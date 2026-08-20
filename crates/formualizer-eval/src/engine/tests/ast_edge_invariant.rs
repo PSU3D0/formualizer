@@ -449,7 +449,7 @@ fn run_campaign(campaign: Campaign) -> CampaignStats {
             "Tracked",
             NamedDefinition::Cell(CellRef::new(
                 tracked_sheet,
-                Coord::from_excel(1_000, 1_000, true, true),
+                Coord::from_excel(2, 1, true, true),
             )),
             NameScope::Workbook,
         )
@@ -548,7 +548,7 @@ fn run_campaign(campaign: Campaign) -> CampaignStats {
             80..=85 => {
                 let target = CellRef::new(
                     engine.sheet_id(&sheet).unwrap(),
-                    Coord::from_excel(row + 1_000, col + 1_000, true, true),
+                    Coord::from_excel(row, col, true, true),
                 );
                 log.begin_compound("campaign-redefine-name".to_string());
                 engine
@@ -1207,8 +1207,8 @@ fn symbol_vertices_are_absent_from_the_cell_index_under_every_grid_operation() {
         .define_name(
             "Block",
             NamedDefinition::Range(RangeRef::new(
-                CellRef::new(sheet2, Coord::from_excel(1, 6, true, true)),
-                CellRef::new(sheet2, Coord::from_excel(2, 7, true, true)),
+                CellRef::new(sheet2, Coord::from_excel(1, 1, true, true)),
+                CellRef::new(sheet2, Coord::from_excel(2, 2, true, true)),
             )),
             NameScope::Workbook,
         )

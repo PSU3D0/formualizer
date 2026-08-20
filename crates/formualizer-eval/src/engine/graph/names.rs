@@ -55,6 +55,7 @@ fn adjust_named_definition(
     context: &crate::engine::graph::editor::reference_adjuster::ReferenceContext<'_>,
 ) -> Result<(), ExcelError> {
     use crate::engine::graph::editor::reference_adjuster::AbsShiftPolicy;
+    let mut invalidated = false;
     match definition {
         NamedDefinition::Cell(cell_ref) => {
             if let Some(adjusted) =
@@ -62,7 +63,7 @@ fn adjust_named_definition(
             {
                 *cell_ref = adjusted;
             } else {
-                return Err(ExcelError::new(ExcelErrorKind::Ref));
+                invalidated = true;
             }
         }
         NamedDefinition::Range(range_ref) => {
@@ -81,7 +82,7 @@ fn adjust_named_definition(
                 range_ref.start = start;
                 range_ref.end = end;
             } else {
-                return Err(ExcelError::new(ExcelErrorKind::Ref));
+                invalidated = true;
             }
         }
         NamedDefinition::Literal(_) => {
@@ -103,6 +104,18 @@ fn adjust_named_definition(
             dependencies.clear();
             range_deps.clear();
         }
+    }
+    if invalidated {
+        *definition = NamedDefinition::Formula {
+            ast: formualizer_parse::parser::ASTNode::new(
+                formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Error(
+                    ExcelError::new(ExcelErrorKind::Ref),
+                )),
+                None,
+            ),
+            dependencies: Vec::new(),
+            range_deps: Vec::new(),
+        };
     }
     Ok(())
 }
@@ -789,7 +802,11 @@ impl DependencyGraph {
                 self.default_sheet_id,
                 &self.sheet_reg,
             );
-        for named_range in self.named_ranges.values_mut() {
+        // Adjust cloned definitions first so a future fallible definition kind
+        // cannot leave the name table half-adjusted.
+        let mut adjusted_named_ranges = self.named_ranges.clone();
+        let mut adjusted_sheet_named_ranges = self.sheet_named_ranges.clone();
+        for named_range in adjusted_named_ranges.values_mut() {
             adjust_named_definition(
                 &mut named_range.definition,
                 &adjuster,
@@ -799,13 +816,59 @@ impl DependencyGraph {
         }
 
         // Sheet-scoped formulas bind unqualified references to their scope sheet.
-        for ((scope_sheet_id, _), named_range) in self.sheet_named_ranges.iter_mut() {
+        for ((scope_sheet_id, _), named_range) in adjusted_sheet_named_ranges.iter_mut() {
             let context = crate::engine::graph::editor::reference_adjuster::ReferenceContext::new(
                 *scope_sheet_id,
                 &self.sheet_reg,
             );
             adjust_named_definition(&mut named_range.definition, &adjuster, operation, &context)?;
         }
+        let changed_names: Vec<_> = adjusted_named_ranges
+            .iter()
+            .filter_map(|(key, adjusted)| {
+                self.named_ranges
+                    .get(key)
+                    .is_some_and(|current| current.definition != adjusted.definition)
+                    .then_some((adjusted.vertex, adjusted.scope, adjusted.definition.clone()))
+            })
+            .chain(
+                adjusted_sheet_named_ranges
+                    .iter()
+                    .filter_map(|(key, adjusted)| {
+                        self.sheet_named_ranges
+                            .get(key)
+                            .is_some_and(|current| current.definition != adjusted.definition)
+                            .then_some((
+                                adjusted.vertex,
+                                adjusted.scope,
+                                adjusted.definition.clone(),
+                            ))
+                    }),
+            )
+            .collect();
+        self.named_ranges = adjusted_named_ranges;
+        self.sheet_named_ranges = adjusted_sheet_named_ranges;
+        for &(vertex, scope, ref definition) in &changed_names {
+            self.detach_vertex_from_names(vertex);
+            self.store.set_kind(
+                vertex,
+                if matches!(definition, NamedDefinition::Range(_)) {
+                    VertexKind::NamedArray
+                } else {
+                    VertexKind::NamedScalar
+                },
+            );
+            let referenced_names = self.rebuild_name_dependencies(vertex, definition, scope);
+            if !referenced_names.is_empty() {
+                self.attach_vertex_to_names(vertex, &referenced_names);
+            }
+        }
+        self.mark_dirty_many(
+            &changed_names
+                .iter()
+                .map(|(vertex, _, _)| *vertex)
+                .collect::<Vec<_>>(),
+        );
         if changed {
             self.bump_symbol_revision();
         }

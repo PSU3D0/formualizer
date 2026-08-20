@@ -1803,11 +1803,10 @@ fn test_named_range_delete_causes_ref_error() {
         count: 1,
     };
 
-    // Adjusting should fail with REF error
-    let result = graph.adjust_named_ranges(&op);
-    assert!(result.is_err());
-    if let Err(e) = result {
-        assert!(matches!(e.kind, ExcelErrorKind::Ref));
+    graph.adjust_named_ranges(&op).unwrap();
+    match graph.resolve_name("Target", 0).unwrap() {
+        NamedDefinition::Formula { ast, .. } => assert_eq!(canonical_formula(ast), "=#REF!"),
+        other => panic!("expected invalidated formula definition, got {other:?}"),
     }
 }
 
@@ -2042,10 +2041,11 @@ fn test_absolute_ref_deleted_returns_ref_error() {
         count: 1,
     };
 
-    let error = graph
-        .adjust_named_ranges(&op)
-        .expect_err("deleting an absolute named-cell target must return #REF!");
-    assert_eq!(error.kind, ExcelErrorKind::Ref);
+    graph.adjust_named_ranges(&op).unwrap();
+    match graph.resolve_name("AbsoluteRef", 0).unwrap() {
+        NamedDefinition::Formula { ast, .. } => assert_eq!(canonical_formula(ast), "=#REF!"),
+        other => panic!("expected invalidated formula definition, got {other:?}"),
+    }
 }
 
 // ============ Phase 3: VertexEditor Integration Tests ============
@@ -2498,4 +2498,150 @@ fn sheet_scoped_named_formula_delete_of_target_renders_ref_and_evaluates_ref() {
         engine.get_cell_value("Data", 1, 1),
         Some(LiteralValue::Error(error)) if error.kind == ExcelErrorKind::Ref
     ));
+}
+
+#[derive(Clone, Copy)]
+enum DeleteTargetKind {
+    Cell,
+    Range,
+    Formula,
+}
+
+fn assert_public_delete_of_named_target(axis_is_row: bool, kind: DeleteTargetKind) {
+    let mut engine = Engine::new(TestWorkbook::new(), canonical_cfg());
+    let data = engine.sheet_id_mut("Data");
+    let delete_count = if matches!(kind, DeleteTargetKind::Range) {
+        2
+    } else {
+        1
+    };
+
+    if axis_is_row {
+        for (row, value) in [(3, 30.0), (4, 40.0), (5, 50.0)] {
+            engine
+                .set_cell_value("Data", row, 2, lit_num(value))
+                .unwrap();
+        }
+    } else {
+        for (col, value) in [(3, 30.0), (4, 40.0), (5, 50.0)] {
+            engine
+                .set_cell_value("Data", 2, col, lit_num(value))
+                .unwrap();
+        }
+    }
+
+    let definition = match (axis_is_row, kind) {
+        (true, DeleteTargetKind::Cell) => {
+            NamedDefinition::Cell(CellRef::new(data, Coord::new(2, 1, true, true)))
+        }
+        (false, DeleteTargetKind::Cell) => {
+            NamedDefinition::Cell(CellRef::new(data, Coord::new(1, 2, true, true)))
+        }
+        (true, DeleteTargetKind::Range) => NamedDefinition::Range(RangeRef::new(
+            CellRef::new(data, Coord::new(2, 1, true, true)),
+            CellRef::new(data, Coord::new(3, 1, true, true)),
+        )),
+        (false, DeleteTargetKind::Range) => NamedDefinition::Range(RangeRef::new(
+            CellRef::new(data, Coord::new(1, 2, true, true)),
+            CellRef::new(data, Coord::new(1, 3, true, true)),
+        )),
+        (true, DeleteTargetKind::Formula) => NamedDefinition::Formula {
+            ast: parse("=Data!$B$3").unwrap(),
+            dependencies: Vec::new(),
+            range_deps: Vec::new(),
+        },
+        (false, DeleteTargetKind::Formula) => NamedDefinition::Formula {
+            ast: parse("=Data!$C$2").unwrap(),
+            dependencies: Vec::new(),
+            range_deps: Vec::new(),
+        },
+    };
+    engine
+        .define_name("DeleteTarget", definition, NameScope::Workbook)
+        .unwrap();
+    let named_reader = if matches!(kind, DeleteTargetKind::Range) {
+        "=SUM(DeleteTarget)"
+    } else {
+        "=DeleteTarget"
+    };
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse(named_reader).unwrap())
+        .unwrap();
+    engine
+        .set_cell_formula(
+            "Sheet1",
+            2,
+            1,
+            parse(if axis_is_row { "=Data!B5" } else { "=Data!E2" }).unwrap(),
+        )
+        .unwrap();
+    engine.evaluate_all().unwrap();
+
+    if axis_is_row {
+        engine.delete_rows("Data", 3, delete_count).unwrap();
+    } else {
+        engine.delete_columns("Data", 3, delete_count).unwrap();
+    }
+    engine.evaluate_all().unwrap();
+
+    match &engine
+        .resolve_name_entry("DeleteTarget", data)
+        .unwrap()
+        .definition
+    {
+        NamedDefinition::Formula { ast, .. } => assert_eq!(canonical_formula(ast), "=#REF!"),
+        other => panic!("expected invalidated formula definition, got {other:?}"),
+    }
+    assert!(matches!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Error(error)) if error.kind == ExcelErrorKind::Ref
+    ));
+    assert_eq!(engine.get_cell_value("Sheet1", 2, 1), Some(lit_num(50.0)));
+
+    let shifted_target = 5 - delete_count;
+    if axis_is_row {
+        engine
+            .set_cell_value("Data", shifted_target, 2, lit_num(777.0))
+            .unwrap();
+    } else {
+        engine
+            .set_cell_value("Data", 2, shifted_target, lit_num(777.0))
+            .unwrap();
+    }
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 2, 1),
+        Some(lit_num(777.0)),
+        "the shifted formula must remain bound to its textual target"
+    );
+}
+
+#[test]
+fn public_delete_rows_of_named_cell_target_invalidates_to_ref_atomically() {
+    assert_public_delete_of_named_target(true, DeleteTargetKind::Cell);
+}
+
+#[test]
+fn public_delete_columns_of_named_cell_target_invalidates_to_ref_atomically() {
+    assert_public_delete_of_named_target(false, DeleteTargetKind::Cell);
+}
+
+#[test]
+fn public_delete_rows_of_named_range_target_invalidates_to_ref_atomically() {
+    assert_public_delete_of_named_target(true, DeleteTargetKind::Range);
+}
+
+#[test]
+fn public_delete_columns_of_named_range_target_invalidates_to_ref_atomically() {
+    assert_public_delete_of_named_target(false, DeleteTargetKind::Range);
+}
+
+#[test]
+fn public_delete_rows_of_named_formula_target_invalidates_to_ref_atomically() {
+    assert_public_delete_of_named_target(true, DeleteTargetKind::Formula);
+}
+
+#[test]
+fn public_delete_columns_of_named_formula_target_invalidates_to_ref_atomically() {
+    assert_public_delete_of_named_target(false, DeleteTargetKind::Formula);
 }
