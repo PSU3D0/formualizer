@@ -295,6 +295,7 @@ pub fn rewrite_calc_pr_in_zip(
 }
 
 #[cfg(test)]
+#[cfg(any(feature = "calamine", feature = "umya"))]
 mod tests {
     use super::*;
     use formualizer_eval::engine::{CycleDetection, CyclePolicy};
