@@ -46,11 +46,8 @@ fn is_valid_excel_name(name: &str) -> bool {
 
 /// Helper function to adjust a named definition during structural operations.
 ///
-/// Named definitions deliberately keep the legacy `Pin` policy for absolute
-/// anchors: formula reference adjustment now tracks absolute refs through
-/// structural shifts (issue #168), but flipping named-range definitions to
-/// the same semantics is a separate policy decision that has not been made —
-/// see `AbsShiftPolicy` and the #168 discussion.
+/// Named definitions track structural edits regardless of `$` anchors, matching
+/// formula references. Absolute markers affect copy/fill, not structural shifts.
 fn adjust_named_definition(
     definition: &mut NamedDefinition,
     adjuster: &crate::engine::graph::editor::reference_adjuster::ReferenceAdjuster,
@@ -61,7 +58,7 @@ fn adjust_named_definition(
     match definition {
         NamedDefinition::Cell(cell_ref) => {
             if let Some(adjusted) =
-                adjuster.adjust_cell_ref_with_policy(cell_ref, operation, AbsShiftPolicy::Pin)
+                adjuster.adjust_cell_ref_with_policy(cell_ref, operation, AbsShiftPolicy::Track)
             {
                 *cell_ref = adjusted;
             } else {
@@ -72,12 +69,12 @@ fn adjust_named_definition(
             let adjusted_start = adjuster.adjust_cell_ref_with_policy(
                 &range_ref.start,
                 operation,
-                AbsShiftPolicy::Pin,
+                AbsShiftPolicy::Track,
             );
             let adjusted_end = adjuster.adjust_cell_ref_with_policy(
                 &range_ref.end,
                 operation,
-                AbsShiftPolicy::Pin,
+                AbsShiftPolicy::Track,
             );
 
             if let (Some(start), Some(end)) = (adjusted_start, adjusted_end) {
@@ -98,7 +95,7 @@ fn adjust_named_definition(
             let adjusted_ast = adjuster.adjust_ast_with_policy_in_context(
                 ast,
                 operation,
-                AbsShiftPolicy::Pin,
+                AbsShiftPolicy::Track,
                 context,
             );
             *ast = adjusted_ast;

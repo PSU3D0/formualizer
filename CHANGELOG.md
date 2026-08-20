@@ -6,6 +6,7 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Changed
 
+- Named-range definitions now track structural inserts and deletes like all other references; previously they stayed pinned to their original coordinates. (#170)
 - Arrow dependencies upgraded 58.2 → 59.2 across `formualizer-eval` (`arrow`, `arrow-array`, `arrow-buffer`, `arrow-schema`, `arrow-select`, `arrow-cast`). No API or behaviour change; full suite green on the pinned surface, native and wasm32.
 
 ### Fixed

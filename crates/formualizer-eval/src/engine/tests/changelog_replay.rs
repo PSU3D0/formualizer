@@ -202,7 +202,7 @@ fn changelog_replay_roundtrip_matches_end_state() {
 
         // Structural edits.
         editor.insert_rows(sheet_id, 1, 2).unwrap();
-        editor.delete_columns(sheet_id, 1, 1).unwrap();
+        editor.delete_columns(sheet_id, 2, 1).unwrap();
 
         // Exercise spill events in the replay harness. We commit a small 2x2 spill
         // anchored at A1 in the current sheet.
