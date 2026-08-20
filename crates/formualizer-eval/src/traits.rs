@@ -536,6 +536,14 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
         match &self.expr {
             ArgumentExpr::Ast(node) => match &node.node_type {
                 ASTNodeType::Reference { reference, .. } => {
+                    // A LET/LAMBDA local shadows any workbook name of the same
+                    // spelling; locals only resolve on the value path, so a
+                    // bound name must not be sent down the named-range route.
+                    if let ReferenceType::NamedRange(name) = reference
+                        && self.interp.resolve_local_name(name).is_some()
+                    {
+                        return None;
+                    }
                     Some(self.interp.reference_for_current_offset(reference))
                 }
                 ASTNodeType::BinaryOp { op, .. } if op == ":" => {
@@ -569,6 +577,15 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                 };
                 match node {
                     crate::engine::arena::AstNodeData::Reference { ref_type, .. } => {
+                        // Same local-shadowing rule as the AST branch above.
+                        if let crate::engine::arena::CompactRefType::NamedRange(name_id) = ref_type
+                            && self
+                                .interp
+                                .resolve_local_name(data_store.resolve_ast_string(*name_id))
+                                .is_some()
+                        {
+                            return None;
+                        }
                         let reference = data_store
                             .reconstruct_reference_type_for_eval(ref_type, sheet_registry);
                         Some(self.interp.reference_for_current_offset(&reference))
