@@ -681,6 +681,47 @@ impl serde_core::ser::Serialize for formualizer_common::RangeArea
 pub fn formualizer_common::RangeArea::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl<'de> serde_core::de::Deserialize<'de> for formualizer_common::RangeArea
 pub fn formualizer_common::RangeArea::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub mod formualizer_common::numfmt
+#[non_exhaustive] pub enum formualizer_common::numfmt::FormatClass
+pub formualizer_common::numfmt::FormatClass::Currency
+pub formualizer_common::numfmt::FormatClass::Currency::decimals: u8
+pub formualizer_common::numfmt::FormatClass::Date
+pub formualizer_common::numfmt::FormatClass::DateTime
+pub formualizer_common::numfmt::FormatClass::Duration
+pub formualizer_common::numfmt::FormatClass::Fraction
+pub formualizer_common::numfmt::FormatClass::General
+pub formualizer_common::numfmt::FormatClass::Number
+pub formualizer_common::numfmt::FormatClass::Number::decimals: u8
+pub formualizer_common::numfmt::FormatClass::Number::thousands: bool
+pub formualizer_common::numfmt::FormatClass::Other
+pub formualizer_common::numfmt::FormatClass::Percent
+pub formualizer_common::numfmt::FormatClass::Percent::decimals: u8
+pub formualizer_common::numfmt::FormatClass::Scientific
+pub formualizer_common::numfmt::FormatClass::Text
+pub formualizer_common::numfmt::FormatClass::Time
+impl core::clone::Clone for formualizer_common::FormatClass
+pub fn formualizer_common::FormatClass::clone(&self) -> formualizer_common::FormatClass
+impl core::cmp::Eq for formualizer_common::FormatClass
+impl core::cmp::PartialEq for formualizer_common::FormatClass
+pub fn formualizer_common::FormatClass::eq(&self, &formualizer_common::FormatClass) -> bool
+impl core::fmt::Debug for formualizer_common::FormatClass
+pub fn formualizer_common::FormatClass::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_common::FormatClass
+pub struct formualizer_common::numfmt::NumberFormat
+impl formualizer_common::NumberFormat
+pub fn formualizer_common::NumberFormat::builtin(u16) -> core::option::Option<&'static formualizer_common::NumberFormat>
+pub fn formualizer_common::NumberFormat::class(&self) -> &formualizer_common::FormatClass
+pub fn formualizer_common::NumberFormat::code(&self) -> &str
+pub fn formualizer_common::NumberFormat::parse(&str) -> Self
+impl core::clone::Clone for formualizer_common::NumberFormat
+pub fn formualizer_common::NumberFormat::clone(&self) -> formualizer_common::NumberFormat
+impl core::cmp::Eq for formualizer_common::NumberFormat
+impl core::cmp::PartialEq for formualizer_common::NumberFormat
+pub fn formualizer_common::NumberFormat::eq(&self, &formualizer_common::NumberFormat) -> bool
+impl core::fmt::Debug for formualizer_common::NumberFormat
+pub fn formualizer_common::NumberFormat::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_common::NumberFormat
+pub fn formualizer_common::numfmt::builtin_code(u16) -> core::option::Option<&'static str>
 pub mod formualizer_common::range
 pub struct formualizer_common::range::RangeAddress
 pub formualizer_common::range::RangeAddress::end_col: u32
@@ -942,6 +983,31 @@ impl serde_core::ser::Serialize for formualizer_common::ExcelErrorKind
 pub fn formualizer_common::ExcelErrorKind::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl<'de> serde_core::de::Deserialize<'de> for formualizer_common::ExcelErrorKind
 pub fn formualizer_common::ExcelErrorKind::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+#[non_exhaustive] pub enum formualizer_common::FormatClass
+pub formualizer_common::FormatClass::Currency
+pub formualizer_common::FormatClass::Currency::decimals: u8
+pub formualizer_common::FormatClass::Date
+pub formualizer_common::FormatClass::DateTime
+pub formualizer_common::FormatClass::Duration
+pub formualizer_common::FormatClass::Fraction
+pub formualizer_common::FormatClass::General
+pub formualizer_common::FormatClass::Number
+pub formualizer_common::FormatClass::Number::decimals: u8
+pub formualizer_common::FormatClass::Number::thousands: bool
+pub formualizer_common::FormatClass::Other
+pub formualizer_common::FormatClass::Percent
+pub formualizer_common::FormatClass::Percent::decimals: u8
+pub formualizer_common::FormatClass::Scientific
+pub formualizer_common::FormatClass::Text
+pub formualizer_common::FormatClass::Time
+impl core::clone::Clone for formualizer_common::FormatClass
+pub fn formualizer_common::FormatClass::clone(&self) -> formualizer_common::FormatClass
+impl core::cmp::Eq for formualizer_common::FormatClass
+impl core::cmp::PartialEq for formualizer_common::FormatClass
+pub fn formualizer_common::FormatClass::eq(&self, &formualizer_common::FormatClass) -> bool
+impl core::fmt::Debug for formualizer_common::FormatClass
+pub fn formualizer_common::FormatClass::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_common::FormatClass
 pub enum formualizer_common::LiteralValue
 pub formualizer_common::LiteralValue::Array(alloc::vec::Vec<alloc::vec::Vec<formualizer_common::LiteralValue>>)
 pub formualizer_common::LiteralValue::Boolean(bool)
@@ -1336,6 +1402,20 @@ impl serde_core::ser::Serialize for formualizer_common::ExcelError
 pub fn formualizer_common::ExcelError::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl<'de> serde_core::de::Deserialize<'de> for formualizer_common::ExcelError
 pub fn formualizer_common::ExcelError::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct formualizer_common::NumberFormat
+impl formualizer_common::NumberFormat
+pub fn formualizer_common::NumberFormat::builtin(u16) -> core::option::Option<&'static formualizer_common::NumberFormat>
+pub fn formualizer_common::NumberFormat::class(&self) -> &formualizer_common::FormatClass
+pub fn formualizer_common::NumberFormat::code(&self) -> &str
+pub fn formualizer_common::NumberFormat::parse(&str) -> Self
+impl core::clone::Clone for formualizer_common::NumberFormat
+pub fn formualizer_common::NumberFormat::clone(&self) -> formualizer_common::NumberFormat
+impl core::cmp::Eq for formualizer_common::NumberFormat
+impl core::cmp::PartialEq for formualizer_common::NumberFormat
+pub fn formualizer_common::NumberFormat::eq(&self, &formualizer_common::NumberFormat) -> bool
+impl core::fmt::Debug for formualizer_common::NumberFormat
+pub fn formualizer_common::NumberFormat::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_common::NumberFormat
 #[repr(transparent)] pub struct formualizer_common::PackedSheetCell(_)
 impl formualizer_common::PackedSheetCell
 pub const formualizer_common::PackedSheetCell::MAX_COL0: u32
@@ -1537,6 +1617,7 @@ impl<'a> core::hash::Hash for formualizer_common::SheetRangeRef<'a>
 pub fn formualizer_common::SheetRangeRef<'a>::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl<'a> core::marker::StructuralPartialEq for formualizer_common::SheetRangeRef<'a>
 pub fn formualizer_common::a1_sheet_name_needs_quoting(&str) -> bool
+pub fn formualizer_common::builtin_code(u16) -> core::option::Option<&'static str>
 pub fn formualizer_common::col_index_from_letters_1based(&str) -> core::result::Result<u32, formualizer_common::A1ParseError>
 pub fn formualizer_common::col_letters_from_1based(u32) -> core::result::Result<alloc::string::String, formualizer_common::A1ParseError>
 pub fn formualizer_common::date_to_serial_for(formualizer_common::DateSystem, &chrono::naive::date::NaiveDate) -> f64

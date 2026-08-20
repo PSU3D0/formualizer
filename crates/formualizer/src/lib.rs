@@ -63,7 +63,7 @@ pub use formualizer_workbook::{
 };
 
 #[cfg(feature = "eval")]
-pub use formualizer_eval::engine::{DateSystem, EvalConfig};
+pub use formualizer_eval::engine::{DateSystem, EvalConfig, TemporalEgress};
 
 #[cfg(feature = "eval")]
 pub use formualizer_eval::engine::inspect::{

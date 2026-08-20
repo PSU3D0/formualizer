@@ -10,7 +10,7 @@
 //!
 //! Each test pins exactly the property it names.
 
-use crate::engine::{Engine, EvalConfig};
+use crate::engine::{Engine, EvalConfig, TemporalEgress};
 use crate::test_workbook::TestWorkbook;
 use chrono::NaiveDate;
 use formualizer_common::{ExcelErrorKind, LiteralValue};
@@ -21,7 +21,11 @@ const DEC_1_2024: f64 = 45627.0;
 
 fn engine_with_date_anchor() -> Engine<TestWorkbook> {
     let wb = TestWorkbook::new();
-    let mut engine = Engine::new(wb, EvalConfig::default());
+    let config = EvalConfig {
+        temporal_egress: TemporalEgress::Serial,
+        ..Default::default()
+    };
+    let mut engine = Engine::new(wb, config);
     // A1 holds a genuine Date literal, exactly as an ingested date-formatted
     // xlsx cell does. This is the trigger: a formula-produced `=DATE(...)`
     // yields a plain number and never reached the defect.
@@ -51,16 +55,10 @@ fn date_minus_larger_number_returns_negative_number_not_num_error() {
 }
 
 #[test]
-fn date_minus_number_at_serial_zero_boundary_stays_representable() {
+fn date_minus_number_at_serial_zero_is_numeric() {
     let mut engine = engine_with_date_anchor();
-    // Serial 0 is representable as a date, so the temporal tag is preserved.
-    // This pins the boundary the fix must not move.
-    match eval(&mut engine, "=A1-45627") {
-        LiteralValue::Date(d) => {
-            assert_eq!(d, NaiveDate::from_ymd_opt(1899, 12, 31).unwrap())
-        }
-        other => panic!("expected Date at serial 0, got {other:?}"),
-    }
+    // #312: representability no longer controls arithmetic result type.
+    assert_eq!(eval(&mut engine, "=A1-45627"), LiteralValue::Number(0.0));
 }
 
 #[test]

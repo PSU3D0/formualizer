@@ -1,12 +1,11 @@
 use crate::common::build_workbook;
-use chrono::NaiveDate;
 use formualizer_common::LiteralValue;
 use formualizer_eval::engine::ingest::EngineLoadStream;
 use formualizer_eval::engine::{Engine, EvalConfig};
 use formualizer_workbook::{CalamineAdapter, SpreadsheetReader};
 
 #[test]
-fn calamine_date_arithmetic_propagates_date_tag() {
+fn calamine_date_arithmetic_materializes_native_date_at_egress() {
     // C107 = 2024-10-18 (serial 45583)
     // C108 = 1
     // C109 = C107 + (ROUND(C108,0) * 14) => 2024-11-01
@@ -36,13 +35,12 @@ fn calamine_date_arithmetic_propagates_date_tag() {
         .expect("stream into engine");
     engine.evaluate_all().expect("evaluate");
 
-    match engine.get_cell_value("Sheet1", 109, 3) {
-        Some(LiteralValue::Date(d)) => {
-            assert_eq!(d, NaiveDate::from_ymd_opt(2024, 11, 1).unwrap());
-        }
-        Some(LiteralValue::DateTime(dt)) => {
-            assert_eq!(dt.date(), NaiveDate::from_ymd_opt(2024, 11, 1).unwrap());
-        }
-        other => panic!("expected date-like at Sheet1!C109, got {other:?}"),
-    }
+    // #312: arithmetic stays numeric internally, while Native egress uses the
+    // derived format from the loaded date precedent.
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 109, 3),
+        Some(LiteralValue::Date(
+            chrono::NaiveDate::from_ymd_opt(2024, 11, 1).unwrap()
+        ))
+    );
 }

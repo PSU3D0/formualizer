@@ -6,10 +6,13 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Changed
 
+- Computed temporals are numeric during evaluation (`ISNUMBER`/`TYPE` now match Excel). Native scalar, range, table, Python, and SheetPort egress materializes date/time values from the cell's effective format; callers can opt into uniform raw serials. A known datetime class preserves midnight datetimes, while calamine's code-lossy date-ish signal can only classify pure fractions as time, day-plus-fraction serials as datetime, and integers as date.
 - Arrow dependencies upgraded 58.2 → 59.2 across `formualizer-eval` (`arrow`, `arrow-array`, `arrow-buffer`, `arrow-schema`, `arrow-select`, `arrow-cast`). No API or behaviour change; full suite green on the pinned surface, native and wasm32.
 
 ### Fixed
 
+- Date arithmetic no longer conditionally propagates `LiteralValue::Date`; a position-keyed, non-sticky scalar format annotation carries temporal display class independently, fixing #312 without exposing annotations to bulk numeric kernels. Date-plus-time yields datetime, date-plus-percent and date-plus-plain-number yield date, and unspecified class pairs drop the annotation. Selection functions preserve the chosen scalar annotation, including `IFERROR`, `IFNA`, and scalar-argument `MAX`/`MIN`; `MAX`/`MIN` over multi-cell ranges do not yet recover the winning cell's format.
+- Before merge, the unreleased format channel was hardened so row, column, and sheet structural edits purge affected derived-format positions, and value/formula writes invalidate format state in both ephemeral and interactive/changelog modes. This prevents shifted plain values and logged overwrites from inheriting stale temporal formats; neither pre-merge regression shipped.
 - Temporal values saved through `Workbook::to_xlsx_bytes` round-trip as date-system-aware numeric serials instead of text, restoring arithmetic while leaving display and number-format fidelity to the format channel. (#355)
 
 - Structural row inserts and deletes now invalidate compressed open-range readers when the edited axis intersects and an indexed occupied column crosses the range. Bounded formulas whose AST is adjusted remain conservatively dirtied, and column edits retain conservative cross-axis invalidation because Arrow has no cheap occupied-row index. (#313, #314)

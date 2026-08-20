@@ -7,7 +7,7 @@ use formualizer_macros::func_caps;
 
 fn scalar_like_value(arg: &ArgumentHandle<'_, '_>) -> Result<LiteralValue, ExcelError> {
     Ok(match arg.value()? {
-        crate::traits::CalcValue::Scalar(v) => v,
+        crate::traits::CalcValue::Scalar(v) | crate::traits::CalcValue::AnnotatedScalar(v, _) => v,
         crate::traits::CalcValue::Range(rv) => rv.get_cell(0, 0),
         crate::traits::CalcValue::Callable(_) => LiteralValue::Error(
             ExcelError::new(ExcelErrorKind::Calc).with_message("LAMBDA value must be invoked"),

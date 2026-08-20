@@ -2353,36 +2353,13 @@ impl Workbook {
 
     // Ranges
     pub fn read_range(&self, addr: &RangeAddress) -> Vec<Vec<LiteralValue>> {
-        let mut out = Vec::with_capacity(addr.height() as usize);
-        if let Some(asheet) = self.engine.sheet_store().sheet(&addr.sheet) {
-            let sr0 = addr.start_row.saturating_sub(1) as usize;
-            let sc0 = addr.start_col.saturating_sub(1) as usize;
-            let er0 = addr.end_row.saturating_sub(1) as usize;
-            let ec0 = addr.end_col.saturating_sub(1) as usize;
-            let view = asheet.range_view(sr0, sc0, er0, ec0);
-            let (h, w) = view.dims();
-            for rr in 0..h {
-                let mut row = Vec::with_capacity(w);
-                for cc in 0..w {
-                    row.push(view.get_cell(rr, cc));
-                }
-                out.push(row);
-            }
-        } else {
-            // Fallback: materialize via graph stored values
-            for r in addr.start_row..=addr.end_row {
-                let mut row = Vec::with_capacity(addr.width() as usize);
-                for c in addr.start_col..=addr.end_col {
-                    row.push(
-                        self.engine
-                            .get_cell_value(&addr.sheet, r, c)
-                            .unwrap_or(LiteralValue::Empty),
-                    );
-                }
-                out.push(row);
-            }
-        }
-        out
+        self.engine.get_range_values(
+            &addr.sheet,
+            addr.start_row,
+            addr.start_col,
+            addr.end_row,
+            addr.end_col,
+        )
     }
     pub fn write_range(
         &mut self,

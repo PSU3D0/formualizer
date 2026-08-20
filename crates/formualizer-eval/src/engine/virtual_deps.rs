@@ -220,6 +220,35 @@ impl<'a, R: EvaluationContext> EvaluationContext for DynamicRefCollector<'a, R> 
         self.engine.cancellation_token()
     }
 
+    fn resolve_cell_format(
+        &self,
+        sheet: Option<&str>,
+        row: u32,
+        col: u32,
+        current_sheet: &str,
+    ) -> Option<crate::format::FormatId> {
+        self.engine
+            .resolve_cell_format(sheet, row, col, current_sheet)
+    }
+
+    fn format_class(
+        &self,
+        format: crate::format::FormatId,
+    ) -> Option<formualizer_common::numfmt::FormatClass> {
+        self.engine.format_class(format)
+    }
+
+    fn record_cell_derived_format(
+        &self,
+        sheet: &str,
+        row: u32,
+        col: u32,
+        format: Option<crate::format::FormatId>,
+    ) {
+        self.engine
+            .record_cell_derived_format(sheet, row, col, format)
+    }
+
     fn resolve_range_view<'c>(
         &'c self,
         reference: &ReferenceType,

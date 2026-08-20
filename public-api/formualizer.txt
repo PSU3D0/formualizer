@@ -60,6 +60,7 @@ pub use formualizer::TableBinding
 pub use formualizer::TableLocation
 pub use formualizer::TableRow
 pub use formualizer::TableValue
+pub use formualizer::TemporalEgress
 pub use formualizer::Token
 pub use formualizer::TokenSubType
 pub use formualizer::TokenType

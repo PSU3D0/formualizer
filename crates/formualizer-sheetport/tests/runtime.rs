@@ -674,3 +674,113 @@ ports:
         other => panic!("unexpected error: {other:?}"),
     }
 }
+
+#[test]
+fn date_range_port_uses_the_same_native_egress_as_scalar_ports() {
+    let manifest: Manifest = Manifest::from_yaml_str(
+        r#"
+spec: fio
+spec_version: "0.3.0"
+manifest: { id: date-range, name: Date Range }
+ports:
+  - id: dates
+    dir: in
+    shape: range
+    location: { a1: Sheet!F10:G10 }
+    schema: { kind: range, cell_type: date }
+"#,
+    )
+    .expect("manifest parses");
+    let mut workbook = Workbook::new();
+    workbook.add_sheet("Sheet").unwrap();
+    workbook
+        .set_value(
+            "Sheet",
+            10,
+            6,
+            LiteralValue::Date(chrono::NaiveDate::from_ymd_opt(2024, 12, 1).unwrap()),
+        )
+        .unwrap();
+    workbook.set_formula("Sheet", 10, 7, "=F10+1").unwrap();
+    workbook.evaluate_all().unwrap();
+
+    let mut sheetport = SheetPort::new(&mut workbook, manifest).expect("sheetport binds");
+    let inputs = sheetport.read_inputs().expect("date range validates");
+    let Some(PortValue::Range(rows)) = inputs.get("dates") else {
+        panic!("expected range port");
+    };
+    assert_eq!(rows.len(), 1);
+    assert!(
+        rows[0]
+            .iter()
+            .all(|value| matches!(value, LiteralValue::Date(_)))
+    );
+}
+
+#[test]
+fn date_table_port_materializes_and_validates_native_dates() {
+    let manifest: Manifest = Manifest::from_yaml_str(
+        r#"
+spec: fio
+spec_version: "0.3.0"
+capabilities: { profile: full-v0 }
+manifest: { id: date-table, name: Date Table }
+ports:
+  - id: rows
+    dir: out
+    shape: table
+    location:
+      table: { name: Dates, area: body }
+    schema:
+      kind: table
+      columns:
+        - { name: Date, type: date }
+        - { name: Next, type: date }
+"#,
+    )
+    .unwrap();
+    let mut workbook = Workbook::new();
+    workbook.add_sheet("Sheet").unwrap();
+    workbook
+        .set_value("Sheet", 10, 6, LiteralValue::Text("Date".into()))
+        .unwrap();
+    workbook
+        .set_value("Sheet", 10, 7, LiteralValue::Text("Next".into()))
+        .unwrap();
+    workbook
+        .set_value(
+            "Sheet",
+            11,
+            6,
+            LiteralValue::Date(chrono::NaiveDate::from_ymd_opt(2024, 12, 1).unwrap()),
+        )
+        .unwrap();
+    workbook.set_formula("Sheet", 11, 7, "=F11+1").unwrap();
+    workbook.evaluate_all().unwrap();
+    let sheet = workbook.engine().sheet_id("Sheet").unwrap();
+    workbook
+        .engine_mut()
+        .define_table(
+            "Dates",
+            RangeRef::new(
+                CellRef::new(sheet, Coord::from_excel(10, 6, true, true)),
+                CellRef::new(sheet, Coord::from_excel(11, 7, true, true)),
+            ),
+            true,
+            vec!["Date".into(), "Next".into()],
+            false,
+        )
+        .unwrap();
+
+    let mut sheetport = SheetPort::new(&mut workbook, manifest).unwrap();
+    let output = sheetport.evaluate_once(EvalOptions::default()).unwrap();
+    let Some(PortValue::Table(table)) = output.get("rows") else {
+        panic!("expected table port");
+    };
+    assert!(
+        table.rows[0]
+            .values
+            .values()
+            .all(|value| matches!(value, LiteralValue::Date(_)))
+    );
+}

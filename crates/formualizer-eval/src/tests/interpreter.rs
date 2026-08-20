@@ -18,7 +18,8 @@ mod tests {
         let cv = interpreter.evaluate_ast(&ast)?;
         if formula.contains('{') {
             Ok(match cv {
-                crate::traits::CalcValue::Scalar(v) => v,
+                crate::traits::CalcValue::Scalar(v)
+                | crate::traits::CalcValue::AnnotatedScalar(v, _) => v,
                 crate::traits::CalcValue::Range(rv) => {
                     let (rows, _cols) = rv.dims();
                     let mut data = Vec::with_capacity(rows);

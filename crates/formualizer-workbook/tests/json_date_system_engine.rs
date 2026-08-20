@@ -16,16 +16,19 @@ fn json_date_system_propagates_and_affects_date_serials() {
     // Set dimensions to at least 1x1
     adapter.set_dimensions(sheet, Some((1, 1)));
 
-    // Engine default (1900)
-    let mut eng_1900 = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    // Compare raw serials across date systems.
+    let config = EvalConfig {
+        temporal_egress: formualizer_eval::engine::TemporalEgress::Serial,
+        ..Default::default()
+    };
+    let mut eng_1900 = Engine::new(TestWorkbook::new(), config.clone());
     adapter.stream_into_engine(&mut eng_1900).unwrap();
     let v1 = eng_1900.evaluate_cell(sheet, 1, 1).unwrap().unwrap();
 
     // Now mark workbook as 1904 and stream into a fresh engine
     let mut adapter_1904 = adapter;
     adapter_1904.set_date_system_1904(sheet, true);
-    let cfg = EvalConfig::default();
-    let mut eng_1904 = Engine::new(TestWorkbook::new(), cfg);
+    let mut eng_1904 = Engine::new(TestWorkbook::new(), config);
     adapter_1904.stream_into_engine(&mut eng_1904).unwrap();
     let v2 = eng_1904.evaluate_cell(sheet, 1, 1).unwrap().unwrap();
 

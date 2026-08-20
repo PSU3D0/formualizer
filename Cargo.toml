@@ -27,7 +27,7 @@ documentation = "https://docs.rs/formualizer"
 
 [workspace.dependencies]
 
-formualizer-common = { version = "3.0.0", path = "crates/formualizer-common" }
+formualizer-common = { version = "3.1.0", path = "crates/formualizer-common" }
 formualizer-macros = { version = "0.8.4", path = "crates/formualizer-macros" }
 formualizer-parse = { version = "3.0.0", path = "crates/formualizer-parse" }
 formualizer-eval = { version = "0.8.4", path = "crates/formualizer-eval" }
