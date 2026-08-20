@@ -614,6 +614,11 @@ impl<'a> SheetPort<'a> {
     fn read_port_value(&mut self, binding: &PortBinding) -> Result<PortValue, SheetPortError> {
         let mut value = self.read_port_value_raw(binding)?;
         value = apply_defaults(binding, value);
+        value = crate::validation::coerce_port_value_to_declared(
+            binding,
+            value,
+            self.workbook.engine().config.date_system,
+        );
         if let Err(violations) = validate_port_value(binding, &value, ValidationScope::Full) {
             return Err(SheetPortError::ConstraintViolation { violations });
         }

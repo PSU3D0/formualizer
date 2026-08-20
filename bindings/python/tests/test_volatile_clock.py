@@ -22,27 +22,39 @@ def _serial(day: datetime.date) -> float:
     return float((day - _EXCEL_EPOCH).days)
 
 
-def _evaluate(formula: str) -> float:
+def _evaluate(formula: str, *, egress: str | None = None):
     workbook = fz.Workbook(mode=fz.WorkbookMode.Ephemeral)
+    if egress is not None:
+        workbook.set_temporal_egress(egress)
     workbook.add_sheet("Sheet1")
     workbook.set_formula("Sheet1", 1, 1, formula)
-    value = workbook.evaluate_cell("Sheet1", 1, 1)
-    assert isinstance(value, float), f"{formula} returned {value!r}"
-    return value
+    return workbook.evaluate_cell("Sheet1", 1, 1)
 
 
 def test_today_is_the_host_date_not_the_epoch() -> None:
+    # Default egress is native: TODAY() is a datetime.date, not a raw serial.
     today = _evaluate("=TODAY()")
-    assert today != _UNIX_EPOCH_SERIAL
+    assert isinstance(today, datetime.date) and not isinstance(
+        today, datetime.datetime
+    ), f"=TODAY() returned {today!r}"
+    assert today != _EXCEL_EPOCH
     # One day of slack absorbs a midnight rollover between the two reads and
     # any offset between the engine's local zone and the interpreter's.
-    assert abs(today - _serial(datetime.date.today())) <= 1.0
+    assert abs((today - datetime.date.today()).days) <= 1
 
 
 def test_now_is_the_host_instant_not_the_epoch() -> None:
     now = _evaluate("=NOW()")
-    assert now != _UNIX_EPOCH_SERIAL
-    assert abs(now - _serial(datetime.date.today())) <= 1.0
+    assert isinstance(now, datetime.datetime), f"=NOW() returned {now!r}"
+    assert abs((now.date() - datetime.date.today()).days) <= 1
+
+
+def test_today_serial_egress_is_the_host_serial() -> None:
+    # Serial egress restores the raw-serial contract for callers that opt out.
+    today = _evaluate("=TODAY()", egress="serial")
+    assert isinstance(today, float), f"=TODAY() under serial egress returned {today!r}"
+    assert today != _UNIX_EPOCH_SERIAL
+    assert abs(today - _serial(datetime.date.today())) <= 1.0
 
 
 def test_year_of_today_is_the_host_year() -> None:

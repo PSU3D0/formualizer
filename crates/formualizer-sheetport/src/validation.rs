@@ -3,7 +3,7 @@ use crate::binding::{
     TableBinding,
 };
 use crate::value::{PortValue, TableRow, TableValue};
-use formualizer_common::LiteralValue;
+use formualizer_common::{DateSystem, LiteralValue};
 use regex::Regex;
 use serde_json::Value as JsonValue;
 use sheetport_spec::{Constraints, ValueType};
@@ -400,4 +400,173 @@ fn literal_to_json(value: &LiteralValue) -> Option<JsonValue> {
 
 fn is_empty(value: &LiteralValue) -> bool {
     matches!(value, LiteralValue::Empty)
+}
+
+/// Coerce temporal/serial values to the manifest-declared type at the port boundary.
+///
+/// SheetPort is a versioned protocol: a port declared `number`/`integer` must keep
+/// receiving numeric serials regardless of the engine's `TemporalEgress` policy, and a
+/// port declared `date`/`datetime` must receive native temporals even when the engine
+/// egresses raw serials. The manifest is the contract; engine egress is a default that
+/// applies only where the manifest does not speak.
+pub(crate) fn coerce_port_value_to_declared(
+    binding: &PortBinding,
+    value: PortValue,
+    date_system: DateSystem,
+) -> PortValue {
+    match (&binding.kind, value) {
+        (BoundPort::Scalar(scalar), PortValue::Scalar(v)) => PortValue::Scalar(
+            coerce_literal_to_declared(scalar.value_type, v, date_system),
+        ),
+        (BoundPort::Record(record), PortValue::Record(mut map)) => {
+            for (field_name, field_binding) in &record.fields {
+                if let Some(v) = map.remove(field_name) {
+                    map.insert(
+                        field_name.clone(),
+                        coerce_literal_to_declared(field_binding.value_type, v, date_system),
+                    );
+                }
+            }
+            PortValue::Record(map)
+        }
+        (BoundPort::Range(range), PortValue::Range(rows)) => PortValue::Range(
+            rows.into_iter()
+                .map(|row| {
+                    row.into_iter()
+                        .map(|v| coerce_literal_to_declared(range.cell_type, v, date_system))
+                        .collect()
+                })
+                .collect(),
+        ),
+        (BoundPort::Table(table), PortValue::Table(mut tv)) => {
+            for row in &mut tv.rows {
+                for column in &table.columns {
+                    if let Some(v) = row.values.remove(&column.name) {
+                        row.values.insert(
+                            column.name.clone(),
+                            coerce_literal_to_declared(column.value_type, v, date_system),
+                        );
+                    }
+                }
+            }
+            PortValue::Table(tv)
+        }
+        (_, value) => value,
+    }
+}
+
+fn coerce_literal_to_declared(
+    value_type: ValueType,
+    value: LiteralValue,
+    system: DateSystem,
+) -> LiteralValue {
+    use formualizer_common::{
+        date_to_serial_for, datetime_to_serial_for, time_to_fraction, try_serial_to_date_for,
+        try_serial_to_datetime_for,
+    };
+    match value_type {
+        ValueType::Number | ValueType::Integer => match value {
+            LiteralValue::Date(d) => LiteralValue::Number(date_to_serial_for(system, &d)),
+            LiteralValue::DateTime(dt) => LiteralValue::Number(datetime_to_serial_for(system, &dt)),
+            LiteralValue::Time(t) => LiteralValue::Number(time_to_fraction(&t)),
+            LiteralValue::Duration(d) => LiteralValue::Number(
+                d.num_nanoseconds()
+                    .map(|n| n as f64 / (86_400.0 * 1_000_000_000.0))
+                    .unwrap_or_else(|| d.num_seconds() as f64 / 86_400.0),
+            ),
+            other => other,
+        },
+        ValueType::Date => match value {
+            LiteralValue::Number(n) => try_serial_to_date_for(system, n)
+                .map(LiteralValue::Date)
+                .unwrap_or(LiteralValue::Number(n)),
+            other => other,
+        },
+        ValueType::Datetime => match value {
+            LiteralValue::Number(n) => try_serial_to_datetime_for(system, n)
+                .map(LiteralValue::DateTime)
+                .unwrap_or(LiteralValue::Number(n)),
+            other => other,
+        },
+        ValueType::String | ValueType::Boolean => value,
+    }
+}
+
+#[cfg(test)]
+mod coerce_tests {
+    use super::*;
+    use chrono::{NaiveDate, NaiveDateTime};
+
+    fn d(y: i32, m: u32, day: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(y, m, day).unwrap()
+    }
+
+    #[test]
+    fn numeric_port_receives_serial_from_native_date() {
+        let v = coerce_literal_to_declared(
+            ValueType::Number,
+            LiteralValue::Date(d(2026, 8, 20)),
+            DateSystem::Excel1900,
+        );
+        let LiteralValue::Number(serial) = v else {
+            panic!("expected serial, got {v:?}");
+        };
+        assert_eq!(
+            formualizer_common::try_serial_to_date_for(DateSystem::Excel1900, serial).unwrap(),
+            d(2026, 8, 20)
+        );
+    }
+
+    #[test]
+    fn numeric_port_receives_serial_from_native_datetime() {
+        let dt = NaiveDateTime::new(
+            d(2026, 8, 20),
+            chrono::NaiveTime::from_hms_opt(6, 0, 0).unwrap(),
+        );
+        let v = coerce_literal_to_declared(
+            ValueType::Number,
+            LiteralValue::DateTime(dt),
+            DateSystem::Excel1900,
+        );
+        let LiteralValue::Number(serial) = v else {
+            panic!("expected serial, got {v:?}");
+        };
+        assert!(
+            (serial.fract() - 0.25).abs() < 1e-9,
+            "6:00 is a quarter day, got {serial}"
+        );
+    }
+
+    #[test]
+    fn date_port_receives_native_from_serial() {
+        let serial = formualizer_common::date_to_serial_for(DateSystem::Excel1900, &d(2026, 8, 20));
+        let v = coerce_literal_to_declared(
+            ValueType::Date,
+            LiteralValue::Number(serial),
+            DateSystem::Excel1900,
+        );
+        assert_eq!(v, LiteralValue::Date(d(2026, 8, 20)));
+    }
+
+    #[test]
+    fn non_temporal_values_pass_through_unchanged() {
+        for vt in [ValueType::Number, ValueType::Date, ValueType::String] {
+            assert_eq!(
+                coerce_literal_to_declared(
+                    vt,
+                    LiteralValue::Text("x".into()),
+                    DateSystem::Excel1900
+                ),
+                LiteralValue::Text("x".into())
+            );
+        }
+        assert_eq!(
+            coerce_literal_to_declared(
+                ValueType::Number,
+                LiteralValue::Int(3),
+                DateSystem::Excel1900
+            ),
+            LiteralValue::Int(3)
+        );
+    }
 }
