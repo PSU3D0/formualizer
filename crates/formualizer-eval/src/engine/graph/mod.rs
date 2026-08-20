@@ -31,6 +31,7 @@ mod formula_dirty;
 mod names;
 pub(crate) mod prepared_legacy_graph;
 mod range_deps;
+pub(crate) use range_deps::{StructuralEdit, StructuralOccupancy};
 
 mod sheets;
 pub mod snapshot;

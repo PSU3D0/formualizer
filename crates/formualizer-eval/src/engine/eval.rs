@@ -1500,6 +1500,7 @@ where
 
             let sheet_id = self.engine.graph.sheet_id_mut(sheet);
             let before0 = before.saturating_sub(1);
+            let occupancy = self.engine.structural_row_occupancy(sheet, sheet_id);
             let affected_region = Engine::<R>::structural_row_region(sheet_id, before0);
             // Authority geometry is not journaled. Materialize affected spans
             // before the logged graph shift so undo/redo remains exact instead
@@ -1513,6 +1514,7 @@ where
                 let mut out: Result<crate::engine::ShiftSummary, crate::engine::EditorError> =
                     Ok(crate::engine::ShiftSummary::default());
                 self.engine.edit_with_logger(log, |editor| {
+                    editor.set_structural_occupancy(occupancy);
                     out = editor.insert_rows(sheet_id, before0, count);
                 })?;
                 out?
@@ -1579,6 +1581,7 @@ where
 
             let sheet_id = self.engine.graph.sheet_id_mut(sheet);
             let before0 = before.saturating_sub(1);
+            let occupancy = self.engine.structural_column_occupancy();
             let affected_region = Engine::<R>::structural_col_region(sheet_id, before0);
             self.engine
                 .demote_spans_preserving_computed_overlays(sheet_id, affected_region)?;
@@ -1588,6 +1591,7 @@ where
                 let mut out: Result<crate::engine::ShiftSummary, crate::engine::EditorError> =
                     Ok(crate::engine::ShiftSummary::default());
                 self.engine.edit_with_logger(log, |editor| {
+                    editor.set_structural_occupancy(occupancy);
                     out = editor.insert_columns(sheet_id, before0, count);
                 })?;
                 out?
@@ -14676,6 +14680,31 @@ where
         Ok(())
     }
 
+    fn structural_row_occupancy(
+        &self,
+        sheet: &str,
+        sheet_id: SheetId,
+    ) -> crate::engine::graph::StructuralOccupancy {
+        if !self.graph.has_compressed_range_dependencies() {
+            return crate::engine::graph::StructuralOccupancy::default();
+        }
+        let mut occupancy = self.graph.structural_occupancy(sheet_id);
+        if let Some(arrow_sheet) = self.arrow_sheets.sheet(sheet) {
+            occupancy.include_arrow_sheet(arrow_sheet);
+            occupancy
+        } else {
+            // Missing Arrow state cannot prove an apparently empty column empty.
+            crate::engine::graph::StructuralOccupancy::conservative()
+        }
+    }
+
+    fn structural_column_occupancy(&self) -> crate::engine::graph::StructuralOccupancy {
+        // Arrow exposes occupied columns through chunk metadata and overlay maps,
+        // but has no cheap occupied-row index. Column edits therefore deliberately
+        // retain conservative cross-axis invalidation instead of scanning cells.
+        crate::engine::graph::StructuralOccupancy::conservative()
+    }
+
     /// Insert rows (1-based) and mirror into Arrow store when enabled
     pub fn insert_rows(
         &mut self,
@@ -14694,6 +14723,7 @@ where
         let sheet_id = self.ensure_known_sheet_id(sheet)?;
         let before0 = before.saturating_sub(1);
         let affected_region = Self::structural_row_region(sheet_id, before0);
+        let occupancy = self.structural_row_occupancy(sheet, sheet_id);
         let op = StructuralOp::InsertRows {
             sheet_id,
             before: before0,
@@ -14701,7 +14731,8 @@ where
         };
         self.demote_spans_for_structural_op(op, affected_region)?;
         let summary = {
-            let mut editor = VertexEditor::new(&mut self.graph);
+            let mut editor =
+                VertexEditor::new(&mut self.graph).with_structural_occupancy(occupancy);
             editor.insert_rows(sheet_id, before0, count)?
         };
         if let Some(asheet) = self.arrow_sheets.sheet_mut(sheet) {
@@ -14734,6 +14765,7 @@ where
         let sheet_id = self.ensure_known_sheet_id(sheet)?;
         let start0 = start.saturating_sub(1);
         let affected_region = Self::structural_row_region(sheet_id, start0);
+        let occupancy = self.structural_row_occupancy(sheet, sheet_id);
         let op = StructuralOp::DeleteRows {
             sheet_id,
             start: start0,
@@ -14741,7 +14773,8 @@ where
         };
         self.demote_spans_for_structural_op(op, affected_region)?;
         let summary = {
-            let mut editor = VertexEditor::new(&mut self.graph);
+            let mut editor =
+                VertexEditor::new(&mut self.graph).with_structural_occupancy(occupancy);
             editor.delete_rows(sheet_id, start0, count)?
         };
         if let Some(asheet) = self.arrow_sheets.sheet_mut(sheet) {
@@ -14779,6 +14812,7 @@ where
         )?;
         let before0 = before.saturating_sub(1);
         let affected_region = Self::structural_col_region(sheet_id, before0);
+        let occupancy = self.structural_column_occupancy();
         let op = StructuralOp::InsertColumns {
             sheet_id,
             before: before0,
@@ -14786,7 +14820,8 @@ where
         };
         self.demote_spans_for_structural_op(op, affected_region)?;
         let summary = {
-            let mut editor = VertexEditor::new(&mut self.graph);
+            let mut editor =
+                VertexEditor::new(&mut self.graph).with_structural_occupancy(occupancy);
             editor.insert_columns(sheet_id, before0, count)?
         };
         if let Some(asheet) = self.arrow_sheets.sheet_mut(sheet) {
@@ -14823,6 +14858,7 @@ where
         )?;
         let start0 = start.saturating_sub(1);
         let affected_region = Self::structural_col_region(sheet_id, start0);
+        let occupancy = self.structural_column_occupancy();
         let op = StructuralOp::DeleteColumns {
             sheet_id,
             start: start0,
@@ -14830,7 +14866,8 @@ where
         };
         self.demote_spans_for_structural_op(op, affected_region)?;
         let summary = {
-            let mut editor = VertexEditor::new(&mut self.graph);
+            let mut editor =
+                VertexEditor::new(&mut self.graph).with_structural_occupancy(occupancy);
             editor.delete_columns(sheet_id, start0, count)?
         };
         if let Some(asheet) = self.arrow_sheets.sheet_mut(sheet) {
