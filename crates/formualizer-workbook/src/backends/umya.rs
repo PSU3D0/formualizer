@@ -44,6 +44,7 @@ pub struct FormulaCacheUpdateRef<'a> {
 
 pub struct UmyaAdapter {
     workbook: RwLock<Spreadsheet>,
+    date_system: formualizer_eval::engine::DateSystem,
     lazy: bool,
     original_path: Option<std::path::PathBuf>,
     load_stats: AdapterLoadStats,
@@ -65,6 +66,7 @@ impl UmyaAdapter {
     pub fn new_empty() -> Self {
         Self {
             workbook: RwLock::new(umya_spreadsheet::new_file()),
+            date_system: formualizer_eval::engine::DateSystem::Excel1900,
             lazy: false,
             original_path: None,
             load_stats: AdapterLoadStats::default(),
@@ -72,6 +74,10 @@ impl UmyaAdapter {
             table_header_rows_available: false,
             calc_settings: None,
         }
+    }
+
+    pub(crate) fn set_date_system(&mut self, date_system: formualizer_eval::engine::DateSystem) {
+        self.date_system = date_system;
     }
 
     /// Parse `<calcPr>` settings from the `.xlsx` zip (spec §9). Returns `None`
@@ -608,6 +614,7 @@ impl SpreadsheetReader for UmyaAdapter {
 
         Ok(Self {
             workbook: RwLock::new(sheet),
+            date_system: formualizer_eval::engine::DateSystem::Excel1900,
             lazy: false,
             original_path: Some(path_ref.to_path_buf()),
             load_stats: AdapterLoadStats::default(),
@@ -660,6 +667,7 @@ impl SpreadsheetReader for UmyaAdapter {
 
         Ok(Self {
             workbook: RwLock::new(sheet),
+            date_system: formualizer_eval::engine::DateSystem::Excel1900,
             lazy: false,
             original_path: None,
             load_stats: AdapterLoadStats::default(),
@@ -796,6 +804,7 @@ impl SpreadsheetWriter for UmyaAdapter {
         col: u32,
         data: CellData,
     ) -> Result<(), Self::Error> {
+        let date_system = self.date_system;
         let mut wb = self.workbook.write();
         // If sheet missing create before any deserialize attempts
         if wb.get_sheet_by_name(sheet).is_none() {
@@ -834,16 +843,21 @@ impl SpreadsheetWriter for UmyaAdapter {
                     cell.set_value("#ARRAY");
                 }
                 LiteralValue::Date(d) => {
-                    cell.set_value(d.to_string());
+                    let dt = d.and_hms_opt(0, 0, 0).unwrap();
+                    let serial = formualizer_common::datetime_to_serial_for(date_system, &dt);
+                    cell.set_value_number(serial);
                 }
                 LiteralValue::DateTime(dt) => {
-                    cell.set_value(dt.to_string());
+                    let serial = formualizer_common::datetime_to_serial_for(date_system, &dt);
+                    cell.set_value_number(serial);
                 }
                 LiteralValue::Time(t) => {
-                    cell.set_value(t.format("%H:%M:%S").to_string());
+                    let serial = formualizer_common::time_to_fraction(&t);
+                    cell.set_value_number(serial);
                 }
                 LiteralValue::Duration(dur) => {
-                    cell.set_value(format!("PT{}S", dur.num_seconds()));
+                    let serial = dur.num_seconds() as f64 / 86_400.0;
+                    cell.set_value_number(serial);
                 }
                 LiteralValue::Pending => {
                     cell.set_value("#PENDING");

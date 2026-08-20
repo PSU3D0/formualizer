@@ -1152,6 +1152,7 @@ impl Workbook {
         use crate::backends::UmyaAdapter;
 
         let mut adapter = UmyaAdapter::new_empty();
+        adapter.set_date_system(self.engine.config.date_system);
         let sheet_names = self.sheet_names();
 
         if let Some((first_sheet, remaining_sheets)) = sheet_names.split_first() {
