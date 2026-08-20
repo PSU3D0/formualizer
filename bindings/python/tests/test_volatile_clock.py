@@ -34,9 +34,9 @@ def _evaluate(formula: str, *, egress: str | None = None):
 def test_today_is_the_host_date_not_the_epoch() -> None:
     # Default egress is native: TODAY() is a datetime.date, not a raw serial.
     today = _evaluate("=TODAY()")
-    assert isinstance(today, datetime.date) and not isinstance(today, datetime.datetime), (
-        f"=TODAY() returned {today!r}"
-    )
+    assert isinstance(today, datetime.date) and not isinstance(
+        today, datetime.datetime
+    ), f"=TODAY() returned {today!r}"
     assert today != _EXCEL_EPOCH
     # One day of slack absorbs a midnight rollover between the two reads and
     # any offset between the engine's local zone and the interpreter's.
