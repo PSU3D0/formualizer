@@ -20,12 +20,120 @@ impl RangeSelfUse {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum StructuralEdit {
+    InsertRows { before: u32 },
+    DeleteRows { start: u32, end: u32 },
+    InsertColumns { before: u32 },
+    DeleteColumns { start: u32, end: u32 },
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct StructuralOccupancy {
+    occupied_rows: Vec<u32>,
+    occupied_columns: Vec<u32>,
+    conservative: bool,
+}
+
+impl StructuralOccupancy {
+    pub(crate) fn conservative() -> Self {
+        Self {
+            conservative: true,
+            ..Self::default()
+        }
+    }
+
+    fn finish(&mut self) {
+        self.occupied_rows.sort_unstable();
+        self.occupied_rows.dedup();
+        self.occupied_columns.sort_unstable();
+        self.occupied_columns.dedup();
+    }
+
+    pub(crate) fn include_arrow_sheet(&mut self, sheet: &crate::arrow_store::ArrowSheet) {
+        use formualizer_common::LiteralValue;
+
+        let shapes = sheet.shape();
+        for (col, column) in sheet.columns.iter().enumerate() {
+            let shape_occupied = shapes.get(col).is_some_and(|shape| {
+                shape.has_num || shape.has_bool || shape.has_text || shape.has_err
+            });
+            let mut column_occupied = shape_occupied;
+
+            for (chunk_index, chunk) in column.chunks.iter().enumerate().chain(
+                column
+                    .sparse_chunks
+                    .iter()
+                    .map(|(&chunk_index, chunk)| (chunk_index, chunk)),
+            ) {
+                let chunk_start = sheet
+                    .chunk_starts
+                    .get(chunk_index)
+                    .copied()
+                    .unwrap_or_else(|| chunk_index.saturating_mul(sheet.chunk_rows));
+
+                // Exact scalar reads cover base chunks even if their metadata is
+                // stale. Overlay indices are included separately and may only
+                // over-approximate (an explicit Empty still counts as occupied).
+                for offset in 0..chunk.len() {
+                    let row = chunk_start.saturating_add(offset);
+                    if !matches!(sheet.get_cell_value(row, col), LiteralValue::Empty) {
+                        column_occupied = true;
+                        self.occupied_rows.push(row as u32);
+                    }
+                }
+                for (offset, _) in chunk.overlay.iter().chain(chunk.computed_overlay.iter()) {
+                    column_occupied = true;
+                    self.occupied_rows
+                        .push(chunk_start.saturating_add(offset) as u32);
+                }
+            }
+
+            if column_occupied {
+                self.occupied_columns.push(col as u32);
+            }
+        }
+        self.finish();
+    }
+
+    fn intersects(sorted: &[u32], start: u32, end: u32) -> bool {
+        let index = sorted.partition_point(|value| *value < start);
+        sorted.get(index).is_some_and(|value| *value <= end)
+    }
+
+    fn cross_axis_occupied(self_ref: &Self, edit: StructuralEdit, start: u32, end: u32) -> bool {
+        if self_ref.conservative {
+            return true;
+        }
+        match edit {
+            StructuralEdit::InsertRows { .. } | StructuralEdit::DeleteRows { .. } => {
+                Self::intersects(&self_ref.occupied_columns, start, end)
+            }
+            StructuralEdit::InsertColumns { .. } | StructuralEdit::DeleteColumns { .. } => {
+                Self::intersects(&self_ref.occupied_rows, start, end)
+            }
+        }
+    }
+}
+
 impl DependencyGraph {
-    pub(crate) fn compressed_range_dependents_intersecting_deleted_rows(
+    pub(crate) fn structural_occupancy(&self, sheet_id: SheetId) -> StructuralOccupancy {
+        let mut occupancy = StructuralOccupancy::default();
+        for (id, coord) in self.grid_vertices_in_sheet(sheet_id) {
+            if self.store.kind(id) != VertexKind::Empty {
+                occupancy.occupied_rows.push(coord.row());
+                occupancy.occupied_columns.push(coord.col());
+            }
+        }
+        occupancy.finish();
+        occupancy
+    }
+
+    pub(crate) fn compressed_range_dependents_for_structural_edit(
         &self,
         sheet_id: SheetId,
-        start_row: u32,
-        end_row: u32,
+        edit: StructuralEdit,
+        occupancy: &StructuralOccupancy,
     ) -> Vec<VertexId> {
         self.formula_to_range_deps
             .iter()
@@ -34,46 +142,45 @@ impl DependencyGraph {
                     .iter()
                     .any(|range| {
                         // `Current` is the dependent formula's own sheet. An
-                        // unresolvable sheet name keeps the dependent in the
-                        // candidate set (over-approximating is safe here;
-                        // dropping it would silently lose a dependent).
+                        // unresolvable sheet keeps the candidate conservative.
                         let range_sheet_id = self
                             .sheet_reg
                             .resolve_locator(&range.sheet, self.get_vertex_sheet_id(dependent))
                             .unwrap_or(sheet_id);
-                        let range_start = range.start_row.map(|bound| bound.index).unwrap_or(0);
-                        let range_end = range.end_row.map(|bound| bound.index).unwrap_or(u32::MAX);
-                        range_sheet_id == sheet_id
-                            && range_start <= end_row
-                            && range_end >= start_row
-                    })
-                    .then_some(dependent)
-            })
-            .collect()
-    }
-
-    pub(crate) fn compressed_range_dependents_intersecting_deleted_columns(
-        &self,
-        sheet_id: SheetId,
-        start_col: u32,
-        end_col: u32,
-    ) -> Vec<VertexId> {
-        self.formula_to_range_deps
-            .iter()
-            .filter_map(|(&dependent, ranges)| {
-                ranges
-                    .iter()
-                    .any(|range| {
-                        // See the row query above.
-                        let range_sheet_id = self
-                            .sheet_reg
-                            .resolve_locator(&range.sheet, self.get_vertex_sheet_id(dependent))
-                            .unwrap_or(sheet_id);
-                        let range_start = range.start_col.map(|bound| bound.index).unwrap_or(0);
-                        let range_end = range.end_col.map(|bound| bound.index).unwrap_or(u32::MAX);
-                        range_sheet_id == sheet_id
-                            && range_start <= end_col
-                            && range_end >= start_col
+                        if range_sheet_id != sheet_id {
+                            return false;
+                        }
+                        let start_row = range.start_row.map(|bound| bound.index).unwrap_or(0);
+                        let end_row = range.end_row.map(|bound| bound.index).unwrap_or(u32::MAX);
+                        let start_col = range.start_col.map(|bound| bound.index).unwrap_or(0);
+                        let end_col = range.end_col.map(|bound| bound.index).unwrap_or(u32::MAX);
+                        let axis_matches = match edit {
+                            StructuralEdit::DeleteRows { start, end } => {
+                                start_row <= end && end_row >= start
+                            }
+                            StructuralEdit::InsertRows { before } => {
+                                start_row < before && before <= end_row
+                            }
+                            StructuralEdit::DeleteColumns { start, end } => {
+                                start_col <= end && end_col >= start
+                            }
+                            StructuralEdit::InsertColumns { before } => {
+                                start_col < before && before <= end_col
+                            }
+                        };
+                        let (cross_start, cross_end) = match edit {
+                            StructuralEdit::InsertRows { .. }
+                            | StructuralEdit::DeleteRows { .. } => (start_col, end_col),
+                            StructuralEdit::InsertColumns { .. }
+                            | StructuralEdit::DeleteColumns { .. } => (start_row, end_row),
+                        };
+                        axis_matches
+                            && StructuralOccupancy::cross_axis_occupied(
+                                occupancy,
+                                edit,
+                                cross_start,
+                                cross_end,
+                            )
                     })
                     .then_some(dependent)
             })

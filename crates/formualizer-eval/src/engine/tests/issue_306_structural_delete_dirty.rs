@@ -438,7 +438,11 @@ fn compressed_delete_queries_select_exact_shape_and_boundary_matrix() {
             &engine,
             engine
                 .graph
-                .compressed_range_dependents_intersecting_deleted_rows(data, start, end),
+                .compressed_range_dependents_for_structural_edit(
+                    data,
+                    crate::engine::graph::StructuralEdit::DeleteRows { start, end },
+                    &crate::engine::graph::StructuralOccupancy::conservative(),
+                ),
             &expected_rows,
         );
     }
@@ -456,7 +460,11 @@ fn compressed_delete_queries_select_exact_shape_and_boundary_matrix() {
             &engine,
             engine
                 .graph
-                .compressed_range_dependents_intersecting_deleted_columns(data, start, end),
+                .compressed_range_dependents_for_structural_edit(
+                    data,
+                    crate::engine::graph::StructuralEdit::DeleteColumns { start, end },
+                    &crate::engine::graph::StructuralOccupancy::conservative(),
+                ),
             &expected_rows,
         );
     }
@@ -586,10 +594,7 @@ fn unrelated_sheet_deletes_do_not_recompute_open_range_readers_on_either_axis() 
     assert_eq!(col_calls.load(Ordering::SeqCst), 1);
 }
 
-// Pre-existing on main; follow-up #313 tracks position-sensitive open-range
-// readers that insertion leaves current over stale values.
 #[test]
-#[ignore = "pending insert open-range invalidation follow-up #313"]
 fn insert_rows_dirties_match_over_whole_column() {
     let mut engine = Engine::new(
         TestWorkbook::new(),
@@ -618,9 +623,7 @@ fn insert_rows_dirties_match_over_whole_column() {
     assert_eq!(inspected.value, Some(LiteralValue::Number(51.0)));
 }
 
-// Pre-existing on main; follow-up #313 tracks this insertion invalidation gap.
 #[test]
-#[ignore = "pending insert open-range invalidation follow-up #313"]
 fn insert_rows_dirties_index_over_whole_column() {
     let mut engine = Engine::new(
         TestWorkbook::new(),
@@ -649,9 +652,7 @@ fn insert_rows_dirties_index_over_whole_column() {
     assert_eq!(inspected.value, Some(LiteralValue::Number(60.0)));
 }
 
-// Pre-existing on main; follow-up #313 tracks the symmetric column case.
 #[test]
-#[ignore = "pending insert open-range invalidation follow-up #313"]
 fn insert_columns_dirties_index_over_whole_row() {
     let mut engine = Engine::new(
         TestWorkbook::new(),

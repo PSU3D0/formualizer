@@ -213,6 +213,7 @@ pub struct VertexEditor<'g> {
     graph: &'g mut DependencyGraph,
     change_logger: Option<&'g mut dyn ChangeLogger>,
     spill_value_reader: Option<&'g dyn SpillValueReader>,
+    structural_occupancy: Option<crate::engine::graph::StructuralOccupancy>,
     batch_mode: bool,
 }
 
@@ -223,8 +224,25 @@ impl<'g> VertexEditor<'g> {
             graph,
             change_logger: None,
             spill_value_reader: None,
+            structural_occupancy: None,
             batch_mode: false,
         }
+    }
+
+    /// Supply the conservative union of graph and Arrow occupancy for structural edits.
+    pub(crate) fn with_structural_occupancy(
+        mut self,
+        occupancy: crate::engine::graph::StructuralOccupancy,
+    ) -> Self {
+        self.structural_occupancy = Some(occupancy);
+        self
+    }
+
+    pub(crate) fn set_structural_occupancy(
+        &mut self,
+        occupancy: crate::engine::graph::StructuralOccupancy,
+    ) {
+        self.structural_occupancy = Some(occupancy);
     }
 
     /// Create a new vertex editor with change logging
@@ -236,6 +254,7 @@ impl<'g> VertexEditor<'g> {
             graph,
             change_logger: Some(logger as &'g mut dyn ChangeLogger),
             spill_value_reader: None,
+            structural_occupancy: None,
             batch_mode: false,
         }
     }
@@ -250,6 +269,7 @@ impl<'g> VertexEditor<'g> {
             graph,
             change_logger: Some(logger as &'g mut dyn ChangeLogger),
             spill_value_reader: Some(spill_value_reader),
+            structural_occupancy: None,
             batch_mode: false,
         }
     }
@@ -900,6 +920,15 @@ impl<'g> VertexEditor<'g> {
         // Begin batch for efficiency
         self.begin_batch();
 
+        let conservative = crate::engine::graph::StructuralOccupancy::conservative();
+        let occupancy = self.structural_occupancy.as_ref().unwrap_or(&conservative);
+        let range_dependents = self.graph.compressed_range_dependents_for_structural_edit(
+            sheet_id,
+            crate::engine::graph::StructuralEdit::InsertRows { before },
+            occupancy,
+        );
+        self.graph.mark_dirty_many(&range_dependents);
+
         // 1. Collect vertices to shift (those at or after the insert point)
         let vertices_to_shift: Vec<(VertexId, GridAddr)> = self
             .graph
@@ -1021,13 +1050,16 @@ impl<'g> VertexEditor<'g> {
             .filter(|(_, coord)| coord.row() >= start && coord.row() < start + count)
             .map(|(id, _)| id)
             .collect();
-        let range_dependents = self
-            .graph
-            .compressed_range_dependents_intersecting_deleted_rows(
-                sheet_id,
+        let conservative = crate::engine::graph::StructuralOccupancy::conservative();
+        let occupancy = self.structural_occupancy.as_ref().unwrap_or(&conservative);
+        let range_dependents = self.graph.compressed_range_dependents_for_structural_edit(
+            sheet_id,
+            crate::engine::graph::StructuralEdit::DeleteRows {
                 start,
-                start.saturating_add(count).saturating_sub(1).max(start),
-            );
+                end: start.saturating_add(count).saturating_sub(1).max(start),
+            },
+            occupancy,
+        );
         self.graph.mark_dirty_many(&range_dependents);
 
         for id in vertices_to_delete {
@@ -1135,6 +1167,15 @@ impl<'g> VertexEditor<'g> {
 
         // Begin batch for efficiency
         self.begin_batch();
+
+        let conservative = crate::engine::graph::StructuralOccupancy::conservative();
+        let occupancy = self.structural_occupancy.as_ref().unwrap_or(&conservative);
+        let range_dependents = self.graph.compressed_range_dependents_for_structural_edit(
+            sheet_id,
+            crate::engine::graph::StructuralEdit::InsertColumns { before },
+            occupancy,
+        );
+        self.graph.mark_dirty_many(&range_dependents);
 
         // 1. Collect vertices to shift (those at or after the insert point)
         let vertices_to_shift: Vec<(VertexId, GridAddr)> = self
@@ -1257,13 +1298,16 @@ impl<'g> VertexEditor<'g> {
             .filter(|(_, coord)| coord.col() >= start && coord.col() < start + count)
             .map(|(id, _)| id)
             .collect();
-        let range_dependents = self
-            .graph
-            .compressed_range_dependents_intersecting_deleted_columns(
-                sheet_id,
+        let conservative = crate::engine::graph::StructuralOccupancy::conservative();
+        let occupancy = self.structural_occupancy.as_ref().unwrap_or(&conservative);
+        let range_dependents = self.graph.compressed_range_dependents_for_structural_edit(
+            sheet_id,
+            crate::engine::graph::StructuralEdit::DeleteColumns {
                 start,
-                start.saturating_add(count).saturating_sub(1).max(start),
-            );
+                end: start.saturating_add(count).saturating_sub(1).max(start),
+            },
+            occupancy,
+        );
         self.graph.mark_dirty_many(&range_dependents);
 
         for id in vertices_to_delete {
