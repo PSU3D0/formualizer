@@ -17,8 +17,10 @@ fn json_date_system_propagates_and_affects_date_serials() {
     adapter.set_dimensions(sheet, Some((1, 1)));
 
     // Compare raw serials across date systems.
-    let mut config = EvalConfig::default();
-    config.temporal_egress = formualizer_eval::engine::TemporalEgress::Serial;
+    let mut config = EvalConfig {
+        temporal_egress: formualizer_eval::engine::TemporalEgress::Serial,
+        ..Default::default()
+    };
     let mut eng_1900 = Engine::new(TestWorkbook::new(), config.clone());
     adapter.stream_into_engine(&mut eng_1900).unwrap();
     let v1 = eng_1900.evaluate_cell(sheet, 1, 1).unwrap().unwrap();

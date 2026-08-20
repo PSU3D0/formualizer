@@ -16,10 +16,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 fn iterate_cfg(max_iterations: u32, max_change: f64) -> EvalConfig {
-    let mut config =
-        EvalConfig::default().with_cycle(CycleConfig::iterate(max_iterations, max_change));
-    config.temporal_egress = crate::engine::TemporalEgress::Serial;
-    config
+    EvalConfig {
+        temporal_egress: crate::engine::TemporalEgress::Serial,
+        ..EvalConfig::default().with_cycle(CycleConfig::iterate(max_iterations, max_change))
+    }
 }
 
 fn iterate_engine(max_iterations: u32, max_change: f64) -> Engine<TestWorkbook> {
