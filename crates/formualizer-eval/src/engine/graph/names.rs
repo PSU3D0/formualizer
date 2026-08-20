@@ -271,6 +271,7 @@ impl DependencyGraph {
             self.store.set_kind(vertex_id, VertexKind::NamedScalar);
         }
 
+        // Formula dependencies are re-extracted here to share registration with update/reindex paths.
         let referenced_names =
             self.rebuild_name_dependencies(vertex_id, &named_range.definition, scope)?;
         if !referenced_names.is_empty() {
@@ -691,8 +692,8 @@ impl DependencyGraph {
                 NameScope::Sheet(id) => id,
                 NameScope::Workbook => self.default_sheet_id,
             };
-            let (dependencies, range_dependencies, _, _) =
-                self.extract_dependencies(ast, current_sheet_id)?;
+            let (dependencies, range_dependencies, _, _, _pending_names) =
+                self.extract_dependencies_with_pending_names(ast, current_sheet_id)?;
             Some((dependencies, range_dependencies))
         } else {
             None
@@ -767,8 +768,10 @@ impl DependencyGraph {
                 // No dependencies.
             }
             NamedDefinition::Formula { .. } => {
-                let (formula_deps, range_deps) =
-                    formula_dependencies.expect("formula dependencies were extracted");
+                let Some((formula_deps, range_deps)) = formula_dependencies else {
+                    return Err(ExcelError::new(ExcelErrorKind::Error)
+                        .with_message("Internal error: formula dependencies were not extracted"));
+                };
                 dependencies.extend(formula_deps);
                 range_dependencies.extend(range_deps);
             }

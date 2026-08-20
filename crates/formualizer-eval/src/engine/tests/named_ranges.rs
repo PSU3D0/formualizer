@@ -2638,6 +2638,133 @@ fn sheet_formula_name_reindexes_cell_dependency_after_column_insert() {
     assert_eq!(engine.get_cell_value("Data", 1, 1), Some(lit_num(66.0)));
 }
 
+fn engine_with_dangling_name_reference() -> Engine<TestWorkbook> {
+    let mut engine = Engine::new(TestWorkbook::new(), canonical_cfg());
+    let data = engine.sheet_id_mut("Data");
+    engine.set_cell_value("Data", 1, 20, lit_num(1.0)).unwrap();
+    engine.set_cell_value("Data", 2, 20, lit_num(2.0)).unwrap();
+    engine
+        .define_name(
+            "Data_",
+            NamedDefinition::Range(RangeRef::new(
+                CellRef::new(data, Coord::new(0, 19, true, true)),
+                CellRef::new(data, Coord::new(1, 19, true, true)),
+            )),
+            NameScope::Workbook,
+        )
+        .unwrap();
+    engine
+        .define_name(
+            "Total",
+            NamedDefinition::Formula {
+                ast: parse("=SUM(Data_)").unwrap(),
+                dependencies: Vec::new(),
+                range_deps: Vec::new(),
+            },
+            NameScope::Workbook,
+        )
+        .unwrap();
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse("=Total").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    engine.delete_name("Data_", NameScope::Workbook).unwrap();
+    engine
+}
+
+#[test]
+fn dangling_name_reference_allows_all_structural_ops_to_shift_grid() {
+    let mut outcomes = Vec::new();
+
+    let mut engine = engine_with_dangling_name_reference();
+    for (row, value) in [(1, 11.0), (2, 22.0), (3, 33.0)] {
+        engine
+            .set_cell_value("Data", row, 1, lit_num(value))
+            .unwrap();
+    }
+    let result = engine.insert_rows("Data", 1, 1);
+    outcomes.push(("insert_rows", result.is_ok(), format!("{result:?}")));
+    if result.is_ok() {
+        assert_eq!(engine.get_cell_value("Data", 1, 1), None);
+        assert_eq!(engine.get_cell_value("Data", 2, 1), Some(lit_num(11.0)));
+        assert_eq!(engine.get_cell_value("Data", 3, 1), Some(lit_num(22.0)));
+        assert_eq!(engine.get_cell_value("Data", 4, 1), Some(lit_num(33.0)));
+    }
+
+    let mut engine = engine_with_dangling_name_reference();
+    for (row, value) in [(1, 11.0), (2, 22.0), (3, 33.0)] {
+        engine
+            .set_cell_value("Data", row, 1, lit_num(value))
+            .unwrap();
+    }
+    let result = engine.delete_rows("Data", 1, 1);
+    outcomes.push(("delete_rows", result.is_ok(), format!("{result:?}")));
+    if result.is_ok() {
+        assert_eq!(engine.get_cell_value("Data", 1, 1), Some(lit_num(22.0)));
+        assert_eq!(engine.get_cell_value("Data", 2, 1), Some(lit_num(33.0)));
+        assert_eq!(engine.get_cell_value("Data", 3, 1), None);
+    }
+
+    let mut engine = engine_with_dangling_name_reference();
+    for (col, value) in [(1, 11.0), (2, 22.0), (3, 33.0)] {
+        engine
+            .set_cell_value("Data", 1, col, lit_num(value))
+            .unwrap();
+    }
+    let result = engine.insert_columns("Data", 1, 1);
+    outcomes.push(("insert_columns", result.is_ok(), format!("{result:?}")));
+    if result.is_ok() {
+        assert_eq!(engine.get_cell_value("Data", 1, 1), None);
+        assert_eq!(engine.get_cell_value("Data", 1, 2), Some(lit_num(11.0)));
+        assert_eq!(engine.get_cell_value("Data", 1, 3), Some(lit_num(22.0)));
+        assert_eq!(engine.get_cell_value("Data", 1, 4), Some(lit_num(33.0)));
+    }
+
+    let mut engine = engine_with_dangling_name_reference();
+    for (col, value) in [(1, 11.0), (2, 22.0), (3, 33.0)] {
+        engine
+            .set_cell_value("Data", 1, col, lit_num(value))
+            .unwrap();
+    }
+    let result = engine.delete_columns("Data", 1, 1);
+    outcomes.push(("delete_columns", result.is_ok(), format!("{result:?}")));
+    if result.is_ok() {
+        assert_eq!(engine.get_cell_value("Data", 1, 1), Some(lit_num(22.0)));
+        assert_eq!(engine.get_cell_value("Data", 1, 2), Some(lit_num(33.0)));
+        assert_eq!(engine.get_cell_value("Data", 1, 3), None);
+    }
+
+    assert!(
+        outcomes.iter().all(|(_, ok, _)| *ok),
+        "structural operations failed: {outcomes:#?}"
+    );
+}
+
+#[test]
+fn dangling_name_reference_insert_rows_keeps_grid_and_formula_consistent() {
+    let mut engine = engine_with_dangling_name_reference();
+    engine.set_cell_value("Data", 1, 1, lit_num(11.0)).unwrap();
+    engine.set_cell_value("Data", 2, 1, lit_num(22.0)).unwrap();
+    engine
+        .set_cell_formula("Data", 3, 1, parse("=A1+A2").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(engine.get_cell_value("Data", 3, 1), Some(lit_num(33.0)));
+
+    let result = engine.insert_rows("Data", 1, 1);
+    assert!(result.is_ok(), "insert_rows failed: {result:?}");
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(engine.get_cell_value("Data", 1, 1), None);
+    assert_eq!(engine.get_cell_value("Data", 2, 1), Some(lit_num(11.0)));
+    assert_eq!(engine.get_cell_value("Data", 3, 1), Some(lit_num(22.0)));
+    assert_eq!(engine.get_cell_value("Data", 4, 1), Some(lit_num(33.0)));
+
+    engine.set_cell_value("Data", 2, 1, lit_num(5.0)).unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(engine.get_cell_value("Data", 4, 1), Some(lit_num(27.0)));
+}
+
 #[derive(Clone, Copy)]
 enum DeleteTargetKind {
     Cell,
