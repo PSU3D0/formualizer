@@ -397,9 +397,16 @@ fn compressed_delete_queries_select_exact_shape_and_boundary_matrix() {
         TestWorkbook::new(),
         EvalConfig::default().with_parallel(false),
     );
-    engine
-        .set_cell_value("Data", 1, 1, LiteralValue::Number(1.0))
-        .unwrap();
+    for row in 1..=350 {
+        engine
+            .set_cell_value("Data", row, 1, LiteralValue::Number(1.0))
+            .unwrap();
+    }
+    for col in 1..=52 {
+        engine
+            .set_cell_value("Data", 1, col, LiteralValue::Number(1.0))
+            .unwrap();
+    }
     engine
         .set_cell_value("Other", 1, 1, LiteralValue::Number(1.0))
         .unwrap();
@@ -425,6 +432,7 @@ fn compressed_delete_queries_select_exact_shape_and_boundary_matrix() {
     }
 
     let data = engine.sheet_id("Data").unwrap();
+    let occupancy = engine.graph.structural_occupancy(data);
     // Row windows touch each finite range's exact upper and lower boundaries,
     // and include whole-column, multi-column-open, half-open, and bounded shapes.
     for (start, end, expected_rows) in [
@@ -441,7 +449,7 @@ fn compressed_delete_queries_select_exact_shape_and_boundary_matrix() {
                 .compressed_range_dependents_for_structural_edit(
                     data,
                     crate::engine::graph::StructuralEdit::DeleteRows { start, end },
-                    &crate::engine::graph::StructuralOccupancy::conservative(),
+                    &occupancy,
                 ),
             &expected_rows,
         );
@@ -463,7 +471,7 @@ fn compressed_delete_queries_select_exact_shape_and_boundary_matrix() {
                 .compressed_range_dependents_for_structural_edit(
                     data,
                     crate::engine::graph::StructuralEdit::DeleteColumns { start, end },
-                    &crate::engine::graph::StructuralOccupancy::conservative(),
+                    &occupancy,
                 ),
             &expected_rows,
         );

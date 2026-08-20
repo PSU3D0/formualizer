@@ -87,6 +87,8 @@ pub struct ShiftSummary {
     pub vertices_deleted: Vec<VertexId>,
     pub references_adjusted: usize,
     pub formulas_updated: usize,
+    #[cfg(test)]
+    pub(crate) structural_dependents_dirtied: Vec<VertexId>,
 }
 
 /// Summary of range operations
@@ -927,6 +929,10 @@ impl<'g> VertexEditor<'g> {
             crate::engine::graph::StructuralEdit::InsertRows { before },
             occupancy,
         );
+        #[cfg(test)]
+        {
+            summary.structural_dependents_dirtied = range_dependents.clone();
+        }
         self.graph.mark_dirty_many(&range_dependents);
 
         // 1. Collect vertices to shift (those at or after the insert point)
@@ -1060,6 +1066,10 @@ impl<'g> VertexEditor<'g> {
             },
             occupancy,
         );
+        #[cfg(test)]
+        {
+            summary.structural_dependents_dirtied = range_dependents.clone();
+        }
         self.graph.mark_dirty_many(&range_dependents);
 
         for id in vertices_to_delete {
@@ -1175,6 +1185,10 @@ impl<'g> VertexEditor<'g> {
             crate::engine::graph::StructuralEdit::InsertColumns { before },
             occupancy,
         );
+        #[cfg(test)]
+        {
+            summary.structural_dependents_dirtied = range_dependents.clone();
+        }
         self.graph.mark_dirty_many(&range_dependents);
 
         // 1. Collect vertices to shift (those at or after the insert point)
@@ -1308,6 +1322,10 @@ impl<'g> VertexEditor<'g> {
             },
             occupancy,
         );
+        #[cfg(test)]
+        {
+            summary.structural_dependents_dirtied = range_dependents.clone();
+        }
         self.graph.mark_dirty_many(&range_dependents);
 
         for id in vertices_to_delete {
