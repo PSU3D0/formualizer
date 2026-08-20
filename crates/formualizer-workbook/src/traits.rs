@@ -301,6 +301,18 @@ pub trait SpreadsheetReader: Send + Sync {
         None
     }
 
+    /// Cached values for in-workbook external references (spec §10), as
+    /// `(raw_reference, value)` pairs such as `("[1]Sheet1!A1", Number(42.0))`.
+    ///
+    /// Excel does not recalculate external links; the cached `<v>` values stored
+    /// in the `externalLinkN.xml` parts are the values a formula cell referencing
+    /// them returns. Backends that surface these declare the source scalars on
+    /// the engine during `stream_into_engine`; the values are copied into the
+    /// workbook's resolver so evaluation can answer the reference.
+    fn external_cached_sources(&self) -> &[(String, LiteralValue)] {
+        &[]
+    }
+
     /// Constructor variants for different environments
     fn open_path<P: AsRef<Path>>(path: P) -> Result<Self, Self::Error>
     where

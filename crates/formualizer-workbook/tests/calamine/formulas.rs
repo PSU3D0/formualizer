@@ -2,7 +2,7 @@
 use crate::common::build_workbook;
 use formualizer_eval::engine::ingest::EngineLoadStream;
 use formualizer_eval::engine::{Engine, EvalConfig};
-use formualizer_workbook::{CalamineAdapter, LiteralValue, SpreadsheetReader};
+use formualizer_workbook::{CalamineAdapter, LiteralValue, LoadStrategy, SpreadsheetReader, WorkbookConfig};
 use std::io::{Cursor, Read, Write};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
@@ -124,4 +124,138 @@ fn calamine_loads_external_link_index_formulas_from_bytes() {
     let mut engine: Engine<_> = Engine::new(ctx, EvalConfig::default());
     backend.stream_into_engine(&mut engine).unwrap();
     engine.build_graph_all().unwrap();
+}
+
+/// Inject an in-workbook external link (spec §10) into an `.xlsx` zip: a
+/// `xl/externalLinks/externalLink1.xml` part with cached `sheetData` values,
+/// plus the `<externalReferences>` entry and the matching workbook relationship.
+/// `cells` maps cell refs to cached string values (e.g. `("A1", "42")`).
+fn inject_inbook_external_link(bytes: Vec<u8>, sheet_name: &str, cells: &[(&str, &str)]) -> Vec<u8> {
+    let reader = Cursor::new(bytes);
+    let mut archive = ZipArchive::new(reader).unwrap();
+
+    let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+
+    let mut sheet_data = String::new();
+    for (cell_ref, value) in cells {
+        let row: u32 = cell_ref
+            .chars()
+            .skip_while(|c| c.is_ascii_alphabetic())
+            .collect::<String>()
+            .parse()
+            .expect("row from cell ref");
+        sheet_data.push_str(&format!(
+            "<row r=\"{row}\"><c r=\"{cell_ref}\"><v>{value}</v></c></row>"
+        ));
+    }
+    let ext_xml = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n\
+         <externalLink xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" \
+         xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">\
+         <externalBook r:id=\"rId1\"><sheetNames><sheetName val=\"{sheet_name}\"/></sheetNames>\
+         <sheetDataSet><sheetData sheetId=\"0\">{sheet_data}</sheetData></sheetDataSet>\
+         </externalBook></externalLink>\n"
+    );
+
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i).unwrap();
+        let name = entry.name().to_string();
+        if entry.is_dir() {
+            let _ = writer.add_directory(name, options);
+            continue;
+        }
+        let mut data = Vec::new();
+        entry.read_to_end(&mut data).unwrap();
+        let data = match name.as_str() {
+            "xl/workbook.xml" => String::from_utf8(data)
+                .expect("workbook.xml utf8")
+                .replace(
+                    "</workbook>",
+                    "<externalReferences><externalReference r:id=\"rId9000\"/></externalReferences></workbook>",
+                )
+                .into_bytes(),
+            "xl/_rels/workbook.xml.rels" => String::from_utf8(data)
+                .expect("workbook rels utf8")
+                .replace(
+                    "</Relationships>",
+                    "<Relationship Id=\"rId9000\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/externalLink\" Target=\"externalLinks/externalLink1.xml\"/></Relationships>",
+                )
+                .into_bytes(),
+            _ => data,
+        };
+        writer.start_file(name, options).unwrap();
+        writer.write_all(&data).unwrap();
+    }
+    let _ = writer.add_directory("xl/externalLinks/".to_string(), options);
+    writer.start_file("xl/externalLinks/externalLink1.xml", options).unwrap();
+    writer.write_all(ext_xml.as_bytes()).unwrap();
+    writer.finish().unwrap().into_inner()
+}
+
+#[test]
+fn calamine_evaluates_inbook_external_reference_from_cached_values() {
+    let path = build_workbook(|book| {
+        let sh = book.get_sheet_by_name_mut("Sheet1").unwrap();
+        sh.get_cell_mut((1, 1)).set_value_number(42.0); // A1
+        sh.get_cell_mut((2, 1)).set_formula("[1]Sheet1!A1"); // B1
+    });
+
+    let bytes = std::fs::read(&path).expect("read workbook bytes");
+    let bytes = inject_inbook_external_link(bytes, "Sheet1", &[("A1", "42")]);
+    std::fs::write(&path, bytes).expect("rewrite workbook with external link part");
+
+    let backend = CalamineAdapter::open_path(&path).unwrap();
+    assert_eq!(
+        backend.external_cached_sources(),
+        &[("[1]Sheet1!A1".to_string(), LiteralValue::Number(42.0))]
+    );
+
+    let mut wb = formualizer_workbook::Workbook::from_reader(
+        backend,
+        LoadStrategy::EagerAll,
+        WorkbookConfig::ephemeral(),
+    )
+    .unwrap();
+    wb.evaluate_all().unwrap();
+    assert_eq!(
+        wb.get_value("Sheet1", 1, 2),
+        Some(LiteralValue::Number(42.0))
+    );
+}
+
+#[test]
+fn calamine_inbook_external_reference_without_cache_is_undefined_name() {
+    let path = build_workbook(|book| {
+        let sh = book.get_sheet_by_name_mut("Sheet1").unwrap();
+        sh.get_cell_mut((1, 1)).set_value_number(42.0); // A1
+        sh.get_cell_mut((2, 1)).set_formula("[1]Sheet1!A1"); // B1
+    });
+
+    // No external link part injected: the reference has no cached source, so
+    // evaluation must fail gracefully (#NAME?: Undefined name) instead of
+    // panicking. `interactive` defers graph building, matching the report path.
+    let backend = CalamineAdapter::open_path(&path).unwrap();
+    assert!(backend.external_cached_sources().is_empty());
+
+    let mut wb = formualizer_workbook::Workbook::from_reader(
+        backend,
+        LoadStrategy::EagerAll,
+        WorkbookConfig::interactive(),
+    )
+    .unwrap();
+    let res = wb.evaluate_all();
+    match res {
+        Err(e) => {
+            let msg = format!("{e}");
+            assert!(
+                msg.contains("#NAME?") || msg.contains("Undefined name"),
+                "expected undefined-name error, got: {msg}"
+            );
+        }
+        Ok(_) => assert!(matches!(
+            wb.get_value("Sheet1", 1, 2),
+            Some(LiteralValue::Error(_))
+        )),
+    }
 }
