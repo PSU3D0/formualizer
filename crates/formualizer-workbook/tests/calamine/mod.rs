@@ -36,3 +36,5 @@ mod semantic_epoch_replay;
 mod shared_formulas;
 #[cfg(feature = "calamine")]
 mod sheet_load;
+#[cfg(feature = "umya")]
+mod temporal_roundtrip;
