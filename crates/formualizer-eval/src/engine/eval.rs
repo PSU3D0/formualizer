@@ -940,7 +940,8 @@ pub struct Engine<R> {
     format_registry: crate::format::FormatRegistry,
     /// Thread-safe handoff from immutable/parallel evaluation to overlay apply.
     derived_format_results: std::sync::RwLock<FxHashMap<VertexId, Option<crate::format::FormatId>>>,
-    derived_formats: std::sync::RwLock<FxHashMap<VertexId, crate::format::FormatId>>,
+    /// Derived formula formats keyed by grid position, never graph vertex identity.
+    derived_formats: std::sync::RwLock<FxHashMap<CellRef, crate::format::FormatId>>,
     /// True if any edit after bulk load; disables Arrow reads for parity
     has_edited: bool,
     /// Overlay compaction counter (Phase C instrumentation)
@@ -15922,14 +15923,31 @@ where
     }
 
     fn record_derived_format(&self, vertex_id: VertexId, format: Option<crate::format::FormatId>) {
+        if let Some(cell) = self.graph.get_cell_ref(vertex_id) {
+            self.record_derived_format_at(cell, format);
+        }
+    }
+
+    fn record_derived_format_at(&self, cell: CellRef, format: Option<crate::format::FormatId>) {
         let mut formats = self.derived_formats.write().unwrap();
-        match format {
+        match format.filter(|id| *id != crate::format::FormatId::GENERAL) {
             Some(format) => {
-                formats.insert(vertex_id, format);
+                formats.insert(cell, format);
             }
             None => {
-                formats.remove(&vertex_id);
+                formats.remove(&cell);
             }
+        }
+    }
+
+    fn clear_cell_format_state(&mut self, sheet: &str, cell: CellRef) {
+        self.derived_formats.write().unwrap().remove(&cell);
+        self.derived_format_results
+            .write()
+            .unwrap()
+            .retain(|vertex, _| self.graph.get_cell_ref(*vertex) != Some(cell));
+        if let Some(arrow) = self.arrow_sheets.sheet_mut(sheet) {
+            arrow.clear_format(cell.coord.row() as usize, cell.coord.col() as usize);
         }
     }
 
@@ -16657,6 +16675,7 @@ where
         )
         .map_err(Self::editor_error_to_excel)?;
         self.graph.set_cell_value(sheet, row, col, value.clone())?;
+        self.clear_cell_format_state(sheet, cell_ref);
         self.record_formula_plane_changed_cell(sheet, row, col);
         if !sheet_existed || replaced_formula {
             self.mark_topology_edited();
@@ -16930,6 +16949,7 @@ where
             ingested.dep_plan.volatile,
             ingested.dep_plan.dynamic,
         )?;
+        self.clear_cell_format_state(sheet, placement);
         self.record_formula_plane_changed_cell(sheet, row, col);
 
         // If the cell previously held a user value in the delta overlay, it must not continue
@@ -16986,6 +17006,8 @@ where
             .collect();
         let n = self.graph.bulk_set_formulas_with_plans(sheet, planned)?;
         for (row, col) in edited_cells {
+            let cell = CellRef::new(sheet_id, Coord::from_excel(row, col, true, true));
+            self.clear_cell_format_state(sheet, cell);
             self.record_formula_plane_changed_cell(sheet, row, col);
         }
         // Single topology bump after batch
@@ -17059,11 +17081,9 @@ where
             )
         });
         arrow.or_else(|| {
-            let cell =
-                self.graph
-                    .make_cell_ref(sheet, row.saturating_sub(1), col.saturating_sub(1));
-            let vertex = self.graph.get_vertex_id_for_address(&cell).copied()?;
-            self.derived_formats.read().unwrap().get(&vertex).copied()
+            let sheet_id = self.graph.sheet_id(sheet)?;
+            let cell = CellRef::new(sheet_id, Coord::from_excel(row, col, true, true));
+            self.derived_formats.read().unwrap().get(&cell).copied()
         })
     }
 
@@ -24269,11 +24289,7 @@ where
         col: u32,
         current_sheet: &str,
     ) -> Option<crate::format::FormatId> {
-        let sheet_name = sheet.unwrap_or(current_sheet);
-        self.arrow_sheets.sheet(sheet_name)?.format_id(
-            row.saturating_sub(1) as usize,
-            col.saturating_sub(1) as usize,
-        )
+        self.effective_format_id(sheet.unwrap_or(current_sheet), row, col)
     }
 
     fn format_class(
@@ -24290,11 +24306,9 @@ where
         col: u32,
         format: Option<crate::format::FormatId>,
     ) {
-        let cell = self
-            .graph
-            .make_cell_ref(sheet, row.saturating_sub(1), col.saturating_sub(1));
-        if let Some(vertex) = self.graph.get_vertex_id_for_address(&cell).copied() {
-            self.record_derived_format(vertex, format);
+        if let Some(sheet_id) = self.graph.sheet_id(sheet) {
+            let cell = CellRef::new(sheet_id, Coord::from_excel(row, col, true, true));
+            self.record_derived_format_at(cell, format);
         }
     }
 

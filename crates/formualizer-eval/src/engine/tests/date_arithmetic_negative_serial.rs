@@ -10,7 +10,7 @@
 //!
 //! Each test pins exactly the property it names.
 
-use crate::engine::{Engine, EvalConfig};
+use crate::engine::{Engine, EvalConfig, TemporalEgress};
 use crate::test_workbook::TestWorkbook;
 use chrono::NaiveDate;
 use formualizer_common::{ExcelErrorKind, LiteralValue};
@@ -21,7 +21,11 @@ const DEC_1_2024: f64 = 45627.0;
 
 fn engine_with_date_anchor() -> Engine<TestWorkbook> {
     let wb = TestWorkbook::new();
-    let mut engine = Engine::new(wb, EvalConfig::default());
+    let config = EvalConfig {
+        temporal_egress: TemporalEgress::Serial,
+        ..Default::default()
+    };
+    let mut engine = Engine::new(wb, config);
     // A1 holds a genuine Date literal, exactly as an ingested date-formatted
     // xlsx cell does. This is the trigger: a formula-produced `=DATE(...)`
     // yields a plain number and never reached the defect.

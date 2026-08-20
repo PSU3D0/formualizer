@@ -41,18 +41,24 @@ impl FormatRegistry {
         Self::default()
     }
 
+    /// Intern a format code.
+    ///
+    /// The u16 id space is saturated deliberately: once all ids are occupied,
+    /// the registry logs the loss and returns General without inserting the code.
     pub fn intern(&mut self, code: &str) -> FormatId {
         let parsed = NumberFormat::parse(code);
         if let Some(id) = self.by_code.get(parsed.code()) {
             return *id;
         }
-        let id = u16::try_from(self.formats.len())
-            .ok()
-            .map(FormatId)
-            .unwrap_or(FormatId::GENERAL);
-        if id == FormatId::GENERAL && !self.formats.is_empty() {
-            return id;
-        }
+        let Ok(raw_id) = u16::try_from(self.formats.len()) else {
+            eprintln!(
+                "number-format registry exhausted at {} entries; saturating `{}` to General",
+                self.formats.len(),
+                parsed.code()
+            );
+            return FormatId::GENERAL;
+        };
+        let id = FormatId(raw_id);
         self.by_code.insert(parsed.code().into(), id);
         self.formats.push(Some(parsed));
         id
@@ -84,5 +90,15 @@ mod tests {
         assert_eq!(custom, registry.intern("yyyy-mm-dd"));
         assert_eq!(registry.class(custom), Some(&FormatClass::Date));
         assert!(custom.0 >= 50);
+    }
+
+    #[test]
+    fn exhausted_registry_saturates_explicitly_without_inserting() {
+        let mut registry = FormatRegistry::new();
+        registry.formats.resize(usize::from(u16::MAX) + 1, None);
+        let before = registry.formats.len();
+        assert_eq!(registry.intern("0.000000custom"), FormatId::GENERAL);
+        assert_eq!(registry.formats.len(), before);
+        assert!(!registry.by_code.contains_key("0.000000custom"));
     }
 }

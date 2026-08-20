@@ -328,10 +328,8 @@ impl Function for IfErrorFn {
             )));
         }
         match args[0].value() {
-            Ok(cv) => match cv.into_literal() {
-                LiteralValue::Error(_) => args[1].value(),
-                other => Ok(crate::traits::CalcValue::Scalar(other)),
-            },
+            Ok(cv) if matches!(cv.as_scalar(), Some(LiteralValue::Error(_))) => args[1].value(),
+            Ok(cv) => Ok(cv),
             Err(_) => args[1].value(),
         }
     }
@@ -418,12 +416,12 @@ impl Function for IfNaFn {
                 ExcelError::new_value(),
             )));
         }
-        let v = args[0].value()?.into_literal();
-        match v {
-            LiteralValue::Error(ref e) if e.kind == formualizer_common::ExcelErrorKind::Na => {
+        let value = args[0].value()?;
+        match value.as_scalar() {
+            Some(LiteralValue::Error(e)) if e.kind == formualizer_common::ExcelErrorKind::Na => {
                 args[1].value()
             }
-            other => Ok(crate::traits::CalcValue::Scalar(other)),
+            _ => Ok(value),
         }
     }
 }

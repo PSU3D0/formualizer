@@ -17,7 +17,7 @@ fn json_date_system_propagates_and_affects_date_serials() {
     adapter.set_dimensions(sheet, Some((1, 1)));
 
     // Compare raw serials across date systems.
-    let mut config = EvalConfig {
+    let config = EvalConfig {
         temporal_egress: formualizer_eval::engine::TemporalEgress::Serial,
         ..Default::default()
     };

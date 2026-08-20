@@ -97,7 +97,9 @@ impl Function for MinFn {
         ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let mut mv: Option<f64> = None;
+        let mut mv_format = None;
         for a in args {
+            let argument_format = a.value()?.format_id();
             match resolve_aggregate_argument(a, ctx)? {
                 AggregateArgument::Range(view) => {
                     // Propagate errors from range first
@@ -121,8 +123,12 @@ impl Function for MinFn {
                     for res in view.numbers_slices() {
                         let (_, _, num_cols) = res?;
                         for col in num_cols {
-                            if let Some(n) = arrow::compute::kernels::aggregate::min(col.as_ref()) {
-                                mv = Some(mv.map(|m| m.min(n)).unwrap_or(n));
+                            if let Some(n) = arrow::compute::kernels::aggregate::min(col.as_ref())
+                                && mv.is_none_or(|current| n < current)
+                            {
+                                mv = Some(n);
+                                mv_format =
+                                    (view.dims() == (1, 1)).then_some(argument_format).flatten();
                             }
                         }
                     }
@@ -135,16 +141,22 @@ impl Function for MinFn {
                         return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
                     }
                     other => {
-                        if let Ok(n) = coerce_num(&other) {
-                            mv = Some(mv.map(|m| m.min(n)).unwrap_or(n));
+                        if let Ok(n) = coerce_num(&other)
+                            && mv.is_none_or(|current| n < current)
+                        {
+                            mv = Some(n);
+                            mv_format = argument_format;
                         }
                     }
                 },
             }
         }
-        Ok(crate::traits::CalcValue::Scalar(
-            super::super::utils::aggregate_result(mv.unwrap_or(0.0)),
-        ))
+        Ok(
+            crate::traits::CalcValue::Scalar(super::super::utils::aggregate_result(
+                mv.unwrap_or(0.0),
+            ))
+            .with_format(mv_format),
+        )
     }
 }
 
@@ -237,7 +249,9 @@ impl Function for MaxFn {
         ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let mut mv: Option<f64> = None;
+        let mut mv_format = None;
         for a in args {
+            let argument_format = a.value()?.format_id();
             match resolve_aggregate_argument(a, ctx)? {
                 AggregateArgument::Range(view) => {
                     // Propagate errors from range first
@@ -261,8 +275,12 @@ impl Function for MaxFn {
                     for res in view.numbers_slices() {
                         let (_, _, num_cols) = res?;
                         for col in num_cols {
-                            if let Some(n) = arrow::compute::kernels::aggregate::max(col.as_ref()) {
-                                mv = Some(mv.map(|m| m.max(n)).unwrap_or(n));
+                            if let Some(n) = arrow::compute::kernels::aggregate::max(col.as_ref())
+                                && mv.is_none_or(|current| n > current)
+                            {
+                                mv = Some(n);
+                                mv_format =
+                                    (view.dims() == (1, 1)).then_some(argument_format).flatten();
                             }
                         }
                     }
@@ -275,16 +293,22 @@ impl Function for MaxFn {
                         return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
                     }
                     other => {
-                        if let Ok(n) = coerce_num(&other) {
-                            mv = Some(mv.map(|m| m.max(n)).unwrap_or(n));
+                        if let Ok(n) = coerce_num(&other)
+                            && mv.is_none_or(|current| n > current)
+                        {
+                            mv = Some(n);
+                            mv_format = argument_format;
                         }
                     }
                 },
             }
         }
-        Ok(crate::traits::CalcValue::Scalar(
-            super::super::utils::aggregate_result(mv.unwrap_or(0.0)),
-        ))
+        Ok(
+            crate::traits::CalcValue::Scalar(super::super::utils::aggregate_result(
+                mv.unwrap_or(0.0),
+            ))
+            .with_format(mv_format),
+        )
     }
 }
 

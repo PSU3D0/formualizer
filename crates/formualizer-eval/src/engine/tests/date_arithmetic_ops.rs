@@ -5,17 +5,12 @@ use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::parse;
 
-fn assert_serial(v: Option<LiteralValue>, expected: NaiveDate) {
-    assert_eq!(
-        v,
-        Some(LiteralValue::Number(
-            formualizer_common::date_to_serial_for(crate::engine::DateSystem::Excel1900, &expected)
-        ))
-    );
+fn assert_native_date(v: Option<LiteralValue>, expected: NaiveDate) {
+    assert_eq!(v, Some(LiteralValue::Date(expected)));
 }
 
 #[test]
-fn date_plus_number_is_numeric_with_format_separate() {
+fn date_plus_number_materializes_from_its_separate_format() {
     let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
     engine
         .set_cell_value(
@@ -40,14 +35,14 @@ fn date_plus_number_is_numeric_with_format_separate() {
     );
 
     engine.evaluate_all().unwrap();
-    assert_serial(
+    assert_native_date(
         engine.get_cell_value("Sheet1", 1, 3),
         NaiveDate::from_ymd_opt(2024, 11, 1).unwrap(),
     );
 }
 
 #[test]
-fn date_minus_number_is_numeric_with_format_separate() {
+fn date_minus_number_materializes_from_its_separate_format() {
     let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
     engine
         .set_cell_value(
@@ -64,7 +59,7 @@ fn date_minus_number_is_numeric_with_format_separate() {
         .set_cell_formula("Sheet1", 1, 3, parse("=A1-B1").unwrap())
         .unwrap();
     engine.evaluate_all().unwrap();
-    assert_serial(
+    assert_native_date(
         engine.get_cell_value("Sheet1", 1, 3),
         NaiveDate::from_ymd_opt(2024, 10, 18).unwrap(),
     );
@@ -100,7 +95,7 @@ fn date_minus_date_returns_number_delta() {
 }
 
 #[test]
-fn round_days_times_14_does_not_propagate_date_tag() {
+fn round_days_times_14_propagates_only_the_format_annotation() {
     let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
 
     // Mimic the pattern: C107 + (ROUND(C108,0) * 14)
@@ -120,7 +115,7 @@ fn round_days_times_14_does_not_propagate_date_tag() {
         .unwrap();
 
     engine.evaluate_all().unwrap();
-    assert_serial(
+    assert_native_date(
         engine.get_cell_value("Sheet1", 109, 3),
         NaiveDate::from_ymd_opt(2024, 11, 1).unwrap(),
     );

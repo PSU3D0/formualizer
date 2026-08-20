@@ -524,10 +524,18 @@ impl<'a> Interpreter<'a> {
                 None | Some(FormatClass::General | FormatClass::Number { .. })
             )
         };
+        // This table is intentionally closed. LibreOffice measurement establishes
+        // Date+Time and Date+Percent; unlisted pairs (including Date+Date,
+        // Duration+Date, Date+Currency, DateTime+Time, and Date+Text) drop the
+        // annotation rather than guessing a display class.
         match (op, left.as_ref(), right.as_ref()) {
             ('+', Some(FormatClass::Date), Some(FormatClass::Time))
             | ('+', Some(FormatClass::Time), Some(FormatClass::Date)) => {
                 Some(crate::format::FormatId::DATETIME)
+            }
+            ('+', Some(FormatClass::Date), Some(FormatClass::Percent { .. }))
+            | ('+', Some(FormatClass::Percent { .. }), Some(FormatClass::Date)) => {
+                Some(crate::format::FormatId::DATE)
             }
             ('+' | '-', Some(FormatClass::Date), r) if is_plain(&r.cloned()) => {
                 Some(crate::format::FormatId::DATE)
@@ -1197,22 +1205,13 @@ impl<'a> Interpreter<'a> {
     fn eval_binary(
         &self,
         op: &str,
-        left: &ASTNode,
-        right: &ASTNode,
+        left_node: &ASTNode,
+        right_node: &ASTNode,
     ) -> Result<crate::traits::CalcValue<'a>, ExcelError> {
-        if op == ":" {
-            let lref = self.evaluate_ast_as_reference(left)?;
-            let rref = self.evaluate_ast_as_reference(right)?;
-            return match crate::reference::combine_references(&lref, &rref) {
-                Ok(_) => Err(ExcelError::new(ExcelErrorKind::Ref)
-                    .with_message("Reference produced by ':' cannot be used directly as a value")),
-                Err(error) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(error))),
-            };
-        }
-        let left_calc = self.evaluate_ast(left)?;
+        let left_calc = self.evaluate_ast(left_node)?;
         let left_format = left_calc.format_id();
         let left = left_calc.into_literal();
-        let right_calc = self.evaluate_ast(right)?;
+        let right_calc = self.evaluate_ast(right_node)?;
         let right_format = right_calc.format_id();
         let right = right_calc.into_literal();
         if matches!(op, "=" | "<>" | ">" | "<" | ">=" | "<=") {
@@ -1249,6 +1248,16 @@ impl<'a> Interpreter<'a> {
                     crate::coercion::to_text_invariant(&right)
                 ),
             ))),
+            ":" => {
+                let left_ref = self.evaluate_ast_as_reference(left_node)?;
+                let right_ref = self.evaluate_ast_as_reference(right_node)?;
+                match crate::reference::combine_references(&left_ref, &right_ref) {
+                    Ok(_) => Err(ExcelError::new(ExcelErrorKind::Ref).with_message(
+                        "Reference produced by ':' cannot be used directly as a value",
+                    )),
+                    Err(error) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(error))),
+                }
+            }
             _ => {
                 Err(ExcelError::new(ExcelErrorKind::NImpl)
                     .with_message(format!("Binary op '{op}'")))
@@ -1704,4 +1713,49 @@ fn shift_axis_for_offset(value: u32, delta: i64, is_absolute: bool) -> Result<u3
 fn unsupported_reference_relocation_error() -> ExcelError {
     ExcelError::new(ExcelErrorKind::Ref)
         .with_message("Unsupported reference relocation for FormulaPlane span evaluation")
+}
+
+#[cfg(test)]
+mod format_algebra_tests {
+    use super::*;
+    use crate::engine::{EvalConfig, eval::Engine};
+    use crate::format::FormatId;
+    use crate::test_workbook::TestWorkbook;
+
+    #[test]
+    fn temporal_binary_format_algebra_pins_positive_and_negative_cases() {
+        let engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+        let interpreter = Interpreter::new(&engine, "Sheet1");
+
+        assert_eq!(
+            interpreter.binary_format('+', Some(FormatId::DATE), Some(FormatId::TIME)),
+            Some(FormatId::DATETIME)
+        );
+        assert_eq!(
+            interpreter.binary_format('+', Some(FormatId::DATE), Some(FormatId(9))),
+            Some(FormatId::DATE),
+            "Date + Percent follows the measured temporal-wins rule"
+        );
+        assert_eq!(
+            interpreter.binary_format('-', Some(FormatId::DATE), Some(FormatId::DATE)),
+            None,
+            "Date - Date is an unformatted duration in days"
+        );
+        assert_eq!(
+            interpreter.binary_format('+', Some(FormatId::DATE), Some(FormatId(49))),
+            None,
+            "Date + Text must not acquire a temporal annotation"
+        );
+        for (left, right) in [
+            (FormatId::DATE, FormatId::DATE),
+            (FormatId::DURATION, FormatId::DATE),
+            (FormatId::DATE, FormatId(5)),
+            (FormatId::DATETIME, FormatId::TIME),
+        ] {
+            assert_eq!(
+                interpreter.binary_format('+', Some(left), Some(right)),
+                None
+            );
+        }
+    }
 }

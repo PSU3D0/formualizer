@@ -5,7 +5,7 @@ use formualizer_eval::engine::{Engine, EvalConfig};
 use formualizer_workbook::{CalamineAdapter, SpreadsheetReader};
 
 #[test]
-fn calamine_date_arithmetic_is_numeric_in_formula_domain() {
+fn calamine_date_arithmetic_materializes_native_date_at_egress() {
     // C107 = 2024-10-18 (serial 45583)
     // C108 = 1
     // C109 = C107 + (ROUND(C108,0) * 14) => 2024-11-01
@@ -35,9 +35,12 @@ fn calamine_date_arithmetic_is_numeric_in_formula_domain() {
         .expect("stream into engine");
     engine.evaluate_all().expect("evaluate");
 
-    // #312: formula arithmetic is numeric; representability no longer controls its type.
+    // #312: arithmetic stays numeric internally, while Native egress uses the
+    // derived format from the loaded date precedent.
     assert_eq!(
         engine.get_cell_value("Sheet1", 109, 3),
-        Some(LiteralValue::Number(45_597.0))
+        Some(LiteralValue::Date(
+            chrono::NaiveDate::from_ymd_opt(2024, 11, 1).unwrap()
+        ))
     );
 }

@@ -3587,6 +3587,26 @@ impl ArrowSheet {
         }
     }
 
+    /// Clear every explicit and computed format source at a grid position.
+    pub(crate) fn clear_format(&mut self, abs_row: usize, abs_col: usize) {
+        if abs_row >= self.nrows as usize || abs_col >= self.columns.len() {
+            return;
+        }
+        let Some((ch_idx, in_off)) = self.chunk_of_row(abs_row) else {
+            return;
+        };
+        let Some(ch) = self.ensure_column_chunk_mut(abs_col, ch_idx) else {
+            return;
+        };
+        ch.overlay.set_format(in_off, None);
+        ch.computed_overlay.set_format(in_off, None);
+        if let Some(runs) = &ch.format {
+            let mut ids = runs.to_ids(ch.len());
+            ids[in_off] = FormatId::GENERAL.0;
+            ch.format = FormatRuns::from_ids(&ids);
+        }
+    }
+
     /// Return a summary of each column's chunk counts, total rows, and lane presence.
     pub fn shape(&self) -> Vec<ColumnShape> {
         self.columns
@@ -4823,6 +4843,45 @@ mod tests {
     use super::*;
 
     #[test]
+    fn explicit_format_precedence_and_general_filter_are_stable() {
+        let date = chrono::NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
+        let mut ingest = IngestBuilder::new("Sheet1", 1, 16, crate::engine::DateSystem::Excel1900);
+        ingest.append_row(&[LiteralValue::Date(date)]).unwrap();
+        ingest.append_row(&[LiteralValue::Number(1.0)]).unwrap();
+        let mut sheet = ingest.finish();
+
+        let chunk = sheet.columns[0].chunk_mut(0).unwrap();
+        chunk.computed_overlay.set_format(0, Some(FormatId::TIME));
+        assert_eq!(
+            sheet.format_id(0, 0),
+            Some(FormatId::DATE),
+            "base explicit format must beat the derived overlay"
+        );
+
+        sheet.columns[0]
+            .chunk_mut(0)
+            .unwrap()
+            .overlay
+            .set_format(0, Some(FormatId::DATETIME));
+        assert_eq!(
+            sheet.format_id(0, 0),
+            Some(FormatId::DATETIME),
+            "user explicit overlay must beat base and derived formats"
+        );
+        assert_eq!(
+            sheet.format_id(1, 0),
+            None,
+            "General is absence, not an effective explicit format"
+        );
+        sheet.ensure_row_capacity(3);
+        assert_eq!(
+            sheet.format_id(2, 0),
+            None,
+            "growing a formatted chunk must fill new rows with General"
+        );
+    }
+
+    #[test]
     fn known_error_storage_codes_are_stable() {
         let cases = [
             (ExcelErrorKind::Null, 1),
@@ -4881,13 +4940,18 @@ mod tests {
     fn datetime_lanes_round_trip_the_sheet_date_system() {
         let date = chrono::NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
         let datetime = date.and_hms_opt(12, 30, 0).unwrap();
+        let time = chrono::NaiveTime::from_hms_opt(12, 30, 0).unwrap();
 
         for system in [
             crate::engine::DateSystem::Excel1900,
             crate::engine::DateSystem::Excel1904,
         ] {
-            let values = vec![LiteralValue::Date(date), LiteralValue::DateTime(datetime)];
-            let mut ingest = IngestBuilder::new("Sheet1", 2, 16, system);
+            let values = vec![
+                LiteralValue::Date(date),
+                LiteralValue::DateTime(datetime),
+                LiteralValue::Time(time),
+            ];
+            let mut ingest = IngestBuilder::new("Sheet1", 3, 16, system);
             ingest.append_row(&values).unwrap();
             let sheet = ingest.finish();
 
@@ -4904,6 +4968,7 @@ mod tests {
             );
             assert_eq!(sheet.format_id(0, 0), Some(FormatId::DATE));
             assert_eq!(sheet.format_id(0, 1), Some(FormatId::DATETIME));
+            assert_eq!(sheet.format_id(0, 2), Some(FormatId::TIME));
             let view = sheet.range_view(0, 0, 0, 1);
             assert_eq!(view.get_cell(0, 0), LiteralValue::Number(date_serial));
             assert_eq!(view.get_cell(0, 1), LiteralValue::Number(datetime_serial));
