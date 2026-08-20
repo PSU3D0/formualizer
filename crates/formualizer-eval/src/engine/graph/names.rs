@@ -272,7 +272,7 @@ impl DependencyGraph {
         }
 
         let referenced_names =
-            self.rebuild_name_dependencies(vertex_id, &named_range.definition, scope);
+            self.rebuild_name_dependencies(vertex_id, &named_range.definition, scope)?;
         if !referenced_names.is_empty() {
             self.attach_vertex_to_names(vertex_id, &referenced_names);
         }
@@ -446,7 +446,7 @@ impl DependencyGraph {
                 self.mark_vertex_dirty(vertex);
 
                 let referenced_names =
-                    self.rebuild_name_dependencies(vertex, &definition_snapshot, scope_value);
+                    self.rebuild_name_dependencies(vertex, &definition_snapshot, scope_value)?;
                 if !referenced_names.is_empty() {
                     self.attach_vertex_to_names(vertex, &referenced_names);
                 }
@@ -685,7 +685,19 @@ impl DependencyGraph {
         vertex: VertexId,
         definition: &NamedDefinition,
         scope: NameScope,
-    ) -> Vec<VertexId> {
+    ) -> Result<Vec<VertexId>, ExcelError> {
+        let formula_dependencies = if let NamedDefinition::Formula { ast, .. } = definition {
+            let current_sheet_id = match scope {
+                NameScope::Sheet(id) => id,
+                NameScope::Workbook => self.default_sheet_id,
+            };
+            let (dependencies, range_dependencies, _, _) =
+                self.extract_dependencies(ast, current_sheet_id)?;
+            Some((dependencies, range_dependencies))
+        } else {
+            None
+        };
+
         self.remove_dependent_edges(vertex);
         self.unregister_name_cell_dependencies(vertex);
 
@@ -754,13 +766,11 @@ impl DependencyGraph {
             NamedDefinition::Literal(_) => {
                 // No dependencies.
             }
-            NamedDefinition::Formula {
-                dependencies: formula_deps,
-                range_deps,
-                ..
-            } => {
-                dependencies.extend(formula_deps.iter().copied());
-                range_dependencies.extend(range_deps.iter().cloned());
+            NamedDefinition::Formula { .. } => {
+                let (formula_deps, range_deps) =
+                    formula_dependencies.expect("formula dependencies were extracted");
+                dependencies.extend(formula_deps);
+                range_dependencies.extend(range_deps);
             }
         }
 
@@ -777,7 +787,7 @@ impl DependencyGraph {
             self.add_range_dependent_edges(vertex, &range_dependencies, sheet_id);
         }
 
-        dependencies
+        Ok(dependencies
             .iter()
             .filter(|vid| {
                 matches!(
@@ -786,7 +796,7 @@ impl DependencyGraph {
                 )
             })
             .copied()
-            .collect()
+            .collect())
     }
 
     pub fn adjust_named_ranges(
@@ -858,7 +868,7 @@ impl DependencyGraph {
                     VertexKind::NamedScalar
                 },
             );
-            let referenced_names = self.rebuild_name_dependencies(vertex, definition, scope);
+            let referenced_names = self.rebuild_name_dependencies(vertex, definition, scope)?;
             if !referenced_names.is_empty() {
                 self.attach_vertex_to_names(vertex, &referenced_names);
             }

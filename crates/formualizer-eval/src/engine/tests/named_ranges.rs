@@ -2378,6 +2378,12 @@ fn sheet_scoped_absolute_cell_name_tracks_row_insert_and_column_delete() {
         }
         other => panic!("expected tracked cell definition, got {other:?}"),
     }
+
+    engine
+        .set_cell_value("Data", 7, 4, LiteralValue::Number(66.0))
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(engine.get_cell_value("Data", 1, 1), Some(lit_num(66.0)));
 }
 
 #[test]
@@ -2461,6 +2467,12 @@ fn absolute_named_range_end_tracks_column_insert_inside_the_range() {
         }
         other => panic!("expected tracked range definition, got {other:?}"),
     }
+
+    engine
+        .set_cell_value("Data", 2, 4, LiteralValue::Number(400.0))
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(engine.get_cell_value("Sheet1", 1, 1), Some(lit_num(510.0)));
 }
 
 #[test]
@@ -2498,6 +2510,132 @@ fn sheet_scoped_named_formula_delete_of_target_renders_ref_and_evaluates_ref() {
         engine.get_cell_value("Data", 1, 1),
         Some(LiteralValue::Error(error)) if error.kind == ExcelErrorKind::Ref
     ));
+}
+
+#[test]
+fn workbook_formula_name_reindexes_cell_dependency_after_row_insert() {
+    let mut engine = Engine::new(TestWorkbook::new(), canonical_cfg());
+    let data = engine.sheet_id_mut("Data");
+    engine.set_cell_value("Data", 5, 2, lit_num(100.0)).unwrap();
+    engine
+        .define_name(
+            "TF",
+            NamedDefinition::Formula {
+                ast: parse("=Data!$B$5").unwrap(),
+                dependencies: Vec::new(),
+                range_deps: Vec::new(),
+            },
+            NameScope::Workbook,
+        )
+        .unwrap();
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse("=TF").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(engine.get_cell_value("Sheet1", 1, 1), Some(lit_num(100.0)));
+
+    engine.set_cell_value("Data", 5, 2, lit_num(101.0)).unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(engine.get_cell_value("Sheet1", 1, 1), Some(lit_num(101.0)));
+
+    engine.insert_rows("Data", 2, 2).unwrap();
+    engine.evaluate_all().unwrap();
+    match &engine.resolve_name_entry("TF", data).unwrap().definition {
+        NamedDefinition::Formula { ast, .. } => {
+            assert_eq!(canonical_formula(ast), "=Data!$B$7")
+        }
+        other => panic!("expected tracked formula definition, got {other:?}"),
+    }
+    assert_eq!(engine.get_cell_value("Data", 7, 2), Some(lit_num(101.0)));
+    assert_eq!(engine.get_cell_value("Sheet1", 1, 1), Some(lit_num(101.0)));
+
+    engine.set_cell_value("Data", 7, 2, lit_num(555.0)).unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(engine.get_cell_value("Sheet1", 1, 1), Some(lit_num(555.0)));
+}
+
+#[test]
+fn workbook_formula_name_reindexes_range_dependency_after_row_delete() {
+    let mut engine = Engine::new(TestWorkbook::new(), canonical_cfg());
+    let data = engine.sheet_id_mut("Data");
+    for (row, value) in [(2, 1.0), (3, 3.0), (4, 4.0), (5, 5.0)] {
+        engine
+            .set_cell_value("Data", row, 2, lit_num(value))
+            .unwrap();
+    }
+    engine
+        .define_name(
+            "TF",
+            NamedDefinition::Formula {
+                ast: parse("=SUM(Data!$B$2:$B$5)").unwrap(),
+                dependencies: Vec::new(),
+                range_deps: Vec::new(),
+            },
+            NameScope::Workbook,
+        )
+        .unwrap();
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse("=TF").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(engine.get_cell_value("Sheet1", 1, 1), Some(lit_num(13.0)));
+
+    engine.set_cell_value("Data", 2, 2, lit_num(2.0)).unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(engine.get_cell_value("Sheet1", 1, 1), Some(lit_num(14.0)));
+
+    engine.delete_rows("Data", 3, 2).unwrap();
+    engine.evaluate_all().unwrap();
+    match &engine.resolve_name_entry("TF", data).unwrap().definition {
+        NamedDefinition::Formula { ast, .. } => {
+            assert_eq!(canonical_formula(ast), "=SUM(Data!$B$2:$B$3)")
+        }
+        other => panic!("expected tracked formula definition, got {other:?}"),
+    }
+    assert_eq!(engine.get_cell_value("Sheet1", 1, 1), Some(lit_num(7.0)));
+
+    engine.set_cell_value("Data", 2, 2, lit_num(200.0)).unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(engine.get_cell_value("Sheet1", 1, 1), Some(lit_num(205.0)));
+}
+
+#[test]
+fn sheet_formula_name_reindexes_cell_dependency_after_column_insert() {
+    let mut engine = Engine::new(TestWorkbook::new(), canonical_cfg());
+    let data = engine.sheet_id_mut("Data");
+    engine.set_cell_value("Data", 2, 4, lit_num(40.0)).unwrap();
+    engine
+        .define_name(
+            "TF",
+            NamedDefinition::Formula {
+                ast: parse("=$D$2").unwrap(),
+                dependencies: Vec::new(),
+                range_deps: Vec::new(),
+            },
+            NameScope::Sheet(data),
+        )
+        .unwrap();
+    engine
+        .set_cell_formula("Data", 1, 1, parse("=TF").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(engine.get_cell_value("Data", 1, 1), Some(lit_num(40.0)));
+
+    engine.set_cell_value("Data", 2, 4, lit_num(50.0)).unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(engine.get_cell_value("Data", 1, 1), Some(lit_num(50.0)));
+
+    engine.insert_columns("Data", 2, 2).unwrap();
+    engine.evaluate_all().unwrap();
+    match &engine.resolve_name_entry("TF", data).unwrap().definition {
+        NamedDefinition::Formula { ast, .. } => assert_eq!(canonical_formula(ast), "=$F$2"),
+        other => panic!("expected tracked formula definition, got {other:?}"),
+    }
+    assert_eq!(engine.get_cell_value("Data", 1, 1), Some(lit_num(50.0)));
+
+    engine.set_cell_value("Data", 2, 6, lit_num(66.0)).unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(engine.get_cell_value("Data", 1, 1), Some(lit_num(66.0)));
 }
 
 #[derive(Clone, Copy)]

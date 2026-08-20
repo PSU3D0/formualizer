@@ -384,7 +384,7 @@ impl DependencyGraph {
                 name_vertex,
                 &named_range.definition,
                 named_range.scope,
-            );
+            )?;
             if !referenced_names.is_empty() {
                 self.attach_vertex_to_names(name_vertex, &referenced_names);
             }
