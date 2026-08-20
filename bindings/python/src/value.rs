@@ -192,6 +192,8 @@ impl PyLiteralValue {
             "Calc" => ExcelErrorKind::Calc,
             "Circ" => ExcelErrorKind::Circ,
             "Cancelled" => ExcelErrorKind::Cancelled,
+            "Error" => ExcelErrorKind::Error,
+            "NImpl" => ExcelErrorKind::NImpl,
             _ => {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                     "Invalid error kind: {kind}"

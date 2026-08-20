@@ -79,6 +79,30 @@ def test_error_dict_roundtrip_and_context():
     assert result.get("sheet") == "Sheet1"
 
 
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "Div",
+        "Ref",
+        "Name",
+        "Value",
+        "Num",
+        "Null",
+        "Na",
+        "Spill",
+        "Calc",
+        "Circ",
+        "Cancelled",
+        "Error",
+        "NImpl",
+    ],
+)
+def test_literal_error_kind_roundtrip(kind):
+    value = fz.LiteralValue.error(kind, "boom")
+
+    assert value.error_kind == kind
+
+
 def test_legacy_literal_dicts_still_supported():
     sheet = make_sheet()
 
