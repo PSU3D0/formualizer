@@ -936,6 +936,11 @@ pub struct Engine<R> {
     spill_mgr: ShimSpillManager,
     /// Arrow-backed storage for sheet values (Phase A)
     arrow_sheets: SheetStore,
+    /// Workbook-local number-format registry.
+    format_registry: crate::format::FormatRegistry,
+    /// Thread-safe handoff from immutable/parallel evaluation to overlay apply.
+    derived_format_results: std::sync::RwLock<FxHashMap<VertexId, Option<crate::format::FormatId>>>,
+    derived_formats: std::sync::RwLock<FxHashMap<VertexId, crate::format::FormatId>>,
     /// True if any edit after bulk load; disables Arrow reads for parity
     has_edited: bool,
     /// Overlay compaction counter (Phase C instrumentation)
@@ -2602,6 +2607,9 @@ where
             mixed_topology_cache_skip_streak: 0,
             spill_mgr: ShimSpillManager::default(),
             arrow_sheets: SheetStore::default(),
+            format_registry: crate::format::FormatRegistry::default(),
+            derived_format_results: std::sync::RwLock::new(FxHashMap::default()),
+            derived_formats: std::sync::RwLock::new(FxHashMap::default()),
             has_edited: false,
             overlay_compactions: 0,
             computed_overlay_bytes_estimate: 0,
@@ -2742,6 +2750,9 @@ where
             mixed_topology_cache_skip_streak: 0,
             spill_mgr: ShimSpillManager::default(),
             arrow_sheets: SheetStore::default(),
+            format_registry: crate::format::FormatRegistry::default(),
+            derived_format_results: std::sync::RwLock::new(FxHashMap::default()),
+            derived_formats: std::sync::RwLock::new(FxHashMap::default()),
             has_edited: false,
             overlay_compactions: 0,
             computed_overlay_bytes_estimate: 0,
@@ -3854,6 +3865,15 @@ where
     /// Set the volatile level policy (Always/OnRecalc/OnOpen)
     pub fn set_volatile_level(&mut self, level: crate::traits::VolatileLevel) {
         self.config.volatile_level = level;
+    }
+
+    /// Set public temporal materialisation to native values or raw serials.
+    pub fn set_temporal_egress(&mut self, policy: crate::engine::TemporalEgress) {
+        self.config.temporal_egress = policy;
+    }
+
+    pub fn temporal_egress(&self) -> crate::engine::TemporalEgress {
+        self.config.temporal_egress
     }
 
     /// Enable/disable deterministic evaluation mode (fixed clock + timezone).
@@ -15285,6 +15305,14 @@ where
                 crate::arrow_store::OverlayValue::from_literal_value(value, asheet.date_system);
             let computed_delta = if let Some(ch) = asheet.ensure_column_chunk_mut(col0, ch_idx) {
                 let _ = ch.overlay.set(in_off, ov);
+                let format = match value {
+                    LiteralValue::Date(_) => Some(crate::format::FormatId::DATE),
+                    LiteralValue::DateTime(_) => Some(crate::format::FormatId::DATETIME),
+                    LiteralValue::Time(_) => Some(crate::format::FormatId::TIME),
+                    LiteralValue::Duration(_) => Some(crate::format::FormatId::DURATION),
+                    _ => None,
+                };
+                ch.overlay.set_format(in_off, format);
                 // A user edit must invalidate any computed (formula/spill) overlay entry at
                 // this cell. Otherwise, if the delta overlay later compacts into the base lanes
                 // (clearing `overlay`), a stale `computed_overlay=Empty` could incorrectly mask
@@ -15891,6 +15919,44 @@ where
             col.saturating_sub(1),
             ov,
         );
+    }
+
+    fn record_derived_format(&self, vertex_id: VertexId, format: Option<crate::format::FormatId>) {
+        let mut formats = self.derived_formats.write().unwrap();
+        match format {
+            Some(format) => {
+                formats.insert(vertex_id, format);
+            }
+            None => {
+                formats.remove(&vertex_id);
+            }
+        }
+    }
+
+    fn write_computed_overlay_format_0based(
+        &mut self,
+        sheet: &str,
+        row0: u32,
+        col0: u32,
+        format: Option<crate::format::FormatId>,
+    ) {
+        self.ensure_arrow_sheet(sheet);
+        let (row0, col0) = (row0 as usize, col0 as usize);
+        let Some(asheet) = self.arrow_sheets.sheet_mut(sheet) else {
+            return;
+        };
+        if col0 >= asheet.columns.len() {
+            asheet.insert_columns(asheet.columns.len(), col0 + 1 - asheet.columns.len());
+        }
+        if row0 >= asheet.nrows as usize {
+            asheet.ensure_row_capacity(row0 + 1);
+        }
+        let Some((chunk, offset)) = asheet.chunk_of_row(row0) else {
+            return;
+        };
+        if let Some(chunk) = asheet.ensure_column_chunk_mut(col0, chunk) {
+            chunk.computed_overlay.set_format(offset, format);
+        }
     }
 
     fn write_computed_overlay_value_0based(
@@ -16938,10 +17004,80 @@ where
         }
     }
 
-    /// Get a cell value
+    fn materialize_temporal_egress(
+        value: LiteralValue,
+        class: Option<&formualizer_common::numfmt::FormatClass>,
+        policy: crate::engine::TemporalEgress,
+        date_system: crate::engine::DateSystem,
+    ) -> LiteralValue {
+        use formualizer_common::numfmt::FormatClass;
+        if policy == crate::engine::TemporalEgress::Serial {
+            return value;
+        }
+        let LiteralValue::Number(serial) = value else {
+            return value;
+        };
+        match class {
+            Some(FormatClass::Date) => {
+                formualizer_common::try_serial_to_date_for(date_system, serial)
+                    .map(LiteralValue::Date)
+                    .unwrap_or(LiteralValue::Number(serial))
+            }
+            Some(FormatClass::DateTime) => {
+                formualizer_common::try_serial_to_datetime_for(date_system, serial)
+                    .map(LiteralValue::DateTime)
+                    .unwrap_or(LiteralValue::Number(serial))
+            }
+            Some(FormatClass::Time) => {
+                let seconds = (serial.rem_euclid(1.0) * 86_400.0).round() as u32 % 86_400;
+                chrono::NaiveTime::from_num_seconds_from_midnight_opt(seconds, 0)
+                    .map(LiteralValue::Time)
+                    .unwrap_or(LiteralValue::Number(serial))
+            }
+            Some(FormatClass::Duration) => {
+                let nanos = (serial * 86_400.0 * 1_000_000_000.0).round();
+                if nanos.is_finite() && nanos >= i64::MIN as f64 && nanos <= i64::MAX as f64 {
+                    LiteralValue::Duration(chrono::Duration::nanoseconds(nanos as i64))
+                } else {
+                    LiteralValue::Number(serial)
+                }
+            }
+            _ => LiteralValue::Number(serial),
+        }
+    }
+
+    pub(crate) fn effective_format_id(
+        &self,
+        sheet: &str,
+        row: u32,
+        col: u32,
+    ) -> Option<crate::format::FormatId> {
+        let arrow = self.arrow_sheets.sheet(sheet).and_then(|arrow| {
+            arrow.format_id(
+                row.saturating_sub(1) as usize,
+                col.saturating_sub(1) as usize,
+            )
+        });
+        arrow.or_else(|| {
+            let cell =
+                self.graph
+                    .make_cell_ref(sheet, row.saturating_sub(1), col.saturating_sub(1));
+            let vertex = self.graph.get_vertex_id_for_address(&cell).copied()?;
+            self.derived_formats.read().unwrap().get(&vertex).copied()
+        })
+    }
+
+    /// Get a cell value through the single temporal egress boundary.
     pub fn get_cell_value(&self, sheet: &str, row: u32, col: u32) -> Option<LiteralValue> {
-        self.read_cell_value(sheet, row, col)
-            .and_then(Self::normalize_public_cell_read)
+        let raw = self.read_cell_value(sheet, row, col)?;
+        let format = self.effective_format_id(sheet, row, col);
+        let class = format.and_then(|id| self.format_registry.class(id));
+        Self::normalize_public_cell_read(Self::materialize_temporal_egress(
+            raw,
+            class,
+            self.config.temporal_egress,
+            self.config.date_system,
+        ))
     }
 
     /// Unified internal read API for a single cell value (Arrow-truth).
@@ -17245,8 +17381,17 @@ where
         // If array result, perform spill from the anchor cell
         match result {
             Ok(cv) => {
+                let derived_format = cv.format_id();
+                self.record_derived_format(vertex_id, derived_format);
                 let result_literal =
                     crate::engine::result_finalization::finalize_formula_result(cv.into_literal());
+                let output_sheet_name = sheet_name.to_string();
+                self.write_computed_overlay_format_0based(
+                    &output_sheet_name,
+                    cell_ref.coord.row(),
+                    cell_ref.coord.col(),
+                    derived_format,
+                );
                 match result_literal {
                     LiteralValue::Array(rows) => {
                         // Update kind to FormulaArray for tracking
@@ -22192,6 +22337,21 @@ where
         // Only formula vertices spill dynamic arrays into the grid.
         let is_formula = matches!(kind, VertexKind::FormulaScalar | VertexKind::FormulaArray);
         if is_formula {
+            let derived_format = self
+                .derived_format_results
+                .write()
+                .unwrap()
+                .remove(&vertex_id)
+                .flatten();
+            if let Some(cell) = self.graph.get_cell_ref(vertex_id) {
+                let sheet_name = self.graph.sheet_name(cell.sheet_id).to_string();
+                self.write_computed_overlay_format_0based(
+                    &sheet_name,
+                    cell.coord.row(),
+                    cell.coord.col(),
+                    derived_format,
+                );
+            }
             match result {
                 LiteralValue::Array(rows) => {
                     self.apply_array_result_from_parallel(
@@ -22630,6 +22790,12 @@ where
         interpreter
             .evaluate_arena_ast(ast_id, self.graph.data_store(), self.graph.sheet_reg())
             .map(|cv| {
+                let format = cv.format_id();
+                self.derived_format_results
+                    .write()
+                    .unwrap()
+                    .insert(vertex_id, format);
+                self.record_derived_format(vertex_id, format);
                 crate::engine::result_finalization::finalize_formula_result(cv.into_literal())
             })
     }
@@ -24096,6 +24262,42 @@ where
         }
     }
 
+    fn resolve_cell_format(
+        &self,
+        sheet: Option<&str>,
+        row: u32,
+        col: u32,
+        current_sheet: &str,
+    ) -> Option<crate::format::FormatId> {
+        let sheet_name = sheet.unwrap_or(current_sheet);
+        self.arrow_sheets.sheet(sheet_name)?.format_id(
+            row.saturating_sub(1) as usize,
+            col.saturating_sub(1) as usize,
+        )
+    }
+
+    fn format_class(
+        &self,
+        format: crate::format::FormatId,
+    ) -> Option<formualizer_common::numfmt::FormatClass> {
+        self.format_registry.class(format).cloned()
+    }
+
+    fn record_cell_derived_format(
+        &self,
+        sheet: &str,
+        row: u32,
+        col: u32,
+        format: Option<crate::format::FormatId>,
+    ) {
+        let cell = self
+            .graph
+            .make_cell_ref(sheet, row.saturating_sub(1), col.saturating_sub(1));
+        if let Some(vertex) = self.graph.get_vertex_id_for_address(&cell).copied() {
+            self.record_derived_format(vertex, format);
+        }
+    }
+
     fn resolve_cell_reference_value(
         &self,
         sheet: Option<&str>,
@@ -24908,6 +25110,12 @@ where
                 interpreter
                     .evaluate_arena_ast(ast_id, self.graph.data_store(), self.graph.sheet_reg())
                     .map(|cv| {
+                        let format = cv.format_id();
+                        self.derived_format_results
+                            .write()
+                            .unwrap()
+                            .insert(vertex_id, format);
+                        self.record_derived_format(vertex_id, format);
                         crate::engine::result_finalization::finalize_formula_result(
                             cv.into_literal(),
                         )

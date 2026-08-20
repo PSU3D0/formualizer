@@ -51,16 +51,10 @@ fn date_minus_larger_number_returns_negative_number_not_num_error() {
 }
 
 #[test]
-fn date_minus_number_at_serial_zero_boundary_stays_representable() {
+fn date_minus_number_at_serial_zero_is_numeric() {
     let mut engine = engine_with_date_anchor();
-    // Serial 0 is representable as a date, so the temporal tag is preserved.
-    // This pins the boundary the fix must not move.
-    match eval(&mut engine, "=A1-45627") {
-        LiteralValue::Date(d) => {
-            assert_eq!(d, NaiveDate::from_ymd_opt(1899, 12, 31).unwrap())
-        }
-        other => panic!("expected Date at serial 0, got {other:?}"),
-    }
+    // #312: representability no longer controls arithmetic result type.
+    assert_eq!(eval(&mut engine, "=A1-45627"), LiteralValue::Number(0.0));
 }
 
 #[test]

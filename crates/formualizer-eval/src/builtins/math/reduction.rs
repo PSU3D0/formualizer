@@ -68,6 +68,13 @@ pub struct MinFn; // MIN(...)
 /// Caps: PURE, REDUCTION, NUMERIC_ONLY
 /// [formualizer-docgen:schema:end]
 impl Function for MinFn {
+    fn propagate_format(
+        &self,
+        result: &crate::traits::CalcValue<'_>,
+    ) -> Option<crate::format::FormatId> {
+        result.format_id()
+    }
+
     func_caps!(PURE, REDUCTION, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
         "MIN"
@@ -201,6 +208,13 @@ pub struct MaxFn; // MAX(...)
 /// Caps: PURE, REDUCTION, NUMERIC_ONLY
 /// [formualizer-docgen:schema:end]
 impl Function for MaxFn {
+    fn propagate_format(
+        &self,
+        result: &crate::traits::CalcValue<'_>,
+    ) -> Option<crate::format::FormatId> {
+        result.format_id()
+    }
+
     func_caps!(PURE, REDUCTION, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
         "MAX"

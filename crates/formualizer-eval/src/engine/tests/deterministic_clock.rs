@@ -14,6 +14,7 @@ fn now_and_today_use_injected_fixed_clock() {
         .expect("valid fixed timestamp");
 
     let cfg = EvalConfig {
+        temporal_egress: crate::engine::TemporalEgress::Serial,
         deterministic_mode: DeterministicMode::Enabled {
             timestamp_utc: fixed,
             timezone: TimeZoneSpec::Utc,

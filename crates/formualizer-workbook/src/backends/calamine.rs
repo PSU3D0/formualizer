@@ -172,9 +172,22 @@ fn data_ref_to_overlay(value: &DataRef<'_>) -> Option<OverlayValue> {
         DataRef::Int(i) => Some(OverlayValue::Number(*i as f64)),
         DataRef::Bool(b) => Some(OverlayValue::Boolean(*b)),
         DataRef::Error(e) => Some(OverlayValue::Error(CalamineAdapter::calamine_error_code(e))),
-        DataRef::DateTime(dt) => Some(OverlayValue::DateTime(dt.as_f64())),
+        DataRef::DateTime(dt) => Some(OverlayValue::Number(dt.as_f64())),
         DataRef::DateTimeIso(s) => Some(OverlayValue::Text(Arc::from(s.as_str()))),
         DataRef::DurationIso(s) => Some(OverlayValue::Text(Arc::from(s.as_str()))),
+    }
+}
+
+fn data_ref_format(value: &DataRef<'_>) -> Option<formualizer_eval::format::FormatId> {
+    match value {
+        DataRef::DateTime(dt) if dt.is_duration() => {
+            Some(formualizer_eval::format::FormatId::DURATION)
+        }
+        DataRef::DateTime(dt) if dt.as_f64().fract().abs() > f64::EPSILON => {
+            Some(formualizer_eval::format::FormatId::DATETIME)
+        }
+        DataRef::DateTime(_) => Some(formualizer_eval::format::FormatId::DATE),
+        _ => None,
     }
 }
 
@@ -557,6 +570,7 @@ impl CalamineAdapter {
             if let Some(arrow_sheet) = sparse.as_mut() {
                 if let Some(value) = data_ref_to_overlay(&record.value) {
                     arrow_sheet.set_sparse_overlay_value(row, col, value);
+                    arrow_sheet.set_sparse_overlay_format(row, col, data_ref_format(&record.value));
                     values_handed_to_engine += 1;
                 }
                 continue;
@@ -593,6 +607,7 @@ impl CalamineAdapter {
                 }
                 if let Some(value) = data_ref_to_overlay(&record.value) {
                     arrow_sheet.set_sparse_overlay_value(row, col, value);
+                    arrow_sheet.set_sparse_overlay_format(row, col, data_ref_format(&record.value));
                     values_handed_to_engine += 1;
                 }
                 sparse = Some(arrow_sheet);

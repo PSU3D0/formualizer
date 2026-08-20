@@ -192,22 +192,22 @@ fn released_encode_helpers_and_normalization_remain_public() {
 }
 
 #[test]
-fn sparse_public_constructors_decode_hardcoded_1900_and_1904_serials() {
+fn sparse_public_constructors_keep_temporals_as_serials_internally() {
     use formualizer_eval::arrow_store::{ArrowSheet, OverlayValue};
-
-    let expected = datetime(1904, 1, 1, 12, 0, 0);
+    use formualizer_eval::format::FormatId;
     let mut excel_1900 = ArrowSheet::new_sparse("1900", 1, 1, 16);
     excel_1900.set_sparse_overlay_value(0, 0, OverlayValue::DateTime(1462.5));
+    excel_1900.set_sparse_overlay_format(0, 0, Some(FormatId::DATETIME));
     assert_eq!(
         excel_1900.get_cell_value(0, 0),
-        LiteralValue::DateTime(expected)
+        LiteralValue::Number(1462.5)
     );
+    assert_eq!(excel_1900.format_id(0, 0), Some(FormatId::DATETIME));
 
     let mut excel_1904 =
         ArrowSheet::new_sparse_with_date_system("1904", 1, 1, 16, DateSystem::Excel1904);
     excel_1904.set_sparse_overlay_value(0, 0, OverlayValue::DateTime(0.5));
-    assert_eq!(
-        excel_1904.get_cell_value(0, 0),
-        LiteralValue::DateTime(expected)
-    );
+    excel_1904.set_sparse_overlay_format(0, 0, Some(FormatId::DATETIME));
+    assert_eq!(excel_1904.get_cell_value(0, 0), LiteralValue::Number(0.5));
+    assert_eq!(excel_1904.format_id(0, 0), Some(FormatId::DATETIME));
 }

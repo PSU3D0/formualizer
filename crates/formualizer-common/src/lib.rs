@@ -12,6 +12,7 @@ pub mod date_serial;
 pub mod error;
 pub mod function;
 pub mod grid_address;
+pub mod numfmt;
 pub mod range;
 pub mod value;
 
@@ -22,5 +23,6 @@ pub use date_serial::*;
 pub use error::*;
 pub use function::*;
 pub use grid_address::*;
+pub use numfmt::*;
 pub use range::*;
 pub use value::*;

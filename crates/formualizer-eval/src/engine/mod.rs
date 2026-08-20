@@ -716,6 +716,14 @@ impl Default for WorkbookLoadLimits {
     }
 }
 
+/// Controls whether temporal-formatted serials leave the engine as native values.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TemporalEgress {
+    #[default]
+    Native,
+    Serial,
+}
+
 /// Configuration for the evaluation engine
 #[derive(Debug, Clone)]
 pub struct EvalConfig {
@@ -822,6 +830,9 @@ pub struct EvalConfig {
     /// Workbook date system: Excel 1900 (default) or 1904.
     pub date_system: DateSystem,
 
+    /// Public temporal materialisation policy.
+    pub temporal_egress: TemporalEgress,
+
     /// Policy for malformed formulas encountered during ingest/graph-build.
     pub formula_parse_policy: FormulaParsePolicy,
 
@@ -899,6 +910,7 @@ impl Default for EvalConfig {
             write_formula_overlay_enabled: true,
             max_overlay_memory_bytes: None,
             date_system: DateSystem::Excel1900,
+            temporal_egress: TemporalEgress::default(),
             formula_parse_policy: FormulaParsePolicy::Strict,
             defer_graph_building: false,
             enable_virtual_dep_telemetry: false,

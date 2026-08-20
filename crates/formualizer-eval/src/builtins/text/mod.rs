@@ -9,7 +9,7 @@ use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 
 fn scalar_text_value(arg: &ArgumentHandle<'_, '_>) -> Result<LiteralValue, ExcelError> {
     Ok(match arg.value_for_text()? {
-        CalcValue::Scalar(value) => value,
+        CalcValue::Scalar(value) | CalcValue::AnnotatedScalar(value, _) => value,
         CalcValue::Range(view) => view.get_cell(0, 0),
         CalcValue::Callable(_) => LiteralValue::Error(
             ExcelError::new(ExcelErrorKind::Calc).with_message("LAMBDA value must be invoked"),

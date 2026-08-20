@@ -26,7 +26,7 @@ fn local_name_from_ast(node: &ASTNode) -> Result<String, ExcelError> {
 
 fn binding_from_calc_value(cv: CalcValue<'_>) -> LocalBinding {
     match cv {
-        CalcValue::Scalar(v) => LocalBinding::Value(v),
+        CalcValue::Scalar(v) | CalcValue::AnnotatedScalar(v, _) => LocalBinding::Value(v),
         CalcValue::Range(rv) => {
             let (rows, cols) = rv.dims();
             if rows == 1 && cols == 1 {

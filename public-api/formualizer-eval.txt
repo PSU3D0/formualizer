@@ -68,8 +68,10 @@ pub mod formualizer_eval::arrow_store
 pub enum formualizer_eval::arrow_store::CellIngest<'a>
 pub formualizer_eval::arrow_store::CellIngest::Boolean(bool)
 pub formualizer_eval::arrow_store::CellIngest::DateSerial(f64)
+pub formualizer_eval::arrow_store::CellIngest::DurationSerial(f64)
 pub formualizer_eval::arrow_store::CellIngest::Empty
 pub formualizer_eval::arrow_store::CellIngest::ErrorCode(u8)
+pub formualizer_eval::arrow_store::CellIngest::FormattedNumber(f64, formualizer_eval::format::FormatId)
 pub formualizer_eval::arrow_store::CellIngest::Number(f64)
 pub formualizer_eval::arrow_store::CellIngest::Pending
 pub formualizer_eval::arrow_store::CellIngest::Text(&'a str)
@@ -139,6 +141,7 @@ pub fn formualizer_eval::arrow_store::ArrowSheet::delete_columns(&mut self, usiz
 pub fn formualizer_eval::arrow_store::ArrowSheet::delete_rows(&mut self, usize, usize)
 pub fn formualizer_eval::arrow_store::ArrowSheet::ensure_column_chunk_mut(&mut self, usize, usize) -> core::option::Option<&mut formualizer_eval::arrow_store::ColumnChunk>
 pub fn formualizer_eval::arrow_store::ArrowSheet::ensure_row_capacity(&mut self, usize)
+pub fn formualizer_eval::arrow_store::ArrowSheet::format_id(&self, usize, usize) -> core::option::Option<formualizer_eval::format::FormatId>
 pub fn formualizer_eval::arrow_store::ArrowSheet::get_cell_value(&self, usize, usize) -> formualizer_common::value::LiteralValue
 pub fn formualizer_eval::arrow_store::ArrowSheet::insert_columns(&mut self, usize, usize)
 pub fn formualizer_eval::arrow_store::ArrowSheet::insert_rows(&mut self, usize, usize)
@@ -146,6 +149,7 @@ pub fn formualizer_eval::arrow_store::ArrowSheet::maybe_compact_chunk(&mut self,
 pub fn formualizer_eval::arrow_store::ArrowSheet::new_sparse(&str, usize, usize, usize) -> Self
 pub fn formualizer_eval::arrow_store::ArrowSheet::new_sparse_with_date_system(&str, usize, usize, usize, formualizer_common::value::DateSystem) -> Self
 pub fn formualizer_eval::arrow_store::ArrowSheet::range_view(&self, usize, usize, usize, usize) -> formualizer_eval::engine::range_view::RangeView<'_>
+pub fn formualizer_eval::arrow_store::ArrowSheet::set_sparse_overlay_format(&mut self, usize, usize, core::option::Option<formualizer_eval::format::FormatId>)
 pub fn formualizer_eval::arrow_store::ArrowSheet::set_sparse_overlay_value(&mut self, usize, usize, formualizer_eval::arrow_store::OverlayValue) -> isize
 pub fn formualizer_eval::arrow_store::ArrowSheet::shape(&self) -> alloc::vec::Vec<formualizer_eval::arrow_store::ColumnShape>
 impl core::clone::Clone for formualizer_eval::arrow_store::ArrowSheet
@@ -156,6 +160,7 @@ pub struct formualizer_eval::arrow_store::ColumnChunk
 pub formualizer_eval::arrow_store::ColumnChunk::booleans: core::option::Option<alloc::sync::Arc<arrow_array::array::boolean_array::BooleanArray>>
 pub formualizer_eval::arrow_store::ColumnChunk::computed_overlay: formualizer_eval::arrow_store::Overlay
 pub formualizer_eval::arrow_store::ColumnChunk::errors: core::option::Option<alloc::sync::Arc<arrow_array::array::primitive_array::UInt8Array>>
+pub formualizer_eval::arrow_store::ColumnChunk::format: core::option::Option<formualizer_eval::arrow_store::FormatRuns>
 pub formualizer_eval::arrow_store::ColumnChunk::formula_id: core::option::Option<alloc::sync::Arc<arrow_array::array::primitive_array::UInt32Array>>
 pub formualizer_eval::arrow_store::ColumnChunk::meta: formualizer_eval::arrow_store::ColumnChunkMeta
 pub formualizer_eval::arrow_store::ColumnChunk::numbers: core::option::Option<alloc::sync::Arc<arrow_array::array::primitive_array::Float64Array>>
@@ -201,6 +206,20 @@ pub fn formualizer_eval::arrow_store::ColumnShape::clone(&self) -> formualizer_e
 impl core::fmt::Debug for formualizer_eval::arrow_store::ColumnShape
 pub fn formualizer_eval::arrow_store::ColumnShape::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for formualizer_eval::arrow_store::ColumnShape
+pub struct formualizer_eval::arrow_store::FormatRuns
+impl formualizer_eval::arrow_store::FormatRuns
+pub fn formualizer_eval::arrow_store::FormatRuns::from_ids(&[u16]) -> core::option::Option<Self>
+pub fn formualizer_eval::arrow_store::FormatRuns::get(&self, usize) -> formualizer_eval::format::FormatId
+pub fn formualizer_eval::arrow_store::FormatRuns::slice(&self, usize, usize) -> core::option::Option<Self>
+pub fn formualizer_eval::arrow_store::FormatRuns::to_ids(&self, usize) -> alloc::vec::Vec<u16>
+impl core::clone::Clone for formualizer_eval::arrow_store::FormatRuns
+pub fn formualizer_eval::arrow_store::FormatRuns::clone(&self) -> formualizer_eval::arrow_store::FormatRuns
+impl core::cmp::Eq for formualizer_eval::arrow_store::FormatRuns
+impl core::cmp::PartialEq for formualizer_eval::arrow_store::FormatRuns
+pub fn formualizer_eval::arrow_store::FormatRuns::eq(&self, &formualizer_eval::arrow_store::FormatRuns) -> bool
+impl core::fmt::Debug for formualizer_eval::arrow_store::FormatRuns
+pub fn formualizer_eval::arrow_store::FormatRuns::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_eval::arrow_store::FormatRuns
 pub struct formualizer_eval::arrow_store::IngestBuilder
 impl formualizer_eval::arrow_store::IngestBuilder
 pub fn formualizer_eval::arrow_store::IngestBuilder::append_row(&mut self, &[formualizer_common::value::LiteralValue]) -> core::result::Result<(), formualizer_common::error::ExcelError>
@@ -214,12 +233,14 @@ pub fn formualizer_eval::arrow_store::Overlay::any_in_range(&self, core::ops::ra
 pub fn formualizer_eval::arrow_store::Overlay::clear(&mut self) -> usize
 pub fn formualizer_eval::arrow_store::Overlay::estimated_bytes(&self) -> usize
 pub fn formualizer_eval::arrow_store::Overlay::get(&self, usize) -> core::option::Option<formualizer_eval::arrow_store::OverlayValue>
+pub fn formualizer_eval::arrow_store::Overlay::get_format(&self, usize) -> core::option::Option<formualizer_eval::format::FormatId>
 pub fn formualizer_eval::arrow_store::Overlay::is_empty(&self) -> bool
 pub fn formualizer_eval::arrow_store::Overlay::iter(&self) -> impl core::iter::traits::iterator::Iterator<Item = (usize, formualizer_eval::arrow_store::OverlayValue)>
 pub fn formualizer_eval::arrow_store::Overlay::len(&self) -> usize
 pub fn formualizer_eval::arrow_store::Overlay::new() -> Self
 pub fn formualizer_eval::arrow_store::Overlay::remove(&mut self, usize) -> isize
 pub fn formualizer_eval::arrow_store::Overlay::set(&mut self, usize, formualizer_eval::arrow_store::OverlayValue) -> isize
+pub fn formualizer_eval::arrow_store::Overlay::set_format(&mut self, usize, core::option::Option<formualizer_eval::format::FormatId>)
 impl core::clone::Clone for formualizer_eval::arrow_store::Overlay
 pub fn formualizer_eval::arrow_store::Overlay::clone(&self) -> formualizer_eval::arrow_store::Overlay
 impl core::default::Default for formualizer_eval::arrow_store::Overlay
@@ -1492,6 +1513,7 @@ pub fn formualizer_eval::engine::eval::Engine<R>::set_rows_hidden(&mut self, &st
 pub fn formualizer_eval::engine::eval::Engine<R>::set_sheet_index_mode(&mut self, formualizer_eval::engine::SheetIndexMode)
 pub fn formualizer_eval::engine::eval::Engine<R>::set_source_scalar_version(&mut self, &str, core::option::Option<u64>) -> core::result::Result<(), formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::set_source_table_version(&mut self, &str, core::option::Option<u64>) -> core::result::Result<(), formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::eval::Engine<R>::set_temporal_egress(&mut self, formualizer_eval::engine::TemporalEgress)
 pub fn formualizer_eval::engine::eval::Engine<R>::set_volatile_level(&mut self, formualizer_eval::traits::VolatileLevel)
 pub fn formualizer_eval::engine::eval::Engine<R>::set_workbook_load_limits(&mut self, formualizer_eval::engine::WorkbookLoadLimits)
 pub fn formualizer_eval::engine::eval::Engine<R>::set_workbook_seed(&mut self, u64)
@@ -1506,6 +1528,7 @@ pub fn formualizer_eval::engine::eval::Engine<R>::staged_formula_count(&self) ->
 pub fn formualizer_eval::engine::eval::Engine<R>::table_metadata(&self, &str) -> core::option::Option<formualizer_eval::engine::eval::TableMetadata>
 pub fn formualizer_eval::engine::eval::Engine<R>::tables(&self) -> alloc::vec::Vec<formualizer_eval::engine::eval::TableMetadata>
 pub fn formualizer_eval::engine::eval::Engine<R>::take_formula_parse_diagnostics(&mut self) -> alloc::vec::Vec<formualizer_eval::engine::FormulaParseDiagnostic>
+pub fn formualizer_eval::engine::eval::Engine<R>::temporal_egress(&self) -> formualizer_eval::engine::TemporalEgress
 pub fn formualizer_eval::engine::eval::Engine<R>::undo_action(&mut self, &mut formualizer_eval::engine::graph::editor::undo_engine::UndoEngine) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::eval::Engine<R>::undo_logged(&mut self, &mut formualizer_eval::engine::graph::editor::undo_engine::UndoEngine, &mut formualizer_eval::engine::graph::editor::change_log::ChangeLog) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::eval::Engine<R>::update_name(&mut self, &str, formualizer_eval::engine::named_range::NamedDefinition, formualizer_eval::engine::named_range::NameScope) -> core::result::Result<(), formualizer_common::error::ExcelError>
@@ -1545,10 +1568,13 @@ pub fn formualizer_eval::engine::eval::Engine<R>::clock(&self) -> &dyn formualiz
 pub fn formualizer_eval::engine::eval::Engine<R>::current_sheet_index(&self, &str) -> core::option::Option<usize>
 pub fn formualizer_eval::engine::eval::Engine<R>::data_snapshot_id(&self) -> u64
 pub fn formualizer_eval::engine::eval::Engine<R>::date_system(&self) -> formualizer_common::value::DateSystem
+pub fn formualizer_eval::engine::eval::Engine<R>::format_class(&self, formualizer_eval::format::FormatId) -> core::option::Option<formualizer_common::numfmt::FormatClass>
 pub fn formualizer_eval::engine::eval::Engine<R>::formula_text_at_cell(&self, formualizer_eval::reference::CellRef) -> core::result::Result<core::option::Option<alloc::string::String>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::inspect_reference(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<core::option::Option<formualizer_eval::traits::ReferenceInfo>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::locale(&self) -> formualizer_eval::locale::Locale
 pub fn formualizer_eval::engine::eval::Engine<R>::recalc_epoch(&self) -> u64
+pub fn formualizer_eval::engine::eval::Engine<R>::record_cell_derived_format(&self, &str, u32, u32, core::option::Option<formualizer_eval::format::FormatId>)
+pub fn formualizer_eval::engine::eval::Engine<R>::resolve_cell_format(&self, core::option::Option<&str>, u32, u32, &str) -> core::option::Option<formualizer_eval::format::FormatId>
 pub fn formualizer_eval::engine::eval::Engine<R>::resolve_cell_reference_value(&self, core::option::Option<&str>, u32, u32, &str) -> core::result::Result<formualizer_common::value::LiteralValue, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::resolve_range_view<'c>(&'c self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<formualizer_eval::engine::range_view::RangeView<'c>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
@@ -3440,10 +3466,13 @@ pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::clock(&sel
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::current_sheet_index(&self, &str) -> core::option::Option<usize>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::data_snapshot_id(&self) -> u64
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::date_system(&self) -> formualizer_common::value::DateSystem
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::format_class(&self, formualizer_eval::format::FormatId) -> core::option::Option<formualizer_common::numfmt::FormatClass>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::formula_text_at_cell(&self, formualizer_eval::reference::CellRef) -> core::result::Result<core::option::Option<alloc::string::String>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::inspect_reference(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<core::option::Option<formualizer_eval::traits::ReferenceInfo>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::locale(&self) -> formualizer_eval::locale::Locale
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::recalc_epoch(&self) -> u64
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::record_cell_derived_format(&self, &str, u32, u32, core::option::Option<formualizer_eval::format::FormatId>)
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::resolve_cell_format(&self, core::option::Option<&str>, u32, u32, &str) -> core::option::Option<formualizer_eval::format::FormatId>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::resolve_cell_reference_value(&self, core::option::Option<&str>, u32, u32, &str) -> core::result::Result<formualizer_common::value::LiteralValue, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::resolve_range_view<'c>(&'c self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<formualizer_eval::engine::range_view::RangeView<'c>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
@@ -4744,10 +4773,13 @@ pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::clock
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::current_sheet_index(&self, &str) -> core::option::Option<usize>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::data_snapshot_id(&self) -> u64
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::date_system(&self) -> formualizer_common::value::DateSystem
+pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::format_class(&self, formualizer_eval::format::FormatId) -> core::option::Option<formualizer_common::numfmt::FormatClass>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::formula_text_at_cell(&self, formualizer_eval::reference::CellRef) -> core::result::Result<core::option::Option<alloc::string::String>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::inspect_reference(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<core::option::Option<formualizer_eval::traits::ReferenceInfo>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::locale(&self) -> formualizer_eval::locale::Locale
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::recalc_epoch(&self) -> u64
+pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::record_cell_derived_format(&self, &str, u32, u32, core::option::Option<formualizer_eval::format::FormatId>)
+pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::resolve_cell_format(&self, core::option::Option<&str>, u32, u32, &str) -> core::option::Option<formualizer_eval::format::FormatId>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::resolve_cell_reference_value(&self, core::option::Option<&str>, u32, u32, &str) -> core::result::Result<formualizer_common::value::LiteralValue, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::resolve_range_view<'c>(&'c self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<formualizer_eval::engine::range_view::RangeView<'c>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
@@ -5644,6 +5676,20 @@ pub fn formualizer_eval::engine::TableSelection::fmt(&self, &mut core::fmt::Form
 impl core::hash::Hash for formualizer_eval::engine::TableSelection
 pub fn formualizer_eval::engine::TableSelection::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::TableSelection
+pub enum formualizer_eval::engine::TemporalEgress
+pub formualizer_eval::engine::TemporalEgress::Native
+pub formualizer_eval::engine::TemporalEgress::Serial
+impl core::clone::Clone for formualizer_eval::engine::TemporalEgress
+pub fn formualizer_eval::engine::TemporalEgress::clone(&self) -> formualizer_eval::engine::TemporalEgress
+impl core::cmp::Eq for formualizer_eval::engine::TemporalEgress
+impl core::cmp::PartialEq for formualizer_eval::engine::TemporalEgress
+pub fn formualizer_eval::engine::TemporalEgress::eq(&self, &formualizer_eval::engine::TemporalEgress) -> bool
+impl core::default::Default for formualizer_eval::engine::TemporalEgress
+pub fn formualizer_eval::engine::TemporalEgress::default() -> formualizer_eval::engine::TemporalEgress
+impl core::fmt::Debug for formualizer_eval::engine::TemporalEgress
+pub fn formualizer_eval::engine::TemporalEgress::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_eval::engine::TemporalEgress
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::TemporalEgress
 #[repr(u8)] pub enum formualizer_eval::engine::VertexKind
 pub formualizer_eval::engine::VertexKind::Cell = 1
 pub formualizer_eval::engine::VertexKind::Empty = 0
@@ -6101,6 +6147,7 @@ pub fn formualizer_eval::engine::eval::Engine<R>::set_rows_hidden(&mut self, &st
 pub fn formualizer_eval::engine::eval::Engine<R>::set_sheet_index_mode(&mut self, formualizer_eval::engine::SheetIndexMode)
 pub fn formualizer_eval::engine::eval::Engine<R>::set_source_scalar_version(&mut self, &str, core::option::Option<u64>) -> core::result::Result<(), formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::set_source_table_version(&mut self, &str, core::option::Option<u64>) -> core::result::Result<(), formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::eval::Engine<R>::set_temporal_egress(&mut self, formualizer_eval::engine::TemporalEgress)
 pub fn formualizer_eval::engine::eval::Engine<R>::set_volatile_level(&mut self, formualizer_eval::traits::VolatileLevel)
 pub fn formualizer_eval::engine::eval::Engine<R>::set_workbook_load_limits(&mut self, formualizer_eval::engine::WorkbookLoadLimits)
 pub fn formualizer_eval::engine::eval::Engine<R>::set_workbook_seed(&mut self, u64)
@@ -6115,6 +6162,7 @@ pub fn formualizer_eval::engine::eval::Engine<R>::staged_formula_count(&self) ->
 pub fn formualizer_eval::engine::eval::Engine<R>::table_metadata(&self, &str) -> core::option::Option<formualizer_eval::engine::eval::TableMetadata>
 pub fn formualizer_eval::engine::eval::Engine<R>::tables(&self) -> alloc::vec::Vec<formualizer_eval::engine::eval::TableMetadata>
 pub fn formualizer_eval::engine::eval::Engine<R>::take_formula_parse_diagnostics(&mut self) -> alloc::vec::Vec<formualizer_eval::engine::FormulaParseDiagnostic>
+pub fn formualizer_eval::engine::eval::Engine<R>::temporal_egress(&self) -> formualizer_eval::engine::TemporalEgress
 pub fn formualizer_eval::engine::eval::Engine<R>::undo_action(&mut self, &mut formualizer_eval::engine::graph::editor::undo_engine::UndoEngine) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::eval::Engine<R>::undo_logged(&mut self, &mut formualizer_eval::engine::graph::editor::undo_engine::UndoEngine, &mut formualizer_eval::engine::graph::editor::change_log::ChangeLog) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::eval::Engine<R>::update_name(&mut self, &str, formualizer_eval::engine::named_range::NamedDefinition, formualizer_eval::engine::named_range::NameScope) -> core::result::Result<(), formualizer_common::error::ExcelError>
@@ -6154,10 +6202,13 @@ pub fn formualizer_eval::engine::eval::Engine<R>::clock(&self) -> &dyn formualiz
 pub fn formualizer_eval::engine::eval::Engine<R>::current_sheet_index(&self, &str) -> core::option::Option<usize>
 pub fn formualizer_eval::engine::eval::Engine<R>::data_snapshot_id(&self) -> u64
 pub fn formualizer_eval::engine::eval::Engine<R>::date_system(&self) -> formualizer_common::value::DateSystem
+pub fn formualizer_eval::engine::eval::Engine<R>::format_class(&self, formualizer_eval::format::FormatId) -> core::option::Option<formualizer_common::numfmt::FormatClass>
 pub fn formualizer_eval::engine::eval::Engine<R>::formula_text_at_cell(&self, formualizer_eval::reference::CellRef) -> core::result::Result<core::option::Option<alloc::string::String>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::inspect_reference(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<core::option::Option<formualizer_eval::traits::ReferenceInfo>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::locale(&self) -> formualizer_eval::locale::Locale
 pub fn formualizer_eval::engine::eval::Engine<R>::recalc_epoch(&self) -> u64
+pub fn formualizer_eval::engine::eval::Engine<R>::record_cell_derived_format(&self, &str, u32, u32, core::option::Option<formualizer_eval::format::FormatId>)
+pub fn formualizer_eval::engine::eval::Engine<R>::resolve_cell_format(&self, core::option::Option<&str>, u32, u32, &str) -> core::option::Option<formualizer_eval::format::FormatId>
 pub fn formualizer_eval::engine::eval::Engine<R>::resolve_cell_reference_value(&self, core::option::Option<&str>, u32, u32, &str) -> core::result::Result<formualizer_common::value::LiteralValue, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::resolve_range_view<'c>(&'c self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<formualizer_eval::engine::range_view::RangeView<'c>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
@@ -6268,6 +6319,7 @@ pub formualizer_eval::engine::EvalConfig::sheet_index_mode: formualizer_eval::en
 pub formualizer_eval::engine::EvalConfig::spill: formualizer_eval::engine::SpillConfig
 pub formualizer_eval::engine::EvalConfig::stripe_height: u32
 pub formualizer_eval::engine::EvalConfig::stripe_width: u32
+pub formualizer_eval::engine::EvalConfig::temporal_egress: formualizer_eval::engine::TemporalEgress
 pub formualizer_eval::engine::EvalConfig::use_dynamic_topo: bool
 pub formualizer_eval::engine::EvalConfig::volatile_level: formualizer_eval::traits::VolatileLevel
 pub formualizer_eval::engine::EvalConfig::warmup: formualizer_eval::engine::tuning::WarmupConfig
@@ -7197,6 +7249,44 @@ pub type formualizer_eval::engine::RequestId = u64
 pub mod formualizer_eval::error_policy
 pub fn formualizer_eval::error_policy::propagate_error1(&formualizer_common::value::LiteralValue) -> core::option::Option<formualizer_common::value::LiteralValue>
 pub fn formualizer_eval::error_policy::propagate_error2(&formualizer_common::value::LiteralValue, &formualizer_common::value::LiteralValue) -> core::option::Option<formualizer_common::value::LiteralValue>
+pub mod formualizer_eval::format
+#[repr(transparent)] pub struct formualizer_eval::format::FormatId(pub u16)
+impl formualizer_eval::format::FormatId
+pub const formualizer_eval::format::FormatId::DATE: Self
+pub const formualizer_eval::format::FormatId::DATETIME: Self
+pub const formualizer_eval::format::FormatId::DURATION: Self
+pub const formualizer_eval::format::FormatId::GENERAL: Self
+pub const formualizer_eval::format::FormatId::TIME: Self
+impl core::clone::Clone for formualizer_eval::format::FormatId
+pub fn formualizer_eval::format::FormatId::clone(&self) -> formualizer_eval::format::FormatId
+impl core::cmp::Eq for formualizer_eval::format::FormatId
+impl core::cmp::Ord for formualizer_eval::format::FormatId
+pub fn formualizer_eval::format::FormatId::cmp(&self, &formualizer_eval::format::FormatId) -> core::cmp::Ordering
+impl core::cmp::PartialEq for formualizer_eval::format::FormatId
+pub fn formualizer_eval::format::FormatId::eq(&self, &formualizer_eval::format::FormatId) -> bool
+impl core::cmp::PartialOrd for formualizer_eval::format::FormatId
+pub fn formualizer_eval::format::FormatId::partial_cmp(&self, &formualizer_eval::format::FormatId) -> core::option::Option<core::cmp::Ordering>
+impl core::default::Default for formualizer_eval::format::FormatId
+pub fn formualizer_eval::format::FormatId::default() -> formualizer_eval::format::FormatId
+impl core::fmt::Debug for formualizer_eval::format::FormatId
+pub fn formualizer_eval::format::FormatId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_eval::format::FormatId
+pub fn formualizer_eval::format::FormatId::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for formualizer_eval::format::FormatId
+impl core::marker::StructuralPartialEq for formualizer_eval::format::FormatId
+pub struct formualizer_eval::format::FormatRegistry
+impl formualizer_eval::format::FormatRegistry
+pub fn formualizer_eval::format::FormatRegistry::class(&self, formualizer_eval::format::FormatId) -> core::option::Option<&formualizer_common::numfmt::FormatClass>
+pub fn formualizer_eval::format::FormatRegistry::code(&self, formualizer_eval::format::FormatId) -> core::option::Option<&str>
+pub fn formualizer_eval::format::FormatRegistry::get(&self, formualizer_eval::format::FormatId) -> core::option::Option<&formualizer_common::numfmt::NumberFormat>
+pub fn formualizer_eval::format::FormatRegistry::intern(&mut self, &str) -> formualizer_eval::format::FormatId
+pub fn formualizer_eval::format::FormatRegistry::new() -> Self
+impl core::clone::Clone for formualizer_eval::format::FormatRegistry
+pub fn formualizer_eval::format::FormatRegistry::clone(&self) -> formualizer_eval::format::FormatRegistry
+impl core::default::Default for formualizer_eval::format::FormatRegistry
+pub fn formualizer_eval::format::FormatRegistry::default() -> Self
+impl core::fmt::Debug for formualizer_eval::format::FormatRegistry
+pub fn formualizer_eval::format::FormatRegistry::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub mod formualizer_eval::formula_plane
 pub mod formualizer_eval::formula_plane::grid
 pub enum formualizer_eval::formula_plane::grid::GridExtent
@@ -8617,6 +8707,7 @@ pub type formualizer_eval::function::FnCaps::Output = formualizer_eval::function
 pub fn formualizer_eval::function::FnCaps::not(self) -> Self
 pub trait formualizer_eval::function::Function: core::marker::Send + core::marker::Sync + 'static
 pub fn formualizer_eval::function::Function::aliases(&self) -> &'static [&'static str]
+pub fn formualizer_eval::function::Function::apply_format_propagation<'a>(&self, formualizer_eval::traits::CalcValue<'a>) -> formualizer_eval::traits::CalcValue<'a>
 pub fn formualizer_eval::function::Function::arg_schema(&self) -> &'static [formualizer_eval::args::ArgSchema]
 pub fn formualizer_eval::function::Function::caps(&self) -> formualizer_eval::function::FnCaps
 pub fn formualizer_eval::function::Function::dependency_contract(&self, usize) -> core::option::Option<formualizer_eval::function_contract::FunctionDependencyContract>
@@ -8627,6 +8718,7 @@ pub fn formualizer_eval::function::Function::function_salt(&self) -> u64
 pub fn formualizer_eval::function::Function::min_args(&self) -> usize
 pub fn formualizer_eval::function::Function::name(&self) -> &'static str
 pub fn formualizer_eval::function::Function::namespace(&self) -> &'static str
+pub fn formualizer_eval::function::Function::propagate_format(&self, &formualizer_eval::traits::CalcValue<'_>) -> core::option::Option<formualizer_eval::format::FormatId>
 pub fn formualizer_eval::function::Function::semantic_contract(&self, usize) -> core::option::Option<formualizer_eval::function_contract::FunctionSemanticContract>
 pub fn formualizer_eval::function::Function::variadic(&self) -> bool
 pub fn formualizer_eval::function::Function::volatile(&self) -> bool
@@ -9262,6 +9354,7 @@ pub fn formualizer_eval::timezone::SystemClock::timezone(&self) -> &formualizer_
 pub fn formualizer_eval::timezone::SystemClock::today(&self) -> chrono::naive::date::NaiveDate
 pub mod formualizer_eval::traits
 pub enum formualizer_eval::traits::CalcValue<'a>
+pub formualizer_eval::traits::CalcValue::AnnotatedScalar(formualizer_common::value::LiteralValue, formualizer_eval::format::FormatId)
 pub formualizer_eval::traits::CalcValue::Callable(alloc::sync::Arc<dyn formualizer_eval::traits::CustomCallable>)
 pub formualizer_eval::traits::CalcValue::Range(formualizer_eval::engine::range_view::RangeView<'a>)
 pub formualizer_eval::traits::CalcValue::Scalar(formualizer_common::value::LiteralValue)
@@ -9269,8 +9362,11 @@ impl<'a> formualizer_eval::traits::CalcValue<'a>
 pub fn formualizer_eval::traits::CalcValue<'a>::as_callable(&self) -> core::option::Option<&alloc::sync::Arc<dyn formualizer_eval::traits::CustomCallable>>
 pub fn formualizer_eval::traits::CalcValue<'a>::as_range(&self) -> core::option::Option<&formualizer_eval::engine::range_view::RangeView<'a>>
 pub fn formualizer_eval::traits::CalcValue<'a>::as_scalar(&self) -> core::option::Option<&formualizer_common::value::LiteralValue>
+pub fn formualizer_eval::traits::CalcValue<'a>::format_id(&self) -> core::option::Option<formualizer_eval::format::FormatId>
 pub fn formualizer_eval::traits::CalcValue<'a>::into_literal(self) -> formualizer_common::value::LiteralValue
 pub fn formualizer_eval::traits::CalcValue<'a>::into_owned(self) -> formualizer_common::value::LiteralValue
+pub fn formualizer_eval::traits::CalcValue<'a>::into_scalar_parts(self) -> (formualizer_common::value::LiteralValue, core::option::Option<formualizer_eval::format::FormatId>)
+pub fn formualizer_eval::traits::CalcValue<'a>::with_format(self, core::option::Option<formualizer_eval::format::FormatId>) -> Self
 impl core::convert::From<formualizer_eval::traits::CalcValue<'_>> for formualizer_common::value::LiteralValue
 pub fn formualizer_common::value::LiteralValue::from(formualizer_eval::traits::CalcValue<'_>) -> Self
 impl<'a> core::clone::Clone for formualizer_eval::traits::CalcValue<'a>
@@ -9398,10 +9494,13 @@ pub fn formualizer_eval::traits::EvaluationContext::clock(&self) -> &dyn formual
 pub fn formualizer_eval::traits::EvaluationContext::current_sheet_index(&self, &str) -> core::option::Option<usize>
 pub fn formualizer_eval::traits::EvaluationContext::data_snapshot_id(&self) -> u64
 pub fn formualizer_eval::traits::EvaluationContext::date_system(&self) -> formualizer_common::value::DateSystem
+pub fn formualizer_eval::traits::EvaluationContext::format_class(&self, formualizer_eval::format::FormatId) -> core::option::Option<formualizer_common::numfmt::FormatClass>
 pub fn formualizer_eval::traits::EvaluationContext::formula_text_at_cell(&self, formualizer_eval::reference::CellRef) -> core::result::Result<core::option::Option<alloc::string::String>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::traits::EvaluationContext::inspect_reference(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<core::option::Option<formualizer_eval::traits::ReferenceInfo>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::traits::EvaluationContext::locale(&self) -> formualizer_eval::locale::Locale
 pub fn formualizer_eval::traits::EvaluationContext::recalc_epoch(&self) -> u64
+pub fn formualizer_eval::traits::EvaluationContext::record_cell_derived_format(&self, &str, u32, u32, core::option::Option<formualizer_eval::format::FormatId>)
+pub fn formualizer_eval::traits::EvaluationContext::resolve_cell_format(&self, core::option::Option<&str>, u32, u32, &str) -> core::option::Option<formualizer_eval::format::FormatId>
 pub fn formualizer_eval::traits::EvaluationContext::resolve_cell_reference_value(&self, core::option::Option<&str>, u32, u32, &str) -> core::result::Result<formualizer_common::value::LiteralValue, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::traits::EvaluationContext::resolve_range_view<'c>(&'c self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<formualizer_eval::engine::range_view::RangeView<'c>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::traits::EvaluationContext::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
@@ -9424,10 +9523,13 @@ pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::clock(&sel
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::current_sheet_index(&self, &str) -> core::option::Option<usize>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::data_snapshot_id(&self) -> u64
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::date_system(&self) -> formualizer_common::value::DateSystem
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::format_class(&self, formualizer_eval::format::FormatId) -> core::option::Option<formualizer_common::numfmt::FormatClass>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::formula_text_at_cell(&self, formualizer_eval::reference::CellRef) -> core::result::Result<core::option::Option<alloc::string::String>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::inspect_reference(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<core::option::Option<formualizer_eval::traits::ReferenceInfo>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::locale(&self) -> formualizer_eval::locale::Locale
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::recalc_epoch(&self) -> u64
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::record_cell_derived_format(&self, &str, u32, u32, core::option::Option<formualizer_eval::format::FormatId>)
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::resolve_cell_format(&self, core::option::Option<&str>, u32, u32, &str) -> core::option::Option<formualizer_eval::format::FormatId>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::resolve_cell_reference_value(&self, core::option::Option<&str>, u32, u32, &str) -> core::result::Result<formualizer_common::value::LiteralValue, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::resolve_range_view<'c>(&'c self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<formualizer_eval::engine::range_view::RangeView<'c>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
@@ -9450,10 +9552,13 @@ pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::clock
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::current_sheet_index(&self, &str) -> core::option::Option<usize>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::data_snapshot_id(&self) -> u64
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::date_system(&self) -> formualizer_common::value::DateSystem
+pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::format_class(&self, formualizer_eval::format::FormatId) -> core::option::Option<formualizer_common::numfmt::FormatClass>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::formula_text_at_cell(&self, formualizer_eval::reference::CellRef) -> core::result::Result<core::option::Option<alloc::string::String>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::inspect_reference(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<core::option::Option<formualizer_eval::traits::ReferenceInfo>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::locale(&self) -> formualizer_eval::locale::Locale
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::recalc_epoch(&self) -> u64
+pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::record_cell_derived_format(&self, &str, u32, u32, core::option::Option<formualizer_eval::format::FormatId>)
+pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::resolve_cell_format(&self, core::option::Option<&str>, u32, u32, &str) -> core::option::Option<formualizer_eval::format::FormatId>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::resolve_cell_reference_value(&self, core::option::Option<&str>, u32, u32, &str) -> core::result::Result<formualizer_common::value::LiteralValue, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::resolve_range_view<'c>(&'c self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<formualizer_eval::engine::range_view::RangeView<'c>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
@@ -9476,10 +9581,13 @@ pub fn formualizer_eval::engine::eval::Engine<R>::clock(&self) -> &dyn formualiz
 pub fn formualizer_eval::engine::eval::Engine<R>::current_sheet_index(&self, &str) -> core::option::Option<usize>
 pub fn formualizer_eval::engine::eval::Engine<R>::data_snapshot_id(&self) -> u64
 pub fn formualizer_eval::engine::eval::Engine<R>::date_system(&self) -> formualizer_common::value::DateSystem
+pub fn formualizer_eval::engine::eval::Engine<R>::format_class(&self, formualizer_eval::format::FormatId) -> core::option::Option<formualizer_common::numfmt::FormatClass>
 pub fn formualizer_eval::engine::eval::Engine<R>::formula_text_at_cell(&self, formualizer_eval::reference::CellRef) -> core::result::Result<core::option::Option<alloc::string::String>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::inspect_reference(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<core::option::Option<formualizer_eval::traits::ReferenceInfo>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::locale(&self) -> formualizer_eval::locale::Locale
 pub fn formualizer_eval::engine::eval::Engine<R>::recalc_epoch(&self) -> u64
+pub fn formualizer_eval::engine::eval::Engine<R>::record_cell_derived_format(&self, &str, u32, u32, core::option::Option<formualizer_eval::format::FormatId>)
+pub fn formualizer_eval::engine::eval::Engine<R>::resolve_cell_format(&self, core::option::Option<&str>, u32, u32, &str) -> core::option::Option<formualizer_eval::format::FormatId>
 pub fn formualizer_eval::engine::eval::Engine<R>::resolve_cell_reference_value(&self, core::option::Option<&str>, u32, u32, &str) -> core::result::Result<formualizer_common::value::LiteralValue, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::resolve_range_view<'c>(&'c self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<formualizer_eval::engine::range_view::RangeView<'c>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
@@ -9493,6 +9601,7 @@ pub fn formualizer_eval::engine::eval::Engine<R>::workbook_seed(&self) -> u64
 pub fn formualizer_eval::engine::eval::Engine<R>::workbook_sheet_count(&self) -> core::option::Option<usize>
 pub trait formualizer_eval::traits::Function: core::marker::Send + core::marker::Sync + 'static
 pub fn formualizer_eval::traits::Function::aliases(&self) -> &'static [&'static str]
+pub fn formualizer_eval::traits::Function::apply_format_propagation<'a>(&self, formualizer_eval::traits::CalcValue<'a>) -> formualizer_eval::traits::CalcValue<'a>
 pub fn formualizer_eval::traits::Function::arg_schema(&self) -> &'static [formualizer_eval::args::ArgSchema]
 pub fn formualizer_eval::traits::Function::caps(&self) -> formualizer_eval::function::FnCaps
 pub fn formualizer_eval::traits::Function::dependency_contract(&self, usize) -> core::option::Option<formualizer_eval::function_contract::FunctionDependencyContract>
@@ -9503,6 +9612,7 @@ pub fn formualizer_eval::traits::Function::function_salt(&self) -> u64
 pub fn formualizer_eval::traits::Function::min_args(&self) -> usize
 pub fn formualizer_eval::traits::Function::name(&self) -> &'static str
 pub fn formualizer_eval::traits::Function::namespace(&self) -> &'static str
+pub fn formualizer_eval::traits::Function::propagate_format(&self, &formualizer_eval::traits::CalcValue<'_>) -> core::option::Option<formualizer_eval::format::FormatId>
 pub fn formualizer_eval::traits::Function::semantic_contract(&self, usize) -> core::option::Option<formualizer_eval::function_contract::FunctionSemanticContract>
 pub fn formualizer_eval::traits::Function::variadic(&self) -> bool
 pub fn formualizer_eval::traits::Function::volatile(&self) -> bool

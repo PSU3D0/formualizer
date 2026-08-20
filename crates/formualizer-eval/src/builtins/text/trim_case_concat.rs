@@ -27,7 +27,7 @@ const MAX_CONCAT_RESULT_CHARS: usize = 32_767;
 
 fn scalar_like_value(arg: &ArgumentHandle<'_, '_>) -> Result<LiteralValue, ExcelError> {
     Ok(match arg.value()? {
-        crate::traits::CalcValue::Scalar(v) => v,
+        crate::traits::CalcValue::Scalar(v) | crate::traits::CalcValue::AnnotatedScalar(v, _) => v,
         crate::traits::CalcValue::Range(rv) => rv.get_cell(0, 0),
         crate::traits::CalcValue::Callable(_) => LiteralValue::Error(
             ExcelError::new(ExcelErrorKind::Calc).with_message("LAMBDA value must be invoked"),
@@ -71,7 +71,8 @@ fn legacy_scalar_value(arg: &ArgumentHandle<'_, '_>) -> Result<LiteralValue, Exc
             .and_then(|row| row.first())
             .cloned()
             .unwrap_or(LiteralValue::Empty),
-        crate::traits::CalcValue::Scalar(value) => value,
+        crate::traits::CalcValue::Scalar(value)
+        | crate::traits::CalcValue::AnnotatedScalar(value, _) => value,
         crate::traits::CalcValue::Range(view) => view.get_cell(0, 0),
         crate::traits::CalcValue::Callable(_) => LiteralValue::Error(
             ExcelError::new(ExcelErrorKind::Calc).with_message("LAMBDA value must be invoked"),
@@ -112,7 +113,9 @@ fn for_each_expanded_value(
             }
             Ok(())
         }
-        ResolvedArgument::Value(CalcValue::Scalar(value)) => visitor(&value),
+        ResolvedArgument::Value(
+            CalcValue::Scalar(value) | CalcValue::AnnotatedScalar(value, _),
+        ) => visitor(&value),
         ResolvedArgument::Value(CalcValue::Callable(_)) => visitor(&LiteralValue::Error(
             ExcelError::new(ExcelErrorKind::Calc).with_message("LAMBDA value must be invoked"),
         )),

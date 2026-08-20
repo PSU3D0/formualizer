@@ -836,6 +836,7 @@ fn build_sheetport_workbook() -> Workbook {
 
 fn build_now_today_workbook() -> Workbook {
     let wb = Workbook::new(None).unwrap();
+    wb.set_temporal_egress("serial".to_string()).unwrap();
     wb.add_sheet("Outputs".to_string()).unwrap();
     wb.set_formula("Outputs".to_string(), 1, 1, "NOW()".to_string())
         .unwrap();
@@ -1371,4 +1372,20 @@ fn test_sheetport_session_surfaces_local_timezone_determinism_error() {
             .unwrap()
             .contains("Deterministic mode forbids `Local` timezone")
     );
+}
+
+#[wasm_bindgen_test]
+fn test_computed_date_native_by_default_and_serial_opt_out() {
+    let wb = Workbook::new(None).unwrap();
+    let sheet = wb.sheet("Sheet1".to_string()).unwrap();
+    sheet
+        .set_formula(1, 1, "=DATE(2024,12,1)".to_string())
+        .unwrap();
+    wb.evaluate_all().unwrap();
+
+    let native = sheet.get_value(1, 1).unwrap();
+    assert!(native.is_instance_of::<js_sys::Date>());
+
+    wb.set_temporal_egress("serial".to_string()).unwrap();
+    assert_eq!(sheet.get_value(1, 1).unwrap().as_f64(), Some(45_627.0));
 }

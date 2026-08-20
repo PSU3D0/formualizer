@@ -433,26 +433,13 @@ impl<'a> RangeView<'a> {
                     LiteralValue::Empty
                 }
             }
-            arrow_store::TypeTag::DateTime => {
+            arrow_store::TypeTag::DateTime | arrow_store::TypeTag::Duration => {
                 if let Some(arr) = &ch.numbers {
                     if arr.is_null(in_off) {
-                        return LiteralValue::Empty;
+                        LiteralValue::Empty
+                    } else {
+                        LiteralValue::Number(arr.value(in_off))
                     }
-                    LiteralValue::try_from_serial_number_for(sheet.date_system, arr.value(in_off))
-                        .unwrap_or_else(LiteralValue::Error)
-                } else {
-                    LiteralValue::Empty
-                }
-            }
-            arrow_store::TypeTag::Duration => {
-                if let Some(arr) = &ch.numbers {
-                    if arr.is_null(in_off) {
-                        return LiteralValue::Empty;
-                    }
-                    let serial = arr.value(in_off);
-                    let nanos_f = serial * 86_400.0 * 1_000_000_000.0;
-                    let nanos = nanos_f.round().clamp(i64::MIN as f64, i64::MAX as f64) as i64;
-                    LiteralValue::Duration(chrono::Duration::nanoseconds(nanos))
                 } else {
                     LiteralValue::Empty
                 }

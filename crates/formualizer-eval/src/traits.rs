@@ -107,6 +107,8 @@ pub trait CustomCallable: Send + Sync {
 #[derive(Clone)]
 pub enum CalcValue<'a> {
     Scalar(LiteralValue),
+    /// Scalar carrying an eval-internal number-format annotation.
+    AnnotatedScalar(LiteralValue, crate::format::FormatId),
     Range(RangeView<'a>),
     Callable(Arc<dyn CustomCallable>),
 }
@@ -137,6 +139,11 @@ impl<'a> std::fmt::Debug for CalcValue<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             CalcValue::Scalar(v) => f.debug_tuple("Scalar").field(v).finish(),
+            CalcValue::AnnotatedScalar(v, format) => f
+                .debug_tuple("AnnotatedScalar")
+                .field(v)
+                .field(format)
+                .finish(),
             CalcValue::Range(rv) => {
                 let (r, c) = rv.dims();
                 f.debug_tuple("Range").field(&(r, c)).finish()
@@ -149,7 +156,7 @@ impl<'a> std::fmt::Debug for CalcValue<'a> {
 impl<'a> CalcValue<'a> {
     pub fn into_literal(self) -> LiteralValue {
         match self {
-            CalcValue::Scalar(s) => s,
+            CalcValue::Scalar(s) | CalcValue::AnnotatedScalar(s, _) => s,
             CalcValue::Range(rv) => {
                 let (rows, cols) = rv.dims();
                 if rows == 1 && cols == 1 {
@@ -174,8 +181,34 @@ impl<'a> CalcValue<'a> {
 
     pub fn as_scalar(&self) -> Option<&LiteralValue> {
         match self {
-            CalcValue::Scalar(s) => Some(s),
+            CalcValue::Scalar(s) | CalcValue::AnnotatedScalar(s, _) => Some(s),
             _ => None,
+        }
+    }
+
+    pub fn format_id(&self) -> Option<crate::format::FormatId> {
+        match self {
+            CalcValue::AnnotatedScalar(_, format) => Some(*format),
+            _ => None,
+        }
+    }
+
+    pub fn with_format(self, format: Option<crate::format::FormatId>) -> Self {
+        let format = format.filter(|id| *id != crate::format::FormatId::GENERAL);
+        match (self, format) {
+            (CalcValue::Scalar(value) | CalcValue::AnnotatedScalar(value, _), Some(id)) => {
+                CalcValue::AnnotatedScalar(value, id)
+            }
+            (CalcValue::AnnotatedScalar(value, _), None) => CalcValue::Scalar(value),
+            (other, _) => other,
+        }
+    }
+
+    pub fn into_scalar_parts(self) -> (LiteralValue, Option<crate::format::FormatId>) {
+        match self {
+            CalcValue::Scalar(value) => (value, None),
+            CalcValue::AnnotatedScalar(value, format) => (value, Some(format)),
+            other => (other.into_literal(), None),
         }
     }
 
@@ -207,7 +240,7 @@ impl From<CalcValue<'_>> for LiteralValue {
 impl<'a> PartialEq<LiteralValue> for CalcValue<'a> {
     fn eq(&self, other: &LiteralValue) -> bool {
         match self {
-            CalcValue::Scalar(s) => s == other,
+            CalcValue::Scalar(s) | CalcValue::AnnotatedScalar(s, _) => s == other,
             CalcValue::Range(rv) => match other {
                 LiteralValue::Array(arr) => {
                     let (rows, cols) = rv.dims();
@@ -818,7 +851,9 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
             // Preserve the argument's own error instead of reporting the shape
             // mismatch that rejecting it would produce.
             ResolvedArgument::Value(CalcValue::Scalar(LiteralValue::Error(error))) => Err(error),
-            ResolvedArgument::Value(CalcValue::Scalar(scalar)) => RangeView::try_from_owned_rows(
+            ResolvedArgument::Value(
+                CalcValue::Scalar(scalar) | CalcValue::AnnotatedScalar(scalar, _),
+            ) => RangeView::try_from_owned_rows(
                 vec![vec![scalar]],
                 self.interp.context.date_system(),
                 self.interp.context.cancellation_token(),
@@ -1459,6 +1494,36 @@ pub trait EvaluationContext: Resolver + FunctionProvider + SourceResolver {
         };
         let view = self.resolve_range_view(&reference, current_sheet)?;
         Ok(view.as_1x1().unwrap_or(LiteralValue::Empty))
+    }
+
+    /// Resolve the effective number-format annotation of a scalar cell read.
+    fn resolve_cell_format(
+        &self,
+        _sheet: Option<&str>,
+        _row: u32,
+        _col: u32,
+        _current_sheet: &str,
+    ) -> Option<crate::format::FormatId> {
+        None
+    }
+
+    /// Resolve an interned format id to its reported class.
+    fn format_class(
+        &self,
+        format: crate::format::FormatId,
+    ) -> Option<formualizer_common::numfmt::FormatClass> {
+        formualizer_common::numfmt::NumberFormat::builtin(format.0)
+            .map(|format| format.class().clone())
+    }
+
+    /// Record a formula cell's derived scalar format during alternate scalar evaluation paths.
+    fn record_cell_derived_format(
+        &self,
+        _sheet: &str,
+        _row: u32,
+        _col: u32,
+        _format: Option<crate::format::FormatId>,
+    ) {
     }
 
     /// Locale provider: invariant by default
