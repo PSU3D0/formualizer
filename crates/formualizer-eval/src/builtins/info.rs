@@ -1810,6 +1810,7 @@ impl Function for CellFn {
 
         let top_left = match args[1].value()? {
             CalcValue::Scalar(lit) => lit,
+            CalcValue::AnnotatedScalar(lit, _) => lit,
             CalcValue::Range(view) => view.get_cell(0, 0),
             CalcValue::Callable(_) => {
                 return Ok(scalar(LiteralValue::Error(
