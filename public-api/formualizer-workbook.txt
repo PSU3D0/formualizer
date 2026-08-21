@@ -17,6 +17,7 @@ pub mod formualizer_workbook::backends
 pub mod formualizer_workbook::backends::calamine
 pub struct formualizer_workbook::backends::calamine::CalamineAdapter
 impl formualizer_workbook::backends::calamine::CalamineAdapter
+pub fn formualizer_workbook::backends::calamine::CalamineAdapter::external_cached_sources(&self) -> &[(alloc::string::String, formualizer_common::value::LiteralValue)]
 pub fn formualizer_workbook::backends::calamine::CalamineAdapter::external_link_target(&self, u32) -> core::option::Option<&str>
 impl formualizer_workbook::traits::SpreadsheetReader for formualizer_workbook::backends::calamine::CalamineAdapter
 pub type formualizer_workbook::backends::calamine::CalamineAdapter::Error = calamine::errors::Error
@@ -24,6 +25,7 @@ pub fn formualizer_workbook::backends::calamine::CalamineAdapter::access_granula
 pub fn formualizer_workbook::backends::calamine::CalamineAdapter::calc_settings(&self) -> core::option::Option<formualizer_workbook::traits::CalcSettings>
 pub fn formualizer_workbook::backends::calamine::CalamineAdapter::capabilities(&self) -> formualizer_workbook::traits::BackendCaps
 pub fn formualizer_workbook::backends::calamine::CalamineAdapter::defined_names(&mut self) -> core::result::Result<alloc::vec::Vec<formualizer_workbook::traits::DefinedName>, Self::Error>
+pub fn formualizer_workbook::backends::calamine::CalamineAdapter::external_cached_sources(&self) -> &[(alloc::string::String, formualizer_common::value::LiteralValue)]
 pub fn formualizer_workbook::backends::calamine::CalamineAdapter::is_loaded(&self, &str, core::option::Option<u32>, core::option::Option<u32>) -> bool
 pub fn formualizer_workbook::backends::calamine::CalamineAdapter::load_stats(&self) -> core::option::Option<formualizer_workbook::traits::AdapterLoadStats>
 pub fn formualizer_workbook::backends::calamine::CalamineAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
@@ -145,6 +147,7 @@ pub fn formualizer_workbook::backends::csv::CsvAdapter::access_granularity(&self
 pub fn formualizer_workbook::backends::csv::CsvAdapter::calc_settings(&self) -> core::option::Option<formualizer_workbook::traits::CalcSettings>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::capabilities(&self) -> formualizer_workbook::traits::BackendCaps
 pub fn formualizer_workbook::backends::csv::CsvAdapter::defined_names(&mut self) -> core::result::Result<alloc::vec::Vec<formualizer_workbook::traits::DefinedName>, Self::Error>
+pub fn formualizer_workbook::backends::csv::CsvAdapter::external_cached_sources(&self) -> &[(alloc::string::String, formualizer_common::value::LiteralValue)]
 pub fn formualizer_workbook::backends::csv::CsvAdapter::is_loaded(&self, &str, core::option::Option<u32>, core::option::Option<u32>) -> bool
 pub fn formualizer_workbook::backends::csv::CsvAdapter::load_stats(&self) -> core::option::Option<formualizer_workbook::traits::AdapterLoadStats>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
@@ -220,6 +223,7 @@ pub fn formualizer_workbook::backends::json::JsonAdapter::access_granularity(&se
 pub fn formualizer_workbook::backends::json::JsonAdapter::calc_settings(&self) -> core::option::Option<formualizer_workbook::traits::CalcSettings>
 pub fn formualizer_workbook::backends::json::JsonAdapter::capabilities(&self) -> formualizer_workbook::traits::BackendCaps
 pub fn formualizer_workbook::backends::json::JsonAdapter::defined_names(&mut self) -> core::result::Result<alloc::vec::Vec<formualizer_workbook::traits::DefinedName>, Self::Error>
+pub fn formualizer_workbook::backends::json::JsonAdapter::external_cached_sources(&self) -> &[(alloc::string::String, formualizer_common::value::LiteralValue)]
 pub fn formualizer_workbook::backends::json::JsonAdapter::is_loaded(&self, &str, core::option::Option<u32>, core::option::Option<u32>) -> bool
 pub fn formualizer_workbook::backends::json::JsonAdapter::load_stats(&self) -> core::option::Option<formualizer_workbook::traits::AdapterLoadStats>
 pub fn formualizer_workbook::backends::json::JsonAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
@@ -292,6 +296,7 @@ pub fn formualizer_workbook::backends::umya::UmyaAdapter::access_granularity(&se
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::calc_settings(&self) -> core::option::Option<formualizer_workbook::traits::CalcSettings>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::capabilities(&self) -> formualizer_workbook::traits::BackendCaps
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::defined_names(&mut self) -> core::result::Result<alloc::vec::Vec<formualizer_workbook::traits::DefinedName>, Self::Error>
+pub fn formualizer_workbook::backends::umya::UmyaAdapter::external_cached_sources(&self) -> &[(alloc::string::String, formualizer_common::value::LiteralValue)]
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::is_loaded(&self, &str, core::option::Option<u32>, core::option::Option<u32>) -> bool
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::load_stats(&self) -> core::option::Option<formualizer_workbook::traits::AdapterLoadStats>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
@@ -321,6 +326,7 @@ pub type formualizer_workbook::backends::umya::UmyaAdapter::Error = formualizer_
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::stream_into_engine(&mut self, &mut formualizer_eval::engine::eval::Engine<R>) -> core::result::Result<(), Self::Error>
 pub struct formualizer_workbook::backends::CalamineAdapter
 impl formualizer_workbook::backends::calamine::CalamineAdapter
+pub fn formualizer_workbook::backends::calamine::CalamineAdapter::external_cached_sources(&self) -> &[(alloc::string::String, formualizer_common::value::LiteralValue)]
 pub fn formualizer_workbook::backends::calamine::CalamineAdapter::external_link_target(&self, u32) -> core::option::Option<&str>
 impl formualizer_workbook::traits::SpreadsheetReader for formualizer_workbook::backends::calamine::CalamineAdapter
 pub type formualizer_workbook::backends::calamine::CalamineAdapter::Error = calamine::errors::Error
@@ -328,6 +334,7 @@ pub fn formualizer_workbook::backends::calamine::CalamineAdapter::access_granula
 pub fn formualizer_workbook::backends::calamine::CalamineAdapter::calc_settings(&self) -> core::option::Option<formualizer_workbook::traits::CalcSettings>
 pub fn formualizer_workbook::backends::calamine::CalamineAdapter::capabilities(&self) -> formualizer_workbook::traits::BackendCaps
 pub fn formualizer_workbook::backends::calamine::CalamineAdapter::defined_names(&mut self) -> core::result::Result<alloc::vec::Vec<formualizer_workbook::traits::DefinedName>, Self::Error>
+pub fn formualizer_workbook::backends::calamine::CalamineAdapter::external_cached_sources(&self) -> &[(alloc::string::String, formualizer_common::value::LiteralValue)]
 pub fn formualizer_workbook::backends::calamine::CalamineAdapter::is_loaded(&self, &str, core::option::Option<u32>, core::option::Option<u32>) -> bool
 pub fn formualizer_workbook::backends::calamine::CalamineAdapter::load_stats(&self) -> core::option::Option<formualizer_workbook::traits::AdapterLoadStats>
 pub fn formualizer_workbook::backends::calamine::CalamineAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
@@ -361,6 +368,7 @@ pub fn formualizer_workbook::backends::csv::CsvAdapter::access_granularity(&self
 pub fn formualizer_workbook::backends::csv::CsvAdapter::calc_settings(&self) -> core::option::Option<formualizer_workbook::traits::CalcSettings>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::capabilities(&self) -> formualizer_workbook::traits::BackendCaps
 pub fn formualizer_workbook::backends::csv::CsvAdapter::defined_names(&mut self) -> core::result::Result<alloc::vec::Vec<formualizer_workbook::traits::DefinedName>, Self::Error>
+pub fn formualizer_workbook::backends::csv::CsvAdapter::external_cached_sources(&self) -> &[(alloc::string::String, formualizer_common::value::LiteralValue)]
 pub fn formualizer_workbook::backends::csv::CsvAdapter::is_loaded(&self, &str, core::option::Option<u32>, core::option::Option<u32>) -> bool
 pub fn formualizer_workbook::backends::csv::CsvAdapter::load_stats(&self) -> core::option::Option<formualizer_workbook::traits::AdapterLoadStats>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
@@ -431,6 +439,7 @@ pub fn formualizer_workbook::backends::json::JsonAdapter::access_granularity(&se
 pub fn formualizer_workbook::backends::json::JsonAdapter::calc_settings(&self) -> core::option::Option<formualizer_workbook::traits::CalcSettings>
 pub fn formualizer_workbook::backends::json::JsonAdapter::capabilities(&self) -> formualizer_workbook::traits::BackendCaps
 pub fn formualizer_workbook::backends::json::JsonAdapter::defined_names(&mut self) -> core::result::Result<alloc::vec::Vec<formualizer_workbook::traits::DefinedName>, Self::Error>
+pub fn formualizer_workbook::backends::json::JsonAdapter::external_cached_sources(&self) -> &[(alloc::string::String, formualizer_common::value::LiteralValue)]
 pub fn formualizer_workbook::backends::json::JsonAdapter::is_loaded(&self, &str, core::option::Option<u32>, core::option::Option<u32>) -> bool
 pub fn formualizer_workbook::backends::json::JsonAdapter::load_stats(&self) -> core::option::Option<formualizer_workbook::traits::AdapterLoadStats>
 pub fn formualizer_workbook::backends::json::JsonAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
@@ -471,6 +480,7 @@ pub fn formualizer_workbook::backends::umya::UmyaAdapter::access_granularity(&se
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::calc_settings(&self) -> core::option::Option<formualizer_workbook::traits::CalcSettings>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::capabilities(&self) -> formualizer_workbook::traits::BackendCaps
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::defined_names(&mut self) -> core::result::Result<alloc::vec::Vec<formualizer_workbook::traits::DefinedName>, Self::Error>
+pub fn formualizer_workbook::backends::umya::UmyaAdapter::external_cached_sources(&self) -> &[(alloc::string::String, formualizer_common::value::LiteralValue)]
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::is_loaded(&self, &str, core::option::Option<u32>, core::option::Option<u32>) -> bool
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::load_stats(&self) -> core::option::Option<formualizer_workbook::traits::AdapterLoadStats>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
@@ -904,6 +914,7 @@ pub fn formualizer_workbook::traits::SpreadsheetReader::access_granularity(&self
 pub fn formualizer_workbook::traits::SpreadsheetReader::calc_settings(&self) -> core::option::Option<formualizer_workbook::traits::CalcSettings>
 pub fn formualizer_workbook::traits::SpreadsheetReader::capabilities(&self) -> formualizer_workbook::traits::BackendCaps
 pub fn formualizer_workbook::traits::SpreadsheetReader::defined_names(&mut self) -> core::result::Result<alloc::vec::Vec<formualizer_workbook::traits::DefinedName>, Self::Error>
+pub fn formualizer_workbook::traits::SpreadsheetReader::external_cached_sources(&self) -> &[(alloc::string::String, formualizer_common::value::LiteralValue)]
 pub fn formualizer_workbook::traits::SpreadsheetReader::is_loaded(&self, &str, core::option::Option<u32>, core::option::Option<u32>) -> bool
 pub fn formualizer_workbook::traits::SpreadsheetReader::load_stats(&self) -> core::option::Option<formualizer_workbook::traits::AdapterLoadStats>
 pub fn formualizer_workbook::traits::SpreadsheetReader::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
@@ -920,6 +931,7 @@ pub fn formualizer_workbook::backends::calamine::CalamineAdapter::access_granula
 pub fn formualizer_workbook::backends::calamine::CalamineAdapter::calc_settings(&self) -> core::option::Option<formualizer_workbook::traits::CalcSettings>
 pub fn formualizer_workbook::backends::calamine::CalamineAdapter::capabilities(&self) -> formualizer_workbook::traits::BackendCaps
 pub fn formualizer_workbook::backends::calamine::CalamineAdapter::defined_names(&mut self) -> core::result::Result<alloc::vec::Vec<formualizer_workbook::traits::DefinedName>, Self::Error>
+pub fn formualizer_workbook::backends::calamine::CalamineAdapter::external_cached_sources(&self) -> &[(alloc::string::String, formualizer_common::value::LiteralValue)]
 pub fn formualizer_workbook::backends::calamine::CalamineAdapter::is_loaded(&self, &str, core::option::Option<u32>, core::option::Option<u32>) -> bool
 pub fn formualizer_workbook::backends::calamine::CalamineAdapter::load_stats(&self) -> core::option::Option<formualizer_workbook::traits::AdapterLoadStats>
 pub fn formualizer_workbook::backends::calamine::CalamineAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
@@ -936,6 +948,7 @@ pub fn formualizer_workbook::backends::csv::CsvAdapter::access_granularity(&self
 pub fn formualizer_workbook::backends::csv::CsvAdapter::calc_settings(&self) -> core::option::Option<formualizer_workbook::traits::CalcSettings>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::capabilities(&self) -> formualizer_workbook::traits::BackendCaps
 pub fn formualizer_workbook::backends::csv::CsvAdapter::defined_names(&mut self) -> core::result::Result<alloc::vec::Vec<formualizer_workbook::traits::DefinedName>, Self::Error>
+pub fn formualizer_workbook::backends::csv::CsvAdapter::external_cached_sources(&self) -> &[(alloc::string::String, formualizer_common::value::LiteralValue)]
 pub fn formualizer_workbook::backends::csv::CsvAdapter::is_loaded(&self, &str, core::option::Option<u32>, core::option::Option<u32>) -> bool
 pub fn formualizer_workbook::backends::csv::CsvAdapter::load_stats(&self) -> core::option::Option<formualizer_workbook::traits::AdapterLoadStats>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
@@ -952,6 +965,7 @@ pub fn formualizer_workbook::backends::json::JsonAdapter::access_granularity(&se
 pub fn formualizer_workbook::backends::json::JsonAdapter::calc_settings(&self) -> core::option::Option<formualizer_workbook::traits::CalcSettings>
 pub fn formualizer_workbook::backends::json::JsonAdapter::capabilities(&self) -> formualizer_workbook::traits::BackendCaps
 pub fn formualizer_workbook::backends::json::JsonAdapter::defined_names(&mut self) -> core::result::Result<alloc::vec::Vec<formualizer_workbook::traits::DefinedName>, Self::Error>
+pub fn formualizer_workbook::backends::json::JsonAdapter::external_cached_sources(&self) -> &[(alloc::string::String, formualizer_common::value::LiteralValue)]
 pub fn formualizer_workbook::backends::json::JsonAdapter::is_loaded(&self, &str, core::option::Option<u32>, core::option::Option<u32>) -> bool
 pub fn formualizer_workbook::backends::json::JsonAdapter::load_stats(&self) -> core::option::Option<formualizer_workbook::traits::AdapterLoadStats>
 pub fn formualizer_workbook::backends::json::JsonAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
@@ -968,6 +982,7 @@ pub fn formualizer_workbook::backends::umya::UmyaAdapter::access_granularity(&se
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::calc_settings(&self) -> core::option::Option<formualizer_workbook::traits::CalcSettings>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::capabilities(&self) -> formualizer_workbook::traits::BackendCaps
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::defined_names(&mut self) -> core::result::Result<alloc::vec::Vec<formualizer_workbook::traits::DefinedName>, Self::Error>
+pub fn formualizer_workbook::backends::umya::UmyaAdapter::external_cached_sources(&self) -> &[(alloc::string::String, formualizer_common::value::LiteralValue)]
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::is_loaded(&self, &str, core::option::Option<u32>, core::option::Option<u32>) -> bool
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::load_stats(&self) -> core::option::Option<formualizer_workbook::traits::AdapterLoadStats>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
@@ -1146,6 +1161,8 @@ impl formualizer_eval::traits::ReferenceResolver for formualizer_workbook::workb
 pub fn formualizer_workbook::workbook::WBResolver::resolve_cell_reference(&self, core::option::Option<&str>, u32, u32) -> core::result::Result<formualizer_common::value::LiteralValue, formualizer_common::error::ExcelError>
 impl formualizer_eval::traits::Resolver for formualizer_workbook::workbook::WBResolver
 impl formualizer_eval::traits::SourceResolver for formualizer_workbook::workbook::WBResolver
+pub fn formualizer_workbook::workbook::WBResolver::resolve_source_scalar(&self, &str) -> core::result::Result<formualizer_common::value::LiteralValue, formualizer_common::error::ExcelError>
+pub fn formualizer_workbook::workbook::WBResolver::source_scalar_version(&self, &str) -> core::option::Option<u64>
 impl formualizer_eval::traits::TableResolver for formualizer_workbook::workbook::WBResolver
 pub fn formualizer_workbook::workbook::WBResolver::resolve_table_reference(&self, &formualizer_parse::parser::TableReference) -> core::result::Result<alloc::boxed::Box<dyn formualizer_eval::traits::Table>, formualizer_common::error::ExcelError>
 pub struct formualizer_workbook::workbook::WasmFunctionSpec
@@ -1643,6 +1660,7 @@ impl core::fmt::Debug for formualizer_workbook::traits::BackendCaps
 pub fn formualizer_workbook::traits::BackendCaps::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub struct formualizer_workbook::CalamineAdapter
 impl formualizer_workbook::backends::calamine::CalamineAdapter
+pub fn formualizer_workbook::backends::calamine::CalamineAdapter::external_cached_sources(&self) -> &[(alloc::string::String, formualizer_common::value::LiteralValue)]
 pub fn formualizer_workbook::backends::calamine::CalamineAdapter::external_link_target(&self, u32) -> core::option::Option<&str>
 impl formualizer_workbook::traits::SpreadsheetReader for formualizer_workbook::backends::calamine::CalamineAdapter
 pub type formualizer_workbook::backends::calamine::CalamineAdapter::Error = calamine::errors::Error
@@ -1650,6 +1668,7 @@ pub fn formualizer_workbook::backends::calamine::CalamineAdapter::access_granula
 pub fn formualizer_workbook::backends::calamine::CalamineAdapter::calc_settings(&self) -> core::option::Option<formualizer_workbook::traits::CalcSettings>
 pub fn formualizer_workbook::backends::calamine::CalamineAdapter::capabilities(&self) -> formualizer_workbook::traits::BackendCaps
 pub fn formualizer_workbook::backends::calamine::CalamineAdapter::defined_names(&mut self) -> core::result::Result<alloc::vec::Vec<formualizer_workbook::traits::DefinedName>, Self::Error>
+pub fn formualizer_workbook::backends::calamine::CalamineAdapter::external_cached_sources(&self) -> &[(alloc::string::String, formualizer_common::value::LiteralValue)]
 pub fn formualizer_workbook::backends::calamine::CalamineAdapter::is_loaded(&self, &str, core::option::Option<u32>, core::option::Option<u32>) -> bool
 pub fn formualizer_workbook::backends::calamine::CalamineAdapter::load_stats(&self) -> core::option::Option<formualizer_workbook::traits::AdapterLoadStats>
 pub fn formualizer_workbook::backends::calamine::CalamineAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
@@ -1709,6 +1728,7 @@ pub fn formualizer_workbook::backends::csv::CsvAdapter::access_granularity(&self
 pub fn formualizer_workbook::backends::csv::CsvAdapter::calc_settings(&self) -> core::option::Option<formualizer_workbook::traits::CalcSettings>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::capabilities(&self) -> formualizer_workbook::traits::BackendCaps
 pub fn formualizer_workbook::backends::csv::CsvAdapter::defined_names(&mut self) -> core::result::Result<alloc::vec::Vec<formualizer_workbook::traits::DefinedName>, Self::Error>
+pub fn formualizer_workbook::backends::csv::CsvAdapter::external_cached_sources(&self) -> &[(alloc::string::String, formualizer_common::value::LiteralValue)]
 pub fn formualizer_workbook::backends::csv::CsvAdapter::is_loaded(&self, &str, core::option::Option<u32>, core::option::Option<u32>) -> bool
 pub fn formualizer_workbook::backends::csv::CsvAdapter::load_stats(&self) -> core::option::Option<formualizer_workbook::traits::AdapterLoadStats>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
@@ -1842,6 +1862,7 @@ pub fn formualizer_workbook::backends::json::JsonAdapter::access_granularity(&se
 pub fn formualizer_workbook::backends::json::JsonAdapter::calc_settings(&self) -> core::option::Option<formualizer_workbook::traits::CalcSettings>
 pub fn formualizer_workbook::backends::json::JsonAdapter::capabilities(&self) -> formualizer_workbook::traits::BackendCaps
 pub fn formualizer_workbook::backends::json::JsonAdapter::defined_names(&mut self) -> core::result::Result<alloc::vec::Vec<formualizer_workbook::traits::DefinedName>, Self::Error>
+pub fn formualizer_workbook::backends::json::JsonAdapter::external_cached_sources(&self) -> &[(alloc::string::String, formualizer_common::value::LiteralValue)]
 pub fn formualizer_workbook::backends::json::JsonAdapter::is_loaded(&self, &str, core::option::Option<u32>, core::option::Option<u32>) -> bool
 pub fn formualizer_workbook::backends::json::JsonAdapter::load_stats(&self) -> core::option::Option<formualizer_workbook::traits::AdapterLoadStats>
 pub fn formualizer_workbook::backends::json::JsonAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
@@ -1991,6 +2012,7 @@ pub fn formualizer_workbook::backends::umya::UmyaAdapter::access_granularity(&se
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::calc_settings(&self) -> core::option::Option<formualizer_workbook::traits::CalcSettings>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::capabilities(&self) -> formualizer_workbook::traits::BackendCaps
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::defined_names(&mut self) -> core::result::Result<alloc::vec::Vec<formualizer_workbook::traits::DefinedName>, Self::Error>
+pub fn formualizer_workbook::backends::umya::UmyaAdapter::external_cached_sources(&self) -> &[(alloc::string::String, formualizer_common::value::LiteralValue)]
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::is_loaded(&self, &str, core::option::Option<u32>, core::option::Option<u32>) -> bool
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::load_stats(&self) -> core::option::Option<formualizer_workbook::traits::AdapterLoadStats>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
@@ -2327,6 +2349,7 @@ pub fn formualizer_workbook::SpreadsheetReader::access_granularity(&self) -> for
 pub fn formualizer_workbook::SpreadsheetReader::calc_settings(&self) -> core::option::Option<formualizer_workbook::traits::CalcSettings>
 pub fn formualizer_workbook::SpreadsheetReader::capabilities(&self) -> formualizer_workbook::traits::BackendCaps
 pub fn formualizer_workbook::SpreadsheetReader::defined_names(&mut self) -> core::result::Result<alloc::vec::Vec<formualizer_workbook::traits::DefinedName>, Self::Error>
+pub fn formualizer_workbook::SpreadsheetReader::external_cached_sources(&self) -> &[(alloc::string::String, formualizer_common::value::LiteralValue)]
 pub fn formualizer_workbook::SpreadsheetReader::is_loaded(&self, &str, core::option::Option<u32>, core::option::Option<u32>) -> bool
 pub fn formualizer_workbook::SpreadsheetReader::load_stats(&self) -> core::option::Option<formualizer_workbook::traits::AdapterLoadStats>
 pub fn formualizer_workbook::SpreadsheetReader::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
@@ -2343,6 +2366,7 @@ pub fn formualizer_workbook::backends::calamine::CalamineAdapter::access_granula
 pub fn formualizer_workbook::backends::calamine::CalamineAdapter::calc_settings(&self) -> core::option::Option<formualizer_workbook::traits::CalcSettings>
 pub fn formualizer_workbook::backends::calamine::CalamineAdapter::capabilities(&self) -> formualizer_workbook::traits::BackendCaps
 pub fn formualizer_workbook::backends::calamine::CalamineAdapter::defined_names(&mut self) -> core::result::Result<alloc::vec::Vec<formualizer_workbook::traits::DefinedName>, Self::Error>
+pub fn formualizer_workbook::backends::calamine::CalamineAdapter::external_cached_sources(&self) -> &[(alloc::string::String, formualizer_common::value::LiteralValue)]
 pub fn formualizer_workbook::backends::calamine::CalamineAdapter::is_loaded(&self, &str, core::option::Option<u32>, core::option::Option<u32>) -> bool
 pub fn formualizer_workbook::backends::calamine::CalamineAdapter::load_stats(&self) -> core::option::Option<formualizer_workbook::traits::AdapterLoadStats>
 pub fn formualizer_workbook::backends::calamine::CalamineAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
@@ -2359,6 +2383,7 @@ pub fn formualizer_workbook::backends::csv::CsvAdapter::access_granularity(&self
 pub fn formualizer_workbook::backends::csv::CsvAdapter::calc_settings(&self) -> core::option::Option<formualizer_workbook::traits::CalcSettings>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::capabilities(&self) -> formualizer_workbook::traits::BackendCaps
 pub fn formualizer_workbook::backends::csv::CsvAdapter::defined_names(&mut self) -> core::result::Result<alloc::vec::Vec<formualizer_workbook::traits::DefinedName>, Self::Error>
+pub fn formualizer_workbook::backends::csv::CsvAdapter::external_cached_sources(&self) -> &[(alloc::string::String, formualizer_common::value::LiteralValue)]
 pub fn formualizer_workbook::backends::csv::CsvAdapter::is_loaded(&self, &str, core::option::Option<u32>, core::option::Option<u32>) -> bool
 pub fn formualizer_workbook::backends::csv::CsvAdapter::load_stats(&self) -> core::option::Option<formualizer_workbook::traits::AdapterLoadStats>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
@@ -2375,6 +2400,7 @@ pub fn formualizer_workbook::backends::json::JsonAdapter::access_granularity(&se
 pub fn formualizer_workbook::backends::json::JsonAdapter::calc_settings(&self) -> core::option::Option<formualizer_workbook::traits::CalcSettings>
 pub fn formualizer_workbook::backends::json::JsonAdapter::capabilities(&self) -> formualizer_workbook::traits::BackendCaps
 pub fn formualizer_workbook::backends::json::JsonAdapter::defined_names(&mut self) -> core::result::Result<alloc::vec::Vec<formualizer_workbook::traits::DefinedName>, Self::Error>
+pub fn formualizer_workbook::backends::json::JsonAdapter::external_cached_sources(&self) -> &[(alloc::string::String, formualizer_common::value::LiteralValue)]
 pub fn formualizer_workbook::backends::json::JsonAdapter::is_loaded(&self, &str, core::option::Option<u32>, core::option::Option<u32>) -> bool
 pub fn formualizer_workbook::backends::json::JsonAdapter::load_stats(&self) -> core::option::Option<formualizer_workbook::traits::AdapterLoadStats>
 pub fn formualizer_workbook::backends::json::JsonAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
@@ -2391,6 +2417,7 @@ pub fn formualizer_workbook::backends::umya::UmyaAdapter::access_granularity(&se
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::calc_settings(&self) -> core::option::Option<formualizer_workbook::traits::CalcSettings>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::capabilities(&self) -> formualizer_workbook::traits::BackendCaps
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::defined_names(&mut self) -> core::result::Result<alloc::vec::Vec<formualizer_workbook::traits::DefinedName>, Self::Error>
+pub fn formualizer_workbook::backends::umya::UmyaAdapter::external_cached_sources(&self) -> &[(alloc::string::String, formualizer_common::value::LiteralValue)]
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::is_loaded(&self, &str, core::option::Option<u32>, core::option::Option<u32>) -> bool
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::load_stats(&self) -> core::option::Option<formualizer_workbook::traits::AdapterLoadStats>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized

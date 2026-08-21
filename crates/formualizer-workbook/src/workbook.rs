@@ -8,7 +8,7 @@ use formualizer_eval::engine::RowVisibilitySource;
 use formualizer_eval::engine::eval::EvalPlan;
 use formualizer_eval::engine::named_range::{NameScope, NamedDefinition};
 use parking_lot::RwLock;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
 #[cfg(feature = "wasm_plugins")]
@@ -790,6 +790,10 @@ impl formualizer_eval::function::Function for WorkbookWasmFunction {
 pub struct WBResolver {
     custom_functions: Arc<RwLock<CustomFnRegistry>>,
     custom_function_revision: Arc<std::sync::atomic::AtomicU64>,
+    /// Cached values for in-workbook external references (spec §10), keyed by
+    /// raw reference (`[1]Sheet1!A1`). Populated from the `externalLinkN.xml`
+    /// parts at load; evaluation answers external reference cells through this.
+    source_values: Arc<RwLock<HashMap<String, LiteralValue>>>,
 }
 
 impl Default for WBResolver {
@@ -797,6 +801,7 @@ impl Default for WBResolver {
         Self {
             custom_functions: Arc::new(RwLock::new(BTreeMap::new())),
             custom_function_revision: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            source_values: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 }
@@ -805,10 +810,12 @@ impl WBResolver {
     fn new(
         custom_functions: Arc<RwLock<CustomFnRegistry>>,
         custom_function_revision: Arc<std::sync::atomic::AtomicU64>,
+        source_values: Arc<RwLock<HashMap<String, LiteralValue>>>,
     ) -> Self {
         Self {
             custom_functions,
             custom_function_revision,
+            source_values,
         }
     }
 }
@@ -860,7 +867,17 @@ impl formualizer_eval::traits::TableResolver for WBResolver {
         ))
     }
 }
-impl formualizer_eval::traits::SourceResolver for WBResolver {}
+impl formualizer_eval::traits::SourceResolver for WBResolver {
+    fn source_scalar_version(&self, _name: &str) -> Option<u64> {
+        Some(0)
+    }
+
+    fn resolve_source_scalar(&self, name: &str) -> Result<LiteralValue, ExcelError> {
+        self.source_values.read().get(name).cloned().ok_or_else(|| {
+            ExcelError::new(ExcelErrorKind::Name).with_message(format!("Undefined name: {name}"))
+        })
+    }
+}
 impl formualizer_eval::traits::FunctionProvider for WBResolver {
     fn planning_semantic_revision(&self) -> Option<u64> {
         Some(
@@ -905,6 +922,10 @@ pub struct Workbook {
     engine: formualizer_eval::engine::Engine<WBResolver>,
     custom_functions: Arc<RwLock<CustomFnRegistry>>,
     custom_function_revision: Arc<std::sync::atomic::AtomicU64>,
+    /// Cached values for in-workbook external references (spec §10), shared with
+    /// the engine's resolver. Populated from the `externalLinkN.xml` parts at
+    /// load; see [`WBResolver::source_values`].
+    source_values: Arc<RwLock<HashMap<String, LiteralValue>>>,
     wasm_plugins: WasmPluginManager,
     enable_changelog: bool,
     log: formualizer_eval::engine::ChangeLog,
@@ -1116,9 +1137,11 @@ impl Workbook {
         let ingest_limits = config.ingest_limits.clone();
         let custom_functions = Arc::new(RwLock::new(BTreeMap::new()));
         let custom_function_revision = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let source_values = Arc::new(RwLock::new(HashMap::new()));
         let resolver = WBResolver::new(
             custom_functions.clone(),
             Arc::clone(&custom_function_revision),
+            Arc::clone(&source_values),
         );
         let mut engine = formualizer_eval::engine::Engine::new(resolver, config.eval);
         engine.set_workbook_load_limits(ingest_limits);
@@ -1129,6 +1152,7 @@ impl Workbook {
             engine,
             custom_functions,
             custom_function_revision,
+            source_values,
             wasm_plugins: WasmPluginManager::default(),
             enable_changelog: config.enable_changelog,
             log,
@@ -3469,6 +3493,15 @@ impl Workbook {
         backend
             .stream_into_engine(&mut wb.engine)
             .map_err(IoError::from)?;
+        // In-workbook external references (spec §10): the backend declares the
+        // source scalars during `stream_into_engine`; the cached values stored in
+        // the `externalLinkN.xml` parts are surfaced here so evaluation answers
+        // `[1]Sheet1!A1` cells with the cached value (Excel never recalculates
+        // external links). `new_with_config` seeded the resolver with the same
+        // `source_values` map the Workbook holds, so this populates it directly.
+        for (name, value) in backend.external_cached_sources() {
+            wb.source_values.write().insert(name.clone(), value.clone());
+        }
         let stats = backend.load_stats();
         Ok((wb, stats))
     }
