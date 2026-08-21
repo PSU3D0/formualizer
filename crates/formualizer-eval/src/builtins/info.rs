@@ -1,5 +1,5 @@
 use crate::args::ArgSchema;
-use crate::function::Function;
+use crate::function::{FnCaps, Function};
 use crate::function_contract::{
     FunctionContextDependence, FunctionDependencyContract, FunctionSemanticContract,
 };
@@ -1717,8 +1717,146 @@ impl Function for IsNonTextFn {
     }
 }
 
+#[derive(Debug)]
+pub struct CellFn;
+
+/// Returns requested information about a reference.
+///
+/// Supported `info_type` values (case-insensitive):
+/// - `"contents"` — the value of the upper-left cell of the reference
+/// - `"address"`  — the absolute A1 address of the upper-left cell (e.g. `$A$1`)
+/// - `"col"`      — the 1-based column of the upper-left cell
+/// - `"row"`      — the 1-based row of the upper-left cell
+/// - `"type"`     — `"b"` for a blank cell, `"l"` for text, `"v"` for any value
+///
+/// Other `info_type` values (`format`, `filename`, `parentheses`, `prefix`,
+/// `protect`, `width`) and calls without a reference return `#VALUE!`.
+///
+/// ```yaml,sandbox
+/// title: "CELL contents"
+/// grid:
+///   A1: 10
+/// formula: '=CELL("contents",A1)'
+/// expected: 10
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "CELL address of the top-left cell"
+/// formula: '=CELL("address",A1)'
+/// expected: "$A$1"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SHEET
+///   - ISREF
+/// faq:
+///   - q: "Which info types does CELL support?"
+///     a: "contents, address, col, row and type. Unsupported info types return #VALUE!."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: CELL
+/// Type: CellFn
+/// Min args: 1
+/// Max args: 2
+/// Variadic: false
+/// Signature: CELL(arg1: any@scalar, arg2?: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=false,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for CellFn {
+    fn caps(&self) -> FnCaps {
+        FnCaps::PURE
+    }
+    fn name(&self) -> &'static str {
+        "CELL"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn semantic_contract(&self, arity: usize) -> Option<FunctionSemanticContract> {
+        Some(workbook_metadata_contract(self.dependency_contract(arity)))
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            let mut optional = ArgSchema::any();
+            optional.required = false;
+            vec![ArgSchema::any(), optional]
+        });
+        &SCHEMA
+    }
+
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        let info_type = match args[0].value()?.into_literal() {
+            LiteralValue::Error(e) => return Ok(scalar(LiteralValue::Error(e))),
+            LiteralValue::Text(t) => t.to_ascii_lowercase(),
+            _ => return Ok(scalar(LiteralValue::Error(ExcelError::new_value()))),
+        };
+        if args.len() < 2 {
+            // Without a reference, Excel reports on the last-changed cell, which is
+            // not reproducible here; #VALUE! keeps the result well-defined.
+            return Ok(scalar(LiteralValue::Error(ExcelError::new_value())));
+        }
+
+        let reference = match args[1].as_reference_or_eval() {
+            Ok(reference) => reference,
+            Err(_) => return Ok(scalar(LiteralValue::Error(ExcelError::new_value()))),
+        };
+
+        let top_left = match args[1].value()? {
+            CalcValue::Scalar(lit) => lit,
+            CalcValue::AnnotatedScalar(lit, _) => lit,
+            CalcValue::Range(view) => view.get_cell(0, 0),
+            CalcValue::Callable(_) => {
+                return Ok(scalar(LiteralValue::Error(
+                    ExcelError::new(ExcelErrorKind::Calc)
+                        .with_message("LAMBDA value must be invoked"),
+                )));
+            }
+        };
+
+        match info_type.as_str() {
+            "contents" => return Ok(scalar(top_left)),
+            "type" => {
+                let kind = match top_left {
+                    LiteralValue::Empty => "b",
+                    LiteralValue::Text(_) => "l",
+                    _ => "v",
+                };
+                return Ok(scalar(LiteralValue::Text(kind.into())));
+            }
+            _ => {}
+        }
+
+        let Some(reference_info) = ctx.inspect_reference(&reference)? else {
+            return Ok(scalar(LiteralValue::Error(ExcelError::new_value())));
+        };
+        let Some(cell) = reference_info.first_cell else {
+            return Ok(scalar(LiteralValue::Error(ExcelError::new_value())));
+        };
+        let row = cell.coord.row() + 1;
+        let col = cell.coord.col() + 1;
+
+        match info_type.as_str() {
+            "address" => Ok(scalar(LiteralValue::Text(format!(
+                "${}${row}",
+                crate::reference::Coord::col_to_letters(cell.coord.col())
+            )))),
+            "col" => Ok(scalar(LiteralValue::Int(col as i64))),
+            "row" => Ok(scalar(LiteralValue::Int(row as i64))),
+            _ => Ok(scalar(LiteralValue::Error(ExcelError::new_value()))),
+        }
+    }
+}
+
 pub fn register_builtins() {
     use std::sync::Arc;
+    crate::function_registry::register_builtin(Arc::new(CellFn));
     crate::function_registry::register_builtin(Arc::new(IsNumberFn));
     crate::function_registry::register_builtin(Arc::new(IsTextFn));
     crate::function_registry::register_builtin(Arc::new(IsNonTextFn));

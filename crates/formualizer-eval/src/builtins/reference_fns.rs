@@ -896,10 +896,94 @@ impl Function for IndirectFn {
     }
 }
 
+#[derive(Debug)]
+pub struct HyperlinkFn;
+
+/// Returns the friendly name of a hyperlink, or its link location when no name is given.
+///
+/// Excel stores this function with the `_xlfn.` prefix (`_xlfn.HYPERLINK`); the
+/// registry resolves the prefix, so both spellings evaluate here. The returned
+/// value is always text: `friendly_name` when the second argument is present,
+/// otherwise `link_location`.
+///
+/// ```yaml,sandbox
+/// title: "Hyperlink with a friendly name"
+/// formula: '=HYPERLINK("https://example.com","Example")'
+/// expected: "Example"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Hyperlink without a friendly name"
+/// formula: '=HYPERLINK("https://example.com")'
+/// expected: "https://example.com"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - INDIRECT
+/// faq:
+///   - q: "What does HYPERLINK return?"
+///     a: "The friendly name when provided, otherwise the link location, always as text."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: HYPERLINK
+/// Type: HyperlinkFn
+/// Min args: 1
+/// Max args: 2
+/// Variadic: false
+/// Signature: HYPERLINK(arg1: any@scalar, arg2?: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=false,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for HyperlinkFn {
+    fn caps(&self) -> FnCaps {
+        FnCaps::PURE
+    }
+    fn name(&self) -> &'static str {
+        "HYPERLINK"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            let mut optional = ArgSchema::any();
+            optional.required = false;
+            vec![ArgSchema::any(), optional]
+        });
+        &SCHEMA
+    }
+
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let link = match args[0].value()?.into_literal() {
+            LiteralValue::Error(e) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+            }
+            other => crate::coercion::to_text_invariant(&other),
+        };
+        if args.len() < 2 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(link)));
+        }
+        let name = match args[1].value()?.into_literal() {
+            LiteralValue::Error(e) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+            }
+            other => crate::coercion::to_text_invariant(&other),
+        };
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(name)))
+    }
+}
+
 pub fn register_builtins() {
     crate::function_registry::register_builtin(std::sync::Arc::new(IndexFn));
     crate::function_registry::register_builtin(std::sync::Arc::new(OffsetFn));
     crate::function_registry::register_builtin(std::sync::Arc::new(IndirectFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(HyperlinkFn));
 }
 
 #[cfg(test)]
