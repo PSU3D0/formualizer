@@ -6,6 +6,7 @@ Excel stores cross-workbook references inside the same file via
 cached values. formualizer must do the same instead of failing with
 `#NAME?: Undefined name: [1]Sheet1!A1`.
 """
+
 import zipfile
 
 import pytest
@@ -42,18 +43,18 @@ def build_inbook_external_link_xlsx(tmp_path, sheet_data="42", with_cache=True):
     sheet1 = sheet1.replace(
         "</row>",
         f'      <c r="B1">\n        <f t="shared" ref="B1" si="0">[1]Sheet1!A1</f>\n'
-        f'        <v>{sheet_data}</v>\n      </c>\n    </row>',
+        f"        <v>{sheet_data}</v>\n      </c>\n    </row>",
     )
     if with_cache:
         content_types = content_types.replace(
             '<Override PartName="/xl/styles.xml"',
-            f'<Override PartName="/xl/externalLinks/externalLink1.xml" '
-            f'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.externalLink+xml"/>\n'
-            f'  <Override PartName="/xl/styles.xml"',
+            '<Override PartName="/xl/externalLinks/externalLink1.xml" '
+            'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.externalLink+xml"/>\n'
+            '  <Override PartName="/xl/styles.xml"',
         )
         wbxml = wbxml.replace(
             "</sheets>",
-            "</sheets>\n  <externalReferences>\n    <externalReference r:id=\"rId4\"/>\n  </externalReferences>",
+            '</sheets>\n  <externalReferences>\n    <externalReference r:id="rId4"/>\n  </externalReferences>',
         )
         wbrels = wbrels.replace(
             "</Relationships>",
