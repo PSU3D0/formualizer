@@ -789,6 +789,36 @@ fn if_family_selector_evaluation_count() {
     ));
     assert_eq!(calls.load(Ordering::SeqCst), 1, "AST value arm");
 
+    calls.store(0, Ordering::SeqCst);
+    selected.store(true, Ordering::SeqCst);
+    let ast = formualizer_parse::parser::parse("=INDEX(IF(COUNTSELECTOR(),A1:A3,D1:D3),0,1)")
+        .expect("valid zero-index fallback formula");
+    assert!(matches!(
+        interpreter.evaluate_ast(&ast),
+        Ok(crate::traits::CalcValue::Range(_))
+    ));
+    assert_eq!(calls.load(Ordering::SeqCst), 1, "AST zero-index fallback");
+
+    for (formula, label) in [
+        (
+            "=INDEX(IF(COUNTSELECTOR(),5,A1:A3),1)",
+            "selected scalar fallback",
+        ),
+        (
+            "=INDEX(IF(COUNTSELECTOR(),A1:A3,D1:D3),99,1)",
+            "out-of-bounds fallback",
+        ),
+        (
+            "=INDEX(IF(COUNTSELECTOR(),A1:B3,D1:E3),2)",
+            "2-D omitted-column fallback",
+        ),
+    ] {
+        calls.store(0, Ordering::SeqCst);
+        let ast = formualizer_parse::parser::parse(formula).expect("valid INDEX fallback formula");
+        let _ = interpreter.evaluate_ast(&ast);
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "AST {label}");
+    }
+
     for (select_reference, expected) in [(true, 6.0), (false, 5.0)] {
         calls.store(0, Ordering::SeqCst);
         selected.store(select_reference, Ordering::SeqCst);
@@ -835,5 +865,42 @@ fn if_family_selector_evaluation_count() {
                 "value"
             }
         );
+    }
+
+    for path in ["AST", "Arena"] {
+        calls.store(0, Ordering::SeqCst);
+        array.store(true, Ordering::SeqCst);
+        let wb = workbook(
+            Arc::clone(&array),
+            Arc::clone(&calls),
+            Arc::clone(&selected),
+        );
+        if path == "AST" {
+            let interpreter = wb.interpreter();
+            let ast = formualizer_parse::parser::parse("=IF(COUNTSELECTOR(),{1,1},{2,2})")
+                .expect("valid AST array-selector formula");
+            let handle = ArgumentHandle::new(&ast, &interpreter);
+            let _ = handle.resolve_once();
+        } else {
+            let mut engine = crate::engine::Engine::new(
+                wb,
+                crate::engine::EvalConfig::default().with_cycle(crate::engine::CycleConfig {
+                    detection: crate::engine::CycleDetection::Runtime,
+                    policy: crate::engine::CyclePolicy::Error,
+                }),
+            );
+            engine
+                .set_cell_formula(
+                    "Sheet1",
+                    1,
+                    10,
+                    formualizer_parse::parser::parse("=SUM(IF(COUNTSELECTOR(),{1,1},{2,2}))")
+                        .expect("valid Arena array-selector formula"),
+                )
+                .expect("set Arena array-selector formula");
+            engine.evaluate_all().expect("evaluate array selector");
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 2, "{path} array selector");
+        array.store(false, Ordering::SeqCst);
     }
 }
