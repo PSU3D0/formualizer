@@ -35,11 +35,9 @@
 //! The generated subset is intentionally narrow (numbers, `+ - *`,
 //! comparisons, `IF`, `NOT`, `SUM` over explicit ranges, boolean/number
 //! guards) so coercion is trivial and the oracle is auditable by eye. No
-//! division or text is generated, so the only errors that can ever surface are
-//! `#CIRC` (the cycle verdict) and the `#VALUE!` the engine's `IF`/`NOT`
-//! produce when an error reaches a *condition* — a documented, pre-#112 error
-//! rule the oracle reproduces faithfully (see the KNOWN ENGINE QUIRK notes) so
-//! the property stays sharp on cycle classification.
+//! division or text is generated, so the only error that can surface is
+//! `#CIRC` (the cycle verdict), including when it reaches an `IF`/`NOT`
+//! condition and propagates unchanged.
 
 use crate::engine::{CycleConfig, CycleDetection, CyclePolicy, Engine, EvalConfig};
 use crate::test_workbook::TestWorkbook;
@@ -280,13 +278,11 @@ fn gen_formula(rng: &mut Rng, i: usize, n_guards: usize, n: usize) -> String {
 ///     regardless of how the value is later consumed (an `IF` *guard* that
 ///     re-enters the cell still makes the cell a member — spec §7.3).
 ///   * `CircSettled` — a `#CIRC` value *read from an already-stamped member*
-///     by a cell that is itself **not** a member. It still propagates as
-///     `#CIRC` through arithmetic/comparison, but when fed into an `IF`/`NOT`
-///     *condition* the engine's coercion turns it into `#VALUE!` (see the
-///     KNOWN ENGINE QUIRK note on `eval_node`). Both map to the engine's
-///     `#CIRC` *only* when they survive to a cell's final value; the split
-///     exists purely to reproduce the IF-condition coercion faithfully.
-///   * `Value` — the `#VALUE!` produced by that coercion.
+///     by a cell that is itself **not** a member. It propagates unchanged
+///     through arithmetic, comparisons, and `IF`/`NOT` conditions. Both
+///     circular variants map to the same observable Excel value; the split
+///     records whether the cell is itself a live-cycle member.
+///   * `Value` — a `#VALUE!` result.
 ///
 /// Keeping this split is what lets the oracle stay a faithful mirror of the
 /// engine's *documented* error handling while remaining sharp on the cycle
@@ -441,14 +437,9 @@ impl Oracle {
                     self.walk_node(&args[0]);
                     match self.live_branch(&args[0]) {
                         Some(true) => self.walk_node(&args[1]),
-                        Some(false) => {
-                            if args.len() > 2 {
-                                self.walk_node(&args[2]);
-                            }
-                        }
-                        // Guard is itself circular/uncomputable: conservatively
-                        // descend neither arm — the guard read alone already
-                        // closes any live cycle that runs through the guard.
+                        Some(false) if args.len() > 2 => self.walk_node(&args[2]),
+                        Some(false) => {}
+                        // An errored guard selects no arm.
                         None => {}
                     }
                 }
@@ -495,8 +486,7 @@ impl Oracle {
     /// with `GuardEval` (the same arithmetic / short-circuit / error rules as
     /// the value phase, so arm selection is identical in both phases). A guard
     /// that resolves to a clean bool/number selects an arm; an error/circular
-    /// guard returns None ⇒ descend neither arm (the guard's own reads are
-    /// already walked, so any cycle through the guard is still detected).
+    /// guard returns None, so neither arm is live.
     fn live_branch(&mut self, guard: &ASTNode) -> Option<bool> {
         match self.eval_guard(guard) {
             OVal::Bool(b) => Some(b),
@@ -599,7 +589,7 @@ impl Oracle {
                         // TRUE short-circuit: only the taken arm is evaluated.
                         let cond = self.eval_node(&args[0]);
                         if let OVal::Err(e) = cond {
-                            return condition_error(e);
+                            return OVal::Err(e);
                         }
                         if as_bool(&cond) {
                             self.eval_node(&args[1])
@@ -612,7 +602,7 @@ impl Oracle {
                     "NOT" => {
                         let v = self.eval_node(&args[0]);
                         if let OVal::Err(e) = v {
-                            return condition_error(e);
+                            return OVal::Err(e);
                         }
                         OVal::Bool(!as_bool(&v))
                     }
@@ -696,9 +686,9 @@ impl Oracle {
 /// finalized yet). In the generated subset, guards only ever read leaf guard
 /// cells or *strictly earlier* cells (see the generator), so guards are always
 /// acyclic and this evaluator never actually recurses into a cycle; the
-/// re-entry guard is purely defensive. It applies the exact same arithmetic /
-/// short-circuit / error rules as the value phase (sharing `as_num`/`as_bool`/
-/// `condition_error`) so a guard's truth is identical in both phases.
+/// re-entry guard is purely defensive. It applies the exact same arithmetic,
+/// short-circuit, and error rules as the value phase (sharing `as_num` and
+/// `as_bool`) so a guard's truth is identical in both phases.
 struct GuardEval<'a> {
     asts: &'a [Option<ASTNode>],
     values: &'a [LiteralValue],
@@ -776,7 +766,7 @@ impl GuardEval<'_> {
                 "IF" => {
                     let cond = self.eval_node(&args[0]);
                     if let OVal::Err(e) = cond {
-                        return condition_error(e);
+                        return OVal::Err(e);
                     }
                     if as_bool(&cond) {
                         self.eval_node(&args[1])
@@ -789,7 +779,7 @@ impl GuardEval<'_> {
                 "NOT" => {
                     let v = self.eval_node(&args[0]);
                     if let OVal::Err(e) = v {
-                        return condition_error(e);
+                        return OVal::Err(e);
                     }
                     OVal::Bool(!as_bool(&v))
                 }
@@ -835,26 +825,6 @@ impl GuardEval<'_> {
                 v => Ok(as_num(&v)),
             }
         }
-    }
-}
-
-/// IF/NOT condition coercion of an error operand.
-///
-/// KNOWN ENGINE QUIRK (pre-#112, general error handling — NOT a cycle bug):
-/// `IfFn::eval`/`NotFn` coerce a *non*-bool/*non*-number condition to
-/// `#VALUE!` rather than propagating the condition's own error (the `IfFn`
-/// docs even state "non-numeric/non-boolean conditions return #VALUE!").
-///
-/// The one case the engine does NOT reach this coercion for is a cell that is
-/// itself a live-cycle member: such a cell is stamped `#CIRC` structurally
-/// during the SCC task, before any IF body runs. The oracle mirrors that by
-/// keeping an *active* re-entry (`Circ`) circular even when it flows through a
-/// guard (spec §7.3), and only coercing a `#CIRC` that was *read from another,
-/// already-stamped member* (`CircSettled`) — or any other error — to `#VALUE!`.
-fn condition_error(e: EKind) -> OVal {
-    match e {
-        EKind::Circ => OVal::Err(EKind::Circ), // member: stays #CIRC
-        EKind::CircSettled | EKind::Value => OVal::Err(EKind::Value),
     }
 }
 
@@ -907,10 +877,8 @@ fn engine_to_oval(v: &Option<LiteralValue>) -> Result<OVal, String> {
         Some(LiteralValue::Error(e)) if e.kind == ExcelErrorKind::Circ => {
             Ok(OVal::Err(EKind::Circ))
         }
-        // The only other error the generated subset can yield is the
-        // documented IF/NOT condition-coercion `#VALUE!` (see the KNOWN ENGINE
-        // QUIRK note). Any *other* error kind would be a genuine surprise and
-        // is surfaced as an un-modelable value (test failure).
+        // A Value error is modeled explicitly for clear diagnostics. Any
+        // other non-circular error kind is an un-modelable test failure.
         Some(LiteralValue::Error(e)) if e.kind == ExcelErrorKind::Value => {
             Ok(OVal::Err(EKind::Value))
         }
@@ -1100,8 +1068,8 @@ fn oracle_self_check_known_shapes() {
     let mut o = Oracle::new(&wb);
     assert_eq!(o.value_of(2), OVal::Num(5.0));
 
-    // Downstream non-member reading a member through an IF condition ⇒ #VALUE!
-    // (the documented IfFn coercion). A1↔A2 live cycle; A3 reads A1 via guard.
+    // A downstream non-member propagates a settled #CIRC through an IF guard.
+    // A1↔A2 is a live cycle; A3 reads A1 through its guard.
     let wb = Workbook {
         seed: 0,
         cells: vec![
@@ -1112,7 +1080,7 @@ fn oracle_self_check_known_shapes() {
     };
     let mut o = Oracle::new(&wb);
     assert!(!o.member[2], "A3 is a downstream reader, not a member");
-    assert_eq!(o.value_of(2), OVal::Err(EKind::Value));
+    assert_eq!(o.value_of(2), OVal::Err(EKind::CircSettled));
 }
 
 /// Self-check that the engine harness round-trips the same known shapes, so
