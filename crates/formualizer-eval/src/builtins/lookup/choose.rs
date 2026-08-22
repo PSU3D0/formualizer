@@ -8,7 +8,7 @@
 
 use crate::args::{ArgSchema, CoercionPolicy, ShapeKind};
 use crate::builtins::utils::collapse_if_scalar;
-use crate::function::Function;
+use crate::function::{Function, FunctionResolution, resolution_to_reference};
 use crate::traits::{ArgumentHandle, FunctionContext};
 use formualizer_common::{ArgKind, ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_macros::func_caps;
@@ -115,6 +115,23 @@ impl Function for ChooseFn {
         &SCHEMA
     }
 
+    fn eval_reference<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Option<Result<formualizer_parse::parser::ReferenceType, ExcelError>> {
+        resolution_to_reference(resolve_choose_reference_or_value(args, ctx))
+    }
+
+    fn resolve_reference_or_value<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+        _value_fallback: &dyn Fn() -> Result<crate::traits::CalcValue<'b>, ExcelError>,
+    ) -> Result<FunctionResolution<'b>, ExcelError> {
+        resolve_choose_reference_or_value(args, ctx)
+    }
+
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
@@ -156,6 +173,36 @@ impl Function for ChooseFn {
         let selected_arg = &args[index as usize];
         selected_arg.value()
     }
+}
+
+fn resolve_choose_reference_or_value<'b>(
+    args: &[ArgumentHandle<'_, 'b>],
+    _ctx: &dyn FunctionContext<'b>,
+) -> Result<FunctionResolution<'b>, ExcelError> {
+    let value_error = || {
+        FunctionResolution::Value(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+            ExcelError::new(ExcelErrorKind::Value),
+        )))
+    };
+    if args.len() < 2 {
+        return Ok(value_error());
+    }
+    let index_value = args[0].value()?.into_literal();
+    let index = match index_value {
+        LiteralValue::Number(value) => value as i64,
+        LiteralValue::Int(value) => value,
+        LiteralValue::Error(error) => {
+            return Ok(FunctionResolution::Value(crate::traits::CalcValue::Scalar(
+                LiteralValue::Error(error),
+            )));
+        }
+        _ => return Ok(value_error()),
+    };
+    if index < 1 || index as usize > args.len() - 1 {
+        return Ok(value_error());
+    }
+    let selected = &args[index as usize];
+    selected.resolve_reference_or_value()
 }
 
 /* ───────────────────────── CHOOSECOLS() / CHOOSEROWS() ───────────────────────── */

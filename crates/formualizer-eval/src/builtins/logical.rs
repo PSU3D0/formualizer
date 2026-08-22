@@ -2,7 +2,7 @@
 
 use super::utils::ARG_ANY_ONE;
 use crate::args::ArgSchema;
-use crate::function::Function;
+use crate::function::{Function, FunctionResolution, resolution_to_reference};
 use crate::traits::{ArgumentHandle, FunctionContext};
 use formualizer_common::{ExcelError, LiteralValue};
 use formualizer_macros::func_caps;
@@ -432,7 +432,7 @@ pub struct IfFn;
 /// Variadic: true
 /// Signature: IF(arg1...: any@scalar)
 /// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
-/// Caps: PURE, SHORT_CIRCUIT
+/// Caps: PURE, RETURNS_REFERENCE, SHORT_CIRCUIT
 /// [formualizer-docgen:schema:end]
 impl Function for IfFn {
     fn propagate_format(
@@ -442,7 +442,7 @@ impl Function for IfFn {
         result.format_id()
     }
 
-    func_caps!(PURE, SHORT_CIRCUIT, MAY_SPILL);
+    func_caps!(PURE, SHORT_CIRCUIT, RETURNS_REFERENCE, MAY_SPILL);
 
     fn name(&self) -> &'static str {
         "IF"
@@ -459,6 +459,30 @@ impl Function for IfFn {
         // Single variadic any schema so we can enforce precise 2 or 3 arity inside eval()
         static ONE: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| vec![ArgSchema::any()]);
         &ONE[..]
+    }
+
+    fn eval_reference<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Option<Result<formualizer_parse::parser::ReferenceType, ExcelError>> {
+        match try_resolve_if_reference_or_value(args) {
+            Ok(Some(result)) => resolution_to_reference(Ok(result)),
+            Ok(None) => None,
+            Err(error) => Some(Err(error)),
+        }
+    }
+
+    fn resolve_reference_or_value<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+        value_fallback: &dyn Fn() -> Result<crate::traits::CalcValue<'b>, ExcelError>,
+    ) -> Result<FunctionResolution<'b>, ExcelError> {
+        match try_resolve_if_reference_or_value(args)? {
+            Some(result) => Ok(result),
+            None => value_fallback().map(FunctionResolution::Value),
+        }
     }
 
     fn eval<'a, 'b, 'c>(
@@ -495,6 +519,48 @@ impl Function for IfFn {
                 false,
             )))
         }
+    }
+}
+
+fn try_resolve_if_reference_or_value<'b>(
+    args: &[ArgumentHandle<'_, 'b>],
+) -> Result<Option<FunctionResolution<'b>>, ExcelError> {
+    if args.len() < 2 || args.len() > 3 {
+        return Ok(Some(FunctionResolution::Value(
+            crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value()
+                    .with_message(format!("IF expects 2 or 3 arguments, got {}", args.len())),
+            )),
+        )));
+    }
+    let condition = args[0].value()?.into_literal();
+    let selected = match condition {
+        LiteralValue::Boolean(value) => value,
+        LiteralValue::Number(value) => value != 0.0,
+        LiteralValue::Int(value) => value != 0,
+        LiteralValue::Empty => false,
+        LiteralValue::Error(error) => {
+            return Ok(Some(FunctionResolution::Value(
+                crate::traits::CalcValue::Scalar(LiteralValue::Error(error)),
+            )));
+        }
+        LiteralValue::Array(_) => return Ok(None),
+        _ => {
+            return Ok(Some(FunctionResolution::Value(
+                crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_value().with_message("IF condition must be boolean or number"),
+                )),
+            )));
+        }
+    };
+    if selected {
+        args[1].resolve_reference_or_value().map(Some)
+    } else if let Some(arg) = args.get(2) {
+        arg.resolve_reference_or_value().map(Some)
+    } else {
+        Ok(Some(FunctionResolution::Value(
+            crate::traits::CalcValue::Scalar(LiteralValue::Boolean(false)),
+        )))
     }
 }
 
