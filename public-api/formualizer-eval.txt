@@ -8721,6 +8721,7 @@ pub fn formualizer_eval::function::Function::min_args(&self) -> usize
 pub fn formualizer_eval::function::Function::name(&self) -> &'static str
 pub fn formualizer_eval::function::Function::namespace(&self) -> &'static str
 pub fn formualizer_eval::function::Function::propagate_format(&self, &formualizer_eval::traits::CalcValue<'_>) -> core::option::Option<formualizer_eval::format::FormatId>
+pub fn formualizer_eval::function::Function::resolve_reference_or_value<'a, 'b, 'c>(&self, &'c [formualizer_eval::traits::ArgumentHandle<'a, 'b>], &dyn formualizer_eval::traits::FunctionContext<'b>, &dyn core::ops::function::Fn() -> core::result::Result<formualizer_eval::traits::CalcValue<'b>, formualizer_common::error::ExcelError>) -> core::result::Result<FunctionResolution<'b>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::function::Function::semantic_contract(&self, usize) -> core::option::Option<formualizer_eval::function_contract::FunctionSemanticContract>
 pub fn formualizer_eval::function::Function::variadic(&self) -> bool
 pub fn formualizer_eval::function::Function::volatile(&self) -> bool
@@ -9615,6 +9616,7 @@ pub fn formualizer_eval::traits::Function::min_args(&self) -> usize
 pub fn formualizer_eval::traits::Function::name(&self) -> &'static str
 pub fn formualizer_eval::traits::Function::namespace(&self) -> &'static str
 pub fn formualizer_eval::traits::Function::propagate_format(&self, &formualizer_eval::traits::CalcValue<'_>) -> core::option::Option<formualizer_eval::format::FormatId>
+pub fn formualizer_eval::traits::Function::resolve_reference_or_value<'a, 'b, 'c>(&self, &'c [formualizer_eval::traits::ArgumentHandle<'a, 'b>], &dyn formualizer_eval::traits::FunctionContext<'b>, &dyn core::ops::function::Fn() -> core::result::Result<formualizer_eval::traits::CalcValue<'b>, formualizer_common::error::ExcelError>) -> core::result::Result<FunctionResolution<'b>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::traits::Function::semantic_contract(&self, usize) -> core::option::Option<formualizer_eval::function_contract::FunctionSemanticContract>
 pub fn formualizer_eval::traits::Function::variadic(&self) -> bool
 pub fn formualizer_eval::traits::Function::volatile(&self) -> bool
