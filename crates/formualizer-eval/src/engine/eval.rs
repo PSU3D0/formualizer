@@ -21727,7 +21727,7 @@ where
                             format!(
                                 "{}!{}{}",
                                 sheet_name,
-                                Self::col_to_letters(cell_ref.coord.col() + 1),
+                                Self::col_to_letters(cell_ref.coord.col().saturating_add(1)),
                                 cell_ref.coord.row() + 1
                             )
                         })
