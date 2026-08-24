@@ -458,7 +458,9 @@ impl Function for XLookupFn {
             ));
         }
 
-        if args.len() >= 4 {
+        // An omitted-in-place slot (`XLOOKUP(v,l,r,,mode)`) is not a supplied
+        // if_not_found; Excel returns #N/A, not the omitted slot's 0.
+        if args.len() >= 4 && !args[3].is_omitted() {
             return args[3].value();
         }
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(

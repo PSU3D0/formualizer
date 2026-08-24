@@ -200,3 +200,4 @@ mod approximate_lookup_ignored_entries;
 mod temporal_lookup_semantics;
 
 mod format_channel_t1;
+mod xlookup_excel_parity;
