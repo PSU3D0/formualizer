@@ -294,6 +294,8 @@ pub struct ArgumentHandle<'a, 'b> {
     interp: &'a Interpreter<'b>,
     cached_ast: std::cell::OnceCell<ASTNode>,
     cached_ref: std::cell::OnceCell<ReferenceType>,
+    cached_reference_or_value:
+        std::cell::OnceCell<Result<crate::function::FunctionResolution<'b>, ExcelError>>,
     cached_resolved: std::cell::OnceCell<Result<ResolvedArgument<'b>, ExcelError>>,
     /// Memoized result of [`Self::value`]. `Function::dispatch` evaluates
     /// every argument once during schema validation and the function's `eval`
@@ -313,6 +315,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
             interp,
             cached_ast: std::cell::OnceCell::new(),
             cached_ref: std::cell::OnceCell::new(),
+            cached_reference_or_value: std::cell::OnceCell::new(),
             cached_resolved: std::cell::OnceCell::new(),
             cached_value: std::cell::OnceCell::new(),
         }
@@ -333,6 +336,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
             interp,
             cached_ast: std::cell::OnceCell::new(),
             cached_ref: std::cell::OnceCell::new(),
+            cached_reference_or_value: std::cell::OnceCell::new(),
             cached_resolved: std::cell::OnceCell::new(),
             cached_value: std::cell::OnceCell::new(),
         }
@@ -532,6 +536,96 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
         }
     }
 
+    fn function_resolution_attempt(
+        &self,
+    ) -> Option<Result<crate::function::FunctionResolution<'b>, ExcelError>> {
+        match &self.expr {
+            ArgumentExpr::Ast(node) => {
+                let ASTNodeType::Function { name, args } = &node.node_type else {
+                    return None;
+                };
+                if !self
+                    .interp
+                    .context
+                    .function_capabilities("", name)
+                    .is_some_and(|caps| caps.contains(crate::function::FnCaps::RETURNS_REFERENCE))
+                {
+                    return None;
+                }
+                let fun = match self.interp.context.get_function("", name) {
+                    Some(fun) => fun,
+                    None => {
+                        return Some(Err(ExcelError::new(ExcelErrorKind::Name)
+                            .with_message(format!("Unknown function: {name}"))));
+                    }
+                };
+                let handles: Vec<_> = args
+                    .iter()
+                    .map(|arg| ArgumentHandle::new(arg, self.interp))
+                    .collect();
+                let ctx = DefaultFunctionContext::new_with_sheet(
+                    self.interp.context,
+                    None,
+                    self.interp.current_sheet(),
+                );
+                Some(fun.resolve_reference_or_value(&handles, &ctx, &|| self.value()))
+            }
+            ArgumentExpr::Arena {
+                id,
+                data_store,
+                sheet_registry,
+            } => {
+                let node = match data_store.get_node(*id) {
+                    Some(node) => node,
+                    None => {
+                        return Some(Err(
+                            ExcelError::new(ExcelErrorKind::Value).with_message("Missing AST node")
+                        ));
+                    }
+                };
+                let crate::engine::arena::AstNodeData::Function { name_id, .. } = node else {
+                    return None;
+                };
+                let name = data_store.resolve_ast_string(*name_id);
+                if !self
+                    .interp
+                    .context
+                    .function_capabilities("", name)
+                    .is_some_and(|caps| caps.contains(crate::function::FnCaps::RETURNS_REFERENCE))
+                {
+                    return None;
+                }
+                let fun = match self.interp.context.get_function("", name) {
+                    Some(fun) => fun,
+                    None => {
+                        return Some(Err(ExcelError::new(ExcelErrorKind::Name)
+                            .with_message(format!("Unknown function: {name}"))));
+                    }
+                };
+                let args = match data_store.get_args(*id) {
+                    Some(args) => args,
+                    None => {
+                        return Some(Err(ExcelError::new(ExcelErrorKind::Value)
+                            .with_message("Missing function args")));
+                    }
+                };
+                let handles: Vec<_> = args
+                    .iter()
+                    .copied()
+                    .map(|arg_id| {
+                        ArgumentHandle::new_arena(arg_id, self.interp, data_store, sheet_registry)
+                    })
+                    .collect();
+                let ctx = DefaultFunctionContext::new_with_sheet(
+                    self.interp.context,
+                    None,
+                    self.interp.current_sheet(),
+                );
+                Some(fun.resolve_reference_or_value(&handles, &ctx, &|| self.value()))
+            }
+        }
+    }
+
     fn reference_attempt(&self) -> Option<Result<ReferenceType, ExcelError>> {
         match &self.expr {
             ArgumentExpr::Ast(node) => match &node.node_type {
@@ -624,6 +718,34 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
         }
     }
 
+    pub(crate) fn resolve_reference_or_value(
+        &self,
+    ) -> Result<crate::function::FunctionResolution<'b>, ExcelError> {
+        let resolved = self
+            .cached_reference_or_value
+            .get_or_init(|| self.compute_reference_or_value())
+            .clone();
+        if let Ok(crate::function::FunctionResolution::Value(value)) = &resolved {
+            let _ = self.cached_value.set(Ok(value.clone()));
+        }
+        resolved
+    }
+
+    fn compute_reference_or_value(
+        &self,
+    ) -> Result<crate::function::FunctionResolution<'b>, ExcelError> {
+        if let Some(result) = self.function_resolution_attempt() {
+            return result;
+        }
+        if let Some(reference) = self.reference_attempt() {
+            return Ok(match reference {
+                Ok(reference) => crate::function::FunctionResolution::Reference(reference),
+                Err(error) => crate::function::FunctionResolution::ReferenceError(error),
+            });
+        }
+        self.value().map(crate::function::FunctionResolution::Value)
+    }
+
     /// Resolve this argument once without using a failed range conversion as type dispatch.
     ///
     /// Direct references and the `:` operator take the reference path. Functions
@@ -643,26 +765,32 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
     }
 
     fn compute_resolved_argument(&self) -> Result<ResolvedArgument<'b>, ExcelError> {
-        if let Some(attempt) = self.reference_attempt() {
-            let reference = match attempt {
-                Ok(reference) => reference,
-                Err(error) if error.kind == ExcelErrorKind::Cancelled => return Err(error),
-                Err(error) => return Ok(ResolvedArgument::ReferenceError(error)),
-            };
-            return match self
-                .interp
-                .context
-                .resolve_range_view(&reference, self.interp.current_sheet())
+        let value = match self.resolve_reference_or_value()? {
+            crate::function::FunctionResolution::Reference(reference) => {
+                return match self
+                    .interp
+                    .context
+                    .resolve_range_view(&reference, self.interp.current_sheet())
+                {
+                    Ok(view) => Ok(ResolvedArgument::Range(
+                        self.with_context_cancel_token(view),
+                    )),
+                    Err(error) if error.kind == ExcelErrorKind::Cancelled => Err(error),
+                    Err(error) => Ok(ResolvedArgument::ReferenceError(error)),
+                };
+            }
+            crate::function::FunctionResolution::ReferenceError(error)
+                if error.kind == ExcelErrorKind::Cancelled =>
             {
-                Ok(view) => Ok(ResolvedArgument::Range(
-                    self.with_context_cancel_token(view),
-                )),
-                Err(error) if error.kind == ExcelErrorKind::Cancelled => Err(error),
-                Err(error) => Ok(ResolvedArgument::ReferenceError(error)),
-            };
-        }
+                return Err(error);
+            }
+            crate::function::FunctionResolution::ReferenceError(error) => {
+                return Ok(ResolvedArgument::ReferenceError(error));
+            }
+            crate::function::FunctionResolution::Value(value) => value,
+        };
 
-        match self.value()? {
+        match value {
             CalcValue::Range(view) => Ok(ResolvedArgument::Range(
                 self.with_context_cancel_token(view),
             )),

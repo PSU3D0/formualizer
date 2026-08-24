@@ -9,6 +9,29 @@ use crate::{
     traits::ArgumentHandle,
 };
 use formualizer_common::{ExcelError, LiteralValue};
+use formualizer_parse::parser::ReferenceType;
+
+/// One-pass result for a function used where either a reference or a value is valid.
+#[doc(hidden)]
+#[derive(Clone)]
+pub enum FunctionResolution<'a> {
+    Reference(ReferenceType),
+    ReferenceError(ExcelError),
+    Value(crate::traits::CalcValue<'a>),
+}
+
+pub(crate) fn resolution_to_reference(
+    result: Result<FunctionResolution<'_>, ExcelError>,
+) -> Option<Result<ReferenceType, ExcelError>> {
+    match result {
+        Ok(FunctionResolution::Reference(reference)) => Some(Ok(reference)),
+        Ok(FunctionResolution::ReferenceError(error)) | Err(error) => Some(Err(error)),
+        Ok(FunctionResolution::Value(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+            error,
+        )))) => Some(Err(error)),
+        Ok(FunctionResolution::Value(_)) => None,
+    }
+}
 
 bitflags::bitflags! {
     /// Describes the capabilities and properties of a function.
@@ -187,6 +210,25 @@ pub trait Function: Send + Sync + 'static {
         _ctx: &dyn crate::traits::FunctionContext<'b>,
     ) -> Option<Result<formualizer_parse::parser::ReferenceType, ExcelError>> {
         None
+    }
+
+    /// Resolve a reference-capable function while preserving scalar-selector caching.
+    ///
+    /// The fallback deliberately re-enters the caller's ordinary value path. That
+    /// preserves dispatch validation and array lifting for existing functions whose
+    /// `eval_reference` declines a particular argument shape. Array-valued selectors
+    /// may be evaluated once by each path.
+    fn resolve_reference_or_value<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn crate::traits::FunctionContext<'b>,
+        value_fallback: &dyn Fn() -> Result<crate::traits::CalcValue<'b>, ExcelError>,
+    ) -> Result<FunctionResolution<'b>, ExcelError> {
+        match self.eval_reference(args, ctx) {
+            Some(Ok(reference)) => Ok(FunctionResolution::Reference(reference)),
+            Some(Err(error)) => Ok(FunctionResolution::ReferenceError(error)),
+            None => value_fallback().map(FunctionResolution::Value),
+        }
     }
 
     /// Dispatch to the unified evaluation path with automatic argument validation.
