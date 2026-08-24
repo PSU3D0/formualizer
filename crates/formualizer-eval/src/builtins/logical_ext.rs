@@ -679,7 +679,7 @@ mod tests {
     use super::*;
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
-    use formualizer_common::LiteralValue;
+    use formualizer_common::{ExcelErrorKind, LiteralValue};
     use formualizer_parse::parser::{ASTNode, ASTNodeType};
 
     fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
@@ -1049,6 +1049,53 @@ mod tests {
                 .unwrap()
                 .into_literal(),
             LiteralValue::Int(42)
+        );
+    }
+
+    #[test]
+    fn ifs_and_switch_propagate_condition_error() {
+        let wb = TestWorkbook::new()
+            .with_function(std::sync::Arc::new(IfsFn))
+            .with_function(std::sync::Arc::new(SwitchFn));
+        let ctx = interp(&wb);
+        let error = ASTNode::new(
+            ASTNodeType::Literal(LiteralValue::Error(ExcelError::new_na())),
+            None,
+        );
+        let one = ASTNode::new(ASTNodeType::Literal(LiteralValue::Int(1)), None);
+        let two = ASTNode::new(ASTNodeType::Literal(LiteralValue::Int(2)), None);
+
+        let ifs = ctx.context.get_function("", "IFS").unwrap();
+        let ifs_value = ifs
+            .dispatch(
+                &[
+                    ArgumentHandle::new(&error, &ctx),
+                    ArgumentHandle::new(&one, &ctx),
+                ],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal();
+        assert!(
+            matches!(ifs_value, LiteralValue::Error(ref e) if e.kind == ExcelErrorKind::Na),
+            "IFS must preserve the condition error, got {ifs_value:?}"
+        );
+
+        let switch = ctx.context.get_function("", "SWITCH").unwrap();
+        let switch_value = switch
+            .dispatch(
+                &[
+                    ArgumentHandle::new(&error, &ctx),
+                    ArgumentHandle::new(&one, &ctx),
+                    ArgumentHandle::new(&two, &ctx),
+                ],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal();
+        assert!(
+            matches!(switch_value, LiteralValue::Error(ref e) if e.kind == ExcelErrorKind::Na),
+            "SWITCH must preserve the expression error, got {switch_value:?}"
         );
     }
 }

@@ -479,6 +479,9 @@ impl Function for IfFn {
             LiteralValue::Number(n) => n != 0.0,
             LiteralValue::Int(i) => i != 0,
             LiteralValue::Empty => false,
+            LiteralValue::Error(error) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(error)));
+            }
             _ => {
                 return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                     ExcelError::new_value().with_message("IF condition must be boolean or number"),
@@ -511,9 +514,11 @@ pub fn register_builtins() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::{CycleConfig, CycleDetection, CyclePolicy, Engine, EvalConfig};
     use crate::traits::ArgumentHandle;
     use crate::{interpreter::Interpreter, test_workbook::TestWorkbook};
-    use formualizer_parse::LiteralValue;
+    use formualizer_common::ExcelErrorKind;
+    use formualizer_parse::{LiteralValue, parser::Parser, parser::parse};
     use std::sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -565,6 +570,22 @@ mod tests {
 
     fn interp(wb: &TestWorkbook) -> Interpreter<'_> {
         wb.interpreter()
+    }
+
+    fn evaluate_formula(formula: &str, wb: &TestWorkbook) -> LiteralValue {
+        let mut parser = Parser::new(formula).expect("parser");
+        let ast = parser.parse().expect("parse");
+        wb.interpreter()
+            .evaluate_ast(&ast)
+            .expect("evaluate")
+            .into_literal()
+    }
+
+    fn assert_error_kind(value: LiteralValue, kind: ExcelErrorKind) {
+        assert!(
+            matches!(value, LiteralValue::Error(ref error) if error.kind == kind),
+            "expected {kind:?}, got {value:?}"
+        );
     }
 
     #[test]
@@ -851,6 +872,60 @@ mod tests {
         assert_eq!(
             iff.eval(&args, &fctx).unwrap().into_literal(),
             LiteralValue::Int(20)
+        );
+    }
+
+    #[test]
+    fn if_propagates_condition_error_kind() {
+        let wb = TestWorkbook::new()
+            .with_function(Arc::new(IfFn))
+            .with_function(Arc::new(crate::builtins::info::NaFn));
+
+        assert_error_kind(evaluate_formula("=IF(NA()=0,0,1)", &wb), ExcelErrorKind::Na);
+        assert_error_kind(evaluate_formula("=IF(1/0>1,1,2)", &wb), ExcelErrorKind::Div);
+    }
+
+    #[test]
+    fn if_errored_condition_records_no_arm_edges() {
+        let config = EvalConfig::default().with_cycle(CycleConfig {
+            detection: CycleDetection::Runtime,
+            policy: CyclePolicy::Error,
+        });
+        let mut engine = Engine::new(TestWorkbook::new(), config);
+        engine
+            .set_cell_formula(
+                "Sheet1",
+                1,
+                1,
+                parse("=IF(NA()=0,INDEX(Q1:Q100,50),0)").expect("parse A1"),
+            )
+            .expect("set A1");
+        engine
+            .set_cell_formula("Sheet1", 50, 17, parse("=A1").expect("parse Q50"))
+            .expect("set Q50");
+
+        engine.evaluate_all().expect("evaluate");
+
+        assert_error_kind(
+            engine.get_cell_value("Sheet1", 1, 1).expect("A1 value"),
+            ExcelErrorKind::Na,
+        );
+        assert!(
+            !matches!(
+                engine.get_cell_value("Sheet1", 50, 17),
+                Some(LiteralValue::Error(error)) if error.kind == ExcelErrorKind::Circ
+            ),
+            "Q50 must not be circular when the IF condition errors"
+        );
+        assert_eq!(engine.last_cycle_telemetry().live_cycles_witnessed, 0);
+    }
+
+    #[test]
+    fn if_text_condition_is_value_error() {
+        let wb = TestWorkbook::new().with_function(Arc::new(IfFn));
+        assert_error_kind(
+            evaluate_formula("=IF(\"abc\",1,2)", &wb),
+            ExcelErrorKind::Value,
         );
     }
 }
