@@ -167,3 +167,54 @@ fn open_rect_incremental_edit_path_unchanged() {
     assert_plan_has_precedents(&engine, 3);
     evaluate_and_expect(&mut engine, 3, 6000.0);
 }
+
+#[test]
+fn open_rect_row_mirror_sum_pinned() {
+    // Axis mirror of the multi-column shapes above: an open row band with
+    // formula-valued precedents through the bulk-ingest path. Before the
+    // open-rect bounds fix the collapsed row bounds lost scheduling edges and
+    // the consumer committed a stale 76605 instead of 96660.
+    let mut engine = build_d_to_f_bulk(true, 20, "=SUM($3:$13)");
+    assert_plan_has_precedents(&engine, 20);
+    evaluate_and_expect(&mut engine, 20, 96660.0);
+}
+
+#[test]
+fn open_rect_stripe_set_preserves_start_col() {
+    // Precision pin for the stripe index: an open range that does not start at
+    // column A must register exactly its own column stripes. Dropping
+    // `start_col` on either the key-producer or the stripe-consumer side
+    // degrades into a "safe" over-widening to column A that value-level tests
+    // cannot observe.
+    use crate::engine::graph::StripeType;
+
+    let engine = build_d_to_f_bulk(true, 3, "=VLOOKUP(H3,$D:$F,3,FALSE)");
+    let consumer = *engine
+        .graph
+        .get_vertex_id_for_address(&engine.graph.make_cell_ref("Sheet1", 3, 14))
+        .expect("consumer vertex");
+    let sheet_id = engine.graph.sheet_id("Sheet1").expect("sheet id");
+
+    let mut column_stripes: Vec<u32> = Vec::new();
+    let mut other_stripes: Vec<(StripeType, u32)> = Vec::new();
+    for (key, dependents) in engine.graph.stripe_to_dependents() {
+        if key.sheet_id != sheet_id || !dependents.contains(&consumer) {
+            continue;
+        }
+        match key.stripe_type {
+            StripeType::Column => column_stripes.push(key.index),
+            ref other => other_stripes.push((other.clone(), key.index)),
+        }
+    }
+    column_stripes.sort_unstable();
+
+    assert_eq!(
+        column_stripes,
+        vec![3, 4, 5],
+        "=VLOOKUP over $D:$F must register exactly the D..F column stripes (0-based 3..5)"
+    );
+    assert!(
+        other_stripes.is_empty(),
+        "no row or block stripes expected for an open multi-column range, got {other_stripes:?}"
+    );
+}
