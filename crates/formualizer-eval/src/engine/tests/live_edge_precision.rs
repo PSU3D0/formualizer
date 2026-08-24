@@ -354,3 +354,46 @@ fn index_unbounded_column_selection_measured() {
         "unbounded INDEX retains whole-column live edges while resolving bounds"
     );
 }
+
+/// Direct bound assertions on `precise_single_cell_selection`. The dispatch
+/// path re-rejects out-of-range selections in `reference_from_base`, so a
+/// widened bound in this filter is invisible to the taken/not-taken matrix
+/// above; only predicate-level assertions catch such an off-by-one.
+#[test]
+fn index_precise_selection_predicate_bounds() {
+    use formualizer_parse::parser::ASTNodeType;
+
+    let engine = runtime_engine();
+    let checks: &[(&str, u32, u32, bool)] = &[
+        ("=INDEX(A1:B3,2,1)", 3, 2, true),
+        ("=INDEX(A1:B3,3,2)", 3, 2, true), // inclusive upper corner
+        ("=INDEX(A1:B3,4,1)", 3, 2, false), // row one past the rect
+        ("=INDEX(A1:B3,2,3)", 3, 2, false), // column one past the rect
+        ("=INDEX(A1:B3,0,1)", 3, 2, false), // zero row selects a whole column
+        ("=INDEX(A1:B3,1,0)", 3, 2, false), // zero column selects a whole row
+        ("=INDEX(A1:B3,2)", 3, 2, false),  // 2-arg over a 2D rect
+        ("=INDEX(A1:A3,3)", 3, 1, true),   // column-vector boundary
+        ("=INDEX(A1:A3,4)", 3, 1, false),
+        ("=INDEX(A1:B1,2)", 1, 2, true), // row-vector boundary
+        ("=INDEX(A1:B1,3)", 1, 2, false),
+    ];
+
+    for (formula, rows, cols, expected) in checks {
+        let interpreter = crate::interpreter::Interpreter::new(&engine, "Sheet1");
+        let ast = parse(formula).expect("valid INDEX formula");
+        let ASTNodeType::Function { args, .. } = &ast.node_type else {
+            panic!("expected a function call: {formula}");
+        };
+        let handles: Vec<crate::traits::ArgumentHandle<'_, '_>> = args
+            .iter()
+            .map(|arg| crate::traits::ArgumentHandle::new(arg, &interpreter))
+            .collect();
+        assert_eq!(
+            crate::builtins::reference_fns::IndexFn::precise_single_cell_selection(
+                &handles, *rows, *cols
+            ),
+            *expected,
+            "{formula} with dims {rows}x{cols}"
+        );
+    }
+}

@@ -165,7 +165,7 @@ impl IndexFn {
         }
     }
 
-    fn precise_single_cell_selection<'a, 'b>(
+    pub(crate) fn precise_single_cell_selection<'a, 'b>(
         args: &[ArgumentHandle<'a, 'b>],
         rows: u32,
         cols: u32,
