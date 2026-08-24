@@ -165,7 +165,7 @@ impl IndexFn {
         }
     }
 
-    fn precise_single_cell_selection<'a, 'b>(
+    pub(crate) fn precise_single_cell_selection<'a, 'b>(
         args: &[ArgumentHandle<'a, 'b>],
         rows: u32,
         cols: u32,
@@ -290,6 +290,38 @@ impl IndexFn {
         }
     }
 
+    /// Attempt the precise single-cell fast path.
+    ///
+    /// Returns `None` when any gate declines, in which case the caller falls
+    /// back to `validated_dispatch`. Factored out of `dispatch` (and
+    /// parameterized over the dispatching function) so tests can assert which
+    /// path a given argument shape takes and observe the format policy being
+    /// applied to the precise result.
+    pub(crate) fn precise_dispatch<'a, 'b, 'c>(
+        function: &dyn Function,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Option<crate::traits::CalcValue<'b>> {
+        let argument = args.first()?;
+        if !argument.may_return_reference() {
+            return None;
+        }
+        let Ok(FunctionResolution::Reference(base)) = argument.resolve_reference_or_value() else {
+            return None;
+        };
+        let (rows, cols) = Self::bounded_dimensions(&base)?;
+        if !Self::precise_single_cell_selection(args, rows, cols) {
+            return None;
+        }
+        let Some(Ok(reference @ ReferenceType::Cell { .. })) =
+            Self::reference_from_base(args, ctx, base)
+        else {
+            return None;
+        };
+        let value = Self::materialize_reference(ctx, &reference).ok()?;
+        Some(function.apply_format_propagation(value))
+    }
+
     fn validated_dispatch<'a, 'b>(
         &self,
         args: &[ArgumentHandle<'a, 'b>],
@@ -393,16 +425,8 @@ impl Function for IndexFn {
         args: &'c [ArgumentHandle<'a, 'b>],
         ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
-        if let Some(argument) = args.first()
-            && argument.may_return_reference()
-            && let Ok(FunctionResolution::Reference(base)) = argument.resolve_reference_or_value()
-            && let Some((rows, cols)) = Self::bounded_dimensions(&base)
-            && Self::precise_single_cell_selection(args, rows, cols)
-            && let Some(Ok(reference @ ReferenceType::Cell { .. })) =
-                Self::reference_from_base(args, ctx, base)
-            && let Ok(value) = Self::materialize_reference(ctx, &reference)
-        {
-            return Ok(self.apply_format_propagation(value));
+        if let Some(value) = Self::precise_dispatch(self, args, ctx) {
+            return Ok(value);
         }
         self.validated_dispatch(args, ctx)
     }

@@ -184,22 +184,158 @@ fn index_selected_error_phantom_cycle_stays_acyclic() {
     }
 }
 
+/// Test-only INDEX stand-in with a non-None format policy. The precise path
+/// must route its result through `apply_format_propagation`; with the real
+/// IndexFn the policy is `None`, which makes the application unobservable, so
+/// this marker function is what makes deleting that call falsifiable.
+#[derive(Debug)]
+struct MarkedIndexFn;
+
+impl crate::function::Function for MarkedIndexFn {
+    fn name(&self) -> &'static str {
+        "INDEX.MARKED"
+    }
+
+    fn min_args(&self) -> usize {
+        2
+    }
+
+    fn arg_schema(&self) -> &'static [crate::args::ArgSchema] {
+        &[]
+    }
+
+    fn propagate_format(
+        &self,
+        _result: &crate::traits::CalcValue<'_>,
+    ) -> Option<crate::format::FormatId> {
+        Some(MARKER_FORMAT)
+    }
+
+    fn eval<'a, 'b, 'c>(
+        &self,
+        _args: &'c [crate::traits::ArgumentHandle<'a, 'b>],
+        _ctx: &dyn crate::traits::FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, formualizer_common::ExcelError> {
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+            formualizer_common::ExcelError::new(ExcelErrorKind::NImpl),
+        )))
+    }
+}
+
+const MARKER_FORMAT: crate::format::FormatId = crate::format::FormatId(30);
+
+type PreciseDispatchResult = Option<(Option<crate::format::FormatId>, LiteralValue)>;
+
+fn precise_dispatch_on(
+    engine: &Engine<TestWorkbook>,
+    function: &dyn crate::function::Function,
+    formula: &str,
+) -> PreciseDispatchResult {
+    use formualizer_parse::parser::ASTNodeType;
+
+    let interpreter = crate::interpreter::Interpreter::new(engine, "Sheet1");
+    let ast = parse(formula).expect("valid INDEX formula");
+    let ASTNodeType::Function { args, .. } = &ast.node_type else {
+        panic!("expected a function call: {formula}");
+    };
+    let handles: Vec<crate::traits::ArgumentHandle<'_, '_>> = args
+        .iter()
+        .map(|arg| crate::traits::ArgumentHandle::new(arg, &interpreter))
+        .collect();
+    let ctx = interpreter.function_context(None);
+    crate::builtins::reference_fns::IndexFn::precise_dispatch(function, &handles, &ctx)
+        .map(|value| (value.format_id(), value.into_literal()))
+}
+
 #[test]
 fn index_precise_path_applies_format_policy() {
     let mut engine = runtime_engine();
     engine
+        .set_cell_value("Sheet1", 1, 17, LiteralValue::Int(7))
+        .expect("set Q1");
+
+    // Marker policy: the precise path must apply the dispatching function's
+    // format policy to the materialized value.
+    let (marked_format, _) = precise_dispatch_on(&engine, &MarkedIndexFn, "=INDEX(Q1:Q3,1)")
+        .expect("precise path taken");
+    assert_eq!(
+        marked_format,
+        Some(MARKER_FORMAT),
+        "the precise path must route through apply_format_propagation"
+    );
+
+    // Control: INDEX itself declares no policy, so the same dispatch clears
+    // any annotation.
+    engine
         .set_cell_value(
             "Sheet1",
-            1,
+            2,
             17,
             LiteralValue::Date(NaiveDate::from_ymd_opt(2024, 12, 1).expect("valid date")),
         )
-        .expect("set Q1");
-    let ast = parse("=INDEX(Q1:Q3,1)").expect("valid INDEX formula");
-    let value = crate::interpreter::Interpreter::new(&engine, "Sheet1")
-        .evaluate_ast(&ast)
-        .expect("evaluate INDEX");
-    assert_eq!(value.format_id(), None, "INDEX drops source annotations");
+        .expect("set Q2");
+    let (unmarked_format, _) = precise_dispatch_on(
+        &engine,
+        &crate::builtins::reference_fns::IndexFn,
+        "=INDEX(Q1:Q3,2)",
+    )
+    .expect("precise path taken");
+    assert_eq!(unmarked_format, None, "INDEX drops source annotations");
+}
+
+/// Path-taken matrix for `precise_single_cell_selection`: the filter is a
+/// perf gate whose rejections are re-rejected downstream, so only direct
+/// taken/not-taken assertions can catch an off-by-one in its bounds.
+#[test]
+fn index_precise_path_taken_matrix() {
+    let mut engine = runtime_engine();
+    for (row, col, value) in [
+        (1, 1, 1),
+        (2, 1, 2),
+        (3, 1, 3),
+        (1, 2, 10),
+        (2, 2, 20),
+        (3, 2, 30),
+    ] {
+        engine
+            .set_cell_value("Sheet1", row, col, LiteralValue::Int(value))
+            .expect("set fixture cell");
+    }
+
+    let cases: &[(&str, Option<f64>)] = &[
+        ("=INDEX(A1:B3,2,1)", Some(2.0)),
+        ("=INDEX(A1:B3,3,2)", Some(30.0)), // both upper bounds inclusive
+        ("=INDEX(A1:B3,1,1)", Some(1.0)),
+        ("=INDEX(A1:B3,4,1)", None),    // row just past the rect
+        ("=INDEX(A1:B3,2,3)", None),    // column just past the rect
+        ("=INDEX(A1:B3,0,1)", None),    // zero selects a whole row/column
+        ("=INDEX(A1:B3,2)", None),      // 2-arg over a 2D rect is not single-cell
+        ("=INDEX(A1:A3,3)", Some(3.0)), // single-column vector boundary
+        ("=INDEX(A1:A3,4)", None),
+        ("=INDEX(A1:B1,2)", Some(10.0)), // single-row vector boundary
+        ("=INDEX(A1:B1,3)", None),
+    ];
+
+    for (formula, expected) in cases {
+        let result =
+            precise_dispatch_on(&engine, &crate::builtins::reference_fns::IndexFn, formula);
+        match (result, expected) {
+            (Some((_, literal)), Some(expected)) => {
+                let number = match literal {
+                    LiteralValue::Int(int) => int as f64,
+                    LiteralValue::Number(number) => number,
+                    other => panic!("{formula}: expected a number, got {other:?}"),
+                };
+                assert_eq!(number, *expected, "{formula}");
+            }
+            (None, None) => {}
+            (taken, _) => panic!(
+                "{formula}: precise path taken = {}, expected {}",
+                taken.is_some(),
+                expected.is_some()
+            ),
+        }
+    }
 }
 
 #[test]
@@ -217,4 +353,47 @@ fn index_unbounded_column_selection_measured() {
         is_circ(&engine, 9, 3),
         "unbounded INDEX retains whole-column live edges while resolving bounds"
     );
+}
+
+/// Direct bound assertions on `precise_single_cell_selection`. The dispatch
+/// path re-rejects out-of-range selections in `reference_from_base`, so a
+/// widened bound in this filter is invisible to the taken/not-taken matrix
+/// above; only predicate-level assertions catch such an off-by-one.
+#[test]
+fn index_precise_selection_predicate_bounds() {
+    use formualizer_parse::parser::ASTNodeType;
+
+    let engine = runtime_engine();
+    let checks: &[(&str, u32, u32, bool)] = &[
+        ("=INDEX(A1:B3,2,1)", 3, 2, true),
+        ("=INDEX(A1:B3,3,2)", 3, 2, true), // inclusive upper corner
+        ("=INDEX(A1:B3,4,1)", 3, 2, false), // row one past the rect
+        ("=INDEX(A1:B3,2,3)", 3, 2, false), // column one past the rect
+        ("=INDEX(A1:B3,0,1)", 3, 2, false), // zero row selects a whole column
+        ("=INDEX(A1:B3,1,0)", 3, 2, false), // zero column selects a whole row
+        ("=INDEX(A1:B3,2)", 3, 2, false),  // 2-arg over a 2D rect
+        ("=INDEX(A1:A3,3)", 3, 1, true),   // column-vector boundary
+        ("=INDEX(A1:A3,4)", 3, 1, false),
+        ("=INDEX(A1:B1,2)", 1, 2, true), // row-vector boundary
+        ("=INDEX(A1:B1,3)", 1, 2, false),
+    ];
+
+    for (formula, rows, cols, expected) in checks {
+        let interpreter = crate::interpreter::Interpreter::new(&engine, "Sheet1");
+        let ast = parse(formula).expect("valid INDEX formula");
+        let ASTNodeType::Function { args, .. } = &ast.node_type else {
+            panic!("expected a function call: {formula}");
+        };
+        let handles: Vec<crate::traits::ArgumentHandle<'_, '_>> = args
+            .iter()
+            .map(|arg| crate::traits::ArgumentHandle::new(arg, &interpreter))
+            .collect();
+        assert_eq!(
+            crate::builtins::reference_fns::IndexFn::precise_single_cell_selection(
+                &handles, *rows, *cols
+            ),
+            *expected,
+            "{formula} with dims {rows}x{cols}"
+        );
+    }
 }

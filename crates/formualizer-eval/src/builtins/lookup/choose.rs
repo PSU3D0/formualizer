@@ -651,6 +651,44 @@ mod tests {
     }
 
     #[test]
+    fn choose_len_boundary_value_path() {
+        let wb = TestWorkbook::new().with_function(Arc::new(ChooseFn));
+        let ctx = wb.interpreter();
+        let f = ctx.context.get_function("", "CHOOSE").unwrap();
+
+        let a = lit(LiteralValue::Text("A".into()));
+        let b = lit(LiteralValue::Text("B".into()));
+
+        // CHOOSE(len, ...): the last choice is the highest valid index.
+        let two = lit(LiteralValue::Int(2));
+        let args = vec![
+            ArgumentHandle::new(&two, &ctx),
+            ArgumentHandle::new(&a, &ctx),
+            ArgumentHandle::new(&b, &ctx),
+        ];
+        let result = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
+        assert_eq!(result, LiteralValue::Text("B".into()));
+
+        // CHOOSE(len + 1, ...): exactly one past the last choice must be
+        // #VALUE!, not an out-of-bounds argument access. A bound widened by
+        // one panics here while every wider overflow still errors.
+        let three = lit(LiteralValue::Int(3));
+        let args = vec![
+            ArgumentHandle::new(&three, &ctx),
+            ArgumentHandle::new(&a, &ctx),
+            ArgumentHandle::new(&b, &ctx),
+        ];
+        let result = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
+        assert!(matches!(result, LiteralValue::Error(e) if e.kind == ExcelErrorKind::Value));
+    }
+
+    #[test]
     fn choose_decimal_index() {
         let wb = TestWorkbook::new().with_function(Arc::new(ChooseFn));
         let ctx = wb.interpreter();
