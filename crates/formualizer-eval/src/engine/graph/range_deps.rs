@@ -590,6 +590,18 @@ impl DependencyGraph {
                 self.record_self_loop(dependent);
             }
 
+            // #376: an all-unbounded range means "the whole sheet". The stripe
+            // classification below would treat it as both column- and
+            // row-striped, fall through both branches, and collapse it to a
+            // single row-0 stripe, hiding edits anywhere else from this
+            // dependent. Register full column coverage instead; the precision
+            // check against `formula_to_range_deps` already treats the missing
+            // bounds as unbounded.
+            if s_row.is_none() && e_row.is_none() && s_col.is_none() && e_col.is_none() {
+                self.register_whole_sheet_stripes(dependent, sheet_id);
+                continue;
+            }
+
             let col_stripes = (s_row.is_none() && e_row.is_none())
                 || (s_col.is_some() && e_col.is_some() && (s_row.is_none() || e_row.is_none()));
             let row_stripes = (s_col.is_none() && e_col.is_none())
@@ -724,6 +736,26 @@ impl DependencyGraph {
         }
     }
 
+    /// Register stripes covering every cell of a sheet, for a dependent whose
+    /// range is unbounded on both axes (#376). Dirty-propagation lookups probe
+    /// the column stripe of every edited cell, so covering all columns
+    /// guarantees any edit on the sheet reaches the precision check.
+    fn register_whole_sheet_stripes(&mut self, dependent: VertexId, sheet_id: SheetId) {
+        /// Excel sheet column capacity (column XFD), as a 0-based exclusive bound.
+        const SHEET_MAX_COLS: u32 = 16_384;
+        for col in 0..SHEET_MAX_COLS {
+            let key = StripeKey {
+                sheet_id,
+                stripe_type: StripeType::Column,
+                index: col,
+            };
+            self.stripe_to_dependents
+                .entry(key)
+                .or_default()
+                .insert(dependent);
+        }
+    }
+
     /// Fast-path: add range dependencies using compact RangeKey.
     pub fn add_range_deps_from_keys(
         &mut self,
@@ -813,6 +845,18 @@ impl DependencyGraph {
                     != RangeSelfUse::Excluded
             {
                 self.record_self_loop(dependent);
+            }
+
+            // #376: an all-unbounded range means "the whole sheet". The stripe
+            // classification below would treat it as both column- and
+            // row-striped, fall through both branches, and collapse it to a
+            // single row-0 stripe, hiding edits anywhere else from this
+            // dependent. Register full column coverage instead; the precision
+            // check against `formula_to_range_deps` already treats the missing
+            // bounds as unbounded.
+            if s_row.is_none() && e_row.is_none() && s_col.is_none() && e_col.is_none() {
+                self.register_whole_sheet_stripes(dependent, sheet_id);
+                continue;
             }
 
             let col_stripes = (s_row.is_none() && e_row.is_none())

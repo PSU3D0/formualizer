@@ -1164,3 +1164,63 @@ fn test_heal_one_of_multiple_missing_sheets_does_not_double_bind() {
         "Healing S2 first must not rewrite S3 references"
     );
 }
+
+/// #376: an `OpenRect` key with no bounds on either axis means "the whole
+/// sheet". Before the whole-sheet branch the stripe classifier treated it as
+/// both column- and row-striped, fell through both stripe arms, and collapsed
+/// it to a single row-0 stripe — edits anywhere else never reached the
+/// dependent.
+#[test]
+fn all_unbounded_open_rect_key_covers_whole_sheet() {
+    use crate::engine::graph::{StripeKey, StripeType};
+    use crate::engine::plan::RangeKey;
+
+    let mut graph = DependencyGraph::new();
+    graph
+        .set_cell_formula("Sheet1", 1, 20, parse("=1").unwrap())
+        .unwrap();
+    let dependent = *graph
+        .get_vertex_id_for_address(&abs_cell_ref(0, 1, 20))
+        .unwrap();
+    let sheet = graph.sheet_id("Sheet1").unwrap();
+
+    graph.add_range_deps_from_keys(
+        dependent,
+        &[RangeKey::OpenRect {
+            sheet,
+            start_row: None,
+            start_col: None,
+            end_row: None,
+            end_col: None,
+        }],
+        sheet,
+    );
+
+    // Structural: every edited cell probes its own column stripe, so full
+    // column coverage is what makes the dependent reachable from anywhere.
+    for col0 in [0u32, 7, 16_383] {
+        let key = StripeKey {
+            sheet_id: sheet,
+            stripe_type: StripeType::Column,
+            index: col0,
+        };
+        assert!(
+            graph
+                .stripe_to_dependents()
+                .get(&key)
+                .is_some_and(|deps| deps.contains(&dependent)),
+            "column stripe {col0} must include the whole-sheet dependent"
+        );
+    }
+
+    // Behavioral: an edit far from row 1 must dirty the dependent.
+    graph.clear_dirty_flags(&[dependent]);
+    assert!(!graph.is_dirty(dependent), "dependent starts clean");
+    graph
+        .set_cell_value("Sheet1", 500, 8, LiteralValue::Int(5))
+        .unwrap();
+    assert!(
+        graph.is_dirty(dependent),
+        "an edit anywhere on the sheet must dirty the all-unbounded dependent"
+    );
+}
