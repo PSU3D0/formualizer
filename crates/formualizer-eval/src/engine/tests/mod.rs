@@ -187,6 +187,7 @@ mod iterate_corpus_numeric;
 mod iterate_corpus_scale;
 mod iterate_corpus_structural;
 mod iterate_corpus_text;
+mod live_edge_precision;
 mod live_edges;
 mod scalar_range_promotion;
 mod scc_iterate;

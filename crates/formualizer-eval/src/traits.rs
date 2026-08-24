@@ -373,6 +373,46 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
         self.reference_attempt().is_some()
     }
 
+    /// Return whether this argument's syntax may produce a spreadsheet reference.
+    ///
+    /// Unlike [`Self::has_reference_semantics`], this does not evaluate a
+    /// reference-returning function to discover which arm it selects.
+    pub(crate) fn may_return_reference(&self) -> bool {
+        match &self.expr {
+            ArgumentExpr::Ast(node) => match &node.node_type {
+                ASTNodeType::Reference { reference, .. } => {
+                    !matches!(reference, ReferenceType::NamedRange(name) if self.interp.resolve_local_name(name).is_some())
+                }
+                ASTNodeType::BinaryOp { op, .. } => op == ":",
+                ASTNodeType::Function { name, .. } => self
+                    .interp
+                    .context
+                    .function_capabilities("", name)
+                    .is_some_and(|caps| caps.contains(crate::function::FnCaps::RETURNS_REFERENCE)),
+                _ => false,
+            },
+            ArgumentExpr::Arena { id, data_store, .. } => match data_store.get_node(*id) {
+                Some(crate::engine::arena::AstNodeData::Reference { ref_type, .. }) => !matches!(
+                    ref_type,
+                    crate::engine::arena::CompactRefType::NamedRange(name_id)
+                        if self
+                            .interp
+                            .resolve_local_name(data_store.resolve_ast_string(*name_id))
+                            .is_some()
+                ),
+                Some(crate::engine::arena::AstNodeData::BinaryOp { op_id, .. }) => {
+                    data_store.resolve_ast_string(*op_id) == ":"
+                }
+                Some(crate::engine::arena::AstNodeData::Function { name_id, .. }) => self
+                    .interp
+                    .context
+                    .function_capabilities("", data_store.resolve_ast_string(*name_id))
+                    .is_some_and(|caps| caps.contains(crate::function::FnCaps::RETURNS_REFERENCE)),
+                _ => false,
+            },
+        }
+    }
+
     pub fn value(&self) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         self.cached_value
             .get_or_init(|| self.compute_value())
