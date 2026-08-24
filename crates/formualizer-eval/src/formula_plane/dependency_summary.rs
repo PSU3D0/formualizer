@@ -343,8 +343,10 @@ enum NormalizedRangeDependency {
     },
     OpenRect {
         sheet: String,
-        start: Option<(u32, u32)>,
-        end: Option<(u32, u32)>,
+        start_row: Option<u32>,
+        start_col: Option<u32>,
+        end_row: Option<u32>,
+        end_col: Option<u32>,
     },
 }
 
@@ -430,10 +432,18 @@ fn normalize_planner_range(graph: &DependencyGraph, range: &RangeKey) -> Normali
             sheet: graph.sheet_name(*sheet).to_string(),
             col: *col,
         },
-        RangeKey::OpenRect { sheet, start, end } => NormalizedRangeDependency::OpenRect {
+        RangeKey::OpenRect {
+            sheet,
+            start_row,
+            start_col,
+            end_row,
+            end_col,
+        } => NormalizedRangeDependency::OpenRect {
             sheet: graph.sheet_name(*sheet).to_string(),
-            start: start.map(planner_coord_to_vc),
-            end: end.map(planner_coord_to_vc),
+            start_row: start_row.map(|axis| axis.saturating_add(1)),
+            start_col: start_col.map(|axis| axis.saturating_add(1)),
+            end_row: end_row.map(|axis| axis.saturating_add(1)),
+            end_col: end_col.map(|axis| axis.saturating_add(1)),
         },
     }
 }

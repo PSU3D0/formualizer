@@ -231,12 +231,10 @@ where
                         }
                         _ => per_ranges.push(RangeKey::OpenRect {
                             sheet: dep_sheet,
-                            start: start_row
-                                .zip(start_col)
-                                .map(|(r, c)| AbsCoord::from_excel(r, c)),
-                            end: end_row
-                                .zip(end_col)
-                                .map(|(r, c)| AbsCoord::from_excel(r, c)),
+                            start_row: start_row.map(|row| row.saturating_sub(1)),
+                            start_col: start_col.map(|col| col.saturating_sub(1)),
+                            end_row: end_row.map(|row| row.saturating_sub(1)),
+                            end_col: end_col.map(|col| col.saturating_sub(1)),
                         }),
                     }
                 }
@@ -394,12 +392,10 @@ where
                         }
                         _ => per_ranges.push(RangeKey::OpenRect {
                             sheet: dep_sheet,
-                            start: start_row
-                                .zip(start_col)
-                                .map(|(r, c)| AbsCoord::from_excel(r, c)),
-                            end: end_row
-                                .zip(end_col)
-                                .map(|(r, c)| AbsCoord::from_excel(r, c)),
+                            start_row: start_row.map(|row| row.saturating_sub(1)),
+                            start_col: start_col.map(|col| col.saturating_sub(1)),
+                            end_row: end_row.map(|row| row.saturating_sub(1)),
+                            end_col: end_col.map(|col| col.saturating_sub(1)),
                         }),
                     }
                 }

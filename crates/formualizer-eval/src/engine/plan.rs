@@ -27,8 +27,10 @@ pub enum RangeKey {
     /// Partially bounded rectangle; None means unbounded in that direction
     OpenRect {
         sheet: SheetId,
-        start: Option<AbsCoord>,
-        end: Option<AbsCoord>,
+        start_row: Option<u32>,
+        start_col: Option<u32>,
+        end_row: Option<u32>,
+        end_col: Option<u32>,
     },
 }
 
@@ -196,14 +198,10 @@ fn collect_plan_reference(
                 }
                 _ => context.per_ranges.push(RangeKey::OpenRect {
                     sheet: dep_sheet,
-                    start: range
-                        .start_row
-                        .zip(range.start_col)
-                        .map(|(row, col)| AbsCoord::from_excel(row, col)),
-                    end: range
-                        .end_row
-                        .zip(range.end_col)
-                        .map(|(row, col)| AbsCoord::from_excel(row, col)),
+                    start_row: range.start_row.map(|row| row.saturating_sub(1)),
+                    start_col: range.start_col.map(|col| col.saturating_sub(1)),
+                    end_row: range.end_row.map(|row| row.saturating_sub(1)),
+                    end_col: range.end_col.map(|col| col.saturating_sub(1)),
                 }),
             }
         }

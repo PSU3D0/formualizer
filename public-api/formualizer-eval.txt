@@ -3626,9 +3626,11 @@ pub fn formualizer_eval::engine::plan::DependencyPlanAst<'a>::fmt(&self, &mut co
 impl<'a> core::marker::Copy for formualizer_eval::engine::plan::DependencyPlanAst<'a>
 pub enum formualizer_eval::engine::plan::RangeKey
 pub formualizer_eval::engine::plan::RangeKey::OpenRect
-pub formualizer_eval::engine::plan::RangeKey::OpenRect::end: core::option::Option<formualizer_common::coord::Coord>
+pub formualizer_eval::engine::plan::RangeKey::OpenRect::end_col: core::option::Option<u32>
+pub formualizer_eval::engine::plan::RangeKey::OpenRect::end_row: core::option::Option<u32>
 pub formualizer_eval::engine::plan::RangeKey::OpenRect::sheet: formualizer_eval::reference::SheetId
-pub formualizer_eval::engine::plan::RangeKey::OpenRect::start: core::option::Option<formualizer_common::coord::Coord>
+pub formualizer_eval::engine::plan::RangeKey::OpenRect::start_col: core::option::Option<u32>
+pub formualizer_eval::engine::plan::RangeKey::OpenRect::start_row: core::option::Option<u32>
 pub formualizer_eval::engine::plan::RangeKey::Rect
 pub formualizer_eval::engine::plan::RangeKey::Rect::end: formualizer_common::coord::Coord
 pub formualizer_eval::engine::plan::RangeKey::Rect::sheet: formualizer_eval::reference::SheetId

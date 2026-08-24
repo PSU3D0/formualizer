@@ -766,17 +766,20 @@ impl DependencyGraph {
                     let b = mk_axis(c0);
                     SharedRangeRef::from_parts(sheet_loc, None, Some(b), None, Some(b)).ok()
                 }
-                RK::OpenRect { start, end, .. } => {
-                    let (sr, sc) = match start {
-                        Some(p) => (Some(mk_axis(p.row())), Some(mk_axis(p.col()))),
-                        None => (None, None),
-                    };
-                    let (er, ec) = match end {
-                        Some(p) => (Some(mk_axis(p.row())), Some(mk_axis(p.col()))),
-                        None => (None, None),
-                    };
-                    SharedRangeRef::from_parts(sheet_loc, sr, sc, er, ec).ok()
-                }
+                RK::OpenRect {
+                    start_row,
+                    start_col,
+                    end_row,
+                    end_col,
+                    ..
+                } => SharedRangeRef::from_parts(
+                    sheet_loc,
+                    start_row.map(mk_axis),
+                    start_col.map(mk_axis),
+                    end_row.map(mk_axis),
+                    end_col.map(mk_axis),
+                )
+                .ok(),
             };
 
             if let Some(r) = built {

@@ -106,14 +106,10 @@ fn range_key_from_shared(
         },
         _ => RangeKey::OpenRect {
             sheet,
-            start: range
-                .start_row
-                .zip(range.start_col)
-                .map(|(r, c)| AbsCoord::new(r.index, c.index)),
-            end: range
-                .end_row
-                .zip(range.end_col)
-                .map(|(r, c)| AbsCoord::new(r.index, c.index)),
+            start_row: range.start_row.map(|bound| bound.index),
+            start_col: range.start_col.map(|bound| bound.index),
+            end_row: range.end_row.map(|bound| bound.index),
+            end_col: range.end_col.map(|bound| bound.index),
         },
     }
 }
