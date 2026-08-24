@@ -904,3 +904,96 @@ fn if_family_selector_evaluation_count() {
         array.store(false, Ordering::SeqCst);
     }
 }
+
+fn assert_reference_formula_number(formula: &str, expected: f64) {
+    match evaluate_reference_returning_formula(1, formula) {
+        LiteralValue::Int(value) => assert_eq!(value as f64, expected, "{formula}"),
+        LiteralValue::Number(value) => assert_eq!(value, expected, "{formula}"),
+        other => panic!("expected {expected} from {formula}, got {other:?}"),
+    }
+}
+
+fn assert_reference_formula_value_error(formula: &str) {
+    match evaluate_reference_returning_formula(1, formula) {
+        LiteralValue::Error(error) => assert_eq!(
+            error.kind,
+            formualizer_common::ExcelErrorKind::Value,
+            "{formula}"
+        ),
+        other => panic!("expected #VALUE! from {formula}, got {other:?}"),
+    }
+}
+
+/// CHOOSE selector bounds on the value path. `CHOOSE(len, ...)` is the last
+/// valid index and `CHOOSE(len + 1, ...)` must be #VALUE! rather than an
+/// out-of-bounds argument access: a selector bound widened by one panics on
+/// the len + 1 case while every wider overflow still errors.
+#[test]
+fn choose_selector_bounds_value_path() {
+    assert_reference_formula_number("=CHOOSE(2,A1,B1)", 101.0);
+    assert_reference_formula_value_error("=CHOOSE(0,A1,B1)");
+    assert_reference_formula_value_error("=CHOOSE(3,A1,B1)");
+}
+
+/// The same bounds through `resolve_choose_reference_or_value`: OFFSET forces
+/// CHOOSE down the reference path, which carries its own selector check.
+#[test]
+fn choose_selector_bounds_reference_path() {
+    assert_reference_formula_number("=OFFSET(CHOOSE(2,A1,B1),0,0)", 101.0);
+    assert_reference_formula_number("=OFFSET(CHOOSE(2,A1,B1),1,0)", 102.0);
+    assert_reference_formula_value_error("=OFFSET(CHOOSE(0,A1,B1),0,0)");
+    assert_reference_formula_value_error("=OFFSET(CHOOSE(3,A1,B1),0,0)");
+}
+
+/// Pin every syntax arm of `ArgumentHandle::may_return_reference` so the
+/// guard is falsifiable: it exists to keep arguments that cannot produce a
+/// reference off the reference-resolution path, and the downstream let-chain
+/// re-rejects them, so only direct assertions can catch a broken arm.
+#[test]
+fn may_return_reference_syntax_arms() {
+    crate::builtins::load_builtins();
+    let wb = TestWorkbook::new();
+    let interpreter = wb.interpreter();
+    let arm = |formula: &str| {
+        let ast = formualizer_parse::parser::parse(formula).expect("parse arm formula");
+        ArgumentHandle::new(&ast, &interpreter).may_return_reference()
+    };
+
+    assert!(arm("=A1"), "cell reference");
+    assert!(arm("=A1:B3"), "range reference");
+    assert!(arm("=INDEX(A1:B3,1,1)"), "RETURNS_REFERENCE function");
+    assert!(
+        arm("=UNBOUNDNAME"),
+        "an unbound name may be a workbook named range"
+    );
+    assert!(!arm("=SUM(A1:B3)"), "value-returning function");
+    assert!(!arm("=1+2"), "arithmetic expression");
+    assert!(!arm("=\"text\""), "literal");
+}
+
+/// The LET/LAMBDA exclusion: a local binding shadows any workbook name of the
+/// same spelling and locals resolve only on the value path, so a bound name
+/// must report itself as not reference-capable.
+#[test]
+fn may_return_reference_excludes_let_lambda_locals() {
+    use crate::interpreter::{LocalBinding, LocalEnv};
+
+    crate::builtins::load_builtins();
+    let wb = TestWorkbook::new();
+    let interpreter = wb.interpreter();
+    let ast = formualizer_parse::parser::parse("=X").expect("parse local name");
+
+    let unbound = ArgumentHandle::new(&ast, &interpreter);
+    assert!(
+        unbound.may_return_reference(),
+        "without a local binding the name may be a workbook named range"
+    );
+
+    let env = LocalEnv::default().with_binding("X", LocalBinding::Value(LiteralValue::Int(7)));
+    let scoped = interpreter.with_local_env(env);
+    let bound = ArgumentHandle::new(&ast, &scoped);
+    assert!(
+        !bound.may_return_reference(),
+        "a LET/LAMBDA local must not be sent down the named-range route"
+    );
+}
