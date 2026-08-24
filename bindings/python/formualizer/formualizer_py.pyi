@@ -1780,6 +1780,18 @@ class Workbook:
             print(wb.evaluate_cell("Data", 3, 1))
         ```
         """
+    def set_deterministic_clock(self, deterministic_timestamp_utc: datetime.datetime, deterministic_timezone: typing.Optional[typing.Any] = None) -> None:
+        r"""
+        Pin the evaluation clock to a caller-supplied instant, so the
+        volatile date/time builtins (TODAY, NOW) evaluate deterministically
+        on the next recalculation. Takes effect on a live workbook; no
+        reload is required.
+        
+        `deterministic_timezone` accepts `"utc"`, `"local"`, or a fixed
+        offset in seconds — the same spelling as
+        `SheetPortSession.evaluate_once(deterministic_timezone=...)`.
+        Omitted means UTC.
+        """
     def evaluate_all(self) -> None: ...
     def last_cycle_telemetry(self) -> CycleTelemetry:
         r"""
