@@ -188,6 +188,61 @@ fn named_range_family_promotes_to_span_with_value_parity() {
     assert_column_parity("after edits", SHEET, 3, &auth, &off);
 }
 
+#[test]
+fn formula_backed_name_is_evaluated_with_unrelated_active_span() {
+    let mut auth = engine_with_mode(FormulaPlaneMode::AuthoritativeExperimental);
+    let mut off = engine_with_mode(FormulaPlaneMode::Off);
+    for engine in [&mut auth, &mut off] {
+        engine
+            .set_cell_value(SHEET, 1, 1, LiteralValue::Number(5.0))
+            .unwrap();
+        engine
+            .define_name(
+                "Rate",
+                NamedDefinition::Formula {
+                    ast: parse("=Sheet1!A1*2").unwrap(),
+                    dependencies: Vec::new(),
+                    range_deps: Vec::new(),
+                },
+                NameScope::Workbook,
+            )
+            .unwrap();
+        engine
+            .set_cell_formula(SHEET, 1, 2, parse("=Rate+1").unwrap())
+            .unwrap();
+    }
+
+    let report = ingest_column(&mut auth, SHEET, 3, |row| format!("=A{row}+1"));
+    let _ = ingest_column(&mut off, SHEET, 3, |row| format!("=A{row}+1"));
+    assert_eq!(report.shadow_accepted_span_cells, u64::from(ROWS));
+
+    auth.evaluate_all().unwrap();
+    off.evaluate_all().unwrap();
+    assert_eq!(
+        auth.get_cell_value(SHEET, 1, 2),
+        off.get_cell_value(SHEET, 1, 2)
+    );
+    assert_eq!(
+        auth.get_cell_value(SHEET, 1, 2),
+        Some(LiteralValue::Number(11.0))
+    );
+
+    for engine in [&mut auth, &mut off] {
+        engine
+            .set_cell_value(SHEET, 1, 1, LiteralValue::Number(7.0))
+            .unwrap();
+        engine.evaluate_all().unwrap();
+    }
+    assert_eq!(
+        auth.get_cell_value(SHEET, 1, 2),
+        off.get_cell_value(SHEET, 1, 2)
+    );
+    assert_eq!(
+        auth.get_cell_value(SHEET, 1, 2),
+        Some(LiteralValue::Number(15.0))
+    );
+}
+
 /// (b) Dirty precision: edits inside the resolved named region re-evaluate
 /// the span; edits outside do not.
 #[test]

@@ -45,16 +45,16 @@ use crate::formula_plane::placement::{
 };
 use crate::formula_plane::producer::{
     DirtyProjectionRule, FormulaConsumerReadIndex, FormulaProducerId, FormulaProducerResultIndex,
-    FormulaProducerWork, ProducerDirtyDomain, SpanReadSummary,
+    FormulaProducerWork, ProducerDirtyDomain, ProjectionResult, SpanReadSummary,
 };
 use crate::formula_plane::region_index::{DirtyDomain, Region};
 use crate::formula_plane::runtime::{
     FormulaPlane, FormulaSpanId, FormulaSpanRef, PlacementCoord, PlacementDomain, ResultRegion,
 };
 use crate::formula_plane::scheduler::{
-    MixedSchedule, MixedScheduleFallbackReason, MixedTopology, MixedTopologyCompileResult,
-    MixedTopologyCompileStats, MixedTopologyConfig, build_demand_closure_cached,
-    build_demand_closure_in_memory_runs, build_demand_closure_paged,
+    MixedLayer, MixedSchedule, MixedScheduleFallback, MixedScheduleFallbackReason, MixedTopology,
+    MixedTopologyCompileResult, MixedTopologyCompileStats, MixedTopologyConfig,
+    build_demand_closure_cached, build_demand_closure_in_memory_runs, build_demand_closure_paged,
     build_demand_closure_repeated_passes, compile_mixed_topology, schedule_dirty_work,
     schedule_dirty_work_in_memory_runs, schedule_dirty_work_paged_hybrid,
     schedule_dirty_work_repeated_passes,
@@ -20005,6 +20005,167 @@ where
         })
     }
 
+    fn include_non_grid_legacy_work(
+        &self,
+        schedule: MixedSchedule,
+        vertices: &[VertexId],
+        producer_results: &FormulaProducerResultIndex,
+        consumer_reads: &FormulaConsumerReadIndex,
+    ) -> MixedSchedule {
+        if vertices.is_empty() {
+            return schedule;
+        }
+
+        let mut work_by_producer = BTreeMap::new();
+        for item in schedule
+            .layers
+            .iter()
+            .flat_map(|layer| layer.work.iter())
+            .cloned()
+        {
+            work_by_producer.insert(item.producer, item);
+        }
+        for &vertex in vertices {
+            let producer = FormulaProducerId::Legacy(vertex);
+            work_by_producer
+                .entry(producer)
+                .or_insert(FormulaProducerWork {
+                    producer,
+                    dirty: ProducerDirtyDomain::Whole,
+                });
+        }
+
+        let producer_set = work_by_producer.keys().copied().collect::<FxHashSet<_>>();
+        let mut outgoing = BTreeMap::<FormulaProducerId, BTreeSet<FormulaProducerId>>::new();
+        let mut indegree = work_by_producer
+            .keys()
+            .copied()
+            .map(|producer| (producer, 0usize))
+            .collect::<BTreeMap<_, _>>();
+        let add_edge = |source: FormulaProducerId,
+                        target: FormulaProducerId,
+                        outgoing: &mut BTreeMap<_, BTreeSet<_>>,
+                        indegree: &mut BTreeMap<_, usize>| {
+            if source != target
+                && producer_set.contains(&source)
+                && producer_set.contains(&target)
+                && outgoing.entry(source).or_default().insert(target)
+            {
+                *indegree.entry(target).or_default() += 1;
+            }
+        };
+
+        // Reconstruct the regional edges used by the mixed scheduler, then add
+        // graph-native edges for symbol vertices, which deliberately have no
+        // grid result region and therefore cannot live in the regional index.
+        for &source in &producer_set {
+            let Some(result_region) = producer_results.producer_result_region(source) else {
+                continue;
+            };
+            for matched in consumer_reads.query_changed_region(result_region).matches {
+                if !matches!(matched.value.dirty, ProjectionResult::NoIntersection) {
+                    add_edge(source, matched.value.consumer, &mut outgoing, &mut indegree);
+                }
+            }
+        }
+        for &consumer in &producer_set {
+            let FormulaProducerId::Legacy(vertex) = consumer else {
+                continue;
+            };
+            for dependency in self.graph.get_dependencies(vertex) {
+                let direct = FormulaProducerId::Legacy(dependency);
+                add_edge(direct, consumer, &mut outgoing, &mut indegree);
+
+                // A promoted span may have replaced the dependency's grid
+                // producer. Recover that boundary through its cell coordinate.
+                if let Some(cell) = self.graph.get_cell_ref_for_vertex(dependency) {
+                    let point = Region::point(cell.sheet_id, cell.coord.row(), cell.coord.col());
+                    for matched in producer_results.query(point).matches {
+                        add_edge(
+                            matched.value.producer,
+                            consumer,
+                            &mut outgoing,
+                            &mut indegree,
+                        );
+                    }
+                }
+            }
+            let context_sheet = self.graph.get_vertex_sheet_id(vertex);
+            for range in self
+                .graph
+                .get_range_dependencies(vertex)
+                .into_iter()
+                .flatten()
+            {
+                if let Ok(Some(region)) = self.shared_range_to_region_pattern(range, context_sheet)
+                {
+                    for matched in producer_results.query(region).matches {
+                        add_edge(
+                            matched.value.producer,
+                            consumer,
+                            &mut outgoing,
+                            &mut indegree,
+                        );
+                    }
+                }
+            }
+        }
+
+        let mut ready = indegree
+            .iter()
+            .filter_map(|(&producer, &degree)| (degree == 0).then_some(producer))
+            .collect::<BTreeSet<_>>();
+        let mut layers = Vec::new();
+        let mut scheduled_count = 0usize;
+        while !ready.is_empty() {
+            let current = std::mem::take(&mut ready);
+            let mut next = BTreeSet::new();
+            let mut work = Vec::with_capacity(current.len());
+            for producer in current {
+                scheduled_count = scheduled_count.saturating_add(1);
+                work.push(
+                    work_by_producer
+                        .get(&producer)
+                        .expect("ready producer has work")
+                        .clone(),
+                );
+                for &target in outgoing.get(&producer).into_iter().flatten() {
+                    let degree = indegree.get_mut(&target).expect("edge target has indegree");
+                    *degree -= 1;
+                    if *degree == 0 {
+                        next.insert(target);
+                    }
+                }
+            }
+            layers.push(MixedLayer { work });
+            ready = next;
+        }
+
+        let mut fallbacks = schedule.fallbacks;
+        let mut stats = schedule.stats;
+        if scheduled_count != work_by_producer.len() {
+            for (&producer, &degree) in &indegree {
+                if degree != 0 {
+                    fallbacks.push(MixedScheduleFallback {
+                        producer,
+                        reason: MixedScheduleFallbackReason::CycleDetected,
+                    });
+                }
+            }
+            stats.cycle_count = stats.cycle_count.saturating_add(1);
+        }
+        stats.input_work_items = stats.input_work_items.saturating_add(vertices.len());
+        stats.merged_work_items = work_by_producer.len();
+        stats.unique_producers = work_by_producer.len();
+        stats.edges_added = outgoing.values().map(BTreeSet::len).sum();
+        stats.layers = layers.len();
+        MixedSchedule {
+            layers,
+            stats,
+            fallbacks,
+        }
+    }
+
     fn build_formula_plane_mixed_schedule(
         &mut self,
         formula_dirty: &FormulaDirtyLease,
@@ -20565,6 +20726,7 @@ where
                 .collect();
             let mut work = Vec::new();
             let mut scheduled_legacy_vertices = Vec::new();
+            let mut non_grid_legacy_vertices = Vec::new();
             let demanded_dirty = |producer: FormulaProducerId,
                                   dirty: ProducerDirtyDomain|
              -> Option<ProducerDirtyDomain> {
@@ -20596,11 +20758,23 @@ where
             }
             for vertex in dirty_legacy {
                 let producer = FormulaProducerId::Legacy(vertex);
-                if producer_results.producer_result_region(producer).is_some()
-                    && let Some(dirty) = demanded_dirty(producer, ProducerDirtyDomain::Whole)
+                if producer_results.producer_result_region(producer).is_some() {
+                    if let Some(dirty) = demanded_dirty(producer, ProducerDirtyDomain::Whole) {
+                        scheduled_legacy_vertices.push(vertex);
+                        work.push(FormulaProducerWork { producer, dirty });
+                    }
+                } else if matches!(
+                    self.graph.get_vertex_kind(vertex),
+                    VertexKind::NamedScalar | VertexKind::NamedArray
+                ) && island_target_demand
+                    .as_ref()
+                    .is_none_or(|demand| demand.contains(&vertex))
                 {
-                    scheduled_legacy_vertices.push(vertex);
-                    work.push(FormulaProducerWork { producer, dirty });
+                    // NamedScalar/NamedArray producers intentionally have no
+                    // grid result region. Keep them out of regional dirty
+                    // projection, then merge them back through graph ordering
+                    // after the regional schedule is built.
+                    non_grid_legacy_vertices.push(vertex);
                 }
             }
 
@@ -20686,6 +20860,8 @@ where
                     }
                 }
             }
+
+            scheduled_legacy_vertices.extend(non_grid_legacy_vertices.iter().copied());
 
             let owned_dirty_events = if let Some(demand) = demand.as_ref() {
                 use crate::formula_plane::producer::compute_dirty_closure_checked;
@@ -20992,7 +21168,7 @@ where
                 .as_mut()
                 .map_or(Ok(()), |ledger| ledger.release_scratch(scratch))
                 .map_err(crate::engine::ResourceLedgerError::into_excel_error);
-            let (schedule, exact_strategy, pass_count, native_disk_bytes, result_span_refs) =
+            let (mut schedule, exact_strategy, pass_count, native_disk_bytes, result_span_refs) =
                 match build_result {
                     Ok(output) => {
                         release_result?;
@@ -21003,6 +21179,12 @@ where
                         return Err(error);
                     }
                 };
+            schedule = self.include_non_grid_legacy_work(
+                schedule,
+                &non_grid_legacy_vertices,
+                producer_results,
+                consumer_reads,
+            );
             if let Some(strategy) = exact_strategy
                 && let Some(stats) = self.active_evaluation_resource_request.as_mut()
             {
