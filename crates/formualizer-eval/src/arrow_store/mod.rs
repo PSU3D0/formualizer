@@ -2018,7 +2018,7 @@ impl Overlay {
     }
 
     #[inline]
-    fn has_formats(&self) -> bool {
+    pub(crate) fn has_formats(&self) -> bool {
         !self.format_points.is_empty()
     }
 
