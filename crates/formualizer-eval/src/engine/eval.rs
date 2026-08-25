@@ -18601,7 +18601,9 @@ where
             } => {
                 let _source_cache = self.source_cache_session();
                 self.begin_evaluation_request();
-                if self.graph.formula_authority().active_span_count() > 0 {
+                if self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental
+                    && self.graph.formula_authority().active_span_count() > 0
+                {
                     return self.evaluate_authoritative_formula_plane_all();
                 }
                 if *has_dynamic_refs {
@@ -21338,7 +21340,9 @@ where
         if self.config.defer_graph_building {
             self.build_graph_all()?;
         }
-        if self.graph.formula_authority().active_span_count() > 0 {
+        if self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental
+            && self.graph.formula_authority().active_span_count() > 0
+        {
             return self.evaluate_authoritative_formula_plane(None, Some(delta));
         }
         self.reset_virtual_dep_telemetry_if_disabled();
@@ -22099,7 +22103,9 @@ where
         if self.config.defer_graph_building {
             self.build_graph_all()?;
         }
-        if self.graph.formula_authority().active_span_count() > 0 {
+        if self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental
+            && self.graph.formula_authority().active_span_count() > 0
+        {
             if cancel_flag.load(Ordering::Relaxed) {
                 return Err(ExcelError::new(ExcelErrorKind::Cancelled).with_message(
                     "Evaluation cancelled before FormulaPlane scheduling".to_string(),
@@ -26655,7 +26661,9 @@ where
         if self.config.defer_graph_building {
             self.build_graph_all()?;
         }
-        if self.graph.formula_authority().active_span_count() > 0 {
+        if self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental
+            && self.graph.formula_authority().active_span_count() > 0
+        {
             return self.evaluate_authoritative_formula_plane_all();
         }
         self.reset_virtual_dep_telemetry_if_disabled();
