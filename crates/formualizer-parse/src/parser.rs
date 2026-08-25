@@ -237,6 +237,30 @@ pub struct ExternalReference {
     pub kind: ExternalRefKind,
 }
 
+impl ExternalReference {
+    /// Canonical source name for a single-cell in-workbook external reference
+    /// (spec §10), e.g. `[1]sheet1!A1`.
+    ///
+    /// Keys are derived from structured fields (`book` token, case-folded
+    /// `sheet`, and the coordinates in `kind`) so that authored variations like
+    /// `=[1]Sheet1!A1`, `=[1]Sheet1!$A$1`, and `=[1]sheet1!a1` all resolve to
+    /// the same source. Returns `None` for range references, which route to
+    /// source tables and are not seeded from cached values today.
+    pub fn source_name(&self) -> Option<String> {
+        match self.kind {
+            ExternalRefKind::Cell { row, col, .. } => {
+                Some(formualizer_common::external_cell_source_name(
+                    self.book.token(),
+                    &self.sheet,
+                    row,
+                    col,
+                ))
+            }
+            ExternalRefKind::Range { .. } => None,
+        }
+    }
+}
+
 /// A reference to something outside the cell.
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, PartialEq, Hash)]

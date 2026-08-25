@@ -1063,6 +1063,12 @@ pub struct WorkbookConfig {
     pub eval: formualizer_eval::engine::EvalConfig,
     pub enable_changelog: bool,
     pub ingest_limits: formualizer_eval::engine::WorkbookLoadLimits,
+    /// Resolve in-workbook external references (spec §10) from cached
+    /// `externalLinkN.xml` values. Enabled by default (matches Excel, which
+    /// never recalculates external links); disable to fall back to the pre-#363
+    /// behavior where such references fail with `#NAME?: Undefined name` at
+    /// evaluation.
+    pub resolve_external_cached_sources: bool,
 }
 
 impl WorkbookConfig {
@@ -1071,6 +1077,7 @@ impl WorkbookConfig {
             eval: formualizer_eval::engine::EvalConfig::default(),
             enable_changelog: false,
             ingest_limits: formualizer_eval::engine::WorkbookLoadLimits::default(),
+            resolve_external_cached_sources: true,
         }
     }
 
@@ -1084,6 +1091,7 @@ impl WorkbookConfig {
             eval,
             enable_changelog: true,
             ingest_limits: formualizer_eval::engine::WorkbookLoadLimits::default(),
+            resolve_external_cached_sources: true,
         }
     }
 
@@ -1092,6 +1100,16 @@ impl WorkbookConfig {
         ingest_limits: formualizer_eval::engine::WorkbookLoadLimits,
     ) -> Self {
         self.ingest_limits = ingest_limits;
+        self
+    }
+
+    /// Opt in/out of cached in-workbook external-reference resolution (spec §10).
+    ///
+    /// Enabled by default; when disabled, external-reference cells are not seeded
+    /// from `externalLinkN.xml` cached values and fail with `#NAME?` at
+    /// evaluation, matching pre-#363 behavior.
+    pub fn with_external_cached_sources(mut self, enabled: bool) -> Self {
+        self.resolve_external_cached_sources = enabled;
         self
     }
 
@@ -3484,24 +3502,48 @@ impl Workbook {
             config.eval.cycle =
                 crate::calc_pr::apply_calc_settings_to_cycle(settings, config.eval.cycle);
         }
+        let ingest_limits = config.ingest_limits.clone();
+        let resolve_external_cached_sources = config.resolve_external_cached_sources;
 
         let mut wb = Self::new_with_config(config);
         // Retain round-trip-only calcPr attributes (calcMode/fullCalcOnLoad) so
         // the XLSX write path can re-emit them; iterate* are sourced from the
         // live engine config at save time.
         wb.calc_settings = parsed_calc;
-        backend
-            .stream_into_engine(&mut wb.engine)
-            .map_err(IoError::from)?;
-        // In-workbook external references (spec §10): the backend declares the
-        // source scalars during `stream_into_engine`; the cached values stored in
-        // the `externalLinkN.xml` parts are surfaced here so evaluation answers
+        // In-workbook external references (spec §10): when resolution is enabled,
+        // scan the cached `externalLinkN.xml` values (bounded by ingest limits),
+        // declare each unique source scalar on the engine *before* formulas are
+        // ingested, and surface the values to the resolver so evaluation answers
         // `[1]Sheet1!A1` cells with the cached value (Excel never recalculates
         // external links). `new_with_config` seeded the resolver with the same
         // `source_values` map the Workbook holds, so this populates it directly.
-        for (name, value) in backend.external_cached_sources() {
-            wb.source_values.write().insert(name.clone(), value.clone());
+        if resolve_external_cached_sources {
+            backend
+                .scan_external_cached_sources(&ingest_limits)
+                .map_err(|e| IoError::from_backend("workbook", e))?;
+            let mut declared: HashMap<String, LiteralValue> = HashMap::new();
+            for src in backend.external_cached_sources() {
+                let name = formualizer_common::external_cell_source_name(
+                    &format!("[{}]", src.book_index),
+                    &src.sheet,
+                    src.row,
+                    src.col,
+                );
+                // Duplicate cached cells (same book/sheet/row/col) are last-wins.
+                declared.insert(name, src.value.clone());
+            }
+            for name in declared.keys() {
+                wb.engine
+                    .define_source_scalar(name, Some(0))
+                    .map_err(IoError::Engine)?;
+            }
+            for (name, value) in declared {
+                wb.source_values.write().insert(name, value);
+            }
         }
+        backend
+            .stream_into_engine(&mut wb.engine)
+            .map_err(IoError::from)?;
         let stats = backend.load_stats();
         Ok((wb, stats))
     }

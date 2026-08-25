@@ -21,8 +21,10 @@ except Exception:  # pragma: no cover - allow skipping if not present in dev env
 pytestmark = pytest.mark.skipif(openpyxl is None, reason="openpyxl not installed")
 
 
-def build_inbook_external_link_xlsx(tmp_path, sheet_data="42", with_cache=True):
-    """Build an `.xlsx` with `=[1]Sheet1!A1` and an external link part caching A1."""
+def build_inbook_external_link_xlsx(
+    tmp_path, sheet_data="42", with_cache=True, formula="[1]Sheet1!A1"
+):
+    """Build an `.xlsx` with `=...` external ref and an external link part caching A1."""
     p = tmp_path / "external_links.xlsx"
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -42,7 +44,7 @@ def build_inbook_external_link_xlsx(tmp_path, sheet_data="42", with_cache=True):
     # Always add the formula cell so the reference exists even without a cache.
     sheet1 = sheet1.replace(
         "</row>",
-        f'      <c r="B1">\n        <f t="shared" ref="B1" si="0">[1]Sheet1!A1</f>\n'
+        f'      <c r="B1">\n        <f t="shared" ref="B1" si="0">{formula}</f>\n'
         f"        <v>{sheet_data}</v>\n      </c>\n    </row>",
     )
     if with_cache:
@@ -111,6 +113,17 @@ def test_inbook_external_reference_evaluates_from_cached_values(tmp_path):
     wb.evaluate_all()
     assert wb.get_value("Sheet1", 1, 2) == 42.0
     assert wb.get_formula("Sheet1", 1, 2) == "=[1]Sheet1!A1"
+
+
+@pytest.mark.parametrize(
+    "formula",
+    ["[1]Sheet1!A1", "[1]Sheet1!$A$1", "[1]sheet1!A1"],
+)
+def test_inbook_external_reference_matches_structurally(tmp_path, formula):
+    p = build_inbook_external_link_xlsx(tmp_path, formula=formula)
+    wb = fz.load_workbook(str(p))
+    wb.evaluate_all()
+    assert wb.get_value("Sheet1", 1, 2) == 42.0
 
 
 def test_inbook_external_reference_without_cache_fails_gracefully(tmp_path):

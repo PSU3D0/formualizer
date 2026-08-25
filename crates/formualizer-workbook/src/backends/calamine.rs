@@ -1,7 +1,8 @@
 use crate::load_limits::enforce_sheet_dimension_limits;
 use crate::traits::{
     AccessGranularity, AdapterLoadStats, BackendCaps, CalcSettings, CellData, DefinedName,
-    DefinedNameDefinition, DefinedNameScope, MergedRange, SheetData, SpreadsheetReader,
+    DefinedNameDefinition, DefinedNameScope, ExternalCachedSource, MergedRange, SheetData,
+    SpreadsheetReader,
 };
 use formualizer_common::{DateSystem, ExcelError, ExcelErrorKind, LiteralValue};
 use parking_lot::RwLock;
@@ -216,13 +217,23 @@ impl DebugTimer {
 
 type ShadowRelocationComparator = Arc<dyn Fn(&ASTNode, &ASTNode) -> bool + Send + Sync>;
 
+/// Reopenable source an `.xlsx` was loaded from, retained so cached
+/// external-link parts (spec §10) can be scanned at load time once the
+/// `WorkbookConfig::ingest_limits` (and the resolution knob) are known. Dropped
+/// after the scan so it does not pin a second full copy of the file.
+enum ExternalLinkSource {
+    Path(std::path::PathBuf),
+    Bytes(Vec<u8>),
+}
+
 pub struct CalamineAdapter {
     workbook: RwLock<CalamineWorkbook>,
     loaded_sheets: HashSet<String>,
     cached_names: Option<Vec<String>>,
     defined_names: Vec<DefinedName>,
     external_link_targets: BTreeMap<u32, String>,
-    external_cached_sources: Vec<(String, LiteralValue)>,
+    external_cached_sources: Vec<ExternalCachedSource>,
+    external_link_source: Option<ExternalLinkSource>,
     calc_settings: Option<CalcSettings>,
     load_stats: AdapterLoadStats,
     shadow_relocation_comparator: Option<ShadowRelocationComparator>,
@@ -882,12 +893,16 @@ impl CalamineAdapter {
         self.external_link_targets.get(&index).map(|s| s.as_str())
     }
 
-    /// Cached values for in-workbook external references (spec §10: `<externalLink>`
-    /// parts), as `(raw_reference, value)` pairs. A formula cell `=[1]Sheet1!A1`
-    /// resolves against the raw reference (e.g. `[1]Sheet1!A1`) at evaluation time;
-    /// Excel does not recalculate external links and instead surfaces the cached
-    /// value from the link part, which is what the engine returns.
-    pub fn external_cached_sources(&self) -> &[(String, LiteralValue)] {
+    /// Cached in-workbook external reference cells (spec §10: `<externalLink>`
+    /// parts), as structured `(book_index, sheet, row, col, value)` records. A
+    /// formula cell `=[1]Sheet1!A1` resolves against the canonical source key
+    /// derived from these fields at evaluation time; Excel does not recalculate
+    /// external links and instead surfaces the cached value from the link part,
+    /// which is what the engine returns.
+    ///
+    /// Populated by [`SpreadsheetReader::scan_external_cached_sources`]; empty
+    /// until that is called.
+    pub fn external_cached_sources(&self) -> &[ExternalCachedSource] {
         &self.external_cached_sources
     }
 
@@ -1212,17 +1227,43 @@ impl CalamineAdapter {
     /// Number(42.0))`, where the book token is the 1-based position of the
     /// `<externalReference>` in `xl/workbook.xml` (matching the `[n]` prefix the
     /// parser produces for in-workbook external references).
-    fn scan_external_link_sources_from_reader<R>(reader: R) -> Vec<(String, LiteralValue)>
+    /// Scan cached values for in-workbook external references (spec §10) straight
+    /// from the `.xlsx` zip — calamine does not surface `<externalLink>` parts.
+    ///
+    /// Returns `(sources, scan_failures)`. `sources` holds one
+    /// [`ExternalCachedSource`] per cached numeric/string/boolean cell; cells
+    /// Excel would derive from the live (external) source without a cached value
+    /// are not recoverable and are skipped. `scan_failures` counts structural
+    /// failures (zip errors, missing `workbook.xml`/rels, declared references
+    /// without a matching rel or `externalLinkN.xml` part) so a broken external
+    /// link is distinguishable from a genuinely absent one. The `book_index` is
+    /// the 1-based position of the `<externalReference>` in `xl/workbook.xml`,
+    /// matching the `[n]` token the parser produces.
+    ///
+    /// Memory is bounded by `max_cells`: at most that many cached cells are
+    /// materialized, and each `externalLinkN.xml` part is read with a matching
+    /// byte budget, so a malicious part cannot exhaust load-time memory before
+    /// the ingest limits apply.
+    fn scan_external_link_sources_from_reader<R>(
+        reader: R,
+        max_cells: u64,
+    ) -> (Vec<ExternalCachedSource>, u64)
     where
         R: Read + Seek,
     {
-        fn entry_text<R2>(archive: &mut ZipArchive<R2>, name: &str) -> Option<String>
+        /// Read a zip entry up to `max_bytes`; returns `None` only on a real read
+        /// failure, not when the byte budget is exhausted (the reader just ends).
+        fn entry_text_bounded<R2>(
+            archive: &mut ZipArchive<R2>,
+            name: &str,
+            max_bytes: u64,
+        ) -> Option<String>
         where
             R2: Read + Seek,
         {
             let mut entry = archive.by_name(name).ok()?;
             let mut xml = String::new();
-            entry.read_to_string(&mut xml).ok()?;
+            (&mut entry).take(max_bytes).read_to_string(&mut xml).ok()?;
             Some(xml)
         }
 
@@ -1307,26 +1348,16 @@ impl CalamineAdapter {
         }
 
         /// Parse `sheetNames` + cached `sheetData` from one `externalLinkN.xml`.
-        /// Returns `([n]Sheet!ref, value)` pairs for every cached numeric/string/
-        /// boolean cell; cells Excel would derive from the live (external) source
-        /// without a cached value are not recoverable and are skipped.
-        fn external_link_cached_cells(xml: &str, book_index: u32) -> Vec<(String, LiteralValue)> {
-            fn quote_sheet(sheet: &str) -> String {
-                if sheet.chars().all(|c| {
-                    c.is_ascii_alphanumeric()
-                        || c == '_'
-                        || c == '.'
-                        || c == '\\'
-                        || c == '('
-                        || c == ')'
-                }) && !sheet.is_empty()
-                {
-                    sheet.to_string()
-                } else {
-                    format!("'{sheet}'")
-                }
-            }
-
+        /// Returns structured `ExternalCachedSource` records for every cached
+        /// numeric/string/boolean cell up to `max_cells`; cells Excel would
+        /// derive from the live (external) source without a cached value are not
+        /// recoverable and are skipped.
+        fn external_link_cached_cells(
+            xml: &str,
+            book_index: u32,
+            max_cells: u64,
+        ) -> Vec<ExternalCachedSource> {
+            /// Split a cell ref like `A1` into its column letters and 1-based row.
             fn parse_cell_ref(cell_ref: &str) -> Option<(String, u32)> {
                 let bytes = cell_ref.as_bytes();
                 let mut i = 0;
@@ -1431,6 +1462,11 @@ impl CalamineAdapter {
                             let Some((cols, row)) = parse_cell_ref(cell_ref) else {
                                 continue;
                             };
+                            let Some(col) =
+                                formualizer_common::col_index_from_letters_1based(&cols).ok()
+                            else {
+                                continue;
+                            };
                             let value = match cur_cell_type.as_str() {
                                 "b" => Some(LiteralValue::Boolean(
                                     text_buf.trim() == "1"
@@ -1446,10 +1482,16 @@ impl CalamineAdapter {
                                     .map(LiteralValue::Number),
                             };
                             if let Some(value) = value {
-                                out.push((
-                                    format!("[{book_index}]{}!{cols}{row}", quote_sheet(sheet)),
+                                out.push(ExternalCachedSource {
+                                    book_index,
+                                    sheet: sheet.clone(),
+                                    row,
+                                    col,
                                     value,
-                                ));
+                                });
+                                if out.len() as u64 >= max_cells {
+                                    break;
+                                }
                             }
                         }
                     }
@@ -1460,38 +1502,56 @@ impl CalamineAdapter {
             out
         }
 
+        let mut failures = 0u64;
+        // A byte budget bounds each part read (the attacker-controlled bulk is
+        // the externalLink data). The floor keeps small ingest caps from
+        // truncating the tiny `workbook.xml`/rels meta files; truncating a data
+        // part just seeds fewer cached cells, which is exactly the point of the
+        // cap.
+        let byte_budget = max_cells.saturating_mul(128).max(16 * 1024);
         let mut archive = match ZipArchive::new(reader) {
             Ok(a) => a,
-            Err(_) => return Vec::new(),
+            Err(_) => return (Vec::new(), 1),
         };
-        let Some(workbook_xml) = entry_text(&mut archive, "xl/workbook.xml") else {
-            return Vec::new();
+        let Some(workbook_xml) = entry_text_bounded(&mut archive, "xl/workbook.xml", byte_budget)
+        else {
+            return (Vec::new(), 1);
         };
         let rids = workbook_external_reference_rids(&workbook_xml);
         if rids.is_empty() {
-            return Vec::new();
+            return (Vec::new(), 0);
         }
-        let Some(rels) = entry_text(&mut archive, "xl/_rels/workbook.xml.rels") else {
-            return Vec::new();
+        let Some(rels) =
+            entry_text_bounded(&mut archive, "xl/_rels/workbook.xml.rels", byte_budget)
+        else {
+            return (Vec::new(), 1);
         };
         let link_by_rid = workbook_external_link_rels(&rels);
 
         let mut out = Vec::new();
+        let mut remaining = max_cells;
         for (book_index, rid) in rids.iter().enumerate() {
             let book_index = (book_index as u32) + 1;
             let Some(link_index) = link_by_rid.get(rid) else {
+                failures += 1;
                 continue;
             };
-            let Some(xml) = entry_text(
+            let Some(xml) = entry_text_bounded(
                 &mut archive,
                 &format!("xl/externalLinks/externalLink{link_index}.xml"),
+                byte_budget,
             ) else {
+                failures += 1;
                 continue;
             };
-            let cells = external_link_cached_cells(&xml, book_index);
+            let cells = external_link_cached_cells(&xml, book_index, remaining);
+            remaining = remaining.saturating_sub(cells.len() as u64);
             out.extend(cells);
+            if remaining == 0 {
+                break;
+            }
         }
-        out
+        (out, failures)
     }
 
     fn calamine_error_code(e: &calamine::CellErrorType) -> u8 {
@@ -1646,8 +1706,30 @@ impl SpreadsheetReader for CalamineAdapter {
         self.calc_settings.clone()
     }
 
-    fn external_cached_sources(&self) -> &[(String, LiteralValue)] {
+    fn external_cached_sources(&self) -> &[ExternalCachedSource] {
         &self.external_cached_sources
+    }
+
+    fn scan_external_cached_sources(
+        &mut self,
+        limits: &formualizer_eval::engine::WorkbookLoadLimits,
+    ) -> Result<(), Self::Error> {
+        let max_cells = limits.max_external_cached_cells;
+        let (sources, failures) = match self.external_link_source.take() {
+            Some(ExternalLinkSource::Path(path)) => {
+                let file = File::open(&path).map_err(calamine::Error::Io)?;
+                Self::scan_external_link_sources_from_reader(BufReader::new(file), max_cells)
+            }
+            Some(ExternalLinkSource::Bytes(data)) => Self::scan_external_link_sources_from_reader(
+                Cursor::new(data.as_slice()),
+                max_cells,
+            ),
+            None => (Vec::new(), 0),
+        };
+        self.load_stats.external_cached_source_cells = Some(sources.len() as u64);
+        self.load_stats.external_link_scan_failures = Some(failures);
+        self.external_cached_sources = sources;
+        Ok(())
     }
 
     fn open_path<P: AsRef<Path>>(path: P) -> Result<Self, Self::Error>
@@ -1662,10 +1744,7 @@ impl SpreadsheetReader for CalamineAdapter {
         let calc_settings = File::open(path)
             .ok()
             .and_then(|file| Self::scan_calc_settings_from_reader(BufReader::new(file)));
-        let external_cached_sources = match File::open(path) {
-            Ok(file) => Self::scan_external_link_sources_from_reader(BufReader::new(file)),
-            Err(_) => Vec::new(),
-        };
+        let external_link_source = Some(ExternalLinkSource::Path(path.to_path_buf()));
         let workbook: Xlsx<BufReader<File>> = open_workbook(path)?;
         let sheet_names = workbook.sheet_names().to_vec();
         let defined_names = if workbook.defined_names().is_empty() {
@@ -1689,7 +1768,8 @@ impl SpreadsheetReader for CalamineAdapter {
             cached_names: Some(sheet_names),
             defined_names,
             external_link_targets,
-            external_cached_sources,
+            external_cached_sources: Vec::new(),
+            external_link_source,
             calc_settings,
             load_stats: AdapterLoadStats::default(),
             shadow_relocation_comparator: None,
@@ -1712,8 +1792,7 @@ impl SpreadsheetReader for CalamineAdapter {
         let external_link_targets =
             Self::scan_external_link_targets_from_reader(Cursor::new(data.as_slice()));
         let calc_settings = Self::scan_calc_settings_from_reader(Cursor::new(data.as_slice()));
-        let external_cached_sources =
-            Self::scan_external_link_sources_from_reader(Cursor::new(data.as_slice()));
+        let external_link_source = Some(ExternalLinkSource::Bytes(data.clone()));
         let workbook: Xlsx<Cursor<Vec<u8>>> = open_workbook_from_rs(Cursor::new(data.clone()))?;
         let sheet_names = workbook.sheet_names().to_vec();
         let defined_names = if workbook.defined_names().is_empty() {
@@ -1734,7 +1813,8 @@ impl SpreadsheetReader for CalamineAdapter {
             cached_names: Some(sheet_names),
             defined_names,
             external_link_targets,
-            external_cached_sources,
+            external_cached_sources: Vec::new(),
+            external_link_source,
             calc_settings,
             load_stats: AdapterLoadStats::default(),
             shadow_relocation_comparator: None,
@@ -1850,17 +1930,6 @@ where
         engine.reset_ensure_touched();
 
         let load_result = (|| -> Result<(), calamine::Error> {
-            // Declare external sources (SourceVertex) before ingesting formulas
-            // (spec §10 in-workbook external references). Excel does not
-            // recalculate external links: the cached `<v>` values stored in the
-            // `externalLinkN.xml` parts are the values a formula cell referencing
-            // them should return, resolved by the engine through SourceResolver.
-            for (name, _value) in &self.external_cached_sources {
-                engine
-                    .define_source_scalar(name, Some(0))
-                    .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?;
-            }
-
             let chunk_rows: usize = 32 * 1024;
             let mut total_values = 0usize;
             let mut total_value_cells_observed = 0usize;
@@ -2128,6 +2197,8 @@ where
                 value_slots_handed_to_engine: Some(total_values as u64),
                 formula_cells_handed_to_engine: Some(total_formula_handed_to_engine as u64),
                 shared_formula_tags_observed: Some(total_shared_formula_tags as u64),
+                external_cached_source_cells: self.load_stats.external_cached_source_cells,
+                external_link_scan_failures: self.load_stats.external_link_scan_failures,
             };
             Ok(())
         })();

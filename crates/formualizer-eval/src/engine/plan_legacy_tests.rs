@@ -243,7 +243,10 @@ where
                 ReferenceType::External(ext) => match ext.kind {
                     formualizer_parse::parser::ExternalRefKind::Cell { .. } => {
                         flags |= F_HAS_NAMES;
-                        per_names.push(ext.raw.clone());
+                        per_names.push(
+                            ext.source_name()
+                                .expect("cell external reference yields a canonical source name"),
+                        );
                     }
                     formualizer_parse::parser::ExternalRefKind::Range { .. } => {
                         flags |= F_HAS_TABLES;
@@ -406,7 +409,10 @@ where
                 ReferenceType::External(ext) => match ext.kind {
                     formualizer_parse::parser::ExternalRefKind::Cell { .. } => {
                         flags |= F_HAS_NAMES;
-                        per_names.push(ext.raw.clone());
+                        per_names.push(
+                            ext.source_name()
+                                .expect("cell external reference yields a canonical source name"),
+                        );
                     }
                     formualizer_parse::parser::ExternalRefKind::Range { .. } => {
                         flags |= F_HAS_TABLES;

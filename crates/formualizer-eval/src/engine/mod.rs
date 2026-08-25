@@ -689,6 +689,9 @@ pub struct WorkbookLoadLimits {
     pub formula_spool_memory_prefix_bytes: u64,
     /// Independent cap for a memory-only formula replay spool.
     pub max_formula_spool_memory_bytes: u64,
+    /// Hard cap for cached in-workbook external-reference cells (spec §10
+    /// `externalLinkN.xml` parts) a backend may seed into the engine.
+    pub max_external_cached_cells: u64,
     /// Whether formula replay data may use secure native temporary storage.
     pub formula_spool_disk_policy: FormulaSpoolDiskPolicy,
 }
@@ -707,6 +710,7 @@ impl Default for WorkbookLoadLimits {
             max_formula_spool_files_per_workbook: 1_024,
             formula_spool_memory_prefix_bytes: 1024 * 1024,
             max_formula_spool_memory_bytes: 16 * 1024 * 1024,
+            max_external_cached_cells: 1_000_000,
             formula_spool_disk_policy: if cfg!(target_arch = "wasm32") {
                 FormulaSpoolDiskPolicy::MemoryOnly
             } else {
