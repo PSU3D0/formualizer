@@ -1,7 +1,7 @@
 use crate::engine::graph::DependencyGraph;
 use crate::engine::named_range::{NameScope, NamedDefinition};
 use crate::engine::vertex::VertexKind;
-use crate::engine::{Engine, EvalConfig};
+use crate::engine::{Engine, EvalConfig, FormulaPlaneMode};
 use crate::reference::{CellRef, Coord, RangeRef};
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::{ExcelErrorKind, LiteralValue};
@@ -59,6 +59,59 @@ fn workbook_named_literal_invalidation_updates_dependents() {
     match av.get_cell(0, 0) {
         LiteralValue::Number(n) => assert!((n - 3.0).abs() < 1e-9),
         other => panic!("expected Number(3.0) from Arrow overlay, got {other:?}"),
+    }
+}
+
+#[test]
+fn delete_then_redefine_name_heals_all_direct_readers_in_both_modes() {
+    for mode in [
+        FormulaPlaneMode::Off,
+        FormulaPlaneMode::AuthoritativeExperimental,
+    ] {
+        let mut engine = Engine::new(
+            TestWorkbook::new(),
+            EvalConfig::default().with_formula_plane_mode(mode),
+        );
+        engine
+            .define_name(
+                "X",
+                NamedDefinition::Literal(LiteralValue::Number(1.0)),
+                NameScope::Workbook,
+            )
+            .unwrap();
+        for col in 1..=3 {
+            engine
+                .set_cell_formula("Sheet1", 1, col, parse("=X").unwrap())
+                .unwrap();
+        }
+
+        engine.evaluate_all().unwrap();
+        engine.delete_name("X", NameScope::Workbook).unwrap();
+        engine.evaluate_all().unwrap();
+        for col in 1..=3 {
+            match engine.get_cell_value("Sheet1", 1, col) {
+                Some(LiteralValue::Error(error)) => {
+                    assert_eq!(error.kind, ExcelErrorKind::Name, "mode={mode:?}, col={col}")
+                }
+                other => panic!("mode={mode:?}, col={col}: expected #NAME?, got {other:?}"),
+            }
+        }
+
+        engine
+            .define_name(
+                "X",
+                NamedDefinition::Literal(LiteralValue::Number(2.0)),
+                NameScope::Workbook,
+            )
+            .unwrap();
+        engine.evaluate_all().unwrap();
+        for col in 1..=3 {
+            assert_eq!(
+                engine.get_cell_value("Sheet1", 1, col),
+                Some(LiteralValue::Number(2.0)),
+                "mode={mode:?}, col={col}"
+            );
+        }
     }
 }
 

@@ -328,6 +328,42 @@ fn sheet_scoped_define_after_ingest_invalidates_workbook_resolved_spans() {
     assert_column_parity("edit inside shadowed region", SHEET, 3, &auth, &off);
 }
 
+#[test]
+fn formula_name_define_demotes_active_dependent_span_and_succeeds() {
+    let mut engine = engine_with_mode(FormulaPlaneMode::AuthoritativeExperimental);
+    seed_named_workbook(&mut engine);
+    let report = ingest_column(&mut engine, SHEET, 3, |r| format!("=SUM(Data)+A{r}"));
+    assert_eq!(report.shadow_accepted_span_cells, u64::from(ROWS));
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+
+    engine
+        .set_cell_value(SHEET, 2, 4, LiteralValue::Number(50.0))
+        .unwrap();
+    let sheet_id = engine.graph.sheet_id_mut(SHEET);
+    engine
+        .define_name(
+            "Data",
+            NamedDefinition::Formula {
+                ast: parse("=D2").unwrap(),
+                dependencies: Vec::new(),
+                range_deps: Vec::new(),
+            },
+            NameScope::Sheet(sheet_id),
+        )
+        .expect("define_name must demote FormulaPlane dependents like update_name");
+
+    assert_eq!(
+        engine.baseline_stats().formula_plane_active_span_count,
+        0,
+        "formula-backed shadowing define must demote the dependent span"
+    );
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value(SHEET, FIRST_ROW, 3),
+        Some(LiteralValue::Number(70.0))
+    );
+}
+
 /// (e) delete_name: cells fall back to legacy and evaluate to #NAME? exactly
 /// like the Off-mode ground truth.
 #[test]

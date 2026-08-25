@@ -4231,12 +4231,6 @@ where
         // registry changes so their cells re-ingest and re-resolve through
         // the normal legacy path.
         self.graph.validate_define_name(name, scope)?;
-        let has_dependent_spans = !self.exact_name_dependent_span_refs([name]).is_empty();
-        if has_dependent_spans && matches!(definition, NamedDefinition::Formula { .. }) {
-            return Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(
-                "formula-name shadowing with active FormulaPlane dependents is not supported",
-            ));
-        }
         let prepared = self
             .prepare_name_dependent_span_demotion([name])
             .map_err(Self::editor_error_to_excel)?;
