@@ -493,6 +493,11 @@ impl DependencyGraph {
                     affected.insert(*vertex_id);
                 }
             }
+            let formulas_to_rebuild = affected
+                .iter()
+                .filter(|&&vertex_id| self.get_cell_ref_for_vertex(vertex_id).is_some())
+                .filter_map(|&vertex_id| self.get_formula(vertex_id).map(|ast| (vertex_id, ast)))
+                .collect::<Vec<_>>();
             for vertex_id in affected {
                 self.mark_vertex_dirty(vertex_id);
                 if let Some(names) = self.vertex_to_names.get_mut(&vertex_id) {
@@ -503,6 +508,13 @@ impl DependencyGraph {
                 }
             }
             self.mark_named_vertex_deleted(&named_range);
+            // Re-extract cell-formula dependencies after the registry entry is gone. This
+            // preserves fallback-to-workbook resolution for a deleted sheet name and records
+            // an unresolved pending-name link otherwise, allowing a later define to heal the
+            // formula without requiring re-ingest.
+            for (vertex_id, ast) in formulas_to_rebuild {
+                self.rebuild_formula_dependencies(vertex_id, &ast);
+            }
             self.bump_symbol_revision();
             Ok(())
         } else {
