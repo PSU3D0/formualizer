@@ -662,6 +662,7 @@ pub(crate) enum ComputedWrite {
         row0: u32,
         col0: u32,
         value: OverlayValue,
+        format_id: Option<crate::format::FormatId>,
     },
     Rect {
         seq: u64,
@@ -669,6 +670,7 @@ pub(crate) enum ComputedWrite {
         sr0: u32,
         sc0: u32,
         values: Vec<Vec<OverlayValue>>,
+        formats: Vec<Vec<Option<crate::format::FormatId>>>,
     },
 }
 
@@ -718,6 +720,17 @@ impl ComputedWriteBuffer {
         col0: u32,
         value: OverlayValue,
     ) {
+        self.push_cell_with_format(sheet_id, row0, col0, value, None);
+    }
+
+    pub(crate) fn push_cell_with_format(
+        &mut self,
+        sheet_id: SheetId,
+        row0: u32,
+        col0: u32,
+        value: OverlayValue,
+        format_id: Option<crate::format::FormatId>,
+    ) {
         let seq = self.next_sequence();
         self.estimated_bytes = self
             .estimated_bytes
@@ -728,6 +741,7 @@ impl ComputedWriteBuffer {
             row0,
             col0,
             value,
+            format_id,
         });
     }
 
@@ -745,12 +759,14 @@ impl ComputedWriteBuffer {
             .map(Self::estimate_value_bytes)
             .fold(0usize, usize::saturating_add);
         self.estimated_bytes = self.estimated_bytes.saturating_add(added);
+        let formats = values.iter().map(|row| vec![None; row.len()]).collect();
         self.writes.push(ComputedWrite::Rect {
             seq,
             sheet_id,
             sr0,
             sc0,
             values,
+            formats,
         });
     }
 
@@ -789,6 +805,7 @@ pub(crate) struct ComputedWriteChunkEntryPlan {
     pub(crate) row_in_chunk: usize,
     pub(crate) seq: u64,
     pub(crate) value: OverlayValue,
+    pub(crate) format_id: Option<crate::format::FormatId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -16045,6 +16062,53 @@ where
             .retain(|cell, _| cell.sheet_id != sheet_id);
     }
 
+    #[cfg(test)]
+    pub(crate) fn debug_computed_overlay_format_0based(
+        &self,
+        sheet: &str,
+        row0: u32,
+        col0: u32,
+    ) -> Option<crate::format::FormatId> {
+        let sheet = self.arrow_sheets.sheet(sheet)?;
+        let (chunk_idx, row_in_chunk) = sheet.chunk_of_row(row0 as usize)?;
+        sheet
+            .columns
+            .get(col0 as usize)?
+            .chunk(chunk_idx)?
+            .computed_overlay
+            .get_format(row_in_chunk)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn debug_computed_overlay_chunk_has_formats_0based(
+        &self,
+        sheet: &str,
+        row0: u32,
+        col0: u32,
+    ) -> bool {
+        let Some(sheet) = self.arrow_sheets.sheet(sheet) else {
+            return false;
+        };
+        let Some((chunk_idx, _)) = sheet.chunk_of_row(row0 as usize) else {
+            return false;
+        };
+        sheet
+            .columns
+            .get(col0 as usize)
+            .and_then(|column| column.chunk(chunk_idx))
+            .is_some_and(|chunk| chunk.computed_overlay.has_formats())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn debug_clear_derived_format_0based(&mut self, sheet: &str, row0: u32, col0: u32) {
+        if let Some(sheet_id) = self.graph.sheet_id(sheet) {
+            self.derived_formats
+                .write()
+                .unwrap()
+                .remove(&CellRef::new_absolute(sheet_id, row0, col0));
+        }
+    }
+
     fn write_computed_overlay_format_0based(
         &mut self,
         sheet: &str,
@@ -16156,6 +16220,7 @@ where
                     row0,
                     col0,
                     value,
+                    format_id,
                 } => {
                     input_cells = input_cells.saturating_add(1);
                     self.push_computed_write_plan_entry(
@@ -16165,6 +16230,7 @@ where
                         row0,
                         col0,
                         value,
+                        format_id,
                     );
                 }
                 ComputedWrite::Rect {
@@ -16173,9 +16239,12 @@ where
                     sr0,
                     sc0,
                     values,
+                    formats,
                 } => {
-                    for (r_off, row) in values.into_iter().enumerate() {
-                        for (c_off, value) in row.into_iter().enumerate() {
+                    for (r_off, (row, format_row)) in values.into_iter().zip(formats).enumerate() {
+                        for (c_off, (value, format_id)) in
+                            row.into_iter().zip(format_row).enumerate()
+                        {
                             input_cells = input_cells.saturating_add(1);
                             self.push_computed_write_plan_entry(
                                 &mut groups,
@@ -16184,6 +16253,7 @@ where
                                 sr0.saturating_add(r_off as u32),
                                 sc0.saturating_add(c_off as u32),
                                 value,
+                                format_id,
                             );
                         }
                     }
@@ -16220,6 +16290,7 @@ where
         row0: u32,
         col0: u32,
         value: OverlayValue,
+        format_id: Option<crate::format::FormatId>,
     ) {
         let (chunk_idx, chunk_start_row0, row_in_chunk) =
             self.locate_computed_write_chunk(sheet_id, row0);
@@ -16236,6 +16307,7 @@ where
                 row_in_chunk,
                 seq,
                 value,
+                format_id,
             });
     }
 
@@ -16405,12 +16477,23 @@ where
 
     fn flush_computed_write_chunk_plan_as_points(&mut self, chunk: ComputedWriteChunkPlan) {
         let sheet_name = self.graph.sheet_name(chunk.sheet_id).to_string();
+        let formats: Vec<_> = chunk
+            .entries
+            .iter()
+            .map(|entry| (entry.row_in_chunk, entry.format_id))
+            .collect();
         for entry in chunk.entries {
             let row0 = chunk
                 .chunk_start_row0
                 .saturating_add(entry.row_in_chunk as u32);
             self.write_computed_overlay_value_0based(&sheet_name, row0, chunk.col0, entry.value);
         }
+        self.write_computed_overlay_formats_for_chunk(
+            chunk.sheet_id,
+            chunk.col0,
+            chunk.chunk_idx,
+            formats,
+        );
     }
 
     fn flush_computed_write_chunk_plan_as_sparse_fragment_or_points(
@@ -16422,6 +16505,11 @@ where
         let col0 = chunk.col0;
         let chunk_idx = chunk.chunk_idx;
         let chunk_start_row0 = chunk.chunk_start_row0;
+        let formats: Vec<_> = chunk
+            .entries
+            .iter()
+            .map(|entry| (entry.row_in_chunk, entry.format_id))
+            .collect();
         let items: Vec<(usize, OverlayValue)> = chunk
             .entries
             .into_iter()
@@ -16444,6 +16532,7 @@ where
             }
             None => {}
         }
+        self.write_computed_overlay_formats_for_chunk(sheet_id, col0, chunk_idx, formats);
     }
 
     #[inline]
@@ -16474,6 +16563,11 @@ where
             return;
         }
         let start = chunk.entries[0].row_in_chunk;
+        let formats: Vec<_> = chunk
+            .entries
+            .iter()
+            .map(|entry| (entry.row_in_chunk, entry.format_id))
+            .collect();
         let values: Vec<OverlayValue> =
             chunk.entries.into_iter().map(|entry| entry.value).collect();
         if let Some(fragment) = OverlayFragment::dense_range(start, values) {
@@ -16484,6 +16578,12 @@ where
                 fragment,
             );
         }
+        self.write_computed_overlay_formats_for_chunk(
+            chunk.sheet_id,
+            chunk.col0,
+            chunk.chunk_idx,
+            formats,
+        );
     }
 
     fn flush_computed_write_chunk_plan_as_run_fragment(&mut self, chunk: ComputedWriteChunkPlan) {
@@ -16491,6 +16591,11 @@ where
             return;
         }
         let start = chunk.entries[0].row_in_chunk;
+        let formats: Vec<_> = chunk
+            .entries
+            .iter()
+            .map(|entry| (entry.row_in_chunk, entry.format_id))
+            .collect();
         let values: Vec<OverlayValue> =
             chunk.entries.into_iter().map(|entry| entry.value).collect();
         if let Some(fragment) = OverlayFragment::run_range(start, values) {
@@ -16500,6 +16605,43 @@ where
                 chunk.chunk_idx,
                 fragment,
             );
+        }
+        self.write_computed_overlay_formats_for_chunk(
+            chunk.sheet_id,
+            chunk.col0,
+            chunk.chunk_idx,
+            formats,
+        );
+    }
+
+    fn write_computed_overlay_formats_for_chunk(
+        &mut self,
+        sheet_id: SheetId,
+        col0: u32,
+        chunk_idx: usize,
+        formats: Vec<(usize, Option<crate::format::FormatId>)>,
+    ) {
+        if !(self.config.arrow_storage_enabled
+            && self.config.delta_overlay_enabled
+            && self.config.write_formula_overlay_enabled)
+            || self.computed_overlay_mirroring_disabled
+        {
+            return;
+        }
+
+        let sheet_name = self.graph.sheet_name(sheet_id);
+        let Some(sheet) = self.arrow_sheets.sheet_mut(sheet_name) else {
+            return;
+        };
+        let Some(chunk) = sheet
+            .columns
+            .get_mut(col0 as usize)
+            .and_then(|column| column.chunk_mut(chunk_idx))
+        else {
+            return;
+        };
+        for (row_in_chunk, format_id) in formats {
+            chunk.computed_overlay.set_format(row_in_chunk, format_id);
         }
     }
 
@@ -16657,7 +16799,14 @@ where
         let date_system = self.arrow_sheet_date_system(&sheet_name);
         let ov = Self::literal_to_overlay_value(value, date_system);
         if let Some(buffer) = computed_writes {
-            buffer.push_cell(cell.sheet_id, cell.coord.row(), cell.coord.col(), ov);
+            let format_id = self.derived_formats.read().unwrap().get(&cell).copied();
+            buffer.push_cell_with_format(
+                cell.sheet_id,
+                cell.coord.row(),
+                cell.coord.col(),
+                ov,
+                format_id,
+            );
             if self.should_flush_computed_write_buffer(buffer) {
                 self.flush_computed_write_buffer(buffer)?;
             }
