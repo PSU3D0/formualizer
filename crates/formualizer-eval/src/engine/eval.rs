@@ -45,16 +45,16 @@ use crate::formula_plane::placement::{
 };
 use crate::formula_plane::producer::{
     DirtyProjectionRule, FormulaConsumerReadIndex, FormulaProducerId, FormulaProducerResultIndex,
-    FormulaProducerWork, ProducerDirtyDomain, SpanReadSummary,
+    FormulaProducerWork, ProducerDirtyDomain, ProjectionResult, SpanReadSummary,
 };
-use crate::formula_plane::region_index::{DirtyDomain, Region};
+use crate::formula_plane::region_index::{BoundedRegionQueryResult, DirtyDomain, Region};
 use crate::formula_plane::runtime::{
     FormulaPlane, FormulaSpanId, FormulaSpanRef, PlacementCoord, PlacementDomain, ResultRegion,
 };
 use crate::formula_plane::scheduler::{
-    MixedSchedule, MixedScheduleFallbackReason, MixedTopology, MixedTopologyCompileResult,
-    MixedTopologyCompileStats, MixedTopologyConfig, build_demand_closure_cached,
-    build_demand_closure_in_memory_runs, build_demand_closure_paged,
+    MixedLayer, MixedSchedule, MixedScheduleFallback, MixedScheduleFallbackReason, MixedTopology,
+    MixedTopologyCompileResult, MixedTopologyCompileStats, MixedTopologyConfig,
+    build_demand_closure_cached, build_demand_closure_in_memory_runs, build_demand_closure_paged,
     build_demand_closure_repeated_passes, compile_mixed_topology, schedule_dirty_work,
     schedule_dirty_work_in_memory_runs, schedule_dirty_work_paged_hybrid,
     schedule_dirty_work_repeated_passes,
@@ -20150,6 +20150,419 @@ where
         })
     }
 
+    fn include_non_grid_legacy_work(
+        &self,
+        schedule: MixedSchedule,
+        vertices: &[VertexId],
+        initial_fallbacks: &[MixedScheduleFallback],
+        producer_results: &FormulaProducerResultIndex,
+        consumer_reads: &FormulaConsumerReadIndex,
+        max_candidates: usize,
+        max_edges: usize,
+    ) -> MixedSchedule {
+        if vertices.is_empty() && initial_fallbacks.is_empty() {
+            return schedule;
+        }
+
+        // Regional ordering cannot represent dynamic/virtual reads, unresolved
+        // range shapes, spill domains, or reads from multi-cell producers.
+        let mut candidate_count = 0usize;
+        let mut preflight_fallbacks = initial_fallbacks.to_vec();
+        for &vertex in vertices {
+            let producer = FormulaProducerId::Legacy(vertex);
+            let named_formula_is_dynamic =
+                self.graph
+                    .named_range_by_vertex(vertex)
+                    .is_some_and(|named| match &named.definition {
+                        crate::engine::named_range::NamedDefinition::Formula { ast, .. } => {
+                            self.graph.is_ast_dynamic(ast)
+                        }
+                        _ => false,
+                    });
+            if self.graph.is_dynamic(vertex) || named_formula_is_dynamic {
+                preflight_fallbacks.push(MixedScheduleFallback {
+                    producer,
+                    reason: MixedScheduleFallbackReason::UnsupportedProjection,
+                });
+                continue;
+            }
+
+            let context_sheet = self.graph.get_vertex_sheet_id(vertex);
+            for range in self
+                .graph
+                .get_range_dependencies(vertex)
+                .into_iter()
+                .flatten()
+            {
+                let Ok(Some(region)) = self.shared_range_to_region_pattern(range, context_sheet)
+                else {
+                    preflight_fallbacks.push(MixedScheduleFallback {
+                        producer,
+                        reason: MixedScheduleFallbackReason::UnsupportedProjection,
+                    });
+                    break;
+                };
+
+                let (rows, cols) = region.axis_ranges();
+                let (row_start, row_end) = rows.query_bounds();
+                let (col_start, col_end) = cols.query_bounds();
+                if !self
+                    .graph
+                    .spill_anchors_in_region(
+                        region.sheet_id(),
+                        row_start,
+                        col_start,
+                        row_end,
+                        col_end,
+                    )
+                    .is_empty()
+                {
+                    preflight_fallbacks.push(MixedScheduleFallback {
+                        producer,
+                        reason: MixedScheduleFallbackReason::UnsupportedProjection,
+                    });
+                    break;
+                }
+
+                let remaining = max_candidates.saturating_sub(candidate_count);
+                match producer_results.query_bounded(region, remaining) {
+                    BoundedRegionQueryResult::Incomplete { .. } => {
+                        preflight_fallbacks.push(MixedScheduleFallback {
+                            producer,
+                            reason: MixedScheduleFallbackReason::MaxCandidatesExceeded,
+                        });
+                        break;
+                    }
+                    BoundedRegionQueryResult::Complete(query) => {
+                        candidate_count = candidate_count.saturating_add(query.matches.len());
+                        if query
+                            .matches
+                            .iter()
+                            .any(|matched| matched.value.result_region.as_point().is_none())
+                        {
+                            preflight_fallbacks.push(MixedScheduleFallback {
+                                producer,
+                                reason: MixedScheduleFallbackReason::UnsupportedProjection,
+                            });
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        if !preflight_fallbacks.is_empty() {
+            let mut schedule = schedule;
+            schedule.stats.input_work_items = schedule
+                .stats
+                .input_work_items
+                .saturating_add(vertices.len())
+                .saturating_add(initial_fallbacks.len());
+            schedule.stats.consumer_candidate_count = schedule
+                .stats
+                .consumer_candidate_count
+                .saturating_add(candidate_count);
+            schedule.stats.max_candidates_exceeded_count =
+                schedule.stats.max_candidates_exceeded_count.saturating_add(
+                    preflight_fallbacks
+                        .iter()
+                        .filter(|fallback| {
+                            fallback.reason == MixedScheduleFallbackReason::MaxCandidatesExceeded
+                        })
+                        .count(),
+                );
+            schedule.fallbacks.extend(preflight_fallbacks);
+            return schedule;
+        }
+
+        let mut work_by_producer = BTreeMap::new();
+        for item in schedule
+            .layers
+            .iter()
+            .flat_map(|layer| layer.work.iter())
+            .cloned()
+        {
+            work_by_producer.insert(item.producer, item);
+        }
+        for &vertex in vertices {
+            let producer = FormulaProducerId::Legacy(vertex);
+            work_by_producer
+                .entry(producer)
+                .or_insert(FormulaProducerWork {
+                    producer,
+                    dirty: ProducerDirtyDomain::Whole,
+                });
+        }
+
+        if work_by_producer.len() > max_candidates {
+            let mut schedule = schedule;
+            schedule.stats.input_work_items = schedule
+                .stats
+                .input_work_items
+                .saturating_add(vertices.len());
+            schedule.stats.max_candidates_exceeded_count = schedule
+                .stats
+                .max_candidates_exceeded_count
+                .saturating_add(1);
+            schedule.fallbacks.push(MixedScheduleFallback {
+                producer: FormulaProducerId::Legacy(vertices[0]),
+                reason: MixedScheduleFallbackReason::MaxCandidatesExceeded,
+            });
+            return schedule;
+        }
+
+        let producer_set = work_by_producer.keys().copied().collect::<FxHashSet<_>>();
+        let mut outgoing = BTreeMap::<FormulaProducerId, BTreeSet<FormulaProducerId>>::new();
+        let mut indegree = work_by_producer
+            .keys()
+            .copied()
+            .map(|producer| (producer, 0usize))
+            .collect::<BTreeMap<_, _>>();
+        let mut derived_edges = 0usize;
+        let mut duplicate_edges = 0usize;
+        let try_add_edge = |source: FormulaProducerId,
+                            target: FormulaProducerId,
+                            outgoing: &mut BTreeMap<_, BTreeSet<_>>,
+                            indegree: &mut BTreeMap<_, usize>,
+                            derived_edges: &mut usize,
+                            duplicate_edges: &mut usize|
+         -> bool {
+            if source == target
+                || !producer_set.contains(&source)
+                || !producer_set.contains(&target)
+            {
+                return true;
+            }
+            if outgoing
+                .get(&source)
+                .is_some_and(|targets| targets.contains(&target))
+            {
+                *duplicate_edges = duplicate_edges.saturating_add(1);
+                return true;
+            }
+            if *derived_edges >= max_edges {
+                return false;
+            }
+            outgoing.entry(source).or_default().insert(target);
+            *indegree.entry(target).or_default() += 1;
+            *derived_edges = derived_edges.saturating_add(1);
+            true
+        };
+
+        let mut overflow_reason = None;
+        'regional_edges: for &source in &producer_set {
+            let Some(result_region) = producer_results.producer_result_region(source) else {
+                continue;
+            };
+            let remaining = max_candidates.saturating_sub(candidate_count);
+            let query = match consumer_reads.query_changed_region_bounded(result_region, remaining)
+            {
+                BoundedRegionQueryResult::Incomplete { .. } => {
+                    overflow_reason = Some(MixedScheduleFallbackReason::MaxCandidatesExceeded);
+                    break 'regional_edges;
+                }
+                BoundedRegionQueryResult::Complete(query) => query,
+            };
+            candidate_count = candidate_count.saturating_add(query.matches.len());
+            for matched in query.matches {
+                if !matches!(matched.value.dirty, ProjectionResult::NoIntersection)
+                    && !try_add_edge(
+                        source,
+                        matched.value.consumer,
+                        &mut outgoing,
+                        &mut indegree,
+                        &mut derived_edges,
+                        &mut duplicate_edges,
+                    )
+                {
+                    overflow_reason = Some(MixedScheduleFallbackReason::MaxEdgesExceeded);
+                    break 'regional_edges;
+                }
+            }
+        }
+
+        if overflow_reason.is_none() {
+            'legacy_edges: for &consumer in &producer_set {
+                let FormulaProducerId::Legacy(vertex) = consumer else {
+                    continue;
+                };
+                for dependency in self.graph.get_dependencies(vertex) {
+                    let direct = FormulaProducerId::Legacy(dependency);
+                    if !try_add_edge(
+                        direct,
+                        consumer,
+                        &mut outgoing,
+                        &mut indegree,
+                        &mut derived_edges,
+                        &mut duplicate_edges,
+                    ) {
+                        overflow_reason = Some(MixedScheduleFallbackReason::MaxEdgesExceeded);
+                        break 'legacy_edges;
+                    }
+
+                    if let Some(cell) = self.graph.get_cell_ref_for_vertex(dependency) {
+                        let point =
+                            Region::point(cell.sheet_id, cell.coord.row(), cell.coord.col());
+                        let remaining = max_candidates.saturating_sub(candidate_count);
+                        let query = match producer_results.query_bounded(point, remaining) {
+                            BoundedRegionQueryResult::Incomplete { .. } => {
+                                overflow_reason =
+                                    Some(MixedScheduleFallbackReason::MaxCandidatesExceeded);
+                                break 'legacy_edges;
+                            }
+                            BoundedRegionQueryResult::Complete(query) => query,
+                        };
+                        candidate_count = candidate_count.saturating_add(query.matches.len());
+                        for matched in query.matches {
+                            if !try_add_edge(
+                                matched.value.producer,
+                                consumer,
+                                &mut outgoing,
+                                &mut indegree,
+                                &mut derived_edges,
+                                &mut duplicate_edges,
+                            ) {
+                                overflow_reason =
+                                    Some(MixedScheduleFallbackReason::MaxEdgesExceeded);
+                                break 'legacy_edges;
+                            }
+                        }
+                    }
+                }
+                let context_sheet = self.graph.get_vertex_sheet_id(vertex);
+                for range in self
+                    .graph
+                    .get_range_dependencies(vertex)
+                    .into_iter()
+                    .flatten()
+                {
+                    if let Ok(Some(region)) =
+                        self.shared_range_to_region_pattern(range, context_sheet)
+                    {
+                        let remaining = max_candidates.saturating_sub(candidate_count);
+                        let query = match producer_results.query_bounded(region, remaining) {
+                            BoundedRegionQueryResult::Incomplete { .. } => {
+                                overflow_reason =
+                                    Some(MixedScheduleFallbackReason::MaxCandidatesExceeded);
+                                break 'legacy_edges;
+                            }
+                            BoundedRegionQueryResult::Complete(query) => query,
+                        };
+                        candidate_count = candidate_count.saturating_add(query.matches.len());
+                        for matched in query.matches {
+                            if !try_add_edge(
+                                matched.value.producer,
+                                consumer,
+                                &mut outgoing,
+                                &mut indegree,
+                                &mut derived_edges,
+                                &mut duplicate_edges,
+                            ) {
+                                overflow_reason =
+                                    Some(MixedScheduleFallbackReason::MaxEdgesExceeded);
+                                break 'legacy_edges;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some(reason) = overflow_reason {
+            let mut schedule = schedule;
+            schedule.stats.input_work_items = schedule
+                .stats
+                .input_work_items
+                .saturating_add(vertices.len());
+            schedule.stats.consumer_candidate_count = schedule
+                .stats
+                .consumer_candidate_count
+                .saturating_add(candidate_count);
+            schedule.stats.duplicate_edges_skipped = schedule
+                .stats
+                .duplicate_edges_skipped
+                .saturating_add(duplicate_edges);
+            match reason {
+                MixedScheduleFallbackReason::MaxEdgesExceeded => {
+                    schedule.stats.max_edges_exceeded_count =
+                        schedule.stats.max_edges_exceeded_count.saturating_add(1);
+                }
+                MixedScheduleFallbackReason::MaxCandidatesExceeded => {
+                    schedule.stats.max_candidates_exceeded_count = schedule
+                        .stats
+                        .max_candidates_exceeded_count
+                        .saturating_add(1);
+                }
+                _ => unreachable!("non-grid reconstruction overflow reason is capped"),
+            }
+            schedule.fallbacks.push(MixedScheduleFallback {
+                producer: FormulaProducerId::Legacy(vertices[0]),
+                reason,
+            });
+            return schedule;
+        }
+
+        let mut ready = indegree
+            .iter()
+            .filter_map(|(&producer, &degree)| (degree == 0).then_some(producer))
+            .collect::<BTreeSet<_>>();
+        let mut layers = Vec::new();
+        let mut scheduled_count = 0usize;
+        while !ready.is_empty() {
+            let current = std::mem::take(&mut ready);
+            let mut next = BTreeSet::new();
+            let mut work = Vec::with_capacity(current.len());
+            for producer in current {
+                scheduled_count = scheduled_count.saturating_add(1);
+                work.push(
+                    work_by_producer
+                        .get(&producer)
+                        .expect("ready producer has work")
+                        .clone(),
+                );
+                for &target in outgoing.get(&producer).into_iter().flatten() {
+                    let degree = indegree.get_mut(&target).expect("edge target has indegree");
+                    *degree -= 1;
+                    if *degree == 0 {
+                        next.insert(target);
+                    }
+                }
+            }
+            layers.push(MixedLayer { work });
+            ready = next;
+        }
+
+        let mut fallbacks = schedule.fallbacks;
+        let mut stats = schedule.stats;
+        if scheduled_count != work_by_producer.len() {
+            for (&producer, &degree) in &indegree {
+                if degree != 0 {
+                    fallbacks.push(MixedScheduleFallback {
+                        producer,
+                        reason: MixedScheduleFallbackReason::CycleDetected,
+                    });
+                }
+            }
+            stats.cycle_count = stats.cycle_count.saturating_add(1);
+        }
+        stats.input_work_items = stats.input_work_items.saturating_add(vertices.len());
+        stats.merged_work_items = work_by_producer.len();
+        stats.unique_producers = work_by_producer.len();
+        stats.consumer_candidate_count = stats
+            .consumer_candidate_count
+            .saturating_add(candidate_count);
+        stats.edges_added = stats.edges_added.saturating_add(derived_edges);
+        stats.duplicate_edges_skipped = stats
+            .duplicate_edges_skipped
+            .saturating_add(duplicate_edges);
+        stats.layers = layers.len();
+        MixedSchedule {
+            layers,
+            stats,
+            fallbacks,
+        }
+    }
+
     fn build_formula_plane_mixed_schedule(
         &mut self,
         formula_dirty: &FormulaDirtyLease,
@@ -20710,6 +21123,8 @@ where
                 .collect();
             let mut work = Vec::new();
             let mut scheduled_legacy_vertices = Vec::new();
+            let mut non_grid_legacy_vertices = Vec::new();
+            let mut non_grid_legacy_fallbacks = Vec::new();
             let demanded_dirty = |producer: FormulaProducerId,
                                   dirty: ProducerDirtyDomain|
              -> Option<ProducerDirtyDomain> {
@@ -20741,11 +21156,30 @@ where
             }
             for vertex in dirty_legacy {
                 let producer = FormulaProducerId::Legacy(vertex);
-                if producer_results.producer_result_region(producer).is_some()
-                    && let Some(dirty) = demanded_dirty(producer, ProducerDirtyDomain::Whole)
-                {
-                    scheduled_legacy_vertices.push(vertex);
-                    work.push(FormulaProducerWork { producer, dirty });
+                if producer_results.producer_result_region(producer).is_some() {
+                    if let Some(dirty) = demanded_dirty(producer, ProducerDirtyDomain::Whole) {
+                        scheduled_legacy_vertices.push(vertex);
+                        work.push(FormulaProducerWork { producer, dirty });
+                    }
+                } else if matches!(
+                    self.graph.get_vertex_kind(vertex),
+                    VertexKind::NamedScalar | VertexKind::NamedArray
+                ) {
+                    if island_target_demand
+                        .as_ref()
+                        .is_none_or(|demand| demand.contains(&vertex))
+                    {
+                        // NamedScalar/NamedArray producers intentionally have no
+                        // grid result region. Keep them out of regional dirty
+                        // projection, then merge them back through graph ordering
+                        // after the regional schedule is built.
+                        non_grid_legacy_vertices.push(vertex);
+                    } else {
+                        non_grid_legacy_fallbacks.push(MixedScheduleFallback {
+                            producer,
+                            reason: MixedScheduleFallbackReason::MissingProducerResultRegion,
+                        });
+                    }
                 }
             }
 
@@ -20831,6 +21265,8 @@ where
                     }
                 }
             }
+
+            scheduled_legacy_vertices.extend(non_grid_legacy_vertices.iter().copied());
 
             let owned_dirty_events = if let Some(demand) = demand.as_ref() {
                 use crate::formula_plane::producer::compute_dirty_closure_checked;
@@ -21132,22 +21568,31 @@ where
                     span_refs_by_id.clone(),
                 ))
             })();
-            let release_result = self
-                .active_resource_ledger
-                .as_mut()
-                .map_or(Ok(()), |ledger| ledger.release_scratch(scratch))
-                .map_err(crate::engine::ResourceLedgerError::into_excel_error);
-            let (schedule, exact_strategy, pass_count, native_disk_bytes, result_span_refs) =
+            let (mut schedule, exact_strategy, pass_count, native_disk_bytes, result_span_refs) =
                 match build_result {
-                    Ok(output) => {
-                        release_result?;
-                        output
-                    }
+                    Ok(output) => output,
                     Err(error) => {
-                        let _ = release_result;
+                        if let Some(ledger) = self.active_resource_ledger.as_mut() {
+                            let _ = ledger.release_scratch(scratch);
+                        }
                         return Err(error);
                     }
                 };
+            // Keep the selected strategy's scratch reservation live while the
+            // bounded symbol merge allocates its replacement edge map.
+            schedule = self.include_non_grid_legacy_work(
+                schedule,
+                &non_grid_legacy_vertices,
+                &non_grid_legacy_fallbacks,
+                producer_results,
+                consumer_reads,
+                key.max_candidates,
+                key.max_edges,
+            );
+            self.active_resource_ledger
+                .as_mut()
+                .map_or(Ok(()), |ledger| ledger.release_scratch(scratch))
+                .map_err(crate::engine::ResourceLedgerError::into_excel_error)?;
             if let Some(strategy) = exact_strategy
                 && let Some(stats) = self.active_evaluation_resource_request.as_mut()
             {
