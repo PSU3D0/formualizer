@@ -176,3 +176,69 @@ fn cell_non_text_info_type_is_value_error() {
 fn cell_extra_arguments_rejected() {
     assert_error(r#"=CELL("address",A1,A1)"#, ExcelErrorKind::Value);
 }
+
+#[test]
+fn cell_address_qualifies_other_sheet() {
+    let mut engine = new_engine();
+    engine.graph.add_sheet("Sheet2").unwrap();
+    engine
+        .set_cell_formula(
+            "Sheet1",
+            1,
+            20,
+            parse(r#"=CELL("address",Sheet2!A1)"#).unwrap(),
+        )
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    match engine.get_cell_value("Sheet1", 1, 20).unwrap() {
+        LiteralValue::Text(actual) => assert_eq!(actual, "Sheet2!$A$1"),
+        other => panic!("expected \"Sheet2!$A$1\", got {other:?}"),
+    }
+    // Same-sheet references stay unqualified.
+    engine
+        .set_cell_formula("Sheet1", 1, 20, parse(r#"=CELL("address",A1)"#).unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    match engine.get_cell_value("Sheet1", 1, 20).unwrap() {
+        LiteralValue::Text(actual) => assert_eq!(actual, "$A$1"),
+        other => panic!("expected \"$A$1\", got {other:?}"),
+    }
+}
+
+#[test]
+fn cell_address_on_ranges_and_whole_columns() {
+    // The address is the top-left cell of a range reference.
+    assert_text(r#"=CELL("address",B2:C3)"#, "$B$2");
+    // Whole-column/row references resolve to a top-left address without
+    // materializing the referenced axis's values.
+    assert_text(r#"=CELL("address",A:A)"#, "$A$1");
+    assert_text(r#"=CELL("address",2:2)"#, "$A$2");
+}
+
+#[test]
+fn hyperlink_rejects_multi_cell_arguments() {
+    let mut engine = new_engine();
+    engine
+        .set_cell_value("Sheet1", 2, 1, LiteralValue::Int(1))
+        .unwrap();
+    engine
+        .set_cell_value("Sheet1", 3, 1, LiteralValue::Int(2))
+        .unwrap();
+    engine
+        .set_cell_formula("Sheet1", 1, 20, parse("=HYPERLINK(A2:A3)").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    match engine.get_cell_value("Sheet1", 1, 20).unwrap() {
+        LiteralValue::Error(e) => {
+            assert_eq!(e.kind, ExcelErrorKind::Value, "range link_location")
+        }
+        other => panic!("expected #VALUE! for range link_location, got {other:?}"),
+    }
+    // Array literals behave the same, except 1x1 arrays collapse.
+    assert_error("=HYPERLINK({1,2})", ExcelErrorKind::Value);
+    assert_error(
+        r#"=HYPERLINK("https://example.com",{1,2})"#,
+        ExcelErrorKind::Value,
+    );
+    assert_text("=HYPERLINK({1})", "1");
+}

@@ -1808,21 +1808,12 @@ impl Function for CellFn {
             Err(_) => return Ok(scalar(LiteralValue::Error(ExcelError::new_value()))),
         };
 
-        let top_left = match args[1].value()? {
-            CalcValue::Scalar(lit) => lit,
-            CalcValue::AnnotatedScalar(lit, _) => lit,
-            CalcValue::Range(view) => view.get_cell(0, 0),
-            CalcValue::Callable(_) => {
-                return Ok(scalar(LiteralValue::Error(
-                    ExcelError::new(ExcelErrorKind::Calc)
-                        .with_message("LAMBDA value must be invoked"),
-                )));
-            }
-        };
-
         match info_type.as_str() {
-            "contents" => return Ok(scalar(top_left)),
+            "contents" => {
+                return Ok(scalar(cell_top_left(&args[1])?));
+            }
             "type" => {
+                let top_left = cell_top_left(&args[1])?;
                 let kind = match top_left {
                     LiteralValue::Empty => "b",
                     LiteralValue::Text(_) => "l",
@@ -1843,14 +1834,50 @@ impl Function for CellFn {
         let col = cell.coord.col() + 1;
 
         match info_type.as_str() {
-            "address" => Ok(scalar(LiteralValue::Text(format!(
-                "${}${row}",
-                crate::reference::Coord::col_to_letters(cell.coord.col())
-            )))),
+            "address" => {
+                let letters = crate::reference::Coord::col_to_letters(cell.coord.col());
+                let address = format!("${letters}${row}");
+                // Excel qualifies the address with the sheet name only when the
+                // reference targets a different sheet than the formula's own.
+                let qualified = match reference_sheet(&reference) {
+                    Some(sheet) if !sheet.eq_ignore_ascii_case(ctx.current_sheet()) => {
+                        format!("{sheet}!{address}")
+                    }
+                    _ => address,
+                };
+                Ok(scalar(LiteralValue::Text(qualified)))
+            }
             "col" => Ok(scalar(LiteralValue::Int(col as i64))),
             "row" => Ok(scalar(LiteralValue::Int(row as i64))),
             _ => Ok(scalar(LiteralValue::Error(ExcelError::new_value()))),
         }
+    }
+}
+
+/// Materializes the upper-left cell of the reference argument as a literal.
+///
+/// Only `contents` and `type` need the referenced value; `address`, `col` and
+/// `row` derive purely from reference metadata and must not force evaluation of
+/// (or trip over) the referenced cell's value.
+fn cell_top_left<'a, 'b>(arg: &ArgumentHandle<'a, 'b>) -> Result<LiteralValue, ExcelError> {
+    match arg.value()? {
+        CalcValue::Scalar(lit) => Ok(lit),
+        CalcValue::AnnotatedScalar(lit, _) => Ok(lit),
+        CalcValue::Range(view) => Ok(view.get_cell(0, 0)),
+        CalcValue::Callable(_) => Ok(LiteralValue::Error(
+            ExcelError::new(ExcelErrorKind::Calc).with_message("LAMBDA value must be invoked"),
+        )),
+    }
+}
+
+/// The explicit sheet name carried by a reference, when it names one.
+fn reference_sheet(reference: &formualizer_parse::parser::ReferenceType) -> Option<&str> {
+    match reference {
+        formualizer_parse::parser::ReferenceType::Cell { sheet, .. } => sheet.as_deref(),
+        formualizer_parse::parser::ReferenceType::Range { sheet, .. } => sheet.as_deref(),
+        formualizer_parse::parser::ReferenceType::Cell3D { sheet_first, .. } => Some(sheet_first),
+        formualizer_parse::parser::ReferenceType::Range3D { sheet_first, .. } => Some(sheet_first),
+        _ => None,
     }
 }
 

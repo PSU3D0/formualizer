@@ -1064,23 +1064,50 @@ impl Function for HyperlinkFn {
         args: &'c [ArgumentHandle<'a, 'b>],
         _ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
-        let link = match args[0].value()?.into_literal() {
-            LiteralValue::Error(e) => {
-                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
-            }
-            other => crate::coercion::to_text_invariant(&other),
-        };
+        let link = hyperlink_text(&args[0])?;
         if args.len() < 2 {
-            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(link)));
+            return Ok(link);
         }
-        let name = match args[1].value()?.into_literal() {
-            LiteralValue::Error(e) => {
-                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
-            }
-            other => crate::coercion::to_text_invariant(&other),
-        };
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(name)))
+        hyperlink_text(&args[1])
     }
+}
+
+/// Coerces a HYPERLINK argument to its display text.
+///
+/// Errors propagate as the argument's own error. Multi-cell references and
+/// array constants cannot name a hyperlink target, so they surface `#VALUE!`
+/// instead of leaking a debug-formatted array literal into the cell text.
+/// A 1x1 array collapses to its single element.
+fn hyperlink_text<'a, 'b>(
+    arg: &ArgumentHandle<'a, 'b>,
+) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+    let lit = match arg.value()? {
+        crate::traits::CalcValue::Scalar(lit) => lit,
+        crate::traits::CalcValue::AnnotatedScalar(lit, _) => lit,
+        crate::traits::CalcValue::Range(view) => {
+            let (rows, cols) = view.dims();
+            if rows == 1 && cols == 1 {
+                view.get_cell(0, 0)
+            } else {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_value(),
+                )));
+            }
+        }
+        crate::traits::CalcValue::Callable(_) => {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new(ExcelErrorKind::Calc).with_message("LAMBDA value must be invoked"),
+            )));
+        }
+    };
+    Ok(crate::traits::CalcValue::Scalar(match lit {
+        LiteralValue::Error(e) => LiteralValue::Error(e),
+        LiteralValue::Array(arr) if arr.len() == 1 && arr[0].len() == 1 => {
+            LiteralValue::Text(crate::coercion::to_text_invariant(&arr[0][0]))
+        }
+        LiteralValue::Array(_) => LiteralValue::Error(ExcelError::new_value()),
+        other => LiteralValue::Text(crate::coercion::to_text_invariant(&other)),
+    }))
 }
 
 pub fn register_builtins() {
