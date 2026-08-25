@@ -234,7 +234,14 @@ fn parallel_short_circuit_correctness_under_parallelism() {
     ingest(&mut engine, formulas);
     engine.evaluate_all().unwrap();
 
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    assert_eq!(
+        engine
+            .last_formula_plane_span_eval_report()
+            .unwrap()
+            .parallel_per_placement_invocations,
+        1
+    );
     for row in 1..=rows {
         assert_eq!(numeric_value(&engine, row, 2), 1.0);
     }

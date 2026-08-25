@@ -11,7 +11,7 @@
 //! scope. Current-row structured references are classified explicitly here so a
 //! future ingest-side rewrite cannot silently give a different authority answer.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use formualizer_common::LiteralValue;
@@ -465,6 +465,9 @@ pub(crate) fn canonicalize_template_with_provider(
     }
 
     let expr = canonicalizer.canonicalize_expr(ast, CanonicalReferenceContext::Value);
+    canonicalizer
+        .labels
+        .revoke_admitted_reference_returning_rejects(&expr);
     if canonicalizer
         .labels
         .flags
@@ -492,6 +495,170 @@ pub(crate) fn canonicalize_template_with_provider(
         ),
         literal_bindings: canonicalizer.literal_bindings.into_boxed_slice(),
     }
+}
+
+impl CanonicalTemplateLabels {
+    fn revoke_admitted_reference_returning_rejects(&mut self, expr: &CanonicalExpr) {
+        let mut admissions = BTreeMap::<String, bool>::new();
+        classify_reference_returning_admission(expr, &mut admissions);
+        self.reject_reasons.retain(|reason| {
+            let name = match reason {
+                CanonicalRejectReason::ReferenceReturningFunction { name }
+                | CanonicalRejectReason::ArrayOrSpillFunction { name } => name,
+                _ => return true,
+            };
+            !admissions.get(name).copied().unwrap_or(false)
+        });
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ReferenceReturningAdmissionShape {
+    safe: bool,
+    scalar: bool,
+}
+
+fn classify_reference_returning_admission(
+    expr: &CanonicalExpr,
+    admissions: &mut BTreeMap<String, bool>,
+) -> ReferenceReturningAdmissionShape {
+    match expr {
+        CanonicalExpr::Literal(_) | CanonicalExpr::Omitted => ReferenceReturningAdmissionShape {
+            safe: true,
+            scalar: true,
+        },
+        CanonicalExpr::Reference { reference, .. } => match reference {
+            CanonicalReference::Cell { row, col, .. }
+                if admission_axis_is_cell(row) && admission_axis_is_cell(col) =>
+            {
+                ReferenceReturningAdmissionShape {
+                    safe: true,
+                    scalar: true,
+                }
+            }
+            CanonicalReference::Range {
+                start_row,
+                start_col,
+                end_row,
+                end_col,
+                ..
+            } if [start_row, start_col, end_row, end_col]
+                .into_iter()
+                .all(|axis| admission_axis_is_cell(axis)) =>
+            {
+                ReferenceReturningAdmissionShape {
+                    safe: true,
+                    scalar: false,
+                }
+            }
+            CanonicalReference::Cell { .. }
+            | CanonicalReference::Range { .. }
+            | CanonicalReference::Named { .. }
+            | CanonicalReference::Unsupported { .. } => ReferenceReturningAdmissionShape {
+                safe: false,
+                scalar: false,
+            },
+        },
+        CanonicalExpr::Unary { op, expr } => {
+            let child = classify_reference_returning_admission(expr, admissions);
+            let supported = matches!(op.as_str(), "+" | "-" | "%");
+            ReferenceReturningAdmissionShape {
+                safe: supported && child.safe,
+                scalar: supported && child.scalar,
+            }
+        }
+        CanonicalExpr::Binary { op, left, right } => {
+            let left = classify_reference_returning_admission(left, admissions);
+            let right = classify_reference_returning_admission(right, admissions);
+            let supported = matches!(
+                op.as_str(),
+                "+" | "-" | "*" | "/" | "^" | "&" | "=" | "<>" | "<" | "<=" | ">" | ">="
+            );
+            ReferenceReturningAdmissionShape {
+                safe: supported && left.safe && right.safe,
+                scalar: supported && left.scalar && right.scalar,
+            }
+        }
+        CanonicalExpr::Function { id, args } => {
+            let child_shapes = args
+                .iter()
+                .map(|arg| classify_reference_returning_admission(arg, admissions))
+                .collect::<Vec<_>>();
+            if admitted_reference_returning_function(&id.canonical_name) {
+                let admitted = child_shapes.iter().all(|shape| shape.safe)
+                    && reference_returning_arms(&id.canonical_name, args.len())
+                        .all(|index| child_shapes[index].scalar);
+                admissions
+                    .entry(id.canonical_name.clone())
+                    .and_modify(|all| *all &= admitted)
+                    .or_insert(admitted);
+                ReferenceReturningAdmissionShape {
+                    safe: admitted,
+                    scalar: admitted,
+                }
+            } else {
+                let safe =
+                    child_shapes.iter().all(|shape| shape.safe) && function_is_static_scalar(id);
+                ReferenceReturningAdmissionShape { safe, scalar: safe }
+            }
+        }
+        CanonicalExpr::CallUnsupported { callee, args } => {
+            classify_reference_returning_admission(callee, admissions);
+            for arg in args {
+                classify_reference_returning_admission(arg, admissions);
+            }
+            ReferenceReturningAdmissionShape {
+                safe: false,
+                scalar: false,
+            }
+        }
+        CanonicalExpr::ArrayUnsupported { rows } => {
+            for item in rows.iter().flatten() {
+                classify_reference_returning_admission(item, admissions);
+            }
+            ReferenceReturningAdmissionShape {
+                safe: false,
+                scalar: false,
+            }
+        }
+    }
+}
+
+fn admitted_reference_returning_function(name: &str) -> bool {
+    matches!(name, "IF" | "IFS" | "CHOOSE")
+}
+
+fn reference_returning_arms(name: &str, arity: usize) -> impl Iterator<Item = usize> {
+    let step = if name == "IFS" { 2 } else { 1 };
+    (1..arity).step_by(step)
+}
+
+fn admission_axis_is_cell(axis: &AxisRef) -> bool {
+    matches!(
+        axis,
+        AxisRef::RelativeToPlacement { .. } | AxisRef::AbsoluteVc { .. }
+    )
+}
+
+fn function_is_static_scalar(id: &CanonicalFunctionId) -> bool {
+    let forbidden_caps = FnCaps::VOLATILE
+        | FnCaps::DYNAMIC_DEPENDENCY
+        | FnCaps::LOCAL_ENVIRONMENT
+        | FnCaps::RETURNS_REFERENCE
+        | FnCaps::MAY_SPILL;
+    if !(FnCaps::from_bits_retain(id.semantic_flags) & forbidden_caps).is_empty() {
+        return false;
+    }
+    let Some(contract) = id.contract else {
+        return false;
+    };
+    matches!(
+        contract.dependency,
+        FunctionDependencySemantics::RecursiveSyntacticArgs
+    ) && contract.environment == FunctionEnvironmentSemantics::None
+        && !contract.result.may_return_reference()
+        && !contract.result.may_spill()
+        && contract.context == FunctionContextDependence::None
 }
 
 struct Canonicalizer<'a> {
@@ -2025,5 +2192,67 @@ mod tests {
                 name: "myname".to_string(),
             }
         );
+    }
+
+    #[test]
+    fn reference_returning_cell_and_scalar_arms_revoke_both_shape_rejects() {
+        for formula in [
+            "=IF(A1,B1,C1)",
+            "=IF(A1,SUM(B1:B3),0)",
+            "=IFS(A1,B1,A2,2)",
+            "=CHOOSE(A1,B1,2,C1+1)",
+            "=IF(A1,IF(B1,C1,D1),E1)",
+            "=IF(A1:A3>0,B1,C1)",
+        ] {
+            let template = canonical(formula, 4, 6);
+            assert!(
+                template.labels.is_authority_supported(),
+                "{formula}: {:?}",
+                template.labels.reject_reasons
+            );
+        }
+    }
+
+    #[test]
+    fn reference_returning_revoke_invariant_preserves_rejects_for_every_other_shape() {
+        let cases = [
+            "=IF(TRUE,A1:A3,0)",
+            "=CHOOSE(2,A1,B1:B3)",
+            "=SQRT(IF(TRUE,A1:A3,B1:B3))",
+            "=IF(TRUE,NOW(),0)",
+            "=IF(TRUE,OFFSET(A1,1,0),0)",
+            "=IF(TRUE,INDIRECT(\"A1\"),0)",
+            "=IF(TRUE,INDEX(A1:A3,1),0)",
+            "=IF(TRUE,MyName,0)",
+            "=IF(TRUE,SUM($A$1:$A),0)",
+            "=IF(TRUE,A1:B2,IF(FALSE,C1,D1))",
+        ];
+        for formula in cases {
+            let template = canonical(formula, 4, 6);
+            let name = if formula.starts_with("=CHOOSE") {
+                "CHOOSE"
+            } else {
+                "IF"
+            };
+            assert!(
+                template.labels.reject_reasons.contains(
+                    &CanonicalRejectReason::ReferenceReturningFunction {
+                        name: name.to_string()
+                    }
+                ),
+                "{formula}: {:?}",
+                template.labels.reject_reasons
+            );
+            assert!(
+                template.labels.reject_reasons.contains(
+                    &CanonicalRejectReason::ArrayOrSpillFunction {
+                        name: name.to_string()
+                    }
+                ),
+                "{formula}: {:?}",
+                template.labels.reject_reasons
+            );
+            assert!(!template.labels.is_authority_supported(), "{formula}");
+        }
     }
 }

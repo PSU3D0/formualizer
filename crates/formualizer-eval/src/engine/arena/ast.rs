@@ -156,6 +156,24 @@ pub(crate) struct AstNodeEntry {
 pub(crate) struct AstNodeMetadata {
     pub(crate) canonical_hash: u64,
     pub(crate) labels: CanonicalLabels,
+    pub(crate) reference_returning_admission: ReferenceReturningAdmission,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub(crate) struct ReferenceReturningAdmission(u8);
+
+impl ReferenceReturningAdmission {
+    pub(crate) const fn new(safe: bool, scalar: bool) -> Self {
+        Self((safe as u8) | ((scalar as u8) << 1))
+    }
+
+    pub(crate) const fn safe(self) -> bool {
+        self.0 & 1 != 0
+    }
+
+    pub(crate) const fn scalar(self) -> bool {
+        self.0 & 2 != 0
+    }
 }
 
 /// Compact bitset labels for arena-native canonicalization.

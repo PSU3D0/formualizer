@@ -25,7 +25,10 @@
 
 #![allow(dead_code)]
 
-use super::ast::{AstNodeData, AstNodeMetadata, CanonicalLabels, CompactRefType, SheetKey};
+use super::ast::{
+    AstNodeData, AstNodeMetadata, CanonicalLabels, CompactRefType, ReferenceReturningAdmission,
+    SheetKey,
+};
 use super::string_interner::StringInterner;
 use crate::traits::FunctionProvider;
 use formualizer_parse::parser::ExternalRefKind;
@@ -76,13 +79,18 @@ pub(crate) fn compute_node_metadata(
 
     let mut hasher = StableHasher::new();
     hasher.mix_bytes(b"fp8-arena-canonical:v1");
+    let mut admission = ReferenceReturningAdmission::default();
 
     match data {
         AstNodeData::Literal(value) => {
             hasher.mix_u8(KIND_LITERAL);
             hasher.mix_u32(value.as_raw());
+            admission = ReferenceReturningAdmission::new(true, true);
         }
-        AstNodeData::Omitted => hasher.mix_u8(KIND_OMITTED),
+        AstNodeData::Omitted => {
+            hasher.mix_u8(KIND_OMITTED);
+            admission = ReferenceReturningAdmission::new(true, true);
+        }
         AstNodeData::Reference {
             original_id,
             ref_type,
@@ -96,6 +104,7 @@ pub(crate) fn compute_node_metadata(
                 mix_string(&mut hasher, original);
             }
             mix_reference(&mut hasher, &mut labels, *ref_type, data_store_strings);
+            admission = reference_admission(*ref_type, labels.rejects == 0);
         }
         AstNodeData::UnaryOp { op_id, .. } => {
             hasher.mix_u8(KIND_UNARY);
@@ -106,12 +115,31 @@ pub(crate) fn compute_node_metadata(
                 "@" => labels.rejects |= CanonicalLabels::REJECT_IMPLICIT_INTERSECTION_OPERATOR,
                 _ => {}
             }
+            let child = children.first().copied().cloned().unwrap_or_default();
+            let supported = matches!(op, "+" | "-" | "%");
+            admission = ReferenceReturningAdmission::new(
+                supported && child.reference_returning_admission.safe(),
+                supported && child.reference_returning_admission.scalar(),
+            );
             mix_children(&mut hasher, children);
         }
         AstNodeData::BinaryOp { op_id, .. } => {
             hasher.mix_u8(KIND_BINARY);
             let op = data_store_strings.get(*op_id).unwrap_or("");
             mix_string(&mut hasher, op);
+            let supported = matches!(
+                op,
+                "+" | "-" | "*" | "/" | "^" | "&" | "=" | "<>" | "<" | "<=" | ">" | ">="
+            );
+            let safe = supported
+                && children
+                    .iter()
+                    .all(|child| child.reference_returning_admission.safe());
+            let scalar = supported
+                && children
+                    .iter()
+                    .all(|child| child.reference_returning_admission.scalar());
+            admission = ReferenceReturningAdmission::new(safe, scalar);
             mix_children(&mut hasher, children);
         }
         AstNodeData::Function {
@@ -123,7 +151,7 @@ pub(crate) fn compute_node_metadata(
             labels.flags |= CanonicalLabels::FLAG_CONTAINS_FUNCTION;
             let raw_name = data_store_strings.get(*name_id).unwrap_or("");
             hasher.mix_u16(*args_count);
-            classify_and_mix_function(
+            let classification = classify_and_mix_function(
                 raw_name,
                 usize::from(*args_count),
                 function_provider,
@@ -131,6 +159,32 @@ pub(crate) fn compute_node_metadata(
                 &mut hasher,
                 &mut labels,
             );
+            let all_safe = children
+                .iter()
+                .all(|child| child.reference_returning_admission.safe());
+            if matches!(
+                classification.canonical_name.as_str(),
+                "IF" | "IFS" | "CHOOSE"
+            ) {
+                let step = if classification.canonical_name == "IFS" {
+                    2
+                } else {
+                    1
+                };
+                let arms_scalar = (1..children.len())
+                    .step_by(step)
+                    .all(|index| children[index].reference_returning_admission.scalar());
+                let admitted = all_safe && arms_scalar;
+                if admitted {
+                    labels.rejects &= !(CanonicalLabels::REJECT_REFERENCE_RETURNING_FUNCTION
+                        | CanonicalLabels::REJECT_ARRAY_OR_SPILL_FUNCTION);
+                    labels.flags &= !CanonicalLabels::FLAG_CONTAINS_ARRAY;
+                }
+                admission = ReferenceReturningAdmission::new(admitted, admitted);
+            } else {
+                let safe = all_safe && classification.static_scalar;
+                admission = ReferenceReturningAdmission::new(safe, safe);
+            }
             mix_children(&mut hasher, children);
         }
         AstNodeData::Array { rows, cols, .. } => {
@@ -150,6 +204,31 @@ pub(crate) fn compute_node_metadata(
     AstNodeMetadata {
         canonical_hash: hasher.finish(),
         labels,
+        reference_returning_admission: admission,
+    }
+}
+
+fn reference_admission(reference: CompactRefType, no_rejects: bool) -> ReferenceReturningAdmission {
+    if !no_rejects {
+        return ReferenceReturningAdmission::default();
+    }
+    match reference {
+        CompactRefType::Cell { .. } => ReferenceReturningAdmission::new(true, true),
+        CompactRefType::Range {
+            start_row,
+            start_col,
+            end_row,
+            end_col,
+            ..
+        } if start_row != 0 && start_col != 0 && end_row != u32::MAX && end_col != u32::MAX => {
+            ReferenceReturningAdmission::new(true, false)
+        }
+        CompactRefType::Range { .. }
+        | CompactRefType::External { .. }
+        | CompactRefType::NamedRange(_)
+        | CompactRefType::Table { .. }
+        | CompactRefType::Cell3D { .. }
+        | CompactRefType::Range3D { .. } => ReferenceReturningAdmission::default(),
     }
 }
 
@@ -367,6 +446,11 @@ fn finalize_anchor_flags(labels: &mut CanonicalLabels) {
     }
 }
 
+struct FunctionClassification {
+    canonical_name: String,
+    static_scalar: bool,
+}
+
 fn classify_and_mix_function(
     raw_name: &str,
     arity: usize,
@@ -374,7 +458,7 @@ fn classify_and_mix_function(
     allow_function_semantics: bool,
     hasher: &mut StableHasher,
     labels: &mut CanonicalLabels,
-) {
+) -> FunctionClassification {
     use crate::function::FnCaps;
     use crate::function_contract::{
         FunctionContextDependence, FunctionDependencySemantics, FunctionEnvironmentSemantics,
@@ -387,8 +471,12 @@ fn classify_and_mix_function(
         mix_string(hasher, &raw_name.trim().to_ascii_uppercase());
         hasher.mix_u64(0);
         labels.rejects |= CanonicalLabels::REJECT_UNKNOWN_OR_CUSTOM_FUNCTION;
-        return;
+        return FunctionClassification {
+            canonical_name: raw_name.trim().to_ascii_uppercase(),
+            static_scalar: false,
+        };
     };
+    let canonical_name = identity.canonical_name.clone();
     let encoded = identity.encode();
     hasher.mix_usize(encoded.len());
     hasher.mix_bytes(&encoded);
@@ -436,6 +524,24 @@ fn classify_and_mix_function(
     }
     if contract.context != FunctionContextDependence::None {
         labels.rejects |= CanonicalLabels::REJECT_UNKNOWN_OR_CUSTOM_FUNCTION;
+    }
+    let forbidden_caps = FnCaps::VOLATILE
+        | FnCaps::DYNAMIC_DEPENDENCY
+        | FnCaps::LOCAL_ENVIRONMENT
+        | FnCaps::RETURNS_REFERENCE
+        | FnCaps::MAY_SPILL;
+    let static_scalar = (caps & forbidden_caps).is_empty()
+        && matches!(
+            contract.dependency,
+            FunctionDependencySemantics::RecursiveSyntacticArgs
+        )
+        && contract.environment == FunctionEnvironmentSemantics::None
+        && !contract.result.may_return_reference()
+        && !contract.result.may_spill()
+        && contract.context == FunctionContextDependence::None;
+    FunctionClassification {
+        canonical_name,
+        static_scalar,
     }
 }
 

@@ -211,7 +211,7 @@ fn per_placement_literal_in_nested_if_chain() {
                 "=IF({row}<10, IF({row}>0, A{row}+{row}, -1), IF({row}<100, IF(MOD({row}, 2)=0, A{row}+{row}*2, A{row}+{row}*3), IF({row}<150, A{row}-{row}, A{row}+{row}/2)))"
             )
         },
-        0,
+        1,
     );
 
     for row in SAMPLES {
