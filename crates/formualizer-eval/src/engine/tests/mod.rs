@@ -128,6 +128,7 @@ mod formula_plane_coverage_pinning;
 mod formula_plane_cycle_member_exclusion;
 mod formula_plane_demotion_correctness;
 mod formula_plane_dirty_domain_preservation;
+mod formula_plane_format_broadcast;
 mod formula_plane_index_promotion;
 mod formula_plane_ingest_shadow;
 mod formula_plane_inspect_parity;

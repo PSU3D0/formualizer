@@ -16,6 +16,7 @@ use crate::engine::CancelToken;
 use crate::engine::arena::{AstNodeData, AstNodeId, CompactRefType, DataStore};
 use crate::engine::eval::ComputedWriteBuffer;
 use crate::engine::sheet_registry::SheetRegistry;
+use crate::format::FormatId;
 use crate::interpreter::{Interpreter, InterpreterParameterBindings};
 use crate::reference::CellRef;
 use crate::traits::EvaluationContext;
@@ -168,6 +169,11 @@ struct MemoGroup {
     placements: Vec<PlacementCoord>,
 }
 
+struct MemoGroupValue {
+    value: OverlayValue,
+    format_id: Option<FormatId>,
+}
+
 pub(crate) struct SpanEvaluator<'a> {
     plane: &'a FormulaPlane,
     context: &'a dyn EvaluationContext,
@@ -291,17 +297,15 @@ impl<'a> SpanEvaluator<'a> {
                 first_writable_placement.row,
                 first_writable_placement.col,
             ));
-            let value = match interpreter.evaluate_ast(&ast_tree) {
+            let (value, format_id) = match interpreter.evaluate_ast(&ast_tree) {
                 Ok(calc) => {
-                    self.context.record_cell_derived_format(
-                        self.current_sheet,
-                        first_writable_placement.row + 1,
-                        first_writable_placement.col + 1,
-                        calc.format_id(),
-                    );
-                    formula_result_to_overlay(calc.into_literal(), self.context.date_system())
+                    let format_id = calc.format_id();
+                    (
+                        formula_result_to_overlay(calc.into_literal(), self.context.date_system()),
+                        format_id,
+                    )
                 }
-                Err(err) => OverlayValue::Error(map_error_code(err.kind)),
+                Err(err) => (OverlayValue::Error(map_error_code(err.kind)), None),
             };
 
             for (index, placement) in placements.iter().enumerate() {
@@ -311,6 +315,12 @@ impl<'a> SpanEvaluator<'a> {
                         report.skipped_overlay_punchout_count.saturating_add(1);
                     continue;
                 }
+                self.context.record_cell_derived_format(
+                    self.current_sheet,
+                    placement.row + 1,
+                    placement.col + 1,
+                    format_id,
+                );
                 sink.push_cell(placement, value.clone());
                 report.span_eval_placement_count =
                     report.span_eval_placement_count.saturating_add(1);
@@ -695,7 +705,7 @@ impl<'a> SpanEvaluator<'a> {
         binding_set: &SpanBindingSet,
         group: &MemoGroup,
         base_interpreter: Option<&Interpreter<'a>>,
-    ) -> Result<OverlayValue, SpanEvalError> {
+    ) -> Result<MemoGroupValue, SpanEvalError> {
         let placement = group.representative;
         let row_delta = i64::from(placement.row) + 1 - i64::from(origin_row);
         let col_delta = i64::from(placement.col) + 1 - i64::from(origin_col);
@@ -732,15 +742,19 @@ impl<'a> SpanEvaluator<'a> {
             self.sheet_registry,
         ) {
             Ok(calc) => {
-                self.context.record_cell_derived_format(
-                    self.current_sheet,
-                    placement.row + 1,
-                    placement.col + 1,
-                    calc.format_id(),
-                );
-                formula_result_to_overlay(calc.into_literal(), self.context.date_system())
+                let format_id = calc.format_id();
+                MemoGroupValue {
+                    value: formula_result_to_overlay(
+                        calc.into_literal(),
+                        self.context.date_system(),
+                    ),
+                    format_id,
+                }
             }
-            Err(err) => OverlayValue::Error(map_error_code(err.kind)),
+            Err(err) => MemoGroupValue {
+                value: OverlayValue::Error(map_error_code(err.kind)),
+                format_id: None,
+            },
         };
         Ok(value)
     }
@@ -748,12 +762,18 @@ impl<'a> SpanEvaluator<'a> {
     fn push_memo_group_value(
         &self,
         group: &MemoGroup,
-        value: OverlayValue,
+        value: MemoGroupValue,
         sink: &mut SpanComputedWriteSink<'_>,
         report: &mut SpanEvalReport,
     ) {
         for placement in &group.placements {
-            sink.push_cell(*placement, value.clone());
+            self.context.record_cell_derived_format(
+                self.current_sheet,
+                placement.row + 1,
+                placement.col + 1,
+                value.format_id,
+            );
+            sink.push_cell(*placement, value.value.clone());
             report.span_eval_placement_count = report.span_eval_placement_count.saturating_add(1);
         }
         report.memo_broadcast_count = report
