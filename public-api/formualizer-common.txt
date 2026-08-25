@@ -303,6 +303,7 @@ pub type formualizer_common::RelativeCoord::Err = formualizer_common::A1ParseErr
 pub fn formualizer_common::RelativeCoord::from_str(&str) -> core::result::Result<Self, Self::Err>
 pub fn formualizer_common::coord::col_index_from_letters_1based(&str) -> core::result::Result<u32, formualizer_common::A1ParseError>
 pub fn formualizer_common::coord::col_letters_from_1based(u32) -> core::result::Result<alloc::string::String, formualizer_common::A1ParseError>
+pub fn formualizer_common::coord::external_cell_source_name(&str, &str, u32, u32) -> alloc::string::String
 pub fn formualizer_common::coord::parse_a1_1based(&str) -> core::result::Result<(u32, u32, bool, bool), formualizer_common::A1ParseError>
 pub mod formualizer_common::coord_hash
 pub struct formualizer_common::coord_hash::CoordBuildHasher
@@ -1624,6 +1625,7 @@ pub fn formualizer_common::date_to_serial_for(formualizer_common::DateSystem, &c
 pub fn formualizer_common::datetime_to_serial(&chrono::naive::datetime::NaiveDateTime) -> f64
 pub fn formualizer_common::datetime_to_serial(&chrono::naive::datetime::NaiveDateTime) -> f64
 pub fn formualizer_common::datetime_to_serial_for(formualizer_common::DateSystem, &chrono::naive::datetime::NaiveDateTime) -> f64
+pub fn formualizer_common::external_cell_source_name(&str, &str, u32, u32) -> alloc::string::String
 pub fn formualizer_common::format_a1_sheet_name(&str) -> alloc::borrow::Cow<'_, str>
 pub fn formualizer_common::max_excel_serial_for(formualizer_common::DateSystem) -> f64
 pub fn formualizer_common::parse_a1_1based(&str) -> core::result::Result<(u32, u32, bool, bool), formualizer_common::A1ParseError>
