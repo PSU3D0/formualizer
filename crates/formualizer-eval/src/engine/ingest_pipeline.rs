@@ -765,6 +765,121 @@ fn dedup_strings(values: &mut Vec<String>) {
     values.dedup();
 }
 
+#[derive(Clone, Copy)]
+struct ReferenceReturningProjectionShape {
+    safe: bool,
+    scalar: bool,
+}
+
+fn reference_returning_projection_shape(
+    ast: &ASTNode,
+    function_provider: Option<&dyn FunctionProvider>,
+) -> ReferenceReturningProjectionShape {
+    match &ast.node_type {
+        ASTNodeType::Literal(_) | ASTNodeType::Omitted => ReferenceReturningProjectionShape {
+            safe: true,
+            scalar: true,
+        },
+        ASTNodeType::Reference { reference, .. } => match reference {
+            ReferenceType::Cell { .. } => ReferenceReturningProjectionShape {
+                safe: true,
+                scalar: true,
+            },
+            ReferenceType::Range {
+                start_row,
+                start_col,
+                end_row,
+                end_col,
+                ..
+            } if start_row.is_some()
+                && start_col.is_some()
+                && end_row.is_some()
+                && end_col.is_some() =>
+            {
+                ReferenceReturningProjectionShape {
+                    safe: true,
+                    scalar: false,
+                }
+            }
+            _ => ReferenceReturningProjectionShape {
+                safe: false,
+                scalar: false,
+            },
+        },
+        ASTNodeType::UnaryOp { op, expr } => {
+            let child = reference_returning_projection_shape(expr, function_provider);
+            let supported = matches!(op.as_str(), "+" | "-" | "%");
+            ReferenceReturningProjectionShape {
+                safe: supported && child.safe,
+                scalar: supported && child.scalar,
+            }
+        }
+        ASTNodeType::BinaryOp { op, left, right } => {
+            let left = reference_returning_projection_shape(left, function_provider);
+            let right = reference_returning_projection_shape(right, function_provider);
+            let supported = matches!(
+                op.as_str(),
+                "+" | "-" | "*" | "/" | "^" | "&" | "=" | "<>" | "<" | "<=" | ">" | ">="
+            );
+            ReferenceReturningProjectionShape {
+                safe: supported && left.safe && right.safe,
+                scalar: supported && left.scalar && right.scalar,
+            }
+        }
+        ASTNodeType::Function { name, args } => {
+            let function =
+                crate::formula_plane::template_canonical::resolve_canonical_function_with_provider(
+                    function_provider,
+                    name,
+                    args.len(),
+                );
+            let children = args
+                .iter()
+                .map(|arg| reference_returning_projection_shape(arg, function_provider))
+                .collect::<Vec<_>>();
+            let all_safe = children.iter().all(|child| child.safe);
+            if matches!(function.canonical_name.as_str(), "IF" | "IFS" | "CHOOSE") {
+                let step = if function.canonical_name == "IFS" {
+                    2
+                } else {
+                    1
+                };
+                let admitted = all_safe
+                    && (1..children.len())
+                        .step_by(step)
+                        .all(|index| children[index].scalar);
+                ReferenceReturningProjectionShape {
+                    safe: admitted,
+                    scalar: admitted,
+                }
+            } else {
+                let caps = crate::function::FnCaps::from_bits_retain(function.semantic_flags);
+                let forbidden = crate::function::FnCaps::VOLATILE
+                    | crate::function::FnCaps::DYNAMIC_DEPENDENCY
+                    | crate::function::FnCaps::LOCAL_ENVIRONMENT
+                    | crate::function::FnCaps::RETURNS_REFERENCE
+                    | crate::function::FnCaps::MAY_SPILL;
+                let static_scalar = function.contract.is_some_and(|contract| {
+                    contract.dependency
+                        == crate::function_contract::FunctionDependencySemantics::RecursiveSyntacticArgs
+                        && contract.environment
+                            == crate::function_contract::FunctionEnvironmentSemantics::None
+                        && contract.context
+                            == crate::function_contract::FunctionContextDependence::None
+                        && !contract.result.may_return_reference()
+                        && !contract.result.may_spill()
+                }) && (caps & forbidden).is_empty();
+                let safe = all_safe && static_scalar;
+                ReferenceReturningProjectionShape { safe, scalar: safe }
+            }
+        }
+        ASTNodeType::Call { .. } | ASTNodeType::Array(_) => ReferenceReturningProjectionShape {
+            safe: false,
+            scalar: false,
+        },
+    }
+}
+
 fn compute_read_projections(
     ast: &ASTNode,
     placement: CellRef,
@@ -1062,13 +1177,16 @@ fn compute_read_projections(
                 let contract = function
                     .contract
                     .ok_or(ProjectionFallbackReason::UnsupportedDependencySummary)?;
+                let admitted_reference_returning =
+                    matches!(function.canonical_name.as_str(), "IF" | "IFS" | "CHOOSE")
+                        && reference_returning_projection_shape(ast, function_provider).safe;
                 if contract.dependency
                     != crate::function_contract::FunctionDependencySemantics::RecursiveSyntacticArgs
                     || contract.environment
                         != crate::function_contract::FunctionEnvironmentSemantics::None
                     || contract.context != crate::function_contract::FunctionContextDependence::None
-                    || contract.result.may_return_reference()
-                    || contract.result.may_spill()
+                    || (!admitted_reference_returning
+                        && (contract.result.may_return_reference() || contract.result.may_spill()))
                     || function.semantic_flags & crate::function::FnCaps::VOLATILE.bits() != 0
                 {
                     return Err(ProjectionFallbackReason::UnsupportedDependencySummary);

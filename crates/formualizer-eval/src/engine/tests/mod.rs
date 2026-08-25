@@ -141,6 +141,7 @@ mod formula_plane_named_ranges;
 mod formula_plane_parallel_span_eval;
 mod formula_plane_per_placement_literal_bindings;
 mod formula_plane_per_span_overhead;
+mod formula_plane_ref_returning_admission;
 mod formula_plane_structural;
 mod formula_plane_structural_affected_region;
 mod formula_plane_structural_split_acceptance;
