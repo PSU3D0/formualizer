@@ -243,6 +243,80 @@ fn formula_backed_name_is_evaluated_with_unrelated_active_span() {
     );
 }
 
+#[test]
+fn offset_backed_name_fails_closed_with_span_producers() {
+    let mut auth = engine_with_mode(FormulaPlaneMode::AuthoritativeExperimental);
+    let mut off = engine_with_mode(FormulaPlaneMode::Off);
+    for engine in [&mut auth, &mut off] {
+        for row in FIRST_ROW..=LAST_ROW {
+            engine
+                .set_cell_value(SHEET, row, 4, LiteralValue::Number(row as f64))
+                .unwrap();
+        }
+    }
+    let report = ingest_column(&mut auth, SHEET, 1, |row| format!("=D{row}*2"));
+    let _ = ingest_column(&mut off, SHEET, 1, |row| format!("=D{row}*2"));
+    assert_eq!(report.shadow_accepted_span_cells, u64::from(ROWS));
+
+    for engine in [&mut auth, &mut off] {
+        engine
+            .define_name(
+                "WindowTotal",
+                NamedDefinition::Formula {
+                    ast: parse("=SUM(OFFSET(Sheet1!A2,0,0,2,1))").unwrap(),
+                    dependencies: Vec::new(),
+                    range_deps: Vec::new(),
+                },
+                NameScope::Workbook,
+            )
+            .unwrap();
+        engine
+            .set_cell_formula(SHEET, 1, 2, parse("=WindowTotal").unwrap())
+            .unwrap();
+    }
+
+    auth.evaluate_all().unwrap();
+    off.evaluate_all().unwrap();
+    assert_eq!(
+        auth.get_cell_value(SHEET, 1, 2),
+        off.get_cell_value(SHEET, 1, 2)
+    );
+    assert_eq!(
+        auth.get_cell_value(SHEET, 1, 2),
+        Some(LiteralValue::Number(10.0))
+    );
+    assert_eq!(auth.formula_plane_capacity_bailouts(), 1);
+}
+
+#[test]
+fn unresolvable_named_range_pattern_routes_to_capacity_fallback() {
+    let mut engine = engine_with_mode(FormulaPlaneMode::AuthoritativeExperimental);
+    let report = ingest_column(&mut engine, SHEET, 3, |row| format!("=A{row}+1"));
+    assert_eq!(report.shadow_accepted_span_cells, u64::from(ROWS));
+
+    engine
+        .define_name(
+            "ConservativeName",
+            NamedDefinition::Formula {
+                ast: parse("=SUM(A1:A)").unwrap(),
+                dependencies: Vec::new(),
+                range_deps: Vec::new(),
+            },
+            NameScope::Workbook,
+        )
+        .unwrap();
+    engine
+        .set_cell_formula(SHEET, 1, 2, parse("=ConservativeName+1").unwrap())
+        .unwrap();
+
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value(SHEET, 1, 2),
+        Some(LiteralValue::Number(1.0))
+    );
+    assert_eq!(engine.formula_plane_capacity_bailouts(), 1);
+}
+
 /// (b) Dirty precision: edits inside the resolved named region re-evaluate
 /// the span; edits outside do not.
 #[test]
