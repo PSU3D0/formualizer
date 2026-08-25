@@ -544,7 +544,7 @@ fn classify_reference_returning_admission(
                 ..
             } if [start_row, start_col, end_row, end_col]
                 .into_iter()
-                .all(|axis| admission_axis_is_cell(axis)) =>
+                .all(&admission_axis_is_cell) =>
             {
                 ReferenceReturningAdmissionShape {
                     safe: true,
