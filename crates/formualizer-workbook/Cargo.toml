@@ -36,8 +36,10 @@ system-clock = ["formualizer-eval/system-clock"]
 js-runtime = ["formualizer-eval/js-runtime"]
 json = ["dep:serde_json", "formualizer-common/serde"]
 csv = ["dep:csv"]
-calamine = ["dep:calamine", "dep:zip", "dep:quick-xml"]
+calamine = ["dep:calamine", "dep:zip", "dep:quick-xml", "dep:memmap2"]
 umya = ["dep:umya-spreadsheet", "dep:zip", "dep:quick-xml"]
+# Backward-compatible alias. Memory mapping is selected at runtime through
+# `XlsxPathSource::DirectMmap`; this feature no longer changes path behavior.
 mmap = ["dep:memmap2"]
 io_builtins = []
 import_range = ["io_builtins"]

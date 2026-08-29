@@ -60,6 +60,13 @@ import formualizer as fz
 
 wb = fz.load_workbook("financial_model.xlsx", strategy="eager_all")
 print(wb.evaluate_cell("Summary", 1, 2))
+
+# Optional native read-only mapping. The underlying file must not be
+# destructively modified or truncated while it is loading.
+mapped = fz.load_workbook(
+    "financial_model.xlsx",
+    path_source=fz.XlsxPathSource.DIRECT_MMAP,
+)
 ```
 
 ### Load and save XLSX bytes
@@ -285,7 +292,7 @@ print(result["final_price"])  # 120.0
 ```python
 tokenize(formula: str, dialect: FormulaDialect = None) -> Tokenizer
 parse(formula: str, dialect: FormulaDialect = None) -> ASTNode
-load_workbook(path: str, strategy: str = None) -> Workbook
+load_workbook(path: str, strategy: str = None, *, path_source: XlsxPathSource | None = None) -> Workbook
 load_workbook_bytes(data: bytes, strategy: str = None, backend: str | None = None) -> Workbook
 recalculate_file(path: str, output: str | None = None) -> dict
 ```

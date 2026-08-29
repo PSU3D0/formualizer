@@ -49,7 +49,7 @@ struct SharedFileCursor {
     position: u64,
 }
 
-#[cfg(all(feature = "mmap", any(unix, windows)))]
+#[cfg(any(unix, windows))]
 struct MappedXlsxSource {
     // The handle pins the opened file rather than its path. It does not prevent
     // another process from truncating the file on Unix; see CalamineAdapter.
@@ -64,11 +64,36 @@ enum SharedXlsxReader {
         position: u64,
     },
     File(SharedFileCursor),
-    #[cfg(all(feature = "mmap", any(unix, windows)))]
+    #[cfg(any(unix, windows))]
     Mapped {
         source: Arc<MappedXlsxSource>,
         position: u64,
     },
+}
+
+/// Selects the retained backing source used for an XLSX filesystem path.
+///
+/// This policy applies only to path-based Calamine XLSX loads. Byte and reader
+/// inputs always retain one shared immutable byte allocation.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum XlsxPathSource {
+    /// Retain one opened file and serialize physical seeks and reads while
+    /// giving each XLSX consumer an independent logical cursor.
+    ///
+    /// This mutation-safe option is the default. Renaming or replacing the
+    /// pathname is safe because the opened handle is retained.
+    #[default]
+    SharedFile,
+    /// Retain the opened file and map it read-only.
+    ///
+    /// Mapping is attempted explicitly and errors are returned without falling
+    /// back to [`SharedFile`](Self::SharedFile). The caller guarantees that the
+    /// opened underlying file/inode is not destructively modified or truncated
+    /// for the adapter's lifetime. Violating this contract can terminate the
+    /// process; in particular, Unix may deliver `SIGBUS` when a mapped page past
+    /// a new end-of-file is accessed. Renaming or replacing the pathname is safe
+    /// because the original opened handle remains retained.
+    DirectMmap,
 }
 
 fn seek_position(position: u64, len: u64, from: SeekFrom) -> std::io::Result<u64> {
@@ -101,28 +126,44 @@ impl SharedXlsxReader {
         }
     }
 
-    fn from_file(file: File) -> Result<Self, std::io::Error> {
+    fn from_file(file: File, policy: XlsxPathSource) -> Result<Self, std::io::Error> {
         let len = file.metadata()?.len();
-        #[cfg(all(feature = "mmap", any(unix, windows)))]
-        if len != 0 {
-            // SAFETY: this opt-in map is read-only and its source handle remains
-            // alive. Callers accept the mutation/truncation semantics documented
-            // on CalamineAdapter when enabling `mmap`.
-            if let Ok(map) = unsafe { memmap2::MmapOptions::new().map(&file) } {
-                return Ok(Self::Mapped {
-                    source: Arc::new(MappedXlsxSource { _file: file, map }),
-                    position: 0,
-                });
+        match policy {
+            XlsxPathSource::SharedFile => Ok(Self::File(SharedFileCursor {
+                source: Arc::new(SharedFile {
+                    file: Mutex::new(file),
+                    len,
+                }),
+                position: 0,
+            })),
+            XlsxPathSource::DirectMmap => {
+                #[cfg(any(unix, windows))]
+                {
+                    if len == 0 {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidInput,
+                            "cannot memory-map an empty XLSX file",
+                        ));
+                    }
+                    // SAFETY: the map is read-only and its source handle remains
+                    // alive. The caller accepts the mutation/truncation contract
+                    // documented on `XlsxPathSource::DirectMmap`.
+                    let map = unsafe { memmap2::MmapOptions::new().map(&file) }?;
+                    Ok(Self::Mapped {
+                        source: Arc::new(MappedXlsxSource { _file: file, map }),
+                        position: 0,
+                    })
+                }
+                #[cfg(not(any(unix, windows)))]
+                {
+                    let _ = (file, len);
+                    Err(std::io::Error::new(
+                        std::io::ErrorKind::Unsupported,
+                        "DirectMmap XLSX path loading is unsupported on this target",
+                    ))
+                }
             }
         }
-
-        Ok(Self::File(SharedFileCursor {
-            source: Arc::new(SharedFile {
-                file: Mutex::new(file),
-                len,
-            }),
-            position: 0,
-        }))
     }
 
     fn reader(&self) -> Self {
@@ -135,7 +176,7 @@ impl SharedXlsxReader {
                 source: Arc::clone(&cursor.source),
                 position: 0,
             }),
-            #[cfg(all(feature = "mmap", any(unix, windows)))]
+            #[cfg(any(unix, windows))]
             Self::Mapped { source, .. } => Self::Mapped {
                 source: Arc::clone(source),
                 position: 0,
@@ -156,7 +197,7 @@ impl SharedXlsxReader {
         match self {
             Self::Bytes { bytes, .. } => Arc::strong_count(bytes),
             Self::File(cursor) => Arc::strong_count(&cursor.source),
-            #[cfg(all(feature = "mmap", any(unix, windows)))]
+            #[cfg(any(unix, windows))]
             Self::Mapped { source, .. } => Arc::strong_count(source),
         }
     }
@@ -187,7 +228,7 @@ impl Read for SharedXlsxReader {
                     .ok_or_else(|| std::io::Error::other("reader position overflow"))?;
                 Ok(read)
             }
-            #[cfg(all(feature = "mmap", any(unix, windows)))]
+            #[cfg(any(unix, windows))]
             Self::Mapped { source, position } => read_slice(&source.map, position, buf),
         }
     }
@@ -204,7 +245,7 @@ impl Seek for SharedXlsxReader {
                 cursor.position = seek_position(cursor.position, cursor.source.len, from)?;
                 cursor.position
             }
-            #[cfg(all(feature = "mmap", any(unix, windows)))]
+            #[cfg(any(unix, windows))]
             Self::Mapped { source, position } => {
                 *position = seek_position(*position, source.map.len() as u64, from)?;
                 *position
@@ -383,14 +424,11 @@ type ShadowRelocationComparator = Arc<dyn Fn(&ASTNode, &ASTNode) -> bool + Send 
 
 /// Read-only XLSX adapter backed by one shared source acquisition.
 ///
-/// By default, `open_path` retains one opened file and uses serialized file I/O
-/// with independent logical cursors. Byte and reader inputs use shared immutable
-/// owned bytes. With the opt-in `mmap` feature on Unix and Windows, `open_path`
-/// instead attempts a read-only memory map and falls back to shared file I/O if
-/// mapping fails. A mapped file must not be overwritten or truncated while the
-/// adapter is alive: on Unix, accessing a mapped page past a new EOF can deliver
-/// `SIGBUS` and abort the process. Renaming or replacing the path does not change
-/// any retained backing source.
+/// [`SpreadsheetReader::open_path`] retains one opened file and uses serialized
+/// file I/O with independent logical cursors. [`Self::open_path_with_source`]
+/// can explicitly request a read-only memory map instead. Byte and reader inputs
+/// use shared immutable owned bytes. See [`XlsxPathSource::DirectMmap`] for the
+/// mapped-file safety contract.
 pub struct CalamineAdapter {
     workbook: RwLock<CalamineWorkbook>,
     source: SharedXlsxReader,
@@ -416,6 +454,21 @@ struct LazyScanCounts {
 
 impl CalamineAdapter {
     const EXCEL_MAX_ROWS: u32 = 1_048_576;
+
+    /// Opens one XLSX path using the requested retained backing source.
+    ///
+    /// [`XlsxPathSource::SharedFile`] matches [`SpreadsheetReader::open_path`].
+    /// [`XlsxPathSource::DirectMmap`] performs an actual read-only mapping on
+    /// Unix and Windows and returns the mapping error without fallback. Other
+    /// targets return a `calamine::Error::Io` whose I/O kind is `Unsupported`.
+    pub fn open_path_with_source<P: AsRef<Path>>(
+        path: P,
+        source: XlsxPathSource,
+    ) -> Result<Self, calamine::Error> {
+        let file = File::open(path).map_err(calamine::Error::Io)?;
+        let source = SharedXlsxReader::from_file(file, source).map_err(calamine::Error::Io)?;
+        Self::from_shared_source(source)
+    }
 
     #[doc(hidden)]
     pub fn set_shadow_relocation_comparator_for_test(
@@ -1602,11 +1655,7 @@ impl SpreadsheetReader for CalamineAdapter {
     where
         Self: Sized,
     {
-        // Acquire the path exactly once. The safe default shares the retained
-        // handle; the opt-in mmap path falls back to that same opened handle.
-        let file = File::open(path).map_err(calamine::Error::Io)?;
-        let source = SharedXlsxReader::from_file(file).map_err(calamine::Error::Io)?;
-        Self::from_shared_source(source)
+        Self::open_path_with_source(path, XlsxPathSource::SharedFile)
     }
 
     fn open_reader(mut reader: Box<dyn Read + Send + Sync>) -> Result<Self, Self::Error>
@@ -2029,7 +2078,7 @@ mod tests {
             ),
             (
                 "xl/worksheets/sheet1.xml",
-                r#"<?xml version="1.0"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><dimension ref="A1"/><sheetData><row r="1"><c r="A1"><v>42</v></c></row></sheetData></worksheet>"#,
+                r#"<?xml version="1.0"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><dimension ref="A1:B1"/><sheetData><row r="1"><c r="A1"><v>42</v></c><c r="B1"><f>A1*2</f><v>84</v></c></row></sheetData></worksheet>"#,
             ),
             (
                 "xl/externalLinks/_rels/externalLink7.xml.rels",
@@ -2092,7 +2141,7 @@ mod tests {
         });
     }
 
-    #[cfg(all(unix, not(feature = "mmap")))]
+    #[cfg(unix)]
     #[test]
     fn truncation_after_safe_open_returns_normal_fallbacks_and_errors() {
         let file = tempfile::NamedTempFile::new().unwrap();
@@ -2112,13 +2161,41 @@ mod tests {
         assert!(adapter.read_sheet("Data").is_err());
     }
 
-    #[cfg(all(feature = "mmap", any(unix, windows)))]
+    #[cfg(any(unix, windows))]
     #[test]
-    fn mmap_feature_uses_mapping_for_nonempty_path() {
+    fn runtime_direct_mmap_uses_mapping_for_nonempty_path() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), metadata_fixture()).unwrap();
+        let adapter =
+            CalamineAdapter::open_path_with_source(file.path(), XlsxPathSource::DirectMmap)
+                .unwrap();
+        assert!(matches!(adapter.source, SharedXlsxReader::Mapped { .. }));
+    }
+
+    #[test]
+    fn default_open_path_uses_shared_file() {
         let file = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(file.path(), metadata_fixture()).unwrap();
         let adapter = CalamineAdapter::open_path(file.path()).unwrap();
-        assert!(matches!(adapter.source, SharedXlsxReader::Mapped { .. }));
+        assert_eq!(XlsxPathSource::default(), XlsxPathSource::SharedFile);
+        assert!(matches!(adapter.source, SharedXlsxReader::File(_)));
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn direct_mmap_mapping_failure_is_returned_without_fallback() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let error = SharedXlsxReader::from_file(file.reopen().unwrap(), XlsxPathSource::DirectMmap)
+            .err()
+            .expect("empty files cannot be mapped");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+
+        let error = CalamineAdapter::open_path_with_source(file.path(), XlsxPathSource::DirectMmap)
+            .err()
+            .expect("the public API must return the mapping error");
+        assert!(
+            matches!(error, calamine::Error::Io(error) if error.kind() == std::io::ErrorKind::InvalidInput)
+        );
     }
 
     #[test]
@@ -2207,6 +2284,72 @@ mod tests {
             from_path.external_link_target(7),
             from_bytes.external_link_target(7)
         );
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn shared_file_and_direct_mmap_have_full_semantic_parity() {
+        use crate::{LoadStrategy, Workbook, WorkbookConfig};
+
+        #[derive(Debug, PartialEq)]
+        struct Observed {
+            sheet_names: Vec<String>,
+            defined_names: Vec<DefinedName>,
+            calc_settings: Option<CalcSettings>,
+            external_target: Option<String>,
+            value: Option<LiteralValue>,
+            formula: Option<String>,
+            evaluated: LiteralValue,
+        }
+
+        fn observe(path: &Path, policy: XlsxPathSource) -> Observed {
+            let mut adapter = CalamineAdapter::open_path_with_source(path, policy).unwrap();
+            let sheet_names = adapter.sheet_names().unwrap();
+            let defined_names = adapter.defined_names().unwrap();
+            let calc_settings = adapter.calc_settings();
+            let external_target = adapter.external_link_target(7).map(str::to_string);
+            let mut workbook =
+                Workbook::from_reader(adapter, LoadStrategy::EagerAll, WorkbookConfig::ephemeral())
+                    .unwrap();
+            Observed {
+                sheet_names,
+                defined_names,
+                calc_settings,
+                external_target,
+                value: workbook.get_value("Data", 1, 1),
+                formula: workbook.get_formula("Data", 1, 2),
+                evaluated: workbook.evaluate_cell("Data", 1, 2).unwrap(),
+            }
+        }
+
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), metadata_fixture()).unwrap();
+        let shared = observe(file.path(), XlsxPathSource::SharedFile);
+        let mapped = observe(file.path(), XlsxPathSource::DirectMmap);
+
+        assert_eq!(shared, mapped);
+        assert_eq!(shared.sheet_names, ["Data"]);
+        assert_eq!(shared.defined_names.len(), 2);
+        assert!(
+            shared
+                .defined_names
+                .iter()
+                .any(|name| name.name == "GlobalData" && name.scope_sheet.is_none())
+        );
+        assert!(
+            shared
+                .defined_names
+                .iter()
+                .any(|name| name.name == "LocalData" && name.scope_sheet.as_deref() == Some("Data"))
+        );
+        assert_eq!(shared.calc_settings.unwrap().iterate_count, Some(17));
+        assert_eq!(
+            shared.external_target.as_deref(),
+            Some("file:///tmp/source.xlsx")
+        );
+        assert_eq!(shared.value, Some(LiteralValue::Number(42.0)));
+        assert_eq!(shared.formula.as_deref(), Some("=A1 * 2"));
+        assert_eq!(shared.evaluated, LiteralValue::Number(84.0));
     }
 
     #[cfg(unix)]

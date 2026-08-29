@@ -62,6 +62,7 @@ __all__ = [
     "Workbook",
     "WorkbookConfig",
     "WorkbookMode",
+    "XlsxPathSource",
     "load_workbook",
     "load_workbook_bytes",
     "parse",
