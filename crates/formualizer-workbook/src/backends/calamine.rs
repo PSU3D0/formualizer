@@ -7,13 +7,11 @@ use formualizer_common::{DateSystem, ExcelError, ExcelErrorKind, LiteralValue};
 use parking_lot::RwLock;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs::File;
-use std::io::{BufRead, BufReader, Cursor, Read, Seek};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 
-use calamine::{
-    Data, DataRef, Range, Reader, Xlsx, XlsxFormulaMetadata, open_workbook, open_workbook_from_rs,
-};
+use calamine::{Data, DataRef, Range, Reader, Xlsx, XlsxFormulaMetadata, open_workbook_from_rs};
 use formualizer_common::RangeAddress;
 use formualizer_eval::arrow_store::{IngestBuilder, OverlayValue, map_error_code};
 use formualizer_eval::engine::ingest::EngineLoadStream;
@@ -40,24 +38,191 @@ use formula_replay::{
     HybridFormulaReplaySpool, SpoolFormulaRecord, replay_spool_per_cell_filtered_with_family,
 };
 
-enum CalamineWorkbook {
-    File(Xlsx<BufReader<File>>),
-    Bytes(Xlsx<Cursor<Vec<u8>>>),
+struct SharedFile {
+    file: Mutex<File>,
+    len: u64,
 }
 
-impl CalamineWorkbook {
-    fn worksheet_range(&mut self, sheet: &str) -> Result<Range<Data>, calamine::Error> {
-        match self {
-            Self::File(workbook) => workbook.worksheet_range(sheet).map_err(Into::into),
-            Self::Bytes(workbook) => workbook.worksheet_range(sheet).map_err(Into::into),
+#[derive(Clone)]
+struct SharedFileCursor {
+    source: Arc<SharedFile>,
+    position: u64,
+}
+
+#[cfg(all(feature = "mmap", any(unix, windows)))]
+struct MappedXlsxSource {
+    // The handle pins the opened file rather than its path. It does not prevent
+    // another process from truncating the file on Unix; see CalamineAdapter.
+    _file: File,
+    map: memmap2::Mmap,
+}
+
+#[derive(Clone)]
+enum SharedXlsxReader {
+    Bytes {
+        bytes: Arc<[u8]>,
+        position: u64,
+    },
+    File(SharedFileCursor),
+    #[cfg(all(feature = "mmap", any(unix, windows)))]
+    Mapped {
+        source: Arc<MappedXlsxSource>,
+        position: u64,
+    },
+}
+
+fn seek_position(position: u64, len: u64, from: SeekFrom) -> std::io::Result<u64> {
+    let next = match from {
+        SeekFrom::Start(next) => Some(next),
+        SeekFrom::Current(offset) => position.checked_add_signed(offset),
+        SeekFrom::End(offset) => len.checked_add_signed(offset),
+    };
+    next.ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid seek"))
+}
+
+fn read_slice(source: &[u8], position: &mut u64, buf: &mut [u8]) -> std::io::Result<usize> {
+    let start = usize::try_from(*position).unwrap_or(usize::MAX);
+    if start >= source.len() {
+        return Ok(0);
+    }
+    let read = buf.len().min(source.len() - start);
+    buf[..read].copy_from_slice(&source[start..start + read]);
+    *position = position
+        .checked_add(read as u64)
+        .ok_or_else(|| std::io::Error::other("reader position overflow"))?;
+    Ok(read)
+}
+
+impl SharedXlsxReader {
+    fn from_bytes(data: Vec<u8>) -> Self {
+        Self::Bytes {
+            bytes: Arc::from(data),
+            position: 0,
         }
     }
 
-    fn worksheet_formula(&mut self, sheet: &str) -> Result<Range<String>, calamine::Error> {
-        match self {
-            Self::File(workbook) => workbook.worksheet_formula(sheet).map_err(Into::into),
-            Self::Bytes(workbook) => workbook.worksheet_formula(sheet).map_err(Into::into),
+    fn from_file(file: File) -> Result<Self, std::io::Error> {
+        let len = file.metadata()?.len();
+        #[cfg(all(feature = "mmap", any(unix, windows)))]
+        if len != 0 {
+            // SAFETY: this opt-in map is read-only and its source handle remains
+            // alive. Callers accept the mutation/truncation semantics documented
+            // on CalamineAdapter when enabling `mmap`.
+            if let Ok(map) = unsafe { memmap2::MmapOptions::new().map(&file) } {
+                return Ok(Self::Mapped {
+                    source: Arc::new(MappedXlsxSource { _file: file, map }),
+                    position: 0,
+                });
+            }
         }
+
+        Ok(Self::File(SharedFileCursor {
+            source: Arc::new(SharedFile {
+                file: Mutex::new(file),
+                len,
+            }),
+            position: 0,
+        }))
+    }
+
+    fn reader(&self) -> Self {
+        match self {
+            Self::Bytes { bytes, .. } => Self::Bytes {
+                bytes: Arc::clone(bytes),
+                position: 0,
+            },
+            Self::File(cursor) => Self::File(SharedFileCursor {
+                source: Arc::clone(&cursor.source),
+                position: 0,
+            }),
+            #[cfg(all(feature = "mmap", any(unix, windows)))]
+            Self::Mapped { source, .. } => Self::Mapped {
+                source: Arc::clone(source),
+                position: 0,
+            },
+        }
+    }
+
+    #[cfg(test)]
+    fn bytes_backing_ptr(&self) -> Option<*const u8> {
+        match self {
+            Self::Bytes { bytes, .. } => Some(bytes.as_ptr()),
+            _ => None,
+        }
+    }
+
+    #[cfg(test)]
+    fn strong_count(&self) -> usize {
+        match self {
+            Self::Bytes { bytes, .. } => Arc::strong_count(bytes),
+            Self::File(cursor) => Arc::strong_count(&cursor.source),
+            #[cfg(all(feature = "mmap", any(unix, windows)))]
+            Self::Mapped { source, .. } => Arc::strong_count(source),
+        }
+    }
+}
+
+impl Read for SharedXlsxReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            Self::Bytes { bytes, position } => read_slice(bytes, position, buf),
+            Self::File(cursor) => {
+                if cursor.position >= cursor.source.len {
+                    return Ok(0);
+                }
+                let remaining = cursor.source.len - cursor.position;
+                let limit = buf
+                    .len()
+                    .min(usize::try_from(remaining).unwrap_or(usize::MAX));
+                let mut file = cursor
+                    .source
+                    .file
+                    .lock()
+                    .map_err(|_| std::io::Error::other("shared XLSX file lock poisoned"))?;
+                file.seek(SeekFrom::Start(cursor.position))?;
+                let read = file.read(&mut buf[..limit])?;
+                cursor.position = cursor
+                    .position
+                    .checked_add(read as u64)
+                    .ok_or_else(|| std::io::Error::other("reader position overflow"))?;
+                Ok(read)
+            }
+            #[cfg(all(feature = "mmap", any(unix, windows)))]
+            Self::Mapped { source, position } => read_slice(&source.map, position, buf),
+        }
+    }
+}
+
+impl Seek for SharedXlsxReader {
+    fn seek(&mut self, from: SeekFrom) -> std::io::Result<u64> {
+        let position = match self {
+            Self::Bytes { bytes, position } => {
+                *position = seek_position(*position, bytes.len() as u64, from)?;
+                *position
+            }
+            Self::File(cursor) => {
+                cursor.position = seek_position(cursor.position, cursor.source.len, from)?;
+                cursor.position
+            }
+            #[cfg(all(feature = "mmap", any(unix, windows)))]
+            Self::Mapped { source, position } => {
+                *position = seek_position(*position, source.map.len() as u64, from)?;
+                *position
+            }
+        };
+        Ok(position)
+    }
+}
+
+struct CalamineWorkbook(Xlsx<SharedXlsxReader>);
+
+impl CalamineWorkbook {
+    fn worksheet_range(&mut self, sheet: &str) -> Result<Range<Data>, calamine::Error> {
+        self.0.worksheet_range(sheet).map_err(Into::into)
+    }
+
+    fn worksheet_formula(&mut self, sheet: &str) -> Result<Range<String>, calamine::Error> {
+        self.0.worksheet_formula(sheet).map_err(Into::into)
     }
 }
 
@@ -216,15 +381,37 @@ impl DebugTimer {
 
 type ShadowRelocationComparator = Arc<dyn Fn(&ASTNode, &ASTNode) -> bool + Send + Sync>;
 
+/// Read-only XLSX adapter backed by one shared source acquisition.
+///
+/// By default, `open_path` retains one opened file and uses serialized file I/O
+/// with independent logical cursors. Byte and reader inputs use shared immutable
+/// owned bytes. With the opt-in `mmap` feature on Unix and Windows, `open_path`
+/// instead attempts a read-only memory map and falls back to shared file I/O if
+/// mapping fails. A mapped file must not be overwritten or truncated while the
+/// adapter is alive: on Unix, accessing a mapped page past a new EOF can deliver
+/// `SIGBUS` and abort the process. Renaming or replacing the path does not change
+/// any retained backing source.
 pub struct CalamineAdapter {
     workbook: RwLock<CalamineWorkbook>,
+    source: SharedXlsxReader,
     loaded_sheets: HashSet<String>,
     cached_names: Option<Vec<String>>,
-    defined_names: Vec<DefinedName>,
-    external_link_targets: BTreeMap<u32, String>,
-    calc_settings: Option<CalcSettings>,
+    calamine_has_defined_names: bool,
+    defined_names: OnceLock<Vec<DefinedName>>,
+    external_link_targets: OnceLock<BTreeMap<u32, String>>,
+    calc_settings: OnceLock<Option<CalcSettings>>,
     load_stats: AdapterLoadStats,
     shadow_relocation_comparator: Option<ShadowRelocationComparator>,
+    #[cfg(test)]
+    lazy_scan_counts: LazyScanCounts,
+}
+
+#[cfg(test)]
+#[derive(Default)]
+struct LazyScanCounts {
+    external_links: std::sync::atomic::AtomicUsize,
+    calc_settings: std::sync::atomic::AtomicUsize,
+    defined_names: std::sync::atomic::AtomicUsize,
 }
 
 impl CalamineAdapter {
@@ -877,8 +1064,72 @@ impl CalamineAdapter {
         })
     }
 
+    fn from_shared_source(source: SharedXlsxReader) -> Result<Self, calamine::Error> {
+        let workbook: Xlsx<SharedXlsxReader> = open_workbook_from_rs(source.reader())?;
+        let sheet_names = workbook.sheet_names().to_vec();
+        let calamine_has_defined_names = !workbook.defined_names().is_empty();
+
+        Ok(Self {
+            workbook: RwLock::new(CalamineWorkbook(workbook)),
+            source,
+            loaded_sheets: HashSet::new(),
+            cached_names: Some(sheet_names),
+            calamine_has_defined_names,
+            defined_names: OnceLock::new(),
+            external_link_targets: OnceLock::new(),
+            calc_settings: OnceLock::new(),
+            load_stats: AdapterLoadStats::default(),
+            shadow_relocation_comparator: None,
+            #[cfg(test)]
+            lazy_scan_counts: LazyScanCounts::default(),
+        })
+    }
+
+    fn lazy_external_link_targets(&self) -> &BTreeMap<u32, String> {
+        self.external_link_targets.get_or_init(|| {
+            #[cfg(test)]
+            self.lazy_scan_counts
+                .external_links
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Self::scan_external_link_targets_from_reader(self.source.reader())
+        })
+    }
+
+    fn lazy_calc_settings(&self) -> &Option<CalcSettings> {
+        self.calc_settings.get_or_init(|| {
+            #[cfg(test)]
+            self.lazy_scan_counts
+                .calc_settings
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Self::scan_calc_settings_from_reader(self.source.reader())
+        })
+    }
+
+    fn lazy_defined_names(&self) -> &Vec<DefinedName> {
+        self.defined_names.get_or_init(|| {
+            #[cfg(test)]
+            self.lazy_scan_counts
+                .defined_names
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if !self.calamine_has_defined_names {
+                return Vec::new();
+            }
+
+            let sheet_names = self.cached_names.as_deref().unwrap_or_default();
+            let parsed = Self::scan_defined_names_from_reader(self.source.reader(), sheet_names);
+            if parsed.is_empty() {
+                let workbook = self.workbook.read();
+                Self::fallback_defined_names_from_workbook(&workbook.0, sheet_names)
+            } else {
+                parsed
+            }
+        })
+    }
+
     pub fn external_link_target(&self, index: u32) -> Option<&str> {
-        self.external_link_targets.get(&index).map(|s| s.as_str())
+        self.lazy_external_link_targets()
+            .get(&index)
+            .map(String::as_str)
     }
 
     fn normalize_open_ended_bounds(
@@ -1340,52 +1591,22 @@ impl SpreadsheetReader for CalamineAdapter {
     }
 
     fn defined_names(&mut self) -> Result<Vec<DefinedName>, Self::Error> {
-        Ok(self.defined_names.clone())
+        Ok(self.lazy_defined_names().clone())
     }
 
     fn calc_settings(&self) -> Option<CalcSettings> {
-        self.calc_settings.clone()
+        self.lazy_calc_settings().clone()
     }
 
     fn open_path<P: AsRef<Path>>(path: P) -> Result<Self, Self::Error>
     where
         Self: Sized,
     {
-        let path = path.as_ref();
-        let external_link_targets = match File::open(path) {
-            Ok(file) => Self::scan_external_link_targets_from_reader(BufReader::new(file)),
-            Err(_) => BTreeMap::new(),
-        };
-        let calc_settings = File::open(path)
-            .ok()
-            .and_then(|file| Self::scan_calc_settings_from_reader(BufReader::new(file)));
-        let workbook: Xlsx<BufReader<File>> = open_workbook(path)?;
-        let sheet_names = workbook.sheet_names().to_vec();
-        let defined_names = if workbook.defined_names().is_empty() {
-            Vec::new()
-        } else {
-            let parsed = match File::open(path) {
-                Ok(file) => {
-                    Self::scan_defined_names_from_reader(BufReader::new(file), &sheet_names)
-                }
-                Err(_) => Vec::new(),
-            };
-            if parsed.is_empty() {
-                Self::fallback_defined_names_from_workbook(&workbook, &sheet_names)
-            } else {
-                parsed
-            }
-        };
-        Ok(Self {
-            workbook: RwLock::new(CalamineWorkbook::File(workbook)),
-            loaded_sheets: HashSet::new(),
-            cached_names: Some(sheet_names),
-            defined_names,
-            external_link_targets,
-            calc_settings,
-            load_stats: AdapterLoadStats::default(),
-            shadow_relocation_comparator: None,
-        })
+        // Acquire the path exactly once. The safe default shares the retained
+        // handle; the opt-in mmap path falls back to that same opened handle.
+        let file = File::open(path).map_err(calamine::Error::Io)?;
+        let source = SharedXlsxReader::from_file(file).map_err(calamine::Error::Io)?;
+        Self::from_shared_source(source)
     }
 
     fn open_reader(mut reader: Box<dyn Read + Send + Sync>) -> Result<Self, Self::Error>
@@ -1394,40 +1615,14 @@ impl SpreadsheetReader for CalamineAdapter {
     {
         let mut data = Vec::new();
         reader.read_to_end(&mut data).map_err(calamine::Error::Io)?;
-        Self::open_bytes(data)
+        Self::from_shared_source(SharedXlsxReader::from_bytes(data))
     }
 
     fn open_bytes(data: Vec<u8>) -> Result<Self, Self::Error>
     where
         Self: Sized,
     {
-        let external_link_targets =
-            Self::scan_external_link_targets_from_reader(Cursor::new(data.as_slice()));
-        let calc_settings = Self::scan_calc_settings_from_reader(Cursor::new(data.as_slice()));
-        let workbook: Xlsx<Cursor<Vec<u8>>> = open_workbook_from_rs(Cursor::new(data.clone()))?;
-        let sheet_names = workbook.sheet_names().to_vec();
-        let defined_names = if workbook.defined_names().is_empty() {
-            Vec::new()
-        } else {
-            let parsed =
-                Self::scan_defined_names_from_reader(Cursor::new(data.as_slice()), &sheet_names);
-            if parsed.is_empty() {
-                Self::fallback_defined_names_from_workbook(&workbook, &sheet_names)
-            } else {
-                parsed
-            }
-        };
-
-        Ok(Self {
-            workbook: RwLock::new(CalamineWorkbook::Bytes(workbook)),
-            loaded_sheets: HashSet::new(),
-            cached_names: Some(sheet_names),
-            defined_names,
-            external_link_targets,
-            calc_settings,
-            load_stats: AdapterLoadStats::default(),
-            shadow_relocation_comparator: None,
-        })
+        Self::from_shared_source(SharedXlsxReader::from_bytes(data))
     }
 
     fn read_range(
@@ -1568,38 +1763,21 @@ where
                     self.shadow_relocation_comparator.as_ref().map(Arc::clone);
                 let streamed = {
                     let mut workbook = self.workbook.write();
-                    match &mut *workbook {
-                        CalamineWorkbook::File(workbook) => Self::stream_worksheet(
-                            workbook,
-                            n,
-                            engine,
-                            sheet_instance as u32,
-                            StreamWorksheetOptions {
-                                chunk_rows,
-                                debug,
-                                workbook_spool_usage: WorkbookSpoolUsage {
-                                    bytes: workbook_spool_bytes_used,
-                                    files: workbook_spill_files_used,
-                                },
-                                shadow_relocation_comparator: shadow_relocation_comparator.clone(),
+                    Self::stream_worksheet(
+                        &mut workbook.0,
+                        n,
+                        engine,
+                        sheet_instance as u32,
+                        StreamWorksheetOptions {
+                            chunk_rows,
+                            debug,
+                            workbook_spool_usage: WorkbookSpoolUsage {
+                                bytes: workbook_spool_bytes_used,
+                                files: workbook_spill_files_used,
                             },
-                        ),
-                        CalamineWorkbook::Bytes(workbook) => Self::stream_worksheet(
-                            workbook,
-                            n,
-                            engine,
-                            sheet_instance as u32,
-                            StreamWorksheetOptions {
-                                chunk_rows,
-                                debug,
-                                workbook_spool_usage: WorkbookSpoolUsage {
-                                    bytes: workbook_spool_bytes_used,
-                                    files: workbook_spill_files_used,
-                                },
-                                shadow_relocation_comparator,
-                            },
-                        ),
-                    }?
+                            shadow_relocation_comparator,
+                        },
+                    )?
                 };
                 let StreamedSheet {
                     arrow_sheet: asheet,
@@ -1823,6 +2001,234 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Cursor;
+
+    fn metadata_fixture() -> Vec<u8> {
+        use std::io::Write;
+        use zip::write::SimpleFileOptions;
+        use zip::{CompressionMethod, ZipWriter};
+
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+        let entries = [
+            (
+                "[Content_Types].xml",
+                r#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>"#,
+            ),
+            (
+                "_rels/.rels",
+                r#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>"#,
+            ),
+            (
+                "xl/workbook.xml",
+                r#"<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Data" sheetId="1" r:id="rId1"/></sheets><definedNames><definedName name="GlobalData">Data!$A$1</definedName><definedName name="LocalData" localSheetId="0">$A$1</definedName></definedNames><calcPr iterate="1" iterateCount="17" iterateDelta="0.01" calcMode="auto"/></workbook>"#,
+            ),
+            (
+                "xl/_rels/workbook.xml.rels",
+                r#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>"#,
+            ),
+            (
+                "xl/worksheets/sheet1.xml",
+                r#"<?xml version="1.0"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><dimension ref="A1"/><sheetData><row r="1"><c r="A1"><v>42</v></c></row></sheetData></worksheet>"#,
+            ),
+            (
+                "xl/externalLinks/_rels/externalLink7.xml.rels",
+                r#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/externalLinkPath" Target="file:///tmp/source.xlsx" TargetMode="External"/></Relationships>"#,
+            ),
+        ];
+        for (name, xml) in entries {
+            writer.start_file(name, options).unwrap();
+            writer.write_all(xml.as_bytes()).unwrap();
+        }
+        writer.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn shared_bytes_have_one_backing_allocation() {
+        let adapter = CalamineAdapter::open_bytes(metadata_fixture()).unwrap();
+        let pointer = adapter.source.bytes_backing_ptr().unwrap();
+
+        // One Arc is retained by the adapter for scanners and one by calamine's
+        // cursor. Metadata cursors are cheap temporary Arc clones.
+        assert_eq!(adapter.source.strong_count(), 2);
+        assert_eq!(
+            adapter.external_link_target(7),
+            Some("file:///tmp/source.xlsx")
+        );
+        assert_eq!(adapter.source.bytes_backing_ptr(), Some(pointer));
+        assert_eq!(adapter.source.strong_count(), 2);
+    }
+
+    #[test]
+    fn shared_file_cursors_keep_independent_positions_under_concurrency() {
+        use std::io::Write;
+
+        let mut file = tempfile::tempfile().unwrap();
+        let data: Vec<u8> = (0..=255).cycle().take(16 * 1024).collect();
+        file.write_all(&data).unwrap();
+        let source = SharedXlsxReader::File(SharedFileCursor {
+            source: Arc::new(SharedFile {
+                file: Mutex::new(file),
+                len: data.len() as u64,
+            }),
+            position: 0,
+        });
+
+        std::thread::scope(|scope| {
+            for thread_index in 0..8_u64 {
+                let mut reader = source.reader();
+                let data = &data;
+                scope.spawn(move || {
+                    for round in 0..200_u64 {
+                        let offset = (thread_index * 997 + round * 43) % 16_000;
+                        reader.seek(SeekFrom::Start(offset)).unwrap();
+                        let mut actual = [0_u8; 31];
+                        reader.read_exact(&mut actual).unwrap();
+                        assert_eq!(&actual, &data[offset as usize..offset as usize + 31]);
+                        assert_eq!(reader.stream_position().unwrap(), offset + 31);
+                    }
+                });
+            }
+        });
+    }
+
+    #[cfg(all(unix, not(feature = "mmap")))]
+    #[test]
+    fn truncation_after_safe_open_returns_normal_fallbacks_and_errors() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), metadata_fixture()).unwrap();
+        let mut adapter = CalamineAdapter::open_path(file.path()).unwrap();
+        assert!(matches!(adapter.source, SharedXlsxReader::File(_)));
+
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(file.path())
+            .unwrap()
+            .set_len(0)
+            .unwrap();
+
+        assert_eq!(adapter.external_link_target(7), None);
+        assert_eq!(adapter.calc_settings(), None);
+        assert!(adapter.read_sheet("Data").is_err());
+    }
+
+    #[cfg(all(feature = "mmap", any(unix, windows)))]
+    #[test]
+    fn mmap_feature_uses_mapping_for_nonempty_path() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), metadata_fixture()).unwrap();
+        let adapter = CalamineAdapter::open_path(file.path()).unwrap();
+        assert!(matches!(adapter.source, SharedXlsxReader::Mapped { .. }));
+    }
+
+    #[test]
+    fn metadata_scans_are_lazy_and_run_at_most_once() {
+        use std::sync::atomic::Ordering;
+
+        let mut adapter = CalamineAdapter::open_bytes(metadata_fixture()).unwrap();
+        assert_eq!(
+            adapter
+                .lazy_scan_counts
+                .external_links
+                .load(Ordering::Relaxed),
+            0
+        );
+        assert_eq!(
+            adapter
+                .lazy_scan_counts
+                .calc_settings
+                .load(Ordering::Relaxed),
+            0
+        );
+        assert_eq!(
+            adapter
+                .lazy_scan_counts
+                .defined_names
+                .load(Ordering::Relaxed),
+            0
+        );
+
+        std::thread::scope(|scope| {
+            let adapter = &adapter;
+            for _ in 0..4 {
+                scope.spawn(move || {
+                    assert_eq!(
+                        adapter.external_link_target(7),
+                        Some("file:///tmp/source.xlsx")
+                    );
+                    assert_eq!(adapter.calc_settings().unwrap().iterate_count, Some(17));
+                });
+            }
+        });
+        assert_eq!(adapter.defined_names().unwrap().len(), 2);
+        assert_eq!(adapter.defined_names().unwrap().len(), 2);
+
+        assert_eq!(
+            adapter
+                .lazy_scan_counts
+                .external_links
+                .load(Ordering::Relaxed),
+            1
+        );
+        assert_eq!(
+            adapter
+                .lazy_scan_counts
+                .calc_settings
+                .load(Ordering::Relaxed),
+            1
+        );
+        assert_eq!(
+            adapter
+                .lazy_scan_counts
+                .defined_names
+                .load(Ordering::Relaxed),
+            1
+        );
+    }
+
+    #[test]
+    fn path_and_bytes_metadata_are_identical() {
+        let bytes = metadata_fixture();
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), &bytes).unwrap();
+        let mut from_path = CalamineAdapter::open_path(file.path()).unwrap();
+        let mut from_bytes = CalamineAdapter::open_bytes(bytes).unwrap();
+
+        assert_eq!(
+            from_path.sheet_names().unwrap(),
+            from_bytes.sheet_names().unwrap()
+        );
+        assert_eq!(
+            from_path.defined_names().unwrap(),
+            from_bytes.defined_names().unwrap()
+        );
+        assert_eq!(from_path.calc_settings(), from_bytes.calc_settings());
+        assert_eq!(
+            from_path.external_link_target(7),
+            from_bytes.external_link_target(7)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn path_is_not_reopened_for_lazy_metadata_or_sheet_reads() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("source.xlsx");
+        std::fs::write(&path, metadata_fixture()).unwrap();
+        let mut adapter = CalamineAdapter::open_path(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+
+        assert_eq!(
+            adapter.external_link_target(7),
+            Some("file:///tmp/source.xlsx")
+        );
+        assert_eq!(adapter.calc_settings().unwrap().iterate_count, Some(17));
+        assert_eq!(adapter.defined_names().unwrap().len(), 2);
+        assert_eq!(
+            adapter.read_sheet("Data").unwrap().cells[&(1, 1)].value,
+            Some(LiteralValue::Number(42.0))
+        );
+    }
 
     #[test]
     fn new_calamine_error_variants_preserve_generic_error_semantics() {

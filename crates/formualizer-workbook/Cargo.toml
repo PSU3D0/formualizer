@@ -55,10 +55,6 @@ wasm_runtime_wasmtime = ["wasm_plugins", "dep:wasmtime"]
 version = "0.36"
 optional = true
 
-[dependencies.memmap2]
-version = "0.9"
-optional = true
-
 [dependencies.reqwest]
 version = "0.11"
 optional = true
@@ -78,6 +74,9 @@ optional = true
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tempfile = { workspace = true }
 wasmtime = { version = "43.0.2", optional = true }
+
+[target.'cfg(any(unix, windows))'.dependencies]
+memmap2 = { version = "0.9", optional = true }
 
 [dev-dependencies]
 formualizer-eval = { path = "../formualizer-eval", version = "0.8.4", default-features = false, features = ["test-support"] }
