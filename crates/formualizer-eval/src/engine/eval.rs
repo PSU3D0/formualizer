@@ -14613,10 +14613,12 @@ where
         let prepared = self
             .prepare_formula_span_demotion(&span_refs)
             .map_err(|error| map_error("preparation", error))?;
+        let commit_started = self.preflight_evaluation_commit_window(prepared.placement_count)?;
         let report = self
             .commit_prepared_formula_span_demotion(prepared)
             .map_err(|error| map_error("commit", error))?;
-        self.checked_ack_formula_dirty_observed(formula_dirty)?;
+        self.ack_formula_dirty_observed(formula_dirty);
+        self.observe_evaluation_commit_window(commit_started);
         self.observe_materialization(
             report.placements_materialized,
             false,
@@ -17619,13 +17621,15 @@ where
             engine.observe_function_semantic_epoch()?;
             // A direct request selects exactly one vertex, regardless of its formula kind.
             engine.resource_checkpoint(1)?;
-            let is_formula = engine.graph.vertex_exists(vertex_id)
-                && matches!(
-                    engine.graph.get_vertex_kind(vertex_id),
-                    VertexKind::FormulaScalar | VertexKind::FormulaArray
-                );
+            if !engine.graph.vertex_exists(vertex_id) {
+                return engine.evaluate_vertex_impl(vertex_id, None);
+            }
+            engine.transition_off_mode_spans_to_legacy()?;
+            let is_formula = matches!(
+                engine.graph.get_vertex_kind(vertex_id),
+                VertexKind::FormulaScalar | VertexKind::FormulaArray
+            );
             if is_formula {
-                engine.transition_off_mode_spans_to_legacy()?;
                 engine.begin_evaluation_request();
                 engine.graph.flush_pending_edge_deltas();
                 let roots = [crate::engine::target_preparation::TargetProducer::Legacy(
