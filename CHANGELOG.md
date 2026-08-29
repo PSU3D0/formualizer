@@ -6,6 +6,7 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Changed
 
+- FormulaPlane correctness now covers mixed-pass named-symbol scheduling with dynamic fail-closed preflight, format preservation across broadcast and computed-overlay writeback, transactional demotion of retained spans before Off-mode legacy evaluation without FormulaPlane dispatch, and dependent healing after name redefinition.
 - FormulaPlane now admits `IF`, `IFS`, and `CHOOSE` spans when every result arm is a single cell or a statically scalar expression. Range, open-range, named, volatile, and dynamic-reference arms remain on the legacy path.
 - Named-range definitions now track structural inserts and deletes like all other references; previously they stayed pinned to their original coordinates. Deleting a band containing a name target now invalidates the definition to `#REF!`. (#170)
 - Computed temporals are numeric during evaluation (`ISNUMBER`/`TYPE` now match Excel). Native scalar, range, table, Python, and SheetPort egress materializes date/time values from the cell's effective format; callers can opt into uniform raw serials. A known datetime class preserves midnight datetimes, while calamine's code-lossy date-ish signal can only classify pure fractions as time, day-plus-fraction serials as datetime, and integers as date.

@@ -14592,6 +14592,39 @@ where
         })
     }
 
+    fn transition_off_mode_spans_to_legacy(&mut self) -> Result<bool, ExcelError> {
+        if self.config.formula_plane_mode != FormulaPlaneMode::Off {
+            return Ok(false);
+        }
+        let span_refs = self.graph.formula_authority().active_span_refs();
+        if span_refs.is_empty() {
+            return Ok(false);
+        }
+
+        let formula_dirty = self.graph.lease_formula_dirty();
+        let materialization_started = crate::instant::FzInstant::now();
+        let map_error = |phase: &str, error: FormulaSpanDemotionError| match error {
+            FormulaSpanDemotionError::Resource(error)
+            | FormulaSpanDemotionError::AstPreparation(error) => error,
+            error => ExcelError::new(ExcelErrorKind::NImpl).with_message(format!(
+                "FormulaPlane Off-mode span demotion {phase} failed: {error}"
+            )),
+        };
+        let prepared = self
+            .prepare_formula_span_demotion(&span_refs)
+            .map_err(|error| map_error("preparation", error))?;
+        let report = self
+            .commit_prepared_formula_span_demotion(prepared)
+            .map_err(|error| map_error("commit", error))?;
+        self.checked_ack_formula_dirty_observed(formula_dirty)?;
+        self.observe_materialization(
+            report.placements_materialized,
+            false,
+            materialization_started.elapsed(),
+        );
+        Ok(true)
+    }
+
     #[cfg(test)]
     pub(crate) fn set_formula_span_demotion_fault_for_test(
         &mut self,
@@ -17592,6 +17625,7 @@ where
                     VertexKind::FormulaScalar | VertexKind::FormulaArray
                 );
             if is_formula {
+                engine.transition_off_mode_spans_to_legacy()?;
                 engine.begin_evaluation_request();
                 engine.graph.flush_pending_edge_deltas();
                 let roots = [crate::engine::target_preparation::TargetProducer::Legacy(
@@ -18365,6 +18399,7 @@ where
         scope: &crate::engine::PrepareScope,
         delta: Option<&mut DeltaCollector>,
     ) -> Result<EvalResult, ExcelError> {
+        self.transition_off_mode_spans_to_legacy()?;
         if matches!(scope, crate::engine::PrepareScope::Workbook)
             && let Some(stats) = self.active_evaluation_resource_request.as_mut()
         {
@@ -18743,6 +18778,7 @@ where
                 has_dynamic_refs,
             } => {
                 let _source_cache = self.source_cache_session();
+                let transitioned = self.transition_off_mode_spans_to_legacy()?;
                 self.begin_evaluation_request();
                 if self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental
                     && self.graph.formula_authority().active_span_count() > 0
@@ -18752,7 +18788,12 @@ where
                 if *has_dynamic_refs {
                     self.virtual_dep_fallback_activations =
                         self.virtual_dep_fallback_activations.saturating_add(1);
-                    return self.evaluate_all_coordinator();
+                    if !transitioned {
+                        return self.evaluate_all_coordinator();
+                    }
+                }
+                if transitioned {
+                    return self.evaluate_all_legacy_impl();
                 }
 
                 let start = crate::instant::FzInstant::now();
@@ -21709,6 +21750,7 @@ where
     /// coordinator; the coordinator itself composes with private legacy
     /// primitives for legacy-only work.
     fn evaluate_all_coordinator(&mut self) -> Result<EvalResult, ExcelError> {
+        self.transition_off_mode_spans_to_legacy()?;
         self.begin_evaluation_request();
         if self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental {
             return self.evaluate_authoritative_formula_plane_all();
@@ -21923,11 +21965,12 @@ where
         &mut self,
         delta: &mut DeltaCollector,
     ) -> Result<EvalResult, ExcelError> {
-        self.begin_evaluation_request();
         let _source_cache = self.source_cache_session();
         if self.config.defer_graph_building {
             self.build_graph_all()?;
         }
+        self.transition_off_mode_spans_to_legacy()?;
+        self.begin_evaluation_request();
         if self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental
             && self.graph.formula_authority().active_span_count() > 0
         {
@@ -22685,12 +22728,26 @@ where
         &mut self,
         cancel_flag: &AtomicBool,
     ) -> Result<EvalResult, ExcelError> {
-        self.begin_evaluation_request();
         let _source_cache = self.source_cache_session();
         self.validate_deterministic_mode()?;
         if self.config.defer_graph_building {
             self.build_graph_all()?;
         }
+        if cancel_flag.load(Ordering::Relaxed) {
+            let message = if self.config.formula_plane_mode
+                == FormulaPlaneMode::AuthoritativeExperimental
+                && self.graph.formula_authority().active_span_count() > 0
+            {
+                "Evaluation cancelled before FormulaPlane scheduling"
+            } else {
+                "Evaluation cancelled before scheduling"
+            };
+            return Err(
+                ExcelError::new(ExcelErrorKind::Cancelled).with_message(message.to_string())
+            );
+        }
+        self.transition_off_mode_spans_to_legacy()?;
+        self.begin_evaluation_request();
         if self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental
             && self.graph.formula_authority().active_span_count() > 0
         {
@@ -27243,12 +27300,13 @@ where
         log: &mut ChangeLog,
     ) -> Result<EvalResult, ExcelError> {
         self.observe_function_semantic_epoch()?;
-        self.begin_evaluation_request();
         let _source_cache = self.source_cache_session();
         self.validate_deterministic_mode()?;
         if self.config.defer_graph_building {
             self.build_graph_all()?;
         }
+        self.transition_off_mode_spans_to_legacy()?;
+        self.begin_evaluation_request();
         if self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental
             && self.graph.formula_authority().active_span_count() > 0
         {
