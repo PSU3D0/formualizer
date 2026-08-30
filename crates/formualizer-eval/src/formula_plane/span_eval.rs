@@ -325,12 +325,6 @@ impl<'a> SpanEvaluator<'a> {
                         report.skipped_overlay_punchout_count.saturating_add(1);
                     continue;
                 }
-                self.context.record_cell_derived_format(
-                    self.current_sheet,
-                    placement.row + 1,
-                    placement.col + 1,
-                    format_id,
-                );
                 sink.push_cell(placement, value.clone(), format_id);
                 report.span_eval_placement_count =
                     report.span_eval_placement_count.saturating_add(1);
@@ -453,12 +447,6 @@ impl<'a> SpanEvaluator<'a> {
             ) {
                 Ok(calc) => {
                     let format_id = calc.format_id();
-                    self.context.record_cell_derived_format(
-                        self.current_sheet,
-                        placement.row + 1,
-                        placement.col + 1,
-                        format_id,
-                    );
                     MemoGroupValue {
                         value: formula_result_to_overlay(
                             calc.into_literal(),
@@ -482,12 +470,6 @@ impl<'a> SpanEvaluator<'a> {
             ) {
                 Ok(calc) => {
                     let format_id = calc.format_id();
-                    self.context.record_cell_derived_format(
-                        self.current_sheet,
-                        placement.row + 1,
-                        placement.col + 1,
-                        format_id,
-                    );
                     MemoGroupValue {
                         value: formula_result_to_overlay(
                             calc.into_literal(),
@@ -797,12 +779,6 @@ impl<'a> SpanEvaluator<'a> {
         report: &mut SpanEvalReport,
     ) {
         for placement in &group.placements {
-            self.context.record_cell_derived_format(
-                self.current_sheet,
-                placement.row + 1,
-                placement.col + 1,
-                value.format_id,
-            );
             sink.push_cell(*placement, value.value.clone(), value.format_id);
             report.span_eval_placement_count = report.span_eval_placement_count.saturating_add(1);
         }

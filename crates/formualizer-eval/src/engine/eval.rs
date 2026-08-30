@@ -670,7 +670,6 @@ pub(crate) enum ComputedWrite {
         sr0: u32,
         sc0: u32,
         values: Vec<Vec<OverlayValue>>,
-        formats: Vec<Vec<Option<crate::format::FormatId>>>,
     },
 }
 
@@ -688,6 +687,7 @@ pub(crate) struct ComputedWriteBuffer {
     writes: Vec<ComputedWrite>,
     next_seq: u64,
     estimated_bytes: usize,
+    formats_present: bool,
 }
 
 impl ComputedWriteBuffer {
@@ -731,6 +731,8 @@ impl ComputedWriteBuffer {
         value: OverlayValue,
         format_id: Option<crate::format::FormatId>,
     ) {
+        let format_id = format_id.filter(|id| *id != crate::format::FormatId::GENERAL);
+        self.formats_present |= format_id.is_some();
         let seq = self.next_sequence();
         self.estimated_bytes = self
             .estimated_bytes
@@ -759,25 +761,25 @@ impl ComputedWriteBuffer {
             .map(Self::estimate_value_bytes)
             .fold(0usize, usize::saturating_add);
         self.estimated_bytes = self.estimated_bytes.saturating_add(added);
-        let formats = values.iter().map(|row| vec![None; row.len()]).collect();
         self.writes.push(ComputedWrite::Rect {
             seq,
             sheet_id,
             sr0,
             sc0,
             values,
-            formats,
         });
     }
 
     pub(crate) fn clear(&mut self) {
         self.writes.clear();
         self.estimated_bytes = 0;
+        self.formats_present = false;
     }
 
-    fn take_writes(&mut self) -> Vec<ComputedWrite> {
+    fn take_writes(&mut self) -> (Vec<ComputedWrite>, bool) {
         self.estimated_bytes = 0;
-        std::mem::take(&mut self.writes)
+        let formats_present = std::mem::take(&mut self.formats_present);
+        (std::mem::take(&mut self.writes), formats_present)
     }
 
     fn next_sequence(&mut self) -> u64 {
@@ -826,6 +828,25 @@ pub(crate) enum ComputedWriteChunkPlanShape {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ComputedWriteFormatClear {
+    Range { start: usize, end: usize },
+    Offsets(Vec<usize>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum ComputedWriteChunkFormatEffect {
+    NoFormatWork,
+    ClearStale(ComputedWriteFormatClear),
+    SetExplicit(Vec<(usize, Option<crate::format::FormatId>)>),
+}
+
+struct DerivedFormatPlaneSyncPlan {
+    plane_epoch: u64,
+    active_regions: Vec<crate::formula_plane::region_index::Region>,
+    overlay_regions: Vec<crate::formula_plane::region_index::Region>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ComputedWriteChunkPlan {
     pub(crate) sheet_id: SheetId,
@@ -834,6 +855,7 @@ pub(crate) struct ComputedWriteChunkPlan {
     pub(crate) chunk_start_row0: u32,
     pub(crate) entries: Vec<ComputedWriteChunkEntryPlan>,
     pub(crate) shape: ComputedWriteChunkPlanShape,
+    pub(crate) format_effect: ComputedWriteChunkFormatEffect,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -855,6 +877,8 @@ impl ComputedWriteChunkPlan {
     fn from_group(
         key: ComputedWriteChunkKey,
         mut entries: Vec<ComputedWriteChunkEntryPlan>,
+        formats_present: bool,
+        computed_lane_has_formats: bool,
     ) -> (Self, usize) {
         entries.sort_by_key(|entry| (entry.row_in_chunk, entry.seq));
         let input_len = entries.len();
@@ -870,6 +894,12 @@ impl ComputedWriteChunkPlan {
         }
         let overwritten = input_len.saturating_sub(coalesced.len());
         let shape = Self::classify_shape(&coalesced);
+        let format_effect = Self::classify_format_effect(
+            &coalesced,
+            &shape,
+            formats_present,
+            computed_lane_has_formats,
+        );
         (
             Self {
                 sheet_id: key.sheet_id,
@@ -878,9 +908,61 @@ impl ComputedWriteChunkPlan {
                 chunk_start_row0: key.chunk_start_row0,
                 entries: coalesced,
                 shape,
+                format_effect,
             },
             overwritten,
         )
+    }
+
+    fn classify_format_effect(
+        entries: &[ComputedWriteChunkEntryPlan],
+        shape: &ComputedWriteChunkPlanShape,
+        formats_present: bool,
+        computed_lane_has_formats: bool,
+    ) -> ComputedWriteChunkFormatEffect {
+        if !formats_present {
+            return if computed_lane_has_formats {
+                ComputedWriteChunkFormatEffect::ClearStale(Self::format_clear_spec(entries, shape))
+            } else {
+                ComputedWriteChunkFormatEffect::NoFormatWork
+            };
+        }
+
+        if entries.iter().all(|entry| entry.format_id.is_none()) {
+            return if computed_lane_has_formats {
+                ComputedWriteChunkFormatEffect::ClearStale(Self::format_clear_spec(entries, shape))
+            } else {
+                ComputedWriteChunkFormatEffect::NoFormatWork
+            };
+        }
+
+        ComputedWriteChunkFormatEffect::SetExplicit(
+            entries
+                .iter()
+                .map(|entry| (entry.row_in_chunk, entry.format_id))
+                .collect(),
+        )
+    }
+
+    fn format_clear_spec(
+        entries: &[ComputedWriteChunkEntryPlan],
+        shape: &ComputedWriteChunkPlanShape,
+    ) -> ComputedWriteFormatClear {
+        match shape {
+            ComputedWriteChunkPlanShape::DenseRange { start, len }
+            | ComputedWriteChunkPlanShape::RunRange { start, len, .. } => {
+                ComputedWriteFormatClear::Range {
+                    start: *start,
+                    end: start.saturating_add(*len),
+                }
+            }
+            ComputedWriteChunkPlanShape::Point
+            | ComputedWriteChunkPlanShape::SparseOffsets { .. } => {
+                ComputedWriteFormatClear::Offsets(
+                    entries.iter().map(|entry| entry.row_in_chunk).collect(),
+                )
+            }
+        }
     }
 
     fn classify_shape(entries: &[ComputedWriteChunkEntryPlan]) -> ComputedWriteChunkPlanShape {
@@ -959,6 +1041,19 @@ pub struct Engine<R> {
     derived_format_results: std::sync::RwLock<FxHashMap<VertexId, Option<crate::format::FormatId>>>,
     /// Derived formula formats keyed by grid position, never graph vertex identity.
     derived_formats: std::sync::RwLock<FxHashMap<CellRef, crate::format::FormatId>>,
+    /// FormulaPlane epoch whose active result regions have been purged from
+    /// `derived_formats`.
+    derived_formats_plane_epoch: u64,
+    #[cfg(test)]
+    derived_format_operations_for_test: std::sync::atomic::AtomicU64,
+    #[cfg(test)]
+    computed_overlay_set_explicit_entry_operations_for_test: u64,
+    #[cfg(test)]
+    computed_overlay_stale_clear_range_effects_for_test: u64,
+    #[cfg(test)]
+    computed_overlay_stale_clear_offset_attempts_for_test: u64,
+    #[cfg(test)]
+    computed_format_vector_allocations_for_test: std::sync::atomic::AtomicU64,
     /// True if any edit after bulk load; disables Arrow reads for parity
     has_edited: bool,
     /// Overlay compaction counter (Phase C instrumentation)
@@ -1092,6 +1187,8 @@ pub struct Engine<R> {
     force_virtual_dep_changes_remaining_for_test: usize,
     #[cfg(test)]
     fail_evaluation_commit_preflight_once_for_test: bool,
+    #[cfg(test)]
+    cancel_before_formula_plane_layer_commit_once_for_test: bool,
     #[cfg(test)]
     force_source_family_fallback: bool,
     #[cfg(test)]
@@ -2636,6 +2733,17 @@ where
             format_registry: crate::format::FormatRegistry::default(),
             derived_format_results: std::sync::RwLock::new(FxHashMap::default()),
             derived_formats: std::sync::RwLock::new(FxHashMap::default()),
+            derived_formats_plane_epoch: 0,
+            #[cfg(test)]
+            derived_format_operations_for_test: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(test)]
+            computed_overlay_set_explicit_entry_operations_for_test: 0,
+            #[cfg(test)]
+            computed_overlay_stale_clear_range_effects_for_test: 0,
+            #[cfg(test)]
+            computed_overlay_stale_clear_offset_attempts_for_test: 0,
+            #[cfg(test)]
+            computed_format_vector_allocations_for_test: std::sync::atomic::AtomicU64::new(0),
             has_edited: false,
             overlay_compactions: 0,
             computed_overlay_bytes_estimate: 0,
@@ -2692,6 +2800,8 @@ where
             force_virtual_dep_changes_remaining_for_test: 0,
             #[cfg(test)]
             fail_evaluation_commit_preflight_once_for_test: false,
+            #[cfg(test)]
+            cancel_before_formula_plane_layer_commit_once_for_test: false,
             #[cfg(test)]
             force_source_family_fallback: false,
             #[cfg(test)]
@@ -2779,6 +2889,17 @@ where
             format_registry: crate::format::FormatRegistry::default(),
             derived_format_results: std::sync::RwLock::new(FxHashMap::default()),
             derived_formats: std::sync::RwLock::new(FxHashMap::default()),
+            derived_formats_plane_epoch: 0,
+            #[cfg(test)]
+            derived_format_operations_for_test: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(test)]
+            computed_overlay_set_explicit_entry_operations_for_test: 0,
+            #[cfg(test)]
+            computed_overlay_stale_clear_range_effects_for_test: 0,
+            #[cfg(test)]
+            computed_overlay_stale_clear_offset_attempts_for_test: 0,
+            #[cfg(test)]
+            computed_format_vector_allocations_for_test: std::sync::atomic::AtomicU64::new(0),
             has_edited: false,
             overlay_compactions: 0,
             computed_overlay_bytes_estimate: 0,
@@ -2835,6 +2956,8 @@ where
             force_virtual_dep_changes_remaining_for_test: 0,
             #[cfg(test)]
             fail_evaluation_commit_preflight_once_for_test: false,
+            #[cfg(test)]
+            cancel_before_formula_plane_layer_commit_once_for_test: false,
             #[cfg(test)]
             force_source_family_fallback: false,
             #[cfg(test)]
@@ -5600,6 +5723,11 @@ where
     #[cfg(test)]
     pub(crate) fn fail_evaluation_commit_preflight_once_for_test(&mut self) {
         self.fail_evaluation_commit_preflight_once_for_test = true;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cancel_before_formula_plane_layer_commit_once_for_test(&mut self) {
+        self.cancel_before_formula_plane_layer_commit_once_for_test = true;
     }
 
     #[cfg(test)]
@@ -16038,6 +16166,9 @@ where
     }
 
     fn record_derived_format_at(&self, cell: CellRef, format: Option<crate::format::FormatId>) {
+        #[cfg(test)]
+        self.derived_format_operations_for_test
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let mut formats = self.derived_formats.write().unwrap();
         match format.filter(|id| *id != crate::format::FormatId::GENERAL) {
             Some(format) => {
@@ -16046,6 +16177,85 @@ where
             None => {
                 formats.remove(&cell);
             }
+        }
+    }
+
+    fn prepare_formula_plane_derived_format_sync(&self) -> Option<DerivedFormatPlaneSyncPlan> {
+        let plane_epoch = self.graph.formula_authority().plane.epoch().0;
+        if self.derived_formats_plane_epoch == plane_epoch {
+            return None;
+        }
+
+        if self.derived_formats.read().unwrap().is_empty() {
+            return Some(DerivedFormatPlaneSyncPlan {
+                plane_epoch,
+                active_regions: Vec::new(),
+                overlay_regions: Vec::new(),
+            });
+        }
+
+        let authority = self.graph.formula_authority();
+        let active_regions = authority
+            .plane
+            .spans
+            .active_spans()
+            .map(|span| {
+                crate::formula_plane::region_index::Region::from_domain(span.result_region.domain())
+            })
+            .collect();
+        let overlay_regions = authority
+            .plane
+            .formula_overlay
+            .active_entries()
+            .map(|(entry, _)| {
+                crate::formula_plane::region_index::Region::from_domain(&entry.domain)
+            })
+            .collect();
+        Some(DerivedFormatPlaneSyncPlan {
+            plane_epoch,
+            active_regions,
+            overlay_regions,
+        })
+    }
+
+    fn commit_formula_plane_derived_format_sync(&mut self, plan: DerivedFormatPlaneSyncPlan) {
+        let DerivedFormatPlaneSyncPlan {
+            plane_epoch,
+            active_regions,
+            overlay_regions,
+        } = plan;
+        if !active_regions.is_empty() {
+            self.derived_formats.write().unwrap().retain(|cell, _| {
+                let key = crate::formula_plane::region_index::RegionKey::new(
+                    cell.sheet_id,
+                    cell.coord.row(),
+                    cell.coord.col(),
+                );
+                let plane_owned = active_regions.iter().any(|region| region.contains_key(key))
+                    && overlay_regions
+                        .iter()
+                        .all(|region| !region.contains_key(key));
+                !plane_owned
+            });
+        }
+        self.derived_formats_plane_epoch = plane_epoch;
+
+        #[cfg(debug_assertions)]
+        {
+            let formats = self.derived_formats.read().unwrap();
+            debug_assert!(formats.keys().all(|cell| {
+                let key = crate::formula_plane::region_index::RegionKey::new(
+                    cell.sheet_id,
+                    cell.coord.row(),
+                    cell.coord.col(),
+                );
+                active_regions
+                    .iter()
+                    .all(|region| !region.contains_key(key))
+                    || overlay_regions
+                        .iter()
+                        .any(|region| region.contains_key(key))
+            }));
         }
     }
 
@@ -16144,6 +16354,58 @@ where
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn debug_record_derived_format_0based(
+        &self,
+        sheet: &str,
+        row0: u32,
+        col0: u32,
+        format: Option<crate::format::FormatId>,
+    ) {
+        if let Some(sheet_id) = self.graph.sheet_id(sheet) {
+            self.record_derived_format_at(CellRef::new_absolute(sheet_id, row0, col0), format);
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn debug_derived_format_0based(
+        &self,
+        sheet: &str,
+        row0: u32,
+        col0: u32,
+    ) -> Option<crate::format::FormatId> {
+        let sheet_id = self.graph.sheet_id(sheet)?;
+        self.derived_formats
+            .read()
+            .unwrap()
+            .get(&CellRef::new_absolute(sheet_id, row0, col0))
+            .copied()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn debug_reset_format_write_operation_counts(&mut self) {
+        self.derived_format_operations_for_test
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+        self.computed_overlay_set_explicit_entry_operations_for_test = 0;
+        self.computed_overlay_stale_clear_range_effects_for_test = 0;
+        self.computed_overlay_stale_clear_offset_attempts_for_test = 0;
+        self.computed_format_vector_allocations_for_test
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn debug_format_write_operation_counts(&self) -> (u64, u64, u64, u64, u64) {
+        (
+            self.derived_format_operations_for_test
+                .load(std::sync::atomic::Ordering::Relaxed),
+            self.computed_overlay_set_explicit_entry_operations_for_test,
+            self.computed_format_vector_allocations_for_test
+                .load(std::sync::atomic::Ordering::Relaxed),
+            self.computed_overlay_stale_clear_range_effects_for_test,
+            self.computed_overlay_stale_clear_offset_attempts_for_test,
+        )
+    }
+
     fn write_computed_overlay_format_0based(
         &mut self,
         sheet: &str,
@@ -16229,19 +16491,24 @@ where
         &self,
         buffer: &ComputedWriteBuffer,
     ) -> ComputedWriteCoalescingPlan {
-        self.plan_computed_write_coalescing_from_writes(buffer.writes().iter().cloned())
+        self.plan_computed_write_coalescing_from_writes(
+            buffer.writes().iter().cloned(),
+            buffer.formats_present,
+        )
     }
 
     fn plan_owned_computed_write_coalescing(
         &self,
         writes: Vec<ComputedWrite>,
+        formats_present: bool,
     ) -> ComputedWriteCoalescingPlan {
-        self.plan_computed_write_coalescing_from_writes(writes)
+        self.plan_computed_write_coalescing_from_writes(writes, formats_present)
     }
 
     fn plan_computed_write_coalescing_from_writes(
         &self,
         writes: impl IntoIterator<Item = ComputedWrite>,
+        formats_present: bool,
     ) -> ComputedWriteCoalescingPlan {
         let mut groups: BTreeMap<ComputedWriteChunkKey, Vec<ComputedWriteChunkEntryPlan>> =
             BTreeMap::new();
@@ -16274,12 +16541,9 @@ where
                     sr0,
                     sc0,
                     values,
-                    formats,
                 } => {
-                    for (r_off, (row, format_row)) in values.into_iter().zip(formats).enumerate() {
-                        for (c_off, (value, format_id)) in
-                            row.into_iter().zip(format_row).enumerate()
-                        {
+                    for (r_off, row) in values.into_iter().enumerate() {
+                        for (c_off, value) in row.into_iter().enumerate() {
                             input_cells = input_cells.saturating_add(1);
                             self.push_computed_write_plan_entry(
                                 &mut groups,
@@ -16288,7 +16552,7 @@ where
                                 sr0.saturating_add(r_off as u32),
                                 sc0.saturating_add(c_off as u32),
                                 value,
-                                format_id,
+                                None,
                             );
                         }
                     }
@@ -16303,7 +16567,22 @@ where
             overwritten_cells: 0,
         };
         for (key, entries) in groups {
-            let (chunk_plan, overwritten) = ComputedWriteChunkPlan::from_group(key, entries);
+            let computed_lane_has_formats =
+                self.computed_overlay_chunk_has_formats(key.sheet_id, key.col0, key.chunk_idx);
+            let (chunk_plan, overwritten) = ComputedWriteChunkPlan::from_group(
+                key,
+                entries,
+                formats_present,
+                computed_lane_has_formats,
+            );
+            #[cfg(test)]
+            if matches!(
+                &chunk_plan.format_effect,
+                ComputedWriteChunkFormatEffect::SetExplicit(_)
+            ) {
+                self.computed_format_vector_allocations_for_test
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
             plan.coalesced_cells = plan
                 .coalesced_cells
                 .saturating_add(chunk_plan.entries.len());
@@ -16344,6 +16623,20 @@ where
                 value,
                 format_id,
             });
+    }
+
+    fn computed_overlay_chunk_has_formats(
+        &self,
+        sheet_id: SheetId,
+        col0: u32,
+        chunk_idx: usize,
+    ) -> bool {
+        let sheet_name = self.graph.sheet_name(sheet_id);
+        self.arrow_sheets
+            .sheet(sheet_name)
+            .and_then(|sheet| sheet.columns.get(col0 as usize))
+            .and_then(|column| column.chunk(chunk_idx))
+            .is_some_and(|chunk| chunk.computed_overlay.has_formats())
     }
 
     fn locate_computed_write_chunk(&self, sheet_id: SheetId, row0: u32) -> (usize, u32, usize) {
@@ -16461,17 +16754,54 @@ where
         &mut self,
         buffer: &mut ComputedWriteBuffer,
     ) -> Result<(), ExcelError> {
+        self.flush_computed_write_buffer_inner(buffer, false)
+    }
+
+    fn flush_authoritative_computed_write_buffer(
+        &mut self,
+        buffer: &mut ComputedWriteBuffer,
+    ) -> Result<(), ExcelError> {
+        self.flush_computed_write_buffer_inner(buffer, true)
+    }
+
+    fn flush_computed_write_buffer_inner(
+        &mut self,
+        buffer: &mut ComputedWriteBuffer,
+        synchronize_formula_plane_formats: bool,
+    ) -> Result<(), ExcelError> {
         if buffer.is_empty() {
+            // No plane-owned placement is published by this layer. It is
+            // either legacy-only or its selected span placements are all
+            // overlay punchouts. A newly admitted dirty span with any
+            // plane-owned placement necessarily contributes a buffered write.
             return Ok(());
+        }
+
+        #[cfg(test)]
+        if synchronize_formula_plane_formats
+            && std::mem::take(&mut self.cancel_before_formula_plane_layer_commit_once_for_test)
+        {
+            self.active_cancel_flag
+                .as_ref()
+                .expect("test cancellation hook requires a cancellable evaluation")
+                .cancel();
+            self.cancellation_checkpoint("Evaluation cancelled before FormulaPlane layer commit")?;
         }
 
         // Keep ownership of all pending writes until the final request
         // checkpoint and bounded commit-window preflight succeed so failures
-        // remain retry safe. The plan and flush that follow are prevalidated
-        // and contain no cancellation point.
+        // remain retry safe. The synchronization and flush that follow are
+        // infallible mutations with no cancellation point.
         self.resource_checkpoint(0)?;
+        let format_sync = synchronize_formula_plane_formats
+            .then(|| self.prepare_formula_plane_derived_format_sync())
+            .flatten();
         let commit_started = self.preflight_evaluation_commit_window(buffer.len())?;
-        let plan = self.plan_owned_computed_write_coalescing(buffer.take_writes());
+        if let Some(format_sync) = format_sync {
+            self.commit_formula_plane_derived_format_sync(format_sync);
+        }
+        let (writes, formats_present) = buffer.take_writes();
+        let plan = self.plan_owned_computed_write_coalescing(writes, formats_present);
         self.flush_computed_write_plan(plan);
         self.observe_evaluation_commit_window(commit_started);
 
@@ -16512,22 +16842,17 @@ where
 
     fn flush_computed_write_chunk_plan_as_points(&mut self, chunk: ComputedWriteChunkPlan) {
         let sheet_name = self.graph.sheet_name(chunk.sheet_id).to_string();
-        let formats: Vec<_> = chunk
-            .entries
-            .iter()
-            .map(|entry| (entry.row_in_chunk, entry.format_id))
-            .collect();
         for entry in chunk.entries {
             let row0 = chunk
                 .chunk_start_row0
                 .saturating_add(entry.row_in_chunk as u32);
             self.write_computed_overlay_value_0based(&sheet_name, row0, chunk.col0, entry.value);
         }
-        self.write_computed_overlay_formats_for_chunk(
+        self.apply_computed_overlay_format_effect(
             chunk.sheet_id,
             chunk.col0,
             chunk.chunk_idx,
-            formats,
+            chunk.format_effect,
         );
     }
 
@@ -16540,11 +16865,7 @@ where
         let col0 = chunk.col0;
         let chunk_idx = chunk.chunk_idx;
         let chunk_start_row0 = chunk.chunk_start_row0;
-        let formats: Vec<_> = chunk
-            .entries
-            .iter()
-            .map(|entry| (entry.row_in_chunk, entry.format_id))
-            .collect();
+        let format_effect = chunk.format_effect;
         let items: Vec<(usize, OverlayValue)> = chunk
             .entries
             .into_iter()
@@ -16567,7 +16888,7 @@ where
             }
             None => {}
         }
-        self.write_computed_overlay_formats_for_chunk(sheet_id, col0, chunk_idx, formats);
+        self.apply_computed_overlay_format_effect(sheet_id, col0, chunk_idx, format_effect);
     }
 
     #[inline]
@@ -16598,11 +16919,6 @@ where
             return;
         }
         let start = chunk.entries[0].row_in_chunk;
-        let formats: Vec<_> = chunk
-            .entries
-            .iter()
-            .map(|entry| (entry.row_in_chunk, entry.format_id))
-            .collect();
         let values: Vec<OverlayValue> =
             chunk.entries.into_iter().map(|entry| entry.value).collect();
         if let Some(fragment) = OverlayFragment::dense_range(start, values) {
@@ -16613,11 +16929,11 @@ where
                 fragment,
             );
         }
-        self.write_computed_overlay_formats_for_chunk(
+        self.apply_computed_overlay_format_effect(
             chunk.sheet_id,
             chunk.col0,
             chunk.chunk_idx,
-            formats,
+            chunk.format_effect,
         );
     }
 
@@ -16626,11 +16942,6 @@ where
             return;
         }
         let start = chunk.entries[0].row_in_chunk;
-        let formats: Vec<_> = chunk
-            .entries
-            .iter()
-            .map(|entry| (entry.row_in_chunk, entry.format_id))
-            .collect();
         let values: Vec<OverlayValue> =
             chunk.entries.into_iter().map(|entry| entry.value).collect();
         if let Some(fragment) = OverlayFragment::run_range(start, values) {
@@ -16641,20 +16952,20 @@ where
                 fragment,
             );
         }
-        self.write_computed_overlay_formats_for_chunk(
+        self.apply_computed_overlay_format_effect(
             chunk.sheet_id,
             chunk.col0,
             chunk.chunk_idx,
-            formats,
+            chunk.format_effect,
         );
     }
 
-    fn write_computed_overlay_formats_for_chunk(
+    fn apply_computed_overlay_format_effect(
         &mut self,
         sheet_id: SheetId,
         col0: u32,
         chunk_idx: usize,
-        formats: Vec<(usize, Option<crate::format::FormatId>)>,
+        effect: ComputedWriteChunkFormatEffect,
     ) {
         if !(self.config.arrow_storage_enabled
             && self.config.delta_overlay_enabled
@@ -16675,8 +16986,42 @@ where
         else {
             return;
         };
-        for (row_in_chunk, format_id) in formats {
-            chunk.computed_overlay.set_format(row_in_chunk, format_id);
+        match effect {
+            ComputedWriteChunkFormatEffect::NoFormatWork => {}
+            ComputedWriteChunkFormatEffect::ClearStale(ComputedWriteFormatClear::Range {
+                start,
+                end,
+            }) => {
+                #[cfg(test)]
+                {
+                    self.computed_overlay_stale_clear_range_effects_for_test = self
+                        .computed_overlay_stale_clear_range_effects_for_test
+                        .saturating_add(1);
+                }
+                chunk.computed_overlay.clear_format_range(start, end);
+            }
+            ComputedWriteChunkFormatEffect::ClearStale(ComputedWriteFormatClear::Offsets(
+                offsets,
+            )) => {
+                #[cfg(test)]
+                {
+                    self.computed_overlay_stale_clear_offset_attempts_for_test = self
+                        .computed_overlay_stale_clear_offset_attempts_for_test
+                        .saturating_add(offsets.len() as u64);
+                }
+                chunk.computed_overlay.clear_format_offsets(&offsets);
+            }
+            ComputedWriteChunkFormatEffect::SetExplicit(formats) => {
+                #[cfg(test)]
+                {
+                    self.computed_overlay_set_explicit_entry_operations_for_test = self
+                        .computed_overlay_set_explicit_entry_operations_for_test
+                        .saturating_add(formats.len() as u64);
+                }
+                for (row_in_chunk, format_id) in formats {
+                    chunk.computed_overlay.set_format(row_in_chunk, format_id);
+                }
+            }
         }
     }
 
@@ -19379,7 +19724,7 @@ where
                 if let Some(delta) = delta.as_deref_mut() {
                     self.record_computed_write_buffer_delta(&buffer, delta);
                 }
-                self.flush_computed_write_buffer(&mut buffer)?;
+                self.flush_authoritative_computed_write_buffer(&mut buffer)?;
             }
 
             let mut changed_virtual =

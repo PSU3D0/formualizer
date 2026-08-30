@@ -64,7 +64,7 @@ This ledger is the standing record of both. It is **updated per merge**: any PR 
 | **External references** (`[1]Sheet1!A1`) | `rejected-by-policy` | 0% | `template_canonical.rs:937`, unconditional, on the path every ingest route traverses. Tracked as issue **#378**; documented policy, no work item. |
 | Unregistered / custom functions | `rejected-by-policy` | 0% | `UnknownOrCustomFunction` — fail-closed default. |
 | `CELL` | `pending-merge` (#329) | n/a | Not implemented; currently rejects as `unknown_or_custom_function`. **Must register with `FunctionContextDependence::WorkbookMetadata` or `PlacementDependent`.** Registering it as `None` makes it span-admitted, and every member of a span returns the *anchor* cell's answer. Highest-risk registration decision in #329. |
-| `HYPERLINK` | `pending-merge` (#329) | n/a | Not implemented. Natural scalar-text registration makes it span-eligible, which is fine for the value channel. Its display/link side-channel **must** ride the `record_cell_derived_format`-style funnel that `span_eval` mirrors, or `HYPERLINK` must carry `FunctionContextDependence` to force rejection. |
+| `HYPERLINK` | `pending-merge` (#329) | n/a | Not implemented. Natural scalar-text registration makes it span-eligible, which is fine for the value channel. Its display/link side-channel **must** ride the transactional `ComputedWriteBuffer` channel used by span results, or `HYPERLINK` must carry `FunctionContextDependence` to force rejection. |
 
 ## B. Structural / placement classes
 
@@ -86,8 +86,8 @@ This ledger is the standing record of both. It is **updated per merge**: any PR 
 
 | Mechanism | Status | Notes |
 |---|---|---|
-| Format write channel | `accepted` | `span_eval` calls `record_cell_derived_format` on all four result paths (:328, :456, :485, :800); computed-writes carry `FormatId` to the overlay lane since `1c2e4822`. |
-| Temporal egress | `accepted` | Single funnel `get_cell_value → effective_format_id → materialize_temporal_egress` (eval.rs:17314-17343), keyed on coordinates, evaluator-agnostic **by construction**. |
+| Format write channel | `accepted` | Span formats ride `ComputedWriteBuffer` exclusively. Each first successful non-empty authoritative span-buffer commit for a plane epoch prepares synchronization without mutation, passes the resource and commit-window preflights, then atomically purges then-existing plane-owned stale `derived_formats` immediately before applying buffered values and formats. Cancellation or typed preflight failure preserves both stores. Chunk effects explicitly distinguish no work, exact stale clear, and actual set. This is a transactionally committed point-in-time cleanup, not a permanent prohibition: later same-epoch legacy work may write consistent side-band entries, and effective read precedence preserves correctness; overlay punchouts remain legacy-owned. |
+| Effective-format read cascade and temporal egress | `accepted` | User-overlay format wins, then a genuine non-General source `FormatRuns` entry, then computed-overlay format. A General source entry denotes no source format and falls through to the computed lane. The single `get_cell_value → effective_format_id → materialize_temporal_egress` funnel is keyed on coordinates and evaluator-agnostic; an engine-direct Arrow fixture pins Off/Authoritative effective-format and temporal-egress parity when the output chunk carries a source format lane. |
 | Format preservation across constant-result broadcast | `accepted` | Fixed by `0ef92be3`; verified (`=$J$1+0` × 200 placements → `Date:200` both modes). |
 | Name lifecycle invalidation reaching span members | `accepted` | define / update / delete / redefine / sheet-scope shadowing / undo-redo. 19 tests. `81560db7` closed the redefinition hole; `a84069db` fixed mixed-pass symbol scheduling. |
 | Plane-mode gating of authority | `accepted` | Before `bc0c5bb0`, four entry points dispatched to the plane on `active_span_count() > 0` with no mode check. `b0c60080`/`bf2b1f8b` completed the fix: a live authoritative→Off transition transactionally materializes retained spans into legacy before any valid evaluation request, with pre-commit resource checks and infallible post-commit dirty acknowledgement. Any parity probe must assert `accepted_span_cells == 0` under `Off`. |
@@ -128,6 +128,7 @@ Enumerated in `CanonicalRejectKind` with diagnostics labels, but **never constru
 | `feat/refreturn-span-admission` | `c4816e51` | **PLANE-ALIGNED (expansion)** | Admits IF/IFS/CHOOSE scalar-arm spans. Invalidates the #372 rejection premise; introduces the array-condition coupling (WI-2) and the anchor-gate inconsistency (WI-3). |
 | `fix/fp-mixed-schedule-symbol-drop` | `a84069db` | **PLANE-ALIGNED** | Named symbols scheduled in the mixed pass, fail-closed preflight. |
 | Off-mode retained-span transition completion | `b0c60080` / `bf2b1f8b` | **PLANE-ALIGNED (bug fix)** | Off never dispatches FormulaPlane; retained spans are transactionally demoted before valid evaluation requests. Pre-commit failures preserve exact authority/dirty state; no recoverable branch follows commit. |
+| FormulaPlane format-write fast path | next merge | **PLANE-ALIGNED (bug fix)** | Span values, computed formats, and the epoch-scoped stale-sideband purge share the post-preflight authoritative commit seam. General source runs fall through to computed formats while non-General source and user-overlay precedence remain intact. Source-lane parity, commit-window failure, deterministic mid-span cancellation, DATE→General, Point, sparse, mixed-chunk, and virgin-100k regressions are pinned. |
 
 ---
 
@@ -139,6 +140,7 @@ Enumerated in `CanonicalRejectKind` with diagnostics labels, but **never constru
 | WI-2 | Span evaluation silently collapses array results to top-left with no backstop | Medium — latent, high blast radius |
 | WI-3 | Anchor-side capability gate not updated for the reference-returning admission | Low — consistency |
 | WI-4 | Dependency-summary parity oracle skips whole-axis / open-rect dependencies | Low — audit completeness |
+| WI-5 | Formatted legacy result admitted into a General span had no stale-clear regression pin | **Closed** — source-format-lane read parity and post-preflight purge timing are pinned alongside DATE→General, Point/sparse/mixed clears, deterministic mid-span cancellation, typed commit failure, and 100k virgin-lane counters |
 
 Full statements in `/tmp/formualizer-span-coverage-audit.md` §6.
 
