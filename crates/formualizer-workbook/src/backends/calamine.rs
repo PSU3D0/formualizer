@@ -1,7 +1,8 @@
 use crate::load_limits::enforce_sheet_dimension_limits;
 use crate::traits::{
     AccessGranularity, AdapterLoadStats, BackendCaps, CalcSettings, CellData, DefinedName,
-    DefinedNameDefinition, DefinedNameScope, MergedRange, SheetData, SpreadsheetReader,
+    DefinedNameDefinition, DefinedNameScope, ExternalCachedSource, MergedRange, SheetData,
+    SpreadsheetReader,
 };
 use formualizer_common::{DateSystem, ExcelError, ExcelErrorKind, LiteralValue};
 use parking_lot::RwLock;
@@ -216,12 +217,23 @@ impl DebugTimer {
 
 type ShadowRelocationComparator = Arc<dyn Fn(&ASTNode, &ASTNode) -> bool + Send + Sync>;
 
+/// Reopenable source an `.xlsx` was loaded from, retained so cached
+/// external-link parts (spec §10) can be scanned at load time once the
+/// `WorkbookConfig::ingest_limits` (and the resolution knob) are known. Dropped
+/// after the scan so it does not pin a second full copy of the file.
+enum ExternalLinkSource {
+    Path(std::path::PathBuf),
+    Bytes(Vec<u8>),
+}
+
 pub struct CalamineAdapter {
     workbook: RwLock<CalamineWorkbook>,
     loaded_sheets: HashSet<String>,
     cached_names: Option<Vec<String>>,
     defined_names: Vec<DefinedName>,
     external_link_targets: BTreeMap<u32, String>,
+    external_cached_sources: Vec<ExternalCachedSource>,
+    external_link_source: Option<ExternalLinkSource>,
     calc_settings: Option<CalcSettings>,
     load_stats: AdapterLoadStats,
     shadow_relocation_comparator: Option<ShadowRelocationComparator>,
@@ -881,6 +893,19 @@ impl CalamineAdapter {
         self.external_link_targets.get(&index).map(|s| s.as_str())
     }
 
+    /// Cached in-workbook external reference cells (spec §10: `<externalLink>`
+    /// parts), as structured `(book_index, sheet, row, col, value)` records. A
+    /// formula cell `=[1]Sheet1!A1` resolves against the canonical source key
+    /// derived from these fields at evaluation time; Excel does not recalculate
+    /// external links and instead surfaces the cached value from the link part,
+    /// which is what the engine returns.
+    ///
+    /// Populated by [`SpreadsheetReader::scan_external_cached_sources`]; empty
+    /// until that is called.
+    pub fn external_cached_sources(&self) -> &[ExternalCachedSource] {
+        &self.external_cached_sources
+    }
+
     fn normalize_open_ended_bounds(
         start_row: Option<u32>,
         start_col: Option<u32>,
@@ -1195,6 +1220,340 @@ impl CalamineAdapter {
         crate::calc_pr::parse_calc_pr(&xml)
     }
 
+    /// Scan cached values for in-workbook external references (spec §10) straight
+    /// from the `.xlsx` zip — calamine does not surface `<externalLink>` parts.
+    ///
+    /// Returns `(raw_reference, cached_value)` pairs, e.g. `("[1]Sheet1!A1",
+    /// Number(42.0))`, where the book token is the 1-based position of the
+    /// `<externalReference>` in `xl/workbook.xml` (matching the `[n]` prefix the
+    /// parser produces for in-workbook external references).
+    /// Scan cached values for in-workbook external references (spec §10) straight
+    /// from the `.xlsx` zip — calamine does not surface `<externalLink>` parts.
+    ///
+    /// Returns `(sources, scan_failures)`. `sources` holds one
+    /// [`ExternalCachedSource`] per cached numeric/string/boolean cell; cells
+    /// Excel would derive from the live (external) source without a cached value
+    /// are not recoverable and are skipped. `scan_failures` counts structural
+    /// failures (zip errors, missing `workbook.xml`/rels, declared references
+    /// without a matching rel or `externalLinkN.xml` part) so a broken external
+    /// link is distinguishable from a genuinely absent one. The `book_index` is
+    /// the 1-based position of the `<externalReference>` in `xl/workbook.xml`,
+    /// matching the `[n]` token the parser produces.
+    ///
+    /// Memory is bounded by `max_cells`: at most that many cached cells are
+    /// materialized, and each `externalLinkN.xml` part is read with a matching
+    /// byte budget, so a malicious part cannot exhaust load-time memory before
+    /// the ingest limits apply.
+    fn scan_external_link_sources_from_reader<R>(
+        reader: R,
+        max_cells: u64,
+    ) -> (Vec<ExternalCachedSource>, u64)
+    where
+        R: Read + Seek,
+    {
+        /// Read a zip entry up to `max_bytes`; returns `None` only on a real read
+        /// failure, not when the byte budget is exhausted (the reader just ends).
+        fn entry_text_bounded<R2>(
+            archive: &mut ZipArchive<R2>,
+            name: &str,
+            max_bytes: u64,
+        ) -> Option<String>
+        where
+            R2: Read + Seek,
+        {
+            let mut entry = archive.by_name(name).ok()?;
+            let mut xml = String::new();
+            (&mut entry).take(max_bytes).read_to_string(&mut xml).ok()?;
+            Some(xml)
+        }
+
+        /// Parse `r:id="..."` targets out of `xl/_rels/workbook.xml.rels`; only the
+        /// external-link relationships are returned (`rId -> externalLink index`).
+        fn workbook_external_link_rels(rels: &str) -> BTreeMap<String, u32> {
+            let mut out = BTreeMap::new();
+            let mut reader = XmlReader::from_str(rels);
+            reader.config_mut().trim_text(true);
+            let mut buf = Vec::new();
+            loop {
+                buf.clear();
+                match reader.read_event_into(&mut buf) {
+                    Ok(Event::Empty(ref e)) | Ok(Event::Start(ref e))
+                        if e.local_name().as_ref() == b"Relationship" =>
+                    {
+                        let mut id = String::new();
+                        let mut idx = None;
+                        for attr in e.attributes().filter_map(Result::ok) {
+                            match attr.key {
+                                QName(b"Id") => {
+                                    id = attr
+                                        .decode_and_unescape_value(reader.decoder())
+                                        .map(|s| s.into_owned())
+                                        .unwrap_or_default()
+                                }
+                                QName(b"Target") => {
+                                    let target = attr
+                                        .decode_and_unescape_value(reader.decoder())
+                                        .map(|s| s.into_owned())
+                                        .unwrap_or_default();
+                                    if let Some(num) = target
+                                        .rsplit('/')
+                                        .next()
+                                        .and_then(|p| p.strip_prefix("externalLink"))
+                                        .and_then(|p| p.strip_suffix(".xml"))
+                                        .and_then(|p| p.parse::<u32>().ok())
+                                    {
+                                        idx = Some(num);
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        if let (Some(idx), false) = (idx, id.is_empty()) {
+                            out.insert(id, idx);
+                        }
+                    }
+                    Ok(Event::Eof) | Err(_) => break,
+                    _ => {}
+                }
+            }
+            out
+        }
+
+        /// Ordered 1-based list of external-link relationship ids from
+        /// `xl/workbook.xml` `<externalReferences>`.
+        fn workbook_external_reference_rids(workbook_xml: &str) -> Vec<String> {
+            let mut out = Vec::new();
+            let mut reader = XmlReader::from_str(workbook_xml);
+            reader.config_mut().trim_text(true);
+            let mut buf = Vec::new();
+            loop {
+                buf.clear();
+                match reader.read_event_into(&mut buf) {
+                    Ok(Event::Empty(ref e)) | Ok(Event::Start(ref e))
+                        if e.local_name().as_ref() == b"externalReference" =>
+                    {
+                        for attr in e.attributes().filter_map(Result::ok) {
+                            if attr.key == QName(b"r:id")
+                                && let Ok(v) = attr.decode_and_unescape_value(reader.decoder())
+                            {
+                                out.push(v.into_owned());
+                            }
+                        }
+                    }
+                    Ok(Event::Eof) | Err(_) => break,
+                    _ => {}
+                }
+            }
+            out
+        }
+
+        /// Parse `sheetNames` + cached `sheetData` from one `externalLinkN.xml`.
+        /// Returns structured `ExternalCachedSource` records for every cached
+        /// numeric/string/boolean cell up to `max_cells`; cells Excel would
+        /// derive from the live (external) source without a cached value are not
+        /// recoverable and are skipped.
+        fn external_link_cached_cells(
+            xml: &str,
+            book_index: u32,
+            max_cells: u64,
+        ) -> Vec<ExternalCachedSource> {
+            /// Split a cell ref like `A1` into its column letters and 1-based row.
+            fn parse_cell_ref(cell_ref: &str) -> Option<(String, u32)> {
+                let bytes = cell_ref.as_bytes();
+                let mut i = 0;
+                while i < bytes.len() && bytes[i].is_ascii_alphabetic() {
+                    i += 1;
+                }
+                if i == 0 {
+                    return None;
+                }
+                let cols = cell_ref[..i].to_string();
+                let row: u32 = cell_ref[i..].parse().ok()?;
+                Some((cols, row))
+            }
+
+            let mut out = Vec::new();
+            let mut sheet_names: Vec<String> = Vec::new();
+            let mut cur_sheet_id: Option<u32> = None;
+            let mut cur_cell_ref: Option<String> = None;
+            let mut cur_cell_type = String::new();
+            let mut capturing: Option<&'static str> = None;
+            let mut text_buf = String::new();
+
+            let mut reader = XmlReader::from_str(xml);
+            reader.config_mut().trim_text(true);
+            let mut buf = Vec::new();
+            loop {
+                buf.clear();
+                match reader.read_event_into(&mut buf) {
+                    Ok(Event::Start(ref e)) => {
+                        let qname = e.local_name();
+                        let name = qname.as_ref();
+                        if name == b"sheetName" {
+                            for attr in e.attributes().filter_map(Result::ok) {
+                                if attr.key == QName(b"val")
+                                    && let Ok(v) = attr.decode_and_unescape_value(reader.decoder())
+                                {
+                                    sheet_names.push(v.into_owned());
+                                }
+                            }
+                        } else if name == b"sheetData" {
+                            cur_sheet_id = None;
+                            for attr in e.attributes().filter_map(Result::ok) {
+                                if attr.key == QName(b"sheetId") {
+                                    cur_sheet_id = attr
+                                        .decode_and_unescape_value(reader.decoder())
+                                        .ok()
+                                        .and_then(|v| v.parse().ok());
+                                }
+                            }
+                        } else if name == b"c" {
+                            cur_cell_ref = None;
+                            cur_cell_type.clear();
+                            for attr in e.attributes().filter_map(Result::ok) {
+                                let Ok(v) = attr.decode_and_unescape_value(reader.decoder()) else {
+                                    continue;
+                                };
+                                match attr.key {
+                                    QName(b"r") => cur_cell_ref = Some(v.into_owned()),
+                                    QName(b"t") => cur_cell_type = v.into_owned(),
+                                    _ => {}
+                                }
+                            }
+                        } else if name == b"v" || name == b"t" {
+                            capturing = Some(if name == b"v" { "v" } else { "t" });
+                            text_buf.clear();
+                        }
+                    }
+                    Ok(Event::Empty(ref e)) => {
+                        let qname = e.local_name();
+                        let name = qname.as_ref();
+                        if name == b"sheetName" {
+                            for attr in e.attributes().filter_map(Result::ok) {
+                                if attr.key == QName(b"val")
+                                    && let Ok(v) = attr.decode_and_unescape_value(reader.decoder())
+                                {
+                                    sheet_names.push(v.into_owned());
+                                }
+                            }
+                        }
+                    }
+                    Ok(Event::Text(ref t)) => {
+                        if capturing.is_some()
+                            && let Ok(v) = t.decode()
+                        {
+                            text_buf.push_str(&v);
+                        }
+                    }
+                    Ok(Event::End(ref e)) => {
+                        let qname = e.local_name();
+                        let name = qname.as_ref();
+                        if name == b"v" || name == b"t" {
+                            let (Some(cell_ref), Some(sheet_id)) =
+                                (cur_cell_ref.as_deref(), cur_sheet_id)
+                            else {
+                                capturing = None;
+                                continue;
+                            };
+                            capturing = None;
+                            let Some(sheet) = sheet_names.get(sheet_id as usize) else {
+                                continue;
+                            };
+                            let Some((cols, row)) = parse_cell_ref(cell_ref) else {
+                                continue;
+                            };
+                            let Some(col) =
+                                formualizer_common::col_index_from_letters_1based(&cols).ok()
+                            else {
+                                continue;
+                            };
+                            let value = match cur_cell_type.as_str() {
+                                "b" => Some(LiteralValue::Boolean(
+                                    text_buf.trim() == "1"
+                                        || text_buf.trim().eq_ignore_ascii_case("true"),
+                                )),
+                                "str" | "inlineStr" => Some(LiteralValue::Text(text_buf.clone())),
+                                "e" => None,
+                                "s" => None,
+                                _ => text_buf
+                                    .trim()
+                                    .parse::<f64>()
+                                    .ok()
+                                    .map(LiteralValue::Number),
+                            };
+                            if let Some(value) = value {
+                                out.push(ExternalCachedSource {
+                                    book_index,
+                                    sheet: sheet.clone(),
+                                    row,
+                                    col,
+                                    value,
+                                });
+                                if out.len() as u64 >= max_cells {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    Ok(Event::Eof) | Err(_) => break,
+                    _ => {}
+                }
+            }
+            out
+        }
+
+        let mut failures = 0u64;
+        // A byte budget bounds each part read (the attacker-controlled bulk is
+        // the externalLink data). The floor keeps small ingest caps from
+        // truncating the tiny `workbook.xml`/rels meta files; truncating a data
+        // part just seeds fewer cached cells, which is exactly the point of the
+        // cap.
+        let byte_budget = max_cells.saturating_mul(128).max(16 * 1024);
+        let mut archive = match ZipArchive::new(reader) {
+            Ok(a) => a,
+            Err(_) => return (Vec::new(), 1),
+        };
+        let Some(workbook_xml) = entry_text_bounded(&mut archive, "xl/workbook.xml", byte_budget)
+        else {
+            return (Vec::new(), 1);
+        };
+        let rids = workbook_external_reference_rids(&workbook_xml);
+        if rids.is_empty() {
+            return (Vec::new(), 0);
+        }
+        let Some(rels) =
+            entry_text_bounded(&mut archive, "xl/_rels/workbook.xml.rels", byte_budget)
+        else {
+            return (Vec::new(), 1);
+        };
+        let link_by_rid = workbook_external_link_rels(&rels);
+
+        let mut out = Vec::new();
+        let mut remaining = max_cells;
+        for (book_index, rid) in rids.iter().enumerate() {
+            let book_index = (book_index as u32) + 1;
+            let Some(link_index) = link_by_rid.get(rid) else {
+                failures += 1;
+                continue;
+            };
+            let Some(xml) = entry_text_bounded(
+                &mut archive,
+                &format!("xl/externalLinks/externalLink{link_index}.xml"),
+                byte_budget,
+            ) else {
+                failures += 1;
+                continue;
+            };
+            let cells = external_link_cached_cells(&xml, book_index, remaining);
+            remaining = remaining.saturating_sub(cells.len() as u64);
+            out.extend(cells);
+            if remaining == 0 {
+                break;
+            }
+        }
+        (out, failures)
+    }
+
     fn calamine_error_code(e: &calamine::CellErrorType) -> u8 {
         let kind = match e {
             calamine::CellErrorType::Div0 => ExcelErrorKind::Div,
@@ -1347,6 +1706,32 @@ impl SpreadsheetReader for CalamineAdapter {
         self.calc_settings.clone()
     }
 
+    fn external_cached_sources(&self) -> &[ExternalCachedSource] {
+        &self.external_cached_sources
+    }
+
+    fn scan_external_cached_sources(
+        &mut self,
+        limits: &formualizer_eval::engine::WorkbookLoadLimits,
+    ) -> Result<(), Self::Error> {
+        let max_cells = limits.max_external_cached_cells;
+        let (sources, failures) = match self.external_link_source.take() {
+            Some(ExternalLinkSource::Path(path)) => {
+                let file = File::open(&path).map_err(calamine::Error::Io)?;
+                Self::scan_external_link_sources_from_reader(BufReader::new(file), max_cells)
+            }
+            Some(ExternalLinkSource::Bytes(data)) => Self::scan_external_link_sources_from_reader(
+                Cursor::new(data.as_slice()),
+                max_cells,
+            ),
+            None => (Vec::new(), 0),
+        };
+        self.load_stats.external_cached_source_cells = Some(sources.len() as u64);
+        self.load_stats.external_link_scan_failures = Some(failures);
+        self.external_cached_sources = sources;
+        Ok(())
+    }
+
     fn open_path<P: AsRef<Path>>(path: P) -> Result<Self, Self::Error>
     where
         Self: Sized,
@@ -1359,6 +1744,7 @@ impl SpreadsheetReader for CalamineAdapter {
         let calc_settings = File::open(path)
             .ok()
             .and_then(|file| Self::scan_calc_settings_from_reader(BufReader::new(file)));
+        let external_link_source = Some(ExternalLinkSource::Path(path.to_path_buf()));
         let workbook: Xlsx<BufReader<File>> = open_workbook(path)?;
         let sheet_names = workbook.sheet_names().to_vec();
         let defined_names = if workbook.defined_names().is_empty() {
@@ -1382,6 +1768,8 @@ impl SpreadsheetReader for CalamineAdapter {
             cached_names: Some(sheet_names),
             defined_names,
             external_link_targets,
+            external_cached_sources: Vec::new(),
+            external_link_source,
             calc_settings,
             load_stats: AdapterLoadStats::default(),
             shadow_relocation_comparator: None,
@@ -1404,6 +1792,7 @@ impl SpreadsheetReader for CalamineAdapter {
         let external_link_targets =
             Self::scan_external_link_targets_from_reader(Cursor::new(data.as_slice()));
         let calc_settings = Self::scan_calc_settings_from_reader(Cursor::new(data.as_slice()));
+        let external_link_source = Some(ExternalLinkSource::Bytes(data.clone()));
         let workbook: Xlsx<Cursor<Vec<u8>>> = open_workbook_from_rs(Cursor::new(data.clone()))?;
         let sheet_names = workbook.sheet_names().to_vec();
         let defined_names = if workbook.defined_names().is_empty() {
@@ -1424,6 +1813,8 @@ impl SpreadsheetReader for CalamineAdapter {
             cached_names: Some(sheet_names),
             defined_names,
             external_link_targets,
+            external_cached_sources: Vec::new(),
+            external_link_source,
             calc_settings,
             load_stats: AdapterLoadStats::default(),
             shadow_relocation_comparator: None,
@@ -1806,6 +2197,8 @@ where
                 value_slots_handed_to_engine: Some(total_values as u64),
                 formula_cells_handed_to_engine: Some(total_formula_handed_to_engine as u64),
                 shared_formula_tags_observed: Some(total_shared_formula_tags as u64),
+                external_cached_source_cells: self.load_stats.external_cached_source_cells,
+                external_link_scan_failures: self.load_stats.external_link_scan_failures,
             };
             Ok(())
         })();

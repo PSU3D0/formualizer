@@ -39,9 +39,9 @@ pub use recalculate::{
 pub use resolver::IoResolver;
 pub use session::{EditorSession, IoConfig};
 pub use traits::{
-    AccessGranularity, AdapterLoadStats, BackendCaps, CalcSettings, CellData, LoadStrategy,
-    MergedRange, NamedRange, NamedRangeScope, SheetData, SpreadsheetIO, SpreadsheetReader,
-    SpreadsheetWriter, TableDefinition,
+    AccessGranularity, AdapterLoadStats, BackendCaps, CalcSettings, CellData, ExternalCachedSource,
+    LoadStrategy, MergedRange, NamedRange, NamedRangeScope, SheetData, SpreadsheetIO,
+    SpreadsheetReader, SpreadsheetWriter, TableDefinition,
 };
 pub use transaction::{WriteOp, WriteTransaction};
 

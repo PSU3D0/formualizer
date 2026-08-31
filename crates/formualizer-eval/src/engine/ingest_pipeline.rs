@@ -393,28 +393,30 @@ impl<'a> IngestPipeline<'a> {
         use crate::engine::refs::SemanticReference;
 
         match reference {
-            SemanticReference::ExternalSource(ext) => match ext.kind {
-                ExternalRefKind::Cell { .. } => {
-                    let name = ext.raw.as_str();
-                    if self.sources.resolve_scalar(name).is_some() {
-                        plan.source_refs.push(name.to_string());
-                        Ok(())
-                    } else {
-                        Err(ExcelError::new(ExcelErrorKind::Name)
-                            .with_message(format!("Undefined name: {name}")))
+            SemanticReference::ExternalSource(ext) => {
+                let canonical = ext.source_name();
+                let name = canonical.as_deref().unwrap_or(ext.raw.as_str());
+                match ext.kind {
+                    ExternalRefKind::Cell { .. } => {
+                        if self.sources.resolve_scalar(name).is_some() {
+                            plan.source_refs.push(name.to_string());
+                            Ok(())
+                        } else {
+                            Err(ExcelError::new(ExcelErrorKind::Name)
+                                .with_message(format!("Undefined name: {name}")))
+                        }
+                    }
+                    ExternalRefKind::Range { .. } => {
+                        if self.sources.resolve_table(name).is_some() {
+                            plan.source_refs.push(name.to_string());
+                            Ok(())
+                        } else {
+                            Err(ExcelError::new(ExcelErrorKind::Name)
+                                .with_message(format!("Undefined table: {name}")))
+                        }
                     }
                 }
-                ExternalRefKind::Range { .. } => {
-                    let name = ext.raw.as_str();
-                    if self.sources.resolve_table(name).is_some() {
-                        plan.source_refs.push(name.to_string());
-                        Ok(())
-                    } else {
-                        Err(ExcelError::new(ExcelErrorKind::Name)
-                            .with_message(format!("Undefined table: {name}")))
-                    }
-                }
-            },
+            }
             SemanticReference::Cell(cell) => {
                 let sheet_id = self.resolve_reference_sheet(cell.sheet.name(), current_sheet_id)?;
                 plan.direct_cell_deps.push(CellRef::new(
@@ -2098,28 +2100,30 @@ mod tests {
             local_scopes: &[FxHashSet<String>],
         ) -> Result<(), ExcelError> {
             match reference {
-                ReferenceType::External(ext) => match ext.kind {
-                    ExternalRefKind::Cell { .. } => {
-                        let name = ext.raw.as_str();
-                        if self.sources.resolve_scalar(name).is_some() {
-                            plan.source_refs.push(name.to_string());
-                            Ok(())
-                        } else {
-                            Err(ExcelError::new(ExcelErrorKind::Name)
-                                .with_message(format!("Undefined name: {name}")))
+                ReferenceType::External(ext) => {
+                    let canonical = ext.source_name();
+                    let name = canonical.as_deref().unwrap_or(ext.raw.as_str());
+                    match ext.kind {
+                        ExternalRefKind::Cell { .. } => {
+                            if self.sources.resolve_scalar(name).is_some() {
+                                plan.source_refs.push(name.to_string());
+                                Ok(())
+                            } else {
+                                Err(ExcelError::new(ExcelErrorKind::Name)
+                                    .with_message(format!("Undefined name: {name}")))
+                            }
+                        }
+                        ExternalRefKind::Range { .. } => {
+                            if self.sources.resolve_table(name).is_some() {
+                                plan.source_refs.push(name.to_string());
+                                Ok(())
+                            } else {
+                                Err(ExcelError::new(ExcelErrorKind::Name)
+                                    .with_message(format!("Undefined table: {name}")))
+                            }
                         }
                     }
-                    ExternalRefKind::Range { .. } => {
-                        let name = ext.raw.as_str();
-                        if self.sources.resolve_table(name).is_some() {
-                            plan.source_refs.push(name.to_string());
-                            Ok(())
-                        } else {
-                            Err(ExcelError::new(ExcelErrorKind::Name)
-                                .with_message(format!("Undefined table: {name}")))
-                        }
-                    }
-                },
+                }
                 ReferenceType::Cell {
                     sheet, row, col, ..
                 } => {

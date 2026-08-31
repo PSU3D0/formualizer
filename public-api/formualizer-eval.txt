@@ -7200,6 +7200,7 @@ impl core::marker::StructuralPartialEq for formualizer_eval::engine::resource_le
 pub struct formualizer_eval::engine::WorkbookLoadLimits
 pub formualizer_eval::engine::WorkbookLoadLimits::formula_spool_disk_policy: formualizer_eval::engine::FormulaSpoolDiskPolicy
 pub formualizer_eval::engine::WorkbookLoadLimits::formula_spool_memory_prefix_bytes: u64
+pub formualizer_eval::engine::WorkbookLoadLimits::max_external_cached_cells: u64
 pub formualizer_eval::engine::WorkbookLoadLimits::max_formula_plane_fallback_cells: u64
 pub formualizer_eval::engine::WorkbookLoadLimits::max_formula_spool_bytes_per_sheet: u64
 pub formualizer_eval::engine::WorkbookLoadLimits::max_formula_spool_bytes_per_workbook: u64

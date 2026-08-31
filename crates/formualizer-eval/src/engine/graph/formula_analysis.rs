@@ -67,28 +67,30 @@ fn collect_graph_reference(
     use crate::engine::refs::SemanticReference;
 
     match reference {
-        SemanticReference::ExternalSource(external) => match external.kind {
-            formualizer_parse::parser::ExternalRefKind::Cell { .. } => {
-                let name = external.raw.as_str();
-                if let Some(source) = context.graph.resolve_source_scalar_entry(name) {
-                    context.dependencies.insert(source.vertex);
-                    Ok(())
-                } else {
-                    Err(ExcelError::new(ExcelErrorKind::Name)
-                        .with_message(format!("Undefined name: {name}")))
+        SemanticReference::ExternalSource(external) => {
+            let canonical = external.source_name();
+            let name = canonical.as_deref().unwrap_or(external.raw.as_str());
+            match external.kind {
+                formualizer_parse::parser::ExternalRefKind::Cell { .. } => {
+                    if let Some(source) = context.graph.resolve_source_scalar_entry(name) {
+                        context.dependencies.insert(source.vertex);
+                        Ok(())
+                    } else {
+                        Err(ExcelError::new(ExcelErrorKind::Name)
+                            .with_message(format!("Undefined name: {name}")))
+                    }
+                }
+                formualizer_parse::parser::ExternalRefKind::Range { .. } => {
+                    if let Some(source) = context.graph.resolve_source_table_entry(name) {
+                        context.dependencies.insert(source.vertex);
+                        Ok(())
+                    } else {
+                        Err(ExcelError::new(ExcelErrorKind::Name)
+                            .with_message(format!("Undefined table: {name}")))
+                    }
                 }
             }
-            formualizer_parse::parser::ExternalRefKind::Range { .. } => {
-                let name = external.raw.as_str();
-                if let Some(source) = context.graph.resolve_source_table_entry(name) {
-                    context.dependencies.insert(source.vertex);
-                    Ok(())
-                } else {
-                    Err(ExcelError::new(ExcelErrorKind::Name)
-                        .with_message(format!("Undefined table: {name}")))
-                }
-            }
-        },
+        }
         SemanticReference::Cell(cell) => {
             let sheet_id = match cell.sheet.name() {
                 Some(name) => context.graph.resolve_existing_sheet_id(name)?,

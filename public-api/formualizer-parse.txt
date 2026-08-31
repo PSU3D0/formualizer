@@ -352,6 +352,8 @@ pub formualizer_parse::parser::ExternalReference::book: formualizer_parse::parse
 pub formualizer_parse::parser::ExternalReference::kind: formualizer_parse::parser::ExternalRefKind
 pub formualizer_parse::parser::ExternalReference::raw: alloc::string::String
 pub formualizer_parse::parser::ExternalReference::sheet: alloc::string::String
+impl formualizer_parse::parser::ExternalReference
+pub fn formualizer_parse::parser::ExternalReference::source_name(&self) -> core::option::Option<alloc::string::String>
 impl core::clone::Clone for formualizer_parse::parser::ExternalReference
 pub fn formualizer_parse::parser::ExternalReference::clone(&self) -> formualizer_parse::parser::ExternalReference
 impl core::cmp::PartialEq for formualizer_parse::parser::ExternalReference

@@ -25014,7 +25014,8 @@ where
     ) -> Result<RangeView<'c>, ExcelError> {
         match reference {
             ReferenceType::External(ext) => {
-                let name = ext.raw.as_str();
+                let canonical = ext.source_name();
+                let name = canonical.as_deref().unwrap_or(ext.raw.as_str());
                 match ext.kind {
                     formualizer_parse::parser::ExternalRefKind::Cell { .. } => {
                         let Some(source) = self.graph.resolve_source_scalar_entry(name) else {

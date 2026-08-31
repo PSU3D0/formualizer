@@ -461,6 +461,22 @@ pub fn col_index_from_letters_1based(col: &str) -> Result<u32, A1ParseError> {
     }
 }
 
+/// Canonical source name for a single-cell in-workbook external reference
+/// (spec §10), e.g. `[1]sheet1!A1`.
+///
+/// External-reference keys are derived from structured fields — book token,
+/// case-folded sheet, and 1-based coordinates — rather than from the authored
+/// raw text. This is the single shared builder: the engine's reference
+/// resolution and the workbook's cached-source seeding both derive keys through
+/// it, so `=[1]Sheet1!A1`, `=[1]Sheet1!$A$1`, and `=[1]sheet1!a1` all resolve
+/// to the same key. `book_token` is used verbatim (e.g. `[1]`); `sheet` is
+/// case-folded (Excel matches external-link sheet names case-insensitively) and
+/// `row`/`col` are 1-based.
+pub fn external_cell_source_name(book_token: &str, sheet: &str, row: u32, col: u32) -> String {
+    let letters = col_letters_from_1based(col).unwrap_or_default();
+    format!("{book_token}{}!{letters}{row}", sheet.to_lowercase())
+}
+
 fn parse_a1_components(input: &str) -> Result<(u32, u32, bool, bool), A1ParseError> {
     if input.is_empty() {
         return Err(A1ParseError::Empty);

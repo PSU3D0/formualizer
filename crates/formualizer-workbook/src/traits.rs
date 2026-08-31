@@ -242,6 +242,37 @@ pub struct AdapterLoadStats {
     pub value_slots_handed_to_engine: Option<u64>,
     pub formula_cells_handed_to_engine: Option<u64>,
     pub shared_formula_tags_observed: Option<u64>,
+    /// Cached in-workbook external-reference cells (spec §10) seeded into the
+    /// engine from `externalLinkN.xml` parts. `None` when the backend does not
+    /// surface external-link caches.
+    pub external_cached_source_cells: Option<u64>,
+    /// External-link part scan failures (zip errors, missing/malformed parts).
+    /// A nonzero count means the cached sources are incomplete; formula cells
+    /// referencing the unreadable parts will fail with `#NAME?` at evaluation.
+    pub external_link_scan_failures: Option<u64>,
+}
+
+/// A single cached in-workbook external reference cell (spec §10).
+///
+/// Excel stores cross-workbook reference values in `externalLinkN.xml` parts and
+/// never recalculates them; this struct carries one cached cell's structured
+/// identity (book index, sheet name, 1-based row/col) plus its cached value. The
+/// canonical engine source key is derived from these structured fields by
+/// [`formualizer_common::external_cell_source_name`], so authored variants like
+/// `=[1]Sheet1!A1`, `=[1]Sheet1!$A$1`, and `=[1]sheet1!a1` all resolve to it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ExternalCachedSource {
+    /// 1-based position of the `<externalReference>` in `xl/workbook.xml`,
+    /// matching the `[n]` book token the parser produces.
+    pub book_index: u32,
+    /// Sheet name as stored in `sheetName val="..."` (unquoted).
+    pub sheet: String,
+    /// 1-based row.
+    pub row: u32,
+    /// 1-based column.
+    pub col: u32,
+    /// Cached value Excel surfaces for the reference.
+    pub value: LiteralValue,
 }
 
 /// Workbook-level calculation properties parsed from `xl/workbook.xml`'s
@@ -299,6 +330,34 @@ pub trait SpreadsheetReader: Send + Sync {
     /// that case. Only the XLSX backends populate this today.
     fn calc_settings(&self) -> Option<CalcSettings> {
         None
+    }
+
+    /// Scan cached values for in-workbook external references (spec §10) from
+    /// the backend's underlying source, honoring `limits` (entry cap).
+    ///
+    /// Excel never recalculates external links; the cached `<v>` values stored
+    /// in the `externalLinkN.xml` parts are the values a formula cell referencing
+    /// them returns. Backends that surface these populate
+    /// [`SpreadsheetReader::external_cached_sources`] during this call; scan
+    /// failures (zip errors, missing/malformed parts) are reflected in
+    /// [`AdapterLoadStats::external_link_scan_failures`]. Backends without
+    /// support leave the cache empty and return `Ok`.
+    fn scan_external_cached_sources(
+        &mut self,
+        limits: &formualizer_eval::engine::WorkbookLoadLimits,
+    ) -> Result<(), Self::Error> {
+        let _ = limits;
+        Ok(())
+    }
+
+    /// Cached in-workbook external reference cells (spec §10) surfaced by the
+    /// backend, as structured `(book, sheet, row, col, value)` records.
+    ///
+    /// Populated during [`SpreadsheetReader::scan_external_cached_sources`]; the
+    /// workbook copies them into its resolver so evaluation can answer the
+    /// reference with the cached value.
+    fn external_cached_sources(&self) -> &[ExternalCachedSource] {
+        &[]
     }
 
     /// Constructor variants for different environments

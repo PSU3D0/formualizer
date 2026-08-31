@@ -208,7 +208,11 @@ fn collect_plan_reference(
         SemanticReference::ExternalSource(external) => match external.kind {
             formualizer_parse::parser::ExternalRefKind::Cell { .. } => {
                 *context.flags |= F_HAS_NAMES;
-                context.per_names.push(external.raw.clone());
+                context.per_names.push(
+                    external
+                        .source_name()
+                        .expect("cell external reference yields a canonical source name"),
+                );
             }
             formualizer_parse::parser::ExternalRefKind::Range { .. } => {
                 *context.flags |= F_HAS_TABLES;
