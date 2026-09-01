@@ -127,6 +127,14 @@ pub(crate) enum PlacementFallbackReason {
     /// demotes a cyclic span at schedule-build time rather than at initial
     /// placement.
     CycleMember,
+    /// Span evaluation produced a `LiteralValue::Array` for at least one
+    /// placement (refs #388). A span publishes exactly one value per placement,
+    /// while the legacy evaluator routes array results into the spill planner,
+    /// so the span is demoted before anything is published and the placements
+    /// re-evaluate on the legacy path with correct spill semantics. Recorded at
+    /// evaluation time rather than at initial placement because the result
+    /// shape is only observable once the formula runs.
+    ArrayResult,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
