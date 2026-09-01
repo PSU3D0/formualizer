@@ -88,7 +88,9 @@ impl PySheet {
         self.workbook.check_reentrancy()?;
 
         let cached = {
-            let sheets = self.workbook.sheets.read().unwrap();
+            let sheets = self.workbook.sheets.read().map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("sheets cache lock: {e}"))
+            })?;
             sheets
                 .get(&self.name)
                 .and_then(|m| m.get(&(row, col)).cloned())
