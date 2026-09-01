@@ -91,7 +91,7 @@ cargo run -p formualizer-workbook --features wasm_runtime_wasmtime --example was
 - **400+ Excel functions** — all built-ins from `formualizer-eval` are available through the workbook surface.
 - **Changelog + undo/redo** — opt into change logging with automatic action grouping. Single edits are individually undoable; batch operations group as one step.
 - **I/O backends** — pluggable readers/writers behind feature flags:
-  - `calamine` — XLSX/ODS reading
+  - `calamine` — XLSX/ODS reading. XLSX paths default to the safe `XlsxPathSource::SharedFile`; use `CalamineAdapter::open_path_with_source(..., XlsxPathSource::DirectMmap)` for an explicit native read-only mapping. Direct mmap never falls back and requires the underlying file/inode not be destructively modified or truncated for the adapter lifetime (violations can terminate a Unix process with `SIGBUS`). The legacy `mmap` feature no longer selects behavior.
   - `umya` — XLSX reading/writing with round-trip support
   - `json` — structured JSON serialization
   - `csv` — CSV/TSV import/export

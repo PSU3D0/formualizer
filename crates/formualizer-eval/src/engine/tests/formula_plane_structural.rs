@@ -1786,3 +1786,174 @@ fn formula_plane_column_pinned_origin_shifts_compose_and_match_span_off_engine()
     );
     assert_value_parity(&span_on, &span_off, 125, 8);
 }
+
+/// Issue #171 fixture: a span whose reads sit far ABOVE its result domain.
+/// Values live in A10:A130 and C150:C270 holds `=A{r-140}`, so every read is
+/// displaced from its placement by a constant -140 rows. A delete anywhere
+/// between the two bands moves placements and reads by different amounts,
+/// which is exactly what the delete-compaction frame must not get wrong.
+fn displaced_read_span_pair() -> (Engine<TestWorkbook>, Engine<TestWorkbook>) {
+    let mut span_on = authoritative_engine();
+    let mut span_off = span_off_engine();
+    for engine in [&mut span_on, &mut span_off] {
+        let mut formulas = Vec::new();
+        for row in 10..=130 {
+            engine
+                .set_cell_value("Sheet1", row, 1, LiteralValue::Number(row as f64))
+                .unwrap();
+        }
+        for row in 150..=270 {
+            formulas.push(record(engine, row, 3, &format!("=A{}", row - 140)));
+        }
+        engine
+            .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
+            .unwrap();
+        engine.evaluate_all().unwrap();
+    }
+    assert_eq!(span_on.baseline_stats().formula_plane_active_span_count, 1);
+    (span_on, span_off)
+}
+
+/// Delete `count` rows at `start` on both engines and assert the span-ON
+/// engine still matches the span-OFF oracle, both immediately and after
+/// incremental writes into the read band.
+fn assert_displaced_read_span_delete_parity(start: u32, count: u32) {
+    let (mut span_on, mut span_off) = displaced_read_span_pair();
+    for engine in [&mut span_on, &mut span_off] {
+        engine.delete_rows("Sheet1", start, count).unwrap();
+        engine.evaluate_all().unwrap();
+    }
+    assert_span_read_summaries_exact(&span_on);
+    assert_value_parity(&span_on, &span_off, 280, 3);
+    // Incremental writes into the read band: stationary A10, mid-band A60 and
+    // A100. A stale relative frame that happened to agree on the initial
+    // evaluation still diverges here.
+    for (row, value) in [(10u32, 999.0f64), (100, 777.0), (60, 555.0)] {
+        for engine in [&mut span_on, &mut span_off] {
+            engine
+                .set_cell_value("Sheet1", row, 1, LiteralValue::Number(value))
+                .unwrap();
+            engine.evaluate_all().unwrap();
+        }
+        assert_value_parity(&span_on, &span_off, 280, 3);
+    }
+}
+
+#[test]
+fn formula_plane_delete_inside_displaced_read_span_splits_instead_of_miscompacting() {
+    // The delete falls strictly inside the result domain and below every
+    // read. Placements above the band keep `=A{r-140}`; placements below move
+    // up by 2 and keep reading the same cells, i.e. `=A{r-138}`. Compaction
+    // can only carry one offset, so the span must split.
+    assert_displaced_read_span_delete_parity(200, 2);
+    let (mut span_on, _) = displaced_read_span_pair();
+    span_on.delete_rows("Sheet1", 200, 2).unwrap();
+    span_on.evaluate_all().unwrap();
+    let stats = span_on.baseline_stats();
+    assert_eq!(stats.formula_plane_active_span_count, 2);
+    assert_eq!(stats.graph_formula_vertex_count, 0);
+    assert_eq!(
+        span_on.get_cell_value("Sheet1", 200, 3),
+        Some(LiteralValue::Number(62.0)),
+        "the formula that was at row 202 (=A62) moves to row 200 and keeps its read"
+    );
+}
+
+#[test]
+fn formula_plane_delete_inside_displaced_read_region_demotes() {
+    // The delete lands inside the read band: the read region straddles it, so
+    // the classifier demotes to per-cell formulas.
+    assert_displaced_read_span_delete_parity(50, 2);
+}
+
+#[test]
+fn formula_plane_delete_between_displaced_reads_and_span_shifts_whole_span() {
+    // Nothing straddles: the whole domain moves up and the reads stay put, so
+    // the origin follows the block and the span survives intact.
+    assert_displaced_read_span_delete_parity(135, 2);
+    let (mut span_on, _) = displaced_read_span_pair();
+    span_on.delete_rows("Sheet1", 135, 2).unwrap();
+    span_on.evaluate_all().unwrap();
+    assert_eq!(
+        span_on.baseline_stats().formula_plane_active_span_count,
+        1,
+        "a pure lockstep shift must not fragment the span"
+    );
+}
+
+#[test]
+fn formula_plane_delete_trims_displaced_read_span_tail() {
+    // Only the head survives and no read moves: compaction is sound and the
+    // span stays whole.
+    assert_displaced_read_span_delete_parity(265, 20);
+    let (mut span_on, _) = displaced_read_span_pair();
+    span_on.delete_rows("Sheet1", 265, 20).unwrap();
+    span_on.evaluate_all().unwrap();
+    assert_eq!(span_on.baseline_stats().formula_plane_active_span_count, 1);
+    assert_eq!(span_on.baseline_stats().graph_formula_vertex_count, 0);
+}
+
+#[test]
+fn formula_plane_delete_trims_displaced_read_span_head_keeping_origin() {
+    // The origin row survives at the head of the band, so both sides of the
+    // delete keep placements — and they need different offsets.
+    assert_displaced_read_span_delete_parity(151, 10);
+    let (mut span_on, _) = displaced_read_span_pair();
+    span_on.delete_rows("Sheet1", 151, 10).unwrap();
+    span_on.evaluate_all().unwrap();
+    assert_eq!(
+        span_on.get_cell_value("Sheet1", 151, 3),
+        Some(LiteralValue::Number(21.0)),
+        "the formula that was at row 161 (=A21) moves to row 151 and keeps its read"
+    );
+}
+
+#[test]
+fn formula_plane_delete_trims_displaced_read_span_head_removing_origin() {
+    // The delete removes the origin row itself; the template anchor cannot be
+    // carried, so the span demotes to the (correct) per-cell path.
+    assert_displaced_read_span_delete_parity(145, 10);
+}
+
+#[test]
+fn formula_plane_delete_sweep_over_displaced_read_span_matches_span_off_engine() {
+    // Parametrized sweep across every structural class of the fixture:
+    // deletes above, inside and below the read band, straddling the gap,
+    // trimming either end of the domain and sitting strictly inside it.
+    for start in [5u32, 50, 135, 145, 151, 200, 250, 265] {
+        for count in [1u32, 2, 10] {
+            let (mut span_on, mut span_off) = displaced_read_span_pair();
+            for engine in [&mut span_on, &mut span_off] {
+                engine.delete_rows("Sheet1", start, count).unwrap();
+                engine.evaluate_all().unwrap();
+            }
+            assert_span_read_summaries_exact(&span_on);
+            for row in 1..=280u32 {
+                for col in 1..=3u32 {
+                    assert_eq!(
+                        span_on.get_cell_value("Sheet1", row, col),
+                        span_off.get_cell_value("Sheet1", row, col),
+                        "delete_rows({start}, {count}) diverged at row={row} col={col}"
+                    );
+                }
+            }
+            for (write_row, value) in [(10u32, 999.0f64), (100, 777.0), (60, 555.0)] {
+                for engine in [&mut span_on, &mut span_off] {
+                    engine
+                        .set_cell_value("Sheet1", write_row, 1, LiteralValue::Number(value))
+                        .unwrap();
+                    engine.evaluate_all().unwrap();
+                }
+                for row in 1..=280u32 {
+                    for col in 1..=3u32 {
+                        assert_eq!(
+                            span_on.get_cell_value("Sheet1", row, col),
+                            span_off.get_cell_value("Sheet1", row, col),
+                            "delete_rows({start}, {count}) diverged after A{write_row} write at row={row} col={col}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}

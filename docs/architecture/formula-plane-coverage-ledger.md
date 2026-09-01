@@ -1,8 +1,8 @@
 # FormulaPlane Coverage Ledger
 
 **Status:** Standing architecture ledger
-**Last audited commit:** `bf2b1f8b`
-**Last audited:** 2026-08-29
+**Last audited commit:** `a238d067`
+**Last audited:** 2026-09-01
 
 ---
 
@@ -81,6 +81,8 @@ This ledger is the standing record of both. It is **updated per merge**: any PR 
 | Unresolvable sheet binding | `rejected-by-policy` | `UnknownSheetBinding` — preserves legacy `#REF!`. |
 | Undefined / Literal / Formula-backed names | `rejected-by-policy` | `UnsupportedNamedReference` — preserves `#NAME?` and named-formula semantics. |
 | Structural shifts straddling a span | `rejected-by-policy` | `SpanShiftPlan::Demote` family (`structural_shift.rs`) — demote to the per-cell adjuster. |
+| Mid-domain row/column **insert** straddling a span | `accepted` | `SpanShiftPlan::Split` + `plan_span_split` — an untouched upper half and a shifted lower half, each re-classified in its own frame; not-provably-clean splits demote. |
+| Row/column **delete** straddling a span's result domain | `accepted` (guarded) | Compaction keeps one span only when the surviving domain is expressible in one relative-offset frame: `delete_compaction_frame_is_sound` requires `d_r == d_p - d_o` (read / placement / origin displacement) for every relative read bound of every surviving placement, and refuses a read bound landing inside the deleted band. Otherwise the span splits at the band like an insert; if the split is not provably clean — or only one side of the band survives and its frame does not hold — it demotes. Before this rule compaction copied the projection verbatim while moving the origin, so a span reading *above* a mid-domain delete served the pre-delete formula on every placement below the band (#171). |
 
 ## C. Cross-cutting mechanisms
 
@@ -140,24 +142,42 @@ Enumerated in `CanonicalRejectKind` with diagnostics labels, but **never constru
 | WI-2 | Span evaluation silently collapses array results to top-left with no backstop | Medium — latent, high blast radius |
 | WI-3 | Anchor-side capability gate not updated for the reference-returning admission | Low — consistency |
 | WI-4 | Dependency-summary parity oracle skips whole-axis / open-rect dependencies | Low — audit completeness |
+| WI-6 | Delete-compaction ignored the placement/read/origin displacement identity; `legacy_island_structural_summaries_trusted` is pinned `false` after every axis op as the standing mitigation | **Closed for the span path** — `delete_compaction_frame_is_sound` gates compaction and the delete split covers the two-sided case (#171). The trust flag is deliberately left `false` in that fix: re-enabling it needs a separate audit of the *legacy island* summaries, which this change does not touch. **→ WI-7** |
+| WI-7 | Re-enable `legacy_island_structural_summaries_trusted` after an axis op | Low — perf, not correctness. Blocked on a legacy-island (non-span) structural summary audit; the #171 span-side blocker is cleared |
 | WI-5 | Formatted legacy result admitted into a General span had no stale-clear regression pin | **Closed** — source-format-lane read parity and post-preflight purge timing are pinned alongside DATE→General, Point/sparse/mixed clears, deterministic mid-span cancellation, typed commit failure, and 100k virgin-lane counters |
 
-Full statements in `/tmp/formualizer-span-coverage-audit.md` §6.
+Full statements in [`formula-plane-span-coverage-audit.md`](formula-plane-span-coverage-audit.md) (§6 of the `788675a8` span-coverage audit, checked in verbatim).
 
 ---
 
 ## G. Standing measurement
 
-Per-class differential probe (engine-direct; **do not** use loader-based fixtures for format parity — `UmyaAdapter` drops the number-format channel entirely):
+Per-class differential probe (engine-direct; **do not** use loader-based fixtures for format parity — `UmyaAdapter` drops the number-format channel entirely). The probe is in-tree at [`crates/formualizer-bench-core/src/bin/probe-fp-audit2.rs`](../../crates/formualizer-bench-core/src/bin/probe-fp-audit2.rs):
 
 ```bash
-git worktree add /tmp/fp-audit-wt <commit> --detach
-cp probe-fp-audit2.rs /tmp/fp-audit-wt/crates/formualizer-bench-core/src/bin/
-cd /tmp/fp-audit-wt
-cargo build -p formualizer-bench-core --features formualizer_runner --release --bin probe-fp-audit2
-./target/release/probe-fp-audit2 --rows 200
+cargo run -p formualizer-bench-core --features formualizer_runner --release \
+  --bin probe-fp-audit2 -- --rows 200
 ```
 
-Acceptance gate: **`total_divergent_cells == 0`**, and every class's status matches its row in §A.
+It writes the full per-class report as JSON on stdout and a summary table on stderr. Useful flags: `--rows N` (formula rows per class; >= 100 is required for non-constant span promotion), `--seed N`, `--only class1,class2`.
 
-Last value differential at `788675a8`: **19 classes, 3 800 cells, 0 divergent** (first eval and after-edit); `cargo test -p formualizer-eval --lib formula_plane` → **666 passed, 0 failed**. The Off-transition completion through `bf2b1f8b` was separately adversarially verified and passed workspace 3,714/0 plus Python 138/0.
+Acceptance gate: **`total_divergent_cells == 0`**, and every class's status matches its row in §A. The probe **exits non-zero** when that gate fails, so it is machine-checkable.
+
+### Continuous enforcement
+
+`.github/workflows/ci.yml` runs `cargo test --workspace --exclude formualizer-bench-core`, so nothing in the bench-core crate — including the parity harness — is covered by the main Rust job. The gate therefore has its own workflow, [`.github/workflows/formula-plane-parity.yml`](../../.github/workflows/formula-plane-parity.yml) (`formula-plane-parity` job, on `pull_request` and `push` to `main`), which runs:
+
+1. `cargo clippy -p formualizer-bench-core --features formualizer_runner --all-targets -- -D warnings`
+2. `probe-fp-audit2 --rows 200` — the per-class Off↔Authoritative differential above; asserts exit 0.
+3. `cargo test -p formualizer-bench-core --features formualizer_runner --test parity_harness_smoke` — the full-cell Off↔Auth parity harness (`src/parity_harness.rs`) over loader-built workbooks.
+4. `probe-corpus-parity --scale small --exclude 's040-*,s041-*,s042-*'` — full-cell Off↔Auth parity across the synthetic scenario registry, 81 scenarios, ~20 s wall clock. The three exclusions fail with `HarnessError` (no public `Workbook` API for undoable row inserts, native table extension, or external-source declaration), not with divergences; re-include them when those APIs land.
+
+Any change to a plane eligibility site, a `FunctionResultSemantics` / `FnCaps` registration, a read-projection rule, or `span_eval`'s write/egress path must keep this job green.
+
+### Last measured
+
+At `a238d067` (this branch), `probe-fp-audit2 --rows 200 --seed 42`: **19 classes, 3 800 cells compared, 3 800 identical, 0 near-miss, 0 divergent** — first eval and after-edit, exit 0. Span residency: **13 of 19 classes at 100 %**, 6 at 0 % (5 rejected by documented policy, 1 — `open_range_rows` — rejected accidentally, WI-1).
+
+`probe-corpus-parity --scale small` at the same commit: **81 scenarios run, 81 passed, 2 skipped (expected divergence), 0 total divergences.**
+
+Historical: the `788675a8` audit measured the identical 19 / 3 800 / 0 figures, alongside `cargo test -p formualizer-eval --lib formula_plane` → **666 passed, 0 failed**. The Off-transition completion through `bf2b1f8b` was separately adversarially verified and passed workspace 3,714/0 plus Python 138/0.
