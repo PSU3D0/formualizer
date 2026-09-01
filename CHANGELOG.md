@@ -29,6 +29,10 @@ All notable changes to Formualizer will be documented in this file.
 
   Symbol vertices now hold a `SymbolAddr` in an address space disjoint from the grid's, and the structures keyed by position — the cell index, the per-sheet range index, and the iteration that drives every structural edit — accept a `GridAddr`, which a symbol cannot produce. `NameScope` is now purely lookup metadata and no longer decides where a vertex lives. Evaluation results are unchanged; a name's scope, resolution and dirty propagation all behave exactly as before.
 
+### Security and hardening
+
+- Bumped the docs site to Next.js `16.2.11`, clearing nine npm advisories affecting `next` `16.2.6` (four high: GHSA-89xv-2m56-2m9x, GHSA-p9j2-gv94-2wf4, GHSA-6gpp-xcg3-4w24, GHSA-m99w-x7hq-7vfj). The docs site's `bun.lock` was removed; `pnpm-lock.yaml` is the only lockfile the site builds and deploys from.
+
 ## [0.8.4] - 2026-08-14
 
 ### Changed
