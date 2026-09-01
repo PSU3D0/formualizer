@@ -1,9 +1,7 @@
 //! CELL / HYPERLINK builtins.
 //!
 //! CELL answers `contents`, `address`, `col`, `row` and `type` for a reference;
-//! HYPERLINK returns its friendly name or link location as text. Both are
-//! stored with the `_xlfn.` prefix in real workbooks, which the registry
-//! resolves transparently.
+//! HYPERLINK returns its friendly name or link location as text.
 use crate::engine::{Engine, EvalConfig};
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::{ExcelErrorKind, LiteralValue};
@@ -71,6 +69,9 @@ fn hyperlink_returns_link_location_without_name() {
 
 #[test]
 fn hyperlink_xlfn_spelling_resolves() {
+    // HYPERLINK is an Excel-97-era function and is never written with the
+    // `_xlfn.` prefix in real files; the registry strips the prefix
+    // generically, so the spelling still has to resolve.
     assert_text(r#"=_xlfn.HYPERLINK("https://example.com","link")"#, "link");
 }
 

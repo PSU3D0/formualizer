@@ -1005,10 +1005,12 @@ pub struct HyperlinkFn;
 
 /// Returns the friendly name of a hyperlink, or its link location when no name is given.
 ///
-/// Excel stores this function with the `_xlfn.` prefix (`_xlfn.HYPERLINK`); the
-/// registry resolves the prefix, so both spellings evaluate here. The returned
-/// value is always text: `friendly_name` when the second argument is present,
+/// The returned value is `friendly_name` when the second argument is present,
 /// otherwise `link_location`.
+///
+/// Known divergence: the friendly name is always returned as text, whereas
+/// Excel passes numbers and booleans through with their original type, so
+/// `=ISNUMBER(HYPERLINK("x",1))` is FALSE here and TRUE in Excel.
 ///
 /// ```yaml,sandbox
 /// title: "Hyperlink with a friendly name"
