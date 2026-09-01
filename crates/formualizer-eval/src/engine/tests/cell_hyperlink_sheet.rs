@@ -153,6 +153,21 @@ fn cell_type_classifies_value() {
 }
 
 #[test]
+fn cell_contents_on_blank_is_empty_in_graph() {
+    // diverges from Excel: Excel returns numeric 0; tracked in #333, resolve
+    // with the #319 variant study. In-graph the result is Empty, so ISBLANK
+    // sees a blank; egress coerces the same result to 0.
+    assert_eq!(
+        eval_formula(r#"=ISBLANK(CELL("contents",Z99))"#),
+        LiteralValue::Boolean(true)
+    );
+    assert_eq!(
+        eval_formula(r#"=CELL("contents",Z99)"#),
+        LiteralValue::Number(0.0)
+    );
+}
+
+#[test]
 fn cell_unsupported_info_type_is_value_error() {
     assert_error(r#"=CELL("format",A1)"#, ExcelErrorKind::Value);
     assert_error(r#"=CELL("filename",A1)"#, ExcelErrorKind::Value);

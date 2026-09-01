@@ -1734,6 +1734,11 @@ pub struct CellFn;
 /// 3-D references and a non-reference argument for `address`, `col` or `row`.
 /// An argument that evaluates to an error propagates that error unchanged.
 ///
+/// Known divergence: `CELL("contents", <blank cell>)` produces `Empty` in-graph
+/// where Excel produces numeric `0`, so `ISBLANK(CELL("contents",Z99))` is TRUE
+/// here and FALSE in Excel; tracked in #333 and to be resolved with the #319
+/// blank-coercion variant study.
+///
 /// ```yaml,sandbox
 /// title: "CELL contents"
 /// grid:
