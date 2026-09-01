@@ -2267,6 +2267,32 @@ mod tests {
         assert!(matches!(adapter.source, SharedXlsxReader::File(_)));
     }
 
+    /// The legacy `mmap` Cargo feature is a compatibility alias and must not
+    /// select load behaviour. This test only compiles under
+    /// `--features calamine,mmap`, so the no-op is pinned rather than assumed.
+    #[cfg(feature = "mmap")]
+    #[test]
+    fn legacy_mmap_feature_does_not_select_path_behaviour() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), metadata_fixture()).unwrap();
+
+        assert_eq!(XlsxPathSource::default(), XlsxPathSource::SharedFile);
+        let default_adapter = CalamineAdapter::open_path(file.path()).unwrap();
+        assert!(matches!(default_adapter.source, SharedXlsxReader::File(_)));
+        let requested_default =
+            CalamineAdapter::open_path_with_source(file.path(), XlsxPathSource::default()).unwrap();
+        assert!(matches!(
+            requested_default.source,
+            SharedXlsxReader::File(_)
+        ));
+
+        // Mapping remains reachable only through the explicit opt-in.
+        let mapped =
+            CalamineAdapter::open_path_with_source(file.path(), XlsxPathSource::DirectMmap)
+                .unwrap();
+        assert!(matches!(mapped.source, SharedXlsxReader::Mapped { .. }));
+    }
+
     /// The readahead window is keyed by absolute offset, so backward and
     /// forward seeks inside it must not re-read the file or desynchronise.
     #[test]

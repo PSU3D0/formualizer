@@ -36,10 +36,17 @@ system-clock = ["formualizer-eval/system-clock"]
 js-runtime = ["formualizer-eval/js-runtime"]
 json = ["dep:serde_json", "formualizer-common/serde"]
 csv = ["dep:csv"]
+# `memmap2` is unconditional here on purpose: `XlsxPathSource::DirectMmap` is a
+# runtime choice on a public enum, so gating the dependency behind `mmap` would
+# make that variant fail with ErrorKind::Unsupported in every default calamine
+# build (including the Python extension, which enables calamine but not mmap).
 calamine = ["dep:calamine", "dep:zip", "dep:quick-xml", "dep:memmap2"]
 umya = ["dep:umya-spreadsheet", "dep:zip", "dep:quick-xml"]
-# Backward-compatible alias. Memory mapping is selected at runtime through
-# `XlsxPathSource::DirectMmap`; this feature no longer changes path behavior.
+# No-op compatibility alias, retained only so existing `features = ["mmap"]`
+# declarations keep compiling. It selects no behaviour: `open_path` uses
+# `XlsxPathSource::SharedFile` with or without it, and mapping is reachable only
+# through the explicit `XlsxPathSource::DirectMmap`. Safe to drop downstream.
+# Pinned by `legacy_mmap_feature_does_not_select_path_behaviour`.
 mmap = ["dep:memmap2"]
 io_builtins = []
 import_range = ["io_builtins"]
