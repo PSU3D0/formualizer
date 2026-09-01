@@ -221,6 +221,52 @@ impl From<CoreFormulaDialect> for PyFormulaDialect {
     }
 }
 
+/// XLSX filesystem backing source used by Calamine path loads.
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pyclass_enum)]
+#[pyclass(
+    name = "XlsxPathSource",
+    module = "formualizer.formualizer_py",
+    from_py_object
+)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PyXlsxPathSource {
+    /// Safe default: one retained file handle with shared serialized I/O.
+    #[default]
+    #[pyo3(name = "SHARED_FILE")]
+    SharedFile,
+    /// Explicit read-only mmap; see the filesystem mutation contract.
+    #[pyo3(name = "DIRECT_MMAP")]
+    DirectMmap,
+}
+
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pymethods)]
+#[pymethods]
+impl PyXlsxPathSource {
+    fn __str__(&self) -> &'static str {
+        match self {
+            Self::SharedFile => "shared_file",
+            Self::DirectMmap => "direct_mmap",
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        match self {
+            Self::SharedFile => "XlsxPathSource.SHARED_FILE".to_string(),
+            Self::DirectMmap => "XlsxPathSource.DIRECT_MMAP".to_string(),
+        }
+    }
+}
+
+#[cfg(not(target_os = "emscripten"))]
+impl From<PyXlsxPathSource> for formualizer::workbook::XlsxPathSource {
+    fn from(value: PyXlsxPathSource) -> Self {
+        match value {
+            PyXlsxPathSource::SharedFile => Self::SharedFile,
+            PyXlsxPathSource::DirectMmap => Self::DirectMmap,
+        }
+    }
+}
+
 /// Workbook mode enum exposed to Python.
 #[cfg_attr(not(target_os = "emscripten"), gen_stub_pyclass_enum)]
 #[pyclass(
@@ -253,6 +299,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTokenType>()?;
     m.add_class::<PyTokenSubType>()?;
     m.add_class::<PyFormulaDialect>()?;
+    m.add_class::<PyXlsxPathSource>()?;
     m.add_class::<PyWorkbookMode>()?;
     Ok(())
 }

@@ -13,3 +13,4 @@ formualizer\.formualizer_py\.TokenType\.(Literal|Operand|Func|Array|Paren|Sep|Op
 formualizer\.formualizer_py\.TraceDirection\.(Precedents|Dependents)$
 formualizer\.formualizer_py\.TraceLinkKindType\.(Formula|SpillAnchor|SpillReader|Unknown)$
 formualizer\.formualizer_py\.WorkbookMode\.(Ephemeral|Interactive)$
+formualizer\.formualizer_py\.XlsxPathSource\.(SHARED_FILE|DIRECT_MMAP)$

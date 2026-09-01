@@ -36,8 +36,17 @@ system-clock = ["formualizer-eval/system-clock"]
 js-runtime = ["formualizer-eval/js-runtime"]
 json = ["dep:serde_json", "formualizer-common/serde"]
 csv = ["dep:csv"]
-calamine = ["dep:calamine", "dep:zip", "dep:quick-xml"]
+# `memmap2` is unconditional here on purpose: `XlsxPathSource::DirectMmap` is a
+# runtime choice on a public enum, so gating the dependency behind `mmap` would
+# make that variant fail with ErrorKind::Unsupported in every default calamine
+# build (including the Python extension, which enables calamine but not mmap).
+calamine = ["dep:calamine", "dep:zip", "dep:quick-xml", "dep:memmap2"]
 umya = ["dep:umya-spreadsheet", "dep:zip", "dep:quick-xml"]
+# No-op compatibility alias, retained only so existing `features = ["mmap"]`
+# declarations keep compiling. It selects no behaviour: `open_path` uses
+# `XlsxPathSource::SharedFile` with or without it, and mapping is reachable only
+# through the explicit `XlsxPathSource::DirectMmap`. Safe to drop downstream.
+# Pinned by `legacy_mmap_feature_does_not_select_path_behaviour`.
 mmap = ["dep:memmap2"]
 io_builtins = []
 import_range = ["io_builtins"]
@@ -53,10 +62,6 @@ wasm_runtime_wasmtime = ["wasm_plugins", "dep:wasmtime"]
 
 [dependencies.calamine]
 version = "0.36"
-optional = true
-
-[dependencies.memmap2]
-version = "0.9"
 optional = true
 
 [dependencies.reqwest]
@@ -78,6 +83,9 @@ optional = true
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tempfile = { workspace = true }
 wasmtime = { version = "43.0.2", optional = true }
+
+[target.'cfg(any(unix, windows))'.dependencies]
+memmap2 = { version = "0.9", optional = true }
 
 [dev-dependencies]
 formualizer-eval = { path = "../formualizer-eval", version = "0.8.4", default-features = false, features = ["test-support"] }
