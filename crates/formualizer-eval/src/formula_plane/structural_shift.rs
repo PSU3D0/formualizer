@@ -474,14 +474,116 @@ fn split_axis_at(min: u32, max: u32, before: u32) -> Option<((u32, u32), (u32, u
     }
 }
 
-/// Split `domain` at an insert boundary into (upper, lower) halves in the
-/// PRE-insert coordinate frame: the upper half is untouched by the insert,
-/// the lower half starts at the insert boundary and shifts by the insert
-/// count. Sibling of the delete-compaction domain surgery in
-/// `demote_spans_for_structural_op_impl` (deliberately not merged: compaction
-/// yields one domain, splitting yields two). Returns None whenever the domain
-/// cannot be split cleanly along the insert axis; callers fall back to
-/// demoting the whole span.
+/// An inclusive `[min, max]` run on the op axis.
+type AxisRun = (u32, u32);
+
+/// The surviving halves of `[min, max]` through a delete of `count` units at
+/// `start`, expressed in the PRE-delete frame: everything strictly above the
+/// deleted band, and everything at/below its end. Either half may be absent.
+fn delete_survivor_axis(
+    min: u32,
+    max: u32,
+    start: u32,
+    count: u32,
+) -> (Option<AxisRun>, Option<AxisRun>) {
+    let end = start.saturating_add(count);
+    let upper = if min < start {
+        Some((min, start - 1))
+    } else {
+        None
+    };
+    let lower = if max >= end {
+        Some((min.max(end), max))
+    } else {
+        None
+    };
+    (upper, lower)
+}
+
+fn domain_axis_bounds(domain: &PlacementDomain, axis: AxisKindForOp) -> Option<AxisRun> {
+    match (domain, axis) {
+        (
+            PlacementDomain::RowRun {
+                row_start, row_end, ..
+            },
+            AxisKindForOp::Row,
+        )
+        | (
+            PlacementDomain::Rect {
+                row_start, row_end, ..
+            },
+            AxisKindForOp::Row,
+        ) => Some((*row_start, *row_end)),
+        (
+            PlacementDomain::ColRun {
+                col_start, col_end, ..
+            },
+            AxisKindForOp::Col,
+        )
+        | (
+            PlacementDomain::Rect {
+                col_start, col_end, ..
+            },
+            AxisKindForOp::Col,
+        ) => Some((*col_start, *col_end)),
+        // A domain whose op-axis extent is a single coordinate (a RowRun under
+        // a column op, a ColRun under a row op) never straddles an op
+        // boundary, so callers only reach this arm on unreachable geometry.
+        _ => None,
+    }
+}
+
+fn domain_with_axis_bounds(
+    domain: &PlacementDomain,
+    axis: AxisKindForOp,
+    min: u32,
+    max: u32,
+) -> Option<PlacementDomain> {
+    match (domain, axis) {
+        (PlacementDomain::RowRun { sheet_id, col, .. }, AxisKindForOp::Row) => {
+            Some(PlacementDomain::row_run(*sheet_id, min, max, *col))
+        }
+        (PlacementDomain::ColRun { sheet_id, row, .. }, AxisKindForOp::Col) => {
+            Some(PlacementDomain::col_run(*sheet_id, *row, min, max))
+        }
+        (
+            PlacementDomain::Rect {
+                sheet_id,
+                col_start,
+                col_end,
+                ..
+            },
+            AxisKindForOp::Row,
+        ) => Some(PlacementDomain::rect(
+            *sheet_id, min, max, *col_start, *col_end,
+        )),
+        (
+            PlacementDomain::Rect {
+                sheet_id,
+                row_start,
+                row_end,
+                ..
+            },
+            AxisKindForOp::Col,
+        ) => Some(PlacementDomain::rect(
+            *sheet_id, *row_start, *row_end, min, max,
+        )),
+        _ => None,
+    }
+}
+
+/// Split `domain` at an op boundary into (upper, lower) halves in the PRE-op
+/// coordinate frame.
+///
+/// For an INSERT the upper half is untouched and the lower half starts at the
+/// insert boundary and shifts by the insert count.
+///
+/// For a DELETE the two halves are the survivors on either side of the
+/// deleted band: the upper half is untouched and the lower half starts at the
+/// band's end and shifts up by the delete count. `None` is returned when
+/// either half is empty — a one-sided survivor is handled by the
+/// delete-compaction path (which keeps a single span) rather than by
+/// splitting.
 pub(crate) fn split_domain_at(
     domain: &PlacementDomain,
     op: StructuralOp,
@@ -489,75 +591,127 @@ pub(crate) fn split_domain_at(
     if domain.sheet_id() != op.sheet_id() {
         return None;
     }
-    match (domain, op) {
-        (
-            PlacementDomain::RowRun {
-                sheet_id,
-                row_start,
-                row_end,
-                col,
-            },
-            StructuralOp::InsertRows { before, .. },
-        ) => {
-            let ((upper_start, upper_end), (lower_start, lower_end)) =
-                split_axis_at(*row_start, *row_end, before)?;
-            Some((
-                PlacementDomain::row_run(*sheet_id, upper_start, upper_end, *col),
-                PlacementDomain::row_run(*sheet_id, lower_start, lower_end, *col),
-            ))
+    let axis = op.axis_kind();
+    let (min, max) = domain_axis_bounds(domain, axis)?;
+    let ((upper_min, upper_max), (lower_min, lower_max)) = match op {
+        StructuralOp::InsertRows { before, .. } | StructuralOp::InsertColumns { before, .. } => {
+            split_axis_at(min, max, before)?
         }
-        (
-            PlacementDomain::Rect {
-                sheet_id,
-                row_start,
-                row_end,
-                col_start,
-                col_end,
-            },
-            StructuralOp::InsertRows { before, .. },
-        ) => {
-            let ((upper_start, upper_end), (lower_start, lower_end)) =
-                split_axis_at(*row_start, *row_end, before)?;
-            Some((
-                PlacementDomain::rect(*sheet_id, upper_start, upper_end, *col_start, *col_end),
-                PlacementDomain::rect(*sheet_id, lower_start, lower_end, *col_start, *col_end),
-            ))
+        StructuralOp::DeleteRows { start, count, .. }
+        | StructuralOp::DeleteColumns { start, count, .. } => {
+            let (upper, lower) = delete_survivor_axis(min, max, start, count);
+            (upper?, lower?)
         }
-        (
-            PlacementDomain::ColRun {
-                sheet_id,
-                row,
-                col_start,
-                col_end,
-            },
-            StructuralOp::InsertColumns { before, .. },
-        ) => {
-            let ((upper_start, upper_end), (lower_start, lower_end)) =
-                split_axis_at(*col_start, *col_end, before)?;
-            Some((
-                PlacementDomain::col_run(*sheet_id, *row, upper_start, upper_end),
-                PlacementDomain::col_run(*sheet_id, *row, lower_start, lower_end),
-            ))
-        }
-        (
-            PlacementDomain::Rect {
-                sheet_id,
-                row_start,
-                row_end,
-                col_start,
-                col_end,
-            },
-            StructuralOp::InsertColumns { before, .. },
-        ) => {
-            let ((upper_start, upper_end), (lower_start, lower_end)) =
-                split_axis_at(*col_start, *col_end, before)?;
-            Some((
-                PlacementDomain::rect(*sheet_id, *row_start, *row_end, upper_start, upper_end),
-                PlacementDomain::rect(*sheet_id, *row_start, *row_end, lower_start, lower_end),
-            ))
-        }
-        _ => None,
+    };
+    Some((
+        domain_with_axis_bounds(domain, axis, upper_min, upper_max)?,
+        domain_with_axis_bounds(domain, axis, lower_min, lower_max)?,
+    ))
+}
+
+/// DELETE-COMPACTION FRAME INVARIANT (issue #171).
+///
+/// Compaction keeps ONE span with ONE template across a delete that straddles
+/// its result domain: the domain closes over the deleted band, the template
+/// AST is untouched, and the origin is carried through the delete
+/// (`origin_through_delete`). Placement-relative reads are therefore
+/// evaluated at `placement + offset` with `offset = authored - origin`
+/// unchanged, so compaction is only equivalent to per-cell adjustment when
+/// that single offset stays right for EVERY surviving placement.
+///
+/// Write `d_p` for "this placement moves up by the delete count", `d_r` for
+/// "this placement's read target moves up", and `d_o` for "the origin moves
+/// up". Per-cell semantics require the post-delete offset to be
+/// `offset + count * (d_r - d_p)`; compaction delivers `offset + count * d_o`
+/// via the carried origin. The two agree exactly when `d_r == d_p - d_o` for
+/// every surviving placement and every relative read bound.
+///
+/// The typical failure is a span whose reads sit ABOVE a mid-domain delete
+/// (`d_r = 0`, `d_o = 0`) while placements exist on both sides of the band:
+/// the upper placements need the authored offset and the lower ones need
+/// `offset + count`. No single template can serve both, so the caller must
+/// split the span (or demote it).
+///
+/// A read bound that lands INSIDE the deleted band is refused outright: the
+/// per-cell result is `#REF!` for some placements and a live reference for
+/// others, which no uniform template expresses. Cross-sheet reads never move,
+/// so they are checked with `d_r = 0` — a delete that moves this span's origin
+/// would shear them.
+pub(crate) fn delete_compaction_frame_is_sound(
+    read_summary: &SpanReadSummary,
+    domain: &PlacementDomain,
+    origin_row: u32,
+    origin_col: u32,
+    op: StructuralOp,
+) -> bool {
+    let (start_u32, count_u32) = match op {
+        StructuralOp::DeleteRows { start, count, .. }
+        | StructuralOp::DeleteColumns { start, count, .. } => (start, count),
+        StructuralOp::InsertRows { .. } | StructuralOp::InsertColumns { .. } => return false,
+    };
+    let start = i64::from(start_u32);
+    let end = start + i64::from(count_u32);
+    let axis = op.axis_kind();
+    // Template origins are 1-based; domains and op boundaries are 0-based.
+    let origin_axis0 = match axis {
+        AxisKindForOp::Row => i64::from(origin_row) - 1,
+        AxisKindForOp::Col => i64::from(origin_col) - 1,
+    };
+    if origin_axis0 < 0 {
+        return false;
     }
+    let origin_displaced = if origin_axis0 < start {
+        0
+    } else if origin_axis0 >= end {
+        1
+    } else {
+        // The origin itself is deleted; `origin_through_delete` refuses to
+        // guess a new anchor and the caller demotes.
+        return false;
+    };
+    let Some((min, max)) = domain_axis_bounds(domain, axis) else {
+        return false;
+    };
+    let (upper, lower) = delete_survivor_axis(min, max, start_u32, count_u32);
+    let survivors = [(upper, 0i64), (lower, 1i64)];
+    for dependency in &read_summary.dependencies {
+        let Some(offsets) = rule_relative_offsets_on_op_axis(dependency.projection, axis) else {
+            return false;
+        };
+        // Cross-sheet read targets are never displaced by this op.
+        let cross_sheet = dependency.read_region.sheet_id() != op.sheet_id();
+        for offset in offsets.into_iter().flatten() {
+            for (survivor, placement_displaced) in survivors {
+                let Some((lo, hi)) = survivor else {
+                    continue;
+                };
+                let required = placement_displaced - origin_displaced;
+                if !(0..=1).contains(&required) {
+                    return false;
+                }
+                // `read = placement + offset` is monotone in the placement, so
+                // checking both ends of a surviving run proves the whole run
+                // reads on one side of the deleted band.
+                for placement in [i64::from(lo), i64::from(hi)] {
+                    let read = placement + offset;
+                    if read < 0 {
+                        return false;
+                    }
+                    let read_displaced = if cross_sheet || read < start {
+                        0
+                    } else if read >= end {
+                        1
+                    } else {
+                        return false;
+                    };
+                    if read_displaced != required {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+    true
 }
 
 #[cfg(test)]
@@ -910,7 +1064,7 @@ mod tests {
     }
 
     #[test]
-    fn split_domain_at_rejects_non_straddling_and_cross_axis_cases() {
+    fn split_domain_at_splits_op_straddles_and_rejects_cross_axis_cases() {
         let row_run = PlacementDomain::row_run(0, 10, 99, 2);
         // Boundary at/above the start or beyond the end is not a straddle.
         for before in [5, 10, 100, 200] {
@@ -950,6 +1104,7 @@ mod tests {
             ),
             None
         );
+        // A delete splits into the survivors on either side of the band...
         assert_eq!(
             split_domain_at(
                 &row_run,
@@ -957,6 +1112,33 @@ mod tests {
                     sheet_id: 0,
                     start: 40,
                     count: 1,
+                },
+            ),
+            Some((
+                PlacementDomain::row_run(0, 10, 39, 2),
+                PlacementDomain::row_run(0, 41, 99, 2),
+            ))
+        );
+        // ...but a one-sided survivor is not a split (the delete-compaction
+        // path keeps a single span for those).
+        assert_eq!(
+            split_domain_at(
+                &row_run,
+                StructuralOp::DeleteRows {
+                    sheet_id: 0,
+                    start: 90,
+                    count: 20,
+                },
+            ),
+            None
+        );
+        assert_eq!(
+            split_domain_at(
+                &row_run,
+                StructuralOp::DeleteRows {
+                    sheet_id: 0,
+                    start: 5,
+                    count: 20,
                 },
             ),
             None
@@ -1255,6 +1437,121 @@ mod tests {
             -2,
         )]);
         assert!(!rewrite_frame_is_sound(&cross_sheet, 51, 3, insert_rows(9)));
+    }
+
+    #[test]
+    fn delete_compaction_frame_soundness_matrix() {
+        // The issue #171 fixture, in 0-based region/domain coordinates: C150:C270
+        // holds `=A{r-140}`, i.e. placements 149..=269 reading rows 9..=129 at a
+        // constant offset of -140. The template origin is row 150 (1-based).
+        fn displaced_summary() -> SpanReadSummary {
+            SpanReadSummary {
+                result_region: Region::col_interval(0, 2, 149, 269),
+                dependencies: vec![SpanReadDependency {
+                    read_region: Region::col_interval(0, 0, 9, 129),
+                    projection: DirtyProjectionRule::AffineCell {
+                        row: AxisProjection::Relative { offset: -140 },
+                        col: AxisProjection::Absolute { index: 0 },
+                    },
+                }],
+            }
+        }
+        let domain = PlacementDomain::row_run(0, 149, 269, 2);
+        let delete = |start: u32, count: u32| StructuralOp::DeleteRows {
+            sheet_id: 0,
+            start,
+            count,
+        };
+
+        // Mid-domain delete below every read: the two survivor runs need
+        // different offsets, so compaction is unsound (the span must split).
+        assert!(!delete_compaction_frame_is_sound(
+            &displaced_summary(),
+            &domain,
+            150,
+            3,
+            delete(199, 2)
+        ));
+        // Head trim that keeps the origin row: same story.
+        assert!(!delete_compaction_frame_is_sound(
+            &displaced_summary(),
+            &domain,
+            150,
+            3,
+            delete(150, 10)
+        ));
+        // Tail trim: only the (unmoved) head survives and no read moves.
+        assert!(delete_compaction_frame_is_sound(
+            &displaced_summary(),
+            &domain,
+            150,
+            3,
+            delete(264, 20)
+        ));
+        // The delete removes the origin row itself: no anchor to carry.
+        assert!(!delete_compaction_frame_is_sound(
+            &displaced_summary(),
+            &domain,
+            150,
+            3,
+            delete(144, 10)
+        ));
+
+        // Lockstep reads (`=A{r}`, offset 0) compact cleanly through a
+        // mid-domain delete: placements and reads move together.
+        let lockstep = SpanReadSummary {
+            result_region: Region::col_interval(0, 1, 41, 101),
+            dependencies: vec![SpanReadDependency {
+                read_region: Region::col_interval(0, 0, 41, 101),
+                projection: DirtyProjectionRule::AffineCell {
+                    row: AxisProjection::Relative { offset: 0 },
+                    col: AxisProjection::Absolute { index: 0 },
+                },
+            }],
+        };
+        let lockstep_domain = PlacementDomain::row_run(0, 41, 101, 1);
+        assert!(delete_compaction_frame_is_sound(
+            &lockstep,
+            &lockstep_domain,
+            1,
+            2,
+            delete(59, 2)
+        ));
+        // ...but a read bound landing inside the deleted band is `#REF!` for
+        // some placements and live for others.
+        let straddling_bound = SpanReadSummary {
+            result_region: Region::col_interval(0, 1, 41, 101),
+            dependencies: vec![SpanReadDependency {
+                read_region: Region::col_interval(0, 0, 36, 96),
+                projection: DirtyProjectionRule::AffineCell {
+                    row: AxisProjection::Relative { offset: -5 },
+                    col: AxisProjection::Absolute { index: 0 },
+                },
+            }],
+        };
+        assert!(!delete_compaction_frame_is_sound(
+            &straddling_bound,
+            &lockstep_domain,
+            1,
+            2,
+            delete(59, 2)
+        ));
+
+        // WholeResult rules carry no axis information: unverifiable.
+        let whole_result = SpanReadSummary {
+            result_region: Region::col_interval(0, 1, 41, 101),
+            dependencies: vec![SpanReadDependency {
+                read_region: Region::col_interval(0, 0, 41, 101),
+                projection: DirtyProjectionRule::WholeResult,
+            }],
+        };
+        assert!(!delete_compaction_frame_is_sound(
+            &whole_result,
+            &lockstep_domain,
+            1,
+            2,
+            delete(59, 2)
+        ));
     }
 
     #[test]
