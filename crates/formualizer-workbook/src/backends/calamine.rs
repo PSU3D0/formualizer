@@ -43,10 +43,78 @@ struct SharedFile {
     len: u64,
 }
 
+/// Per-cursor readahead window for the shared-file policy.
+///
+/// ZIP central-directory and part reads are small and mostly forward, so an
+/// unbuffered cursor turns each into its own lock/seek/read syscall. The window
+/// is keyed by absolute offset, so a seek that lands inside it is still served
+/// from memory.
+///
+/// This widens the window in which a cursor can serve bytes a concurrent writer
+/// has since changed. `SharedFile` was never a snapshot, so no guarantee moves:
+/// a concurrently mutated file still yields ordinary EOF/I/O/ZIP errors or
+/// ordinary stale bytes, never a mapped-memory fault.
+const SHARED_FILE_READAHEAD: usize = 64 * 1024;
+
 #[derive(Clone)]
 struct SharedFileCursor {
     source: Arc<SharedFile>,
     position: u64,
+    /// Bytes covering `[buffer_start, buffer_start + buffer.len())`.
+    buffer: Vec<u8>,
+    buffer_start: u64,
+}
+
+impl SharedFileCursor {
+    fn new(source: Arc<SharedFile>) -> Self {
+        Self {
+            source,
+            position: 0,
+            buffer: Vec::new(),
+            buffer_start: 0,
+        }
+    }
+
+    /// Serves `buf` from the readahead window when it covers `self.position`.
+    fn read_buffered(&mut self, buf: &mut [u8]) -> Option<usize> {
+        let offset = usize::try_from(self.position.checked_sub(self.buffer_start)?).ok()?;
+        let available = self.buffer.len().checked_sub(offset)?;
+        if available == 0 {
+            return None;
+        }
+        let read = buf.len().min(available);
+        buf[..read].copy_from_slice(&self.buffer[offset..offset + read]);
+        self.position += read as u64;
+        Some(read)
+    }
+
+    /// One locked seek+read. Fills the readahead window unless `direct` is set,
+    /// in which case the caller's larger buffer is filled straight through.
+    fn read_physical(&mut self, buf: &mut [u8], limit: usize) -> std::io::Result<usize> {
+        let mut file = self
+            .source
+            .file
+            .lock()
+            .map_err(|_| std::io::Error::other("shared XLSX file lock poisoned"))?;
+        file.seek(SeekFrom::Start(self.position))?;
+        if limit >= SHARED_FILE_READAHEAD {
+            let read = file.read(&mut buf[..limit])?;
+            drop(file);
+            self.position += read as u64;
+            self.buffer.clear();
+            return Ok(read);
+        }
+        let window = limit.max(
+            SHARED_FILE_READAHEAD
+                .min(usize::try_from(self.source.len - self.position).unwrap_or(usize::MAX)),
+        );
+        self.buffer.resize(window, 0);
+        let filled = file.read(&mut self.buffer[..window])?;
+        drop(file);
+        self.buffer.truncate(filled);
+        self.buffer_start = self.position;
+        Ok(self.read_buffered(buf).unwrap_or(0))
+    }
 }
 
 #[cfg(any(unix, windows))]
@@ -129,13 +197,12 @@ impl SharedXlsxReader {
     fn from_file(file: File, policy: XlsxPathSource) -> Result<Self, std::io::Error> {
         let len = file.metadata()?.len();
         match policy {
-            XlsxPathSource::SharedFile => Ok(Self::File(SharedFileCursor {
-                source: Arc::new(SharedFile {
+            XlsxPathSource::SharedFile => {
+                Ok(Self::File(SharedFileCursor::new(Arc::new(SharedFile {
                     file: Mutex::new(file),
                     len,
-                }),
-                position: 0,
-            })),
+                }))))
+            }
             XlsxPathSource::DirectMmap => {
                 #[cfg(any(unix, windows))]
                 {
@@ -172,10 +239,7 @@ impl SharedXlsxReader {
                 bytes: Arc::clone(bytes),
                 position: 0,
             },
-            Self::File(cursor) => Self::File(SharedFileCursor {
-                source: Arc::clone(&cursor.source),
-                position: 0,
-            }),
+            Self::File(cursor) => Self::File(SharedFileCursor::new(Arc::clone(&cursor.source))),
             #[cfg(any(unix, windows))]
             Self::Mapped { source, .. } => Self::Mapped {
                 source: Arc::clone(source),
@@ -208,25 +272,17 @@ impl Read for SharedXlsxReader {
         match self {
             Self::Bytes { bytes, position } => read_slice(bytes, position, buf),
             Self::File(cursor) => {
-                if cursor.position >= cursor.source.len {
+                if buf.is_empty() || cursor.position >= cursor.source.len {
                     return Ok(0);
+                }
+                if let Some(read) = cursor.read_buffered(buf) {
+                    return Ok(read);
                 }
                 let remaining = cursor.source.len - cursor.position;
                 let limit = buf
                     .len()
                     .min(usize::try_from(remaining).unwrap_or(usize::MAX));
-                let mut file = cursor
-                    .source
-                    .file
-                    .lock()
-                    .map_err(|_| std::io::Error::other("shared XLSX file lock poisoned"))?;
-                file.seek(SeekFrom::Start(cursor.position))?;
-                let read = file.read(&mut buf[..limit])?;
-                cursor.position = cursor
-                    .position
-                    .checked_add(read as u64)
-                    .ok_or_else(|| std::io::Error::other("reader position overflow"))?;
-                Ok(read)
+                cursor.read_physical(buf, limit)
             }
             #[cfg(any(unix, windows))]
             Self::Mapped { source, position } => read_slice(&source.map, position, buf),
@@ -2059,6 +2115,13 @@ mod tests {
     use std::io::Cursor;
 
     fn metadata_fixture() -> Vec<u8> {
+        metadata_fixture_with_padding(0)
+    }
+
+    /// `padding` inserts a stored filler part immediately before the worksheet,
+    /// pushing the worksheet's bytes past any readahead window that earlier
+    /// parts warmed. Used to test behaviour at offsets that cannot be cached.
+    fn metadata_fixture_with_padding(padding: usize) -> Vec<u8> {
         use std::io::Write;
         use zip::write::SimpleFileOptions;
         use zip::{CompressionMethod, ZipWriter};
@@ -2092,6 +2155,17 @@ mod tests {
             ),
         ];
         for (name, xml) in entries {
+            if padding > 0 && name == "xl/worksheets/sheet1.xml" {
+                writer
+                    .start_file(
+                        "xl/media/pad.bin",
+                        SimpleFileOptions::default().compression_method(CompressionMethod::Stored),
+                    )
+                    .unwrap();
+                writer
+                    .write_all(&(0..=255_u8).cycle().take(padding).collect::<Vec<_>>())
+                    .unwrap();
+            }
             writer.start_file(name, options).unwrap();
             writer.write_all(xml.as_bytes()).unwrap();
         }
@@ -2121,13 +2195,10 @@ mod tests {
         let mut file = tempfile::tempfile().unwrap();
         let data: Vec<u8> = (0..=255).cycle().take(16 * 1024).collect();
         file.write_all(&data).unwrap();
-        let source = SharedXlsxReader::File(SharedFileCursor {
-            source: Arc::new(SharedFile {
-                file: Mutex::new(file),
-                len: data.len() as u64,
-            }),
-            position: 0,
-        });
+        let source = SharedXlsxReader::File(SharedFileCursor::new(Arc::new(SharedFile {
+            file: Mutex::new(file),
+            len: data.len() as u64,
+        })));
 
         std::thread::scope(|scope| {
             for thread_index in 0..8_u64 {
@@ -2147,11 +2218,20 @@ mod tests {
         });
     }
 
+    /// Truncation under the safe default must degrade to ordinary I/O results,
+    /// never to a mapped-memory fault. The fixture is padded past the readahead
+    /// window so the worksheet lives at an offset no cursor can have cached;
+    /// bytes already inside a window may still be served after truncation,
+    /// which is a staleness widening, not a memory-safety hazard.
     #[cfg(unix)]
     #[test]
     fn truncation_after_safe_open_returns_normal_fallbacks_and_errors() {
         let file = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(file.path(), metadata_fixture()).unwrap();
+        std::fs::write(
+            file.path(),
+            metadata_fixture_with_padding(4 * SHARED_FILE_READAHEAD),
+        )
+        .unwrap();
         let mut adapter = CalamineAdapter::open_path(file.path()).unwrap();
         assert!(matches!(adapter.source, SharedXlsxReader::File(_)));
 
@@ -2185,6 +2265,36 @@ mod tests {
         let adapter = CalamineAdapter::open_path(file.path()).unwrap();
         assert_eq!(XlsxPathSource::default(), XlsxPathSource::SharedFile);
         assert!(matches!(adapter.source, SharedXlsxReader::File(_)));
+    }
+
+    /// The readahead window is keyed by absolute offset, so backward and
+    /// forward seeks inside it must not re-read the file or desynchronise.
+    #[test]
+    fn shared_file_readahead_serves_seeks_within_the_window() {
+        use std::io::Write;
+
+        let mut file = tempfile::tempfile().unwrap();
+        let data: Vec<u8> = (0..=255).cycle().take(4 * SHARED_FILE_READAHEAD).collect();
+        file.write_all(&data).unwrap();
+        let source = SharedXlsxReader::File(SharedFileCursor::new(Arc::new(SharedFile {
+            file: Mutex::new(file),
+            len: data.len() as u64,
+        })));
+
+        let mut reader = source.reader();
+        for offset in [0_u64, 4096, 1, 64, 4095, 8192, 200_000, 199_999] {
+            reader.seek(SeekFrom::Start(offset)).unwrap();
+            let mut actual = [0_u8; 17];
+            reader.read_exact(&mut actual).unwrap();
+            assert_eq!(&actual, &data[offset as usize..offset as usize + 17]);
+            assert_eq!(reader.stream_position().unwrap(), offset + 17);
+        }
+
+        // A request larger than the window bypasses it and still reads exactly.
+        reader.seek(SeekFrom::Start(3)).unwrap();
+        let mut large = vec![0_u8; 2 * SHARED_FILE_READAHEAD];
+        reader.read_exact(&mut large).unwrap();
+        assert_eq!(&large[..], &data[3..3 + 2 * SHARED_FILE_READAHEAD]);
     }
 
     #[cfg(any(unix, windows))]
