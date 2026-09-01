@@ -165,8 +165,79 @@ fn cell_requires_reference_argument() {
     // Missing reference: Excel reports on the last-changed cell, which is not
     // reproducible, so we surface #VALUE!.
     assert_error(r#"=CELL("contents")"#, ExcelErrorKind::Value);
-    // A scalar value cannot be inspected as a reference.
+    // A scalar value cannot be inspected as a reference by the metadata info
+    // types; #VALUE! is reserved for exactly this case.
     assert_error(r#"=CELL("address",42)"#, ExcelErrorKind::Value);
+    assert_error(r#"=CELL("col",42)"#, ExcelErrorKind::Value);
+    assert_error(r#"=CELL("row","x")"#, ExcelErrorKind::Value);
+}
+
+#[test]
+fn cell_propagates_reference_argument_errors() {
+    // Excel evaluates the argument first, so its error wins over #VALUE!.
+    assert_error(r#"=CELL("row",1/0)"#, ExcelErrorKind::Div);
+    assert_error(r#"=CELL("address",1/0)"#, ExcelErrorKind::Div);
+    assert_error(r#"=CELL("contents",NA())"#, ExcelErrorKind::Na);
+    assert_error(r#"=CELL("type",NA())"#, ExcelErrorKind::Na);
+}
+
+#[test]
+fn cell_propagates_ref_error_after_row_delete() {
+    // Deleting the referenced row invalidates the reference; CELL must report
+    // #REF!, not a blanket #VALUE!.
+    let mut engine = new_engine();
+    engine
+        .set_cell_value("Sheet1", 5, 1, LiteralValue::Int(7))
+        .unwrap();
+    engine
+        .set_cell_formula("Sheet1", 1, 20, parse(r#"=CELL("row",A5)"#).unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 20).unwrap(),
+        LiteralValue::Number(5.0)
+    );
+    engine.delete_rows("Sheet1", 5, 1).unwrap();
+    engine.evaluate_all().unwrap();
+    match engine.get_cell_value("Sheet1", 1, 20).unwrap() {
+        LiteralValue::Error(error) => assert_eq!(error.kind, ExcelErrorKind::Ref),
+        other => panic!("expected #REF! after delete_rows, got {other:?}"),
+    }
+}
+
+#[test]
+fn cell_value_info_types_accept_a_literal() {
+    // Excel's `contents` and `type` read a value, so a literal in the reference
+    // position is legitimate.
+    assert_text(r#"=CELL("type","")"#, "l");
+    assert_text(r#"=CELL("type","x")"#, "l");
+    assert_text(r#"=CELL("type",5)"#, "v");
+    assert_int(r#"=CELL("contents",5)"#, 5);
+    assert_text(r#"=CELL("contents","abc")"#, "abc");
+}
+
+#[test]
+fn cell_rejects_3d_references() {
+    // Excel's CELL does not accept 3-D references; it must not silently report
+    // on the first sheet of the span.
+    let mut engine = new_engine();
+    engine.graph.add_sheet("Sheet2").unwrap();
+    for formula in [
+        r#"=CELL("address",Sheet1:Sheet2!A1)"#,
+        r#"=CELL("row",Sheet1:Sheet1!A1)"#,
+        r#"=CELL("contents",Sheet1:Sheet2!A1)"#,
+    ] {
+        engine
+            .set_cell_formula("Sheet1", 1, 20, parse(formula).unwrap())
+            .unwrap();
+        engine.evaluate_all().unwrap();
+        match engine.get_cell_value("Sheet1", 1, 20).unwrap() {
+            LiteralValue::Error(error) => {
+                assert_eq!(error.kind, ExcelErrorKind::Value, "{formula}")
+            }
+            other => panic!("{formula}: expected #VALUE!, got {other:?}"),
+        }
+    }
 }
 
 #[test]

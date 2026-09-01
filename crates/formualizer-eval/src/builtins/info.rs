@@ -1730,7 +1730,9 @@ pub struct CellFn;
 /// - `"type"`     — `"b"` for a blank cell, `"l"` for text, `"v"` for any value
 ///
 /// Other `info_type` values (`format`, `filename`, `parentheses`, `prefix`,
-/// `protect`, `width`) and calls without a reference return `#VALUE!`.
+/// `protect`, `width`) and calls without a reference return `#VALUE!`, as do
+/// 3-D references and a non-reference argument for `address`, `col` or `row`.
+/// An argument that evaluates to an error propagates that error unchanged.
 ///
 /// ```yaml,sandbox
 /// title: "CELL contents"
@@ -1803,18 +1805,25 @@ impl Function for CellFn {
             return Ok(scalar(LiteralValue::Error(ExcelError::new_value())));
         }
 
-        let reference = match args[1].as_reference_or_eval() {
-            Ok(reference) => reference,
-            Err(_) => return Ok(scalar(LiteralValue::Error(ExcelError::new_value()))),
-        };
+        // A reference argument that does not resolve is not automatically a
+        // #VALUE!; see `non_reference_error`.
+        let reference = args[1].as_reference_or_eval().ok();
 
+        // Excel's CELL rejects 3-D references outright rather than reporting on
+        // the first sheet of the span.
+        if reference.as_ref().is_some_and(is_3d_reference) {
+            return Ok(scalar(LiteralValue::Error(ExcelError::new_value())));
+        }
+
+        // `contents` and `type` read a value, so they also accept a literal in
+        // the reference position (`=CELL("type","")` is "l" in Excel). The
+        // metadata info types (`address`, `col`, `row`) derive purely from
+        // reference metadata and must not force the referenced value.
         match info_type.as_str() {
-            "contents" => {
-                return Ok(scalar(cell_top_left(&args[1])?));
-            }
+            "contents" => return Ok(scalar(cell_top_left(&args[1])?)),
             "type" => {
-                let top_left = cell_top_left(&args[1])?;
-                let kind = match top_left {
+                let kind = match cell_top_left(&args[1])? {
+                    LiteralValue::Error(e) => return Ok(scalar(LiteralValue::Error(e))),
                     LiteralValue::Empty => "b",
                     LiteralValue::Text(_) => "l",
                     _ => "v",
@@ -1823,6 +1832,10 @@ impl Function for CellFn {
             }
             _ => {}
         }
+
+        let Some(reference) = reference else {
+            return Ok(scalar(non_reference_error(&args[1])?));
+        };
 
         let Some(reference_info) = ctx.inspect_reference(&reference)? else {
             return Ok(scalar(LiteralValue::Error(ExcelError::new_value())));
@@ -1868,6 +1881,32 @@ fn cell_top_left<'a, 'b>(arg: &ArgumentHandle<'a, 'b>) -> Result<LiteralValue, E
             ExcelError::new(ExcelErrorKind::Calc).with_message("LAMBDA value must be invoked"),
         )),
     }
+}
+
+/// The error CELL reports for an argument that did not resolve as a reference.
+///
+/// Excel evaluates the argument first, so an argument that *is* an error
+/// propagates that error (`=CELL("row",1/0)` is #DIV/0!, `=CELL("row",A5)`
+/// after row 5 is deleted is #REF!). #VALUE! is reserved for an argument that
+/// evaluates to a perfectly good value that simply is not a reference, such as
+/// `=CELL("address",42)`.
+fn non_reference_error<'a, 'b>(arg: &ArgumentHandle<'a, 'b>) -> Result<LiteralValue, ExcelError> {
+    Ok(match cell_top_left(arg)? {
+        LiteralValue::Error(e) => LiteralValue::Error(e),
+        _ => LiteralValue::Error(ExcelError::new_value()),
+    })
+}
+
+/// Whether the reference spans sheets (`Sheet1:Sheet2!A1`).
+///
+/// Excel's CELL rejects 3-D references with #VALUE! rather than reporting on
+/// the first sheet of the span.
+fn is_3d_reference(reference: &formualizer_parse::parser::ReferenceType) -> bool {
+    matches!(
+        reference,
+        formualizer_parse::parser::ReferenceType::Cell3D { .. }
+            | formualizer_parse::parser::ReferenceType::Range3D { .. }
+    )
 }
 
 /// The explicit sheet name carried by a reference, when it names one.
