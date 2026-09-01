@@ -1000,10 +1000,123 @@ impl Function for IndirectFn {
     }
 }
 
+#[derive(Debug)]
+pub struct HyperlinkFn;
+
+/// Returns the friendly name of a hyperlink, or its link location when no name is given.
+///
+/// The returned value is `friendly_name` when the second argument is present,
+/// otherwise `link_location`.
+///
+/// Known divergence: the friendly name is always returned as text, whereas
+/// Excel passes numbers and booleans through with their original type, so
+/// `=ISNUMBER(HYPERLINK("x",1))` is FALSE here and TRUE in Excel.
+///
+/// ```yaml,sandbox
+/// title: "Hyperlink with a friendly name"
+/// formula: '=HYPERLINK("https://example.com","Example")'
+/// expected: "Example"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Hyperlink without a friendly name"
+/// formula: '=HYPERLINK("https://example.com")'
+/// expected: "https://example.com"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - INDIRECT
+/// faq:
+///   - q: "What does HYPERLINK return?"
+///     a: "The friendly name when provided, otherwise the link location, always as text."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: HYPERLINK
+/// Type: HyperlinkFn
+/// Min args: 1
+/// Max args: 2
+/// Variadic: false
+/// Signature: HYPERLINK(arg1: any@scalar, arg2?: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=false,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for HyperlinkFn {
+    fn caps(&self) -> FnCaps {
+        FnCaps::PURE
+    }
+    fn name(&self) -> &'static str {
+        "HYPERLINK"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            let mut optional = ArgSchema::any();
+            optional.required = false;
+            vec![ArgSchema::any(), optional]
+        });
+        &SCHEMA
+    }
+
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let link = hyperlink_text(&args[0])?;
+        if args.len() < 2 {
+            return Ok(link);
+        }
+        hyperlink_text(&args[1])
+    }
+}
+
+/// Coerces a HYPERLINK argument to its display text.
+///
+/// Errors propagate as the argument's own error. Multi-cell references and
+/// array constants cannot name a hyperlink target, so they surface `#VALUE!`
+/// instead of leaking a debug-formatted array literal into the cell text.
+/// A 1x1 array collapses to its single element.
+fn hyperlink_text<'a, 'b>(
+    arg: &ArgumentHandle<'a, 'b>,
+) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+    let lit = match arg.value()? {
+        crate::traits::CalcValue::Scalar(lit) => lit,
+        crate::traits::CalcValue::AnnotatedScalar(lit, _) => lit,
+        crate::traits::CalcValue::Range(view) => {
+            let (rows, cols) = view.dims();
+            if rows == 1 && cols == 1 {
+                view.get_cell(0, 0)
+            } else {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_value(),
+                )));
+            }
+        }
+        crate::traits::CalcValue::Callable(_) => {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new(ExcelErrorKind::Calc).with_message("LAMBDA value must be invoked"),
+            )));
+        }
+    };
+    Ok(crate::traits::CalcValue::Scalar(match lit {
+        LiteralValue::Error(e) => LiteralValue::Error(e),
+        LiteralValue::Array(arr) if arr.len() == 1 && arr[0].len() == 1 => {
+            LiteralValue::Text(crate::coercion::to_text_invariant(&arr[0][0]))
+        }
+        LiteralValue::Array(_) => LiteralValue::Error(ExcelError::new_value()),
+        other => LiteralValue::Text(crate::coercion::to_text_invariant(&other)),
+    }))
+}
+
 pub fn register_builtins() {
     crate::function_registry::register_builtin(std::sync::Arc::new(IndexFn));
     crate::function_registry::register_builtin(std::sync::Arc::new(OffsetFn));
     crate::function_registry::register_builtin(std::sync::Arc::new(IndirectFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(HyperlinkFn));
 }
 
 #[cfg(test)]

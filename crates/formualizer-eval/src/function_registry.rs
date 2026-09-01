@@ -2063,7 +2063,7 @@ mod tests {
                 "{name} with argument"
             );
         }
-        for name in ["ISFORMULA", "FORMULATEXT", "SHEET", "SHEETS"] {
+        for name in ["CELL", "ISFORMULA", "FORMULATEXT", "SHEET", "SHEETS"] {
             let contract = resolve_for_arity("", name, get("", name).unwrap().min_args())
                 .unwrap()
                 .semantics

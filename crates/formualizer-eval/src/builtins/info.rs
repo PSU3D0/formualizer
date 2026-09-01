@@ -1,10 +1,10 @@
 use crate::args::ArgSchema;
-use crate::function::Function;
+use crate::function::{FnCaps, Function};
 use crate::function_contract::{
     FunctionContextDependence, FunctionDependencyContract, FunctionSemanticContract,
 };
 use crate::traits::{ArgumentHandle, CalcValue, FunctionContext};
-use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
+use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue, format_a1_sheet_name};
 use formualizer_macros::func_caps;
 
 use super::utils::ARG_ANY_ONE;
@@ -1717,8 +1717,217 @@ impl Function for IsNonTextFn {
     }
 }
 
+#[derive(Debug)]
+pub struct CellFn;
+
+/// Returns requested information about a reference.
+///
+/// Supported `info_type` values (case-insensitive):
+/// - `"contents"` — the value of the upper-left cell of the reference
+/// - `"address"`  — the absolute A1 address of the upper-left cell (e.g. `$A$1`)
+/// - `"col"`      — the 1-based column of the upper-left cell
+/// - `"row"`      — the 1-based row of the upper-left cell
+/// - `"type"`     — `"b"` for a blank cell, `"l"` for text, `"v"` for any value
+///
+/// Other `info_type` values (`format`, `filename`, `parentheses`, `prefix`,
+/// `protect`, `width`) and calls without a reference return `#VALUE!`, as do
+/// 3-D references and a non-reference argument for `address`, `col` or `row`.
+/// An argument that evaluates to an error propagates that error unchanged.
+///
+/// Known divergence: `CELL("contents", <blank cell>)` produces `Empty` in-graph
+/// where Excel produces numeric `0`, so `ISBLANK(CELL("contents",Z99))` is TRUE
+/// here and FALSE in Excel; tracked in #333 and to be resolved with the #319
+/// blank-coercion variant study.
+///
+/// ```yaml,sandbox
+/// title: "CELL contents"
+/// grid:
+///   A1: 10
+/// formula: '=CELL("contents",A1)'
+/// expected: 10
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "CELL address of the top-left cell"
+/// formula: '=CELL("address",A1)'
+/// expected: "$A$1"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SHEET
+///   - ISREF
+/// faq:
+///   - q: "Which info types does CELL support?"
+///     a: "contents, address, col, row and type. Unsupported info types return #VALUE!."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: CELL
+/// Type: CellFn
+/// Min args: 1
+/// Max args: 2
+/// Variadic: false
+/// Signature: CELL(arg1: any@scalar, arg2?: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=false,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for CellFn {
+    fn caps(&self) -> FnCaps {
+        FnCaps::PURE
+    }
+    fn name(&self) -> &'static str {
+        "CELL"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn semantic_contract(&self, arity: usize) -> Option<FunctionSemanticContract> {
+        Some(workbook_metadata_contract(self.dependency_contract(arity)))
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            let mut optional = ArgSchema::any();
+            optional.required = false;
+            vec![ArgSchema::any(), optional]
+        });
+        &SCHEMA
+    }
+
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        let info_type = match args[0].value()?.into_literal() {
+            LiteralValue::Error(e) => return Ok(scalar(LiteralValue::Error(e))),
+            LiteralValue::Text(t) => t.to_ascii_lowercase(),
+            _ => return Ok(scalar(LiteralValue::Error(ExcelError::new_value()))),
+        };
+        if args.len() < 2 {
+            // Without a reference, Excel reports on the last-changed cell, which is
+            // not reproducible here; #VALUE! keeps the result well-defined.
+            return Ok(scalar(LiteralValue::Error(ExcelError::new_value())));
+        }
+
+        // A reference argument that does not resolve is not automatically a
+        // #VALUE!; see `non_reference_error`.
+        let reference = args[1].as_reference_or_eval().ok();
+
+        // Excel's CELL rejects 3-D references outright rather than reporting on
+        // the first sheet of the span.
+        if reference.as_ref().is_some_and(is_3d_reference) {
+            return Ok(scalar(LiteralValue::Error(ExcelError::new_value())));
+        }
+
+        // `contents` and `type` read a value, so they also accept a literal in
+        // the reference position (`=CELL("type","")` is "l" in Excel). The
+        // metadata info types (`address`, `col`, `row`) derive purely from
+        // reference metadata and must not force the referenced value.
+        match info_type.as_str() {
+            "contents" => return Ok(scalar(cell_top_left(&args[1])?)),
+            "type" => {
+                let kind = match cell_top_left(&args[1])? {
+                    LiteralValue::Error(e) => return Ok(scalar(LiteralValue::Error(e))),
+                    LiteralValue::Empty => "b",
+                    LiteralValue::Text(_) => "l",
+                    _ => "v",
+                };
+                return Ok(scalar(LiteralValue::Text(kind.into())));
+            }
+            _ => {}
+        }
+
+        let Some(reference) = reference else {
+            return Ok(scalar(non_reference_error(&args[1])?));
+        };
+
+        let Some(reference_info) = ctx.inspect_reference(&reference)? else {
+            return Ok(scalar(LiteralValue::Error(ExcelError::new_value())));
+        };
+        let Some(cell) = reference_info.first_cell else {
+            return Ok(scalar(LiteralValue::Error(ExcelError::new_value())));
+        };
+        let row = cell.coord.row() + 1;
+        let col = cell.coord.col() + 1;
+
+        match info_type.as_str() {
+            "address" => {
+                let letters = crate::reference::Coord::col_to_letters(cell.coord.col());
+                let address = format!("${letters}${row}");
+                // Excel qualifies the address with the sheet name only when the
+                // reference targets a different sheet than the formula's own.
+                let qualified = match reference_sheet(&reference) {
+                    Some(sheet) if !sheet.eq_ignore_ascii_case(ctx.current_sheet()) => {
+                        format!("{}!{address}", format_a1_sheet_name(sheet))
+                    }
+                    _ => address,
+                };
+                Ok(scalar(LiteralValue::Text(qualified)))
+            }
+            "col" => Ok(scalar(LiteralValue::Int(col as i64))),
+            "row" => Ok(scalar(LiteralValue::Int(row as i64))),
+            _ => Ok(scalar(LiteralValue::Error(ExcelError::new_value()))),
+        }
+    }
+}
+
+/// Materializes the upper-left cell of the reference argument as a literal.
+///
+/// Only `contents` and `type` need the referenced value; `address`, `col` and
+/// `row` derive purely from reference metadata and must not force evaluation of
+/// (or trip over) the referenced cell's value.
+fn cell_top_left<'a, 'b>(arg: &ArgumentHandle<'a, 'b>) -> Result<LiteralValue, ExcelError> {
+    match arg.value()? {
+        CalcValue::Scalar(lit) => Ok(lit),
+        CalcValue::AnnotatedScalar(lit, _) => Ok(lit),
+        CalcValue::Range(view) => Ok(view.get_cell(0, 0)),
+        CalcValue::Callable(_) => Ok(LiteralValue::Error(
+            ExcelError::new(ExcelErrorKind::Calc).with_message("LAMBDA value must be invoked"),
+        )),
+    }
+}
+
+/// The error CELL reports for an argument that did not resolve as a reference.
+///
+/// Excel evaluates the argument first, so an argument that *is* an error
+/// propagates that error (`=CELL("row",1/0)` is #DIV/0!, `=CELL("row",A5)`
+/// after row 5 is deleted is #REF!). #VALUE! is reserved for an argument that
+/// evaluates to a perfectly good value that simply is not a reference, such as
+/// `=CELL("address",42)`.
+fn non_reference_error<'a, 'b>(arg: &ArgumentHandle<'a, 'b>) -> Result<LiteralValue, ExcelError> {
+    Ok(match cell_top_left(arg)? {
+        LiteralValue::Error(e) => LiteralValue::Error(e),
+        _ => LiteralValue::Error(ExcelError::new_value()),
+    })
+}
+
+/// Whether the reference spans sheets (`Sheet1:Sheet2!A1`).
+///
+/// Excel's CELL rejects 3-D references with #VALUE! rather than reporting on
+/// the first sheet of the span.
+fn is_3d_reference(reference: &formualizer_parse::parser::ReferenceType) -> bool {
+    matches!(
+        reference,
+        formualizer_parse::parser::ReferenceType::Cell3D { .. }
+            | formualizer_parse::parser::ReferenceType::Range3D { .. }
+    )
+}
+
+/// The explicit sheet name carried by a reference, when it names one.
+fn reference_sheet(reference: &formualizer_parse::parser::ReferenceType) -> Option<&str> {
+    match reference {
+        formualizer_parse::parser::ReferenceType::Cell { sheet, .. } => sheet.as_deref(),
+        formualizer_parse::parser::ReferenceType::Range { sheet, .. } => sheet.as_deref(),
+        formualizer_parse::parser::ReferenceType::Cell3D { sheet_first, .. } => Some(sheet_first),
+        formualizer_parse::parser::ReferenceType::Range3D { sheet_first, .. } => Some(sheet_first),
+        _ => None,
+    }
+}
+
 pub fn register_builtins() {
     use std::sync::Arc;
+    crate::function_registry::register_builtin(Arc::new(CellFn));
     crate::function_registry::register_builtin(Arc::new(IsNumberFn));
     crate::function_registry::register_builtin(Arc::new(IsTextFn));
     crate::function_registry::register_builtin(Arc::new(IsNonTextFn));
