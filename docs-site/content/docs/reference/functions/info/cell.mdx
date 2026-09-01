@@ -1,0 +1,68 @@
+---
+title: "CELL"
+description: "CELL: Returns requested information about a reference."
+---
+
+<FunctionPageSchema id="info/cell" />
+
+## Summary
+
+Supported `info_type` values (case-insensitive):
+ - `"contents"` — the value of the upper-left cell of the reference
+ - `"address"`  — the absolute A1 address of the upper-left cell (e.g. `$A$1`)
+ - `"col"`      — the 1-based column of the upper-left cell
+ - `"row"`      — the 1-based row of the upper-left cell
+ - `"type"`     — `"b"` for a blank cell, `"l"` for text, `"v"` for any value
+
+ Other `info_type` values (`format`, `filename`, `parentheses`, `prefix`,
+ `protect`, `width`) and calls without a reference return `#VALUE!`, as do
+ 3-D references and a non-reference argument for `address`, `col` or `row`.
+ An argument that evaluates to an error propagates that error unchanged.
+
+ Known divergence: `CELL("contents", &lt;blank cell&gt;)` produces `Empty` in-graph
+ where Excel produces numeric `0`, so `ISBLANK(CELL("contents",Z99))` is TRUE
+ here and FALSE in Excel; tracked in #333 and to be resolved with the #319
+ blank-coercion variant study.
+
+## Examples
+
+<Tabs items={["CELL contents", "CELL address of the top-left cell"]}>
+<Tab value="CELL contents">
+<FunctionSandbox
+  title="CELL contents"
+  formula={`=CELL("contents",A1)`}
+  grid={{"A1":"10"}}
+  expected={"10"}
+/>
+</Tab>
+
+<Tab value="CELL address of the top-left cell">
+<FunctionSandbox
+  title="CELL address of the top-left cell"
+  formula={`=CELL("address",A1)`}
+  grid={{}}
+  expected={"$A$1"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [SHEET](/docs/reference/functions/info/sheet)
+- [ISREF](/docs/reference/functions/info/isref)
+- [ERROR.TYPE](/docs/reference/functions/info/error-type)
+- [FORMULATEXT](/docs/reference/functions/info/formulatext)
+- [ISBLANK](/docs/reference/functions/info/isblank)
+- [ISERR](/docs/reference/functions/info/iserr)
+
+## FAQ
+
+### Which info types does CELL support?
+contents, address, col, row and type. Unsupported info types return #VALUE!.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="info/cell" />
+{/* [formualizer-docgen:function-meta:end] */}

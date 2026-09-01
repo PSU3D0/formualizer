@@ -3,6 +3,7 @@
   "defaultOpen": false,
   "pages": [
     "index",
+    "hyperlink",
     "index-fn",
     "indirect",
     "offset"

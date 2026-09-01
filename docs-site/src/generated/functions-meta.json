@@ -5811,6 +5811,50 @@
     "typeName": "YieldFn",
     "variadic": true
   },
+  "info/cell": {
+    "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=false,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "any"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "any"
+        ],
+        "max": null,
+        "name": "arg2",
+        "repeating": null,
+        "required": false,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "info",
+    "implementationSource": "crates/formualizer-eval/src/builtins/info.rs",
+    "maxArgs": 2,
+    "minArgs": 1,
+    "name": "CELL",
+    "registrationSource": "crates/formualizer-eval/src/builtins/info.rs",
+    "shortSummary": "Returns requested information about a reference.",
+    "signature": "CELL(arg1: any@scalar, arg2?: any@scalar)",
+    "typeName": "CellFn",
+    "variadic": false
+  },
   "info/error-type": {
     "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
     "args": [
@@ -11619,6 +11663,50 @@
     "shortSummary": "Returns a random integer between two inclusive bounds.",
     "signature": "RANDBETWEEN(arg1: number@scalar, arg2: number@scalar)",
     "typeName": "RandBetweenFn",
+    "variadic": false
+  },
+  "reference-fns/hyperlink": {
+    "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=false,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "any"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "any"
+        ],
+        "max": null,
+        "name": "arg2",
+        "repeating": null,
+        "required": false,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "reference_fns",
+    "implementationSource": "crates/formualizer-eval/src/builtins/reference_fns.rs",
+    "maxArgs": 2,
+    "minArgs": 1,
+    "name": "HYPERLINK",
+    "registrationSource": "crates/formualizer-eval/src/builtins/reference_fns.rs",
+    "shortSummary": "Returns the friendly name of a hyperlink, or its link location when no name is given.",
+    "signature": "HYPERLINK(arg1: any@scalar, arg2?: any@scalar)",
+    "typeName": "HyperlinkFn",
     "variadic": false
   },
   "reference-fns/index-fn": {

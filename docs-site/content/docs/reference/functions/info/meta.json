@@ -3,6 +3,7 @@
   "defaultOpen": false,
   "pages": [
     "index",
+    "cell",
     "error-type",
     "formulatext",
     "isblank",
