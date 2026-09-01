@@ -1623,6 +1623,7 @@ pub formualizer_eval::engine::eval::EngineBaselineStats::evaluation_vertex_count
 pub formualizer_eval::engine::eval::EngineBaselineStats::formula_ast_node_count: usize
 pub formualizer_eval::engine::eval::EngineBaselineStats::formula_ast_root_count: usize
 pub formualizer_eval::engine::eval::EngineBaselineStats::formula_plane_active_span_count: usize
+pub formualizer_eval::engine::eval::EngineBaselineStats::formula_plane_array_result_span_demotions: u64
 pub formualizer_eval::engine::eval::EngineBaselineStats::formula_plane_consumer_read_entries: usize
 pub formualizer_eval::engine::eval::EngineBaselineStats::formula_plane_cycle_member_span_demotions: u64
 pub formualizer_eval::engine::eval::EngineBaselineStats::formula_plane_dirty_global_invalidations: u64
@@ -6260,6 +6261,7 @@ pub formualizer_eval::engine::EngineBaselineStats::evaluation_vertex_count: usiz
 pub formualizer_eval::engine::EngineBaselineStats::formula_ast_node_count: usize
 pub formualizer_eval::engine::EngineBaselineStats::formula_ast_root_count: usize
 pub formualizer_eval::engine::EngineBaselineStats::formula_plane_active_span_count: usize
+pub formualizer_eval::engine::EngineBaselineStats::formula_plane_array_result_span_demotions: u64
 pub formualizer_eval::engine::EngineBaselineStats::formula_plane_consumer_read_entries: usize
 pub formualizer_eval::engine::EngineBaselineStats::formula_plane_cycle_member_span_demotions: u64
 pub formualizer_eval::engine::EngineBaselineStats::formula_plane_dirty_global_invalidations: u64
