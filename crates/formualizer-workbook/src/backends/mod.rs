@@ -2,7 +2,7 @@
 pub mod calamine;
 
 #[cfg(feature = "calamine")]
-pub use calamine::CalamineAdapter;
+pub use calamine::{CalamineAdapter, XlsxPathSource};
 
 #[cfg(feature = "json")]
 pub mod json;

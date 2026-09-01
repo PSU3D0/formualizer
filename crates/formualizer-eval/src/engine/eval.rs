@@ -13426,7 +13426,10 @@ where
             })
         }
 
-        /// Plan a conservative span split for a mid-domain insert. Returns
+        /// Plan a conservative span split at a mid-domain op boundary: an
+        /// insert that straddles the domain, or a delete that straddles it
+        /// with placements surviving on both sides of the deleted band and no
+        /// single relative-offset frame covering them (issue #171). Returns
         /// None whenever the split is not provably clean — missing template,
         /// masked span, non-trivial literal bindings, an unsplittable domain,
         /// a half that does not re-classify to NoOp (upper) / Shift (lower),
@@ -13656,6 +13659,13 @@ where
                     reason:
                         crate::formula_plane::structural_shift::SpanDemoteReason::DeletePartiallyOverlaps,
                 } => {
+                    let Some(template) = authority.plane.templates.get(span.template_id) else {
+                        return Err(ExcelError::new(ExcelErrorKind::Ref)
+                            .with_message(
+                                "FormulaPlane delete compaction found a span with a missing template",
+                            )
+                            .into());
+                    };
                     let binding_compaction_safe = span
                         .binding_set_id
                         .and_then(|id| authority.plane.binding_sets.get(id))
@@ -13669,8 +13679,24 @@ where
                             summary, op,
                         )
                     });
+                    // Compaction also keeps ONE relative-offset frame for the
+                    // whole surviving domain. When the delete displaces
+                    // placements and reads differently on either side of the
+                    // band, no single frame is right (issue #171) — fall
+                    // through to the split/demote path below.
+                    let compaction_frame_sound = read_summary.is_none_or(|summary| {
+                        crate::formula_plane::structural_shift::delete_compaction_frame_is_sound(
+                            summary,
+                            &span.domain,
+                            template.origin_row,
+                            template.origin_col,
+                            op,
+                        )
+                    });
+                    let mut compaction_plan = None;
                     if binding_compaction_safe
                         && absolute_reads_compaction_safe
+                        && compaction_frame_sound
                         && let Some(new_domain) = compact_domain_through_delete(&span.domain, op)
                     {
                         let new_result_region = Region::from_domain(&new_domain);
@@ -13678,13 +13704,6 @@ where
                             compact_read_summary_through_delete(summary, new_result_region, op)
                         } else {
                             None
-                        };
-                        let Some(template) = authority.plane.templates.get(span.template_id) else {
-                            return Err(ExcelError::new(ExcelErrorKind::Ref)
-                                .with_message(
-                                    "FormulaPlane delete compaction found a span with a missing template",
-                                )
-                                .into());
                         };
                         let carried_origin =
                             origin_through_delete(template.origin_row, template.origin_col, op);
@@ -13701,7 +13720,7 @@ where
                                 });
                             let dirty_region =
                                 Self::structural_dirty_region_for_domain(&new_domain, op);
-                            shift_plans.push(ShiftPlan {
+                            compaction_plan = Some(ShiftPlan {
                                 span_ref,
                                 template_id: span.template_id,
                                 new_origin_row,
@@ -13713,11 +13732,28 @@ where
                                 rewrite: None,
                                 dirty_region,
                             });
-                        } else {
-                            demote_refs.push(span_ref);
                         }
-                    } else {
-                        demote_refs.push(span_ref);
+                    }
+                    match compaction_plan {
+                        Some(plan) => shift_plans.push(plan),
+                        // Compaction cannot express the post-delete frame.
+                        // Try the same split the insert path uses — an
+                        // untouched upper half plus a shifted lower half,
+                        // each re-classified in its own frame — and demote
+                        // the whole span when the split is not provably
+                        // clean (issue #171).
+                        None => match plan_span_split(authority, span, span_ref, read_summary, op) {
+                            Some(mut plan) => {
+                                plan.upper_dirty_region =
+                                    Self::structural_dirty_region_for_domain(&plan.upper_domain, op);
+                                plan.lower_dirty_region = Self::structural_dirty_region_for_domain(
+                                    &plan.lower_new_domain,
+                                    op,
+                                );
+                                split_plans.push(plan);
+                            }
+                            None => demote_refs.push(span_ref),
+                        },
                     }
                 }
                 SpanShiftPlan::Demote { .. } => {
