@@ -63,8 +63,8 @@ This ledger is the standing record of both. It is **updated per merge**: any PR 
 | 3-D references (`Sheet1:Sheet3!A1`) | `rejected-by-policy` | 0% | Sheet-set enumeration not modeled by read projections. |
 | **External references** (`[1]Sheet1!A1`) | `rejected-by-policy` | 0% | `template_canonical.rs:937`, unconditional, on the path every ingest route traverses. Tracked as issue **#378**; documented policy, no work item. |
 | Unregistered / custom functions | `rejected-by-policy` | 0% | `UnknownOrCustomFunction` — fail-closed default. |
-| `CELL` | `pending-merge` (#329) | n/a | Not implemented; currently rejects as `unknown_or_custom_function`. **Must register with `FunctionContextDependence::WorkbookMetadata` or `PlacementDependent`.** Registering it as `None` makes it span-admitted, and every member of a span returns the *anchor* cell's answer. Highest-risk registration decision in #329. |
-| `HYPERLINK` | `pending-merge` (#329) | n/a | Not implemented. Natural scalar-text registration makes it span-eligible, which is fine for the value channel. Its display/link side-channel **must** ride the transactional `ComputedWriteBuffer` channel used by span results, or `HYPERLINK` must carry `FunctionContextDependence` to force rejection. |
+| `CELL` | `rejected-by-policy` | 0% | Registers `FunctionContextDependence::WorkbookMetadata`, so canonicalization rejects it as `ContextDependentFunction` before span admission. This is the constraint #329 had to satisfy: registering `None` would have span-admitted it and every member of a span would return the *anchor* cell's answer. Pinned by `cell_is_not_plane_eligible_via_context_dependence_contract` (template_canonical.rs). |
+| `HYPERLINK` | `accepted` | 100% | Value-channel only: `eval` ignores `ctx` and returns a scalar derived solely from its arguments, so there is no side channel that could bypass the span result path. Span admission is therefore safe by construction, not by a checked invariant that could later drift. |
 
 ## B. Structural / placement classes
 
@@ -120,7 +120,7 @@ Enumerated in `CanonicalRejectKind` with diagnostics labels, but **never constru
 | #340 XLOOKUP class rules | `35cd2376` | **PLANE-NEUTRAL** | XLOOKUP/XMATCH plane-rejected via `MAY_SPILL`. |
 | #377 review asks / `precise_dispatch` | `60c0afad` | **PLANE-NEUTRAL** | No `formula_plane/` file touched; the lone eval.rs change is a cosmetic formatter guard. `CHOOSE` changes are span-reachable but neutral by shared interpreter. |
 | #363 external refs → #378 | — | **PLANE-NEUTRAL** | `rejected-by-policy`; site verified template_canonical.rs:937. |
-| #329 CELL / HYPERLINK | *unmerged* | **PENDING** | Pre-registration constraints in §A. |
+| #329 CELL / HYPERLINK | PR #329 | **PLANE-ALIGNED** | `CELL` registers `FunctionContextDependence::WorkbookMetadata` and is rejected at canonicalization as `ContextDependentFunction`, pinned by `cell_is_not_plane_eligible_via_context_dependence_contract`. `HYPERLINK` is value-channel only — `eval` ignores `ctx` and returns a scalar — so no side channel exists and span admission is safe by construction. |
 | `fix/fp-format-broadcast-parity` | `0ef92be3` | **PLANE-ALIGNED** | Preserves formats across span broadcasts. |
 | `fix/fp-gate-mode-conjuncts` | `bc0c5bb0` | **PLANE-ALIGNED (bug fix)** | `FormulaPlaneMode::Off` now actually disables plane authority. |
 | `fix/name-redefine-healing` | `81560db7` | **PLANE-ALIGNED** | Redefined names heal dependents. |
