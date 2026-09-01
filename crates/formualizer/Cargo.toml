@@ -34,7 +34,7 @@ tracing_chrome = ["tracing", "formualizer-eval/tracing_chrome"]
 system-clock = [
   "formualizer-eval/system-clock",
   "formualizer-workbook/system-clock",
-  "formualizer-sheetport/system-clock",
+  "formualizer-sheetport?/system-clock",
 ]
 
 # js-runtime: browser/wasm-bindgen execution environment — activates web-time
@@ -42,7 +42,7 @@ system-clock = [
 js-runtime = [
   "formualizer-eval/js-runtime",
   "formualizer-workbook/js-runtime",
-  "formualizer-sheetport/js-runtime",
+  "formualizer-sheetport?/js-runtime",
 ]
 
 # --- Named top-level presets ---
