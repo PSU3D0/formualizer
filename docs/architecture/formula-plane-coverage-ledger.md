@@ -1,7 +1,7 @@
 # FormulaPlane Coverage Ledger
 
 **Status:** Standing architecture ledger
-**Last audited commit:** `bf2b1f8b`
+**Last audited commit:** `a238d067`
 **Last audited:** 2026-08-29
 
 ---
@@ -81,6 +81,8 @@ This ledger is the standing record of both. It is **updated per merge**: any PR 
 | Unresolvable sheet binding | `rejected-by-policy` | `UnknownSheetBinding` — preserves legacy `#REF!`. |
 | Undefined / Literal / Formula-backed names | `rejected-by-policy` | `UnsupportedNamedReference` — preserves `#NAME?` and named-formula semantics. |
 | Structural shifts straddling a span | `rejected-by-policy` | `SpanShiftPlan::Demote` family (`structural_shift.rs`) — demote to the per-cell adjuster. |
+| Mid-domain row/column **insert** straddling a span | `accepted` | `SpanShiftPlan::Split` + `plan_span_split` — an untouched upper half and a shifted lower half, each re-classified in its own frame; not-provably-clean splits demote. |
+| Row/column **delete** straddling a span's result domain | `accepted` (guarded) | Compaction keeps one span only when the surviving domain is expressible in one relative-offset frame: `delete_compaction_frame_is_sound` requires `d_r == d_p - d_o` (read / placement / origin displacement) for every relative read bound of every surviving placement, and refuses a read bound landing inside the deleted band. Otherwise the span splits at the band like an insert; if the split is not provably clean — or only one side of the band survives and its frame does not hold — it demotes. Before this rule compaction copied the projection verbatim while moving the origin, so a span reading *above* a mid-domain delete served the pre-delete formula on every placement below the band (#171). |
 
 ## C. Cross-cutting mechanisms
 
@@ -140,6 +142,8 @@ Enumerated in `CanonicalRejectKind` with diagnostics labels, but **never constru
 | WI-2 | Span evaluation silently collapses array results to top-left with no backstop | Medium — latent, high blast radius |
 | WI-3 | Anchor-side capability gate not updated for the reference-returning admission | Low — consistency |
 | WI-4 | Dependency-summary parity oracle skips whole-axis / open-rect dependencies | Low — audit completeness |
+| WI-6 | Delete-compaction ignored the placement/read/origin displacement identity; `legacy_island_structural_summaries_trusted` is pinned `false` after every axis op as the standing mitigation | **Closed for the span path** — `delete_compaction_frame_is_sound` gates compaction and the delete split covers the two-sided case (#171). The trust flag is deliberately left `false` in that fix: re-enabling it needs a separate audit of the *legacy island* summaries, which this change does not touch. **→ WI-7** |
+| WI-7 | Re-enable `legacy_island_structural_summaries_trusted` after an axis op | Low — perf, not correctness. Blocked on a legacy-island (non-span) structural summary audit; the #171 span-side blocker is cleared |
 | WI-5 | Formatted legacy result admitted into a General span had no stale-clear regression pin | **Closed** — source-format-lane read parity and post-preflight purge timing are pinned alongside DATE→General, Point/sparse/mixed clears, deterministic mid-span cancellation, typed commit failure, and 100k virgin-lane counters |
 
 Full statements in `/tmp/formualizer-span-coverage-audit.md` §6.
