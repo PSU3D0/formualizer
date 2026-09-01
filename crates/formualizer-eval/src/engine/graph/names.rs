@@ -413,10 +413,12 @@ impl DependencyGraph {
         };
 
         if let Some(dependents) = dependents_to_dirty {
-            // Mark all dependents as dirty
-            for vertex_id in dependents {
-                self.mark_vertex_dirty(vertex_id);
-            }
+            // Dirty every dependent WITH propagation (#365). A dependent may
+            // itself be a formula-backed name vertex; everything downstream of
+            // it has to recompute against the new binding. A non-propagating
+            // mark stops after one hop and leaves cells that read the
+            // dependent name serving stale values.
+            self.mark_dirty_many(&dependents);
 
             // Now update the definition
             let named_range = match scope {
@@ -444,13 +446,15 @@ impl DependencyGraph {
                 } else {
                     self.store.set_kind(vertex, VertexKind::NamedScalar);
                 }
-                self.mark_vertex_dirty(vertex);
 
                 let referenced_names =
                     self.rebuild_name_dependencies(vertex, &definition_snapshot, scope_value)?;
                 if !referenced_names.is_empty() {
                     self.attach_vertex_to_names(vertex, &referenced_names);
                 }
+                // Propagate from the rebound name vertex itself, after its
+                // edges are current, so the transitive closure is reached.
+                self.mark_dirty_many(&[vertex]);
             }
 
             self.bump_symbol_revision();
@@ -498,8 +502,25 @@ impl DependencyGraph {
                 .filter(|&&vertex_id| self.get_cell_ref_for_vertex(vertex_id).is_some())
                 .filter_map(|&vertex_id| self.get_formula(vertex_id).map(|ast| (vertex_id, ast)))
                 .collect::<Vec<_>>();
+            // Symbol (name) vertices are excluded from `formulas_to_rebuild`
+            // by the cell-ref filter above, but a formula-backed name that
+            // referenced the deleted name needs the same treatment (#365):
+            // its dependency edges must be re-extracted so it re-resolves to
+            // #NAME? now and can be healed by a later define.
+            let names_to_rebuild = affected
+                .iter()
+                .filter(|&&vertex_id| vertex_id != named_range.vertex)
+                .filter_map(|&vertex_id| {
+                    self.named_range_by_vertex(vertex_id)
+                        .map(|nr| (vertex_id, nr.definition.clone(), nr.scope))
+                })
+                .collect::<Vec<_>>();
+            let dirty_sources = affected
+                .iter()
+                .copied()
+                .filter(|&vertex_id| vertex_id != named_range.vertex)
+                .collect::<Vec<_>>();
             for vertex_id in affected {
-                self.mark_vertex_dirty(vertex_id);
                 if let Some(names) = self.vertex_to_names.get_mut(&vertex_id) {
                     names.retain(|vid| *vid != named_range.vertex);
                     if names.is_empty() {
@@ -515,6 +536,17 @@ impl DependencyGraph {
             for (vertex_id, ast) in formulas_to_rebuild {
                 self.rebuild_formula_dependencies(vertex_id, &ast);
             }
+            for (vertex_id, definition, name_scope) in names_to_rebuild {
+                let referenced_names =
+                    self.rebuild_name_dependencies(vertex_id, &definition, name_scope)?;
+                if !referenced_names.is_empty() {
+                    self.attach_vertex_to_names(vertex_id, &referenced_names);
+                }
+            }
+            // Dirty the affected set WITH propagation, once every dependency
+            // edge above is current, so cells reading a formula-backed
+            // dependent name recompute instead of serving a cached value.
+            self.mark_dirty_many(&dirty_sources);
             self.bump_symbol_revision();
             Ok(())
         } else {

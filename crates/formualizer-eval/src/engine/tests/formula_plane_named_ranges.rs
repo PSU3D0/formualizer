@@ -1126,3 +1126,217 @@ fn direct_name_update_demotes_disjoint_spans_as_one_retryable_batch() {
         Some(LiteralValue::Number(_))
     ));
 }
+
+// ---------------------------------------------------------------------------
+// Regression: name -> name invalidation (#365).
+//
+// A formula-backed name is itself a graph vertex whose dependents are real
+// edges. Deleting (or rebinding) a name it references must propagate PAST the
+// dependent name to everything downstream of it, exactly like a grid formula.
+// ---------------------------------------------------------------------------
+
+fn formula_def(formula: &str) -> NamedDefinition {
+    NamedDefinition::Formula {
+        ast: parse(formula).unwrap_or_else(|err| panic!("parse {formula}: {err}")),
+        dependencies: Vec::new(),
+        range_deps: Vec::new(),
+    }
+}
+
+fn assert_name_error(label: &str, engine: &Engine<TestWorkbook>, row: u32, col: u32) {
+    match engine.get_cell_value(SHEET, row, col) {
+        Some(LiteralValue::Error(err)) => assert_eq!(
+            err.kind,
+            formualizer_common::ExcelErrorKind::Name,
+            "{label}: expected #NAME? at R{row}C{col}, got {err:?}"
+        ),
+        other => panic!("{label}: expected #NAME? at R{row}C{col}, got {other:?}"),
+    }
+}
+
+/// Issue #365 repro: `C1 = B_name`, `B_name = A_name*2`, `A_name -> $A$1`.
+/// Deleting `A_name` must cascade through `B_name` to `C1`.
+#[test]
+fn delete_name_cascades_through_formula_backed_dependent_name() {
+    let mut engine = engine_with_mode(FormulaPlaneMode::Off);
+    engine
+        .set_cell_value(SHEET, 1, 1, LiteralValue::Number(1.0))
+        .unwrap();
+    let a1 = cell_ref(&mut engine, SHEET, 1, 1);
+    engine
+        .define_name("A_name", NamedDefinition::Cell(a1), NameScope::Workbook)
+        .unwrap();
+    engine
+        .define_name("B_name", formula_def("=A_name*2"), NameScope::Workbook)
+        .unwrap();
+    engine
+        .set_cell_formula(SHEET, 1, 3, parse("=B_name").unwrap())
+        .unwrap();
+
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value(SHEET, 1, 3),
+        Some(LiteralValue::Number(2.0))
+    );
+
+    engine.delete_name("A_name", NameScope::Workbook).unwrap();
+    engine.evaluate_all().unwrap();
+    assert_name_error("after delete_name", &engine, 1, 3);
+}
+
+/// The same cascade must reach a two-level name chain
+/// (`A_name` -> `B_name` -> `C_name` -> cell).
+#[test]
+fn delete_name_cascades_through_two_level_name_chain() {
+    let mut engine = engine_with_mode(FormulaPlaneMode::Off);
+    engine
+        .set_cell_value(SHEET, 1, 1, LiteralValue::Number(3.0))
+        .unwrap();
+    let a1 = cell_ref(&mut engine, SHEET, 1, 1);
+    engine
+        .define_name("A_name", NamedDefinition::Cell(a1), NameScope::Workbook)
+        .unwrap();
+    engine
+        .define_name("B_name", formula_def("=A_name*2"), NameScope::Workbook)
+        .unwrap();
+    engine
+        .define_name("C_name", formula_def("=B_name+1"), NameScope::Workbook)
+        .unwrap();
+    engine
+        .set_cell_formula(SHEET, 1, 3, parse("=C_name").unwrap())
+        .unwrap();
+
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value(SHEET, 1, 3),
+        Some(LiteralValue::Number(7.0))
+    );
+
+    engine.delete_name("A_name", NameScope::Workbook).unwrap();
+    engine.evaluate_all().unwrap();
+    assert_name_error("after delete_name (chain)", &engine, 1, 3);
+}
+
+/// Rebinding a name must cascade the same way (`update_name` shared the
+/// one-hop, non-propagating dirty loop with `delete_name`).
+#[test]
+fn update_name_cascades_through_formula_backed_dependent_name() {
+    let mut engine = engine_with_mode(FormulaPlaneMode::Off);
+    engine
+        .set_cell_value(SHEET, 1, 1, LiteralValue::Number(1.0))
+        .unwrap();
+    let a1 = cell_ref(&mut engine, SHEET, 1, 1);
+    engine
+        .define_name("A_name", NamedDefinition::Cell(a1), NameScope::Workbook)
+        .unwrap();
+    engine
+        .define_name("B_name", formula_def("=A_name*2"), NameScope::Workbook)
+        .unwrap();
+    engine
+        .set_cell_formula(SHEET, 1, 3, parse("=B_name").unwrap())
+        .unwrap();
+
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value(SHEET, 1, 3),
+        Some(LiteralValue::Number(2.0))
+    );
+
+    engine
+        .update_name(
+            "A_name",
+            NamedDefinition::Literal(LiteralValue::Number(100.0)),
+            NameScope::Workbook,
+        )
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value(SHEET, 1, 3),
+        Some(LiteralValue::Number(200.0)),
+        "rebinding A_name must flow through the formula-backed B_name"
+    );
+}
+
+/// Sheet-scoped variant of the #365 repro.
+#[test]
+fn delete_sheet_scoped_name_cascades_through_dependent_name() {
+    let mut engine = engine_with_mode(FormulaPlaneMode::Off);
+    engine
+        .set_cell_value(SHEET, 1, 1, LiteralValue::Number(4.0))
+        .unwrap();
+    let a1 = cell_ref(&mut engine, SHEET, 1, 1);
+    let sheet_id = engine.graph.sheet_id_mut(SHEET);
+    engine
+        .define_name(
+            "A_name",
+            NamedDefinition::Cell(a1),
+            NameScope::Sheet(sheet_id),
+        )
+        .unwrap();
+    engine
+        .define_name(
+            "B_name",
+            formula_def("=A_name*2"),
+            NameScope::Sheet(sheet_id),
+        )
+        .unwrap();
+    engine
+        .set_cell_formula(SHEET, 1, 3, parse("=B_name").unwrap())
+        .unwrap();
+
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value(SHEET, 1, 3),
+        Some(LiteralValue::Number(8.0))
+    );
+
+    engine
+        .delete_name("A_name", NameScope::Sheet(sheet_id))
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_name_error("after sheet-scoped delete_name", &engine, 1, 3);
+}
+
+/// Plane parity for the transitive case. A template referencing a
+/// formula-backed name (`B_name`) never promotes: `NamedDefinition::Formula`
+/// falls back with `UnsupportedNamedReference`, exactly like
+/// `literal_and_undefined_names_fall_back_with_precise_reason`. So the family
+/// stays on the legacy path in both modes, and what this pins is that
+/// AuthoritativeExperimental yields identical #NAME? results to Off once
+/// `A_name` is deleted -- the plane adds no second staleness path on top of
+/// the graph-level fix.
+#[test]
+fn delete_name_invalidates_dependent_name_consumers_under_plane_parity() {
+    let mut auth = engine_with_mode(FormulaPlaneMode::AuthoritativeExperimental);
+    let mut off = engine_with_mode(FormulaPlaneMode::Off);
+    for engine in [&mut auth, &mut off] {
+        seed_named_workbook(engine);
+        let a1 = cell_ref(engine, SHEET, 1, 1);
+        engine
+            .define_name("A_name", NamedDefinition::Cell(a1), NameScope::Workbook)
+            .unwrap();
+        engine
+            .define_name("B_name", formula_def("=A_name*2"), NameScope::Workbook)
+            .unwrap();
+    }
+    let report = ingest_column(&mut auth, SHEET, 3, |r| format!("=B_name+A{r}"));
+    let _ = ingest_column(&mut off, SHEET, 3, |r| format!("=B_name+A{r}"));
+    assert_eq!(
+        report.shadow_accepted_span_cells, 0,
+        "formula-backed names are not span-eligible; histogram: {:?}",
+        report.fallback_reasons
+    );
+
+    auth.evaluate_all().unwrap();
+    off.evaluate_all().unwrap();
+    assert_column_parity("before delete of transitive name", SHEET, 3, &auth, &off);
+
+    for engine in [&mut auth, &mut off] {
+        engine.delete_name("A_name", NameScope::Workbook).unwrap();
+    }
+    auth.evaluate_all().unwrap();
+    off.evaluate_all().unwrap();
+    assert_column_parity("after delete of transitive name", SHEET, 3, &auth, &off);
+    assert_name_error("off ground truth", &off, FIRST_ROW, 3);
+    assert_name_error("auth plane", &auth, FIRST_ROW, 3);
+}
