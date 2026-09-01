@@ -1,0 +1,97 @@
+name: FormulaPlane Parity Gate
+
+# Standing acceptance gate for the plane-authoritative cutover: everything the
+# FormulaPlane accepts must evaluate identically to the legacy per-cell graph.
+# See docs/architecture/formula-plane-coverage-ledger.md §G.
+#
+# The main CI Rust job runs `cargo test --workspace --exclude
+# formualizer-bench-core`, so neither the parity harness test nor the audit
+# probes are covered there. This workflow covers them.
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  formula-plane-parity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: 1.93.0
+        components: clippy
+
+    - name: Cache Rust dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/
+        key: ${{ runner.os }}-cargo-fp-parity-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-fp-parity-
+          ${{ runner.os }}-cargo-
+
+    - name: Clippy (formualizer-bench-core, runner feature)
+      run: >-
+        cargo clippy -p formualizer-bench-core
+        --features formualizer_runner --all-targets -- -D warnings
+
+    - name: Build parity probes (release)
+      run: >-
+        cargo build -p formualizer-bench-core --release
+        --features formualizer_runner
+        --bin probe-fp-audit2 --bin probe-corpus-parity
+
+    - name: Per-class Off-vs-Authoritative differential (probe-fp-audit2)
+      # Acceptance gate: total_divergent_cells == 0. The probe exits non-zero
+      # otherwise. Baseline on main: 19 classes, 3800 cells, 0 divergent.
+      run: |
+        set -euo pipefail
+        ./target/release/probe-fp-audit2 --rows 200 > fp-audit2.json
+
+    - name: Full-cell parity harness smoke test
+      run: >-
+        cargo test -p formualizer-bench-core
+        --features formualizer_runner
+        --test parity_harness_smoke
+
+    - name: Scenario-corpus Off-vs-Authoritative parity (probe-corpus-parity)
+      # `--scale small` over the synthetic scenario registry: 81 scenarios,
+      # ~20s wall clock. s040/s041/s042 are excluded because they fail with
+      # HarnessError (missing public Workbook APIs for undoable row inserts,
+      # native table extension and external-source declaration), not with
+      # divergences.
+      run: >-
+        ./target/release/probe-corpus-parity
+        --scale small
+        --exclude 's040-*,s041-*,s042-*'
+
+    - name: Upload parity artifacts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: formula-plane-parity
+        path: |
+          fp-audit2.json
+          target/scenario-corpus/parity/parity/
+        if-no-files-found: warn
