@@ -15,9 +15,24 @@ pub use formualizer_workbook::TargetEvalOptions
 pub use formualizer_workbook::WorkbookLoadLimits
 pub mod formualizer_workbook::backends
 pub mod formualizer_workbook::backends::calamine
+pub enum formualizer_workbook::backends::calamine::XlsxPathSource
+pub formualizer_workbook::backends::calamine::XlsxPathSource::DirectMmap
+pub formualizer_workbook::backends::calamine::XlsxPathSource::SharedFile
+impl core::clone::Clone for formualizer_workbook::backends::calamine::XlsxPathSource
+pub fn formualizer_workbook::backends::calamine::XlsxPathSource::clone(&self) -> formualizer_workbook::backends::calamine::XlsxPathSource
+impl core::cmp::Eq for formualizer_workbook::backends::calamine::XlsxPathSource
+impl core::cmp::PartialEq for formualizer_workbook::backends::calamine::XlsxPathSource
+pub fn formualizer_workbook::backends::calamine::XlsxPathSource::eq(&self, &formualizer_workbook::backends::calamine::XlsxPathSource) -> bool
+impl core::default::Default for formualizer_workbook::backends::calamine::XlsxPathSource
+pub fn formualizer_workbook::backends::calamine::XlsxPathSource::default() -> formualizer_workbook::backends::calamine::XlsxPathSource
+impl core::fmt::Debug for formualizer_workbook::backends::calamine::XlsxPathSource
+pub fn formualizer_workbook::backends::calamine::XlsxPathSource::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_workbook::backends::calamine::XlsxPathSource
+impl core::marker::StructuralPartialEq for formualizer_workbook::backends::calamine::XlsxPathSource
 pub struct formualizer_workbook::backends::calamine::CalamineAdapter
 impl formualizer_workbook::backends::calamine::CalamineAdapter
 pub fn formualizer_workbook::backends::calamine::CalamineAdapter::external_link_target(&self, u32) -> core::option::Option<&str>
+pub fn formualizer_workbook::backends::calamine::CalamineAdapter::open_path_with_source<P: core::convert::AsRef<std::path::Path>>(P, formualizer_workbook::backends::calamine::XlsxPathSource) -> core::result::Result<Self, calamine::errors::Error>
 impl formualizer_workbook::traits::SpreadsheetReader for formualizer_workbook::backends::calamine::CalamineAdapter
 pub type formualizer_workbook::backends::calamine::CalamineAdapter::Error = calamine::errors::Error
 pub fn formualizer_workbook::backends::calamine::CalamineAdapter::access_granularity(&self) -> formualizer_workbook::traits::AccessGranularity
@@ -319,9 +334,24 @@ pub fn formualizer_workbook::backends::umya::UmyaAdapter::write_to<W: std::io::W
 impl<R> formualizer_eval::engine::ingest::EngineLoadStream<R> for formualizer_workbook::backends::umya::UmyaAdapter where R: formualizer_eval::traits::EvaluationContext
 pub type formualizer_workbook::backends::umya::UmyaAdapter::Error = formualizer_workbook::error::IoError
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::stream_into_engine(&mut self, &mut formualizer_eval::engine::eval::Engine<R>) -> core::result::Result<(), Self::Error>
+pub enum formualizer_workbook::backends::XlsxPathSource
+pub formualizer_workbook::backends::XlsxPathSource::DirectMmap
+pub formualizer_workbook::backends::XlsxPathSource::SharedFile
+impl core::clone::Clone for formualizer_workbook::backends::calamine::XlsxPathSource
+pub fn formualizer_workbook::backends::calamine::XlsxPathSource::clone(&self) -> formualizer_workbook::backends::calamine::XlsxPathSource
+impl core::cmp::Eq for formualizer_workbook::backends::calamine::XlsxPathSource
+impl core::cmp::PartialEq for formualizer_workbook::backends::calamine::XlsxPathSource
+pub fn formualizer_workbook::backends::calamine::XlsxPathSource::eq(&self, &formualizer_workbook::backends::calamine::XlsxPathSource) -> bool
+impl core::default::Default for formualizer_workbook::backends::calamine::XlsxPathSource
+pub fn formualizer_workbook::backends::calamine::XlsxPathSource::default() -> formualizer_workbook::backends::calamine::XlsxPathSource
+impl core::fmt::Debug for formualizer_workbook::backends::calamine::XlsxPathSource
+pub fn formualizer_workbook::backends::calamine::XlsxPathSource::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_workbook::backends::calamine::XlsxPathSource
+impl core::marker::StructuralPartialEq for formualizer_workbook::backends::calamine::XlsxPathSource
 pub struct formualizer_workbook::backends::CalamineAdapter
 impl formualizer_workbook::backends::calamine::CalamineAdapter
 pub fn formualizer_workbook::backends::calamine::CalamineAdapter::external_link_target(&self, u32) -> core::option::Option<&str>
+pub fn formualizer_workbook::backends::calamine::CalamineAdapter::open_path_with_source<P: core::convert::AsRef<std::path::Path>>(P, formualizer_workbook::backends::calamine::XlsxPathSource) -> core::result::Result<Self, calamine::errors::Error>
 impl formualizer_workbook::traits::SpreadsheetReader for formualizer_workbook::backends::calamine::CalamineAdapter
 pub type formualizer_workbook::backends::calamine::CalamineAdapter::Error = calamine::errors::Error
 pub fn formualizer_workbook::backends::calamine::CalamineAdapter::access_granularity(&self) -> formualizer_workbook::traits::AccessGranularity
@@ -1602,6 +1632,20 @@ impl core::clone::Clone for formualizer_workbook::transaction::WriteOp
 pub fn formualizer_workbook::transaction::WriteOp::clone(&self) -> formualizer_workbook::transaction::WriteOp
 impl core::fmt::Debug for formualizer_workbook::transaction::WriteOp
 pub fn formualizer_workbook::transaction::WriteOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub enum formualizer_workbook::XlsxPathSource
+pub formualizer_workbook::XlsxPathSource::DirectMmap
+pub formualizer_workbook::XlsxPathSource::SharedFile
+impl core::clone::Clone for formualizer_workbook::backends::calamine::XlsxPathSource
+pub fn formualizer_workbook::backends::calamine::XlsxPathSource::clone(&self) -> formualizer_workbook::backends::calamine::XlsxPathSource
+impl core::cmp::Eq for formualizer_workbook::backends::calamine::XlsxPathSource
+impl core::cmp::PartialEq for formualizer_workbook::backends::calamine::XlsxPathSource
+pub fn formualizer_workbook::backends::calamine::XlsxPathSource::eq(&self, &formualizer_workbook::backends::calamine::XlsxPathSource) -> bool
+impl core::default::Default for formualizer_workbook::backends::calamine::XlsxPathSource
+pub fn formualizer_workbook::backends::calamine::XlsxPathSource::default() -> formualizer_workbook::backends::calamine::XlsxPathSource
+impl core::fmt::Debug for formualizer_workbook::backends::calamine::XlsxPathSource
+pub fn formualizer_workbook::backends::calamine::XlsxPathSource::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_workbook::backends::calamine::XlsxPathSource
+impl core::marker::StructuralPartialEq for formualizer_workbook::backends::calamine::XlsxPathSource
 pub struct formualizer_workbook::AdapterLoadStats
 pub formualizer_workbook::AdapterLoadStats::formula_cells_handed_to_engine: core::option::Option<u64>
 pub formualizer_workbook::AdapterLoadStats::formula_cells_observed: core::option::Option<u64>
@@ -1644,6 +1688,7 @@ pub fn formualizer_workbook::traits::BackendCaps::fmt(&self, &mut core::fmt::For
 pub struct formualizer_workbook::CalamineAdapter
 impl formualizer_workbook::backends::calamine::CalamineAdapter
 pub fn formualizer_workbook::backends::calamine::CalamineAdapter::external_link_target(&self, u32) -> core::option::Option<&str>
+pub fn formualizer_workbook::backends::calamine::CalamineAdapter::open_path_with_source<P: core::convert::AsRef<std::path::Path>>(P, formualizer_workbook::backends::calamine::XlsxPathSource) -> core::result::Result<Self, calamine::errors::Error>
 impl formualizer_workbook::traits::SpreadsheetReader for formualizer_workbook::backends::calamine::CalamineAdapter
 pub type formualizer_workbook::backends::calamine::CalamineAdapter::Error = calamine::errors::Error
 pub fn formualizer_workbook::backends::calamine::CalamineAdapter::access_granularity(&self) -> formualizer_workbook::traits::AccessGranularity

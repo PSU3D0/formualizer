@@ -44,7 +44,7 @@ mod value;
 mod workbook;
 
 use ast::PyASTNode;
-use enums::PyFormulaDialect;
+use enums::{PyFormulaDialect, PyXlsxPathSource};
 use tokenizer::PyTokenizer;
 
 /// Tokenize a formula string into a structured [`Tokenizer`].
@@ -116,12 +116,19 @@ fn parse(formula: &str, dialect: Option<PyFormulaDialect>) -> PyResult<PyASTNode
 ///     path: Path to an `.xlsx` file.
 ///     strategy: Currently accepted for backward compatibility.
 ///         (The backend/strategy is currently fixed to `calamine` + eager load.)
+///     path_source: `XlsxPathSource.SHARED_FILE` (the safe default) or
+///         `XlsxPathSource.DIRECT_MMAP`. Direct mmap retains an actual read-only
+///         mapping; the underlying file must not be destructively modified or
+///         truncated while the workbook loads.
 ///
 /// Example:
 /// ```python
 ///     import formualizer as fz
 ///
-///     wb = fz.load_workbook("financial_model.xlsx")
+///     wb = fz.load_workbook(
+///         "financial_model.xlsx",
+///         path_source=fz.XlsxPathSource.DIRECT_MMAP,
+///     )
 ///     print(wb.evaluate_cell("Summary", 1, 2))
 /// ```
 #[cfg_attr(
@@ -129,11 +136,12 @@ fn parse(formula: &str, dialect: Option<PyFormulaDialect>) -> PyResult<PyASTNode
     gen_stub_pyfunction(module = "formualizer.formualizer_py")
 )]
 #[pyfunction]
-#[pyo3(signature = (path, strategy=None, *, span_evaluation=None))]
+#[pyo3(signature = (path, strategy=None, *, path_source=None, span_evaluation=None))]
 fn load_workbook(
     py: Python,
     path: &str,
     strategy: Option<&str>,
+    path_source: Option<PyXlsxPathSource>,
     span_evaluation: Option<bool>,
 ) -> PyResult<workbook::PyWorkbook> {
     // Backward-compat convenience
@@ -142,6 +150,7 @@ fn load_workbook(
         &py.get_type::<workbook::PyWorkbook>(),
         path,
         Some("calamine"),
+        path_source,
         None,
         None,
         span_evaluation,

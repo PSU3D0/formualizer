@@ -62,6 +62,7 @@ __all__ = [
     "Workbook",
     "WorkbookConfig",
     "WorkbookMode",
+    "XlsxPathSource",
     "load_workbook",
     "load_workbook_bytes",
     "parse",
@@ -1544,7 +1545,7 @@ class Workbook:
         """
     def __new__(cls, *, mode: typing.Optional[WorkbookMode] = None, config: typing.Optional[WorkbookConfig] = None, span_evaluation: typing.Optional[builtins.bool] = None) -> Workbook: ...
     @classmethod
-    def load_path(cls, path: builtins.str, strategy: typing.Optional[builtins.str] = None, backend: typing.Optional[builtins.str] = None, *, mode: typing.Optional[WorkbookMode] = None, config: typing.Optional[WorkbookConfig] = None, span_evaluation: typing.Optional[builtins.bool] = None) -> Workbook:
+    def load_path(cls, path: builtins.str, strategy: typing.Optional[builtins.str] = None, backend: typing.Optional[builtins.str] = None, *, path_source: typing.Optional[XlsxPathSource] = None, mode: typing.Optional[WorkbookMode] = None, config: typing.Optional[WorkbookConfig] = None, span_evaluation: typing.Optional[builtins.bool] = None) -> Workbook:
         r"""
         Class method: load an XLSX workbook from a file path.
         
@@ -1553,13 +1554,19 @@ class Workbook:
         Args:
             path: Path to the `.xlsx` file.
             backend: Backend name (currently defaults to `calamine`).
+            path_source: `XlsxPathSource.SHARED_FILE` (the safe default) or
+                `XlsxPathSource.DIRECT_MMAP`. Direct mmap requires a native
+                Calamine `.xlsx` path whose underlying file is not destructively
+                modified or truncated while the workbook loads.
             mode/config: Optional workbook configuration.
         
         Example:
         ```python
             import formualizer as fz
         
-            wb = fz.Workbook.load_path("model.xlsx")
+            wb = fz.Workbook.load_path(
+                "model.xlsx", path_source=fz.XlsxPathSource.DIRECT_MMAP
+            )
             print(wb.sheet_names)
         ```
         """
@@ -1583,7 +1590,7 @@ class Workbook:
         ```
         """
     @classmethod
-    def from_path(cls, path: builtins.str, backend: typing.Optional[builtins.str] = None, *, mode: typing.Optional[WorkbookMode] = None, config: typing.Optional[WorkbookConfig] = None, span_evaluation: typing.Optional[builtins.bool] = None) -> Workbook: ...
+    def from_path(cls, path: builtins.str, backend: typing.Optional[builtins.str] = None, *, path_source: typing.Optional[XlsxPathSource] = None, mode: typing.Optional[WorkbookMode] = None, config: typing.Optional[WorkbookConfig] = None, span_evaluation: typing.Optional[builtins.bool] = None) -> Workbook: ...
     @classmethod
     def from_bytes(cls, data: bytes, backend: typing.Optional[builtins.str] = None, *, mode: typing.Optional[WorkbookMode] = None, config: typing.Optional[WorkbookConfig] = None, span_evaluation: typing.Optional[builtins.bool] = None) -> Workbook:
         r"""
@@ -2046,7 +2053,24 @@ class WorkbookMode(enum.Enum):
     def __str__(self) -> builtins.str: ...
     def __repr__(self) -> builtins.str: ...
 
-def load_workbook(path: builtins.str, strategy: typing.Optional[builtins.str] = None, *, span_evaluation: typing.Optional[builtins.bool] = None) -> Workbook:
+@typing.final
+class XlsxPathSource(enum.Enum):
+    r"""
+    XLSX filesystem backing source used by Calamine path loads.
+    """
+    SHARED_FILE = ...
+    r"""
+    Safe default: one retained file handle with shared serialized I/O.
+    """
+    DIRECT_MMAP = ...
+    r"""
+    Explicit read-only mmap; see the filesystem mutation contract.
+    """
+
+    def __str__(self) -> builtins.str: ...
+    def __repr__(self) -> builtins.str: ...
+
+def load_workbook(path: builtins.str, strategy: typing.Optional[builtins.str] = None, *, path_source: typing.Optional[XlsxPathSource] = None, span_evaluation: typing.Optional[builtins.bool] = None) -> Workbook:
     r"""
     Load an XLSX workbook from a filesystem path.
     
@@ -2056,12 +2080,19 @@ def load_workbook(path: builtins.str, strategy: typing.Optional[builtins.str] = 
         path: Path to an `.xlsx` file.
         strategy: Currently accepted for backward compatibility.
             (The backend/strategy is currently fixed to `calamine` + eager load.)
+        path_source: `XlsxPathSource.SHARED_FILE` (the safe default) or
+            `XlsxPathSource.DIRECT_MMAP`. Direct mmap retains an actual read-only
+            mapping; the underlying file must not be destructively modified or
+            truncated while the workbook loads.
     
     Example:
     ```python
         import formualizer as fz
     
-        wb = fz.load_workbook("financial_model.xlsx")
+        wb = fz.load_workbook(
+            "financial_model.xlsx",
+            path_source=fz.XlsxPathSource.DIRECT_MMAP,
+        )
         print(wb.evaluate_cell("Summary", 1, 2))
     ```
     """

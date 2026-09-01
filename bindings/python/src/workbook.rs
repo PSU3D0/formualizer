@@ -9,7 +9,7 @@ use formualizer::common::error::{ExcelError, ExcelErrorKind};
 use crate::engine::{
     PyEvaluationConfig, apply_binding_eval_defaults, eval_plan_to_py, merge_python_eval_config,
 };
-use crate::enums::PyWorkbookMode;
+use crate::enums::{PyWorkbookMode, PyXlsxPathSource};
 use crate::errors::workbook_error_to_pyerr;
 use crate::value::{literal_to_py, py_to_literal};
 use std::collections::HashMap;
@@ -277,28 +277,43 @@ impl PyWorkbook {
     /// Args:
     ///     path: Path to the `.xlsx` file.
     ///     backend: Backend name (currently defaults to `calamine`).
+    ///     path_source: `XlsxPathSource.SHARED_FILE` (the safe default) or
+    ///         `XlsxPathSource.DIRECT_MMAP`. Direct mmap requires a native
+    ///         Calamine `.xlsx` path whose underlying file is not destructively
+    ///         modified or truncated while the workbook loads.
     ///     mode/config: Optional workbook configuration.
     ///
     /// Example:
     /// ```python
     ///     import formualizer as fz
     ///
-    ///     wb = fz.Workbook.load_path("model.xlsx")
+    ///     wb = fz.Workbook.load_path(
+    ///         "model.xlsx", path_source=fz.XlsxPathSource.DIRECT_MMAP
+    ///     )
     ///     print(wb.sheet_names)
     /// ```
     #[classmethod]
-    #[pyo3(signature = (path, strategy=None, backend=None, *, mode=None, config=None, span_evaluation=None))]
+    #[pyo3(signature = (path, strategy=None, backend=None, *, path_source=None, mode=None, config=None, span_evaluation=None))]
     pub fn load_path(
         _cls: &Bound<'_, pyo3::types::PyType>,
         path: &str,
         strategy: Option<&str>,
         backend: Option<&str>,
+        path_source: Option<PyXlsxPathSource>,
         mode: Option<PyWorkbookMode>,
         config: Option<PyWorkbookConfig>,
         span_evaluation: Option<bool>,
     ) -> PyResult<Self> {
         let _ = strategy; // currently unused, default eager
-        Self::from_path(_cls, path, backend, mode, config, span_evaluation)
+        Self::from_path(
+            _cls,
+            path,
+            backend,
+            path_source,
+            mode,
+            config,
+            span_evaluation,
+        )
     }
 
     /// Get or create a sheet by name.
@@ -335,35 +350,62 @@ impl PyWorkbook {
     }
 
     #[classmethod]
-    #[pyo3(signature = (path, backend=None, *, mode=None, config=None, span_evaluation=None))]
+    #[pyo3(signature = (path, backend=None, *, path_source=None, mode=None, config=None, span_evaluation=None))]
     pub fn from_path(
         _cls: &Bound<'_, pyo3::types::PyType>,
         path: &str,
         backend: Option<&str>,
+        path_source: Option<PyXlsxPathSource>,
         mode: Option<PyWorkbookMode>,
         config: Option<PyWorkbookConfig>,
         span_evaluation: Option<bool>,
     ) -> PyResult<Self> {
         let backend = backend.unwrap_or("calamine");
+        let path_source = path_source.unwrap_or_default();
+        if path_source == PyXlsxPathSource::DirectMmap && backend != "calamine" {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "path_source=XlsxPathSource.DIRECT_MMAP requires backend='calamine', not backend='{backend}'"
+            )));
+        }
+        if path_source == PyXlsxPathSource::DirectMmap
+            && !std::path::Path::new(path)
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("xlsx"))
+        {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "path_source=XlsxPathSource.DIRECT_MMAP supports only Calamine `.xlsx` filesystem paths; use SHARED_FILE or an in-memory byte API for other formats",
+            ));
+        }
         let cfg = resolve_workbook_config(mode, config, span_evaluation)?;
         match backend {
             "calamine" => {
                 #[cfg(target_os = "emscripten")]
                 {
                     let _ = (path, cfg);
+                    let message = if path_source == PyXlsxPathSource::DirectMmap {
+                        "XlsxPathSource.DIRECT_MMAP is unavailable in the Pyodide build; use SHARED_FILE or an in-memory XLSX byte API"
+                    } else {
+                        "backend='calamine' is unavailable in the Pyodide build; use backend='umya' with in-memory XLSX bytes"
+                    };
                     Err(PyErr::new::<pyo3::exceptions::PyNotImplementedError, _>(
-                        "backend='calamine' is unavailable in the Pyodide build; use backend='umya' with in-memory XLSX bytes",
+                        message,
                     ))
                 }
                 #[cfg(not(target_os = "emscripten"))]
                 {
                     use formualizer::workbook::backends::CalamineAdapter;
-                    use formualizer::workbook::traits::SpreadsheetReader;
-                    let adapter = <CalamineAdapter as SpreadsheetReader>::open_path(
+                    let adapter = CalamineAdapter::open_path_with_source(
                         std::path::Path::new(path),
+                        path_source.into(),
                     )
                     .map_err(|e| {
-                        PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("open failed: {e}"))
+                        let source = match path_source {
+                            PyXlsxPathSource::SharedFile => "SHARED_FILE",
+                            PyXlsxPathSource::DirectMmap => "DIRECT_MMAP",
+                        };
+                        PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
+                            "open failed with XlsxPathSource.{source}: {e}"
+                        ))
                     })?;
                     let wb = formualizer::workbook::Workbook::from_reader(
                         adapter,
