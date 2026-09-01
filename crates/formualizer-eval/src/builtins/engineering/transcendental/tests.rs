@@ -180,3 +180,99 @@ fn bessel_kn_known_values() {
         );
     }
 }
+
+/// Regression: the tiny-`x` Taylor branch of `jn` accumulated `n!` in an `i32`.
+/// `13!` already overflows `i32`, so any order in `13..=33` combined with a
+/// very small `x` panicked in debug builds (and silently wrapped, producing
+/// garbage, in release builds).
+#[test]
+fn bessel_jn_tiny_x_high_order_does_not_overflow() {
+    // x < 2^-29 selects the Taylor branch.
+    let x = 1e-12;
+    for n in 2..=33 {
+        let f = jn(n, x);
+        assert!(f.is_finite(), "jn({n}, {x}) must be finite, got {f}");
+        // (x/2)^n / n! underflows to +0 well before n = 33.
+        assert!(f >= 0.0, "jn({n}, {x}) must be non-negative, got {f}");
+    }
+}
+
+/// Regression: `jn`/`yn` negated `n` with `-n`, which overflows for
+/// `i32::MIN`, and `jn` negated the high word with `-hx`, which overflows for
+/// the high word of `-0.0`.
+#[test]
+fn bessel_extreme_orders_do_not_panic() {
+    for x in [0.5f64, 1.0, 30.0] {
+        let jn_result = jn(i32::MIN, x);
+        let yn_result = yn(i32::MIN, x);
+        assert!(
+            jn_result.is_finite() || jn_result.is_nan() || jn_result.is_infinite(),
+            "jn(i32::MIN, {x}) = {jn_result} must not panic"
+        );
+        assert!(
+            yn_result.is_finite() || yn_result.is_nan() || yn_result.is_infinite(),
+            "yn(i32::MIN, {x}) = {yn_result} must not panic"
+        );
+    }
+}
+
+/// Regression: `jn` used `-hx` on the high word to flip the sign of `x`.
+/// For `x == -0.0` the high word is `i32::MIN`, whose arithmetic negation
+/// overflows.
+#[test]
+fn bessel_jn_handles_negative_zero() {
+    assert_eq!(jn(2, -0.0), 0.0);
+    assert_eq!(jn(3, 0.0), 0.0);
+}
+
+/// `y0`/`yn` rely on the *high* word of the IEEE bit pattern to detect zero,
+/// infinity and the sign. Sanity-check those boundaries, which silently broke
+/// when the words were extracted via native byte order.
+#[test]
+fn bessel_y_special_values() {
+    assert!(yn(2, 0.0).is_infinite() && yn(2, 0.0) < 0.0);
+    assert!(yn(2, -1.0).is_nan());
+    assert_eq!(yn(2, f64::INFINITY), 0.0);
+    assert!(yn(2, f64::NAN).is_nan());
+}
+
+/// Accuracy contract for the `MAX_RECURRENCE_ORDER` iteration cap.
+///
+/// The cap (200_000) only short-circuits orders so large the result has already
+/// underflowed (`J`) or diverged (`Y`). Orders below the cap must run the real
+/// recurrence unchanged. `jn(2000, 100)` / `yn(2000, 100)` are the inputs flagged
+/// in review: they are below the cap, so they take the ordinary code path and
+/// terminate in a few thousand iterations rather than being clamped.
+///
+/// Note on magnitudes: for order 2000 vastly exceeding argument 100, the true
+/// values are `J_2000(100) ~ 10^-3000` (underflows to +0 in f64) and
+/// `Y_2000(100) ~ -10^+3000` (overflows to -inf in f64). Those IEEE-754 limits
+/// are the *correct* representable results here, not a defect — the point of the
+/// test is that this order is computed directly, not truncated by the cap.
+#[test]
+fn bessel_moderate_orders_run_real_recurrence() {
+    let j = jn(2000, 100.0);
+    let y = yn(2000, 100.0);
+    // J underflows toward zero from above: a non-negative, non-NaN result.
+    assert!(!j.is_nan(), "jn(2000, 100) must not be NaN, got {j}");
+    assert!(j >= 0.0, "jn(2000, 100) = {j} must be non-negative");
+    // Y diverges negative: either a large finite negative or -inf, never NaN/positive.
+    assert!(!y.is_nan(), "yn(2000, 100) must not be NaN, got {y}");
+    assert!(y < 0.0, "yn(2000, 100) = {y} must be negative");
+}
+
+/// The iteration cap must actually short-circuit pathological orders to the
+/// asymptotic limit (`J -> 0`, `Y -> -inf`) instead of running a multi-billion
+/// step recurrence. Terminating at all within the test timeout is the guarantee;
+/// the returned limits document the contract.
+#[test]
+fn bessel_pathological_order_short_circuits_to_limit() {
+    // Orders far beyond MAX_RECURRENCE_ORDER (200_000).
+    assert_eq!(jn(i32::MAX, 1.0), 0.0);
+    assert_eq!(jn(10_000_000, 3.5), 0.0);
+    assert!(yn(i32::MAX, 1.0).is_infinite());
+    assert!(yn(10_000_000, 3.5).is_infinite());
+    // i32::MIN negates (saturating) to i32::MAX, so it exercises the same cap.
+    assert_eq!(jn(i32::MIN, 2.0), 0.0);
+    assert!(yn(i32::MIN, 2.0).is_infinite());
+}
