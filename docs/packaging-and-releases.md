@@ -105,6 +105,8 @@ python3 scripts/release-preflight.py --track product
 
 Use only the track being released. `--allow-dirty` exists for development checks and is forbidden for a release tag.
 
+Every track first asserts the parser/SDK lockstep rule: `formualizer-common` and `formualizer-parse` must carry the same manifest version, and the product track additionally requires that version to already exist on crates.io. A product release that pins an unpublished parser-track version fails here rather than at `cargo publish`.
+
 For multi-crate tracks, the script packages crates in dependency order, adds each prospective archive to a temporary local Cargo registry, and verifies downstream archives against those exact bytes. Workspace path dependencies therefore cannot hide an unpublished or incompatible registry package. The staging registry and Cargo home are temporary; inherited Cargo/GitHub token variables are removed and Git prompting is disabled. The exact `cargo-local-registry` helper and its isolated download cache live under `target/release-preflight-*` without replacing a global tool.
 
 For every package, the preflight queries crates.io. A version that does not yet exist is accepted. If the version exists, the shipped source/data/doc payload must match exactly; generated `Cargo.toml`, `Cargo.lock`, and `.cargo_vcs_info.json` are excluded because they vary with Cargo or the source commit, while `Cargo.toml.orig` remains compared so dependency requirements are covered. Any other difference means the source must be restored or the package version bumped.

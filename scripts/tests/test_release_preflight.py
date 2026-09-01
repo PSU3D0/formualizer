@@ -198,6 +198,57 @@ class ReleasePreflightTests(unittest.TestCase):
             self.assertNotIn(name, track_names)
         release_preflight.validate_binding_package_policy()
 
+    def test_parser_track_versions_are_in_lockstep_in_tree(self) -> None:
+        self.assertEqual(
+            release_preflight.COMMON.version(), release_preflight.PARSE.version()
+        )
+        release_preflight.validate_parser_track_lockstep("parse")
+        release_preflight.validate_parser_track_lockstep("spec")
+
+    def test_parser_track_lockstep_rejects_version_drift(self) -> None:
+        with mock.patch.object(
+            release_preflight.Package, "version", autospec=True
+        ) as version:
+            version.side_effect = lambda package: (
+                "3.1.0" if package.name == "formualizer-common" else "3.0.0"
+            )
+            for track in ("parse", "product"):
+                with self.subTest(track=track):
+                    with self.assertRaisesRegex(
+                        RuntimeError, r"lockstep.*formualizer-common is 3\.1\.0"
+                    ):
+                        release_preflight.validate_parser_track_lockstep(track)
+
+    def test_product_track_requires_published_parser_crates(self) -> None:
+        looked_up: list[tuple[str, str]] = []
+
+        def missing(name: str, version: str) -> None:
+            looked_up.append((name, version))
+            return None
+
+        with self.assertRaisesRegex(
+            RuntimeError, r"formualizer-common .* is not published"
+        ):
+            release_preflight.validate_parser_track_lockstep("product", lookup=missing)
+        self.assertEqual(
+            looked_up,
+            [("formualizer-common", release_preflight.COMMON.version())],
+        )
+
+        looked_up.clear()
+        release_preflight.validate_parser_track_lockstep("parse", lookup=missing)
+        self.assertEqual(looked_up, [])
+
+        def published(name: str, version: str) -> dict[str, str]:
+            looked_up.append((name, version))
+            return {"num": version}
+
+        release_preflight.validate_parser_track_lockstep("product", lookup=published)
+        self.assertEqual(
+            [name for name, _ in looked_up],
+            ["formualizer-common", "formualizer-parse"],
+        )
+
     def test_track_order_matches_publish_dependencies(self) -> None:
         self.assertEqual(
             [package.name for package in release_preflight.TRACKS["parse"]],

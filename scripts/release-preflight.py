@@ -22,7 +22,7 @@ import tarfile
 import tempfile
 import urllib.error
 import urllib.request
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -110,6 +110,38 @@ def validate_binding_package_policy(root: Path = ROOT) -> None:
             raise RuntimeError(
                 f"binding package policy {manifest}: package {expected_name!r} "
                 "must set literal publish = false"
+            )
+
+
+def validate_parser_track_lockstep(
+    track: str, *, lookup: Callable[[str, str], Any] | None = None
+) -> None:
+    """The parser/SDK crates share one version, and product releases need it published.
+
+    docs/packaging-and-releases.md: ``formualizer-common`` and ``formualizer-parse``
+    ship together under one ``parse-v*`` tag. The product publish job never
+    publishes them, so a product release whose manifests pin an unpublished
+    parser-track version passes local packaging (the staging registry contains
+    the workspace archives) and then fails against the real registry.
+    """
+
+    common_version = COMMON.version()
+    parse_version = PARSE.version()
+    if common_version != parse_version:
+        raise RuntimeError(
+            f"parser track lockstep: {COMMON.name} is {common_version} but "
+            f"{PARSE.name} is {parse_version}; bump both with "
+            "scripts/bump-version.py --track parse"
+        )
+    if track != "product":
+        return
+    resolve = crates_io_version if lookup is None else lookup
+    for package in TRACKS["parse"]:
+        version = package.version()
+        if resolve(package.name, version) is None:
+            raise RuntimeError(
+                f"parser track lockstep: {package.name} {version} is not published "
+                f"on crates.io; release parse-v{version} before the product track"
             )
 
 
@@ -564,6 +596,7 @@ def prepare_local_registry(
 
 def preflight(track: str, allow_dirty: bool) -> None:
     validate_binding_package_policy()
+    validate_parser_track_lockstep(track)
     ensure_clean(allow_dirty)
     packages = TRACKS[track]
     with (
