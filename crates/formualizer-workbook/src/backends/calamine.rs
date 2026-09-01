@@ -434,7 +434,12 @@ pub struct CalamineAdapter {
     source: SharedXlsxReader,
     loaded_sheets: HashSet<String>,
     cached_names: Option<Vec<String>>,
-    calamine_has_defined_names: bool,
+    /// Calamine's already-parsed `(name, formula)` pairs, captured at open time.
+    ///
+    /// Held outside `workbook` on purpose: [`Self::lazy_defined_names`] must not
+    /// acquire the `workbook` lock, because `parking_lot::RwLock` is not
+    /// reentrant and any caller holding the write lock would self-deadlock.
+    calamine_defined_names: Vec<(String, String)>,
     defined_names: OnceLock<Vec<DefinedName>>,
     external_link_targets: OnceLock<BTreeMap<u32, String>>,
     calc_settings: OnceLock<Option<CalcSettings>>,
@@ -1120,14 +1125,14 @@ impl CalamineAdapter {
     fn from_shared_source(source: SharedXlsxReader) -> Result<Self, calamine::Error> {
         let workbook: Xlsx<SharedXlsxReader> = open_workbook_from_rs(source.reader())?;
         let sheet_names = workbook.sheet_names().to_vec();
-        let calamine_has_defined_names = !workbook.defined_names().is_empty();
+        let calamine_defined_names = workbook.defined_names().to_vec();
 
         Ok(Self {
             workbook: RwLock::new(CalamineWorkbook(workbook)),
             source,
             loaded_sheets: HashSet::new(),
             cached_names: Some(sheet_names),
-            calamine_has_defined_names,
+            calamine_defined_names,
             defined_names: OnceLock::new(),
             external_link_targets: OnceLock::new(),
             calc_settings: OnceLock::new(),
@@ -1158,21 +1163,25 @@ impl CalamineAdapter {
         })
     }
 
+    /// Resolves workbook/sheet-scoped defined names on first request.
+    ///
+    /// Deliberately lock-free with respect to [`Self::workbook`]: it reads only
+    /// the shared source and the `calamine_defined_names` snapshot taken at open
+    /// time, so it is safe to call while the `workbook` write lock is held.
     fn lazy_defined_names(&self) -> &Vec<DefinedName> {
         self.defined_names.get_or_init(|| {
             #[cfg(test)]
             self.lazy_scan_counts
                 .defined_names
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            if !self.calamine_has_defined_names {
+            if self.calamine_defined_names.is_empty() {
                 return Vec::new();
             }
 
             let sheet_names = self.cached_names.as_deref().unwrap_or_default();
             let parsed = Self::scan_defined_names_from_reader(self.source.reader(), sheet_names);
             if parsed.is_empty() {
-                let workbook = self.workbook.read();
-                Self::fallback_defined_names_from_workbook(&workbook.0, sheet_names)
+                Self::fallback_defined_names(&self.calamine_defined_names, sheet_names)
             } else {
                 parsed
             }
@@ -1330,17 +1339,14 @@ impl CalamineAdapter {
         Ok(())
     }
 
-    fn fallback_defined_names_from_workbook<R>(
-        workbook: &Xlsx<R>,
+    fn fallback_defined_names(
+        calamine_defined_names: &[(String, String)],
         sheet_names: &[String],
-    ) -> Vec<DefinedName>
-    where
-        R: Read + Seek,
-    {
+    ) -> Vec<DefinedName> {
         let mut out = Vec::new();
         let mut seen: HashSet<(DefinedNameScope, Option<String>, String)> = HashSet::new();
 
-        for (name, formula) in workbook.defined_names() {
+        for (name, formula) in calamine_defined_names {
             if let Some(converted) = Self::convert_defined_name(name, formula, None, sheet_names) {
                 let key = (
                     converted.scope.clone(),
