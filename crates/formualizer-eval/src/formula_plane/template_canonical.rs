@@ -1782,6 +1782,33 @@ mod tests {
     }
 
     #[test]
+    fn cell_is_not_plane_eligible_via_context_dependence_contract() {
+        // Regression: CELL reads position-dependent reference metadata, so a
+        // single span broadcast over many placements would silently return the
+        // anchor cell's answer. Its WorkbookMetadata context contract must make
+        // the FormulaPlane reject it at canonicalization time (same
+        // ContextDependentFunction path as ROW/COLUMN/SHEET). If a future
+        // capability refactor drops that context, this test starts failing.
+        for formula in [
+            r#"=CELL("address",A1)"#,
+            r#"=CELL("row",$A$1)"#,
+            r#"=CELL("contents")"#,
+        ] {
+            let template = canonical(formula, 2, 3);
+            assert!(
+                template
+                    .labels
+                    .contains_reject_kind(CanonicalRejectKind::ContextDependentFunction),
+                "{formula}: expected ContextDependentFunction reject"
+            );
+            assert!(
+                !template.labels.is_authority_supported(),
+                "{formula}: CELL must not be plane-eligible"
+            );
+        }
+    }
+
+    #[test]
     fn runtime_provider_override_cannot_borrow_global_registry_semantics() {
         struct LocalAbs;
         impl crate::function::Function for LocalAbs {

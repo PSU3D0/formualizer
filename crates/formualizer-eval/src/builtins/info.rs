@@ -4,7 +4,7 @@ use crate::function_contract::{
     FunctionContextDependence, FunctionDependencyContract, FunctionSemanticContract,
 };
 use crate::traits::{ArgumentHandle, CalcValue, FunctionContext};
-use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
+use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue, format_a1_sheet_name};
 use formualizer_macros::func_caps;
 
 use super::utils::ARG_ANY_ONE;
@@ -1841,7 +1841,7 @@ impl Function for CellFn {
                 // reference targets a different sheet than the formula's own.
                 let qualified = match reference_sheet(&reference) {
                     Some(sheet) if !sheet.eq_ignore_ascii_case(ctx.current_sheet()) => {
-                        format!("{sheet}!{address}")
+                        format!("{}!{address}", format_a1_sheet_name(sheet))
                     }
                     _ => address,
                 };

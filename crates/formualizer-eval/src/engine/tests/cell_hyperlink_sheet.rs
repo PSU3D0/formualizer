@@ -126,6 +126,9 @@ fn cell_address_col_row() {
 
 #[test]
 fn cell_type_classifies_value() {
+    // Blank cells classify as "b". NOTE: this is provisional pending #319/#285
+    // blank-coercion adjudication; the variant study may change what a blank
+    // cell yields, so this assertion should be revisited rather than preserved.
     assert_text(r#"=CELL("type",Z99)"#, "b");
     let mut engine = new_engine();
     engine
@@ -202,6 +205,27 @@ fn cell_address_qualifies_other_sheet() {
     match engine.get_cell_value("Sheet1", 1, 20).unwrap() {
         LiteralValue::Text(actual) => assert_eq!(actual, "$A$1"),
         other => panic!("expected \"$A$1\", got {other:?}"),
+    }
+}
+
+#[test]
+fn cell_address_qualifies_off_sheet_with_quoted_name() {
+    // A cross-sheet reference whose sheet name needs quoting is qualified with
+    // the quoted name, per Excel, and the coordinates come from the reference.
+    let mut engine = new_engine();
+    engine.graph.add_sheet("My Sheet").unwrap();
+    engine
+        .set_cell_formula(
+            "Sheet1",
+            1,
+            20,
+            parse(r#"=CELL("address",'My Sheet'!B7)"#).unwrap(),
+        )
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    match engine.get_cell_value("Sheet1", 1, 20).unwrap() {
+        LiteralValue::Text(actual) => assert_eq!(actual, "'My Sheet'!$B$7"),
+        other => panic!("expected \"'My Sheet'!$B$7\", got {other:?}"),
     }
 }
 
