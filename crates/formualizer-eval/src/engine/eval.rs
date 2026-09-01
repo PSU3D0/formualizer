@@ -1101,6 +1101,11 @@ pub struct Engine<R> {
     /// producers become visible) so the cycle members land on the legacy graph
     /// path. Observational only.
     formula_plane_cycle_member_span_demotions: u64,
+    /// Spans demoted to legacy because a placement evaluated to an array
+    /// result (refs #388). Spans publish exactly one value per placement, so an
+    /// array must be re-evaluated on the legacy path where the spill planner
+    /// owns it. Observational only.
+    formula_plane_array_result_span_demotions: u64,
     /// Successfully completed non-cycle unsafe mixed requests. Incremented
     /// only after every scheduled span has committed demotion and the single
     /// legacy completion pass succeeds; failed attempts are not counted.
@@ -1879,6 +1884,10 @@ pub struct EngineBaselineStats {
     /// Number of spans demoted to legacy because a member participated in a
     /// statically-cyclic SCC (gotcha G8, refs #112).
     pub formula_plane_cycle_member_span_demotions: u64,
+    /// Number of spans demoted to legacy because span evaluation produced an
+    /// array result that legacy would route through the spill planner
+    /// (refs #388).
+    pub formula_plane_array_result_span_demotions: u64,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -2763,6 +2772,7 @@ where
             last_formula_ingest_report: None,
             formula_ingest_report_total: FormulaIngestReport::default(),
             formula_plane_cycle_member_span_demotions: 0,
+            formula_plane_array_result_span_demotions: 0,
             formula_plane_capacity_bailouts: 0,
             formula_plane_structural_span_candidates: 0,
             active_cancel_flag: None,
@@ -2919,6 +2929,7 @@ where
             last_formula_ingest_report: None,
             formula_ingest_report_total: FormulaIngestReport::default(),
             formula_plane_cycle_member_span_demotions: 0,
+            formula_plane_array_result_span_demotions: 0,
             formula_plane_capacity_bailouts: 0,
             formula_plane_structural_span_candidates: 0,
             active_cancel_flag: None,
@@ -4635,6 +4646,8 @@ where
             formula_plane_structural_span_candidates: self.formula_plane_structural_span_candidates,
             formula_plane_cycle_member_span_demotions: self
                 .formula_plane_cycle_member_span_demotions,
+            formula_plane_array_result_span_demotions: self
+                .formula_plane_array_result_span_demotions,
         }
     }
 
@@ -14876,6 +14889,54 @@ where
         Ok(())
     }
 
+    /// Fail closed when span evaluation produces an array result (refs #388).
+    ///
+    /// A span owns exactly one published value per placement, but the legacy
+    /// evaluator routes `LiteralValue::Array` results into the spill planner.
+    /// Collapsing the array to its top-left element would broadcast a single
+    /// value across the whole span while legacy spills a rectangle, so
+    /// [`SpanEvaluator::evaluate_task`] refuses the conversion and the
+    /// coordinator lands here with nothing published: the offending layer's
+    /// `ComputedWriteBuffer` is dropped unflushed. Demote the span through the
+    /// prepared-transaction demotion path so its placements become legacy
+    /// vertices, then replan; the legacy pass recomputes them with correct
+    /// spill semantics.
+    fn demote_array_result_span(&mut self, span_ref: FormulaSpanRef) -> Result<(), ExcelError> {
+        let materialization_started = crate::instant::FzInstant::now();
+        let prepared = self
+            .prepare_formula_span_demotion(&[span_ref])
+            .map_err(|error| {
+                if let FormulaSpanDemotionError::Resource(error) = error {
+                    error
+                } else {
+                    ExcelError::new(ExcelErrorKind::NImpl).with_message(format!(
+                        "FormulaPlane array-result span demotion preparation failed: {error}"
+                    ))
+                }
+            })?;
+        let report = self
+            .commit_prepared_formula_span_demotion(prepared)
+            .map_err(|error| {
+                ExcelError::new(ExcelErrorKind::NImpl).with_message(format!(
+                    "FormulaPlane array-result span demotion commit failed: {error}"
+                ))
+            })?;
+        self.observe_materialization(
+            report.placements_materialized,
+            true,
+            materialization_started.elapsed(),
+        );
+        self.formula_plane_array_result_span_demotions = self
+            .formula_plane_array_result_span_demotions
+            .saturating_add(report.spans_demoted as u64);
+        Self::record_shadow_fallback_reason(
+            &mut self.formula_ingest_report_total,
+            PlacementFallbackReason::ArrayResult,
+            report.spans_demoted as u64,
+        );
+        Ok(())
+    }
+
     /// Evaluate residual *legacy-only* cyclic SCCs before the FormulaPlane
     /// mixed schedule runs (gotcha G8, refs #112).
     ///
@@ -19383,6 +19444,8 @@ where
         let mut computed_vertices = 0usize;
         let mut runtime_replan_iterations = 0usize;
         const MAX_RUNTIME_REPLAN: usize = 5;
+        let mut array_result_demotions = 0usize;
+        const MAX_ARRAY_RESULT_DEMOTIONS: usize = 64;
         let mut virtual_telemetry = self
             .config
             .enable_virtual_dep_telemetry
@@ -19606,7 +19669,11 @@ where
             {
                 self.last_formula_plane_span_eval_report = None;
             }
-            for layer in schedule.layers {
+            // #388: set when a span placement evaluated to an array. The layer
+            // loop breaks out immediately, leaving that layer's write buffer
+            // unflushed, so nothing from the offending span is published.
+            let mut array_result_span: Option<FormulaSpanRef> = None;
+            'layers: for layer in schedule.layers {
                 self.cancellation_checkpoint("Evaluation cancelled before mixed layer")?;
                 let mut buffer = ComputedWriteBuffer::default();
                 let mut sink = SpanComputedWriteSink::new(&mut buffer);
@@ -19682,23 +19749,33 @@ where
                                 self.cancellation_checkpoint(
                                     "Evaluation cancelled during FormulaPlane span",
                                 )?;
-                                let report = evaluator.evaluate_task(&task, &mut sink).map_err(
-                                    |err| {
-                                        if err
-                                            == crate::formula_plane::span_eval::SpanEvalError::Cancelled
-                                        {
-                                            ExcelError::new(ExcelErrorKind::Cancelled).with_message(
+                                let report = match evaluator.evaluate_task(&task, &mut sink) {
+                                    Ok(report) => report,
+                                    // #388: fail closed on array results. Drop
+                                    // this layer's buffer unflushed, demote the
+                                    // span after the borrow of the authority
+                                    // ends, and replan onto the legacy path.
+                                    Err(
+                                        crate::formula_plane::span_eval::SpanEvalError::ArrayResultRequiresSpill,
+                                    ) => {
+                                        array_result_span = Some(group_span_ref);
+                                        break 'layers;
+                                    }
+                                    Err(
+                                        crate::formula_plane::span_eval::SpanEvalError::Cancelled,
+                                    ) => {
+                                        return Err(ExcelError::new(ExcelErrorKind::Cancelled)
+                                            .with_message(
                                                 "Evaluation cancelled during FormulaPlane span",
-                                            )
-                                        } else {
-                                            ExcelError::new(ExcelErrorKind::NImpl).with_message(
-                                                format!(
-                                                    "FormulaPlane span evaluation failed: {err:?}"
-                                                ),
-                                            )
-                                        }
-                                    },
-                                )?;
+                                            ));
+                                    }
+                                    Err(err) => {
+                                        return Err(ExcelError::new(ExcelErrorKind::NImpl)
+                                            .with_message(format!(
+                                                "FormulaPlane span evaluation failed: {err:?}"
+                                            )));
+                                    }
+                                };
                                 #[cfg(test)]
                                 {
                                     last_group_report = Some(report.clone());
@@ -19761,6 +19838,34 @@ where
                     self.record_computed_write_buffer_delta(&buffer, delta);
                 }
                 self.flush_authoritative_computed_write_buffer(&mut buffer)?;
+            }
+
+            if let Some(span_ref) = array_result_span {
+                // #388: nothing from the aborted layer was published. Demote the
+                // span so its placements become legacy vertices (dirty on
+                // ingest) and rebuild the mixed schedule; the legacy evaluator
+                // then applies the spill planner to the array result. Each
+                // iteration removes one span from the plane, so this terminates.
+                array_result_demotions = array_result_demotions.saturating_add(1);
+                if array_result_demotions >= MAX_ARRAY_RESULT_DEMOTIONS {
+                    return Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(
+                        "FormulaPlane array-result span demotion did not converge".to_string(),
+                    ));
+                }
+                self.demote_array_result_span(span_ref)?;
+                if self.graph.formula_authority().active_span_count() == 0 {
+                    if let Some(target_roots) = runtime_target_roots.as_deref() {
+                        let refreshed =
+                            self.resolve_target_producers_from_existing_roots(target_roots)?;
+                        let result =
+                            self.evaluate_legacy_target_roots(&refreshed, delta.as_deref_mut())?;
+                        self.checked_ack_formula_dirty_sublease_observed(formula_dirty, &[])?;
+                        return Ok(result);
+                    }
+                    return self.evaluate_all_legacy_and_ack_dirty(formula_dirty);
+                }
+                include_dirty_regions = true;
+                continue 'virtual_replan;
             }
 
             let mut changed_virtual =

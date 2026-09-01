@@ -65,6 +65,16 @@ pub(crate) enum SpanEvalError {
     UnsupportedDirtyDomain,
     UnsupportedReferenceRelocation,
     Cancelled,
+    /// A placement evaluated to `LiteralValue::Array` (refs #388).
+    ///
+    /// Spans are a scalar-result surface: every placement owns exactly one
+    /// cell, so there is no way to publish an array without diverging from the
+    /// legacy evaluator, which routes array results into the spill planner.
+    /// Collapsing to the top-left element would silently broadcast one value
+    /// across the whole span while legacy spills, so span evaluation fails
+    /// closed here and the coordinator demotes the span to legacy vertices
+    /// before anything is published.
+    ArrayResultRequiresSpill,
 }
 
 pub(crate) struct SpanComputedWriteSink<'a> {
@@ -311,7 +321,7 @@ impl<'a> SpanEvaluator<'a> {
                 Ok(calc) => {
                     let format_id = calc.format_id();
                     (
-                        formula_result_to_overlay(calc.into_literal(), self.context.date_system()),
+                        formula_result_to_overlay(calc.into_literal(), self.context.date_system())?,
                         format_id,
                     )
                 }
@@ -451,7 +461,7 @@ impl<'a> SpanEvaluator<'a> {
                         value: formula_result_to_overlay(
                             calc.into_literal(),
                             self.context.date_system(),
-                        ),
+                        )?,
                         format_id,
                     }
                 }
@@ -474,7 +484,7 @@ impl<'a> SpanEvaluator<'a> {
                         value: formula_result_to_overlay(
                             calc.into_literal(),
                             self.context.date_system(),
-                        ),
+                        )?,
                         format_id,
                     }
                 }
@@ -759,7 +769,7 @@ impl<'a> SpanEvaluator<'a> {
                     value: formula_result_to_overlay(
                         calc.into_literal(),
                         self.context.date_system(),
-                    ),
+                    )?,
                     format_id,
                 }
             }
@@ -1154,18 +1164,18 @@ fn validate_relocatable_compact_reference(reference: &CompactRefType) -> Result<
 fn literal_to_overlay(
     value: LiteralValue,
     date_system: formualizer_common::DateSystem,
-) -> OverlayValue {
-    match value {
+) -> Result<OverlayValue, SpanEvalError> {
+    Ok(match value {
         LiteralValue::Int(i) => OverlayValue::Number(i as f64),
         LiteralValue::Number(n) => OverlayValue::Number(n),
         LiteralValue::Text(s) => OverlayValue::Text(Arc::from(s)),
         LiteralValue::Boolean(b) => OverlayValue::Boolean(b),
-        LiteralValue::Array(mut rows) => rows
-            .get_mut(0)
-            .and_then(|row| row.get_mut(0))
-            .cloned()
-            .map(|value| literal_to_overlay(value, date_system))
-            .unwrap_or(OverlayValue::Empty),
+        // Fail closed (#388): never collapse an array to its top-left element.
+        // The legacy evaluator hands array results to the spill planner, so a
+        // collapse here would publish one value across every placement of the
+        // span. The caller demotes the span and re-evaluates it on the legacy
+        // path instead; nothing is published from this task.
+        LiteralValue::Array(_) => return Err(SpanEvalError::ArrayResultRequiresSpill),
         LiteralValue::Date(_) | LiteralValue::DateTime(_) | LiteralValue::Time(_) => value
             .as_serial_number_for(date_system)
             .map(OverlayValue::DateTime)
@@ -1177,13 +1187,13 @@ fn literal_to_overlay(
         LiteralValue::Empty => OverlayValue::Empty,
         LiteralValue::Pending => OverlayValue::Pending,
         LiteralValue::Error(err) => OverlayValue::Error(map_error_code(err.kind)),
-    }
+    })
 }
 
 fn formula_result_to_overlay(
     value: LiteralValue,
     date_system: formualizer_common::DateSystem,
-) -> OverlayValue {
+) -> Result<OverlayValue, SpanEvalError> {
     literal_to_overlay(
         crate::engine::result_finalization::finalize_formula_result(value),
         date_system,
@@ -1210,6 +1220,33 @@ mod tests {
     };
     use super::*;
 
+    /// Refs #388: an array result must never be collapsed to its top-left
+    /// element; the conversion fails closed so the coordinator can demote.
+    #[test]
+    fn array_results_fail_closed_instead_of_collapsing_to_top_left() {
+        let array = LiteralValue::Array(vec![
+            vec![LiteralValue::Number(1.0), LiteralValue::Number(2.0)],
+            vec![LiteralValue::Number(3.0), LiteralValue::Number(4.0)],
+        ]);
+        assert_eq!(
+            literal_to_overlay(array.clone(), formualizer_common::DateSystem::Excel1900),
+            Err(SpanEvalError::ArrayResultRequiresSpill)
+        );
+        // Even a 1x1 array fails closed: legacy routes it through the spill
+        // planner, so the plane must not special-case it into a scalar.
+        assert_eq!(
+            formula_result_to_overlay(
+                LiteralValue::Array(vec![vec![LiteralValue::Number(7.0)]]),
+                formualizer_common::DateSystem::Excel1900,
+            ),
+            Err(SpanEvalError::ArrayResultRequiresSpill)
+        );
+        assert_eq!(
+            formula_result_to_overlay(array, formualizer_common::DateSystem::Excel1900),
+            Err(SpanEvalError::ArrayResultRequiresSpill)
+        );
+    }
+
     #[test]
     fn temporal_overlay_conversion_uses_the_workbook_date_system() {
         let date = chrono::NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
@@ -1228,11 +1265,11 @@ mod tests {
             ),
         ] {
             assert_eq!(
-                literal_to_overlay(LiteralValue::Date(date), system),
+                literal_to_overlay(LiteralValue::Date(date), system).unwrap(),
                 OverlayValue::DateTime(date_serial)
             );
             assert_eq!(
-                literal_to_overlay(LiteralValue::DateTime(datetime), system),
+                literal_to_overlay(LiteralValue::DateTime(datetime), system).unwrap(),
                 OverlayValue::DateTime(datetime_serial)
             );
         }
