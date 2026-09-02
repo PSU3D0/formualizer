@@ -6327,7 +6327,6 @@ pub formualizer_eval::engine::EvalConfig::pk_compaction_interval_ops: u64
 pub formualizer_eval::engine::EvalConfig::pk_reject_cycle_edges: bool
 pub formualizer_eval::engine::EvalConfig::pk_visit_budget: usize
 pub formualizer_eval::engine::EvalConfig::range_expansion_limit: usize
-pub formualizer_eval::engine::EvalConfig::reuse_converged_sccs: bool
 pub formualizer_eval::engine::EvalConfig::sheet_index_mode: formualizer_eval::engine::SheetIndexMode
 pub formualizer_eval::engine::EvalConfig::spill: formualizer_eval::engine::SpillConfig
 pub formualizer_eval::engine::EvalConfig::stripe_height: u32
@@ -6353,7 +6352,6 @@ pub fn formualizer_eval::engine::EvalConfig::with_formula_parse_policy(self, for
 pub fn formualizer_eval::engine::EvalConfig::with_formula_plane_mode(self, formualizer_eval::engine::FormulaPlaneMode) -> Self
 pub fn formualizer_eval::engine::EvalConfig::with_parallel(self, bool) -> Self
 pub fn formualizer_eval::engine::EvalConfig::with_range_expansion_limit(self, usize) -> Self
-pub fn formualizer_eval::engine::EvalConfig::with_reuse_converged_sccs(self, bool) -> Self
 pub fn formualizer_eval::engine::EvalConfig::with_virtual_dep_telemetry(self, bool) -> Self
 impl core::clone::Clone for formualizer_eval::engine::EvalConfig
 pub fn formualizer_eval::engine::EvalConfig::clone(&self) -> formualizer_eval::engine::EvalConfig

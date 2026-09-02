@@ -13,8 +13,8 @@
 //! - Unrelated block: `G` input values, `H{r}=G{r}*3+1`, `I{r}=H{r}+G{r}`.
 //!
 //! The scenario runs under `CycleConfig::iterate_excel_defaults()` via
-//! `Scenario::eval_config`; with the default `reuse_converged_sccs` every
-//! ring is retained after the initial evaluation, so an unrelated edit
+//! `Scenario::eval_config`; every ring is retained after the initial
+//! evaluation (#368), so an unrelated edit
 //! re-evaluates two cells and a dependency edit re-runs exactly one ring.
 
 use anyhow::Result;

@@ -154,8 +154,8 @@ fn aggregate_overflow_sanitizes_to_num_error_and_scc_converges() {
 
     // And stays converged: a no-edit recalc does NOT burn the pass budget
     // (the old leak capped at 7 passes on every recalc, forever). The
-    // `#NUM!` fixed point is exact (error identity), so with
-    // `reuse_converged_sccs` (default) the SCC is retained and not re-run.
+    // `#NUM!` fixed point is exact (error identity), so the SCC is retained
+    // and not re-run (#368).
     engine.evaluate_all().unwrap();
     let t = engine.last_cycle_telemetry();
     assert_eq!(t.iterated_sccs, 0, "exact error fixed point is retained");
@@ -164,25 +164,6 @@ fn aggregate_overflow_sanitizes_to_num_error_and_scc_converges() {
     assert_eq!(t.settle_passes_total, 0);
     assert_eq!(err_kind(&engine, "Sheet1", 1, 2), ExcelErrorKind::Num);
     assert_eq!(err_kind(&engine, "Sheet1", 1, 3), ExcelErrorKind::Num);
-
-    // Knob off: the SCC re-runs each recalc and converges again cheaply.
-    let mut engine = Engine::new(
-        TestWorkbook::new(),
-        EvalConfig::default()
-            .with_cycle(CycleConfig::iterate(7, 0.001))
-            .with_reuse_converged_sccs(false),
-    );
-    set_value(&mut engine, "Sheet1", 1, 1, LiteralValue::Number(1.0e308));
-    set_value(&mut engine, "Sheet1", 2, 1, LiteralValue::Number(1.0e308));
-    set_formula(&mut engine, "Sheet1", 1, 2, "=MAX(SUM(A1:A2),C1)");
-    set_formula(&mut engine, "Sheet1", 1, 3, "=B1");
-    engine.evaluate_all().unwrap();
-    engine.evaluate_all().unwrap();
-    let t = engine.last_cycle_telemetry();
-    assert_eq!(t.iterated_sccs, 1);
-    assert_eq!(t.converged_sccs, 1);
-    assert_eq!(t.capped_sccs, 0);
-    assert!(t.settle_passes_total <= 6);
 }
 
 #[test]

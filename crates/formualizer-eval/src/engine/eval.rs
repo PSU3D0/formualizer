@@ -1158,8 +1158,7 @@ pub struct Engine<R> {
     /// not exist or settles as phantom, nothing re-registers, and the
     /// redirty chain stops by itself.
     ///
-    /// SCCs that landed on an exact fixed point are exempt when
-    /// `EvalConfig::reuse_converged_sccs` is on: they go to
+    /// SCCs that landed on an exact fixed point are exempt: they go to
     /// [`Self::retained_scc_members`] instead and stay clean until the dirty
     /// graph (or a config change) reaches them (#368).
     pending_iterative_redirty: Vec<VertexId>,
@@ -1939,7 +1938,7 @@ pub struct EngineBaselineStats {
     /// (refs #388).
     pub formula_plane_array_result_span_demotions: u64,
     /// Members of exactly converged iterative SCCs currently retained across
-    /// recalcs (`EvalConfig::reuse_converged_sccs`, #368).
+    /// recalcs (#368).
     pub retained_scc_members: usize,
 }
 
@@ -2004,8 +2003,7 @@ pub struct CycleTelemetry {
     /// Identical-bit NaN vs NaN member comparisons that were treated as
     /// converged (spec §6 NaN rule).
     pub nan_converged: usize,
-    /// Retained iterative SCCs (`EvalConfig::reuse_converged_sccs`, #368)
-    /// that had no dirty member at request begin and were therefore not
+    /// Retained iterative SCCs (#368) that had no dirty member at request begin and were therefore not
     /// re-run: their last exact fixed point is served as-is. Counted at
     /// request begin, so a demand-driven request that never reaches a
     /// retained SCC still reports it as reused.
@@ -3825,7 +3823,6 @@ where
         use std::hash::{Hash, Hasher};
         let mut hasher = rustc_hash::FxHasher::default();
         let config = &self.config;
-        config.reuse_converged_sccs.hash(&mut hasher);
         std::mem::discriminant(&config.cycle.detection).hash(&mut hasher);
         match config.cycle.policy {
             CyclePolicy::Error => 0u8.hash(&mut hasher),
@@ -26564,7 +26561,7 @@ where
         // to downstream dependents, but all members are registered so the
         // contract survives partial structural edits between recalcs.
         //
-        // Exception (#368, `reuse_converged_sccs`): an SCC that stopped on an
+        // Exception (#368): an SCC that stopped on an
         // exact fixed point — every member reproduced its previous value
         // bit-for-bit before the pass cap, no NaN identity, no volatile or
         // dynamic-reference member — cannot change on a re-run with the same
@@ -26580,8 +26577,7 @@ where
             }
         }
         if iterating {
-            let retain = self.config.reuse_converged_sccs
-                && converged
+            let retain = converged
                 && !capped
                 && exact_fixed_point
                 && iter_nan_converged == 0

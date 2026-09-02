@@ -1,5 +1,5 @@
-//! Probe for issue #368: the per-recalc cost of stable iterative SCCs with
-//! and without `EvalConfig::reuse_converged_sccs`, across FormulaPlane modes.
+//! Probe for issue #368: the per-recalc cost of stable iterative SCCs
+//! (retained exact fixed points) across FormulaPlane modes.
 //!
 //! Workload shape mirrors the issue: `--sccs` independent convergent ring
 //! SCCs of `--members` cells each (column B), `--downstream` chained column
@@ -14,8 +14,6 @@
 //! ```bash
 //! cargo run --release -p formualizer-bench-core --features formualizer_runner \
 //!   --bin probe-scc-reuse -- --sccs 78 --members 120 --downstream 3
-//! cargo run --release -p formualizer-bench-core --features formualizer_runner \
-//!   --bin probe-scc-reuse -- --reuse false   # pre-#368 behavior
 //! ```
 
 #[cfg(not(feature = "formualizer_runner"))]
@@ -71,10 +69,6 @@ mod probe {
         /// Comma list of modes: off,shadow,auth
         #[arg(long, default_value = "off,shadow,auth")]
         modes: String,
-        /// `EvalConfig::reuse_converged_sccs` (default on; `false` restores
-        /// the per-recalc redirty of every iterating SCC).
-        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
-        reuse: bool,
     }
 
     fn mix(seed: u64, a: u64) -> f64 {
@@ -176,8 +170,7 @@ mod probe {
             TestWorkbook::default(),
             EvalConfig::default()
                 .with_formula_plane_mode(mode)
-                .with_cycle(CycleConfig::iterate_excel_defaults())
-                .with_reuse_converged_sccs(cli.reuse),
+                .with_cycle(CycleConfig::iterate_excel_defaults()),
         );
         // Inputs: A feeds rings + downstream, G feeds the unrelated block.
         for r in 1..=rows {

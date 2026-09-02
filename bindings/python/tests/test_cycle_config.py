@@ -12,29 +12,6 @@ def test_cycle_defaults():
     # Knob getters read Excel defaults even when not iterating.
     assert cfg.iterate_max_iterations == 100
     assert cfg.iterate_max_change == pytest.approx(0.001)
-    # #368: exact-fixed-point SCC retention is on by default.
-    assert cfg.reuse_converged_sccs is True
-
-
-def test_reuse_converged_sccs_round_trips():
-    cfg = fz.EvaluationConfig()
-    assert cfg.reuse_converged_sccs is True
-    cfg.reuse_converged_sccs = False
-    assert cfg.reuse_converged_sccs is False
-    # It is independent of the cycle policy knobs.
-    cfg.cycle_policy = "iterate"
-    assert cfg.reuse_converged_sccs is False
-    cfg.reuse_converged_sccs = True
-    assert cfg.reuse_converged_sccs is True
-
-    # It survives the trip through WorkbookConfig into a live workbook.
-    cfg.reuse_converged_sccs = False
-    wb = fz.Workbook(config=fz.WorkbookConfig(eval_config=cfg))
-    wb.add_sheet("S")
-    wb.set_formula("S", 1, 1, "=A1+1")
-    wb.evaluate_all()
-    wb.evaluate_all()
-    assert wb.last_cycle_telemetry().reused_sccs == 0
 
 
 def test_setting_iterate_policy_promotes_detection_to_runtime():

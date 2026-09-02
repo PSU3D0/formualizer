@@ -123,7 +123,7 @@ A cell that stamps "now" the first time it is touched and then holds steady is t
 
 ## Retained fixed points
 
-By default the engine **does not re-run a cycle that has already settled exactly**. Every iterating cycle used to be redirtied at the end of each recalc, so circular cells re-evaluated on every recalculation; a workbook with thousands of circular cells paid for all of them on every recalc, even when nothing had changed.
+The engine **does not re-run a cycle that has already settled exactly**. Every iterating cycle used to be redirtied at the end of each recalc, so circular cells re-evaluated on every recalculation; a workbook with thousands of circular cells paid for all of them on every recalc, even when nothing had changed.
 
 A cycle is retained clean across recalcs when the recalc that iterated it stopped on an **exact fixed point**: every member reproduced its previous value exactly — `|Δ| == 0` for numbers (*not* merely `|Δ| < max_change`), identity for text, booleans and errors, and never a NaN identity — before the `max_iterations` cap, with no volatile and no dynamic-reference (`INDIRECT`, `OFFSET`) member. Running such a cycle again with the same inputs cannot change a value, so the engine serves the values it already has.
 
@@ -164,23 +164,7 @@ assert t.reused_sccs == 1 and t.iterated_sccs == 0
   runnable={false}
 />
 
-To restore the previous behavior — every iterating cycle re-runs on every recalc — turn the knob off:
-
-<CodeTabs
-  title="Opt out of fixed-point retention"
-  rust={`let mut cfg = WorkbookConfig::interactive();
-cfg.eval = cfg.eval
-    .with_cycle(CycleConfig::iterate_excel_defaults())
-    .with_reuse_converged_sccs(false);`}
-  python={`cfg = fz.EvaluationConfig()
-cfg.cycle_policy = "iterate"
-cfg.reuse_converged_sccs = False`}
-  ts={`const wb = Workbook.fromJsonWithOptions(json, {
-  cyclePolicy: "iterate",
-  reuseConvergedSccs: false,
-});`}
-  runnable={false}
-/>
+There is no switch to turn retention off. It only removes work that could not have changed an answer, and a retained cycle is invalidated by exactly the machinery that invalidates every other formula, so a case where it should be disabled is a bug worth reporting rather than a configuration.
 
 ## Reading convergence telemetry
 

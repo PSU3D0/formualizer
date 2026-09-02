@@ -40,13 +40,9 @@ Applies to cycles confirmed *live* under `Runtime` detection.
 | `max_iterations` | `100` | Total passes per cycle per recalc (pass 1 included). `1` = each member evaluates once per recalc (accumulator contract). `0` is a config error. |
 | `max_change` | `0.001` | Absolute per-member convergence threshold (`|Δ| < max_change`, strict). Negative or non-finite is a config error. |
 
-### `reuse_converged_sccs` (on `EvalConfig`, not `CycleConfig`)
+### Retained fixed points
 
-| Knob | Default | Notes |
-|------|---------|-------|
-| `reuse_converged_sccs` | `true` | Retain exactly converged iterative SCCs across recalcs instead of re-running them every time. |
-
-Every iterating SCC used to be redirtied at the end of each recalc, so circular cells re-evaluated on every recalculation. With `reuse_converged_sccs` on, an SCC that landed on an **exact fixed point** is left clean instead.
+Every iterating SCC used to be redirtied at the end of each recalc, so circular cells re-evaluated on every recalculation. An SCC that landed on an **exact fixed point** is now left clean instead. This is not configurable: it changes only work done, never a value.
 
 Exact fixed point means the recalc that iterated the SCC stopped because *every* member reproduced its previous value exactly — `|Δ| == 0` for numbers (not merely `|Δ| < max_change`), identity for text, booleans and errors, never a NaN identity — before the `max_iterations` cap, and no member is volatile or holds a dynamic reference (`INDIRECT`, `OFFSET`). Such an SCC is a fixed point of its own inputs: re-running it with the same inputs cannot change any value.
 
@@ -61,7 +57,7 @@ These keep re-running on every recalc, unchanged:
 - **Capped SCCs** — including the `max_iterations: 1` accumulator contract.
 - **Volatile or dynamic-reference cycles** — anything containing `NOW()`, `RAND()`, `INDIRECT`, `OFFSET`, and friends.
 
-Set it to `false` to restore the previous behavior, where every iterating SCC re-runs on every recalc. See [Retained fixed points](/docs/guides/iterative-calculation#retained-fixed-points) for the telemetry and measured numbers.
+See [Retained fixed points](/docs/guides/iterative-calculation#retained-fixed-points) for the telemetry and measured numbers.
 
 ## Validation rules
 
@@ -89,11 +85,7 @@ let cfg = CycleConfig::iterate_excel_defaults();
 let cfg = CycleConfig::iterate(50, 0.0001);
 
 // Applied via EvalConfig::with_cycle (panics on invalid combos)
-let eval = formualizer_eval::engine::EvalConfig::default().with_cycle(cfg);
-
-// Exactly converged cycles are retained across recalcs by default;
-// opt out to re-run every iterating SCC on every recalc.
-let eval = eval.with_reuse_converged_sccs(false);`}
+let eval = formualizer_eval::engine::EvalConfig::default().with_cycle(cfg);`}
   python={`import formualizer as fz
 
 cfg = fz.EvaluationConfig()
@@ -101,7 +93,6 @@ cfg.cycle_detection = "static" | "runtime"   # mode
 cfg.cycle_policy = "error" | "iterate"        # policy ("iterate" -> runtime)
 cfg.iterate_max_iterations = 100              # only meaningful when iterating
 cfg.iterate_max_change = 0.001
-cfg.reuse_converged_sccs = True               # default; False re-runs every recalc
 
 wb = fz.Workbook(config=fz.WorkbookConfig(eval_config=cfg))`}
   ts={`// JS/WASM accepts cycle config only on the load entry points.
@@ -111,7 +102,6 @@ const wb = Workbook.fromJsonWithOptions(json, {
   cyclePolicy: "iterate",          // "error" | "iterate" (implies runtime)
   iterateMaxIterations: 100,
   iterateMaxChange: 0.001,
-  reuseConvergedSccs: true,        // default; false re-runs every recalc
 });
 // Also available: Workbook.fromXlsxBytesWithOptions(bytes, options)`}
   runnable={false}
@@ -123,7 +113,6 @@ const wb = Workbook.fromJsonWithOptions(json, {
 |-----------|------|--------|---------|
 | Set detection mode | ✅ | ✅ `cycle_detection` | ✅ `cycleDetection` (load only) |
 | Set policy / iterate knobs | ✅ | ✅ `cycle_policy`, `iterate_*` | ✅ `cyclePolicy`, `iterate*` (load only) |
-| Retain converged cycles | ✅ `with_reuse_converged_sccs` | ✅ `reuse_converged_sccs` | ✅ `reuseConvergedSccs` (load only) |
 | Configure on programmatic (empty) workbook | ✅ | ✅ `Workbook(config=...)` | ❌ constructor takes no options |
 | Read `CycleTelemetry` | ✅ `engine().last_cycle_telemetry()` | ✅ `wb.last_cycle_telemetry()` | ❌ config-only today |
 | XLSX `<calcPr>` round-trip | ✅ | ✅ (via load/save) | ✅ (via `fromXlsxBytesWithOptions`) |

@@ -1347,8 +1347,7 @@ pub struct PyCycleTelemetry {
     /// Identical-bit NaN comparisons treated as converged (spec §6 NaN rule).
     #[pyo3(get)]
     pub nan_converged: usize,
-    /// Retained exactly-converged SCCs (`EvaluationConfig.reuse_converged_sccs`)
-    /// that had no dirty member at the start of this request and were
+    /// Retained exactly-converged SCCs that had no dirty member at the start of this request and were
     /// therefore served without a re-run (#368).
     #[pyo3(get)]
     pub reused_sccs: usize,
