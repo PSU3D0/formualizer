@@ -1144,7 +1144,8 @@ pub struct Engine<R> {
     active_resource_ledger: Option<ResourceLedger>,
 
     /// SCC members that entered iterative calculation (`CyclePolicy::Iterate`
-    /// with a witnessed live cycle) during the current evaluation request.
+    /// with a witnessed live cycle) during the current evaluation request
+    /// and must re-run on the next one.
     ///
     /// Excel re-evaluates circular cells on EVERY recalc (the accumulator
     /// contract, spec §4/§7.6), but this engine's dirty model marks SCC
@@ -1156,17 +1157,66 @@ pub struct Engine<R> {
     /// if an edit breaks the cycle, the next recalc's SCC task either does
     /// not exist or settles as phantom, nothing re-registers, and the
     /// redirty chain stops by itself.
+    ///
+    /// SCCs that landed on an exact fixed point are exempt when
+    /// `EvalConfig::reuse_converged_sccs` is on: they go to
+    /// [`Self::retained_scc_members`] instead and stay clean until the dirty
+    /// graph (or a config change) reaches them (#368).
     pending_iterative_redirty: Vec<VertexId>,
+    /// Members of iterating SCCs retained across recalcs (#368), keyed to the
+    /// id of the retained SCC they belong to (ids come from
+    /// `next_retained_scc_id`; grouping is only used for telemetry).
+    ///
+    /// An SCC is retained when the recalc that iterated it stopped because
+    /// every member reproduced its previous value exactly (|Δ| = 0, or
+    /// identity for non-numeric members; never NaN-converged), before the
+    /// `max_iterations` cap, with no volatile or dynamic-reference member.
+    /// Such an SCC is a fixed point of its own inputs: running it again with
+    /// the same inputs cannot change any value, so it is not redirtied. The
+    /// dirty graph remains the validity authority — any edit that reaches a
+    /// member dirties it like any other formula and the SCC task re-runs.
+    /// Membership is dropped when a member runs in an SCC task again (it is
+    /// then re-retained or re-registered for per-recalc redirty), when the
+    /// vertex is deleted, or when
+    /// [`Self::reconcile_retained_sccs_at_request_begin`] invalidates the
+    /// whole set because a config knob outside the graph changed.
+    retained_scc_members: FxHashMap<VertexId, u64>,
+    next_retained_scc_id: u64,
+    /// [`Self::retained_scc_config_fingerprint`] as of the last retention.
+    /// `Engine::config` is a public field, so knobs that change a retained
+    /// SCC's result (cycle policy/tolerance, date system, determinism,
+    /// volatile seeding) can change between recalcs without touching the
+    /// graph; a mismatch at request begin dirties every retained member.
+    /// Only meaningful while `retained_scc_members` is non-empty.
+    retained_scc_config_fingerprint: u64,
+    /// Function-registry semantic epoch and runtime-provider revision as of
+    /// the last time retained SCCs were reconciled against them. A newer
+    /// epoch dirties only the retained members whose formula calls a changed
+    /// function (or every member when the change log is incomplete), the
+    /// same rule FormulaPlane spans use in
+    /// [`Self::observe_function_semantic_epoch`].
+    retained_scc_function_epoch_seen: u64,
+    retained_scc_provider_revision_seen: Option<u64>,
+    /// Retained members that were already dirty when the current request
+    /// began, with the SCC id they carried. A member still holding that id
+    /// at the end of the request was not touched by any SCC task — its
+    /// cycle dissolved (it evaluated as an ordinary formula) or the request
+    /// never reached it — so [`Self::redirty_for_next_recalc`] drops it from
+    /// the retained set instead of letting it linger.
+    retained_scc_dirty_at_begin: Vec<(VertexId, u64)>,
 
-    /// Final committed values of iterating-SCC members as of the end of the
-    /// most recent recalc (spec §4 persistence). In canonical (value-cache
-    /// disabled) mode the computed overlay is the ONLY home of a formula's
-    /// value, and structural edits clear computed overlays wholesale
-    /// (`clear_computed_overlay_after_row/_col`) — destroying iteration
-    /// state (accumulators reset to 0; found by the iterate edge corpus).
-    /// This snapshot, refreshed by [`Self::redirty_for_next_recalc`], lets
-    /// the next SCC task re-seed members whose overlay entry vanished.
-    /// Empty unless something iterated — zero cost otherwise.
+    /// Final committed values of iterating-SCC members (spec §4 persistence).
+    /// In canonical (value-cache disabled) mode the computed overlay is the
+    /// ONLY home of a formula's value, and structural edits clear computed
+    /// overlays wholesale (`clear_computed_overlay_after_row/_col`) —
+    /// destroying iteration state (accumulators reset to 0; found by the
+    /// iterate edge corpus). This snapshot lets the next SCC task re-seed
+    /// members whose overlay entry vanished. Members registered for
+    /// per-recalc redirty are refreshed by
+    /// [`Self::redirty_for_next_recalc`]; retained members are written once
+    /// when retained. Entries are dropped when the member's SCC task ends
+    /// without iterating or when the vertex is deleted. Empty unless
+    /// something iterated — zero cost otherwise.
     iterative_state_values: FxHashMap<VertexId, LiteralValue>,
 
     /// Global function-registry semantic epoch observed after the latest
@@ -1888,6 +1938,9 @@ pub struct EngineBaselineStats {
     /// array result that legacy would route through the spill planner
     /// (refs #388).
     pub formula_plane_array_result_span_demotions: u64,
+    /// Members of exactly converged iterative SCCs currently retained across
+    /// recalcs (`EvalConfig::reuse_converged_sccs`, #368).
+    pub retained_scc_members: usize,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1951,6 +2004,14 @@ pub struct CycleTelemetry {
     /// Identical-bit NaN vs NaN member comparisons that were treated as
     /// converged (spec §6 NaN rule).
     pub nan_converged: usize,
+    /// Retained iterative SCCs (`EvalConfig::reuse_converged_sccs`, #368)
+    /// that had no dirty member at request begin and were therefore not
+    /// re-run: their last exact fixed point is served as-is. Counted at
+    /// request begin, so a demand-driven request that never reaches a
+    /// retained SCC still reports it as reused.
+    pub reused_sccs: usize,
+    /// Members of the SCCs counted in `reused_sccs`.
+    pub reused_scc_members: usize,
     /// Total wall-clock time spent inside Runtime SCC tasks.
     pub elapsed_ms: u128,
 }
@@ -2791,6 +2852,12 @@ where
             evaluation_resource_config_diagnostic: resolved_resources.diagnostic,
             active_resource_ledger: None,
             pending_iterative_redirty: Vec::new(),
+            retained_scc_members: FxHashMap::default(),
+            next_retained_scc_id: 0,
+            retained_scc_config_fingerprint: 0,
+            retained_scc_function_epoch_seen: 0,
+            retained_scc_provider_revision_seen: None,
+            retained_scc_dirty_at_begin: Vec::new(),
             iterative_state_values: FxHashMap::default(),
             function_semantic_epoch_seen: crate::function_registry::semantic_epoch(),
             function_provider_revision_seen,
@@ -2948,6 +3015,12 @@ where
             evaluation_resource_config_diagnostic: resolved_resources.diagnostic,
             active_resource_ledger: None,
             pending_iterative_redirty: Vec::new(),
+            retained_scc_members: FxHashMap::default(),
+            next_retained_scc_id: 0,
+            retained_scc_config_fingerprint: 0,
+            retained_scc_function_epoch_seen: 0,
+            retained_scc_provider_revision_seen: None,
+            retained_scc_dirty_at_begin: Vec::new(),
             iterative_state_values: FxHashMap::default(),
             function_semantic_epoch_seen: crate::function_registry::semantic_epoch(),
             function_provider_revision_seen,
@@ -3680,6 +3753,7 @@ where
         // Defensive: consumed at the end of the previous request; a request
         // that errored out mid-walk must not leak its members into this one.
         self.pending_iterative_redirty.clear();
+        self.reconcile_retained_sccs_at_request_begin();
         // Spec §7.11: NOW()/TODAY() sample the clock ONCE per recalc; every
         // read within this request (including SCC iteration passes) observes
         // this sample.
@@ -3687,37 +3761,162 @@ where
     }
 
     /// End-of-recalc redirty: volatile vertices (as always) plus members of
-    /// SCCs that iterated this recalc (`CyclePolicy::Iterate`), so circular
-    /// cells re-evaluate on every recalc exactly like Excel's iterative
-    /// calculation (spec §4 persistence / §7.6 accumulator / §7.11 volatile
-    /// redirty). Replaces the bare `graph.redirty_volatiles()` call at every
-    /// evaluation-flow exit; must run AFTER the flow's `clear_dirty_flags`.
+    /// SCCs that iterated this recalc without reaching a retainable fixed
+    /// point (`CyclePolicy::Iterate`), so circular cells re-evaluate on every
+    /// recalc exactly like Excel's iterative calculation (spec §4
+    /// persistence / §7.6 accumulator / §7.11 volatile redirty). Retained
+    /// SCCs (`retained_scc_members`, #368) are left clean. Replaces the bare
+    /// `graph.redirty_volatiles()` call at every evaluation-flow exit; must
+    /// run AFTER the flow's `clear_dirty_flags`.
     fn redirty_for_next_recalc(&mut self) {
         self.graph.redirty_volatiles();
         let pending = std::mem::take(&mut self.pending_iterative_redirty);
-        // Refresh the §4-persistence snapshot: these final values survive
-        // structural edits that clear the computed overlay (the only value
-        // home in canonical mode) so the next SCC task can re-seed from them
-        // (see `iterative_state_values`). Replaced wholesale each recalc —
-        // when nothing iterates the map empties and stays free.
-        self.iterative_state_values.clear();
+        let dirty_at_begin = std::mem::take(&mut self.retained_scc_dirty_at_begin);
+        for (vertex, scc) in dirty_at_begin {
+            if self.retained_scc_members.get(&vertex) == Some(&scc) {
+                // No SCC task claimed this member during the request: the
+                // cycle dissolved and it evaluated as an ordinary formula,
+                // or the request never reached it. Either way it is no
+                // longer a retained fixed point. Its persisted value is
+                // obsolete only if it actually re-evaluated (clean now).
+                self.retained_scc_members.remove(&vertex);
+                if !self.graph.is_dirty(vertex) {
+                    self.iterative_state_values.remove(&vertex);
+                }
+            }
+        }
+        if !self.iterative_state_values.is_empty() || !self.retained_scc_members.is_empty() {
+            let graph = &self.graph;
+            self.iterative_state_values
+                .retain(|vertex, _| graph.is_live_formula_vertex(*vertex));
+            self.retained_scc_members
+                .retain(|vertex, _| graph.is_live_formula_vertex(*vertex));
+        }
+        // Refresh the §4-persistence snapshot for members that re-run each
+        // recalc: these final values survive structural edits that clear the
+        // computed overlay (the only value home in canonical mode) so the
+        // next SCC task can re-seed from them (see `iterative_state_values`).
         for &vertex in &pending {
-            if !self.graph.vertex_exists(vertex) {
+            if !self.graph.is_live_formula_vertex(vertex) {
                 continue;
             }
             if let Some(cell) = self.graph.get_cell_ref(vertex) {
                 let sheet_name = self.graph.sheet_name(cell.sheet_id);
-                if let Some(value) =
-                    self.get_cell_value(sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
-                    && !matches!(value, LiteralValue::Empty)
-                {
-                    self.iterative_state_values.insert(vertex, value);
+                match self.get_cell_value(sheet_name, cell.coord.row() + 1, cell.coord.col() + 1) {
+                    Some(value) if !matches!(value, LiteralValue::Empty) => {
+                        self.iterative_state_values.insert(vertex, value);
+                    }
+                    _ => {
+                        self.iterative_state_values.remove(&vertex);
+                    }
                 }
             }
         }
         if !pending.is_empty() {
             self.graph.redirty_iterative_members(&pending);
         }
+    }
+
+    /// Hash of every `EvalConfig` knob that can change the result of a
+    /// retained SCC without any edit reaching the dependency graph. The
+    /// function registry is tracked separately and precisely (see
+    /// `retained_scc_function_epoch_seen`).
+    fn retained_scc_config_fingerprint(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = rustc_hash::FxHasher::default();
+        let config = &self.config;
+        config.reuse_converged_sccs.hash(&mut hasher);
+        std::mem::discriminant(&config.cycle.detection).hash(&mut hasher);
+        match config.cycle.policy {
+            CyclePolicy::Error => 0u8.hash(&mut hasher),
+            CyclePolicy::Iterate {
+                max_iterations,
+                max_change,
+            } => {
+                1u8.hash(&mut hasher);
+                max_iterations.hash(&mut hasher);
+                max_change.to_bits().hash(&mut hasher);
+            }
+        }
+        config.date_system.hash(&mut hasher);
+        config.workbook_seed.hash(&mut hasher);
+        std::mem::discriminant(&config.volatile_level).hash(&mut hasher);
+        // `DeterministicMode` carries a timestamp and a timezone spec; hash
+        // its Debug rendering rather than growing its derive set for this.
+        format!("{:?}", config.deterministic_mode).hash(&mut hasher);
+        config.range_expansion_limit.hash(&mut hasher);
+        config.max_open_ended_rows.hash(&mut hasher);
+        config.max_open_ended_cols.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    /// Request-begin bookkeeping for retained SCCs (#368): drop deleted
+    /// vertices, invalidate everything when the config fingerprint moved
+    /// (marking retained members dirty so their SCC tasks run in this
+    /// request), and record how many retained SCCs are being reused, i.e.
+    /// have no dirty member at request begin.
+    fn reconcile_retained_sccs_at_request_begin(&mut self) {
+        self.retained_scc_dirty_at_begin.clear();
+        if self.retained_scc_members.is_empty() {
+            return;
+        }
+        // Deleted vertices and members overwritten with a literal (the
+        // vertex survives as a value cell) are no longer retained formulas.
+        let graph = &self.graph;
+        self.retained_scc_members
+            .retain(|vertex, _| graph.is_live_formula_vertex(*vertex));
+        if self.retained_scc_config_fingerprint() != self.retained_scc_config_fingerprint {
+            let members: Vec<VertexId> = self.retained_scc_members.keys().copied().collect();
+            self.retained_scc_members.clear();
+            self.graph.mark_dirty_many(&members);
+            return;
+        }
+        let changes =
+            crate::function_registry::semantic_changes_since(self.retained_scc_function_epoch_seen);
+        let global_changed = changes.epoch != self.retained_scc_function_epoch_seen;
+        let provider_revision = self.resolver.planning_semantic_revision();
+        let provider_changed = provider_revision != self.retained_scc_provider_revision_seen;
+        if global_changed || provider_changed {
+            let changed: BTreeSet<(String, String)> = changes.keys.into_iter().collect();
+            let affected: Vec<VertexId> = self
+                .retained_scc_members
+                .keys()
+                .copied()
+                .filter(|&vertex| {
+                    let Some(ast) = self.graph.get_formula(vertex) else {
+                        return true;
+                    };
+                    (global_changed
+                        && (!changes.complete || Self::ast_uses_changed_function(&ast, &changed)))
+                        || (provider_changed && Self::ast_contains_function(&ast))
+                })
+                .collect();
+            for vertex in &affected {
+                self.retained_scc_members.remove(vertex);
+            }
+            if !affected.is_empty() {
+                self.graph.mark_dirty_many(&affected);
+            }
+            self.retained_scc_function_epoch_seen = changes.epoch;
+            self.retained_scc_provider_revision_seen = provider_revision;
+        }
+        let mut dirty_sccs: FxHashSet<u64> = FxHashSet::default();
+        let mut all_sccs: FxHashSet<u64> = FxHashSet::default();
+        for (&vertex, &scc) in &self.retained_scc_members {
+            all_sccs.insert(scc);
+            if self.graph.is_dirty(vertex) {
+                dirty_sccs.insert(scc);
+                self.retained_scc_dirty_at_begin.push((vertex, scc));
+            }
+        }
+        let reused_members = self
+            .retained_scc_members
+            .values()
+            .filter(|scc| !dirty_sccs.contains(scc))
+            .count();
+        let t = &mut self.last_cycle_telemetry;
+        t.reused_sccs = all_sccs.len() - dirty_sccs.len();
+        t.reused_scc_members = reused_members;
     }
 
     pub fn virtual_dep_fallback_activations(&self) -> u64 {
@@ -4648,6 +4847,7 @@ where
                 .formula_plane_cycle_member_span_demotions,
             formula_plane_array_result_span_demotions: self
                 .formula_plane_array_result_span_demotions,
+            retained_scc_members: self.retained_scc_members.len(),
         }
     }
 
@@ -26104,6 +26304,7 @@ where
         // ── Iterate-policy state ──
         let mut iterating = false;
         let mut converged = false;
+        let mut exact_fixed_point = false;
         // Values committed by the last *full* pass; `None` until the first
         // iteration pass runs (pass 1 has no predecessor to compare against)
         // and reset when a settle pass runs (no cross-kind comparisons).
@@ -26197,6 +26398,7 @@ where
                             let mut round_max_delta = 0f64;
                             let mut round_nan = 0usize;
                             let mut all_converged = true;
+                            let mut round_exact = true;
                             for i in 0..n {
                                 if excluded[i] {
                                     // Stamped mid-iteration (array result,
@@ -26215,6 +26417,9 @@ where
                                 }
                                 if let Some(d) = out.abs_delta {
                                     round_max_delta = round_max_delta.max(d);
+                                    if d != 0.0 {
+                                        round_exact = false;
+                                    }
                                 }
                                 if !out.converged {
                                     all_converged = false;
@@ -26225,6 +26430,7 @@ where
                             iter_max_delta = round_max_delta;
                             iter_nan_converged = round_nan;
                             if all_converged {
+                                exact_fixed_point = round_exact;
                                 converged = true;
                                 break;
                             }
@@ -26357,9 +26563,63 @@ where
         // any one member propagates around the (strongly connected) SCC and
         // to downstream dependents, but all members are registered so the
         // contract survives partial structural edits between recalcs.
+        //
+        // Exception (#368, `reuse_converged_sccs`): an SCC that stopped on an
+        // exact fixed point — every member reproduced its previous value
+        // bit-for-bit before the pass cap, no NaN identity, no volatile or
+        // dynamic-reference member — cannot change on a re-run with the same
+        // inputs, so it is retained clean. The dirty graph decides when it
+        // runs again. Tolerance-only convergence (|Δ| < max_change but ≠ 0),
+        // capped SCCs (including the `max_iterations: 1` accumulator
+        // contract) and volatile cycles keep the per-recalc redirty.
+        // Whatever the outcome, this task supersedes any earlier retention
+        // of its members.
+        if !self.retained_scc_members.is_empty() {
+            for m in members.iter() {
+                self.retained_scc_members.remove(&m.vertex);
+            }
+        }
         if iterating {
-            self.pending_iterative_redirty
-                .extend(members.iter().map(|m| m.vertex));
+            let retain = self.config.reuse_converged_sccs
+                && converged
+                && !capped
+                && exact_fixed_point
+                && iter_nan_converged == 0
+                && members
+                    .iter()
+                    .all(|m| !self.graph.is_volatile(m.vertex) && !self.graph.is_dynamic(m.vertex));
+            if retain {
+                if self.retained_scc_members.is_empty() {
+                    self.retained_scc_config_fingerprint = self.retained_scc_config_fingerprint();
+                    self.retained_scc_function_epoch_seen =
+                        crate::function_registry::semantic_epoch();
+                    self.retained_scc_provider_revision_seen =
+                        self.resolver.planning_semantic_revision();
+                }
+                let scc_id = self.next_retained_scc_id;
+                self.next_retained_scc_id = self.next_retained_scc_id.wrapping_add(1);
+                for (i, m) in members.iter().enumerate() {
+                    self.retained_scc_members.insert(m.vertex, scc_id);
+                    // §4 persistence snapshot, written once: retained
+                    // members do not pass through `redirty_for_next_recalc`.
+                    if matches!(last_value[i], LiteralValue::Empty) {
+                        self.iterative_state_values.remove(&m.vertex);
+                    } else {
+                        self.iterative_state_values
+                            .insert(m.vertex, last_value[i].clone());
+                    }
+                }
+            } else {
+                self.pending_iterative_redirty
+                    .extend(members.iter().map(|m| m.vertex));
+            }
+        } else if !self.iterative_state_values.is_empty() {
+            // The cycle dissolved (phantom settle or `#CIRC!` stamping):
+            // these members are ordinary formulas again and must not carry
+            // stale iteration state into a future cycle.
+            for m in members.iter() {
+                self.iterative_state_values.remove(&m.vertex);
+            }
         }
 
         {

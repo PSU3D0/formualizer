@@ -350,8 +350,9 @@ mod enabled {
 
         let phase = PhaseMetrics::start("phase_load");
         let mut config = WorkbookConfig::ephemeral();
-        config.eval = EvalConfig::default().with_formula_plane_mode(mode.eval_mode());
-        config.eval.enable_parallel = enable_parallel;
+        let mut eval = EvalConfig::default().with_formula_plane_mode(mode.eval_mode());
+        eval.enable_parallel = enable_parallel;
+        config.eval = scenario.eval_config(eval);
         let mut workbook = match backend {
             BackendMode::Umya => {
                 let backend = UmyaAdapter::open_path(&fixture.path)

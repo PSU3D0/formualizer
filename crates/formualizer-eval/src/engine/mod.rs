@@ -795,6 +795,28 @@ pub struct EvalConfig {
     /// `CycleDetection::Runtime` is opt-in (RFC #112).
     pub cycle: CycleConfig,
 
+    /// Retain exactly converged iterative SCCs across recalcs (#368).
+    ///
+    /// Under `CyclePolicy::Iterate`, an SCC whose members all reproduced
+    /// their previous value exactly (|Δ| = 0, not merely |Δ| < `max_change`;
+    /// identity for text/boolean/error members; never a NaN identity),
+    /// stopped before `max_iterations`, and contains no volatile or
+    /// dynamic-reference member is left clean at the end of the recalc
+    /// instead of being redirtied volatile-like. It re-runs only when the
+    /// dirty graph reaches it (a precedent edit, a formula change, a
+    /// structural edit, a name rebinding) or when a config knob that can
+    /// change its result changes between recalcs (cycle policy or
+    /// tolerance, date system, determinism, volatile seeding) or when a
+    /// function a member calls is registered or replaced. Tolerance-only
+    /// convergence, capped SCCs (including the
+    /// `max_iterations: 1` accumulator contract) and volatile cycles keep
+    /// re-running every recalc, exactly as before.
+    ///
+    /// `false` restores the previous behavior: every iterating SCC re-runs
+    /// on every recalc. Telemetry: `CycleTelemetry::reused_sccs`,
+    /// `EngineBaselineStats::retained_scc_members`.
+    pub reuse_converged_sccs: bool,
+
     /// Use dynamic topological ordering (Pearce-Kelly algorithm)
     pub use_dynamic_topo: bool,
     /// Maximum nodes to visit before falling back to full rebuild
@@ -896,6 +918,7 @@ impl Default for EvalConfig {
             enable_block_stripes: false,
             spill: SpillConfig::default(),
             cycle: CycleConfig::default(),
+            reuse_converged_sccs: true,
 
             // Dynamic topology configuration
             use_dynamic_topo: false, // Disabled by default for compatibility
@@ -1027,6 +1050,14 @@ impl EvalConfig {
             panic!("invalid CycleConfig: {msg}");
         }
         self.cycle = cycle;
+        self
+    }
+
+    /// Enable or disable retaining exactly converged iterative SCCs across
+    /// recalcs (see [`EvalConfig::reuse_converged_sccs`]; default `true`).
+    #[inline]
+    pub fn with_reuse_converged_sccs(mut self, enabled: bool) -> Self {
+        self.reuse_converged_sccs = enabled;
         self
     }
 }

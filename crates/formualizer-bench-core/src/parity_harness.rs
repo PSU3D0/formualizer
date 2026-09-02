@@ -216,9 +216,10 @@ fn run_scenario_parity_inner(
         );
     }
 
-    let (mut off, off_load_ms) = open_workbook(&fixture.path, Mode::Off, options.enable_parallel)?;
+    let (mut off, off_load_ms) =
+        open_workbook(scenario, &fixture.path, Mode::Off, options.enable_parallel)?;
     let (mut auth, auth_load_ms) =
-        open_workbook(&fixture.path, Mode::Auth, options.enable_parallel)?;
+        open_workbook(scenario, &fixture.path, Mode::Auth, options.enable_parallel)?;
 
     let mut phases = Vec::new();
     phases.push(compare_phase(
@@ -340,11 +341,17 @@ fn finish_report(
     }
 }
 
-fn open_workbook(path: &Path, mode: Mode, enable_parallel: bool) -> Result<(Workbook, f64)> {
+fn open_workbook(
+    scenario: &dyn Scenario,
+    path: &Path,
+    mode: Mode,
+    enable_parallel: bool,
+) -> Result<(Workbook, f64)> {
     let start = Instant::now();
     let mut config = WorkbookConfig::ephemeral();
-    config.eval = EvalConfig::default().with_formula_plane_mode(mode.eval_mode());
-    config.eval.enable_parallel = enable_parallel;
+    let mut eval = EvalConfig::default().with_formula_plane_mode(mode.eval_mode());
+    eval.enable_parallel = enable_parallel;
+    config.eval = scenario.eval_config(eval);
     let backend =
         UmyaAdapter::open_path(path).with_context(|| format!("open fixture {}", path.display()))?;
     let workbook = Workbook::from_reader(backend, LoadStrategy::EagerAll, config)
