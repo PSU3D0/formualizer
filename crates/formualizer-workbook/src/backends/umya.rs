@@ -5,6 +5,7 @@ use crate::traits::{
 };
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue, RangeAddress};
 use formualizer_eval::engine::{FormulaIngestBatch, FormulaIngestRecord};
+use formualizer_eval::instant::FzInstant as Instant;
 use formualizer_parse::parser::ReferenceType;
 use parking_lot::RwLock;
 use std::collections::BTreeMap;
@@ -13,7 +14,6 @@ use std::collections::HashSet;
 use std::io::{Cursor, Read, Seek};
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Instant;
 use umya_spreadsheet::{
     CellRawValue, CellValue, Spreadsheet,
     reader::xlsx,
