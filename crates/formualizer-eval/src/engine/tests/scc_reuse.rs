@@ -1,10 +1,8 @@
-//! #368 — `EvalConfig::reuse_converged_sccs`: retaining exactly converged
-//! iterative SCCs across recalcs.
+//! #368 — retaining exactly converged iterative SCCs across recalcs.
 //!
 //! Under `CyclePolicy::Iterate` every iterating SCC used to be redirtied at
 //! the end of each recalc (Excel's "circular cells recalculate every time"
-//! contract, spec §4/§7.6). With the knob on (the DEFAULT) an SCC that
-//! stopped on an *exact* fixed point — every member reproduced its previous
+//! contract, spec §4/§7.6). Now an SCC that stopped on an *exact* fixed point — every member reproduced its previous
 //! value bit-for-bit, before the `max_iterations` cap, no NaN identity, no
 //! volatile or dynamic member — is left clean instead. Running it again with
 //! the same inputs cannot change anything, so the dirty graph alone decides
@@ -44,14 +42,6 @@ fn deterministic_iterate_cfg(max_iterations: u32, max_change: f64) -> EvalConfig
         timezone: TimeZoneSpec::Utc,
     };
     cfg
-}
-
-/// Engine with the #368 knob explicitly set (default is `true`).
-fn engine_with_reuse(max_iterations: u32, max_change: f64, reuse: bool) -> Engine<TestWorkbook> {
-    Engine::new(
-        TestWorkbook::new(),
-        iterate_cfg(max_iterations, max_change).with_reuse_converged_sccs(reuse),
-    )
 }
 
 fn iterate_engine(max_iterations: u32, max_change: f64) -> Engine<TestWorkbook> {
@@ -385,28 +375,23 @@ fn retained_scc_feeds_a_formula_plane_span_family_in_authoritative_mode() {
 
 /* ═══════════════ 8–13: reuse must NOT happen ═══════════════════════════ */
 
-/// Runs `build` twice — knob on and knob off — and asserts that the recalc
-/// after the first one re-runs the SCC in both cases (no retention).
+/// Runs `build` and asserts that the recalc after the first one re-runs the
+/// SCC (no retention).
 fn assert_never_retained(name: &str, build: impl Fn(&mut Engine<TestWorkbook>), cfg: EvalConfig) {
-    for reuse in [true, false] {
-        let mut engine = Engine::new(
-            TestWorkbook::new(),
-            cfg.clone().with_reuse_converged_sccs(reuse),
-        );
-        build(&mut engine);
-        engine.evaluate_all().unwrap();
-        assert_eq!(
-            engine.baseline_stats().retained_scc_members,
-            0,
-            "{name} (reuse={reuse}): nothing may be retained"
-        );
-        engine.evaluate_all().unwrap();
-        assert_eq!(
-            reuse_telemetry(&engine),
-            (1, 0, 0),
-            "{name} (reuse={reuse}): the SCC must re-run"
-        );
-    }
+    let mut engine = Engine::new(TestWorkbook::new(), cfg);
+    build(&mut engine);
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.baseline_stats().retained_scc_members,
+        0,
+        "{name}: nothing may be retained"
+    );
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        reuse_telemetry(&engine),
+        (1, 0, 0),
+        "{name}: the SCC must re-run"
+    );
 }
 
 #[test]
@@ -455,21 +440,15 @@ fn capped_divergent_pair_is_not_retained() {
 fn accumulator_still_adds_its_input_exactly_once_per_recalc() {
     let _epoch = epoch_stable();
     // The `max_iterations: 1` accumulator caps by construction, so it can
-    // never be retained — the §7.6 contract is unchanged by the knob.
-    for reuse in [true, false] {
-        let mut engine = engine_with_reuse(1, 0.001, reuse);
-        set_value(&mut engine, "Sheet1", 1, 1, LiteralValue::Number(5.0));
-        set_formula(&mut engine, "Sheet1", 1, 2, "=B1+A1");
-        for (recalc, expected) in [(1u32, 5.0), (2, 10.0), (3, 15.0)] {
-            engine.evaluate_all().unwrap();
-            assert_eq!(
-                num(&engine, "Sheet1", 1, 2),
-                expected,
-                "reuse={reuse} recalc {recalc}"
-            );
-            assert_eq!(reuse_telemetry(&engine), (1, 0, 0), "reuse={reuse}");
-            assert_eq!(engine.baseline_stats().retained_scc_members, 0);
-        }
+    // never be retained — the §7.6 contract is unchanged by retention.
+    let mut engine = iterate_engine(1, 0.001);
+    set_value(&mut engine, "Sheet1", 1, 1, LiteralValue::Number(5.0));
+    set_formula(&mut engine, "Sheet1", 1, 2, "=B1+A1");
+    for (recalc, expected) in [(1u32, 5.0), (2, 10.0), (3, 15.0)] {
+        engine.evaluate_all().unwrap();
+        assert_eq!(num(&engine, "Sheet1", 1, 2), expected, "recalc {recalc}");
+        assert_eq!(reuse_telemetry(&engine), (1, 0, 0), "recalc {recalc}");
+        assert_eq!(engine.baseline_stats().retained_scc_members, 0);
     }
 }
 
@@ -1060,23 +1039,6 @@ fn registry_changes_rerun_only_retained_members_that_call_a_changed_function() {
     // Retained again afterwards.
     engine.evaluate_all().unwrap();
     assert_eq!(reuse_telemetry(&engine), (0, 1, 2));
-}
-
-#[test]
-fn turning_the_knob_off_between_recalcs_reruns_every_recalc_afterwards() {
-    let _epoch = epoch_stable();
-    let mut engine = retained_engine(3.0);
-    engine.config.reuse_converged_sccs = false;
-    for i in 0..2 {
-        engine.evaluate_all().unwrap();
-        assert_eq!(reuse_telemetry(&engine), (1, 0, 0), "recalc {i}");
-        assert_eq!(
-            engine.baseline_stats().retained_scc_members,
-            0,
-            "recalc {i}"
-        );
-        assert_eq!(num(&engine, "Sheet1", 1, 1), 3.0, "recalc {i}");
-    }
 }
 
 #[test]

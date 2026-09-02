@@ -60,7 +60,6 @@ pub(crate) fn merge_python_eval_config(base: &mut EvalConfig, python_config: &Ev
     base.formula_plane_mode = python_config.formula_plane_mode;
     base.evaluation_budgets = python_config.evaluation_budgets.clone();
     base.cycle = python_config.cycle;
-    base.reuse_converged_sccs = python_config.reuse_converged_sccs;
 }
 
 #[cfg_attr(not(target_os = "emscripten"), gen_stub_pymethods)]
@@ -394,29 +393,6 @@ impl PyEvaluationConfig {
             max_change: value,
         })
     }
-
-    /// Retain exactly converged iterative SCCs across recalcs instead of
-    /// re-running every iterating cycle on every recalc (default `True`,
-    /// #368).
-    ///
-    /// An SCC is retained only when every member reproduced its previous
-    /// value exactly (`|Δ| == 0`, not merely `|Δ| < iterate_max_change`)
-    /// before the `iterate_max_iterations` cap, with no volatile and no
-    /// dynamic-reference member; it re-runs as soon as an edit reaches a
-    /// member or a config knob that could change its result changes.
-    /// Tolerance-only convergence, capped SCCs (including the
-    /// `iterate_max_iterations = 1` accumulator) and volatile cycles keep
-    /// re-running every recalc. `False` restores that older behavior for
-    /// every cycle.
-    #[getter]
-    pub fn get_reuse_converged_sccs(&self) -> bool {
-        self.inner.reuse_converged_sccs
-    }
-
-    #[setter]
-    pub fn set_reuse_converged_sccs(&mut self, value: bool) {
-        self.inner.reuse_converged_sccs = value;
-    }
 }
 
 impl PyEvaluationConfig {
@@ -550,21 +526,6 @@ mod tests {
         // Knob getters read Excel defaults even when not iterating.
         assert_eq!(cfg.get_iterate_max_iterations(), 100);
         assert!((cfg.get_iterate_max_change() - 0.001).abs() < f64::EPSILON);
-        // #368: exact-fixed-point SCC retention is on by default.
-        assert!(cfg.get_reuse_converged_sccs());
-    }
-
-    #[test]
-    fn reuse_converged_sccs_round_trips_and_merges() {
-        let mut cfg = PyEvaluationConfig::new();
-        assert!(cfg.get_reuse_converged_sccs());
-        cfg.set_reuse_converged_sccs(false);
-        assert!(!cfg.get_reuse_converged_sccs());
-
-        let mut base = EvalConfig::default();
-        assert!(base.reuse_converged_sccs);
-        merge_python_eval_config(&mut base, &cfg.inner);
-        assert!(!base.reuse_converged_sccs);
     }
 
     #[test]

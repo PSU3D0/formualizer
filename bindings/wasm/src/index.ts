@@ -593,14 +593,6 @@ export interface WorkbookLoadOptions {
   iterateMaxIterations?: number;
   /** Iterative-calculation absolute convergence threshold (Excel default 0.001). */
   iterateMaxChange?: number;
-  /**
-   * Retain exactly converged iterative SCCs across recalcs instead of
-   * re-running every iterating cycle on every recalc (default `true`). Only
-   * an SCC whose members all reproduced their previous value exactly, before
-   * the pass cap, with no volatile or dynamic-reference member is retained;
-   * set `false` to re-run every iterating cycle on every recalc.
-   */
-  reuseConvergedSccs?: boolean;
   /** Maximum evaluation work units for one outer request. */
   maxWorkUnits?: number;
   /** Maximum elapsed evaluation time in milliseconds for one outer request. */
