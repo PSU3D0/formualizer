@@ -54,6 +54,9 @@ struct JsWorkbookLoadOptions {
     iterate_max_iterations: Option<u32>,
     /// Iterative-calculation absolute convergence threshold (Excel default 0.001).
     iterate_max_change: Option<f64>,
+    /// Retain exactly converged iterative SCCs across recalcs instead of
+    /// re-running every iterating cycle on every recalc (default `true`, #368).
+    reuse_converged_sccs: Option<bool>,
     max_work_units: Option<u64>,
     max_eval_time_ms: Option<u64>,
 }
@@ -148,6 +151,9 @@ fn workbook_config_from_options(
         .validate()
         .map_err(|msg| js_error(format!("invalid cycle config: {msg}")))?;
     cfg.eval.cycle = cycle;
+    if let Some(reuse) = parsed.reuse_converged_sccs {
+        cfg.eval.reuse_converged_sccs = reuse;
+    }
     if let Some(max_work_units) = parsed.max_work_units {
         cfg.eval.evaluation_budgets.work.max_work_units = Some(max_work_units);
     }
@@ -1384,6 +1390,12 @@ impl Workbook {
             &obj,
             "nanConverged",
             JsValue::from_f64(t.nan_converged as f64),
+        )?;
+        set(&obj, "reusedSccs", JsValue::from_f64(t.reused_sccs as f64))?;
+        set(
+            &obj,
+            "reusedSccMembers",
+            JsValue::from_f64(t.reused_scc_members as f64),
         )?;
         // u128 -> u64 saturation mirrors the Python binding; the u64 -> f64
         // conversion is then lossless for any realistic duration.

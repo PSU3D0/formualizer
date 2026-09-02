@@ -1347,6 +1347,14 @@ pub struct PyCycleTelemetry {
     /// Identical-bit NaN comparisons treated as converged (spec §6 NaN rule).
     #[pyo3(get)]
     pub nan_converged: usize,
+    /// Retained exactly-converged SCCs (`EvaluationConfig.reuse_converged_sccs`)
+    /// that had no dirty member at the start of this request and were
+    /// therefore served without a re-run (#368).
+    #[pyo3(get)]
+    pub reused_sccs: usize,
+    /// Members of the SCCs counted in `reused_sccs`.
+    #[pyo3(get)]
+    pub reused_scc_members: usize,
     /// Wall-clock milliseconds spent inside Runtime SCC tasks.
     #[pyo3(get)]
     pub elapsed_ms: u64,
@@ -1366,6 +1374,8 @@ impl PyCycleTelemetry {
             capped_sccs: t.capped_sccs,
             max_abs_delta_at_stop: t.max_abs_delta_at_stop,
             nan_converged: t.nan_converged,
+            reused_sccs: t.reused_sccs,
+            reused_scc_members: t.reused_scc_members,
             elapsed_ms: u64::try_from(t.elapsed_ms).unwrap_or(u64::MAX),
         }
     }
@@ -1379,7 +1389,8 @@ impl PyCycleTelemetry {
             "CycleTelemetry(static_sccs={}, phantom_sccs={}, live_cycles_witnessed={}, \
              circ_cells_stamped={}, settle_passes_total={}, max_passes_single_scc={}, \
              iterated_sccs={}, converged_sccs={}, capped_sccs={}, \
-             max_abs_delta_at_stop={}, nan_converged={}, elapsed_ms={})",
+             max_abs_delta_at_stop={}, nan_converged={}, reused_sccs={}, \
+             reused_scc_members={}, elapsed_ms={})",
             self.static_sccs,
             self.phantom_sccs,
             self.live_cycles_witnessed,
@@ -1391,6 +1402,8 @@ impl PyCycleTelemetry {
             self.capped_sccs,
             self.max_abs_delta_at_stop,
             self.nan_converged,
+            self.reused_sccs,
+            self.reused_scc_members,
             self.elapsed_ms,
         )
     }

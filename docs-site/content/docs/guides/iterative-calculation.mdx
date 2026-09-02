@@ -121,6 +121,67 @@ is accepted at edit time — this is the one case where the normal
 
 A cell that stamps "now" the first time it is touched and then holds steady is the iterative form of an audit timestamp: `=IF(A1=0, NOW(), A1)`. With iteration enabled and the input guard transitioning once, the cell records a value and subsequent recalcs leave it in place (the live edge keeps reading the already-stamped value). This is the iterative-calculation idiom behind Excel's "timestamp on entry" trick.
 
+## Retained fixed points
+
+By default the engine **does not re-run a cycle that has already settled exactly**. Every iterating cycle used to be redirtied at the end of each recalc, so circular cells re-evaluated on every recalculation; a workbook with thousands of circular cells paid for all of them on every recalc, even when nothing had changed.
+
+A cycle is retained clean across recalcs when the recalc that iterated it stopped on an **exact fixed point**: every member reproduced its previous value exactly — `|Δ| == 0` for numbers (*not* merely `|Δ| < max_change`), identity for text, booleans and errors, and never a NaN identity — before the `max_iterations` cap, with no volatile and no dynamic-reference (`INDIRECT`, `OFFSET`) member. Running such a cycle again with the same inputs cannot change a value, so the engine serves the values it already has.
+
+A retained cycle runs again as soon as the dirty graph reaches one of its members — a precedent edit, a formula change, a structural edit, a name rebinding — or when a config knob that could change its result changes between recalcs (cycle policy or tolerance, date system, workbook seed, volatile level, deterministic mode, range-expansion limits), or when a function one of its members calls is registered or replaced. Everything else keeps the old per-recalc behavior: **tolerance-only convergence** (`|Δ| < max_change` but non-zero), **capped cycles** including the `max_iterations: 1` accumulator above, and **volatile cycles** such as the self-referential timestamp.
+
+Measured in release on 78 ring cycles of 120 members each (9,360 circular cells) plus three downstream column families:
+
+| Recalc | Before | After |
+|--------|--------|-------|
+| No change at all | 70 ms | 0.3 ms |
+| Edit to an unrelated cell | 84 ms | 0.9 ms |
+| Edit feeding one cycle | 72 ms (all 78 cycles re-run) | 2.6 ms (exactly one cycle re-run) |
+
+Values and checksums are identical either way — retention only removes work that could not have changed an answer.
+
+Two `CycleTelemetry` fields report it: `reused_sccs` counts the retained cycles that had no dirty member at the start of the request and were therefore served without a re-run, and `reused_scc_members` counts their members. `EngineBaselineStats::retained_scc_members` (Rust) reports how many members are currently retained.
+
+<CodeTabs
+  title="A settled cycle is not re-run on the next recalc (Python)"
+  python={`import formualizer as fz
+
+cfg = fz.EvaluationConfig()
+cfg.cycle_policy = "iterate"
+wb = fz.Workbook(config=fz.WorkbookConfig(eval_config=cfg))
+wb.add_sheet("S")
+wb.set_formula("S", 1, 1, "=IF(B1>2, 7, B1+1)")  # A1: climbs 1,2,3 then holds 7
+wb.set_formula("S", 1, 2, "=A1")                  # B1
+
+wb.evaluate_all()                                 # iterates until A1 = B1 = 7 exactly
+assert wb.last_cycle_telemetry().reused_sccs == 0
+
+wb.evaluate_all()                                 # retained: no passes at all
+t = wb.last_cycle_telemetry()
+assert t.reused_sccs == 1 and t.iterated_sccs == 0
+
+# A converged-within-tolerance cycle (|Δ| < max_change but not 0) is NOT
+# retained: e.g. "=0.5*B1+10" / "=A1" keeps re-running every recalc.`}
+  runnable={false}
+/>
+
+To restore the previous behavior — every iterating cycle re-runs on every recalc — turn the knob off:
+
+<CodeTabs
+  title="Opt out of fixed-point retention"
+  rust={`let mut cfg = WorkbookConfig::interactive();
+cfg.eval = cfg.eval
+    .with_cycle(CycleConfig::iterate_excel_defaults())
+    .with_reuse_converged_sccs(false);`}
+  python={`cfg = fz.EvaluationConfig()
+cfg.cycle_policy = "iterate"
+cfg.reuse_converged_sccs = False`}
+  ts={`const wb = Workbook.fromJsonWithOptions(json, {
+  cyclePolicy: "iterate",
+  reuseConvergedSccs: false,
+});`}
+  runnable={false}
+/>
+
 ## Reading convergence telemetry
 
 The engine records a `CycleTelemetry` snapshot per recalc, reset at the start of every evaluation request. Useful fields for answering "did it converge?":
@@ -133,6 +194,8 @@ The engine records a `CycleTelemetry` snapshot per recalc, reset at the start of
 | `settle_passes_total` | total passes across all cycles |
 | `max_passes_single_scc` | worst-case passes for one cycle |
 | `max_abs_delta_at_stop` | largest per-member delta at the stopping point |
+| `reused_sccs` | retained cycles served without a re-run this recalc (see [Retained fixed points](#retained-fixed-points)) |
+| `reused_scc_members` | members of those retained cycles |
 | `elapsed_ms` | wall time spent in cycle settling |
 
 The Python binding exposes this via `Workbook.last_cycle_telemetry()` (see examples above). **The WASM binding is config-only today** — it accepts the iterate config but does not yet surface telemetry.

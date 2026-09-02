@@ -3887,6 +3887,13 @@ impl DependencyGraph {
         out
     }
 
+    /// Whether `vertex_id` is an existing, non-deleted vertex that still
+    /// holds a formula (a cell overwritten with a literal keeps its vertex
+    /// but drops its formula).
+    pub(crate) fn is_live_formula_vertex(&self, vertex_id: VertexId) -> bool {
+        self.store.vertex_exists_active(vertex_id) && self.get_formula_id(vertex_id).is_some()
+    }
+
     /// Check if a vertex exists
     pub(crate) fn vertex_exists(&self, vertex_id: VertexId) -> bool {
         if vertex_id.0 < FIRST_NORMAL_VERTEX {

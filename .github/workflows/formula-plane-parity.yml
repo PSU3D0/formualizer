@@ -85,7 +85,7 @@ jobs:
         --test parity_harness_smoke
 
     - name: Scenario-corpus Off-vs-Authoritative parity (probe-corpus-parity)
-      # `--scale small` over the synthetic scenario registry: 81 scenarios,
+      # `--scale small` over the synthetic scenario registry: 82 scenarios,
       # ~20s wall clock. s040/s041/s042 are excluded because they fail with
       # HarnessError (missing public Workbook APIs for undoable row inserts,
       # native table extension and external-source declaration), not with

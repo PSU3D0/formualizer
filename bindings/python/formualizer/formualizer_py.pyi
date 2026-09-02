@@ -300,6 +300,18 @@ class CycleTelemetry:
         Identical-bit NaN comparisons treated as converged (spec §6 NaN rule).
         """
     @property
+    def reused_sccs(self) -> builtins.int:
+        r"""
+        Retained exactly-converged SCCs (`EvaluationConfig.reuse_converged_sccs`)
+        that had no dirty member at the start of this request and were
+        therefore served without a re-run (#368).
+        """
+    @property
+    def reused_scc_members(self) -> builtins.int:
+        r"""
+        Members of the SCCs counted in `reused_sccs`.
+        """
+    @property
     def elapsed_ms(self) -> builtins.int:
         r"""
         Wall-clock milliseconds spent inside Runtime SCC tasks.
@@ -508,6 +520,25 @@ class EvaluationConfig:
         """
     @iterate_max_change.setter
     def iterate_max_change(self, value: builtins.float) -> None: ...
+    @property
+    def reuse_converged_sccs(self) -> builtins.bool:
+        r"""
+        Retain exactly converged iterative SCCs across recalcs instead of
+        re-running every iterating cycle on every recalc (default `True`,
+        #368).
+        
+        An SCC is retained only when every member reproduced its previous
+        value exactly (`|Δ| == 0`, not merely `|Δ| < iterate_max_change`)
+        before the `iterate_max_iterations` cap, with no volatile and no
+        dynamic-reference member; it re-runs as soon as an edit reaches a
+        member or a config knob that could change its result changes.
+        Tolerance-only convergence, capped SCCs (including the
+        `iterate_max_iterations = 1` accumulator) and volatile cycles keep
+        re-running every recalc. `False` restores that older behavior for
+        every cycle.
+        """
+    @reuse_converged_sccs.setter
+    def reuse_converged_sccs(self, value: builtins.bool) -> None: ...
     def __new__(cls) -> EvaluationConfig:
         r"""
         Create a new evaluation configuration

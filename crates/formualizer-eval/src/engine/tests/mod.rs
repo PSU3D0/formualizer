@@ -195,6 +195,7 @@ mod live_edge_precision;
 mod live_edges;
 mod scalar_range_promotion;
 mod scc_iterate;
+mod scc_reuse;
 mod scc_runtime_cycles;
 mod scc_runtime_property;
 mod short_circuit_dispatch;

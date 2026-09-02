@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use formualizer_common::LiteralValue;
+use formualizer_eval::engine::EvalConfig;
 use formualizer_workbook::Workbook;
 
 pub mod common;
@@ -97,6 +98,7 @@ mod s083_affine_row_literals_single_outlier;
 mod s084_affine_row_literals_periodic_outliers;
 mod s085_affine_row_literals_gap;
 mod s086_non_integer_literal_dictionary;
+mod s087_stable_scc_unrelated_edit;
 
 pub use s001_no_formulas_static_grid::S001NoFormulasStaticGrid;
 pub use s002_single_column_trivial_family::S002SingleColumnTrivialFamily;
@@ -184,6 +186,7 @@ pub use s083_affine_row_literals_single_outlier::S083AffineRowLiteralsSingleOutl
 pub use s084_affine_row_literals_periodic_outliers::S084AffineRowLiteralsPeriodicOutliers;
 pub use s085_affine_row_literals_gap::S085AffineRowLiteralsGap;
 pub use s086_non_integer_literal_dictionary::S086NonIntegerLiteralDictionary;
+pub use s087_stable_scc_unrelated_edit::S087StableSccUnrelatedEdit;
 
 pub trait Scenario: Send + Sync {
     /// Stable, immutable identifier. Format: "sNNN-name".
@@ -201,6 +204,15 @@ pub trait Scenario: Send + Sync {
     /// Optional edit-cycle plan.
     fn edit_plan(&self) -> Option<EditPlan> {
         None
+    }
+
+    /// Engine configuration for this scenario. Runners build the workbook
+    /// with `EvalConfig::default()` plus the FormulaPlane mode and
+    /// parallelism they are sweeping, then pass that through here so a
+    /// scenario can require e.g. iterative calculation
+    /// (`CycleConfig::iterate_excel_defaults()`). Default: unchanged.
+    fn eval_config(&self, base: EvalConfig) -> EvalConfig {
+        base
     }
 
     /// Expected result invariants checked by the runner after phases.
@@ -480,6 +492,7 @@ impl ScenarioRegistry {
             Box::new(S084AffineRowLiteralsPeriodicOutliers::new()),
             Box::new(S085AffineRowLiteralsGap::new()),
             Box::new(S086NonIntegerLiteralDictionary::new()),
+            Box::new(S087StableSccUnrelatedEdit::new()),
         ]
     }
 }
