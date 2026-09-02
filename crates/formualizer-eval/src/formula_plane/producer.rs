@@ -49,43 +49,6 @@ impl ProducerDirtyDomain {
         }
     }
 
-    pub(crate) fn merge_changed(&mut self, other: Self) -> bool {
-        let before = self.clone();
-        self.merge(other);
-        *self != before
-    }
-
-    pub(crate) fn merge(&mut self, other: Self) {
-        match (&mut *self, other) {
-            (Self::Whole, _) | (_, Self::Whole) => {
-                *self = Self::Whole;
-            }
-            (Self::Cells(existing), Self::Cells(incoming)) => {
-                append_unique(existing, incoming);
-            }
-            (Self::Regions(existing), Self::Regions(incoming)) => {
-                append_unique(existing, incoming);
-            }
-            (Self::Cells(existing_cells), Self::Regions(incoming_regions)) => {
-                let mut regions = existing_cells
-                    .iter()
-                    .copied()
-                    .map(|key| Region::point(key.sheet_id, key.row, key.col))
-                    .collect::<Vec<_>>();
-                append_unique(&mut regions, incoming_regions);
-                *self = Self::Regions(regions);
-            }
-            (Self::Regions(existing_regions), Self::Cells(incoming_cells)) => {
-                append_unique(
-                    existing_regions,
-                    incoming_cells
-                        .into_iter()
-                        .map(|key| Region::point(key.sheet_id, key.row, key.col)),
-                );
-            }
-        }
-    }
-
     pub(crate) fn result_regions(&self, producer_result_region: Region) -> Vec<Region> {
         match self {
             Self::Whole => vec![producer_result_region],
@@ -129,15 +92,80 @@ impl ProducerDirtyDomain {
     }
 }
 
-fn append_unique<T, I>(existing: &mut Vec<T>, incoming: I)
-where
-    T: Eq + std::hash::Hash + Clone,
-    I: IntoIterator<Item = T>,
-{
-    let mut seen = existing.iter().cloned().collect::<FxHashSet<_>>();
-    for item in incoming {
-        if seen.insert(item.clone()) {
-            existing.push(item);
+/// Linear-time union of dirty projections aimed at one producer.
+///
+/// `compute_dirty_closure` and the mixed scheduler can project tens of
+/// thousands of changed cells onto a single consumer (every changed row of a
+/// column feeding one legacy formula or one span). Merging each projection
+/// with a clone-and-compare `Vec` union made that O(n²) in the number of dirty
+/// cells (#405). The accumulator remembers what it has already admitted, so
+/// each `push` costs O(|incoming|) and the finished domain is identical to the
+/// old union: arrival order, deduplicated by cell/region identity, `Whole`
+/// absorbing everything, and any `Regions` input promoting the result kind to
+/// `Regions` with cells rendered as point regions.
+#[derive(Debug, Default)]
+pub(crate) struct DirtyDomainAccumulator {
+    whole: bool,
+    saw_regions: bool,
+    items: Vec<Region>,
+    seen: FxHashSet<Region>,
+}
+
+impl DirtyDomainAccumulator {
+    /// Merges `dirty` into the accumulated domain and reports whether anything
+    /// new was admitted (a first `Whole`, or a cell/region not seen before).
+    pub(crate) fn push(&mut self, dirty: &ProducerDirtyDomain) -> bool {
+        if self.whole {
+            return false;
+        }
+        match dirty {
+            ProducerDirtyDomain::Whole => {
+                self.whole = true;
+                self.saw_regions = false;
+                self.items = Vec::new();
+                self.seen = FxHashSet::default();
+                true
+            }
+            ProducerDirtyDomain::Cells(cells) => {
+                let mut changed = false;
+                for key in cells {
+                    changed |= self.admit(Region::point(key.sheet_id, key.row, key.col));
+                }
+                changed
+            }
+            ProducerDirtyDomain::Regions(regions) => {
+                let mut changed = !self.saw_regions && !self.items.is_empty();
+                self.saw_regions = true;
+                for region in regions {
+                    changed |= self.admit(*region);
+                }
+                changed
+            }
+        }
+    }
+
+    #[inline]
+    fn admit(&mut self, region: Region) -> bool {
+        if self.seen.insert(region) {
+            self.items.push(region);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub(crate) fn finish(self) -> ProducerDirtyDomain {
+        if self.whole {
+            ProducerDirtyDomain::Whole
+        } else if self.saw_regions {
+            ProducerDirtyDomain::Regions(self.items)
+        } else {
+            ProducerDirtyDomain::Cells(
+                self.items
+                    .into_iter()
+                    .filter_map(Region::as_point)
+                    .collect(),
+            )
         }
     }
 }
@@ -1084,7 +1112,8 @@ fn compute_dirty_closure_with_iteration_limit<E>(
         }
     }
 
-    let mut dirty_by_producer: BTreeMap<FormulaProducerId, ProducerDirtyDomain> = BTreeMap::new();
+    let mut dirty_by_producer: BTreeMap<FormulaProducerId, DirtyDomainAccumulator> =
+        BTreeMap::new();
     let mut changed_result_regions = Vec::new();
     let mut fallbacks = Vec::new();
     let mut incomplete = false;
@@ -1181,7 +1210,10 @@ fn compute_dirty_closure_with_iteration_limit<E>(
 
     let work = dirty_by_producer
         .into_iter()
-        .map(|(producer, dirty)| FormulaProducerWork { producer, dirty })
+        .map(|(producer, dirty)| FormulaProducerWork {
+            producer,
+            dirty: dirty.finish(),
+        })
         .collect();
 
     if pending_work > 0 {
@@ -1204,21 +1236,14 @@ fn apply_dirty_projection(
     changed_region: Region,
     dirty: ProducerDirtyDomain,
     result_region: &impl Fn(FormulaProducerId) -> Option<Region>,
-    dirty_by_producer: &mut BTreeMap<FormulaProducerId, ProducerDirtyDomain>,
+    dirty_by_producer: &mut BTreeMap<FormulaProducerId, DirtyDomainAccumulator>,
     queue: &mut VecDeque<Region>,
     seen_changed_regions: &mut FxHashSet<Region>,
     changed_result_regions: &mut Vec<Region>,
     fallbacks: &mut Vec<FormulaDirtyFallback>,
     stats: &mut FormulaDirtyClosureStats,
 ) {
-    let merged = if let Some(existing) = dirty_by_producer.get_mut(&consumer) {
-        existing.merge_changed(dirty.clone())
-    } else {
-        dirty_by_producer.insert(consumer, dirty.clone());
-        true
-    };
-
-    if !merged {
+    if !dirty_by_producer.entry(consumer).or_default().push(&dirty) {
         return;
     }
 
@@ -1874,25 +1899,115 @@ mod tests {
 
     #[test]
     fn dirty_domain_merge_preserves_sparse_cells_without_widening() {
-        let mut dirty = ProducerDirtyDomain::Cells(vec![RegionKey::new(0, 1, 2)]);
-        dirty.merge(ProducerDirtyDomain::Cells(vec![
+        let mut dirty = DirtyDomainAccumulator::default();
+        dirty.push(&ProducerDirtyDomain::Cells(vec![RegionKey::new(0, 1, 2)]));
+        dirty.push(&ProducerDirtyDomain::Cells(vec![
             RegionKey::new(0, 1, 2),
             RegionKey::new(0, 10, 2),
         ]));
         assert_eq!(
-            dirty,
+            dirty.finish(),
             ProducerDirtyDomain::Cells(vec![RegionKey::new(0, 1, 2), RegionKey::new(0, 10, 2)])
         );
     }
 
     #[test]
     fn dirty_domain_merge_changed_reports_growth_only() {
-        let mut dirty = ProducerDirtyDomain::Cells(vec![RegionKey::new(0, 1, 2)]);
-        assert!(!dirty.merge_changed(ProducerDirtyDomain::Cells(vec![RegionKey::new(0, 1, 2)])));
-        assert!(dirty.merge_changed(ProducerDirtyDomain::Cells(vec![RegionKey::new(0, 2, 2)])));
+        let mut dirty = DirtyDomainAccumulator::default();
+        assert!(dirty.push(&ProducerDirtyDomain::Cells(vec![RegionKey::new(0, 1, 2)])));
+        assert!(!dirty.push(&ProducerDirtyDomain::Cells(vec![RegionKey::new(0, 1, 2)])));
+        assert!(dirty.push(&ProducerDirtyDomain::Cells(vec![RegionKey::new(0, 2, 2)])));
         assert_eq!(
-            dirty,
+            dirty.finish(),
             ProducerDirtyDomain::Cells(vec![RegionKey::new(0, 1, 2), RegionKey::new(0, 2, 2)])
+        );
+    }
+
+    #[test]
+    fn dirty_domain_merge_promotes_to_regions_and_dedupes_across_kinds() {
+        let mut dirty = DirtyDomainAccumulator::default();
+        assert!(dirty.push(&ProducerDirtyDomain::Cells(vec![RegionKey::new(0, 1, 2)])));
+        // The first `Regions` input promotes the domain kind (a change even
+        // though the point region is the same dirty cell as the RegionKey).
+        assert!(dirty.push(&ProducerDirtyDomain::Regions(vec![Region::point(0, 1, 2)])));
+        assert!(!dirty.push(&ProducerDirtyDomain::Regions(vec![Region::point(0, 1, 2)])));
+        assert!(
+            dirty.push(&ProducerDirtyDomain::Regions(vec![Region::col_interval(
+                0, 2, 0, 9
+            )]))
+        );
+        assert!(!dirty.push(&ProducerDirtyDomain::Cells(vec![RegionKey::new(0, 1, 2)])));
+        assert_eq!(
+            dirty.finish(),
+            ProducerDirtyDomain::Regions(vec![
+                Region::point(0, 1, 2),
+                Region::col_interval(0, 2, 0, 9)
+            ])
+        );
+    }
+
+    #[test]
+    fn dirty_domain_merge_whole_absorbs_everything() {
+        let mut dirty = DirtyDomainAccumulator::default();
+        assert!(dirty.push(&ProducerDirtyDomain::Cells(vec![RegionKey::new(0, 1, 2)])));
+        assert!(dirty.push(&ProducerDirtyDomain::Whole));
+        assert!(!dirty.push(&ProducerDirtyDomain::Whole));
+        assert!(!dirty.push(&ProducerDirtyDomain::Cells(vec![RegionKey::new(0, 5, 2)])));
+        assert!(!dirty.push(&ProducerDirtyDomain::Regions(vec![Region::whole_col(0, 1)])));
+        assert_eq!(dirty.finish(), ProducerDirtyDomain::Whole);
+    }
+
+    #[test]
+    fn dirty_closure_projecting_many_cells_onto_one_consumer_is_linear() {
+        // #405: one span reading a whole column receives one projection per
+        // changed cell. With clone-and-compare merging this was O(n²) and took
+        // seconds at 20k rows; the accumulator makes it a hash insert per cell.
+        const ROWS: u32 = 40_000;
+        let projection = DirtyProjectionRule::AffineCell {
+            row: AxisProjection::Relative { offset: 0 },
+            col: AxisProjection::Relative { offset: -1 },
+        };
+        let result = Region::col_interval(0, 1, 0, ROWS - 1);
+        let read = projection.read_region_for_result(0, result).unwrap();
+        let mut index = FormulaConsumerReadIndex::default();
+        index.insert_read(span(1), read, result, projection);
+        // Every changed cell is submitted twice: the second copy must be a
+        // constant-time no-op, not a rescan of the accumulated domain.
+        let changed = (0..ROWS)
+            .chain(0..ROWS)
+            .map(|row| Region::point(0, row, 0))
+            .collect::<Vec<_>>();
+
+        let start = std::time::Instant::now();
+        let closure = compute_dirty_closure(&index, changed, |producer| {
+            (producer == span(1)).then_some(result)
+        });
+        let elapsed = start.elapsed();
+
+        assert_eq!(closure.fallbacks, Vec::new());
+        assert_eq!(closure.work.len(), 1);
+        match &closure.work[0].dirty {
+            ProducerDirtyDomain::Cells(cells) => {
+                assert_eq!(cells.len(), ROWS as usize);
+                assert!(
+                    cells
+                        .iter()
+                        .enumerate()
+                        .all(|(i, key)| *key == RegionKey::new(0, i as u32, 1))
+                );
+            }
+            other => panic!("expected sparse cells, got {other:?}"),
+        }
+        assert_eq!(closure.stats.merged_dirty_domains, ROWS as usize);
+        assert_eq!(
+            closure.stats.duplicate_changed_regions_skipped,
+            ROWS as usize
+        );
+        // Generous budget: the quadratic version needed well over a minute in
+        // debug builds at this size; the linear one finishes in milliseconds.
+        assert!(
+            elapsed < std::time::Duration::from_secs(20),
+            "dirty closure took {elapsed:?} for {ROWS} rows"
         );
     }
 
