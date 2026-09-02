@@ -4141,4 +4141,36 @@ mod r1c1_disambiguation {
             assert_not_table(formula, &spanned);
         }
     }
+
+    #[test]
+    fn deeply_nested_formula_errors_instead_of_overflowing_stack() {
+        // A hostile formula string of deeply nested parentheses / unary ops /
+        // calls must return a ParserError, not overflow the stack. Run on a
+        // small (1 MiB) thread stack so an unbounded recursion would abort the
+        // process rather than silently succeed on the generous test-runner stack.
+        for formula in [
+            format!("={}1{}", "(".repeat(5000), ")".repeat(5000)),
+            format!("={}1", "-".repeat(5000)),
+            format!("={}1{}", "SUM(".repeat(5000), ")".repeat(5000)),
+        ] {
+            let handle = std::thread::Builder::new()
+                .stack_size(1024 * 1024)
+                .spawn(move || crate::parser::parse(&formula).is_err())
+                .expect("spawn parse thread");
+            let is_err = handle
+                .join()
+                .expect("parser must not overflow the stack on deep input");
+            assert!(
+                is_err,
+                "deeply nested formula should be rejected with an error"
+            );
+        }
+
+        // A modestly nested formula (well under the limit) must still parse.
+        let ok = format!("={}1{}", "(".repeat(40), ")".repeat(40));
+        assert!(
+            crate::parser::parse(&ok).is_ok(),
+            "normal nesting must still parse"
+        );
+    }
 }
