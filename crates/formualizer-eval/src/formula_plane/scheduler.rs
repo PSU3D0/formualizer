@@ -10,8 +10,8 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use rustc_hash::FxHashSet;
 
 use super::producer::{
-    DirtyProjectionRule, FormulaConsumerReadIndex, FormulaProducerId, FormulaProducerResultIndex,
-    FormulaProducerWork, ProducerDirtyDomain, ProjectionResult,
+    DirtyDomainAccumulator, DirtyProjectionRule, FormulaConsumerReadIndex, FormulaProducerId,
+    FormulaProducerResultIndex, FormulaProducerWork, ProducerDirtyDomain, ProjectionResult,
 };
 use super::region_index::{BoundedRegionQueryResult, Region};
 
@@ -1998,13 +1998,13 @@ fn merge_work_items(
     work: impl IntoIterator<Item = FormulaProducerWork>,
 ) -> (Vec<FormulaProducerWork>, MixedScheduleStats) {
     let mut stats = MixedScheduleStats::default();
-    let mut by_producer: BTreeMap<FormulaProducerId, DirtyAccumulator> = BTreeMap::new();
+    let mut by_producer: BTreeMap<FormulaProducerId, DirtyDomainAccumulator> = BTreeMap::new();
     for item in work {
         stats.input_work_items = stats.input_work_items.saturating_add(1);
         by_producer
             .entry(item.producer)
             .or_default()
-            .push(item.dirty);
+            .push(&item.dirty);
     }
     (
         by_producer
@@ -2016,62 +2016,6 @@ fn merge_work_items(
             .collect(),
         stats,
     )
-}
-
-#[derive(Default)]
-struct DirtyAccumulator {
-    whole: bool,
-    cells: Vec<super::region_index::RegionKey>,
-    seen_cells: FxHashSet<super::region_index::RegionKey>,
-    regions: Vec<Region>,
-    seen_regions: FxHashSet<Region>,
-}
-
-impl DirtyAccumulator {
-    fn push(&mut self, dirty: ProducerDirtyDomain) {
-        if self.whole {
-            return;
-        }
-        match dirty {
-            ProducerDirtyDomain::Whole => {
-                self.whole = true;
-                self.cells.clear();
-                self.seen_cells.clear();
-                self.regions.clear();
-                self.seen_regions.clear();
-            }
-            ProducerDirtyDomain::Cells(cells) => {
-                for cell in cells {
-                    if self.seen_cells.insert(cell) {
-                        self.cells.push(cell);
-                    }
-                }
-            }
-            ProducerDirtyDomain::Regions(regions) => {
-                for region in regions {
-                    if self.seen_regions.insert(region) {
-                        self.regions.push(region);
-                    }
-                }
-            }
-        }
-    }
-
-    fn finish(self) -> ProducerDirtyDomain {
-        if self.whole {
-            ProducerDirtyDomain::Whole
-        } else if self.regions.is_empty() {
-            ProducerDirtyDomain::Cells(self.cells)
-        } else {
-            let mut regions = self
-                .cells
-                .into_iter()
-                .map(|key| Region::point(key.sheet_id, key.row, key.col))
-                .collect::<Vec<_>>();
-            regions.extend(self.regions);
-            ProducerDirtyDomain::Regions(regions)
-        }
-    }
 }
 
 fn edge_derivation_regions(

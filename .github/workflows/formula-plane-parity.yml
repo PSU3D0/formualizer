@@ -60,7 +60,7 @@ jobs:
       run: >-
         cargo build -p formualizer-bench-core --release
         --features formualizer_runner
-        --bin probe-fp-audit2 --bin probe-corpus-parity
+        --bin probe-fp-audit2 --bin probe-corpus-parity --bin probe-fp-reject-chain
 
     - name: Per-class Off-vs-Authoritative differential (probe-fp-audit2)
       # Acceptance gate: total_divergent_cells == 0. The probe exits non-zero
@@ -68,6 +68,15 @@ jobs:
       run: |
         set -euo pipefail
         ./target/release/probe-fp-audit2 --rows 200 > fp-audit2.json
+
+    - name: First-eval scaling gate (probe-fp-reject-chain, #405 shape)
+      # A rejected legacy chain column next to two accepted span families.
+      # Authoritative first eval must stay within 3x Off at every row count;
+      # before #405 the mixed-schedule dirty projection was O(rows²) here
+      # (18.7k rows: 6.4 s vs 0.1 s).
+      run: >-
+        ./target/release/probe-fp-reject-chain
+        --rows 5000,10000,20000 --spans 2 --reps 2 --max-ratio 3
 
     - name: Full-cell parity harness smoke test
       run: >-
