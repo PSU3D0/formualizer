@@ -134,9 +134,19 @@ fn parse_month_name_date(text: &str) -> Option<NaiveDate> {
 }
 
 /// Parse "Jan 2024" or "January 2024" as the first day of that month.
+///
+/// The year token must be four digits. `parse_excel_year` also accepts one- and
+/// two-digit years, but admitting them here reads `"Jan 3"` as `2003-01-01`,
+/// which collides with a month-plus-day-without-year form. #290 explicitly
+/// refuses those (`"Jan-03"`, `"1/03"`) because a wall-clock year fill-in is
+/// ambiguous, so the month-year form is held to an unambiguous four-digit year.
 fn parse_month_year_only(text: &str) -> Option<NaiveDate> {
     let (month_text, year_text) = text.rsplit_once(' ')?;
-    let year = parse_excel_year(year_text.trim())?;
+    let year_text = year_text.trim();
+    if year_text.len() != 4 || !year_text.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let year = year_text.parse::<i32>().ok()?;
     // Try abbreviated and full month names
     let month = parse_month_name(month_text.trim())?;
     NaiveDate::from_ymd_opt(year, month, 1)
@@ -208,6 +218,12 @@ pub fn parse_excel_time_text(input: &str) -> Option<NaiveTime> {
 }
 
 /// Strip fractional seconds from a time string: "12:30:45.123" → "12:30:45"
+///
+/// Only a dot that terminates a full `HH:MM:SS` field is treated as fractional
+/// seconds. The dot must be preceded by two colons (the hour and minute
+/// separators), so `"12:00.5"` — a single colon, i.e. a malformed time — is
+/// left untouched and subsequently rejected by the parser as `#VALUE!` rather
+/// than silently accepted as `12:00`.
 fn strip_fractional_seconds(text: &str) -> String {
     // Find pattern: digits followed by '.' followed by digits, where this
     // appears after the second ':' (seconds position) or before a space/AM/PM
@@ -215,7 +231,9 @@ fn strip_fractional_seconds(text: &str) -> String {
         // Verify the dot is in a seconds position (preceded by digits, followed by digits)
         let before_dot = &text[..dot_pos];
         let after_dot = &text[dot_pos + 1..];
-        if before_dot.ends_with(|c: char| c.is_ascii_digit()) {
+        if before_dot.matches(':').count() >= 2
+            && before_dot.ends_with(|c: char| c.is_ascii_digit())
+        {
             // Find where the fractional digits end
             let frac_end = after_dot
                 .find(|c: char| !c.is_ascii_digit())
@@ -700,8 +718,29 @@ mod tests {
             parse_excel_date_text("February 2024"),
             Some(date(2024, 2, 1))
         );
-        assert_eq!(parse_excel_date_text("Dec 99"), Some(date(1999, 12, 1)));
-        assert_eq!(parse_excel_date_text("Mar 05"), Some(date(2005, 3, 1)));
         assert_eq!(parse_excel_date_text("July 2000"), Some(date(2000, 7, 1)));
+    }
+
+    #[test]
+    fn month_year_only_requires_a_four_digit_year() {
+        // A one- or two-digit trailing token is a day, not a year: the
+        // month-year form is held to an unambiguous four-digit year so that
+        // "Jan 3" is not silently read as 2003-01-01 (#290). Excel and
+        // LibreOffice reject the month-plus-day-without-year shape.
+        assert_eq!(parse_excel_date_text("Jan 3"), None);
+        assert_eq!(parse_excel_date_text("Mar 05"), None);
+        assert_eq!(parse_excel_date_text("Dec 99"), None);
+    }
+
+    #[test]
+    fn malformed_single_colon_time_with_dot_is_rejected() {
+        // "12:00.5" has a single colon, so the dot does not terminate an
+        // HH:MM:SS field. It must not be silently accepted as 12:00 (#290).
+        assert_eq!(parse_excel_time_text("12:00.5"), None);
+        // The well-formed HH:MM:SS.f case still truncates.
+        assert_eq!(
+            parse_excel_time_text("12:00:00.5"),
+            Some(NaiveTime::from_hms_opt(12, 0, 0).unwrap())
+        );
     }
 }
