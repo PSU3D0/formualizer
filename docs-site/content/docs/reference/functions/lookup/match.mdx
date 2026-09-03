@@ -14,7 +14,7 @@ description: "MATCH: Returns the relative position of a lookup value in a one-di
  - `match_type=0` performs exact matching and supports `*`, `?`, and `~` wildcards for text.
  - `match_type=1` looks for the largest value less than or equal to the lookup value.
  - `match_type=-1` looks for the smallest value greater than or equal to the lookup value.
- - Approximate modes require sorted data; unsorted data returns `#N/A`.
+ - Approximate modes require sorted data. MATCH detects unsorted input and returns `#N/A`, matching the same guard applied by VLOOKUP and HLOOKUP.
  - If no match is found, returns `#N/A`.
 
 ## Examples
