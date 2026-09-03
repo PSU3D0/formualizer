@@ -43,47 +43,70 @@ use super::{
     bessel_util::{FRAC_2_SQRT_PI, split_words},
 };
 
-/// Ceiling on the number of recurrence steps `jn`/`yn` may perform.
+/// Natural log of the largest finite `f64`, `ln(f64::MAX) ~= 709.783`.
 ///
-/// The forward and backward recurrences in `jn`/`yn` iterate on the order `n`.
-/// For a pathological order such as `i32::MAX` (reachable via
-/// `(-i32::MIN).checked_neg().unwrap_or(i32::MAX)`), that is a ~2-billion-step
-/// loop driven by a single formula call — a genuine DoS.
-///
-/// Bounding *iterations* (rather than clamping the input) is safe because
-/// `J_n(x)` and `Y_n(x)` are dominated by their asymptotic forms once the order
-/// far exceeds the argument:
-///
-/// ```text
-///   J_n(x) ~ (1 / sqrt(2*pi*n)) * (e*x / (2n))^n   -> underflows to 0
-///   Y_n(x) ~ -sqrt(2 / (pi*n)) * (2n / (e*x))^n    -> overflows to +/-inf
-/// ```
-///
-/// `f64` loses the last representable magnitude around `n * ln(2n / (e*x)) ~ 709`
-/// (the log of `f64::MAX`). Every order that would still yield a representable,
-/// non-zero result is far below this cap, so computing the recurrence past it
-/// only produces `0.0` / `+/-inf` anyway. A cap of 200_000 clears every input the
-/// reviewer flagged as must-still-work (e.g. `jn(2000, 100)`, `yn(2000, 100)`)
-/// with several orders of magnitude of head-room while keeping the worst case
-/// bounded and fast.
-const MAX_RECURRENCE_ORDER: i32 = 200_000;
+/// A magnitude whose natural log exceeds this cannot be represented, so it
+/// underflows to `0` (for a decaying quantity) or overflows to `+/-inf` (for a
+/// growing one).
+const LN_F64_MAX: f64 = 709.8;
 
-/// Returns the asymptotic limit of `J_n(x)` / `Y_n(x)` when the order is large
-/// enough that the recurrence is both prohibitively long and numerically moot.
+/// Hard ceiling on recurrence steps for the residual `n <= |x|` regime.
+///
+/// Below the turning point (`n <= |x|`) `J_n`/`Y_n` are oscillatory and finite,
+/// so [`asymptotic_large_order`] cannot short-circuit them — yet an order like
+/// `jn(2_000_000_000, 3_000_000_000)` is still a ~2-billion-step recurrence
+/// driven by one formula call, a genuine DoS. When the forward recurrence would
+/// exceed this many steps we bail with `NaN` rather than a confident wrong
+/// number; `engineering.rs` maps a non-finite Bessel result to `#NUM!`, which is
+/// an honest answer where a fabricated value would not be. The bound is chosen
+/// for latency, not accuracy: every argument small enough to matter in a
+/// spreadsheet is far below it.
+const MAX_RECURRENCE_ORDER: i32 = 1_000_000;
+
+/// Returns the asymptotic limit of `J_n(x)` / `Y_n(x)` when the order is high
+/// enough *relative to the argument* that the result has left the representable
+/// range, so the full recurrence is both numerically moot and prohibitively
+/// long.
 ///
 /// `Some(limit)` short-circuits the caller; `None` means "compute normally".
-/// Any order beyond `MAX_RECURRENCE_ORDER` is so far above every representable
-/// argument that `J` has underflowed to `0` and `Y` has diverged, so the limit
-/// is decided by the function kind alone.
+///
+/// Whether `J_n(x)` has underflowed depends on `n` *relative to* `|x|`, not on
+/// `n` alone: the first order to underflow is ~518 at `x = 100` but ~1.0e8 at
+/// `x = 1e8`. The boundary is the Debye (uniform asymptotic) exponent for
+/// `n > |x|`:
+///
+/// ```text
+///   a  = |x| / n                       (0 < a < 1 above the turning point)
+///   xi = arccosh(1/a) = ln((1+sqrt(1-a^2))/a) - sqrt(1-a^2)
+///   J_n(x) ~ exp(-n*xi) / sqrt(2*pi*n)   -> underflows to 0
+///   Y_n(x) ~ -exp(+n*xi) * sqrt(2/(pi*n)) -> overflows to +/-inf
+/// ```
+///
+/// `J` is representable while `n*xi <= ln(f64::MAX)`; past that it underflows to
+/// `0` and `Y` diverges. At or below the turning point (`n <= |x|`) the
+/// functions are oscillatory and always computed. This keeps genuinely
+/// representable large-order results (e.g. `jn(300000, 1e8)`,
+/// `jn(250000, 250000)`) on the real recurrence while still short-circuiting the
+/// pathological DoS orders (e.g. `jn(2e9, 1.0)`) in O(1).
 #[inline]
-fn asymptotic_large_order(n: i32, kind: BesselKind) -> Option<f64> {
-    if n <= MAX_RECURRENCE_ORDER {
+fn asymptotic_large_order(n: i32, x: f64, kind: BesselKind) -> Option<f64> {
+    let n_f = n as f64;
+    let ax = x.abs();
+    if n_f <= ax {
+        // Below the turning point: always compute.
         return None;
     }
-    match kind {
-        BesselKind::J => Some(0.0),
-        BesselKind::Y => Some(f64::NEG_INFINITY),
+    let a = ax / n_f; // 0 < a < 1
+    let s = (1.0 - a * a).sqrt();
+    let xi = ((1.0 + s) / a).ln() - s; // J_n ~ exp(-n*xi) / sqrt(2*pi*n)
+    if n_f * xi <= LN_F64_MAX {
+        // Still representable: compute normally.
+        return None;
     }
+    Some(match kind {
+        BesselKind::J => 0.0,
+        BesselKind::Y => f64::NEG_INFINITY,
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -125,14 +148,22 @@ pub(crate) fn jn(n: i32, x: f64) -> f64 {
     if n == 1 {
         return j1(x);
     }
-    // Bound the recurrence: for orders far above the argument, J_n(x) has already
-    // underflowed to 0. This caps pathological orders (e.g. i32::MAX) at O(1)
-    // without changing any result that is still representable. See
-    // `MAX_RECURRENCE_ORDER`.
-    if let Some(limit) = asymptotic_large_order(n, BesselKind::J) {
-        return limit;
-    }
     let sign = (n & 1) & (hx >> 31); /* even n -- 0, odd n -- sign(x) */
+    // For orders far above the argument, J_n(x) has already underflowed to 0.
+    // This short-circuits genuinely-unrepresentable orders (including the
+    // pathological i32::MAX DoS) in O(1) without changing any result that is
+    // still representable. The limit carries the parity sign, so an odd order
+    // of a negative argument keeps -0.0. See `asymptotic_large_order`.
+    if let Some(limit) = asymptotic_large_order(n, x, BesselKind::J) {
+        return if sign == 1 { -limit } else { limit };
+    }
+    // Residual DoS guard: below the turning point (n <= |x|) the result is
+    // finite and oscillatory, so the asymptotic short-circuit does not fire, yet
+    // the recurrence still runs ~n steps. Bail with NaN (mapped to #NUM!) rather
+    // than spin through a multi-billion-step loop. See `MAX_RECURRENCE_ORDER`.
+    if n > MAX_RECURRENCE_ORDER {
+        return f64::NAN;
+    }
     // let sign = if x < 0.0 { -1 } else { 1 };
     let x = x.abs();
     let b = if (ix | lx) == 0 || ix >= 0x7ff00000 {
@@ -347,13 +378,21 @@ pub(crate) fn yn(n: i32, x: f64) -> f64 {
     if ix == 0x7ff00000 {
         return 0.0;
     }
-    // Bound the recurrence: for orders far above the argument, Y_n(x) has already
-    // diverged. This caps pathological orders (e.g. i32::MAX) at O(1) without
-    // changing any result that is still representable. See `MAX_RECURRENCE_ORDER`.
-    // `Y_n` diverges to -inf for the even-parity branch; fold the parity `sign`
-    // so odd orders of a negated `n` keep their +inf limit.
-    if let Some(limit) = asymptotic_large_order(n, BesselKind::Y) {
+    // For orders far above the argument, Y_n(x) has already diverged. This
+    // short-circuits genuinely-unrepresentable orders (including the pathological
+    // i32::MAX DoS) in O(1) without changing any result that is still
+    // representable. `Y_n` diverges to -inf for the even-parity branch; fold the
+    // parity `sign` so odd orders of a negated `n` keep their +inf limit. See
+    // `asymptotic_large_order`.
+    if let Some(limit) = asymptotic_large_order(n, x, BesselKind::Y) {
         return (sign as f64) * limit;
+    }
+    // Residual DoS guard: below the turning point (n <= |x|) the result is finite
+    // and oscillatory, so the asymptotic short-circuit does not fire, yet the
+    // recurrence still runs ~n steps. Bail with NaN (mapped to #NUM!) rather than
+    // spin through a multi-billion-step loop. See `MAX_RECURRENCE_ORDER`.
+    if n > MAX_RECURRENCE_ORDER {
+        return f64::NAN;
     }
     let b = if ix >= 0x52D00000 {
         // x > 2^302

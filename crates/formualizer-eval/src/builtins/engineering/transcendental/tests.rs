@@ -236,19 +236,16 @@ fn bessel_y_special_values() {
     assert!(yn(2, f64::NAN).is_nan());
 }
 
-/// Accuracy contract for the `MAX_RECURRENCE_ORDER` iteration cap.
+/// Accuracy contract for the large-order short-circuit.
 ///
-/// The cap (200_000) only short-circuits orders so large the result has already
-/// underflowed (`J`) or diverged (`Y`). Orders below the cap must run the real
-/// recurrence unchanged. `jn(2000, 100)` / `yn(2000, 100)` are the inputs flagged
-/// in review: they are below the cap, so they take the ordinary code path and
-/// terminate in a few thousand iterations rather than being clamped.
-///
-/// Note on magnitudes: for order 2000 vastly exceeding argument 100, the true
-/// values are `J_2000(100) ~ 10^-3000` (underflows to +0 in f64) and
-/// `Y_2000(100) ~ -10^+3000` (overflows to -inf in f64). Those IEEE-754 limits
-/// are the *correct* representable results here, not a defect — the point of the
-/// test is that this order is computed directly, not truncated by the cap.
+/// `asymptotic_large_order` only short-circuits orders so large *relative to the
+/// argument* that the result has already underflowed (`J`) or diverged (`Y`).
+/// Orders on the representable side of the Debye boundary must run the real
+/// recurrence unchanged. `jn(2000, 100)` / `yn(2000, 100)` are the inputs
+/// flagged in review: order 2000 far exceeds argument 100, so they short-circuit
+/// to the correct IEEE-754 limits (`J_2000(100) ~ 10^-3000` underflows to +0,
+/// `Y_2000(100) ~ -10^+3000` overflows to -inf) rather than spinning the
+/// recurrence.
 #[test]
 fn bessel_moderate_orders_run_real_recurrence() {
     let j = jn(2000, 100.0);
@@ -261,18 +258,81 @@ fn bessel_moderate_orders_run_real_recurrence() {
     assert!(y < 0.0, "yn(2000, 100) = {y} must be negative");
 }
 
-/// The iteration cap must actually short-circuit pathological orders to the
-/// asymptotic limit (`J -> 0`, `Y -> -inf`) instead of running a multi-billion
-/// step recurrence. Terminating at all within the test timeout is the guarantee;
-/// the returned limits document the contract.
+/// The short-circuit must fire for orders that are large *relative to the
+/// argument* — the asymptotic limit (`J -> 0`, `Y -> -inf`) — instead of running
+/// a multi-billion step recurrence. Terminating at all within the test timeout
+/// is the guarantee; the returned limits document the contract.
 #[test]
 fn bessel_pathological_order_short_circuits_to_limit() {
-    // Orders far beyond MAX_RECURRENCE_ORDER (200_000).
+    // Orders vastly exceeding the argument: J underflows, Y diverges.
     assert_eq!(jn(i32::MAX, 1.0), 0.0);
     assert_eq!(jn(10_000_000, 3.5), 0.0);
     assert!(yn(i32::MAX, 1.0).is_infinite());
     assert!(yn(10_000_000, 3.5).is_infinite());
-    // i32::MIN negates (saturating) to i32::MAX, so it exercises the same cap.
+    // i32::MIN negates (saturating) to i32::MAX, so it exercises the same path.
     assert_eq!(jn(i32::MIN, 2.0), 0.0);
     assert!(yn(i32::MIN, 2.0).is_infinite());
+}
+
+/// The short-circuit boundary depends on `|x|`, not on `n` alone: a large order
+/// paired with a large argument is still representable and must run the real
+/// recurrence. These values are cross-checked against scipy and were returned as
+/// `0.0` / `-inf` (i.e. `#NUM!` for `Y`) by the earlier `n`-only bound.
+#[test]
+fn bessel_large_order_large_argument_stays_representable() {
+    // scipy: jn(300000, 1e8) ~ 2.6539906e-5
+    let j1 = jn(300_000, 1e8);
+    assert!(
+        j1.is_finite() && j1.abs() > 1e-6,
+        "jn(300000, 1e8) must be a small finite non-zero value, got {j1}"
+    );
+    // scipy: yn(300000, 1e8) ~ -7.5245326e-5 (finite, must not be -inf -> #NUM!)
+    let y1 = yn(300_000, 1e8);
+    assert!(
+        y1.is_finite() && y1.abs() > 1e-6,
+        "yn(300000, 1e8) must be finite, got {y1}"
+    );
+    // scipy: jn(250000, 250000) ~ 7.1005611e-3 (on the turning point)
+    let j2 = jn(250_000, 250_000.0);
+    assert!(
+        j2.is_finite() && j2.abs() > 1e-4,
+        "jn(250000, 250000) must be a finite non-zero value, got {j2}"
+    );
+    // jn(1e6, 1e8): far below the turning point, ordinary oscillatory value.
+    let j3 = jn(1_000_000, 1e8);
+    assert!(j3.is_finite(), "jn(1000000, 1e8) must be finite, got {j3}");
+}
+
+/// Continuity across the short-circuit boundary: adjacent orders at a fixed
+/// large argument must not jump from a real value to `0` / `-inf`. Before the
+/// Debye fix, `n = 200000` and `n = 200001` at `x = 1e8` differed by ~7.8e-6
+/// because the bound triggered on `n` alone at 200_000.
+#[test]
+fn bessel_order_boundary_is_continuous_at_large_argument() {
+    let j_lo = jn(200_000, 1e8);
+    let j_hi = jn(200_001, 1e8);
+    assert!(
+        j_lo.is_finite(),
+        "jn(200000, 1e8) must be finite, got {j_lo}"
+    );
+    assert!(
+        j_hi.is_finite(),
+        "jn(200001, 1e8) must be finite, got {j_hi}"
+    );
+    // Neighbouring orders are close; certainly not separated by a full unit gap.
+    assert!(
+        (j_lo - j_hi).abs() < 1e-3,
+        "jn is discontinuous across n=200000/200001 at x=1e8: {j_lo} vs {j_hi}"
+    );
+}
+
+/// Below the turning point (`n <= |x|`) the result is finite, so the asymptotic
+/// short-circuit cannot fire. A genuinely huge such order would still be a
+/// multi-billion-step recurrence, so it is bounded to `NaN` (mapped to `#NUM!`)
+/// for latency rather than a fabricated value. Terminating quickly is the
+/// guarantee.
+#[test]
+fn bessel_finite_but_huge_order_below_turning_point_bails_to_nan() {
+    assert!(jn(2_000_000_000, 3_000_000_000.0).is_nan());
+    assert!(yn(2_000_000_000, 3_000_000_000.0).is_nan());
 }
