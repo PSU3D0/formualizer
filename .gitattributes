@@ -8,3 +8,5 @@ docs-site/src/generated/functions-meta.json linguist-generated=true
 benchmarks/*-baseline.patch whitespace=-blank-at-eol
 # This experimental diff also ends on an encoded empty context line.
 benchmarks/perf-ranges-422-a-only.patch whitespace=-blank-at-eol,-blank-at-eof
+# This patch ends with an encoded blank context line.
+benchmarks/perf-recalc-427-baseline.patch whitespace=-blank-at-eol,-blank-at-eof
