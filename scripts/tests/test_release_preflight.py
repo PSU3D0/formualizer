@@ -28,6 +28,20 @@ POLICY_FIXTURE_FILES = (
     "bindings/wasm/Cargo.toml",
 )
 
+WORKBOOK_WORKSPACE_VERSION = str(
+    tomllib.loads((release_preflight.ROOT / "Cargo.toml").read_text(encoding="utf-8"))[
+        "workspace"
+    ]["dependencies"]["formualizer-workbook"]["version"]
+)
+
+
+def workbook_workspace_dependency(extra: str = "") -> str:
+    return (
+        "formualizer-workbook = { version = "
+        f'"{WORKBOOK_WORKSPACE_VERSION}", path = "crates/formualizer-workbook"'
+        f"{extra} }}"
+    )
+
 
 def copy_policy_fixture(destination: Path) -> None:
     for relative in POLICY_FIXTURE_FILES:
@@ -288,8 +302,8 @@ class ReleasePreflightTests(unittest.TestCase):
             r"cffi-native.*system-clock.*uncovered",
             (
                 "Cargo.toml",
-                'formualizer-workbook = { version = "0.8.4", path = "crates/formualizer-workbook" }',
-                'formualizer-workbook = { version = "0.8.4", path = "crates/formualizer-workbook", default-features = false }',
+                workbook_workspace_dependency(),
+                workbook_workspace_dependency(", default-features = false"),
             ),
         )
 
@@ -302,8 +316,10 @@ class ReleasePreflightTests(unittest.TestCase):
             mutate_file(
                 root,
                 "Cargo.toml",
-                'formualizer-workbook = { version = "0.8.4", path = "crates/formualizer-workbook" }',
-                'formualizer-workbook = { version = "0.8.4", path = "crates/formualizer-workbook", default-features = false, features = ["system-clock"] }',
+                workbook_workspace_dependency(),
+                workbook_workspace_dependency(
+                    ', default-features = false, features = ["system-clock"]'
+                ),
             )
             release_preflight.validate_binding_value_feature_policy(root)
 
@@ -312,8 +328,8 @@ class ReleasePreflightTests(unittest.TestCase):
             r"member default-features override",
             (
                 "Cargo.toml",
-                'formualizer-workbook = { version = "0.8.4", path = "crates/formualizer-workbook" }',
-                'formualizer-workbook = { version = "0.8.4", path = "crates/formualizer-workbook", default-features = false }',
+                workbook_workspace_dependency(),
+                workbook_workspace_dependency(", default-features = false"),
             ),
             (
                 "crates/formualizer-cffi/Cargo.toml",
@@ -473,8 +489,10 @@ class ReleasePreflightTests(unittest.TestCase):
             r"alternate semantic dependency 'clock-workbook'.*formualizer-workbook",
             (
                 "Cargo.toml",
-                'formualizer-workbook = { version = "0.8.4", path = "crates/formualizer-workbook" }',
-                'formualizer-workbook = { version = "0.8.4", path = "crates/formualizer-workbook" }\nclock-workbook = { package = "formualizer-workbook", version = "0.8.4", path = "crates/formualizer-workbook" }',
+                workbook_workspace_dependency(),
+                workbook_workspace_dependency()
+                + "\nclock-workbook = { package = \"formualizer-workbook\", version = "
+                + f'"{WORKBOOK_WORKSPACE_VERSION}", path = "crates/formualizer-workbook" }}',
             ),
             (
                 "bindings/python/Cargo.toml",
