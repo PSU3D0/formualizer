@@ -33,7 +33,7 @@ python bindings/python/examples/custom_function_registration.py
 
 ## Running in the browser (Pyodide)
 
-Formualizer also ships a Pyodide-tagged wheel — `await micropip.install("formualizer")` works inside a Pyodide runtime with the same API shown above. See the [Pyodide Quickstart](/docs/quickstarts/pyodide-quickstart) for install, UDF, and XLSX-byte examples, plus the handful of platform-specific defaults.
+Formualizer also supports Pyodide from a compatible wheel URL. Extract the `wheels-pyodide` Actions artifact and host the compatible wheel at a downloadable URL, then install it with `await micropip.install(wheel_url)`. See the [Pyodide Quickstart](/docs/quickstarts/pyodide-quickstart) for the URL-based install, UDF, and XLSX-byte examples, plus the handful of platform-specific defaults.
 
 ## Next
 
