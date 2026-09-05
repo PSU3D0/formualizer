@@ -85,6 +85,43 @@ fn range_or_scalar<'a, 'b>(
     })
 }
 
+// Bound additional retained masks per invocation; an over-budget mask is still
+// used for the current chunk, but is not retained. Keep the row-major reduction
+// order unchanged (including floating-point summation order).
+const CRITERIA_MASK_MEMO_BYTES: usize = 1024 * 1024;
+
+#[derive(Default)]
+struct CriteriaMaskMemo {
+    masks: rustc_hash::FxHashMap<(usize, usize), Option<std::sync::Arc<BooleanArray>>>,
+    bytes: usize,
+}
+
+impl CriteriaMaskMemo {
+    fn get_or_build(
+        &mut self,
+        key: (usize, usize),
+        build: impl FnOnce() -> Option<std::sync::Arc<BooleanArray>>,
+    ) -> Option<std::sync::Arc<BooleanArray>> {
+        if let Some(mask) = self.masks.get(&key) {
+            return mask.clone();
+        }
+        let mask = build();
+        // Include the BooleanArray allocation and full backing buffers. The extra
+        // 512 bytes conservatively cover its Arc header, two Arrow buffer owners,
+        // allocator overhead, and hash buckets (including growth slack). Charge
+        // unsupported predicates too, so memo metadata remains bounded.
+        let bytes = mask
+            .as_ref()
+            .map_or(0, |m| m.get_array_memory_size())
+            .saturating_add(512);
+        if bytes <= CRITERIA_MASK_MEMO_BYTES.saturating_sub(self.bytes) {
+            self.bytes += bytes;
+            self.masks.insert(key, mask.clone());
+        }
+        mask
+    }
+}
+
 fn eval_if_family<'a, 'b>(
     args: &[ArgumentHandle<'a, 'b>],
     ctx: &dyn FunctionContext<'b>,
@@ -226,6 +263,7 @@ fn eval_if_family<'a, 'b>(
             drv
         };
 
+        let mut criteria_masks = CriteriaMaskMemo::default();
         for res in driver.iter_row_chunks() {
             let cs = res?;
             let row_start = cs.row_start;
@@ -234,18 +272,9 @@ fn eval_if_family<'a, 'b>(
                 continue;
             }
 
-            // Get slices for all criteria and sum range
-            let mut crit_num_slices = Vec::with_capacity(crit_specs.len());
-            let mut crit_text_slices = Vec::with_capacity(crit_specs.len());
-            for (rv, _, _) in &crit_specs {
-                if let Some(v) = rv {
-                    crit_num_slices.push(Some(v.slice_numbers(row_start, row_len)));
-                    crit_text_slices.push(Some(v.slice_lowered_text(row_start, row_len)));
-                } else {
-                    crit_num_slices.push(None);
-                    crit_text_slices.push(None);
-                }
-            }
+            // Numeric fallback lanes are materialized only if a mask is unsupported.
+            // Text fallback uses get_cell, not lowered-text lanes.
+            let mut crit_num_slices = vec![None; crit_specs.len()];
 
             let sum_slices = sum_view
                 .as_ref()
@@ -273,45 +302,47 @@ fn eval_if_family<'a, 'b>(
 
                     // Try cache
                     let cur_cached = if let Some(ref view) = crit_specs[j].0 {
-                        ctx.get_criteria_mask(view, c, pred).map(|m| {
-                            let fill = criteria_match(pred, &LiteralValue::Empty);
-                            let m_len = m.len();
+                        criteria_masks
+                            .get_or_build((j, c), || ctx.get_criteria_mask(view, c, pred))
+                            .map(|m| {
+                                let fill = criteria_match(pred, &LiteralValue::Empty);
+                                let m_len = m.len();
 
-                            // The cached mask may be shorter than the current driver's chunk
-                            // (e.g., whole-column references trimmed to different used-regions).
-                            // Treat out-of-bounds rows as Empty cells.
-                            if row_start + row_len <= m_len {
-                                #[cfg(test)]
-                                test_hooks::inc_slice_fast();
-                                let sl = m.slice(row_start, row_len);
-                                return sl
-                                    .as_any()
-                                    .downcast_ref::<arrow_array::BooleanArray>()
-                                    .expect("cached criteria mask slice downcast")
-                                    .clone();
-                            }
+                                // The cached mask may be shorter than the current driver's chunk
+                                // (e.g., whole-column references trimmed to different used-regions).
+                                // Treat out-of-bounds rows as Empty cells.
+                                if row_start + row_len <= m_len {
+                                    #[cfg(test)]
+                                    test_hooks::inc_slice_fast();
+                                    let sl = m.slice(row_start, row_len);
+                                    return sl
+                                        .as_any()
+                                        .downcast_ref::<arrow_array::BooleanArray>()
+                                        .expect("cached criteria mask slice downcast")
+                                        .clone();
+                                }
 
-                            let mut bb =
-                                arrow_array::builder::BooleanBuilder::with_capacity(row_len);
-                            if row_start < m_len {
-                                #[cfg(test)]
-                                test_hooks::inc_pad_partial();
-                                let take_len = row_len.min(m_len - row_start);
-                                let sl = m.slice(row_start, take_len);
-                                let ba = sl
-                                    .as_any()
-                                    .downcast_ref::<arrow_array::BooleanArray>()
-                                    .expect("cached criteria mask slice downcast");
-                                bb.append_array(ba);
-                                bb.append_n(row_len - take_len, fill);
-                            } else {
-                                #[cfg(test)]
-                                test_hooks::inc_pad_all_fill();
-                                bb.append_n(row_len, fill);
-                            }
+                                let mut bb =
+                                    arrow_array::builder::BooleanBuilder::with_capacity(row_len);
+                                if row_start < m_len {
+                                    #[cfg(test)]
+                                    test_hooks::inc_pad_partial();
+                                    let take_len = row_len.min(m_len - row_start);
+                                    let sl = m.slice(row_start, take_len);
+                                    let ba = sl
+                                        .as_any()
+                                        .downcast_ref::<arrow_array::BooleanArray>()
+                                        .expect("cached criteria mask slice downcast");
+                                    bb.append_array(ba);
+                                    bb.append_n(row_len - take_len, fill);
+                                } else {
+                                    #[cfg(test)]
+                                    test_hooks::inc_pad_all_fill();
+                                    bb.append_n(row_len, fill);
+                                }
 
-                            bb.finish()
-                        })
+                                bb.finish()
+                            })
                     } else {
                         None
                     };
@@ -324,28 +355,44 @@ fn eval_if_family<'a, 'b>(
                         continue;
                     }
 
-                    // Compute mask for this chunk
+                    // Compute mask for this chunk.
+                    use crate::args::CriteriaPredicate;
+                    if matches!(
+                        pred,
+                        CriteriaPredicate::Gt(_)
+                            | CriteriaPredicate::Ge(_)
+                            | CriteriaPredicate::Lt(_)
+                            | CriteriaPredicate::Le(_)
+                            | CriteriaPredicate::Eq(LiteralValue::Number(_) | LiteralValue::Int(_))
+                            | CriteriaPredicate::Ne(LiteralValue::Number(_) | LiteralValue::Int(_))
+                    ) && crit_num_slices[j].is_none()
+                    {
+                        crit_num_slices[j] = Some(
+                            crit_specs[j]
+                                .0
+                                .as_ref()
+                                .unwrap()
+                                .slice_numbers(row_start, row_len),
+                        );
+                    }
                     let num_col = crit_num_slices[j]
                         .as_ref()
                         .and_then(|cols| cols.get(c).and_then(|a| a.as_ref()));
-                    let text_col = crit_text_slices[j]
-                        .as_ref()
-                        .and_then(|cols| cols.get(c).and_then(|a| a.as_ref()));
 
-                    let m = match (pred, num_col, text_col) {
-                        (crate::args::CriteriaPredicate::Gt(n), Some(nc), _) => {
+                    let m = match (pred, num_col) {
+                        (crate::args::CriteriaPredicate::Gt(n), Some(nc)) => {
                             cmp::gt(nc.as_ref(), &Float64Array::new_scalar(*n)).unwrap()
                         }
-                        (crate::args::CriteriaPredicate::Ge(n), Some(nc), _) => {
+                        (crate::args::CriteriaPredicate::Ge(n), Some(nc)) => {
                             cmp::gt_eq(nc.as_ref(), &Float64Array::new_scalar(*n)).unwrap()
                         }
-                        (crate::args::CriteriaPredicate::Lt(n), Some(nc), _) => {
+                        (crate::args::CriteriaPredicate::Lt(n), Some(nc)) => {
                             cmp::lt(nc.as_ref(), &Float64Array::new_scalar(*n)).unwrap()
                         }
-                        (crate::args::CriteriaPredicate::Le(n), Some(nc), _) => {
+                        (crate::args::CriteriaPredicate::Le(n), Some(nc)) => {
                             cmp::lt_eq(nc.as_ref(), &Float64Array::new_scalar(*n)).unwrap()
                         }
-                        (crate::args::CriteriaPredicate::Eq(v), nc, tc) => {
+                        (crate::args::CriteriaPredicate::Eq(v), nc) => {
                             match v {
                                 LiteralValue::Number(x) => {
                                     let nx = *x;
@@ -451,7 +498,7 @@ fn eval_if_family<'a, 'b>(
                                 }
                             }
                         }
-                        (crate::args::CriteriaPredicate::Ne(v), nc, tc) => match v {
+                        (crate::args::CriteriaPredicate::Ne(v), nc) => match v {
                             LiteralValue::Number(x) => {
                                 let nx = *x;
                                 if let Some(nc) = nc {
@@ -545,7 +592,7 @@ fn eval_if_family<'a, 'b>(
                                 bb.finish()
                             }
                         },
-                        (crate::args::CriteriaPredicate::TextLike { .. }, _, _) => {
+                        (crate::args::CriteriaPredicate::TextLike { .. }, _) => {
                             let mut bb =
                                 arrow_array::builder::BooleanBuilder::with_capacity(row_len);
                             let view = crit_specs[j].0.as_ref().unwrap();
@@ -1559,6 +1606,45 @@ mod tests {
     }
     fn lit(v: LiteralValue) -> ASTNode {
         ASTNode::new(ASTNodeType::Literal(v), None)
+    }
+
+    #[test]
+    fn criteria_mask_memo_is_lazy_and_bounded() {
+        let mut memo = CriteriaMaskMemo::default();
+        let small = std::sync::Arc::new(BooleanArray::from(vec![true; 1024]));
+        assert!(memo.get_or_build((0, 0), || Some(small.clone())).is_some());
+        assert!(
+            memo.get_or_build((0, 0), || panic!("rebuilt mask"))
+                .is_some()
+        );
+        assert!(memo.get_or_build((1, 0), || None).is_none());
+        assert!(
+            memo.get_or_build((1, 0), || panic!("retried unsupported mask"))
+                .is_none()
+        );
+        let oversized =
+            std::sync::Arc::new(BooleanArray::from(vec![true; CRITERIA_MASK_MEMO_BYTES * 8]));
+        assert!(memo.get_or_build((2, 0), || Some(oversized)).is_some());
+        assert!(!memo.masks.contains_key(&(2, 0)));
+        // COUNTIF on a one-row wide range builds distinct tiny masks, not shared
+        // buffers. Include both mask allocations and the backing table in the gate.
+        for col in 1..16_384 {
+            memo.get_or_build((0, col), || {
+                Some(std::sync::Arc::new(BooleanArray::from(vec![true])))
+            });
+        }
+        let arrays_and_owners: usize = memo
+            .masks
+            .values()
+            .flatten()
+            .map(|m| m.get_array_memory_size() + 16 + 2 * 128)
+            .sum();
+        let buckets = (memo.masks.capacity() + 1).next_power_of_two();
+        let table_bytes = buckets
+            * (std::mem::size_of::<((usize, usize), Option<std::sync::Arc<BooleanArray>>)>() + 1);
+        assert!(arrays_and_owners + table_bytes <= CRITERIA_MASK_MEMO_BYTES);
+        assert!(memo.bytes <= CRITERIA_MASK_MEMO_BYTES);
+        assert!(memo.masks.len() < 16_384);
     }
 
     #[test]
