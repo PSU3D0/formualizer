@@ -229,9 +229,9 @@
     },
     {
       "formula": "=MATCH(4.1, {4.1, 2.1, 3.1, 1.1}, -1)",
-      "result": 1,
-      "result_type": "int",
-      "description": "MATCH descending first element"
+      "result": "#N/A",
+      "result_type": "error",
+      "description": "MATCH descending mode rejects unsorted array"
     },
     {
       "formula": "=ADDRESS(5, 3, 1)",
