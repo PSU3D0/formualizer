@@ -1,4 +1,6 @@
 //! Standalone release probe: see benchmarks/perf-tranche-419-421.md.
+#[path = "perf_ranges.rs"]
+mod perf_ranges;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::hint::black_box;

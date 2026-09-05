@@ -3750,9 +3750,9 @@ pub fn formualizer_eval::engine::range_view::RangeView<'a>::clone(&self) -> form
 impl<'a> core::fmt::Debug for formualizer_eval::engine::range_view::RangeView<'a>
 pub fn formualizer_eval::engine::range_view::RangeView<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub struct formualizer_eval::engine::range_view::RowChunkIterator<'a>
-impl<'a> core::iter::traits::iterator::Iterator for formualizer_eval::engine::range_view::RowChunkIterator<'a>
-pub type formualizer_eval::engine::range_view::RowChunkIterator<'a>::Item = core::result::Result<formualizer_eval::engine::range_view::ChunkSlice, formualizer_common::error::ExcelError>
-pub fn formualizer_eval::engine::range_view::RowChunkIterator<'a>::next(&mut self) -> core::option::Option<Self::Item>
+impl core::iter::traits::iterator::Iterator for formualizer_eval::engine::range_view::RowChunkIterator<'_>
+pub type formualizer_eval::engine::range_view::RowChunkIterator<'_>::Item = core::result::Result<formualizer_eval::engine::range_view::ChunkSlice, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::range_view::RowChunkIterator<'_>::next(&mut self) -> core::option::Option<Self::Item>
 pub mod formualizer_eval::engine::resource_ledger
 pub enum formualizer_eval::engine::resource_ledger::DiskScratchPolicy
 pub formualizer_eval::engine::resource_ledger::DiskScratchPolicy::MemoryOnly
