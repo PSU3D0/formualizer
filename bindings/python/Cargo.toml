@@ -11,6 +11,10 @@ repository = "https://github.com/PSU3D0/formualizer"
 documentation = "https://pypi.org/project/formualizer/"
 keywords = ["spreadsheet", "excel", "formula", "python", "parser"]
 categories = ["api-bindings", "mathematics"]
+
+[package.metadata.formualizer-release.value-feature-opt-outs.python-pyodide]
+system-clock = "Pyodide/Emscripten deliberately uses a fixed or caller-injected clock instead of ambient wall-clock time."
+
 [lib]
 name = "formualizer_py"
 crate-type = ["cdylib", "rlib"]
