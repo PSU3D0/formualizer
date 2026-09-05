@@ -106,7 +106,11 @@ fn main() {
         let cached_result = cached.evaluate_all().unwrap();
         let uncached_result = uncached.evaluate_all().unwrap();
         let expected = values(&fresh);
-        assert_eq!(values(&uncached), expected, "uncached oracle: {operation:?}");
+        assert_eq!(
+            values(&uncached),
+            expected,
+            "uncached oracle: {operation:?}"
+        );
         let actual = values(&cached);
         let telemetry = cached.last_virtual_dep_telemetry();
         println!(
@@ -119,5 +123,8 @@ fn main() {
         );
         failures += usize::from(actual != expected);
     }
-    assert_eq!(failures, 0, "cached evaluation must match both exact oracles");
+    assert_eq!(
+        failures, 0,
+        "cached evaluation must match both exact oracles"
+    );
 }
