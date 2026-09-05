@@ -184,6 +184,31 @@ fn invalid_date_time_text_remains_value_error() {
 }
 
 #[test]
+fn month_day_without_year_and_malformed_time_remain_value_errors() {
+    // #290 non-goals, pinned at the eval layer. Month-plus-day-without-year
+    // ("Jan-03", "1/03") and the month-name-plus-day form ("Jan 3") must not
+    // be filled with a wall-clock year, and "12:00.5" (a single-colon time
+    // with a stray dot) must not be silently accepted as 12:00.
+    let cases = [
+        "=\"Jan-03\"+0",
+        "=\"1/03\"+0",
+        "=\"Jan 3\"+0",
+        "=\"12:00.5\"+0",
+    ];
+
+    for system in [DateSystem::Excel1900, DateSystem::Excel1904] {
+        for formula in cases {
+            assert_expected(
+                system,
+                formula,
+                "oracle: lo-verified",
+                Expected::Error(ExcelErrorKind::Value),
+            );
+        }
+    }
+}
+
+#[test]
 fn date_typed_arithmetic_uses_the_1904_workbook_system() {
     let mut engine = Engine::new(
         TestWorkbook::new(),
