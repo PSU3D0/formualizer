@@ -1,3 +1,6 @@
+use std::hash::{Hash, Hasher};
+
+use formualizer_eval::engine::lookup_index_cache::LookupHashKey;
 use formualizer_eval::engine::{
     CycleTelemetry, EngineBaselineStats, EvalDelta, EvalDeltaRecord, EvalResult,
     EvaluationRequestKind, EvaluationRequestOutcome, EvaluationRequestPhaseTimings,
@@ -112,6 +115,14 @@ fn read_semantic_reports(resolution: &SemanticContractResolution, function: &Res
         function.namespace.as_str(),
         function.canonical_name.as_str(),
     );
+}
+
+#[test]
+fn public_lookup_empty_hash_key_remains_constructible_and_hashable() {
+    let key = LookupHashKey::Empty;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    key.hash(&mut hasher);
+    let _ = hasher.finish();
 }
 
 #[test]

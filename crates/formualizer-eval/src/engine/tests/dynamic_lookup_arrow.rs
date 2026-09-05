@@ -4,7 +4,7 @@ use formualizer_common::LiteralValue;
 use formualizer_parse::parser::parse;
 
 #[test]
-fn xlookup_whole_column_empty_lookup_matches_first_cell() {
+fn xlookup_whole_column_empty_lookup_returns_not_found() {
     let wb = TestWorkbook::new();
     let mut engine = Engine::new(wb, EvalConfig::default());
 
