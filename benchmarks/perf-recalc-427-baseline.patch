@@ -1,0 +1,313 @@
+diff --git a/crates/formualizer-eval/Cargo.toml b/crates/formualizer-eval/Cargo.toml
+index 24ab92ed..f3bb34d6 100644
+--- a/crates/formualizer-eval/Cargo.toml
++++ b/crates/formualizer-eval/Cargo.toml
+@@ -126,3 +126,13 @@ test-support = []
+ name = "recalc_quadratic"
+ path = "examples/recalc_quadratic.rs"
+ required-features = ["test-support"]
++
++[[example]]
++name = "recalc_reuse"
++path = "examples/recalc_reuse.rs"
++required-features = ["test-support"]
++
++[[example]]
++name = "recalc_invalidation"
++path = "examples/recalc_invalidation.rs"
++required-features = ["test-support"]
+diff --git a/crates/formualizer-eval/src/engine/eval.rs b/crates/formualizer-eval/src/engine/eval.rs
+index a7c73560..ab9e351d 100644
+--- a/crates/formualizer-eval/src/engine/eval.rs
++++ b/crates/formualizer-eval/src/engine/eval.rs
+@@ -1027,6 +1027,8 @@ pub struct Engine<R> {
+     /// must not use relocated span read summaries to prove disconnection.
+     legacy_island_structural_summaries_trusted: bool,
+     cached_static_schedule: Option<CachedScheduleEntry>,
++    #[cfg(any(test, feature = "benchmark_internal"))]
++    recalc_reuse_probe: std::sync::Mutex<RecalcReuseProbe>,
+     cached_mixed_topology: Option<CachedMixedTopology>,
+     mixed_topology_cache_builds: u64,
+     mixed_topology_cache_hits: u64,
+@@ -2043,6 +2045,71 @@ struct ScheduleBuildMeta {
+     schedule_cache_eligible: bool,
+ }
+ 
++#[cfg(any(test, feature = "benchmark_internal"))]
++#[doc(hidden)]
++#[derive(Debug, Clone, Default)]
++pub struct RecalcReuseProbe {
++    pub schedule_requests: usize,
++    pub schedule_cache_hits: usize,
++    pub schedule_cache_misses: usize,
++    pub schedule_cache_ineligible: usize,
++    pub schedule_builds: usize,
++    pub schedule_deep_clones: usize,
++    pub schedule_deep_clone_buffers: usize,
++    pub schedule_deep_clone_bytes: usize,
++    pub schedule_shared_handles: usize,
++    pub schedule_retained_bytes: usize,
++    pub legacy_target_requests: usize,
++    pub target_schedule_builds: usize,
++    pub demand_builds: usize,
++    pub demand_vertices: usize,
++    pub demand_clean_formulas: usize,
++    pub demand_explicit_edges: usize,
++    pub demand_virtual_builder_calls: usize,
++}
++
++#[cfg(any(test, feature = "benchmark_internal"))]
++fn schedule_probe_heap_layout(
++    schedule: &crate::engine::Schedule,
++    capacity: bool,
++) -> (usize, usize) {
++    fn vector_layout<T>(values: &Vec<T>, capacity: bool) -> (usize, usize) {
++        let entries = if capacity {
++            values.capacity()
++        } else {
++            values.len()
++        };
++        (
++            entries * std::mem::size_of::<T>(),
++            usize::from(entries != 0),
++        )
++    }
++    let mut bytes = 0;
++    let mut buffers = 0;
++    for (next_bytes, next_buffers) in [
++        vector_layout(&schedule.units, capacity),
++        vector_layout(&schedule.layers, capacity),
++        vector_layout(&schedule.cycles, capacity),
++    ]
++    .into_iter()
++    .chain(
++        schedule
++            .layers
++            .iter()
++            .map(|layer| vector_layout(&layer.vertices, capacity)),
++    )
++    .chain(
++        schedule
++            .cycles
++            .iter()
++            .map(|cycle| vector_layout(cycle, capacity)),
++    ) {
++        bytes += next_bytes;
++        buffers += next_buffers;
++    }
++    (bytes, buffers)
++}
++
+ #[derive(Debug, Clone)]
+ struct CachedScheduleEntry {
+     topology_epoch: u64,
+@@ -2821,6 +2888,8 @@ where
+             topology_epoch: 0,
+             legacy_island_structural_summaries_trusted: true,
+             cached_static_schedule: None,
++            #[cfg(any(test, feature = "benchmark_internal"))]
++            recalc_reuse_probe: std::sync::Mutex::new(RecalcReuseProbe::default()),
+             cached_mixed_topology: None,
+             mixed_topology_cache_builds: 0,
+             mixed_topology_cache_hits: 0,
+@@ -2984,6 +3053,8 @@ where
+             topology_epoch: 0,
+             legacy_island_structural_summaries_trusted: true,
+             cached_static_schedule: None,
++            #[cfg(any(test, feature = "benchmark_internal"))]
++            recalc_reuse_probe: std::sync::Mutex::new(RecalcReuseProbe::default()),
+             cached_mixed_topology: None,
+             mixed_topology_cache_builds: 0,
+             mixed_topology_cache_hits: 0,
+@@ -5782,6 +5853,33 @@ where
+         self.graph.set_sheet_index_mode(mode);
+     }
+ 
++    #[cfg(any(test, feature = "benchmark_internal"))]
++    #[doc(hidden)]
++    pub fn reset_recalc_reuse_probe(&mut self) {
++        *self.recalc_reuse_probe.get_mut().unwrap() = RecalcReuseProbe::default();
++    }
++
++    #[cfg(any(test, feature = "benchmark_internal"))]
++    #[doc(hidden)]
++    pub fn recalc_reuse_probe(&self) -> RecalcReuseProbe {
++        let mut probe = self.recalc_reuse_probe.lock().unwrap().clone();
++        if let Some(cached) = self.cached_static_schedule.as_ref() {
++            probe.schedule_retained_bytes = std::mem::size_of::<CachedScheduleEntry>()
++                + cached.candidate_vertices.capacity() * std::mem::size_of::<VertexId>()
++                + schedule_probe_heap_layout(&cached.schedule, true).0;
++        }
++        probe
++    }
++
++    #[cfg(any(test, feature = "benchmark_internal"))]
++    fn probe_schedule_deep_clone(&self, schedule: &crate::engine::Schedule) {
++        let (bytes, buffers) = schedule_probe_heap_layout(schedule, false);
++        let mut probe = self.recalc_reuse_probe.lock().unwrap();
++        probe.schedule_deep_clones += 1;
++        probe.schedule_deep_clone_bytes += bytes;
++        probe.schedule_deep_clone_buffers += buffers;
++    }
++
+     fn clear_cached_static_schedule(&mut self) {
+         self.cached_static_schedule = None;
+     }
+@@ -19403,6 +19501,13 @@ where
+         mut delta: Option<&mut DeltaCollector>,
+     ) -> Result<EvalResult, ExcelError> {
+         use crate::engine::target_preparation::TargetProducer;
++        #[cfg(any(test, feature = "benchmark_internal"))]
++        {
++            self.recalc_reuse_probe
++                .get_mut()
++                .unwrap()
++                .legacy_target_requests += 1;
++        }
+         let start = crate::instant::FzInstant::now();
+         let root_vertices = roots
+             .iter()
+@@ -19420,6 +19525,13 @@ where
+             if precedents_to_eval.is_empty() {
+                 break;
+             }
++            #[cfg(any(test, feature = "benchmark_internal"))]
++            {
++                self.recalc_reuse_probe
++                    .get_mut()
++                    .unwrap()
++                    .target_schedule_builds += 1;
++            }
+             let scheduler = Scheduler::new(&self.graph);
+             let schedule =
+                 scheduler.create_schedule_with_virtual(&precedents_to_eval, &old_vdeps)?;
+@@ -23263,6 +23375,10 @@ where
+         &mut self,
+         to_evaluate: &[VertexId],
+     ) -> Result<ScheduleBuildOutput, ExcelError> {
++        #[cfg(any(test, feature = "benchmark_internal"))]
++        {
++            self.recalc_reuse_probe.get_mut().unwrap().schedule_requests += 1;
++        }
+         // Fold pending edge deltas once per schedule build so traversal uses
+         // the zero-allocation CSR slices (#125).
+         self.graph.flush_pending_edge_deltas();
+@@ -23280,6 +23396,11 @@ where
+                     schedule_cache_hit: true,
+                     schedule_cache_eligible: true,
+                 };
++                #[cfg(any(test, feature = "benchmark_internal"))]
++                {
++                    self.recalc_reuse_probe.lock().unwrap().schedule_cache_hits += 1;
++                    self.probe_schedule_deep_clone(&cached.schedule);
++                }
+                 return Ok((cached.schedule.clone(), FxHashMap::default(), meta));
+             }
+ 
+@@ -23287,7 +23408,16 @@ where
+                 self.create_evaluation_schedule_uncached(to_evaluate)?;
+             meta.schedule_cache_hit = false;
+             meta.schedule_cache_eligible = true;
++            #[cfg(any(test, feature = "benchmark_internal"))]
++            {
++                self.recalc_reuse_probe
++                    .get_mut()
++                    .unwrap()
++                    .schedule_cache_misses += 1;
++            }
+             if vdeps.is_empty() {
++                #[cfg(any(test, feature = "benchmark_internal"))]
++                self.probe_schedule_deep_clone(&schedule);
+                 self.cached_static_schedule = Some(CachedScheduleEntry {
+                     topology_epoch: self.topology_epoch,
+                     candidate_vertices: to_evaluate.to_vec(),
+@@ -23300,6 +23430,13 @@ where
+         let (schedule, vdeps, mut meta) = self.create_evaluation_schedule_uncached(to_evaluate)?;
+         meta.schedule_cache_hit = false;
+         meta.schedule_cache_eligible = false;
++        #[cfg(any(test, feature = "benchmark_internal"))]
++        {
++            self.recalc_reuse_probe
++                .get_mut()
++                .unwrap()
++                .schedule_cache_ineligible += 1;
++        }
+         Ok((schedule, vdeps, meta))
+     }
+ 
+@@ -23307,6 +23444,10 @@ where
+         &self,
+         to_evaluate: &[VertexId],
+     ) -> Result<ScheduleBuildOutput, ExcelError> {
++        #[cfg(any(test, feature = "benchmark_internal"))]
++        {
++            self.recalc_reuse_probe.lock().unwrap().schedule_builds += 1;
++        }
+         let builder = VirtualDepBuilder::new(self);
+         let (vdeps, augmented, builder_elapsed_ms, vdeps_edges) =
+             if self.config.enable_virtual_dep_telemetry {
+@@ -23497,6 +23638,8 @@ where
+         let mut visited: FxHashSet<VertexId> = FxHashSet::default();
+         let mut stack: Vec<VertexId> = Vec::new();
+         let mut vdeps: FxHashMap<VertexId, Vec<VertexId>> = FxHashMap::default(); // incoming deps per vertex
++        #[cfg(any(test, feature = "benchmark_internal"))]
++        let (mut probe_vertices, mut probe_clean_formulas, mut probe_edges) = (0, 0, 0);
+ 
+         for &t in target_vertices {
+             stack.push(t);
+@@ -23509,6 +23652,18 @@ where
+             if !self.graph.vertex_exists(v) {
+                 continue;
+             }
++            #[cfg(any(test, feature = "benchmark_internal"))]
++            {
++                probe_vertices += 1;
++                if matches!(
++                    self.graph.get_vertex_kind(v),
++                    VertexKind::FormulaScalar | VertexKind::FormulaArray
++                ) && !self.graph.is_dirty(v)
++                    && !self.graph.is_volatile(v)
++                {
++                    probe_clean_formulas += 1;
++                }
++            }
+             // Schedule dirty/volatile formulas. Also schedule pass-through
+             // Named*/Range vertices so the scheduler honours the
+             // topological position of any formula cells that sit underneath
+@@ -23543,12 +23698,20 @@ where
+             // ``to_evaluate``; only Formula vertices are scheduled.
+             if let Some(dependencies) = self.graph.dependencies_slice(v) {
+                 for &dep in dependencies {
++                    #[cfg(any(test, feature = "benchmark_internal"))]
++                    {
++                        probe_edges += 1;
++                    }
+                     if self.graph.vertex_exists(dep) && !visited.contains(&dep) {
+                         stack.push(dep);
+                     }
+                 }
+             } else {
+                 for dep in self.graph.get_dependencies(v) {
++                    #[cfg(any(test, feature = "benchmark_internal"))]
++                    {
++                        probe_edges += 1;
++                    }
+                     if self.graph.vertex_exists(dep) && !visited.contains(&dep) {
+                         stack.push(dep);
+                     }
+@@ -23573,6 +23736,15 @@ where
+             deps.sort_unstable();
+             deps.dedup();
+         }
++        #[cfg(any(test, feature = "benchmark_internal"))]
++        {
++            let mut probe = self.recalc_reuse_probe.lock().unwrap();
++            probe.demand_builds += 1;
++            probe.demand_vertices += probe_vertices;
++            probe.demand_clean_formulas += probe_clean_formulas;
++            probe.demand_explicit_edges += probe_edges;
++            probe.demand_virtual_builder_calls += probe_vertices;
++        }
+         (result, vdeps)
+     }
+ 

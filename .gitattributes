@@ -6,3 +6,5 @@ docs-site/src/generated/functions-meta.json linguist-generated=true
 
 # Unified diffs encode empty context lines as one space.
 benchmarks/*-baseline.patch whitespace=-blank-at-eol
+# This patch ends with an encoded blank context line.
+benchmarks/perf-recalc-427-baseline.patch whitespace=-blank-at-eol,-blank-at-eof
