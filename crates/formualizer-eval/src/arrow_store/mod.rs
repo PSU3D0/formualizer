@@ -158,11 +158,18 @@ impl ColumnChunk {
     }
     #[inline]
     pub fn numbers_or_null(&self) -> Arc<Float64Array> {
+        #[cfg(test)]
+        crate::engine::range_view::range_work::record(|w| w.provider_requests[0] += 1);
         if let Some(a) = &self.numbers {
             return a.clone();
         }
         self.lazy_null_numbers
             .get_or_init(|| {
+                #[cfg(test)]
+                crate::engine::range_view::range_work::record(|w| {
+                    w.provider_builds[0] += 1;
+                    w.provider_slots[0] += self.len();
+                });
                 let arr = new_null_array(&DataType::Float64, self.len());
                 Arc::new(arr.as_any().downcast_ref::<Float64Array>().unwrap().clone())
             })
@@ -170,11 +177,18 @@ impl ColumnChunk {
     }
     #[inline]
     pub fn booleans_or_null(&self) -> Arc<BooleanArray> {
+        #[cfg(test)]
+        crate::engine::range_view::range_work::record(|w| w.provider_requests[1] += 1);
         if let Some(a) = &self.booleans {
             return a.clone();
         }
         self.lazy_null_booleans
             .get_or_init(|| {
+                #[cfg(test)]
+                crate::engine::range_view::range_work::record(|w| {
+                    w.provider_builds[1] += 1;
+                    w.provider_slots[1] += self.len();
+                });
                 let arr = new_null_array(&DataType::Boolean, self.len());
                 Arc::new(arr.as_any().downcast_ref::<BooleanArray>().unwrap().clone())
             })
@@ -182,11 +196,18 @@ impl ColumnChunk {
     }
     #[inline]
     pub fn errors_or_null(&self) -> Arc<UInt8Array> {
+        #[cfg(test)]
+        crate::engine::range_view::range_work::record(|w| w.provider_requests[2] += 1);
         if let Some(a) = &self.errors {
             return a.clone();
         }
         self.lazy_null_errors
             .get_or_init(|| {
+                #[cfg(test)]
+                crate::engine::range_view::range_work::record(|w| {
+                    w.provider_builds[2] += 1;
+                    w.provider_slots[2] += self.len();
+                });
                 let arr = new_null_array(&DataType::UInt8, self.len());
                 Arc::new(arr.as_any().downcast_ref::<UInt8Array>().unwrap().clone())
             })
@@ -194,11 +215,20 @@ impl ColumnChunk {
     }
     #[inline]
     pub fn text_or_null(&self) -> ArrayRef {
+        #[cfg(test)]
+        crate::engine::range_view::range_work::record(|w| w.provider_requests[3] += 1);
         if let Some(a) = &self.text {
             return a.clone();
         }
         self.lazy_null_text
-            .get_or_init(|| new_null_array(&DataType::Utf8, self.len()))
+            .get_or_init(|| {
+                #[cfg(test)]
+                crate::engine::range_view::range_work::record(|w| {
+                    w.provider_builds[3] += 1;
+                    w.provider_slots[3] += self.len();
+                });
+                new_null_array(&DataType::Utf8, self.len())
+            })
             .clone()
     }
 

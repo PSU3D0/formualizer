@@ -4,6 +4,7 @@ use crate::engine::arena::AstNodeId;
 use crate::engine::eval_delta::{
     DeltaCollector, DeltaMode, EvalDelta, EvalDeltaCompatibilityPolicy,
 };
+use crate::engine::graph::editor::change_log::MutationCapture;
 use crate::engine::graph::prepared_legacy_graph::{
     PreparedLegacyGraphError, PreparedLegacyGraphPlan,
 };
@@ -27,7 +28,7 @@ use crate::engine::used_extent::{
 };
 use crate::engine::virtual_deps::{DynamicRefVirtualDepProvider, VirtualDepBuilder};
 use crate::engine::{
-    CycleDetection, CyclePolicy, DependencyGraph, EvalConfig, EvaluationRequestKind,
+    ChangeLogger, CycleDetection, CyclePolicy, DependencyGraph, EvalConfig, EvaluationRequestKind,
     EvaluationRequestOutcome, EvaluationResourceBaselineStats, EvaluationResourceReason,
     EvaluationResourceRequestStats, FormulaDirtyLeaseOutcome, FormulaIngestBatch,
     FormulaIngestRecord, FormulaIngestReport, FormulaParseDiagnostic, FormulaParsePolicy,
@@ -1340,9 +1341,9 @@ where
 {
     engine: &'a mut Engine<R>,
     name: String,
-    // Optional external ChangeLog pointer used by `Engine::action_with_logger`.
+    // Complete private mutation capture used by atomic actions.
     // Stored as a raw pointer to avoid creating aliasing `&mut` borrows alongside `&mut Engine`.
-    log: Option<*mut crate::engine::ChangeLog>,
+    capture: Option<*mut MutationCapture>,
     // Optional Arrow undo journal used by `Engine::action_atomic`.
     // Stored as a raw pointer to avoid aliasing issues with `&mut Engine`.
     arrow_undo: Option<*mut crate::engine::ArrowUndoBatch>,
@@ -1374,13 +1375,13 @@ where
         col: u32,
         value: LiteralValue,
     ) -> Result<(), crate::engine::EditorError> {
-        if self.log.is_some() {
+        if self.capture.is_some() {
             let old_value = self.engine.read_cell_value(sheet, row, col);
             let mut old_formula = self.engine.read_cell_formula_ast(sheet, row, col);
             let addr = self.addr_for(sheet, row, col);
-            let Some(log_ptr) = self.log else {
+            let Some(capture_ptr) = self.capture else {
                 return Err(crate::engine::EditorError::TransactionFailed {
-                    reason: "action_with_logger: missing ChangeLog".to_string(),
+                    reason: "action_with_logger: missing mutation capture".to_string(),
                 });
             };
 
@@ -1414,11 +1415,11 @@ where
                 Some(old_value.clone().unwrap_or(LiteralValue::Empty))
             };
 
-            let start_len = unsafe { (&*log_ptr).len() };
+            let start_len = unsafe { (&*capture_ptr).len() };
 
-            // Safety: `log_ptr` comes from a unique `&mut ChangeLog` in `Engine::action_with_logger`.
-            let log = unsafe { &mut *log_ptr };
-            self.engine.edit_with_logger(log, |editor| {
+            // Safety: `capture_ptr` comes from a unique operation-local `&mut MutationCapture`.
+            let capture = unsafe { &mut *capture_ptr };
+            self.engine.edit_with_capture(capture, |editor| {
                 editor.set_cell_value_with_old_state(
                     addr,
                     value.clone(),
@@ -1435,7 +1436,7 @@ where
 
             if let Some(undo_ptr) = self.arrow_undo {
                 // 1) Spill snapshot operations (computed overlay rect restore).
-                let new_events = &unsafe { (&*log_ptr).events() }[start_len..];
+                let new_events = &unsafe { (&*capture_ptr).events() }[start_len..];
                 let undo = unsafe { &mut *undo_ptr };
                 self.engine
                     .record_spill_ops_into_arrow_undo(undo, new_events);
@@ -1465,13 +1466,13 @@ where
         col: u32,
         ast: ASTNode,
     ) -> Result<(), crate::engine::EditorError> {
-        if self.log.is_some() {
+        if self.capture.is_some() {
             let old_value = self.engine.read_cell_value(sheet, row, col);
             let mut old_formula = self.engine.read_cell_formula_ast(sheet, row, col);
             let addr = self.addr_for(sheet, row, col);
-            let Some(log_ptr) = self.log else {
+            let Some(capture_ptr) = self.capture else {
                 return Err(crate::engine::EditorError::TransactionFailed {
-                    reason: "action_with_logger: missing ChangeLog".to_string(),
+                    reason: "action_with_logger: missing mutation capture".to_string(),
                 });
             };
 
@@ -1511,11 +1512,11 @@ where
             } else {
                 None
             };
-            let start_len = unsafe { (&*log_ptr).len() };
+            let start_len = unsafe { (&*capture_ptr).len() };
 
-            // Safety: `log_ptr` comes from a unique `&mut ChangeLog` in `Engine::action_with_logger`.
-            let log = unsafe { &mut *log_ptr };
-            self.engine.edit_with_logger(log, |editor| {
+            // Safety: `capture_ptr` comes from a unique operation-local `&mut MutationCapture`.
+            let capture = unsafe { &mut *capture_ptr };
+            self.engine.edit_with_capture(capture, |editor| {
                 if let Some((ast_id, plan)) = admitted_formula {
                     editor.set_cell_formula_with_prepared_plan(
                         addr,
@@ -1542,7 +1543,7 @@ where
                 });
 
             if let Some(undo_ptr) = self.arrow_undo {
-                let new_events = &unsafe { (&*log_ptr).events() }[start_len..];
+                let new_events = &unsafe { (&*capture_ptr).events() }[start_len..];
                 let undo = unsafe { &mut *undo_ptr };
                 self.engine
                     .record_spill_ops_into_arrow_undo(undo, new_events);
@@ -1568,7 +1569,7 @@ where
         hidden: bool,
         source: RowVisibilitySource,
     ) -> Result<(), crate::engine::EditorError> {
-        if self.log.is_some() {
+        if self.capture.is_some() {
             let sheet_id = self.engine.ensure_known_sheet_id(sheet)?;
             let row0 = Engine::<R>::normalize_row_1based(row_1based)?;
             let old_hidden = self
@@ -1585,12 +1586,12 @@ where
                 .engine
                 .set_row_hidden_by_sheet_id(sheet_id, row0, hidden, source);
 
-            let Some(log_ptr) = self.log else {
+            let Some(capture_ptr) = self.capture else {
                 return Err(crate::engine::EditorError::TransactionFailed {
-                    reason: "action_with_logger: missing ChangeLog".to_string(),
+                    reason: "action_with_logger: missing mutation capture".to_string(),
                 });
             };
-            unsafe { &mut *log_ptr }.record(crate::engine::ChangeEvent::SetRowVisibility {
+            unsafe { &mut *capture_ptr }.record(crate::engine::ChangeEvent::SetRowVisibility {
                 sheet_id,
                 row0,
                 source,
@@ -1614,17 +1615,17 @@ where
         hidden: bool,
         source: RowVisibilitySource,
     ) -> Result<(), crate::engine::EditorError> {
-        if self.log.is_some() {
+        if self.capture.is_some() {
             let sheet_id = self.engine.ensure_known_sheet_id(sheet)?;
             let (start_row0, end_row0) =
                 Engine::<R>::normalize_row_range_1based(start_row_1based, end_row_1based)?;
 
-            let Some(log_ptr) = self.log else {
+            let Some(capture_ptr) = self.capture else {
                 return Err(crate::engine::EditorError::TransactionFailed {
-                    reason: "action_with_logger: missing ChangeLog".to_string(),
+                    reason: "action_with_logger: missing mutation capture".to_string(),
                 });
             };
-            let log = unsafe { &mut *log_ptr };
+            let capture = unsafe { &mut *capture_ptr };
 
             for row0 in start_row0..=end_row0 {
                 let old_hidden = self
@@ -1641,7 +1642,7 @@ where
                     .engine
                     .set_row_hidden_by_sheet_id(sheet_id, row0, hidden, source);
 
-                log.record(crate::engine::ChangeEvent::SetRowVisibility {
+                capture.record(crate::engine::ChangeEvent::SetRowVisibility {
                     sheet_id,
                     row0,
                     source,
@@ -1667,10 +1668,10 @@ where
         if count == 0 {
             return Ok(crate::engine::ShiftSummary::default());
         }
-        if self.log.is_some() {
-            let Some(log_ptr) = self.log else {
+        if self.capture.is_some() {
+            let Some(capture_ptr) = self.capture else {
                 return Err(crate::engine::EditorError::TransactionFailed {
-                    reason: "action_atomic: missing ChangeLog".to_string(),
+                    reason: "action_atomic: missing mutation capture".to_string(),
                 });
             };
 
@@ -1686,10 +1687,10 @@ where
 
             // Graph structural insert (logged) - no snapshot bump.
             let summary = {
-                let log = unsafe { &mut *log_ptr };
+                let capture = unsafe { &mut *capture_ptr };
                 let mut out: Result<crate::engine::ShiftSummary, crate::engine::EditorError> =
                     Ok(crate::engine::ShiftSummary::default());
-                self.engine.edit_with_logger(log, |editor| {
+                self.engine.edit_with_capture(capture, |editor| {
                     editor.set_structural_occupancy(occupancy);
                     out = editor.insert_rows(sheet_id, before0, count);
                 })?;
@@ -1749,10 +1750,10 @@ where
         if count == 0 {
             return Ok(crate::engine::ShiftSummary::default());
         }
-        if self.log.is_some() {
-            let Some(log_ptr) = self.log else {
+        if self.capture.is_some() {
+            let Some(capture_ptr) = self.capture else {
                 return Err(crate::engine::EditorError::TransactionFailed {
-                    reason: "action_atomic: missing ChangeLog".to_string(),
+                    reason: "action_atomic: missing mutation capture".to_string(),
                 });
             };
 
@@ -1764,10 +1765,10 @@ where
                 .demote_spans_preserving_computed_overlays(sheet_id, affected_region)?;
 
             let summary = {
-                let log = unsafe { &mut *log_ptr };
+                let capture = unsafe { &mut *capture_ptr };
                 let mut out: Result<crate::engine::ShiftSummary, crate::engine::EditorError> =
                     Ok(crate::engine::ShiftSummary::default());
-                self.engine.edit_with_logger(log, |editor| {
+                self.engine.edit_with_capture(capture, |editor| {
                     editor.set_structural_occupancy(occupancy);
                     out = editor.insert_columns(sheet_id, before0, count);
                 })?;
@@ -5041,7 +5042,7 @@ where
         let mut tx = EngineAction {
             engine: self,
             name: name.as_ref().to_string(),
-            log: None,
+            capture: None,
             arrow_undo: None,
             atomic_policy: false,
         };
@@ -5081,14 +5082,14 @@ where
         };
 
         let name_str = name.into();
-        let mut log = crate::engine::ChangeLog::new();
-        let start_len = log.len();
-        self.action_atomic_impl(&mut log, start_len, name_str, f)
+        let mut capture = MutationCapture::new(Default::default());
+        let start_len = capture.len();
+        self.action_atomic_impl(&mut capture, start_len, name_str, f)
     }
 
     fn action_atomic_impl<T>(
         &mut self,
-        log: &mut crate::engine::ChangeLog,
+        capture: &mut MutationCapture,
         start_len: usize,
         name: String,
         f: impl FnOnce(&mut EngineAction<'_, R>) -> Result<T, crate::engine::EditorError>,
@@ -5097,11 +5098,11 @@ where
         let mut arrow_undo = crate::engine::ArrowUndoBatch::default();
         let arrow_ptr: *mut crate::engine::ArrowUndoBatch = &mut arrow_undo;
 
-        let log_ptr: *mut crate::engine::ChangeLog = log;
+        let capture_ptr: *mut MutationCapture = capture;
         let mut tx = EngineAction {
             engine: self,
             name: name.clone(),
-            log: Some(log_ptr),
+            capture: Some(capture_ptr),
             arrow_undo: Some(arrow_ptr),
             atomic_policy: true,
         };
@@ -5110,7 +5111,7 @@ where
 
         // Capture graph structural delta for this action.
         let graph_events: Vec<crate::engine::ChangeEvent> =
-            unsafe { (&*log_ptr).events() }[start_len..].to_vec();
+            unsafe { (&*capture_ptr).events() }[start_len..].to_vec();
         let graph_batch = crate::engine::GraphUndoBatch {
             events: graph_events,
         };
@@ -5160,7 +5161,7 @@ where
     /// Ticket 615: this variant provides atomicity. If the action returns an error, it rolls back:
     /// - Dependency graph structural edits (via inverse ChangeEvents)
     /// - Arrow-truth overlay writes mirrored from ChangeEvents
-    /// - ChangeLog entries (truncated back to the pre-action length)
+    /// - ChangeLog entries (published only after a successful commit)
     pub fn action_with_logger<T>(
         &mut self,
         log: &mut crate::engine::ChangeLog,
@@ -5181,23 +5182,24 @@ where
             _marker: std::marker::PhantomData,
         };
 
-        let start_len = log.len();
         let name_str = name.as_ref().to_string();
-        log.begin_compound(name_str.clone());
+        let mut capture = MutationCapture::new(log.current_meta());
+        let start_len = capture.len();
+        capture.begin_compound(name_str.clone());
 
-        // Use the provided ChangeLog as an observability sink.
-        // Correctness is provided by the internal `ActionJournal` returned from the atomic impl.
-        let res = self.action_atomic_impl(log, start_len, name_str, f);
+        // Mutation correctness uses the complete private capture. The provided ChangeLog remains
+        // an observability sink and is not touched until the action outcome is known.
+        let res = self.action_atomic_impl(&mut capture, start_len, name_str, f);
+        capture.close_compounds();
 
         match res {
             Ok((v, _journal)) => {
-                log.end_compound();
+                log.publish_capture(capture);
                 Ok(v)
             }
             Err(e) => {
-                // Close compound and truncate log as cleanup only.
-                log.end_compound();
-                log.truncate(start_len);
+                // Preserve sequence/group gaps without retaining failed events or evicting history.
+                log.discard_capture(capture);
                 Err(e)
             }
         }
@@ -5365,9 +5367,28 @@ where
         log: &mut crate::engine::ChangeLog,
         f: impl FnOnce(&mut crate::engine::VertexEditor) -> T,
     ) -> Result<T, crate::engine::EditorError> {
+        let mut capture = MutationCapture::new(log.current_meta());
+        let result = self.edit_with_capture(&mut capture, f);
+        capture.close_compounds();
+        match result {
+            Ok(value) => {
+                log.publish_capture(capture);
+                Ok(value)
+            }
+            Err(error) => {
+                log.discard_capture(capture);
+                Err(error)
+            }
+        }
+    }
+
+    fn edit_with_capture<T>(
+        &mut self,
+        capture: &mut MutationCapture,
+        f: impl FnOnce(&mut crate::engine::VertexEditor) -> T,
+    ) -> Result<T, crate::engine::EditorError> {
         let invalidation_baseline = self.invalidation_baseline();
-        // Record starting log length so we can mirror only newly-recorded events.
-        let start_len = log.len();
+        let start_len = capture.len();
 
         // Provide a spill snapshot reader so VertexEditor can snapshot Arrow-truth spill values
         // (graph value cache is intentionally empty in canonical mode).
@@ -5400,13 +5421,13 @@ where
             };
             let mut editor = crate::engine::VertexEditor::with_logger_and_spill_reader(
                 &mut self.graph,
-                log,
+                capture,
                 &spill_reader,
             );
             f(&mut editor)
         };
 
-        let new_events = log.events()[start_len..].to_vec();
+        let new_events = capture.events()[start_len..].to_vec();
         if new_events.iter().any(|event| {
             matches!(
                 event,
@@ -5416,7 +5437,6 @@ where
             )
         }) {
             self.rollback_from_change_events(&new_events, invalidation_baseline)?;
-            log.truncate(start_len);
             return Err(crate::engine::EditorError::TransactionUnsupported {
                 reason: "name mutations must use Engine's prepared logged-name APIs".to_string(),
             });
@@ -5547,6 +5567,10 @@ where
         .map_err(crate::engine::EditorError::Excel)
     }
 
+    /// Undo the last group still retained by the provided audit log.
+    ///
+    /// Disabled, zero-cap, and evicted history is unavailable on this index-based path. Use an
+    /// explicit `ActionJournal` with `undo_action` when undo must be independent of audit retention.
     pub fn undo_logged(
         &mut self,
         undo: &mut crate::engine::graph::editor::undo_engine::UndoEngine,

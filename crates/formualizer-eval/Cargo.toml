@@ -123,6 +123,11 @@ benchmark_internal = []
 test-support = []
 
 [[example]]
+name = "range_projection_probe"
+path = "examples/range_projection_probe.rs"
+required-features = ["test-support"]
+
+[[example]]
 name = "recalc_quadratic"
 path = "examples/recalc_quadratic.rs"
 required-features = ["test-support"]
