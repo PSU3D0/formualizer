@@ -126,3 +126,13 @@ test-support = []
 name = "recalc_quadratic"
 path = "examples/recalc_quadratic.rs"
 required-features = ["test-support"]
+
+[[example]]
+name = "recalc_reuse"
+path = "examples/recalc_reuse.rs"
+required-features = ["test-support"]
+
+[[example]]
+name = "recalc_invalidation"
+path = "examples/recalc_invalidation.rs"
+required-features = ["test-support"]

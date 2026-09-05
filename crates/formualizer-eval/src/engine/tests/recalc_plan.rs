@@ -496,3 +496,111 @@ fn recalc_plan_reused_for_multiple_runs() -> Result<(), ExcelError> {
 
     Ok(())
 }
+
+#[test]
+fn target_probe_keeps_clean_ancestry_discovery_and_sparse_dirty_ownership() {
+    // Other library tests mutate the global semantic epoch. This probe needs a
+    // genuinely stable registry while it measures reuse of a retained plan.
+    const CHILD_ENV: &str = "FZ_RECALC_REUSE_PLAN_PROBE_CHILD";
+    if std::env::var_os(CHILD_ENV).is_none() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "engine::tests::recalc_plan::target_probe_keeps_clean_ancestry_discovery_and_sparse_dirty_ownership",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(CHILD_ENV, "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    for depth in [32, 256] {
+        let mut engine = Engine::new(
+            TestWorkbook::new(),
+            EvalConfig {
+                enable_parallel: false,
+                formula_plane_mode: crate::engine::FormulaPlaneMode::Off,
+                ..EvalConfig::default()
+            },
+        );
+        for (col, value) in [(1, 1), (3, 10), (7, 20)] {
+            engine
+                .set_cell_value("Sheet1", 1, col, LiteralValue::Int(value))
+                .unwrap();
+        }
+        engine
+            .set_cell_formula("Sheet1", 1, 2, parse("=A1+1").unwrap())
+            .unwrap();
+        for row in 2..=depth {
+            engine
+                .set_cell_formula("Sheet1", row, 2, parse(format!("=B{}+1", row - 1)).unwrap())
+                .unwrap();
+        }
+        for (col, formula) in [
+            (4, format!("=B{depth}+C1")),
+            (5, "=D1+1".to_string()),
+            (6, "=G1+5".to_string()),
+        ] {
+            engine
+                .set_cell_formula("Sheet1", 1, col, parse(formula).unwrap())
+                .unwrap();
+        }
+        engine.evaluate_all().unwrap();
+        let targets = [EvaluationTarget::Cell {
+            sheet: "Sheet1".to_string(),
+            row: 1,
+            col: 5,
+        }];
+        let plan = engine.build_recalc_plan_for_targets(&targets).unwrap();
+        engine.reset_recalc_reuse_probe();
+        assert_eq!(
+            engine.evaluate_targets(&targets).unwrap().computed_vertices,
+            0
+        );
+        let clean = engine.recalc_reuse_probe();
+        assert_eq!(clean.legacy_target_requests, 1);
+        assert_eq!(clean.demand_builds, 1);
+        assert_eq!(clean.demand_vertices, depth as usize + 4);
+        assert_eq!(clean.demand_clean_formulas, depth as usize + 2);
+        assert_eq!(clean.target_schedule_builds, 0);
+        assert_eq!(clean.schedule_requests, 0);
+
+        for (use_plan, value) in [(false, 11), (true, 12)] {
+            engine
+                .set_cell_value("Sheet1", 1, 3, LiteralValue::Int(value))
+                .unwrap();
+            engine
+                .set_cell_value("Sheet1", 1, 7, LiteralValue::Int(value))
+                .unwrap();
+            engine.reset_recalc_reuse_probe();
+            let result = if use_plan {
+                engine.evaluate_recalc_plan(&plan)
+            } else {
+                engine.evaluate_targets(&targets)
+            }
+            .unwrap();
+            assert_eq!(result.computed_vertices, 2);
+            let probe = engine.recalc_reuse_probe();
+            assert_eq!(probe.demand_vertices, depth as usize + 4);
+            assert_eq!(probe.demand_clean_formulas, depth as usize);
+            assert_eq!(probe.target_schedule_builds, 1);
+            assert_eq!(probe.schedule_requests, 0);
+            assert_eq!(
+                engine.get_cell_value("Sheet1", 1, 5),
+                Some(LiteralValue::Number(f64::from(depth) + value as f64 + 2.0))
+            );
+            assert_eq!(
+                engine.get_cell_value("Sheet1", 1, 6),
+                Some(LiteralValue::Number(25.0))
+            );
+            assert_eq!(engine.evaluation_vertices().len(), 1);
+        }
+    }
+}
