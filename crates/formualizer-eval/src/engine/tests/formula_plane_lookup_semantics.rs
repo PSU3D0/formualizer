@@ -597,6 +597,483 @@ fn vlookup_lookup_array_is_full_column_reference() {
     );
 }
 
+fn mark_all_formulas_dirty_without_edit(engine: &mut Engine<TestWorkbook>) {
+    let vertices: Vec<_> = engine.graph.vertices_with_formulas().collect();
+    for vertex in vertices {
+        engine.graph.mark_vertex_dirty(vertex);
+    }
+    engine.graph.mark_all_formula_spans_dirty(
+        crate::engine::graph::WholeSpanDirtyReason::GlobalInvalidation,
+    );
+}
+
+#[derive(Clone, Copy)]
+enum LookupExpected {
+    Number(f64),
+    Na,
+    Text(&'static str),
+}
+
+type LookupMatrixExpectation = (u32, u32, LookupExpected, &'static str);
+
+fn blank_zero_lookup_matrix_engine(
+    cache_max_bytes: usize,
+) -> (Engine<TestWorkbook>, Vec<LookupMatrixExpectation>) {
+    let mut engine = engine_with_config(EvalConfig {
+        formula_plane_mode: FormulaPlaneMode::Off,
+        lookup_index_cache_max_bytes: cache_max_bytes,
+        ..EvalConfig::default()
+    });
+
+    for row in 1..=TABLE_ROWS {
+        let key = match row {
+            1 | 7 => LiteralValue::Empty,
+            2 | 10 => LiteralValue::Text(String::new()),
+            3 | 9 => LiteralValue::Text("0".into()),
+            4 | 8 => LiteralValue::Boolean(false),
+            5 => LiteralValue::Number(-0.0),
+            6 => LiteralValue::Number(0.0),
+            _ => LiteralValue::Number(row as f64),
+        };
+        let no_zero_key = match row % 4 {
+            0 => LiteralValue::Empty,
+            1 => LiteralValue::Text(String::new()),
+            2 => LiteralValue::Text("0".into()),
+            _ => LiteralValue::Boolean(false),
+        };
+        value(&mut engine, "Sheet1", row, 1, key.clone());
+        number(&mut engine, "Sheet1", row, 2, row as f64 * 10.0);
+        value(&mut engine, "Sheet1", row, 3, no_zero_key.clone());
+        number(&mut engine, "Sheet1", row, 4, row as f64 * 10.0);
+        value(&mut engine, "Sheet1", 110, row, key);
+        number(&mut engine, "Sheet1", 111, row, row as f64 * 10.0);
+        value(&mut engine, "Sheet1", 120, row, no_zero_key);
+        number(&mut engine, "Sheet1", 121, row, row as f64 * 10.0);
+    }
+
+    let numeric_cases = [
+        ("MATCH +0 vertical", "=MATCH(0,$A$1:$A$100,0)", 5.0),
+        ("MATCH -0 vertical", "=MATCH(-0,$A$1:$A$100,0)", 5.0),
+        (
+            "MATCH blank vertical",
+            "=MATCH($ZZ$1000,$A$1:$A$100,0)",
+            5.0,
+        ),
+        ("MATCH +0 horizontal", "=MATCH(0,$A$110:$CV$110,0)", 5.0),
+        ("MATCH -0 horizontal", "=MATCH(-0,$A$110:$CV$110,0)", 5.0),
+        (
+            "MATCH blank horizontal",
+            "=MATCH($ZZ$1000,$A$110:$CV$110,0)",
+            5.0,
+        ),
+        ("VLOOKUP +0", "=VLOOKUP(0,$A$1:$B$100,2,FALSE)", 50.0),
+        ("VLOOKUP -0", "=VLOOKUP(-0,$A$1:$B$100,2,FALSE)", 50.0),
+        (
+            "VLOOKUP blank",
+            "=VLOOKUP($ZZ$1000,$A$1:$B$100,2,FALSE)",
+            50.0,
+        ),
+        ("HLOOKUP +0", "=HLOOKUP(0,$A$110:$CV$111,2,FALSE)", 50.0),
+        ("HLOOKUP -0", "=HLOOKUP(-0,$A$110:$CV$111,2,FALSE)", 50.0),
+        (
+            "HLOOKUP blank",
+            "=HLOOKUP($ZZ$1000,$A$110:$CV$111,2,FALSE)",
+            50.0,
+        ),
+        (
+            "XMATCH +0 forward vertical",
+            "=XMATCH(0,$A$1:$A$100,0,1)",
+            5.0,
+        ),
+        (
+            "XMATCH +0 reverse vertical",
+            "=XMATCH(0,$A$1:$A$100,0,-1)",
+            6.0,
+        ),
+        (
+            "XMATCH -0 forward vertical",
+            "=XMATCH(-0,$A$1:$A$100,0,1)",
+            5.0,
+        ),
+        (
+            "XMATCH -0 reverse vertical",
+            "=XMATCH(-0,$A$1:$A$100,0,-1)",
+            6.0,
+        ),
+        (
+            "XMATCH blank forward vertical",
+            "=XMATCH($ZZ$1000,$A$1:$A$100,0,1)",
+            5.0,
+        ),
+        (
+            "XMATCH blank reverse vertical",
+            "=XMATCH($ZZ$1000,$A$1:$A$100,0,-1)",
+            6.0,
+        ),
+        (
+            "XMATCH +0 forward horizontal",
+            "=XMATCH(0,$A$110:$CV$110,0,1)",
+            5.0,
+        ),
+        (
+            "XMATCH +0 reverse horizontal",
+            "=XMATCH(0,$A$110:$CV$110,0,-1)",
+            6.0,
+        ),
+        (
+            "XMATCH -0 forward horizontal",
+            "=XMATCH(-0,$A$110:$CV$110,0,1)",
+            5.0,
+        ),
+        (
+            "XMATCH -0 reverse horizontal",
+            "=XMATCH(-0,$A$110:$CV$110,0,-1)",
+            6.0,
+        ),
+        (
+            "XMATCH blank forward horizontal",
+            "=XMATCH($ZZ$1000,$A$110:$CV$110,0,1)",
+            5.0,
+        ),
+        (
+            "XMATCH blank reverse horizontal",
+            "=XMATCH($ZZ$1000,$A$110:$CV$110,0,-1)",
+            6.0,
+        ),
+        (
+            "XLOOKUP +0 forward vertical",
+            "=XLOOKUP(0,$A$1:$A$100,$B$1:$B$100,-1,0,1)",
+            50.0,
+        ),
+        (
+            "XLOOKUP +0 reverse vertical",
+            "=XLOOKUP(0,$A$1:$A$100,$B$1:$B$100,-1,0,-1)",
+            60.0,
+        ),
+        (
+            "XLOOKUP -0 forward vertical",
+            "=XLOOKUP(-0,$A$1:$A$100,$B$1:$B$100,-1,0,1)",
+            50.0,
+        ),
+        (
+            "XLOOKUP -0 reverse vertical",
+            "=XLOOKUP(-0,$A$1:$A$100,$B$1:$B$100,-1,0,-1)",
+            60.0,
+        ),
+        (
+            "XLOOKUP blank forward vertical",
+            "=XLOOKUP($ZZ$1000,$A$1:$A$100,$B$1:$B$100,-1,0,1)",
+            50.0,
+        ),
+        (
+            "XLOOKUP blank reverse vertical",
+            "=XLOOKUP($ZZ$1000,$A$1:$A$100,$B$1:$B$100,-1,0,-1)",
+            60.0,
+        ),
+        (
+            "XLOOKUP +0 forward horizontal",
+            "=XLOOKUP(0,$A$110:$CV$110,$A$111:$CV$111,-1,0,1)",
+            50.0,
+        ),
+        (
+            "XLOOKUP +0 reverse horizontal",
+            "=XLOOKUP(0,$A$110:$CV$110,$A$111:$CV$111,-1,0,-1)",
+            60.0,
+        ),
+        (
+            "XLOOKUP -0 forward horizontal",
+            "=XLOOKUP(-0,$A$110:$CV$110,$A$111:$CV$111,-1,0,1)",
+            50.0,
+        ),
+        (
+            "XLOOKUP -0 reverse horizontal",
+            "=XLOOKUP(-0,$A$110:$CV$110,$A$111:$CV$111,-1,0,-1)",
+            60.0,
+        ),
+        (
+            "XLOOKUP blank forward horizontal",
+            "=XLOOKUP($ZZ$1000,$A$110:$CV$110,$A$111:$CV$111,-1,0,1)",
+            50.0,
+        ),
+        (
+            "XLOOKUP blank reverse horizontal",
+            "=XLOOKUP($ZZ$1000,$A$110:$CV$110,$A$111:$CV$111,-1,0,-1)",
+            60.0,
+        ),
+    ];
+    let missing_cases = [
+        (
+            "MATCH +0 missing vertical",
+            "=MATCH(0,$C$1:$C$100,0)",
+            LookupExpected::Na,
+        ),
+        (
+            "MATCH -0 missing vertical",
+            "=MATCH(-0,$C$1:$C$100,0)",
+            LookupExpected::Na,
+        ),
+        (
+            "MATCH blank missing vertical",
+            "=MATCH($ZZ$1000,$C$1:$C$100,0)",
+            LookupExpected::Na,
+        ),
+        (
+            "MATCH +0 missing horizontal",
+            "=MATCH(0,$A$120:$CV$120,0)",
+            LookupExpected::Na,
+        ),
+        (
+            "MATCH -0 missing horizontal",
+            "=MATCH(-0,$A$120:$CV$120,0)",
+            LookupExpected::Na,
+        ),
+        (
+            "MATCH blank missing horizontal",
+            "=MATCH($ZZ$1000,$A$120:$CV$120,0)",
+            LookupExpected::Na,
+        ),
+        (
+            "VLOOKUP +0 missing",
+            "=VLOOKUP(0,$C$1:$D$100,2,FALSE)",
+            LookupExpected::Na,
+        ),
+        (
+            "VLOOKUP -0 missing",
+            "=VLOOKUP(-0,$C$1:$D$100,2,FALSE)",
+            LookupExpected::Na,
+        ),
+        (
+            "VLOOKUP blank missing",
+            "=VLOOKUP($ZZ$1000,$C$1:$D$100,2,FALSE)",
+            LookupExpected::Na,
+        ),
+        (
+            "HLOOKUP +0 missing",
+            "=HLOOKUP(0,$A$120:$CV$121,2,FALSE)",
+            LookupExpected::Na,
+        ),
+        (
+            "HLOOKUP -0 missing",
+            "=HLOOKUP(-0,$A$120:$CV$121,2,FALSE)",
+            LookupExpected::Na,
+        ),
+        (
+            "HLOOKUP blank missing",
+            "=HLOOKUP($ZZ$1000,$A$120:$CV$121,2,FALSE)",
+            LookupExpected::Na,
+        ),
+        (
+            "XMATCH +0 missing forward vertical",
+            "=XMATCH(0,$C$1:$C$100,0,1)",
+            LookupExpected::Na,
+        ),
+        (
+            "XMATCH +0 missing reverse vertical",
+            "=XMATCH(0,$C$1:$C$100,0,-1)",
+            LookupExpected::Na,
+        ),
+        (
+            "XMATCH -0 missing forward vertical",
+            "=XMATCH(-0,$C$1:$C$100,0,1)",
+            LookupExpected::Na,
+        ),
+        (
+            "XMATCH -0 missing reverse vertical",
+            "=XMATCH(-0,$C$1:$C$100,0,-1)",
+            LookupExpected::Na,
+        ),
+        (
+            "XMATCH blank missing forward vertical",
+            "=XMATCH($ZZ$1000,$C$1:$C$100,0,1)",
+            LookupExpected::Na,
+        ),
+        (
+            "XMATCH blank missing reverse vertical",
+            "=XMATCH($ZZ$1000,$C$1:$C$100,0,-1)",
+            LookupExpected::Na,
+        ),
+        (
+            "XMATCH +0 missing forward horizontal",
+            "=XMATCH(0,$A$120:$CV$120,0,1)",
+            LookupExpected::Na,
+        ),
+        (
+            "XMATCH +0 missing reverse horizontal",
+            "=XMATCH(0,$A$120:$CV$120,0,-1)",
+            LookupExpected::Na,
+        ),
+        (
+            "XMATCH -0 missing forward horizontal",
+            "=XMATCH(-0,$A$120:$CV$120,0,1)",
+            LookupExpected::Na,
+        ),
+        (
+            "XMATCH -0 missing reverse horizontal",
+            "=XMATCH(-0,$A$120:$CV$120,0,-1)",
+            LookupExpected::Na,
+        ),
+        (
+            "XMATCH blank missing forward horizontal",
+            "=XMATCH($ZZ$1000,$A$120:$CV$120,0,1)",
+            LookupExpected::Na,
+        ),
+        (
+            "XMATCH blank missing reverse horizontal",
+            "=XMATCH($ZZ$1000,$A$120:$CV$120,0,-1)",
+            LookupExpected::Na,
+        ),
+        (
+            "XLOOKUP +0 missing forward vertical",
+            "=XLOOKUP(0,$C$1:$C$100,$D$1:$D$100,\"NF\",0,1)",
+            LookupExpected::Text("NF"),
+        ),
+        (
+            "XLOOKUP +0 missing reverse vertical",
+            "=XLOOKUP(0,$C$1:$C$100,$D$1:$D$100,\"NF\",0,-1)",
+            LookupExpected::Text("NF"),
+        ),
+        (
+            "XLOOKUP -0 missing forward vertical",
+            "=XLOOKUP(-0,$C$1:$C$100,$D$1:$D$100,\"NF\",0,1)",
+            LookupExpected::Text("NF"),
+        ),
+        (
+            "XLOOKUP -0 missing reverse vertical",
+            "=XLOOKUP(-0,$C$1:$C$100,$D$1:$D$100,\"NF\",0,-1)",
+            LookupExpected::Text("NF"),
+        ),
+        (
+            "XLOOKUP blank missing forward vertical",
+            "=XLOOKUP($ZZ$1000,$C$1:$C$100,$D$1:$D$100,\"NF\",0,1)",
+            LookupExpected::Text("NF"),
+        ),
+        (
+            "XLOOKUP blank missing reverse vertical",
+            "=XLOOKUP($ZZ$1000,$C$1:$C$100,$D$1:$D$100,\"NF\",0,-1)",
+            LookupExpected::Text("NF"),
+        ),
+        (
+            "XLOOKUP +0 missing forward horizontal",
+            "=XLOOKUP(0,$A$120:$CV$120,$A$121:$CV$121,\"NF\",0,1)",
+            LookupExpected::Text("NF"),
+        ),
+        (
+            "XLOOKUP +0 missing reverse horizontal",
+            "=XLOOKUP(0,$A$120:$CV$120,$A$121:$CV$121,\"NF\",0,-1)",
+            LookupExpected::Text("NF"),
+        ),
+        (
+            "XLOOKUP -0 missing forward horizontal",
+            "=XLOOKUP(-0,$A$120:$CV$120,$A$121:$CV$121,\"NF\",0,1)",
+            LookupExpected::Text("NF"),
+        ),
+        (
+            "XLOOKUP -0 missing reverse horizontal",
+            "=XLOOKUP(-0,$A$120:$CV$120,$A$121:$CV$121,\"NF\",0,-1)",
+            LookupExpected::Text("NF"),
+        ),
+        (
+            "XLOOKUP blank missing forward horizontal",
+            "=XLOOKUP($ZZ$1000,$A$120:$CV$120,$A$121:$CV$121,\"NF\",0,1)",
+            LookupExpected::Text("NF"),
+        ),
+        (
+            "XLOOKUP blank missing reverse horizontal",
+            "=XLOOKUP($ZZ$1000,$A$120:$CV$120,$A$121:$CV$121,\"NF\",0,-1)",
+            LookupExpected::Text("NF"),
+        ),
+    ];
+
+    let mut expected = Vec::new();
+    let mut next_col = 110;
+    for (label, expression, expected_value) in numeric_cases {
+        for row in 1..=5 {
+            formula(&mut engine, "Sheet1", row, next_col, expression);
+            expected.push((row, next_col, LookupExpected::Number(expected_value), label));
+        }
+        next_col += 1;
+    }
+    for (label, expression, expected_value) in missing_cases {
+        for row in 1..=5 {
+            formula(&mut engine, "Sheet1", row, next_col, expression);
+            expected.push((row, next_col, expected_value, label));
+        }
+        next_col += 1;
+    }
+    (engine, expected)
+}
+
+fn assert_blank_zero_lookup_matrix(
+    engine: &Engine<TestWorkbook>,
+    expected: &[LookupMatrixExpectation],
+) {
+    for &(row, col, expected_value, label) in expected {
+        let actual = engine
+            .get_cell_value("Sheet1", row, col)
+            .unwrap_or_else(|| panic!("missing result for {label}"));
+        match expected_value {
+            LookupExpected::Number(expected_number) => {
+                let actual_number = match actual {
+                    LiteralValue::Number(number) => number,
+                    LiteralValue::Int(number) => number as f64,
+                    other => panic!("{label}: expected {expected_number}, got {other:?}"),
+                };
+                assert_eq!(actual_number, expected_number, "{label}");
+            }
+            LookupExpected::Na => assert!(
+                matches!(actual, LiteralValue::Error(ref error) if error.kind == ExcelErrorKind::Na),
+                "{label}: expected #N/A, got {actual:?}"
+            ),
+            LookupExpected::Text(expected_text) => {
+                assert_eq!(actual, LiteralValue::Text(expected_text.into()), "{label}")
+            }
+        }
+    }
+}
+
+#[test]
+fn blank_zero_exact_lookup_matrix_is_identical_cold_and_warm() {
+    for cache_max_bytes in [0, EvalConfig::default().lookup_index_cache_max_bytes] {
+        let (mut engine, expected) = blank_zero_lookup_matrix_engine(cache_max_bytes);
+        let snapshot = engine.inspection_mutation_revision();
+
+        engine.evaluate_all().unwrap();
+        assert_blank_zero_lookup_matrix(&engine, &expected);
+        let first = engine.last_lookup_index_cache_report();
+        if cache_max_bytes == 0 {
+            assert_eq!(first.builds, 0, "{first:?}");
+            assert_eq!(first.hits, 0, "{first:?}");
+            assert_eq!(first.misses, 180, "{first:?}");
+            assert_eq!(first.skipped_cap, 180, "{first:?}");
+        } else {
+            assert_eq!(first.builds, 8, "{first:?}");
+            assert_eq!(first.hits, 148, "{first:?}");
+            assert_eq!(first.entries_count, 8, "{first:?}");
+        }
+
+        mark_all_formulas_dirty_without_edit(&mut engine);
+        assert_eq!(engine.inspection_mutation_revision(), snapshot);
+        engine.evaluate_all().unwrap();
+        assert_eq!(engine.inspection_mutation_revision(), snapshot);
+        assert_blank_zero_lookup_matrix(&engine, &expected);
+        let warm = engine.last_lookup_index_cache_report();
+        assert_eq!(warm.builds, 0, "{warm:?}");
+        assert_eq!(
+            warm.misses,
+            if cache_max_bytes == 0 { 180 } else { 0 },
+            "{warm:?}"
+        );
+        if cache_max_bytes == 0 {
+            assert_eq!(warm.hits, 0, "{warm:?}");
+            assert_eq!(warm.skipped_cap, 180, "{warm:?}");
+        } else {
+            assert_eq!(warm.hits, 180, "{warm:?}");
+            assert_eq!(warm.entries_count, first.entries_count, "{warm:?}");
+            assert_eq!(warm.bytes_in_cache, first.bytes_in_cache, "{warm:?}");
+        }
+    }
+}
+
 #[test]
 fn lookup_cache_invalidates_on_table_edit() {
     let mut engine = repeated_vlookup_engine(EvalConfig::default());

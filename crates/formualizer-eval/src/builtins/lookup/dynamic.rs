@@ -82,6 +82,7 @@ pub struct XLookupFn;
 ///
 /// # Remarks
 /// - Defaults: `match_mode=0` (exact), `search_mode=1` (first-to-last).
+/// - Exact matching never selects a blank candidate. A blank lookup value retains numeric-zero semantics and can select a real numeric zero, but not blank, text, or boolean candidates.
 /// - `if_not_found` is optional; if omitted and no match exists, returns `#N/A`.
 /// - `match_mode`: `0` exact, `-1` exact-or-next-smaller, `1` exact-or-next-larger, `2` wildcard.
 /// - `search_mode`: `1` forward, `-1` reverse. Other modes are accepted with current fallback behavior.
@@ -479,6 +480,7 @@ pub struct XMatchFn;
 ///
 /// # Remarks
 /// - Defaults: `match_mode=0` (exact), `search_mode=1` (first-to-last).
+/// - Exact matching never selects a blank candidate. A blank lookup value retains numeric-zero semantics and can select a real numeric zero, but not blank, text, or boolean candidates.
 /// - `match_mode`: `0` exact, `-1` exact-or-next-smaller, `1` exact-or-next-larger, `2` wildcard.
 /// - `search_mode`: `1` forward, `-1` reverse, `2` ascending binary intent, `-2` descending binary intent.
 /// - `lookup_array` must be a single row or single column, otherwise returns `#VALUE!`.
@@ -3596,6 +3598,126 @@ mod tests {
             .unwrap()
             .into_literal();
         assert_eq!(v_nf, LiteralValue::Text("NF".into()));
+    }
+
+    #[test]
+    fn modern_reverse_array_lookups_only_match_numeric_zero_candidates() {
+        let wb = TestWorkbook::new()
+            .with_function(Arc::new(XLookupFn))
+            .with_function(Arc::new(XMatchFn));
+        let ctx = wb.interpreter();
+        let xlookup = ctx.context.get_function("", "XLOOKUP").unwrap();
+        let xmatch = ctx.context.get_function("", "XMATCH").unwrap();
+        let zero_mode = lit(LiteralValue::Int(0));
+        let reverse = lit(LiteralValue::Int(-1));
+        let not_found = lit(LiteralValue::Text("NF".into()));
+        let needles = [
+            LiteralValue::Number(0.0),
+            LiteralValue::Number(-0.0),
+            LiteralValue::Empty,
+        ];
+
+        for vertical in [false, true] {
+            let candidates = vec![
+                LiteralValue::Boolean(false),
+                LiteralValue::Text("0".into()),
+                LiteralValue::Number(-0.0),
+                LiteralValue::Number(0.0),
+                LiteralValue::Boolean(false),
+                LiteralValue::Text("0".into()),
+            ];
+            let payloads = vec![
+                LiteralValue::Int(10),
+                LiteralValue::Int(20),
+                LiteralValue::Int(30),
+                LiteralValue::Int(40),
+                LiteralValue::Int(50),
+                LiteralValue::Int(60),
+            ];
+            let no_zero = vec![
+                LiteralValue::Boolean(false),
+                LiteralValue::Text("0".into()),
+                LiteralValue::Text(String::new()),
+                LiteralValue::Empty,
+                LiteralValue::Text("0".into()),
+                LiteralValue::Boolean(false),
+            ];
+            let rows = |values: Vec<LiteralValue>| {
+                if vertical {
+                    values.into_iter().map(|value| vec![value]).collect()
+                } else {
+                    vec![values]
+                }
+            };
+            let lookup_array = lit(LiteralValue::Array(rows(candidates)));
+            let return_array = lit(LiteralValue::Array(rows(payloads.clone())));
+            let no_zero_array = lit(LiteralValue::Array(rows(no_zero)));
+            let no_zero_returns = lit(LiteralValue::Array(rows(payloads)));
+
+            for needle_value in needles.clone() {
+                let needle = lit(needle_value);
+                let xmatch_args = vec![
+                    ArgumentHandle::new(&needle, &ctx),
+                    ArgumentHandle::new(&lookup_array, &ctx),
+                    ArgumentHandle::new(&zero_mode, &ctx),
+                    ArgumentHandle::new(&reverse, &ctx),
+                ];
+                assert_eq!(
+                    xmatch
+                        .dispatch(&xmatch_args, &ctx.function_context(None))
+                        .unwrap()
+                        .into_literal(),
+                    LiteralValue::Int(4)
+                );
+
+                let xlookup_args = vec![
+                    ArgumentHandle::new(&needle, &ctx),
+                    ArgumentHandle::new(&lookup_array, &ctx),
+                    ArgumentHandle::new(&return_array, &ctx),
+                    ArgumentHandle::new(&not_found, &ctx),
+                    ArgumentHandle::new(&zero_mode, &ctx),
+                    ArgumentHandle::new(&reverse, &ctx),
+                ];
+                assert_eq!(
+                    xlookup
+                        .dispatch(&xlookup_args, &ctx.function_context(None))
+                        .unwrap()
+                        .into_literal(),
+                    LiteralValue::Number(40.0)
+                );
+
+                let missing_match_args = vec![
+                    ArgumentHandle::new(&needle, &ctx),
+                    ArgumentHandle::new(&no_zero_array, &ctx),
+                    ArgumentHandle::new(&zero_mode, &ctx),
+                    ArgumentHandle::new(&reverse, &ctx),
+                ];
+                let missing_match = xmatch
+                    .dispatch(&missing_match_args, &ctx.function_context(None))
+                    .unwrap()
+                    .into_literal();
+                assert!(
+                    matches!(missing_match, LiteralValue::Error(ref error) if error.kind == ExcelErrorKind::Na),
+                    "XMATCH should reject non-numeric zero candidates, got {missing_match:?}"
+                );
+
+                let missing_lookup_args = vec![
+                    ArgumentHandle::new(&needle, &ctx),
+                    ArgumentHandle::new(&no_zero_array, &ctx),
+                    ArgumentHandle::new(&no_zero_returns, &ctx),
+                    ArgumentHandle::new(&not_found, &ctx),
+                    ArgumentHandle::new(&zero_mode, &ctx),
+                    ArgumentHandle::new(&reverse, &ctx),
+                ];
+                assert_eq!(
+                    xlookup
+                        .dispatch(&missing_lookup_args, &ctx.function_context(None))
+                        .unwrap()
+                        .into_literal(),
+                    LiteralValue::Text("NF".into())
+                );
+            }
+        }
     }
 
     #[test]

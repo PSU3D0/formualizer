@@ -75,6 +75,17 @@ pub(crate) struct PreparedLookupMatcher<'a> {
     date_system: DateSystem,
 }
 
+fn is_numeric_exact_value(value: &LiteralValue) -> bool {
+    matches!(
+        value,
+        LiteralValue::Number(_)
+            | LiteralValue::Int(_)
+            | LiteralValue::Date(_)
+            | LiteralValue::DateTime(_)
+            | LiteralValue::Time(_)
+    )
+}
+
 impl<'a> PreparedLookupMatcher<'a> {
     pub(crate) fn new(needle: &'a LiteralValue, wildcard: bool, date_system: DateSystem) -> Self {
         let text = match needle {
@@ -100,6 +111,17 @@ impl<'a> PreparedLookupMatcher<'a> {
     }
 
     pub(crate) fn matches(&self, candidate: &LiteralValue) -> bool {
+        // Exact lookup eligibility is asymmetric: blank needles still coerce
+        // to zero, but a blank range entry can never satisfy a match (#319).
+        // Numeric and temporal needles share one candidate class; unlike the
+        // lenient comparison helper, they do not admit boolean or text values.
+        if matches!(candidate, LiteralValue::Empty) {
+            return false;
+        }
+        if matches!(self.needle, LiteralValue::Empty) || is_numeric_exact_value(self.needle) {
+            return is_numeric_exact_value(candidate)
+                && cmp_for_lookup(self.needle, candidate, self.date_system) == Some(0);
+        }
         match (&self.text, candidate) {
             (
                 Some(PreparedTextMatcher::Exact { folded_needle }),
@@ -136,10 +158,9 @@ pub fn equals_maybe_wildcard(
 ///
 /// The legacy approximate lookups (`MATCH` with `match_type` 1/-1,
 /// `VLOOKUP`/`HLOOKUP` with `range_lookup` TRUE) consider only entries in the
-/// needle's comparable value set. A blank cell, or an incomparable entry such
-/// as a text header sitting above a column of numbers, is skipped: it is neither
-/// out-of-order data nor a matchable position. Errors are handled separately
-/// and propagate rather than being classified as skippable.
+/// needle's comparable value set. A blank cell, error cell, or incomparable
+/// entry such as a text header sitting above a column of numbers is skipped: it
+/// is neither out-of-order data nor a matchable position.
 pub fn is_searchable_for_approximate(
     value: &LiteralValue,
     needle: &LiteralValue,
@@ -473,7 +494,7 @@ pub fn find_exact_index_in_view(
         LiteralValue::Int(i) => find_exact_number_in_view(view, *i as f64, vertical),
         LiteralValue::Text(s) => find_exact_text_in_view(view, s, wildcard, vertical),
         LiteralValue::Boolean(b) => find_exact_boolean_in_view(view, *b, vertical),
-        LiteralValue::Empty => find_exact_empty_in_view(view, vertical),
+        LiteralValue::Empty => find_exact_number_in_view(view, 0.0, vertical),
         LiteralValue::Error(e) => Err(e.clone()),
         // A temporal needle searches the numeric lane by serial: the arrow
         // store keeps dates and times as serials under a temporal type tag,
@@ -600,35 +621,6 @@ fn find_exact_boolean_in_view(
             let (_row_start, _row_len, cols) = res?;
             for (c, arr) in cols.iter().enumerate() {
                 if !arr.is_null(0) && arr.value(0) == b {
-                    return Ok(Some(c));
-                }
-            }
-        }
-    }
-    Ok(None)
-}
-
-fn find_exact_empty_in_view(
-    view: &RangeView<'_>,
-    vertical: bool,
-) -> Result<Option<usize>, ExcelError> {
-    if vertical {
-        for res in view.type_tags_slices() {
-            let (row_start, _row_len, cols) = res?;
-            if !cols.is_empty() {
-                let arr = &cols[0];
-                for i in 0..arr.len() {
-                    if !arr.is_null(i) && arr.value(i) == crate::arrow_store::TypeTag::Empty as u8 {
-                        return Ok(Some(row_start + i));
-                    }
-                }
-            }
-        }
-    } else {
-        for res in view.type_tags_slices() {
-            let (_row_start, _row_len, cols) = res?;
-            for (c, arr) in cols.iter().enumerate() {
-                if !arr.is_null(0) && arr.value(0) == crate::arrow_store::TypeTag::Empty as u8 {
                     return Ok(Some(c));
                 }
             }
@@ -842,11 +834,11 @@ mod tests {
             None
         );
 
-        // Searching for Empty should still find the blank cell.
+        // Ratified S6: a blank needle coerces to zero, not a blank candidate.
         assert_eq!(
             find_exact_index_in_view(&view, &LiteralValue::Empty, false, DateSystem::Excel1900)
                 .unwrap(),
-            Some(0)
+            None
         );
 
         // Searching for 1 still works normally.
@@ -860,6 +852,92 @@ mod tests {
             .unwrap(),
             Some(1)
         );
+    }
+
+    #[test]
+    fn zero_needles_only_find_real_zero_in_both_orientations() {
+        let values = vec![
+            LiteralValue::Empty,
+            LiteralValue::Text(String::new()),
+            LiteralValue::Text("0".into()),
+            LiteralValue::Boolean(false),
+            LiteralValue::Number(-0.0),
+            LiteralValue::Number(0.0),
+            LiteralValue::Empty,
+            LiteralValue::Boolean(false),
+            LiteralValue::Text("0".into()),
+        ];
+        let no_numeric_zero = vec![
+            LiteralValue::Empty,
+            LiteralValue::Text(String::new()),
+            LiteralValue::Text("0".into()),
+            LiteralValue::Boolean(false),
+            LiteralValue::Text("0".into()),
+            LiteralValue::Boolean(false),
+        ];
+        for vertical in [true, false] {
+            let make_rows = |values: &[LiteralValue]| {
+                if vertical {
+                    values.iter().cloned().map(|value| vec![value]).collect()
+                } else {
+                    vec![values.to_vec()]
+                }
+            };
+            let view = RangeView::from_owned_rows(make_rows(&values), DateSystem::Excel1900);
+            let missing_view =
+                RangeView::from_owned_rows(make_rows(&no_numeric_zero), DateSystem::Excel1900);
+            for needle in [
+                LiteralValue::Number(0.0),
+                LiteralValue::Number(-0.0),
+                LiteralValue::Empty,
+            ] {
+                assert_eq!(
+                    find_exact_index_in_view(&view, &needle, false, DateSystem::Excel1900).unwrap(),
+                    Some(4)
+                );
+                assert_eq!(
+                    find_exact_index_in_view(&missing_view, &needle, false, DateSystem::Excel1900)
+                        .unwrap(),
+                    None
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn materialized_zero_needles_only_match_numeric_zero() {
+        let values = vec![
+            LiteralValue::Empty,
+            LiteralValue::Text(String::new()),
+            LiteralValue::Text("0".into()),
+            LiteralValue::Boolean(false),
+            LiteralValue::Number(-0.0),
+            LiteralValue::Number(0.0),
+            LiteralValue::Boolean(false),
+            LiteralValue::Text("0".into()),
+        ];
+        let no_numeric_zero = vec![
+            LiteralValue::Empty,
+            LiteralValue::Text(String::new()),
+            LiteralValue::Text("0".into()),
+            LiteralValue::Boolean(false),
+            LiteralValue::Text("0".into()),
+            LiteralValue::Boolean(false),
+        ];
+        for needle in [
+            LiteralValue::Number(0.0),
+            LiteralValue::Number(-0.0),
+            LiteralValue::Empty,
+        ] {
+            assert_eq!(
+                find_exact_index(&values, &needle, false, DateSystem::Excel1900),
+                Some(4)
+            );
+            assert_eq!(
+                find_exact_index(&no_numeric_zero, &needle, false, DateSystem::Excel1900),
+                None
+            );
+        }
     }
 
     #[test]

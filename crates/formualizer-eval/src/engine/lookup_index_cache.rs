@@ -57,13 +57,22 @@ impl Hash for LookupHashKey {
 }
 
 impl LookupHashKey {
+    fn from_needle(value: &LiteralValue, date_system: DateSystem) -> Option<Self> {
+        // Blank needles retain numeric-zero coercion; blank candidates do not.
+        if matches!(value, LiteralValue::Empty) {
+            Some(Self::Number(0.0f64.to_bits()))
+        } else {
+            Self::from_literal(value, date_system)
+        }
+    }
+
     pub(crate) fn from_literal(value: &LiteralValue, date_system: DateSystem) -> Option<Self> {
         match value {
             LiteralValue::Number(n) => Some(Self::Number(normalize_f64_bits(*n))),
             LiteralValue::Int(i) => Some(Self::Number(normalize_f64_bits(*i as f64))),
             LiteralValue::Text(s) => Some(Self::Text(s.to_lowercase().into_boxed_str())),
             LiteralValue::Boolean(b) => Some(Self::Boolean(*b)),
-            LiteralValue::Empty => Some(Self::Empty),
+            LiteralValue::Empty => None,
             // Temporal values are numbers in Excel: key them by their serial so
             // an exact lookup finds them whether the needle or the cell (or
             // both) carry a temporal type rather than a plain numeric.
@@ -84,7 +93,12 @@ fn normalize_f64_bits(n: f64) -> u64 {
     }
     let rounded = n.round();
     if (n - rounded).abs() < 1e-12 {
-        rounded.to_bits()
+        // Exact comparisons identify signed zero; the index must do so too.
+        if rounded == 0.0 {
+            0.0f64.to_bits()
+        } else {
+            rounded.to_bits()
+        }
     } else {
         n.to_bits()
     }
@@ -103,7 +117,6 @@ pub struct LookupIndex {
     pub(crate) bytes: usize,
     pub(crate) entries: FxHashMap<LookupHashKey, DuplicateIndices>,
     pub(crate) cell_values: Box<[LiteralValue]>,
-    pub(crate) first_empty: Option<usize>,
 }
 
 #[cfg(test)]
@@ -145,7 +158,6 @@ impl LookupIndex {
 
         let mut entries: FxHashMap<LookupHashKey, DuplicateIndices> = FxHashMap::default();
         let mut cell_values = Vec::with_capacity(len);
-        let mut first_empty = None;
         let mut error_count = 0usize;
 
         for idx in 0..len {
@@ -155,9 +167,6 @@ impl LookupIndex {
             };
             if matches!(value, LiteralValue::Error(_)) {
                 error_count += 1;
-            }
-            if matches!(value, LiteralValue::Empty) && first_empty.is_none() {
-                first_empty = Some(idx);
             }
             if let Some(key) = LookupHashKey::from_literal(&value, date_system) {
                 let dups = entries.entry(key).or_insert_with(|| DuplicateIndices {
@@ -185,12 +194,11 @@ impl LookupIndex {
             bytes,
             entries,
             cell_values: cell_values.into_boxed_slice(),
-            first_empty,
         }))
     }
 
     pub(crate) fn find_first_exact(&self, needle: &LiteralValue) -> Option<usize> {
-        let hash_key = LookupHashKey::from_literal(needle, self.date_system)?;
+        let hash_key = LookupHashKey::from_needle(needle, self.date_system)?;
         if let Some(dups) = self.entries.get(&hash_key) {
             for &idx in &dups.all {
                 if cmp_for_lookup(needle, &self.cell_values[idx], self.date_system) == Some(0) {
@@ -198,16 +206,11 @@ impl LookupIndex {
                 }
             }
         }
-        if let Some(n) = numeric_zero_candidate(needle)
-            && n.abs() < 1e-12
-        {
-            return self.first_empty;
-        }
         None
     }
 
     pub(crate) fn find_last_exact(&self, needle: &LiteralValue) -> Option<usize> {
-        let hash_key = LookupHashKey::from_literal(needle, self.date_system)?;
+        let hash_key = LookupHashKey::from_needle(needle, self.date_system)?;
         if let Some(dups) = self.entries.get(&hash_key) {
             for &idx in dups.all.iter().rev() {
                 if cmp_for_lookup(needle, &self.cell_values[idx], self.date_system) == Some(0) {
@@ -215,20 +218,7 @@ impl LookupIndex {
                 }
             }
         }
-        if let Some(n) = numeric_zero_candidate(needle)
-            && n.abs() < 1e-12
-        {
-            return self.first_empty;
-        }
         None
-    }
-}
-
-fn numeric_zero_candidate(needle: &LiteralValue) -> Option<f64> {
-    match needle {
-        LiteralValue::Number(n) => Some(*n),
-        LiteralValue::Int(i) => Some(*i as f64),
-        _ => None,
     }
 }
 
@@ -519,6 +509,7 @@ impl LookupIndexCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::NaiveTime;
 
     fn key(col: u32) -> LookupIndexKey {
         LookupIndexKey {
@@ -538,8 +529,68 @@ mod tests {
             bytes,
             entries: FxHashMap::default(),
             cell_values: Box::new([]),
-            first_empty: None,
         }
+    }
+
+    #[test]
+    fn exact_index_selects_signed_zero_and_temporal_zero_duplicates() {
+        assert_eq!(
+            LookupHashKey::from_literal(&LiteralValue::Empty, DateSystem::Excel1900),
+            None
+        );
+        assert_eq!(
+            LookupHashKey::from_needle(&LiteralValue::Empty, DateSystem::Excel1900),
+            Some(LookupHashKey::Number(0.0f64.to_bits()))
+        );
+        let midnight = LiteralValue::Time(NaiveTime::from_hms_opt(0, 0, 0).unwrap());
+        let values = vec![
+            LiteralValue::Empty,
+            LiteralValue::Boolean(false),
+            LiteralValue::Text("0".into()),
+            LiteralValue::Number(-0.0),
+            midnight.clone(),
+            LiteralValue::Number(0.0),
+            LiteralValue::Boolean(false),
+            LiteralValue::Text("0".into()),
+        ];
+        let view = RangeView::from_owned_rows(
+            values.into_iter().map(|value| vec![value]).collect(),
+            DateSystem::Excel1900,
+        );
+        let BuildOutcome::Built(index) =
+            LookupIndex::build(&view, LookupAxis::ColumnInView(0), DateSystem::Excel1900).unwrap()
+        else {
+            panic!("expected a lookup index");
+        };
+
+        assert_eq!(index.find_first_exact(&LiteralValue::Number(0.0)), Some(3));
+        assert_eq!(index.find_last_exact(&LiteralValue::Number(-0.0)), Some(5));
+        assert_eq!(index.find_first_exact(&midnight), Some(3));
+        assert_eq!(index.find_last_exact(&midnight), Some(5));
+        assert_eq!(index.find_first_exact(&LiteralValue::Empty), Some(3));
+        assert_eq!(index.find_last_exact(&LiteralValue::Empty), Some(5));
+
+        let temporal_only_view = RangeView::from_owned_rows(
+            vec![
+                vec![LiteralValue::Empty],
+                vec![LiteralValue::Boolean(false)],
+                vec![LiteralValue::Text("0".into())],
+                vec![midnight],
+            ],
+            DateSystem::Excel1900,
+        );
+        let BuildOutcome::Built(temporal_only) = LookupIndex::build(
+            &temporal_only_view,
+            LookupAxis::ColumnInView(0),
+            DateSystem::Excel1900,
+        )
+        .unwrap() else {
+            panic!("expected a temporal lookup index");
+        };
+        assert_eq!(
+            temporal_only.find_first_exact(&LiteralValue::Number(0.0)),
+            Some(3)
+        );
     }
 
     #[test]
