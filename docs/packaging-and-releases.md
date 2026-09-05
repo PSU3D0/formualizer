@@ -107,6 +107,27 @@ Use only the track being released. `--allow-dirty` exists for development checks
 
 Every track first asserts the parser/SDK lockstep rule: `formualizer-common` and `formualizer-parse` must carry the same manifest version, and the product track additionally requires that version to already exist on crates.io. A product release that pins an unpublished parser-track version fails here rather than at `cargo publish`.
 
+A parser source change cannot reuse a published parser-track version. In particular, landing the parser hardening from #408 changes the payload already published as `formualizer-parse` 3.1.0. Before the next product release, bump both `formualizer-common` and `formualizer-parse` to 3.1.1, publish the paired `parse-v3.1.1` track, and only then run the final product preflight. The same-version source-drift and published-parser gates are intentional and must not be bypassed. Publication remains a separate, explicitly authorized operation.
+
+Product preflight also checks binding feature semantics before any registry query, tool installation, or package build. `crates/formualizer/Cargo.toml` declares value-affecting features in `[package.metadata.formualizer-release]`; adding a feature there immediately requires every shipped binding profile to activate it. Exceptions require an independently reviewed checker-policy update as well as a substantive manifest rationale; adding opt-out metadata cannot authorize a new exception by itself.
+
+The current policy has one value-affecting feature, `system-clock`, and four shipped profiles:
+
+| Profile | Dependency edge | Policy |
+| --- | --- | --- |
+| `cffi-native` | `formualizer-workbook`, workspace-inherited defaults | Required through the workbook `default` feature set. |
+| `python-native` | `formualizer`, `cfg(not(target_os = "emscripten"))` | Required explicitly. |
+| `python-pyodide` | `formualizer`, `cfg(target_os = "emscripten")` | Reviewed opt-out: the portable profile uses a fixed or caller-injected clock. |
+| `wasm-browser` | `formualizer`, ordinary dependency | Required transitively through `wasm-js`. |
+
+The four profile names, manifests, dependencies, and exact target keys are fixed independently in the checker; binding metadata cannot redefine or remove that inventory. Only the approved Pyodide `system-clock` exception is represented in binding metadata.
+
+This is deliberately not a Cargo resolver. It supports the current non-overlapping edges, dependency defaults, additive explicit features on the CFFI workspace-inherited edge, and small same-package alias closure. Binding forwarding remains supported for existing non-value features, but weak forwarding and any forwarded source alias that reaches a value-affecting feature are rejected. Generic-plus-target overlap, unknown target layouts, optional policy dependencies, member `default-features` overrides, unsupported workspace inheritance, and stale opt-outs also fail.
+
+The topology boundary is the dependency tables declared by the three binding crates plus their declared workspace inheritance. A binding may directly depend on the roll-up, eval, workbook, or sheetport semantic crates only at the fixed profile edges; alternate normal or target-qualified edges and direct or workspace-renamed aliases are rejected. This is a precise check of the current declared topology, not a universal claim about every future transitive Cargo graph. A richer topology must escalate to Cargo's actual resolved graph for concrete release targets rather than extending this checker into another resolver.
+
+Policy dependency paths and their `Cargo.toml` files must remain non-symlinked inside the checkout and resolve to the expected package.
+
 For multi-crate tracks, the script packages crates in dependency order, adds each prospective archive to a temporary local Cargo registry, and verifies downstream archives against those exact bytes. Workspace path dependencies therefore cannot hide an unpublished or incompatible registry package. The staging registry and Cargo home are temporary; inherited Cargo/GitHub token variables are removed and Git prompting is disabled. The exact `cargo-local-registry` helper and its isolated download cache live under `target/release-preflight-*` without replacing a global tool.
 
 For every package, the preflight queries crates.io. A version that does not yet exist is accepted. If the version exists, the shipped source/data/doc payload must match exactly; generated `Cargo.toml`, `Cargo.lock`, and `.cargo_vcs_info.json` are excluded because they vary with Cargo or the source commit, while `Cargo.toml.orig` remains compared so dependency requirements are covered. Any other difference means the source must be restored or the package version bumped.

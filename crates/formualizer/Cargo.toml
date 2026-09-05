@@ -11,6 +11,12 @@ readme = "README.md"
 keywords = ["spreadsheet", "excel", "formula", "arrow", "wasm"]
 categories = ["data-structures", "mathematics", "parser-implementations"]
 
+[package.metadata.formualizer-release]
+# Features listed here can change computed cell values. Product preflight
+# requires every shipped binding profile to activate each one or carry an
+# independently approved exception with a substantive rationale.
+value-affecting-features = { system-clock = "Selects ambient wall-clock evaluation for TODAY() and NOW(); omitting it changes computed values to the fixed-clock fallback." }
+
 [features]
 # Default: preserve the pre-runtime-split user experience — full stack,
 # workbook JSON/CSV support, and ambient system clock behaviour.

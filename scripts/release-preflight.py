@@ -76,6 +76,25 @@ BINDING_PACKAGE_POLICY: tuple[tuple[str, str], ...] = (
     ("bindings/wasm/Cargo.toml", "formualizer-wasm"),
 )
 
+VALUE_FEATURE_POLICY_MANIFEST = "crates/formualizer/Cargo.toml"
+RELEASE_METADATA_KEY = "formualizer-release"
+# Fixed release policy: (name, manifest, dependency, exact target, source manifest).
+BindingFeatureProfile = tuple[str, str, str, str | None, str]
+BINDING_FEATURE_PROFILES: tuple[BindingFeatureProfile, ...] = (
+    ("cffi-native", "crates/formualizer-cffi/Cargo.toml", "formualizer-workbook", None,
+     "crates/formualizer-workbook/Cargo.toml"),
+    ("python-native", "bindings/python/Cargo.toml", "formualizer",
+     'cfg(not(target_os = "emscripten"))', VALUE_FEATURE_POLICY_MANIFEST),
+    ("python-pyodide", "bindings/python/Cargo.toml", "formualizer",
+     'cfg(target_os = "emscripten")', VALUE_FEATURE_POLICY_MANIFEST),
+    ("wasm-browser", "bindings/wasm/Cargo.toml", "formualizer", None, VALUE_FEATURE_POLICY_MANIFEST),
+)
+APPROVED_VALUE_FEATURE_OPT_OUTS = {("python-pyodide", "system-clock")}
+SEMANTIC_PACKAGES = frozenset({
+    "formualizer", "formualizer-eval", "formualizer-workbook",
+    "formualizer-sheetport",
+})
+
 
 def validate_binding_package_policy(root: Path = ROOT) -> None:
     """Require exact identities and literal non-publishable binding manifests."""
@@ -111,6 +130,296 @@ def validate_binding_package_policy(root: Path = ROOT) -> None:
                 f"binding package policy {manifest}: package {expected_name!r} "
                 "must set literal publish = false"
             )
+
+
+def read_manifest(root: Path, relative: str) -> dict[str, Any]:
+    try:
+        return tomllib.loads((root / relative).read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise RuntimeError(f"binding feature policy {relative}: {exc}") from exc
+
+
+def require_policy(ok: bool, context: str, message: str) -> None:
+    if not ok:
+        raise RuntimeError(f"binding feature policy {context}: {message}")
+
+
+def policy_table(value: Any, context: str, name: str) -> dict[str, Any]:
+    require_policy(isinstance(value, dict), context, f"{name} must be a table")
+    return value
+
+
+def string_list(value: Any, context: str, name: str) -> list[str]:
+    valid = isinstance(value, list) and all(isinstance(v, str) for v in value)
+    require_policy(valid, context, f"{name} must be a string list")
+    return value
+
+
+def feature_table(data: dict[str, Any], manifest: str) -> dict[str, list[str]]:
+    raw = policy_table(data.get("features", {}), manifest, "features")
+    return {name: string_list(value, manifest, f"feature {name!r}") for name, value in raw.items()}
+
+
+def dependency_edges(data: dict[str, Any], dependency: str, manifest: str) -> dict[str | None, dict[str, Any]]:
+    locations: list[tuple[str | None, Any]] = [(None, data.get("dependencies", {}))]
+    for target, value in policy_table(data.get("target", {}), manifest, "target").items():
+        target_table = policy_table(value, manifest, f"target {target!r}")
+        locations.append((target, target_table.get("dependencies", {})))
+    result = {}
+    for target, value in locations:
+        dependencies = policy_table(value, manifest, "dependencies")
+        aliases = [
+            name
+            for name, edge in dependencies.items()
+            if name != dependency and isinstance(edge, dict)
+            and edge.get("package") == dependency
+        ]
+        require_policy(
+            not aliases, manifest,
+            f"renamed policy dependency {dependency!r} is unsupported: {aliases}",
+        )
+        if dependency in dependencies:
+            result[target] = policy_table(
+                dependencies[dependency], manifest, f"dependency {dependency!r}"
+            )
+    return result
+
+
+def reject_alternate_semantic_edges(
+    root: Path, bindings: dict[str, dict[str, Any]]
+) -> None:
+    """Reject direct semantic-crate edges outside the fixed profile inventory."""
+    workspace = policy_table(
+        read_manifest(root, "Cargo.toml").get("workspace"), "Cargo.toml", "workspace"
+    )
+    workspace_dependencies = policy_table(
+        workspace.get("dependencies"), "Cargo.toml", "workspace.dependencies"
+    )
+    expected = {
+        (manifest, dependency, target)
+        for _, manifest, dependency, target, _ in BINDING_FEATURE_PROFILES
+    }
+    for manifest, binding in bindings.items():
+        locations: list[tuple[str | None, Any]] = [
+            (None, binding.get("dependencies", {}))
+        ]
+        targets = policy_table(binding.get("target", {}), manifest, "target")
+        for target, value in targets.items():
+            target_table = policy_table(value, manifest, f"target {target!r}")
+            locations.append((target, target_table.get("dependencies", {})))
+        for target, value in locations:
+            dependencies = policy_table(value, manifest, "dependencies")
+            for alias, edge in dependencies.items():
+                declaration = edge
+                if isinstance(edge, dict) and edge.get("workspace") is True:
+                    declaration = workspace_dependencies.get(alias)
+                package = (
+                    declaration.get("package", alias)
+                    if isinstance(declaration, dict)
+                    else alias
+                )
+                if package in SEMANTIC_PACKAGES:
+                    require_policy(
+                        (manifest, alias, target) in expected, manifest,
+                        f"alternate semantic dependency {alias!r} ({package!r}) "
+                        f"at target {target!r} is unsupported",
+                    )
+
+
+def effective_edge(root: Path, profile: BindingFeatureProfile, edge: dict[str, Any]) -> dict[str, Any]:
+    name, manifest, dependency, _, _ = profile
+    inherited: dict[str, Any] = {}
+    if name == "cffi-native":
+        require_policy(edge.get("workspace") is True, manifest, "expected workspace edge")
+        require_policy(
+            "default-features" not in edge, manifest,
+            "workspace member default-features override is unsupported",
+        )
+        require_policy(set(edge) <= {"workspace", "features"}, manifest, "unsupported workspace member inheritance")
+        workspace = policy_table(read_manifest(root, "Cargo.toml").get("workspace"), "Cargo.toml", "workspace")
+        dependencies = policy_table(workspace.get("dependencies"), "Cargo.toml", "workspace.dependencies")
+        inherited = policy_table(dependencies.get(dependency), "Cargo.toml", f"workspace dependency {dependency!r}")
+        supported = {"path", "version", "package", "features", "default-features"}
+        require_policy(set(inherited) <= supported, "Cargo.toml", "unsupported workspace dependency inheritance")
+    else:
+        require_policy("workspace" not in edge, manifest, "workspace edge is unsupported")
+        supported = {"path", "version", "package", "features", "default-features", "optional"}
+        require_policy(set(edge) <= supported, manifest, "unsupported policy dependency fields")
+    non_optional = inherited.get("optional") in (None, False) and edge.get(
+        "optional"
+    ) in (None, False)
+    require_policy(
+        non_optional, manifest,
+        f"optional policy dependency {dependency!r} is unsupported",
+    )
+    inherited_features = string_list(inherited.get("features", []), manifest, "inherited dependency features")
+    explicit_features = string_list(edge.get("features", []), manifest, "dependency features")
+    default_features = inherited.get("default-features", edge.get("default-features", True))
+    require_policy(isinstance(default_features, bool), manifest, "default-features must be boolean")
+    return {
+        **inherited, **edge,
+        "features": [*inherited_features, *explicit_features],
+        "default-features": default_features,
+    }
+
+
+def local_source(root: Path, profile: BindingFeatureProfile, edge: dict[str, Any]) -> dict[str, Any]:
+    _, manifest, dependency, _, source_manifest = profile
+    declared = edge.get("path")
+    require_policy(isinstance(declared, str), manifest, "local path is required")
+    checkout = Path(os.path.abspath(root))
+    base = checkout if edge.get("workspace") is True else (checkout / manifest).parent
+    source_dir = Path(os.path.abspath(base / declared))
+    require_policy(source_dir.is_relative_to(checkout), manifest, "source leaves checkout")
+    cursor = checkout
+    for part in source_dir.relative_to(checkout).parts:
+        cursor /= part
+        require_policy(not cursor.is_symlink(), manifest, "symlinked source path")
+    require_policy(source_dir.is_dir(), manifest, "source path must be a directory")
+    expected = (checkout / source_manifest).parent.resolve()
+    require_policy(
+        source_dir.resolve() == expected, manifest, f"source is not {source_manifest}"
+    )
+    source_file = source_dir / "Cargo.toml"
+    require_policy(not source_file.is_symlink(), manifest, "symlinked source Cargo.toml")
+    require_policy(source_file.is_file(), manifest, "source Cargo.toml must be a file")
+    require_policy(
+        source_file.resolve().is_relative_to(checkout.resolve()), manifest,
+        "source Cargo.toml leaves checkout",
+    )
+    source = read_manifest(root, source_manifest)
+    package = policy_table(source.get("package"), source_manifest, "package")
+    require_policy(
+        package.get("name") == edge.get("package", dependency), manifest,
+        "dependency package identity mismatch",
+    )
+    return source
+
+
+def alias_closure(source: dict[str, Any], initial: set[str], manifest: str) -> set[str]:
+    """Expand same-package aliases; external dependency forwarding stays opaque."""
+    features = feature_table(source, manifest)
+    active: set[str] = set()
+    pending = list(initial)
+    while pending:
+        feature = pending.pop()
+        if feature in active:
+            continue
+        require_policy(feature in features, manifest, f"unknown feature {feature!r}")
+        active.add(feature)
+        for member in features[feature]:
+            if member.startswith("dep:") or "/" in member:
+                continue
+            require_policy(member in features, manifest, f"unsupported same-package feature member {member!r}")
+            pending.append(member)
+    return active
+
+
+def validate_binding_value_feature_policy(root: Path = ROOT) -> dict[str, dict[str, str]]:
+    """Validate the fixed profiles without approximating general Cargo resolution."""
+    product = read_manifest(root, VALUE_FEATURE_POLICY_MANIFEST)
+    package = policy_table(product.get("package"), VALUE_FEATURE_POLICY_MANIFEST, "package")
+    metadata = policy_table(package.get("metadata"), VALUE_FEATURE_POLICY_MANIFEST, "package.metadata")
+    policy = policy_table(metadata.get(RELEASE_METADATA_KEY), VALUE_FEATURE_POLICY_MANIFEST, RELEASE_METADATA_KEY)
+    require_policy(set(policy) == {"value-affecting-features"}, VALUE_FEATURE_POLICY_MANIFEST, "metadata schema drift")
+    value_features = policy_table(
+        policy["value-affecting-features"], VALUE_FEATURE_POLICY_MANIFEST,
+        "value-affecting-features",
+    )
+    declared_features = feature_table(product, VALUE_FEATURE_POLICY_MANIFEST)
+    require_policy(bool(value_features), VALUE_FEATURE_POLICY_MANIFEST, "empty policy")
+    for feature, rationale in value_features.items():
+        valid = feature in declared_features and isinstance(rationale, str) and bool(rationale.strip())
+        require_policy(valid, VALUE_FEATURE_POLICY_MANIFEST, f"invalid value-affecting feature {feature!r}")
+
+    manifests = {profile[1] for profile in BINDING_FEATURE_PROFILES}
+    bindings = {manifest: read_manifest(root, manifest) for manifest in manifests}
+    reject_alternate_semantic_edges(root, bindings)
+    opt_outs: dict[str, dict[str, str]] = {}
+    for manifest, binding in bindings.items():
+        binding_package = policy_table(binding.get("package"), manifest, "package")
+        binding_metadata = policy_table(binding_package.get("metadata", {}), manifest, "package.metadata")
+        binding_policy = binding_metadata.get(RELEASE_METADATA_KEY)
+        if binding_policy is None:
+            continue
+        require_policy(manifest == "bindings/python/Cargo.toml", manifest, "binding release metadata is unsupported")
+        binding_policy = policy_table(binding_policy, manifest, RELEASE_METADATA_KEY)
+        require_policy(set(binding_policy) == {"value-feature-opt-outs"}, manifest, "metadata schema drift")
+        profile_values = policy_table(binding_policy["value-feature-opt-outs"], manifest, "value-feature-opt-outs")
+        for profile, values in profile_values.items():
+            require_policy(profile not in opt_outs, manifest, f"duplicate opt-out profile {profile!r}")
+            opt_outs[profile] = policy_table(values, manifest, f"opt-outs for {profile!r}")
+
+    profile_names = {profile[0] for profile in BINDING_FEATURE_PROFILES}
+    require_policy(set(opt_outs) <= profile_names, "metadata", "unknown opt-out profile")
+    for profile, values in opt_outs.items():
+        for feature, rationale in values.items():
+            require_policy(
+                (profile, feature) in APPROVED_VALUE_FEATURE_OPT_OUTS, profile,
+                f"unapproved opt-out for {feature!r}",
+            )
+            substantive = isinstance(rationale, str) and len(rationale.strip()) >= 40 and len(rationale.split()) >= 8
+            require_policy(substantive, profile, f"opt-out for {feature!r} needs a substantive rationale")
+
+    expected_edges: dict[tuple[str, str], set[str | None]] = {}
+    for _, manifest, dependency, target, _ in BINDING_FEATURE_PROFILES:
+        expected_edges.setdefault((manifest, dependency), set()).add(target)
+    for (manifest, dependency), expected in expected_edges.items():
+        actual = set(dependency_edges(bindings[manifest], dependency, manifest))
+        require_policy(
+            actual == expected, manifest,
+            f"dependency {dependency!r} edges {actual!r}, expected {expected!r}",
+        )
+        forwarded = [
+            item
+            for values in feature_table(bindings[manifest], manifest).values()
+            for item in values
+            if item.startswith((f"{dependency}/", f"{dependency}?/"))
+        ]
+        weak = [item for item in forwarded if item.startswith(f"{dependency}?/")]
+        require_policy(not weak, manifest, f"weak forwarding is unsupported: {weak}")
+        activated: set[str] = set()
+        if forwarded:
+            source_manifest = next(
+                profile[4]
+                for profile in BINDING_FEATURE_PROFILES
+                if profile[1:3] == (manifest, dependency)
+            )
+            source = read_manifest(root, source_manifest)
+            for item in forwarded:
+                activated.update(
+                    alias_closure(source, {item.split("/", 1)[1]}, source_manifest)
+                )
+        relevant = sorted(activated & set(value_features))
+        require_policy(
+            not relevant, manifest,
+            f"binding forwarding enables value-affecting features: {relevant}",
+        )
+
+    coverage: dict[str, dict[str, str]] = {}
+    for profile in BINDING_FEATURE_PROFILES:
+        name, manifest, dependency, target, source_manifest = profile
+        context = f"{manifest} profile {name}"
+        edge = dependency_edges(bindings[manifest], dependency, manifest)[target]
+        edge = effective_edge(root, profile, edge)
+        source = local_source(root, profile, edge)
+        initial = set(edge["features"])
+        if edge["default-features"]:
+            initial.add("default")
+        active = alias_closure(source, initial, source_manifest)
+        coverage[name] = {}
+        for feature in value_features:
+            rationale = opt_outs.get(name, {}).get(feature)
+            require_policy(
+                not (feature in active and rationale), context,
+                f"stale opt-out for enabled feature {feature!r}",
+            )
+            require_policy(
+                feature in active or rationale is not None, context,
+                f"value-affecting feature {feature!r} is uncovered",
+            )
+            coverage[name][feature] = "enabled" if feature in active else f"opt-out: {rationale}"
+    return coverage
 
 
 def validate_parser_track_lockstep(
@@ -596,6 +905,9 @@ def prepare_local_registry(
 
 def preflight(track: str, allow_dirty: bool) -> None:
     validate_binding_package_policy()
+    if track == "product":
+        coverage = validate_binding_value_feature_policy()
+        print(json.dumps({"binding_value_feature_policy": coverage}, indent=2))
     validate_parser_track_lockstep(track)
     ensure_clean(allow_dirty)
     packages = TRACKS[track]
@@ -650,6 +962,7 @@ def main() -> int:
     except (
         OSError,
         RuntimeError,
+        TypeError,
         ValueError,
         subprocess.CalledProcessError,
         tarfile.TarError,
