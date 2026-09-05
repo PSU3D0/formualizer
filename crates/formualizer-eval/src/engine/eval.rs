@@ -2448,8 +2448,20 @@ pub(crate) mod criteria_mask_test_hooks {
     use std::cell::Cell;
 
     thread_local! {
+        static MASK_CALLS_ROWS: Cell<(usize, usize)> = const { Cell::new((0, 0)) };
         static TEXT_SEGMENTS_TOTAL: Cell<usize> = const { Cell::new(0) };
         static TEXT_SEGMENTS_ALL_NULL: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub(crate) fn take_mask_work() -> (usize, usize) {
+        MASK_CALLS_ROWS.with(|c| c.replace((0, 0)))
+    }
+
+    pub(crate) fn note_mask(rows: usize) {
+        MASK_CALLS_ROWS.with(|c| {
+            let (calls, work) = c.get();
+            c.set((calls + 1, work + rows));
+        });
     }
 
     pub fn reset_text_segment_counters() {
@@ -5721,6 +5733,7 @@ where
     /// Mark data edited: bump snapshot and set edited flag.
     /// Value-only edits keep the stable-topology schedule cache alive.
     pub fn mark_data_edited(&mut self) {
+        self.lookup_index_cache.clear();
         self.snapshot_id
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.has_edited = true;
@@ -5728,6 +5741,7 @@ where
 
     /// Mark a topology-changing edit: bump snapshot + topology epoch and invalidate cached schedules.
     pub fn mark_topology_edited(&mut self) {
+        self.lookup_index_cache.clear();
         self.snapshot_id
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.topology_epoch = self.topology_epoch.wrapping_add(1);
@@ -17599,10 +17613,8 @@ where
         }
         // Mirror into Arrow overlay when enabled
         self.mirror_value_to_overlay(sheet, row, col, &value);
-        // Advance snapshot to reflect external mutation
-        self.snapshot_id
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        self.has_edited = true;
+        // Advance snapshot to reflect external mutation.
+        self.mark_data_edited();
         Ok(())
     }
 
@@ -25831,6 +25843,8 @@ where
         col_in_view: usize,
         pred: &crate::args::CriteriaPredicate,
     ) -> Option<std::sync::Arc<arrow_array::BooleanArray>> {
+        #[cfg(test)]
+        criteria_mask_test_hooks::note_mask(view.dims().0);
         if view.dims().1 == 0 {
             return None;
         }

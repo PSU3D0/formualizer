@@ -1,0 +1,42 @@
+--- a/crates/formualizer-eval/src/engine/eval.rs
++++ b/crates/formualizer-eval/src/engine/eval.rs
+@@ -2448,8 +2448,20 @@
+     use std::cell::Cell;
+ 
+     thread_local! {
++        static MASK_CALLS_ROWS: Cell<(usize, usize)> = const { Cell::new((0, 0)) };
+         static TEXT_SEGMENTS_TOTAL: Cell<usize> = const { Cell::new(0) };
+         static TEXT_SEGMENTS_ALL_NULL: Cell<usize> = const { Cell::new(0) };
++    }
++
++    pub(crate) fn take_mask_work() -> (usize, usize) {
++        MASK_CALLS_ROWS.with(|c| c.replace((0, 0)))
++    }
++
++    pub(crate) fn note_mask(rows: usize) {
++        MASK_CALLS_ROWS.with(|c| {
++            let (calls, work) = c.get();
++            c.set((calls + 1, work + rows));
++        });
+     }
+ 
+     pub fn reset_text_segment_counters() {
+@@ -25831,6 +25843,8 @@
+         col_in_view: usize,
+         pred: &crate::args::CriteriaPredicate,
+     ) -> Option<std::sync::Arc<arrow_array::BooleanArray>> {
++        #[cfg(test)]
++        criteria_mask_test_hooks::note_mask(view.dims().0);
+         if view.dims().1 == 0 {
+             return None;
+         }
+--- a/crates/formualizer-eval/src/engine/tests/mod.rs
++++ b/crates/formualizer-eval/src/engine/tests/mod.rs
+@@ -30,6 +30,7 @@
+ mod mark_dirty_multi_source;
+ mod mixed_target_coordinator;
+ mod parallel;
++mod perf_tranche;
+ mod range_dependencies;
+ mod range_property_tests;
+ mod recalc_plan;

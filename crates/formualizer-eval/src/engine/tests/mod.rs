@@ -26,6 +26,7 @@ mod graph_internal_helpers;
 mod issue_326_error_skip_oracle;
 mod layer_evaluation;
 mod load_fast_mappings;
+mod perf_tranche;
 //mod mark_dirty_benchmarks;
 mod mark_dirty_multi_source;
 mod mixed_target_coordinator;

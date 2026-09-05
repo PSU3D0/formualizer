@@ -106,12 +106,24 @@ pub struct LookupIndex {
     pub(crate) first_empty: Option<usize>,
 }
 
+#[cfg(test)]
+thread_local! {
+    static BUILD_ATTEMPTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn take_build_attempts() -> usize {
+    BUILD_ATTEMPTS.with(|c| c.replace(0))
+}
+
 impl LookupIndex {
     pub(crate) fn build(
         view: &RangeView<'_>,
         axis: LookupAxis,
         date_system: DateSystem,
     ) -> Result<BuildOutcome, ExcelError> {
+        #[cfg(test)]
+        BUILD_ATTEMPTS.with(|c| c.set(c.get() + 1));
         let (rows, cols) = view.dims();
         let len = match axis {
             LookupAxis::ColumnInView(col) => {
@@ -166,7 +178,7 @@ impl LookupIndex {
             return Ok(BuildOutcome::ErrorInLookupAxis);
         }
 
-        let bytes = estimate_bytes(len, entries.len());
+        let bytes = retained_bytes(&cell_values, &entries);
         Ok(BuildOutcome::Built(Self {
             len,
             date_system,
@@ -220,6 +232,63 @@ fn numeric_zero_candidate(needle: &LiteralValue) -> Option<f64> {
     }
 }
 
+fn retained_bytes(
+    values: &[LiteralValue],
+    entries: &FxHashMap<LookupHashKey, DuplicateIndices>,
+) -> usize {
+    // HashMap capacity excludes control bytes and vacant buckets. Round up to
+    // the backing power-of-two bucket count; allocator bookkeeping is estimated.
+    let buckets = if entries.capacity() == 0 {
+        0
+    } else {
+        entries.capacity().saturating_add(1).next_power_of_two()
+    };
+    let mut bytes = values
+        .len()
+        .saturating_mul(std::mem::size_of::<LiteralValue>())
+        .saturating_add(
+            buckets.saturating_mul(std::mem::size_of::<(LookupHashKey, DuplicateIndices)>() + 1),
+        )
+        .saturating_add(256);
+    for value in values {
+        bytes = bytes.saturating_add(literal_payload_bytes(value));
+    }
+    for (key, indices) in entries {
+        if let LookupHashKey::Text(text) = key {
+            bytes = bytes.saturating_add(text.len());
+        }
+        if indices.all.spilled() {
+            bytes = bytes.saturating_add(
+                indices
+                    .all
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<usize>()),
+            );
+        }
+    }
+    bytes
+}
+
+fn literal_payload_bytes(value: &LiteralValue) -> usize {
+    match value {
+        LiteralValue::Text(text) => text.capacity(),
+        LiteralValue::Array(rows) => rows.iter().fold(
+            rows.capacity()
+                .saturating_mul(std::mem::size_of::<Vec<LiteralValue>>()),
+            |bytes, row| {
+                row.iter().fold(
+                    bytes.saturating_add(
+                        row.capacity()
+                            .saturating_mul(std::mem::size_of::<LiteralValue>()),
+                    ),
+                    |bytes, value| bytes.saturating_add(literal_payload_bytes(value)),
+                )
+            },
+        ),
+        _ => 0,
+    }
+}
+
 pub(crate) fn estimate_bytes(len: usize, entries: usize) -> usize {
     len.saturating_mul(std::mem::size_of::<LiteralValue>().saturating_add(8))
         .saturating_add(entries.saturating_mul(96))
@@ -233,6 +302,7 @@ pub(crate) enum BuildOutcome {
 }
 
 const LOOKUP_INDEX_BUILD_THRESHOLD: u32 = 3;
+const CAP_REJECTED: u32 = u32::MAX;
 const CALL_COUNT_PRUNE_LIMIT: usize = 4096;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -291,6 +361,24 @@ impl LookupIndexCache {
         }
     }
 
+    // Called only at an exclusive Engine mutation boundary, after all evaluation
+    // workers have joined. No old-generation builder can race this reclamation.
+    pub(crate) fn clear(&mut self) {
+        self.inner
+            .get_mut()
+            .unwrap_or_else(|p| p.into_inner())
+            .clear();
+        self.call_counts
+            .get_mut()
+            .unwrap_or_else(|p| p.into_inner())
+            .clear();
+        self.volatile_keys
+            .get_mut()
+            .unwrap_or_else(|p| p.into_inner())
+            .clear();
+        self.bytes_in_use.store(0, Ordering::Relaxed);
+    }
+
     pub(crate) fn get(&self, key: &LookupIndexKey) -> Option<Arc<LookupIndex>> {
         let found = self
             .inner
@@ -314,7 +402,11 @@ impl LookupIndexCache {
             guard.retain(|existing_key, _| existing_key.snapshot_id == key.snapshot_id);
         }
         let count = guard.entry(key).or_insert(0);
-        *count = count.saturating_add(1);
+        if *count == CAP_REJECTED {
+            self.skipped_cap.fetch_add(1, Ordering::Relaxed);
+            return false;
+        }
+        *count = count.saturating_add(1).min(CAP_REJECTED - 1);
         if *count <= self.build_threshold {
             self.skipped_below_threshold.fetch_add(1, Ordering::Relaxed);
             return false;
@@ -352,17 +444,24 @@ impl LookupIndexCache {
         index: LookupIndex,
     ) -> Option<Arc<LookupIndex>> {
         let bytes = index.bytes;
-        let current = self.bytes_in_use.load(Ordering::Relaxed);
-        if current.saturating_add(bytes) > self.max_bytes {
-            self.skipped_cap.fetch_add(1, Ordering::Relaxed);
-            return None;
-        }
-        let index = Arc::new(index);
         if let Ok(mut guard) = self.inner.write() {
             if let Some(existing) = guard.get(&key) {
                 self.hits.fetch_add(1, Ordering::Relaxed);
                 return Some(existing.clone());
             }
+            // Serialize duplicate detection, admission and accounting. The earlier
+            // preflight estimate is only a hint and cannot reserve concurrent space.
+            let current = self.bytes_in_use.load(Ordering::Relaxed);
+            if bytes > self.max_bytes.saturating_sub(current) {
+                self.skipped_cap.fetch_add(1, Ordering::Relaxed);
+                // Actual payloads (especially text) can exceed the preflight
+                // estimate. Do not rebuild and discard them on every later call.
+                if let Ok(mut counts) = self.call_counts.write() {
+                    counts.insert(key, CAP_REJECTED);
+                }
+                return None;
+            }
+            let index = Arc::new(index);
             guard.insert(key, index.clone());
             self.bytes_in_use.fetch_add(bytes, Ordering::Relaxed);
             self.builds.fetch_add(1, Ordering::Relaxed);
@@ -400,11 +499,8 @@ impl LookupIndexCache {
     }
 
     pub(crate) fn report(&self) -> LookupIndexCacheReport {
-        let entries_count = self
-            .inner
-            .read()
-            .map(|guard| guard.len())
-            .unwrap_or_default();
+        let guard = self.inner.read().ok();
+        let entries_count = guard.as_ref().map_or(0, |guard| guard.len());
         LookupIndexCacheReport {
             builds: self.builds.load(Ordering::Relaxed),
             hits: self.hits.load(Ordering::Relaxed),
@@ -417,5 +513,95 @@ impl LookupIndexCache {
             bytes_in_cache: self.bytes_in_use.load(Ordering::Relaxed),
             entries_count,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn key(col: u32) -> LookupIndexKey {
+        LookupIndexKey {
+            sheet_id: 0,
+            start_row: 0,
+            start_col: col,
+            end_row: 128,
+            end_col: col,
+            axis: LookupAxis::ColumnInView(0),
+            snapshot_id: 1,
+        }
+    }
+    fn index(bytes: usize) -> LookupIndex {
+        LookupIndex {
+            len: 0,
+            date_system: DateSystem::Excel1900,
+            bytes,
+            entries: FxHashMap::default(),
+            cell_values: Box::new([]),
+            first_empty: None,
+        }
+    }
+
+    #[test]
+    fn concurrent_admission_and_duplicate_races_obey_cap() {
+        for duplicate in [false, true] {
+            let mut cache = LookupIndexCache::new(if duplicate { 1024 } else { 4096 });
+            let barrier = std::sync::Barrier::new(16);
+            std::thread::scope(|scope| {
+                let handles: Vec<_> = (0..16)
+                    .map(|i| {
+                        let cache = &cache;
+                        let barrier = &barrier;
+                        scope.spawn(move || {
+                            barrier.wait();
+                            cache.insert_if_room(key(if duplicate { 0 } else { i }), index(1024))
+                        })
+                    })
+                    .collect();
+                let admitted: Vec<_> = handles
+                    .into_iter()
+                    .filter_map(|h| h.join().unwrap())
+                    .collect();
+                assert_eq!(admitted.len(), if duplicate { 16 } else { 4 });
+                if duplicate {
+                    assert!(admitted.iter().all(|item| Arc::ptr_eq(item, &admitted[0])));
+                }
+            });
+            let report = cache.report();
+            assert_eq!(report.bytes_in_cache, cache.max_bytes);
+            assert_eq!(report.builds, if duplicate { 1 } else { 4 });
+            assert_eq!(report.entries_count, report.builds);
+            assert_eq!(report.skipped_cap, if duplicate { 0 } else { 12 });
+            cache.clear();
+            assert_eq!(cache.report().bytes_in_cache, 0);
+            assert_eq!(cache.report().entries_count, 0);
+            assert!(cache.insert_if_room(key(0), index(1024)).is_some());
+        }
+    }
+
+    #[test]
+    fn retained_text_and_duplicate_heap_payloads_are_charged() {
+        let mut entries = FxHashMap::default();
+        let mut text = String::with_capacity(4096);
+        text.push_str("LONG KEY");
+        let values = [LiteralValue::Text(text)];
+        let empty_bytes = retained_bytes(&[], &entries);
+        assert_eq!(
+            retained_bytes(&values, &entries) - empty_bytes,
+            std::mem::size_of::<LiteralValue>() + 4096
+        );
+        let mut dups = DuplicateIndices::default();
+        dups.all.extend(0..100);
+        let heap_bytes = dups.all.capacity() * std::mem::size_of::<usize>();
+        entries.insert(LookupHashKey::Text("long key".into()), dups);
+        let charged = retained_bytes(&values, &entries);
+        assert!(charged >= empty_bytes + 4096 + 8 + heap_bytes);
+        entries
+            .get_mut(&LookupHashKey::Text("long key".into()))
+            .unwrap()
+            .all = SmallVec::new();
+        assert_eq!(charged - retained_bytes(&values, &entries), heap_bytes);
+        let cache = LookupIndexCache::new(charged - 1);
+        assert!(cache.insert_if_room(key(0), index(charged)).is_none());
     }
 }

@@ -571,7 +571,14 @@ fn resolve_registered(
         .map(|entry| (alias.target.clone(), entry.clone()))
 }
 
+#[cfg(test)]
+thread_local! {
+    static RESOLUTION_WRITES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 fn resolve_entry(ns: &str, name: &str) -> Option<(RegistryKey, RegistryEntry)> {
+    #[cfg(test)]
+    RESOLUTION_WRITES.with(|c| c.set(c.get() + 1));
     let ns = norm(ns);
     let normalized_name = norm(name);
     let key = (ns.clone(), normalized_name.clone());
@@ -637,7 +644,28 @@ fn resolve_entry_read_only(ns: &str, name: &str) -> Option<(RegistryKey, Registr
 }
 
 pub fn get(ns: &str, name: &str) -> Option<Arc<dyn Function>> {
-    resolve_entry(ns, name).map(|(_, entry)| entry.function)
+    let key = (norm(ns), norm(name));
+    {
+        let state = REGISTRY
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let entry = state.registrations.get(&key).or_else(|| {
+            let alias = state.aliases.get(&key)?;
+            state.registrations.get(&alias.target)
+        });
+        if let Some(entry) = entry {
+            return Some(Arc::clone(&entry.function));
+        }
+        if !EXCEL_PREFIXES
+            .iter()
+            .any(|prefix| key.1.starts_with(prefix))
+        {
+            return None;
+        }
+    }
+    // Prefix misses may publish an alias. Recheck under the write lock, since a
+    // registration or alias owner could have changed after releasing the read lock.
+    resolve_entry(&key.0, &key.1).map(|(_, entry)| entry.function)
 }
 
 /// Read-only registry lookup for planning providers. Unlike [`get`], this does
@@ -1172,6 +1200,38 @@ mod tests {
             aliases,
             caps,
         })
+    }
+
+    #[test]
+    fn runtime_hits_only_clone_current_function_without_resolution_writes() {
+        let ns = "__RUNTIME_READ_FAST_PATH__";
+        let first = planning_fn(ns, "TARGET", &["ALIAS"], FnCaps::empty());
+        register_function(first.clone());
+        assert!(Arc::ptr_eq(&get(ns, "_xlfn._xlws.alias").unwrap(), &first));
+        RESOLUTION_WRITES.with(|c| c.set(0));
+        for name in ["target", "ALIAS", "_XLFN._XLWS.ALIAS"] {
+            assert!(Arc::ptr_eq(&get(ns, name).unwrap(), &first));
+        }
+        assert!(get(ns, "MISSING").is_none());
+        assert_eq!(RESOLUTION_WRITES.with(|c| c.get()), 0);
+        let second = planning_fn(ns, "TARGET", &["ALIAS"], FnCaps::empty());
+        register_function(second.clone());
+        for name in ["target", "ALIAS", "_XLFN._XLWS.ALIAS"] {
+            assert!(Arc::ptr_eq(&get(ns, name).unwrap(), &second));
+        }
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                let second = &second;
+                scope.spawn(move || {
+                    RESOLUTION_WRITES.with(|c| c.set(0));
+                    for _ in 0..1000 {
+                        assert!(Arc::ptr_eq(&get(ns, "TARGET").unwrap(), second));
+                        assert!(Arc::ptr_eq(&get(ns, "_XLFN._XLWS.ALIAS").unwrap(), second));
+                    }
+                    assert_eq!(RESOLUTION_WRITES.with(|c| c.get()), 0);
+                });
+            }
+        });
     }
 
     #[test]
