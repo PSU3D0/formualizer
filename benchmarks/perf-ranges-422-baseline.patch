@@ -1,0 +1,223 @@
+diff --git a/crates/formualizer-eval/src/arrow_store/mod.rs b/crates/formualizer-eval/src/arrow_store/mod.rs
+index 085782a5..920e27e3 100644
+--- a/crates/formualizer-eval/src/arrow_store/mod.rs
++++ b/crates/formualizer-eval/src/arrow_store/mod.rs
+@@ -158,11 +158,18 @@ impl ColumnChunk {
+     }
+     #[inline]
+     pub fn numbers_or_null(&self) -> Arc<Float64Array> {
++        #[cfg(test)]
++        crate::engine::range_view::range_work::record(|w| w.provider_requests[0] += 1);
+         if let Some(a) = &self.numbers {
+             return a.clone();
+         }
+         self.lazy_null_numbers
+             .get_or_init(|| {
++                #[cfg(test)]
++                crate::engine::range_view::range_work::record(|w| {
++                    w.provider_builds[0] += 1;
++                    w.provider_slots[0] += self.len();
++                });
+                 let arr = new_null_array(&DataType::Float64, self.len());
+                 Arc::new(arr.as_any().downcast_ref::<Float64Array>().unwrap().clone())
+             })
+@@ -170,11 +177,18 @@ impl ColumnChunk {
+     }
+     #[inline]
+     pub fn booleans_or_null(&self) -> Arc<BooleanArray> {
++        #[cfg(test)]
++        crate::engine::range_view::range_work::record(|w| w.provider_requests[1] += 1);
+         if let Some(a) = &self.booleans {
+             return a.clone();
+         }
+         self.lazy_null_booleans
+             .get_or_init(|| {
++                #[cfg(test)]
++                crate::engine::range_view::range_work::record(|w| {
++                    w.provider_builds[1] += 1;
++                    w.provider_slots[1] += self.len();
++                });
+                 let arr = new_null_array(&DataType::Boolean, self.len());
+                 Arc::new(arr.as_any().downcast_ref::<BooleanArray>().unwrap().clone())
+             })
+@@ -182,11 +196,18 @@ impl ColumnChunk {
+     }
+     #[inline]
+     pub fn errors_or_null(&self) -> Arc<UInt8Array> {
++        #[cfg(test)]
++        crate::engine::range_view::range_work::record(|w| w.provider_requests[2] += 1);
+         if let Some(a) = &self.errors {
+             return a.clone();
+         }
+         self.lazy_null_errors
+             .get_or_init(|| {
++                #[cfg(test)]
++                crate::engine::range_view::range_work::record(|w| {
++                    w.provider_builds[2] += 1;
++                    w.provider_slots[2] += self.len();
++                });
+                 let arr = new_null_array(&DataType::UInt8, self.len());
+                 Arc::new(arr.as_any().downcast_ref::<UInt8Array>().unwrap().clone())
+             })
+@@ -194,11 +215,20 @@ impl ColumnChunk {
+     }
+     #[inline]
+     pub fn text_or_null(&self) -> ArrayRef {
++        #[cfg(test)]
++        crate::engine::range_view::range_work::record(|w| w.provider_requests[3] += 1);
+         if let Some(a) = &self.text {
+             return a.clone();
+         }
+         self.lazy_null_text
+-            .get_or_init(|| new_null_array(&DataType::Utf8, self.len()))
++            .get_or_init(|| {
++                #[cfg(test)]
++                crate::engine::range_view::range_work::record(|w| {
++                    w.provider_builds[3] += 1;
++                    w.provider_slots[3] += self.len();
++                });
++                new_null_array(&DataType::Utf8, self.len())
++            })
+             .clone()
+     }
+ 
+diff --git a/crates/formualizer-eval/src/engine/range_view.rs b/crates/formualizer-eval/src/engine/range_view.rs
+index 46d5bab0..dfbc52db 100644
+--- a/crates/formualizer-eval/src/engine/range_view.rs
++++ b/crates/formualizer-eval/src/engine/range_view.rs
+@@ -7,6 +7,49 @@ use arrow_schema::DataType;
+ use formualizer_common::{CoercionPolicy, DateSystem, ExcelError, LiteralValue};
+ use std::sync::Arc;
+ 
++#[cfg(test)]
++pub(crate) mod range_work {
++    use std::cell::Cell;
++
++    #[derive(Clone, Copy, Debug, Default, serde::Serialize)]
++    pub(crate) struct Work {
++        pub iterators: usize,
++        pub search_probes: usize,
++        pub candidates: usize,
++        pub segments: usize,
++        pub segment_rows: usize,
++        pub generic_columns: usize,
++        pub selector_searches: usize,
++        pub null_arrays: usize,
++        pub null_slots: usize,
++        pub provider_requests: [usize; 4],
++        pub provider_builds: [usize; 4],
++        pub provider_slots: [usize; 4],
++    }
++
++    thread_local! {
++        static WORK: Cell<Option<Work>> = const { Cell::new(None) };
++    }
++
++    pub(crate) fn begin() {
++        WORK.with(|work| work.set(Some(Work::default())));
++    }
++
++    pub(crate) fn take() -> Work {
++        WORK.with(|work| work.replace(None).unwrap_or_default())
++    }
++
++    #[inline]
++    pub(crate) fn record(f: impl FnOnce(&mut Work)) {
++        WORK.with(|work| {
++            if let Some(mut value) = work.get() {
++                f(&mut value);
++                work.set(Some(value));
++            }
++        });
++    }
++}
++
+ #[derive(Clone)]
+ pub enum RangeBacking<'a> {
+     Borrowed(&'a arrow_store::ArrowSheet),
+@@ -85,6 +128,8 @@ impl<'a> Iterator for RowChunkIterator<'a> {
+         let row_end = self.view.er.min(sheet_rows.saturating_sub(1));
+ 
+         while self.current_chunk_idx < chunk_starts.len() {
++            #[cfg(test)]
++            range_work::record(|w| w.candidates += 1);
+             let ci = self.current_chunk_idx;
+             let start = chunk_starts[ci];
+             self.current_chunk_idx += 1;
+@@ -109,7 +154,14 @@ impl<'a> Iterator for RowChunkIterator<'a> {
+ 
+             let mut cols = Vec::with_capacity(self.view.cols);
+             for col_idx in self.view.sc..=self.view.ec {
++                #[cfg(test)]
++                range_work::record(|w| w.generic_columns += 1);
+                 if col_idx >= sheet.columns.len() {
++                    #[cfg(test)]
++                    range_work::record(|w| {
++                        w.null_arrays += 4;
++                        w.null_slots += 4 * seg_len;
++                    });
+                     let numbers = Some(arrow_array::new_null_array(&DataType::Float64, seg_len));
+                     let booleans = Some(arrow_array::new_null_array(&DataType::Boolean, seg_len));
+                     let text = Some(arrow_array::new_null_array(&DataType::Utf8, seg_len));
+@@ -130,6 +182,11 @@ impl<'a> Iterator for RowChunkIterator<'a> {
+                 } else {
+                     let col = &sheet.columns[col_idx];
+                     let Some(ch) = col.chunk(ci) else {
++                        #[cfg(test)]
++                        range_work::record(|w| {
++                            w.null_arrays += 4;
++                            w.null_slots += 4 * seg_len;
++                        });
+                         let numbers =
+                             Some(arrow_array::new_null_array(&DataType::Float64, seg_len));
+                         let booleans =
+@@ -172,6 +229,11 @@ impl<'a> Iterator for RowChunkIterator<'a> {
+                     });
+                 }
+             }
++            #[cfg(test)]
++            range_work::record(|w| {
++                w.segments += 1;
++                w.segment_rows += seg_len;
++            });
+             return Some(Ok(ChunkSlice {
+                 row_start: is - self.view.sr,
+                 row_len: seg_len,
+@@ -485,6 +547,8 @@ impl<'a> RangeView<'a> {
+ 
+     /// Iterate overlapping chunks by row segment.
+     pub fn iter_row_chunks(&self) -> RowChunkIterator<'_> {
++        #[cfg(test)]
++        range_work::record(|w| w.iterators += 1);
+         RowChunkIterator {
+             view: self,
+             current_chunk_idx: 0,
+@@ -661,6 +725,8 @@ impl<'a> RangeView<'a> {
+ 
+                 // Identify chunk and overlay segment
+                 let abs_seg_start = self.sr + cs.row_start;
++                #[cfg(test)]
++                range_work::record(|w| w.selector_searches += 1);
+                 let ch_idx = match chunk_starts.binary_search(&abs_seg_start) {
+                     Ok(i) => i,
+                     Err(0) => 0,
+@@ -873,6 +939,8 @@ impl<'a> RangeView<'a> {
+                     .clone();
+                 let base_arc: Arc<arrow_array::UInt8Array> = Arc::new(base_e);
+                 let abs_seg_start = self.sr + cs.row_start;
++                #[cfg(test)]
++                range_work::record(|w| w.selector_searches += 1);
+                 let ch_idx = match chunk_starts.binary_search(&abs_seg_start) {
+                     Ok(i) => i,
+                     Err(0) => 0,
+diff --git a/crates/formualizer-eval/src/engine/tests/perf_tranche.rs b/crates/formualizer-eval/src/engine/tests/perf_tranche.rs
+index 0ef0f663..f99ad786 100644
+--- a/crates/formualizer-eval/src/engine/tests/perf_tranche.rs
++++ b/crates/formualizer-eval/src/engine/tests/perf_tranche.rs
+@@ -1,4 +1,6 @@
+ //! Standalone release probe: see benchmarks/perf-tranche-419-421.md.
++#[path = "perf_ranges.rs"]
++mod perf_ranges;
+ use std::alloc::{GlobalAlloc, Layout, System};
+ use std::cell::Cell;
+ use std::hint::black_box;

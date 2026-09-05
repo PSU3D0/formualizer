@@ -1,0 +1,272 @@
+--- a/crates/formualizer-eval/src/engine/range_view.rs
++++ b/crates/formualizer-eval/src/engine/range_view.rs
+@@ -102,13 +102,20 @@
+     pub cols: Vec<ChunkCol>,
+ }
+ 
+-pub struct RowChunkIterator<'a> {
++struct RowSegment {
++    chunk_idx: usize,
++    chunk_offset: usize,
++    row_start: usize,
++    row_len: usize,
++}
++
++struct RowSegmentIterator<'a> {
+     view: &'a RangeView<'a>,
+-    current_chunk_idx: usize,
++    chunks: Option<core::ops::Range<usize>>,
+ }
+ 
+-impl<'a> Iterator for RowChunkIterator<'a> {
+-    type Item = Result<ChunkSlice, ExcelError>;
++impl Iterator for RowSegmentIterator<'_> {
++    type Item = Result<RowSegment, ExcelError>;
+ 
+     fn next(&mut self) -> Option<Self::Item> {
+         if self
+@@ -121,42 +128,107 @@
+                 formualizer_common::ExcelErrorKind::Cancelled,
+             )));
+         }
+-
+         let sheet = self.view.sheet();
+-        let chunk_starts = &sheet.chunk_starts;
++        let starts = &sheet.chunk_starts;
+         let sheet_rows = sheet.nrows as usize;
+         let row_end = self.view.er.min(sheet_rows.saturating_sub(1));
+-
+-        while self.current_chunk_idx < chunk_starts.len() {
++        let chunks = self.chunks.get_or_insert_with(|| {
++            // Match row coverage independently of logical column/zero-sized subview dimensions.
++            if sheet_rows == 0 || starts.is_empty() || self.view.sr > row_end {
++                return 0..0;
++            }
++            let first = starts
++                .partition_point(|&start| {
++                    #[cfg(test)]
++                    range_work::record(|w| w.search_probes += 1);
++                    start <= self.view.sr
++                })
++                .saturating_sub(1);
++            let end = starts.partition_point(|&start| {
++                #[cfg(test)]
++                range_work::record(|w| w.search_probes += 1);
++                start <= row_end
++            });
++            first..end
++        });
++        for ci in chunks.by_ref() {
+             #[cfg(test)]
+             range_work::record(|w| w.candidates += 1);
+-            let ci = self.current_chunk_idx;
+-            let start = chunk_starts[ci];
+-            self.current_chunk_idx += 1;
+-
+-            let end = if ci + 1 < chunk_starts.len() {
+-                chunk_starts[ci + 1]
+-            } else {
+-                sheet_rows
+-            };
++            let start = starts[ci];
++            let end = starts.get(ci + 1).copied().unwrap_or(sheet_rows);
+             let len = end.saturating_sub(start);
+             if len == 0 {
+                 continue;
+             }
+-            let chunk_end_abs = start + len - 1;
+-            let is = start.max(self.view.sr);
+-            let ie = chunk_end_abs.min(row_end);
+-            if is > ie {
++            let lo = start.max(self.view.sr);
++            let hi = (start + len - 1).min(row_end);
++            if lo > hi {
+                 continue;
+             }
+-            let seg_len = ie - is + 1;
+-            let rel_off = is - start;
++            let row_len = hi - lo + 1;
++            #[cfg(test)]
++            range_work::record(|w| {
++                w.segments += 1;
++                w.segment_rows += row_len;
++            });
++            return Some(Ok(RowSegment {
++                chunk_idx: ci,
++                chunk_offset: lo - start,
++                row_start: lo - self.view.sr,
++                row_len,
++            }));
++        }
++        None
++    }
++}
++
++pub struct RowChunkIterator<'a> {
++    segments: RowSegmentIterator<'a>,
++}
++
++impl Iterator for RowChunkIterator<'_> {
++    type Item = Result<ChunkSlice, ExcelError>;
+ 
+-            let mut cols = Vec::with_capacity(self.view.cols);
+-            for col_idx in self.view.sc..=self.view.ec {
++    fn next(&mut self) -> Option<Self::Item> {
++        let segment = match self.segments.next()? {
++            Ok(segment) => segment,
++            Err(error) => return Some(Err(error)),
++        };
++        let view = self.segments.view;
++        let sheet = view.sheet();
++        let ci = segment.chunk_idx;
++        let rel_off = segment.chunk_offset;
++        let seg_len = segment.row_len;
++        let mut cols = Vec::with_capacity(view.cols);
++        for col_idx in view.sc..=view.ec {
++            #[cfg(test)]
++            range_work::record(|w| w.generic_columns += 1);
++            if col_idx >= sheet.columns.len() {
+                 #[cfg(test)]
+-                range_work::record(|w| w.generic_columns += 1);
+-                if col_idx >= sheet.columns.len() {
++                range_work::record(|w| {
++                    w.null_arrays += 4;
++                    w.null_slots += 4 * seg_len;
++                });
++                let numbers = Some(arrow_array::new_null_array(&DataType::Float64, seg_len));
++                let booleans = Some(arrow_array::new_null_array(&DataType::Boolean, seg_len));
++                let text = Some(arrow_array::new_null_array(&DataType::Utf8, seg_len));
++                let errors = Some(arrow_array::new_null_array(&DataType::UInt8, seg_len));
++                let type_tag: arrow_array::ArrayRef =
++                    Arc::new(arrow_array::UInt8Array::from(vec![
++                        arrow_store::TypeTag::Empty
++                            as u8;
++                        seg_len
++                    ]));
++                cols.push(ChunkCol {
++                    numbers,
++                    booleans,
++                    text,
++                    errors,
++                    type_tag,
++                });
++            } else {
++                let col = &sheet.columns[col_idx];
++                let Some(ch) = col.chunk(ci) else {
+                     #[cfg(test)]
+                     range_work::record(|w| {
+                         w.null_arrays += 4;
+@@ -179,68 +251,33 @@
+                         errors,
+                         type_tag,
+                     });
+-                } else {
+-                    let col = &sheet.columns[col_idx];
+-                    let Some(ch) = col.chunk(ci) else {
+-                        #[cfg(test)]
+-                        range_work::record(|w| {
+-                            w.null_arrays += 4;
+-                            w.null_slots += 4 * seg_len;
+-                        });
+-                        let numbers =
+-                            Some(arrow_array::new_null_array(&DataType::Float64, seg_len));
+-                        let booleans =
+-                            Some(arrow_array::new_null_array(&DataType::Boolean, seg_len));
+-                        let text = Some(arrow_array::new_null_array(&DataType::Utf8, seg_len));
+-                        let errors = Some(arrow_array::new_null_array(&DataType::UInt8, seg_len));
+-                        let type_tag: arrow_array::ArrayRef =
+-                            Arc::new(arrow_array::UInt8Array::from(vec![
+-                                arrow_store::TypeTag::Empty
+-                                    as u8;
+-                                seg_len
+-                            ]));
+-                        cols.push(ChunkCol {
+-                            numbers,
+-                            booleans,
+-                            text,
+-                            errors,
+-                            type_tag,
+-                        });
+-                        continue;
+-                    };
+-
+-                    let numbers_base: arrow_array::ArrayRef = ch.numbers_or_null();
+-                    let booleans_base: arrow_array::ArrayRef = ch.booleans_or_null();
+-                    let text_base: arrow_array::ArrayRef = ch.text_or_null();
+-                    let errors_base: arrow_array::ArrayRef = ch.errors_or_null();
+-
+-                    let numbers = Some(numbers_base.slice(rel_off, seg_len));
+-                    let booleans = Some(booleans_base.slice(rel_off, seg_len));
+-                    let text = Some(text_base.slice(rel_off, seg_len));
+-                    let errors = Some(errors_base.slice(rel_off, seg_len));
+-                    let type_tag: arrow_array::ArrayRef =
+-                        Arc::new(ch.type_tag.slice(rel_off, seg_len));
+-                    cols.push(ChunkCol {
+-                        numbers,
+-                        booleans,
+-                        text,
+-                        errors,
+-                        type_tag,
+-                    });
+-                }
++                    continue;
++                };
++
++                let numbers_base: arrow_array::ArrayRef = ch.numbers_or_null();
++                let booleans_base: arrow_array::ArrayRef = ch.booleans_or_null();
++                let text_base: arrow_array::ArrayRef = ch.text_or_null();
++                let errors_base: arrow_array::ArrayRef = ch.errors_or_null();
++
++                let numbers = Some(numbers_base.slice(rel_off, seg_len));
++                let booleans = Some(booleans_base.slice(rel_off, seg_len));
++                let text = Some(text_base.slice(rel_off, seg_len));
++                let errors = Some(errors_base.slice(rel_off, seg_len));
++                let type_tag: arrow_array::ArrayRef = Arc::new(ch.type_tag.slice(rel_off, seg_len));
++                cols.push(ChunkCol {
++                    numbers,
++                    booleans,
++                    text,
++                    errors,
++                    type_tag,
++                });
+             }
+-            #[cfg(test)]
+-            range_work::record(|w| {
+-                w.segments += 1;
+-                w.segment_rows += seg_len;
+-            });
+-            return Some(Ok(ChunkSlice {
+-                row_start: is - self.view.sr,
+-                row_len: seg_len,
+-                cols,
+-            }));
+         }
+-        None
++        Some(Ok(ChunkSlice {
++            row_start: segment.row_start,
++            row_len: seg_len,
++            cols,
++        }))
+     }
+ }
+ 
+@@ -547,11 +584,17 @@
+ 
+     /// Iterate overlapping chunks by row segment.
+     pub fn iter_row_chunks(&self) -> RowChunkIterator<'_> {
++        RowChunkIterator {
++            segments: self.iter_row_segments(),
++        }
++    }
++
++    fn iter_row_segments(&self) -> RowSegmentIterator<'_> {
+         #[cfg(test)]
+         range_work::record(|w| w.iterators += 1);
+-        RowChunkIterator {
++        RowSegmentIterator {
+             view: self,
+-            current_chunk_idx: 0,
++            chunks: None,
+         }
+     }
+ 

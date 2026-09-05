@@ -6,3 +6,5 @@ docs-site/src/generated/functions-meta.json linguist-generated=true
 
 # Unified diffs encode empty context lines as one space.
 benchmarks/*-baseline.patch whitespace=-blank-at-eol
+# This experimental diff also ends on an encoded empty context line.
+benchmarks/perf-ranges-422-a-only.patch whitespace=-blank-at-eol,-blank-at-eof
