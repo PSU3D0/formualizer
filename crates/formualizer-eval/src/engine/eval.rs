@@ -1708,7 +1708,6 @@ where
                 .clear_computed_overlay_after_row(sheet, before0 as usize);
             self.engine
                 .record_formula_plane_structural_change(StructuralScope::Region(affected_region));
-            self.engine.mark_topology_edited();
             if let Some(undo_ptr) = self.arrow_undo {
                 unsafe { &mut *undo_ptr }.record_insert_rows(sheet_id, before0, count);
             }
@@ -1784,7 +1783,6 @@ where
                 .clear_computed_overlay_after_col(sheet, before0 as usize);
             self.engine
                 .record_formula_plane_structural_change(StructuralScope::Region(affected_region));
-            self.engine.mark_topology_edited();
             if let Some(undo_ptr) = self.arrow_undo {
                 unsafe { &mut *undo_ptr }.record_insert_cols(sheet_id, before0, count);
             }
@@ -1867,6 +1865,26 @@ enum StructuralScope {
     RemovedSheet(SheetId),
     OpaqueGlobal,
     AllSheets,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum LoggedEditImpact {
+    NoOp,
+    DataOnly,
+    Topology,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LoggedEditDirection {
+    Original,
+    InverseReplay,
+    ForwardReplay,
+}
+
+#[derive(Clone, Copy)]
+struct InvalidationBaseline {
+    snapshot_id: u64,
+    topology_epoch: u64,
 }
 
 struct SourceCacheSession {
@@ -4981,6 +4999,7 @@ where
         name: String,
         f: impl FnOnce(&mut EngineAction<'_, R>) -> Result<T, crate::engine::EditorError>,
     ) -> Result<(T, crate::engine::ActionJournal), crate::engine::EditorError> {
+        let invalidation_baseline = self.invalidation_baseline();
         let mut arrow_undo = crate::engine::ArrowUndoBatch::default();
         let arrow_ptr: *mut crate::engine::ArrowUndoBatch = &mut arrow_undo;
 
@@ -5015,12 +5034,17 @@ where
                     for event in &journal.graph.events {
                         self.record_formula_plane_change_for_event(event);
                     }
-                    self.mark_data_edited();
+                    self.invalidate_for_action_journal(
+                        &journal,
+                        LoggedEditDirection::Original,
+                        invalidation_baseline,
+                    );
                 }
                 Ok((v, journal))
             }
             Err(e) => {
-                if let Err(rb) = self.rollback_from_action_journal(&journal) {
+                if let Err(rb) = self.rollback_from_action_journal(&journal, invalidation_baseline)
+                {
                     return Err(crate::engine::EditorError::TransactionFailed {
                         reason: format!(
                             "Engine::action_atomic rollback failed after error '{e}': {rb}"
@@ -5088,7 +5112,15 @@ where
     fn rollback_from_action_journal(
         &mut self,
         journal: &crate::engine::ActionJournal,
+        invalidation_baseline: InvalidationBaseline,
     ) -> Result<(), crate::engine::EditorError> {
+        // Invalidate first so a partial inverse failure cannot leave a changed
+        // graph behind an apparently current schedule or lookup cache.
+        self.invalidate_for_action_journal(
+            journal,
+            LoggedEditDirection::InverseReplay,
+            invalidation_baseline,
+        );
         // 1) Roll back the dependency graph structure.
         journal.graph.undo(&mut self.graph)?;
         // 2) Roll back engine row-visibility sidecar events.
@@ -5101,8 +5133,17 @@ where
     fn rollback_from_change_events(
         &mut self,
         events: &[crate::engine::ChangeEvent],
+        invalidation_baseline: InvalidationBaseline,
     ) -> Result<(), crate::engine::EditorError> {
         use crate::engine::ChangeEvent;
+
+        // Fail closed before applying inverses because replay can return after
+        // only part of the batch has been restored.
+        self.invalidate_for_change_events(
+            events,
+            LoggedEditDirection::InverseReplay,
+            invalidation_baseline,
+        );
 
         // 1) Roll back the dependency graph.
         {
@@ -5230,6 +5271,7 @@ where
         log: &mut crate::engine::ChangeLog,
         f: impl FnOnce(&mut crate::engine::VertexEditor) -> T,
     ) -> Result<T, crate::engine::EditorError> {
+        let invalidation_baseline = self.invalidation_baseline();
         // Record starting log length so we can mirror only newly-recorded events.
         let start_len = log.len();
 
@@ -5279,7 +5321,7 @@ where
                     | ChangeEvent::DeleteName { .. }
             )
         }) {
-            self.rollback_from_change_events(&new_events)?;
+            self.rollback_from_change_events(&new_events, invalidation_baseline)?;
             log.truncate(start_len);
             return Err(crate::engine::EditorError::TransactionUnsupported {
                 reason: "name mutations must use Engine's prepared logged-name APIs".to_string(),
@@ -5294,6 +5336,16 @@ where
         }
         for ev in &new_events {
             self.record_formula_plane_change_for_event(ev);
+        }
+
+        // Atomic EngineAction calls publish one invalidation for their complete
+        // journal at commit/rollback. Direct logged edits publish here.
+        if self.action_depth == 0 {
+            self.invalidate_for_change_events(
+                &new_events,
+                LoggedEditDirection::Original,
+                invalidation_baseline,
+            );
         }
 
         Ok(ret)
@@ -5412,10 +5464,18 @@ where
             .map(|index| log.events()[index].clone())
             .collect::<Vec<_>>();
         self.preflight_replay_admission(&pending_events, false)?;
+        let invalidation_baseline = self.invalidation_baseline();
         let names = Self::name_event_names(&pending_events);
         let prepared =
             self.prepare_name_dependent_span_demotion(names.iter().map(String::as_str))?;
-        let demoted = self.commit_name_dependent_span_demotion(prepared)?;
+        self.commit_name_dependent_span_demotion(prepared)?;
+        // UndoEngine can fail after partially applying the batch, so publish
+        // invalidation before replay rather than only on the success path.
+        self.invalidate_for_change_events(
+            &pending_events,
+            LoggedEditDirection::InverseReplay,
+            invalidation_baseline,
+        );
         let batch = undo.undo(&mut self.graph, log)?;
         for item in batch.iter().rev() {
             self.apply_inverse_row_visibility_event(&item.event);
@@ -5433,9 +5493,6 @@ where
             for item in &batch {
                 self.record_formula_plane_change_for_event(&item.event);
             }
-            if !demoted && !names.is_empty() {
-                self.mark_topology_edited();
-            }
         }
         Ok(())
     }
@@ -5447,10 +5504,16 @@ where
     ) -> Result<(), crate::engine::EditorError> {
         let pending_events = undo.pending_redo_events();
         self.preflight_replay_admission(&pending_events, true)?;
+        let invalidation_baseline = self.invalidation_baseline();
         let names = Self::name_event_names(&pending_events);
         let prepared =
             self.prepare_name_dependent_span_demotion(names.iter().map(String::as_str))?;
-        let demoted = self.commit_name_dependent_span_demotion(prepared)?;
+        self.commit_name_dependent_span_demotion(prepared)?;
+        self.invalidate_for_change_events(
+            &pending_events,
+            LoggedEditDirection::ForwardReplay,
+            invalidation_baseline,
+        );
         let batch = undo.redo(&mut self.graph, log)?;
         for item in &batch {
             self.apply_forward_row_visibility_event(&item.event);
@@ -5467,9 +5530,6 @@ where
         if !batch.is_empty() {
             for item in &batch {
                 self.record_formula_plane_change_for_event(&item.event);
-            }
-            if !demoted && !names.is_empty() {
-                self.mark_topology_edited();
             }
         }
         Ok(())
@@ -5489,6 +5549,7 @@ where
             undo.push_done_action(journal);
             return Err(error);
         }
+        let invalidation_baseline = self.invalidation_baseline();
         let names = Self::name_event_names(&journal.graph.events);
         let prepared =
             match self.prepare_name_dependent_span_demotion(names.iter().map(String::as_str)) {
@@ -5498,25 +5559,22 @@ where
                     return Err(error);
                 }
             };
-        let demoted = match self.commit_name_dependent_span_demotion(prepared) {
-            Ok(demoted) => demoted,
-            Err(error) => {
-                undo.push_done_action(journal);
-                return Err(error);
-            }
-        };
+        if let Err(error) = self.commit_name_dependent_span_demotion(prepared) {
+            undo.push_done_action(journal);
+            return Err(error);
+        }
 
+        self.invalidate_for_action_journal(
+            &journal,
+            LoggedEditDirection::InverseReplay,
+            invalidation_baseline,
+        );
         journal.graph.undo(&mut self.graph)?;
         self.apply_inverse_row_visibility_events(&journal.graph.events);
         self.apply_arrow_undo_batch(&journal.arrow, /*undo=*/ true);
         if !journal.graph.is_empty() || !journal.arrow.is_empty() {
             for event in &journal.graph.events {
                 self.record_formula_plane_change_for_event(event);
-            }
-            if !demoted && !names.is_empty() {
-                self.mark_topology_edited();
-            } else {
-                self.mark_data_edited();
             }
         }
 
@@ -5538,6 +5596,7 @@ where
             undo.push_redo_action(journal);
             return Err(error);
         }
+        let invalidation_baseline = self.invalidation_baseline();
         let names = Self::name_event_names(&journal.graph.events);
         let prepared =
             match self.prepare_name_dependent_span_demotion(names.iter().map(String::as_str)) {
@@ -5547,25 +5606,22 @@ where
                     return Err(error);
                 }
             };
-        let demoted = match self.commit_name_dependent_span_demotion(prepared) {
-            Ok(demoted) => demoted,
-            Err(error) => {
-                undo.push_redo_action(journal);
-                return Err(error);
-            }
-        };
+        if let Err(error) = self.commit_name_dependent_span_demotion(prepared) {
+            undo.push_redo_action(journal);
+            return Err(error);
+        }
 
+        self.invalidate_for_action_journal(
+            &journal,
+            LoggedEditDirection::ForwardReplay,
+            invalidation_baseline,
+        );
         journal.graph.redo(&mut self.graph)?;
         self.apply_forward_row_visibility_events(&journal.graph.events);
         self.apply_arrow_undo_batch(&journal.arrow, /*undo=*/ false);
         if !journal.graph.is_empty() || !journal.arrow.is_empty() {
             for event in &journal.graph.events {
                 self.record_formula_plane_change_for_event(event);
-            }
-            if !demoted && !names.is_empty() {
-                self.mark_topology_edited();
-            } else {
-                self.mark_data_edited();
             }
         }
 
@@ -5728,6 +5784,122 @@ where
 
     fn clear_cached_static_schedule(&mut self) {
         self.cached_static_schedule = None;
+    }
+
+    fn invalidation_baseline(&self) -> InvalidationBaseline {
+        InvalidationBaseline {
+            snapshot_id: self.snapshot_id.load(std::sync::atomic::Ordering::Relaxed),
+            topology_epoch: self.topology_epoch,
+        }
+    }
+
+    fn classify_change_events(
+        events: &[crate::engine::ChangeEvent],
+        direction: LoggedEditDirection,
+    ) -> LoggedEditImpact {
+        use crate::engine::ChangeEvent;
+
+        events
+            .iter()
+            .map(|event| match event {
+                ChangeEvent::CompoundStart { .. } | ChangeEvent::CompoundEnd { .. } => {
+                    LoggedEditImpact::NoOp
+                }
+                ChangeEvent::SetRowVisibility { .. }
+                | ChangeEvent::SetValue {
+                    old_formula: None,
+                    old_value: Some(_),
+                    ..
+                } => LoggedEditImpact::DataOnly,
+                // Original canonical writes can lack an Arrow old value while
+                // updating an existing placeholder. Inverse replay actually
+                // removes that vertex; a later redo recreates it.
+                ChangeEvent::SetValue {
+                    old_formula: None,
+                    old_value: None,
+                    ..
+                } if direction == LoggedEditDirection::Original => LoggedEditImpact::DataOnly,
+                ChangeEvent::SetValue { .. }
+                | ChangeEvent::SetFormula { .. }
+                | ChangeEvent::AddVertex { .. }
+                | ChangeEvent::RemoveVertex { .. }
+                | ChangeEvent::VertexMoved { .. }
+                | ChangeEvent::FormulaAdjusted { .. }
+                | ChangeEvent::NamedRangeAdjusted { .. }
+                | ChangeEvent::EdgeAdded { .. }
+                | ChangeEvent::EdgeRemoved { .. }
+                | ChangeEvent::DefineName { .. }
+                | ChangeEvent::UpdateName { .. }
+                | ChangeEvent::DeleteName { .. }
+                | ChangeEvent::SpillCommitted { .. }
+                | ChangeEvent::SpillCleared { .. }
+                | ChangeEvent::StagedFormulaCellChanged { .. } => LoggedEditImpact::Topology,
+            })
+            .max()
+            .unwrap_or(LoggedEditImpact::NoOp)
+    }
+
+    fn classify_arrow_undo(arrow: &crate::engine::ArrowUndoBatch) -> LoggedEditImpact {
+        use crate::engine::ArrowOp;
+
+        arrow
+            .ops
+            .iter()
+            .map(|op| match op {
+                ArrowOp::SetDeltaCell { .. } | ArrowOp::SetComputedCell { .. } => {
+                    LoggedEditImpact::DataOnly
+                }
+                ArrowOp::RestoreComputedRect { .. }
+                | ArrowOp::InsertRows { .. }
+                | ArrowOp::InsertCols { .. } => LoggedEditImpact::Topology,
+            })
+            .max()
+            .unwrap_or(LoggedEditImpact::NoOp)
+    }
+
+    fn apply_logged_edit_impact(
+        &mut self,
+        impact: LoggedEditImpact,
+        baseline: InvalidationBaseline,
+    ) {
+        match impact {
+            LoggedEditImpact::NoOp => {}
+            LoggedEditImpact::DataOnly => {
+                if self.topology_epoch == baseline.topology_epoch
+                    && self.snapshot_id.load(std::sync::atomic::Ordering::Relaxed)
+                        == baseline.snapshot_id
+                {
+                    self.mark_data_edited();
+                }
+            }
+            LoggedEditImpact::Topology => {
+                // FormulaPlane demotion and some structural entry points already
+                // publish topology invalidation. Do not bump the same batch twice.
+                if self.topology_epoch == baseline.topology_epoch {
+                    self.mark_topology_edited();
+                }
+            }
+        }
+    }
+
+    fn invalidate_for_change_events(
+        &mut self,
+        events: &[crate::engine::ChangeEvent],
+        direction: LoggedEditDirection,
+        baseline: InvalidationBaseline,
+    ) {
+        self.apply_logged_edit_impact(Self::classify_change_events(events, direction), baseline);
+    }
+
+    fn invalidate_for_action_journal(
+        &mut self,
+        journal: &crate::engine::ActionJournal,
+        direction: LoggedEditDirection,
+        baseline: InvalidationBaseline,
+    ) {
+        let impact = Self::classify_change_events(&journal.graph.events, direction)
+            .max(Self::classify_arrow_undo(&journal.arrow));
+        self.apply_logged_edit_impact(impact, baseline);
     }
 
     /// Mark data edited: bump snapshot and set edited flag.
