@@ -49,6 +49,7 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Security and hardening
 
+- Bounded parser recursion so excessively nested formulas return a parser error instead of exhausting the stack, with accepted-boundary coverage for 64 nested calls and parentheses. The limit counts parser frames rather than Excel nesting levels; recursive destruction of very long flat ASTs remains a separate known limitation (#411). Original recursion guard contributed by @chiliec. (#408)
 - Bumped the docs site to Next.js `16.2.11`, clearing nine npm advisories affecting `next` `16.2.6` (four high: GHSA-89xv-2m56-2m9x, GHSA-p9j2-gv94-2wf4, GHSA-6gpp-xcg3-4w24, GHSA-m99w-x7hq-7vfj). The docs site's `bun.lock` was removed; `pnpm-lock.yaml` is the only lockfile the site builds and deploys from.
 
 ## [0.8.4] - 2026-08-14

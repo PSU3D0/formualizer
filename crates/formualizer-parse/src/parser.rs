@@ -2330,11 +2330,15 @@ pub struct Parser {
     depth: usize,
 }
 
-/// Maximum expression nesting depth accepted by the parser. Excel itself caps
-/// formula nesting at 64; matching that keeps every real formula well within
-/// bounds while preventing unbounded recursion (and stack overflow) on hostile
-/// input.
-const MAX_PARSE_DEPTH: usize = 64;
+/// Bound active Pratt-parser frames, not Excel function-nesting levels. Leave
+/// headroom for 64 nested calls or parentheses, including IF conditions: the
+/// top-level expression and infix right-hand sides also consume frames. A
+/// right-nested infix expression with parentheses consumes two per level, so
+/// this is deliberately not an exact implementation of Excel's nesting limit.
+/// The boundary is exercised on a 1 MiB thread stack in debug and release tests.
+/// Flat left-associative AST depth and recursive AST destruction are separate
+/// limits; this guard does not bound total AST size.
+const MAX_PARSE_DEPTH: usize = 72;
 
 impl Parser {
     /// Tokenize a formula using the default Excel dialect and prepare it for parsing.
