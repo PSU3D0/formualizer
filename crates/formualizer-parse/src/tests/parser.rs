@@ -4142,3 +4142,52 @@ mod r1c1_disambiguation {
         }
     }
 }
+
+#[cfg(test)]
+mod parser_hardening {
+    fn parse_on_small_stack(formula: String) -> Result<(), crate::parser::ParserError> {
+        std::thread::Builder::new()
+            .stack_size(1024 * 1024)
+            .spawn(move || crate::parser::parse(&formula).map(|_| ()))
+            .expect("spawn parse thread")
+            .join()
+            .expect("parser must not overflow the stack")
+    }
+
+    #[test]
+    fn accepts_excel_nesting_boundary_on_small_stack() {
+        for (shape, formula) in [
+            (
+                "parentheses",
+                format!("={}1{}", "(".repeat(64), ")".repeat(64)),
+            ),
+            (
+                "calls",
+                format!("={}1{}", "SUM(".repeat(64), ")".repeat(64)),
+            ),
+            (
+                "conditional calls",
+                format!("={}1{}", "IF(A1>0,".repeat(64), ",0)".repeat(64)),
+            ),
+        ] {
+            let result = parse_on_small_stack(formula);
+            assert!(result.is_ok(), "{shape}: {result:?}");
+        }
+    }
+
+    #[test]
+    fn deeply_nested_formula_errors_instead_of_overflowing_stack() {
+        for formula in [
+            format!("={}1{}", "(".repeat(5000), ")".repeat(5000)),
+            format!("={}1", "-".repeat(5000)),
+            format!("={}1{}", "SUM(".repeat(5000), ")".repeat(5000)),
+            format!("={}1{}", "1+(".repeat(5000), ")".repeat(5000)),
+            format!("={}1{}", "IF(A1>0,".repeat(5000), ",0)".repeat(5000)),
+            format!("={}1{}", "{".repeat(5000), "}".repeat(5000)),
+            format!("={}1", "1^".repeat(5000)),
+        ] {
+            let error = parse_on_small_stack(formula).expect_err("reject excessive recursion");
+            assert!(error.message.contains("Formula nesting too deep"));
+        }
+    }
+}

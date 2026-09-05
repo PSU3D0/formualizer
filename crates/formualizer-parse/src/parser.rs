@@ -2324,7 +2324,21 @@ pub struct Parser {
     /// When > 0, treat a top-level `OpInfix(",")` as a terminator (call-arg
     /// separator) instead of the union/list operator. Used by `parse_call_arguments`.
     in_call_args_depth: usize,
+    /// Current recursion depth of `parse_bp`. Bounded by [`MAX_PARSE_DEPTH`] so a
+    /// deeply nested formula (e.g. `=((((...))))`) returns an error instead of
+    /// overflowing the stack.
+    depth: usize,
 }
+
+/// Bound active Pratt-parser frames, not Excel function-nesting levels. Leave
+/// headroom for 64 nested calls or parentheses, including IF conditions: the
+/// top-level expression and infix right-hand sides also consume frames. A
+/// right-nested infix expression with parentheses consumes two per level, so
+/// this is deliberately not an exact implementation of Excel's nesting limit.
+/// The boundary is exercised on a 1 MiB thread stack in debug and release tests.
+/// Flat left-associative AST depth and recursive AST destruction are separate
+/// limits; this guard does not bound total AST size.
+const MAX_PARSE_DEPTH: usize = 72;
 
 impl Parser {
     /// Tokenize a formula using the default Excel dialect and prepare it for parsing.
@@ -2372,6 +2386,7 @@ impl Parser {
             volatility_classifier: None,
             dialect,
             in_call_args_depth: 0,
+            depth: 0,
         }
     }
 
@@ -2508,6 +2523,22 @@ impl Parser {
     }
 
     fn parse_bp(&mut self, min_precedence: u8) -> Result<ASTNode, ParserError> {
+        // Bound recursion so deeply nested input (e.g. `=((((...))))`) returns
+        // an error instead of overflowing the stack.
+        self.depth += 1;
+        if self.depth > MAX_PARSE_DEPTH {
+            self.depth -= 1;
+            return Err(ParserError {
+                message: format!("Formula nesting too deep (max {MAX_PARSE_DEPTH})"),
+                position: Some(self.position),
+            });
+        }
+        let result = self.parse_bp_inner(min_precedence);
+        self.depth -= 1;
+        result
+    }
+
+    fn parse_bp_inner(&mut self, min_precedence: u8) -> Result<ASTNode, ParserError> {
         let mut left = self.parse_prefix()?;
 
         loop {
