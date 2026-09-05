@@ -189,6 +189,71 @@ pub struct ChangeLog {
     current_meta: ChangeEventMeta,
 }
 
+/// Complete, operation-local mutation capture used by `Engine` correctness paths.
+///
+/// Unlike `ChangeLog`, this sink is always enabled and never evicts. It is crate-private so
+/// audit retention remains a property of `ChangeLog`, not of graph mutation.
+#[derive(Debug)]
+pub(crate) struct MutationCapture {
+    events: Vec<ChangeEvent>,
+    compound_depth: usize,
+    current_meta: ChangeEventMeta,
+}
+
+impl MutationCapture {
+    pub(crate) fn new(current_meta: ChangeEventMeta) -> Self {
+        Self {
+            events: Vec::new(),
+            compound_depth: 0,
+            current_meta,
+        }
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.events.len()
+    }
+
+    pub(crate) fn events(&self) -> &[ChangeEvent] {
+        &self.events
+    }
+
+    pub(crate) fn close_compounds(&mut self) {
+        while self.compound_depth > 0 {
+            self.end_compound();
+        }
+    }
+
+    fn push(&mut self, event: ChangeEvent) {
+        self.events.push(event);
+    }
+}
+
+impl ChangeLogger for MutationCapture {
+    fn record(&mut self, event: ChangeEvent) {
+        self.push(event);
+    }
+
+    fn set_enabled(&mut self, _: bool) {}
+
+    fn begin_compound(&mut self, description: String) {
+        self.compound_depth += 1;
+        self.push(ChangeEvent::CompoundStart {
+            description,
+            depth: self.compound_depth,
+        });
+    }
+
+    fn end_compound(&mut self) {
+        if self.compound_depth == 0 {
+            return;
+        }
+        self.push(ChangeEvent::CompoundEnd {
+            depth: self.compound_depth,
+        });
+        self.compound_depth -= 1;
+    }
+}
+
 impl ChangeLog {
     pub fn new() -> Self {
         Self {
@@ -222,7 +287,7 @@ impl ChangeLog {
             return;
         };
         if max == 0 {
-            self.clear();
+            self.clear_retained();
             return;
         }
         if self.events.len() <= max {
@@ -233,6 +298,90 @@ impl ChangeLog {
         self.metas.drain(0..drop_n);
         self.seqs.drain(0..drop_n);
         self.groups.drain(0..drop_n);
+    }
+
+    fn clear_retained(&mut self) {
+        self.events.clear();
+        self.metas.clear();
+        self.seqs.clear();
+        self.groups.clear();
+    }
+
+    fn replay_record(&mut self, event: ChangeEvent, meta: &ChangeEventMeta, retain: bool) {
+        if !self.enabled {
+            return;
+        }
+        let seq = self.next_seq;
+        self.next_seq += 1;
+        if retain {
+            self.events.push(event);
+            self.metas.push(meta.clone());
+            self.seqs.push(seq);
+            self.groups.push(self.group_stack.last().copied());
+        }
+    }
+
+    fn replay_begin_compound(&mut self, description: String, meta: &ChangeEventMeta, retain: bool) {
+        self.compound_depth += 1;
+        if self.compound_depth == 1 {
+            let gid = self.next_group_id;
+            self.next_group_id += 1;
+            self.group_stack.push(gid);
+        } else if let Some(&gid) = self.group_stack.last() {
+            self.group_stack.push(gid);
+        }
+        self.replay_record(
+            ChangeEvent::CompoundStart {
+                description,
+                depth: self.compound_depth,
+            },
+            meta,
+            retain,
+        );
+    }
+
+    fn replay_end_compound(&mut self, meta: &ChangeEventMeta, retain: bool) {
+        if self.compound_depth == 0 {
+            return;
+        }
+        self.replay_record(
+            ChangeEvent::CompoundEnd {
+                depth: self.compound_depth,
+            },
+            meta,
+            retain,
+        );
+        self.compound_depth -= 1;
+        self.group_stack.pop();
+    }
+
+    fn replay_capture(&mut self, capture: MutationCapture, retain: bool) {
+        for event in capture.events {
+            match event {
+                ChangeEvent::CompoundStart { description, .. } => {
+                    self.replay_begin_compound(description, &capture.current_meta, retain);
+                }
+                ChangeEvent::CompoundEnd { .. } => {
+                    self.replay_end_compound(&capture.current_meta, retain);
+                }
+                event => self.replay_record(event, &capture.current_meta, retain),
+            }
+        }
+        if retain {
+            self.enforce_cap();
+        }
+    }
+
+    pub(crate) fn current_meta(&self) -> ChangeEventMeta {
+        self.current_meta.clone()
+    }
+
+    pub(crate) fn publish_capture(&mut self, capture: MutationCapture) {
+        self.replay_capture(capture, true);
+    }
+
+    pub(crate) fn discard_capture(&mut self, capture: MutationCapture) {
+        self.replay_capture(capture, false);
     }
 
     pub fn record(&mut self, event: ChangeEvent) {
@@ -326,10 +475,7 @@ impl ChangeLog {
     }
 
     pub fn clear(&mut self) {
-        self.events.clear();
-        self.metas.clear();
-        self.seqs.clear();
-        self.groups.clear();
+        self.clear_retained();
         self.compound_depth = 0;
         self.group_stack.clear();
     }

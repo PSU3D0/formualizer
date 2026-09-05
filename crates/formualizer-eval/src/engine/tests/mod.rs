@@ -24,6 +24,8 @@ mod evaluation_resource_observability;
 mod graph_basic;
 mod graph_internal_helpers;
 mod issue_326_error_skip_oracle;
+mod issue_432_logged_invalidation;
+mod issue_434_private_mutation_capture;
 mod layer_evaluation;
 mod load_fast_mappings;
 mod perf_tranche;
