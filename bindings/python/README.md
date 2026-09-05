@@ -334,12 +334,13 @@ maturin develop --release  # optimized build
 
 ## Using in Pyodide (browser / WebAssembly)
 
-`formualizer` ships a Pyodide-tagged wheel (`*-pyodide_<abi>_wasm32.whl`) alongside the native wheels on PyPI. Inside a Pyodide runtime:
+Native wheels are published to PyPI. Pyodide wheels are built and smoke-tested in CI and release workflows, then uploaded only as the `wheels-pyodide` Actions artifact; they are not uploaded to PyPI or attached to GitHub Releases. Download and extract the artifact (or build locally), then host the compatible wheel at a browser-accessible URL with suitable CORS headers. An Actions artifact ZIP is not a wheel URL:
 
 ```python
 import micropip
 
-await micropip.install("formualizer")
+wheel_url = "<your-downloadable-wheel-url>"
+await micropip.install(wheel_url)
 
 import formualizer as fz
 
@@ -351,7 +352,7 @@ wb.set_formula("Sheet1", 1, 2, "=SUM(A1:A2)")
 wb.evaluate_cell("Sheet1", 1, 2)  # -> 42.0
 ```
 
-**Supported Pyodide versions:** 0.29.x (ABI `pyodide_2025_0`). Later minors may require a new wheel — check the PyPI release matrix for your target Pyodide version.
+**Tested Pyodide target:** CI and release smoke tests use Pyodide 0.29.3 and the wheel's derived ABI (currently `pyodide_2025_0`). Rebuild and smoke-test a wheel when targeting another runtime; no persistent public wheel URL is promised.
 
 **Pyodide-specific behavior:**
 - `EvaluationConfig()` and `Workbook()` default `enable_parallel = False` on `sys.platform == "emscripten"` (Pyodide has no threads). You can still opt in, but it falls back to single-threaded execution.
@@ -360,14 +361,14 @@ wb.evaluate_cell("Sheet1", 1, 2)  # -> 42.0
 
 ### Building a Pyodide wheel from source
 
-For local development or targeting a Pyodide version that isn't on PyPI:
+For local development or targeting a Pyodide version without a retained Actions artifact:
 
 ```bash
 ./scripts/build-pyodide-wheel.sh
 ./scripts/smoke-pyodide-wheel.sh dist/pyodide/*-pyodide_*_wasm32.whl
 ```
 
-The build script derives Python, ABI, Emscripten, and Rust toolchain from `pyodide config` (no hardcoded versions), installs Pyodide's custom wasm-EH Rust sysroot over the stock rustup target, and retags the output wheel to the platform tag Pyodide's `micropip` expects.
+The build script defaults to xbuildenv Pyodide 0.29.3, derives Python, ABI, Emscripten, and Rust toolchain values from `pyodide config`, installs Pyodide's custom wasm-EH Rust sysroot over the stock rustup target, and retags the output wheel to the platform tag Pyodide's `micropip` expects. `pyodide-cli` and `pyodide-build` are resolved through `uvx` and are not pinned by the script.
 
 ## Testing
 

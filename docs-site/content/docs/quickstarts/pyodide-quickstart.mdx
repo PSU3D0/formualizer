@@ -3,16 +3,17 @@ title: Pyodide Quickstart
 description: Run formualizer in the browser via Pyodide — install with micropip and evaluate workbook formulas client-side.
 ---
 
-Formualizer publishes a Pyodide-tagged wheel (`*-pyodide_<abi>_wasm32.whl`) alongside the native CPython wheels. Any Python code that works against formualizer on CPython works the same inside a Pyodide runtime — with a few platform-specific defaults noted below.
+Formualizer publishes native CPython wheels to PyPI. Pyodide wheels (`*-pyodide_<abi>_wasm32.whl`) are built and smoke-tested in CI and release workflows, then uploaded only as the `wheels-pyodide` Actions artifact; they are not uploaded to PyPI or attached to GitHub Releases. The core Formualizer API is available in Pyodide, subject to the platform-specific defaults and runtime limitations noted below.
 
 ## 1) Install in a Pyodide runtime
 
 ```python
 import micropip
-await micropip.install("formualizer")
+wheel_url = "<your-downloadable-wheel-url>"
+await micropip.install(wheel_url)
 ```
 
-This resolves the Pyodide-tagged wheel from PyPI — no extra index URL, no manual wheel download.
+Download and extract the `wheels-pyodide` Actions artifact (or build locally), then host the compatible wheel at a browser-accessible URL with suitable CORS headers. Replace `wheel_url` with that URL, not the artifact ZIP URL. Actions artifacts are retention-limited; no persistent public wheel URL is promised.
 
 ## 2) Evaluate a formula
 
@@ -57,9 +58,9 @@ restored = fz.load_workbook_bytes(xlsx_bytes)
 restored.evaluate_cell("Sheet1", 1, 2)
 ```
 
-## Supported Pyodide versions
+## Tested Pyodide target
 
-The published wheel targets **Pyodide 0.29.x** (ABI `pyodide_2025_0`). Check the formualizer release that matches your Pyodide runtime — when Pyodide ships a new ABI, a new formualizer release is cut against it.
+The CI and release smoke paths currently use **Pyodide 0.29.3** and the wheel's derived ABI (currently `pyodide_2025_0`). Rebuild and smoke-test a wheel when targeting another runtime.
 
 ## Pyodide-specific behavior
 

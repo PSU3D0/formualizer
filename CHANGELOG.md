@@ -24,8 +24,15 @@ All notable changes to Formualizer will be documented in this file.
 - Arrow dependencies upgraded 58.2 → 59.2 across `formualizer-eval` (`arrow`, `arrow-array`, `arrow-buffer`, `arrow-schema`, `arrow-select`, `arrow-cast`). No API or behaviour change; full suite green on the pinned surface, native and wasm32.
 
 - **Parser/SDK track `parse-v3.1.0`.** `formualizer-common` gains the number-format carrier introduced by the format channel work (`NumberFormat`, `FormatClass`, `numfmt::builtin_code`) and is published as 3.1.0; `formualizer-parse` moves to 3.1.0 with no source change so the two crates keep their documented shared version. Product crates now pin `formualizer-parse = "3.1.0"`. `scripts/release-preflight.py` asserts that the two parser-track manifests agree, and that a product-track preflight only passes once the pinned parser-track version is already on crates.io; previously the product preflight staged the workspace archives locally, passed, and left `cargo publish` to fail against the real registry.
+- Pyodide wheel documentation now reflects distribution reality: native wheels are on PyPI, while Pyodide wheels are built and smoke-tested and retained as the `wheels-pyodide` Actions artifact for download or self-hosting from a compatible wheel URL.
+
+### Performance
+
+- **Reduced criteria, registry, and exact-lookup overhead.** Criteria masks are memoized per invocation, predicate, and column with a conservative 1 MiB admission charge; ordinary registry hits take a read lock and clone only the current function handle; exact indexes are reclaimed at exclusive Engine snapshot-mutation boundaries with retained-payload admission accounting. Matching rules are unchanged; tranche probes show less repeated mask work and fewer direct-registry allocations, while no-edit lookup recalculation reuses the index. (#431)
 
 ### Fixed
+
+- Logged formula/topology edits, atomic commits, and undo/redo now invalidate cached schedules and retained plans according to the replayed operation. Partial replay failures invalidate before returning; existing-cell value-only edits preserve eligible schedule hits while clearing lookup snapshots. (#435)
 
 - Logged Engine mutations now use a complete operation-local capture for graph rollback, Arrow mirroring, FormulaPlane invalidation, and explicit action journals before publishing to the caller's optional audit `ChangeLog`. Disabled, zero-cap, and saturated audit policies no longer make a direct edit or atomic rollback incomplete, and failed actions no longer evict older retained audit entries. Retention policy is unchanged: index-based `undo_logged` can replay only events still present in its external log and cannot recover disabled or evicted history; explicit `ActionJournal` undo/redo remains the retention-independent path. (#434)
 
@@ -51,7 +58,13 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Security and hardening
 
+- Release preflight now fails closed when declared binding feature profiles drift from the canonical value-feature policy; Pyodide's explicit `system-clock` opt-out remains the only approved exception. (#433)
+
 - Bumped the docs site to Next.js `16.2.11`, clearing nine npm advisories affecting `next` `16.2.6` (four high: GHSA-89xv-2m56-2m9x, GHSA-p9j2-gv94-2wf4, GHSA-6gpp-xcg3-4w24, GHSA-m99w-x7hq-7vfj). The docs site's `bun.lock` was removed; `pnpm-lock.yaml` is the only lockfile the site builds and deploys from.
+
+### Known limitations
+
+- Workbook undo can drop a dependent formula edge after writing a referenced empty cell (#301), leave a retained formula AST and dependency edge referring to different rows after undoing a logged row insertion (#303), truncate the changelog and lose the undone operation's audit record (#367), or leave an evaluated formula written to a fresh cell in place (#412). Long flat, left-associative chains can overflow the stack during recursive AST drop even when parsing returns `Ok` (#411).
 
 ## [0.8.4] - 2026-08-14
 
