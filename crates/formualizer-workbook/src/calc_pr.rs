@@ -40,7 +40,7 @@ use formualizer_eval::engine::{CycleConfig, CyclePolicy};
 /// Returns `None` when there is no `<calcPr>` element at all (so callers leave
 /// the engine config untouched). A present-but-empty `<calcPr/>` yields a
 /// default [`CalcSettings`] (`iterate = false`).
-#[cfg(any(feature = "calamine", feature = "umya"))]
+#[cfg(any(feature = "calamine", feature = "umya", feature = "umya3"))]
 pub fn parse_calc_pr(workbook_xml: &[u8]) -> Option<CalcSettings> {
     use quick_xml::Reader as XmlReader;
     use quick_xml::events::Event;
@@ -254,7 +254,7 @@ pub fn rewrite_calc_pr_in_workbook_xml(xml: &str, settings: &CalcSettings) -> St
 /// This is the umya save path (the umya writer cannot express the iterate
 /// attributes). Returns the original bytes unchanged if the archive has no
 /// `xl/workbook.xml`.
-#[cfg(feature = "umya")]
+#[cfg(any(feature = "umya", feature = "umya3"))]
 pub fn rewrite_calc_pr_in_zip(
     bytes: &[u8],
     settings: &CalcSettings,
@@ -295,7 +295,7 @@ pub fn rewrite_calc_pr_in_zip(
 }
 
 #[cfg(test)]
-#[cfg(any(feature = "calamine", feature = "umya"))]
+#[cfg(any(feature = "calamine", feature = "umya", feature = "umya3"))]
 mod tests {
     use super::*;
     use formualizer_eval::engine::{CycleDetection, CyclePolicy};

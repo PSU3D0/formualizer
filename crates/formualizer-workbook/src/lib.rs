@@ -4,7 +4,12 @@ pub mod backends;
 pub mod builtins;
 pub mod calc_pr;
 pub mod error;
-#[cfg(any(feature = "calamine", feature = "json", feature = "umya"))]
+#[cfg(any(
+    feature = "calamine",
+    feature = "json",
+    feature = "umya",
+    feature = "umya3"
+))]
 pub(crate) mod load_limits;
 #[cfg(feature = "umya")]
 pub mod recalculate;
@@ -21,14 +26,18 @@ pub mod worksheet;
 pub use backends::CsvAdapter;
 #[cfg(feature = "json")]
 pub use backends::JsonAdapter;
+#[cfg(feature = "umya3")]
+pub use backends::Umya3Adapter;
+#[cfg(feature = "umya")]
+pub use backends::UmyaAdapter;
 #[cfg(feature = "csv")]
 pub use backends::csv::CsvArrayPolicy;
 #[cfg(feature = "json")]
 pub use backends::json::JsonReadOptions;
 #[cfg(feature = "calamine")]
 pub use backends::{CalamineAdapter, XlsxPathSource};
-#[cfg(feature = "umya")]
-pub use backends::{FormulaCacheUpdate, FormulaCacheUpdateRef, UmyaAdapter};
+#[cfg(any(feature = "umya", feature = "umya3"))]
+pub use backends::{FormulaCacheUpdate, FormulaCacheUpdateRef};
 pub use builtins::{ensure_builtins_loaded, register_function_dynamic, try_load_builtins};
 pub use error::{IoError, with_cell_context};
 #[cfg(feature = "umya")]

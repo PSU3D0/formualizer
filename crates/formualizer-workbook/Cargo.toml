@@ -1,6 +1,6 @@
 [package]
 name = "formualizer-workbook"
-version = "0.9.0"
+version = "0.9.1"
 edition = "2024"
 description = "Ergonomic workbook API over the Formualizer engine (sheets, loaders, staging, undo/redo)"
 homepage.workspace = true
@@ -33,7 +33,7 @@ default = ["json", "csv", "system-clock"]
 system-clock = ["formualizer-eval/system-clock"]
 # js-runtime: forwards eval's browser/wasm-bindgen runtime feature.
 # Activates web-time + JS getrandom. NOT enabled by default.
-js-runtime = ["formualizer-eval/js-runtime"]
+js-runtime = ["formualizer-eval/js-runtime", "getrandom04?/wasm_js"]
 json = ["dep:serde_json", "formualizer-common/serde"]
 csv = ["dep:csv"]
 # `memmap2` is unconditional here on purpose: `XlsxPathSource::DirectMmap` is a
@@ -42,6 +42,7 @@ csv = ["dep:csv"]
 # build (including the Python extension, which enables calamine but not mmap).
 calamine = ["dep:calamine", "dep:zip", "dep:quick-xml", "dep:memmap2"]
 umya = ["dep:umya-spreadsheet", "dep:zip", "dep:quick-xml"]
+umya3 = ["dep:umya-spreadsheet3", "dep:zip", "dep:quick-xml", "dep:getrandom04"]
 # No-op compatibility alias, retained only so existing `features = ["mmap"]`
 # declarations keep compiling. It selects no behaviour: `open_path` uses
 # `XlsxPathSource::SharedFile` with or without it, and mapping is reachable only
@@ -100,9 +101,27 @@ path = "tests/calamine/mod.rs"
 required-features = ["calamine"]
 
 [[test]]
+name = "umya3_export"
+path = "tests/umya3_export.rs"
+required-features = ["umya3"]
+
+[[test]]
+name = "umya3_border_import"
+path = "tests/umya3_border_import.rs"
+required-features = ["umya3"]
+
+[[test]]
 name = "umya"
 path = "tests/umya/mod.rs"
 required-features = ["umya"]
+
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+getrandom04 = { package = "getrandom", version = "0.4", optional = true }
+
+[dependencies.umya-spreadsheet3]
+version = "=3.1.0"
+package = "umya-spreadsheet"
+optional = true
 
 [dependencies.umya-spreadsheet]
 version = "=2.3.2"
