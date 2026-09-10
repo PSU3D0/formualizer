@@ -1,5 +1,7 @@
 """Tests for undo/redo, begin/end action, and cancel APIs."""
 
+import pytest
+
 import formualizer as fz
 
 
@@ -31,26 +33,28 @@ class TestUndoRedo:
         wb.evaluate_all()
         assert wb.get_value("S1", 1, 1) == 42.0
 
-    def test_undo_set_formula_on_existing_cell(self):
-        """Undo a formula set on a cell that already has a value."""
+    @pytest.mark.xfail(
+        strict=True,
+        raises=AssertionError,
+        reason="#412: formula undo leaves computed value",
+    )
+    def test_undo_formula_on_fresh_cell(self):
+        """Undo formula creation clears C1 without changing its inputs."""
         wb = fz.Workbook()
         s = wb.sheet("S1")
         s.set_value(1, 1, 10)
         s.set_value(1, 2, 20)
         wb.evaluate_all()
 
-        # Set a formula on A3 (which doesn't exist yet ??? this is staging)
+        # Set a formula on the previously empty C1.
         s.set_formula(1, 3, "=A1+B1")
         wb.evaluate_all()
         assert wb.get_value("S1", 1, 3) == 30.0
 
-        # The undo system supports undoing the most recent change.
-        # Formula undo in deferred mode has engine-level constraints.
-        # Verify that undo/redo round-trips cleanly for value operations.
         wb.undo()
         wb.evaluate_all()
-        # After undo, the value at C1 should be cleared
-        # (this tests that the changelog roundtrip works)
+        assert wb.get_value("S1", 1, 3) is None
+        assert wb.get_formula("S1", 1, 3) is None
         assert wb.get_value("S1", 1, 1) == 10.0
         assert wb.get_value("S1", 1, 2) == 20.0
 
@@ -121,7 +125,9 @@ class TestUndoRedo:
         wb.evaluate_all()
 
         wb.undo()
+        wb.evaluate_all()
         wb.undo()
+        wb.evaluate_all()
         assert wb.get_value("S1", 1, 1) == 10.0
 
         wb.redo()
@@ -176,11 +182,22 @@ class TestCompoundActions:
     def test_compound_action_with_evaluation(self):
         wb = fz.Workbook()
         s = wb.sheet("S1")
-        wb.begin_action("formula batch")
+        s.set_value(1, 1, 1)
+        s.set_value(1, 2, 2)
+        s.set_formula(1, 3, "=A1+B1")
+        wb.evaluate_all()
+        wb.begin_action("value batch with dependent formula")
         s.set_value(1, 1, 5)
         s.set_value(1, 2, 10)
-        s.set_formula(1, 3, "=A1+B1")
         wb.end_action()
+        wb.evaluate_all()
+        assert wb.get_value("S1", 1, 3) == 15.0
+        wb.undo()
+        wb.evaluate_all()
+        assert wb.get_value("S1", 1, 1) == 1.0
+        assert wb.get_value("S1", 1, 2) == 2.0
+        assert wb.get_value("S1", 1, 3) == 3.0
+        wb.redo()
         wb.evaluate_all()
         assert wb.get_value("S1", 1, 3) == 15.0
 
@@ -206,18 +223,8 @@ class TestCompoundActions:
 class TestCancel:
     """Tests for cooperative cancellation."""
 
-    def test_cancel_during_evaluate_all(self):
-        wb = fz.Workbook()
-        s = wb.sheet("S1")
-        for i in range(1, 101):
-            s.set_value(i, 1, i)
-            s.set_formula(i, 2, f"=A{i}*2")
-
-        wb.cancel()
-        try:
-            wb.evaluate_all()
-        except Exception:
-            pass
+    # In-flight cancellation needs the separate #417 contract; calling cancel()
+    # synchronously before evaluate_all() does not test cancellation during work.
 
     def test_cancel_then_reset(self):
         wb = fz.Workbook()
@@ -230,7 +237,7 @@ class TestCancel:
         wb.evaluate_all()
         assert wb.get_value("S1", 1, 2) == 84.0
 
-    def test_cancel_flag_is_per_workbook(self):
+    def test_other_workbook_evaluates_after_cancel_request(self):
         wb1 = fz.Workbook()
         wb2 = fz.Workbook()
         s1 = wb1.sheet("S1")
@@ -242,6 +249,10 @@ class TestCancel:
         wb1.cancel()
         wb2.evaluate_all()
         assert wb2.get_value("S1", 1, 1) == 20.0
+        assert wb1.get_value("S1", 1, 1) == 10.0
+        wb1.reset_cancel()
+        wb1.evaluate_all()
+        assert wb1.get_value("S1", 1, 1) == 10.0
 
 
 class TestEdgeCases:
@@ -249,19 +260,17 @@ class TestEdgeCases:
 
     def test_undo_without_changes_is_noop(self):
         wb = fz.Workbook()
-        try:
-            wb.undo()
-        except Exception:
-            pass
+        names = wb.sheet_names
+        assert wb.undo() is None
+        assert wb.sheet_names == names
 
     def test_redo_without_undo_is_noop(self):
         wb = fz.Workbook()
-        try:
-            wb.redo()
-        except Exception:
-            pass
+        names = wb.sheet_names
+        assert wb.redo() is None
+        assert wb.sheet_names == names
 
-    def test_changelog_metadata(self):
+    def test_metadata_setters_allow_subsequent_edit(self):
         wb = fz.Workbook()
         wb.set_actor_id("user-123")
         wb.set_correlation_id("corr-456")
@@ -271,7 +280,7 @@ class TestEdgeCases:
         wb.evaluate_all()
         assert wb.get_value("S1", 1, 1) == 42.0
 
-    def test_set_changelog_enabled(self):
+    def test_changelog_toggle_controls_recording(self):
         wb = fz.Workbook()
         wb.set_changelog_enabled(False)
         s = wb.sheet("S1")
@@ -283,6 +292,12 @@ class TestEdgeCases:
         s.set_value(1, 1, 20)
         wb.evaluate_all()
         assert wb.get_value("S1", 1, 1) == 20.0
+        wb.undo()
+        wb.evaluate_all()
+        assert wb.get_value("S1", 1, 1) == 10.0
+        wb.undo()
+        wb.evaluate_all()
+        assert wb.get_value("S1", 1, 1) == 10.0
 
     def test_undo_after_sheet_add_delete(self):
         wb = fz.Workbook()
@@ -294,6 +309,8 @@ class TestEdgeCases:
 
         wb.undo()
         wb.evaluate_all()
+        assert wb.get_value("Temp", 1, 1) is None
+        assert "Temp" in wb.sheet_names
 
     def test_evaluate_cells_after_undo(self):
         wb = fz.Workbook()
@@ -303,8 +320,30 @@ class TestEdgeCases:
         wb.evaluate_all()
         assert wb.get_value("S1", 1, 2) == 30.0
 
+        s.set_value(1, 1, 20)
+        assert wb.evaluate_cells([("S1", 1, 2)]) == [60.0]
         wb.undo()
-        wb.evaluate_cells([("S1", 1, 2)])
+        assert wb.evaluate_cells([("S1", 1, 2)]) == [30.0]
+        assert wb.get_value("S1", 1, 1) == 10.0
+        assert wb.get_value("S1", 1, 2) == 30.0
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=AssertionError,
+    reason="#301: rewritten empty precedent loses dependency",
+)
+def test_rewrite_previously_empty_precedent_after_undo():
+    wb = fz.Workbook()
+    sheet = wb.sheet("S1")
+    sheet.set_formula(4, 4, "=C6+1")
+    assert wb.evaluate_cell("S1", 4, 4) == 1.0
+    sheet.set_value(6, 3, 10)
+    assert wb.evaluate_cell("S1", 4, 4) == 11.0
+    wb.undo()
+    assert wb.evaluate_cell("S1", 4, 4) == 1.0
+    sheet.set_value(6, 3, 20)
+    assert wb.evaluate_cell("S1", 4, 4) == 21.0
 
 
 class TestSheetLevelUndoRedo:
@@ -321,8 +360,13 @@ class TestSheetLevelUndoRedo:
         wb.evaluate_all()
         assert s.get_cell(1, 1).value is None
 
+    @pytest.mark.xfail(
+        strict=True,
+        raises=AssertionError,
+        reason="#412: formula undo leaves computed value",
+    )
     def test_sheet_set_formula_undo(self):
-        """Sheet-level undo of a value operation preserves formula state."""
+        """Sheet-level undo clears the created formula and its computed value."""
         wb = fz.Workbook()
         s = wb.sheet("S1")
         s.set_value(1, 1, 10)
@@ -335,6 +379,8 @@ class TestSheetLevelUndoRedo:
         wb.evaluate_all()
         assert s.get_cell(1, 1).value == 10.0
         assert s.get_cell(1, 2).value == 20.0
+        assert s.get_cell(1, 3).value is None
+        assert wb.get_formula("S1", 1, 3) is None
 
     def test_sheet_batch_set_undo(self):
         wb = fz.Workbook()
