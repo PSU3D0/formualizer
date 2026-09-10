@@ -6,6 +6,7 @@ use formualizer_eval::engine::ingest::EngineLoadStream;
 use formualizer_eval::engine::{CancelToken, Engine, EvalConfig};
 use std::collections::BTreeMap;
 use std::io::{Cursor, Read, Write};
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
 use zip::{ZipArchive, ZipWriter};
 
