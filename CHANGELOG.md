@@ -4,6 +4,8 @@ All notable changes to Formualizer will be documented in this file.
 
 ## Unreleased
 
+- Fixed logged workbook formula setters silently swallowing binding/admission failures and clearing existing spills on rejection. Rejected assignments now report errors like unlogged setters; existing deferred-validation and non-atomic batch policies remain unchanged. Added fallible low-level editor APIs without changing legacy signatures. See [formula assignment contracts](docs/formula-assignment-failures.md). (#451)
+
 ## [0.9.2] - 2026-09-10
 
 - Aligned Rust product crates and Python/npm bindings at 0.9.2; parser/common remain at 3.1.1 and SheetPort spec at 0.3.1. Cache-only XLSX APIs are additive and explicitly invoked; Python support is native-only, not Pyodide.
