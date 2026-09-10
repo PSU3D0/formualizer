@@ -72,7 +72,7 @@ fn criteria_ingest_resource_probe() {
         let formulas: u32 = formulas.parse().unwrap();
         for row in 1..=formulas {
             let ast =
-                formualizer_parse::parser::parse(&format!("=COUNTIF(A1:A{rows},\"*\")")).unwrap();
+                formualizer_parse::parser::parse(format!("=COUNTIF(A1:A{rows},\"*\")")).unwrap();
             engine.set_cell_formula("S", row, 2, ast).unwrap();
         }
         crate::engine::eval::criteria_mask_test_hooks::take_mask_work();
