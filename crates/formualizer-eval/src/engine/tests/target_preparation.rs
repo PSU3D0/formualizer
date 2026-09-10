@@ -384,6 +384,119 @@ fn strict_opaque_policy_is_preserved_for_package_fallback_and_authoritative_comp
     assert!(authoritative.has_staged_formulas());
 }
 
+#[test]
+fn failed_source_preparation_retains_authority_for_retry() {
+    use crate::engine::inspect::SnapshotOptions;
+    use formualizer_common::CellAddress;
+
+    for mode in [
+        FormulaPlaneMode::Off,
+        FormulaPlaneMode::AuthoritativeExperimental,
+    ] {
+        for imported in [false, true] {
+            for targeted in [false, true] {
+                let mut engine = engine(mode);
+                let formulas = [
+                    (1, 1, "1+2"),
+                    (1, 2, "NOSHEET!A1"),
+                    (1, 3, "\"NOSHEET!A1\""),
+                ];
+                if imported {
+                    engine
+                        .source_formula_ingress()
+                        .stage_deferred(fallback_package("Outputs", &formulas));
+                } else {
+                    for (row, col, text) in formulas {
+                        engine.stage_formula_text("Outputs", row, col, text.into());
+                    }
+                }
+                for _ in 0..2 {
+                    let result = if targeted {
+                        engine
+                            .prepare_graph_for_targets(&[cell("Outputs", 1, 2)], Default::default())
+                            .map(|_| ())
+                    } else {
+                        engine.build_graph_all()
+                    };
+                    assert!(
+                        result.is_err(),
+                        "{mode:?} imported={imported} targeted={targeted}"
+                    );
+                    for (row, col, text) in formulas {
+                        assert_eq!(
+                            engine
+                                .get_staged_formula_text("Outputs", row, col)
+                                .as_deref(),
+                            Some(text)
+                        );
+                        let snapshot = engine
+                            .inspect_cell(
+                                &CellAddress::new("Outputs", row, col).unwrap(),
+                                &SnapshotOptions::default(),
+                            )
+                            .unwrap();
+                        assert_eq!(
+                            snapshot.cell.formula,
+                            Some(formualizer_parse::pretty::canonical_formula(
+                                &formualizer_parse::parse(format!("={text}")).unwrap()
+                            ))
+                        );
+                    }
+                    assert!(engine.staged_formula_index_is_consistent_for_test());
+                }
+                engine.add_sheet("NOSHEET").unwrap();
+                engine
+                    .set_cell_value("NOSHEET", 1, 1, LiteralValue::Number(7.0))
+                    .unwrap();
+                engine.build_graph_all().unwrap();
+                assert_eq!(engine.staged_formula_count(), 0);
+                assert_eq!(
+                    engine.evaluate_cell("Outputs", 1, 1).unwrap(),
+                    Some(LiteralValue::Number(3.0))
+                );
+                assert_eq!(
+                    engine.evaluate_cell("Outputs", 1, 2).unwrap(),
+                    Some(LiteralValue::Number(7.0))
+                );
+                assert_eq!(
+                    engine.evaluate_cell("Outputs", 1, 3).unwrap(),
+                    Some(LiteralValue::Text("NOSHEET!A1".into()))
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn failed_direct_preparation_retries_a_committed_source_prefix() {
+    let mut engine = engine(FormulaPlaneMode::AuthoritativeExperimental);
+    engine
+        .source_formula_ingress()
+        .stage_deferred(complete_family_package("Outputs", 990, 1));
+    engine
+        .source_formula_ingress()
+        .stage_deferred(fallback_package("Middle", &[(1, 1, "NOSHEET!A1")]));
+    for _ in 0..2 {
+        assert!(
+            engine
+                .build_graph_for_sheets(["Outputs", "Middle"])
+                .is_err()
+        );
+        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+        assert!(engine.get_staged_formula_text("Outputs", 1, 2).is_some());
+        assert_eq!(
+            engine.get_staged_formula_text("Middle", 1, 1).as_deref(),
+            Some("NOSHEET!A1")
+        );
+    }
+    engine.add_sheet("NOSHEET").unwrap();
+    engine
+        .build_graph_for_sheets(["Outputs", "Middle"])
+        .unwrap();
+    assert!(!engine.has_staged_formulas());
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+}
+
 #[derive(Default)]
 struct EmptyReplay;
 
@@ -478,6 +591,493 @@ fn fallback_package(sheet: &str, formulas: &[(u32, u32, &str)]) -> DeferredFormu
         coordinates,
         Box::new(FamilyReplay { records }),
     )
+}
+
+struct IndexedOrdinaryReplay(std::collections::BTreeMap<(u32, u32), DeferredReplayFormula>);
+
+impl DeferredFormulaReplay for IndexedOrdinaryReplay {
+    fn replay(
+        &mut self,
+        disposition: &FormulaReplayDisposition,
+    ) -> Result<Vec<DeferredReplayFormula>, String> {
+        Ok(self
+            .0
+            .values()
+            .filter(|r| {
+                disposition
+                    .ordinary_disposition(SourceCoord {
+                        row: r.row - 1,
+                        col: r.col - 1,
+                    })
+                    .0
+                    != FormulaReplayCoordinateDisposition::Suppressed
+            })
+            .cloned()
+            .collect())
+    }
+    fn replay_selected_ordinary(
+        &mut self,
+        coordinates: &[(u32, u32)],
+        checkpoint: &mut dyn FnMut(u64, u64) -> Result<(), formualizer_common::ExcelError>,
+    ) -> Result<Option<Vec<DeferredReplayFormula>>, formualizer_common::ExcelError> {
+        let mut records = Vec::new();
+        for point in coordinates {
+            checkpoint(1, 0)?;
+            if let Some(record) = self.0.get(point) {
+                records.push(record.clone());
+            }
+        }
+        Ok(Some(records))
+    }
+    fn formula_at(&mut self, row: u32, col: u32) -> Result<Option<DeferredReplayFormula>, String> {
+        Ok(self.0.get(&(row, col)).cloned())
+    }
+}
+
+fn indexed_package(sheet: &str, formulas: &[(u32, u32, &str)]) -> DeferredFormulaPackage {
+    let mut package = fallback_package(sheet, formulas);
+    let records = formulas
+        .iter()
+        .enumerate()
+        .map(|(i, &(row, col, text))| {
+            (
+                (row, col),
+                DeferredReplayFormula {
+                    source_order: SourceFormulaOrder::new(i as u64),
+                    row,
+                    col,
+                    text: text.into(),
+                    family: None,
+                    partition_owner: None,
+                },
+            )
+        })
+        .collect();
+    package.replay = Arc::new(std::sync::Mutex::new(Box::new(IndexedOrdinaryReplay(
+        records,
+    ))));
+    package
+}
+
+#[test]
+fn pending_spill_ordinary_and_indexed_blockers_are_not_prepared_and_retry() {
+    for mode in [FormulaPlaneMode::Off, FormulaPlaneMode::Shadow] {
+        for indexed in [false, true] {
+            for blocker in ["99", "NOSHEET!A1"] {
+                let mut engine = engine(mode);
+                if indexed {
+                    engine
+                        .source_formula_ingress()
+                        .stage_deferred(indexed_package(
+                            "Inputs",
+                            &[(1, 1, "SEQUENCE(2)"), (2, 1, blocker)],
+                        ));
+                } else {
+                    engine.stage_formula_text("Inputs", 1, 1, "SEQUENCE(2)".into());
+                    engine.stage_formula_text("Inputs", 2, 1, blocker.into());
+                }
+                for _ in 0..3 {
+                    let value = engine.evaluate_cell("Inputs", 1, 1);
+                    assert!(
+                        matches!(&value, Ok(Some(LiteralValue::Error(e))) | Err(e) if e.kind == formualizer_common::ExcelErrorKind::Spill),
+                        "{mode:?} indexed={indexed} blocker={blocker}: {value:?}"
+                    );
+                    assert_eq!(
+                        engine.get_staged_formula_text("Inputs", 2, 1).as_deref(),
+                        Some(blocker),
+                        "{mode:?} indexed={indexed}"
+                    );
+                    assert!(!matches!(
+                        engine.get_cell_value("Inputs", 2, 1),
+                        Some(LiteralValue::Number(2.0))
+                    ));
+                }
+                if blocker == "NOSHEET!A1" {
+                    assert!(engine.build_graph_all().is_err());
+                }
+                // No read dependency is introduced: the invalid blocker remains source.
+                engine.clear_staged_formula_text("Inputs", 2, 1);
+                engine
+                    .set_cell_value("Inputs", 2, 1, LiteralValue::Empty)
+                    .unwrap();
+                assert_eq!(
+                    engine.evaluate_cell("Inputs", 1, 1).unwrap(),
+                    Some(LiteralValue::Number(1.0))
+                );
+                assert_eq!(
+                    engine.get_cell_value("Inputs", 2, 1),
+                    Some(LiteralValue::Number(2.0))
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn pending_spill_family_fragments_holes_and_source_overrides() {
+    for row in [150, 151, 152, 153] {
+        for suppress in [false, true] {
+            let mut engine = engine(FormulaPlaneMode::Off);
+            engine
+                .set_cell_formula(
+                    "Inputs",
+                    row,
+                    2,
+                    formualizer_parse::parse("=SEQUENCE(1,2)").unwrap(),
+                )
+                .unwrap();
+            engine
+                .source_formula_ingress()
+                .stage_deferred(fragmented_family_package("Inputs", 0));
+            if suppress {
+                engine.clear_staged_formula_text("Inputs", row, 3);
+            }
+            let blocked = row != 151 && !suppress;
+            let value = engine.evaluate_cell("Inputs", row, 2).unwrap();
+            assert_eq!(
+                matches!(&value, Some(LiteralValue::Error(e)) if e.kind == formualizer_common::ExcelErrorKind::Spill),
+                blocked,
+                "row={row} suppress={suppress} value={value:?}"
+            );
+            assert!(engine.has_staged_formulas());
+            if suppress {
+                // A tombstoned package source must not hide a newer ordinary formula.
+                engine.stage_formula_text("Inputs", row, 3, "NOSHEET!A1".into());
+                engine
+                    .set_cell_formula(
+                        "Inputs",
+                        row,
+                        2,
+                        formualizer_parse::parse("=SEQUENCE(1,2)").unwrap(),
+                    )
+                    .unwrap();
+                assert!(
+                    matches!(engine.evaluate_cell("Inputs", row, 2).unwrap(), Some(LiteralValue::Error(e)) if e.kind == formualizer_common::ExcelErrorKind::Spill)
+                );
+            }
+        }
+    }
+    let mut engine = engine(FormulaPlaneMode::Off);
+    engine
+        .set_cell_formula(
+            "Inputs",
+            1,
+            1,
+            formualizer_parse::parse("=SEQUENCE(1,2)").unwrap(),
+        )
+        .unwrap();
+    engine
+        .source_formula_ingress()
+        .stage_deferred(complete_family_package("Inputs", 0, 1));
+    assert!(
+        matches!(engine.evaluate_cell("Inputs", 1, 1).unwrap(), Some(LiteralValue::Error(e)) if e.kind == formualizer_common::ExcelErrorKind::Spill)
+    );
+    engine.clear_staged_formula_text("Inputs", 1, 2);
+    assert_eq!(
+        engine.evaluate_cell("Inputs", 1, 1).unwrap(),
+        Some(LiteralValue::Number(1.0))
+    );
+}
+
+#[test]
+fn indexed_cache_shared_replay_is_counted_once_without_locking_or_retaining_source() {
+    use std::sync::atomic::AtomicU64;
+    struct CachedReplay {
+        inner: Box<dyn DeferredFormulaReplay>,
+        footprint: Arc<AtomicU64>,
+    }
+    impl DeferredFormulaReplay for CachedReplay {
+        fn selection_cache_footprint(&self) -> Option<std::sync::Weak<AtomicU64>> {
+            Some(Arc::downgrade(&self.footprint))
+        }
+        fn replay(
+            &mut self,
+            disposition: &FormulaReplayDisposition,
+        ) -> Result<Vec<DeferredReplayFormula>, String> {
+            self.inner.replay(disposition)
+        }
+        fn formula_at(
+            &mut self,
+            row: u32,
+            col: u32,
+        ) -> Result<Option<DeferredReplayFormula>, String> {
+            self.inner.formula_at(row, col)
+        }
+        fn replay_selected_ordinary(
+            &mut self,
+            coordinates: &[(u32, u32)],
+            checkpoint: &mut dyn FnMut(u64, u64) -> Result<(), formualizer_common::ExcelError>,
+        ) -> Result<Option<Vec<DeferredReplayFormula>>, formualizer_common::ExcelError> {
+            if self.footprint.load(Ordering::Acquire) == 0 {
+                checkpoint(0, 64)?;
+                self.footprint.store(64, Ordering::Release);
+            }
+            self.inner.replay_selected_ordinary(coordinates, checkpoint)
+        }
+    }
+    let mut engine = engine(FormulaPlaneMode::Off);
+    let mut first = indexed_package("Inputs", &[(1, 1, "1+2"), (2, 1, "3+4")]);
+    let inner = Arc::try_unwrap(first.replay)
+        .ok()
+        .unwrap()
+        .into_inner()
+        .unwrap();
+    let footprint = Arc::new(AtomicU64::new(0));
+    let weak = Arc::downgrade(&footprint);
+    first.replay = Arc::new(std::sync::Mutex::new(Box::new(CachedReplay {
+        inner,
+        footprint,
+    })));
+    let shared = first.replay.clone();
+    let mut second = indexed_package("Outputs", &[(1, 1, "1+2"), (2, 1, "3+4")]);
+    second.replay = shared.clone();
+    engine.source_formula_ingress().stage_deferred(first);
+    engine.source_formula_ingress().stage_deferred(second);
+    let mut budgets = EvaluationBudgets::default();
+    budgets.retained.total_bytes = Some(64);
+    engine.set_evaluation_resource_budgets(budgets);
+    engine
+        .prepare_graph_for_targets(
+            &[cell("Inputs", 1, 1), cell("Outputs", 1, 1)],
+            Default::default(),
+        )
+        .unwrap();
+    assert_eq!(
+        engine
+            .last_evaluation_resource_request_stats()
+            .unwrap()
+            .ledger
+            .retained_current,
+        64
+    );
+    engine.build_graph_all().unwrap();
+    // External replay ownership is real cache ownership even after package consumption.
+    assert_eq!(
+        engine
+            .last_evaluation_resource_request_stats()
+            .unwrap()
+            .ledger
+            .retained_current,
+        64
+    );
+    drop(shared);
+    assert!(weak.upgrade().is_none());
+    engine.build_graph_all().unwrap();
+    assert_eq!(
+        engine
+            .last_evaluation_resource_request_stats()
+            .unwrap()
+            .ledger
+            .retained_current,
+        0
+    );
+}
+
+#[test]
+fn indexed_ordinary_package_targets_isolate_failures_and_retain_residual_source() {
+    for mode in [
+        FormulaPlaneMode::Off,
+        FormulaPlaneMode::Shadow,
+        FormulaPlaneMode::AuthoritativeExperimental,
+    ] {
+        let mut engine = engine(mode);
+        engine
+            .source_formula_ingress()
+            .stage_deferred(indexed_package(
+                "Inputs",
+                &[
+                    (1, 1, "1+2"),
+                    (1, 2, "NOSHEET!A1"),
+                    (1, 3, "B1+1"),
+                    (1, 4, "A1+5"),
+                ],
+            ));
+        let report = engine
+            .prepare_graph_for_targets(&[cell("Inputs", 1, 4)], Default::default())
+            .unwrap();
+        assert_eq!(report.widened_scope, PrepareScope::Exact);
+        assert_eq!(report.selected_staged_cells, 2);
+        assert_eq!(report.retained_staged_cells, 2);
+        assert!(engine.staged_formula_index_is_consistent_for_test());
+        assert_eq!(
+            engine.evaluate_cell("Inputs", 1, 4).unwrap(),
+            Some(LiteralValue::Number(8.0))
+        );
+        for col in [2, 3] {
+            assert!(
+                engine
+                    .prepare_graph_for_targets(&[cell("Inputs", 1, col)], Default::default())
+                    .is_err()
+            );
+            assert_eq!(
+                engine.get_staged_formula_text("Inputs", 1, 2).as_deref(),
+                Some("NOSHEET!A1")
+            );
+        }
+        assert!(engine.build_graph_all().is_err());
+        engine.add_sheet("NOSHEET").unwrap();
+        engine
+            .set_cell_value("NOSHEET", 1, 1, LiteralValue::Number(42.0))
+            .unwrap();
+        engine.build_graph_all().unwrap();
+        assert_eq!(
+            engine.evaluate_cell("Inputs", 1, 3).unwrap(),
+            Some(LiteralValue::Number(43.0))
+        );
+        assert!(!engine.has_staged_formulas());
+    }
+}
+
+#[test]
+fn indexed_ordinary_overlapping_regions_consume_each_coordinate_once() {
+    let mut engine = engine(FormulaPlaneMode::Off);
+    engine
+        .source_formula_ingress()
+        .stage_deferred(indexed_package("Inputs", &[(1, 1, "1+2"), (1, 2, "A1+1")]));
+    let report = engine
+        .prepare_graph_for_targets(
+            &[
+                EvaluationTarget::Range(RangeAddress::new("Inputs", 1, 1, 1, 2).unwrap()),
+                cell("Inputs", 1, 1),
+            ],
+            Default::default(),
+        )
+        .unwrap();
+    assert_eq!(report.selected_staged_cells, 2);
+    assert_eq!(report.selected_cells.len(), 2);
+    assert_eq!(report.retained_staged_cells, 0);
+    assert!(!engine.has_staged_formulas());
+    assert_eq!(
+        engine
+            .formula_ingest_report_total()
+            .source_formula_records_spooled,
+        2
+    );
+}
+
+#[test]
+fn indexed_ordinary_cross_sheet_names_and_resource_failures_preserve_closure() {
+    let mut engine = engine(FormulaPlaneMode::Off);
+    let inputs = engine.sheet_id("Inputs").unwrap();
+    engine
+        .define_name(
+            "Chosen",
+            NamedDefinition::Cell(CellRef::new(inputs, Coord::from_excel(1, 1, true, true))),
+            NameScope::Workbook,
+        )
+        .unwrap();
+    engine
+        .source_formula_ingress()
+        .stage_deferred(indexed_package(
+            "Inputs",
+            &[(1, 1, "40+2"), (1, 2, "NOSHEET!A1")],
+        ));
+    engine
+        .source_formula_ingress()
+        .stage_deferred(indexed_package(
+            "Outputs",
+            &[(1, 1, "Chosen+Inputs!A1"), (1, 2, "NOSHEET!A1")],
+        ));
+    let budgets = EvaluationBudgets {
+        admission: AdmissionResourceBudget {
+            materialization_cells: Some(1),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let error = engine
+        .prepare_graph_for_targets(
+            &[cell("Outputs", 1, 1)],
+            TargetEvalOptions {
+                budgets: Some(&budgets),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+    assert!(matches!(error.extra, ExcelErrorExtra::Resource { .. }));
+    assert_eq!(engine.staged_formula_count(), 4);
+    let cancel = crate::engine::CancelToken::new();
+    cancel.cancel();
+    assert!(
+        engine
+            .prepare_graph_for_targets(
+                &[cell("Outputs", 1, 1)],
+                TargetEvalOptions {
+                    cancel: Some(cancel),
+                    ..Default::default()
+                }
+            )
+            .is_err()
+    );
+    assert_eq!(engine.staged_formula_count(), 4);
+    let report = engine
+        .prepare_graph_for_targets(&[cell("Outputs", 1, 1)], Default::default())
+        .unwrap();
+    assert_eq!(report.selected_staged_cells, 2);
+    assert_eq!(report.retained_staged_cells, 2);
+    assert_eq!(
+        engine.evaluate_cell("Outputs", 1, 1).unwrap(),
+        Some(LiteralValue::Number(84.0))
+    );
+    assert_eq!(
+        engine
+            .formula_ingest_report_total()
+            .source_formula_records_spooled,
+        4
+    );
+    // An independently selected source record from the same original package
+    // must not charge the original spool again.
+    engine.add_sheet("NOSHEET").unwrap();
+    engine
+        .set_cell_value("NOSHEET", 1, 1, LiteralValue::Number(7.0))
+        .unwrap();
+    engine
+        .prepare_graph_for_targets(&[cell("Inputs", 1, 2)], Default::default())
+        .unwrap();
+    engine.build_graph_all().unwrap();
+    assert_eq!(
+        engine
+            .formula_ingest_report_total()
+            .source_formula_records_spooled,
+        4
+    );
+}
+
+#[test]
+fn indexed_ordinary_selection_faults_do_not_consume_source() {
+    for fault in [
+        TargetPreparationFault::AfterDiscovery,
+        TargetPreparationFault::FinalRevisionValidation,
+        TargetPreparationFault::FinalGraphValidation,
+        TargetPreparationFault::Admission,
+        TargetPreparationFault::Reservation,
+        TargetPreparationFault::BeforeFirstMutation,
+    ] {
+        let mut engine = engine(FormulaPlaneMode::Off);
+        engine
+            .source_formula_ingress()
+            .stage_deferred(indexed_package(
+                "Inputs",
+                &[(1, 1, "1+2"), (1, 2, "NOSHEET!A1")],
+            ));
+        engine.set_target_preparation_fault_for_test(fault);
+        assert!(
+            engine
+                .prepare_graph_for_targets(&[cell("Inputs", 1, 1)], Default::default())
+                .is_err()
+        );
+        assert_eq!(
+            engine.get_staged_formula_text("Inputs", 1, 1).as_deref(),
+            Some("1+2")
+        );
+        assert!(engine.staged_formula_index_is_consistent_for_test());
+        engine.set_target_preparation_fault_for_test(TargetPreparationFault::None);
+        let report = engine
+            .prepare_graph_for_targets(&[cell("Inputs", 1, 1)], Default::default())
+            .unwrap();
+        assert_eq!(report.selected_staged_cells, 1);
+        assert_eq!(report.retained_staged_cells, 1);
+    }
 }
 
 struct CountingReplay {

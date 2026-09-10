@@ -522,6 +522,46 @@ fn test_recalculate_xlsx_bytes_returns_typed_array_and_counts() {
 }
 
 #[wasm_bindgen_test]
+fn test_blank_counts_keep_u64_extent_and_spill_members() {
+    let wb = Workbook::new(None).unwrap();
+    for sheet in ["Data", "Spill", "Results"] {
+        wb.add_sheet(sheet.to_string()).unwrap();
+    }
+    wb.set_value("Data".to_string(), 5, 3, JsValue::from_f64(1.0))
+        .unwrap();
+    wb.set_formula("Spill".to_string(), 10, 3, "SEQUENCE(2,3)".to_string())
+        .unwrap();
+    for (row, formula) in [
+        "COUNTBLANK(Data!A:XFD)",
+        r#"COUNTIF(Data!1:1048576,"")"#,
+        r#"COUNTIF(Spill!C:C,"")"#,
+        "COUNTBLANK(Spill!10:10)",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        wb.set_formula(
+            "Results".to_string(),
+            row as u32 + 1,
+            1,
+            formula.to_string(),
+        )
+        .unwrap();
+    }
+    wb.evaluate_all().unwrap();
+    let results = wb.sheet("Results".to_string()).unwrap();
+    for (row, expected) in [17_179_869_183.0, 17_179_869_183.0, 1_048_574.0, 16_381.0]
+        .into_iter()
+        .enumerate()
+    {
+        assert_eq!(
+            results.get_value(row as u32 + 1, 1).unwrap().as_f64(),
+            Some(expected)
+        );
+    }
+}
+
+#[wasm_bindgen_test]
 fn test_register_simple_function_and_evaluate() {
     let wb = Workbook::new(None).unwrap();
     wb.add_sheet("Sheet1".to_string()).unwrap();

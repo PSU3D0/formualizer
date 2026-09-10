@@ -1548,9 +1548,21 @@ impl<'g> VertexEditor<'g> {
         }
     }
 
-    /// Set a cell formula, creating the vertex if it doesn't exist
+    /// Set a cell formula, creating the vertex if it doesn't exist.
+    ///
+    /// Legacy compatibility API: failures return vertex zero. Prefer
+    /// [`Self::try_set_cell_formula`] when failure must be observable.
     pub fn set_cell_formula(&mut self, cell_ref: CellRef, formula: ASTNode) -> VertexId {
         self.set_cell_formula_with_old_state(cell_ref, formula, None, None)
+    }
+
+    /// Set a formula, reporting binding/admission failures without clearing its old spill.
+    pub fn try_set_cell_formula(
+        &mut self,
+        cell_ref: CellRef,
+        formula: ASTNode,
+    ) -> Result<VertexId, ExcelError> {
+        self.try_set_cell_formula_with_old_state(cell_ref, formula, None, None)
     }
 
     /// Like [`set_cell_formula`](Self::set_cell_formula), but lets the caller
@@ -1565,6 +1577,24 @@ impl<'g> VertexEditor<'g> {
         fallback_old_value: Option<LiteralValue>,
         fallback_old_formula: Option<ASTNode>,
     ) -> VertexId {
+        self.try_set_cell_formula_with_old_state(
+            cell_ref,
+            formula,
+            fallback_old_value,
+            fallback_old_formula,
+        )
+        .unwrap_or_else(|_| VertexId::new(0))
+    }
+
+    /// Fallible counterpart to [`Self::set_cell_formula_with_old_state`].
+    /// Graph-captured old state takes precedence over caller-provided state.
+    pub fn try_set_cell_formula_with_old_state(
+        &mut self,
+        cell_ref: CellRef,
+        formula: ASTNode,
+        fallback_old_value: Option<LiteralValue>,
+        fallback_old_formula: Option<ASTNode>,
+    ) -> Result<VertexId, ExcelError> {
         self.set_cell_formula_with_old_state_and_plan(
             cell_ref,
             formula,
@@ -1590,6 +1620,7 @@ impl<'g> VertexEditor<'g> {
             fallback_old_formula,
             Some((ast_id, plan)),
         )
+        .unwrap_or_else(|_| VertexId::new(0))
     }
 
     fn set_cell_formula_with_old_state_and_plan(
@@ -1602,7 +1633,7 @@ impl<'g> VertexEditor<'g> {
             crate::engine::arena::AstNodeId,
             crate::engine::ingest_pipeline::DependencyPlanRow,
         )>,
-    ) -> VertexId {
+    ) -> Result<VertexId, ExcelError> {
         let sheet_name = self.graph.sheet_name(cell_ref.sheet_id).to_string();
 
         // Capture old state before modification (value + formula); fall back
@@ -1615,25 +1646,11 @@ impl<'g> VertexEditor<'g> {
             .and_then(|id| self.get_formula_ast(id))
             .or(fallback_old_formula);
 
-        // If this cell currently anchors a spill, clear it before updating the formula.
+        // Snapshot old spill values before updating, but do not clear or log anything
+        // until the fallible binding/admission path succeeds.
         let spill_snapshot =
             old_id.and_then(|id| self.snapshot_spill_for_anchor(id).map(|s| (id, s)));
         let did_spill_clear = spill_snapshot.is_some();
-        if let Some((anchor, old_spill)) = spill_snapshot {
-            if let Some(logger) = &mut self.change_logger {
-                logger.begin_compound(format!(
-                    "SetFormulaWithSpillClear sheet={} row={} col={}",
-                    cell_ref.sheet_id,
-                    cell_ref.coord.row(),
-                    cell_ref.coord.col()
-                ));
-            }
-            self.graph.clear_spill_region(anchor);
-            self.log_change(ChangeEvent::SpillCleared {
-                anchor,
-                old: old_spill,
-            });
-        }
 
         // VertexEditor operates on internal 0-based coords; graph APIs are 1-based.
         let result = if let Some((ast_id, plan)) = prepared {
@@ -1656,6 +1673,21 @@ impl<'g> VertexEditor<'g> {
         };
         match result {
             Ok(summary) => {
+                if let Some((anchor, old_spill)) = spill_snapshot {
+                    if let Some(logger) = &mut self.change_logger {
+                        logger.begin_compound(format!(
+                            "SetFormulaWithSpillClear sheet={} row={} col={}",
+                            cell_ref.sheet_id,
+                            cell_ref.coord.row(),
+                            cell_ref.coord.col()
+                        ));
+                    }
+                    self.graph.clear_spill_region(anchor);
+                    self.log_change(ChangeEvent::SpillCleared {
+                        anchor,
+                        old: old_spill,
+                    });
+                }
                 // Log change event
                 let change_event = ChangeEvent::SetFormula {
                     addr: cell_ref,
@@ -1669,13 +1701,13 @@ impl<'g> VertexEditor<'g> {
                     logger.end_compound();
                 }
 
-                summary
+                Ok(summary
                     .affected_vertices
                     .into_iter()
                     .next()
-                    .unwrap_or(VertexId::new(0))
+                    .unwrap_or(VertexId::new(0)))
             }
-            Err(_) => VertexId::new(0),
+            Err(error) => Err(error),
         }
     }
 

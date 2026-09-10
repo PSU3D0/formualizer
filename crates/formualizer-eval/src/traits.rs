@@ -797,7 +797,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
             .clone()
     }
 
-    fn with_context_cancel_token(&self, view: RangeView<'b>) -> RangeView<'b> {
+    pub(crate) fn with_context_cancel_token(&self, view: RangeView<'b>) -> RangeView<'b> {
         match self.interp.context.cancellation_token() {
             Some(token) => view.with_cancel_token(Some(token)),
             None => view,

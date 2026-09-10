@@ -74,6 +74,100 @@ enum RangeOrScalar<'a> {
     ReferenceError(ExcelError),
 }
 
+// Blank-sensitive counts must retain the logical extent of whole rows/columns.
+// Ordinary aggregate resolution trims those references to their used region.
+// Keep a physically bounded view and carry only an arithmetic logical cell
+// count alongside it. Expanding to the full Excel rectangle here would introduce
+// huge unstored-column work. Cached resolution also avoids executing reference-
+// producing expressions twice. u64 keeps whole-sheet counts safe on wasm32.
+fn resolve_count_argument<'a, 'b>(
+    arg: &ArgumentHandle<'a, 'b>,
+    ctx: &dyn FunctionContext<'b>,
+) -> Result<(AggregateArgument<'b>, Option<u64>), ExcelError> {
+    use formualizer_parse::parser::ReferenceType;
+
+    let unbounded = match arg.resolve_reference_or_value()? {
+        crate::function::FunctionResolution::Reference(
+            reference @ ReferenceType::Range {
+                start_row,
+                end_row,
+                start_col,
+                end_col,
+                ..
+            },
+        ) if start_row.is_none()
+            || end_row.is_none()
+            || start_col.is_none()
+            || end_col.is_none() =>
+        {
+            Some(reference)
+        }
+        _ => None,
+    };
+    let argument = resolve_aggregate_argument(arg, ctx)?;
+    if let AggregateArgument::Range(mut view) = argument {
+        let (rows, cols) = view.dims();
+        let mut logical_cells = rows as u64 * cols as u64;
+        if let Some(mut reference) = unbounded {
+            let ReferenceType::Range {
+                start_row,
+                end_row,
+                start_col,
+                end_col,
+                start_row_abs,
+                end_row_abs,
+                start_col_abs,
+                end_col_abs,
+                ..
+            } = &mut reference
+            else {
+                unreachable!()
+            };
+            let (r1, r2) = (start_row.unwrap_or(1), end_row.unwrap_or(1_048_576));
+            let (c1, c2) = (start_col.unwrap_or(1), end_col.unwrap_or(16_384));
+            let logical_rows = r1.abs_diff(r2) as u64 + 1;
+            let logical_cols = c1.abs_diff(c2) as u64 + 1;
+            logical_cells = logical_rows * logical_cols;
+            // Use already-resolved coordinates (including shared-formula rebasing).
+            let (sr, sc) = (view.start_row() as u32 + 1, view.start_col() as u32 + 1);
+            let er = (sr as u64 - 1 + logical_rows).min(view.sheet().nrows as u64) as u32;
+            let ec = (sc as u64 - 1 + logical_cols).min(view.sheet().columns.len() as u64) as u32;
+            let physical_rows = er.saturating_sub(sr.saturating_sub(1)) as usize;
+            let physical_cols = ec.saturating_sub(sc.saturating_sub(1)) as usize;
+            if physical_rows > 0
+                && physical_cols > 0
+                && (physical_rows > rows || physical_cols > cols)
+            {
+                // Generic whole-axis resolution can trim to graph placements,
+                // which excludes spill members beyond their anchor. Re-resolve
+                // only this finite physical rectangle through the context so
+                // computed/spill authority is retained. The argument expression
+                // stays cached; neither the whole Excel axis nor its AST is expanded.
+                *start_row = Some(sr);
+                *end_row = Some(er);
+                *start_col = Some(sc);
+                *end_col = Some(ec);
+                *start_row_abs = true;
+                *end_row_abs = true;
+                *start_col_abs = true;
+                *end_col_abs = true;
+                view = arg.with_context_cancel_token(
+                    ctx.resolve_range_view(&reference, ctx.current_sheet())?,
+                );
+            }
+        }
+        let (rows, cols) = view.dims();
+        let physical_rows =
+            rows.min((view.sheet().nrows as usize).saturating_sub(view.start_row()));
+        let physical_cols = cols.min(view.sheet().columns.len().saturating_sub(view.start_col()));
+        return Ok((
+            AggregateArgument::Range(view.sub_view(0, 0, physical_rows, physical_cols)),
+            Some(logical_cells),
+        ));
+    }
+    Ok((argument, None))
+}
+
 fn range_or_scalar<'a, 'b>(
     arg: &ArgumentHandle<'a, 'b>,
     ctx: &dyn FunctionContext<'b>,
@@ -131,6 +225,7 @@ fn eval_if_family<'a, 'b>(
     let mut sum_view: Option<crate::engine::range_view::RangeView<'_>> = None;
     let mut sum_scalar: Option<LiteralValue> = None;
     let mut crit_specs = Vec::new();
+    let mut logical_count_cells = None;
 
     macro_rules! resolve_range_or_scalar {
         ($arg:expr) => {
@@ -155,7 +250,19 @@ fn eval_if_family<'a, 'b>(
             )));
         }
         let pred = crate::args::parse_criteria(&args[1].value()?.into_literal())?;
-        let (crit_rv, crit_val) = resolve_range_or_scalar!(&args[0]);
+        let (crit_rv, crit_val) = if agg_type == AggregationType::Count {
+            let (argument, logical_cells) = resolve_count_argument(&args[0], ctx)?;
+            logical_count_cells = logical_cells;
+            match argument {
+                AggregateArgument::Range(view) => (Some(view), None),
+                AggregateArgument::Scalar(value) => (None, Some(value)),
+                AggregateArgument::ReferenceError(error) => {
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(error)));
+                }
+            }
+        } else {
+            resolve_range_or_scalar!(&args[0])
+        };
         crit_specs.push((crit_rv, pred, crit_val));
 
         if agg_type != AggregationType::Count {
@@ -264,10 +371,12 @@ fn eval_if_family<'a, 'b>(
         };
 
         let mut criteria_masks = CriteriaMaskMemo::default();
+        let mut visited_rows = 0usize;
         for res in driver.iter_row_chunks() {
             let cs = res?;
             let row_start = cs.row_start;
             let row_len = cs.row_len;
+            visited_rows = visited_rows.max(row_start + row_len);
             if row_len == 0 {
                 continue;
             }
@@ -688,6 +797,16 @@ fn eval_if_family<'a, 'b>(
                     }
                 }
             }
+        }
+        // COUNTIF's logical range can extend beyond physically stored rows.
+        // Every cell in that tail is Empty: account for it arithmetically,
+        // without allocating masks or iterating a million empty cells.
+        if !multi
+            && agg_type == AggregationType::Count
+            && criteria_match(&crit_specs[0].1, &LiteralValue::Empty)
+        {
+            let logical_cells = logical_count_cells.unwrap_or(dims.0 as u64 * dims.1 as u64);
+            total_count += logical_cells.saturating_sub(visited_rows as u64 * dims.1 as u64) as i64;
         }
     } else {
         // Scalar driver fallback
@@ -1539,16 +1658,19 @@ impl Function for CountBlankFn {
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let mut cnt = 0i64;
         for a in args {
-            match resolve_aggregate_argument(a, ctx)? {
+            let (argument, logical_cells) = resolve_count_argument(a, ctx)?;
+            match argument {
                 AggregateArgument::Range(view) => {
                     let mut tag_it = view.type_tags_slices();
                     let mut text_it = view.text_slices();
+                    let mut visited_cells = 0u64;
 
                     while let (Some(tag_res), Some(text_res)) = (tag_it.next(), text_it.next()) {
                         let (_, _, tag_cols) = tag_res?;
                         let (_, _, text_cols) = text_res?;
 
                         for (tc, xc) in tag_cols.into_iter().zip(text_cols.into_iter()) {
+                            visited_cells += tc.len() as u64;
                             let text_arr = xc
                                 .as_any()
                                 .downcast_ref::<arrow_array::StringArray>()
@@ -1565,6 +1687,10 @@ impl Function for CountBlankFn {
                             }
                         }
                     }
+                    let (rows, cols) = view.dims();
+                    cnt += logical_cells
+                        .unwrap_or(rows as u64 * cols as u64)
+                        .saturating_sub(visited_cells) as i64;
                 }
                 AggregateArgument::ReferenceError(error) => {
                     return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(error)));
@@ -1601,6 +1727,83 @@ mod tests {
     use crate::traits::ArgumentHandle;
     use formualizer_common::LiteralValue;
     use formualizer_parse::parser::{ASTNode, ASTNodeType};
+    #[test]
+    fn expanded_count_view_keeps_argument_cancellation() {
+        use crate::engine::{CancelToken, Engine, EvalConfig};
+        use crate::traits::CalcValue;
+        use formualizer_common::ExcelErrorKind;
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
+
+        #[derive(Debug)]
+        struct Probe(Arc<AtomicBool>);
+        impl Function for Probe {
+            func_caps!(PURE, REDUCTION, WINDOWED, STREAM_OK);
+            fn arg_schema(&self) -> &'static [ArgSchema] {
+                &ARG_ANY_ONE[..]
+            }
+            fn name(&self) -> &'static str {
+                "COUNT_EXPANSION_CANCEL_PROBE"
+            }
+            fn eval<'a, 'b, 'c>(
+                &self,
+                args: &'c [ArgumentHandle<'a, 'b>],
+                ctx: &dyn FunctionContext<'b>,
+            ) -> Result<CalcValue<'b>, ExcelError> {
+                let AggregateArgument::Range(original) = resolve_aggregate_argument(&args[0], ctx)?
+                else {
+                    panic!("expected original range");
+                };
+                assert_eq!(
+                    original.dims(),
+                    (10, 1),
+                    "probe must take the expansion branch"
+                );
+                let (AggregateArgument::Range(view), logical) =
+                    resolve_count_argument(&args[0], ctx)?
+                else {
+                    panic!("expected an expanded count view");
+                };
+                assert_eq!(view.dims(), (11, 1));
+                assert_eq!(logical, Some(1_048_576));
+                ctx.cancellation_token()
+                    .expect("active request token")
+                    .cancel();
+                let cancelled = matches!(view.iter_row_chunks().next(), Some(Err(error)) if error.kind == ExcelErrorKind::Cancelled);
+                self.0.store(cancelled, Ordering::SeqCst);
+                Ok(CalcValue::Scalar(LiteralValue::Boolean(cancelled)))
+            }
+        }
+        let observed = Arc::new(AtomicBool::new(false));
+        let workbook = TestWorkbook::new().with_function(Arc::new(Probe(Arc::clone(&observed))));
+        let mut engine = Engine::new(workbook, EvalConfig::default());
+        engine
+            .set_cell_formula(
+                "Data",
+                10,
+                3,
+                formualizer_parse::parser::parse("=SEQUENCE(2,3)").unwrap(),
+            )
+            .unwrap();
+        engine
+            .set_cell_formula(
+                "Results",
+                1,
+                1,
+                formualizer_parse::parser::parse("=COUNT_EXPANSION_CANCEL_PROBE(Data!C:C)")
+                    .unwrap(),
+            )
+            .unwrap();
+        let result = engine.evaluate_all_cancellable(CancelToken::new());
+        assert!(result.is_ok() || result.unwrap_err().kind == ExcelErrorKind::Cancelled);
+        assert!(
+            observed.load(Ordering::SeqCst),
+            "expanded iteration must retain the argument's cancellation token, not just rely on a later engine checkpoint"
+        );
+    }
+
     fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
         wb.interpreter()
     }

@@ -4,6 +4,16 @@ All notable changes to Formualizer will be documented in this file.
 
 ## Unreleased
 
+- Prevent spills from overwriting pending formulas without preparing blockers; retain bounded, admitted retry regions and release failed reservations. Existing interactive Empty-overlay visibility remains unchanged.
+
+- Fixed logged workbook formula setters silently swallowing binding/admission failures and clearing existing spills on rejection. Rejected assignments now report errors like unlogged setters; existing deferred-validation and non-atomic batch policies remain unchanged. Added fallible low-level editor APIs without changing legacy signatures. See [formula assignment contracts](docs/formula-assignment-failures.md). (#451)
+- Fixed dependency edges disappearing across split bulk-ingest calls and stale consumers after bulk formula replacement. Complete initial loads retain their fast path. (#456)
+- Preserved imported/staged formula sources after compressed preparation failures so inspection, edits and retries remain possible; corrected inspection of formula text without a leading `=` without changing genuine string-literal formulas. (#452, #455)
+- Fixed blank criteria masks mistaking absent numeric/boolean text-lane data for empty cells, without adding numeric-string caches. Mixed wildcard masks now preserve the existing scalar matching policy across imported and edited data. (#457)
+- Counted implicit blanks in COUNTIF/COUNTBLANK ranges arithmetically while keeping physical views bounded, including direct whole-row/column extents and available spill members beyond graph placement bounds. This addresses part of #285, not all blank-range or cross-engine criteria semantics. See [criteria compatibility](docs/criteria-ingest-compatibility.md).
+- Isolated ordinary Calamine formula targets from unrelated preparation failures using lazy indexed source selection, retaining unconsumed formulas for later targets, edits and full preparation. Shared/reconciliation-dependent packages remain conservative in this step; #453 remains open for shared-family isolation. See [target preparation](docs/imported-target-preparation.md).
+- Documented and tested the existing preparation-error boundary: spreadsheet guards do not turn unresolved-sheet/table preparation or request-level admission/cancellation failures into fallback values. No new reference-error policy was introduced. (#454)
+
 ## [0.9.2] - 2026-09-10
 
 - Aligned Rust product crates and Python/npm bindings at 0.9.2; parser/common remain at 3.1.1 and SheetPort spec at 0.3.1. Cache-only XLSX APIs are additive and explicitly invoked; Python support is native-only, not Pyodide.
