@@ -4,7 +4,7 @@ All notable changes to Formualizer will be documented in this file.
 
 ## Unreleased
 
-- Added opt-in cache-only XLSX recalculation through Calamine, with bounded namespace-aware admission, typed cache repair, source-epoch handling and package-preserving ZIP32 writeback. Unsupported metadata/results fail without publishing partial output.
+- Added explicitly invoked cache-only XLSX recalculation through Calamine, available by default in `formualizer-workbook` and the facade through the removable `xlsx-recalc` feature, with bounded namespace-aware admission, typed cache repair, source-epoch handling and package-preserving ZIP32 writeback. Unsupported metadata/results fail without publishing partial output.
 - Exposed the shared cache-only core through Rust byte/file APIs, Python byte/file functions and a WASM `Uint8Array` API, without changing existing workbook APIs.
 - Added cancellable Calamine byte ingestion and cooperative read/row/replay checkpoints.
 

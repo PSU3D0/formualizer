@@ -29,7 +29,7 @@ quick-xml = { version = "0.39", features = ["encoding"], optional = true }
 [features]
 # system-clock: forwards eval's ambient-time feature (Local::now/Utc::now).
 # Enabled by default for native + wasm-js consumers. Disable for portable wasm guests.
-default = ["json", "csv", "system-clock"]
+default = ["json", "csv", "system-clock", "xlsx-recalc"]
 system-clock = ["formualizer-eval/system-clock"]
 # js-runtime: forwards eval's browser/wasm-bindgen runtime feature.
 # Activates web-time + JS getrandom. NOT enabled by default.

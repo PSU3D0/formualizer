@@ -20,7 +20,7 @@ value-affecting-features = { system-clock = "Selects ambient wall-clock evaluati
 [features]
 # Default: preserve the pre-runtime-split user experience — full stack,
 # workbook JSON/CSV support, and ambient system clock behaviour.
-default = ["portable-wasm", "json", "csv", "system-clock"]
+default = ["portable-wasm", "json", "csv", "system-clock", "xlsx-recalc"]
 common = ["dep:formualizer-common"]
 parse = ["dep:formualizer-parse", "common"]
 eval = ["dep:formualizer-eval"]
