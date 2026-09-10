@@ -347,6 +347,26 @@ impl HybridFormulaReplaySpool {
         }
     }
 
+    fn read_at(&mut self, offset: u64) -> Result<OwnedSpoolFormulaRecord, SpoolError> {
+        if offset < HEADER_LEN as u64 || offset >= self.encoded_bytes {
+            return Err(SpoolError::Truncated);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(file) = self.file.as_mut() {
+            let mut reader = BufReader::new(
+                file.as_file()
+                    .try_clone()
+                    .map_err(|e| SpoolError::Io(e.kind()))?,
+            );
+            reader
+                .seek(SeekFrom::Start(offset))
+                .map_err(|e| SpoolError::Io(e.kind()))?;
+            return decode_frame_from_reader(&mut reader, &mut (self.encoded_bytes - offset));
+        }
+        let mut cursor = usize::try_from(offset).map_err(|_| SpoolError::OffsetOverflow)?;
+        decode_frame(&self.memory, &mut cursor)
+    }
+
     pub(super) fn peak_memory_bytes(&self) -> u64 {
         self.peak_memory_bytes
     }
@@ -373,7 +393,12 @@ impl HybridFormulaReplaySpool {
     }
 }
 
+type OrdinaryReplayLocator = Vec<(u32, u32, u64)>;
+
 pub(super) struct CalamineDeferredFormulaReplay {
+    /// Lazy, text-free coordinate/offset locator. None means not scanned yet;
+    /// Err means genuine shared/unsupported source semantics require full replay.
+    ordinary_index: Option<Result<OrdinaryReplayLocator, ()>>,
     spool: HybridFormulaReplaySpool,
     sheet_name: String,
     sheet_instance: u32,
@@ -386,6 +411,7 @@ impl CalamineDeferredFormulaReplay {
         sheet_instance: u32,
     ) -> Self {
         Self {
+            ordinary_index: None,
             spool,
             sheet_name,
             sheet_instance,
@@ -496,6 +522,88 @@ impl DeferredFormulaReplay for CalamineDeferredFormulaReplay {
         partitions: &[PartitionedSourceFormulaFamily],
     ) -> Result<Vec<DeferredReplayFormula>, String> {
         self.replay_routed(disposition, partitions)
+    }
+
+    fn replay_selected_ordinary(
+        &mut self,
+        coordinates: &[(u32, u32)],
+        checkpoint: &mut dyn FnMut(u64, u64) -> Result<(), formualizer_common::ExcelError>,
+    ) -> Result<Option<Vec<DeferredReplayFormula>>, formualizer_common::ExcelError> {
+        use formualizer_common::{ExcelError, ExcelErrorKind};
+        let error =
+            |e: SpoolError| ExcelError::new(ExcelErrorKind::Value).with_message(e.to_string());
+        if self.ordinary_index.is_none() {
+            #[cfg(not(target_arch = "wasm32"))]
+            let encoded_bytes = self.spool.encoded_bytes;
+            let mut iter = self.spool.replay().map_err(error)?;
+            let mut index = Vec::new();
+            loop {
+                checkpoint(1, 0)?;
+                let offset = match &iter {
+                    FormulaReplayIter::Memory { cursor, .. } => *cursor as u64,
+                    #[cfg(not(target_arch = "wasm32"))]
+                    FormulaReplayIter::Native { remaining, .. } => encoded_bytes - remaining,
+                };
+                let Some(record) = iter.next() else {
+                    break;
+                };
+                let OwnedSpoolFormulaRecord::Ordinary { coord0, .. } = record.map_err(error)?
+                else {
+                    self.ordinary_index = Some(Err(()));
+                    return Ok(None);
+                };
+                if index.len() == index.capacity() {
+                    let additional = index.capacity().max(256);
+                    checkpoint(0, (additional as u64).saturating_mul(16))?;
+                    index.try_reserve_exact(additional).map_err(|_| {
+                        ExcelError::new(ExcelErrorKind::Value)
+                            .with_message("ordinary source locator allocation failed")
+                    })?;
+                }
+                index.push((coord0.row + 1, coord0.col + 1, offset));
+            }
+            checkpoint(
+                (index.len() as u64)
+                    .saturating_mul(u64::from(usize::BITS - index.len().max(1).leading_zeros())),
+                0,
+            )?;
+            index.sort_unstable();
+            self.ordinary_index = Some(Ok(index));
+        }
+        let Some(Ok(index)) = &self.ordinary_index else {
+            return Ok(None);
+        };
+        let mut formulas = Vec::new();
+        for &(row, col) in coordinates {
+            checkpoint(1, 0)?;
+            let start = index.partition_point(|&(r, c, _)| (r, c) < (row, col));
+            for &(_, _, offset) in index[start..]
+                .iter()
+                .take_while(|&&(r, c, _)| (r, c) == (row, col))
+            {
+                checkpoint(1, 0)?;
+                let record = self.spool.read_at(offset).map_err(error)?;
+                let OwnedSpoolFormulaRecord::Ordinary {
+                    sequence,
+                    coord0,
+                    text,
+                } = record
+                else {
+                    return Err(ExcelError::new(ExcelErrorKind::Value)
+                        .with_message("ordinary source locator changed"));
+                };
+                formulas.push(DeferredReplayFormula {
+                    source_order: SourceFormulaOrder::new(sequence),
+                    row: coord0.row + 1,
+                    col: coord0.col + 1,
+                    text,
+                    family: None,
+                    partition_owner: None,
+                });
+            }
+        }
+        formulas.sort_by_key(|formula| formula.source_order);
+        Ok(Some(formulas))
     }
 
     fn formula_at(&mut self, row: u32, col: u32) -> Result<Option<DeferredReplayFormula>, String> {
@@ -1704,6 +1812,120 @@ mod tests {
             allow_disk,
             spill_files_remaining: 1,
             spill_files_limit: 1,
+        }
+    }
+
+    #[test]
+    fn indexed_ordinary_selection_preserves_duplicate_coordinate_source_order() {
+        let mut spool = HybridFormulaReplaySpool::new(hybrid_limits(
+            u64::MAX,
+            u64::MAX,
+            u64::MAX,
+            u64::MAX,
+            false,
+        ));
+        for (sequence, text) in [(20, "2"), (10, "1"), (30, "3")] {
+            spool
+                .append(SpoolFormulaRecord::Ordinary {
+                    sequence,
+                    coord0: coord(0, 0),
+                    text,
+                })
+                .unwrap();
+        }
+        let mut replay = CalamineDeferredFormulaReplay::new(spool, "Sheet1".into(), 0);
+        let records = replay
+            .replay_selected_ordinary(&[(1, 1)], &mut |_, _| Ok(()))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            records
+                .iter()
+                .map(|record| record.text.as_str())
+                .collect::<Vec<_>>(),
+            ["1", "2", "3"]
+        );
+        let mut disposition = FormulaReplayDisposition::default();
+        disposition.extend_suppressed_excel_coords([(1, 1)]);
+        assert!(replay.replay(&disposition).unwrap().is_empty());
+    }
+
+    #[test]
+    fn indexed_ordinary_selection_is_lazy_bounded_and_retryable() {
+        use formualizer_common::{ExcelError, ExcelErrorKind};
+        for disk in [false, true] {
+            let mut spool = HybridFormulaReplaySpool::new(hybrid_limits(
+                u64::MAX,
+                u64::MAX,
+                if disk { 1 } else { u64::MAX },
+                u64::MAX,
+                disk,
+            ));
+            for row in 0..10_000 {
+                spool
+                    .append(SpoolFormulaRecord::Ordinary {
+                        sequence: row as u64,
+                        coord0: coord(row, 0),
+                        text: "1+2",
+                    })
+                    .unwrap();
+            }
+            let mut replay = CalamineDeferredFormulaReplay::new(spool, "Sheet1".into(), 0);
+            assert!(replay.ordinary_index.is_none());
+            let mut scanned = 0;
+            let failure = replay
+                .replay_selected_ordinary(&[(1, 1)], &mut |work, _| {
+                    scanned += work;
+                    if scanned > 32 {
+                        Err(ExcelError::new(ExcelErrorKind::Cancelled))
+                    } else {
+                        Ok(())
+                    }
+                })
+                .unwrap_err();
+            assert_eq!(failure.kind, ExcelErrorKind::Cancelled);
+            assert!(replay.ordinary_index.is_none());
+            let denied = replay.replay_selected_ordinary(&[(1, 1)], &mut |_, bytes| {
+                if bytes > 0 {
+                    Err(ExcelError::new(ExcelErrorKind::Value)
+                        .with_message("injected locator admission denial"))
+                } else {
+                    Ok(())
+                }
+            });
+            assert!(denied.is_err());
+            assert!(replay.ordinary_index.is_none());
+            let mut bytes = 0;
+            let started = std::time::Instant::now();
+            let records = replay
+                .replay_selected_ordinary(&[(1, 1)], &mut |_, allocated| {
+                    bytes += allocated;
+                    Ok(())
+                })
+                .unwrap()
+                .unwrap();
+            let first = started.elapsed();
+            assert_eq!(records.len(), 1);
+            assert!((160_000..=320_000).contains(&bytes));
+            let mut work = 0;
+            let started = std::time::Instant::now();
+            for row in 2..=101 {
+                let records = replay
+                    .replay_selected_ordinary(&[(row, 1)], &mut |units, allocated| {
+                        work += units;
+                        assert_eq!(allocated, 0);
+                        Ok(())
+                    })
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(records.len(), 1);
+                assert_eq!(records[0].row, row);
+            }
+            assert_eq!(work, 200);
+            eprintln!(
+                "ordinary locator disk={disk} records=10000 locator_bytes={bytes} first={first:?} next100={:?} bounded_work={work}",
+                started.elapsed()
+            );
         }
     }
 

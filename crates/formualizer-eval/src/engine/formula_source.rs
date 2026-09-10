@@ -974,11 +974,25 @@ pub trait DeferredFormulaReplay: Send {
         }
     }
 
+    /// Optional indexed selection for packages proven to contain only ordinary records.
+    /// Coordinates are one-based. Preserve all matching records and their source order.
+    /// Charge scanning work and locator storage before allocating via `checkpoint`.
+    /// `None` selects the conservative whole-package path. Once supported, this
+    /// capability must remain supported for the lifetime of this immutable source.
+    fn replay_selected_ordinary(
+        &mut self,
+        _coordinates: &[(u32, u32)],
+        _checkpoint: &mut dyn FnMut(u64, u64) -> Result<(), formualizer_common::ExcelError>,
+    ) -> Result<Option<Vec<DeferredReplayFormula>>, formualizer_common::ExcelError> {
+        Ok(None)
+    }
+
     fn formula_at(&mut self, row: u32, col: u32) -> Result<Option<DeferredReplayFormula>, String>;
 }
 
 /// Sealed workbook-to-engine package. It owns the source spool and compressed
-/// family evidence until exactly one selected deferred build consumes it.
+/// family evidence until preparation consumes it. Indexed ordinary-only sources
+/// may be consumed by coordinate; residual records retain the original authority.
 #[doc(hidden)]
 pub struct DeferredFormulaPackage {
     pub(crate) sheet_name: String,
@@ -987,12 +1001,17 @@ pub struct DeferredFormulaPackage {
     pub(crate) partitioned_families: Vec<PartitionedSourceFormulaFamily>,
     pub(crate) replay: Arc<std::sync::Mutex<Box<dyn DeferredFormulaReplay>>>,
     pub(crate) invalidated: std::collections::BTreeSet<SourceFamilyId>,
-    pub(crate) suppressed: std::collections::BTreeSet<(u32, u32)>,
+    /// Membership only; replay retains source ordering. Reservable storage lets
+    /// partial target publication suppress coordinates without commit-time allocation.
+    pub(crate) suppressed: rustc_hash::FxHashSet<(u32, u32)>,
     /// Exact source-record coordinates used only by staged target discovery.
     /// Family rectangles remain the compact vocabulary for family members;
     /// this list supplies ordinary and otherwise unclassified fallback points.
     pub(crate) source_coordinates: Vec<SourceCoord>,
     pub(crate) source_geometry_complete: bool,
+    /// Immutable source-spool totals are emitted once, on the first successful
+    /// consumption. Residual selections still report their actual replay work.
+    pub(crate) source_accounted: bool,
     /// Replay cached only when an already-staged ordinary formula must be
     /// reconciled with a subsequently attached package. This keeps that
     /// reconciliation linear in the package instead of scanning the spool
@@ -1001,6 +1020,14 @@ pub struct DeferredFormulaPackage {
 }
 
 impl DeferredFormulaPackage {
+    pub(crate) fn accounting_report(&self) -> FormulaCompressedSourceReport {
+        if self.source_accounted {
+            FormulaCompressedSourceReport::default()
+        } else {
+            self.report.clone()
+        }
+    }
+
     #[doc(hidden)]
     pub fn new(
         sheet_name: String,
@@ -1071,6 +1098,7 @@ impl DeferredFormulaPackage {
             suppressed: Default::default(),
             source_coordinates,
             source_geometry_complete,
+            source_accounted: false,
             reconciliation_replay: None,
         }
     }

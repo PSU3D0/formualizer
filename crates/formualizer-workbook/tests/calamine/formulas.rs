@@ -134,6 +134,108 @@ fn calamine_failed_preparation_preserves_source_inspection_and_history() {
 }
 
 #[test]
+fn calamine_ordinary_targets_isolate_unrelated_preparation_failures() {
+    use formualizer_workbook::{LoadStrategy, Workbook, WorkbookConfig};
+    let path = build_workbook(|book| {
+        let sh = book.get_sheet_by_name_mut("Sheet1").unwrap();
+        for (col, formula) in [(1, "1+2"), (2, "NOSHEET!A1"), (3, "B1+1"), (4, "A1+5")] {
+            sh.get_cell_mut((col, 1)).set_formula(formula);
+        }
+    });
+    let adapter = CalamineAdapter::open_path(&path).unwrap();
+    let mut wb = Workbook::from_reader(
+        adapter,
+        LoadStrategy::EagerAll,
+        WorkbookConfig::interactive(),
+    )
+    .unwrap();
+    assert_eq!(
+        wb.evaluate_cell("Sheet1", 1, 1).unwrap(),
+        LiteralValue::Number(3.0)
+    );
+    assert_eq!(
+        wb.evaluate_cell("Sheet1", 1, 4).unwrap(),
+        LiteralValue::Number(8.0)
+    );
+    assert_eq!(
+        wb.get_formula("Sheet1", 1, 2)
+            .unwrap()
+            .trim_start_matches('='),
+        "NOSHEET!A1"
+    );
+    for _ in 0..2 {
+        assert!(wb.evaluate_cell("Sheet1", 1, 2).is_err());
+        assert!(wb.evaluate_cell("Sheet1", 1, 3).is_err());
+        assert!(wb.evaluate_all().is_err());
+    }
+    // Editing a consumed formula must not be overwritten by residual spool replay.
+    wb.set_formula("Sheet1", 1, 1, "=20").unwrap();
+    wb.add_sheet("NOSHEET").unwrap();
+    wb.set_value("NOSHEET", 1, 1, LiteralValue::Number(42.0))
+        .unwrap();
+    wb.evaluate_all().unwrap();
+    assert_eq!(
+        wb.get_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(20.0))
+    );
+    assert_eq!(
+        wb.get_value("Sheet1", 1, 3),
+        Some(LiteralValue::Number(43.0))
+    );
+    assert_eq!(
+        wb.get_value("Sheet1", 1, 4),
+        Some(LiteralValue::Number(25.0))
+    );
+}
+
+#[test]
+#[ignore = "manual indexed target timing probe"]
+fn calamine_indexed_target_cost_probe() {
+    use formualizer_workbook::{LoadStrategy, Workbook, WorkbookConfig};
+    use std::time::Instant;
+    let path = build_workbook(|book| {
+        let sh = book.get_sheet_by_name_mut("Sheet1").unwrap();
+        for row in 1..=10_000 {
+            sh.get_cell_mut((1, row)).set_formula(format!("{row}+2"));
+        }
+        sh.get_cell_mut((2, 1)).set_formula("NOSHEET!A1");
+    });
+    let started = Instant::now();
+    let adapter = CalamineAdapter::open_path(&path).unwrap();
+    let mut wb = Workbook::from_reader(
+        adapter,
+        LoadStrategy::EagerAll,
+        WorkbookConfig::interactive(),
+    )
+    .unwrap();
+    let load = started.elapsed();
+    let started = Instant::now();
+    assert_eq!(
+        wb.evaluate_cell("Sheet1", 1, 1).unwrap(),
+        LiteralValue::Number(3.0)
+    );
+    let first = started.elapsed();
+    let started = Instant::now();
+    for row in 2..=101 {
+        assert_eq!(
+            wb.evaluate_cell("Sheet1", row, 1).unwrap(),
+            LiteralValue::Number((row + 2) as f64)
+        );
+    }
+    eprintln!(
+        "indexed-target 10001 formulas load={load:?} first={first:?} next100={:?}",
+        started.elapsed()
+    );
+    assert_eq!(
+        wb.engine()
+            .formula_ingest_report_total()
+            .source_formula_records_spooled,
+        10_001
+    );
+    assert!(wb.get_formula("Sheet1", 1, 2).is_some());
+}
+
+#[test]
 #[ignore = "manual successful load/preparation timing probe"]
 fn calamine_source_retention_cost_probe() {
     use formualizer_workbook::{LoadStrategy, Workbook, WorkbookConfig};
@@ -147,9 +249,12 @@ fn calamine_source_retention_cost_probe() {
     for _ in 0..5 {
         let started = Instant::now();
         let adapter = CalamineAdapter::open_path(&path).unwrap();
-        let mut wb =
-            Workbook::from_reader(adapter, LoadStrategy::EagerAll, WorkbookConfig::interactive())
-                .unwrap();
+        let mut wb = Workbook::from_reader(
+            adapter,
+            LoadStrategy::EagerAll,
+            WorkbookConfig::interactive(),
+        )
+        .unwrap();
         let load = started.elapsed();
         let started = Instant::now();
         wb.engine_mut().build_graph_all().unwrap();

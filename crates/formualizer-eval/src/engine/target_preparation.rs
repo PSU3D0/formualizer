@@ -153,8 +153,9 @@ pub struct PreparedTargetGraphReport {
     pub normalized_regions: usize,
     pub normalized_target_list: Vec<EvaluationTarget>,
     pub selected_staged_cells: usize,
-    /// Total family proposals owned by the whole deferred packages selected by
-    /// this request. Selection and consumption are package-atomic.
+    /// Total family proposals owned by deferred packages selected by this request.
+    /// Family-bearing packages remain package-atomic; indexed ordinary-only
+    /// packages can be selected and consumed by coordinate.
     pub selected_source_families: usize,
     pub retained_staged_cells: usize,
     pub selected_cells: Vec<RangeAddress>,
@@ -342,6 +343,7 @@ impl StagedFormulaIndex {
                 .source_coordinates
                 .iter()
                 .map(|coord| (coord.row.saturating_add(1), coord.col.saturating_add(1)))
+                .filter(|point| !package.source_accounted || !package.suppressed.contains(point))
                 .collect();
             let geometry_complete = package.source_geometry_complete
                 || package.report.source_formula_records_spooled == 0;
@@ -362,6 +364,36 @@ impl StagedFormulaIndex {
         if changed {
             self.bump();
         }
+    }
+
+    pub(crate) fn package_points_in_region(
+        &self,
+        sheet: &str,
+        start_row: u32,
+        start_col: u32,
+        end_row: u32,
+        end_col: u32,
+    ) -> Vec<(u32, u32)> {
+        self.packages
+            .get(sheet)
+            .into_iter()
+            .flat_map(|package| {
+                package
+                    .fallback_points
+                    .range((start_row, 0)..=(end_row, u32::MAX))
+            })
+            .filter(|&&(_, col)| col >= start_col && col <= end_col)
+            .copied()
+            .collect()
+    }
+
+    pub(crate) fn consume_package_points(&mut self, sheet: &str, points: &BTreeSet<(u32, u32)>) {
+        if let Some(package) = self.packages.get_mut(sheet) {
+            for point in points {
+                package.fallback_points.remove(point);
+            }
+        }
+        self.touch_package(sheet);
     }
 
     pub(crate) fn touch_package(&mut self, sheet: &str) {
