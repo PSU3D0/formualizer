@@ -1994,7 +1994,7 @@ fn erf_approx(x: f64) -> f64 {
             1.85777706184603153e-01,
         ];
         const Q: [f64; 5] = [
-            2.84423748127893300e+03,
+            2.84423683343917062e+03,
             1.28261652607737228e+03,
             2.44024637934444173e+02,
             2.36012909523441209e+01,
@@ -5441,6 +5441,25 @@ mod tests {
         assert_eq!(eval("=ERFC.PRECISE(0)"), LiteralValue::Number(1.0));
         // Numeric text is accepted through standard function coercion.
         assert_number_close(eval("=ERFC.PRECISE(\"1\")"), erfc_direct(1.0));
+    }
+
+    #[test]
+    fn erf_small_argument_branch_is_double_precision() {
+        // Regression for #458: a mistyped Q[0] gave up to ~1e-7 error for |x| < 0.5.
+        for (x, expected) in [
+            (0.05, 0.05637197779701663),
+            (0.137, 0.15362621367822615),
+            (0.3, 0.3286267594591274),
+            (0.49, 0.511668261188523),
+        ] {
+            let got = erf_approx(x);
+            assert!(
+                (got - expected).abs() < 1e-15,
+                "erf({x}) = {got} != {expected}"
+            );
+            assert!((erf_approx(-x) + expected).abs() < 1e-15);
+        }
+        assert_number_close(eval("=ERFC(0.3)"), 0.6713732405408726);
     }
 
     #[test]
