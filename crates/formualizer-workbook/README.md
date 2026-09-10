@@ -99,6 +99,10 @@ cargo run -p formualizer-workbook --features wasm_runtime_wasmtime --example was
 - **Batch transactions** — atomic multi-cell operations with rollback.
 - **Evaluation planning** — inspect the dependency schedule before computing.
 
+## Retaining a rich Umya document after ingestion
+
+Both Umya adapters expose `into_document(self)`. After `EngineLoadStream::stream_into_engine` ingests an evaluator, consume the adapter to retain its existing Umya document for rich edits. This transfers ownership without cloning the cell graph or serializing/reimporting XLSX. It preserves the document's current lazy/deserialized state; ingestion materializes the sheets it reads. Source-only adapter metadata has already been consumed by ingestion and is not a separate persistent document authority.
+
 ## License
 
 Dual-licensed under MIT or Apache-2.0, at your option.

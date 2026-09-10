@@ -297,6 +297,7 @@ impl<'a> core::marker::Copy for formualizer_workbook::FormulaCacheUpdateRef<'a>
 pub struct formualizer_workbook::backends::umya::UmyaAdapter
 impl formualizer_workbook::backends::umya::UmyaAdapter
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::formula_cells(&self) -> alloc::vec::Vec<(alloc::string::String, u32, u32)>
+pub fn formualizer_workbook::backends::umya::UmyaAdapter::into_document(self) -> umya_spreadsheet::structs::spreadsheet::Spreadsheet
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::new_empty() -> Self
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::set_formula_cached_value(&mut self, &str, u32, u32, &formualizer_common::value::LiteralValue, formualizer_common::value::DateSystem) -> core::result::Result<(), umya_spreadsheet::structs::error::XlsxError>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::set_formula_cached_values_batch<'a, I>(&mut self, I, formualizer_common::value::DateSystem) -> core::result::Result<(), umya_spreadsheet::structs::error::XlsxError> where I: core::iter::traits::collect::IntoIterator<Item = formualizer_workbook::FormulaCacheUpdateRef<'a>>
@@ -360,6 +361,7 @@ impl<'a> core::marker::Copy for formualizer_workbook::FormulaCacheUpdateRef<'a>
 pub struct formualizer_workbook::backends::umya3::UmyaAdapter
 impl formualizer_workbook::backends::umya3::UmyaAdapter
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::formula_cells(&self) -> alloc::vec::Vec<(alloc::string::String, u32, u32)>
+pub fn formualizer_workbook::backends::umya3::UmyaAdapter::into_document(self) -> umya_spreadsheet::structs::workbook::Workbook
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::new_empty() -> Self
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::set_formula_cached_value(&mut self, &str, u32, u32, &formualizer_common::value::LiteralValue, formualizer_common::value::DateSystem) -> core::result::Result<(), umya_spreadsheet::structs::error::XlsxError>
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::set_formula_cached_values_batch<'a, I>(&mut self, I, formualizer_common::value::DateSystem) -> core::result::Result<(), umya_spreadsheet::structs::error::XlsxError> where I: core::iter::traits::collect::IntoIterator<Item = formualizer_workbook::FormulaCacheUpdateRef<'a>>
@@ -560,6 +562,7 @@ pub fn formualizer_workbook::backends::json::JsonAdapter::stream_into_engine(&mu
 pub struct formualizer_workbook::backends::Umya3Adapter
 impl formualizer_workbook::backends::umya3::UmyaAdapter
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::formula_cells(&self) -> alloc::vec::Vec<(alloc::string::String, u32, u32)>
+pub fn formualizer_workbook::backends::umya3::UmyaAdapter::into_document(self) -> umya_spreadsheet::structs::workbook::Workbook
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::new_empty() -> Self
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::set_formula_cached_value(&mut self, &str, u32, u32, &formualizer_common::value::LiteralValue, formualizer_common::value::DateSystem) -> core::result::Result<(), umya_spreadsheet::structs::error::XlsxError>
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::set_formula_cached_values_batch<'a, I>(&mut self, I, formualizer_common::value::DateSystem) -> core::result::Result<(), umya_spreadsheet::structs::error::XlsxError> where I: core::iter::traits::collect::IntoIterator<Item = formualizer_workbook::FormulaCacheUpdateRef<'a>>
@@ -600,6 +603,7 @@ pub fn formualizer_workbook::backends::umya3::UmyaAdapter::stream_into_engine(&m
 pub struct formualizer_workbook::backends::UmyaAdapter
 impl formualizer_workbook::backends::umya::UmyaAdapter
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::formula_cells(&self) -> alloc::vec::Vec<(alloc::string::String, u32, u32)>
+pub fn formualizer_workbook::backends::umya::UmyaAdapter::into_document(self) -> umya_spreadsheet::structs::spreadsheet::Spreadsheet
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::new_empty() -> Self
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::set_formula_cached_value(&mut self, &str, u32, u32, &formualizer_common::value::LiteralValue, formualizer_common::value::DateSystem) -> core::result::Result<(), umya_spreadsheet::structs::error::XlsxError>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::set_formula_cached_values_batch<'a, I>(&mut self, I, formualizer_common::value::DateSystem) -> core::result::Result<(), umya_spreadsheet::structs::error::XlsxError> where I: core::iter::traits::collect::IntoIterator<Item = formualizer_workbook::FormulaCacheUpdateRef<'a>>
@@ -2165,6 +2169,7 @@ pub fn formualizer_workbook::traits::TableDefinition::deserialize<__D>(__D) -> c
 pub struct formualizer_workbook::Umya3Adapter
 impl formualizer_workbook::backends::umya3::UmyaAdapter
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::formula_cells(&self) -> alloc::vec::Vec<(alloc::string::String, u32, u32)>
+pub fn formualizer_workbook::backends::umya3::UmyaAdapter::into_document(self) -> umya_spreadsheet::structs::workbook::Workbook
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::new_empty() -> Self
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::set_formula_cached_value(&mut self, &str, u32, u32, &formualizer_common::value::LiteralValue, formualizer_common::value::DateSystem) -> core::result::Result<(), umya_spreadsheet::structs::error::XlsxError>
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::set_formula_cached_values_batch<'a, I>(&mut self, I, formualizer_common::value::DateSystem) -> core::result::Result<(), umya_spreadsheet::structs::error::XlsxError> where I: core::iter::traits::collect::IntoIterator<Item = formualizer_workbook::FormulaCacheUpdateRef<'a>>
@@ -2205,6 +2210,7 @@ pub fn formualizer_workbook::backends::umya3::UmyaAdapter::stream_into_engine(&m
 pub struct formualizer_workbook::UmyaAdapter
 impl formualizer_workbook::backends::umya::UmyaAdapter
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::formula_cells(&self) -> alloc::vec::Vec<(alloc::string::String, u32, u32)>
+pub fn formualizer_workbook::backends::umya::UmyaAdapter::into_document(self) -> umya_spreadsheet::structs::spreadsheet::Spreadsheet
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::new_empty() -> Self
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::set_formula_cached_value(&mut self, &str, u32, u32, &formualizer_common::value::LiteralValue, formualizer_common::value::DateSystem) -> core::result::Result<(), umya_spreadsheet::structs::error::XlsxError>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::set_formula_cached_values_batch<'a, I>(&mut self, I, formualizer_common::value::DateSystem) -> core::result::Result<(), umya_spreadsheet::structs::error::XlsxError> where I: core::iter::traits::collect::IntoIterator<Item = formualizer_workbook::FormulaCacheUpdateRef<'a>>

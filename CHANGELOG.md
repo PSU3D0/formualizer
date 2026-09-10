@@ -4,6 +4,8 @@ All notable changes to Formualizer will be documented in this file.
 
 ## Unreleased
 
+- Added `UmyaAdapter::into_document` for both Umya backends, allowing evaluator ingestion and rich-document ownership to share one import without cloning or serializing the workbook.
+
 - Added the opt-in `umya3` backend to `formualizer-workbook` and the facade (0.9.1), sharing adapter algorithms with the unchanged Umya 2 backend.
 - Fixed lost border colours on Umya 3.1 XLSX import and colour-selector collisions during export using paired, bounded compatibility I/O. The cold writer repairs emitted colour definitions and style references from the authoritative document, retaining RGB/indexed/theme identity and tint without reimporting a workbook or evaluator.
 
