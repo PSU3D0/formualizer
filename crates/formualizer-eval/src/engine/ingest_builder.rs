@@ -350,6 +350,8 @@ impl<'g> BulkIngestBuilder<'g> {
                 .map_err(crate::engine::ResourceLedgerError::into_excel_error)?;
         }
 
+        let had_vertices = self.g.vertex_count() != 0;
+        let mut dirty_roots = Vec::new();
         let mut total_vertices = 0usize;
         let mut total_formulas = 0usize;
         let mut total_edges = 0usize;
@@ -517,6 +519,9 @@ impl<'g> BulkIngestBuilder<'g> {
                         }
                     }
                     self.g.mark_vertices_dirty_batch(&target_vids);
+                    if had_vertices {
+                        dirty_roots.extend_from_slice(&target_vids);
+                    }
                     total_formulas += target_vids.len();
                     t_assign_ms += ta0.elapsed().as_millis();
 
@@ -656,7 +661,15 @@ impl<'g> BulkIngestBuilder<'g> {
             } else {
                 // One-shot CSR build from accumulated adjacency and coords/ids
                 let mut t_coords_ms = 0u128;
-                if coord_accum.is_empty() || id_accum.is_empty() {
+                // Allocation batches contain only vertices created by this ingest,
+                // not necessarily the complete graph (including symbol vertices).
+                // Keep the complete initial-load fast path, but never install partial
+                // membership: later rebuilds use it to carry untouched edges forward.
+                // vertex_count includes deleted slots, which can only cause a safe
+                // extra collection here; each accumulated id is newly allocated once.
+                if id_accum.len() != total_vertices_now {
+                    coord_accum.clear();
+                    id_accum.clear();
                     if dbg {
                         eprintln!("[fz][ingest] finalize: gathering coords/ids");
                     }
@@ -683,6 +696,13 @@ impl<'g> BulkIngestBuilder<'g> {
                     );
                 }
             }
+        }
+
+        // Replacing a formula also invalidates its existing consumers. Do this
+        // once, after all new edges are installed, rather than one BFS per row.
+        // On a complete first load every formula is already dirty.
+        if !dirty_roots.is_empty() {
+            self.g.mark_dirty_many(&dirty_roots);
         }
 
         // Restore config
