@@ -2724,6 +2724,35 @@ fn compute_criteria_mask(
         }
     }
 
+    // The scalar wildcard contract includes numeric/boolean string forms and
+    // Empty. The lowered base lane is text-only, unlike the overlay lane. Keep
+    // the vectorized path for text-only data, but build a scalar-equivalent
+    // Boolean mask for mixed data. The existing bounded criteria cache can
+    // reuse that mask without retaining strings for every numeric input.
+    if matches!(pred, crate::args::CriteriaPredicate::TextLike { .. }) {
+        for tags in view.type_tags_slices() {
+            let (_, _, cols) = tags.ok()?;
+            let tags = cols.get(col_in_view)?;
+            if tags.values().iter().any(|tag| {
+                *tag == crate::arrow_store::TypeTag::Empty as u8
+                    || *tag == crate::arrow_store::TypeTag::Number as u8
+                    || *tag == crate::arrow_store::TypeTag::Boolean as u8
+            }) {
+                let mut mask = BooleanBuilder::new();
+                for chunk in view.iter_row_chunks() {
+                    let chunk = chunk.ok()?;
+                    for row in chunk.row_start..chunk.row_start + chunk.row_len {
+                        mask.append_value(crate::builtins::criteria_match(
+                            pred,
+                            &view.get_cell(row, col_in_view),
+                        ));
+                    }
+                }
+                return Some(std::sync::Arc::new(mask.finish()));
+            }
+        }
+    }
+
     // TEXT PATH: build masks per row-chunk using lowered text slices.
     // This avoids concatenating full-string columns just to compute a boolean mask.
     let (text_kind, text_pat, empty_special) = match pred {

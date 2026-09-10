@@ -7,6 +7,8 @@ mod calcpr;
 #[cfg(feature = "calamine")]
 mod criteria_ingest_blank;
 #[cfg(feature = "calamine")]
+mod criteria_wildcard_parity;
+#[cfg(feature = "calamine")]
 mod date_arithmetic;
 #[cfg(feature = "calamine")]
 mod dates;
