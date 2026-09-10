@@ -386,7 +386,9 @@ impl DependencyGraph {
         {
             return Err(FragmentedTransactionPrepareError::SheetIdentity);
         }
-        if !disposition.owns_partition_exactly(source) {
+        if !disposition.owns_partition_exactly(source)
+            || !disposition.consumed_engine_matches(engine_token)
+        {
             return Err(FragmentedTransactionPrepareError::DispositionOwnership);
         }
         if !self.fragmented_name_assumptions_match(&prepared.name_assumptions) {
@@ -447,11 +449,16 @@ impl DependencyGraph {
         }
 
         legacy_formulas.sort_by_key(|formula| formula.coord);
-        let expected = source.legacy_members.as_slice();
+        let expected: Vec<_> = source
+            .legacy_members
+            .as_slice()
+            .iter()
+            .filter(|member| !disposition.is_consumed_member(source.source_id, member.coord))
+            .collect();
         if legacy_formulas.len() != expected.len()
             || legacy_formulas
                 .iter()
-                .zip(expected)
+                .zip(&expected)
                 .any(|(formula, member)| {
                     formula.source_id != source.source_id
                         || formula.coord != member.coord
@@ -569,6 +576,10 @@ impl DependencyGraph {
             .expected_disposition
             .owns_partition_exactly(&prepared.source)
             || !disposition.owns_partition_exactly(&prepared.source)
+            || !prepared
+                .expected_disposition
+                .consumed_engine_matches(engine_token)
+            || !disposition.consumed_engine_matches(engine_token)
         {
             return replay(FragmentedReplayReason::DispositionChanged);
         }
