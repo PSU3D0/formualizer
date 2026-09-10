@@ -748,6 +748,13 @@ impl<R: EvaluationContext> InspectSource for LegacyInspectSource<'_, R> {
         let row = cell.row0 + 1;
         let col = cell.col0 + 1;
         if let Some(text) = self.engine.get_staged_formula_text(sheet, row, col) {
+            // Imported OOXML formula text normally omits '='. Without it the
+            // parser intentionally interprets the input as a literal cell value.
+            let text = if text.starts_with('=') {
+                text
+            } else {
+                format!("={text}")
+            };
             let ast =
                 formualizer_parse::parse(&text).map_err(|error| InspectError::InvalidAddress {
                     message: format!("staged formula at {sheet}!R{row}C{col} is invalid: {error}"),

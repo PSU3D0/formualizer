@@ -384,6 +384,118 @@ fn strict_opaque_policy_is_preserved_for_package_fallback_and_authoritative_comp
     assert!(authoritative.has_staged_formulas());
 }
 
+#[test]
+fn failed_source_preparation_retains_authority_for_retry() {
+    use crate::engine::inspect::SnapshotOptions;
+    use formualizer_common::CellAddress;
+
+    for mode in [
+        FormulaPlaneMode::Off,
+        FormulaPlaneMode::AuthoritativeExperimental,
+    ] {
+        for imported in [false, true] {
+            for targeted in [false, true] {
+                let mut engine = engine(mode);
+                let formulas = [
+                    (1, 1, "1+2"),
+                    (1, 2, "NOSHEET!A1"),
+                    (1, 3, "\"NOSHEET!A1\""),
+                ];
+                if imported {
+                    engine
+                        .source_formula_ingress()
+                        .stage_deferred(fallback_package("Outputs", &formulas));
+                } else {
+                    for (row, col, text) in formulas {
+                        engine.stage_formula_text("Outputs", row, col, text.into());
+                    }
+                }
+                for _ in 0..2 {
+                    let result = if targeted {
+                        engine
+                            .prepare_graph_for_targets(&[cell("Outputs", 1, 2)], Default::default())
+                            .map(|_| ())
+                    } else {
+                        engine.build_graph_all()
+                    };
+                    assert!(
+                        result.is_err(),
+                        "{mode:?} imported={imported} targeted={targeted}"
+                    );
+                    for (row, col, text) in formulas {
+                        assert_eq!(
+                            engine
+                                .get_staged_formula_text("Outputs", row, col)
+                                .as_deref(),
+                            Some(text)
+                        );
+                        let snapshot = engine
+                            .inspect_cell(
+                                &CellAddress::new("Outputs", row, col).unwrap(),
+                                &SnapshotOptions::default(),
+                            )
+                            .unwrap();
+                        assert_eq!(
+                            snapshot.cell.formula,
+                            Some(formualizer_parse::pretty::canonical_formula(
+                                &formualizer_parse::parse(format!("={text}")).unwrap()
+                            ))
+                        );
+                    }
+                    assert!(engine.staged_formula_index_is_consistent_for_test());
+                }
+                engine.add_sheet("NOSHEET").unwrap();
+                engine
+                    .set_cell_value("NOSHEET", 1, 1, LiteralValue::Number(7.0))
+                    .unwrap();
+                engine.build_graph_all().unwrap();
+                assert_eq!(engine.staged_formula_count(), 0);
+                assert_eq!(
+                    engine.evaluate_cell("Outputs", 1, 1).unwrap(),
+                    Some(LiteralValue::Number(3.0))
+                );
+                assert_eq!(
+                    engine.evaluate_cell("Outputs", 1, 2).unwrap(),
+                    Some(LiteralValue::Number(7.0))
+                );
+                assert_eq!(
+                    engine.evaluate_cell("Outputs", 1, 3).unwrap(),
+                    Some(LiteralValue::Text("NOSHEET!A1".into()))
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn failed_direct_preparation_retries_a_committed_source_prefix() {
+    let mut engine = engine(FormulaPlaneMode::AuthoritativeExperimental);
+    engine
+        .source_formula_ingress()
+        .stage_deferred(complete_family_package("Outputs", 990, 1));
+    engine
+        .source_formula_ingress()
+        .stage_deferred(fallback_package("Middle", &[(1, 1, "NOSHEET!A1")]));
+    for _ in 0..2 {
+        assert!(
+            engine
+                .build_graph_for_sheets(["Outputs", "Middle"])
+                .is_err()
+        );
+        assert!(engine.get_staged_formula_text("Outputs", 1, 2).is_some());
+        assert_eq!(
+            engine.get_staged_formula_text("Middle", 1, 1).as_deref(),
+            Some("NOSHEET!A1")
+        );
+    }
+    engine.add_sheet("NOSHEET").unwrap();
+    engine
+        .build_graph_for_sheets(["Outputs", "Middle"])
+        .unwrap();
+    assert!(!engine.has_staged_formulas());
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+}
+
 #[derive(Default)]
 struct EmptyReplay;
 

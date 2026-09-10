@@ -731,7 +731,13 @@ fn deferred_partition_late_replay_failure_leaves_current_family_unmodified() {
             .graph_formula_cells_materialized,
         0
     );
+    // A late direct-source failure must retain the spool for inspection/retry.
+    assert!(engine.has_staged_formulas());
+    assert!(engine.staged_formula_index_is_consistent_for_test());
+    // The injected commit fault is one-shot; retry can now commit the retained family.
+    engine.build_graph_all().unwrap();
     assert!(!engine.has_staged_formulas());
+    assert!(engine.baseline_stats().formula_plane_active_span_count > 0);
 }
 
 #[test]

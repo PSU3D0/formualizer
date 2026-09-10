@@ -12430,23 +12430,28 @@ where
         };
         let (ordinary, compressed, direct) = prepared;
 
-        // Deferred packages are consumed exactly once once authority commit starts.
-        // Pre-commit lock, replay, and parse failures restore them above for retry.
-        if !ordinary.is_empty()
-            && let Err(error) = self.ingest_formula_batches(ordinary)
-        {
+        // Keep the original source/spool alive through every fallible ingestion route.
+        // Graph admission may have committed a prefix; replay replaces those placements
+        // rather than treating their cached values as authoritative source.
+        let result = (|| {
+            if !ordinary.is_empty() {
+                self.ingest_formula_batches(ordinary)?;
+            }
+            if !compressed.is_empty() {
+                self.ingest_compressed_formula_source_batches(compressed)?;
+            }
+            if !direct.is_empty() {
+                self.finish_compressed_formula_sources(direct)?;
+            }
+            Ok(())
+        })();
+        if let Err(error) = result {
             self.formula_parse_diagnostics.truncate(diagnostics_len);
             for (sheet, staged) in collected {
                 self.restore_staged_sheet(sheet, staged);
             }
             self.staged_formula_index = staged_index_snapshot;
             return Err(error);
-        }
-        if !compressed.is_empty() {
-            let _ = self.ingest_compressed_formula_source_batches(compressed)?;
-        }
-        if !direct.is_empty() {
-            let _ = self.finish_compressed_formula_sources(direct)?;
         }
         self.dedup_formula_parse_diagnostics_since(diagnostics_len);
         Ok(())

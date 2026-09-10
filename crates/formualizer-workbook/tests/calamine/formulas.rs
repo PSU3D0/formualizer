@@ -68,6 +68,101 @@ fn calamine_extracts_formulas_and_normalizes_equals() {
 }
 
 #[test]
+fn calamine_failed_preparation_preserves_source_inspection_and_history() {
+    use formualizer_common::CellAddress;
+    use formualizer_eval::engine::inspect::SnapshotOptions;
+    use formualizer_workbook::{LoadStrategy, Workbook, WorkbookConfig};
+
+    let path = build_workbook(|book| {
+        let sh = book.get_sheet_by_name_mut("Sheet1").unwrap();
+        sh.get_cell_mut((1, 1)).set_formula("1+2");
+        sh.get_cell_mut((2, 1)).set_formula("NOSHEET!A1");
+        sh.get_cell_mut((3, 1)).set_formula("\"NOSHEET!A1\"");
+    });
+    for targeted in [false, true] {
+        let adapter = CalamineAdapter::open_path(&path).unwrap();
+        let mut wb = Workbook::from_reader(
+            adapter,
+            LoadStrategy::EagerAll,
+            WorkbookConfig::interactive(),
+        )
+        .unwrap();
+        let original: Vec<_> = (1..=3)
+            .map(|col| wb.get_formula("Sheet1", 1, col).unwrap())
+            .collect();
+        for _ in 0..2 {
+            for col in 1..=3 {
+                let text = &original[col as usize - 1];
+                assert_eq!(wb.get_formula("Sheet1", 1, col).as_ref(), Some(text));
+                let expected = formualizer_parse::pretty::canonical_formula(
+                    &formualizer_parse::parse(format!("={}", text.trim_start_matches('=')))
+                        .unwrap(),
+                );
+                let report = wb
+                    .engine()
+                    .inspect_cell(
+                        &CellAddress::new("Sheet1", 1, col).unwrap(),
+                        &SnapshotOptions::default(),
+                    )
+                    .unwrap();
+                assert_eq!(report.cell.formula, Some(expected));
+            }
+            if targeted {
+                assert!(wb.evaluate_cell("Sheet1", 1, 2).is_err());
+            } else {
+                assert!(wb.evaluate_all().is_err());
+            }
+        }
+        // Logged edits and undo must use the retained source, not imported caches.
+        wb.set_formula("Sheet1", 1, 2, "=10").unwrap();
+        wb.undo().unwrap();
+        assert_eq!(wb.get_formula("Sheet1", 1, 2).as_ref(), Some(&original[1]));
+        wb.redo().unwrap();
+        assert_eq!(
+            wb.evaluate_cell("Sheet1", 1, 2).unwrap(),
+            LiteralValue::Number(10.0)
+        );
+        assert_eq!(
+            wb.evaluate_cell("Sheet1", 1, 1).unwrap(),
+            LiteralValue::Number(3.0)
+        );
+        assert_eq!(
+            wb.evaluate_cell("Sheet1", 1, 3).unwrap(),
+            LiteralValue::Text("NOSHEET!A1".into())
+        );
+    }
+}
+
+#[test]
+#[ignore = "manual successful load/preparation timing probe"]
+fn calamine_source_retention_cost_probe() {
+    use formualizer_workbook::{LoadStrategy, Workbook, WorkbookConfig};
+    use std::time::Instant;
+    let path = build_workbook(|book| {
+        let sh = book.get_sheet_by_name_mut("Sheet1").unwrap();
+        for row in 1..=10_000 {
+            sh.get_cell_mut((1, row)).set_formula(format!("{row}+2"));
+        }
+    });
+    for _ in 0..5 {
+        let started = Instant::now();
+        let adapter = CalamineAdapter::open_path(&path).unwrap();
+        let mut wb =
+            Workbook::from_reader(adapter, LoadStrategy::EagerAll, WorkbookConfig::interactive())
+                .unwrap();
+        let load = started.elapsed();
+        let started = Instant::now();
+        wb.engine_mut().build_graph_all().unwrap();
+        let preparation = started.elapsed();
+        assert_eq!(
+            wb.evaluate_cell("Sheet1", 10_000, 1).unwrap(),
+            LiteralValue::Number(10_002.0)
+        );
+        eprintln!("source-retention 10000 formulas load={load:?} preparation={preparation:?}");
+    }
+}
+
+#[test]
 fn calamine_error_cells_map() {
     let path = build_workbook(|book| {
         let sh = book.get_sheet_by_name_mut("Sheet1").unwrap();
