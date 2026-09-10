@@ -2850,24 +2850,45 @@ impl Function for DevsqFn {
 STATISTICAL DISTRIBUTION FUNCTIONS
 ═══════════════════════════════════════════════════════════════════════════ */
 
-/// Helper: Standard normal CDF using error function approximation
+/// Helper: Standard normal CDF, Φ(z)
+///
+/// Hart (1968) algorithm 5666 as given by West (2005), "Better approximations to
+/// cumulative normal functions". Absolute error is about 1e-16 across the real line.
 fn std_norm_cdf(z: f64) -> f64 {
-    // Use the complementary error function: Φ(z) = 0.5 * erfc(-z / sqrt(2))
-    // Approximation using Abramowitz and Stegun formula 7.1.26
-    let a1 = 0.254829592;
-    let a2 = -0.284496736;
-    let a3 = 1.421413741;
-    let a4 = -1.453152027;
-    let a5 = 1.061405429;
-    let p = 0.3275911;
-
-    let sign = if z < 0.0 { -1.0 } else { 1.0 };
-    let z_abs = z.abs() / std::f64::consts::SQRT_2;
-
-    let t = 1.0 / (1.0 + p * z_abs);
-    let y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * (-z_abs * z_abs).exp();
-
-    0.5 * (1.0 + sign * y)
+    if z.is_nan() {
+        return f64::NAN;
+    }
+    let a = z.abs();
+    let tail = if a > 37.0 {
+        0.0
+    } else {
+        let e = (-a * a / 2.0).exp();
+        if a < 7.07106781186547 {
+            let mut n = 3.52624965998911e-2 * a + 0.700383064443688;
+            n = n * a + 6.37396220353165;
+            n = n * a + 33.912866078383;
+            n = n * a + 112.079291497871;
+            n = n * a + 221.213596169931;
+            n = n * a + 220.206867912376;
+            let mut d = 8.83883476483184e-2 * a + 1.75566716318264;
+            d = d * a + 16.064177579207;
+            d = d * a + 86.7807322029461;
+            d = d * a + 296.564248779674;
+            d = d * a + 637.333633378831;
+            d = d * a + 793.826512519948;
+            d = d * a + 440.413735824752;
+            e * n / d
+        } else {
+            // Continued fraction for the far tail.
+            let mut b = a + 0.65;
+            b = a + 4.0 / b;
+            b = a + 3.0 / b;
+            b = a + 2.0 / b;
+            b = a + 1.0 / b;
+            e / b / (2.0 * std::f64::consts::PI).sqrt()
+        }
+    };
+    if z > 0.0 { 1.0 - tail } else { tail }
 }
 
 /// Helper: Standard normal PDF
@@ -10141,6 +10162,47 @@ mod tests_basic_stats {
             ])),
             None,
         )
+    }
+    #[test]
+    fn std_norm_cdf_is_double_precision() {
+        // Regression for #458: the A&S 7.1.26 approximation was only good to ~7e-8.
+        // Reference values are Φ(z) = erfc(-z/√2)/2 evaluated in double precision.
+        assert_eq!(std_norm_cdf(0.0), 0.5);
+        for (z, expected) in [
+            (0.5, 0.6914624612740131),
+            (1.0, 0.8413447460685429),
+            (1.96, 0.9750021048517795),
+            (2.0, 0.9772498680518208),
+            (-2.0, 0.022750131948179216),
+            (3.0, 0.9986501019683699),
+            (-3.0, 0.0013498980316300957),
+            (7.1, 0.9999999999993762),
+        ] {
+            let got = std_norm_cdf(z);
+            assert!(
+                (got - expected).abs() < 1e-15,
+                "Φ({z}) = {got} != {expected}"
+            );
+        }
+        // Tails, including both sides of the |z| ≈ 7.07 branch switch. Hart/West is
+        // accurate in absolute terms; relative error in the far tail is only ~1e-8.
+        for (z, expected) in [
+            (-5.0, 2.8665157187919455e-07),
+            (-7.0, 1.279812543885835e-12),
+            (-7.1, 6.23784446333164e-13),
+            (-8.0, 6.22096057427182e-16),
+            (-10.0, 7.619853024160595e-24),
+            (-37.0, 5.725571222525139e-300),
+        ] {
+            let got = std_norm_cdf(z);
+            assert!(
+                (got - expected).abs() < 1e-16,
+                "Φ({z}) = {got} != {expected}"
+            );
+        }
+        assert_eq!(std_norm_cdf(-38.0), 0.0);
+        assert_eq!(std_norm_cdf(38.0), 1.0);
+        assert!(std_norm_cdf(f64::NAN).is_nan());
     }
     #[test]
     fn median_even() {

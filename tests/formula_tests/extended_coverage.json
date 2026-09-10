@@ -846,7 +846,7 @@
     },
     {
       "formula": "=NORM.S.DIST(1.96, TRUE)",
-      "result": 0.9750021738917761,
+      "result": 0.9750021048517795,
       "result_type": "float",
       "description": "standard normal CDF at 1.96"
     },
@@ -888,7 +888,7 @@
     },
     {
       "formula": "=GAUSS(1)",
-      "result": 0.3413447361676363,
+      "result": 0.3413447460685429,
       "result_type": "float",
       "description": "GAUSS(1) probability"
     },
@@ -1686,25 +1686,25 @@
     },
     {
       "formula": "=Z.TEST({3,6,7,8,6,5,4,2,1,9}, 4)",
-      "result": 0.07933464890044983,
+      "result": 0.07933459630405937,
       "result_type": "float",
       "description": "Z.TEST one-tailed p-value"
     },
     {
       "formula": "=Z.TEST({3,6,7,8,6,5,4,2,1,9}, 6)",
-      "result": 0.8756017155164422,
+      "result": 0.8756017728117506,
       "result_type": "float",
       "description": "Z.TEST with x close to mean"
     },
     {
       "formula": "=Z.TEST({3,6,7,8,6,5,4,2,1,9}, 4, 2.5)",
-      "result": 0.082051809658099,
+      "result": 0.0820517534128935,
       "result_type": "float",
       "description": "Z.TEST with explicit sigma"
     },
     {
       "formula": "=ZTEST({3,6,7,8,6,5,4,2,1,9}, 4)",
-      "result": 0.07933464890044983,
+      "result": 0.07933459630405937,
       "result_type": "float",
       "description": "ZTEST alias for Z.TEST"
     },
