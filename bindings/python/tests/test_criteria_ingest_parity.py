@@ -1,3 +1,7 @@
+from io import BytesIO
+from xml.etree import ElementTree as ET
+from zipfile import ZipFile
+
 import pytest
 
 import formualizer as fz
@@ -44,3 +48,92 @@ def test_loaded_constructed_criteria_parity(
         workbook.set_value("Sheet1", 1, 1, None)
         workbook.evaluate_all()
         assert workbook.get_value("Sheet1", 1, 2) == after_clear
+
+
+@pytest.mark.parametrize("span_evaluation", [False, True])
+def test_blank_count_clipping_keeps_spilled_values_and_clear(span_evaluation):
+    book = fz.Workbook(span_evaluation=span_evaluation)
+    book.add_sheet("Data")
+    book.add_sheet("Results")
+    book.set_formula("Data", 10, 3, "SEQUENCE(2,3)")
+    formulas = [
+        'COUNTIF(Data!A1:F20,"")',
+        "COUNTBLANK(Data!A1:F20)",
+        'COUNTIF(Data!C:C,"")',
+        "COUNTBLANK(Data!10:10)",
+    ]
+    for row, formula in enumerate(formulas, 1):
+        book.set_formula("Results", row, 1, formula)
+    book.evaluate_all()
+    assert book.get_value("Data", 11, 5) == 6
+    assert [book.get_value("Results", row, 1) for row in range(1, 5)] == [
+        114,
+        114,
+        1_048_574,
+        16_381,
+    ]
+    book.set_value("Data", 10, 3, 9)
+    book.evaluate_all()
+    assert [book.get_value("Results", row, 1) for row in range(1, 5)] == [
+        119,
+        119,
+        1_048_575,
+        16_383,
+    ]
+
+
+@pytest.mark.parametrize("span_evaluation", [False, True])
+def test_blank_count_clipping_keeps_uncached_shared_results(
+    xlsx_builder, span_evaluation
+):
+    def populate(book):
+        data = book.active
+        data.title = "Data"
+        for row in range(10, 13):
+            data.cell(row, 3, 7)
+        results = book.create_sheet("Results")
+        for row, formula in enumerate(
+            [
+                'COUNTIF(Data!A1:E20,"")',
+                "COUNTBLANK(Data!A1:E20)",
+                'COUNTIF(Data!C:C,"")',
+                "COUNTBLANK(Data!10:10)",
+                "COUNTIF(Data!A1:E20,7)",
+            ],
+            1,
+        ):
+            results.cell(row, 1, "=" + formula)
+
+    path = xlsx_builder(populate)
+    # Genuine shared OOXML without cached values: counts must see calculated
+    # authority, not merely the input value store's nonempty extent.
+    namespace = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+    output = BytesIO()
+    with ZipFile(path) as original, ZipFile(output, "w") as changed:
+        for entry in original.infolist():
+            content = original.read(entry.filename)
+            if entry.filename == "xl/worksheets/sheet1.xml":
+                sheet = ET.fromstring(content)
+                for cell in sheet.iter(namespace + "c"):
+                    coordinate = cell.get("r")
+                    if coordinate in ("C10", "C11", "C12"):
+                        cell.clear()
+                        cell.set("r", coordinate)
+                        formula = ET.SubElement(
+                            cell, namespace + "f", {"t": "shared", "si": "1"}
+                        )
+                        if coordinate == "C10":
+                            formula.set("ref", "C10:C12")
+                            formula.text = "7"
+                content = ET.tostring(sheet, encoding="utf-8")
+            changed.writestr(entry, content)
+    book = fz.Workbook.from_bytes(output.getvalue(), span_evaluation=span_evaluation)
+    book.evaluate_all()
+    assert [book.get_value("Data", row, 3) for row in range(10, 13)] == [7, 7, 7]
+    assert [book.get_value("Results", row, 1) for row in range(1, 6)] == [
+        97,
+        97,
+        1_048_573,
+        16_383,
+        3,
+    ]

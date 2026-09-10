@@ -76,7 +76,7 @@ enum RangeOrScalar<'a> {
 
 // Blank-sensitive counts must retain the logical extent of whole rows/columns.
 // Ordinary aggregate resolution trims those references to their used region.
-// Keep that physically trimmed view and carry only an arithmetic logical cell
+// Keep a physically bounded view and carry only an arithmetic logical cell
 // count alongside it. Expanding to the full Excel rectangle here would introduce
 // huge unstored-column work. Cached resolution also avoids executing reference-
 // producing expressions twice. u64 keeps whole-sheet counts safe on wasm32.
@@ -84,30 +84,77 @@ fn resolve_count_argument<'a, 'b>(
     arg: &ArgumentHandle<'a, 'b>,
     ctx: &dyn FunctionContext<'b>,
 ) -> Result<(AggregateArgument<'b>, Option<u64>), ExcelError> {
-    let logical_cells = if let crate::function::FunctionResolution::Reference(
-        formualizer_parse::parser::ReferenceType::Range {
-            start_row,
-            end_row,
-            start_col,
-            end_col,
-            ..
-        },
-    ) = arg.resolve_reference_or_value()?
-        && (start_row.is_none() || end_row.is_none() || start_col.is_none() || end_col.is_none())
-    {
-        let rows = start_row
-            .unwrap_or(1)
-            .abs_diff(end_row.unwrap_or(1_048_576)) as u64
-            + 1;
-        let cols = start_col.unwrap_or(1).abs_diff(end_col.unwrap_or(16_384)) as u64 + 1;
-        Some(rows * cols)
-    } else {
-        None
+    use formualizer_parse::parser::ReferenceType;
+
+    let unbounded = match arg.resolve_reference_or_value()? {
+        crate::function::FunctionResolution::Reference(
+            reference @ ReferenceType::Range {
+                start_row,
+                end_row,
+                start_col,
+                end_col,
+                ..
+            },
+        ) if start_row.is_none()
+            || end_row.is_none()
+            || start_col.is_none()
+            || end_col.is_none() =>
+        {
+            Some(reference)
+        }
+        _ => None,
     };
     let argument = resolve_aggregate_argument(arg, ctx)?;
-    if let AggregateArgument::Range(view) = argument {
+    if let AggregateArgument::Range(mut view) = argument {
         let (rows, cols) = view.dims();
-        let logical_cells = logical_cells.unwrap_or(rows as u64 * cols as u64);
+        let mut logical_cells = rows as u64 * cols as u64;
+        if let Some(mut reference) = unbounded {
+            let ReferenceType::Range {
+                start_row,
+                end_row,
+                start_col,
+                end_col,
+                start_row_abs,
+                end_row_abs,
+                start_col_abs,
+                end_col_abs,
+                ..
+            } = &mut reference
+            else {
+                unreachable!()
+            };
+            let (r1, r2) = (start_row.unwrap_or(1), end_row.unwrap_or(1_048_576));
+            let (c1, c2) = (start_col.unwrap_or(1), end_col.unwrap_or(16_384));
+            let logical_rows = r1.abs_diff(r2) as u64 + 1;
+            let logical_cols = c1.abs_diff(c2) as u64 + 1;
+            logical_cells = logical_rows * logical_cols;
+            // Use already-resolved coordinates (including shared-formula rebasing).
+            let (sr, sc) = (view.start_row() as u32 + 1, view.start_col() as u32 + 1);
+            let er = (sr as u64 - 1 + logical_rows).min(view.sheet().nrows as u64) as u32;
+            let ec = (sc as u64 - 1 + logical_cols).min(view.sheet().columns.len() as u64) as u32;
+            let physical_rows = er.saturating_sub(sr.saturating_sub(1)) as usize;
+            let physical_cols = ec.saturating_sub(sc.saturating_sub(1)) as usize;
+            if physical_rows > 0
+                && physical_cols > 0
+                && (physical_rows > rows || physical_cols > cols)
+            {
+                // Generic whole-axis resolution can trim to graph placements,
+                // which excludes spill members beyond their anchor. Re-resolve
+                // only this finite physical rectangle through the context so
+                // computed/spill authority is retained. The argument expression
+                // stays cached; neither the whole Excel axis nor its AST is expanded.
+                *start_row = Some(sr);
+                *end_row = Some(er);
+                *start_col = Some(sc);
+                *end_col = Some(ec);
+                *start_row_abs = true;
+                *end_row_abs = true;
+                *start_col_abs = true;
+                *end_col_abs = true;
+                view = ctx.resolve_range_view(&reference, ctx.current_sheet())?;
+            }
+        }
+        let (rows, cols) = view.dims();
         let physical_rows =
             rows.min((view.sheet().nrows as usize).saturating_sub(view.start_row()));
         let physical_cols = cols.min(view.sheet().columns.len().saturating_sub(view.start_col()));
@@ -116,7 +163,7 @@ fn resolve_count_argument<'a, 'b>(
             Some(logical_cells),
         ));
     }
-    Ok((argument, logical_cells))
+    Ok((argument, None))
 }
 
 fn range_or_scalar<'a, 'b>(

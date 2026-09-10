@@ -10,9 +10,9 @@ This avoids populating a persistent numeric-string cache merely to fix blank mat
 
 ## Logical blank counts (part of #285)
 
-COUNTIF and COUNTBLANK account arithmetically for addressed cells outside physical storage. Direct whole-row/column references retain their logical Excel extents for these counts while the physical count view stays bounded. Whole-sheet cell-count arithmetic uses u64, including on wasm32; it does not iterate or allocate a full unstored worksheet rectangle.
+COUNTIF and COUNTBLANK account arithmetically for addressed cells outside physical storage. Count-specific finite views include available computed/spill values beyond the generic graph-placement bounds, without evaluating reference-producing arguments twice. Direct whole-row/column references retain their logical Excel extents for these counts while the physical count view stays bounded. Whole-sheet cell-count arithmetic uses u64, including on wasm32; it does not iterate or allocate a full unstored worksheet rectangle.
 
-This is not a global range-resolver change. COUNTIFS tail alignment, unbounded named aliases, SUM(IF(...)) and the rest of #285's acceptance remain outside this fix. Wide-reference admission/resolution can still be expensive even when counting the omitted cells is constant work.
+This is not a global range-resolver or dependency-scheduling change. Independent preexisting spill-value retirement and spill-only consumer invalidation bugs reproduced in published 0.9.2 are tracked in [#459](https://github.com/PSU3D0/formualizer/issues/459) and [#460](https://github.com/PSU3D0/formualizer/issues/460), not claimed fixed here. COUNTIFS tail alignment, unbounded named aliases, SUM(IF(...)) and the rest of #285's acceptance remain outside this fix. Wide-reference admission/resolution can still be expensive even when counting the omitted cells is constant work.
 
 ## Existing wildcard compatibility
 
