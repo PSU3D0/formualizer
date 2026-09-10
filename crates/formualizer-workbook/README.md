@@ -21,9 +21,9 @@ Use [`formualizer-eval`](https://crates.io/crates/formualizer-eval) instead if y
 
 ## Cache-only XLSX recalculation
 
-Enable `xlsx-recalc` for `recalculate_xlsx_bytes`. It loads with Calamine, evaluates physical ordinary/shared formula cells with the existing engine, and raw-copies untouched ZIP members while patching changed formula caches. `recalculate_xlsx_file` is native-only and writes a same-directory temporary file before atomic replacement.
+Enable `xlsx-recalc` for `recalculate_xlsx_bytes`. It uses Calamine and the existing evaluator, then surgically patches formula caches and the corresponding ZIP32 metadata without importing an Umya document. Untouched XML, metadata and compressed payloads are retained; a cache no-op returns the original bytes exactly. Native `recalculate_xlsx_file` adds bounded snapshots and same-directory atomic replacement, not source compare-and-swap.
 
-This strict, cache-only surface rejects encrypted/signature-bearing packages, arrays/data tables, external links, dynamic metadata, unsupported scalar results, and malformed/over-budget ZIP/XML inputs. A no-op returns the original bytes exactly. The file helper provides snapshot plus atomic-replace semantics, not compare-and-swap against external writers.
+This is a strict opt-in subset: tables, array/data-table metadata, multi-cell spills, unsupported ZIP/XML representations and nonrepresentable results fail without publishing partial output. Source epochs, typed caches, cooperative cancellation and configurable bounds are covered by the shared core. See [cache-only XLSX](../../docs/cache-only-xlsx.md) for exact eligibility, defaults and error policy.
 
 ## Quick start
 

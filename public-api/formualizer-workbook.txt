@@ -32,6 +32,7 @@ impl core::marker::StructuralPartialEq for formualizer_workbook::backends::calam
 pub struct formualizer_workbook::backends::calamine::CalamineAdapter
 impl formualizer_workbook::backends::calamine::CalamineAdapter
 pub fn formualizer_workbook::backends::calamine::CalamineAdapter::external_link_target(&self, u32) -> core::option::Option<&str>
+pub fn formualizer_workbook::backends::calamine::CalamineAdapter::open_bytes_cancellable(alloc::vec::Vec<u8>, formualizer_eval::engine::cancel::CancelToken) -> core::result::Result<Self, calamine::errors::Error>
 pub fn formualizer_workbook::backends::calamine::CalamineAdapter::open_path_with_source<P: core::convert::AsRef<std::path::Path>>(P, formualizer_workbook::backends::calamine::XlsxPathSource) -> core::result::Result<Self, calamine::errors::Error>
 impl formualizer_workbook::traits::SpreadsheetReader for formualizer_workbook::backends::calamine::CalamineAdapter
 pub type formualizer_workbook::backends::calamine::CalamineAdapter::Error = calamine::errors::Error
@@ -422,6 +423,7 @@ impl core::marker::StructuralPartialEq for formualizer_workbook::backends::calam
 pub struct formualizer_workbook::backends::CalamineAdapter
 impl formualizer_workbook::backends::calamine::CalamineAdapter
 pub fn formualizer_workbook::backends::calamine::CalamineAdapter::external_link_target(&self, u32) -> core::option::Option<&str>
+pub fn formualizer_workbook::backends::calamine::CalamineAdapter::open_bytes_cancellable(alloc::vec::Vec<u8>, formualizer_eval::engine::cancel::CancelToken) -> core::result::Result<Self, calamine::errors::Error>
 pub fn formualizer_workbook::backends::calamine::CalamineAdapter::open_path_with_source<P: core::convert::AsRef<std::path::Path>>(P, formualizer_workbook::backends::calamine::XlsxPathSource) -> core::result::Result<Self, calamine::errors::Error>
 impl formualizer_workbook::traits::SpreadsheetReader for formualizer_workbook::backends::calamine::CalamineAdapter
 pub type formualizer_workbook::backends::calamine::CalamineAdapter::Error = calamine::errors::Error
@@ -652,6 +654,46 @@ pub fn formualizer_workbook::builtins::ensure_builtins_loaded() -> &'static form
 pub fn formualizer_workbook::builtins::load_io_builtins() -> usize
 pub fn formualizer_workbook::builtins::register_function_dynamic(alloc::sync::Arc<dyn formualizer_eval::function::Function>)
 pub fn formualizer_workbook::builtins::try_load_builtins() -> core::result::Result<formualizer_workbook::builtins::BuiltinsGuard, &'static str>
+pub mod formualizer_workbook::cache_recalculate
+pub struct formualizer_workbook::cache_recalculate::XlsxRecalculateLimits
+pub formualizer_workbook::cache_recalculate::XlsxRecalculateLimits::max_cells: usize
+pub formualizer_workbook::cache_recalculate::XlsxRecalculateLimits::max_columns: u32
+pub formualizer_workbook::cache_recalculate::XlsxRecalculateLimits::max_entries: usize
+pub formualizer_workbook::cache_recalculate::XlsxRecalculateLimits::max_expanded_bytes: usize
+pub formualizer_workbook::cache_recalculate::XlsxRecalculateLimits::max_formula_cells: usize
+pub formualizer_workbook::cache_recalculate::XlsxRecalculateLimits::max_input_bytes: usize
+pub formualizer_workbook::cache_recalculate::XlsxRecalculateLimits::max_output_bytes: usize
+pub formualizer_workbook::cache_recalculate::XlsxRecalculateLimits::max_worksheet_bytes: usize
+pub formualizer_workbook::cache_recalculate::XlsxRecalculateLimits::max_xml_depth: usize
+impl core::clone::Clone for formualizer_workbook::cache_recalculate::XlsxRecalculateLimits
+pub fn formualizer_workbook::cache_recalculate::XlsxRecalculateLimits::clone(&self) -> formualizer_workbook::cache_recalculate::XlsxRecalculateLimits
+impl core::default::Default for formualizer_workbook::cache_recalculate::XlsxRecalculateLimits
+pub fn formualizer_workbook::cache_recalculate::XlsxRecalculateLimits::default() -> Self
+impl core::fmt::Debug for formualizer_workbook::cache_recalculate::XlsxRecalculateLimits
+pub fn formualizer_workbook::cache_recalculate::XlsxRecalculateLimits::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct formualizer_workbook::cache_recalculate::XlsxRecalculateOptions
+pub formualizer_workbook::cache_recalculate::XlsxRecalculateOptions::cancel: core::option::Option<formualizer_eval::engine::cancel::CancelToken>
+pub formualizer_workbook::cache_recalculate::XlsxRecalculateOptions::error_location_limit: usize
+pub formualizer_workbook::cache_recalculate::XlsxRecalculateOptions::eval_config: formualizer_eval::engine::EvalConfig
+pub formualizer_workbook::cache_recalculate::XlsxRecalculateOptions::limits: formualizer_workbook::cache_recalculate::XlsxRecalculateLimits
+impl core::clone::Clone for formualizer_workbook::cache_recalculate::XlsxRecalculateOptions
+pub fn formualizer_workbook::cache_recalculate::XlsxRecalculateOptions::clone(&self) -> formualizer_workbook::cache_recalculate::XlsxRecalculateOptions
+impl core::default::Default for formualizer_workbook::cache_recalculate::XlsxRecalculateOptions
+pub fn formualizer_workbook::cache_recalculate::XlsxRecalculateOptions::default() -> Self
+impl core::fmt::Debug for formualizer_workbook::cache_recalculate::XlsxRecalculateOptions
+pub fn formualizer_workbook::cache_recalculate::XlsxRecalculateOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct formualizer_workbook::cache_recalculate::XlsxRecalculateResult
+pub formualizer_workbook::cache_recalculate::XlsxRecalculateResult::bytes: alloc::vec::Vec<u8>
+pub formualizer_workbook::cache_recalculate::XlsxRecalculateResult::cache_cells_changed: usize
+pub formualizer_workbook::cache_recalculate::XlsxRecalculateResult::formula_cells: usize
+pub formualizer_workbook::cache_recalculate::XlsxRecalculateResult::summary: formualizer_workbook::recalculate::RecalculateSummary
+pub formualizer_workbook::cache_recalculate::XlsxRecalculateResult::worksheet_parts_changed: usize
+impl core::clone::Clone for formualizer_workbook::cache_recalculate::XlsxRecalculateResult
+pub fn formualizer_workbook::cache_recalculate::XlsxRecalculateResult::clone(&self) -> formualizer_workbook::cache_recalculate::XlsxRecalculateResult
+impl core::fmt::Debug for formualizer_workbook::cache_recalculate::XlsxRecalculateResult
+pub fn formualizer_workbook::cache_recalculate::XlsxRecalculateResult::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn formualizer_workbook::cache_recalculate::recalculate_xlsx_bytes(&[u8], formualizer_workbook::cache_recalculate::XlsxRecalculateOptions) -> core::result::Result<formualizer_workbook::cache_recalculate::XlsxRecalculateResult, formualizer_workbook::error::IoError>
+pub fn formualizer_workbook::cache_recalculate::recalculate_xlsx_file(&std::path::Path, core::option::Option<&std::path::Path>, formualizer_workbook::cache_recalculate::XlsxRecalculateOptions) -> core::result::Result<formualizer_workbook::cache_recalculate::XlsxRecalculateResult, formualizer_workbook::error::IoError>
 pub mod formualizer_workbook::calc_pr
 pub fn formualizer_workbook::calc_pr::apply_calc_settings_to_cycle(&formualizer_workbook::traits::CalcSettings, formualizer_eval::engine::CycleConfig) -> formualizer_eval::engine::CycleConfig
 pub fn formualizer_workbook::calc_pr::calc_settings_from_cycle(&formualizer_eval::engine::CycleConfig) -> formualizer_workbook::traits::CalcSettings
@@ -1831,6 +1873,7 @@ pub fn formualizer_workbook::traits::BackendCaps::fmt(&self, &mut core::fmt::For
 pub struct formualizer_workbook::CalamineAdapter
 impl formualizer_workbook::backends::calamine::CalamineAdapter
 pub fn formualizer_workbook::backends::calamine::CalamineAdapter::external_link_target(&self, u32) -> core::option::Option<&str>
+pub fn formualizer_workbook::backends::calamine::CalamineAdapter::open_bytes_cancellable(alloc::vec::Vec<u8>, formualizer_eval::engine::cancel::CancelToken) -> core::result::Result<Self, calamine::errors::Error>
 pub fn formualizer_workbook::backends::calamine::CalamineAdapter::open_path_with_source<P: core::convert::AsRef<std::path::Path>>(P, formualizer_workbook::backends::calamine::XlsxPathSource) -> core::result::Result<Self, calamine::errors::Error>
 impl formualizer_workbook::traits::SpreadsheetReader for formualizer_workbook::backends::calamine::CalamineAdapter
 pub type formualizer_workbook::backends::calamine::CalamineAdapter::Error = calamine::errors::Error
@@ -2539,6 +2582,43 @@ pub fn formualizer_workbook::transaction::WriteTransaction<'a, W>::write_cell(&m
 pub fn formualizer_workbook::transaction::WriteTransaction<'a, W>::write_range(&mut self, &str, alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>) -> &mut Self
 impl<'a, W: formualizer_workbook::traits::SpreadsheetWriter> core::ops::drop::Drop for formualizer_workbook::transaction::WriteTransaction<'a, W>
 pub fn formualizer_workbook::transaction::WriteTransaction<'a, W>::drop(&mut self)
+pub struct formualizer_workbook::XlsxRecalculateLimits
+pub formualizer_workbook::XlsxRecalculateLimits::max_cells: usize
+pub formualizer_workbook::XlsxRecalculateLimits::max_columns: u32
+pub formualizer_workbook::XlsxRecalculateLimits::max_entries: usize
+pub formualizer_workbook::XlsxRecalculateLimits::max_expanded_bytes: usize
+pub formualizer_workbook::XlsxRecalculateLimits::max_formula_cells: usize
+pub formualizer_workbook::XlsxRecalculateLimits::max_input_bytes: usize
+pub formualizer_workbook::XlsxRecalculateLimits::max_output_bytes: usize
+pub formualizer_workbook::XlsxRecalculateLimits::max_worksheet_bytes: usize
+pub formualizer_workbook::XlsxRecalculateLimits::max_xml_depth: usize
+impl core::clone::Clone for formualizer_workbook::cache_recalculate::XlsxRecalculateLimits
+pub fn formualizer_workbook::cache_recalculate::XlsxRecalculateLimits::clone(&self) -> formualizer_workbook::cache_recalculate::XlsxRecalculateLimits
+impl core::default::Default for formualizer_workbook::cache_recalculate::XlsxRecalculateLimits
+pub fn formualizer_workbook::cache_recalculate::XlsxRecalculateLimits::default() -> Self
+impl core::fmt::Debug for formualizer_workbook::cache_recalculate::XlsxRecalculateLimits
+pub fn formualizer_workbook::cache_recalculate::XlsxRecalculateLimits::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct formualizer_workbook::XlsxRecalculateOptions
+pub formualizer_workbook::XlsxRecalculateOptions::cancel: core::option::Option<formualizer_eval::engine::cancel::CancelToken>
+pub formualizer_workbook::XlsxRecalculateOptions::error_location_limit: usize
+pub formualizer_workbook::XlsxRecalculateOptions::eval_config: formualizer_eval::engine::EvalConfig
+pub formualizer_workbook::XlsxRecalculateOptions::limits: formualizer_workbook::cache_recalculate::XlsxRecalculateLimits
+impl core::clone::Clone for formualizer_workbook::cache_recalculate::XlsxRecalculateOptions
+pub fn formualizer_workbook::cache_recalculate::XlsxRecalculateOptions::clone(&self) -> formualizer_workbook::cache_recalculate::XlsxRecalculateOptions
+impl core::default::Default for formualizer_workbook::cache_recalculate::XlsxRecalculateOptions
+pub fn formualizer_workbook::cache_recalculate::XlsxRecalculateOptions::default() -> Self
+impl core::fmt::Debug for formualizer_workbook::cache_recalculate::XlsxRecalculateOptions
+pub fn formualizer_workbook::cache_recalculate::XlsxRecalculateOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct formualizer_workbook::XlsxRecalculateResult
+pub formualizer_workbook::XlsxRecalculateResult::bytes: alloc::vec::Vec<u8>
+pub formualizer_workbook::XlsxRecalculateResult::cache_cells_changed: usize
+pub formualizer_workbook::XlsxRecalculateResult::formula_cells: usize
+pub formualizer_workbook::XlsxRecalculateResult::summary: formualizer_workbook::recalculate::RecalculateSummary
+pub formualizer_workbook::XlsxRecalculateResult::worksheet_parts_changed: usize
+impl core::clone::Clone for formualizer_workbook::cache_recalculate::XlsxRecalculateResult
+pub fn formualizer_workbook::cache_recalculate::XlsxRecalculateResult::clone(&self) -> formualizer_workbook::cache_recalculate::XlsxRecalculateResult
+impl core::fmt::Debug for formualizer_workbook::cache_recalculate::XlsxRecalculateResult
+pub fn formualizer_workbook::cache_recalculate::XlsxRecalculateResult::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub const formualizer_workbook::DEFAULT_ERROR_LOCATION_LIMIT: usize
 pub const formualizer_workbook::WASM_ABI_VERSION_V1: u32
 pub const formualizer_workbook::WASM_CODEC_VERSION_V1: u32
@@ -2741,6 +2821,8 @@ pub fn formualizer_workbook::extract_wasm_manifest_json_from_module(&[u8]) -> co
 pub fn formualizer_workbook::parse_wasm_manifest_json(&[u8]) -> core::result::Result<formualizer_workbook::workbook::WasmModuleManifest, formualizer_common::error::ExcelError>
 pub fn formualizer_workbook::recalculate_file(&std::path::Path, core::option::Option<&std::path::Path>) -> core::result::Result<formualizer_workbook::recalculate::RecalculateSummary, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::recalculate_file_with_limit(&std::path::Path, core::option::Option<&std::path::Path>, usize) -> core::result::Result<formualizer_workbook::recalculate::RecalculateSummary, formualizer_workbook::error::IoError>
+pub fn formualizer_workbook::recalculate_xlsx_bytes(&[u8], formualizer_workbook::cache_recalculate::XlsxRecalculateOptions) -> core::result::Result<formualizer_workbook::cache_recalculate::XlsxRecalculateResult, formualizer_workbook::error::IoError>
+pub fn formualizer_workbook::recalculate_xlsx_file(&std::path::Path, core::option::Option<&std::path::Path>, formualizer_workbook::cache_recalculate::XlsxRecalculateOptions) -> core::result::Result<formualizer_workbook::cache_recalculate::XlsxRecalculateResult, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::register_function_dynamic(alloc::sync::Arc<dyn formualizer_eval::function::Function>)
 pub fn formualizer_workbook::try_load_builtins() -> core::result::Result<formualizer_workbook::builtins::BuiltinsGuard, &'static str>
 pub fn formualizer_workbook::validate_wasm_manifest(&formualizer_workbook::workbook::WasmModuleManifest) -> core::result::Result<(), formualizer_common::error::ExcelError>

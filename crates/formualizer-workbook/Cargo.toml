@@ -97,6 +97,10 @@ formualizer-testkit = { path = "../formualizer-testkit" }
 tempfile = { workspace = true }
 umya-spreadsheet = "=2.3.2"
 
+[[example]]
+name = "cache_recalculate"
+required-features = ["xlsx-recalc"]
+
 [[test]]
 name = "calamine"
 path = "tests/calamine/mod.rs"

@@ -56,7 +56,7 @@ USAGE
 feature_profile() {
   case "$1" in
     formualizer)
-      printf '%s\n' 'common,parse,eval,workbook,sheetport,calamine,json,csv,umya,umya3,tracing,tracing_chrome,system-clock'
+      printf '%s\n' 'common,parse,eval,workbook,sheetport,calamine,xlsx-recalc,json,csv,umya,umya3,tracing,tracing_chrome,system-clock'
       ;;
     formualizer-common)
       printf '%s\n' 'serde'
@@ -68,7 +68,7 @@ feature_profile() {
       printf '%s\n' 'system-clock,serde,tracing,tracing_chrome,perf_instrumentation,formula_plane_diagnostics'
       ;;
     formualizer-workbook)
-      printf '%s\n' 'system-clock,json,csv,calamine,umya,umya3,mmap,io_builtins,import_range,webservice,tracing,perf_instrumentation,compression,calamine_integration,umya_integration,wasm_plugins,wasm_runtime_wasmtime'
+      printf '%s\n' 'system-clock,json,csv,calamine,xlsx-recalc,umya,umya3,mmap,io_builtins,import_range,webservice,tracing,perf_instrumentation,compression,calamine_integration,umya_integration,wasm_plugins,wasm_runtime_wasmtime'
       ;;
     formualizer-sheetport)
       printf '%s\n' 'system-clock,umya'

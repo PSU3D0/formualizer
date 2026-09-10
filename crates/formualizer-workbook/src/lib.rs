@@ -23,6 +23,8 @@ pub mod transaction;
 mod wasm_runtime_wasmtime;
 pub mod workbook;
 pub mod worksheet;
+#[cfg(any(feature = "umya3", feature = "xlsx-recalc"))]
+pub(crate) mod xlsx_path;
 
 #[cfg(feature = "csv")]
 pub use backends::CsvAdapter;
