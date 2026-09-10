@@ -20,6 +20,12 @@ Completely demanded eligible families use compressed preparation rather than one
 
 These plans still use existing admission, revision and prevalidated publication boundaries. Source retention is not graph-wide rollback of previously committed prefixes. See [the detailed source ownership contract](architecture/imported-target-source-isolation.md).
 
+## Spill occupancy
+
+Pending formulas remain occupied cells for spill planning and final publication without preparing their expressions. Exact geometry respects holes, residual shared families and live overrides. Blocked anchors keep one retained-admitted retry region each; successful occupancy edits dirty intersecting blocked anchors. Retry scans are linear in the number of tracked blocked anchors. Failed reservations are released.
+
+Existing spill-consumer invalidation and interactive Empty-overlay visibility are not fixed here. An edited Empty can remain publicly visible over a subsequently successful computed spill member; this also occurs in released 0.9.2.
+
 ## Loading and resource implications
 
 Calamine builds text-free coordinate/offset and shared-anchor/offset locators lazily. The initial scan and sort are not repeated for every selected dependency. Later selections seek/decode selected records and any necessary anchor. Cold loading and ordinary full preparation do not unconditionally build those locators.

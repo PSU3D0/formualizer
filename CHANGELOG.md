@@ -4,6 +4,8 @@ All notable changes to Formualizer will be documented in this file.
 
 ## Unreleased
 
+- Prevent spills from overwriting pending formulas without preparing blockers; retain bounded, admitted retry regions and release failed reservations. Existing interactive Empty-overlay visibility remains unchanged.
+
 - Fixed logged workbook formula setters silently swallowing binding/admission failures and clearing existing spills on rejection. Rejected assignments now report errors like unlogged setters; existing deferred-validation and non-atomic batch policies remain unchanged. Added fallible low-level editor APIs without changing legacy signatures. See [formula assignment contracts](docs/formula-assignment-failures.md). (#451)
 - Fixed dependency edges disappearing across split bulk-ingest calls and stale consumers after bulk formula replacement. Complete initial loads retain their fast path. (#456)
 - Preserved imported/staged formula sources after compressed preparation failures so inspection, edits and retries remain possible; corrected inspection of formula text without a leading `=` without changing genuine string-literal formulas. (#452, #455)
