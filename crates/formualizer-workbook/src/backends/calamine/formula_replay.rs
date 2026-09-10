@@ -482,14 +482,19 @@ impl CalamineDeferredFormulaReplay {
         row: u32,
         col: u32,
     ) -> Result<Option<DeferredReplayFormula>, String> {
-        let mut found = None;
+        let mut found: Option<DeferredReplayFormula> = None;
         let sheet_instance = self.sheet_instance;
         replay_spool_with_family(
             &mut self.spool,
             &self.sheet_name,
             |_, _| true,
             |sequence, coord0, text, family| {
-                if coord0.row + 1 == row && coord0.col + 1 == col {
+                if coord0.row + 1 == row
+                    && coord0.col + 1 == col
+                    && found
+                        .as_ref()
+                        .is_none_or(|prior| prior.source_order < SourceFormulaOrder::new(sequence))
+                {
                     let family = family.map(|shared_index| SourceFamilyId {
                         sheet_instance,
                         source_index: shared_index,
@@ -1946,6 +1951,84 @@ mod tests {
         let mut disposition = FormulaReplayDisposition::default();
         disposition.extend_suppressed_excel_coords([(1, 1)]);
         assert!(replay.replay(&disposition).unwrap().is_empty());
+    }
+
+    #[test]
+    fn indexed_shared_forward_override_lookup_uses_source_order_not_emission_order() {
+        let mut spool = HybridFormulaReplaySpool::new(hybrid_limits(
+            u64::MAX,
+            u64::MAX,
+            u64::MAX,
+            u64::MAX,
+            false,
+        ));
+        spool
+            .append(SpoolFormulaRecord::SharedDescendant {
+                sequence: 0,
+                coord0: coord(1, 1),
+                shared_index: 9,
+            })
+            .unwrap();
+        spool
+            .append(SpoolFormulaRecord::Ordinary {
+                sequence: 1,
+                coord0: coord(1, 1),
+                text: "99",
+            })
+            .unwrap();
+        spool
+            .append(SpoolFormulaRecord::SharedAnchor {
+                sequence: 2,
+                coord0: coord(0, 1),
+                shared_index: 9,
+                declared_range: None,
+                text: "A1+1",
+            })
+            .unwrap();
+        let mut replay = CalamineDeferredFormulaReplay::new(spool, "Sheet1".into(), 0);
+        assert_eq!(replay.formula_at(2, 2).unwrap().unwrap().text, "99");
+        let selected = replay
+            .replay_selected_exact(&[(2, 2)], &mut |_, _| Ok(()))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            selected
+                .iter()
+                .map(|record| record.text.as_str())
+                .collect::<Vec<_>>(),
+            ["A2+1", "99"]
+        );
+        let mut work = 0;
+        assert!(
+            replay
+                .replay_selected_exact(&[(2, 2)], &mut |units, _| {
+                    work += units;
+                    if work >= 3 {
+                        Err(formualizer_common::ExcelError::new(
+                            formualizer_common::ExcelErrorKind::Value,
+                        )
+                        .with_message("cancelled anchor read"))
+                    } else {
+                        Ok(())
+                    }
+                })
+                .is_err()
+        );
+        assert!(
+            replay
+                .cache_footprint
+                .load(std::sync::atomic::Ordering::Acquire)
+                > 0
+        );
+        assert_eq!(
+            replay
+                .replay_selected_exact(&[(2, 2)], &mut |_, _| Ok(()))
+                .unwrap()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(replay.formula_at(2, 2).unwrap().unwrap().text, "99");
     }
 
     #[test]
