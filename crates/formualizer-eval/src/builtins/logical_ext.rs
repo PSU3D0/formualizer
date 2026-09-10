@@ -277,7 +277,7 @@ pub struct IfErrorFn; // IFERROR(value, fallback)
 ///   - ISERROR
 /// faq:
 ///   - q: "Does IFERROR catch all error types?"
-///     a: "Yes. Any error kind in the first argument triggers the fallback value."
+///     a: "An error produced while evaluating the first argument triggers the fallback. Dependency preparation and request-level failures can still abort before the guard runs."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: IFERROR
