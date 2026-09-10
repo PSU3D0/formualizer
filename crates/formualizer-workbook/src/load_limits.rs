@@ -1,6 +1,7 @@
 use crate::IoError;
 use formualizer_eval::engine::WorkbookLoadLimits;
 
+#[allow(dead_code)] // Calamine only uses dimension admission; JSON/Umya use sparse staging.
 pub(crate) fn use_sparse_initial_ingest(
     rows: u32,
     cols: u32,
@@ -56,6 +57,7 @@ pub(crate) fn enforce_sheet_dimension_limits(
     Ok(())
 }
 
+#[allow(dead_code)] // Calamine only uses dimension admission; JSON/Umya use sparse staging.
 pub(crate) fn enforce_sheet_load_limits(
     backend: &str,
     sheet: &str,
