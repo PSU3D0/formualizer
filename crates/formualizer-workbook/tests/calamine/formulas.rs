@@ -189,6 +189,111 @@ fn calamine_ordinary_targets_isolate_unrelated_preparation_failures() {
 }
 
 #[test]
+fn calamine_locator_retained_admission_across_packages_and_failures() {
+    use formualizer_eval::engine::{EvaluationBudgets, ResourceExhaustionReason};
+    use formualizer_workbook::{LoadStrategy, Workbook, WorkbookConfig};
+    let path = build_workbook(|book| {
+        book.new_sheet("Second").unwrap();
+        for name in ["Sheet1", "Second"] {
+            let sh = book.get_sheet_by_name_mut(name).unwrap();
+            for row in 1..=1000 {
+                sh.get_cell_mut((1, row)).set_formula("1+2");
+            }
+            sh.get_cell_mut((2, 1)).set_formula("NOSHEET!A1");
+        }
+    });
+    for fail_first in [false, true] {
+        let mut wb = Workbook::from_reader(
+            CalamineAdapter::open_path(&path).unwrap(),
+            LoadStrategy::EagerAll,
+            WorkbookConfig::interactive(),
+        )
+        .unwrap();
+        let prepare = |wb: &mut Workbook, sheet: &str, row, col| {
+            wb.engine_mut().prepare_graph_for_targets(
+                &[formualizer_eval::engine::EvaluationTarget::Cell {
+                    sheet: sheet.into(),
+                    row,
+                    col,
+                }],
+                Default::default(),
+            )
+        };
+        let mut budgets = EvaluationBudgets::default();
+        budgets.retained.total_bytes = Some(20_000);
+        wb.engine_mut()
+            .set_evaluation_resource_budgets(budgets.clone());
+        assert_eq!(
+            prepare(&mut wb, "Sheet1", 1, if fail_first { 2 } else { 1 }).is_err(),
+            fail_first
+        );
+        let stats = wb
+            .engine()
+            .last_evaluation_resource_request_stats()
+            .unwrap();
+        assert_eq!(stats.ledger.retained_current, 16_384);
+        assert_eq!(stats.ledger.scratch_current, 0);
+        // A second package cannot hide its locator behind released request scratch.
+        assert!(prepare(&mut wb, "Second", 1, 1).is_err());
+        let stats = wb
+            .engine()
+            .last_evaluation_resource_request_stats()
+            .unwrap();
+        assert_eq!(
+            stats.ledger.exhaustion,
+            Some(ResourceExhaustionReason::RetainedMemory)
+        );
+        assert_eq!(stats.ledger.retained_current, 16_384);
+        // Tightening must reject even warm reuse and report the still-live cache.
+        budgets.retained.total_bytes = Some(1);
+        wb.engine_mut()
+            .set_evaluation_resource_budgets(budgets.clone());
+        assert!(prepare(&mut wb, "Sheet1", 2, 1).is_err());
+        assert_eq!(
+            wb.engine()
+                .last_evaluation_resource_request_stats()
+                .unwrap()
+                .ledger
+                .retained_current,
+            16_384
+        );
+        budgets.retained.total_bytes = Some(40_000);
+        wb.engine_mut().set_evaluation_resource_budgets(budgets);
+        prepare(&mut wb, "Sheet1", 2, 1).unwrap();
+        let warm = wb
+            .engine()
+            .last_evaluation_resource_request_stats()
+            .unwrap();
+        assert_eq!(warm.ledger.retained_current, 16_384);
+        assert!(
+            warm.ledger.work_charged < 1000,
+            "warm selection must not rescan"
+        );
+        // Binding failure after publication still owns/admitted the second cache.
+        assert!(prepare(&mut wb, "Second", 1, 2).is_err());
+        assert_eq!(
+            wb.engine()
+                .last_evaluation_resource_request_stats()
+                .unwrap()
+                .ledger
+                .retained_current,
+            32_768
+        );
+        wb.add_sheet("NOSHEET").unwrap();
+        wb.engine_mut().build_graph_all().unwrap();
+        // Complete source consumption drops both backend tokens at request end.
+        assert_eq!(
+            wb.engine()
+                .last_evaluation_resource_request_stats()
+                .unwrap()
+                .ledger
+                .retained_current,
+            0
+        );
+    }
+}
+
+#[test]
 #[ignore = "manual indexed target timing probe"]
 fn calamine_indexed_target_cost_probe() {
     use formualizer_workbook::{LoadStrategy, Workbook, WorkbookConfig};

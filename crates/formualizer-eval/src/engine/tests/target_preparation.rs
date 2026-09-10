@@ -660,6 +660,100 @@ fn indexed_package(sheet: &str, formulas: &[(u32, u32, &str)]) -> DeferredFormul
 }
 
 #[test]
+fn indexed_cache_shared_replay_is_counted_once_without_locking_or_retaining_source() {
+    use std::sync::atomic::AtomicU64;
+    struct CachedReplay {
+        inner: Box<dyn DeferredFormulaReplay>,
+        footprint: Arc<AtomicU64>,
+    }
+    impl DeferredFormulaReplay for CachedReplay {
+        fn selection_cache_footprint(&self) -> Option<std::sync::Weak<AtomicU64>> {
+            Some(Arc::downgrade(&self.footprint))
+        }
+        fn replay(
+            &mut self,
+            disposition: &FormulaReplayDisposition,
+        ) -> Result<Vec<DeferredReplayFormula>, String> {
+            self.inner.replay(disposition)
+        }
+        fn formula_at(
+            &mut self,
+            row: u32,
+            col: u32,
+        ) -> Result<Option<DeferredReplayFormula>, String> {
+            self.inner.formula_at(row, col)
+        }
+        fn replay_selected_ordinary(
+            &mut self,
+            coordinates: &[(u32, u32)],
+            checkpoint: &mut dyn FnMut(u64, u64) -> Result<(), formualizer_common::ExcelError>,
+        ) -> Result<Option<Vec<DeferredReplayFormula>>, formualizer_common::ExcelError> {
+            if self.footprint.load(Ordering::Acquire) == 0 {
+                checkpoint(0, 64)?;
+                self.footprint.store(64, Ordering::Release);
+            }
+            self.inner.replay_selected_ordinary(coordinates, checkpoint)
+        }
+    }
+    let mut engine = engine(FormulaPlaneMode::Off);
+    let mut first = indexed_package("Inputs", &[(1, 1, "1+2"), (2, 1, "3+4")]);
+    let inner = Arc::try_unwrap(first.replay)
+        .ok()
+        .unwrap()
+        .into_inner()
+        .unwrap();
+    let footprint = Arc::new(AtomicU64::new(0));
+    let weak = Arc::downgrade(&footprint);
+    first.replay = Arc::new(std::sync::Mutex::new(Box::new(CachedReplay {
+        inner,
+        footprint,
+    })));
+    let shared = first.replay.clone();
+    let mut second = indexed_package("Outputs", &[(1, 1, "1+2"), (2, 1, "3+4")]);
+    second.replay = shared.clone();
+    engine.source_formula_ingress().stage_deferred(first);
+    engine.source_formula_ingress().stage_deferred(second);
+    let mut budgets = EvaluationBudgets::default();
+    budgets.retained.total_bytes = Some(64);
+    engine.set_evaluation_resource_budgets(budgets);
+    engine
+        .prepare_graph_for_targets(
+            &[cell("Inputs", 1, 1), cell("Outputs", 1, 1)],
+            Default::default(),
+        )
+        .unwrap();
+    assert_eq!(
+        engine
+            .last_evaluation_resource_request_stats()
+            .unwrap()
+            .ledger
+            .retained_current,
+        64
+    );
+    engine.build_graph_all().unwrap();
+    // External replay ownership is real cache ownership even after package consumption.
+    assert_eq!(
+        engine
+            .last_evaluation_resource_request_stats()
+            .unwrap()
+            .ledger
+            .retained_current,
+        64
+    );
+    drop(shared);
+    assert!(weak.upgrade().is_none());
+    engine.build_graph_all().unwrap();
+    assert_eq!(
+        engine
+            .last_evaluation_resource_request_stats()
+            .unwrap()
+            .ledger
+            .retained_current,
+        0
+    );
+}
+
+#[test]
 fn indexed_ordinary_package_targets_isolate_failures_and_retain_residual_source() {
     for mode in [
         FormulaPlaneMode::Off,

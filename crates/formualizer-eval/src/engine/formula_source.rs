@@ -957,6 +957,22 @@ pub struct DeferredReplayFormula {
 /// loading. This deliberately has no clone/snapshot operation.
 #[doc(hidden)]
 pub trait DeferredFormulaReplay: Send {
+    /// Optional lifetime footprint for immutable selection caches: the sum of all
+    /// resident cache allocation capacities in bytes (not lengths or new growth).
+    /// Return the same weak token for this source's lifetime, initially zero; set
+    /// it back to zero if storage is evicted while the source remains alive.
+    /// The backend owns the
+    /// strong token and publishes actual retained capacity with Release ordering,
+    /// including when selection fails after cache publication. Drop the token when
+    /// its storage dies; observers never keep the source alive or lock other replays.
+    /// With a token, selection checkpoint bytes admit retained growth (as well as
+    /// construction scratch) before allocation/publication. Without one, checkpoint
+    /// bytes describe request-local scratch only: no cache may retain that storage.
+    #[doc(hidden)]
+    fn selection_cache_footprint(&self) -> Option<std::sync::Weak<std::sync::atomic::AtomicU64>> {
+        None
+    }
+
     fn replay(
         &mut self,
         disposition: &FormulaReplayDisposition,

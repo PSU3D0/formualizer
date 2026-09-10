@@ -1170,6 +1170,8 @@ pub struct Engine<R> {
     evaluation_resource_config_diagnostic:
         Option<crate::engine::EvaluationResourceConfigDiagnostic>,
     active_resource_ledger: Option<ResourceLedger>,
+    source_cache_footprints: Vec<std::sync::Weak<std::sync::atomic::AtomicU64>>,
+    source_cache_accounted: u64,
 
     /// SCC members that entered iterative calculation (`CyclePolicy::Iterate`
     /// with a witnessed live cycle) during the current evaluation request
@@ -3029,6 +3031,8 @@ where
             evaluation_resource_budgets: resolved_resources.budgets,
             evaluation_resource_config_diagnostic: resolved_resources.diagnostic,
             active_resource_ledger: None,
+            source_cache_footprints: Vec::new(),
+            source_cache_accounted: 0,
             pending_iterative_redirty: Vec::new(),
             retained_scc_members: FxHashMap::default(),
             next_retained_scc_id: 0,
@@ -3194,6 +3198,8 @@ where
             evaluation_resource_budgets: resolved_resources.budgets,
             evaluation_resource_config_diagnostic: resolved_resources.diagnostic,
             active_resource_ledger: None,
+            source_cache_footprints: Vec::new(),
+            source_cache_accounted: 0,
             pending_iterative_redirty: Vec::new(),
             retained_scc_members: FxHashMap::default(),
             next_retained_scc_id: 0,
@@ -3304,6 +3310,31 @@ where
         self.last_evaluation_resource_request = None;
     }
 
+    // Reconcile without replay locks: several packages may share the same Arc.
+    // Weak tokens neither retain dead packages nor duplicate their allocations.
+    fn reconcile_source_cache_footprints(&mut self) -> Result<(), ExcelError> {
+        let mut bytes = 0u64;
+        self.source_cache_footprints.retain(|weak| {
+            let Some(footprint) = weak.upgrade() else {
+                return false;
+            };
+            bytes = bytes.saturating_add(footprint.load(std::sync::atomic::Ordering::Acquire));
+            true
+        });
+        if let Some(ledger) = self.active_resource_ledger.as_mut() {
+            ledger
+                .release_retained(self.source_cache_accounted)
+                .map_err(crate::engine::ResourceLedgerError::into_excel_error)?;
+            // Observe first: even a tightened budget cannot erase live ownership.
+            ledger.observe_retained(bytes);
+            self.source_cache_accounted = bytes;
+            ledger
+                .reserve_retained(0)
+                .map_err(crate::engine::ResourceLedgerError::into_excel_error)?;
+        }
+        Ok(())
+    }
+
     fn duration_ns(duration: std::time::Duration) -> u64 {
         u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
     }
@@ -3327,6 +3358,7 @@ where
             ));
             self.evaluation_resource_baseline.record_started(request_id);
             self.evaluation_resource_request_started_at = Some(crate::instant::FzInstant::now());
+            self.source_cache_accounted = 0;
             self.active_resource_ledger = Some(ResourceLedger::new(
                 Some(request_id),
                 self.evaluation_resource_budgets.clone(),
@@ -3335,13 +3367,21 @@ where
         self.evaluation_resource_request_depth =
             self.evaluation_resource_request_depth.saturating_add(1);
         let result = if outermost {
-            self.resource_checkpoint(0).and_then(|()| evaluate(self))
+            self.reconcile_source_cache_footprints()
+                .and_then(|()| self.resource_checkpoint(0))
+                .and_then(|()| evaluate(self))
         } else {
             evaluate(self)
         };
         self.evaluation_resource_request_depth =
             self.evaluation_resource_request_depth.saturating_sub(1);
 
+        let reconciliation = if outermost {
+            self.reconcile_source_cache_footprints()
+        } else {
+            Ok(())
+        };
+        let result = result.and_then(|value| reconciliation.map(|()| value));
         if outermost {
             let total_ns = self
                 .evaluation_resource_request_started_at
@@ -6241,6 +6281,15 @@ where
     }
 
     fn stage_deferred_formula_package(&mut self, package: crate::engine::DeferredFormulaPackage) {
+        if let Ok(replay) = package.replay.lock()
+            && let Some(footprint) = replay.selection_cache_footprint()
+            && !self
+                .source_cache_footprints
+                .iter()
+                .any(|known| known.ptr_eq(&footprint))
+        {
+            self.source_cache_footprints.push(footprint);
+        }
         let sheet = package.sheet_name.clone();
         let staged = self.staged_formulas.entry(sheet.clone()).or_default();
         debug_assert!(staged.deferred_package.is_none());
@@ -8392,18 +8441,27 @@ where
             .filter(|point| !package.suppressed.contains(point))
             .collect();
         let coordinates: Vec<_> = selected_points.iter().copied().collect();
-        let records = replay
-            .lock()
-            .map_err(|_| {
-                ExcelError::new(ExcelErrorKind::Value)
-                    .with_message("deferred formula spool lock poisoned")
-            })?
-            .replay_selected_ordinary(&coordinates, &mut |work, bytes| {
-                self.target_preparation_checkpoint(deadline, work)?;
-                self.reserve_graph_source_scratch(bytes)?;
-                *scratch = scratch.saturating_add(bytes);
-                Ok(())
-            })?;
+        let mut replay_guard = replay.lock().map_err(|_| {
+            ExcelError::new(ExcelErrorKind::Value)
+                .with_message("deferred formula spool lock poisoned")
+        })?;
+        let retained = replay_guard.selection_cache_footprint().is_some();
+        let records = replay_guard.replay_selected_ordinary(&coordinates, &mut |work, bytes| {
+            self.target_preparation_checkpoint(deadline, work)?;
+            if retained && let Some(ledger) = self.active_resource_ledger.as_mut() {
+                ledger
+                    .reserve_retained(bytes)
+                    .map_err(crate::engine::ResourceLedgerError::into_excel_error)?;
+                self.source_cache_accounted = self.source_cache_accounted.saturating_add(bytes);
+            }
+            self.reserve_graph_source_scratch(bytes)?;
+            *scratch = scratch.saturating_add(bytes);
+            Ok(())
+        });
+        drop(replay_guard);
+        let reconciled = self.reconcile_source_cache_footprints();
+        let records = records?;
+        reconciled?;
         let Some(mut replay_records) = records else {
             return Ok(None);
         };

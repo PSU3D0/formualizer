@@ -399,6 +399,7 @@ pub(super) struct CalamineDeferredFormulaReplay {
     /// Lazy, text-free coordinate/offset locator. None means not scanned yet;
     /// Err means genuine shared/unsupported source semantics require full replay.
     ordinary_index: Option<Result<OrdinaryReplayLocator, ()>>,
+    cache_footprint: std::sync::Arc<std::sync::atomic::AtomicU64>,
     spool: HybridFormulaReplaySpool,
     sheet_name: String,
     sheet_instance: u32,
@@ -412,6 +413,7 @@ impl CalamineDeferredFormulaReplay {
     ) -> Self {
         Self {
             ordinary_index: None,
+            cache_footprint: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             spool,
             sheet_name,
             sheet_instance,
@@ -509,6 +511,10 @@ impl CalamineDeferredFormulaReplay {
 }
 
 impl DeferredFormulaReplay for CalamineDeferredFormulaReplay {
+    fn selection_cache_footprint(&self) -> Option<std::sync::Weak<std::sync::atomic::AtomicU64>> {
+        Some(std::sync::Arc::downgrade(&self.cache_footprint))
+    }
+
     fn replay(
         &mut self,
         disposition: &FormulaReplayDisposition,
@@ -555,10 +561,14 @@ impl DeferredFormulaReplay for CalamineDeferredFormulaReplay {
                 if index.len() == index.capacity() {
                     let additional = index.capacity().max(256);
                     checkpoint(0, (additional as u64).saturating_mul(16))?;
+                    let admitted_capacity = index.capacity() + additional;
                     index.try_reserve_exact(additional).map_err(|_| {
                         ExcelError::new(ExcelErrorKind::Value)
                             .with_message("ordinary source locator allocation failed")
                     })?;
+                    // Allocators may provide more capacity than requested. Admit
+                    // that excess before this allocation can become retained.
+                    checkpoint(0, (index.capacity() - admitted_capacity) as u64 * 16)?;
                 }
                 index.push((coord0.row + 1, coord0.col + 1, offset));
             }
@@ -568,6 +578,10 @@ impl DeferredFormulaReplay for CalamineDeferredFormulaReplay {
                 0,
             )?;
             index.sort_unstable();
+            self.cache_footprint.store(
+                index.capacity() as u64 * std::mem::size_of::<(u32, u32, u64)>() as u64,
+                std::sync::atomic::Ordering::Release,
+            );
             self.ordinary_index = Some(Ok(index));
         }
         let Some(Ok(index)) = &self.ordinary_index else {
@@ -1872,6 +1886,7 @@ mod tests {
             }
             let mut replay = CalamineDeferredFormulaReplay::new(spool, "Sheet1".into(), 0);
             assert!(replay.ordinary_index.is_none());
+            let footprint = replay.selection_cache_footprint().unwrap();
             let mut scanned = 0;
             let failure = replay
                 .replay_selected_ordinary(&[(1, 1)], &mut |work, _| {
@@ -1895,6 +1910,38 @@ mod tests {
             });
             assert!(denied.is_err());
             assert!(replay.ordinary_index.is_none());
+            assert_eq!(
+                footprint
+                    .upgrade()
+                    .unwrap()
+                    .load(std::sync::atomic::Ordering::Acquire),
+                0
+            );
+            // Cancel on the first indexed lookup, after construction/publication.
+            let mut sorted = false;
+            let failed = replay.replay_selected_ordinary(&[(1, 1)], &mut |work, _| {
+                if sorted {
+                    return Err(ExcelError::new(ExcelErrorKind::Cancelled));
+                }
+                sorted = work > 10_000;
+                Ok(())
+            });
+            assert!(failed.is_err());
+            let capacity = replay
+                .ordinary_index
+                .as_ref()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .capacity() as u64
+                * 16;
+            assert_eq!(
+                footprint
+                    .upgrade()
+                    .unwrap()
+                    .load(std::sync::atomic::Ordering::Acquire),
+                capacity
+            );
             let mut bytes = 0;
             let started = std::time::Instant::now();
             let records = replay
@@ -1906,7 +1953,8 @@ mod tests {
                 .unwrap();
             let first = started.elapsed();
             assert_eq!(records.len(), 1);
-            assert!((160_000..=320_000).contains(&bytes));
+            assert_eq!(bytes, 0, "retry reuses the retained locator");
+            assert!((160_000..=320_000).contains(&capacity));
             let mut work = 0;
             let started = std::time::Instant::now();
             for row in 2..=101 {
@@ -1923,8 +1971,13 @@ mod tests {
             }
             assert_eq!(work, 200);
             eprintln!(
-                "ordinary locator disk={disk} records=10000 locator_bytes={bytes} first={first:?} next100={:?} bounded_work={work}",
+                "ordinary locator disk={disk} records=10000 locator_bytes={capacity} retry={first:?} next100={:?} bounded_work={work}",
                 started.elapsed()
+            );
+            drop(replay);
+            assert!(
+                footprint.upgrade().is_none(),
+                "observation must not retain a dead cache"
             );
         }
     }
