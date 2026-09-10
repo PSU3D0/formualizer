@@ -3,6 +3,7 @@ from __future__ import annotations
 from io import BytesIO
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
+from xml.etree import ElementTree as ET
 
 import pytest
 
@@ -17,7 +18,7 @@ def fixture_xlsx(*, formula: bool = True) -> bytes:
         + '</row></sheetData></worksheet>'
     )
     members = {
-        "[Content_Types].xml": '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>',
+        "[Content_Types].xml": '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>',
         "_rels/.rels": '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>',
         "xl/workbook.xml": '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>',
         "xl/_rels/workbook.xml.rels": '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>',
@@ -43,8 +44,14 @@ def test_recalculate_xlsx_bytes_updates_typed_cache_and_returns_bytes():
     assert result["formula_cells"] == result["cache_cells_changed"] == 1
     assert result["worksheet_parts_changed"] == 1
     xml = worksheet_xml(result["bytes"])
-    assert '<c r="C1"><f>A1+B1</f><v>3</v></c>' in xml
-    assert 't="str"' not in xml
+    ns = {"s": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+    cell = ET.fromstring(xml).find('.//s:c[@r="C1"]', ns)
+    assert cell is not None and cell.get("t") is None
+    assert cell.findtext("s:f", namespaces=ns) == "A1+B1"
+    assert cell.findtext("s:v", namespaces=ns) == "3"
+    repeated = fz.recalculate_xlsx_bytes(result["bytes"])
+    assert repeated["bytes"] == result["bytes"]
+    assert repeated["cache_cells_changed"] == 0
 
 
 def test_recalculate_xlsx_bytes_no_formula_is_a_noop():

@@ -67,7 +67,7 @@ fn xlsx_summary_to_js(
         &JsValue::from_str("total_errors"),
         &JsValue::from_f64(summary.errors as f64),
     )?;
-    let sheets = Object::new();
+    let sheet_entries = js_sys::Array::new();
     for (name, stats) in summary.sheets {
         let sheet = Object::new();
         Reflect::set(
@@ -80,8 +80,14 @@ fn xlsx_summary_to_js(
             &JsValue::from_str("errors"),
             &JsValue::from_f64(stats.errors as f64),
         )?;
-        Reflect::set(&sheets, &JsValue::from_str(&name), &sheet)?;
+        let entry = js_sys::Array::new();
+        entry.push(&JsValue::from_str(&name));
+        entry.push(&sheet);
+        sheet_entries.push(&entry);
     }
+    // Sheet names are user data: fromEntries creates own data properties even
+    // for __proto__, rather than invoking Object.prototype's inherited setter.
+    let sheets = Object::from_entries(&sheet_entries)?;
     Reflect::set(&out, &JsValue::from_str("sheets"), &sheets)?;
     if !summary.error_summary.is_empty() {
         let errors = Object::new();
