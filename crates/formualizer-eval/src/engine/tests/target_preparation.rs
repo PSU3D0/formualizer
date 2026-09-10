@@ -482,6 +482,7 @@ fn failed_direct_preparation_retries_a_committed_source_prefix() {
                 .build_graph_for_sheets(["Outputs", "Middle"])
                 .is_err()
         );
+        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
         assert!(engine.get_staged_formula_text("Outputs", 1, 2).is_some());
         assert_eq!(
             engine.get_staged_formula_text("Middle", 1, 1).as_deref(),
