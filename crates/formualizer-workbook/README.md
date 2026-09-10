@@ -19,6 +19,12 @@ Use `formualizer-workbook` for **most integrations**:
 
 Use [`formualizer-eval`](https://crates.io/crates/formualizer-eval) instead if you need direct engine access with custom resolvers.
 
+## Cache-only XLSX recalculation
+
+Enable `xlsx-recalc` for `recalculate_xlsx_bytes`. It loads with Calamine, evaluates physical ordinary/shared formula cells with the existing engine, and raw-copies untouched ZIP members while patching changed formula caches. `recalculate_xlsx_file` is native-only and writes a same-directory temporary file before atomic replacement.
+
+This strict, cache-only surface rejects encrypted/signature-bearing packages, arrays/data tables, external links, dynamic metadata, unsupported scalar results, and malformed/over-budget ZIP/XML inputs. A no-op returns the original bytes exactly. The file helper provides snapshot plus atomic-replace semantics, not compare-and-swap against external writers.
+
 ## Quick start
 
 ```rust

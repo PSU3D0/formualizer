@@ -2,6 +2,8 @@
 
 pub mod backends;
 pub mod builtins;
+#[cfg(feature = "xlsx-recalc")]
+pub mod cache_recalculate;
 pub mod calc_pr;
 pub mod error;
 #[cfg(any(
@@ -11,7 +13,7 @@ pub mod error;
     feature = "umya3"
 ))]
 pub(crate) mod load_limits;
-#[cfg(feature = "umya")]
+#[cfg(any(feature = "umya", feature = "xlsx-recalc"))]
 pub mod recalculate;
 pub mod resolver;
 pub mod session;
@@ -39,12 +41,20 @@ pub use backends::{CalamineAdapter, XlsxPathSource};
 #[cfg(any(feature = "umya", feature = "umya3"))]
 pub use backends::{FormulaCacheUpdate, FormulaCacheUpdateRef};
 pub use builtins::{ensure_builtins_loaded, register_function_dynamic, try_load_builtins};
+#[cfg(all(feature = "xlsx-recalc", not(target_arch = "wasm32")))]
+pub use cache_recalculate::recalculate_xlsx_file;
+#[cfg(feature = "xlsx-recalc")]
+pub use cache_recalculate::{
+    XlsxRecalculateLimits, XlsxRecalculateOptions, XlsxRecalculateResult, recalculate_xlsx_bytes,
+};
 pub use error::{IoError, with_cell_context};
-#[cfg(feature = "umya")]
+#[cfg(any(feature = "umya", feature = "xlsx-recalc"))]
 pub use recalculate::{
     DEFAULT_ERROR_LOCATION_LIMIT, RecalculateErrorSummary, RecalculateSheetSummary,
-    RecalculateStatus, RecalculateSummary, recalculate_file, recalculate_file_with_limit,
+    RecalculateStatus, RecalculateSummary,
 };
+#[cfg(feature = "umya")]
+pub use recalculate::{recalculate_file, recalculate_file_with_limit};
 pub use resolver::IoResolver;
 pub use session::{EditorSession, IoConfig};
 pub use traits::{

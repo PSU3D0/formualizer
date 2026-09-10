@@ -41,6 +41,8 @@ csv = ["dep:csv"]
 # make that variant fail with ErrorKind::Unsupported in every default calamine
 # build (including the Python extension, which enables calamine but not mmap).
 calamine = ["dep:calamine", "dep:zip", "dep:quick-xml", "dep:memmap2"]
+# Package-preserving XLSX formula-cache recalculation through Calamine and ZIP.
+xlsx-recalc = ["calamine"]
 umya = ["dep:umya-spreadsheet", "dep:zip", "dep:quick-xml"]
 umya3 = ["dep:umya-spreadsheet3", "dep:zip", "dep:quick-xml", "dep:getrandom04"]
 # No-op compatibility alias, retained only so existing `features = ["mmap"]`
