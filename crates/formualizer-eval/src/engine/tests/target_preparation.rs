@@ -660,6 +660,126 @@ fn indexed_package(sheet: &str, formulas: &[(u32, u32, &str)]) -> DeferredFormul
 }
 
 #[test]
+fn pending_spill_ordinary_and_indexed_blockers_are_not_prepared_and_retry() {
+    for mode in [FormulaPlaneMode::Off, FormulaPlaneMode::Shadow] {
+        for indexed in [false, true] {
+            for blocker in ["99", "NOSHEET!A1"] {
+                let mut engine = engine(mode);
+                if indexed {
+                    engine
+                        .source_formula_ingress()
+                        .stage_deferred(indexed_package(
+                            "Inputs",
+                            &[(1, 1, "SEQUENCE(2)"), (2, 1, blocker)],
+                        ));
+                } else {
+                    engine.stage_formula_text("Inputs", 1, 1, "SEQUENCE(2)".into());
+                    engine.stage_formula_text("Inputs", 2, 1, blocker.into());
+                }
+                for _ in 0..3 {
+                    let value = engine.evaluate_cell("Inputs", 1, 1);
+                    assert!(
+                        matches!(&value, Ok(Some(LiteralValue::Error(e))) | Err(e) if e.kind == formualizer_common::ExcelErrorKind::Spill),
+                        "{mode:?} indexed={indexed} blocker={blocker}: {value:?}"
+                    );
+                    assert_eq!(
+                        engine.get_staged_formula_text("Inputs", 2, 1).as_deref(),
+                        Some(blocker),
+                        "{mode:?} indexed={indexed}"
+                    );
+                    assert!(!matches!(
+                        engine.get_cell_value("Inputs", 2, 1),
+                        Some(LiteralValue::Number(2.0))
+                    ));
+                }
+                if blocker == "NOSHEET!A1" {
+                    assert!(engine.build_graph_all().is_err());
+                }
+                // No read dependency is introduced: the invalid blocker remains source.
+                engine.clear_staged_formula_text("Inputs", 2, 1);
+                engine
+                    .set_cell_value("Inputs", 2, 1, LiteralValue::Empty)
+                    .unwrap();
+                assert_eq!(
+                    engine.evaluate_cell("Inputs", 1, 1).unwrap(),
+                    Some(LiteralValue::Number(1.0))
+                );
+                assert_eq!(
+                    engine.get_cell_value("Inputs", 2, 1),
+                    Some(LiteralValue::Number(2.0))
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn pending_spill_family_fragments_holes_and_source_overrides() {
+    for row in [150, 151, 152, 153] {
+        for suppress in [false, true] {
+            let mut engine = engine(FormulaPlaneMode::Off);
+            engine
+                .set_cell_formula(
+                    "Inputs",
+                    row,
+                    2,
+                    formualizer_parse::parse("=SEQUENCE(1,2)").unwrap(),
+                )
+                .unwrap();
+            engine
+                .source_formula_ingress()
+                .stage_deferred(fragmented_family_package("Inputs", 0));
+            if suppress {
+                engine.clear_staged_formula_text("Inputs", row, 3);
+            }
+            let blocked = row != 151 && !suppress;
+            let value = engine.evaluate_cell("Inputs", row, 2).unwrap();
+            assert_eq!(
+                matches!(&value, Some(LiteralValue::Error(e)) if e.kind == formualizer_common::ExcelErrorKind::Spill),
+                blocked,
+                "row={row} suppress={suppress} value={value:?}"
+            );
+            assert!(engine.has_staged_formulas());
+            if suppress {
+                // A tombstoned package source must not hide a newer ordinary formula.
+                engine.stage_formula_text("Inputs", row, 3, "NOSHEET!A1".into());
+                engine
+                    .set_cell_formula(
+                        "Inputs",
+                        row,
+                        2,
+                        formualizer_parse::parse("=SEQUENCE(1,2)").unwrap(),
+                    )
+                    .unwrap();
+                assert!(
+                    matches!(engine.evaluate_cell("Inputs", row, 2).unwrap(), Some(LiteralValue::Error(e)) if e.kind == formualizer_common::ExcelErrorKind::Spill)
+                );
+            }
+        }
+    }
+    let mut engine = engine(FormulaPlaneMode::Off);
+    engine
+        .set_cell_formula(
+            "Inputs",
+            1,
+            1,
+            formualizer_parse::parse("=SEQUENCE(1,2)").unwrap(),
+        )
+        .unwrap();
+    engine
+        .source_formula_ingress()
+        .stage_deferred(complete_family_package("Inputs", 0, 1));
+    assert!(
+        matches!(engine.evaluate_cell("Inputs", 1, 1).unwrap(), Some(LiteralValue::Error(e)) if e.kind == formualizer_common::ExcelErrorKind::Spill)
+    );
+    engine.clear_staged_formula_text("Inputs", 1, 2);
+    assert_eq!(
+        engine.evaluate_cell("Inputs", 1, 1).unwrap(),
+        Some(LiteralValue::Number(1.0))
+    );
+}
+
+#[test]
 fn indexed_cache_shared_replay_is_counted_once_without_locking_or_retaining_source() {
     use std::sync::atomic::AtomicU64;
     struct CachedReplay {

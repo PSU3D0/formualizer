@@ -1107,6 +1107,8 @@ pub struct Engine<R> {
     staged_formulas: StagedFormulaMap,
     /// Presence and generation authority for ordinary staged formula discovery.
     staged_formula_index: StagedFormulaIndex,
+    // Occupancy invalidation only: never a formula/read dependency.
+    blocked_pending_spills: Vec<(VertexId, CellRef, Region)>,
     /// Per-sheet row visibility sidecar state.
     row_visibility: FxHashMap<SheetId, RowVisibilityState>,
     /// Cached row visibility masks keyed by sheet/span/mode/version.
@@ -3007,6 +3009,7 @@ where
             recalc_plan_token: Arc::new(()),
             staged_formulas: std::collections::HashMap::new(),
             staged_formula_index: StagedFormulaIndex::default(),
+            blocked_pending_spills: Vec::new(),
             row_visibility: FxHashMap::default(),
             row_visibility_mask_cache: std::sync::RwLock::new(FxHashMap::default()),
             formula_parse_diagnostics: Vec::new(),
@@ -3174,6 +3177,7 @@ where
             recalc_plan_token: Arc::new(()),
             staged_formulas: std::collections::HashMap::new(),
             staged_formula_index: StagedFormulaIndex::default(),
+            blocked_pending_spills: Vec::new(),
             row_visibility: FxHashMap::default(),
             row_visibility_mask_cache: std::sync::RwLock::new(FxHashMap::default()),
             formula_parse_diagnostics: Vec::new(),
@@ -3313,7 +3317,19 @@ where
     // Reconcile without replay locks: several packages may share the same Arc.
     // Weak tokens neither retain dead packages nor duplicate their allocations.
     fn reconcile_source_cache_footprints(&mut self) -> Result<(), ExcelError> {
-        let mut bytes = 0u64;
+        self.blocked_pending_spills.retain(|&(vertex, anchor, _)| {
+            self.graph.vertex_exists(vertex)
+                && self.graph.get_cell_ref(vertex) == Some(anchor)
+                && matches!(
+                    self.graph.get_vertex_kind(vertex),
+                    VertexKind::FormulaScalar | VertexKind::FormulaArray
+                )
+        });
+        if self.blocked_pending_spills.is_empty() {
+            self.blocked_pending_spills = Vec::new();
+        }
+        let mut bytes = (self.blocked_pending_spills.capacity()
+            * std::mem::size_of::<(VertexId, CellRef, Region)>()) as u64;
         self.source_cache_footprints.retain(|weak| {
             let Some(footprint) = weak.upgrade() else {
                 return false;
@@ -6238,6 +6254,13 @@ where
             .or_default()
             .stage(row, col, text);
         self.staged_formula_index.stage(sheet, row, col);
+        if let Some(sheet) = self.graph.sheet_id(sheet) {
+            self.invalidate_pending_spills(StructuralScope::Cell {
+                sheet,
+                row: row.saturating_sub(1),
+                col: col.saturating_sub(1),
+            });
+        }
     }
 
     fn index_removed_staged_sheet(&mut self, sheet: &str, staged: &StagedSheet) {
@@ -6297,6 +6320,29 @@ where
         staged.reconcile_attached_deferred_package();
         self.staged_formula_index
             .set_package(&sheet, staged.deferred_package.as_ref());
+        if let Some(sheet_id) = self.graph.sheet_id(&sheet) {
+            let package = self
+                .staged_formulas
+                .get(&sheet)
+                .and_then(|staged| staged.deferred_package.as_ref());
+            for &(vertex, anchor, region) in &self.blocked_pending_spills {
+                if anchor.sheet_id == sheet_id
+                    && self.graph.vertex_exists(vertex)
+                    && self.graph.get_cell_ref(vertex) == Some(anchor)
+                    && self.staged_formula_index.package_occupies_spill(
+                        &sheet,
+                        (anchor.coord.row() + 1, anchor.coord.col() + 1),
+                        (
+                            region.rows.query_bounds().1 + 1,
+                            region.cols.query_bounds().1 + 1,
+                        ),
+                        |point| package.is_some_and(|package| package.suppressed.contains(&point)),
+                    )
+                {
+                    self.graph.mark_vertex_dirty(vertex);
+                }
+            }
+        }
     }
 
     pub fn clear_staged_formula_text(&mut self, sheet: &str, row: u32, col: u32) -> Option<String> {
@@ -6316,12 +6362,24 @@ where
             self.staged_formulas.remove(sheet);
             self.staged_formula_index.set_package(sheet, None);
         }
+        if (ordinary_removed || had_package)
+            && let Some(sheet) = self.graph.sheet_id(sheet)
+        {
+            self.invalidate_pending_spills(StructuralScope::Cell {
+                sheet,
+                row: row.saturating_sub(1),
+                col: col.saturating_sub(1),
+            });
+        }
         removed
     }
 
     pub fn clear_staged_formulas_for_sheet(&mut self, sheet: &str) {
         if self.staged_formulas.remove(sheet).is_some() {
             self.staged_formula_index.clear_sheet(sheet);
+            if let Some(sheet_id) = self.graph.sheet_id(sheet) {
+                self.invalidate_pending_spills(StructuralScope::Sheet(sheet_id));
+            }
         }
     }
 
@@ -18265,9 +18323,6 @@ where
     /// span work from `FormulaConsumerReadIndex` instead of recomputing every
     /// active span.
     fn record_formula_plane_changed_cell(&mut self, sheet: &str, row: u32, col: u32) {
-        if self.config.formula_plane_mode == FormulaPlaneMode::Off {
-            return;
-        }
         let sheet_id = self.graph.sheet_id_mut(sheet);
         self.record_formula_plane_structural_change(StructuralScope::Cell {
             sheet: sheet_id,
@@ -18277,10 +18332,6 @@ where
     }
 
     fn record_formula_plane_change_for_event(&mut self, event: &ChangeEvent) {
-        if self.config.formula_plane_mode == FormulaPlaneMode::Off {
-            return;
-        }
-
         match event {
             ChangeEvent::SetValue { addr, .. } | ChangeEvent::SetFormula { addr, .. } => {
                 self.record_formula_plane_structural_change(StructuralScope::Cell {
@@ -18328,6 +18379,7 @@ where
     }
 
     fn record_formula_plane_structural_change(&mut self, scope: StructuralScope) {
+        self.invalidate_pending_spills(scope);
         if self.config.formula_plane_mode == FormulaPlaneMode::Off {
             return;
         }
@@ -19178,6 +19230,9 @@ where
                                     delta.as_deref_mut(),
                                     None,
                                 ) {
+                                    if e.kind != ExcelErrorKind::Spill {
+                                        return Err(e);
+                                    }
                                     // If commit fails, mark as error
                                     self.clear_spill_projection_and_mirror(
                                         vertex_id,
@@ -24836,6 +24891,9 @@ where
                     delta.as_deref_mut(),
                     overwritable_formulas,
                 ) {
+                    if e.kind != ExcelErrorKind::Spill {
+                        return Err(e);
+                    }
                     self.clear_spill_projection_and_mirror(vertex_id, delta.as_deref_mut());
                     let err_val = LiteralValue::Error(e.clone());
                     if let Some(d) = delta.as_deref_mut()
@@ -25398,6 +25456,10 @@ impl ShimSpillManager {
         rows: Vec<Vec<LiteralValue>>,
         overwritable_formulas: Option<&rustc_hash::FxHashSet<VertexId>>,
     ) -> Result<(), ExcelError> {
+        if let Err(error) = engine.guard_pending_spill_commit(anchor_vertex, targets) {
+            self.release_owner(anchor_vertex);
+            return Err(error);
+        }
         // Re-run plan on concrete targets before committing to respect blockers.
         let plan_res = engine.graph.plan_spill_region_allowing_formula_overwrite(
             anchor_vertex,
@@ -25421,6 +25483,9 @@ impl ShimSpillManager {
             self.region_locks.release(id);
         }
         commit_res.map(|_| ())?;
+        engine
+            .blocked_pending_spills
+            .retain(|entry| entry.0 != anchor_vertex);
 
         // Mirror into Arrow overlay when enabled
         if engine.config.arrow_storage_enabled
@@ -27507,7 +27572,154 @@ where
         }
     }
 
-    /// Helper: commit spill via shim and mirror resulting cells into Arrow overlay when enabled.
+    /// Pending source occupancy is independent of formula preparation and value caches.
+    fn pending_spill_occupied(&self, anchor: CellRef, end_row: u32, end_col: u32) -> bool {
+        let sheet = self.graph.sheet_name(anchor.sheet_id);
+        let package = self
+            .staged_formulas
+            .get(sheet)
+            .and_then(|staged| staged.deferred_package.as_ref());
+        self.staged_formula_index.occupies_spill(
+            sheet,
+            (anchor.coord.row() + 1, anchor.coord.col() + 1),
+            (end_row + 1, end_col + 1),
+            |point| package.is_some_and(|package| package.suppressed.contains(&point)),
+        )
+    }
+
+    fn remember_pending_spill(
+        &mut self,
+        vertex: VertexId,
+        anchor: CellRef,
+        region: Region,
+    ) -> Result<(), ExcelError> {
+        self.cancellation_checkpoint("pending spill occupancy")?;
+        self.resource_checkpoint(1)?;
+        if let Some(entry) = self
+            .blocked_pending_spills
+            .iter_mut()
+            .find(|entry| entry.0 == vertex)
+        {
+            *entry = (vertex, anchor, region);
+            return Ok(());
+        }
+        if self.blocked_pending_spills.len() == self.blocked_pending_spills.capacity() {
+            // Geometric growth avoids copying every existing retry entry for
+            // every new blocked anchor. Admit the entire capacity increment.
+            let additional = self.blocked_pending_spills.capacity().max(1);
+            let bytes =
+                (additional as u64)
+                    .saturating_mul(std::mem::size_of::<(VertexId, CellRef, Region)>() as u64);
+            if let Some(ledger) = self.active_resource_ledger.as_mut() {
+                ledger
+                    .reserve_retained(bytes)
+                    .map_err(crate::engine::ResourceLedgerError::into_excel_error)?;
+                self.source_cache_accounted = self.source_cache_accounted.saturating_add(bytes);
+            }
+            if self
+                .blocked_pending_spills
+                .try_reserve_exact(additional)
+                .is_err()
+            {
+                if let Some(ledger) = self.active_resource_ledger.as_mut() {
+                    ledger
+                        .release_retained(bytes)
+                        .map_err(crate::engine::ResourceLedgerError::into_excel_error)?;
+                    self.source_cache_accounted -= bytes;
+                }
+                return Err(crate::engine::ResourceLedgerError::Exhausted(
+                    formualizer_common::ResourceExhaustionDetail {
+                        reason: formualizer_common::ResourceExhaustionReason::RetainedMemory,
+                        limit: u64::MAX,
+                        observed: bytes,
+                        request_id: None,
+                    },
+                )
+                .into_excel_error());
+            }
+        }
+        self.blocked_pending_spills.push((vertex, anchor, region));
+        Ok(())
+    }
+
+    // Successful edits wake only intersecting attempted regions. Keep the entry
+    // until evaluation: logged edits may still roll back, and materializing a
+    // pending formula must not destroy its anchor's occupancy retry information.
+    fn invalidate_pending_spills(&mut self, scope: StructuralScope) {
+        if let StructuralScope::RemovedSheet(sheet) = scope {
+            self.blocked_pending_spills
+                .retain(|entry| entry.1.sheet_id != sheet);
+            return;
+        }
+        for &(vertex, anchor, region) in &self.blocked_pending_spills {
+            let affected = match scope {
+                StructuralScope::Cell { sheet, row, col } => {
+                    region.intersects(&Region::point(sheet, row, col))
+                }
+                StructuralScope::Region(changed) => region.intersects(&changed),
+                StructuralScope::Sheet(sheet) | StructuralScope::RemovedSheet(sheet) => {
+                    region.sheet_id() == sheet
+                }
+                StructuralScope::OpaqueGlobal | StructuralScope::AllSheets => true,
+            };
+            if affected
+                && self.graph.vertex_exists(vertex)
+                && self.graph.get_cell_ref(vertex) == Some(anchor)
+                && matches!(
+                    self.graph.get_vertex_kind(vertex),
+                    VertexKind::FormulaScalar | VertexKind::FormulaArray
+                )
+            {
+                self.graph.mark_vertex_dirty(vertex);
+            }
+        }
+    }
+
+    fn guard_pending_spill_commit(
+        &mut self,
+        anchor_vertex: VertexId,
+        targets: &[CellRef],
+    ) -> Result<(), ExcelError> {
+        let Some(anchor) = self.graph.get_cell_ref(anchor_vertex) else {
+            return Ok(());
+        };
+        let Some(last) = targets.last() else {
+            return Ok(());
+        };
+        let occupied = self.pending_spill_occupied(anchor, last.coord.row(), last.coord.col());
+        if (occupied
+            || self
+                .blocked_pending_spills
+                .iter()
+                .any(|entry| entry.0 == anchor_vertex))
+            && let Err(error) = self.remember_pending_spill(
+                anchor_vertex,
+                anchor,
+                Region::rect(
+                    anchor.sheet_id,
+                    anchor.coord.row(),
+                    last.coord.row(),
+                    anchor.coord.col(),
+                    last.coord.col(),
+                ),
+            )
+        {
+            self.spill_mgr.release_owner(anchor_vertex);
+            return Err(error);
+        }
+        if occupied {
+            self.spill_mgr.release_owner(anchor_vertex);
+            return Err(ExcelError::new(ExcelErrorKind::Spill)
+                .with_message("Spill blocked")
+                .with_extra(formualizer_common::ExcelErrorExtra::Spill {
+                    expected_rows: last.coord.row() - anchor.coord.row() + 1,
+                    expected_cols: last.coord.col() - anchor.coord.col() + 1,
+                }));
+        }
+        Ok(())
+    }
+
+    /// Commit spill via shim and mirror resulting cells into Arrow overlay.
     fn commit_spill_and_mirror(
         &mut self,
         anchor_vertex: VertexId,
@@ -27516,6 +27728,7 @@ where
         delta: Option<&mut DeltaCollector>,
         overwritable_formulas: Option<&rustc_hash::FxHashSet<VertexId>>,
     ) -> Result<(), ExcelError> {
+        self.guard_pending_spill_commit(anchor_vertex, targets)?;
         let prev_spill_cells = self
             .graph
             .spill_cells_for_anchor(anchor_vertex)
@@ -27599,6 +27812,8 @@ where
             },
         )?;
 
+        self.blocked_pending_spills
+            .retain(|entry| entry.0 != anchor_vertex);
         if let Some(scope) = Self::formula_plane_region_from_cells(&prev_spill_cells) {
             self.record_formula_plane_structural_change(scope);
         }
@@ -27647,6 +27862,10 @@ where
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "tests/pending_spill.rs"]
+mod pending_spill_tests;
 
 // ── Effects pipeline (ticket 603) ──────────────────────────────────────────
 //
@@ -27701,10 +27920,14 @@ where
 
     /// Plan effects for a formula vertex that produced a scalar/error result.
     fn plan_scalar_effects(
-        &self,
+        &mut self,
         vertex_id: VertexId,
         value: LiteralValue,
     ) -> Result<Vec<Effect>, ExcelError> {
+        if !matches!(&value, LiteralValue::Error(e) if e.kind == ExcelErrorKind::Spill) {
+            self.blocked_pending_spills
+                .retain(|entry| entry.0 != vertex_id);
+        }
         let has_spill = self
             .graph
             .spill_cells_for_anchor(vertex_id)
@@ -27761,6 +27984,32 @@ where
                     anchor.coord.row() + r,
                     anchor.coord.col() + c,
                 ));
+            }
+        }
+
+        if h != 0 && w != 0 {
+            let occupied = self.pending_spill_occupied(anchor, end_row, end_col);
+            if occupied
+                || self
+                    .blocked_pending_spills
+                    .iter()
+                    .any(|entry| entry.0 == vertex_id)
+            {
+                self.spill_mgr.release_owner(vertex_id);
+                self.remember_pending_spill(
+                    vertex_id,
+                    anchor,
+                    Region::rect(
+                        sheet_id,
+                        anchor.coord.row(),
+                        end_row,
+                        anchor.coord.col(),
+                        end_col,
+                    ),
+                )?;
+            }
+            if occupied {
+                return self.plan_spill_error_effects(vertex_id, "Spill blocked", h, w);
             }
         }
 
@@ -27865,12 +28114,13 @@ where
 
     /// Build the effect list for a spill that failed validation.
     fn plan_spill_error_effects(
-        &self,
+        &mut self,
         vertex_id: VertexId,
         message: &str,
         expected_rows: u32,
         expected_cols: u32,
     ) -> Result<Vec<Effect>, ExcelError> {
+        self.spill_mgr.release_owner(vertex_id);
         let spill_err = ExcelError::new(ExcelErrorKind::Spill)
             .with_message(message)
             .with_extra(formualizer_common::ExcelErrorExtra::Spill {
@@ -28051,6 +28301,7 @@ where
         log: Option<&mut ChangeLog>,
         computed_writes: Option<&mut ComputedWriteBuffer>,
     ) -> Result<(), ExcelError> {
+        self.guard_pending_spill_commit(anchor_vertex, target_cells)?;
         if let Some(buffer) = computed_writes {
             self.flush_computed_write_buffer(buffer)?;
         }
