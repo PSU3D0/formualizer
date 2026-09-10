@@ -396,6 +396,12 @@ impl StagedFormulaIndex {
         self.touch_package(sheet);
     }
 
+    pub(crate) fn update_package_family_count(&mut self, sheet: &str, count: usize) {
+        if let Some(package) = self.packages.get_mut(sheet) {
+            package.family_count = count;
+        }
+    }
+
     pub(crate) fn touch_package(&mut self, sheet: &str) {
         if let Some(package) = self.packages.get_mut(sheet) {
             package.generation = self.next_generation;

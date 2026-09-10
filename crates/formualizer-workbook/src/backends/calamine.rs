@@ -1075,19 +1075,10 @@ impl CalamineAdapter {
                 })
             })
             .collect::<Result<Vec<_>, calamine::Error>>()?;
-        let represented_families = compressed_families
-            .iter()
-            .map(|family| family.source_id)
-            .chain(partitioned_families.iter().map(|family| family.source_id))
-            .collect::<BTreeSet<_>>();
         let deferred_source_coordinates = deferred_source_coordinates
             .unwrap_or_default()
             .into_iter()
-            .filter_map(|(coord, family)| {
-                family
-                    .is_none_or(|family| !represented_families.contains(&family))
-                    .then_some(coord)
-            })
+            .map(|(coord, _)| coord)
             .collect::<Vec<_>>();
         let formula_spool_bytes = if formula_count == 0 {
             0
@@ -1228,6 +1219,7 @@ impl CalamineAdapter {
                     sheet_instance,
                 )),
             )
+            .with_complete_coordinate_coverage()
         });
         Ok(StreamedSheet {
             arrow_sheet,

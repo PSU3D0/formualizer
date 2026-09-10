@@ -410,6 +410,10 @@ pub struct FormulaReplayDisposition {
     shared_overrides: BTreeMap<(SourceFamilyId, SourceCoord), FormulaReplayCoordinateDisposition>,
     ordinary_owners: BTreeMap<SourceCoord, SourceFamilyId>,
     suppressed: BTreeSet<(u32, u32)>,
+    /// Engine-created proof of source ownership already consumed by a validated
+    /// target commit. Suppression alone never establishes partition ownership.
+    consumed: BTreeSet<(SourceFamilyId, SourceCoord)>,
+    consumed_engine: Option<Arc<()>>,
 }
 
 impl FormulaReplayDisposition {
@@ -503,6 +507,28 @@ impl FormulaReplayDisposition {
         self.set_family_legacy(family);
     }
 
+    pub(crate) fn register_consumed_members(
+        &mut self,
+        engine: Option<&Arc<()>>,
+        members: impl IntoIterator<Item = (SourceFamilyId, SourceCoord)>,
+    ) {
+        self.consumed_engine = engine.cloned();
+        self.consumed.extend(members);
+    }
+
+    pub(crate) fn consumed_engine_matches(&self, engine: &Arc<()>) -> bool {
+        self.consumed.is_empty()
+            || self
+                .consumed_engine
+                .as_ref()
+                .is_some_and(|token| Arc::ptr_eq(token, engine))
+    }
+
+    pub(crate) fn is_consumed_member(&self, family: SourceFamilyId, coord: SourceCoord) -> bool {
+        self.consumed.contains(&(family, coord))
+            && self.suppressed.contains(&(coord.row + 1, coord.col + 1))
+    }
+
     pub(crate) fn owns_partition_exactly(&self, family: &PartitionedSourceFormulaFamily) -> bool {
         if self.family_defaults.get(&family.source_id)
             != Some(&FormulaReplayCoordinateDisposition::Direct)
@@ -557,11 +583,9 @@ impl FormulaReplayDisposition {
                 .fragments
                 .iter()
                 .any(|fragment| source_rect_contains(fragment.rect(), coord))
-                || family
-                    .legacy_members
-                    .as_slice()
-                    .iter()
-                    .any(|member| member.coord == coord)
+                || family.legacy_members.as_slice().iter().any(|member| {
+                    member.coord == coord && !self.is_consumed_member(family.source_id, coord)
+                })
         })
     }
 
@@ -1003,12 +1027,23 @@ pub trait DeferredFormulaReplay: Send {
         Ok(None)
     }
 
+    /// Exact indexed coordinate replay, including shared reconstruction. Preserve
+    /// every matching source record and its order; do not demand anchor dependencies.
+    /// Shared records must identify their family. Unsupported evidence returns None.
+    fn replay_selected_exact(
+        &mut self,
+        coordinates: &[(u32, u32)],
+        checkpoint: &mut dyn FnMut(u64, u64) -> Result<(), formualizer_common::ExcelError>,
+    ) -> Result<Option<Vec<DeferredReplayFormula>>, formualizer_common::ExcelError> {
+        self.replay_selected_ordinary(coordinates, checkpoint)
+    }
+
     fn formula_at(&mut self, row: u32, col: u32) -> Result<Option<DeferredReplayFormula>, String>;
 }
 
 /// Sealed workbook-to-engine package. It owns the source spool and compressed
-/// family evidence until preparation consumes it. Indexed ordinary-only sources
-/// may be consumed by coordinate; residual records retain the original authority.
+/// family evidence until preparation consumes it. Indexed exact sources may be
+/// consumed by coordinate, retaining validated residual family authority.
 #[doc(hidden)]
 pub struct DeferredFormulaPackage {
     pub(crate) sheet_name: String,
@@ -1021,9 +1056,15 @@ pub struct DeferredFormulaPackage {
     /// partial target publication suppress coordinates without commit-time allocation.
     pub(crate) suppressed: rustc_hash::FxHashSet<(u32, u32)>,
     /// Exact source-record coordinates used only by staged target discovery.
-    /// Family rectangles remain the compact vocabulary for family members;
-    /// this list supplies ordinary and otherwise unclassified fallback points.
+    /// Legacy producers supply fallback points; indexed exact producers opt into
+    /// complete coordinate coverage (including shared members) below.
     pub(crate) source_coordinates: Vec<SourceCoord>,
+    pub(crate) coordinates_cover_families: bool,
+    /// Created only by a revision-validated target commit from exact source
+    /// records and validated residual geometry. Coordinates stay excluded after
+    /// edits/deletion; neither a public constructor nor suppression can forge it.
+    pub(crate) consumed_members: rustc_hash::FxHashSet<(SourceFamilyId, SourceCoord)>,
+    pub(crate) consumed_engine: Option<Arc<()>>,
     pub(crate) source_geometry_complete: bool,
     /// Immutable source-spool totals are emitted once, on the first successful
     /// consumption. Residual selections still report their actual replay work.
@@ -1093,6 +1134,164 @@ impl DeferredFormulaPackage {
         )
     }
 
+    /// Build residual authority only from original family geometry plus exact
+    /// members consumed by this request. Selected points become legacy-owned
+    /// exclusions, never holes; the template origin and source order stay intact.
+    pub(crate) fn residual_sources(
+        &self,
+        selected: &BTreeMap<SourceFamilyId, BTreeSet<SourceCoord>>,
+        limits: &super::WorkbookLoadLimits,
+    ) -> Result<
+        (
+            Vec<SourceFormulaFamily>,
+            Vec<PartitionedSourceFormulaFamily>,
+        ),
+        &'static str,
+    > {
+        let mut families = Vec::new();
+        let mut partitions = self.partitioned_families.clone();
+        for family in &self.families {
+            if !selected.contains_key(&family.source_id)
+                || self.invalidated.contains(&family.source_id)
+            {
+                families.push(family.clone());
+                continue;
+            }
+            let SourceFamilyMembers::CompleteDomain(domain) = family.members else {
+                return Err("ResidualExplicitFamilyUnsupported");
+            };
+            partitions.push(PartitionedSourceFormulaFamily {
+                source_id: family.source_id,
+                source_order: family.source_order,
+                template_origin0: family.anchor_coord0,
+                template_text: Arc::clone(&family.anchor_text),
+                declared: domain.rect(),
+                surviving_member_count: family.member_count,
+                fragments: vec![domain],
+                legacy_members: ExplicitPartitionLegacyMembers::try_new(Vec::new())?,
+                reconciliation: PartitionReconciliation {
+                    shared_members: family.member_count,
+                    ..Default::default()
+                },
+            });
+        }
+        for source in &mut partitions {
+            let Some(points) = selected.get(&source.source_id) else {
+                continue;
+            };
+            if self.invalidated.contains(&source.source_id) {
+                continue;
+            }
+            if source.fragments.iter().all(|fragment| {
+                let rect = fragment.rect();
+                let selected = points
+                    .range(
+                        SourceCoord {
+                            row: rect.start.row,
+                            col: 0,
+                        }..=SourceCoord {
+                            row: rect.end.row,
+                            col: u32::MAX,
+                        },
+                    )
+                    .filter(|&&coord| source_rect_contains(rect, coord))
+                    .count() as u64;
+                source_rect_area(rect) == Some(selected)
+            }) {
+                source.fragments.clear();
+                continue;
+            }
+            let mut legacy = source.legacy_members.as_slice().to_vec();
+            for &point in points {
+                if legacy.iter().any(|member| member.coord == point) {
+                    continue;
+                }
+                let Some(index) = source
+                    .fragments
+                    .iter()
+                    .position(|fragment| source_rect_contains(fragment.rect(), point))
+                else {
+                    return Err("ResidualMemberOwnershipMismatch");
+                };
+                let rect = source.fragments.remove(index).rect();
+                // Four disjoint rectangles, bounded before any unbounded growth.
+                let mut pieces = Vec::with_capacity(4);
+                if point.row > rect.start.row {
+                    pieces.push(SourceRect {
+                        start: rect.start,
+                        end: SourceCoord {
+                            row: point.row - 1,
+                            col: rect.end.col,
+                        },
+                    });
+                }
+                if point.row < rect.end.row {
+                    pieces.push(SourceRect {
+                        start: SourceCoord {
+                            row: point.row + 1,
+                            col: rect.start.col,
+                        },
+                        end: rect.end,
+                    });
+                }
+                if point.col > rect.start.col {
+                    pieces.push(SourceRect {
+                        start: SourceCoord {
+                            row: point.row,
+                            col: rect.start.col,
+                        },
+                        end: SourceCoord {
+                            row: point.row,
+                            col: point.col - 1,
+                        },
+                    });
+                }
+                if point.col < rect.end.col {
+                    pieces.push(SourceRect {
+                        start: SourceCoord {
+                            row: point.row,
+                            col: point.col + 1,
+                        },
+                        end: SourceCoord {
+                            row: point.row,
+                            col: rect.end.col,
+                        },
+                    });
+                }
+                if source.fragments.len() + pieces.len() > MAX_PARTITIONED_SOURCE_FAMILY_FRAGMENTS {
+                    return Err("ResidualFragmentLimitExceeded");
+                }
+                source
+                    .fragments
+                    .extend(pieces.into_iter().map(PlacementDomainTransport::Rect));
+                legacy.push(PartitionLegacyMember {
+                    coord: point,
+                    kind: PartitionLegacyMemberKind::SharedFamilyMember,
+                });
+                if legacy.len() > MAX_EXPLICIT_SOURCE_FAMILY_MEMBERS {
+                    return Err("ResidualMemberLimitExceeded");
+                }
+            }
+            source.legacy_members = ExplicitPartitionLegacyMembers::try_new(legacy)?;
+            if !source.fragments.is_empty() {
+                source.validate(limits)?;
+            } else if !source.reconciles_compact_geometry() {
+                return Err("ResidualGeometryMismatch");
+            }
+        }
+        // A fully selected direct domain has no residual span. Legacy source is
+        // still replayed (with exact suppression), without synthesizing authority.
+        partitions.retain(|source| !source.fragments.is_empty());
+        Ok((families, partitions))
+    }
+
+    /// Declare that source coordinates include every shared and ordinary record.
+    #[doc(hidden)]
+    pub fn with_complete_coordinate_coverage(mut self) -> Self {
+        self.coordinates_cover_families = true;
+        self
+    }
+
     fn new_with_geometry(
         sheet_name: String,
         report: FormulaCompressedSourceReport,
@@ -1113,6 +1312,9 @@ impl DeferredFormulaPackage {
             invalidated: Default::default(),
             suppressed: Default::default(),
             source_coordinates,
+            coordinates_cover_families: false,
+            consumed_members: Default::default(),
+            consumed_engine: None,
             source_geometry_complete,
             source_accounted: false,
             reconciliation_replay: None,
