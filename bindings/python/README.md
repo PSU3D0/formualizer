@@ -101,6 +101,21 @@ summary = fz.recalculate_file(
 > Formula text is preserved. Cached-value typing follows the active
 > `umya-spreadsheet` implementation.
 
+### Cache-only XLSX recalculation
+
+```python
+result = fz.recalculate_xlsx_bytes(payload)
+assert isinstance(result["bytes"], bytes)
+print(result["summary"]["status"], result["cache_cells_changed"])
+
+# The file API snapshots input and atomically replaces the destination on success.
+result = fz.recalculate_xlsx_file("model.xlsx", output="model.recalc.xlsx")
+```
+
+These APIs use the shared cache-only Rust implementation, retaining formula text
+and unrelated package members. Safe core resource limits apply;
+`error_location_limit=` only caps retained error locations.
+
 ### Parse and analyze formulas
 
 ```python

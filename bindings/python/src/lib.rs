@@ -245,6 +245,110 @@ fn recalculate_file(py: Python<'_>, path: &str, output: Option<&str>) -> PyResul
     Ok(out.into_any().unbind())
 }
 
+#[cfg(not(target_os = "emscripten"))]
+fn xlsx_result_to_py(
+    py: Python<'_>,
+    result: formualizer::workbook::XlsxRecalculateResult,
+) -> PyResult<Py<PyAny>> {
+    let out = pyo3::types::PyDict::new(py);
+    out.set_item("bytes", PyBytes::new(py, &result.bytes))?;
+    let summary = pyo3::types::PyDict::new(py);
+    summary.set_item("status", result.summary.status.as_str())?;
+    summary.set_item("evaluated", result.summary.evaluated)?;
+    summary.set_item("errors", result.summary.errors)?;
+    summary.set_item("total_formulas", result.summary.evaluated)?;
+    summary.set_item("total_errors", result.summary.errors)?;
+    let sheets = pyo3::types::PyDict::new(py);
+    for (name, stats) in result.summary.sheets {
+        let sheet = pyo3::types::PyDict::new(py);
+        sheet.set_item("evaluated", stats.evaluated)?;
+        sheet.set_item("errors", stats.errors)?;
+        sheets.set_item(name, sheet)?;
+    }
+    summary.set_item("sheets", sheets)?;
+    if !result.summary.error_summary.is_empty() {
+        let errors = pyo3::types::PyDict::new(py);
+        for (token, info) in result.summary.error_summary {
+            let error = pyo3::types::PyDict::new(py);
+            error.set_item("count", info.count)?;
+            error.set_item("locations", info.locations)?;
+            if info.locations_truncated > 0 {
+                error.set_item("locations_truncated", info.locations_truncated)?;
+            }
+            errors.set_item(token, error)?;
+        }
+        summary.set_item("error_summary", errors)?;
+    }
+    out.set_item("summary", summary)?;
+    out.set_item("formula_cells", result.formula_cells)?;
+    out.set_item("cache_cells_changed", result.cache_cells_changed)?;
+    out.set_item("worksheet_parts_changed", result.worksheet_parts_changed)?;
+    Ok(out.into_any().unbind())
+}
+
+#[cfg(not(target_os = "emscripten"))]
+/// Recalculate XLSX formula caches in memory without rewriting unrelated package parts.
+/// Returns a dictionary with output ``bytes``, a ``summary``, and formula/cache/worksheet counts.
+#[cfg_attr(
+    not(target_os = "emscripten"),
+    gen_stub_pyfunction(module = "formualizer.formualizer_py")
+)]
+#[pyfunction]
+#[pyo3(signature = (data, *, error_location_limit=None))]
+fn recalculate_xlsx_bytes(
+    py: Python<'_>,
+    data: &Bound<'_, PyBytes>,
+    error_location_limit: Option<usize>,
+) -> PyResult<Py<PyAny>> {
+    let mut options = formualizer::workbook::XlsxRecalculateOptions::default();
+    if let Some(limit) = error_location_limit {
+        options.error_location_limit = limit;
+    }
+    // Reject above the core's safe default before copying Python-owned bytes.
+    if data.as_bytes().len() > options.limits.max_input_bytes {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "recalculate XLSX failed: input size limit exceeded",
+        ));
+    }
+    let input = data.as_bytes().to_vec();
+    let result = py
+        .detach(move || formualizer::workbook::recalculate_xlsx_bytes(&input, options))
+        .map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("recalculate XLSX failed: {e}"))
+        })?;
+    xlsx_result_to_py(py, result)
+}
+
+#[cfg(not(target_os = "emscripten"))]
+/// Recalculate XLSX formula caches from a path using atomic output replacement.
+#[cfg_attr(
+    not(target_os = "emscripten"),
+    gen_stub_pyfunction(module = "formualizer.formualizer_py")
+)]
+#[pyfunction]
+#[pyo3(signature = (path, output=None, *, error_location_limit=None))]
+fn recalculate_xlsx_file(
+    py: Python<'_>,
+    path: &str,
+    output: Option<&str>,
+    error_location_limit: Option<usize>,
+) -> PyResult<Py<PyAny>> {
+    let mut options = formualizer::workbook::XlsxRecalculateOptions::default();
+    if let Some(limit) = error_location_limit {
+        options.error_location_limit = limit;
+    }
+    let input = std::path::PathBuf::from(path);
+    let output = output.map(std::path::PathBuf::from);
+    let result = py
+        .detach(move || {
+            formualizer::workbook::recalculate_xlsx_file(&input, output.as_deref(), options)
+        })
+        .map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("recalculate XLSX failed: {e}"))
+        })?;
+    xlsx_result_to_py(py, result)
+}
+
 /// The main formualizer Python module
 #[pymodule]
 fn formualizer_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -268,6 +372,10 @@ fn formualizer_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(load_workbook, m)?)?;
     m.add_function(wrap_pyfunction!(load_workbook_bytes, m)?)?;
     m.add_function(wrap_pyfunction!(recalculate_file, m)?)?;
+    #[cfg(not(target_os = "emscripten"))]
+    m.add_function(wrap_pyfunction!(recalculate_xlsx_bytes, m)?)?;
+    #[cfg(not(target_os = "emscripten"))]
+    m.add_function(wrap_pyfunction!(recalculate_xlsx_file, m)?)?;
 
     // Backward-compatible aliases for older names which started with `Py...`.
     // These are not the preferred API, but keeping them avoids breaking existing callers.

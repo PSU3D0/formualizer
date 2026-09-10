@@ -56,10 +56,23 @@ pub use formualizer_workbook::{
     LoadStrategy, Workbook, WorkbookConfig, WorkbookMode, WorksheetHandle,
 };
 
-#[cfg(all(feature = "workbook", feature = "umya"))]
+#[cfg(all(feature = "workbook", any(feature = "umya", feature = "xlsx-recalc")))]
 pub use formualizer_workbook::{
     DEFAULT_ERROR_LOCATION_LIMIT, RecalculateErrorSummary, RecalculateSheetSummary,
-    RecalculateStatus, RecalculateSummary, recalculate_file, recalculate_file_with_limit,
+    RecalculateStatus, RecalculateSummary,
+};
+#[cfg(all(feature = "workbook", feature = "umya"))]
+pub use formualizer_workbook::{recalculate_file, recalculate_file_with_limit};
+
+#[cfg(all(
+    feature = "workbook",
+    feature = "xlsx-recalc",
+    not(target_arch = "wasm32")
+))]
+pub use formualizer_workbook::recalculate_xlsx_file;
+#[cfg(all(feature = "workbook", feature = "xlsx-recalc"))]
+pub use formualizer_workbook::{
+    XlsxRecalculateLimits, XlsxRecalculateOptions, XlsxRecalculateResult, recalculate_xlsx_bytes,
 };
 
 #[cfg(feature = "eval")]

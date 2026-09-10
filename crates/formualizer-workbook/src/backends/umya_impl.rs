@@ -70,6 +70,16 @@ impl UmyaAdapter {
         }
     }
 
+    /// Consume the adapter and return its document without cloning or serializing it.
+    ///
+    /// This lets a caller ingest an evaluator and then retain the same document
+    /// for rich edits. The document keeps its current lazy/deserialized state;
+    /// `EngineLoadStream::stream_into_engine` materializes the
+    /// sheets it ingests before this handoff.
+    pub fn into_document(self) -> Spreadsheet {
+        self.workbook.into_inner()
+    }
+
     /// Parse `<calcPr>` settings from the `.xlsx` zip (spec §9). Returns `None`
     /// when `xl/workbook.xml` is missing or has no `<calcPr>` element.
     fn read_calc_settings_from_reader<R: Read + Seek>(
@@ -1552,4 +1562,76 @@ where
         }
         Ok(())
     }
+}
+
+#[cfg(test)]
+#[test]
+fn consuming_adapter_moves_the_existing_cell_graph() {
+    use formualizer_eval::engine::ingest::EngineLoadStream;
+    let mut adapter = UmyaAdapter::new_empty();
+    {
+        let sheet = adapter
+            .workbook
+            .get_mut()
+            .lookup_sheet_mut("Sheet1")
+            .unwrap();
+        sheet.get_cell_mut("A1").set_formula("Input+1");
+        sheet.get_cell_mut("B1").set_value_number(1.0);
+        sheet.add_defined_name("Input", "Sheet1!$B$1").unwrap();
+        sheet
+            .get_cell_mut("A1")
+            .get_style_mut()
+            .get_number_format_mut()
+            .set_format_code("0.00");
+    }
+    adapter
+        .set_formula_cached_value(
+            "Sheet1",
+            1,
+            1,
+            &LiteralValue::Number(2.0),
+            formualizer_eval::engine::DateSystem::Excel1900,
+        )
+        .unwrap();
+    let before = adapter
+        .workbook
+        .get_mut()
+        .lookup_sheet("Sheet1")
+        .unwrap()
+        .get_cell("A1")
+        .unwrap() as *const umya_spreadsheet::Cell;
+    let mut engine = formualizer_eval::engine::Engine::new(
+        formualizer_eval::test_workbook::TestWorkbook::new(),
+        formualizer_eval::engine::EvalConfig::default(),
+    );
+    adapter.stream_into_engine(&mut engine).unwrap();
+    let document = adapter.into_document();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(2.0))
+    );
+    let cell = document
+        .lookup_sheet("Sheet1")
+        .unwrap()
+        .get_cell("A1")
+        .unwrap();
+    assert!(std::ptr::eq(before, cell));
+    assert_eq!(cell.get_formula(), "Input+1");
+    assert_eq!(cell.get_value(), "2");
+    assert_eq!(
+        cell.get_style()
+            .get_number_format()
+            .unwrap()
+            .get_format_code(),
+        "0.00"
+    );
+    assert_eq!(
+        document
+            .lookup_sheet("Sheet1")
+            .unwrap()
+            .get_defined_names()
+            .len(),
+        1
+    );
 }

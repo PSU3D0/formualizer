@@ -1,10 +1,11 @@
 #![cfg(target_arch = "wasm32")]
 
 use formualizer_wasm::{
-    FormulaDialect, Parser, Reference, SheetPortSession, Tokenizer, Workbook, parse, tokenize,
+    FormulaDialect, Parser, Reference, SheetPortSession, Tokenizer, Workbook, parse,
+    recalculate_xlsx_bytes, tokenize,
 };
-use js_sys::{Function, Object, Reflect};
-use std::io::{Cursor, Write};
+use js_sys::{Function, Object, Reflect, Uint8Array};
+use std::io::{Cursor, Read, Write};
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_test::*;
 use zip::write::SimpleFileOptions;
@@ -31,6 +32,10 @@ fn set_prop(obj: &Object, key: &str, value: JsValue) {
 }
 
 fn build_fixture_xlsx_bytes() -> Vec<u8> {
+    build_named_fixture_xlsx_bytes("Sheet1")
+}
+
+fn build_named_fixture_xlsx_bytes(sheet_name: &str) -> Vec<u8> {
     let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
     let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
 
@@ -81,7 +86,7 @@ fn build_fixture_xlsx_bytes() -> Vec<u8> {
     <row r="1">
       <c r="A1"><v>1</v></c>
       <c r="B1"><v>2</v></c>
-      <c r="C1"><f>A1+B1</f><v>3</v></c>
+      <c r="C1" t="str"><f>A1+B1</f><v>stale</v></c>
     </row>
   </sheetData>
 </worksheet>
@@ -89,6 +94,11 @@ fn build_fixture_xlsx_bytes() -> Vec<u8> {
         ),
     ] {
         zip.start_file(path, options).unwrap();
+        let contents = if path == "xl/workbook.xml" {
+            contents.replace("name=\"Sheet1\"", &format!("name=\"{sheet_name}\""))
+        } else {
+            contents.to_owned()
+        };
         zip.write_all(contents.as_bytes()).unwrap();
     }
 
@@ -460,6 +470,55 @@ fn test_workbook_from_xlsx_bytes_evaluates_formula() {
         .get_formula(1, 3)
         .expect("formula preserved from XLSX");
     assert_eq!(formula.replace(' ', ""), "=A1+B1");
+}
+
+#[wasm_bindgen_test]
+fn test_recalculate_xlsx_bytes_preserves_prototype_like_sheet_names() {
+    let input = Uint8Array::from(build_named_fixture_xlsx_bytes("__proto__").as_slice());
+    let result: Object = recalculate_xlsx_bytes(input, None)
+        .unwrap()
+        .unchecked_into();
+    let summary: Object = js_get(&result, "summary").unchecked_into();
+    let sheets: Object = js_get(&summary, "sheets").unchecked_into();
+    assert_eq!(
+        Object::keys(&sheets).get(0).as_string().as_deref(),
+        Some("__proto__")
+    );
+    let stats: Object = js_get(&sheets, "__proto__").unchecked_into();
+    assert_eq!(js_get_f64(&stats, "evaluated"), 1.0);
+    assert!(js_get(&Object::get_prototype_of(&sheets), "evaluated").is_undefined());
+}
+
+#[wasm_bindgen_test]
+fn test_recalculate_xlsx_bytes_returns_typed_array_and_counts() {
+    let input = Uint8Array::from(build_fixture_xlsx_bytes().as_slice());
+    let result: Object = recalculate_xlsx_bytes(input, None)
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    let bytes: Uint8Array = js_get(&result, "bytes").dyn_into().unwrap();
+    assert!(bytes.length() > 0);
+    assert_eq!(js_get_f64(&result, "formula_cells"), 1.0);
+    assert_eq!(js_get_f64(&result, "cache_cells_changed"), 1.0);
+    assert_eq!(js_get_f64(&result, "worksheet_parts_changed"), 1.0);
+    let output = bytes.to_vec();
+    let mut archive = zip::ZipArchive::new(Cursor::new(&output)).unwrap();
+    let mut xml = String::new();
+    archive
+        .by_name("xl/worksheets/sheet1.xml")
+        .unwrap()
+        .read_to_string(&mut xml)
+        .unwrap();
+    assert!(xml.contains("<v>3</v>"));
+    assert!(!xml.contains("t=\"str\""));
+    let repeated: Object = recalculate_xlsx_bytes(bytes, None)
+        .unwrap()
+        .unchecked_into();
+    let repeated_bytes: Uint8Array = js_get(&repeated, "bytes").dyn_into().unwrap();
+    assert_eq!(repeated_bytes.to_vec(), output);
+    assert_eq!(js_get_f64(&repeated, "cache_cells_changed"), 0.0);
+    let summary: Object = js_get(&result, "summary").dyn_into().unwrap();
+    assert_eq!(js_get_string(&summary, "status"), "success");
 }
 
 #[wasm_bindgen_test]

@@ -19,6 +19,12 @@ Use `formualizer-workbook` for **most integrations**:
 
 Use [`formualizer-eval`](https://crates.io/crates/formualizer-eval) instead if you need direct engine access with custom resolvers.
 
+## Cache-only XLSX recalculation
+
+The default-enabled `xlsx-recalc` feature provides `recalculate_xlsx_bytes`; minimal builds can omit it with `default-features = false`. It uses Calamine and the existing evaluator, then surgically patches formula caches and the corresponding ZIP32 metadata without importing an Umya document. Untouched XML, metadata and compressed payloads are retained; a cache no-op returns the original bytes exactly. Native `recalculate_xlsx_file` adds bounded snapshots and same-directory atomic replacement, not source compare-and-swap.
+
+This is a strict opt-in subset: tables, array/data-table metadata, multi-cell spills, unsupported ZIP/XML representations and nonrepresentable results fail without publishing partial output. Source epochs, typed caches, cooperative cancellation and configurable bounds are covered by the shared core. See [cache-only XLSX](../../docs/cache-only-xlsx.md) for exact eligibility, defaults and error policy.
+
 ## Quick start
 
 ```rust
@@ -98,6 +104,10 @@ cargo run -p formualizer-workbook --features wasm_runtime_wasmtime --example was
   - `csv` — CSV/TSV import/export
 - **Batch transactions** — atomic multi-cell operations with rollback.
 - **Evaluation planning** — inspect the dependency schedule before computing.
+
+## Retaining a rich Umya document after ingestion
+
+Both Umya adapters expose `into_document(self)`. After `EngineLoadStream::stream_into_engine` ingests an evaluator, consume the adapter to retain its existing Umya document for rich edits. This transfers ownership without cloning the cell graph or serializing/reimporting XLSX. It preserves the document's current lazy/deserialized state; ingestion materializes the sheets it reads. Source-only adapter metadata has already been consumed by ingestion and is not a separate persistent document authority.
 
 ## License
 

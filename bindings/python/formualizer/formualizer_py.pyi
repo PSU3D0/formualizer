@@ -68,6 +68,8 @@ __all__ = [
     "parse",
     "parse_formula",
     "recalculate_file",
+    "recalculate_xlsx_bytes",
+    "recalculate_xlsx_file",
     "tokenize",
     "DependencyStateUnavailableError",
     "ExcelEvaluationError",
@@ -2160,6 +2162,17 @@ def recalculate_file(path: builtins.str, output: typing.Optional[builtins.str] =
     Note:
         Formula text is preserved. Cached-value typing follows the active
         `umya-spreadsheet` implementation.
+    """
+
+def recalculate_xlsx_bytes(data: bytes, *, error_location_limit: typing.Optional[builtins.int] = None) -> typing.Any:
+    r"""
+    Recalculate XLSX formula caches in memory without rewriting unrelated package parts.
+    Returns a dictionary with output ``bytes``, a ``summary``, and formula/cache/worksheet counts.
+    """
+
+def recalculate_xlsx_file(path: builtins.str, output: typing.Optional[builtins.str] = None, *, error_location_limit: typing.Optional[builtins.int] = None) -> typing.Any:
+    r"""
+    Recalculate XLSX formula caches from a path using atomic output replacement.
     """
 
 def tokenize(formula: builtins.str, dialect: typing.Optional[FormulaDialect] = None) -> Tokenizer:

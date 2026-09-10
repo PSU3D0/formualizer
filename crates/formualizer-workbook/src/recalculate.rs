@@ -1,11 +1,20 @@
+#[cfg(feature = "umya")]
+use crate::IoError;
+#[cfg(feature = "umya")]
 use crate::backends::umya::FormulaCacheUpdate;
+#[cfg(feature = "umya")]
 use crate::error::col_to_a1;
-use crate::{IoError, SpreadsheetReader, SpreadsheetWriter, UmyaAdapter, workbook::WBResolver};
+#[cfg(feature = "umya")]
+use crate::{SpreadsheetReader, SpreadsheetWriter, UmyaAdapter, workbook::WBResolver};
+#[cfg(feature = "umya")]
 use formualizer_common::{LiteralValue, PackedSheetCell};
+#[cfg(feature = "umya")]
 use formualizer_eval::engine::ingest::EngineLoadStream;
+#[cfg(feature = "umya")]
 use formualizer_eval::engine::{Engine, EvalConfig};
-use std::collections::{BTreeMap, HashSet};
-use std::path::Path;
+use std::collections::BTreeMap;
+#[cfg(feature = "umya")]
+use std::{collections::HashSet, path::Path};
 
 pub const DEFAULT_ERROR_LOCATION_LIMIT: usize = 20;
 
@@ -71,6 +80,7 @@ impl RecalculateSummary {
 ///
 /// Formula text is preserved. Cached-value typing is delegated to the active
 /// `umya-spreadsheet` implementation.
+#[cfg(feature = "umya")]
 pub fn recalculate_file(
     input: &Path,
     output: Option<&Path>,
@@ -78,6 +88,7 @@ pub fn recalculate_file(
     recalculate_file_with_limit(input, output, DEFAULT_ERROR_LOCATION_LIMIT)
 }
 
+#[cfg(feature = "umya")]
 pub fn recalculate_file_with_limit(
     input: &Path,
     output: Option<&Path>,

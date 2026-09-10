@@ -78,6 +78,9 @@ pub use formualizer::Workbook
 pub use formualizer::WorkbookConfig
 pub use formualizer::WorkbookMode
 pub use formualizer::WorksheetHandle
+pub use formualizer::XlsxRecalculateLimits
+pub use formualizer::XlsxRecalculateOptions
+pub use formualizer::XlsxRecalculateResult
 pub use formualizer::canonical_formula
 pub use formualizer::common
 pub use formualizer::eval
@@ -85,6 +88,8 @@ pub use formualizer::parse
 pub use formualizer::parse_with_dialect
 pub use formualizer::recalculate_file
 pub use formualizer::recalculate_file_with_limit
+pub use formualizer::recalculate_xlsx_bytes
+pub use formualizer::recalculate_xlsx_file
 pub use formualizer::sheetport
 pub use formualizer::sheetport_spec
 pub use formualizer::workbook

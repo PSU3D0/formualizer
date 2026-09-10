@@ -270,8 +270,8 @@ class ReleasePreflightTests(unittest.TestCase):
             r"python-native.*system-clock.*uncovered",
             (
                 "bindings/python/Cargo.toml",
-                ', "umya", "system-clock"] }',
-                ', "umya"] }',
+                ', "umya", "xlsx-recalc", "system-clock"] }',
+                ', "umya", "xlsx-recalc"] }',
             ),
         )
 
@@ -290,8 +290,8 @@ class ReleasePreflightTests(unittest.TestCase):
             r"cffi-native.*system-clock.*uncovered",
             (
                 "crates/formualizer-workbook/Cargo.toml",
-                'default = ["json", "csv", "system-clock"]',
-                'default = ["json", "csv"]',
+                'default = ["json", "csv", "system-clock", "xlsx-recalc"]',
+                'default = ["json", "csv", "xlsx-recalc"]',
             ),
         )
 
@@ -375,7 +375,7 @@ class ReleasePreflightTests(unittest.TestCase):
             r"alternate semantic dependency 'formualizer'|dependency 'formualizer' edges",
             (
                 "bindings/python/Cargo.toml",
-                'formualizer = { path = "../../crates/formualizer", default-features = false, features = ["eval", "workbook", "sheetport", "parse", "calamine", "umya", "system-clock"] }',
+                'formualizer = { path = "../../crates/formualizer", default-features = false, features = ["eval", "workbook", "sheetport", "parse", "calamine", "umya", "xlsx-recalc", "system-clock"] }',
                 "",
             ),
             (
@@ -439,8 +439,8 @@ class ReleasePreflightTests(unittest.TestCase):
             ),
             (
                 "bindings/wasm/Cargo.toml",
-                'default = ["console_panic", "json", "calamine"]',
-                'default = ["console_panic", "json", "calamine", "clock"]\nclock = ["formualizer?/system-clock"]',
+                'default = ["console_panic", "json", "calamine", "xlsx-recalc"]',
+                'default = ["console_panic", "json", "calamine", "xlsx-recalc", "clock"]\nclock = ["formualizer?/system-clock"]',
             ),
         )
 
@@ -449,8 +449,8 @@ class ReleasePreflightTests(unittest.TestCase):
             r"forwarding enables value-affecting features",
             (
                 "bindings/wasm/Cargo.toml",
-                'default = ["console_panic", "json", "calamine"]',
-                'default = ["console_panic", "json", "calamine", "clock"]\nclock = ["formualizer/system-clock"]',
+                'default = ["console_panic", "json", "calamine", "xlsx-recalc"]',
+                'default = ["console_panic", "json", "calamine", "xlsx-recalc", "clock"]\nclock = ["formualizer/system-clock"]',
             ),
         )
 
