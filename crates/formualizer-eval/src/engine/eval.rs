@@ -2722,10 +2722,12 @@ fn compute_criteria_mask(
         _ => return None,
     };
 
-    let ne_matches_blank = text_kind == 1 && !text_pat.is_empty();
+    let text_pat_is_empty = text_pat.is_empty();
+    let ne_matches_blank = text_kind == 1 && !text_pat_is_empty;
     let pat = StringArray::new_scalar(text_pat);
     let mut bool_parts: Vec<BooleanArray> = Vec::new();
 
+    let mut tag_slices = view.type_tags_slices();
     for res in view.iter_row_chunks() {
         let cs = res.ok()?;
         if cs.row_len == 0 {
@@ -2740,6 +2742,30 @@ fn compute_criteria_mask(
         }
 
         let seg_opt = slices[col_in_view].as_ref().map(|a| a.as_ref());
+        if empty_special || (text_kind == 1 && text_pat_is_empty) {
+            let (tag_start, tag_len, tags) = tag_slices.next()?.ok()?;
+            if tag_start != cs.row_start || tag_len != cs.row_len {
+                return None;
+            }
+            let tags = tags.get(col_in_view)?;
+            // A null text lane is not a blank cell: base numeric/boolean/error
+            // cells also have null text. Consult the overlay-aware type tags,
+            // and inspect strings only to distinguish empty text from text.
+            let strings = seg_opt.and_then(|a| a.as_any().downcast_ref::<StringArray>());
+            let mut bb = BooleanBuilder::with_capacity(cs.row_len);
+            for i in 0..cs.row_len {
+                let blank = tags.value(i) == crate::arrow_store::TypeTag::Empty as u8
+                    || (tags.value(i) == crate::arrow_store::TypeTag::Text as u8
+                        && strings.is_some_and(|s| s.is_valid(i) && s.value(i).is_empty()));
+                bb.append_value(if text_kind == 0 { blank } else { !blank });
+            }
+            #[cfg(test)]
+            if seg_opt.is_none() {
+                criteria_mask_test_hooks::inc_all_null();
+            }
+            bool_parts.push(bb.finish());
+            continue;
+        }
         let seg = match seg_opt {
             Some(s) => s,
             None => {

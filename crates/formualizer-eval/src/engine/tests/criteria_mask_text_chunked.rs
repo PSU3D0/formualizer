@@ -47,13 +47,13 @@ fn criteria_mask_text_is_built_per_chunk_and_handles_empty_string_semantics() {
         assert!(mask_eq.value(i));
     }
 
-    // Ne("") should yield all nulls on an all-empty column (nilike(null, "") == null).
+    // Ne("") excludes every blank using the typed mask.
     let pred_ne_empty = crate::args::parse_criteria(&LiteralValue::Text("<>".into())).unwrap();
     let mask_ne = engine
         .build_criteria_mask(&view, 0, &pred_ne_empty)
         .expect("mask");
     assert_eq!(mask_ne.len(), total_rows as usize);
-    assert_eq!(mask_ne.null_count(), total_rows as usize);
+    assert_eq!(mask_ne.true_count(), 0);
 
     // Ensure we actually walked chunks and hit the all-null segment fast path.
     let (segments_total, segments_all_null) =
