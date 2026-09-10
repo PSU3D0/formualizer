@@ -10,6 +10,12 @@ Selection keeps the original replay source until its remaining formulas are cons
 
 This is not exception-to-cell-error conversion. See [the preparation error policy](preparation-error-policy.md).
 
+## Spill occupancy
+
+Pending formulas remain occupied cells for spill planning and final publication without preparing their expressions. Exact geometry respects holes and live overrides. Blocked anchors keep one retained-admitted retry region each; successful occupancy edits dirty intersecting blocked anchors. Retry scans are linear in the number of tracked blocked anchors. Failed reservations are released.
+
+Existing spill-consumer invalidation and interactive Empty-overlay visibility are not fixed here. An edited Empty can remain publicly visible over a subsequently successful computed spill member; this also occurs in released 0.9.2.
+
 ## Loading and resource implications
 
 Calamine builds a text-free coordinate/offset locator lazily, on the first eligible selective request. This is one source scan and a sort, not a scan of the entire source for every selected dependency. Later lookups seek/decode the selected records. Cold loading and ordinary full preparation do not unconditionally build this locator.
