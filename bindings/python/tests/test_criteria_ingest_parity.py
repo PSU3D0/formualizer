@@ -9,7 +9,7 @@ import formualizer as fz
         ('COUNTIF(A1:A6,"")', 1, 2),
         ('COUNTIF(A1:A6,"<>")', 5, 4),
         ('COUNTIF(A1:A20,"")', 15, 16),
-        ('COUNTBLANK(A1:A20)', 15, 16),
+        ("COUNTBLANK(A1:A20)", 15, 16),
         # Established scalar compatibility policy, not an Excel oracle claim.
         ('COUNTIF(A1:A6,"*")', 6, 6),
         ('COUNTIF(A1:A6,"1*")', 2, 1),

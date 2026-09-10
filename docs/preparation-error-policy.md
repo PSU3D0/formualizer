@@ -16,6 +16,12 @@ Decision for [#454](https://github.com/PSU3D0/formualizer/issues/454): **retain 
 | `=IFERROR(SUM(IFERROR(NOSHEET!A1,0)),1)` | Preparation fails; neither fallback is a substitute for evaluation |
 | `=IFERROR(7,1/0)` | Returns 7 without evaluating the fallback |
 | `=IFERROR(7,NOSHEET!A1)` | Can fail during dependency binding despite runtime branch laziness |
+| `=IFERROR(MissingName,456)` | The current unresolved-name evaluation path returns 456 |
+| `=IFNA(MissingName,456)` | Returns a `#NAME?` cell error |
+| `=IFERROR(SUM(MissingTable[Amount]),456)` | Undefined-table preparation fails |
+| `=IFERROR(UnknownFunction(1),456)` | The current unknown-function evaluation path returns 456 |
+| `=IFERROR(A1,456)` in A1 | Returns a circularity cell error without evaluating the guard normally |
+| Malformed `=IFERROR(1+,456)` imported under the default error-cell parse policy | The whole formula becomes a parse-error cell; no guard can be evaluated |
 
 A missing-sheet binding failure and a literal `#REF!` may share an Excel error kind. Their provenance and lifecycle stage differ. Consumers must not identify catchability by kind alone, by error-message parsing, or by the presence of IFERROR in the source formula.
 
