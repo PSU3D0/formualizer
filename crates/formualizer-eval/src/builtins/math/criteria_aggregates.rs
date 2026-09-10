@@ -151,7 +151,9 @@ fn resolve_count_argument<'a, 'b>(
                 *end_row_abs = true;
                 *start_col_abs = true;
                 *end_col_abs = true;
-                view = ctx.resolve_range_view(&reference, ctx.current_sheet())?;
+                view = arg.with_context_cancel_token(
+                    ctx.resolve_range_view(&reference, ctx.current_sheet())?,
+                );
             }
         }
         let (rows, cols) = view.dims();
@@ -1725,6 +1727,83 @@ mod tests {
     use crate::traits::ArgumentHandle;
     use formualizer_common::LiteralValue;
     use formualizer_parse::parser::{ASTNode, ASTNodeType};
+    #[test]
+    fn expanded_count_view_keeps_argument_cancellation() {
+        use crate::engine::{CancelToken, Engine, EvalConfig};
+        use crate::traits::CalcValue;
+        use formualizer_common::ExcelErrorKind;
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
+
+        #[derive(Debug)]
+        struct Probe(Arc<AtomicBool>);
+        impl Function for Probe {
+            func_caps!(PURE, REDUCTION, WINDOWED, STREAM_OK);
+            fn arg_schema(&self) -> &'static [ArgSchema] {
+                &ARG_ANY_ONE[..]
+            }
+            fn name(&self) -> &'static str {
+                "COUNT_EXPANSION_CANCEL_PROBE"
+            }
+            fn eval<'a, 'b, 'c>(
+                &self,
+                args: &'c [ArgumentHandle<'a, 'b>],
+                ctx: &dyn FunctionContext<'b>,
+            ) -> Result<CalcValue<'b>, ExcelError> {
+                let AggregateArgument::Range(original) = resolve_aggregate_argument(&args[0], ctx)?
+                else {
+                    panic!("expected original range");
+                };
+                assert_eq!(
+                    original.dims(),
+                    (10, 1),
+                    "probe must take the expansion branch"
+                );
+                let (AggregateArgument::Range(view), logical) =
+                    resolve_count_argument(&args[0], ctx)?
+                else {
+                    panic!("expected an expanded count view");
+                };
+                assert_eq!(view.dims(), (11, 1));
+                assert_eq!(logical, Some(1_048_576));
+                ctx.cancellation_token()
+                    .expect("active request token")
+                    .cancel();
+                let cancelled = matches!(view.iter_row_chunks().next(), Some(Err(error)) if error.kind == ExcelErrorKind::Cancelled);
+                self.0.store(cancelled, Ordering::SeqCst);
+                Ok(CalcValue::Scalar(LiteralValue::Boolean(cancelled)))
+            }
+        }
+        let observed = Arc::new(AtomicBool::new(false));
+        let workbook = TestWorkbook::new().with_function(Arc::new(Probe(Arc::clone(&observed))));
+        let mut engine = Engine::new(workbook, EvalConfig::default());
+        engine
+            .set_cell_formula(
+                "Data",
+                10,
+                3,
+                formualizer_parse::parser::parse("=SEQUENCE(2,3)").unwrap(),
+            )
+            .unwrap();
+        engine
+            .set_cell_formula(
+                "Results",
+                1,
+                1,
+                formualizer_parse::parser::parse("=COUNT_EXPANSION_CANCEL_PROBE(Data!C:C)")
+                    .unwrap(),
+            )
+            .unwrap();
+        let result = engine.evaluate_all_cancellable(CancelToken::new());
+        assert!(result.is_ok() || result.unwrap_err().kind == ExcelErrorKind::Cancelled);
+        assert!(
+            observed.load(Ordering::SeqCst),
+            "expanded iteration must retain the argument's cancellation token, not just rely on a later engine checkpoint"
+        );
+    }
+
     fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
         wb.interpreter()
     }
