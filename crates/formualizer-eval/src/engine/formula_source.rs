@@ -1140,6 +1140,7 @@ impl DeferredFormulaPackage {
     pub(crate) fn residual_sources(
         &self,
         selected: &BTreeMap<SourceFamilyId, BTreeSet<SourceCoord>>,
+        complete: &BTreeSet<SourceFamilyId>,
         limits: &super::WorkbookLoadLimits,
     ) -> Result<
         (
@@ -1149,8 +1150,16 @@ impl DeferredFormulaPackage {
         &'static str,
     > {
         let mut families = Vec::new();
-        let mut partitions = self.partitioned_families.clone();
+        let mut partitions: Vec<_> = self
+            .partitioned_families
+            .iter()
+            .filter(|family| !complete.contains(&family.source_id))
+            .cloned()
+            .collect();
         for family in &self.families {
+            if complete.contains(&family.source_id) {
+                continue;
+            }
             if !selected.contains_key(&family.source_id)
                 || self.invalidated.contains(&family.source_id)
             {

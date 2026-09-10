@@ -2734,6 +2734,189 @@ fn indexed_shared_package() -> DeferredFormulaPackage {
     package
 }
 
+struct CountSelectedFamilyReplay {
+    inner: FamilyReplay,
+    selected: Arc<AtomicUsize>,
+    whole: Arc<AtomicUsize>,
+}
+
+impl DeferredFormulaReplay for CountSelectedFamilyReplay {
+    fn replay(
+        &mut self,
+        disposition: &FormulaReplayDisposition,
+    ) -> Result<Vec<DeferredReplayFormula>, String> {
+        self.whole.fetch_add(1, Ordering::SeqCst);
+        self.inner.replay(disposition)
+    }
+    fn replay_partitioned(
+        &mut self,
+        disposition: &FormulaReplayDisposition,
+        _: &[PartitionedSourceFormulaFamily],
+    ) -> Result<Vec<DeferredReplayFormula>, String> {
+        self.replay(disposition)
+    }
+    fn replay_selected_exact(
+        &mut self,
+        coordinates: &[(u32, u32)],
+        checkpoint: &mut dyn FnMut(u64, u64) -> Result<(), formualizer_common::ExcelError>,
+    ) -> Result<Option<Vec<DeferredReplayFormula>>, formualizer_common::ExcelError> {
+        self.selected.fetch_add(1, Ordering::SeqCst);
+        let points: std::collections::BTreeSet<_> = coordinates.iter().copied().collect();
+        let mut records = Vec::new();
+        for record in &self.inner.records {
+            if points.contains(&(record.row, record.col)) {
+                checkpoint(1, 0)?;
+                records.push(record.clone());
+            }
+        }
+        Ok(Some(records))
+    }
+    fn formula_at(&mut self, row: u32, col: u32) -> Result<Option<DeferredReplayFormula>, String> {
+        self.inner.formula_at(row, col)
+    }
+}
+
+fn count_selected_family_package(
+    mut package: DeferredFormulaPackage,
+) -> (DeferredFormulaPackage, Arc<AtomicUsize>, Arc<AtomicUsize>) {
+    let records = package
+        .replay
+        .lock()
+        .unwrap()
+        .replay(&Default::default())
+        .unwrap();
+    let selected = Arc::new(AtomicUsize::new(0));
+    let whole = Arc::new(AtomicUsize::new(0));
+    package.replay = Arc::new(std::sync::Mutex::new(Box::new(CountSelectedFamilyReplay {
+        inner: FamilyReplay { records },
+        selected: Arc::clone(&selected),
+        whole: Arc::clone(&whole),
+    })));
+    (package.with_complete_coordinate_coverage(), selected, whole)
+}
+
+#[test]
+fn complete_indexed_family_preparation_never_replays_descendants_and_is_transactional() {
+    for fault in [
+        TargetPreparationFault::AfterDiscovery,
+        TargetPreparationFault::FinalRevisionValidation,
+        TargetPreparationFault::FinalGraphValidation,
+        TargetPreparationFault::Admission,
+        TargetPreparationFault::Reservation,
+        TargetPreparationFault::BeforeFirstMutation,
+    ] {
+        let mut engine = engine(FormulaPlaneMode::AuthoritativeExperimental);
+        let (package, selected, whole) =
+            count_selected_family_package(complete_family_package("Inputs", 42, 2));
+        engine.source_formula_ingress().stage_deferred(package);
+        engine.set_target_preparation_fault_for_test(fault);
+        let targets = [EvaluationTarget::Range(
+            RangeAddress::new("Inputs", 1, 2, 100, 2).unwrap(),
+        )];
+        assert!(
+            engine
+                .prepare_graph_for_targets(&targets, Default::default())
+                .is_err()
+        );
+        assert_eq!(engine.staged_formula_count(), 200);
+        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+        assert!(
+            engine
+                .deferred_package_for_test("Inputs")
+                .suppressed
+                .is_empty()
+        );
+        engine.set_target_preparation_fault_for_test(TargetPreparationFault::None);
+        let budgets = EvaluationBudgets {
+            admission: AdmissionResourceBudget {
+                materialization_cells: Some(0),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let report = engine
+            .prepare_graph_for_targets(
+                &targets,
+                TargetEvalOptions {
+                    budgets: Some(&budgets),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(report.selected_source_families, 1);
+        assert_eq!(report.selected_staged_cells, 100);
+        assert_eq!(report.retained_staged_cells, 100);
+        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+        assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
+        assert_eq!(engine.formula_ingest_report_total().formula_cells_seen, 100);
+        assert_eq!(engine.formula_ingest_report_total().source_spool_replays, 0);
+        assert!(engine.staged_formula_index_is_consistent_for_test());
+        assert_eq!(selected.load(Ordering::SeqCst), 0);
+        assert_eq!(whole.load(Ordering::SeqCst), 0);
+    }
+}
+
+#[test]
+fn queued_cross_sheet_sum_completes_family_before_partial_ast_expansion() {
+    let mut engine = engine(FormulaPlaneMode::AuthoritativeExperimental);
+    let (package, selected, whole) =
+        count_selected_family_package(complete_family_package("Inputs", 42, 2));
+    engine.source_formula_ingress().stage_deferred(package);
+    engine
+        .source_formula_ingress()
+        .stage_deferred(indexed_package("Outputs", &[(1, 1, "SUM(Inputs!B1:B100)")]));
+    engine
+        .prepare_graph_for_targets(
+            &[
+                EvaluationTarget::Range(RangeAddress::new("Inputs", 1, 2, 50, 2).unwrap()),
+                cell("Outputs", 1, 1),
+            ],
+            Default::default(),
+        )
+        .unwrap();
+    let stats = engine.baseline_stats();
+    assert_eq!(stats.formula_plane_active_span_count, 1);
+    assert_eq!(stats.graph_formula_vertex_count, 1);
+    assert!(
+        stats.formula_ast_node_count < 32,
+        "orphan partial ASTs: {stats:?}"
+    );
+    assert_eq!(selected.load(Ordering::SeqCst), 0);
+    assert_eq!(whole.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        engine.evaluate_cell("Outputs", 1, 1).unwrap(),
+        Some(LiteralValue::Number(100.0))
+    );
+}
+
+#[test]
+fn complete_indexed_family_late_append_fallback_replays_only_on_rejection() {
+    let mut engine = engine(FormulaPlaneMode::AuthoritativeExperimental);
+    engine
+        .set_cell_value("Outputs", 1, 1, LiteralValue::Number(40.0))
+        .unwrap();
+    let (package, selected, whole) =
+        count_selected_family_package(overlapping_families_package("Outputs", 870));
+    engine.source_formula_ingress().stage_deferred(package);
+    engine
+        .prepare_graph_for_targets(
+            &[EvaluationTarget::Range(
+                RangeAddress::new("Outputs", 1, 2, 2, 2).unwrap(),
+            )],
+            Default::default(),
+        )
+        .unwrap();
+    assert_eq!(selected.load(Ordering::SeqCst), 1);
+    assert_eq!(whole.load(Ordering::SeqCst), 0);
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 2);
+    assert!(!engine.has_staged_formulas());
+    assert_eq!(
+        engine.evaluate_cell("Outputs", 1, 2).unwrap(),
+        Some(LiteralValue::Number(42.0))
+    );
+}
+
 #[test]
 fn indexed_shared_precommit_faults_preserve_source_and_authority_proof() {
     for fault in [
@@ -2849,7 +3032,7 @@ fn residual_partition_requires_consumed_source_proof_not_suppression_alone() {
     );
     assert!(
         package
-            .residual_sources(&forged, &Default::default())
+            .residual_sources(&forged, &Default::default(), &Default::default())
             .is_err()
     );
 }

@@ -390,8 +390,15 @@ struct PreparedTargetSourcePackage {
     sheet_id: SheetId,
     lease: StagedPackageLease,
     selected_points: Option<BTreeSet<(u32, u32)>>,
+    complete_selections: BTreeSet<crate::engine::SourceFamilyId>,
+    deferred_shared: bool,
+    direct_domains: Vec<(
+        crate::engine::SourceFamilyId,
+        crate::engine::PlacementDomainTransport,
+    )>,
     source_report: crate::engine::FormulaCompressedSourceReport,
     replay_records: Vec<crate::engine::DeferredReplayFormula>,
+    spool_replays: u64,
     disposition: crate::engine::FormulaReplayDisposition,
     placements: Vec<crate::formula_plane::placement::PreparedAnchorOncePlacement>,
     legacy: Vec<(u32, u32, AstNodeId, DependencyPlanRow)>,
@@ -408,6 +415,16 @@ struct PreparedTargetSourcePackage {
 }
 
 impl PreparedTargetSourcePackage {
+    fn direct_contains(&self, row: u32, col: u32) -> bool {
+        self.direct_domains.iter().any(|(_, domain)| {
+            let rect = domain.rect();
+            row > rect.start.row
+                && row <= rect.end.row + 1
+                && col > rect.start.col
+                && col <= rect.end.col + 1
+        })
+    }
+
     fn fallback_records(&self) -> impl Iterator<Item = &crate::engine::DeferredReplayFormula> {
         self.replay_records.iter().filter(|record| {
             let Some((row, col)) = record.row.checked_sub(1).zip(record.col.checked_sub(1)) else {
@@ -8422,7 +8439,66 @@ where
         assumptions: &crate::engine::PreparationRevision,
         planning_requests: &mut BTreeSet<(String, String, usize)>,
         deadline: Option<std::time::Instant>,
+        scratch: &mut u64,
     ) -> Result<(), ExcelError> {
+        if !package.direct_domains.is_empty() {
+            let coordinates: Vec<_> = package
+                .selected_points
+                .as_ref()
+                .unwrap()
+                .iter()
+                .copied()
+                .filter(|&(row, col)| package.direct_contains(row, col))
+                .collect();
+            let replay = Arc::clone(
+                &self
+                    .staged_formulas
+                    .get(&package.sheet)
+                    .unwrap()
+                    .deferred_package
+                    .as_ref()
+                    .unwrap()
+                    .replay,
+            );
+            let mut records = self
+                .replay_target_coordinates(&replay, &coordinates, deadline, scratch)?
+                .ok_or_else(|| {
+                    ExcelError::new(ExcelErrorKind::Value)
+                        .with_message("complete target fallback requires indexed replay")
+                })?;
+            records.sort_by_key(|record| record.source_order);
+            let final_records: BTreeMap<_, _> = records
+                .iter()
+                .map(|record| ((record.row, record.col), record))
+                .collect();
+            if final_records.len() != coordinates.len()
+                || final_records.iter().any(|(&(row, col), record)| {
+                    record.partition_owner != record.family
+                        || record.family.is_none_or(|owner| {
+                            !package.direct_domains.iter().any(|(id, domain)| {
+                                let rect = domain.rect();
+                                *id == owner
+                                    && row > rect.start.row
+                                    && row <= rect.end.row + 1
+                                    && col > rect.start.col
+                                    && col <= rect.end.col + 1
+                            })
+                        })
+                })
+                || records
+                    .windows(2)
+                    .any(|pair| pair[0].source_order == pair[1].source_order)
+            {
+                return Err(ExcelError::new(ExcelErrorKind::Value)
+                    .with_message("invalid complete target fallback replay"));
+            }
+            package.spool_replays += u64::from(!coordinates.is_empty());
+            package.replay_records.extend(records);
+            package
+                .replay_records
+                .sort_by_key(|record| record.source_order);
+            package.direct_domains.clear();
+        }
         let existing = package
             .legacy
             .iter()
@@ -8481,11 +8557,267 @@ where
         Ok(())
     }
 
+    fn replay_target_coordinates(
+        &mut self,
+        replay: &Arc<std::sync::Mutex<Box<dyn crate::engine::DeferredFormulaReplay>>>,
+        coordinates: &[(u32, u32)],
+        deadline: Option<std::time::Instant>,
+        scratch: &mut u64,
+    ) -> Result<Option<Vec<crate::engine::DeferredReplayFormula>>, ExcelError> {
+        if coordinates.is_empty() {
+            return Ok(Some(Vec::new()));
+        }
+        let mut guard = replay.lock().map_err(|_| {
+            ExcelError::new(ExcelErrorKind::Value)
+                .with_message("deferred formula spool lock poisoned")
+        })?;
+        let retained = guard.selection_cache_footprint().is_some();
+        let records = guard.replay_selected_exact(coordinates, &mut |work, bytes| {
+            self.target_preparation_checkpoint(deadline, work)?;
+            if retained && let Some(ledger) = self.active_resource_ledger.as_mut() {
+                ledger
+                    .reserve_retained(bytes)
+                    .map_err(crate::engine::ResourceLedgerError::into_excel_error)?;
+                self.source_cache_accounted = self.source_cache_accounted.saturating_add(bytes);
+            }
+            self.reserve_graph_source_scratch(bytes)?;
+            *scratch = scratch.saturating_add(bytes);
+            Ok(())
+        });
+        drop(guard);
+        let reconciled = self.reconcile_source_cache_footprints();
+        let records = records?;
+        reconciled?;
+        Ok(records)
+    }
+
+    fn prepare_complete_target_selections(
+        &mut self,
+        sheet: &str,
+        selected: &mut BTreeSet<(u32, u32)>,
+        previous: &BTreeSet<(u32, u32)>,
+        prepared: &mut PreparedTargetSourcePackage,
+        deadline: Option<std::time::Instant>,
+        scratch: &mut u64,
+    ) -> Result<(), ExcelError> {
+        if selected.is_empty()
+            || self.config.formula_plane_mode != FormulaPlaneMode::AuthoritativeExperimental
+        {
+            return Ok(());
+        }
+        self.target_preparation_checkpoint(
+            deadline,
+            selected.len() as u64 + previous.len() as u64,
+        )?;
+        let source = self
+            .staged_formulas
+            .get(sheet)
+            .unwrap()
+            .deferred_package
+            .as_ref()
+            .unwrap();
+        let metadata_bytes = source.families.len() as u64 * 256
+            + source
+                .partitioned_families
+                .iter()
+                .map(|family| {
+                    256 + family.fragments.len() as u64 * 32
+                        + family.legacy_members.len() as u64 * 32
+                })
+                .sum::<u64>();
+        self.reserve_graph_source_scratch(metadata_bytes)?;
+        *scratch = scratch.saturating_add(metadata_bytes);
+        let source = self
+            .staged_formulas
+            .get(sheet)
+            .unwrap()
+            .deferred_package
+            .as_ref()
+            .unwrap();
+        let families = source.families.clone();
+        let partitions = source.partitioned_families.clone();
+        let invalidated = source.invalidated.clone();
+        let contains = |rect: crate::engine::SourceRect, &(row, col): &(u32, u32)| {
+            row > rect.start.row
+                && row <= rect.end.row + 1
+                && col > rect.start.col
+                && col <= rect.end.col + 1
+        };
+        let covered = |rect: crate::engine::SourceRect| {
+            let current = selected
+                .range((rect.start.row + 1, 0)..=(rect.end.row + 1, u32::MAX))
+                .filter(|point| contains(rect, point))
+                .count();
+            let prior = previous
+                .range((rect.start.row + 1, 0)..=(rect.end.row + 1, u32::MAX))
+                .filter(|point| contains(rect, point) && !selected.contains(point))
+                .count();
+            (
+                (current + prior) as u64
+                    == (u64::from(rect.end.row - rect.start.row) + 1)
+                        * (u64::from(rect.end.col - rect.start.col) + 1),
+                current > 0,
+            )
+        };
+        let mut ordered = Vec::new();
+        for family in &families {
+            if invalidated.contains(&family.source_id) {
+                continue;
+            }
+            let crate::engine::SourceFamilyMembers::CompleteDomain(domain) = family.members else {
+                continue;
+            };
+            if covered(domain.rect()) != (true, true) {
+                continue;
+            }
+            self.target_preparation_checkpoint(deadline, 1)?;
+            match self.prepare_source_formula_family(prepared.sheet_id, family, true, None) {
+                Ok((placement, _)) => {
+                    prepared.direct_cells += placement.member_count;
+                    prepared.direct_complete_cells += placement.member_count;
+                    prepared.direct_complete_families += 1;
+                    prepared.direct_families += 1;
+                    prepared.anchor_parses += 1;
+                    prepared.anchor_asts += 1;
+                    prepared.anchor_analyses += 1;
+                    prepared.complete_selections.insert(family.source_id);
+                    prepared.direct_domains.push((family.source_id, domain));
+                    prepared.disposition.set_family_direct(family.source_id);
+                    ordered.push((family.source_order, vec![placement]));
+                }
+                Err(error) => {
+                    prepared.anchor_parses += u64::from(error.parse_attempted);
+                    prepared.anchor_asts += u64::from(error.ast_created);
+                    prepared.anchor_analyses += u64::from(error.analysis_created);
+                    *prepared
+                        .source_report
+                        .fallback_reasons
+                        .entry(error.reason)
+                        .or_default() += 1;
+                }
+            }
+        }
+        for source in &partitions {
+            if invalidated.contains(&source.source_id) {
+                continue;
+            }
+            let domains: Vec<_> = source
+                .fragments
+                .iter()
+                .map(|domain| covered(domain.rect()))
+                .collect();
+            let legacy_complete = source.legacy_members.as_slice().iter().all(|member| {
+                prepared
+                    .disposition
+                    .is_consumed_member(source.source_id, member.coord)
+                    || selected.contains(&(member.coord.row + 1, member.coord.col + 1))
+                    || previous.contains(&(member.coord.row + 1, member.coord.col + 1))
+            });
+            if !legacy_complete
+                || !domains.iter().all(|(complete, _)| *complete)
+                || !(domains.iter().any(|(_, touched)| *touched)
+                    || source.legacy_members.as_slice().iter().any(|member| {
+                        selected.contains(&(member.coord.row + 1, member.coord.col + 1))
+                    }))
+            {
+                continue;
+            }
+            self.target_preparation_checkpoint(deadline, 1)?;
+            let analyzed =
+                match self.analyze_partitioned_source_family_for_transaction(sheet, source) {
+                    Ok(analyzed) => {
+                        prepared.anchor_parses += 1;
+                        prepared.anchor_asts += 1;
+                        prepared.anchor_analyses += 1;
+                        analyzed
+                    }
+                    Err(error) => {
+                        prepared.anchor_parses += u64::from(error.parse_attempted);
+                        prepared.anchor_asts += u64::from(error.ast_created);
+                        prepared.anchor_analyses += u64::from(error.analysis_created);
+                        *prepared
+                            .source_report
+                            .fallback_reasons
+                            .entry(error.reason)
+                            .or_default() += 1;
+                        continue;
+                    }
+                };
+            let regions: Vec<_> = analyzed
+                .placements
+                .iter()
+                .map(|placement| Region::from_domain(placement.fragment_dependency_proof().0))
+                .collect();
+            if analyzed
+                .placements
+                .iter()
+                .enumerate()
+                .any(|(index, placement)| {
+                    placement
+                        .fragment_dependency_proof()
+                        .1
+                        .dependencies
+                        .iter()
+                        .any(|dependency| {
+                            regions.iter().enumerate().any(|(other, region)| {
+                                other != index && dependency.read_region.intersects(region)
+                            })
+                        })
+                })
+            {
+                continue;
+            }
+            let mut disposition = prepared.disposition.clone();
+            disposition
+                .register_partition(source, true)
+                .map_err(|reason| ExcelError::new(ExcelErrorKind::Value).with_message(reason))?;
+            if !disposition.owns_partition_exactly(source)
+                || !disposition.consumed_engine_matches(&self.source_formula_token)
+            {
+                return Err(ExcelError::new(ExcelErrorKind::Value)
+                    .with_message("complete target partition ownership mismatch"));
+            }
+            prepared.disposition = disposition;
+            prepared.direct_cells += analyzed.direct_cells;
+            prepared.direct_partition_cells += analyzed.direct_cells;
+            prepared.direct_partition_families += 1;
+            prepared.direct_fragments += analyzed.placements.len() as u64;
+            prepared.direct_families += 1;
+            prepared.complete_selections.insert(source.source_id);
+            prepared.direct_domains.extend(
+                source
+                    .fragments
+                    .iter()
+                    .map(|domain| (source.source_id, *domain)),
+            );
+            ordered.push((source.source_order, analyzed.placements));
+        }
+        ordered.sort_by_key(|(order, _)| *order);
+        prepared.placements = ordered
+            .into_iter()
+            .flat_map(|(_, placements)| placements)
+            .collect();
+        selected.extend(
+            previous
+                .iter()
+                .filter(|point| {
+                    prepared
+                        .direct_domains
+                        .iter()
+                        .any(|(_, domain)| contains(domain.rect(), point))
+                })
+                .copied(),
+        );
+        Ok(())
+    }
+
     fn prepare_target_exact_source_selection(
         &mut self,
         sheet: &str,
         lease: StagedPackageLease,
         coordinates: Vec<(u32, u32)>,
+        previous: &BTreeSet<(u32, u32)>,
+        allow_partial_shared: bool,
         deadline: Option<std::time::Instant>,
         scratch: &mut u64,
     ) -> Result<Option<PreparedTargetSourcePackage>, ExcelError> {
@@ -8507,34 +8839,106 @@ where
                 .register_partition(partition, false)
                 .map_err(|message| ExcelError::new(ExcelErrorKind::Value).with_message(message))?;
         }
+        routing.extend_suppressed_excel_coords(package.suppressed.iter().copied());
+        routing.register_consumed_members(
+            package.consumed_engine.as_ref(),
+            package.consumed_members.iter().copied(),
+        );
         let replay = Arc::clone(&package.replay);
         let source_report = package.accounting_report();
-        let selected_points: BTreeSet<_> = coordinates
+        let mut selected_points: BTreeSet<_> = coordinates
             .into_iter()
             .filter(|point| !package.suppressed.contains(point))
             .collect();
-        let coordinates: Vec<_> = selected_points.iter().copied().collect();
-        let mut replay_guard = replay.lock().map_err(|_| {
-            ExcelError::new(ExcelErrorKind::Value)
-                .with_message("deferred formula spool lock poisoned")
-        })?;
-        let retained = replay_guard.selection_cache_footprint().is_some();
-        let records = replay_guard.replay_selected_exact(&coordinates, &mut |work, bytes| {
-            self.target_preparation_checkpoint(deadline, work)?;
-            if retained && let Some(ledger) = self.active_resource_ledger.as_mut() {
-                ledger
-                    .reserve_retained(bytes)
-                    .map_err(crate::engine::ResourceLedgerError::into_excel_error)?;
-                self.source_cache_accounted = self.source_cache_accounted.saturating_add(bytes);
-            }
-            self.reserve_graph_source_scratch(bytes)?;
-            *scratch = scratch.saturating_add(bytes);
-            Ok(())
-        });
-        drop(replay_guard);
-        let reconciled = self.reconcile_source_cache_footprints();
-        let records = records?;
-        reconciled?;
+        let mut prepared = PreparedTargetSourcePackage {
+            sheet: sheet.to_owned(),
+            sheet_id: self.graph.sheet_id(sheet).unwrap(),
+            lease,
+            selected_points: None,
+            complete_selections: Default::default(),
+            deferred_shared: false,
+            direct_domains: Vec::new(),
+            source_report,
+            replay_records: Vec::new(),
+            spool_replays: 0,
+            disposition: routing.clone(),
+            placements: Vec::new(),
+            legacy: Vec::new(),
+            direct_families: 0,
+            direct_cells: 0,
+            direct_fragments: 0,
+            direct_complete_families: 0,
+            direct_complete_cells: 0,
+            direct_partition_families: 0,
+            direct_partition_cells: 0,
+            anchor_parses: 0,
+            anchor_asts: 0,
+            anchor_analyses: 0,
+        };
+        self.prepare_complete_target_selections(
+            sheet,
+            &mut selected_points,
+            previous,
+            &mut prepared,
+            deadline,
+            scratch,
+        )?;
+        if !allow_partial_shared
+            && self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental
+        {
+            let source = self
+                .staged_formulas
+                .get(sheet)
+                .unwrap()
+                .deferred_package
+                .as_ref()
+                .unwrap();
+            let contains = |rect: crate::engine::SourceRect, row: u32, col: u32| {
+                row > rect.start.row
+                    && row <= rect.end.row + 1
+                    && col > rect.start.col
+                    && col <= rect.end.col + 1
+            };
+            let mut deferred = false;
+            selected_points.retain(|&(row, col)| {
+                if prepared.direct_contains(row, col) {
+                    return true;
+                }
+                let coord = crate::engine::SourceCoord {
+                    row: row - 1,
+                    col: col - 1,
+                };
+                let shared = source.families.iter().any(|family| match &family.members {
+                    crate::engine::SourceFamilyMembers::CompleteDomain(domain) => {
+                        contains(domain.rect(), row, col)
+                    }
+                    crate::engine::SourceFamilyMembers::ExplicitMembers(members) => {
+                        members.as_slice().binary_search(&coord).is_ok()
+                    }
+                }) || source.partitioned_families.iter().any(|family| {
+                    family
+                        .fragments
+                        .iter()
+                        .any(|domain| contains(domain.rect(), row, col))
+                        || family.legacy_members.as_slice().iter().any(|member| {
+                            member.coord == coord
+                                && member.kind
+                                    == crate::engine::PartitionLegacyMemberKind::SharedFamilyMember
+                        })
+                });
+                deferred |= shared;
+                !shared
+            });
+            prepared.deferred_shared = deferred;
+        }
+        let replay_points: BTreeSet<_> = selected_points
+            .iter()
+            .copied()
+            .filter(|&(row, col)| !prepared.direct_contains(row, col))
+            .collect();
+        let coordinates: Vec<_> = replay_points.iter().copied().collect();
+        let records = self.replay_target_coordinates(&replay, &coordinates, deadline, scratch)?;
+        prepared.spool_replays = u64::from(!coordinates.is_empty());
         let Some(mut replay_records) = records else {
             return Ok(None);
         };
@@ -8560,7 +8964,7 @@ where
                 .with_message("invalid indexed exact source selection"));
         }
         let represented: BTreeSet<_> = replay_records.iter().map(|r| (r.row, r.col)).collect();
-        if represented != selected_points {
+        if represented != replay_points {
             return Err(ExcelError::new(ExcelErrorKind::Value)
                 .with_message("incomplete indexed exact source selection"));
         }
@@ -8633,27 +9037,9 @@ where
                     .with_message("indexed source ownership mismatch"));
             }
         }
-        Ok(Some(PreparedTargetSourcePackage {
-            sheet: sheet.to_owned(),
-            sheet_id: self.graph.sheet_id(sheet).unwrap(),
-            lease,
-            selected_points: Some(selected_points),
-            source_report,
-            replay_records,
-            disposition: Default::default(),
-            placements: Vec::new(),
-            legacy: Vec::new(),
-            direct_families: 0,
-            direct_cells: 0,
-            direct_fragments: 0,
-            direct_complete_families: 0,
-            direct_complete_cells: 0,
-            direct_partition_families: 0,
-            direct_partition_cells: 0,
-            anchor_parses: 0,
-            anchor_asts: 0,
-            anchor_analyses: 0,
-        }))
+        prepared.selected_points = Some(selected_points);
+        prepared.replay_records = replay_records;
+        Ok(Some(prepared))
     }
 
     fn prepare_target_source_package(
@@ -8912,8 +9298,12 @@ where
             sheet_id,
             lease,
             selected_points: None,
+            complete_selections: Default::default(),
+            deferred_shared: false,
+            direct_domains: Vec::new(),
             source_report,
             replay_records,
+            spool_replays: 1,
             disposition,
             placements,
             legacy: Vec::new(),
@@ -11156,6 +11546,7 @@ where
         let mut scope = PrepareScope::Exact;
         let mut reasons = Vec::new();
         let mut regions = VecDeque::new();
+        let mut deferred_shared_regions = VecDeque::new();
         let mut normalized = Vec::with_capacity(targets.len());
         let mut symbol_vertices = VecDeque::new();
         for target in targets {
@@ -11249,7 +11640,7 @@ where
         let mut package_encountered = false;
         let mut selected_package_sheets = FxHashSet::default();
         let mut selected_package_points: BTreeMap<String, BTreeSet<(u32, u32)>> = BTreeMap::new();
-        let mut prepared_packages = Vec::new();
+        let mut prepared_packages: Vec<PreparedTargetSourcePackage> = Vec::new();
         let authoritative_with_ordinary = self.config.formula_plane_mode
             == FormulaPlaneMode::AuthoritativeExperimental
             && self.staged_formula_index.ordinary_count() != 0;
@@ -11351,7 +11742,15 @@ where
                 }
             }
 
-            let Some(region) = regions.pop_front() else {
+            // Finish known ordinary/name dependency discovery before expanding
+            // partial shared demands. A queued SUM may complete those families.
+            let allow_partial_shared = regions.is_empty() && symbol_vertices.is_empty();
+            let next_region = if allow_partial_shared {
+                deferred_shared_regions.pop_front()
+            } else {
+                regions.pop_front()
+            };
+            let Some(region) = next_region else {
                 if let Some(vertex) = symbol_vertices.pop_front() {
                     self.target_preparation_checkpoint(options.deadline, 1)?;
                     if !visited_vertices.insert(vertex) || !self.graph.vertex_exists(vertex) {
@@ -11567,7 +11966,7 @@ where
             };
 
             self.target_preparation_checkpoint(options.deadline, 1)?;
-            if !visited_regions.insert(region.clone()) {
+            if !visited_regions.insert(region.clone()) && !allow_partial_shared {
                 continue;
             }
             if let PrepareScope::Sheets(sheets) = &mut scope
@@ -11630,6 +12029,41 @@ where
                     region.end_row,
                     region.end_col,
                 );
+                let coalesce_shared = self.config.formula_plane_mode
+                    == FormulaPlaneMode::AuthoritativeExperimental
+                    && self
+                        .staged_formulas
+                        .get(&region.sheet)
+                        .and_then(|staged| staged.deferred_package.as_ref())
+                        .is_some_and(|source| {
+                            source.coordinates_cover_families
+                                && (!source.families.is_empty()
+                                    || !source.partitioned_families.is_empty())
+                        });
+                if coalesce_shared && !points.is_empty() {
+                    // These are already demanded regions, not package-wide widening.
+                    // Union their indexed coordinates before deciding family completeness.
+                    for queued in regions
+                        .iter()
+                        .chain(deferred_shared_regions.iter())
+                        .filter(|queued| queued.sheet == region.sheet)
+                    {
+                        let additional = self.staged_formula_index.package_points_in_region(
+                            &queued.sheet,
+                            queued.start_row,
+                            queued.start_col,
+                            queued.end_row,
+                            queued.end_col,
+                        );
+                        self.target_preparation_checkpoint(
+                            options.deadline,
+                            additional.len() as u64,
+                        )?;
+                        points.extend(additional);
+                    }
+                    points.sort_unstable();
+                    points.dedup();
+                }
                 if let Some(selected) = selected_package_points.get(&region.sheet) {
                     points.retain(|point| !selected.contains(point));
                 }
@@ -11637,10 +12071,36 @@ where
                     &region.sheet,
                     package_lease,
                     points,
+                    selected_package_points
+                        .get(&region.sheet)
+                        .unwrap_or(&BTreeSet::new()),
+                    allow_partial_shared,
                     options.deadline,
                     &mut discovery_scratch_reserved,
                 )?;
                 let mut package = if let Some(mut package) = partial {
+                    if package.deferred_shared {
+                        deferred_shared_regions.push_back(region.clone());
+                    }
+                    // A later range can complete a family touched earlier in this
+                    // request. Retire only that family's earlier legacy proposals;
+                    // nothing has been published and its dependencies remain demanded.
+                    if !package.direct_domains.is_empty() {
+                        for prior in prepared_packages
+                            .iter_mut()
+                            .filter(|prior| prior.sheet == region.sheet)
+                        {
+                            prior
+                                .replay_records
+                                .retain(|record| !package.direct_contains(record.row, record.col));
+                            prior
+                                .legacy
+                                .retain(|(row, col, _, _)| !package.direct_contains(*row, *col));
+                            if let Some(points) = prior.selected_points.as_mut() {
+                                points.retain(|&(row, col)| !package.direct_contains(row, col));
+                            }
+                        }
+                    }
                     if selected_package_points.contains_key(&region.sheet) {
                         package.source_report = Default::default();
                     }
@@ -12275,6 +12735,7 @@ where
                                 &assumptions,
                                 &mut planning_requests,
                                 options.deadline,
+                                &mut discovery_scratch_reserved,
                             )?;
                         } else {
                             package.direct_families = 0;
@@ -12394,7 +12855,16 @@ where
                             })
                             .sum::<u64>(),
                     )
-                    .saturating_add(points.len() as u64 * 512)
+                    // Direct complete domains need coordinate suppression, not
+                    // a per-member residual split/proof or legacy AST reserve.
+                    .saturating_add(points.len() as u64 * 32)
+                    .saturating_add(
+                        prepared_packages
+                            .iter()
+                            .filter(|package| &package.sheet == sheet)
+                            .map(|package| package.replay_records.len() as u64 * 480)
+                            .sum::<u64>(),
+                    )
             })
             .sum::<u64>();
         let scratch_bytes = discovery_scratch_reserved
@@ -12464,8 +12934,13 @@ where
                 .deferred_package
                 .as_ref()
                 .unwrap();
+            let complete: BTreeSet<_> = prepared_packages
+                .iter()
+                .filter(|package| &package.sheet == sheet)
+                .flat_map(|package| package.complete_selections.iter().copied())
+                .collect();
             let residual = source
-                .residual_sources(&selected, &self.workbook_load_limits)
+                .residual_sources(&selected, &complete, &self.workbook_load_limits)
                 .map_err(|reason| ExcelError::new(ExcelErrorKind::Value).with_message(reason))?;
             residual_owners.insert(
                 sheet.clone(),
@@ -12720,7 +13195,15 @@ where
             ingest_delta.formula_cells_seen = (prepared.len() as u64).saturating_add(
                 prepared_packages
                     .iter()
-                    .map(|package| package.replay_records.len() as u64)
+                    .map(|package| {
+                        (package.replay_records.len() as u64).saturating_add(
+                            if package.selected_points.is_some() {
+                                package.direct_cells
+                            } else {
+                                0
+                            },
+                        )
+                    })
                     .sum::<u64>(),
             );
             ingest_delta.graph_formula_cells_materialized = committed as u64;
@@ -12749,7 +13232,7 @@ where
                 ingest_delta.source_spool_replays = ingest_delta
                     .source_spool_replays
                     .saturating_add(source.source_spool_replays)
-                    .saturating_add(1);
+                    .saturating_add(package.spool_replays);
                 ingest_delta.source_families_seen = ingest_delta
                     .source_families_seen
                     .saturating_add(source.families_seen);
@@ -12925,6 +13408,11 @@ where
                 .filter(|package| package.selected_points.is_some())
                 .flat_map(|package| package.replay_records.iter())
                 .filter_map(|record| record.partition_owner.or(record.family))
+                .chain(
+                    prepared_packages
+                        .iter()
+                        .flat_map(|package| package.complete_selections.iter().copied()),
+                )
                 .collect::<BTreeSet<_>>()
                 .len();
         let selected_staged_cells = prepared.len().saturating_add(

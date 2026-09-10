@@ -2004,6 +2004,356 @@ fn mixed_shared_targets_demand_coordinates_not_family_dependencies() {
     }
 }
 
+fn shared_sum_target_xlsx(rows: u32, broken: bool, fragmented: bool) -> Vec<u8> {
+    let bytes = if fragmented {
+        large_fragmented_vertical_xlsx(rows, rows / 2, rows / 2 + 1, false)
+    } else {
+        large_shared_vertical_xlsx(rows, "A1+1")
+    };
+    rewrite_sheet_xml(bytes, |mut xml| {
+        let end = xml.find("</row>").unwrap();
+        let mut added = format!("<c r=\"D1\"><f>SUM(B1:B{rows})</f></c>");
+        if broken {
+            added.push_str("<c r=\"E1\"><f>NOSHEET!A1</f></c><c r=\"F1\"><f t=\"shared\" si=\"999\" ref=\"F1:F2\">NOSHEET!A1</f></c>");
+        }
+        xml.insert_str(end, &added);
+        if broken {
+            let row2 = xml.find("<row r=\"2\"").unwrap();
+            let end = row2 + xml[row2..].find("</row>").unwrap();
+            xml.insert_str(end, "<c r=\"F2\"><f t=\"shared\" si=\"999\"></f></c>");
+        }
+        xml
+    })
+}
+
+#[test]
+fn complete_shared_sum_target_preserves_compression_and_unrelated_errors() {
+    for (fragmented, partial_first, same_request) in [
+        (false, false, 0),
+        (false, true, 0),
+        (false, true, 1),
+        (false, true, 2),
+        (false, true, 3),
+        (true, false, 0),
+        (true, true, 0),
+    ] {
+        let mut config = WorkbookConfig::interactive();
+        config.eval.formula_plane_mode = FormulaPlaneMode::AuthoritativeExperimental;
+        let mut wb = Workbook::from_reader(
+            CalamineAdapter::open_bytes(shared_sum_target_xlsx(1000, true, fragmented)).unwrap(),
+            LoadStrategy::EagerAll,
+            config,
+        )
+        .unwrap();
+        if partial_first && same_request == 0 {
+            assert_eq!(
+                wb.evaluate_cell("Sheet1", 2, 2).unwrap(),
+                LiteralValue::Number(3.0)
+            );
+            wb.set_formula("Sheet1", 2, 2, "=40").unwrap();
+        }
+        if same_request > 0 {
+            let targets = match same_request {
+                1 => vec![
+                    EvaluationTarget::Cell {
+                        sheet: "Sheet1".into(),
+                        row: 2,
+                        col: 2,
+                    },
+                    EvaluationTarget::Cell {
+                        sheet: "Sheet1".into(),
+                        row: 1,
+                        col: 4,
+                    },
+                ],
+                2 => vec![
+                    EvaluationTarget::Range(RangeAddress::new("Sheet1", 1, 2, 500, 2).unwrap()),
+                    EvaluationTarget::Cell {
+                        sheet: "Sheet1".into(),
+                        row: 1,
+                        col: 4,
+                    },
+                ],
+                _ => vec![EvaluationTarget::Range(
+                    RangeAddress::new("Sheet1", 1, 2, 500, 4).unwrap(),
+                )],
+            };
+            let mut budgets = formualizer_eval::engine::EvaluationBudgets::default();
+            budgets.admission.materialization_cells = Some(1);
+            budgets.scratch.graph_source_bytes = Some(128 * 1024);
+            wb.engine_mut()
+                .prepare_graph_for_targets(
+                    &targets,
+                    formualizer_eval::engine::TargetEvalOptions {
+                        budgets: Some(&budgets),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+        }
+        let expected = 501500.0 - if fragmented { 402.0 } else { 0.0 }
+            + if partial_first && same_request == 0 {
+                37.0
+            } else {
+                0.0
+            };
+        assert_eq!(
+            wb.evaluate_cell("Sheet1", 1, 4).unwrap(),
+            LiteralValue::Number(expected),
+            "fragmented={fragmented} partial={partial_first} same={same_request}"
+        );
+        let stats = wb.engine().baseline_stats();
+        assert!(stats.formula_plane_active_span_count >= 1, "{stats:?}");
+        assert!(stats.graph_formula_vertex_count <= 3, "{stats:?}");
+        assert!(stats.formula_ast_root_count <= 3, "{stats:?}");
+        assert!(
+            stats.formula_ast_node_count < 32,
+            "orphan per-member ASTs: {stats:?}"
+        );
+        assert_eq!(wb.engine().staged_formula_count(), 3);
+        assert!(wb.evaluate_cell("Sheet1", 1, 5).is_err());
+        assert!(wb.evaluate_cell("Sheet1", 1, 6).is_err());
+        assert!(wb.evaluate_all().is_err());
+        assert_eq!(
+            wb.get_formula("Sheet1", 2, 6)
+                .unwrap()
+                .trim_start_matches('='),
+            "NOSHEET!A2"
+        );
+        wb.add_sheet("NOSHEET").unwrap();
+        wb.evaluate_all().unwrap();
+        assert_eq!(
+            wb.get_value("Sheet1", 1, 4),
+            Some(LiteralValue::Number(expected))
+        );
+    }
+}
+
+#[test]
+fn complete_shared_target_preserves_previously_selected_master_deletion() {
+    let mut config = WorkbookConfig::interactive();
+    config.eval.formula_plane_mode = FormulaPlaneMode::AuthoritativeExperimental;
+    let mut wb = Workbook::from_reader(
+        CalamineAdapter::open_bytes(shared_sum_target_xlsx(1000, false, false)).unwrap(),
+        LoadStrategy::EagerAll,
+        config,
+    )
+    .unwrap();
+    assert_eq!(
+        wb.evaluate_cell("Sheet1", 1, 2).unwrap(),
+        LiteralValue::Number(2.0)
+    );
+    wb.set_value("Sheet1", 1, 2, LiteralValue::Empty).unwrap();
+    assert_eq!(
+        wb.evaluate_cell("Sheet1", 1, 4).unwrap(),
+        LiteralValue::Number(501498.0)
+    );
+    assert_eq!(wb.get_value("Sheet1", 1, 2), None);
+    assert_eq!(
+        wb.engine().baseline_stats().formula_plane_active_span_count,
+        1
+    );
+    assert_eq!(wb.engine().baseline_stats().graph_formula_vertex_count, 1);
+    assert!(!wb.engine().has_staged_formulas());
+}
+
+#[test]
+fn complete_shared_target_related_broken_precedent_remains_an_exception() {
+    let bytes = rewrite_sheet_xml(shared_sum_target_xlsx(1000, false, false), |mut xml| {
+        let start = xml.find("<c r=\"A700\"").unwrap();
+        let end = start + xml[start..].find("</c>").unwrap() + 4;
+        xml.replace_range(start..end, "<c r=\"A700\"><f>NOSHEET!A1</f></c>");
+        xml
+    });
+    let mut config = WorkbookConfig::interactive();
+    config.eval.formula_plane_mode = FormulaPlaneMode::AuthoritativeExperimental;
+    let mut wb = Workbook::from_reader(
+        CalamineAdapter::open_bytes(bytes).unwrap(),
+        LoadStrategy::EagerAll,
+        config,
+    )
+    .unwrap();
+    for _ in 0..2 {
+        assert!(wb.evaluate_cell("Sheet1", 1, 4).is_err());
+        assert_eq!(wb.engine().staged_formula_count(), 1002);
+        assert_eq!(
+            wb.get_formula("Sheet1", 1, 2)
+                .unwrap()
+                .trim_start_matches('='),
+            "A1+1"
+        );
+    }
+    wb.add_sheet("NOSHEET").unwrap();
+    wb.set_value("NOSHEET", 1, 1, LiteralValue::Number(7.0))
+        .unwrap();
+    assert_eq!(
+        wb.evaluate_cell("Sheet1", 1, 4).unwrap(),
+        LiteralValue::Number(500807.0)
+    );
+    assert_eq!(
+        wb.engine().baseline_stats().formula_plane_active_span_count,
+        1
+    );
+    assert_eq!(wb.engine().baseline_stats().graph_formula_vertex_count, 2);
+}
+
+#[test]
+fn complete_and_partial_shared_families_keep_independent_authority() {
+    let bytes = rewrite_sheet_xml(
+        large_fragmented_vertical_xlsx(1000, 500, 501, true),
+        |mut xml| {
+            let end = xml.find("</row>").unwrap();
+            xml.insert_str(end, "<c r=\"E1\"><f>SUM(B1:B1000)</f></c>");
+            xml
+        },
+    );
+    let mut config = WorkbookConfig::interactive();
+    config.eval.formula_plane_mode = FormulaPlaneMode::AuthoritativeExperimental;
+    let mut wb = Workbook::from_reader(
+        CalamineAdapter::open_bytes(bytes).unwrap(),
+        LoadStrategy::EagerAll,
+        config,
+    )
+    .unwrap();
+    wb.engine_mut()
+        .prepare_graph_for_targets(
+            &[
+                EvaluationTarget::Cell {
+                    sheet: "Sheet1".into(),
+                    row: 2,
+                    col: 4,
+                },
+                EvaluationTarget::Cell {
+                    sheet: "Sheet1".into(),
+                    row: 1,
+                    col: 5,
+                },
+            ],
+            Default::default(),
+        )
+        .unwrap();
+    assert_eq!(
+        wb.engine().baseline_stats().formula_plane_active_span_count,
+        2
+    );
+    assert_eq!(wb.engine().baseline_stats().graph_formula_vertex_count, 3);
+    assert_eq!(wb.engine().staged_formula_count(), 999);
+    wb.set_formula("Sheet1", 2, 4, "=40").unwrap();
+    wb.engine_mut().build_graph_all().unwrap();
+    assert_eq!(
+        wb.engine().baseline_stats().formula_plane_active_span_count,
+        4
+    );
+    wb.evaluate_all().unwrap();
+    assert_eq!(
+        wb.get_value("Sheet1", 1, 5),
+        Some(LiteralValue::Number(501098.0))
+    );
+    assert_eq!(
+        wb.get_value("Sheet1", 2, 4),
+        Some(LiteralValue::Number(40.0))
+    );
+    assert_eq!(
+        wb.get_value("Sheet1", 3, 4),
+        Some(LiteralValue::Number(31.0))
+    );
+}
+
+#[test]
+#[ignore = "manual complete shared demand cost probe"]
+fn complete_shared_sum_target_cost_probe() {
+    let bytes = shared_sum_target_xlsx(10_000, false, false);
+    for pattern in [
+        "full",
+        "target",
+        "partial-target",
+        "narrow-range-target",
+        "wide-target",
+    ] {
+        let mut config = WorkbookConfig::interactive();
+        config.eval.formula_plane_mode = FormulaPlaneMode::AuthoritativeExperimental;
+        let load = std::time::Instant::now();
+        let mut wb = Workbook::from_reader(
+            CalamineAdapter::open_bytes(bytes.clone()).unwrap(),
+            LoadStrategy::EagerAll,
+            config,
+        )
+        .unwrap();
+        let load = load.elapsed();
+        let prep = std::time::Instant::now();
+        if pattern == "full" {
+            wb.engine_mut().build_graph_all().unwrap();
+        } else if pattern == "narrow-range-target" {
+            wb.engine_mut()
+                .prepare_graph_for_targets(
+                    &[
+                        EvaluationTarget::Range(
+                            RangeAddress::new("Sheet1", 1, 2, 5000, 2).unwrap(),
+                        ),
+                        EvaluationTarget::Cell {
+                            sheet: "Sheet1".into(),
+                            row: 1,
+                            col: 4,
+                        },
+                    ],
+                    Default::default(),
+                )
+                .unwrap();
+        } else if pattern == "wide-target" {
+            wb.engine_mut()
+                .prepare_graph_for_targets(
+                    &[EvaluationTarget::Range(
+                        RangeAddress::new("Sheet1", 1, 2, 5000, 4).unwrap(),
+                    )],
+                    Default::default(),
+                )
+                .unwrap();
+        } else {
+            if pattern == "partial-target" {
+                wb.engine_mut()
+                    .prepare_graph_for_targets(
+                        &[EvaluationTarget::Cell {
+                            sheet: "Sheet1".into(),
+                            row: 2,
+                            col: 2,
+                        }],
+                        Default::default(),
+                    )
+                    .unwrap();
+            }
+            wb.engine_mut()
+                .prepare_graph_for_targets(
+                    &[EvaluationTarget::Cell {
+                        sheet: "Sheet1".into(),
+                        row: 1,
+                        col: 4,
+                    }],
+                    Default::default(),
+                )
+                .unwrap();
+        }
+        let prep = prep.elapsed();
+        let full = std::time::Instant::now();
+        wb.engine_mut().build_graph_all().unwrap();
+        let full = full.elapsed();
+        let stats = wb.engine().baseline_stats();
+        eprintln!(
+            "complete shared pattern={pattern} load={load:?} prep={prep:?} later_full={full:?} stats={stats:?}"
+        );
+        assert!(stats.formula_plane_active_span_count >= 1);
+        assert!(stats.graph_formula_vertex_count <= 2);
+        assert!(stats.formula_ast_root_count <= 2);
+        assert!(
+            stats.formula_ast_node_count < 32,
+            "orphan per-member ASTs: {stats:?}"
+        );
+        assert_eq!(
+            wb.evaluate_cell("Sheet1", 1, 4).unwrap(),
+            LiteralValue::Number(50015000.0)
+        );
+    }
+}
+
 #[test]
 #[ignore = "manual shared target/full preparation cost probe"]
 fn shared_target_then_full_cost_probe() {
