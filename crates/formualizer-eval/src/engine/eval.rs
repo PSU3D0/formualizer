@@ -415,6 +415,34 @@ struct PreparedTargetSourcePackage {
 }
 
 impl PreparedTargetSourcePackage {
+    fn empty_selection(sheet: &str, sheet_id: SheetId, lease: StagedPackageLease) -> Self {
+        Self {
+            sheet: sheet.to_owned(),
+            sheet_id,
+            lease,
+            selected_points: Some(BTreeSet::new()),
+            complete_selections: Default::default(),
+            deferred_shared: false,
+            direct_domains: Vec::new(),
+            source_report: Default::default(),
+            replay_records: Vec::new(),
+            spool_replays: 0,
+            disposition: Default::default(),
+            placements: Vec::new(),
+            legacy: Vec::new(),
+            direct_families: 0,
+            direct_cells: 0,
+            direct_fragments: 0,
+            direct_complete_families: 0,
+            direct_complete_cells: 0,
+            direct_partition_families: 0,
+            direct_partition_cells: 0,
+            anchor_parses: 0,
+            anchor_asts: 0,
+            anchor_analyses: 0,
+        }
+    }
+
     fn direct_contains(&self, row: u32, col: u32) -> bool {
         self.direct_domains.iter().any(|(_, domain)| {
             let rect = domain.rect();
@@ -8833,6 +8861,18 @@ where
         {
             return Ok(None);
         }
+        let mut selected_points: BTreeSet<_> = coordinates
+            .into_iter()
+            .filter(|point| !package.suppressed.contains(point))
+            .collect();
+        let mut prepared = PreparedTargetSourcePackage::empty_selection(
+            sheet,
+            self.graph.sheet_id(sheet).unwrap(),
+            lease,
+        );
+        if selected_points.is_empty() {
+            return Ok(Some(prepared));
+        }
         let mut routing = crate::engine::FormulaReplayDisposition::default();
         for partition in &package.partitioned_families {
             routing
@@ -8846,35 +8886,8 @@ where
         );
         let replay = Arc::clone(&package.replay);
         let source_report = package.accounting_report();
-        let mut selected_points: BTreeSet<_> = coordinates
-            .into_iter()
-            .filter(|point| !package.suppressed.contains(point))
-            .collect();
-        let mut prepared = PreparedTargetSourcePackage {
-            sheet: sheet.to_owned(),
-            sheet_id: self.graph.sheet_id(sheet).unwrap(),
-            lease,
-            selected_points: None,
-            complete_selections: Default::default(),
-            deferred_shared: false,
-            direct_domains: Vec::new(),
-            source_report,
-            replay_records: Vec::new(),
-            spool_replays: 0,
-            disposition: routing.clone(),
-            placements: Vec::new(),
-            legacy: Vec::new(),
-            direct_families: 0,
-            direct_cells: 0,
-            direct_fragments: 0,
-            direct_complete_families: 0,
-            direct_complete_cells: 0,
-            direct_partition_families: 0,
-            direct_partition_cells: 0,
-            anchor_parses: 0,
-            anchor_asts: 0,
-            anchor_analyses: 0,
-        };
+        prepared.source_report = source_report;
+        prepared.disposition = routing.clone();
         self.prepare_complete_target_selections(
             sheet,
             &mut selected_points,
@@ -12029,6 +12042,9 @@ where
                     region.end_row,
                     region.end_col,
                 );
+                if let Some(selected) = selected_package_points.get(&region.sheet) {
+                    points.retain(|point| !selected.contains(point));
+                }
                 let coalesce_shared = self.config.formula_plane_mode
                     == FormulaPlaneMode::AuthoritativeExperimental
                     && self
@@ -12067,6 +12083,11 @@ where
                 if let Some(selected) = selected_package_points.get(&region.sheet) {
                     points.retain(|point| !selected.contains(point));
                 }
+                let permit_partial = allow_partial_shared
+                    || (points.len() == 1
+                        && regions.is_empty()
+                        && symbol_vertices.is_empty()
+                        && deferred_shared_regions.is_empty());
                 let partial = self.prepare_target_exact_source_selection(
                     &region.sheet,
                     package_lease,
@@ -12074,7 +12095,7 @@ where
                     selected_package_points
                         .get(&region.sheet)
                         .unwrap_or(&BTreeSet::new()),
-                    allow_partial_shared,
+                    permit_partial,
                     options.deadline,
                     &mut discovery_scratch_reserved,
                 )?;

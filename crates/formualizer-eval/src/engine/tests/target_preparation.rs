@@ -2890,6 +2890,32 @@ fn queued_cross_sheet_sum_completes_family_before_partial_ast_expansion() {
 }
 
 #[test]
+fn many_explicit_member_roots_coalesce_once_without_quadratic_discovery() {
+    let mut engine = engine(FormulaPlaneMode::AuthoritativeExperimental);
+    let (package, selected, whole) =
+        count_selected_family_package(complete_family_package("Inputs", 42, 2));
+    engine.source_formula_ingress().stage_deferred(package);
+    let targets: Vec<_> = (1..=100).map(|row| cell("Inputs", row, 2)).collect();
+    let mut budgets = EvaluationBudgets::default();
+    budgets.work.max_work_units = Some(5000);
+    budgets.admission.materialization_cells = Some(0);
+    engine
+        .prepare_graph_for_targets(
+            &targets,
+            TargetEvalOptions {
+                budgets: Some(&budgets),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let stats = engine.baseline_stats();
+    assert_eq!(stats.formula_plane_active_span_count, 1);
+    assert_eq!(stats.graph_formula_vertex_count, 0);
+    assert_eq!(selected.load(Ordering::SeqCst), 0);
+    assert_eq!(whole.load(Ordering::SeqCst), 0);
+}
+
+#[test]
 fn complete_indexed_family_late_append_fallback_replays_only_on_rejection() {
     let mut engine = engine(FormulaPlaneMode::AuthoritativeExperimental);
     engine
