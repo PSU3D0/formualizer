@@ -74,6 +74,40 @@ enum RangeOrScalar<'a> {
     ReferenceError(ExcelError),
 }
 
+// Blank-sensitive counts must retain the logical extent of whole rows/columns.
+// Ordinary aggregate resolution trims those references to their used region.
+// Resolve the cached reference, never evaluate a reference-producing expression
+// twice, and only change this count-specific view (not the shared resolver).
+fn resolve_count_argument<'a, 'b>(
+    arg: &ArgumentHandle<'a, 'b>,
+    ctx: &dyn FunctionContext<'b>,
+) -> Result<AggregateArgument<'b>, ExcelError> {
+    if let crate::function::FunctionResolution::Reference(mut reference) =
+        arg.resolve_reference_or_value()?
+        && let formualizer_parse::parser::ReferenceType::Range {
+            start_row,
+            end_row,
+            start_col,
+            end_col,
+            ..
+        } = &mut reference
+        && (start_row.is_none() || end_row.is_none() || start_col.is_none() || end_col.is_none())
+    {
+        *start_row = Some(start_row.unwrap_or(1));
+        *end_row = Some(end_row.unwrap_or(1_048_576));
+        *start_col = Some(start_col.unwrap_or(1));
+        *end_col = Some(end_col.unwrap_or(16_384));
+        return match ctx.resolve_range_view(&reference, ctx.current_sheet()) {
+            Ok(view) => Ok(AggregateArgument::Range(
+                view.with_cancel_token(ctx.cancellation_token()),
+            )),
+            Err(error) if error.kind == formualizer_common::ExcelErrorKind::Cancelled => Err(error),
+            Err(error) => Ok(AggregateArgument::ReferenceError(error)),
+        };
+    }
+    resolve_aggregate_argument(arg, ctx)
+}
+
 fn range_or_scalar<'a, 'b>(
     arg: &ArgumentHandle<'a, 'b>,
     ctx: &dyn FunctionContext<'b>,
@@ -155,7 +189,17 @@ fn eval_if_family<'a, 'b>(
             )));
         }
         let pred = crate::args::parse_criteria(&args[1].value()?.into_literal())?;
-        let (crit_rv, crit_val) = resolve_range_or_scalar!(&args[0]);
+        let (crit_rv, crit_val) = if agg_type == AggregationType::Count {
+            match resolve_count_argument(&args[0], ctx)? {
+                AggregateArgument::Range(view) => (Some(view), None),
+                AggregateArgument::Scalar(value) => (None, Some(value)),
+                AggregateArgument::ReferenceError(error) => {
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(error)));
+                }
+            }
+        } else {
+            resolve_range_or_scalar!(&args[0])
+        };
         crit_specs.push((crit_rv, pred, crit_val));
 
         if agg_type != AggregationType::Count {
@@ -264,10 +308,12 @@ fn eval_if_family<'a, 'b>(
         };
 
         let mut criteria_masks = CriteriaMaskMemo::default();
+        let mut visited_rows = 0usize;
         for res in driver.iter_row_chunks() {
             let cs = res?;
             let row_start = cs.row_start;
             let row_len = cs.row_len;
+            visited_rows = visited_rows.max(row_start + row_len);
             if row_len == 0 {
                 continue;
             }
@@ -688,6 +734,15 @@ fn eval_if_family<'a, 'b>(
                     }
                 }
             }
+        }
+        // COUNTIF's logical range can extend beyond physically stored rows.
+        // Every cell in that tail is Empty: account for it arithmetically,
+        // without allocating masks or iterating a million empty cells.
+        if !multi
+            && agg_type == AggregationType::Count
+            && criteria_match(&crit_specs[0].1, &LiteralValue::Empty)
+        {
+            total_count += (dims.0.saturating_sub(visited_rows) * dims.1) as i64;
         }
     } else {
         // Scalar driver fallback
@@ -1539,16 +1594,18 @@ impl Function for CountBlankFn {
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let mut cnt = 0i64;
         for a in args {
-            match resolve_aggregate_argument(a, ctx)? {
+            match resolve_count_argument(a, ctx)? {
                 AggregateArgument::Range(view) => {
                     let mut tag_it = view.type_tags_slices();
                     let mut text_it = view.text_slices();
+                    let mut visited_cells = 0usize;
 
                     while let (Some(tag_res), Some(text_res)) = (tag_it.next(), text_it.next()) {
                         let (_, _, tag_cols) = tag_res?;
                         let (_, _, text_cols) = text_res?;
 
                         for (tc, xc) in tag_cols.into_iter().zip(text_cols.into_iter()) {
+                            visited_cells += tc.len();
                             let text_arr = xc
                                 .as_any()
                                 .downcast_ref::<arrow_array::StringArray>()
@@ -1565,6 +1622,8 @@ impl Function for CountBlankFn {
                             }
                         }
                     }
+                    let (rows, cols) = view.dims();
+                    cnt += (rows * cols).saturating_sub(visited_cells) as i64;
                 }
                 AggregateArgument::ReferenceError(error) => {
                     return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(error)));

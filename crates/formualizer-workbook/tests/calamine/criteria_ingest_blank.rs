@@ -21,6 +21,15 @@ fn criteria_blanks_agree_for_imported_constructed_and_edited_workbooks() {
         (r#"SUMIF(A1:A6,"",B1:B6)"#, 30.0),
         (r#"SUMIFS(B1:B6,A1:A6,"")"#, 30.0),
         (r#"COUNTIF(D1:D6,"")"#, 6.0),
+        (r#"COUNTIF(A1:A20,"")"#, 17.0),
+        (r#"COUNTBLANK(A1:A20)"#, 17.0),
+        (r#"COUNTIF(A15:A20,"")"#, 6.0),
+        (r#"COUNTBLANK(A15:A20)"#, 6.0),
+        (r#"COUNTIF(A1:A1048576,"")"#, 1_048_573.0),
+        (r#"COUNTBLANK(A1:A1048576)"#, 1_048_573.0),
+        (r#"COUNTIF(A15:A20,"<>")"#, 0.0),
+        (r#"COUNTIF(A:A,"")"#, 1_048_573.0),
+        (r#"COUNTBLANK(A:A)"#, 1_048_573.0),
     ];
     for (i, (f, _)) in formulas.iter().enumerate() {
         sheet.get_cell_mut((3, i as u32 + 1)).set_formula(*f);
