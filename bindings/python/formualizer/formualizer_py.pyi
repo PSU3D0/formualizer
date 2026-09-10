@@ -2167,7 +2167,6 @@ def recalculate_file(path: builtins.str, output: typing.Optional[builtins.str] =
 def recalculate_xlsx_bytes(data: bytes, *, error_location_limit: typing.Optional[builtins.int] = None) -> typing.Any:
     r"""
     Recalculate XLSX formula caches in memory without rewriting unrelated package parts.
-
     Returns a dictionary with output ``bytes``, a ``summary``, and formula/cache/worksheet counts.
     """
 

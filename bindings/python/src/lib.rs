@@ -245,6 +245,7 @@ fn recalculate_file(py: Python<'_>, path: &str, output: Option<&str>) -> PyResul
     Ok(out.into_any().unbind())
 }
 
+#[cfg(not(target_os = "emscripten"))]
 fn xlsx_result_to_py(
     py: Python<'_>,
     result: formualizer::workbook::XlsxRecalculateResult,
@@ -287,7 +288,6 @@ fn xlsx_result_to_py(
 
 #[cfg(not(target_os = "emscripten"))]
 /// Recalculate XLSX formula caches in memory without rewriting unrelated package parts.
-///
 /// Returns a dictionary with output ``bytes``, a ``summary``, and formula/cache/worksheet counts.
 #[cfg_attr(
     not(target_os = "emscripten"),

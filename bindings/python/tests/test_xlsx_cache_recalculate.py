@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from io import BytesIO
 from pathlib import Path
-from zipfile import ZIP_DEFLATED, ZipFile
 from xml.etree import ElementTree as ET
+from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
 
@@ -14,8 +14,12 @@ def fixture_xlsx(*, formula: bool = True) -> bytes:
     worksheet = (
         '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
         '<sheetData><row r="1"><c r="A1"><v>1</v></c><c r="B1"><v>2</v></c>'
-        + ('<c r="C1" t="str"><f>A1+B1</f><v>stale</v></c>' if formula else '<c r="C1"><v>3</v></c>')
-        + '</row></sheetData></worksheet>'
+        + (
+            '<c r="C1" t="str"><f>A1+B1</f><v>stale</v></c>'
+            if formula
+            else '<c r="C1"><v>3</v></c>'
+        )
+        + "</row></sheetData></worksheet>"
     )
     members = {
         "[Content_Types].xml": '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>',
@@ -69,7 +73,9 @@ def test_recalculate_xlsx_bytes_surfaces_core_rejection():
         fz.recalculate_xlsx_bytes(b"not an XLSX package")
 
 
-def test_recalculate_xlsx_file_failure_leaves_existing_destination_unchanged(tmp_path: Path):
+def test_recalculate_xlsx_file_failure_leaves_existing_destination_unchanged(
+    tmp_path: Path,
+):
     source = tmp_path / "invalid.xlsx"
     destination = tmp_path / "destination.xlsx"
     source.write_bytes(b"not an XLSX package")
