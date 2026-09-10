@@ -16,7 +16,7 @@ use formualizer_common::RangeAddress;
 use formualizer_eval::arrow_store::{IngestBuilder, OverlayValue, map_error_code};
 use formualizer_eval::engine::ingest::EngineLoadStream;
 use formualizer_eval::engine::{
-    DeferredFormulaPackage, Engine as EvalEngine, ExplicitPartitionLegacyMembers,
+    CancelToken, DeferredFormulaPackage, Engine as EvalEngine, ExplicitPartitionLegacyMembers,
     FormulaCompressedPreparation, FormulaCompressedSourceBatch, FormulaCompressedSourceReport,
     FormulaIngestBatch, FormulaIngestRecord, FormulaSpoolDiskPolicy, PartitionLegacyMember,
     PartitionLegacyMemberKind, PartitionReconciliation, PartitionedSourceFormulaFamily,
@@ -311,7 +311,48 @@ impl Seek for SharedXlsxReader {
     }
 }
 
-struct CalamineWorkbook(Xlsx<SharedXlsxReader>);
+/// A bounded, cooperative cancellation layer for Calamine's ZIP reads.
+///
+/// `ErrorKind::Interrupted` is deliberately not used: standard library helpers
+/// such as `read_to_end` retry it automatically. Limiting each forwarded read
+/// also bounds the time before a concurrently-signalled token is observed when
+/// the backing source is an in-memory byte slice.
+struct CancellableReader {
+    inner: SharedXlsxReader,
+    cancel: Option<CancelToken>,
+}
+
+impl CancellableReader {
+    const MAX_READ: usize = 64 * 1024;
+
+    fn new(inner: SharedXlsxReader, cancel: Option<CancelToken>) -> Self {
+        Self { inner, cancel }
+    }
+
+    fn checkpoint(&self) -> std::io::Result<()> {
+        if self.cancel.as_ref().is_some_and(CancelToken::is_cancelled) {
+            return Err(std::io::Error::other("calamine load cancelled"));
+        }
+        Ok(())
+    }
+}
+
+impl Read for CancellableReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.checkpoint()?;
+        let limit = buf.len().min(Self::MAX_READ);
+        self.inner.read(&mut buf[..limit])
+    }
+}
+
+impl Seek for CancellableReader {
+    fn seek(&mut self, from: SeekFrom) -> std::io::Result<u64> {
+        self.checkpoint()?;
+        self.inner.seek(from)
+    }
+}
+
+struct CalamineWorkbook(Xlsx<CancellableReader>);
 
 impl CalamineWorkbook {
     fn worksheet_range(&mut self, sheet: &str) -> Result<Range<Data>, calamine::Error> {
@@ -488,6 +529,8 @@ type ShadowRelocationComparator = Arc<dyn Fn(&ASTNode, &ASTNode) -> bool + Send 
 pub struct CalamineAdapter {
     workbook: RwLock<CalamineWorkbook>,
     source: SharedXlsxReader,
+    /// Present only for adapters opened through [`Self::open_bytes_cancellable`].
+    cancel: Option<CancelToken>,
     loaded_sheets: HashSet<String>,
     cached_names: Option<Vec<String>>,
     /// Calamine's already-parsed `(name, formula)` pairs, captured at open time.
@@ -503,6 +546,8 @@ pub struct CalamineAdapter {
     shadow_relocation_comparator: Option<ShadowRelocationComparator>,
     #[cfg(test)]
     lazy_scan_counts: LazyScanCounts,
+    #[cfg(test)]
+    stream_row_checkpoint_hook: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 #[cfg(test)]
@@ -528,7 +573,20 @@ impl CalamineAdapter {
     ) -> Result<Self, calamine::Error> {
         let file = File::open(path).map_err(calamine::Error::Io)?;
         let source = SharedXlsxReader::from_file(file, source).map_err(calamine::Error::Io)?;
-        Self::from_shared_source(source)
+        Self::from_shared_source(source, None)
+    }
+
+    /// Opens XLSX bytes with cooperative cancellation for parsing and later
+    /// [`EngineLoadStream::stream_into_engine`] work.
+    ///
+    /// Cancellation is reported as a non-`Interrupted` I/O error wrapped in
+    /// [`calamine::Error`], so callers can inspect the supplied token and map
+    /// it to their own typed cancellation result.
+    pub fn open_bytes_cancellable(
+        bytes: Vec<u8>,
+        cancel: CancelToken,
+    ) -> Result<Self, calamine::Error> {
+        Self::from_shared_source(SharedXlsxReader::from_bytes(bytes), Some(cancel))
     }
 
     #[doc(hidden)]
@@ -629,11 +687,14 @@ impl CalamineAdapter {
         engine: &mut EvalEngine<C>,
         sheet_instance: u32,
         options: StreamWorksheetOptions,
+        cancel: Option<&CancelToken>,
+        #[cfg(test)] row_checkpoint_hook: Option<&(dyn Fn() + Send + Sync)>,
     ) -> Result<StreamedSheet, calamine::Error>
     where
         RS: Read + Seek,
         C: EvaluationContext,
     {
+        Self::cancellation_checkpoint(cancel)?;
         let timer = DebugTimer::start();
         let StreamWorksheetOptions {
             chunk_rows,
@@ -703,6 +764,7 @@ impl CalamineAdapter {
         });
         let mut last_formula_coord = None;
         let mut shared_formula_tags = 0usize;
+        let mut last_cancel_row = None;
 
         while let Some(record) = reader
             .next_cell_with_formula_metadata()
@@ -711,6 +773,14 @@ impl CalamineAdapter {
             let (row0, col0) = record.pos;
             let row = row0 as usize;
             let col = col0 as usize;
+            if last_cancel_row != Some(row) {
+                #[cfg(test)]
+                if let Some(hook) = row_checkpoint_hook {
+                    hook();
+                }
+                Self::cancellation_checkpoint(cancel)?;
+                last_cancel_row = Some(row);
+            }
             if row >= dims_rows || col >= dims_cols {
                 dims_rows = dims_rows.max(row + 1);
                 dims_cols = dims_cols.max(col + 1);
@@ -1041,6 +1111,7 @@ impl CalamineAdapter {
             == formualizer_eval::engine::FormulaPlaneMode::AuthoritativeExperimental
             && !engine.config.defer_graph_building
         {
+            Self::cancellation_checkpoint(cancel)?;
             let replay: Box<dyn formualizer_eval::engine::DeferredFormulaReplay> =
                 Box::new(CalamineDeferredFormulaReplay::new(
                     formula_spool.take().expect("eager formula spool available"),
@@ -1062,6 +1133,7 @@ impl CalamineAdapter {
         } else {
             None
         };
+        Self::cancellation_checkpoint(cancel)?;
         if direct_preparation.is_none() && !engine.config.defer_graph_building {
             formula_source_report.source_spool_replays = 1;
             let compare_shadow = engine.config.formula_plane_mode
@@ -1074,6 +1146,7 @@ impl CalamineAdapter {
                 sheet,
                 |_| false,
                 |coord0, formula, shared_index| {
+                    Self::cancellation_checkpoint(cancel)?;
                     if compare_shadow
                         && let (Some(comparator), Some(shared_index)) =
                             (shadow_relocation_comparator.as_ref(), shared_index)
@@ -1178,14 +1251,19 @@ impl CalamineAdapter {
         })
     }
 
-    fn from_shared_source(source: SharedXlsxReader) -> Result<Self, calamine::Error> {
-        let workbook: Xlsx<SharedXlsxReader> = open_workbook_from_rs(source.reader())?;
+    fn from_shared_source(
+        source: SharedXlsxReader,
+        cancel: Option<CancelToken>,
+    ) -> Result<Self, calamine::Error> {
+        let workbook: Xlsx<CancellableReader> =
+            open_workbook_from_rs(CancellableReader::new(source.reader(), cancel.clone()))?;
         let sheet_names = workbook.sheet_names().to_vec();
         let calamine_defined_names = workbook.defined_names().to_vec();
 
         Ok(Self {
             workbook: RwLock::new(CalamineWorkbook(workbook)),
             source,
+            cancel,
             loaded_sheets: HashSet::new(),
             cached_names: Some(sheet_names),
             calamine_defined_names,
@@ -1196,7 +1274,31 @@ impl CalamineAdapter {
             shadow_relocation_comparator: None,
             #[cfg(test)]
             lazy_scan_counts: LazyScanCounts::default(),
+            #[cfg(test)]
+            stream_row_checkpoint_hook: None,
         })
+    }
+
+    fn cancellable_reader(&self) -> CancellableReader {
+        CancellableReader::new(self.source.reader(), self.cancel.clone())
+    }
+
+    fn checkpoint_cancel(&self) -> Result<(), calamine::Error> {
+        if self.cancel.as_ref().is_some_and(CancelToken::is_cancelled) {
+            return Err(calamine::Error::Io(std::io::Error::other(
+                "calamine load cancelled",
+            )));
+        }
+        Ok(())
+    }
+
+    fn cancellation_checkpoint(cancel: Option<&CancelToken>) -> Result<(), calamine::Error> {
+        if cancel.is_some_and(CancelToken::is_cancelled) {
+            return Err(calamine::Error::Io(std::io::Error::other(
+                "calamine load cancelled",
+            )));
+        }
+        Ok(())
     }
 
     fn lazy_external_link_targets(&self) -> &BTreeMap<u32, String> {
@@ -1205,7 +1307,7 @@ impl CalamineAdapter {
             self.lazy_scan_counts
                 .external_links
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            Self::scan_external_link_targets_from_reader(self.source.reader())
+            Self::scan_external_link_targets_from_reader(self.cancellable_reader())
         })
     }
 
@@ -1215,7 +1317,7 @@ impl CalamineAdapter {
             self.lazy_scan_counts
                 .calc_settings
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            Self::scan_calc_settings_from_reader(self.source.reader())
+            Self::scan_calc_settings_from_reader(self.cancellable_reader())
         })
     }
 
@@ -1235,7 +1337,8 @@ impl CalamineAdapter {
             }
 
             let sheet_names = self.cached_names.as_deref().unwrap_or_default();
-            let parsed = Self::scan_defined_names_from_reader(self.source.reader(), sheet_names);
+            let parsed =
+                Self::scan_defined_names_from_reader(self.cancellable_reader(), sheet_names);
             if parsed.is_empty() {
                 Self::fallback_defined_names(&self.calamine_defined_names, sheet_names)
             } else {
@@ -1726,14 +1829,14 @@ impl SpreadsheetReader for CalamineAdapter {
     {
         let mut data = Vec::new();
         reader.read_to_end(&mut data).map_err(calamine::Error::Io)?;
-        Self::from_shared_source(SharedXlsxReader::from_bytes(data))
+        Self::from_shared_source(SharedXlsxReader::from_bytes(data), None)
     }
 
     fn open_bytes(data: Vec<u8>) -> Result<Self, Self::Error>
     where
         Self: Sized,
     {
-        Self::from_shared_source(SharedXlsxReader::from_bytes(data))
+        Self::from_shared_source(SharedXlsxReader::from_bytes(data), None)
     }
 
     fn read_range(
@@ -1814,6 +1917,8 @@ where
         // Calamine 0.36 streams cached values and formula metadata from each XLSX
         // cell record in one pass. FormulaPlane staging and authoritative family
         // grouping remain unchanged downstream.
+        self.checkpoint_cancel()?;
+        let cancel = self.cancel.clone();
         let debug = std::env::var("FZ_DEBUG_LOAD")
             .ok()
             .is_some_and(|v| v != "0");
@@ -1862,6 +1967,7 @@ where
             )> = Vec::new();
 
             for (sheet_instance, n) in names.iter().enumerate() {
+                Self::cancellation_checkpoint(cancel.as_ref())?;
                 let t_sheet = DebugTimer::start();
                 if debug {
                     eprintln!("[fz][load] >> sheet '{n}'");
@@ -1872,6 +1978,8 @@ where
 
                 let shadow_relocation_comparator =
                     self.shadow_relocation_comparator.as_ref().map(Arc::clone);
+                #[cfg(test)]
+                let row_checkpoint_hook = self.stream_row_checkpoint_hook.as_deref();
                 let streamed = {
                     let mut workbook = self.workbook.write();
                     Self::stream_worksheet(
@@ -1888,6 +1996,9 @@ where
                             },
                             shadow_relocation_comparator,
                         },
+                        cancel.as_ref(),
+                        #[cfg(test)]
+                        row_checkpoint_hook,
                     )?
                 };
                 let StreamedSheet {
@@ -1996,26 +2107,32 @@ where
             }
 
             if !engine.config.defer_graph_building && !eager_formula_batches.is_empty() {
+                Self::cancellation_checkpoint(cancel.as_ref())?;
                 engine
                     .source_formula_ingress()
                     .ingest_replay_batches(eager_formula_batches)
                     .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?;
+                Self::cancellation_checkpoint(cancel.as_ref())?;
             }
             if !eager_direct_batches.is_empty() {
+                Self::cancellation_checkpoint(cancel.as_ref())?;
                 engine
                     .source_formula_ingress()
                     .finish_prepared(eager_direct_batches)
                     .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?;
+                Self::cancellation_checkpoint(cancel.as_ref())?;
             }
 
             {
                 use rustc_hash::FxHashSet;
 
+                Self::cancellation_checkpoint(cancel.as_ref())?;
                 let defined = self.defined_names()?;
                 let mut seen: FxHashSet<(DefinedNameScope, Option<String>, String)> =
                     FxHashSet::default();
 
                 for dn in defined {
+                    Self::cancellation_checkpoint(cancel.as_ref())?;
                     let key = (dn.scope.clone(), dn.scope_sheet.clone(), dn.name.clone());
                     if !seen.insert(key) {
                         continue;
@@ -2526,6 +2643,62 @@ mod tests {
             data_ref_to_overlay(&DataRef::Error(error)),
             Some(OverlayValue::Error(8))
         ));
+    }
+
+    #[test]
+    fn cancellable_open_rejects_pre_cancelled_token_without_interrupted_error() {
+        let token = CancelToken::new();
+        token.cancel();
+        let mut reader = CancellableReader::new(
+            SharedXlsxReader::from_bytes(metadata_fixture()),
+            Some(token.clone()),
+        );
+        let read_error = reader.read(&mut [0_u8; 1]).expect_err("read must stop");
+        assert_ne!(read_error.kind(), std::io::ErrorKind::Interrupted);
+
+        let error = match CalamineAdapter::open_bytes_cancellable(metadata_fixture(), token) {
+            Ok(_) => panic!("pre-cancelled open must stop before parsing"),
+            Err(error) => error,
+        };
+        assert!(
+            !error.to_string().is_empty(),
+            "cancellation must remain a reportable Calamine error"
+        );
+    }
+
+    #[test]
+    fn cancellable_stream_stops_at_a_row_checkpoint() {
+        let token = CancelToken::new();
+        let mut adapter =
+            CalamineAdapter::open_bytes_cancellable(metadata_fixture(), token.clone())
+                .expect("open uncancelled workbook");
+        adapter.stream_row_checkpoint_hook = Some(Arc::new(move || token.cancel()));
+        let context = formualizer_eval::test_workbook::TestWorkbook::new();
+        let mut engine = EvalEngine::new(context, Default::default());
+
+        let error = adapter
+            .stream_into_engine(&mut engine)
+            .expect_err("row checkpoint must observe cancellation");
+        assert!(matches!(
+            error,
+            calamine::Error::Io(ref error) if error.kind() != std::io::ErrorKind::Interrupted
+        ));
+    }
+
+    #[test]
+    fn uncancelled_cancellable_open_matches_open_bytes() {
+        let bytes = metadata_fixture();
+        let plain = CalamineAdapter::open_bytes(bytes.clone()).expect("plain open");
+        let cancellable = CalamineAdapter::open_bytes_cancellable(bytes, CancelToken::new())
+            .expect("uncancelled cancellable open");
+        assert_eq!(
+            plain.sheet_names().unwrap(),
+            cancellable.sheet_names().unwrap()
+        );
+        assert_eq!(
+            plain.calamine_defined_names,
+            cancellable.calamine_defined_names
+        );
     }
 
     #[test]
