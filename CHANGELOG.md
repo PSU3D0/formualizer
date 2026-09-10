@@ -5,6 +5,7 @@ All notable changes to Formualizer will be documented in this file.
 ## Unreleased
 
 - Added opt-in cache-only XLSX recalculation through Calamine, with bounded namespace-aware admission, typed cache repair, source-epoch handling and package-preserving ZIP32 writeback. Unsupported metadata/results fail without publishing partial output.
+- Exposed the shared cache-only core through Rust byte/file APIs, Python byte/file functions and a WASM `Uint8Array` API, without changing existing workbook APIs.
 - Added cancellable Calamine byte ingestion and cooperative read/row/replay checkpoints.
 
 - Added `UmyaAdapter::into_document` for both Umya backends, allowing evaluator ingestion and rich-document ownership to share one import without cloning or serializing the workbook.
