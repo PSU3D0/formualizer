@@ -52,6 +52,23 @@ wb.setFormula('Loans', 1, 2, '=PMT(A2/12, A3, -A1)');
 console.log(await wb.evaluateCell('Loans', 1, 2)); // ~1266.71
 ```
 
+
+### Cache-only XLSX recalculation
+
+```typescript
+import { recalculateXlsxBytes } from 'formualizer';
+
+const input = new Uint8Array(await (await fetch('/model.xlsx')).arrayBuffer());
+const result = await recalculateXlsxBytes(input);
+console.log(result.summary.status, result.cache_cells_changed);
+// `result.bytes` is a Uint8Array ready for download/upload.
+```
+
+This delegates to the shared Rust cache-only XLSX recalculator: formula text and
+unrelated package members are retained, while formula cached values are updated.
+Safe core resource limits apply; `errorLocationLimit` only limits stored error
+locations.
+
 ### Parse formulas
 
 ```typescript

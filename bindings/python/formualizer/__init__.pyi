@@ -68,6 +68,8 @@ __all__ = [
     "parse",
     "parse_formula",
     "recalculate_file",
+    "recalculate_xlsx_bytes",
+    "recalculate_xlsx_file",
     "tokenize",
     "DependencyStateUnavailableError",
     "ExcelEvaluationError",

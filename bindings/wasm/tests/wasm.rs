@@ -1,9 +1,10 @@
 #![cfg(target_arch = "wasm32")]
 
 use formualizer_wasm::{
-    FormulaDialect, Parser, Reference, SheetPortSession, Tokenizer, Workbook, parse, tokenize,
+    FormulaDialect, Parser, Reference, SheetPortSession, Tokenizer, Workbook, parse,
+    recalculate_xlsx_bytes, tokenize,
 };
-use js_sys::{Function, Object, Reflect};
+use js_sys::{Function, Object, Reflect, Uint8Array};
 use std::io::{Cursor, Write};
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_test::*;
@@ -81,7 +82,7 @@ fn build_fixture_xlsx_bytes() -> Vec<u8> {
     <row r="1">
       <c r="A1"><v>1</v></c>
       <c r="B1"><v>2</v></c>
-      <c r="C1"><f>A1+B1</f><v>3</v></c>
+      <c r="C1" t="str"><f>A1+B1</f><v>stale</v></c>
     </row>
   </sheetData>
 </worksheet>
@@ -460,6 +461,22 @@ fn test_workbook_from_xlsx_bytes_evaluates_formula() {
         .get_formula(1, 3)
         .expect("formula preserved from XLSX");
     assert_eq!(formula.replace(' ', ""), "=A1+B1");
+}
+
+#[wasm_bindgen_test]
+fn test_recalculate_xlsx_bytes_returns_typed_array_and_counts() {
+    let input = Uint8Array::from(build_fixture_xlsx_bytes().as_slice());
+    let result: Object = recalculate_xlsx_bytes(input, None)
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    let bytes: Uint8Array = js_get(&result, "bytes").dyn_into().unwrap();
+    assert!(bytes.length() > 0);
+    assert_eq!(js_get_f64(&result, "formula_cells"), 1.0);
+    assert_eq!(js_get_f64(&result, "cache_cells_changed"), 1.0);
+    assert_eq!(js_get_f64(&result, "worksheet_parts_changed"), 1.0);
+    let summary: Object = js_get(&result, "summary").dyn_into().unwrap();
+    assert_eq!(js_get_string(&summary, "status"), "success");
 }
 
 #[wasm_bindgen_test]
