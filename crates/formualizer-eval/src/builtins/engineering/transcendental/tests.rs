@@ -297,7 +297,7 @@ fn bessel_representable_values_are_not_discarded() {
     // mpmath 80-digit references; compare ratios to retain subnormal sensitivity
     // and avoid overflowing a subtraction of large opposite-sign values.
     for (actual, expected) in [
-        (jn(100, 0.06), 5.522273948726346e-311),
+        (jn(100, 0.06), 5.522_273_948_726_5e-311),
         (yn(100, 0.06), -5.76410997427483e307),
         (jn(13, 1e-12), 1.9603324996120135e-170),
     ] {

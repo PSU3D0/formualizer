@@ -7,7 +7,7 @@ fn bessel_safety_has_consistent_formula_results() {
             Workbook::new_with_config(WorkbookConfig::interactive().with_span_evaluation(span));
         wb.add_sheet("S").unwrap();
         for (row, formula, expected) in [
-            (1, "BESSELJ(0.06,100)", 5.522273948726346e-311),
+            (1, "BESSELJ(0.06,100)", 5.522_273_948_726_5e-311),
             (2, "BESSELY(0.06,100)", -5.76410997427483e307),
             (3, "BESSELJ(1e-12,13)", 1.9603324996120135e-170),
             (4, "IFERROR(BESSELJ(3e9,2e9),42)", 42.0),
