@@ -2496,6 +2496,8 @@ impl Function for BesselIFn {
 ///
 /// # Remarks
 /// - Arguments are supplied as `BESSELJ(x, n)`.
+/// - Recurrence work above order 1,000,000 returns `#NUM!`; existing constant-time
+///   special-value, tiny-argument and huge-argument paths are handled first.
 /// - Negative orders return `#NUM!` in the public spreadsheet function.
 /// - Results are approximate floating-point values.
 ///
@@ -2622,6 +2624,8 @@ impl Function for BesselKFn {
 ///
 /// # Remarks
 /// - Arguments are supplied as `BESSELY(x, n)`.
+/// - Recurrence work above order 1,000,000 returns `#NUM!`; existing constant-time
+///   special-value and huge-argument paths are handled first.
 /// - Negative orders and invalid domains return `#NUM!`.
 /// - Results are approximate floating-point values.
 ///

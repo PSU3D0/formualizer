@@ -4,6 +4,8 @@ All notable changes to Formualizer will be documented in this file.
 
 ## Unreleased
 
+- Fixed endian-sensitive Bessel word extraction and integer-overflow paths, preserving extreme-order parity. `BESSELJ`/`BESSELY` now reject recurrence orders above 1,000,000 with `#NUM!` instead of risking unbounded work; existing constant-time paths remain available. No order-only or Debye cutoff fabricates zero/infinity for representable results. (#465)
+
 - Prevent spills from overwriting pending formulas without preparing blockers; retain bounded, admitted retry regions and release failed reservations. Existing interactive Empty-overlay visibility remains unchanged.
 
 - Fixed logged workbook formula setters silently swallowing binding/admission failures and clearing existing spills on rejection. Rejected assignments now report errors like unlogged setters; existing deferred-validation and non-atomic batch policies remain unchanged. Added fallible low-level editor APIs without changing legacy signatures. See [formula assignment contracts](docs/formula-assignment-failures.md). (#451)

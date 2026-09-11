@@ -43,6 +43,14 @@ use super::{
     bessel_util::{FRAC_2_SQRT_PI, split_words},
 };
 
+/// Work limit for each recurrence phase, not a numerical underflow threshold.
+///
+/// Constant-time zero, infinity, tiny-argument and huge-argument paths are
+/// handled first. More expensive requests return NaN (the spreadsheet wrapper
+/// returns #NUM!) rather than fabricated zero/infinity. No claim is made that
+/// all representable results fit within this limit.
+const MAX_RECURRENCE_ORDER: u32 = 1_000_000;
+
 // Special cases are:
 //
 //	$ J_n(n, ±\Infinity) = 0$
@@ -59,11 +67,14 @@ pub(crate) fn jn(n: i32, x: f64) -> f64 {
     //     return x + x;
     // }
     let (n, x) = if n < 0 {
-        // hx ^= 0x80000000;
-        hx = -hx;
-        (-n, -x)
+        // Flip the sign *bit* (openlibm's `hx ^= 0x80000000`). Arithmetic
+        // negation (`-hx`) is not equivalent: it overflows and panics for
+        // `hx == i32::MIN`, which is exactly the high word of -0.0.
+        hx ^= i32::MIN;
+        // Preserve magnitude and parity even for i32::MIN.
+        (n.unsigned_abs(), -x)
     } else {
-        (n, x)
+        (n as u32, x)
     };
     if n == 0 {
         return j0(x);
@@ -71,7 +82,7 @@ pub(crate) fn jn(n: i32, x: f64) -> f64 {
     if n == 1 {
         return j1(x);
     }
-    let sign = (n & 1) & (hx >> 31); /* even n -- 0, odd n -- sign(x) */
+    let sign = ((n & 1) as i32) & (hx >> 31); /* even n -- 0, odd n -- sign(x) */
     // let sign = if x < 0.0 { -1 } else { 1 };
     let x = x.abs();
     let b = if (ix | lx) == 0 || ix >= 0x7ff00000 {
@@ -94,19 +105,21 @@ pub(crate) fn jn(n: i32, x: f64) -> f64 {
              *		   2	-s+c		-c-s
              *		   3	 s+c		 c-s
              */
+            // `n` is non-negative here, so `n & 3` is in 0..=3. Ordering the
+            // arms so that the `0` case is the catch-all keeps the match
+            // exhaustive without an unreachable branch that would silently
+            // return 0.0 (or panic) if the invariant ever changed.
             let temp = match n & 3 {
-                0 => x.cos() + x.sin(),
                 1 => -x.cos() + x.sin(),
                 2 => -x.cos() - x.sin(),
                 3 => x.cos() - x.sin(),
-                _ => {
-                    // Impossible: FIXME!
-                    // panic!("")
-                    0.0
-                }
+                _ => x.cos() + x.sin(),
             };
             FRAC_2_SQRT_PI * temp / x.sqrt()
         } else {
+            if n > MAX_RECURRENCE_ORDER {
+                return f64::NAN;
+            }
             let mut a = j0(x);
             let mut b = j1(x);
             for i in 1..n {
@@ -127,14 +140,21 @@ pub(crate) fn jn(n: i32, x: f64) -> f64 {
             } else {
                 let temp = x * 0.5;
                 let mut b = temp;
-                let mut a = 1;
+                // `a` accumulates n! for n up to 33. 13! already exceeds i32::MAX,
+                // so this must be computed in floating point (as the original
+                // openlibm C code does) -- an integer accumulator overflows and
+                // panics in debug builds / silently wraps in release builds.
+                let mut a = 1.0f64;
                 for i in 2..=n {
-                    a *= i; /* a = n! */
+                    a *= i as f64; /* a = n! */
                     b *= temp; /* b = (x/2)^n */
                 }
-                b / (a as f64)
+                b / a
             }
         } else {
+            if n > MAX_RECURRENCE_ORDER {
+                return f64::NAN;
+            }
             /* use backward recurrence */
             /* 			x      x^2      x^2
              *  J(n,x)/J(n-1,x) =  ----   ------   ------   .....
@@ -164,23 +184,30 @@ pub(crate) fn jn(n: i32, x: f64) -> f64 {
              * When Q(k) > 1e17	good for quadruple
              */
 
-            let w = ((n + n) as f64) / x;
+            let n_f64 = n as f64;
+            let w = (n_f64 + n_f64) / x;
             let h = 2.0 / x;
             let mut q0 = w;
             let mut z = w + h;
             let mut q1 = w * z - 1.0;
-            let mut k = 1;
+            let mut k = 1u32;
             while q1 < 1.0e9 {
+                if k >= MAX_RECURRENCE_ORDER {
+                    return f64::NAN;
+                }
                 k += 1;
                 z += h;
                 let tmp = z * q1 - q0;
                 q0 = q1;
                 q1 = tmp;
             }
-            let m = n + n;
+            let m = (n as i64) + (n as i64);
             let mut t = 0.0;
-            for i in (m..2 * (n + k)).step_by(2).rev() {
+            let end = 2 * ((n as i64) + i64::from(k));
+            let mut i = end - 2;
+            while i >= m {
                 t = 1.0 / ((i as f64) / x - t);
+                i -= 2;
             }
             // for (t=0, i = 2*(n+k); i>=m; i -= 2) t = 1/(i/x-t);
             let mut a = t;
@@ -256,26 +283,23 @@ pub(crate) fn yn(n: i32, x: f64) -> f64 {
     //     return x + x;
     // }
 
+    let sign = if n < 0 && n & 1 != 0 { -1.0 } else { 1.0 };
     if (ix | lx) == 0 {
-        return f64::NEG_INFINITY;
+        return sign * f64::NEG_INFINITY;
     }
     if hx < 0 {
         return f64::NAN;
     }
 
-    let (n, sign) = if n < 0 {
-        (-n, 1 - ((n & 1) << 1))
-    } else {
-        (n, 1)
-    };
+    let n = n.unsigned_abs();
     if n == 0 {
         return y0(x);
     }
     if n == 1 {
-        return (sign as f64) * y1(x);
+        return sign * y1(x);
     }
     if ix == 0x7ff00000 {
-        return 0.0;
+        return sign * 0.0;
     }
     let b = if ix >= 0x52D00000 {
         // x > 2^302
@@ -293,17 +317,16 @@ pub(crate) fn yn(n: i32, x: f64) -> f64 {
          *		   3	 s+c		 c-s
          */
         let temp = match n & 3 {
-            0 => x.sin() - x.cos(),
             1 => -x.sin() - x.cos(),
             2 => -x.sin() + x.cos(),
             3 => x.sin() + x.cos(),
-            _ => {
-                // unreachable
-                0.0
-            }
+            _ => x.sin() - x.cos(),
         };
         FRAC_2_SQRT_PI * temp / x.sqrt()
     } else {
+        if n > MAX_RECURRENCE_ORDER {
+            return f64::NAN;
+        }
         let mut a = y0(x);
         let mut b = y1(x);
         for i in 1..n {
@@ -317,5 +340,5 @@ pub(crate) fn yn(n: i32, x: f64) -> f64 {
         }
         b
     };
-    if sign > 0 { b } else { -b }
+    sign * b
 }
