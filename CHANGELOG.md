@@ -4,6 +4,17 @@ All notable changes to Formualizer will be documented in this file.
 
 ## Unreleased
 
+## [0.9.3] - 2026-09-11
+
+- Aligned Rust product crates and Python/npm bindings at 0.9.3. Parser/common move together to **3.1.2** because the date/time text parsing change below lives in `formualizer-common`; `formualizer-parse` moves in lockstep with no source change and product crates now pin `formualizer-parse = "3.1.2"`. SheetPort spec remains 0.3.1.
+
+### Changed
+
+- Date/time text parsing accepts more Excel-compatible forms: single-digit years (`"1/2/5"`), `24:00`/`24:00:00` as midnight, truncated fractional seconds on a full `HH:MM:SS.f` field, and month-year-only forms (`"Jan 2003"`, `"January 2003"`) resolving to the first of the month. The month-year form requires a four-digit year, so `"Jan 3"` is not read as `2003-01-01`, and fractional-second truncation only fires when the dot terminates a full `HH:MM:SS` field, so a single-colon `"12:00.5"` is rejected as `#VALUE!` rather than silently accepted as `12:00`. Partially addresses #290; the `"24:00"`-as-a-full-day arithmetic case, sub-second retention, and `DATEVALUE`/`TIMEVALUE` datetime routing are tracked separately in #416. (#398)
+
+### Fixed
+
+- Computed the standard normal CDF with the Hart (1968) rational approximation as given by West (2005), replacing the Abramowitz & Stegun 7.1.26 formula that was accurate only to about 7e-8. `NORM.S.DIST`, `NORM.DIST`, `LOGNORM.DIST`, `GAUSS` and `Z.TEST` now agree with a 90-digit reference to about 2e-16 absolute error across the sampled real line, and `NORM.S.DIST(0,TRUE)` is exactly 0.5. Corrected a mistyped Cody CALERF constant in the small-argument `ERF` branch that skewed `ERF`, `ERF.PRECISE`, `ERFC` and `ERFC.PRECISE` by up to about 1e-7 near the origin. Relative accuracy in the far tails, large-argument `ERFC`, the inverse-normal family and the `Z.TEST` sample-versus-population deviation convention are tracked separately in #464. Contributed by @cloudexible. (#458, #461)
 - Fixed endian-sensitive Bessel word extraction and integer-overflow paths, preserving extreme-order parity. `BESSELJ`/`BESSELY` now reject recurrence orders above 1,000,000 with `#NUM!` instead of risking unbounded work; existing constant-time paths remain available. No order-only or Debye cutoff fabricates zero/infinity for representable results. (#465)
 
 - Prevent spills from overwriting pending formulas without preparing blockers; retain bounded, admitted retry regions and release failed reservations. Existing interactive Empty-overlay visibility remains unchanged.
@@ -15,6 +26,14 @@ All notable changes to Formualizer will be documented in this file.
 - Counted implicit blanks in COUNTIF/COUNTBLANK ranges arithmetically while keeping physical views bounded, including direct whole-row/column extents and available spill members beyond graph placement bounds. This addresses part of #285, not all blank-range or cross-engine criteria semantics. See [criteria compatibility](docs/criteria-ingest-compatibility.md).
 - Isolated ordinary and supported shared/fragmented Calamine formula targets from unrelated preparation failures using indexed source selection. Partial families retain validated residual compression; complete-family demands retain compressed preparation without per-member AST expansion. Preserve source order, selected edits, retries and retained locator admission. Unsupported/reconciliation-dependent sources remain conservative; shared coordinate metadata adds disclosed linear cold storage. See [target preparation](docs/imported-target-preparation.md). (#453)
 - Documented and tested the existing preparation-error boundary: spreadsheet guards do not turn unresolved-sheet/table preparation or request-level admission/cancellation failures into fallback values. No new reference-error policy was introduced. (#454)
+
+### Python bindings
+
+- Added a Python undo/redo/cancel regression suite with real outcome assertions; the two pre-existing defects it exposes (#301, #412) are pinned as strict expected failures rather than hidden. Contributed by @Ocean82. (#401)
+
+### Security and hardening
+
+- Bumped the docs site's `fumadocs-mdx` from 14 to 15, dropping the transitive `js-yaml` dependency flagged by SNYK-JS-JSYAML-18313070, and aligned `fumadocs-core`/`fumadocs-ui` with the MDX upgrade. Docs-site only; no published package payload changes. Contributed by @Ocean82. (#402)
 
 ## [0.9.2] - 2026-09-10
 
@@ -97,7 +116,6 @@ All notable changes to Formualizer will be documented in this file.
 - Date arithmetic no longer conditionally propagates `LiteralValue::Date`; a position-keyed, non-sticky scalar format annotation carries temporal display class independently, fixing #312 without exposing annotations to bulk numeric kernels. Date-plus-time yields datetime, date-plus-percent and date-plus-plain-number yield date, and unspecified class pairs drop the annotation. Selection functions preserve the chosen scalar annotation, including `IFERROR`, `IFNA`, and scalar-argument `MAX`/`MIN`; `MAX`/`MIN` over multi-cell ranges do not yet recover the winning cell's format.
 - Before merge, the unreleased format channel was hardened so row, column, and sheet structural edits purge affected derived-format positions, and value/formula writes invalidate format state in both ephemeral and interactive/changelog modes. This prevents shifted plain values and logged overwrites from inheriting stale temporal formats; neither pre-merge regression shipped.
 - Temporal values saved through `Workbook::to_xlsx_bytes` round-trip as date-system-aware numeric serials instead of text, restoring arithmetic while leaving display and number-format fidelity to the format channel. (#355)
-- Date/time text parsing accepts more Excel-compatible forms: single-digit years (`"1/2/5"`), `24:00`/`24:00:00` as midnight, truncated fractional seconds on a full `HH:MM:SS.f` field, and month-year-only forms (`"Jan 2003"`, `"January 2003"`) resolving to the first of the month. The month-year form requires a four-digit year, so `"Jan 3"` is not read as `2003-01-01`, and fractional-second truncation only fires when the dot terminates a full `HH:MM:SS` field, so a single-colon `"12:00.5"` is rejected as `#VALUE!` rather than silently accepted as `12:00`. Partially addresses #290; the `"24:00"`-as-a-full-day arithmetic case, sub-second retention, and `DATEVALUE`/`TIMEVALUE` datetime routing are tracked separately in #416.
 
 - Structural row inserts and deletes now invalidate compressed open-range readers when the edited axis intersects and an indexed occupied column crosses the range. Bounded formulas whose AST is adjusted remain conservatively dirtied, and column edits retain conservative cross-axis invalidation because Arrow has no cheap occupied-row index. (#313, #314)
 - **A structural edit no longer reaches a defined name, table or external source.** Those three, plus sheet-scoped names, are identified by name and have no position on any sheet, but the graph gave them fabricated grid coordinates on a real user-visible sheet: the first workbook name landed on `Sheet1!$A$1`, the second on `$B$1`, and a table on its range's anchor cell. The only thing separating such a vertex from the actual cell at that address was its deliberate absence from the cell index — a convention, not a structural property. Two code paths broke it, and both are fixed by giving symbols their own address space. (#302, #304)
