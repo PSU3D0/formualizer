@@ -206,12 +206,12 @@ fn bessel_extreme_orders_do_not_panic() {
         let jn_result = jn(i32::MIN, x);
         let yn_result = yn(i32::MIN, x);
         assert!(
-            jn_result.is_finite() || jn_result.is_nan() || jn_result.is_infinite(),
-            "jn(i32::MIN, {x}) = {jn_result} must not panic"
+            jn_result.is_nan(),
+            "excessive recurrence must fail explicitly"
         );
         assert!(
-            yn_result.is_finite() || yn_result.is_nan() || yn_result.is_infinite(),
-            "yn(i32::MIN, {x}) = {yn_result} must not panic"
+            yn_result.is_nan(),
+            "excessive recurrence must fail explicitly"
         );
     }
 }
@@ -221,8 +221,17 @@ fn bessel_extreme_orders_do_not_panic() {
 /// overflows.
 #[test]
 fn bessel_jn_handles_negative_zero() {
-    assert_eq!(jn(2, -0.0), 0.0);
-    assert_eq!(jn(3, 0.0), 0.0);
+    for (n, x, negative) in [
+        (2, -0.0, false),
+        (3, -0.0, true),
+        (-3, 0.0, true),
+        (-3, -0.0, false),
+        (i32::MIN, -0.0, false),
+    ] {
+        let result = jn(n, x);
+        assert_eq!(result, 0.0);
+        assert_eq!(result.is_sign_negative(), negative);
+    }
 }
 
 /// `y0`/`yn` rely on the *high* word of the IEEE bit pattern to detect zero,
@@ -236,19 +245,8 @@ fn bessel_y_special_values() {
     assert!(yn(2, f64::NAN).is_nan());
 }
 
-/// Accuracy contract for the `MAX_RECURRENCE_ORDER` iteration cap.
-///
-/// The cap (200_000) only short-circuits orders so large the result has already
-/// underflowed (`J`) or diverged (`Y`). Orders below the cap must run the real
-/// recurrence unchanged. `jn(2000, 100)` / `yn(2000, 100)` are the inputs flagged
-/// in review: they are below the cap, so they take the ordinary code path and
-/// terminate in a few thousand iterations rather than being clamped.
-///
-/// Note on magnitudes: for order 2000 vastly exceeding argument 100, the true
-/// values are `J_2000(100) ~ 10^-3000` (underflows to +0 in f64) and
-/// `Y_2000(100) ~ -10^+3000` (overflows to -inf in f64). Those IEEE-754 limits
-/// are the *correct* representable results here, not a defect — the point of the
-/// test is that this order is computed directly, not truncated by the cap.
+/// Genuine underflow/overflow inside the admitted recurrence still has its
+/// ordinary IEEE result. This is not a reason to synthesize limits elsewhere.
 #[test]
 fn bessel_moderate_orders_run_real_recurrence() {
     let j = jn(2000, 100.0);
@@ -261,18 +259,86 @@ fn bessel_moderate_orders_run_real_recurrence() {
     assert!(y < 0.0, "yn(2000, 100) = {y} must be negative");
 }
 
-/// The iteration cap must actually short-circuit pathological orders to the
-/// asymptotic limit (`J -> 0`, `Y -> -inf`) instead of running a multi-billion
-/// step recurrence. Terminating at all within the test timeout is the guarantee;
-/// the returned limits document the contract.
 #[test]
-fn bessel_pathological_order_short_circuits_to_limit() {
-    // Orders far beyond MAX_RECURRENCE_ORDER (200_000).
-    assert_eq!(jn(i32::MAX, 1.0), 0.0);
-    assert_eq!(jn(10_000_000, 3.5), 0.0);
-    assert!(yn(i32::MAX, 1.0).is_infinite());
-    assert!(yn(10_000_000, 3.5).is_infinite());
-    // i32::MIN negates (saturating) to i32::MAX, so it exercises the same cap.
-    assert_eq!(jn(i32::MIN, 2.0), 0.0);
-    assert!(yn(i32::MIN, 2.0).is_infinite());
+fn bessel_excessive_recurrence_returns_failure_not_fabricated_limits() {
+    for n in [1_000_001, i32::MAX, i32::MIN] {
+        for x in [1.0, 3.5, 3e9] {
+            assert!(jn(n, x).is_nan());
+            assert!(yn(n, x).is_nan());
+        }
+    }
+}
+
+#[test]
+fn bessel_constant_time_paths_precede_work_limit_and_preserve_parity() {
+    for n in [i32::MIN, i32::MAX, 2_000_000] {
+        assert_eq!(jn(n, f64::INFINITY), 0.0);
+        assert_eq!(jn(n, f64::NEG_INFINITY), 0.0);
+        assert_eq!(yn(n, f64::INFINITY), 0.0);
+        assert!(jn(n, f64::NAN).is_nan());
+        assert!(yn(n, f64::NAN).is_nan());
+        assert!(yn(n, -1.0).is_nan());
+        // The existing tiny-x bound is distinct from an order-only heuristic.
+        assert_eq!(jn(n, 1e-12), 0.0);
+        // Huge x uses the existing constant-time phase approximation. With
+        // i32::MIN the magnitude is even, not the odd saturated i32::MAX.
+        let parity = n.unsigned_abs() % 4;
+        let sign = if n < 0 && parity % 2 != 0 { -1.0 } else { 1.0 };
+        assert_eq!(jn(n, 1e100), sign * jn(parity as i32, 1e100));
+        assert_eq!(yn(n, 1e100), sign * yn(parity as i32, 1e100));
+    }
+    assert_eq!(yn(-3, 0.0), f64::INFINITY);
+    assert_eq!(yn(-2, -0.0), f64::NEG_INFINITY);
+    assert_eq!(yn(i32::MIN, 0.0), f64::NEG_INFINITY);
+}
+
+#[test]
+fn bessel_representable_values_are_not_discarded() {
+    // mpmath 80-digit references; compare ratios to retain subnormal sensitivity
+    // and avoid overflowing a subtraction of large opposite-sign values.
+    for (actual, expected) in [
+        (jn(100, 0.06), 5.522273948726346e-311),
+        (yn(100, 0.06), -5.76410997427483e307),
+        (jn(13, 1e-12), 1.9603324996120135e-170),
+    ] {
+        assert!(
+            (actual / expected - 1.0).abs() < 2e-12,
+            "{actual:e} vs {expected:e}"
+        );
+    }
+    // Independent SciPy 1.18.1/AMOS references around the old cutoff and at
+    // the new work boundary. These assert values, not merely finite/nonzero.
+    for (n, x, j, y) in [
+        (
+            200_000,
+            200_000.0,
+            0.007648847543722423,
+            -0.013248192594800937,
+        ),
+        (
+            200_001,
+            200_000.0,
+            0.007528721867113492,
+            -0.013456282866366336,
+        ),
+        (
+            250_000,
+            250_000.0,
+            0.00710056107183997,
+            -0.012298532559165735,
+        ),
+        (
+            1_000_000,
+            1_000_000.0,
+            0.004473073183377776,
+            -0.007747590021617347,
+        ),
+    ] {
+        assert!((jn(n, x) / j - 1.0).abs() < 1e-10);
+        assert!((yn(n, x) / y - 1.0).abs() < 1e-10);
+    }
+    // Large oscillatory arguments retain the existing recurrence. The wider
+    // tolerance acknowledges disagreement with AMOS here, not a precision fix.
+    assert!((jn(300_000, 1e8) / 2.6539905910125003e-5 - 1.0).abs() < 1e-6);
+    assert!((yn(300_000, 1e8) / -7.524532638187288e-5 - 1.0).abs() < 1e-6);
 }

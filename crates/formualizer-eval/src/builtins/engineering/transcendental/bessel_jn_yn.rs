@@ -43,54 +43,13 @@ use super::{
     bessel_util::{FRAC_2_SQRT_PI, split_words},
 };
 
-/// Ceiling on the number of recurrence steps `jn`/`yn` may perform.
+/// Work limit for each recurrence phase, not a numerical underflow threshold.
 ///
-/// The forward and backward recurrences in `jn`/`yn` iterate on the order `n`.
-/// For a pathological order such as `i32::MAX` (reachable via
-/// `(-i32::MIN).checked_neg().unwrap_or(i32::MAX)`), that is a ~2-billion-step
-/// loop driven by a single formula call — a genuine DoS.
-///
-/// Bounding *iterations* (rather than clamping the input) is safe because
-/// `J_n(x)` and `Y_n(x)` are dominated by their asymptotic forms once the order
-/// far exceeds the argument:
-///
-/// ```text
-///   J_n(x) ~ (1 / sqrt(2*pi*n)) * (e*x / (2n))^n   -> underflows to 0
-///   Y_n(x) ~ -sqrt(2 / (pi*n)) * (2n / (e*x))^n    -> overflows to +/-inf
-/// ```
-///
-/// `f64` loses the last representable magnitude around `n * ln(2n / (e*x)) ~ 709`
-/// (the log of `f64::MAX`). Every order that would still yield a representable,
-/// non-zero result is far below this cap, so computing the recurrence past it
-/// only produces `0.0` / `+/-inf` anyway. A cap of 200_000 clears every input the
-/// reviewer flagged as must-still-work (e.g. `jn(2000, 100)`, `yn(2000, 100)`)
-/// with several orders of magnitude of head-room while keeping the worst case
-/// bounded and fast.
-const MAX_RECURRENCE_ORDER: i32 = 200_000;
-
-/// Returns the asymptotic limit of `J_n(x)` / `Y_n(x)` when the order is large
-/// enough that the recurrence is both prohibitively long and numerically moot.
-///
-/// `Some(limit)` short-circuits the caller; `None` means "compute normally".
-/// Any order beyond `MAX_RECURRENCE_ORDER` is so far above every representable
-/// argument that `J` has underflowed to `0` and `Y` has diverged, so the limit
-/// is decided by the function kind alone.
-#[inline]
-fn asymptotic_large_order(n: i32, kind: BesselKind) -> Option<f64> {
-    if n <= MAX_RECURRENCE_ORDER {
-        return None;
-    }
-    match kind {
-        BesselKind::J => Some(0.0),
-        BesselKind::Y => Some(f64::NEG_INFINITY),
-    }
-}
-
-#[derive(Clone, Copy)]
-enum BesselKind {
-    J,
-    Y,
-}
+/// Constant-time zero, infinity, tiny-argument and huge-argument paths are
+/// handled first. More expensive requests return NaN (the spreadsheet wrapper
+/// returns #NUM!) rather than fabricated zero/infinity. No claim is made that
+/// all representable results fit within this limit.
+const MAX_RECURRENCE_ORDER: u32 = 1_000_000;
 
 // Special cases are:
 //
@@ -112,12 +71,10 @@ pub(crate) fn jn(n: i32, x: f64) -> f64 {
         // negation (`-hx`) is not equivalent: it overflows and panics for
         // `hx == i32::MIN`, which is exactly the high word of -0.0.
         hx ^= i32::MIN;
-        // `i32::MIN.wrapping_neg()` is `i32::MIN`, so guard the negation to
-        // avoid an overflow panic for `n == i32::MIN`. Such an order is far
-        // beyond any converging regime and saturates to `i32::MAX`.
-        (n.checked_neg().unwrap_or(i32::MAX), -x)
+        // Preserve magnitude and parity even for i32::MIN.
+        (n.unsigned_abs(), -x)
     } else {
-        (n, x)
+        (n as u32, x)
     };
     if n == 0 {
         return j0(x);
@@ -125,14 +82,7 @@ pub(crate) fn jn(n: i32, x: f64) -> f64 {
     if n == 1 {
         return j1(x);
     }
-    // Bound the recurrence: for orders far above the argument, J_n(x) has already
-    // underflowed to 0. This caps pathological orders (e.g. i32::MAX) at O(1)
-    // without changing any result that is still representable. See
-    // `MAX_RECURRENCE_ORDER`.
-    if let Some(limit) = asymptotic_large_order(n, BesselKind::J) {
-        return limit;
-    }
-    let sign = (n & 1) & (hx >> 31); /* even n -- 0, odd n -- sign(x) */
+    let sign = ((n & 1) as i32) & (hx >> 31); /* even n -- 0, odd n -- sign(x) */
     // let sign = if x < 0.0 { -1 } else { 1 };
     let x = x.abs();
     let b = if (ix | lx) == 0 || ix >= 0x7ff00000 {
@@ -167,6 +117,9 @@ pub(crate) fn jn(n: i32, x: f64) -> f64 {
             };
             FRAC_2_SQRT_PI * temp / x.sqrt()
         } else {
+            if n > MAX_RECURRENCE_ORDER {
+                return f64::NAN;
+            }
             let mut a = j0(x);
             let mut b = j1(x);
             for i in 1..n {
@@ -199,6 +152,9 @@ pub(crate) fn jn(n: i32, x: f64) -> f64 {
                 b / a
             }
         } else {
+            if n > MAX_RECURRENCE_ORDER {
+                return f64::NAN;
+            }
             /* use backward recurrence */
             /* 			x      x^2      x^2
              *  J(n,x)/J(n-1,x) =  ----   ------   ------   .....
@@ -234,8 +190,11 @@ pub(crate) fn jn(n: i32, x: f64) -> f64 {
             let mut q0 = w;
             let mut z = w + h;
             let mut q1 = w * z - 1.0;
-            let mut k = 1;
+            let mut k = 1u32;
             while q1 < 1.0e9 {
+                if k >= MAX_RECURRENCE_ORDER {
+                    return f64::NAN;
+                }
                 k += 1;
                 z += h;
                 let tmp = z * q1 - q0;
@@ -244,7 +203,7 @@ pub(crate) fn jn(n: i32, x: f64) -> f64 {
             }
             let m = (n as i64) + (n as i64);
             let mut t = 0.0;
-            let end = 2 * ((n as i64) + k);
+            let end = 2 * ((n as i64) + i64::from(k));
             let mut i = end - 2;
             while i >= m {
                 t = 1.0 / ((i as f64) / x - t);
@@ -324,36 +283,23 @@ pub(crate) fn yn(n: i32, x: f64) -> f64 {
     //     return x + x;
     // }
 
+    let sign = if n < 0 && n & 1 != 0 { -1.0 } else { 1.0 };
     if (ix | lx) == 0 {
-        return f64::NEG_INFINITY;
+        return sign * f64::NEG_INFINITY;
     }
     if hx < 0 {
         return f64::NAN;
     }
 
-    let (n, sign) = if n < 0 {
-        // `-i32::MIN` overflows; saturate instead of panicking. The parity
-        // driven `sign` is computed from the original `n` either way.
-        (n.checked_neg().unwrap_or(i32::MAX), 1 - ((n & 1) << 1))
-    } else {
-        (n, 1)
-    };
+    let n = n.unsigned_abs();
     if n == 0 {
         return y0(x);
     }
     if n == 1 {
-        return (sign as f64) * y1(x);
+        return sign * y1(x);
     }
     if ix == 0x7ff00000 {
-        return 0.0;
-    }
-    // Bound the recurrence: for orders far above the argument, Y_n(x) has already
-    // diverged. This caps pathological orders (e.g. i32::MAX) at O(1) without
-    // changing any result that is still representable. See `MAX_RECURRENCE_ORDER`.
-    // `Y_n` diverges to -inf for the even-parity branch; fold the parity `sign`
-    // so odd orders of a negated `n` keep their +inf limit.
-    if let Some(limit) = asymptotic_large_order(n, BesselKind::Y) {
-        return (sign as f64) * limit;
+        return sign * 0.0;
     }
     let b = if ix >= 0x52D00000 {
         // x > 2^302
@@ -378,6 +324,9 @@ pub(crate) fn yn(n: i32, x: f64) -> f64 {
         };
         FRAC_2_SQRT_PI * temp / x.sqrt()
     } else {
+        if n > MAX_RECURRENCE_ORDER {
+            return f64::NAN;
+        }
         let mut a = y0(x);
         let mut b = y1(x);
         for i in 1..n {
@@ -391,5 +340,5 @@ pub(crate) fn yn(n: i32, x: f64) -> f64 {
         }
         b
     };
-    if sign > 0 { b } else { -b }
+    sign * b
 }
