@@ -12,7 +12,7 @@
 
 This is the **recommended default** for most Rust integrations. It gives you:
 - Workbook API with sheets, values, formulas, undo/redo, and I/O backends
-- 320+ Excel-compatible built-in functions
+- 400+ Excel-compatible built-in functions
 - Formula parsing, tokenization, and pretty-printing
 - SheetPort runtime for typed spreadsheet I/O
 
@@ -42,15 +42,22 @@ let payment = wb.evaluate_cell("Sheet1", 1, 2)?;
 
 | Feature | Default | Description |
 |---------|---------|-------------|
-| `eval` | Yes | Calculation engine and built-in functions |
-| `workbook` | Yes | Workbook API with sheets, undo/redo |
-| `sheetport` | Yes | SheetPort runtime (spreadsheets as typed APIs) |
-| `parse` | Yes | Tokenizer, parser, pretty-printer |
-| `common` | Yes | Shared types (values, errors, references) |
-| `calamine` | No | XLSX/ODS reading via calamine |
-| `umya` | No | XLSX reading/writing via umya-spreadsheet |
-| `json` | No | JSON workbook serialization |
-| `tracing` | No | Performance tracing hooks |
+| `portable-wasm` | Yes | Full stack preset: `eval`, `workbook`, `sheetport`, `parse`, `common`, with no ambient clock or JS runtime hooks |
+| `system-clock` | Yes | Ambient wall-clock time for `NOW()`, `TODAY()` and friends; disable for wasmtime/non-JS wasm guests and inject a clock instead |
+| `json` | Yes | JSON workbook serialization |
+| `csv` | Yes | CSV workbook loading |
+| `xlsx-recalc` | Yes | Explicitly invoked cache-only XLSX recalculation (`recalculate_xlsx_bytes` / file variants) |
+| `eval` | via preset | Calculation engine and built-in functions |
+| `workbook` | via preset | Workbook API with sheets, undo/redo |
+| `sheetport` | via preset | SheetPort runtime (spreadsheets as typed APIs) |
+| `parse` | via preset | Tokenizer, parser, pretty-printer |
+| `common` | via preset | Shared types (values, errors, references) |
+| `calamine` | No | XLSX/ODS reading via calamine, including runtime `XlsxPathSource` selection |
+| `umya` | No | XLSX reading/writing via umya-spreadsheet 2 |
+| `umya3` | No | Opt-in umya-spreadsheet 3 backend sharing the same adapter algorithms |
+| `js-runtime` | No | Browser/wasm-bindgen runtime hooks (`web-time`, JS-backed entropy); only for browser targets |
+| `wasm-js` | No | Preset: `portable-wasm` + `system-clock` + `js-runtime` |
+| `tracing` / `tracing_chrome` | No | Performance tracing hooks and Chrome trace output |
 
 ## License
 

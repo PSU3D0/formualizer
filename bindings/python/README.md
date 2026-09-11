@@ -3,7 +3,7 @@
 <p align="center">
   <img alt="Arrow Powered" src="https://img.shields.io/badge/Arrow-Powered-0A66C2?logo=apache&logoColor=white" />
   <a href="https://pypi.org/project/formualizer/"><img alt="PyPI" src="https://img.shields.io/pypi/v/formualizer.svg" /></a>
-  <a href="../../LICENSE-MIT"><img alt="License: MIT/Apache-2.0" src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg" /></a>
+  <a href="https://github.com/PSU3D0/formualizer/blob/main/LICENSE-MIT"><img alt="License: MIT/Apache-2.0" src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg" /></a>
   <a href="https://www.formualizer.dev/docs/quickstarts/python-quickstart"><img alt="Documentation" src="https://img.shields.io/badge/docs-formualizer.dev-blue" /></a>
 </p>
 
@@ -15,7 +15,7 @@
 
 **Parse, evaluate, and mutate Excel workbooks at native speed from Python.**
 
-A Rust-powered spreadsheet engine with 320+ Excel-compatible functions, exposed through a clean Pythonic API. Tokenize formulas, walk ASTs, evaluate workbooks, and use SheetPort to treat spreadsheets as typed APIs.
+A Rust-powered spreadsheet engine with 400+ Excel-compatible functions, exposed through a clean Pythonic API. Tokenize formulas, walk ASTs, evaluate workbooks, and use SheetPort to treat spreadsheets as typed APIs.
 
 ## Installation
 
@@ -23,7 +23,7 @@ A Rust-powered spreadsheet engine with 320+ Excel-compatible functions, exposed 
 pip install formualizer
 ```
 
-Prebuilt wheels are available for Python 3.10-3.13 on Linux, macOS, and Windows. No Rust toolchain required.
+Prebuilt stable-ABI (`abi3`) wheels are published for Python 3.10 and newer on Linux (glibc and musl), macOS, and Windows. No Rust toolchain required.
 
 ## Documentation
 
@@ -31,7 +31,7 @@ Full documentation at **[formualizer.dev](https://www.formualizer.dev/docs)**:
 
 - [Python Quickstart](https://www.formualizer.dev/docs/quickstarts/python-quickstart)
 - [Python API Reference](https://www.formualizer.dev/docs/reference/python-api-map)
-- [Function Reference](https://www.formualizer.dev/docs/reference/functions) — 320+ built-in functions
+- [Function Reference](https://www.formualizer.dev/docs/reference/functions) — 400+ built-in functions
 - [SheetPort Guide](https://www.formualizer.dev/docs/sheetport) — spreadsheets as typed APIs
 - [Workbook Edits and Batching](https://www.formualizer.dev/docs/guides/workbook-edits-and-batching)
 
@@ -137,7 +137,7 @@ print(collect_function_names(ast))  # ['SUMIFS']
 |---|---|
 | **Tokenization** | Break formulas into structured `Token` objects with byte spans and operator metadata |
 | **Parsing** | Produce a rich AST with reference normalization, source tracking, and 64-bit structural fingerprints |
-| **320+ built-in functions** | Math, text, lookup (XLOOKUP, VLOOKUP), date/time, financial, statistics, database, engineering |
+| **400+ built-in functions** | Math, text, lookup (XLOOKUP, VLOOKUP), date/time, financial, statistics, database, engineering |
 | **Workbook evaluation** | Set values and formulas, evaluate cells/ranges, load XLSX/CSV/JSON |
 | **XLSX cache writeback** | `recalculate_file(path, output=None)` recalculates formulas and writes cached values back |
 | **Batch operations** | `set_values_batch` / `set_formulas_batch` for efficient bulk updates |
@@ -307,16 +307,18 @@ print(result["final_price"])  # 120.0
 ```python
 tokenize(formula: str, dialect: FormulaDialect = None) -> Tokenizer
 parse(formula: str, dialect: FormulaDialect = None) -> ASTNode
-load_workbook(path: str, strategy: str = None, *, path_source: XlsxPathSource | None = None) -> Workbook
-load_workbook_bytes(data: bytes, strategy: str = None, backend: str | None = None) -> Workbook
+load_workbook(path: str, strategy: str = None, *, path_source: XlsxPathSource | None = None, span_evaluation: bool | None = None) -> Workbook
+load_workbook_bytes(data: bytes, strategy: str = None, backend: str | None = None, *, span_evaluation: bool | None = None) -> Workbook
 recalculate_file(path: str, output: str | None = None) -> dict
+recalculate_xlsx_bytes(data: bytes, *, error_location_limit: int | None = None) -> dict
+recalculate_xlsx_file(path: str, output: str | None = None, *, error_location_limit: int | None = None) -> dict
 ```
 
 ### Core classes
 
 - **`Workbook`** — create, load, evaluate, undo/redo. Supports `from_path()`, `from_bytes()`, `load_path()`, and `to_xlsx_bytes()`.
 - **`Sheet`** — per-sheet facade for `set_value`, `set_formula`, `get_cell`, batch operations.
-- **`LiteralValue`** — typed values: `.int()`, `.number()`, `.text()`, `.boolean()`, `.date()`, `.empty()`, `.error()`, `.array()`.
+- **`LiteralValue`** — typed values: `.int()`, `.number()`, `.text()`, `.boolean()`, `.date()`, `.time()`, `.datetime()`, `.duration()`, `.empty()`, `.error()`, `.array()`.
 - **`Tokenizer`** — iterable token sequence with `.render()` and `.tokens`.
 - **`ASTNode`** — `.pretty()`, `.to_formula()`, `.fingerprint()`, `.children()`, `.walk_refs()`.
 - **`CellRef` / `RangeRef` / `TableRef` / `NamedRangeRef`** — typed references.
@@ -338,7 +340,7 @@ Full type stubs are included in the package (`.pyi` files) for IDE autocompletio
 
 ## Building from source
 
-Requires Rust >= 1.70 and [maturin](https://github.com/PyO3/maturin):
+Requires Rust 1.93.0 (the pinned release toolchain; edition 2024) and [maturin](https://github.com/PyO3/maturin):
 
 ```bash
 pip install maturin
@@ -408,4 +410,4 @@ The Python wheel links directly against the Rust crates — there is no runtime 
 
 ## License
 
-Dual-licensed under [MIT](../../LICENSE-MIT) or [Apache-2.0](../../LICENSE-APACHE), at your option.
+Dual-licensed under [MIT](https://github.com/PSU3D0/formualizer/blob/main/LICENSE-MIT) or [Apache-2.0](https://github.com/PSU3D0/formualizer/blob/main/LICENSE-APACHE), at your option. Both license texts ship inside the package.

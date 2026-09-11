@@ -6,7 +6,7 @@
 
 **Arrow-backed Excel formula engine with dependency graph and incremental recalculation.**
 
-`formualizer-eval` is the calculation core of Formualizer. It takes ASTs from `formualizer-parse`, tracks dependencies between cells, and evaluates 320+ Excel-compatible functions with incremental recomputation and optional parallel execution.
+`formualizer-eval` is the calculation core of Formualizer. It takes ASTs from `formualizer-parse`, tracks dependencies between cells, and evaluates 400+ Excel-compatible functions with incremental recomputation and optional parallel execution.
 
 ## When to use this crate
 
@@ -21,7 +21,7 @@ For most integrations, [`formualizer-workbook`](https://crates.io/crates/formual
 
 - **Apache Arrow storage** — columnar sheet backing with spill overlays for efficient large-workbook evaluation.
 - **Dependency graph** — incremental graph with cycle detection, topological scheduling, and CSR (Compressed Sparse Row) edge format.
-- **320+ built-in functions** — math, text, lookup (XLOOKUP, VLOOKUP, HLOOKUP), date/time, financial, statistics, database, engineering.
+- **400+ built-in functions** — math, text, lookup (XLOOKUP, VLOOKUP, HLOOKUP), date/time, financial, statistics, database, engineering.
 - **Dynamic arrays** — FILTER, UNIQUE, SORT, SORTBY with automatic spill semantics.
 - **Parallel evaluation** — optional multi-threaded evaluation via Rayon with configurable thread pools.
 - **Deterministic mode** — inject clock, timezone, and RNG seed for reproducible results.

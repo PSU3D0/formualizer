@@ -3,7 +3,7 @@
 <p align="center">
   <img alt="Arrow Powered" src="https://img.shields.io/badge/Arrow-Powered-0A66C2?logo=apache&logoColor=white" />
   <a href="https://www.npmjs.com/package/formualizer"><img alt="npm" src="https://img.shields.io/npm/v/formualizer.svg" /></a>
-  <a href="../../LICENSE-MIT"><img alt="License: MIT/Apache-2.0" src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg" /></a>
+  <a href="https://github.com/PSU3D0/formualizer/blob/main/LICENSE-MIT"><img alt="License: MIT/Apache-2.0" src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg" /></a>
   <a href="https://www.formualizer.dev/docs/quickstarts/js-wasm-quickstart"><img alt="Documentation" src="https://img.shields.io/badge/docs-formualizer.dev-blue" /></a>
 </p>
 
@@ -15,7 +15,7 @@
 
 **Parse, evaluate, and mutate Excel workbooks in the browser or Node.js.**
 
-A Rust-powered spreadsheet engine compiled to WebAssembly with 320+ Excel-compatible functions, Arrow-powered storage, and a clean TypeScript API.
+A Rust-powered spreadsheet engine compiled to WebAssembly with 400+ Excel-compatible functions, Arrow-powered storage, and a clean TypeScript API.
 
 ## Installation
 
@@ -30,7 +30,7 @@ Full documentation at **[formualizer.dev](https://www.formualizer.dev/docs)**:
 - [JS/WASM Quickstart](https://www.formualizer.dev/docs/quickstarts/js-wasm-quickstart)
 - [JS/WASM API Reference](https://www.formualizer.dev/docs/reference/js-wasm-api-map)
 - [Formula Parser](https://www.formualizer.dev/formula-parser) — interactive in-browser tool
-- [Function Reference](https://www.formualizer.dev/docs/reference/functions) — 320+ built-in functions
+- [Function Reference](https://www.formualizer.dev/docs/reference/functions) — 400+ built-in functions
 - [SheetPort Guide](https://www.formualizer.dev/docs/sheetport) — spreadsheets as typed APIs
 
 ## Quick start
@@ -49,7 +49,7 @@ wb.setValue('Loans', 2, 1, 0.045);   // annual rate
 wb.setValue('Loans', 3, 1, 360);     // months
 
 wb.setFormula('Loans', 1, 2, '=PMT(A2/12, A3, -A1)');
-console.log(await wb.evaluateCell('Loans', 1, 2)); // ~1266.71
+console.log(wb.evaluateCell('Loans', 1, 2)); // ~1266.71
 ```
 
 
@@ -88,19 +88,19 @@ console.log(ast);  // AST with node types, references, operators
 ```typescript
 const wb = new Workbook();
 wb.addSheet('S');
-await wb.setChangelogEnabled(true);
+wb.setChangelogEnabled(true);
 
 wb.setValue('S', 1, 1, 10);
 wb.setValue('S', 1, 1, 20);
-await wb.undo();  // back to 10
-await wb.redo();  // back to 20
+wb.undo();  // back to 10
+wb.redo();  // back to 20
 
 // Group multiple edits into one undo step
-await wb.beginAction('bulk update');
+wb.beginAction('bulk update');
 wb.setValue('S', 1, 1, 100);
 wb.setValue('S', 2, 1, 200);
-await wb.endAction();
-await wb.undo();  // reverts both
+wb.endAction();
+wb.undo();  // reverts both
 ```
 
 ### Register custom functions
@@ -135,7 +135,7 @@ Key semantics:
 
 Runnable example: `node bindings/wasm/examples/custom-function-registration.mjs` (after `npm run build`)
 
-Note: the phase-4 Rust plugin seam (`register_wasm_function`) is intentionally still stubbed/pending runtime integration and is not yet surfaced in the JS API.
+Note: the Rust-side WASM UDF plugin path (`formualizer-workbook` features `wasm_plugins` / `wasm_runtime_wasmtime`) is not surfaced in the JS API; JS callbacks registered with `registerFunction` are the custom-function mechanism here.
 
 ---
 
@@ -147,6 +147,8 @@ Note: the phase-4 Rust plugin seam (`register_wasm_function`) is intentionally s
 import init from 'formualizer';
 await init(); // must be called once before using any API
 ```
+
+`init`, `tokenize`, `parse` and `recalculateXlsxBytes` return promises. `Workbook`, `Sheet` and `SheetPortSession` methods are synchronous once the module is initialized.
 
 ### Formula parsing
 
@@ -168,7 +170,7 @@ parse(formula: string, dialect?: FormulaDialect): Promise<ASTNodeData>
 
 | Method | Description |
 |---|---|
-| `new Workbook()` | Create an empty workbook |
+| `new Workbook(options?)` | Create an empty workbook; options cover span evaluation, cycle detection/policy, iteration limits and per-request work/time budgets |
 | `addSheet(name)` | Add a new sheet |
 | `sheetNames()` | List all sheet names |
 | `sheet(name)` | Get or create a Sheet facade |
@@ -187,6 +189,11 @@ parse(formula: string, dialect?: FormulaDialect): Promise<ASTNodeData>
 | `listFunctions()` | List registered custom function metadata |
 | `static fromJson(json)` | Load workbook from JSON string |
 | `static fromXlsxBytes(bytes)` | Load workbook from XLSX bytes via the Calamine read path |
+| `static fromXlsxBytesWithOptions(bytes, options)` / `static fromJsonWithOptions(json, options)` | Same loaders with `WorkbookLoadOptions` |
+| `inspectCell(cell, options?)` / `precedents(...)` / `dependents(...)` / `trace(...)` / `rangePage(...)` | Inspection and dependency tracing |
+| `getEvalPlan(targets)` | Inspect the evaluation schedule before computing |
+| `lastCycleTelemetry()` | Per-recalc iterative-calculation counters |
+| `cancel()` / `resetCancel()` | Cooperative cancellation of a running evaluation |
 
 ### Sheet
 
@@ -268,11 +275,11 @@ wasm-pack test --node
 ## Why Formualizer?
 
 - **Complete engine**: Parse, evaluate, mutate, and persist — not just read cached values.
-- **320+ functions**: Math, text, lookup (XLOOKUP), date/time, financial, statistics, and more.
+- **400+ functions**: Math, text, lookup (XLOOKUP), date/time, financial, statistics, and more.
 - **Fast**: Arrow-powered storage with incremental dependency tracking and parallel evaluation.
 - **Portable**: Same Rust engine runs natively, in Python, and in the browser via WASM.
 - **Deterministic**: Inject clock, timezone, and RNG for reproducible results.
 
 ## License
 
-Dual-licensed under [MIT](../../LICENSE-MIT) or [Apache-2.0](../../LICENSE-APACHE), at your option.
+Dual-licensed under [MIT](https://github.com/PSU3D0/formualizer/blob/main/LICENSE-MIT) or [Apache-2.0](https://github.com/PSU3D0/formualizer/blob/main/LICENSE-APACHE), at your option. Both license texts ship inside the package.
