@@ -1,5 +1,6 @@
 #![allow(clippy::missing_safety_doc)]
 
+use crate::guard::{catch_ffi, catch_unwind_silent};
 use crate::{
     EXCEL_MAX_COLS, EXCEL_MAX_ROWS, fz_buffer, fz_encoding_format, fz_status, validate_cffi_range,
 };
@@ -13,9 +14,23 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::ffi::{CStr, c_char, c_int, c_uint};
 use std::ptr;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 pub struct OpaqueWorkbook(pub Arc<RwLock<Workbook>>);
+
+impl OpaqueWorkbook {
+    fn write(&self) -> Result<RwLockWriteGuard<'_, Workbook>, String> {
+        self.0
+            .write()
+            .map_err(|_| "workbook lock poisoned".to_string())
+    }
+
+    fn read(&self) -> Result<RwLockReadGuard<'_, Workbook>, String> {
+        self.0
+            .read()
+            .map_err(|_| "workbook lock poisoned".to_string())
+    }
+}
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -140,16 +155,21 @@ fn encode_payload<T: Serialize>(value: &T, format: fz_encoding_format) -> Result
     }
 }
 
+fn opaque_ref(wb: fz_workbook_h) -> Result<&'static OpaqueWorkbook, String> {
+    if wb.0.is_null() {
+        return Err("invalid arguments".to_string());
+    }
+    // SAFETY: handle was produced by create/open and not yet freed.
+    Ok(unsafe { &*(wb.0 as *mut OpaqueWorkbook) })
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn fz_workbook_create(status: *mut fz_status) -> fz_workbook_h {
-    let wb = Workbook::new();
-    let opaque = Box::new(OpaqueWorkbook(Arc::new(RwLock::new(wb))));
-    if !status.is_null() {
-        unsafe {
-            *status = fz_status::ok();
-        }
-    }
-    fz_workbook_h(Box::into_raw(opaque) as *mut std::ffi::c_void)
+    catch_ffi(status, fz_workbook_h(ptr::null_mut()), || {
+        let wb = Workbook::new();
+        let opaque = Box::new(OpaqueWorkbook(Arc::new(RwLock::new(wb))));
+        Ok(fz_workbook_h(Box::into_raw(opaque) as *mut std::ffi::c_void))
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -166,57 +186,30 @@ pub unsafe extern "C" fn fz_workbook_open_xlsx_with_span_evaluation(
     span_evaluation: bool,
     status: *mut fz_status,
 ) -> fz_workbook_h {
-    if path.is_null() {
-        if !status.is_null() {
-            unsafe {
-                *status = fz_status::error("invalid arguments".to_string());
-            }
+    catch_ffi(status, fz_workbook_h(ptr::null_mut()), || {
+        if path.is_null() {
+            return Err("invalid arguments".to_string());
         }
-        return fz_workbook_h(ptr::null_mut());
-    }
 
-    let path_str = unsafe { CStr::from_ptr(path).to_string_lossy() };
-    let backend = match UmyaAdapter::open_path(path_str.as_ref()) {
-        Ok(adapter) => adapter,
-        Err(e) => {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::error(e.to_string());
-                }
-            }
-            return fz_workbook_h(ptr::null_mut());
-        }
-    };
-
-    let cfg = WorkbookConfig::interactive().with_span_evaluation(span_evaluation);
-    let wb = match Workbook::from_reader(backend, LoadStrategy::EagerAll, cfg) {
-        Ok(wb) => wb,
-        Err(e) => {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::error(e.to_string());
-                }
-            }
-            return fz_workbook_h(ptr::null_mut());
-        }
-    };
-
-    let opaque = Box::new(OpaqueWorkbook(Arc::new(RwLock::new(wb))));
-    if !status.is_null() {
-        unsafe {
-            *status = fz_status::ok();
-        }
-    }
-    fz_workbook_h(Box::into_raw(opaque) as *mut std::ffi::c_void)
+        let path_str = unsafe { CStr::from_ptr(path).to_string_lossy() };
+        let backend = UmyaAdapter::open_path(path_str.as_ref()).map_err(|e| e.to_string())?;
+        let cfg = WorkbookConfig::interactive().with_span_evaluation(span_evaluation);
+        let wb = Workbook::from_reader(backend, LoadStrategy::EagerAll, cfg)
+            .map_err(|e| e.to_string())?;
+        let opaque = Box::new(OpaqueWorkbook(Arc::new(RwLock::new(wb))));
+        Ok(fz_workbook_h(Box::into_raw(opaque) as *mut std::ffi::c_void))
+    })
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn fz_workbook_free(wb: fz_workbook_h) {
-    if !wb.0.is_null() {
-        unsafe {
-            let _ = Box::from_raw(wb.0 as *mut OpaqueWorkbook);
+    catch_unwind_silent(|| {
+        if !wb.0.is_null() {
+            unsafe {
+                let _ = Box::from_raw(wb.0 as *mut OpaqueWorkbook);
+            }
         }
-    }
+    });
 }
 
 #[unsafe(no_mangle)]
@@ -225,30 +218,17 @@ pub unsafe extern "C" fn fz_workbook_add_sheet(
     name: *const c_char,
     status: *mut fz_status,
 ) {
-    if wb.0.is_null() || name.is_null() {
-        if !status.is_null() {
-            unsafe {
-                *status = fz_status::error("invalid arguments".to_string());
-            }
+    catch_ffi(status, (), || {
+        if name.is_null() {
+            return Err("invalid arguments".to_string());
         }
-        return;
-    }
-
-    let opaque = unsafe { &*(wb.0 as *mut OpaqueWorkbook) };
-    let name_str = unsafe { CStr::from_ptr(name).to_string_lossy() };
-
-    let mut wb_lock = opaque.0.write().unwrap();
-    if let Err(e) = wb_lock.add_sheet(&name_str) {
-        if !status.is_null() {
-            unsafe {
-                *status = fz_status::error(e.to_string());
-            }
-        }
-    } else if !status.is_null() {
-        unsafe {
-            *status = fz_status::ok();
-        }
-    }
+        let opaque = opaque_ref(wb)?;
+        let name_str = unsafe { CStr::from_ptr(name).to_string_lossy() };
+        opaque
+            .write()?
+            .add_sheet(&name_str)
+            .map_err(|e| e.to_string())
+    });
 }
 
 #[unsafe(no_mangle)]
@@ -262,60 +242,27 @@ pub unsafe extern "C" fn fz_workbook_set_cell_value(
     format: fz_encoding_format,
     status: *mut fz_status,
 ) {
-    if wb.0.is_null() || sheet.is_null() || value_payload.is_null() {
-        if !status.is_null() {
-            unsafe {
-                *status = fz_status::error("invalid arguments".to_string());
+    catch_ffi(status, (), || {
+        if sheet.is_null() || value_payload.is_null() {
+            return Err("invalid arguments".to_string());
+        }
+        checked_excel_coordinates(row, col, None)?;
+        let opaque = opaque_ref(wb)?;
+        let sheet_str = unsafe { CStr::from_ptr(sheet).to_string_lossy() };
+        let payload = unsafe { std::slice::from_raw_parts(value_payload, len) };
+        let value: LiteralValue = match format {
+            fz_encoding_format::FZ_ENCODING_JSON => {
+                serde_json::from_slice(payload).map_err(|e| e.to_string())?
             }
-        }
-        return;
-    }
-    if let Err(e) = checked_excel_coordinates(row, col, None) {
-        if !status.is_null() {
-            unsafe {
-                *status = fz_status::error(e);
+            fz_encoding_format::FZ_ENCODING_CBOR => {
+                ciborium::from_reader(payload).map_err(|e| e.to_string())?
             }
-        }
-        return;
-    }
-
-    let opaque = unsafe { &*(wb.0 as *mut OpaqueWorkbook) };
-    let sheet_str = unsafe { CStr::from_ptr(sheet).to_string_lossy() };
-    let payload = unsafe { std::slice::from_raw_parts(value_payload, len) };
-
-    let value: Result<LiteralValue, String> = match format {
-        fz_encoding_format::FZ_ENCODING_JSON => {
-            serde_json::from_slice(payload).map_err(|e| e.to_string())
-        }
-        fz_encoding_format::FZ_ENCODING_CBOR => {
-            ciborium::from_reader(payload).map_err(|e| e.to_string())
-        }
-    };
-
-    let value = match value {
-        Ok(v) => v,
-        Err(e) => {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::error(e);
-                }
-            }
-            return;
-        }
-    };
-
-    let mut wb_lock = opaque.0.write().unwrap();
-    if let Err(e) = wb_lock.set_value(&sheet_str, row, col, value) {
-        if !status.is_null() {
-            unsafe {
-                *status = fz_status::error(e.to_string());
-            }
-        }
-    } else if !status.is_null() {
-        unsafe {
-            *status = fz_status::ok();
-        }
-    }
+        };
+        opaque
+            .write()?
+            .set_value(&sheet_str, row, col, value)
+            .map_err(|e| e.to_string())
+    });
 }
 
 #[unsafe(no_mangle)]
@@ -327,39 +274,19 @@ pub unsafe extern "C" fn fz_workbook_set_cell_formula(
     formula: *const c_char,
     status: *mut fz_status,
 ) {
-    if wb.0.is_null() || sheet.is_null() || formula.is_null() {
-        if !status.is_null() {
-            unsafe {
-                *status = fz_status::error("invalid arguments".to_string());
-            }
+    catch_ffi(status, (), || {
+        if sheet.is_null() || formula.is_null() {
+            return Err("invalid arguments".to_string());
         }
-        return;
-    }
-    if let Err(e) = checked_excel_coordinates(row, col, None) {
-        if !status.is_null() {
-            unsafe {
-                *status = fz_status::error(e);
-            }
-        }
-        return;
-    }
-
-    let opaque = unsafe { &*(wb.0 as *mut OpaqueWorkbook) };
-    let sheet_str = unsafe { CStr::from_ptr(sheet).to_string_lossy() };
-    let formula_str = unsafe { CStr::from_ptr(formula).to_string_lossy() };
-
-    let mut wb_lock = opaque.0.write().unwrap();
-    if let Err(e) = wb_lock.set_formula(&sheet_str, row, col, &formula_str) {
-        if !status.is_null() {
-            unsafe {
-                *status = fz_status::error(e.to_string());
-            }
-        }
-    } else if !status.is_null() {
-        unsafe {
-            *status = fz_status::ok();
-        }
-    }
+        checked_excel_coordinates(row, col, None)?;
+        let opaque = opaque_ref(wb)?;
+        let sheet_str = unsafe { CStr::from_ptr(sheet).to_string_lossy() };
+        let formula_str = unsafe { CStr::from_ptr(formula).to_string_lossy() };
+        opaque
+            .write()?
+            .set_formula(&sheet_str, row, col, &formula_str)
+            .map_err(|e| e.to_string())
+    });
 }
 
 #[unsafe(no_mangle)]
@@ -370,47 +297,19 @@ pub unsafe extern "C" fn fz_workbook_get_cell_formula(
     col: c_uint,
     status: *mut fz_status,
 ) -> fz_buffer {
-    if wb.0.is_null() || sheet.is_null() {
-        if !status.is_null() {
-            unsafe {
-                *status = fz_status::error("invalid arguments".to_string());
-            }
+    catch_ffi(status, fz_buffer::empty(), || {
+        if sheet.is_null() {
+            return Err("invalid arguments".to_string());
         }
-        return fz_buffer::empty();
-    }
-    if let Err(e) = checked_excel_coordinates(row, col, None) {
-        if !status.is_null() {
-            unsafe {
-                *status = fz_status::error(e);
-            }
-        }
-        return fz_buffer::empty();
-    }
-
-    let opaque = unsafe { &*(wb.0 as *mut OpaqueWorkbook) };
-    let sheet_str = unsafe { CStr::from_ptr(sheet).to_string_lossy() };
-
-    let wb_lock = opaque.0.read().unwrap();
-    let formula = wb_lock.get_formula(&sheet_str, row, col);
-
-    match formula {
-        Some(f) => {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::ok();
-                }
-            }
-            fz_buffer::from_vec(f.into_bytes())
-        }
-        None => {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::ok();
-                }
-            }
-            fz_buffer::empty()
-        }
-    }
+        checked_excel_coordinates(row, col, None)?;
+        let opaque = opaque_ref(wb)?;
+        let sheet_str = unsafe { CStr::from_ptr(sheet).to_string_lossy() };
+        let formula = opaque.read()?.get_formula(&sheet_str, row, col);
+        Ok(match formula {
+            Some(f) => fz_buffer::from_vec(f.into_bytes()),
+            None => fz_buffer::empty(),
+        })
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -422,61 +321,20 @@ pub unsafe extern "C" fn fz_workbook_get_cell_value(
     format: fz_encoding_format,
     status: *mut fz_status,
 ) -> fz_buffer {
-    if wb.0.is_null() || sheet.is_null() {
-        if !status.is_null() {
-            unsafe {
-                *status = fz_status::error("invalid arguments".to_string());
-            }
+    catch_ffi(status, fz_buffer::empty(), || {
+        if sheet.is_null() {
+            return Err("invalid arguments".to_string());
         }
-        return fz_buffer::empty();
-    }
-    if let Err(e) = checked_excel_coordinates(row, col, None) {
-        if !status.is_null() {
-            unsafe {
-                *status = fz_status::error(e);
-            }
-        }
-        return fz_buffer::empty();
-    }
-
-    let opaque = unsafe { &*(wb.0 as *mut OpaqueWorkbook) };
-    let sheet_str = unsafe { CStr::from_ptr(sheet).to_string_lossy() };
-
-    let wb_lock = opaque.0.read().unwrap();
-    let value = wb_lock
-        .get_value(&sheet_str, row, col)
-        .unwrap_or(LiteralValue::Empty);
-
-    let result: Result<Vec<u8>, String> = match format {
-        fz_encoding_format::FZ_ENCODING_JSON => {
-            serde_json::to_vec(&value).map_err(|e| e.to_string())
-        }
-        fz_encoding_format::FZ_ENCODING_CBOR => {
-            let mut buf = Vec::new();
-            ciborium::into_writer(&value, &mut buf)
-                .map_err(|e| e.to_string())
-                .map(|_| buf)
-        }
-    };
-
-    match result {
-        Ok(v) => {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::ok();
-                }
-            }
-            fz_buffer::from_vec(v)
-        }
-        Err(e) => {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::error(e);
-                }
-            }
-            fz_buffer::empty()
-        }
-    }
+        checked_excel_coordinates(row, col, None)?;
+        let opaque = opaque_ref(wb)?;
+        let sheet_str = unsafe { CStr::from_ptr(sheet).to_string_lossy() };
+        let value = opaque
+            .read()?
+            .get_value(&sheet_str, row, col)
+            .unwrap_or(LiteralValue::Empty);
+        let bytes = encode_payload(&value, format)?;
+        Ok(fz_buffer::from_vec(bytes))
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -485,76 +343,18 @@ pub unsafe extern "C" fn fz_workbook_evaluate_all(
     format: fz_encoding_format,
     status: *mut fz_status,
 ) -> fz_buffer {
-    if wb.0.is_null() {
-        if !status.is_null() {
-            unsafe {
-                *status = fz_status::error("invalid arguments".to_string());
-            }
-        }
-        return fz_buffer::empty();
-    }
-
-    let opaque = unsafe { &*(wb.0 as *mut OpaqueWorkbook) };
-    let mut wb_lock = opaque.0.write().unwrap();
-
-    // Workbook needs to build graph if deferred
-    if let Err(e) = wb_lock.prepare_graph_all() {
-        if !status.is_null() {
-            unsafe {
-                *status = fz_status::error(e.to_string());
-            }
-        }
-        return fz_buffer::empty();
-    }
-
-    match wb_lock.evaluate_all() {
-        Ok(res) => {
-            let cffi_res = CffiEvalResult {
-                computed_vertices: res.computed_vertices,
-                cycle_errors: res.cycle_errors,
-                elapsed_ms: res.elapsed.as_millis() as u64,
-            };
-
-            let result: Result<Vec<u8>, String> = match format {
-                fz_encoding_format::FZ_ENCODING_JSON => {
-                    serde_json::to_vec(&cffi_res).map_err(|e| e.to_string())
-                }
-                fz_encoding_format::FZ_ENCODING_CBOR => {
-                    let mut buf = Vec::new();
-                    ciborium::into_writer(&cffi_res, &mut buf)
-                        .map_err(|e| e.to_string())
-                        .map(|_| buf)
-                }
-            };
-
-            match result {
-                Ok(v) => {
-                    if !status.is_null() {
-                        unsafe {
-                            *status = fz_status::ok();
-                        }
-                    }
-                    fz_buffer::from_vec(v)
-                }
-                Err(e) => {
-                    if !status.is_null() {
-                        unsafe {
-                            *status = fz_status::error(e);
-                        }
-                    }
-                    fz_buffer::empty()
-                }
-            }
-        }
-        Err(e) => {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::error(e.to_string());
-                }
-            }
-            fz_buffer::empty()
-        }
-    }
+    catch_ffi(status, fz_buffer::empty(), || {
+        let opaque = opaque_ref(wb)?;
+        let mut wb_lock = opaque.write()?;
+        wb_lock.prepare_graph_all().map_err(|e| e.to_string())?;
+        let res = wb_lock.evaluate_all().map_err(|e| e.to_string())?;
+        let cffi_res = CffiEvalResult {
+            computed_vertices: res.computed_vertices,
+            cycle_errors: res.cycle_errors,
+            elapsed_ms: res.elapsed.as_millis() as u64,
+        };
+        Ok(fz_buffer::from_vec(encode_payload(&cffi_res, format)?))
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -565,94 +365,37 @@ pub unsafe extern "C" fn fz_workbook_evaluate_cells(
     format: fz_encoding_format,
     status: *mut fz_status,
 ) -> fz_buffer {
-    if wb.0.is_null() || targets_payload.is_null() || len == 0 {
-        if !status.is_null() {
-            unsafe {
-                *status = fz_status::error("invalid arguments".to_string());
-            }
+    catch_ffi(status, fz_buffer::empty(), || {
+        if targets_payload.is_null() || len == 0 {
+            return Err("invalid arguments".to_string());
         }
-        return fz_buffer::empty();
-    }
-
-    let targets: Vec<CffiCellTarget> = match decode_payload(targets_payload, len, format) {
-        Ok(targets) => targets,
-        Err(e) => {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::error(e);
-                }
-            }
-            return fz_buffer::empty();
+        let targets: Vec<CffiCellTarget> = decode_payload(targets_payload, len, format)?;
+        for target in &targets {
+            checked_excel_coordinates(target.row, target.col, None)?;
         }
-    };
-    for target in &targets {
-        if let Err(e) = checked_excel_coordinates(target.row, target.col, None) {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::error(e);
-                }
-            }
-            return fz_buffer::empty();
+        let mut sheets: BTreeSet<&str> = BTreeSet::new();
+        for target in &targets {
+            sheets.insert(target.sheet.as_str());
         }
-    }
-
-    let mut sheets: BTreeSet<&str> = BTreeSet::new();
-    for target in &targets {
-        sheets.insert(target.sheet.as_str());
-    }
-
-    let opaque = unsafe { &*(wb.0 as *mut OpaqueWorkbook) };
-    let mut wb_lock = opaque.0.write().unwrap();
-
-    if let Err(targeted_error) = wb_lock.prepare_graph_for_sheets(sheets.iter().copied())
-        && let Err(full_error) = wb_lock.prepare_graph_all()
-    {
-        if !status.is_null() {
-            unsafe {
-                *status = fz_status::error(format!(
-                    "targeted graph preparation failed: {targeted_error}; \
+        let opaque = opaque_ref(wb)?;
+        let mut wb_lock = opaque.write()?;
+        if let Err(targeted_error) = wb_lock.prepare_graph_for_sheets(sheets.iter().copied())
+            && let Err(full_error) = wb_lock.prepare_graph_all()
+        {
+            return Err(format!(
+                "targeted graph preparation failed: {targeted_error}; \
 full graph preparation fallback failed: {full_error}"
-                ));
-            }
+            ));
         }
-        return fz_buffer::empty();
-    }
-
-    let target_refs: Vec<(&str, u32, u32)> = targets
-        .iter()
-        .map(|t| (t.sheet.as_str(), t.row, t.col))
-        .collect();
-
-    let values = match wb_lock.evaluate_cells(&target_refs) {
-        Ok(values) => values,
-        Err(e) => {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::error(e.to_string());
-                }
-            }
-            return fz_buffer::empty();
-        }
-    };
-
-    match encode_payload(&values, format) {
-        Ok(buf) => {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::ok();
-                }
-            }
-            fz_buffer::from_vec(buf)
-        }
-        Err(e) => {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::error(e);
-                }
-            }
-            fz_buffer::empty()
-        }
-    }
+        let target_refs: Vec<(&str, u32, u32)> = targets
+            .iter()
+            .map(|t| (t.sheet.as_str(), t.row, t.col))
+            .collect();
+        let values = wb_lock
+            .evaluate_cells(&target_refs)
+            .map_err(|e| e.to_string())?;
+        Ok(fz_buffer::from_vec(encode_payload(&values, format)?))
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -661,37 +404,11 @@ pub unsafe extern "C" fn fz_workbook_sheet_names(
     format: fz_encoding_format,
     status: *mut fz_status,
 ) -> fz_buffer {
-    if wb.0.is_null() {
-        if !status.is_null() {
-            unsafe {
-                *status = fz_status::error("invalid arguments".to_string());
-            }
-        }
-        return fz_buffer::empty();
-    }
-
-    let opaque = unsafe { &*(wb.0 as *mut OpaqueWorkbook) };
-    let wb_lock = opaque.0.read().unwrap();
-    let names = wb_lock.sheet_names();
-
-    match encode_payload(&names, format) {
-        Ok(v) => {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::ok();
-                }
-            }
-            fz_buffer::from_vec(v)
-        }
-        Err(e) => {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::error(e);
-                }
-            }
-            fz_buffer::empty()
-        }
-    }
+    catch_ffi(status, fz_buffer::empty(), || {
+        let opaque = opaque_ref(wb)?;
+        let names = opaque.read()?.sheet_names();
+        Ok(fz_buffer::from_vec(encode_payload(&names, format)?))
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -700,26 +417,18 @@ pub unsafe extern "C" fn fz_workbook_has_sheet(
     name: *const c_char,
     status: *mut fz_status,
 ) -> c_int {
-    if wb.0.is_null() || name.is_null() {
-        if !status.is_null() {
-            unsafe {
-                *status = fz_status::error("invalid arguments".to_string());
-            }
+    catch_ffi(status, 0, || {
+        if name.is_null() {
+            return Err("invalid arguments".to_string());
         }
-        return 0;
-    }
-
-    let opaque = unsafe { &*(wb.0 as *mut OpaqueWorkbook) };
-    let name_str = unsafe { CStr::from_ptr(name).to_string_lossy() };
-    let wb_lock = opaque.0.read().unwrap();
-    let has = wb_lock.has_sheet(&name_str);
-
-    if !status.is_null() {
-        unsafe {
-            *status = fz_status::ok();
-        }
-    }
-    if has { 1 } else { 0 }
+        let opaque = opaque_ref(wb)?;
+        let name_str = unsafe { CStr::from_ptr(name).to_string_lossy() };
+        Ok(if opaque.read()?.has_sheet(&name_str) {
+            1
+        } else {
+            0
+        })
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -729,47 +438,19 @@ pub unsafe extern "C" fn fz_workbook_sheet_dimensions(
     format: fz_encoding_format,
     status: *mut fz_status,
 ) -> fz_buffer {
-    if wb.0.is_null() || name.is_null() {
-        if !status.is_null() {
-            unsafe {
-                *status = fz_status::error("invalid arguments".to_string());
-            }
+    catch_ffi(status, fz_buffer::empty(), || {
+        if name.is_null() {
+            return Err("invalid arguments".to_string());
         }
-        return fz_buffer::empty();
-    }
-
-    let opaque = unsafe { &*(wb.0 as *mut OpaqueWorkbook) };
-    let name_str = unsafe { CStr::from_ptr(name).to_string_lossy() };
-    let wb_lock = opaque.0.read().unwrap();
-
-    let Some((rows, cols)) = wb_lock.sheet_dimensions(&name_str) else {
-        if !status.is_null() {
-            unsafe {
-                *status = fz_status::error("sheet not found".to_string());
-            }
-        }
-        return fz_buffer::empty();
-    };
-
-    let dims = CffiSheetDimensions { rows, cols };
-    match encode_payload(&dims, format) {
-        Ok(v) => {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::ok();
-                }
-            }
-            fz_buffer::from_vec(v)
-        }
-        Err(e) => {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::error(e);
-                }
-            }
-            fz_buffer::empty()
-        }
-    }
+        let opaque = opaque_ref(wb)?;
+        let name_str = unsafe { CStr::from_ptr(name).to_string_lossy() };
+        let (rows, cols) = opaque
+            .read()?
+            .sheet_dimensions(&name_str)
+            .ok_or_else(|| "sheet not found".to_string())?;
+        let dims = CffiSheetDimensions { rows, cols };
+        Ok(fz_buffer::from_vec(encode_payload(&dims, format)?))
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -778,30 +459,17 @@ pub unsafe extern "C" fn fz_workbook_delete_sheet(
     name: *const c_char,
     status: *mut fz_status,
 ) {
-    if wb.0.is_null() || name.is_null() {
-        if !status.is_null() {
-            unsafe {
-                *status = fz_status::error("invalid arguments".to_string());
-            }
+    catch_ffi(status, (), || {
+        if name.is_null() {
+            return Err("invalid arguments".to_string());
         }
-        return;
-    }
-
-    let opaque = unsafe { &*(wb.0 as *mut OpaqueWorkbook) };
-    let name_str = unsafe { CStr::from_ptr(name).to_string_lossy() };
-
-    let mut wb_lock = opaque.0.write().unwrap();
-    if let Err(e) = wb_lock.delete_sheet(&name_str) {
-        if !status.is_null() {
-            unsafe {
-                *status = fz_status::error(e.to_string());
-            }
-        }
-    } else if !status.is_null() {
-        unsafe {
-            *status = fz_status::ok();
-        }
-    }
+        let opaque = opaque_ref(wb)?;
+        let name_str = unsafe { CStr::from_ptr(name).to_string_lossy() };
+        opaque
+            .write()?
+            .delete_sheet(&name_str)
+            .map_err(|e| e.to_string())
+    });
 }
 
 #[unsafe(no_mangle)]
@@ -811,31 +479,18 @@ pub unsafe extern "C" fn fz_workbook_rename_sheet(
     new_name: *const c_char,
     status: *mut fz_status,
 ) {
-    if wb.0.is_null() || old_name.is_null() || new_name.is_null() {
-        if !status.is_null() {
-            unsafe {
-                *status = fz_status::error("invalid arguments".to_string());
-            }
+    catch_ffi(status, (), || {
+        if old_name.is_null() || new_name.is_null() {
+            return Err("invalid arguments".to_string());
         }
-        return;
-    }
-
-    let opaque = unsafe { &*(wb.0 as *mut OpaqueWorkbook) };
-    let old_str = unsafe { CStr::from_ptr(old_name).to_string_lossy() };
-    let new_str = unsafe { CStr::from_ptr(new_name).to_string_lossy() };
-
-    let mut wb_lock = opaque.0.write().unwrap();
-    if let Err(e) = wb_lock.rename_sheet(&old_str, &new_str) {
-        if !status.is_null() {
-            unsafe {
-                *status = fz_status::error(e.to_string());
-            }
-        }
-    } else if !status.is_null() {
-        unsafe {
-            *status = fz_status::ok();
-        }
-    }
+        let opaque = opaque_ref(wb)?;
+        let old_str = unsafe { CStr::from_ptr(old_name).to_string_lossy() };
+        let new_str = unsafe { CStr::from_ptr(new_name).to_string_lossy() };
+        opaque
+            .write()?
+            .rename_sheet(&old_str, &new_str)
+            .map_err(|e| e.to_string())
+    });
 }
 
 #[unsafe(no_mangle)]
@@ -846,57 +501,13 @@ pub unsafe extern "C" fn fz_workbook_read_range(
     format: fz_encoding_format,
     status: *mut fz_status,
 ) -> fz_buffer {
-    if wb.0.is_null() {
-        if !status.is_null() {
-            unsafe {
-                *status = fz_status::error("invalid arguments".to_string());
-            }
-        }
-        return fz_buffer::empty();
-    }
-
-    let addr: RangeAddress = match decode_payload(range_payload, len, format) {
-        Ok(v) => v,
-        Err(e) => {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::error(e);
-                }
-            }
-            return fz_buffer::empty();
-        }
-    };
-    if let Err(e) = validate_cffi_range(&addr) {
-        if !status.is_null() {
-            unsafe {
-                *status = fz_status::error(e);
-            }
-        }
-        return fz_buffer::empty();
-    }
-
-    let opaque = unsafe { &*(wb.0 as *mut OpaqueWorkbook) };
-    let wb_lock = opaque.0.read().unwrap();
-    let values = wb_lock.read_range(&addr);
-
-    match encode_payload(&values, format) {
-        Ok(v) => {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::ok();
-                }
-            }
-            fz_buffer::from_vec(v)
-        }
-        Err(e) => {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::error(e);
-                }
-            }
-            fz_buffer::empty()
-        }
-    }
+    catch_ffi(status, fz_buffer::empty(), || {
+        let opaque = opaque_ref(wb)?;
+        let addr: RangeAddress = decode_payload(range_payload, len, format)?;
+        validate_cffi_range(&addr)?;
+        let values = opaque.read()?.read_range(&addr);
+        Ok(fz_buffer::from_vec(encode_payload(&values, format)?))
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -910,52 +521,19 @@ pub unsafe extern "C" fn fz_workbook_set_values(
     format: fz_encoding_format,
     status: *mut fz_status,
 ) {
-    if wb.0.is_null() || sheet.is_null() || values_payload.is_null() {
-        if !status.is_null() {
-            unsafe {
-                *status = fz_status::error("invalid arguments".to_string());
-            }
+    catch_ffi(status, (), || {
+        if sheet.is_null() || values_payload.is_null() {
+            return Err("invalid arguments".to_string());
         }
-        return;
-    }
-
-    let values: Vec<Vec<LiteralValue>> = match decode_payload(values_payload, len, format) {
-        Ok(v) => v,
-        Err(e) => {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::error(e);
-                }
-            }
-            return;
-        }
-    };
-    if let Err(e) =
-        checked_excel_coordinates(start_row, start_col, Some(actual_block_dimensions(&values)))
-    {
-        if !status.is_null() {
-            unsafe {
-                *status = fz_status::error(e);
-            }
-        }
-        return;
-    }
-
-    let opaque = unsafe { &*(wb.0 as *mut OpaqueWorkbook) };
-    let sheet_str = unsafe { CStr::from_ptr(sheet).to_string_lossy() };
-
-    let mut wb_lock = opaque.0.write().unwrap();
-    if let Err(e) = wb_lock.set_values(&sheet_str, start_row, start_col, &values) {
-        if !status.is_null() {
-            unsafe {
-                *status = fz_status::error(e.to_string());
-            }
-        }
-    } else if !status.is_null() {
-        unsafe {
-            *status = fz_status::ok();
-        }
-    }
+        let values: Vec<Vec<LiteralValue>> = decode_payload(values_payload, len, format)?;
+        checked_excel_coordinates(start_row, start_col, Some(actual_block_dimensions(&values)))?;
+        let opaque = opaque_ref(wb)?;
+        let sheet_str = unsafe { CStr::from_ptr(sheet).to_string_lossy() };
+        opaque
+            .write()?
+            .set_values(&sheet_str, start_row, start_col, &values)
+            .map_err(|e| e.to_string())
+    });
 }
 
 #[unsafe(no_mangle)]
@@ -969,54 +547,23 @@ pub unsafe extern "C" fn fz_workbook_set_formulas(
     format: fz_encoding_format,
     status: *mut fz_status,
 ) {
-    if wb.0.is_null() || sheet.is_null() || formulas_payload.is_null() {
-        if !status.is_null() {
-            unsafe {
-                *status = fz_status::error("invalid arguments".to_string());
-            }
+    catch_ffi(status, (), || {
+        if sheet.is_null() || formulas_payload.is_null() {
+            return Err("invalid arguments".to_string());
         }
-        return;
-    }
-
-    let formulas: Vec<Vec<String>> = match decode_payload(formulas_payload, len, format) {
-        Ok(v) => v,
-        Err(e) => {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::error(e);
-                }
-            }
-            return;
-        }
-    };
-    if let Err(e) = checked_excel_coordinates(
-        start_row,
-        start_col,
-        Some(formula_block_dimensions(&formulas)),
-    ) {
-        if !status.is_null() {
-            unsafe {
-                *status = fz_status::error(e);
-            }
-        }
-        return;
-    }
-
-    let opaque = unsafe { &*(wb.0 as *mut OpaqueWorkbook) };
-    let sheet_str = unsafe { CStr::from_ptr(sheet).to_string_lossy() };
-
-    let mut wb_lock = opaque.0.write().unwrap();
-    if let Err(e) = wb_lock.set_formulas(&sheet_str, start_row, start_col, &formulas) {
-        if !status.is_null() {
-            unsafe {
-                *status = fz_status::error(e.to_string());
-            }
-        }
-    } else if !status.is_null() {
-        unsafe {
-            *status = fz_status::ok();
-        }
-    }
+        let formulas: Vec<Vec<String>> = decode_payload(formulas_payload, len, format)?;
+        checked_excel_coordinates(
+            start_row,
+            start_col,
+            Some(formula_block_dimensions(&formulas)),
+        )?;
+        let opaque = opaque_ref(wb)?;
+        let sheet_str = unsafe { CStr::from_ptr(sheet).to_string_lossy() };
+        opaque
+            .write()?
+            .set_formulas(&sheet_str, start_row, start_col, &formulas)
+            .map_err(|e| e.to_string())
+    });
 }
 
 #[cfg(test)]
