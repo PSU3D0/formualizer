@@ -19,6 +19,7 @@
 //! - Empty numeric sets produce Excel-specific errors (#NUM! for LARGE/SMALL, #N/A for rank target
 //!   out of range, #DIV/0! for STDEV/VAR sample with n < 2, etc.).
 
+use super::super::builtins::engineering::{erf_approx, erfcx, exp_neg_scaled_square};
 use super::super::builtins::utils::{ARG_RANGE_NUM_LENIENT_ONE, coerce_num};
 use crate::args::ArgSchema;
 use crate::function::Function;
@@ -2852,43 +2853,38 @@ STATISTICAL DISTRIBUTION FUNCTIONS
 
 /// Helper: Standard normal CDF, Φ(z)
 ///
-/// Hart (1968) algorithm 5666 as given by West (2005), "Better approximations to
-/// cumulative normal functions". Absolute error is about 1e-16 across the real line.
+/// Built on Cody's erf/erfc rational approximations (see `engineering.rs`). Relative
+/// error is about 1e-15 wherever Φ(z) is a normal float, and the lower tail stays
+/// nonzero until it underflows near z ≈ −38.5.
 fn std_norm_cdf(z: f64) -> f64 {
     if z.is_nan() {
         return f64::NAN;
     }
-    let a = z.abs();
-    let tail = if a > 37.0 {
-        0.0
-    } else {
-        let e = (-a * a / 2.0).exp();
-        if a < 7.07106781186547 {
-            let mut n = 3.52624965998911e-2 * a + 0.700383064443688;
-            n = n * a + 6.37396220353165;
-            n = n * a + 33.912866078383;
-            n = n * a + 112.079291497871;
-            n = n * a + 221.213596169931;
-            n = n * a + 220.206867912376;
-            let mut d = 8.83883476483184e-2 * a + 1.75566716318264;
-            d = d * a + 16.064177579207;
-            d = d * a + 86.7807322029461;
-            d = d * a + 296.564248779674;
-            d = d * a + 637.333633378831;
-            d = d * a + 793.826512519948;
-            d = d * a + 440.413735824752;
-            e * n / d
-        } else {
-            // Continued fraction for the far tail.
-            let mut b = a + 0.65;
-            b = a + 4.0 / b;
-            b = a + 3.0 / b;
-            b = a + 2.0 / b;
-            b = a + 1.0 / b;
-            e / b / (2.0 * std::f64::consts::PI).sqrt()
-        }
-    };
+    let tail = std_norm_tail(z.abs());
     if z > 0.0 { 1.0 - tail } else { tail }
+}
+
+/// Helper: Φ(−a) for a >= 0, computed without cancellation.
+///
+/// For a/√2 >= 0.5 this is ½·exp(−a²/2)·erfcx(a/√2). The exponential is formed from `a`
+/// itself, so rounding in the division by √2 only reaches the slowly varying erfcx factor.
+fn std_norm_tail(a: f64) -> f64 {
+    let t = a / std::f64::consts::SQRT_2;
+    if t < 0.5 {
+        0.5 * (1.0 - erf_approx(t))
+    } else {
+        0.5 * exp_neg_scaled_square(a, 0.5) * erfcx(t)
+    }
+}
+
+/// Helper: Φ(z) − 0.5, computed as ½·erf(z/√2) near zero to avoid cancellation.
+fn std_norm_cdf_minus_half(z: f64) -> f64 {
+    let t = z / std::f64::consts::SQRT_2;
+    if t.abs() < 0.5 {
+        0.5 * erf_approx(t)
+    } else {
+        std_norm_cdf(z) - 0.5
+    }
 }
 
 /// Helper: Standard normal PDF
@@ -2898,68 +2894,103 @@ fn std_norm_pdf(z: f64) -> f64 {
 }
 
 /// Helper: Inverse standard normal CDF (probit function)
-/// Uses Rational approximation from Abramowitz and Stegun
+///
+/// Wichura (1988), Algorithm AS 241 (PPND16), the algorithm behind Python's
+/// `statistics.NormalDist.inv_cdf`. Relative error is about 1e-15 for every p in (0, 1),
+/// including the extreme tails, so no refinement step is needed.
 #[allow(clippy::excessive_precision)]
 fn std_norm_inv(p: f64) -> Option<f64> {
     if p <= 0.0 || p >= 1.0 {
         return None;
     }
 
-    // Coefficients for rational approximation
-    const A: [f64; 6] = [
-        -3.969683028665376e+01,
-        2.209460984245205e+02,
-        -2.759285104469687e+02,
-        1.383577518672690e+02,
-        -3.066479806614716e+01,
-        2.506628277459239e+00,
-    ];
-    const B: [f64; 5] = [
-        -5.447609879822406e+01,
-        1.615858368580409e+02,
-        -1.556989798598866e+02,
-        6.680131188771972e+01,
-        -1.328068155288572e+01,
-    ];
-    const C: [f64; 6] = [
-        -7.784894002430293e-03,
-        -3.223964580411365e-01,
-        -2.400758277161838e+00,
-        -2.549732539343734e+00,
-        4.374664141464968e+00,
-        2.938163982698783e+00,
-    ];
-    const D: [f64; 4] = [
-        7.784695709041462e-03,
-        3.224671290700398e-01,
-        2.445134137142996e+00,
-        3.754408661907416e+00,
-    ];
-
-    const P_LOW: f64 = 0.02425;
-    const P_HIGH: f64 = 1.0 - P_LOW;
-
     let q = p - 0.5;
-
-    if p < P_LOW {
-        // Lower tail
-        let r = (-2.0 * p.ln()).sqrt();
-        let num = ((((C[0] * r + C[1]) * r + C[2]) * r + C[3]) * r + C[4]) * r + C[5];
-        let den = (((D[0] * r + D[1]) * r + D[2]) * r + D[3]) * r + 1.0;
-        Some(num / den)
-    } else if p <= P_HIGH {
-        // Central region
-        let r = q * q;
-        let num = ((((A[0] * r + A[1]) * r + A[2]) * r + A[3]) * r + A[4]) * r + A[5];
-        let den = ((((B[0] * r + B[1]) * r + B[2]) * r + B[3]) * r + B[4]) * r + 1.0;
-        Some(q * num / den)
-    } else {
-        // Upper tail
-        let r = (-2.0 * (1.0 - p).ln()).sqrt();
-        let num = ((((C[0] * r + C[1]) * r + C[2]) * r + C[3]) * r + C[4]) * r + C[5];
-        let den = (((D[0] * r + D[1]) * r + D[2]) * r + D[3]) * r + 1.0;
-        Some(-num / den)
+    if q.abs() <= 0.425 {
+        let r = 0.180625 - q * q;
+        let num = ((((((2.5090809287301226727e+3 * r + 3.3430575583588128105e+4) * r
+            + 6.7265770927008700853e+4)
+            * r
+            + 4.5921953931549871457e+4)
+            * r
+            + 1.3731693765509461125e+4)
+            * r
+            + 1.9715909503065514427e+3)
+            * r
+            + 1.3314166789178437745e+2)
+            * r
+            + 3.3871328727963666080e+0;
+        let den = ((((((5.2264952788528545610e+3 * r + 2.8729085735721942674e+4) * r
+            + 3.9307895800092710610e+4)
+            * r
+            + 2.1213794301586595867e+4)
+            * r
+            + 5.3941960214247511077e+3)
+            * r
+            + 6.8718700749205790830e+2)
+            * r
+            + 4.2313330701600911252e+1)
+            * r
+            + 1.0;
+        return Some(num * q / den);
     }
+
+    let r = (-(if q <= 0.0 { p } else { 1.0 - p }).ln()).sqrt();
+    let x = if r <= 5.0 {
+        let r = r - 1.6;
+        let num = ((((((7.74545014278341407640e-4 * r + 2.27238449892691845833e-2) * r
+            + 2.41780725177450611770e-1)
+            * r
+            + 1.27045825245236838258e+0)
+            * r
+            + 3.64784832476320460504e+0)
+            * r
+            + 5.76949722146069140550e+0)
+            * r
+            + 4.63033784615654529590e+0)
+            * r
+            + 1.42343711074968357734e+0;
+        let den = ((((((1.05075007164441684324e-9 * r + 5.47593808499534494600e-4) * r
+            + 1.51986665636164571966e-2)
+            * r
+            + 1.48103976427480074590e-1)
+            * r
+            + 6.89767334985100004550e-1)
+            * r
+            + 1.67638483018380384940e+0)
+            * r
+            + 2.05319162663775882187e+0)
+            * r
+            + 1.0;
+        num / den
+    } else {
+        let r = r - 5.0;
+        let num = ((((((2.01033439929228813265e-7 * r + 2.71155556874348757815e-5) * r
+            + 1.24266094738807843860e-3)
+            * r
+            + 2.65321895265761230930e-2)
+            * r
+            + 2.96560571828504891230e-1)
+            * r
+            + 1.78482653991729133580e+0)
+            * r
+            + 5.46378491116411436990e+0)
+            * r
+            + 6.65790464350110377720e+0;
+        let den = ((((((2.04426310338993978564e-15 * r + 1.42151175831644588870e-7) * r
+            + 1.84631831751005468180e-5)
+            * r
+            + 7.86869131145613259100e-4)
+            * r
+            + 1.48753612908506148525e-2)
+            * r
+            + 1.36929880922735805310e-1)
+            * r
+            + 5.99832206555887937690e-1)
+            * r
+            + 1.0;
+        num / den
+    };
+    Some(if q < 0.0 { -x } else { x })
 }
 
 /// Returns the standard normal probability for a z-score as either a CDF or PDF value.
@@ -3057,7 +3088,7 @@ impl Function for NormSDistFn {
 /// ```yaml,sandbox
 /// title: "Upper-tail critical z-score"
 /// formula: "=NORM.S.INV(0.975)"
-/// expected: 1.959963986120195
+/// expected: 1.9599639845400536
 /// ```
 #[derive(Debug)]
 pub struct NormSInvFn;
@@ -3549,7 +3580,7 @@ impl Function for GaussFn {
         let z = coerce_num(&scalar_like_value(&args[0])?)?;
         // GAUSS(z) = Φ(z) - 0.5
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
-            std_norm_cdf(z) - 0.5,
+            std_norm_cdf_minus_half(z),
         )))
     }
 }
@@ -6690,8 +6721,8 @@ impl Function for ZTestFn {
         // z = (mean - x) / (sigma / sqrt(n))
         let z = (mean - x) / (sigma / n.sqrt());
 
-        // P-value = 1 - NORM.S.DIST(z, TRUE)
-        let p_value = 1.0 - std_norm_cdf(z);
+        // P-value = 1 - NORM.S.DIST(z, TRUE), computed as Φ(-z) so tiny p-values survive
+        let p_value = std_norm_cdf(-z);
 
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
             p_value,
@@ -10163,46 +10194,120 @@ mod tests_basic_stats {
             None,
         )
     }
+    fn relative_error(got: f64, expected: f64) -> f64 {
+        if expected == 0.0 {
+            got.abs()
+        } else {
+            ((got - expected) / expected).abs()
+        }
+    }
+    /// Largest f64 below `x` (for testing both sides of a branch boundary).
+    fn prev_float(x: f64) -> f64 {
+        f64::from_bits(x.to_bits() - 1)
+    }
     #[test]
     fn std_norm_cdf_is_double_precision() {
-        // Regression for #458: the A&S 7.1.26 approximation was only good to ~7e-8.
-        // Reference values are Φ(z) = erfc(-z/√2)/2 evaluated in double precision.
+        // Regressions for #458 and #464. References are 80-digit mpmath values of Φ(z),
+        // correctly rounded to f64.
+        use std::f64::consts::FRAC_1_SQRT_2;
         assert_eq!(std_norm_cdf(0.0), 0.5);
+        // Lower tail, relative error. FRAC_1_SQRT_2 and the float below it straddle the
+        // erfcx branch switch at |z|/√2 = 0.5; the far values were exactly 0 or ~1e-8 off
+        // with the previous Hart/West formula.
         for (z, expected) in [
-            (0.5, 0.6914624612740131),
+            (-prev_float(FRAC_1_SQRT_2), 0.23975006109347674),
+            (-FRAC_1_SQRT_2, 0.2397500610934767),
+            (-1.0, 0.15865525393145705),
+            (-5.0, 2.866515718791939e-07),
+            (-7.8, 3.0953587719587e-15),
+            (-10.0, 7.619853024160525e-24),
+            (-20.0, 2.7536241186062337e-89),
+            (-30.0, 4.906713927148187e-198),
+            (-37.0, 5.725571222524577e-300),
+            (-37.5, 4.605353009581955e-308),
+        ] {
+            let got = std_norm_cdf(z);
+            assert!(
+                relative_error(got, expected) < 2e-15,
+                "Φ({z}) = {got} != {expected}"
+            );
+        }
+        // Upper side, absolute error.
+        for (z, expected) in [
+            (prev_float(FRAC_1_SQRT_2), 0.7602499389065233),
+            (FRAC_1_SQRT_2, 0.7602499389065233),
             (1.0, 0.8413447460685429),
-            (1.96, 0.9750021048517795),
-            (2.0, 0.9772498680518208),
-            (-2.0, 0.022750131948179216),
-            (3.0, 0.9986501019683699),
-            (-3.0, 0.0013498980316300957),
-            (7.1, 0.9999999999993762),
+            (5.0, 0.9999997133484281),
+            (9.0, 1.0),
         ] {
             let got = std_norm_cdf(z);
             assert!(
-                (got - expected).abs() < 1e-15,
+                (got - expected).abs() < 3e-16,
                 "Φ({z}) = {got} != {expected}"
             );
         }
-        // Tails, including both sides of the |z| ≈ 7.07 branch switch. Hart/West is
-        // accurate in absolute terms; relative error in the far tail is only ~1e-8.
-        for (z, expected) in [
-            (-5.0, 2.8665157187919455e-07),
-            (-7.0, 1.279812543885835e-12),
-            (-7.1, 6.23784446333164e-13),
-            (-8.0, 6.22096057427182e-16),
-            (-10.0, 7.619853024160595e-24),
-            (-37.0, 5.725571222525139e-300),
-        ] {
-            let got = std_norm_cdf(z);
-            assert!(
-                (got - expected).abs() < 1e-16,
-                "Φ({z}) = {got} != {expected}"
-            );
-        }
-        assert_eq!(std_norm_cdf(-38.0), 0.0);
-        assert_eq!(std_norm_cdf(38.0), 1.0);
+        // Subnormal far tail: nonzero until it underflows. Float spacing near 2.9e-316 is
+        // ~1.7e-8 relative, so allow a few ulps there.
+        assert!(relative_error(std_norm_cdf(-38.0), 2.88542835e-316) < 5e-8);
+        assert!(std_norm_cdf(-38.47) > 0.0);
+        assert_eq!(std_norm_cdf(-38.6), 0.0);
+        assert_eq!(std_norm_cdf(f64::NEG_INFINITY), 0.0);
+        assert_eq!(std_norm_cdf(f64::INFINITY), 1.0);
         assert!(std_norm_cdf(f64::NAN).is_nan());
+    }
+    #[test]
+    fn gauss_has_no_cancellation_near_zero() {
+        // Regression for #464: Φ(z) − 0.5 lost every significant digit for tiny z.
+        // References are mpmath values of erf(z/√2)/2.
+        use std::f64::consts::FRAC_1_SQRT_2;
+        assert_eq!(std_norm_cdf_minus_half(0.0), 0.0);
+        for (z, expected) in [
+            (1e-300, 3.9894228040143265e-301),
+            (-1e-300, -3.9894228040143265e-301),
+            (1e-10, 3.989422804014327e-11),
+            (-1e-05, -3.989422803947837e-06),
+            (0.5, 0.1914624612740131),
+            (prev_float(FRAC_1_SQRT_2), 0.26024993890652326),
+            (FRAC_1_SQRT_2, 0.26024993890652326),
+            (-FRAC_1_SQRT_2, -0.26024993890652326),
+            (1.0, 0.3413447460685429),
+            (10.0, 0.5),
+        ] {
+            let got = std_norm_cdf_minus_half(z);
+            assert!(
+                relative_error(got, expected) < 2e-15,
+                "GAUSS({z}) = {got} != {expected}"
+            );
+        }
+    }
+    #[test]
+    fn std_norm_inv_is_double_precision() {
+        // Regression for #464: the unrefined Acklam approximation was only good to ~1e-9.
+        // Includes both sides of AS241's branch points at |p − 0.5| = 0.425 and
+        // sqrt(−ln p) = 5. References are mpmath roots of Φ(x) = p.
+        assert_eq!(std_norm_inv(0.5), Some(0.0));
+        for (p, expected) in [
+            (1e-300, -37.0470962993612),
+            (1e-100, -21.273453560965326),
+            (1.3887943864963947e-11, -6.657904643501104),
+            (1.3887943864963948e-11, -6.657904643501104),
+            (0.001, -3.0902323061678136),
+            (0.025, -1.9599639845400543),
+            (0.07499999999999998, -1.4395314709384561),
+            (0.075, -1.439531470938456),
+            (0.3, -0.5244005127080408),
+            (0.975, 1.9599639845400538),
+            (0.999, 3.090232306167813),
+            (0.999999999999999, 7.941444487415978),
+        ] {
+            let got = std_norm_inv(p).unwrap();
+            assert!(
+                relative_error(got, expected) < 2e-15,
+                "NORM.S.INV({p}) = {got} != {expected}"
+            );
+        }
+        assert_eq!(std_norm_inv(0.0), None);
+        assert_eq!(std_norm_inv(1.0), None);
     }
     #[test]
     fn median_even() {

@@ -1975,12 +1975,10 @@ impl Function for GestepFn {
 
 /* ─────────────────────────── Error Function ──────────────────────────── */
 
-/// Approximation of the error function erf(x)
-/// Uses the approximation: erf(x) = 1 - (a1*t + a2*t^2 + a3*t^3 + a4*t^4 + a5*t^5) * exp(-x^2)
-/// High-precision error function using Cody's rational approximation
-/// Achieves precision of about 1e-15 (double precision)
+/// Error function erf(x), using W. J. Cody's rational approximations (CALERF, netlib
+/// `specfun`). Relative error is about 1e-15.
 #[allow(clippy::excessive_precision)]
-fn erf_approx(x: f64) -> f64 {
+pub(crate) fn erf_approx(x: f64) -> f64 {
     let ax = x.abs();
 
     // For small x, use series expansion
@@ -2036,9 +2034,41 @@ fn erf_approx(x: f64) -> f64 {
     }
 }
 
+/// exp(-scale * x * x) for x >= 0, split the way Cody's CALERF does: x becomes a
+/// multiple of 1/16 plus a small remainder, so rounding in x * x does not reach the
+/// exponent. Returns 0.0 once the result is certain to underflow.
+pub(crate) fn exp_neg_scaled_square(x: f64, scale: f64) -> f64 {
+    if x * x * scale > 746.0 {
+        return 0.0;
+    }
+    let whole = (x * 16.0).trunc() / 16.0;
+    let rest = (x - whole) * (x + whole);
+    (-whole * whole * scale).exp() * (-rest * scale).exp()
+}
+
+/// Scaled complementary error function exp(x²)·erfc(x) for x >= 0.5, from the
+/// rational parts of Cody's CALERF.
+pub(crate) fn erfcx(x: f64) -> f64 {
+    if x < 4.0 {
+        erfcx_mid(x)
+    } else {
+        erfcx_large(x)
+    }
+}
+
 /// erfc for x in [0.5, 4]
-#[allow(clippy::excessive_precision)]
 fn erfc_mid(x: f64) -> f64 {
+    exp_neg_scaled_square(x, 1.0) * erfcx_mid(x)
+}
+
+/// erfc for x >= 4
+fn erfc_large(x: f64) -> f64 {
+    exp_neg_scaled_square(x, 1.0) * erfcx_large(x)
+}
+
+/// exp(x²)·erfc(x) for x in [0.5, 4]
+#[allow(clippy::excessive_precision)]
+fn erfcx_mid(x: f64) -> f64 {
     const P: [f64; 9] = [
         1.23033935479799725e+03,
         2.05107837782607147e+03,
@@ -2082,12 +2112,12 @@ fn erfc_mid(x: f64) -> f64 {
     let q_val = q_val * x + Q[1];
     let q_val = q_val * x + Q[0];
 
-    (-x * x).exp() * p_val / q_val
+    p_val / q_val
 }
 
-/// erfc for x >= 4
+/// exp(x²)·erfc(x) for x >= 4
 #[allow(clippy::excessive_precision)]
-fn erfc_large(x: f64) -> f64 {
+fn erfcx_large(x: f64) -> f64 {
     const P: [f64; 6] = [
         6.58749161529837803e-04,
         1.60837851487422766e-02,
@@ -2105,8 +2135,7 @@ fn erfc_large(x: f64) -> f64 {
         1.00000000000000000e+00,
     ];
 
-    let x2 = x * x;
-    let inv_x2 = 1.0 / x2;
+    let inv_x2 = 1.0 / (x * x);
 
     let p_val = P[5];
     let p_val = p_val * inv_x2 + P[4];
@@ -2124,7 +2153,8 @@ fn erfc_large(x: f64) -> f64 {
 
     // 1/sqrt(pi) = 0.5641895835477563
     const FRAC_1_SQRT_PI: f64 = 0.5641895835477563;
-    (-x2).exp() / x * (FRAC_1_SQRT_PI + inv_x2 * p_val / q_val)
+    // CALERF subtracts the correction term: RESULT = (SQRPI - RESULT) / Y.
+    (FRAC_1_SQRT_PI - inv_x2 * p_val / q_val) / x
 }
 
 /// Direct erfc computation for ERFC function
@@ -5464,6 +5494,40 @@ mod tests {
             assert!((erf_approx(-x) + expected).abs() < 1e-15);
         }
         assert_number_close(eval("=ERFC(0.3)"), 0.6713732405408726);
+    }
+
+    #[test]
+    fn erfc_large_argument_branch_is_double_precision() {
+        // Regression for #464: erfc_large added the correction term that Cody's CALERF
+        // subtracts, giving ~6% relative error at x = 4 and a jump across the branch
+        // switch. Includes both sides of the 0.5 and 4 switches. References are mpmath.
+        for (x, expected) in [
+            (0.49999999999999994, 0.47950012218695354),
+            (0.5, 0.4795001221869535),
+            (3.9999999999999996, 1.5417257900280076e-08),
+            (4.0, 1.541725790028002e-08),
+            (4.5, 1.9661604415428876e-10),
+            (6.0, 2.1519736712498913e-17),
+            (10.0, 2.088487583762545e-45),
+            (20.0, 5.395865611607901e-176),
+            (26.5, 2.2109076642637343e-307),
+        ] {
+            let got = erfc_direct(x);
+            let rel = ((got - expected) / expected).abs();
+            assert!(rel < 2e-15, "erfc({x}) = {got} != {expected}");
+        }
+        match eval("=ERFC(4)") {
+            LiteralValue::Number(n) => {
+                let rel = ((n - 1.541725790028002e-08) / 1.541725790028002e-08).abs();
+                assert!(rel < 2e-15, "ERFC(4) = {n}");
+            }
+            other => panic!("expected number, got {other:?}"),
+        }
+        // erf(4) = 1 - erfc(4) was previously 9.1e-10 too small.
+        assert!((erf_approx(4.0) - (1.0 - 1.541725790028002e-08)).abs() < 2e-16);
+        assert_eq!(erfc_direct(30.0), 0.0);
+        assert_eq!(erfc_direct(f64::INFINITY), 0.0);
+        assert_eq!(erfc_direct(f64::NEG_INFINITY), 2.0);
     }
 
     #[test]
