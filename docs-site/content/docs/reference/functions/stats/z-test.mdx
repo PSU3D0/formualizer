@@ -10,9 +10,11 @@ description: "Z.TEST: Returns the one-tailed p-value of a z-test against hypothe
 `Z.TEST` evaluates whether the sample mean is significantly greater than the target value.
 
 ## Remarks
- - Uses provided `sigma` when supplied; otherwise computes population standard deviation.
+ - Uses provided `sigma` when supplied; otherwise uses the sample standard deviation
+   (`STDEV.S`), as Excel does.
  - Returns `#NUM!` when `sigma &lt;= 0`.
- - Returns `#DIV/0!` when implied standard deviation is zero.
+ - Returns `#DIV/0!` when `sigma` is omitted and there are fewer than two values or the
+   sample standard deviation is zero.
  - Returns `#N/A` when the data array has no numeric values.
 
 ## Examples
@@ -32,7 +34,7 @@ description: "Z.TEST: Returns the one-tailed p-value of a z-test against hypothe
   title="Z-test with sigma estimated from sample"
   formula={`=Z.TEST({1,2,3,4,5},2)`}
   grid={{}}
-  expected={"0.056923149003329065"}
+  expected={"0.07864960352514257"}
 />
 </Tab>
 

@@ -6587,9 +6587,11 @@ impl Function for ConfidenceTFn {
 /// `Z.TEST` evaluates whether the sample mean is significantly greater than the target value.
 ///
 /// # Remarks
-/// - Uses provided `sigma` when supplied; otherwise computes population standard deviation.
+/// - Uses provided `sigma` when supplied; otherwise uses the sample standard deviation
+///   (`STDEV.S`), as Excel does.
 /// - Returns `#NUM!` when `sigma <= 0`.
-/// - Returns `#DIV/0!` when implied standard deviation is zero.
+/// - Returns `#DIV/0!` when `sigma` is omitted and there are fewer than two values or the
+///   sample standard deviation is zero.
 /// - Returns `#N/A` when the data array has no numeric values.
 ///
 /// # Examples
@@ -6603,7 +6605,7 @@ impl Function for ConfidenceTFn {
 /// ```yaml,sandbox
 /// title: "Z-test with sigma estimated from sample"
 /// formula: "=Z.TEST({1,2,3,4,5},2)"
-/// expected: 0.056923149003329065
+/// expected: 0.07864960352514257
 /// ```
 #[derive(Debug)]
 pub struct ZTestFn;
@@ -6666,7 +6668,7 @@ impl Function for ZTestFn {
         let n = data.len() as f64;
         let mean: f64 = data.iter().sum::<f64>() / n;
 
-        // Calculate sigma: use provided value or compute population std dev
+        // Calculate sigma: use provided value or, like Excel, the sample std dev
         let sigma = if args.len() > 2 {
             let s = coerce_num(&scalar_like_value(&args[2])?)?;
             if s <= 0.0 {
@@ -6676,8 +6678,13 @@ impl Function for ZTestFn {
             }
             s
         } else {
-            // Population standard deviation
-            let variance: f64 = data.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / n;
+            // Sample standard deviation (n - 1 denominator), as STDEV.S
+            if data.len() < 2 {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_div(),
+                )));
+            }
+            let variance: f64 = data.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / (n - 1.0);
             let std_dev = variance.sqrt();
             if std_dev == 0.0 {
                 return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
