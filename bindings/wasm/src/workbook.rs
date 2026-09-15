@@ -234,12 +234,7 @@ fn validate_cell_coords(row: u32, col: u32) -> Result<(), JsValue> {
 
 /// Validate a batch write anchor plus extent after the payload is marshalled,
 /// so a block that would run off the grid is rejected up front.
-fn validate_block(
-    start_row: u32,
-    start_col: u32,
-    rows: usize,
-    cols: usize,
-) -> Result<(), JsValue> {
+fn validate_block(start_row: u32, start_col: u32, rows: usize, cols: usize) -> Result<(), JsValue> {
     validate_cell_coords(start_row, start_col)?;
     if rows == 0 || cols == 0 {
         return Ok(());

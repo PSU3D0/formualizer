@@ -370,7 +370,9 @@ fn test_sheet_rejects_out_of_grid_coords_and_ranges() {
     wb.add_sheet("Sheet1".to_string()).unwrap();
     let sheet = wb.sheet("Sheet1".to_string()).unwrap();
 
-    let err = sheet.set_value(u32::MAX, 1, JsValue::from_f64(1.0)).unwrap_err();
+    let err = sheet
+        .set_value(u32::MAX, 1, JsValue::from_f64(1.0))
+        .unwrap_err();
     let error: js_sys::Error = err.dyn_into().unwrap();
     assert!(
         error
