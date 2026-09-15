@@ -359,7 +359,59 @@ fn test_sheet_rejects_zero_based_coords() {
     let error: js_sys::Error = err.dyn_into().unwrap();
     assert!(error.message().as_string().unwrap().contains("1-based"));
 
-    assert!(sheet.get_formula(0, 1).is_none());
+    let err = sheet.get_formula(0, 1).unwrap_err();
+    let error: js_sys::Error = err.dyn_into().unwrap();
+    assert!(error.message().as_string().unwrap().contains("1-based"));
+}
+
+#[wasm_bindgen_test]
+fn test_sheet_rejects_out_of_grid_coords_and_ranges() {
+    let wb = Workbook::new(None).unwrap();
+    wb.add_sheet("Sheet1".to_string()).unwrap();
+    let sheet = wb.sheet("Sheet1".to_string()).unwrap();
+
+    let err = sheet
+        .set_value(u32::MAX, 1, JsValue::from_f64(1.0))
+        .unwrap_err();
+    let error: js_sys::Error = err.dyn_into().unwrap();
+    assert!(
+        error
+            .message()
+            .as_string()
+            .unwrap()
+            .contains("maximum supported cell"),
+        "unexpected: {:?}",
+        error.message()
+    );
+
+    let payload = js_sys::Array::new();
+    let row = js_sys::Array::new();
+    row.push(&JsValue::from_f64(1.0));
+    payload.push(&row);
+    payload.push(&row);
+    let err = sheet.set_values(1_048_576, 1, payload).unwrap_err();
+    let error: js_sys::Error = err.dyn_into().unwrap();
+    assert!(
+        error
+            .message()
+            .as_string()
+            .unwrap()
+            .contains("exceeds maximum"),
+        "unexpected: {:?}",
+        error.message()
+    );
+
+    let err = sheet.read_range(1, 1, u32::MAX, 1).unwrap_err();
+    let error: js_sys::Error = err.dyn_into().unwrap();
+    assert!(
+        error
+            .message()
+            .as_string()
+            .unwrap()
+            .contains("maximum supported cell"),
+        "unexpected: {:?}",
+        error.message()
+    );
 }
 
 #[wasm_bindgen_test]
@@ -446,7 +498,7 @@ fn test_workbook_sheet_eval() {
     let sheet = wb.sheet("Sheet2".to_string()).unwrap();
     sheet.set_value(1, 1, JsValue::from_f64(10.0)).unwrap();
     sheet.set_formula(1, 2, "=A1*3".to_string()).unwrap();
-    let formula = sheet.get_formula(1, 2).unwrap();
+    let formula = sheet.get_formula(1, 2).unwrap().unwrap();
     assert_eq!(formula, "=A1*3");
 
     let v2 = sheet.evaluate_cell(1, 2).unwrap();
@@ -458,7 +510,7 @@ fn test_workbook_from_xlsx_bytes_evaluates_formula() {
     let bytes = build_fixture_xlsx_bytes();
     let wb = Workbook::from_xlsx_bytes(bytes).unwrap();
 
-    let sheet_names = wb.sheet_names();
+    let sheet_names = wb.sheet_names().unwrap();
     assert_eq!(sheet_names.length(), 1);
     assert_eq!(sheet_names.get(0).as_string().unwrap(), "Sheet1");
 
@@ -468,6 +520,7 @@ fn test_workbook_from_xlsx_bytes_evaluates_formula() {
     let sheet = wb.sheet("Sheet1".to_string()).unwrap();
     let formula = sheet
         .get_formula(1, 3)
+        .unwrap()
         .expect("formula preserved from XLSX");
     assert_eq!(formula.replace(' ', ""), "=A1+B1");
 }
