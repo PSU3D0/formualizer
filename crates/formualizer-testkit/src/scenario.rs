@@ -3,10 +3,25 @@ use crate::shape::{Role, Shape};
 use formualizer_common::LiteralValue;
 use formualizer_eval::engine::FormulaPlaneMode;
 use formualizer_workbook::Workbook;
-use std::{collections::BTreeMap, env, fmt, str::FromStr, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    env, fmt,
+    path::{Path, PathBuf},
+    str::FromStr,
+    sync::Arc,
+};
 
 pub type CustomStep = Arc<dyn Fn(&mut Workbook) -> Result<(), String> + Send + Sync>;
 pub type Oracle = Arc<dyn Fn(&Workbook) -> Result<(), String> + Send + Sync>;
+/// Builder for an external xlsx corpus fixture. The size is passed through so
+/// legacy small/medium/large ladders remain intact.
+pub type XlsxFixture = Arc<dyn Fn(&Path, ScenarioSize) -> Result<PathBuf, String> + Send + Sync>;
+
+#[derive(Clone)]
+pub enum ScenarioSource {
+    Shape(Shape),
+    XlsxFixture(XlsxFixture),
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Position {
@@ -127,12 +142,18 @@ pub enum Expect {
 
 #[derive(Clone, Debug, Default)]
 pub struct StructureExpect {
+    /// Restrict the expectation to one FormulaPlane mode; `None` applies to all.
+    pub mode: Option<FormulaPlaneMode>,
+    /// Restrict the expectation to one materialization provenance; `None` applies to all.
+    pub provenance: Option<Provenance>,
     pub active_spans: Option<usize>,
     pub demotions: Option<DemotionExpect>,
     pub topology_outcome: Option<String>,
     pub arena_nodes: Option<usize>,
     pub placed_families: Option<usize>,
     pub rejected_families: Option<usize>,
+    pub graph_vertices: Option<usize>,
+    pub graph_edges: Option<usize>,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DemotionExpect {
@@ -147,11 +168,11 @@ macro_rules! dimension {
         impl $name { fn value(self) -> &'static str { match self { $(Self::$variant => $value),+ } } }
     };
 }
-dimension!(Family { Coupled => "coupled", Independent => "independent", Fixed => "fixed" });
+dimension!(Family { Coupled => "coupled", Independent => "independent", Fixed => "fixed", Chain => "chain", Reverse => "reverse", Stride => "stride", Window => "window", Blocks => "blocks", SameRelative => "same-relative", Expanding => "expanding", Shifted => "shifted", Lookup => "lookup", Irregular => "irregular" });
 dimension!(Orientation { Vertical => "vertical", Horizontal => "horizontal" });
 dimension!(Provenance { Xlsx => "xlsx", WorkbookApi => "workbook-api" });
 dimension!(LifecycleOp { Load => "load", Evaluate => "evaluate", Edit => "edit", Structural => "structural", History => "history" });
-dimension!(EnginePath { Legacy => "legacy", FormulaPlane => "formula-plane" });
+dimension!(EnginePath { Legacy => "legacy", FormulaPlane => "formula-plane", Demoted => "demoted" });
 dimension!(Purpose { Behavioral => "behavioral", EdgeCase => "edge-case", Parity => "parity", Trace => "trace", Benchmark => "benchmark" });
 dimension!(SizeClass { Small => "small", Medium => "medium", Large => "large", Nightly => "nightly" });
 
@@ -182,11 +203,20 @@ pub struct ScenarioSpec {
     pub id: String,
     pub description: String,
     pub shape: Shape,
+    /// None means Shape(shape); external corpora may provide an xlsx factory.
+    pub source: Option<ScenarioSource>,
     pub script: Script,
     pub expects: Vec<(usize, Expect)>,
     pub tags: Tags,
     pub modes: Vec<FormulaPlaneMode>,
     pub sizes: Vec<ScenarioSize>,
+    pub expected_failures: Vec<ExpectedFailureSpec>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExpectedFailureSpec {
+    pub mode: FormulaPlaneMode,
+    pub reason: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -267,6 +297,7 @@ pub fn built_in_registry(rows: u32) -> Vec<ScenarioSpec> {
         id: id.into(),
         description: description.into(),
         shape,
+        source: None,
         script: Script::standard(),
         expects: (0..Script::standard().0.len())
             .map(|step| {
@@ -304,6 +335,7 @@ pub fn built_in_registry(rows: u32) -> Vec<ScenarioSpec> {
             FormulaPlaneMode::AuthoritativeExperimental,
         ],
         sizes: vec![ScenarioSize::new(SizeClass::Small, rows)],
+        expected_failures: vec![],
     };
     let coupled = Shape::new().scale(Scale::rows(rows)).sheet("S", |s| {
         s.values(
@@ -351,10 +383,15 @@ pub fn built_in_registry(rows: u32) -> Vec<ScenarioSpec> {
         s.role("fixed", Role::PrimaryFamily);
     });
     vec![
-        make("coupled", "coupled recurrence", Family::Coupled, coupled),
+        make(
+            "coupled",
+            "two-predecessor coupled recurrence",
+            Family::Coupled,
+            coupled,
+        ),
         make(
             "independent",
-            "independent formulas",
+            "independent formula family",
             Family::Independent,
             independent,
         ),
@@ -366,3 +403,5 @@ pub fn built_in_registry(rows: u32) -> Vec<ScenarioSpec> {
         ),
     ]
 }
+
+pub use crate::witnesses::witness_registry;

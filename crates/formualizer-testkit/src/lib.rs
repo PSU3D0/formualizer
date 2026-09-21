@@ -5,6 +5,8 @@ pub mod run;
 #[cfg(feature = "workbook")]
 pub mod scenario;
 pub mod shape;
+#[cfg(feature = "workbook")]
+pub mod witnesses;
 #[cfg(feature = "xlsx")]
 pub mod xlsx;
 

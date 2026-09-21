@@ -2,7 +2,8 @@
 use crate::{
     materialize::{Artifact, Materialize as _, WorkbookApi, WorkbookRoute},
     scenario::{
-        DemotionExpect, Expect, Position, ScenarioSize, ScenarioSpec, Step, StructureExpect,
+        DemotionExpect, Expect, Position, Provenance, ScenarioSize, ScenarioSource, ScenarioSpec,
+        Step, StructureExpect,
     },
     shape::{Role, Shape},
 };
@@ -135,6 +136,16 @@ impl Materializer {
             Self::Xlsx { config, .. } => config,
         }
     }
+    pub fn provenance(&self) -> Provenance {
+        match self {
+            Self::WorkbookApi { .. } => Provenance::WorkbookApi,
+            #[cfg(feature = "xlsx")]
+            Self::Xlsx { .. } => Provenance::Xlsx,
+        }
+    }
+    fn mode(&self) -> FormulaPlaneMode {
+        self.config().eval.formula_plane_mode
+    }
     fn with_mode(&self, mode: FormulaPlaneMode) -> Self {
         let mut next = self.clone();
         match &mut next {
@@ -156,6 +167,8 @@ pub struct StepReport {
 pub struct RunReport {
     pub steps: Vec<StepReport>,
     pub failure: Option<String>,
+    /// A tracked failure surfaced by this run; it is intentionally visible but non-fatal.
+    pub known_failure: Option<String>,
 }
 impl RunReport {
     pub fn is_ok(&self) -> bool {
@@ -194,7 +207,7 @@ pub fn run(
     if let Some(recorder) = recorder {
         recorder.clear();
     }
-    let execute = || execute(spec, shape, mode, materializer, recorder);
+    let execute = || execute(spec, shape, size, mode, materializer, recorder);
     if let Some(recorder) = recorder {
         let subscriber = Registry::default().with(recorder.clone());
         let _subscriber_guard = tracing::subscriber::set_default(subscriber);
@@ -207,12 +220,14 @@ fn failed(error: String) -> RunReport {
     RunReport {
         steps: vec![],
         failure: Some(error),
+        known_failure: None,
     }
 }
 
 fn execute(
     spec: &ScenarioSpec,
     shape: Shape,
+    size: ScenarioSize,
     mode: FormulaPlaneMode,
     materializer: Materializer,
     recorder: Option<&Recorder>,
@@ -230,10 +245,14 @@ fn execute(
         match execute_steps(
             &shape,
             &spec.script.0,
-            materializer.with_mode(other),
-            None,
-            None,
-            None,
+            Execution {
+                source: spec.source.as_ref(),
+                size,
+                materializer: materializer.with_mode(other),
+                recorder: None,
+                expects: None,
+                parity: None,
+            },
         ) {
             Ok(result) => Some(result.snapshots),
             Err(error) => return failed(format!("parity run failed: {error}")),
@@ -244,17 +263,35 @@ fn execute(
     let executed = match execute_steps(
         &shape,
         &spec.script.0,
-        materializer.with_mode(mode),
-        recorder,
-        Some(&spec.expects),
-        parity.as_ref(),
+        Execution {
+            source: spec.source.as_ref(),
+            size,
+            materializer: materializer.with_mode(mode),
+            recorder,
+            expects: Some(&spec.expects),
+            parity: parity.as_ref(),
+        },
     ) {
         Ok(value) => value,
-        Err(error) => return failed(error),
+        Err(error) => {
+            if let Some(expected) = spec
+                .expected_failures
+                .iter()
+                .find(|expected| expected.mode == mode)
+            {
+                return RunReport {
+                    steps: vec![],
+                    failure: None,
+                    known_failure: Some(format!("{}: {error}", expected.reason)),
+                };
+            }
+            return failed(error);
+        }
     };
     RunReport {
         steps: executed.reports,
         failure: None,
+        known_failure: None,
     }
 }
 
@@ -266,14 +303,27 @@ struct Executed {
     snapshots: RunSnapshots,
     reports: Vec<StepReport>,
 }
+struct Execution<'a> {
+    source: Option<&'a ScenarioSource>,
+    size: ScenarioSize,
+    materializer: Materializer,
+    recorder: Option<&'a Recorder>,
+    expects: Option<&'a [(usize, Expect)]>,
+    parity: Option<&'a RunSnapshots>,
+}
 fn execute_steps(
     shape: &Shape,
     steps: &[Step],
-    materializer: Materializer,
-    recorder: Option<&Recorder>,
-    expects: Option<&[(usize, Expect)]>,
-    parity: Option<&RunSnapshots>,
+    context: Execution<'_>,
 ) -> Result<Executed, String> {
+    let Execution {
+        source,
+        size,
+        materializer,
+        recorder,
+        expects,
+        parity,
+    } = context;
     let mut workbook = None;
     let mut snapshots = Vec::with_capacity(steps.len());
     let mut reports = Vec::with_capacity(steps.len());
@@ -281,7 +331,7 @@ fn execute_steps(
         if let Some(recorder) = recorder {
             recorder.select(index);
         }
-        apply_step(step, shape, &materializer, &mut workbook)?;
+        apply_step(step, shape, source, size, &materializer, &mut workbook)?;
         let snapshot = if let Some(wb) = workbook.as_ref() {
             shape
                 .render()
@@ -306,12 +356,16 @@ fn execute_steps(
             {
                 check_expect_now(
                     expect,
-                    index,
-                    wb,
-                    &snapshot,
-                    stats.as_ref().unwrap(),
-                    parity,
-                    recorder,
+                    StepContext {
+                        step: index,
+                        mode: materializer.mode(),
+                        provenance: materializer.provenance(),
+                        workbook: wb,
+                        snapshot: &snapshot,
+                        stats: stats.as_ref().unwrap(),
+                        parity,
+                        recorder,
+                    },
                 )
                 .map_err(|error| format!("step {index}: {error}"))?;
             }
@@ -334,6 +388,8 @@ fn execute_steps(
 fn apply_step(
     step: &Step,
     shape: &Shape,
+    source: Option<&ScenarioSource>,
+    size: ScenarioSize,
     materializer: &Materializer,
     workbook: &mut Option<Workbook>,
 ) -> Result<(), String> {
@@ -341,14 +397,39 @@ fn apply_step(
         if workbook.is_some() {
             return Err("Load may only occur once".into());
         }
-        let artifact = match materializer {
-            Materializer::WorkbookApi { route, config } => WorkbookApi::new(config.clone())
-                .route(*route)
-                .materialize(shape),
-            #[cfg(feature = "xlsx")]
-            Materializer::Xlsx { path, .. } => {
-                crate::materialize::Xlsx::new(path).materialize(shape)
+        let artifact = match source {
+            Some(ScenarioSource::Shape(source_shape)) => match materializer {
+                Materializer::WorkbookApi { route, config } => WorkbookApi::new(config.clone())
+                    .route(*route)
+                    .materialize(source_shape),
+                #[cfg(feature = "xlsx")]
+                Materializer::Xlsx { path, .. } => {
+                    crate::materialize::Xlsx::new(path).materialize(source_shape)
+                }
+            },
+            Some(ScenarioSource::XlsxFixture(factory)) => {
+                let path = match materializer {
+                    #[cfg(feature = "xlsx")]
+                    Materializer::Xlsx { path, .. } => path.clone(),
+                    Materializer::WorkbookApi { .. } => std::env::temp_dir().join(format!(
+                        "formualizer-scenario-{}-{}.xlsx",
+                        std::process::id(),
+                        size.rows
+                    )),
+                };
+                factory(&path, size)
+                    .map(crate::materialize::Artifact::Xlsx)
+                    .map_err(crate::materialize::MaterializeError::Backend)
             }
+            None => match materializer {
+                Materializer::WorkbookApi { route, config } => WorkbookApi::new(config.clone())
+                    .route(*route)
+                    .materialize(shape),
+                #[cfg(feature = "xlsx")]
+                Materializer::Xlsx { path, .. } => {
+                    crate::materialize::Xlsx::new(path).materialize(shape)
+                }
+            },
         }
         .map_err(|e| e.to_string())?;
         *workbook = Some(match artifact {
@@ -461,15 +542,28 @@ fn validate_roles(shape: &Shape, steps: &[Step]) -> Result<(), String> {
     Ok(())
 }
 
-fn check_expect_now(
-    expect: &Expect,
+/// Everything an expectation may consult after a step has been applied.
+struct StepContext<'a> {
     step: usize,
-    workbook: &Workbook,
-    snapshot: &Vec<(String, u32, u32, Option<LiteralValue>)>,
-    stats: &EngineBaselineStats,
-    parity: Option<&RunSnapshots>,
-    recorder: Option<&Recorder>,
-) -> Result<(), String> {
+    mode: FormulaPlaneMode,
+    provenance: Provenance,
+    workbook: &'a Workbook,
+    snapshot: &'a StepSnapshot,
+    stats: &'a EngineBaselineStats,
+    parity: Option<&'a RunSnapshots>,
+    recorder: Option<&'a Recorder>,
+}
+fn check_expect_now(expect: &Expect, context: StepContext<'_>) -> Result<(), String> {
+    let StepContext {
+        step,
+        mode,
+        provenance,
+        workbook,
+        snapshot,
+        stats,
+        parity,
+        recorder,
+    } = context;
     match expect {
         Expect::Value {
             sheet,
@@ -478,7 +572,9 @@ fn check_expect_now(
             value,
         } => {
             let actual = workbook.get_value(sheet, *row, *col);
-            if actual.as_ref() == Some(value) {
+            if actual.as_ref() == Some(value)
+                || (matches!(value, LiteralValue::Empty) && actual.is_none())
+            {
                 Ok(())
             } else {
                 Err(format!(
@@ -507,7 +603,24 @@ fn check_expect_now(
             }
         }
         Expect::Structure(expected) => {
-            check_structure(expected, stats, recorder.map(|r| r.bucket(step)).as_ref())
+            if expected.mode.is_some_and(|wanted| wanted != mode)
+                || expected
+                    .provenance
+                    .is_some_and(|wanted| wanted != provenance)
+            {
+                return Ok(());
+            }
+            // Event-derived fields count cumulatively through this step: placement
+            // happens at Prepare while demotion happens at first evaluation.
+            let cumulative = recorder.map(|r| {
+                let mut merged = StepBucket::default();
+                for (_, bucket) in r.buckets().into_iter().filter(|(s, _)| *s <= step) {
+                    merged.events.extend(bucket.events);
+                    merged.spans.extend(bucket.spans);
+                }
+                merged
+            });
+            check_structure(expected, stats, cumulative.as_ref())
         }
     }
 }
@@ -539,6 +652,16 @@ fn check_structure(
         "arena_nodes",
         expected.arena_nodes.as_ref(),
         stats.formula_ast_node_count,
+    )?;
+    field(
+        "graph_vertices",
+        expected.graph_vertices.as_ref(),
+        stats.graph_formula_vertex_count,
+    )?;
+    field(
+        "graph_edges",
+        expected.graph_edges.as_ref(),
+        stats.graph_edge_count,
     )?;
     if expected.demotions.is_some()
         || expected.topology_outcome.is_some()

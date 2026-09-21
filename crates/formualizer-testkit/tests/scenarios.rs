@@ -1,4 +1,5 @@
 use formualizer_eval::engine::FormulaPlaneMode;
+use formualizer_testkit::witnesses::witness_registry;
 use formualizer_testkit::{
     materialize::WorkbookRoute,
     run::{Materializer, Recorder, run},
@@ -73,12 +74,22 @@ fn take_custom_args() -> (
 }
 fn main() {
     let (arguments, record, filter, selected_mode, selected_size) = take_custom_args();
-    let registry = built_in_registry(200);
+    // Witness value models are bound to their row count, so the ladder rung is
+    // chosen here rather than by overriding `sizes` afterwards.
+    let witness_rows = selected_size
+        .as_deref()
+        .and_then(|selected| selected.parse::<u32>().ok())
+        .unwrap_or(256);
+    let mut registry = built_in_registry(200);
+    let first_witness = registry.len();
+    registry.extend(witness_registry(witness_rows));
     let mut trials = Vec::new();
-    for spec in registry
+    for (position, spec) in registry
         .iter()
-        .filter(|spec| filter.as_ref().is_none_or(|filter| filter.matches(spec)))
+        .enumerate()
+        .filter(|(_, spec)| filter.as_ref().is_none_or(|filter| filter.matches(spec)))
     {
+        let is_witness = position >= first_witness;
         for &mode in &spec.modes {
             if selected_mode
                 .as_ref()
@@ -87,7 +98,7 @@ fn main() {
                 continue;
             }
             let mut spec = spec.clone();
-            if let Some(selected) = &selected_size {
+            if let Some(selected) = selected_size.as_ref().filter(|_| !is_witness) {
                 if let Ok(rows) = selected.parse::<u32>() {
                     spec.sizes[0].rows = rows;
                 } else {
@@ -99,6 +110,8 @@ fn main() {
                 }
             }
             let run_filter = filter.clone();
+            // Witness structural goldens are event-derived and always record.
+            let record = record || is_witness;
             trials.push(Trial::test(
                 format!("{}.{}", spec.id, mode_name(mode)),
                 move || execute_both(&spec, mode, record, run_filter.as_ref()),

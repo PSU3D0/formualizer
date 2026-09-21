@@ -30,6 +30,8 @@ pub enum Extent {
     Cols,
     RowsMinus(u32),
     ColsMinus(u32),
+    RowsPlus(u32),
+    ColsPlus(u32),
 }
 impl From<u32> for Extent {
     fn from(value: u32) -> Self {
@@ -50,6 +52,14 @@ impl Extent {
                 .cols
                 .checked_sub(k)
                 .ok_or_else(|| ShapeError("column extent outside grid".into()))?,
+            Self::RowsPlus(k) => scale
+                .rows
+                .checked_add(k)
+                .ok_or_else(|| ShapeError("row extent overflow".into()))?,
+            Self::ColsPlus(k) => scale
+                .cols
+                .checked_add(k)
+                .ok_or_else(|| ShapeError("column extent overflow".into()))?,
         };
         if n == 0 {
             Err(ShapeError("range extent outside grid".into()))

@@ -12,7 +12,7 @@ publish = false
 [features]
 default = []
 xlsx = ["dep:formualizer-testkit", "dep:umya-spreadsheet"]
-formualizer_runner = ["xlsx", "dep:formualizer-workbook", "formualizer-workbook/benchmark_internal"]
+formualizer_runner = ["xlsx", "formualizer-testkit/workbook", "dep:formualizer-workbook", "formualizer-workbook/benchmark_internal"]
 c6_calibration = [
   "formualizer_runner",
   "dep:formualizer-sheetport",
