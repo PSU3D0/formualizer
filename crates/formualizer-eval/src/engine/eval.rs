@@ -786,6 +786,17 @@ impl ComputedWriteBuffer {
         self.estimated_bytes
     }
 
+    #[cfg(feature = "tracing")]
+    fn traced_cell_count(&self) -> usize {
+        self.writes
+            .iter()
+            .map(|write| match write {
+                ComputedWrite::Cell { .. } => 1,
+                ComputedWrite::Rect { values, .. } => values.iter().map(Vec::len).sum(),
+            })
+            .sum()
+    }
+
     #[inline]
     pub(crate) fn writes(&self) -> &[ComputedWrite] {
         &self.writes
@@ -1087,6 +1098,17 @@ impl ComputedWriteChunkPlan {
     }
 }
 
+#[cfg(feature = "tracing")]
+#[derive(Default)]
+struct TraceEvaluationCounters {
+    computed_vertices: usize,
+    span_tasks: u64,
+    span_placements: u64,
+    memo_hits: u64,
+    skipped_punchouts: u64,
+    cycles: usize,
+}
+
 pub struct Engine<R> {
     pub(crate) graph: DependencyGraph,
     resolver: R,
@@ -1311,6 +1333,8 @@ pub struct Engine<R> {
 
     #[cfg(test)]
     last_formula_plane_span_eval_report: Option<SpanEvalReport>,
+    #[cfg(feature = "tracing")]
+    trace_evaluation_counters: TraceEvaluationCounters,
     #[cfg(test)]
     evaluation_request_begin_count_for_test: u64,
     #[cfg(any(test, feature = "test-support"))]
@@ -3100,6 +3124,8 @@ where
             function_provider_revision_seen,
             #[cfg(test)]
             last_formula_plane_span_eval_report: None,
+            #[cfg(feature = "tracing")]
+            trace_evaluation_counters: TraceEvaluationCounters::default(),
             #[cfg(test)]
             evaluation_request_begin_count_for_test: 0,
             #[cfg(any(test, feature = "test-support"))]
@@ -3268,6 +3294,8 @@ where
             function_provider_revision_seen,
             #[cfg(test)]
             last_formula_plane_span_eval_report: None,
+            #[cfg(feature = "tracing")]
+            trace_evaluation_counters: TraceEvaluationCounters::default(),
             #[cfg(test)]
             evaluation_request_begin_count_for_test: 0,
             #[cfg(any(test, feature = "test-support"))]
@@ -3413,6 +3441,32 @@ where
         evaluate: impl FnOnce(&mut Self) -> Result<T, ExcelError>,
     ) -> Result<T, ExcelError> {
         let outermost = self.evaluation_resource_request_depth == 0;
+        #[cfg(feature = "tracing")]
+        if outermost {
+            self.trace_evaluation_counters = TraceEvaluationCounters::default();
+        }
+        #[cfg(feature = "tracing")]
+        let request_kind = if matches!(
+            kind,
+            EvaluationRequestKind::Full
+                | EvaluationRequestKind::FullWithDelta
+                | EvaluationRequestKind::FullCancellable
+                | EvaluationRequestKind::FullLogged
+        ) {
+            "full"
+        } else {
+            "targeted"
+        };
+        #[cfg(feature = "tracing")]
+        let _request_span = outermost.then(|| {
+            crate::engine::trace::fz_span!(
+                tracing::Level::INFO,
+                "evaluate",
+                "evaluate.request",
+                kind = request_kind,
+                mode = ?self.config.formula_plane_mode
+            )
+        });
         if outermost {
             let request_id = self.next_evaluation_resource_request_id;
             self.next_evaluation_resource_request_id = request_id
@@ -3489,6 +3543,21 @@ where
             stats.phases.evaluation_ns = total_ns.saturating_sub(attributed);
             self.evaluation_resource_baseline.record_finished(&stats);
             self.last_evaluation_resource_request = Some(stats);
+            crate::engine::trace::fz_event!(
+                tracing::Level::INFO,
+                "evaluate",
+                "evaluate.summary",
+                computed_vertices = self.trace_evaluation_counters.computed_vertices,
+                span_tasks = self.trace_evaluation_counters.span_tasks,
+                span_placements = self.trace_evaluation_counters.span_placements,
+                memo_hits = self.trace_evaluation_counters.memo_hits,
+                skipped_punchouts = self.trace_evaluation_counters.skipped_punchouts,
+                cycles = self.trace_evaluation_counters.cycles,
+                cancelled = matches!(
+                    &result,
+                    Err(error) if error.kind == ExcelErrorKind::Cancelled
+                )
+            );
         }
         result
     }
@@ -5777,6 +5846,14 @@ where
                 self.record_formula_plane_change_for_event(&item.event);
             }
         }
+        crate::engine::trace::fz_event!(
+            tracing::Level::INFO,
+            "history",
+            "history.replay",
+            op = "undo",
+            events_replayed = batch.len(),
+            ownership_resyncs = batch.len()
+        );
         Ok(())
     }
 
@@ -5815,6 +5892,14 @@ where
                 self.record_formula_plane_change_for_event(&item.event);
             }
         }
+        crate::engine::trace::fz_event!(
+            tracing::Level::INFO,
+            "history",
+            "history.replay",
+            op = "redo",
+            events_replayed = batch.len(),
+            ownership_resyncs = batch.len()
+        );
         Ok(())
     }
 
@@ -5861,6 +5946,16 @@ where
             }
         }
 
+        #[cfg(feature = "tracing")]
+        let events_replayed = journal.graph.events.len();
+        crate::engine::trace::fz_event!(
+            tracing::Level::INFO,
+            "history",
+            "history.replay",
+            op = "undo",
+            events_replayed,
+            ownership_resyncs = events_replayed
+        );
         undo.push_redo_action(journal);
         Ok(())
     }
@@ -5908,6 +6003,16 @@ where
             }
         }
 
+        #[cfg(feature = "tracing")]
+        let events_replayed = journal.graph.events.len();
+        crate::engine::trace::fz_event!(
+            tracing::Level::INFO,
+            "history",
+            "history.replay",
+            op = "redo",
+            events_replayed,
+            ownership_resyncs = events_replayed
+        );
         undo.push_done_action(journal);
         Ok(())
     }
@@ -7544,7 +7649,29 @@ where
                 .push(idx);
         }
 
-        for ((_sheet_id, _canonical_hash, _col), candidate_indices) in groups {
+        crate::engine::trace::fz_event!(
+            tracing::Level::INFO,
+            "family",
+            "family.grouping",
+            groups = groups.len(),
+            singleton_groups = groups.values().filter(|members| members.len() == 1).count(),
+            max_group_cells = groups.values().map(Vec::len).max().unwrap_or(0)
+        );
+        for (&(sheet_id, canonical_hash, col), members) in &groups {
+            if members.len() >= 2 {
+                crate::engine::trace::fz_event!(
+                    tracing::Level::DEBUG,
+                    "family",
+                    "family.grouped",
+                    sheet = sheet_id,
+                    template_hash = canonical_hash,
+                    col,
+                    cells = members.len()
+                );
+            }
+        }
+
+        for ((sheet_id, canonical_hash, _col), candidate_indices) in groups {
             let sheet_name = pending_candidates[candidate_indices[0]].0.clone();
             let mut plans_by_coord: BTreeMap<(u32, u32), Vec<DependencyPlanRow>> = BTreeMap::new();
             for idx in &candidate_indices {
@@ -7618,6 +7745,19 @@ where
                         )
                     };
                     Self::accumulate_formula_plane_placement_report(&mut report, &placement_report);
+                    if let Some(FormulaPlacementResult::Legacy { reason, .. }) =
+                        placement_report.results.first()
+                    {
+                        crate::engine::trace::fz_event!(
+                            tracing::Level::INFO,
+                            "family",
+                            "family.rejected",
+                            sheet = sheet_id,
+                            template_hash = canonical_hash,
+                            reason = ?reason,
+                            cells = placement_report.counters.legacy_cells
+                        );
+                    }
 
                     // Index candidates by placement once per component. The
                     // previous per-result linear `find` made this fallback
@@ -10625,6 +10765,26 @@ where
     ) -> Result<FormulaIngestReport, ExcelError> {
         self.observe_function_semantic_epoch()?;
         let formula_cells_seen = batches.iter().map(|batch| batch.len() as u64).sum();
+        #[cfg(feature = "tracing")]
+        let arena_nodes_before = self.graph.data_store().memory_usage().total_ast_nodes;
+        #[cfg(feature = "tracing")]
+        let route = if !partitioned_families.is_empty() {
+            "partitioned"
+        } else if !compressed_families.is_empty() {
+            "compressed_source"
+        } else if source_report.is_some() {
+            "replay"
+        } else {
+            "ordinary"
+        };
+        let _ingest_span = crate::engine::trace::fz_span!(
+            tracing::Level::INFO,
+            "ingest",
+            "ingest.batch",
+            mode = ?self.config.formula_plane_mode,
+            route,
+            formula_cells = formula_cells_seen
+        );
         #[cfg(feature = "benchmark_internal")]
         let benchmark_forced_replay =
             std::env::var_os("FORMUALIZER_BENCH_FORCE_FORMULA_FAMILY_REPLAY").is_some();
@@ -10785,6 +10945,24 @@ where
             report.graph_edges_created = summary.edges as u64;
         }
 
+        crate::engine::trace::fz_event!(
+            tracing::Level::INFO,
+            "ingest",
+            "ingest.summary",
+            candidate_cells = report.shadow_candidate_cells,
+            accepted_span_cells = report.shadow_accepted_span_cells,
+            fallback_cells = report.shadow_fallback_cells,
+            spans_created = report.shadow_spans_created,
+            templates_interned = report.shadow_templates_interned,
+            graph_vertices_created = report.graph_vertices_created,
+            graph_edges_created = report.graph_edges_created,
+            arena_nodes_delta = self
+                .graph
+                .data_store()
+                .memory_usage()
+                .total_ast_nodes
+                .saturating_sub(arena_nodes_before)
+        );
         if publish_report {
             self.record_formula_ingest_report(report.clone());
         }
@@ -14638,7 +14816,20 @@ where
         // #171: after an axis edit, retained read-summary relocation cannot be
         // used as a proof of disconnection. Fail closed for this engine.
         self.legacy_island_structural_summaries_trusted = false;
-        self.demote_spans_for_structural_op_impl(Some(op), affected_region, true)
+        #[cfg(feature = "tracing")]
+        let spans_before = self.graph.formula_authority().active_span_count();
+        let result = self.demote_spans_for_structural_op_impl(Some(op), affected_region, true);
+        #[cfg(feature = "tracing")]
+        let spans_after = self.graph.formula_authority().active_span_count();
+        crate::engine::trace::fz_event!(
+            tracing::Level::INFO,
+            "structural",
+            "structural.edit",
+            op = ?op,
+            spans_before,
+            spans_after
+        );
+        result
     }
 
     fn indexed_structural_candidate_span_refs(
@@ -16101,8 +16292,24 @@ where
             planned_by_sheet
         };
         {
+            #[cfg(feature = "tracing")]
+            let cascade = span_plans.len();
             let authority = self.graph.formula_authority_mut();
             for plan in &span_plans {
+                #[cfg(feature = "tracing")]
+                if let Some(reason) = op
+                    && let Some(span) = authority.plane.spans.get(plan.span_ref)
+                {
+                    crate::engine::trace::fz_event!(
+                        tracing::Level::INFO,
+                        "span",
+                        "span.demoted",
+                        span_id = plan.span_ref.id.0,
+                        reason = ?reason,
+                        cells = span.domain.cell_count(),
+                        cascade
+                    );
+                }
                 authority
                     .plane
                     .remove_overlays_for_source_span(plan.span_ref);
@@ -16464,6 +16671,14 @@ where
         &mut self,
         prepared: PreparedFormulaSpanDemotion,
     ) -> Result<FormulaSpanDemotionReport, FormulaSpanDemotionError> {
+        self.commit_prepared_formula_span_demotion_with_trace(prepared, None)
+    }
+
+    fn commit_prepared_formula_span_demotion_with_trace(
+        &mut self,
+        prepared: PreparedFormulaSpanDemotion,
+        _trace_reason: Option<PlacementFallbackReason>,
+    ) -> Result<FormulaSpanDemotionReport, FormulaSpanDemotionError> {
         self.prepared_legacy_admission(&prepared.legacy_graph, prepared.placement_count as u64)
             .map_err(FormulaSpanDemotionError::Resource)?;
         if prepared.fault == FormulaSpanDemotionFault::FinalLegacyGraphValidation {
@@ -16505,8 +16720,24 @@ where
         let _ = self
             .graph
             .apply_prevalidated_legacy_graph_plan(legacy_graph);
+        #[cfg(feature = "tracing")]
+        let cascade = span_refs.len();
         let authority = self.graph.formula_authority_mut();
         for span_ref in &span_refs {
+            #[cfg(feature = "tracing")]
+            if let Some(reason) = _trace_reason
+                && let Some(span) = authority.plane.spans.get(*span_ref)
+            {
+                crate::engine::trace::fz_event!(
+                    tracing::Level::INFO,
+                    "span",
+                    "span.demoted",
+                    span_id = span_ref.id.0,
+                    reason = ?reason,
+                    cells = span.domain.cell_count(),
+                    cascade
+                );
+            }
             authority.plane.remove_overlays_for_source_span(*span_ref);
             let _ = authority.plane.remove_span(*span_ref);
         }
@@ -16616,7 +16847,10 @@ where
                 }
             })?;
         let report = self
-            .commit_prepared_formula_span_demotion(prepared)
+            .commit_prepared_formula_span_demotion_with_trace(
+                prepared,
+                Some(PlacementFallbackReason::CycleMember),
+            )
             .map_err(|error| {
                 ExcelError::new(ExcelErrorKind::NImpl).with_message(format!(
                     "FormulaPlane cycle-member span demotion commit failed: {error}"
@@ -16664,7 +16898,10 @@ where
                 }
             })?;
         let report = self
-            .commit_prepared_formula_span_demotion(prepared)
+            .commit_prepared_formula_span_demotion_with_trace(
+                prepared,
+                Some(PlacementFallbackReason::ArrayResult),
+            )
             .map_err(|error| {
                 ExcelError::new(ExcelErrorKind::NImpl).with_message(format!(
                     "FormulaPlane array-result span demotion commit failed: {error}"
@@ -21204,6 +21441,12 @@ where
         const MAX_RUNTIME_REPLAN: usize = 5;
         let mut array_result_demotions = 0usize;
         const MAX_ARRAY_RESULT_DEMOTIONS: usize = 64;
+        #[cfg(feature = "tracing")]
+        let mut published_layers = 0usize;
+        #[cfg(feature = "tracing")]
+        let mut published_buffer_cells_total = 0usize;
+        #[cfg(feature = "tracing")]
+        let mut published_buffer_cells_max = 0usize;
         let mut virtual_telemetry = self
             .config
             .enable_virtual_dep_telemetry
@@ -21431,7 +21674,7 @@ where
             // loop breaks out immediately, leaving that layer's write buffer
             // unflushed, so nothing from the offending span is published.
             let mut array_result_span: Option<FormulaSpanRef> = None;
-            'layers: for layer in schedule.layers {
+            'layers: for (layer_index, layer) in schedule.layers.into_iter().enumerate() {
                 self.cancellation_checkpoint("Evaluation cancelled before mixed layer")?;
                 let mut buffer = ComputedWriteBuffer::default();
                 let mut sink = SpanComputedWriteSink::new(&mut buffer);
@@ -21467,6 +21710,8 @@ where
                             #[cfg(test)]
                             let mut last_group_report = None;
                             let mut selected_group_work = 0_u64;
+                            #[cfg(feature = "tracing")]
+                            let mut trace_group = TraceEvaluationCounters::default();
                             while work_index < work_items.len() {
                                 let FormulaProducerId::Span(group_span_id) =
                                     work_items[work_index].producer
@@ -21534,6 +21779,23 @@ where
                                             )));
                                     }
                                 };
+                                #[cfg(feature = "tracing")]
+                                {
+                                    trace_group.span_tasks = trace_group
+                                        .span_tasks
+                                        .saturating_add(report.span_eval_task_count);
+                                    trace_group.span_placements = trace_group
+                                        .span_placements
+                                        .saturating_add(report.span_eval_placement_count);
+                                    trace_group.memo_hits = trace_group.memo_hits.saturating_add(
+                                        report
+                                            .memo_eval_count
+                                            .saturating_add(report.memo_broadcast_count),
+                                    );
+                                    trace_group.skipped_punchouts = trace_group
+                                        .skipped_punchouts
+                                        .saturating_add(report.skipped_overlay_punchout_count);
+                                }
                                 #[cfg(test)]
                                 {
                                     last_group_report = Some(report.clone());
@@ -21543,6 +21805,20 @@ where
                                 computed_vertices = computed_vertices
                                     .saturating_add(report.span_eval_placement_count as usize);
                                 work_index = work_index.saturating_add(1);
+                            }
+                            #[cfg(feature = "tracing")]
+                            {
+                                let trace = &mut self.trace_evaluation_counters;
+                                trace.span_tasks =
+                                    trace.span_tasks.saturating_add(trace_group.span_tasks);
+                                trace.span_placements = trace
+                                    .span_placements
+                                    .saturating_add(trace_group.span_placements);
+                                trace.memo_hits =
+                                    trace.memo_hits.saturating_add(trace_group.memo_hits);
+                                trace.skipped_punchouts = trace
+                                    .skipped_punchouts
+                                    .saturating_add(trace_group.skipped_punchouts);
                             }
                             // Charge the exact selected placement regions before
                             // their transaction-local value buffer is published.
@@ -21594,6 +21870,22 @@ where
                 self.cancellation_checkpoint("Evaluation cancelled before mixed layer flush")?;
                 if let Some(delta) = delta.as_deref_mut() {
                     self.record_computed_write_buffer_delta(&buffer, delta);
+                }
+                crate::engine::trace::fz_event!(
+                    tracing::Level::DEBUG,
+                    "layer",
+                    "layer.flushed",
+                    layer = layer_index,
+                    producers = work_items.len(),
+                    buffer_cells = buffer.traced_cell_count()
+                );
+                #[cfg(feature = "tracing")]
+                {
+                    let buffer_cells = buffer.traced_cell_count();
+                    published_layers = published_layers.saturating_add(1);
+                    published_buffer_cells_total =
+                        published_buffer_cells_total.saturating_add(buffer_cells);
+                    published_buffer_cells_max = published_buffer_cells_max.max(buffer_cells);
                 }
                 self.flush_authoritative_computed_write_buffer(&mut buffer)?;
             }
@@ -21716,6 +22008,19 @@ where
             self.redirty_for_next_recalc();
             self.checked_ack_formula_dirty_sublease_observed(formula_dirty, &owned_dirty_events)?;
             self.recalc_epoch = self.recalc_epoch.wrapping_add(1);
+            #[cfg(feature = "tracing")]
+            {
+                self.trace_evaluation_counters.computed_vertices = computed_vertices;
+                self.trace_evaluation_counters.cycles = prepass_cycle_errors;
+            }
+            crate::engine::trace::fz_event!(
+                tracing::Level::INFO,
+                "publication",
+                "publication.summary",
+                layers = published_layers,
+                buffer_cells_total = published_buffer_cells_total,
+                buffer_cells_max = published_buffer_cells_max
+            );
             return Ok(EvalResult {
                 computed_vertices,
                 cycle_errors: prepass_cycle_errors,
@@ -23084,6 +23389,24 @@ where
             &compile_stats,
             topology_started.elapsed(),
         );
+        #[cfg(feature = "tracing")]
+        let (topology_outcome, fence_reason) = match cache_outcome {
+            FormulaPlaneTopologyCacheOutcome::Hit => ("hit", "none"),
+            FormulaPlaneTopologyCacheOutcome::Built => ("built", "none"),
+            FormulaPlaneTopologyCacheOutcome::SkippedDynamicLegacy => ("fenced", "dynamic_legacy"),
+            FormulaPlaneTopologyCacheOutcome::SkippedOverflow => ("fenced", "overflow"),
+            FormulaPlaneTopologyCacheOutcome::NotUsed => ("fenced", "key_changed"),
+        };
+        crate::engine::trace::fz_event!(
+            tracing::Level::INFO,
+            "topology",
+            "topology.compiled",
+            outcome = topology_outcome,
+            fence_reason,
+            producers = compile_stats.producers,
+            relationships = compile_stats.relationships,
+            legacy_vertices = baseline.graph_vertex_count
+        );
         if let Some(stats) = self.active_evaluation_resource_request.as_mut() {
             stats.topology.cache_skip_streak = self.mixed_topology_cache_skip_streak;
             stats.topology.candidate_cap = Some(key.max_candidates as u64);
@@ -23914,6 +24237,15 @@ where
         match schedule_result {
             Ok(output) => {
                 scratch_release_result?;
+                crate::engine::trace::fz_event!(
+                    tracing::Level::INFO,
+                    "schedule",
+                    "schedule.built",
+                    layers = output.0.layers.len(),
+                    producers = output.0.stats.unique_producers,
+                    cycle_fallbacks = output.0.stats.cycle_count,
+                    contracted_islands = usize::from(!output.5.dirty_vertices.is_empty())
+                );
                 Ok(output)
             }
             Err(error) => {
@@ -23971,6 +24303,7 @@ where
 
     /// Evaluate all dirty/volatile vertices
     pub fn evaluate_all(&mut self) -> Result<EvalResult, ExcelError> {
+        // `evaluate_all_unobserved` owns the `observe_function_semantic_epoch` guard.
         self.observe_evaluation_resource_request(EvaluationRequestKind::Full, |engine| {
             engine.evaluate_all_unobserved()
         })
@@ -24100,8 +24433,8 @@ where
     /// coordinators instead.
     fn evaluate_all_legacy_impl(&mut self) -> Result<EvalResult, ExcelError> {
         self.reset_virtual_dep_telemetry_if_disabled();
-        #[cfg(feature = "tracing")]
-        let _span_eval = tracing::info_span!("evaluate_all").entered();
+        let _span_eval =
+            crate::engine::trace::fz_span!(tracing::Level::INFO, "evaluate", "evaluate.legacy");
         let start = crate::instant::FzInstant::now();
         let mut computed_vertices = 0;
         let mut cycle_errors = 0;
@@ -24225,8 +24558,11 @@ where
             return self.evaluate_authoritative_formula_plane(None, Some(delta));
         }
         self.reset_virtual_dep_telemetry_if_disabled();
-        #[cfg(feature = "tracing")]
-        let _span_eval = tracing::info_span!("evaluate_all_with_delta").entered();
+        let _span_eval = crate::engine::trace::fz_span!(
+            tracing::Level::INFO,
+            "evaluate",
+            "evaluate.legacy_delta"
+        );
         let start = crate::instant::FzInstant::now();
         let mut computed_vertices = 0;
         let mut cycle_errors = 0;
@@ -24920,9 +25256,12 @@ where
         Vec<VertexId>,
         rustc_hash::FxHashMap<VertexId, Vec<VertexId>>,
     ) {
-        #[cfg(feature = "tracing")]
-        let _span =
-            tracing::info_span!("demand_subgraph", targets = target_vertices.len()).entered();
+        let _span = crate::engine::trace::fz_span!(
+            tracing::Level::INFO,
+            "evaluate",
+            "evaluate.demand_subgraph",
+            targets = target_vertices.len()
+        );
         use rustc_hash::{FxHashMap, FxHashSet};
 
         let mut to_evaluate: FxHashSet<VertexId> = FxHashSet::default();

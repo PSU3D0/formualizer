@@ -67,13 +67,16 @@ impl<'a> Scheduler<'a> {
     }
 
     pub fn create_schedule(&self, vertices: &[VertexId]) -> Result<Schedule, ExcelError> {
-        #[cfg(feature = "tracing")]
-        let _span = tracing::info_span!("scheduler", vertices = vertices.len()).entered();
+        let _span = crate::engine::trace::fz_span!(
+            tracing::Level::INFO,
+            "schedule",
+            "schedule.legacy",
+            vertices = vertices.len()
+        );
         // 1. Find strongly connected components using Tarjan's algorithm
-        #[cfg(feature = "tracing")]
-        let _scc_span = tracing::info_span!("tarjan_scc").entered();
+        let _scc_span =
+            crate::engine::trace::fz_span!(tracing::Level::INFO, "schedule", "schedule.tarjan");
         let sccs = self.tarjan_scc(vertices)?;
-        #[cfg(feature = "tracing")]
         drop(_scc_span);
 
         // 2. Separate cyclic from acyclic components
@@ -130,24 +133,29 @@ impl<'a> Scheduler<'a> {
         vertices: &[VertexId],
         vdeps: &FxHashMap<VertexId, Vec<VertexId>>,
     ) -> Result<Schedule, ExcelError> {
-        #[cfg(feature = "tracing")]
-        let _span = tracing::info_span!(
-            "scheduler_with_virtual",
+        let _span = crate::engine::trace::fz_span!(
+            tracing::Level::INFO,
+            "schedule",
+            "schedule.virtual",
             vertices = vertices.len(),
             vdeps = vdeps.len()
-        )
-        .entered();
+        );
         // 1. SCC detection with virtual deps
-        #[cfg(feature = "tracing")]
-        let _scc_span = tracing::info_span!("tarjan_scc_with_virtual").entered();
+        let _scc_span = crate::engine::trace::fz_span!(
+            tracing::Level::INFO,
+            "schedule",
+            "schedule.tarjan_virtual"
+        );
         let sccs = self.tarjan_scc_with_virtual(vertices, vdeps)?;
-        #[cfg(feature = "tracing")]
         drop(_scc_span);
         // 2. Separate cycles and acyclic components
         let (cycles, acyclic_sccs) = self.separate_cycles(sccs);
         // 3. Build layers over combined adjacency (graph + vdeps)
-        #[cfg(feature = "tracing")]
-        let _layers_span = tracing::info_span!("build_layers_with_virtual").entered();
+        let _layers_span = crate::engine::trace::fz_span!(
+            tracing::Level::INFO,
+            "schedule",
+            "schedule.layers_virtual"
+        );
         if cycles.is_empty() {
             // Fast path: byte-for-byte today's layer construction.
             let layers = self.build_layers_with_virtual(acyclic_sccs, vdeps)?;

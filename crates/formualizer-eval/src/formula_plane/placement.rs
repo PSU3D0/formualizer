@@ -1121,6 +1121,28 @@ pub(crate) fn commit_prepared_family(
         report.counters.templates_interned = 1;
     }
     let binding_set_id = plane.insert_binding_set(binding_set);
+    #[cfg(feature = "tracing")]
+    let (domain_kind, row_start, row_end, col_start, col_end) = match &domain {
+        PlacementDomain::RowRun {
+            row_start,
+            row_end,
+            col,
+            ..
+        } => ("row_run", *row_start, *row_end, *col, *col),
+        PlacementDomain::ColRun {
+            row,
+            col_start,
+            col_end,
+            ..
+        } => ("col_run", *row, *row, *col_start, *col_end),
+        PlacementDomain::Rect {
+            row_start,
+            row_end,
+            col_start,
+            col_end,
+            ..
+        } => ("rect", *row_start, *row_end, *col_start, *col_end),
+    };
 
     let read_summary_id = plane.insert_span_read_summary(read_summary);
     let span = plane.insert_span_with_ast_relocation(
@@ -1144,6 +1166,20 @@ pub(crate) fn commit_prepared_family(
     if !origin_analysis.resolved_named_refs.is_empty() {
         plane.register_span_name_dependents(span, &origin_analysis.resolved_named_refs);
     }
+    crate::engine::trace::fz_event!(
+        tracing::Level::INFO,
+        "family",
+        "family.placed",
+        sheet = sheet_id,
+        template_hash = first.parameterized_canonical_hash,
+        domain_kind,
+        row_start,
+        row_end,
+        col_start,
+        col_end,
+        cells = candidates.len(),
+        constant_result = is_constant_result
+    );
 
     report.counters.spans_created = 1;
     report.counters.accepted_span_cells = candidates.len() as u64;

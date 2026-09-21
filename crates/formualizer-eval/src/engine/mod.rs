@@ -47,6 +47,7 @@ pub mod named_range;
 pub mod sheet_index;
 pub mod sheet_registry;
 pub mod topo;
+pub(crate) mod trace;
 pub mod vertex_store;
 
 // Phase 1: Arena modules

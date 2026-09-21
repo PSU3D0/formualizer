@@ -1208,7 +1208,7 @@ fn compute_dirty_closure_with_iteration_limit<E>(
         }
     }
 
-    let work = dirty_by_producer
+    let work: Vec<FormulaProducerWork> = dirty_by_producer
         .into_iter()
         .map(|(producer, dirty)| FormulaProducerWork {
             producer,
@@ -1221,6 +1221,19 @@ fn compute_dirty_closure_with_iteration_limit<E>(
     } else {
         checkpoint(0)?;
     }
+    crate::engine::trace::fz_event!(
+        tracing::Level::INFO,
+        "dirty",
+        "dirty.projected",
+        seeds = stats.input_changed_regions,
+        regions = stats.emitted_changed_regions,
+        whole_span_seeds = work
+            .iter()
+            .filter(|item| matches!(item.dirty, ProducerDirtyDomain::Whole))
+            .count(),
+        global_invalidations = fallbacks.len(),
+        iterations = stats.fixed_point_iterations
+    );
     Ok(FormulaDirtyClosure {
         work,
         changed_result_regions,
