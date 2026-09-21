@@ -1,5 +1,9 @@
 pub mod fp_coverage;
 pub mod materialize;
+#[cfg(feature = "workbook")]
+pub mod run;
+#[cfg(feature = "workbook")]
+pub mod scenario;
 pub mod shape;
 #[cfg(feature = "xlsx")]
 pub mod xlsx;

@@ -390,6 +390,38 @@ impl Shape {
         }
         Ok(out)
     }
+
+    /// Resolve a semantic role to concrete cells at this shape's current scale.
+    /// Role names may identify either an A1 cell or a named family.
+    pub fn resolve_role(&self, role: Role) -> Result<Vec<(String, u32, u32)>, ShapeError> {
+        let mut out = Vec::new();
+        for sheet in &self.sheets {
+            for (name, assigned) in &sheet.roles {
+                if *assigned != role {
+                    continue;
+                }
+                if let Some(family) = sheet.families.iter().find(|family| family.name == *name) {
+                    out.extend(
+                        family
+                            .selected(self.scale)?
+                            .into_iter()
+                            .map(|(row, col)| (sheet.name.clone(), row, col)),
+                    );
+                } else {
+                    let (row, col) = a1(name).map_err(|_| {
+                        ShapeError(format!(
+                            "role {role:?} refers to unknown cell or family {name:?}"
+                        ))
+                    })?;
+                    out.push((sheet.name.clone(), row, col));
+                }
+            }
+        }
+        if out.is_empty() {
+            return Err(ShapeError(format!("shape does not define role {role:?}")));
+        }
+        Ok(out)
+    }
 }
 #[derive(Clone, Debug, PartialEq)]
 pub struct RenderedCell {

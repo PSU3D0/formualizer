@@ -14,7 +14,15 @@ publish = false
 # only need the pure generators (e.g. formualizer-eval dev-deps).
 default = ["xlsx"]
 xlsx = ["dep:umya-spreadsheet", "dep:tempfile", "dep:zip"]
-workbook = ["dep:formualizer-workbook", "dep:formualizer-common", "dep:formualizer-eval", "formualizer-workbook/calamine"]
+workbook = [
+    "dep:formualizer-workbook",
+    "dep:formualizer-common",
+    "dep:formualizer-eval",
+    "dep:tracing",
+    "dep:tracing-subscriber",
+    "formualizer-eval/tracing",
+    "formualizer-workbook/calamine",
+]
 
 [dependencies]
 tempfile = { workspace = true, optional = true }
@@ -23,3 +31,14 @@ zip = { version = "7.2", default-features = false, features = ["deflate"], optio
 formualizer-workbook = { version = "0.9.3", path = "../formualizer-workbook", default-features = false, optional = true }
 formualizer-common = { workspace = true, optional = true }
 formualizer-eval = { version = "0.9.3", path = "../formualizer-eval", default-features = false, optional = true }
+tracing = { version = "0.1", optional = true }
+tracing-subscriber = { version = "0.3", optional = true }
+
+[dev-dependencies]
+libtest-mimic = "0.8"
+
+[[test]]
+name = "scenarios"
+path = "tests/scenarios.rs"
+harness = false
+required-features = ["workbook", "xlsx"]
