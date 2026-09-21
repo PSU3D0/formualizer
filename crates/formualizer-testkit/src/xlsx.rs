@@ -3,9 +3,47 @@
 //! NOTE: umya-spreadsheet uses (col, row) ordering for tuple coordinates,
 //! while much of the engine code uses (row, col).
 
-use std::path::{Path, PathBuf};
+use std::{
+    io::{Read, Write},
+    path::{Path, PathBuf},
+};
 
 use tempfile::tempdir;
+
+/// Replace one XML part of an XLSX package. Unchanged entries are copied as
+/// their original compressed streams, rather than being recompressed.
+pub fn patch_part(
+    path: impl AsRef<Path>,
+    part_name: &str,
+    patch: impl FnOnce(&str) -> String,
+) -> std::io::Result<()> {
+    let path = path.as_ref();
+    let input = std::fs::File::open(path)?;
+    let mut source = zip::ZipArchive::new(input).map_err(std::io::Error::other)?;
+    let replacement = {
+        let mut file = source.by_name(part_name).map_err(std::io::Error::other)?;
+        let mut xml = String::new();
+        file.read_to_string(&mut xml)?;
+        patch(&xml).into_bytes()
+    };
+    let tmp = path.with_extension("xlsx.patch");
+    let output = std::fs::File::create(&tmp)?;
+    let mut dest = zip::ZipWriter::new(output);
+    for i in 0..source.len() {
+        let file = source.by_index(i).map_err(std::io::Error::other)?;
+        if file.name() == part_name {
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated);
+            dest.start_file(part_name, options)
+                .map_err(std::io::Error::other)?;
+            dest.write_all(&replacement)?;
+        } else {
+            dest.raw_copy_file(file).map_err(std::io::Error::other)?;
+        }
+    }
+    dest.finish().map_err(std::io::Error::other)?;
+    std::fs::rename(tmp, path)
+}
 
 /// Write a workbook to a specific output path.
 ///

@@ -1723,8 +1723,12 @@ dependencies = [
 name = "formualizer-testkit"
 version = "0.1.0"
 dependencies = [
+ "formualizer-common",
+ "formualizer-eval",
+ "formualizer-workbook",
  "tempfile",
  "umya-spreadsheet 2.3.2",
+ "zip 7.2.0",
 ]
 
 [[package]]

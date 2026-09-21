@@ -13,8 +13,13 @@ publish = false
 # xlsx fixture helpers (umya-backed). Default-on; disable for dependents that
 # only need the pure generators (e.g. formualizer-eval dev-deps).
 default = ["xlsx"]
-xlsx = ["dep:umya-spreadsheet", "dep:tempfile"]
+xlsx = ["dep:umya-spreadsheet", "dep:tempfile", "dep:zip"]
+workbook = ["dep:formualizer-workbook", "dep:formualizer-common", "dep:formualizer-eval", "formualizer-workbook/calamine"]
 
 [dependencies]
 tempfile = { workspace = true, optional = true }
 umya-spreadsheet = { version = "=2.3.2", optional = true }
+zip = { version = "7.2", default-features = false, features = ["deflate"], optional = true }
+formualizer-workbook = { version = "0.9.3", path = "../formualizer-workbook", default-features = false, optional = true }
+formualizer-common = { workspace = true, optional = true }
+formualizer-eval = { version = "0.9.3", path = "../formualizer-eval", default-features = false, optional = true }
