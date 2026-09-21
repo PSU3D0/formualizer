@@ -7,7 +7,7 @@ One scenario definition serves behavioral tests, edge cases, Off/Auth parity, st
 | Layer | Module | Purpose |
 |---|---|---|
 | Shape | `testkit::shape` | Engine-free workbook description: sheets, value regions, formula families, boundaries, gaps, roles. Scale-relative so one shape renders at any size. |
-| Materialize | `testkit::materialize` | Turns a Shape into an artifact: `Xlsx` (umya, plus `patch_part` for XML injection) or `WorkbookApi` (three distinct routes: per-cell, batch `set_values`/`set_formulas`, `write_range`). `EngineDirect` is declared and unsupported. |
+| Materialize | `testkit::materialize` | Turns a Shape into an artifact: `Xlsx` (written by umya, plus `patch_part` for XML injection) or `WorkbookApi` (three distinct routes: per-cell, batch `set_values`/`set_formulas`, `write_range`). At run time an xlsx artifact is loaded by either the Calamine or the Umya reader (`run::XlsxReader`); these are separate provenances because they take different ingest routes. `EngineDirect` is declared and unsupported. |
 | Scenario | `testkit::scenario`, `testkit::witnesses` | `ScenarioSpec` = shape + `Script` + per-step `Expect` + tags + modes + size. The fourteen pre-M4 witnesses live in `witnesses`. |
 | Run | `testkit::run` | `run(spec, mode, size, materializer, recorder)`; the `Recorder` tracing layer; structural checks. |
 | Runner | `tests/scenarios.rs` | libtest-mimic binary: one named test per `(spec, mode)`, filters, `--record`, `--rung`. |
@@ -53,6 +53,7 @@ cargo test -p formualizer-testkit --features workbook --test scenarios
 cargo test -p formualizer-testkit --features workbook --test scenarios -- witness.coupled --mode authoritative --record
 # by tag; dimensions ANDed, values within a dimension ORed
 cargo test -p formualizer-testkit --features workbook --test scenarios -- --tag-filter 'family:coupled,independent provenance:workbook-api'
+# provenance values: workbook-api, xlsx-calamine, xlsx-umya
 FZ_SCENARIO_FILTER='engine:demoted' cargo test -p formualizer-testkit --features workbook --test scenarios
 # ladder
 cargo test -p formualizer-testkit --features workbook --test scenarios -- --rung 100 witness
@@ -79,6 +80,6 @@ Add a `Kind` variant in `witnesses.rs`, its shape, its first-principles value mo
 
 ## Facts the goldens currently encode
 
-- **FORM-000128.** A family loaded from an xlsx written cell by cell reaches the engine as ordinary source events and is never offered for span placement in Auth mode; the same cells through the API form a span. Every witness carries a `provenance:xlsx` golden of zero placements, so a fix will show as a golden change.
+- **FORM-000128.** A family loaded through the Calamine reader reaches the engine as ordinary source events and is never offered for span placement in Auth mode; the same file through the Umya reader, or the same cells through the API, form a span. Every witness carries a `provenance:xlsx-calamine` golden of zero placements and a `provenance:xlsx-umya` golden equal to the API golden, so a fix will show as a golden change.
 - **Orientation.** The same independent family along a row is singletons through the API because ordinary grouping is keyed by column. The `horizontal` witness encodes zero placements.
 - **Coupled columns.** Two acyclic coupled families are placed and then both demoted as `CycleMember` by the producer-granular scheduler. The `coupled` witness encodes two placements, two demotions, zero active spans.

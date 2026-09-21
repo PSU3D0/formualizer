@@ -115,17 +115,26 @@ pub enum Materializer {
     #[cfg(feature = "xlsx")]
     Xlsx {
         path: PathBuf,
+        reader: XlsxReader,
         config: WorkbookConfig,
     },
+}
+/// Which workbook reader loads an xlsx artifact. The two readers take
+/// different formula ingest routes and are therefore distinct provenances.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum XlsxReader {
+    Calamine,
+    Umya,
 }
 impl Materializer {
     pub fn workbook_api(route: WorkbookRoute, config: WorkbookConfig) -> Self {
         Self::WorkbookApi { route, config }
     }
     #[cfg(feature = "xlsx")]
-    pub fn xlsx(path: impl Into<PathBuf>, config: WorkbookConfig) -> Self {
+    pub fn xlsx(path: impl Into<PathBuf>, reader: XlsxReader, config: WorkbookConfig) -> Self {
         Self::Xlsx {
             path: path.into(),
+            reader,
             config,
         }
     }
@@ -140,7 +149,10 @@ impl Materializer {
         match self {
             Self::WorkbookApi { .. } => Provenance::WorkbookApi,
             #[cfg(feature = "xlsx")]
-            Self::Xlsx { .. } => Provenance::Xlsx,
+            Self::Xlsx { reader, .. } => match reader {
+                XlsxReader::Calamine => Provenance::XlsxCalamine,
+                XlsxReader::Umya => Provenance::XlsxUmya,
+            },
         }
     }
     fn mode(&self) -> FormulaPlaneMode {
@@ -435,11 +447,28 @@ fn apply_step(
         *workbook = Some(match artifact {
             Artifact::Workbook(wb) => wb,
             Artifact::Xlsx(path) => {
-                use formualizer_workbook::{CalamineAdapter, LoadStrategy, SpreadsheetReader};
+                use formualizer_workbook::{
+                    CalamineAdapter, LoadStrategy, SpreadsheetReader, UmyaAdapter,
+                };
                 let config = materializer.config().clone();
-                let backend = CalamineAdapter::open_path(path).map_err(|e| e.to_string())?;
-                Workbook::from_reader(backend, LoadStrategy::EagerAll, config)
-                    .map_err(|e| e.to_string())?
+                let reader = match materializer {
+                    #[cfg(feature = "xlsx")]
+                    Materializer::Xlsx { reader, .. } => *reader,
+                    Materializer::WorkbookApi { .. } => XlsxReader::Calamine,
+                };
+                match reader {
+                    XlsxReader::Calamine => {
+                        let backend =
+                            CalamineAdapter::open_path(path).map_err(|e| e.to_string())?;
+                        Workbook::from_reader(backend, LoadStrategy::EagerAll, config)
+                            .map_err(|e| e.to_string())?
+                    }
+                    XlsxReader::Umya => {
+                        let backend = UmyaAdapter::open_path(path).map_err(|e| e.to_string())?;
+                        Workbook::from_reader(backend, LoadStrategy::EagerAll, config)
+                            .map_err(|e| e.to_string())?
+                    }
+                }
             }
         });
         return Ok(());

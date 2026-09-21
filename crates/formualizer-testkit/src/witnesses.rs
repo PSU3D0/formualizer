@@ -250,14 +250,22 @@ impl Kind {
         expect
     }
 
-    /// Observed for every witness at 256 rows when the same cells are loaded from
-    /// an xlsx written cell-by-cell (no shared-formula tags): the source-formula
-    /// ingress routes ordinary cells straight to legacy vertices and offers no
-    /// span candidates, so nothing is placed or demoted in either mode.
-    fn xlsx_structure_after_first_eval(self) -> StructureExpect {
+    /// The Umya reader hands ordinary cells to the same placement route as the
+    /// API, so its goldens match the API goldens.
+    fn umya_structure_after_first_eval(self, rows: u32) -> StructureExpect {
+        let mut expect = self.api_structure_after_first_eval(rows);
+        expect.provenance = Some(Provenance::XlsxUmya);
+        expect
+    }
+
+    /// Observed for every witness when the same cells are loaded through the
+    /// Calamine reader (FORM-000128): its source-formula ingress routes ordinary
+    /// cells straight to legacy vertices and offers no span candidates, so
+    /// nothing is placed or demoted. The Umya reader does not behave this way.
+    fn calamine_structure_after_first_eval(self) -> StructureExpect {
         StructureExpect {
             mode: Some(FormulaPlaneMode::AuthoritativeExperimental),
-            provenance: Some(Provenance::Xlsx),
+            provenance: Some(Provenance::XlsxCalamine),
             placed_families: Some(0),
             active_spans: Some(0),
             demotions: Some(DemotionExpect {
@@ -622,7 +630,14 @@ pub fn witness(kind: Kind, rows: u32) -> ScenarioSpec {
     // the recorded run is practical to collect.
     if rows < 1_000_000 {
         expects.push((2, Expect::Structure(kind.structure_after_first_eval(rows))));
-        expects.push((2, Expect::Structure(kind.xlsx_structure_after_first_eval())));
+        expects.push((
+            2,
+            Expect::Structure(kind.umya_structure_after_first_eval(rows)),
+        ));
+        expects.push((
+            2,
+            Expect::Structure(kind.calamine_structure_after_first_eval()),
+        ));
     }
     ScenarioSpec {
         id: format!("witness.{}", kind.id()),

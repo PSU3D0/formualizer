@@ -170,7 +170,7 @@ macro_rules! dimension {
 }
 dimension!(Family { Coupled => "coupled", Independent => "independent", Fixed => "fixed", Chain => "chain", Reverse => "reverse", Stride => "stride", Window => "window", Blocks => "blocks", SameRelative => "same-relative", Expanding => "expanding", Shifted => "shifted", Lookup => "lookup", Irregular => "irregular" });
 dimension!(Orientation { Vertical => "vertical", Horizontal => "horizontal" });
-dimension!(Provenance { Xlsx => "xlsx", WorkbookApi => "workbook-api" });
+dimension!(Provenance { XlsxCalamine => "xlsx-calamine", XlsxUmya => "xlsx-umya", WorkbookApi => "workbook-api" });
 dimension!(LifecycleOp { Load => "load", Evaluate => "evaluate", Edit => "edit", Structural => "structural", History => "history" });
 dimension!(EnginePath { Legacy => "legacy", FormulaPlane => "formula-plane", Demoted => "demoted" });
 dimension!(Purpose { Behavioral => "behavioral", EdgeCase => "edge-case", Parity => "parity", Trace => "trace", Benchmark => "benchmark" });

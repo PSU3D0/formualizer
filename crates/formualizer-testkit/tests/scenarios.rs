@@ -1,4 +1,5 @@
 use formualizer_eval::engine::FormulaPlaneMode;
+use formualizer_testkit::run::XlsxReader;
 use formualizer_testkit::scenario::ladder::{by_rows_or_class, covering_set};
 use formualizer_testkit::{
     materialize::WorkbookRoute,
@@ -28,12 +29,18 @@ fn execute_both(
             .into_result()
             .map_err(Failed::from)?;
     }
-    if filter.is_none_or(|filter| filter.allows_provenance(Provenance::Xlsx)) {
-        let path = env::temp_dir().join(format!("fz-scenario-{}-{mode:?}.xlsx", spec.id));
-        let xlsx = Materializer::xlsx(path, config(mode));
-        run(spec, mode, size, xlsx, recorder.as_ref())
-            .into_result()
-            .map_err(Failed::from)?;
+    for (provenance, reader) in [
+        (Provenance::XlsxCalamine, XlsxReader::Calamine),
+        (Provenance::XlsxUmya, XlsxReader::Umya),
+    ] {
+        if filter.is_none_or(|filter| filter.allows_provenance(provenance)) {
+            let path =
+                env::temp_dir().join(format!("fz-scenario-{}-{mode:?}-{reader:?}.xlsx", spec.id));
+            let xlsx = Materializer::xlsx(path, reader, config(mode));
+            run(spec, mode, size, xlsx, recorder.as_ref())
+                .into_result()
+                .map_err(Failed::from)?;
+        }
     }
     Ok(())
 }
@@ -328,9 +335,9 @@ fn filters_by_tag() -> Result<(), Failed> {
     if selected != ["coupled"] {
         return Err(format!("unexpected tag selection: {selected:?}").into());
     }
-    let provenance = Filter::from_str("provenance:xlsx").unwrap();
+    let provenance = Filter::from_str("provenance:xlsx-calamine").unwrap();
     if !provenance.matches(&specs[0])
-        || !provenance.allows_provenance(Provenance::Xlsx)
+        || !provenance.allows_provenance(Provenance::XlsxCalamine)
         || provenance.allows_provenance(Provenance::WorkbookApi)
     {
         return Err("run-time provenance filter failed".into());
