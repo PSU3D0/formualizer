@@ -405,3 +405,86 @@ pub fn built_in_registry(rows: u32) -> Vec<ScenarioSpec> {
 }
 
 pub use crate::witnesses::witness_registry;
+
+/// The standard witness size ladder. Witness value models and structural
+/// goldens are bound to rows, so a rung is a registry rather than an override.
+pub mod ladder {
+    use super::{ScenarioSize, ScenarioSpec, SizeClass};
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct Rung {
+        pub class: SizeClass,
+        pub rows: u32,
+    }
+
+    pub const RUNGS: &[Rung] = &[
+        Rung {
+            class: SizeClass::Small,
+            rows: 16,
+        },
+        Rung {
+            class: SizeClass::Small,
+            rows: 100,
+        },
+        Rung {
+            class: SizeClass::Small,
+            rows: 256,
+        },
+        Rung {
+            class: SizeClass::Medium,
+            rows: 1_000,
+        },
+        Rung {
+            class: SizeClass::Medium,
+            rows: 4_096,
+        },
+        Rung {
+            class: SizeClass::Large,
+            rows: 16_384,
+        },
+        Rung {
+            class: SizeClass::Large,
+            rows: 100_000,
+        },
+        Rung {
+            class: SizeClass::Nightly,
+            rows: 1_000_000,
+        },
+    ];
+    pub fn by_rows_or_class(value: &str) -> Option<Vec<Rung>> {
+        if value == "all" {
+            return Some(RUNGS.to_vec());
+        }
+        if let Ok(rows) = value.parse::<u32>() {
+            return RUNGS
+                .iter()
+                .copied()
+                .find(|r| r.rows == rows)
+                .map(|r| vec![r]);
+        }
+        let class = match value.to_ascii_lowercase().as_str() {
+            "small" => SizeClass::Small,
+            "medium" => SizeClass::Medium,
+            "large" => SizeClass::Large,
+            "nightly" => SizeClass::Nightly,
+            _ => return None,
+        };
+        Some(RUNGS.iter().copied().filter(|r| r.class == class).collect())
+    }
+    /// Full coverage is preferable to pairwise here: 14 × 8 is only 112 specs.
+    pub fn covering_set(rungs: impl IntoIterator<Item = Rung>) -> Vec<ScenarioSpec> {
+        rungs
+            .into_iter()
+            .flat_map(|rung| {
+                crate::witnesses::witness_registry(rung.rows)
+                    .into_iter()
+                    .map(move |mut spec| {
+                        spec.id = format!("{}@{}", spec.id, rung.rows);
+                        spec.tags.size = vec![rung.class];
+                        spec.sizes = vec![ScenarioSize::new(rung.class, rung.rows)];
+                        spec
+                    })
+            })
+            .collect()
+    }
+}

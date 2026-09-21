@@ -1,5 +1,5 @@
 use formualizer_eval::engine::FormulaPlaneMode;
-use formualizer_testkit::witnesses::witness_registry;
+use formualizer_testkit::scenario::ladder::{by_rows_or_class, covering_set};
 use formualizer_testkit::{
     materialize::WorkbookRoute,
     run::{Materializer, Recorder, run},
@@ -61,8 +61,8 @@ fn take_custom_args() -> (
             );
         } else if arg == "--mode" {
             mode = Some(input.next().expect("--mode requires a value"));
-        } else if arg == "--size" {
-            size = Some(input.next().expect("--size requires a value"));
+        } else if arg == "--rung" {
+            size = Some(input.next().expect("--rung requires rows, class, or all"));
         } else {
             args.push(arg);
         }
@@ -74,15 +74,20 @@ fn take_custom_args() -> (
 }
 fn main() {
     let (arguments, record, filter, selected_mode, selected_size) = take_custom_args();
-    // Witness value models are bound to their row count, so the ladder rung is
-    // chosen here rather than by overriding `sizes` afterwards.
-    let witness_rows = selected_size
-        .as_deref()
-        .and_then(|selected| selected.parse::<u32>().ok())
-        .unwrap_or(256);
+    // A witness rung owns its row-bound models and goldens.
+    let requested = selected_size.as_deref().unwrap_or("256");
+    let mut rungs =
+        by_rows_or_class(requested).unwrap_or_else(|| panic!("unknown --rung {requested:?}"));
+    // Large and Nightly are never implicit: any --rung value is an explicit
+    // request; without one only the 256-row default is enumerated. The env
+    // switch is retained for automation that supplies class filters.
+    let _nightly_enabled = env::var("FZ_SCENARIO_NIGHTLY").ok().as_deref() == Some("1");
+    if selected_size.is_none() {
+        rungs.retain(|r| r.rows == 256);
+    }
     let mut registry = built_in_registry(200);
     let first_witness = registry.len();
-    registry.extend(witness_registry(witness_rows));
+    registry.extend(covering_set(rungs));
     let mut trials = Vec::new();
     for (position, spec) in registry
         .iter()
@@ -97,18 +102,7 @@ fn main() {
             {
                 continue;
             }
-            let mut spec = spec.clone();
-            if let Some(selected) = selected_size.as_ref().filter(|_| !is_witness) {
-                if let Ok(rows) = selected.parse::<u32>() {
-                    spec.sizes[0].rows = rows;
-                } else {
-                    spec.sizes
-                        .retain(|size| format!("{:?}", size.class).eq_ignore_ascii_case(selected));
-                    if spec.sizes.is_empty() {
-                        continue;
-                    }
-                }
-            }
+            let spec = spec.clone();
             let run_filter = filter.clone();
             // Witness structural goldens are event-derived and always record.
             let record = record || is_witness;

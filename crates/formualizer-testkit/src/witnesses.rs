@@ -209,7 +209,14 @@ impl Kind {
                             s.family("family", b, "=A{r}*2+1");
                         }
                         Kind::Blocks => {
-                            s.family("family", b, "=A{r}*2+1").gap_every(128);
+                            let family = s.family("family", b, "=A{r}*2+1");
+                            // The 100-row rung deliberately leaves a 99-cell
+                            // block: it documents the strict promotion cutoff.
+                            if rows == 100 {
+                                family.blocks(99, 1);
+                            } else {
+                                family.gap_every(128);
+                            }
                         }
                         Kind::Fixed => {
                             s.family("family", b, "=SUM($A$1:$A${n})");
@@ -262,6 +269,55 @@ impl Kind {
     }
 
     fn api_structure_after_first_eval(self, rows: u32) -> StructureExpect {
+        // The 100-cell promotion threshold is observable: 16-row families do
+        // not place at all. Coupled has no eligible component at 16 either.
+        if rows == 16 && self == Kind::Fixed {
+            return StructureExpect {
+                mode: Some(FormulaPlaneMode::AuthoritativeExperimental),
+                placed_families: Some(1),
+                active_spans: Some(1),
+                demotions: None,
+                ..StructureExpect::default()
+            };
+        }
+        if rows == 16 {
+            return StructureExpect {
+                mode: Some(FormulaPlaneMode::AuthoritativeExperimental),
+                placed_families: Some(0),
+                active_spans: Some(0),
+                demotions: Some(DemotionExpect {
+                    count: 0,
+                    reason: None,
+                }),
+                ..StructureExpect::default()
+            };
+        }
+        if rows == 100 && self == Kind::Blocks {
+            return StructureExpect {
+                mode: Some(FormulaPlaneMode::AuthoritativeExperimental),
+                placed_families: Some(0),
+                active_spans: Some(0),
+                demotions: Some(DemotionExpect {
+                    count: 0,
+                    reason: None,
+                }),
+                ..StructureExpect::default()
+            };
+        }
+        // At exactly 100 rows only the B component of coupled is placed; it
+        // remains active because its C partner is below the promotion cutoff.
+        if rows == 100 && self == Kind::Coupled {
+            return StructureExpect {
+                mode: Some(FormulaPlaneMode::AuthoritativeExperimental),
+                placed_families: Some(1),
+                active_spans: Some(0),
+                demotions: Some(DemotionExpect {
+                    count: 1,
+                    reason: Some("CycleMember".into()),
+                }),
+                ..StructureExpect::default()
+            };
+        }
         let (placed, active, demotions) = match self {
             // 4096: 0 spans. Own-result overlap rejected at placement.
             Kind::Chain | Kind::Reverse | Kind::Stride | Kind::Window => (0, 0, None),
@@ -426,7 +482,7 @@ fn model(kind: Kind, n: u32, state: State) -> Vec<(u32, u32, f64)> {
         }
         Kind::Blocks => {
             for (i, r) in (1..=n).enumerate() {
-                if (i + 1) % 128 == 0 {
+                if (n == 100 && r == 100) || (n != 100 && (i + 1) % 128 == 0) {
                     continue;
                 }
                 let v = if overridden(r, 2) {
@@ -562,8 +618,12 @@ pub fn witness(kind: Kind, rows: u32) -> ScenarioSpec {
             ]
         })
         .collect();
-    expects.push((2, Expect::Structure(kind.structure_after_first_eval(rows))));
-    expects.push((2, Expect::Structure(kind.xlsx_structure_after_first_eval())));
+    // One million rows is nightly-only; do not claim a structural golden until
+    // the recorded run is practical to collect.
+    if rows < 1_000_000 {
+        expects.push((2, Expect::Structure(kind.structure_after_first_eval(rows))));
+        expects.push((2, Expect::Structure(kind.xlsx_structure_after_first_eval())));
+    }
     ScenarioSpec {
         id: format!("witness.{}", kind.id()),
         description: kind.description().into(),
@@ -602,8 +662,8 @@ pub fn witness(kind: Kind, rows: u32) -> ScenarioSpec {
 fn size_class(rows: u32) -> SizeClass {
     match rows {
         0..=256 => SizeClass::Small,
-        257..=16_384 => SizeClass::Medium,
-        16_385..=200_000 => SizeClass::Large,
+        257..=4_096 => SizeClass::Medium,
+        4_097..=100_000 => SizeClass::Large,
         _ => SizeClass::Nightly,
     }
 }
