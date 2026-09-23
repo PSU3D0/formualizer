@@ -4,6 +4,10 @@ All notable changes to Formualizer will be documented in this file.
 
 ## Unreleased
 
+### Performance
+
+- Stopped the Arrow ingest builder from allocating full-capacity lane builders it then drops. After a chunk flush, the next chunk's builders are created only when another row arrives, so the final flush of a sheet load (partial or at an exact chunk multiple) allocates nothing. Text payload space is no longer pre-reserved at 12 bytes per row for every column: the first chunk grows it on demand and later chunks reserve what the column's previous chunk used. Chunk layout, lane presence, null semantics and formats are unchanged.
+
 ## [0.9.3] - 2026-09-11
 
 - Aligned Rust product crates and Python/npm bindings at 0.9.3. Parser/common move together to **3.1.2** because the date/time text parsing change below lives in `formualizer-common`; `formualizer-parse` moves in lockstep with no source change and product crates now pin `formualizer-parse = "3.1.2"`. SheetPort spec remains 0.3.1.
