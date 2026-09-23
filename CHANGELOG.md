@@ -4,6 +4,10 @@ All notable changes to Formualizer will be documented in this file.
 
 ## Unreleased
 
+### Performance
+
+- Made repeated builtin loading a no-op once every builtin is registered. `load_builtins` runs from every formula-planning snapshot (once per ordered-fallback proposal on the Calamine authoritative route) and from template canonicalization, and it used to inspect the metadata of all ~409 builtins and take the registry write lock for each on every call. A completed pass is now remembered until a user registration displaces a builtin, and an already-registered builtin is detected under a read lock before any metadata inspection. User overrides of builtin names and their restoration by the next load behave as before. Remaining snapshot work is one metadata inspection per requested function.
+
 ## [0.9.3] - 2026-09-11
 
 - Aligned Rust product crates and Python/npm bindings at 0.9.3. Parser/common move together to **3.1.2** because the date/time text parsing change below lives in `formualizer-common`; `formualizer-parse` moves in lockstep with no source change and product crates now pin `formualizer-parse = "3.1.2"`. SheetPort spec remains 0.3.1.
