@@ -8,9 +8,11 @@
 //! 2. **Specialization**, keyed by `(shape, placement sheet)`: everything the
 //!    unmemoized path derives from the shape plus the pipeline's frozen
 //!    bindings (names, tables, sources, sheet registry, function provider,
-//!    policy). Valid only while the provider's planning revision and the
-//!    global function registry's semantic epoch are unchanged; the memo lives
-//!    no longer than one `IngestPipeline`.
+//!    policy). Reused only while the provider reports a planning revision
+//!    and neither it nor the global function registry's semantic epoch has
+//!    changed since the entry was derived; a provider without a revision
+//!    (`None`) gets no memo at all. The memo lives no longer than one
+//!    `IngestPipeline`.
 //! 3. **Per-placement work**, never memoized: dependency-plan replay through
 //!    `collect_reference` on the cell's own references (sheet resolution,
 //!    reversed ranges, range expansion versus subscription from the
@@ -36,14 +38,20 @@
 //!   input degrades to the unmemoized cost rather than quadratic work.
 //! - **Memory per pipeline.** At most [`MAX_SHAPES`] shapes,
 //!   [`MAX_SPECIALIZATIONS`] specializations and [`MAX_SEEN`] first-sighting
-//!   hashes. Stored shapes and specializations are charged their shape's
-//!   token count against [`MAX_STORED_TOKENS`], and a shape longer than
-//!   [`MAX_SHAPE_TOKENS`] is ineligible. A specialization's canonical
-//!   expression, keys and slot descriptors are linear in its shape's token
-//!   count, so the memo's footprint is linear in the charged total: the token
-//!   budget (8 MiB of stored tokens) plus proportional specialization data and
-//!   about 1 MiB of first-sighting hashes. Past any bound, new shapes take the
-//!   per-cell path; the memo is dropped with its pipeline.
+//!   hashes. The key walk stops as soon as a formula exceeds
+//!   [`MAX_SHAPE_TOKENS`] tokens or [`MAX_SHAPE_REFS`] references, so its
+//!   scratch buffers never grow past those bounds; such a formula is
+//!   ineligible. Stored shapes and specializations are charged their shape's
+//!   token count against [`MAX_STORED_TOKENS`] (8 MiB of stored tokens).
+//!   Variable-length specialization payloads (canonical keys and expression,
+//!   literal bindings including text, and the names, identifiers and sheet
+//!   names they spell out) are not proportional to the token count, so each
+//!   specialization is also charged an estimate of its retained bytes
+//!   ([`Specialization::retained_bytes`]) against [`MAX_STORED_BYTES`]; one
+//!   over [`MAX_SPECIALIZATION_BYTES`] is not retained and its shape takes the
+//!   per-cell path on that sheet. First-sighting hashes add about 1 MiB. Past
+//!   any bound, new shapes take the per-cell path; the memo is dropped with
+//!   its pipeline.
 
 use crate::SheetId;
 use crate::engine::arena::value_ref::ValueType;
@@ -71,6 +79,12 @@ pub(crate) const MAX_SPECIALIZATIONS: usize = MAX_SHAPES;
 pub(crate) const MAX_STORED_TOKENS: usize = 1 << 20;
 /// Longest eligible shape, in tokens.
 pub(crate) const MAX_SHAPE_TOKENS: usize = 4_096;
+/// Most reference nodes in an eligible shape.
+pub(crate) const MAX_SHAPE_REFS: usize = 1_024;
+/// Largest retained specialization, in estimated bytes.
+pub(crate) const MAX_SPECIALIZATION_BYTES: usize = 256 << 10;
+/// Estimated bytes of specialization payload retained per pipeline.
+pub(crate) const MAX_STORED_BYTES: usize = 64 << 20;
 
 const T_EMPTY: u64 = 1;
 const T_INT: u64 = 2;
@@ -107,6 +121,43 @@ pub(crate) struct Specialization {
     pub(crate) visit: Box<[u32]>,
 }
 
+impl Specialization {
+    /// Conservative estimate of the heap and inline bytes this entry keeps
+    /// alive. The canonical keys are measured exactly. The canonical
+    /// expression and the reference slot descriptors hold no string that the
+    /// exact key does not spell out, so each is charged the exact key's
+    /// length again plus a node-size term per shape token; literal bindings
+    /// are charged their text.
+    pub(crate) fn retained_bytes(&self, shape_tokens: usize) -> usize {
+        use std::mem::size_of;
+        let literal_text: usize = self
+            .literal_bindings
+            .iter()
+            .map(|value| match value {
+                LiteralValue::Text(text) => text.len(),
+                LiteralValue::Error(error) => error.message.as_ref().map_or(0, String::len) + 64,
+                _ => 0,
+            })
+            .sum();
+        let exact = self.exact_canonical_key.len();
+        size_of::<Self>()
+            + exact
+            + self.parameterized_canonical_key.len()
+            + exact
+            + shape_tokens * size_of::<CanonicalExpr>()
+            + self.literal_bindings.len() * size_of::<LiteralValue>()
+            + literal_text
+            + self.literal_slot_descriptors.len() * size_of::<LiteralSlotDescriptor>()
+            + self.value_ref_slot_descriptors.len() * size_of::<ValueRefSlotDescriptor>()
+            + exact
+            + self
+                .read_projections
+                .as_ref()
+                .map_or(0, |p| p.len() * size_of::<ReadProjection>())
+            + self.visit.len() * size_of::<u32>()
+    }
+}
+
 /// Work counts per product for one pipeline.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct MemoCounts {
@@ -125,7 +176,9 @@ pub(crate) struct MemoCounts {
 /// What a memo entry's semantics depend on besides the pipeline's frozen
 /// bindings: the function provider's planning revision and the global
 /// function registry's semantic epoch (read lock-free, since callers may hold
-/// a registry epoch read guard). Any change clears the memo.
+/// a registry epoch read guard). Any observed change clears the memo. The two
+/// values are sampled separately, not as one atomic snapshot; a provider
+/// without a revision disables the memo instead.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct MemoValidity {
     pub(crate) provider_revision: Option<u64>,
@@ -155,6 +208,8 @@ pub(crate) struct ShapeMemo {
     specializations: FxHashMap<(u32, SheetId), Option<Specialization>>,
     /// Tokens charged against `MAX_STORED_TOKENS`.
     stored_tokens: usize,
+    /// Estimated specialization bytes charged against `MAX_STORED_BYTES`.
+    stored_bytes: usize,
     pub(crate) tokens: Vec<u64>,
     pub(crate) refs: Vec<CompactRefType>,
     /// Test hook: replace every bucket hash with this value (simulates
@@ -186,6 +241,7 @@ impl Default for ShapeMemo {
             shapes: Vec::new(),
             specializations: Default::default(),
             stored_tokens: 0,
+            stored_bytes: 0,
             tokens: Vec::new(),
             refs: Vec::new(),
             #[cfg(test)]
@@ -215,6 +271,7 @@ impl ShapeMemo {
             self.shapes.clear();
             self.specializations.clear();
             self.stored_tokens = 0;
+            self.stored_bytes = 0;
             self.validity = Some(validity);
         }
     }
@@ -289,6 +346,9 @@ impl ShapeMemo {
             && self.stored_tokens + self.shapes[shape as usize].len() <= MAX_STORED_TOKENS
     }
 
+    /// Retain `specialization` for `(shape, sheet)`. One whose estimated
+    /// bytes exceed [`MAX_SPECIALIZATION_BYTES`] or the remaining
+    /// [`MAX_STORED_BYTES`] is dropped and recorded as unmemoizable.
     pub(crate) fn insert_specialization(
         &mut self,
         shape: u32,
@@ -298,8 +358,30 @@ impl ShapeMemo {
         if !self.can_insert_specialization(shape) {
             return;
         }
-        self.stored_tokens += self.shapes[shape as usize].len();
+        let shape_tokens = self.shapes[shape as usize].len();
+        let specialization = specialization.filter(|specialization| {
+            let bytes = specialization.retained_bytes(shape_tokens);
+            if bytes > MAX_SPECIALIZATION_BYTES || self.stored_bytes + bytes > MAX_STORED_BYTES {
+                return false;
+            }
+            self.stored_bytes += bytes;
+            true
+        });
+        self.stored_tokens += shape_tokens;
         self.specializations.insert((shape, sheet), specialization);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn stored_bytes(&self) -> usize {
+        self.stored_bytes
+    }
+
+    #[cfg(test)]
+    pub(crate) fn retained_specializations(&self) -> usize {
+        self.specializations
+            .values()
+            .filter(|s| s.is_some())
+            .count()
     }
 
     #[cfg(test)]
@@ -335,7 +417,29 @@ pub(crate) fn shape_tokens(
     refs.clear();
     let anchor_row = placement.coord.row() + 1;
     let anchor_col = placement.coord.col() + 1;
-    walk(data_store, root, anchor_row, anchor_col, tokens, refs)
+    let eligible = walk(data_store, root, anchor_row, anchor_col, tokens, refs);
+    if !eligible {
+        tokens.clear();
+        refs.clear();
+    }
+    // The walk never exceeds the bounds, but keep retained scratch capacity
+    // bounded regardless of how the buffers were grown.
+    if tokens.capacity() > MAX_SHAPE_TOKENS {
+        tokens.shrink_to(MAX_SHAPE_TOKENS);
+    }
+    if refs.capacity() > MAX_SHAPE_REFS {
+        refs.shrink_to(MAX_SHAPE_REFS);
+    }
+    eligible
+}
+
+/// Append `items` unless that would exceed [`MAX_SHAPE_TOKENS`].
+fn emit<const N: usize>(tokens: &mut Vec<u64>, items: [u64; N]) -> bool {
+    if tokens.len() + N > MAX_SHAPE_TOKENS {
+        return false;
+    }
+    tokens.extend(items);
+    true
 }
 
 fn sheet_token(sheet: Option<SheetKey>) -> u64 {
@@ -370,25 +474,45 @@ fn walk(
     };
     match *node {
         AstNodeData::Literal(value_ref) => match value_ref.value_type() {
-            ValueType::Empty => tokens.push(T_EMPTY),
+            ValueType::Empty => {
+                if !emit(tokens, [T_EMPTY]) {
+                    return false;
+                }
+            }
             ValueType::SmallInt | ValueType::LargeInt => {
                 let LiteralValue::Int(value) = data_store.retrieve_value(value_ref) else {
                     return false;
                 };
-                tokens.extend([T_INT, value as u64]);
+                if !emit(tokens, [T_INT, value as u64]) {
+                    return false;
+                }
             }
             ValueType::Number => {
                 let LiteralValue::Number(value) = data_store.retrieve_value(value_ref) else {
                     return false;
                 };
-                tokens.extend([T_NUMBER, value.to_bits()]);
+                if !emit(tokens, [T_NUMBER, value.to_bits()]) {
+                    return false;
+                }
             }
             // Literal texts are interned, so equal texts have equal refs.
-            ValueType::String => tokens.extend([T_TEXT, u64::from(value_ref.as_raw())]),
-            ValueType::Boolean => tokens.extend([T_BOOL, u64::from(value_ref.as_raw())]),
+            ValueType::String => {
+                if !emit(tokens, [T_TEXT, u64::from(value_ref.as_raw())]) {
+                    return false;
+                }
+            }
+            ValueType::Boolean => {
+                if !emit(tokens, [T_BOOL, u64::from(value_ref.as_raw())]) {
+                    return false;
+                }
+            }
             _ => return false,
         },
-        AstNodeData::Omitted => tokens.push(T_OMITTED),
+        AstNodeData::Omitted => {
+            if !emit(tokens, [T_OMITTED]) {
+                return false;
+            }
+        }
         AstNodeData::Reference {
             original_id,
             ref_type,
@@ -409,13 +533,20 @@ fn walk(
                     col,
                     row_abs,
                     col_abs,
-                } => tokens.extend([
-                    T_CELL,
-                    sheet_token(sheet),
-                    u64::from(row_abs) | (u64::from(col_abs) << 1),
-                    axis_token(row, anchor_row, row_abs),
-                    axis_token(col, anchor_col, col_abs),
-                ]),
+                } => {
+                    if !emit(
+                        tokens,
+                        [
+                            T_CELL,
+                            sheet_token(sheet),
+                            u64::from(row_abs) | (u64::from(col_abs) << 1),
+                            axis_token(row, anchor_row, row_abs),
+                            axis_token(col, anchor_col, col_abs),
+                        ],
+                    ) {
+                        return false;
+                    }
+                }
                 CompactRefType::Range {
                     sheet,
                     start_row,
@@ -458,20 +589,29 @@ fn walk(
                             axis_token(end_col, anchor_col, end_col_abs),
                         )
                     };
-                    tokens.extend([T_RANGE, sheet_token(sheet), flags, sr, sc, er, ec]);
+                    if !emit(tokens, [T_RANGE, sheet_token(sheet), flags, sr, sc, er, ec]) {
+                        return false;
+                    }
                 }
                 CompactRefType::NamedRange(name) => {
-                    tokens.extend([T_NAME, u64::from(name.as_u32())]);
+                    if !emit(tokens, [T_NAME, u64::from(name.as_u32())]) {
+                        return false;
+                    }
                 }
                 CompactRefType::External { .. }
                 | CompactRefType::Table { .. }
                 | CompactRefType::Cell3D { .. }
                 | CompactRefType::Range3D { .. } => return false,
             }
+            if refs.len() >= MAX_SHAPE_REFS {
+                return false;
+            }
             refs.push(ref_type);
         }
         AstNodeData::UnaryOp { op_id, expr_id } => {
-            tokens.extend([T_UNARY, u64::from(op_id.as_u32())]);
+            if !emit(tokens, [T_UNARY, u64::from(op_id.as_u32())]) {
+                return false;
+            }
             return walk(data_store, expr_id, anchor_row, anchor_col, tokens, refs);
         }
         AstNodeData::BinaryOp {
@@ -479,7 +619,9 @@ fn walk(
             left_id,
             right_id,
         } => {
-            tokens.extend([T_BINARY, u64::from(op_id.as_u32())]);
+            if !emit(tokens, [T_BINARY, u64::from(op_id.as_u32())]) {
+                return false;
+            }
             return walk(data_store, left_id, anchor_row, anchor_col, tokens, refs)
                 && walk(data_store, right_id, anchor_row, anchor_col, tokens, refs);
         }
@@ -487,7 +629,12 @@ fn walk(
             let Some(args) = data_store.get_args(id) else {
                 return false;
             };
-            tokens.extend([T_FUNCTION, u64::from(name_id.as_u32()), args.len() as u64]);
+            if !emit(
+                tokens,
+                [T_FUNCTION, u64::from(name_id.as_u32()), args.len() as u64],
+            ) {
+                return false;
+            }
             return args
                 .iter()
                 .all(|&arg| walk(data_store, arg, anchor_row, anchor_col, tokens, refs));
@@ -496,12 +643,17 @@ fn walk(
             let Some((_, _, elements)) = data_store.get_array_elems(id) else {
                 return false;
             };
-            tokens.extend([
-                T_ARRAY,
-                u64::from(rows),
-                u64::from(cols),
-                elements.len() as u64,
-            ]);
+            if !emit(
+                tokens,
+                [
+                    T_ARRAY,
+                    u64::from(rows),
+                    u64::from(cols),
+                    elements.len() as u64,
+                ],
+            ) {
+                return false;
+            }
             return elements
                 .iter()
                 .all(|&element| walk(data_store, element, anchor_row, anchor_col, tokens, refs));
@@ -715,5 +867,60 @@ mod tests {
             ..validity()
         });
         assert_eq!(memo.footprint(), (0, 0, 0, 0));
+    }
+
+    fn specialization_with_key(bytes: usize) -> Specialization {
+        let key: Arc<str> = Arc::from("k".repeat(bytes));
+        Specialization {
+            canonical_hash: 0,
+            exact_canonical_hash: 0,
+            exact_canonical_key: key.clone(),
+            parameterized_canonical_hash: 0,
+            parameterized_canonical_key: key,
+            literal_slot_descriptors: Arc::from(Vec::new()),
+            literal_bindings: vec![LiteralValue::Text("t".repeat(bytes))].into_boxed_slice(),
+            value_ref_slot_descriptors: Arc::from(Vec::new()),
+            expr: CanonicalExpr::Omitted,
+            labels: CanonicalLabels::default(),
+            read_projections: None,
+            read_projection_fallback: None,
+            volatile: false,
+            dynamic: false,
+            visit: Box::new([]),
+        }
+    }
+
+    // Retained specialization bytes are charged: an oversized one is not
+    // retained, and the aggregate stays within MAX_STORED_BYTES.
+    #[test]
+    fn specialization_bytes_are_bounded() {
+        let mut memo = ShapeMemo::default();
+        memo.revalidate(validity());
+        let mut shapes = Vec::new();
+        for shape in 0..2_000u64 {
+            for _ in 0..2 {
+                if let ShapeLookup::Shape(index, true) = lookup(&mut memo, &[T_INT, shape]) {
+                    shapes.push(index);
+                }
+            }
+        }
+        memo.insert_specialization(
+            shapes[0],
+            0,
+            Some(specialization_with_key(MAX_SPECIALIZATION_BYTES)),
+        );
+        assert_eq!(memo.retained_specializations(), 0);
+        assert_eq!(memo.stored_bytes(), 0);
+        for &shape in &shapes[1..] {
+            memo.insert_specialization(shape, 0, Some(specialization_with_key(40 << 10)));
+        }
+        let retained = memo.retained_specializations();
+        assert!(retained > 0 && retained < shapes.len() - 1, "{retained}");
+        assert!(
+            memo.stored_bytes() <= MAX_STORED_BYTES,
+            "{}",
+            memo.stored_bytes()
+        );
+        assert!(memo.stored_bytes() > MAX_STORED_BYTES - MAX_SPECIALIZATION_BYTES);
     }
 }

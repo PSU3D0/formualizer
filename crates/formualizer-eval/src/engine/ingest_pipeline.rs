@@ -213,6 +213,11 @@ impl<'a> IngestPipeline<'a> {
         counts
     }
 
+    #[cfg(test)]
+    pub(crate) fn shape_memo_state(&self) -> Option<&ShapeMemo> {
+        self.shape_memo.as_deref()
+    }
+
     pub(crate) fn enable_function_semantics(mut self) -> Self {
         self.function_semantics_enabled = true;
         self
@@ -258,6 +263,15 @@ impl<'a> IngestPipeline<'a> {
         placement: CellRef,
         formula_text: &Option<Arc<str>>,
     ) -> Option<Result<IngestedFormula, ExcelError>> {
+        // Never take the global registry lock here: callers may already hold
+        // a semantic-epoch read guard, and a second read behind a waiting
+        // writer deadlocks. The provider revision and the registry's epoch
+        // mirror are lock-free; a function registered mid-pipeline changes
+        // the epoch and clears the memo before any later lookup. A provider
+        // without a planning revision cannot prove its semantics unchanged
+        // between cells, so it gets no memo.
+        let validity = MemoValidity::current(self.function_provider);
+        validity.provider_revision?;
         let eligible = shape_memo::shape_tokens(
             self.data_store,
             id,
@@ -268,12 +282,6 @@ impl<'a> IngestPipeline<'a> {
         if !eligible {
             return None;
         }
-        // Never take the global registry lock here: callers may already hold
-        // a semantic-epoch read guard, and a second read behind a waiting
-        // writer deadlocks. The provider revision and the registry's epoch
-        // mirror are lock-free; a function registered mid-pipeline changes
-        // the epoch and clears the memo before any later lookup.
-        let validity = MemoValidity::current(self.function_provider);
         memo.revalidate(validity);
         let shape = match memo.lookup_shape() {
             ShapeLookup::Shape(shape, inserted) => {
