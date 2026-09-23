@@ -615,7 +615,7 @@ fn flip_inputs(
 ) -> Vec<(crate::engine::arena::AstNodeId, CellRef)> {
     let sheet = engine.graph.sheet_id_mut("Sheet1");
     rows.map(|r| {
-        let ast_id = engine.intern_formula_ast(&parse(&format!("=FORMFLIP(A{r})+1")).unwrap());
+        let ast_id = engine.intern_formula_ast(&parse(format!("=FORMFLIP(A{r})+1")).unwrap());
         (
             ast_id,
             CellRef::new(sheet, Coord::from_excel(r, 2, true, true)),
