@@ -4,10 +4,16 @@
 //! legacy graph stays the runtime evaluation path until M1b.
 
 pub mod avl;
+pub mod canon;
+pub mod dir;
+pub mod extract;
 pub mod geom;
+pub mod groups;
 pub mod identity;
+pub mod level_index;
 pub mod proj;
 pub mod slots;
+pub mod store;
 pub mod template;
 
 #[cfg(test)]
