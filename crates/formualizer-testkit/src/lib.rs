@@ -1,6 +1,8 @@
 pub mod fp_coverage;
 pub mod materialize;
 #[cfg(feature = "workbook")]
+pub mod pins;
+#[cfg(feature = "workbook")]
 pub mod run;
 #[cfg(feature = "workbook")]
 pub mod scenario;

@@ -11,6 +11,7 @@ One scenario definition serves behavioral tests, edge cases, Off/Auth parity, st
 | Scenario | `testkit::scenario`, `testkit::witnesses` | `ScenarioSpec` = shape + `Script` + per-step `Expect` + tags + modes + size. The fourteen pre-M4 witnesses live in `witnesses`. |
 | Run | `testkit::run` | `run(spec, mode, size, materializer, recorder)`; the `Recorder` tracing layer; structural checks. |
 | Runner | `tests/scenarios.rs` | libtest-mimic binary: one named test per `(spec, mode)`, filters, `--record`, `--rung`. |
+| Pins | `testkit::pins` | Program 1 M0 behavioral pins (`pin.*`): FORM-000117 structural undo, sheet delete and re-add, the preparation-failure table per route, and the M3 span-ownership regressions as value-level scenarios with first-principles column models. Registered at the default rung. |
 | Adapter | `bench-core::scenarios::unified_registry` | Exposes the 87 legacy `Scenario` impls as specs beside the witnesses; `probe-unified-registry` consumes the union. |
 
 Feature gating: testkit `default = ["xlsx"]`; `workbook` adds the API materializer, scenarios, runner and Recorder (and turns on `formualizer-eval/tracing`). `--no-default-features` keeps `shape` engine-free, which is how `formualizer-eval` dev-tests use it.

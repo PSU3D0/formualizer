@@ -1755,6 +1755,7 @@ version = "0.1.0"
 dependencies = [
  "formualizer-common",
  "formualizer-eval",
+ "formualizer-parse",
  "formualizer-workbook",
  "libtest-mimic",
  "tempfile",

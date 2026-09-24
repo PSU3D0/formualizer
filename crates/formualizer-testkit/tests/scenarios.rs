@@ -93,6 +93,11 @@ fn main() {
         rungs.retain(|r| r.rows == 256);
     }
     let mut registry = built_in_registry(200);
+    // M0 pins are fixed-size behavioral scenarios; they run at the default
+    // rung only.
+    if selected_size.is_none() {
+        registry.extend(formualizer_testkit::pins::pin_registry());
+    }
     let first_witness = registry.len();
     registry.extend(covering_set(rungs));
     let mut trials = Vec::new();
