@@ -12,6 +12,30 @@ use formualizer_parse::parser::{
 };
 use rustc_hash::FxHashSet;
 
+/// Whether an unbound external range defers to evaluation instead of failing
+/// preparation.
+///
+/// Until the parser kept external ranges whole, no formula text reached the
+/// engine as an external range: `[1]S!A1:B2` arrived as an external cell, `:`
+/// and a local cell (preparation fails with `#NAME?`), and whole-row/column
+/// forms such as `[1]S!$B:$B` arrived as two unresolved names (the formula
+/// loads and evaluates to `#REF!`). Both observable outcomes are kept per form
+/// pending the external-reference oracle (semantics log OQ-1).
+pub(crate) fn unbound_external_range_defers(
+    kind: &formualizer_parse::parser::ExternalRefKind,
+) -> bool {
+    match kind {
+        formualizer_parse::parser::ExternalRefKind::Cell { .. } => false,
+        formualizer_parse::parser::ExternalRefKind::Range {
+            start_row,
+            start_col,
+            end_row,
+            end_col,
+            ..
+        } => start_row.is_none() || start_col.is_none() || end_row.is_none() || end_col.is_none(),
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DeclaredSheet<'a> {
     Current,

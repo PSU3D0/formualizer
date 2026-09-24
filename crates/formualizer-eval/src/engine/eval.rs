@@ -27366,7 +27366,16 @@ where
                     }
                     formualizer_parse::parser::ExternalRefKind::Range { .. } => {
                         let Some(source) = self.graph.resolve_source_table_entry(name) else {
-                            return Err(ExcelError::new(ExcelErrorKind::Name)
+                            // A deferred (whole-row/column) external range
+                            // evaluates to #REF!, as it did before the parser
+                            // kept it whole (see `unbound_external_range_defers`).
+                            let kind =
+                                if crate::engine::refs::unbound_external_range_defers(&ext.kind) {
+                                    ExcelErrorKind::Ref
+                                } else {
+                                    ExcelErrorKind::Name
+                                };
+                            return Err(ExcelError::new(kind)
                                 .with_message(format!("Undefined table: {name}")));
                         };
                         let version = source

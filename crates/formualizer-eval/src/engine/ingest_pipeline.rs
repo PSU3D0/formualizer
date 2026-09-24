@@ -694,6 +694,9 @@ impl<'a> IngestPipeline<'a> {
                     if self.sources.resolve_table(name).is_some() {
                         plan.source_refs.push(name.to_string());
                         Ok(())
+                    } else if crate::engine::refs::unbound_external_range_defers(&ext.kind) {
+                        plan.named_refs.push(name.to_string());
+                        Ok(())
                     } else {
                         Err(ExcelError::new(ExcelErrorKind::Name)
                             .with_message(format!("Undefined table: {name}")))

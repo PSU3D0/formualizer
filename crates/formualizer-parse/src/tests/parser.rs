@@ -4191,3 +4191,132 @@ mod parser_hardening {
         }
     }
 }
+
+/// An external-workbook range (`[16]jan94!$A$53:$IV$163`) is one reference.
+/// The `[book]` qualifier used to be mistaken for a structured-reference
+/// bracket, so `:` was emitted as an operator and the end corner became a
+/// local reference on the formula's own sheet.
+#[cfg(test)]
+mod external_range_tests {
+    use crate::parser::{
+        ASTNodeType, ExternalBookRef, ExternalRefKind, ExternalReference, ReferenceType, parse,
+    };
+    use crate::tokenizer::{TokenStream, Tokenizer};
+
+    fn token_values(formula: &str) -> Vec<String> {
+        let legacy: Vec<String> = Tokenizer::new(formula)
+            .unwrap()
+            .items
+            .iter()
+            .map(|token| token.value.clone())
+            .collect();
+        let spans: Vec<String> = TokenStream::new(formula)
+            .unwrap()
+            .to_tokens()
+            .into_iter()
+            .map(|token| token.value)
+            .collect();
+        assert_eq!(legacy, spans, "tokenizers disagree on {formula}");
+        legacy
+    }
+
+    fn single_reference(formula: &str) -> ReferenceType {
+        match parse(formula).unwrap().node_type {
+            ASTNodeType::Reference { reference, .. } => reference,
+            other => panic!("{formula}: expected one reference, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn external_range_is_one_operand_and_one_reference() {
+        let formula = "=SUM([16]jan94!$A$53:$IV$163)";
+        assert_eq!(
+            token_values(formula),
+            vec!["SUM(", "[16]jan94!$A$53:$IV$163", ")"]
+        );
+        let ASTNodeType::Function { args, .. } = parse(formula).unwrap().node_type else {
+            panic!("expected SUM call");
+        };
+        assert_eq!(args.len(), 1);
+        let ASTNodeType::Reference { reference, .. } = &args[0].node_type else {
+            panic!("expected a reference argument, got {:?}", args[0].node_type);
+        };
+        assert_eq!(
+            reference,
+            &ReferenceType::External(ExternalReference {
+                raw: "[16]jan94!$A$53:$IV$163".to_string(),
+                book: ExternalBookRef::Token("[16]".to_string()),
+                sheet: "jan94".to_string(),
+                kind: ExternalRefKind::range_with_abs(
+                    Some(53),
+                    Some(1),
+                    Some(163),
+                    Some(256),
+                    true,
+                    true,
+                    true,
+                    true,
+                ),
+            })
+        );
+    }
+
+    #[test]
+    fn external_range_forms_match_their_local_counterparts() {
+        for (formula, sheet, kind) in [
+            (
+                "=[Book.xlsx]Sheet1!A1:B2",
+                "Sheet1",
+                ExternalRefKind::range(Some(1), Some(1), Some(2), Some(2)),
+            ),
+            (
+                "='[My Book.xlsx]S 1'!A1:B2",
+                "S 1",
+                ExternalRefKind::range(Some(1), Some(1), Some(2), Some(2)),
+            ),
+            (
+                "=[1]S!A:A",
+                "S",
+                ExternalRefKind::range(None, Some(1), None, Some(1)),
+            ),
+            (
+                "=[1]S!1:3",
+                "S",
+                ExternalRefKind::range(Some(1), None, Some(3), None),
+            ),
+            (
+                "='C:\\x\\[B.xlsx]S'!A1:B2",
+                "S",
+                ExternalRefKind::range(Some(1), Some(1), Some(2), Some(2)),
+            ),
+        ] {
+            assert_eq!(token_values(formula).len(), 1, "{formula}");
+            match single_reference(formula) {
+                ReferenceType::External(ext) => {
+                    assert_eq!(ext.raw, &formula[1..], "{formula}");
+                    assert_eq!(ext.sheet, sheet, "{formula}");
+                    assert_eq!(ext.kind, kind, "{formula}");
+                }
+                other => panic!("{formula}: expected external range, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn colon_between_qualified_or_structured_operands_stays_an_operator() {
+        for (formula, tokens) in [
+            ("=[1]S!A1:[1]S!B2", vec!["[1]S!A1", ":", "[1]S!B2"]),
+            ("=[1]S!A1:Sheet2!B2", vec!["[1]S!A1", ":", "Sheet2!B2"]),
+            ("=[1]S!A1:B2:C3", vec!["[1]S!A1:B2", ":", "C3"]),
+            ("=Table1[A]:Table1[B]", vec!["Table1[A]", ":", "Table1[B]"]),
+            (
+                "=Sheet1!Table1[A]:Table1[B]",
+                vec!["Sheet1!Table1[A]", ":", "Table1[B]"],
+            ),
+            ("=[1]S!Table1[A]:B2", vec!["[1]S!Table1[A]", ":", "B2"]),
+            ("=Sheet1!A1:Sheet1!B2", vec!["Sheet1!A1", ":", "Sheet1!B2"]),
+        ] {
+            assert_eq!(token_values(formula), tokens, "{formula}");
+        }
+    }
+}

@@ -83,6 +83,11 @@ fn collect_graph_reference(
                 if let Some(source) = context.graph.resolve_source_table_entry(name) {
                     context.dependencies.insert(source.vertex);
                     Ok(())
+                } else if crate::engine::refs::unbound_external_range_defers(&external.kind)
+                    && context.unresolved_name_policy == UnresolvedNamePolicy::Collect
+                {
+                    context.unresolved_names.insert(name.to_string());
+                    Ok(())
                 } else {
                     Err(ExcelError::new(ExcelErrorKind::Name)
                         .with_message(format!("Undefined table: {name}")))

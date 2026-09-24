@@ -12,6 +12,7 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Fixed
 
+- Fixed parsing of external-workbook ranges such as `[16]jan94!$A$53:$IV$163`, `[1]Sheet1!A:A` and `'[Book.xlsx]My Sheet'!A1:B2`. The tokenizer took the `[book]` qualifier for a structured-reference bracket and split the text at `:`, so the formula parsed as an external cell, the range operator and a *local* reference to the end corner on the formula's own sheet. It is now one external range reference, the same as the local form. In the engine it binds to the source table named by its full text and no longer depends on the local end-corner cell. Unbound, the outcomes are unchanged: a finite external range still fails preparation with `#NAME?`, and a whole-row or whole-column one still loads and evaluates to `#REF!`. Colons between two qualified operands (`[1]S!A1:[1]S!B2`) and between structured references (`Table1[A]:Table1[B]`) are still range operators.
 - Fixed defining a name over a whole-sheet (or any range of 2^32 or more cells) range. The range's cell count was computed in 32 bits and wrapped, so the range passed the small-range expansion check and was expanded cell by cell: a panic in debug builds and an effectively endless loop in release. The count is now computed in 64 bits and compared with the limit before any narrowing, so such names bind as range dependencies like other large ranges.
 
 ## [0.9.3] - 2026-09-11
