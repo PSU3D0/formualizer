@@ -4,9 +4,12 @@ use formualizer_workbook::Workbook;
 
 use super::common::{ScaleState, fixture_path};
 use super::{
-    EditPlan, ExpectedFailure, ExpectedFailureMode, FixtureMetadata, Scenario, ScenarioBuildCtx,
-    ScenarioFixture, ScenarioInvariant, ScenarioPhase, ScenarioScale, ScenarioTag,
+    EditPlan, ExpectedFailure, ExpectedFailureMode, FixtureMetadata, RunnerFailure, Scenario,
+    ScenarioBuildCtx, ScenarioFixture, ScenarioInvariant, ScenarioPhase, ScenarioScale,
+    ScenarioTag,
 };
+
+const UNSUPPORTED: &str = "s040 requires undoable row inserts, but Workbook exposes only undo/redo and Engine::insert_rows via engine_mut(); WorkbookAction has no insert_rows method and using engine_mut() would not exercise Workbook undo/redo";
 
 pub struct S040UndoRedoOfRowInsert {
     scale: ScaleState,
@@ -56,10 +59,18 @@ impl Scenario for S040UndoRedoOfRowInsert {
             ExpectedFailure {
                 mode: ExpectedFailureMode::OffOnly,
                 reason: "Workbook public API has no undoable insert_rows; engine_mut().insert_rows would bypass the Workbook undo/redo machinery this scenario tries to test. PM follow-up: add Workbook surface for structural ops.",
+                runner_failure: RunnerFailure::Action {
+                    step: 3,
+                    message: UNSUPPORTED,
+                },
             },
             ExpectedFailure {
                 mode: ExpectedFailureMode::AuthOnly,
                 reason: "Workbook public API has no undoable insert_rows; engine_mut().insert_rows would bypass the Workbook undo/redo machinery this scenario tries to test. PM follow-up: add Workbook surface for structural ops.",
+                runner_failure: RunnerFailure::Action {
+                    step: 3,
+                    message: UNSUPPORTED,
+                },
             },
         ]
     }
@@ -104,7 +115,5 @@ impl Scenario for S040UndoRedoOfRowInsert {
 }
 
 fn apply_edit(_wb: &mut Workbook, _cycle: usize) -> Result<&'static str, anyhow::Error> {
-    bail!(
-        "s040 requires undoable row inserts, but Workbook exposes only undo/redo and Engine::insert_rows via engine_mut(); WorkbookAction has no insert_rows method and using engine_mut() would not exercise Workbook undo/redo"
-    )
+    bail!(UNSUPPORTED)
 }

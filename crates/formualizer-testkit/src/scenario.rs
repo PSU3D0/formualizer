@@ -214,13 +214,16 @@ pub struct ScenarioSpec {
 }
 
 /// A tracked defect: the run must fail in this mode (and provenance, when
-/// given). A matching run that passes is reported as a failure so the marker
-/// is removed when the defect is fixed.
+/// given), with exactly the `failure` fingerprint. A matching run that passes,
+/// or that fails anywhere else or with another message, is reported as a
+/// failure: the marker is removed when the defect is fixed and cannot hide an
+/// unrelated regression.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExpectedFailureSpec {
     pub mode: FormulaPlaneMode,
     /// `None` applies to every provenance.
     pub provenance: Option<Provenance>,
+    pub failure: FailureFingerprint,
     pub reason: String,
 }
 impl ExpectedFailureSpec {
@@ -229,6 +232,51 @@ impl ExpectedFailureSpec {
             && self
                 .provenance
                 .is_none_or(|expected| expected == provenance)
+    }
+}
+
+/// Which part of a step failed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FailureStage {
+    /// Applying the step (load, edit, evaluation, custom action) returned an error.
+    Action,
+    /// An expectation attached to the step did not hold.
+    Expectation,
+}
+
+/// The exact failure a tracked defect produces: the failing step, the stage
+/// and the complete message (without the `step N: ` prefix). Messages carry the
+/// cell and the observed value (or the error text), so a different mismatch at
+/// the same step does not match.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FailureFingerprint {
+    pub step: usize,
+    pub stage: FailureStage,
+    pub message: String,
+}
+impl FailureFingerprint {
+    pub fn action(step: usize, message: impl Into<String>) -> Self {
+        Self {
+            step,
+            stage: FailureStage::Action,
+            message: message.into(),
+        }
+    }
+    pub fn expectation(step: usize, message: impl Into<String>) -> Self {
+        Self {
+            step,
+            stage: FailureStage::Expectation,
+            message: message.into(),
+        }
+    }
+}
+impl fmt::Display for FailureFingerprint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let stage = match self.stage {
+            FailureStage::Action => "action",
+            FailureStage::Expectation => "expectation",
+        };
+        write!(f, "step {} ({stage}): {}", self.step, self.message)
     }
 }
 

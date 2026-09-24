@@ -18,8 +18,8 @@
 //! observed engine run except where a pin says it records legacy behavior.
 use crate::run::XlsxReader;
 use crate::scenario::{
-    EnginePath, Expect, ExpectedFailureSpec, LifecycleOp, Provenance, Purpose, ScenarioSize,
-    ScenarioSpec, Script, SizeClass, Step, Tags,
+    EnginePath, Expect, ExpectedFailureSpec, FailureFingerprint, LifecycleOp, Provenance, Purpose,
+    ScenarioSize, ScenarioSpec, Script, SizeClass, Step, Tags,
 };
 use crate::shape::{Cell, Extent, Range, Scale, Shape, r#gen};
 use formualizer_common::{ExcelErrorKind, LiteralValue};
@@ -100,20 +100,21 @@ impl Pin {
 }
 
 /// Marks a tracked defect. `scopes` are `(mode, provenance)` pairs; a `None`
-/// provenance covers every provenance.
+/// provenance covers every provenance. Each scope must fail with exactly
+/// `failure` (the observed step and mismatch); markers accumulate.
 fn known(
     mut spec: ScenarioSpec,
     scopes: &[(FormulaPlaneMode, Option<Provenance>)],
+    failure: FailureFingerprint,
     reason: &str,
 ) -> ScenarioSpec {
-    spec.expected_failures = scopes
-        .iter()
-        .map(|(mode, provenance)| ExpectedFailureSpec {
+    spec.expected_failures
+        .extend(scopes.iter().map(|(mode, provenance)| ExpectedFailureSpec {
             mode: *mode,
             provenance: *provenance,
+            failure: failure.clone(),
             reason: reason.into(),
-        })
-        .collect();
+        }));
     spec
 }
 
@@ -362,17 +363,23 @@ fn form117(followup: bool) -> ScenarioSpec {
     .custom(journal.undo())
     .eval([num(100, 2, 999.0), num(101, 2, 505.0), empty(102, 2)]);
     if !followup {
-        return structural_known(pin.spec(
-            "form117.structural-undo-values",
-            "journaled row insert over live overrides, undone: restored values",
-            single_family(200),
-            200,
-            ALL.to_vec(),
-        ));
+        return structural_known(
+            pin.spec(
+                "form117.structural-undo-values",
+                "journaled row insert over live overrides, undone: restored values",
+                single_family(200),
+                200,
+                ALL.to_vec(),
+            ),
+            form117_undo_republished(),
+        );
     }
     pin.custom(set_value(101, 1, LiteralValue::Number(7.0)))
         .eval([num(101, 2, 35.0)]);
-    known(
+    // Span-placing authoritative runs fail earlier, at the undo itself (the
+    // structural defect of `structural_known`); every other run reaches the
+    // FORM-000117 recalculation at step 12.
+    let spec = structural_known(
         pin.spec(
             "form117.later-precedent-recalc",
             "after structural undo a restored formula must follow a later precedent edit",
@@ -380,11 +387,31 @@ fn form117(followup: bool) -> ScenarioSpec {
             200,
             ALL.to_vec(),
         ),
+        form117_undo_republished(),
+    );
+    known(
+        spec,
         &[
             (FormulaPlaneMode::Off, None),
-            (FormulaPlaneMode::AuthoritativeExperimental, None),
+            (
+                FormulaPlaneMode::AuthoritativeExperimental,
+                Some(Provenance::XlsxCalamine),
+            ),
         ],
+        FailureFingerprint::expectation(
+            12,
+            "value: expected Number(35.0), got Some(Number(505.0)) at S!R101C2",
+        ),
         "FORM-000117: after undoing a structural action the restored formula keeps its stale value (505, expected 35) in both modes; absorbed by M3",
+    )
+}
+
+/// The FORM-000117 journaled insert/undo scripts in span-placing runs: after
+/// the undo (step 8) the formula override at row 102 shows the family result.
+fn form117_undo_republished() -> FailureFingerprint {
+    FailureFingerprint::expectation(
+        8,
+        "value: expected Number(505.0), got Some(Number(202.0)) at S!R102C2",
     )
 }
 
@@ -455,6 +482,10 @@ fn span_pins() -> Vec<ScenarioSpec> {
             STRUCTURAL[..3].to_vec(),
         ),
         &SPAN_PLACING,
+        FailureFingerprint::expectation(
+            6,
+            "value: expected Number(35.0), got Some(Number(14.0)) at S!R100C2",
+        ),
         "base: after its precedent changes, a formula written inside a promoted span is overwritten by the family result (14 = A100*2, expected 35 = A100*5); fixed on the M3 perf line (3ec4d547), not on this base",
     ));
 
@@ -532,13 +563,16 @@ fn span_pins() -> Vec<ScenarioSpec> {
         ])
         .custom(set_value(102, 1, LiteralValue::Number(7.0)))
         .eval([num(101, 2, 999.0), num(102, 2, 35.0)]);
-    specs.push(structural_known(pin.spec(
-        "span.row-insert-with-live-overrides",
-        "row insert above value, formula and empty overrides inside a span",
-        single_family(200),
-        200,
-        STRUCTURAL.to_vec(),
-    )));
+    specs.push(structural_known(
+        pin.spec(
+            "span.row-insert-with-live-overrides",
+            "row insert above value, formula and empty overrides inside a span",
+            single_family(200),
+            200,
+            STRUCTURAL.to_vec(),
+        ),
+        republished_override(8, "R102C2"),
+    ));
 
     let insert_1 = a_after_insert(1);
     let mut pin = Pin::loaded();
@@ -554,13 +588,16 @@ fn span_pins() -> Vec<ScenarioSpec> {
             column(1, 201, insert_1),
             column(2, 201, overrides_model(101, insert_1)),
         ]);
-    specs.push(structural_known(pin.spec(
-        "span.top-row-insert-shifts-overrides",
-        "row insert at the top shifts live overrides",
-        single_family(200),
-        200,
-        STRUCTURAL.to_vec(),
-    )));
+    specs.push(structural_known(
+        pin.spec(
+            "span.top-row-insert-shifts-overrides",
+            "row insert at the top shifts live overrides",
+            single_family(200),
+            200,
+            STRUCTURAL.to_vec(),
+        ),
+        republished_override(8, "R102C2"),
+    ));
 
     // Deleting the value-override row: the formula override moves up to 100
     // and reads the shifted A100 (old A101).
@@ -586,13 +623,16 @@ fn span_pins() -> Vec<ScenarioSpec> {
                 _ => a_after_delete(row).map(|v| v * 2.0),
             }),
         ]);
-    specs.push(structural_known(pin.spec(
-        "span.override-row-delete",
-        "deleting a live-override row shifts the remaining overrides",
-        single_family(200),
-        200,
-        STRUCTURAL.to_vec(),
-    )));
+    specs.push(structural_known(
+        pin.spec(
+            "span.override-row-delete",
+            "deleting a live-override row shifts the remaining overrides",
+            single_family(200),
+            200,
+            STRUCTURAL.to_vec(),
+        ),
+        republished_override(8, "R100C2"),
+    ));
 
     // Journaled row/column insert over live overrides, undo and redo.
     for columns in [false, true] {
@@ -628,17 +668,20 @@ fn span_pins() -> Vec<ScenarioSpec> {
         ]);
         pin.custom(journal.redo());
         after_insert(&mut pin);
-        specs.push(structural_known(pin.spec(
-            if columns {
-                "span.undoable-column-insert-with-live-overrides"
-            } else {
-                "span.undoable-row-insert-with-live-overrides"
-            },
-            "journaled insert over live overrides, undo and redo",
-            single_family(200),
-            200,
-            ALL.to_vec(),
-        )));
+        specs.push(structural_known(
+            pin.spec(
+                if columns {
+                    "span.undoable-column-insert-with-live-overrides"
+                } else {
+                    "span.undoable-row-insert-with-live-overrides"
+                },
+                "journaled insert over live overrides, undo and redo",
+                single_family(200),
+                200,
+                ALL.to_vec(),
+            ),
+            republished_override(8, if columns { "R101C3" } else { "R102C2" }),
+        ));
     }
 
     // Undo of an atomic value override restores the family formula.
@@ -748,6 +791,10 @@ fn span_pins() -> Vec<ScenarioSpec> {
             HISTORY.to_vec(),
         ),
         &SPAN_PLACING,
+        FailureFingerprint::expectation(
+            10,
+            "value: expected Number(777.0), got Some(Number(41.0)) at S!R10C2",
+        ),
         "FORM-000115: in a promoted span, undoing a formula that replaced a value override restores the family result (41) instead of the value (777); fixed on the M3 perf line (3ec4d547), not on this base",
     ));
 
@@ -1167,13 +1214,23 @@ fn preparation_policy() -> ScenarioSpec {
 }
 
 /// Structural edits over spans with live overrides lose the overrides on the
-/// Program 1 base (observed per pin). Fixed on the M3 perf line, which is not
-/// on this base.
-fn structural_known(spec: ScenarioSpec) -> ScenarioSpec {
+/// Program 1 base (observed per pin, `failure` is the pin's first mismatch).
+/// Fixed on the M3 perf line, which is not on this base.
+fn structural_known(spec: ScenarioSpec, failure: FailureFingerprint) -> ScenarioSpec {
     known(
         spec,
         &SPAN_PLACING,
+        failure,
         "base: a structural edit over a span with live point overrides republishes family results over the overrides (fixed on the M3 perf line by 3ec4d547, not on this base; M2/M3 must pass it)",
+    )
+}
+
+/// A column oracle at `step` finds the one formula override at `cell` showing
+/// the family result (202) instead of 505.
+fn republished_override(step: usize, cell: &str) -> FailureFingerprint {
+    FailureFingerprint::expectation(
+        step,
+        format!("1 cells differ: {cell}: expected Some(505.0), got Some(Number(202.0))"),
     )
 }
 

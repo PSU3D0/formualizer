@@ -2,8 +2,8 @@
 use crate::{
     materialize::{Artifact, Materialize as _, WorkbookApi, WorkbookRoute},
     scenario::{
-        DemotionExpect, Expect, Position, Provenance, ScenarioSize, ScenarioSource, ScenarioSpec,
-        Step, StructureExpect,
+        DemotionExpect, Expect, FailureFingerprint, Position, Provenance, ScenarioSize,
+        ScenarioSource, ScenarioSpec, Step, StructureExpect,
     },
     shape::{Role, Shape},
 };
@@ -291,28 +291,51 @@ fn execute(
     ) {
         Ok(value) => value,
         Err(error) => {
-            if let Some(expected) = expected_failure {
-                let known = format!("{}: {error}", expected.reason);
-                eprintln!("KNOWN {} {mode:?}: {known}", spec.id);
-                return RunReport {
-                    steps: vec![],
-                    failure: None,
-                    known_failure: Some(known),
-                };
+            let Some(expected) = expected_failure else {
+                return failed(error.to_string());
+            };
+            // Only the fingerprinted failure is known; an earlier or different
+            // failure is a regression the marker must not hide.
+            if !matches!(&error, RunError::Step(actual) if *actual == expected.failure) {
+                return failed(format!(
+                    "expected failure did not match ({:?}): expected {}, got {error} [{}]",
+                    expected.provenance, expected.failure, expected.reason
+                ));
             }
-            return failed(error);
+            let known = format!("{}: {error}", expected.reason);
+            eprintln!("KNOWN {} {mode:?}: {known}", spec.id);
+            return RunReport {
+                steps: vec![],
+                failure: None,
+                known_failure: Some(known),
+            };
         }
     };
     if let Some(expected) = expected_failure {
         return failed(format!(
-            "expected failure did not occur ({:?}): {}",
-            expected.provenance, expected.reason
+            "expected failure did not occur ({:?}): expected {} [{}]",
+            expected.provenance, expected.failure, expected.reason
         ));
     }
     RunReport {
         steps: executed.reports,
         failure: None,
         known_failure: None,
+    }
+}
+
+/// Why a script execution stopped. Only a step failure can match an expected
+/// failure fingerprint.
+enum RunError {
+    Step(FailureFingerprint),
+    Script(String),
+}
+impl std::fmt::Display for RunError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Step(failure) => write!(f, "step {}: {}", failure.step, failure.message),
+            Self::Script(message) => f.write_str(message),
+        }
     }
 }
 
@@ -336,7 +359,7 @@ fn execute_steps(
     shape: &Shape,
     steps: &[Step],
     context: Execution<'_>,
-) -> Result<Executed, String> {
+) -> Result<Executed, RunError> {
     let Execution {
         source,
         size,
@@ -352,11 +375,12 @@ fn execute_steps(
         if let Some(recorder) = recorder {
             recorder.select(index);
         }
-        apply_step(step, shape, source, size, &materializer, &mut workbook)?;
+        apply_step(step, shape, source, size, &materializer, &mut workbook)
+            .map_err(|message| RunError::Step(FailureFingerprint::action(index, message)))?;
         let snapshot = if let Some(wb) = workbook.as_ref() {
             shape
                 .render()
-                .map_err(|e| e.to_string())?
+                .map_err(|e| RunError::Script(e.to_string()))?
                 .into_iter()
                 .map(|cell| {
                     let value = wb.get_value(&cell.sheet, cell.row, cell.col);
@@ -368,9 +392,11 @@ fn execute_steps(
         };
         let stats = workbook.as_ref().map(|wb| wb.engine().baseline_stats());
         if let Some(expects) = expects {
-            let wb = workbook
-                .as_ref()
-                .ok_or_else(|| format!("step {index}: expectation requires a loaded workbook"))?;
+            let wb = workbook.as_ref().ok_or_else(|| {
+                RunError::Script(format!(
+                    "step {index}: expectation requires a loaded workbook"
+                ))
+            })?;
             for (_, expect) in expects
                 .iter()
                 .filter(|(expected_step, _)| *expected_step == index)
@@ -388,7 +414,9 @@ fn execute_steps(
                         recorder,
                     },
                 )
-                .map_err(|error| format!("step {index}: {error}"))?;
+                .map_err(|message| {
+                    RunError::Step(FailureFingerprint::expectation(index, message))
+                })?;
             }
         }
         snapshots.push(snapshot);
@@ -401,9 +429,11 @@ fn execute_steps(
     if let Some((step, _)) =
         expects.and_then(|items| items.iter().find(|(step, _)| *step >= steps.len()))
     {
-        return Err(format!("step {step}: expectation index is outside script"));
+        return Err(RunError::Script(format!(
+            "step {step}: expectation index is outside script"
+        )));
     }
-    workbook.ok_or_else(|| "script never loaded a workbook".to_owned())?;
+    workbook.ok_or_else(|| RunError::Script("script never loaded a workbook".to_owned()))?;
     Ok(Executed { snapshots, reports })
 }
 fn apply_step(

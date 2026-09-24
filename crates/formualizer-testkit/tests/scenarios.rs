@@ -4,11 +4,14 @@ use formualizer_testkit::scenario::ladder::{by_rows_or_class, covering_set};
 use formualizer_testkit::{
     materialize::WorkbookRoute,
     run::{Materializer, Recorder, run},
-    scenario::{Filter, Provenance, ScenarioSpec, StructureExpect, built_in_registry},
+    scenario::{
+        Expect, ExpectedFailureSpec, FailureFingerprint, Filter, Provenance, ScenarioSpec, Step,
+        StructureExpect, built_in_registry,
+    },
 };
 use formualizer_workbook::WorkbookConfig;
 use libtest_mimic::{Arguments, Failed, Trial};
-use std::{env, str::FromStr};
+use std::{env, str::FromStr, sync::Arc};
 
 fn config(mode: FormulaPlaneMode) -> WorkbookConfig {
     let mut config = WorkbookConfig::interactive().with_formula_plane_mode(mode);
@@ -138,6 +141,22 @@ fn main() {
     ));
     trials.push(Trial::test("framework.parity", parity_expectation));
     trials.push(Trial::test("framework.filters-by-tag", filters_by_tag));
+    trials.push(Trial::test(
+        "framework.expected-failure-earlier-failure-fails",
+        expected_failure_earlier_failure_fails,
+    ));
+    trials.push(Trial::test(
+        "framework.expected-failure-other-mismatch-fails",
+        expected_failure_other_mismatch_fails,
+    ));
+    trials.push(Trial::test(
+        "framework.expected-failure-exact-is-known",
+        expected_failure_exact_is_known,
+    ));
+    trials.push(Trial::test(
+        "framework.expected-failure-unexpected-pass-fails",
+        expected_failure_unexpected_pass_fails,
+    ));
     libtest_mimic::run(&arguments, trials).exit();
 }
 fn mode_matches(mode: FormulaPlaneMode, selected: &str) -> bool {
@@ -352,4 +371,84 @@ fn filters_by_tag() -> Result<(), Failed> {
         return Err("OR-within-dimension filter failed".into());
     }
     Ok(())
+}
+
+/// A passing built-in scenario with a tracked defect marked at its last step:
+/// that step's expectation fails with "tracked mismatch" when `defect` is set.
+fn marked_spec(defect: bool) -> (ScenarioSpec, usize) {
+    let mut spec = built_in_registry(200).remove(0);
+    let last = spec.script.0.len() - 1;
+    if defect {
+        spec.expects.push((
+            last,
+            Expect::Oracle(Arc::new(|_| Err("tracked mismatch".into()))),
+        ));
+    }
+    spec.expected_failures.push(ExpectedFailureSpec {
+        mode: FormulaPlaneMode::Off,
+        provenance: None,
+        failure: FailureFingerprint::expectation(last, "tracked mismatch"),
+        reason: "tracked test defect".into(),
+    });
+    (spec, last)
+}
+fn run_off(spec: &ScenarioSpec) -> formualizer_testkit::run::RunReport {
+    run(
+        spec,
+        FormulaPlaneMode::Off,
+        spec.sizes[0],
+        Materializer::workbook_api(
+            WorkbookRoute::SetValuesSetFormulas,
+            config(FormulaPlaneMode::Off),
+        ),
+        None,
+    )
+}
+fn expect_unmatched(report: formualizer_testkit::run::RunReport, got: &str) -> Result<(), Failed> {
+    match (&report.failure, &report.known_failure) {
+        (Some(message), None)
+            if message.contains("expected failure did not match")
+                && message.contains("tracked mismatch")
+                && message.contains(got) =>
+        {
+            Ok(())
+        }
+        other => Err(format!("marker did not reject an unrelated failure: {other:?}").into()),
+    }
+}
+fn expected_failure_earlier_failure_fails() -> Result<(), Failed> {
+    // An earlier expectation fails.
+    let (mut spec, _) = marked_spec(true);
+    spec.expects.push((
+        2,
+        Expect::Oracle(Arc::new(|_| Err("unrelated regression".into()))),
+    ));
+    expect_unmatched(run_off(&spec), "step 2: unrelated regression")?;
+    // An earlier action fails; the marked step keeps its index.
+    let (mut spec, last) = marked_spec(true);
+    spec.script.0[last - 1] = Step::Custom(Arc::new(|_| Err("action broke".into())));
+    expect_unmatched(run_off(&spec), &format!("step {}: action broke", last - 1))
+}
+fn expected_failure_other_mismatch_fails() -> Result<(), Failed> {
+    let (mut spec, last) = marked_spec(false);
+    spec.expects.push((
+        last,
+        Expect::Oracle(Arc::new(|_| Err("different mismatch".into()))),
+    ));
+    expect_unmatched(run_off(&spec), &format!("step {last}: different mismatch"))
+}
+fn expected_failure_exact_is_known() -> Result<(), Failed> {
+    let (spec, last) = marked_spec(true);
+    let report = run_off(&spec);
+    match (&report.failure, &report.known_failure) {
+        (None, Some(known)) if known.ends_with(&format!("step {last}: tracked mismatch")) => Ok(()),
+        other => Err(format!("exact fingerprint was not KNOWN: {other:?}").into()),
+    }
+}
+fn expected_failure_unexpected_pass_fails() -> Result<(), Failed> {
+    let (spec, _) = marked_spec(false);
+    match run_off(&spec).failure {
+        Some(message) if message.contains("expected failure did not occur") => Ok(()),
+        other => Err(format!("unexpected pass was accepted: {other:?}").into()),
+    }
 }

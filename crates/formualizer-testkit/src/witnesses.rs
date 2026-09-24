@@ -11,9 +11,9 @@ use formualizer_eval::engine::FormulaPlaneMode;
 use formualizer_workbook::Workbook;
 
 use crate::scenario::{
-    DemotionExpect, EnginePath, Expect, ExpectedFailureSpec, Family, LifecycleOp, Orientation,
-    Provenance, Purpose, ScenarioSize, ScenarioSpec, Script, SizeClass, Step, StructureExpect,
-    Tags,
+    DemotionExpect, EnginePath, Expect, ExpectedFailureSpec, FailureFingerprint, Family,
+    LifecycleOp, Orientation, Provenance, Purpose, ScenarioSize, ScenarioSpec, Script, SizeClass,
+    Step, StructureExpect, Tags,
 };
 use crate::shape::{Cell, Extent, Range, Role, Scale, Shape, r#gen};
 
@@ -679,7 +679,9 @@ pub fn witness(kind: Kind, rows: u32) -> ScenarioSpec {
 /// promotes; after undo/redo of the interior override, the row insert
 /// republishes the family result over the override (18 instead of 7). The
 /// b102ba90 goldens carried the M3 perf-line fix (3ec4d547), which is not on
-/// this base. The Calamine reader never places spans (FORM-000128).
+/// this base. The Calamine reader never places spans (FORM-000128). The
+/// fingerprint is the observed first mismatch, at the redo-then-insert
+/// evaluation (step 14).
 fn known_failures(kind: Kind, rows: u32) -> Vec<ExpectedFailureSpec> {
     if kind != Kind::Fixed || rows != 16 {
         return vec![];
@@ -689,6 +691,10 @@ fn known_failures(kind: Kind, rows: u32) -> Vec<ExpectedFailureSpec> {
         .map(|provenance| ExpectedFailureSpec {
             mode: FormulaPlaneMode::AuthoritativeExperimental,
             provenance: Some(provenance),
+            failure: FailureFingerprint::expectation(
+                14,
+                "fixed-absolute-sum: S!R10C2 expected 7, got Some(Number(18.0)) (state State { a1: 3.0, override_at: Some((9, 2)), inserted_at: Some(9) })",
+            ),
             reason: "base: a row insert over a promoted span republishes the family result over a live override (fixed on the M3 perf line by 3ec4d547, not on this base)".into(),
         })
         .collect()

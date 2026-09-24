@@ -262,6 +262,20 @@ pub enum ExpectedDivergenceAction {
 pub struct ExpectedFailure {
     pub mode: ExpectedFailureMode,
     pub reason: &'static str,
+    /// The failure the lifecycle runner must observe (see `adapt_scenario`);
+    /// any other failure fails the run.
+    pub runner_failure: RunnerFailure,
+}
+
+/// A lifecycle-runner failure fingerprint. `step` indexes the adapted script:
+/// 0 load, 1 prepare, 2 first evaluation, then an edit and an evaluation per
+/// cycle (edit `3 + 2 * cycle`). `message` is the complete failure message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunnerFailure {
+    /// Applying the step (fixture load, edit, evaluation) returned an error.
+    Action { step: usize, message: &'static str },
+    /// An invariant checked after the step did not hold.
+    Expectation { step: usize, message: &'static str },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -515,8 +529,8 @@ pub fn adapt_scenario(
 ) -> formualizer_testkit::scenario::ScenarioSpec {
     use formualizer_eval::engine::FormulaPlaneMode;
     use formualizer_testkit::scenario::{
-        EnginePath, Expect, ExpectedFailureSpec, Family, LifecycleOp, Purpose, ScenarioSize,
-        ScenarioSource, Script, SizeClass, Step, StructureExpect, Tags,
+        EnginePath, Expect, ExpectedFailureSpec, FailureFingerprint, Family, LifecycleOp, Purpose,
+        ScenarioSize, ScenarioSource, Script, SizeClass, Step, StructureExpect, Tags,
     };
     use std::sync::Arc;
 
@@ -639,6 +653,14 @@ pub fn adapt_scenario(
                 ExpectedFailureMode::OffOnly => FormulaPlaneMode::Off,
             },
             provenance: None,
+            failure: match failure.runner_failure {
+                RunnerFailure::Action { step, message } => {
+                    FailureFingerprint::action(step, message)
+                }
+                RunnerFailure::Expectation { step, message } => {
+                    FailureFingerprint::expectation(step, message)
+                }
+            },
             reason: failure.reason.to_owned(),
         })
         .collect();
