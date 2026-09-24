@@ -10,6 +10,7 @@ pub mod dirty;
 pub mod extract;
 pub mod geom;
 pub mod groups;
+pub mod host;
 pub mod identity;
 pub mod level_index;
 pub mod proj;

@@ -23,6 +23,8 @@ pub struct GraphInstrumentation {
 }
 
 mod ast_utils;
+#[cfg(feature = "unified_authority")]
+pub(crate) mod authority_host;
 pub mod editor;
 mod formula_analysis;
 #[cfg(test)]
@@ -163,6 +165,56 @@ pub struct GraphBaselineStats {
     pub formula_ast_node_count: usize,
 }
 
+/// Formula AST of every formula vertex. Reads go through `Deref`; writes
+/// go through `insert`/`remove`, which, with the `unified_authority`
+/// feature, also record the touched vertex so the authority can follow
+/// formula edits (Program 1 M1a). Without the feature this is the map.
+#[derive(Debug, Default)]
+pub(crate) struct FormulaMap {
+    map: FxHashMap<VertexId, AstNodeId>,
+    #[cfg(feature = "unified_authority")]
+    touched: Vec<VertexId>,
+}
+
+impl std::ops::Deref for FormulaMap {
+    type Target = FxHashMap<VertexId, AstNodeId>;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.map
+    }
+}
+
+impl FormulaMap {
+    #[inline]
+    pub(crate) fn insert(&mut self, vertex: VertexId, ast: AstNodeId) -> Option<AstNodeId> {
+        #[cfg(feature = "unified_authority")]
+        self.touched.push(vertex);
+        self.map.insert(vertex, ast)
+    }
+
+    #[inline]
+    pub(crate) fn remove(&mut self, vertex: &VertexId) -> Option<AstNodeId> {
+        let old = self.map.remove(vertex);
+        #[cfg(feature = "unified_authority")]
+        if old.is_some() {
+            self.touched.push(*vertex);
+        }
+        old
+    }
+
+    #[inline]
+    pub(crate) fn reserve(&mut self, additional: usize) {
+        self.map.reserve(additional);
+    }
+
+    /// Vertices whose formula changed since the last call.
+    #[cfg(feature = "unified_authority")]
+    pub(crate) fn take_touched(&mut self) -> Vec<VertexId> {
+        std::mem::take(&mut self.touched)
+    }
+}
+
 /// SoA-based dependency graph implementation
 #[derive(Debug)]
 pub struct DependencyGraph {
@@ -175,7 +227,7 @@ pub struct DependencyGraph {
     // Arena-based value and formula storage
     data_store: DataStore,
     vertex_values: FxHashMap<VertexId, ValueRef>,
-    vertex_formulas: FxHashMap<VertexId, AstNodeId>,
+    vertex_formulas: FormulaMap,
 
     /// Gate for storing grid-backed (cell/formula) LiteralValue payloads inside the dependency graph.
     ///
@@ -304,6 +356,10 @@ pub struct DependencyGraph {
 
     // Graph-owned FormulaPlane authority shell. Inert until a later runtime cut-over.
     formula_authority: FormulaAuthority,
+    /// Program 1 unified authority, maintained beside the legacy graph
+    /// while the feature is in development (never default).
+    #[cfg(feature = "unified_authority")]
+    authority: crate::engine::authority::host::AuthorityHost,
 
     // Dynamic topology orderer (Pearce–Kelly) maintained alongside edges when enabled
     pk_order: Option<DynamicTopo<VertexId>>,
@@ -1207,7 +1263,7 @@ impl DependencyGraph {
             edges: CsrMutableEdges::new(),
             data_store: DataStore::new(),
             vertex_values: FxHashMap::default(),
-            vertex_formulas: FxHashMap::default(),
+            vertex_formulas: FormulaMap::default(),
             // Phase 1 (ticket 610): Arrow-truth is the only supported mode.
             // The dependency graph does not cache cell/formula literal payloads.
             value_cache_enabled: false,
@@ -1247,6 +1303,8 @@ impl DependencyGraph {
             topology_revision: 0,
             symbol_revision: 0,
             formula_authority: FormulaAuthority::default(),
+            #[cfg(feature = "unified_authority")]
+            authority: Default::default(),
             pk_order: None,
             spill_anchor_to_cells: FxHashMap::default(),
             spill_cell_to_anchor: std::collections::HashMap::with_hasher(CoordBuildHasher),
@@ -2722,6 +2780,9 @@ impl DependencyGraph {
         // Add to dirty set
         self.formula_dirty.legacy_extend(affected.iter().copied());
 
+        #[cfg(feature = "unified_authority")]
+        self.authority_observe_propagation(vertex_ids);
+
         // Return as Vec for compatibility
         affected.into_iter().collect()
     }
@@ -2819,6 +2880,8 @@ impl DependencyGraph {
             self.store.set_dirty(vertex_id, false);
             self.formula_dirty.legacy_remove(&vertex_id);
         }
+        #[cfg(feature = "unified_authority")]
+        self.authority_observe_clean(vertices);
     }
 
     /// 🔮 Scalability Hook: Clear volatile vertices after evaluation cycle
@@ -3783,6 +3846,8 @@ impl DependencyGraph {
         }
 
         self.formula_dirty.legacy_extend(affected.iter().copied());
+        #[cfg(feature = "unified_authority")]
+        self.authority_observe_propagation(vertex_ids);
         affected.into_iter().collect()
     }
 

@@ -4107,6 +4107,8 @@ where
                 .saturating_add(1);
         }
         self.last_cycle_telemetry = CycleTelemetry::default();
+        #[cfg(feature = "unified_authority")]
+        self.graph.authority_sync();
         // Defensive: consumed at the end of the previous request; a request
         // that errored out mid-walk must not leak its members into this one.
         self.pending_iterative_redirty.clear();

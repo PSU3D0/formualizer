@@ -1,8 +1,10 @@
 mod admission;
 mod build_oracle;
 mod dirty;
+mod engine_relation;
 pub(crate) mod fixtures;
 mod identity_props;
+mod nodes_slots;
 pub(crate) mod oracle;
 mod store_traces;
 pub(crate) mod support;

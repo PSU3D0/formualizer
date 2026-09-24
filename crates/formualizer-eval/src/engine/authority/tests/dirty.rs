@@ -5,6 +5,10 @@ use super::super::dirty::DirtyStore;
 use super::super::geom::{Cell, Rect};
 use super::support::Rng;
 use super::support::{Model, build_from, rel};
+use crate::engine::{Engine, EvalConfig};
+use crate::test_workbook::TestWorkbook;
+use formualizer_common::LiteralValue;
+use formualizer_parse::parse;
 use rustc_hash::FxHashSet;
 
 #[test]
@@ -60,4 +64,33 @@ fn mark_closure_equals_the_model_closure() {
     d.clean(0, &Rect::new(0, 2, 20, 2));
     assert_eq!(d.cell_count(), 9);
     assert!(d.is_dirty((0, 21, 2)) && !d.is_dirty((0, 20, 2)));
+}
+
+#[test]
+fn engine_edits_mark_the_legacy_closure_and_evaluation_cleans() {
+    let mut e = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    for r in 1..=20u32 {
+        e.set_cell_value("Sheet1", r, 1, LiteralValue::Number(f64::from(r)))
+            .unwrap();
+        e.set_cell_formula("Sheet1", r, 2, parse(format!("=A{r}*2")).unwrap())
+            .unwrap();
+        e.set_cell_formula("Sheet1", r, 3, parse(format!("=SUM($B$1:B{r})")).unwrap())
+            .unwrap();
+    }
+    e.set_cell_formula("Sheet1", 1, 5, parse("=SUM(C:C)").unwrap())
+        .unwrap();
+    e.evaluate_all().unwrap();
+    assert!(
+        e.graph.authority_host().dirty().is_empty(),
+        "evaluation cleans the cover"
+    );
+    e.set_cell_value("Sheet1", 7, 1, LiteralValue::Number(70.0))
+        .unwrap();
+    let dirty = e.graph.authority_host().dirty().cells();
+    let legacy = e.graph.legacy_closure_cells(&[(0, 6, 0)]);
+    assert_eq!(dirty, legacy);
+    // B7, C7..C20 and E1: one interval per column in the cover.
+    assert_eq!(dirty.len(), 1 + 14 + 1);
+    e.evaluate_all().unwrap();
+    assert!(e.graph.authority_host().dirty().is_empty());
 }
