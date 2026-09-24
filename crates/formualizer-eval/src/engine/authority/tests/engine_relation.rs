@@ -208,7 +208,7 @@ fn fixed_names_across_many_contexts_keep_the_lk_directory_bounded() {
     let mut contexts = 0;
     for s in &sheets {
         for k in 0..8 {
-            e.set_cell_formula(s, 1, 1, parse(&format!("=LibName_k{k}")).unwrap())
+            e.set_cell_formula(s, 1, 1, parse(format!("=LibName_k{k}")).unwrap())
                 .unwrap();
             e.graph.authority().unwrap();
             max_lk = max_lk.max(e.graph.authority_host().store().lk_len());
