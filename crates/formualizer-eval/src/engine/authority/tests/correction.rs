@@ -286,6 +286,48 @@ fn review_replaced_unique_groups_have_bounded_retention() {
     );
 }
 
+/// Re-review R5 (the review's repro): build scratch includes what the input
+/// owns (here a 1,000,000-token L stream).
+#[test]
+fn review_build_scratch_includes_owned_tokens() {
+    let mut f = Formula {
+        refs: vec![],
+        l: 1,
+        literal: 0,
+    }
+    .facts();
+    f.literals.clear();
+    f.ltokens = Some(vec![17u64; 1_000_000].into_boxed_slice());
+    let token_bytes = f.ltokens.as_ref().unwrap().len() * size_of::<u64>();
+    let (_s, scratch) = Store::build_keeping(vec![((0, 0, 0), f)], None).unwrap();
+    assert!(
+        scratch >= token_bytes as u64,
+        "owned input tokens omitted: scratch={scratch}, tokens={token_bytes}"
+    );
+}
+
+/// Re-review R5: a rebuild whose input and previous store already exceed
+/// the scratch budget is rejected before the build allocates anything.
+#[test]
+fn rebuild_preflight_rejects_before_building() {
+    use super::super::store::Budget;
+    let mut f = one(1, 1);
+    f.ltokens = Some(vec![17u64; 100_000].into_boxed_slice());
+    let budget = Budget {
+        scratch: Some(64 * 1024),
+        ..Budget::default()
+    };
+    let (r, alloc) = measure(None, || {
+        Store::rebuild(vec![((0, 0, 0), f)], None, budget).map(|_| ())
+    });
+    match r {
+        Err(AuthorityError::Admission { resource, .. }) => assert_eq!(resource, "scratch"),
+        other => panic!("preflight did not reject: {other:?}"),
+    }
+    // The rejected build never ran: nothing near a store's worth allocated.
+    assert!(alloc.peak < 4 * 1024, "{alloc:?}");
+}
+
 // ---------------------------------------------------------------- B5
 
 /// Review B5(a) repro: zero scratch refuses the first literal-bearing

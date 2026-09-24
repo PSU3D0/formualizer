@@ -29,6 +29,22 @@ impl Store {
         prior: Option<&Store>,
         budget: Budget,
     ) -> Result<Store, AuthorityError> {
+        // Preflight before the build allocates: the input it consumes and
+        // the previous store already coexist, so a scratch budget below
+        // them rejects without building. The full preview (legacy's
+        // `preview_formula_mutations` → `preflight_graph_admission` at bulk
+        // ingest) lands with the resource-ledger link (B-10, addendum B-22).
+        let input_bytes = input.capacity() * size_of::<BuildInput>()
+            + input
+                .iter()
+                .map(|(_, f)| f.owned_heap_bytes())
+                .sum::<usize>();
+        let gate = Store {
+            budget,
+            ..Store::new()
+        };
+        gate.admit(0, input_bytes as u64 + prior.map_or(0, Store::heap_bytes))?;
+        drop(gate);
         let (mut s, scratch) = Self::build_keeping(input, prior.map(Store::ids))?;
         s.budget = budget;
         let transient = scratch + prior.map_or(0, Store::heap_bytes);
@@ -43,7 +59,13 @@ impl Store {
         mut input: Vec<BuildInput>,
         prior: Option<&IdentityTable>,
     ) -> Result<(Store, u64), AuthorityError> {
-        let mut scratch = input.capacity() * size_of::<BuildInput>();
+        // The input and everything it owns coexist with the whole build
+        // (re-review R5).
+        let mut scratch = input.capacity() * size_of::<BuildInput>()
+            + input
+                .iter()
+                .map(|(_, f)| f.owned_heap_bytes())
+                .sum::<usize>();
         let mut s = Store::new();
         input.sort_unstable_by_key(|(c, _)| *c);
         input.dedup_by_key(|(c, _)| *c);
@@ -135,7 +157,14 @@ impl Store {
                 + ungrouped.capacity() * size_of::<usize>();
         }
 
-        // Canon per group, in group order (deterministic).
+        // Canon per group, in group order (deterministic). Groups run one at
+        // a time, so the canon scratch peak is the largest group's bound.
+        scratch += ecells
+            .values()
+            .chain(ncells.values())
+            .map(|v| canon::scratch_bound(v.len()))
+            .max()
+            .unwrap_or(0);
         let mut work = CanonWork::default();
         let mut epieces: Vec<(u32, Vec<Rect>)> = ecells
             .into_iter()
@@ -207,7 +236,12 @@ impl Store {
                 .map(|x| x.capacity() * size_of::<(super::super::geom::BoxT, u32)>())
                 .sum::<usize>()
         };
-        scratch += items_bytes(&dep_items) + items_bytes(&prec_items);
+        // Outer item lists, plus the entry copy each bulk load lays out
+        // (bounded by the role's total items).
+        scratch += items_bytes(&dep_items)
+            + items_bytes(&prec_items)
+            + 2 * max_sheet * size_of::<Vec<(super::super::geom::BoxT, u32)>>()
+            + 2 * nrecs * LevelIndex::bulk_entry_bytes();
         drop(dep_items);
         drop(prec_items);
 
@@ -261,7 +295,9 @@ impl Store {
         for (sheet, items) in node_items.iter().enumerate().take(s.idx.node.len()) {
             s.idx.node[sheet].bulk_load(items, &mut s.node_loc);
         }
-        scratch += items_bytes(&node_items);
+        scratch += items_bytes(&node_items)
+            + max_sheet * size_of::<Vec<(super::super::geom::BoxT, u32)>>()
+            + (s.nnodes as usize) * LevelIndex::bulk_entry_bytes();
 
         // Identity (decision 9): cells live in `prior` keep their ids; new
         // cells get fresh ids from its counter, in (sheet, c0, r0) owner
@@ -313,6 +349,7 @@ impl Store {
         }
         s.ids.check_alloc(fresh).map_err(AuthorityError::Identity)?;
         s.ids.try_reserve_for(&target).expect("build allocation");
+        scratch += target.fwd.capacity() * size_of::<super::super::avl::SlabShadow>();
         let mut rows: Vec<(Vid, usize)> = Vec::new();
         for &(o, c, r, len, first) in &segs {
             let w = s.owners[o as usize];

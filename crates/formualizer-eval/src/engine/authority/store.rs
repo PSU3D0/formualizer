@@ -103,6 +103,31 @@ pub struct FormulaFacts {
     pub flags: u16,
 }
 
+impl FormulaFacts {
+    /// Heap bytes the facts own: the edge list, symbol names, the L token
+    /// stream and spilled literals (build scratch, re-review R5).
+    pub fn owned_heap_bytes(&self) -> usize {
+        self.edges.capacity() * size_of::<EdgeSpec>()
+            + self
+                .edges
+                .iter()
+                .map(|e| match &e.origin {
+                    OriginSpec::Symbol(k) => k.name.len(),
+                    OriginSpec::Text => 0,
+                })
+                .sum::<usize>()
+            + self
+                .ltokens
+                .as_ref()
+                .map_or(0, |t| t.len() * size_of::<u64>())
+            + if self.literals.spilled() {
+                self.literals.capacity() * size_of::<ValueRef>()
+            } else {
+                0
+            }
+    }
+}
+
 /// Interned edge-group key.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct EdgeKey {
@@ -1071,6 +1096,25 @@ impl Store {
                     .collect(),
             )
         })
+    }
+
+    /// LK directory keys (live and dead: the directory is append-only;
+    /// see [`Self::lk_compaction_due`]).
+    pub fn lk_len(&self) -> usize {
+        self.lks.len()
+    }
+
+    /// Whether the append-only LK directory has outgrown the live state
+    /// (re-review R3). Every live key is referenced by a live edge group,
+    /// so once the directory holds more than twice the live edge groups
+    /// plus `formulas` (the host's formula count, the rebuild's cost) plus
+    /// a small constant, at least half of it is dead and the host rebuilds
+    /// (keeping identities, B-18), which drops dead keys. The directory is
+    /// then bounded by live state, and the rebuild's O(formulas + groups +
+    /// keys) cost is amortized over the interned keys and reclaimed groups
+    /// since the last one.
+    pub fn lk_compaction_due(&self, formulas: usize) -> bool {
+        self.lks.len() > 2 * (self.egroups.len() + formulas + 8)
     }
 
     pub fn lk_key(&self, lk: u32) -> &LkKey {

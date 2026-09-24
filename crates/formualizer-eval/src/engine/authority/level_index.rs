@@ -726,6 +726,12 @@ impl LevelIndex {
     }
 
     /// Bulk load into an empty index with the rebuild layout.
+    /// Bytes per item of the entry list a bulk load lays out (build
+    /// scratch accounting).
+    pub fn bulk_entry_bytes() -> usize {
+        size_of::<Entry>()
+    }
+
     pub fn bulk_load(&mut self, items: &[(BoxT, u32)], loc: &mut [u32]) {
         debug_assert_eq!(self.entries(), 0, "bulk_load into a non-empty index");
         let mut entries: Vec<Entry> = items.iter().map(|&(b, id)| (b, id, false)).collect();

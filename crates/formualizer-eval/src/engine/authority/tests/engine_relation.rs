@@ -171,6 +171,76 @@ fn review_symbol_rebuild_obeys_retained_budget() {
     }
 }
 
+/// Re-review R3: fixed workbook names used across many (sheet, name)
+/// contexts, one live formula at a time, no symbol change. Each context
+/// interns a new LK key; the host rebuilds (keeping identities) once dead
+/// keys outgrow the live state, so the directory stays bounded instead of
+/// growing with the contexts ever used.
+#[test]
+fn fixed_names_across_many_contexts_keep_the_lk_directory_bounded() {
+    use crate::engine::EvalConfig;
+    use crate::engine::named_range::{NameScope, NamedDefinition};
+    use crate::reference::CellRef;
+    let mut e = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    let sheets: Vec<String> = (0..8).map(|i| format!("Ctx{i}")).collect();
+    for s in &sheets {
+        e.add_sheet(s).unwrap();
+    }
+    e.set_cell_value("Sheet1", 1, 1, LiteralValue::Number(1.0))
+        .unwrap();
+    let target = e.graph.sheet_id("Sheet1").unwrap();
+    for k in 0..8 {
+        e.define_name(
+            &format!("LibName_k{k}"),
+            NamedDefinition::Cell(CellRef::new_absolute(target, 0, 0)),
+            NameScope::Workbook,
+        )
+        .unwrap();
+    }
+    e.set_cell_formula("Sheet1", 2, 1, parse("=1").unwrap())
+        .unwrap();
+    e.graph.authority().unwrap();
+    let anchor = (target, 1, 0);
+    let anchor_id = e.graph.authority_host().store().ids().id_of(anchor);
+    assert!(anchor_id.is_some());
+    let builds = e.graph.authority_host().builds();
+    let mut max_lk = 0;
+    let mut contexts = 0;
+    for s in &sheets {
+        for k in 0..8 {
+            e.set_cell_formula(s, 1, 1, parse(&format!("=LibName_k{k}")).unwrap())
+                .unwrap();
+            e.graph.authority().unwrap();
+            max_lk = max_lk.max(e.graph.authority_host().store().lk_len());
+            e.set_cell_value(s, 1, 1, LiteralValue::Number(0.0))
+                .unwrap();
+            e.graph.authority().unwrap();
+            max_lk = max_lk.max(e.graph.authority_host().store().lk_len());
+            contexts += 1;
+        }
+    }
+    let host = e.graph.authority_host();
+    eprintln!(
+        "R3: {contexts} contexts, max LK keys {max_lk}, compactions {}",
+        host.lk_compactions()
+    );
+    assert!(host.lk_compactions() > 0, "no compaction ran");
+    assert_eq!(
+        host.builds() - builds,
+        host.lk_compactions(),
+        "only compactions rebuilt"
+    );
+    // One live name formula plus the anchor: the bound is 2·(groups +
+    // formulas + 8) + 1 with a handful of live groups.
+    assert!(max_lk <= 32, "LK directory grew with history: {max_lk}");
+    assert_eq!(
+        host.store().ids().id_of(anchor),
+        anchor_id,
+        "anchor renumbered"
+    );
+    host.store().check().unwrap();
+}
+
 /// Decision 9 under host rebuilds: random engine edits interleaved with
 /// forced rebuilds (symbol revision, and real `define_name` calls). At
 /// every sync, a cell that had a formula at the previous sync and still has

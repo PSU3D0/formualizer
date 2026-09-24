@@ -49,6 +49,8 @@ pub struct AuthorityHost {
     pub(crate) dirty: DirtyStore,
     pub(crate) builds: u64,
     pub(crate) incremental_mutations: u64,
+    /// Rebuilds run because dead LK keys outgrew the live state (R3).
+    pub(crate) lk_compactions: u64,
     pub(crate) diff: DiffCounters,
 }
 
@@ -71,6 +73,10 @@ impl AuthorityHost {
 
     pub fn incremental_mutations(&self) -> u64 {
         self.incremental_mutations
+    }
+
+    pub fn lk_compactions(&self) -> u64 {
+        self.lk_compactions
     }
 
     pub fn diff_counters(&self) -> &DiffCounters {

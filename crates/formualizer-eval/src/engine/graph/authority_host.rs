@@ -180,6 +180,16 @@ impl DependencyGraph {
                 return;
             }
         }
+        // Dead LK keys outgrew the live state (re-review R3): rebuild,
+        // keeping identities, to drop them.
+        if self
+            .authority
+            .store
+            .lk_compaction_due(self.vertex_formulas.len())
+        {
+            self.authority.lk_compactions += 1;
+            self.authority_rebuild();
+        }
     }
 
     /// A formula joins an existing node group only if its L tokens equal
