@@ -3,6 +3,9 @@
 //! Temporary and behind the never-default `unified_authority` feature. The
 //! legacy graph stays the runtime evaluation path until M1b.
 
+// S2 emission primitive; remove allowance when the planning driver lands.
+#[allow(dead_code)]
+pub(crate) mod arc_emit;
 pub mod avl;
 pub mod canon;
 pub mod dir;

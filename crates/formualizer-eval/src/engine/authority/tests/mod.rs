@@ -1,5 +1,6 @@
 mod admission;
 pub(crate) mod alloc;
+mod arc_emit;
 mod build_oracle;
 mod correction;
 mod dirty;
