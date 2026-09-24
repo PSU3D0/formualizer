@@ -113,6 +113,27 @@ pub fn legacy_closure<R>(e: &Engine<R>, cells: &[Cell]) -> Vec<Cell> {
     e.graph.legacy_closure_cells(cells)
 }
 
+/// Δ(a) comparator: run legacy's actual dirty propagation from `cells`
+/// and return `(legacy dirty formula cells, authority marking of the same
+/// propagation)`, both sorted; `None` when no seed has a legacy vertex.
+/// Mutates legacy dirty flags and clears the authority's dirty cover.
+#[allow(clippy::type_complexity)]
+pub fn dirty_pair<R>(
+    e: &mut Engine<R>,
+    cells: &[Cell],
+) -> Result<Option<(Vec<Cell>, Vec<Cell>)>, AuthorityError> {
+    use crate::reference::{CellRef, Coord};
+    let any = cells.iter().any(|&c| {
+        e.graph
+            .get_vertex_for_cell(&CellRef::new(c.0, Coord::new(c.1, c.2, true, true)))
+            .is_some()
+    });
+    if !any {
+        return Ok(None);
+    }
+    e.graph.dirty_propagation_pair(cells).map(Some)
+}
+
 /// Formula cells the authority holds.
 pub fn formula_cells<R>(e: &mut Engine<R>) -> Result<Vec<Cell>, AuthorityError> {
     e.graph.authority()?;

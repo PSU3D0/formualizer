@@ -262,9 +262,24 @@ impl DependencyGraph {
 
     // ------------------------------------------------------------ hooks
 
-    /// Legacy dirty propagation from `seeds` just ran: mark the authority's
-    /// closure dirty and, when enabled, compare it with the legacy mirror.
-    pub(super) fn authority_observe_propagation(&mut self, seeds: &[VertexId]) {
+    /// Legacy dirty propagation from `seeds` just ran and dirtied
+    /// `legacy_affected`: mark the authority's propagation of the same
+    /// seeds (formula seeds and their closure, `DirtyStore::mark_propagation`)
+    /// and, when enabled, compare it with what legacy actually dirtied.
+    ///
+    /// Δ(a) filtering: legacy's affected set holds value sources (affected,
+    /// not dirtied) and symbol vertices (names, tables); only formula cells
+    /// are compared. `exact` is false for `mark_dirty_many_value_cells`,
+    /// whose range lookup uses the sources' bounding rectangle per sheet and
+    /// may over-dirty with several sources: there the authority must be a
+    /// subset, and legacy-only cells are counted as conservative, not as a
+    /// mismatch.
+    pub(super) fn authority_observe_propagation(
+        &mut self,
+        seeds: &[VertexId],
+        legacy_affected: &FxHashSet<VertexId>,
+        exact: bool,
+    ) {
         self.authority_sync();
         if self.authority.state != HostState::Ready {
             return;
@@ -277,30 +292,42 @@ impl DependencyGraph {
             return;
         }
         let rects: Vec<(u16, Rect)> = cells.iter().map(|c| (c.0, Rect::cell(c.1, c.2))).collect();
-        self.authority
+        let marked = self
+            .authority
             .dirty
-            .mark_closure(&self.authority.store, &rects);
+            .mark_propagation(&self.authority.store, &rects);
         let Some(mode) = diff_mode() else {
             return;
         };
-        let (closure, _) = self.authority.store.dependents(&rects, TagFilter::All);
         self.authority.diff.propagations += 1;
         if self.vertex_formulas.len() > DIFF_MAX_FORMULAS || cells.len() > DIFF_MAX_SEEDS {
             self.authority.diff.skipped += 1;
             return;
         }
-        let legacy = self.legacy_closure_cells(&cells);
-        let mine: Vec<Cell> = closure.cells();
+        let legacy = self.legacy_dirty_cells(legacy_affected);
+        let mine: Vec<Cell> = marked.cells();
         let mut problems: Vec<String> = Vec::new();
-        if legacy != mine {
+        let only_legacy: Vec<&Cell> = legacy
+            .iter()
+            .filter(|c| mine.binary_search(c).is_err())
+            .collect();
+        let only_mine: Vec<&Cell> = mine
+            .iter()
+            .filter(|c| legacy.binary_search(c).is_err())
+            .collect();
+        if !only_mine.is_empty() || (exact && !only_legacy.is_empty()) {
             self.authority.diff.closure_mismatches += 1;
             problems.push(format!(
-                "closure seeds={cells:?} legacy={} authority={} only_legacy={:?} only_authority={:?}",
+                "dirty seeds={cells:?} exact={exact} legacy={} authority={} only_legacy={:?} only_authority={:?}",
                 legacy.len(),
                 mine.len(),
-                legacy.iter().filter(|c| mine.binary_search(c).is_err()).take(8).collect::<Vec<_>>(),
-                mine.iter().filter(|c| legacy.binary_search(c).is_err()).take(8).collect::<Vec<_>>(),
+                only_legacy.iter().take(8).collect::<Vec<_>>(),
+                only_mine.iter().take(8).collect::<Vec<_>>(),
             ));
+        }
+        let conservative = only_mine.is_empty() && !exact && !only_legacy.is_empty();
+        if conservative {
+            self.authority.diff.closure_conservative += 1;
         }
         for &c in &cells {
             self.authority.diff.checked_seeds += 1;
@@ -337,6 +364,13 @@ impl DependencyGraph {
                 // One CHECK line per compared propagation (seed count), then
                 // one line per mismatch.
                 let mut lines = vec![format!("{who}\tCHECK seeds={}", cells.len())];
+                if conservative {
+                    lines.push(format!(
+                        "{who}\tCONSERVATIVE seeds={} legacy_only={}",
+                        cells.len(),
+                        only_legacy.len()
+                    ));
+                }
                 lines.extend(problems);
                 append_lines(path, &lines);
             }
@@ -438,6 +472,42 @@ impl DependencyGraph {
             .collect();
         v.sort_unstable();
         v
+    }
+
+    /// Formula cells among what a legacy dirty propagation affected (the
+    /// Δ(a) comparator: value sources and symbol vertices are filtered out).
+    /// Sorted.
+    pub(crate) fn legacy_dirty_cells(&self, affected: &FxHashSet<VertexId>) -> Vec<Cell> {
+        let mut v: Vec<Cell> = affected
+            .iter()
+            .filter(|&&v| self.is_formula_cell_vertex(v))
+            .filter_map(|&v| self.get_cell_ref(v).map(|c| cell_of(&c)))
+            .collect();
+        v.sort_unstable();
+        v
+    }
+
+    /// Run legacy's actual dirty propagation from `cells` (their vertices;
+    /// cells without a vertex are skipped) and return the formula cells it
+    /// dirtied, with the cover the authority marked for the same
+    /// propagation. The authority cover is cleared first, so the second
+    /// result is exactly this propagation's marking. Gates only.
+    pub(crate) fn dirty_propagation_pair(
+        &mut self,
+        cells: &[Cell],
+    ) -> Result<(Vec<Cell>, Vec<Cell>), AuthorityError> {
+        self.authority()?;
+        let vids: Vec<VertexId> = cells
+            .iter()
+            .filter_map(|&c| self.get_vertex_for_cell(&cell_ref(c)))
+            .collect();
+        self.authority.dirty.clear();
+        let affected: FxHashSet<VertexId> = self.mark_dirty_many(&vids).into_iter().collect();
+        if let HostState::Failed(e) = &self.authority.state {
+            return Err(e.clone());
+        }
+        let legacy = self.legacy_dirty_cells(&affected);
+        Ok((legacy, self.authority.dirty.cells()))
     }
 
     // ------------------------------------------------------------ memory gate

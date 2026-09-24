@@ -4,8 +4,9 @@
 //! check (§8.2, M1c) is `O(cols · log m)` per rectangle.
 //!
 //! In M1a the store is marked from every legacy dirty propagation with the
-//! authority's own closure of the same seeds, and cleaned when legacy
-//! clears dirty flags after evaluation; M1b plans from it.
+//! authority's own propagation of the same seeds (formula seeds and their
+//! closure), and cleaned when legacy clears dirty flags after evaluation;
+//! M1b plans from it.
 
 use super::geom::{Cell, Cover, Rect};
 use super::store::{Store, TagFilter};
@@ -28,8 +29,35 @@ impl DirtyStore {
         self.cover.insert_rect(sheet, r);
     }
 
+    /// What a dirty propagation from `seeds` dirties, as legacy's
+    /// `mark_dirty_many` does: every formula cell among the seeds, and the
+    /// transitive dependents (positive length) of all seeds. Value and empty
+    /// seeds are not dirtied themselves. Marks the cover and returns what
+    /// this call marked.
+    pub fn mark_propagation(&mut self, store: &Store, seeds: &[(u16, Rect)]) -> Cover {
+        let (mut marked, _) = store.dependents(seeds, TagFilter::All);
+        let mut runs = Vec::new();
+        for &(s, r) in seeds {
+            for col in r.c0..=r.c1 {
+                runs.clear();
+                store.ids().runs_in(s, col, r.r0, r.r1, &mut runs);
+                for &h in &runs {
+                    let run = store.ids().run(h);
+                    let a = run.row_start.max(r.r0);
+                    let b = (run.row_start + run.len - 1).min(r.r1);
+                    marked.insert_rect(s, &Rect::new(a, col, b, col));
+                }
+            }
+        }
+        for (s, c, a, b) in marked.column_intervals() {
+            self.cover.insert_rect(s, &Rect::new(a, c, b, c));
+        }
+        marked
+    }
+
     /// Mark the transitive dependents of `seeds` (the seeds themselves only
-    /// if they lie on a cycle). Returns the closure's cell count.
+    /// if they lie on a cycle): relation closure, not dirty propagation
+    /// (see [`Self::mark_propagation`]). Returns the closure's cell count.
     pub fn mark_closure(&mut self, store: &Store, seeds: &[(u16, Rect)]) -> u64 {
         let (closure, _) = store.dependents(seeds, TagFilter::All);
         for (s, c, a, b) in closure.column_intervals() {

@@ -28,7 +28,12 @@ pub enum HostState {
 pub struct DiffCounters {
     pub propagations: u64,
     pub checked_seeds: u64,
+    /// Dirty-propagation mismatches against legacy's actual dirty set
+    /// (Δ(a)).
     pub closure_mismatches: u64,
+    /// Propagations where legacy's bounding-rectangle value path dirtied
+    /// more than the authority (a strict superset; not a mismatch).
+    pub closure_conservative: u64,
     pub direct_mismatches: u64,
     pub skipped: u64,
 }
@@ -39,7 +44,8 @@ pub struct AuthorityHost {
     pub(crate) state: HostState,
     /// Symbol revision the store was built against.
     pub(crate) symbol_rev: u64,
-    /// Dirty cover (design §4.4): marked by every legacy propagation.
+    /// Dirty cover (design §4.4): marked by every legacy propagation with
+    /// the authority's propagation of the same seeds.
     pub(crate) dirty: DirtyStore,
     pub(crate) builds: u64,
     pub(crate) incremental_mutations: u64,

@@ -94,3 +94,101 @@ fn engine_edits_mark_the_legacy_closure_and_evaluation_cleans() {
     e.evaluate_all().unwrap();
     assert!(e.graph.authority_host().dirty().is_empty());
 }
+
+// ---------------------------------------------------------------- M1a correction B6
+
+/// Every legacy formula vertex whose dirty flag is set, as sorted cells.
+fn legacy_dirty_flags(e: &Engine<TestWorkbook>) -> Vec<Cell> {
+    let mut v: Vec<Cell> = e
+        .graph
+        .vertices_with_formulas()
+        .filter(|&v| e.graph.is_dirty(v))
+        .filter_map(|v| e.graph.get_cell_ref(v))
+        .map(|c| (c.sheet_id, c.coord.row(), c.coord.col()))
+        .collect();
+    v.sort_unstable();
+    v
+}
+
+/// Review B6 repro: a re-edited standalone formula is dirty in legacy and
+/// must be dirty in the authority cover.
+#[test]
+fn review_formula_seed_is_dirty_in_both_authorities() {
+    let mut e = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    e.set_cell_formula("Sheet1", 1, 1, parse("=1").unwrap())
+        .unwrap();
+    e.evaluate_all().unwrap();
+    e.set_cell_formula("Sheet1", 1, 1, parse("=2").unwrap())
+        .unwrap();
+    let v = e.graph.vertices_with_formulas().next().unwrap();
+    let affected = e.graph.mark_dirty_many(&[v]);
+    assert!(affected.contains(&v));
+    assert!(e.graph.is_dirty(v));
+    let sid = e.graph.sheet_id("Sheet1").unwrap();
+    // The relation closure has no positive-length path from A1: this is
+    // why the old mirror missed the dirty source.
+    assert!(e.graph.legacy_closure_cells(&[(sid, 0, 0)]).is_empty());
+    e.graph.authority().unwrap();
+    assert!(
+        e.graph.authority_host().dirty().is_dirty((sid, 0, 0)),
+        "edited formula is dirty in legacy but absent from authority cover"
+    );
+}
+
+/// Isolated formula create, formula edit and multi-source propagation:
+/// the authority's dirty cover equals legacy's dirty formula cells, both
+/// for one propagation (the Δ(a) comparator) and as the whole cover.
+#[test]
+fn formula_seeds_create_edit_and_multi_source_match_legacy_dirty() {
+    let mut e = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    let sid = e.graph.sheet_id_mut("Sheet1");
+    // Create: a standalone formula, and one with a dependent.
+    e.set_cell_formula("Sheet1", 1, 1, parse("=1").unwrap())
+        .unwrap();
+    e.graph.authority().unwrap();
+    assert!(e.graph.authority_host().dirty().is_dirty((sid, 0, 0)));
+    assert_eq!(
+        e.graph.authority_host().dirty().cells(),
+        legacy_dirty_flags(&e)
+    );
+    e.set_cell_value("Sheet1", 1, 3, LiteralValue::Number(3.0))
+        .unwrap();
+    e.set_cell_formula("Sheet1", 2, 1, parse("=A1+C1").unwrap())
+        .unwrap();
+    e.set_cell_formula("Sheet1", 3, 1, parse("=A2*2").unwrap())
+        .unwrap();
+    e.set_cell_formula("Sheet1", 1, 5, parse("=SUM(C1:C9)").unwrap())
+        .unwrap();
+    e.graph.authority().unwrap();
+    assert_eq!(
+        e.graph.authority_host().dirty().cells(),
+        legacy_dirty_flags(&e)
+    );
+    e.evaluate_all().unwrap();
+    assert!(e.graph.authority_host().dirty().is_empty());
+
+    // Edit: A1 := 2 dirties A1 (the seed) and A2, A3.
+    e.set_cell_formula("Sheet1", 1, 1, parse("=2").unwrap())
+        .unwrap();
+    e.graph.authority().unwrap();
+    let dirty = e.graph.authority_host().dirty().cells();
+    assert_eq!(dirty, vec![(sid, 0, 0), (sid, 1, 0), (sid, 2, 0)]);
+    assert_eq!(dirty, legacy_dirty_flags(&e));
+    e.evaluate_all().unwrap();
+
+    // One propagation, several sources: a formula seed, a value seed with
+    // range and cell readers, and a formula seed with no dependents.
+    let seeds = [(sid, 0, 0), (sid, 0, 2), (sid, 2, 0)];
+    let (legacy, mine) = e.graph.dirty_propagation_pair(&seeds).unwrap();
+    assert_eq!(mine, legacy);
+    assert_eq!(
+        mine,
+        vec![(sid, 0, 0), (sid, 0, 4), (sid, 1, 0), (sid, 2, 0)],
+        "A1, E1 (reads C1), A2 (reads A1, C1), A3 (seed)"
+    );
+    // A value seed alone is affected but not dirty.
+    e.evaluate_all().unwrap();
+    let (legacy, mine) = e.graph.dirty_propagation_pair(&[(sid, 0, 2)]).unwrap();
+    assert_eq!(mine, legacy);
+    assert!(!mine.contains(&(sid, 0, 2)));
+}

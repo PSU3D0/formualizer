@@ -432,12 +432,16 @@ struct Row {
     maintained_eq_rebuild: bool,
     check_ok: bool,
     state: String,
+    /// Δ(a) seeds without a legacy vertex (legacy cannot propagate them).
+    closure_skipped: usize,
+    /// Relation-closure (positive length) mismatches, pre and post edits.
+    relation_mismatches: usize,
     first_mismatch: String,
 }
 
 impl Row {
     fn header() -> &'static str {
-        "workbook\tformulas\trejected\tparse_errors\trecords\towners\tnodes\truns\tslot_rows\tedge_groups\tnode_groups\tauthority_bytes\tauthority_measured_heap\tlegacy_bytes\tratio_capacity\tratio_measured\tdirect_seeds\tdirect_mismatches\tclosure_seeds\tclosure_mismatches\tedits\tpost_direct_mismatches\tpost_closure_mismatches\tmaintained_eq_rebuild\tcheck_ok\tstate\tfirst_mismatch"
+        "workbook\tformulas\trejected\tparse_errors\trecords\towners\tnodes\truns\tslot_rows\tedge_groups\tnode_groups\tauthority_bytes\tauthority_measured_heap\tlegacy_bytes\tratio_capacity\tratio_measured\tdirect_seeds\tdirect_mismatches\tclosure_seeds\tclosure_mismatches\tedits\tpost_direct_mismatches\tpost_closure_mismatches\tmaintained_eq_rebuild\tcheck_ok\tstate\tclosure_skipped\trelation_mismatches\tfirst_mismatch"
     }
 
     fn line(&self) -> String {
@@ -449,7 +453,7 @@ impl Row {
             }
         };
         format!(
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.4}\t{:.4}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.4}\t{:.4}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             self.id,
             self.formulas,
             self.rejected,
@@ -476,6 +480,8 @@ impl Row {
             self.maintained_eq_rebuild,
             self.check_ok,
             self.state,
+            self.closure_skipped,
+            self.relation_mismatches,
             self.first_mismatch.replace('\t', " "),
         )
     }
@@ -532,15 +538,28 @@ fn compare(
             }
         }
     }
+    // Δ(a): legacy's actual dirty propagation (`mark_dirty_many`) against
+    // the authority's marking of the same propagation (formula seeds and
+    // their closure). Only formula cells are compared (value sources are
+    // affected, not dirtied; symbol vertices are not cells).
     let mut cm = 0;
     for &c in closure {
+        // Relation closure (positive length) as a second comparison.
         let mine = probe::closure(engine, &[c]).map_err(|e| anyhow!("{e}"))?;
         let legacy = probe::legacy_closure(engine, &[c]);
+        if mine != legacy {
+            row.relation_mismatches += 1;
+        }
+        let Some((legacy, mine)) = probe::dirty_pair(engine, &[c]).map_err(|e| anyhow!("{e}"))?
+        else {
+            row.closure_skipped += 1;
+            continue;
+        };
         if mine != legacy {
             cm += 1;
             if row.first_mismatch.is_empty() {
                 row.first_mismatch = format!(
-                    "closure {c:?}: legacy {} authority {} e.g. legacy-only {:?} authority-only {:?}",
+                    "dirty {c:?}: legacy {} authority {} e.g. legacy-only {:?} authority-only {:?}",
                     legacy.len(),
                     mine.len(),
                     legacy.iter().find(|x| mine.binary_search(x).is_err()),

@@ -2781,7 +2781,7 @@ impl DependencyGraph {
         self.formula_dirty.legacy_extend(affected.iter().copied());
 
         #[cfg(feature = "unified_authority")]
-        self.authority_observe_propagation(vertex_ids);
+        self.authority_observe_propagation(vertex_ids, &affected, true);
 
         // Return as Vec for compatibility
         affected.into_iter().collect()
@@ -3847,7 +3847,7 @@ impl DependencyGraph {
 
         self.formula_dirty.legacy_extend(affected.iter().copied());
         #[cfg(feature = "unified_authority")]
-        self.authority_observe_propagation(vertex_ids);
+        self.authority_observe_propagation(vertex_ids, &affected, false);
         affected.into_iter().collect()
     }
 
