@@ -20828,6 +20828,8 @@ where
         scope: &crate::engine::PrepareScope,
         delta: Option<&mut DeltaCollector>,
     ) -> Result<EvalResult, ExcelError> {
+        #[cfg(feature = "unified_authority")]
+        self.require_unified_authority()?;
         self.transition_off_mode_spans_to_legacy()?;
         if matches!(scope, crate::engine::PrepareScope::Workbook)
             && let Some(stats) = self.active_evaluation_resource_request.as_mut()
@@ -24303,6 +24305,29 @@ where
         }
     }
 
+    /// Refuse out-of-scope authority states before evaluation can demote spans
+    /// or execute a legacy schedule. The public error type is unchanged; NImpl
+    /// carries the exact internal Unsupported operation for the deferred-scope
+    /// gate. Admission and allocation failures are not scope exceptions.
+    #[cfg(feature = "unified_authority")]
+    fn require_unified_authority(&mut self) -> Result<(), ExcelError> {
+        use crate::engine::authority::store::AuthorityError;
+        self.graph.authority().map(|_| ()).map_err(|error| {
+            // Some unchanged behavioral tests assert only `error.kind`, hiding
+            // the operation in their panic. The opt-in gate trace proves which
+            // typed error was actually returned; it never changes that error.
+            #[cfg(test)]
+            if std::env::var_os("FZ_AUTHORITY_DEFERRED_TRACE").is_some() {
+                eprintln!("M1B_AUTHORITY_ERROR {error:?}");
+            }
+            let kind = match error {
+                AuthorityError::Unsupported { .. } => ExcelErrorKind::NImpl,
+                _ => ExcelErrorKind::Error,
+            };
+            ExcelError::new(kind).with_message(format!("unified_authority: {error:?}"))
+        })
+    }
+
     /// Evaluate all dirty/volatile vertices
     pub fn evaluate_all(&mut self) -> Result<EvalResult, ExcelError> {
         // `evaluate_all_unobserved` owns the `observe_function_semantic_epoch` guard.
@@ -24333,6 +24358,8 @@ where
     /// coordinator; the coordinator itself composes with private legacy
     /// primitives for legacy-only work.
     fn evaluate_all_coordinator(&mut self) -> Result<EvalResult, ExcelError> {
+        #[cfg(feature = "unified_authority")]
+        self.require_unified_authority()?;
         self.transition_off_mode_spans_to_legacy()?;
         self.begin_evaluation_request();
         if self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental {
@@ -24552,6 +24579,8 @@ where
         if self.config.defer_graph_building {
             self.build_graph_all()?;
         }
+        #[cfg(feature = "unified_authority")]
+        self.require_unified_authority()?;
         self.transition_off_mode_spans_to_legacy()?;
         self.begin_evaluation_request();
         if self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental
@@ -25421,6 +25450,8 @@ where
                 ExcelError::new(ExcelErrorKind::Cancelled).with_message(message.to_string())
             );
         }
+        #[cfg(feature = "unified_authority")]
+        self.require_unified_authority()?;
         self.transition_off_mode_spans_to_legacy()?;
         self.begin_evaluation_request();
         if self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental
@@ -30246,6 +30277,8 @@ where
         if self.config.defer_graph_building {
             self.build_graph_all()?;
         }
+        #[cfg(feature = "unified_authority")]
+        self.require_unified_authority()?;
         self.transition_off_mode_spans_to_legacy()?;
         self.begin_evaluation_request();
         if self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental

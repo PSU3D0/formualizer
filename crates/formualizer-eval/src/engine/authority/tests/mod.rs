@@ -4,6 +4,7 @@ mod build_oracle;
 mod correction;
 mod dirty;
 mod engine_relation;
+mod evaluation_boundary;
 pub(crate) mod fixtures;
 mod identity_props;
 mod nodes_slots;
