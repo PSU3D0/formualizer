@@ -128,7 +128,7 @@ impl Store {
         }
         dep.account(&self.idx.dep, &mut b);
         prec.account(&self.idx.prec, &mut b);
-        work += (dep.touched.len() + prec.touched.len()) as u64;
+        work += (dep.touched.len() + prec.touched.len()) as u64 + dep.probes + prec.probes;
         self.stats.plan_work += work;
         let plan_scratch = canon_scratch
             + members.capacity() * 4
@@ -177,6 +177,7 @@ impl Store {
             for (s, sh) in &prec.touched {
                 self.stage_index(PREC, *s, sh)?;
             }
+            self.seal_stage();
             Ok(())
         })();
         if reserved.is_err() {
@@ -282,7 +283,7 @@ impl Store {
             }
         }
         node.account(&self.idx.node, &mut b);
-        self.stats.plan_work += (l + n + node.touched.len()) as u64;
+        self.stats.plan_work += (l + n + node.touched.len()) as u64 + node.probes;
         let entry = size_of::<(super::super::geom::BoxT, u32)>();
         let fam_before = members
             .iter()
@@ -349,6 +350,7 @@ impl Store {
             for (s, sh) in &node.touched {
                 self.stage_index(NODE, *s, sh)?;
             }
+            self.seal_stage();
             Ok(())
         })();
         if reserved.is_err() {

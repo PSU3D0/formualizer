@@ -484,6 +484,12 @@ pub(super) enum IndexOp {
 #[derive(Debug)]
 struct IndexPlan {
     touched: Vec<(u16, IndexShadow)>,
+    /// Sheet → position in `touched` (O(log d) per operation, where a
+    /// linear search made a scope touching d sheets cost d²).
+    pos: AvlMap,
+    /// Upper bound on lookup probes (tree height + 1 per operation), for
+    /// the planning work counter.
+    probes: u64,
     /// Sheet count after the plan (the index vector grows to it).
     sheets: usize,
 }
@@ -492,6 +498,8 @@ impl IndexPlan {
     fn new(idx: &[LevelIndex]) -> Self {
         Self {
             touched: Vec::new(),
+            pos: AvlMap::new(),
+            probes: 0,
             sheets: idx.len(),
         }
     }
@@ -501,8 +509,9 @@ impl IndexPlan {
         idx: &[LevelIndex],
         s: u16,
     ) -> Result<&'a mut IndexShadow, AuthorityError> {
-        let i = match self.touched.iter().position(|t| t.0 == s) {
-            Some(i) => i,
+        self.probes += u64::from(self.pos.height()) + 1;
+        let i = match self.pos.get(u64::from(s)) {
+            Some(i) => i as usize,
             None => {
                 let sh = idx
                     .get(s as usize)
@@ -514,6 +523,11 @@ impl IndexPlan {
                         .try_reserve_exact(self.touched.len().max(1))
                         .map_err(|_| AuthorityError::Alloc)?;
                 }
+                let n = self.pos.len();
+                self.pos
+                    .try_reserve_slots(super::avl::grown(n, n + 1))
+                    .map_err(|_| AuthorityError::Alloc)?;
+                self.pos.insert(u64::from(s), self.touched.len() as u32);
                 self.touched.push((s, sh));
                 self.sheets = self.sheets.max(s as usize + 1);
                 self.touched.len() - 1
@@ -566,6 +580,7 @@ impl IndexPlan {
 
     fn scratch_bytes(&self) -> usize {
         self.touched.capacity() * size_of::<(u16, IndexShadow)>()
+            + self.pos.heap_bytes()
             + self
                 .touched
                 .iter()
@@ -810,14 +825,23 @@ impl Store {
 
     // ------------------------------------------------------------ index ops
 
+    /// Order the staged indexes by (role, sheet) for `index_op`'s binary
+    /// search. In place: no allocation after the reservation.
+    pub(super) fn seal_stage(&mut self) {
+        self.stage.sort_unstable_by_key(|(r, s, _)| (*r, *s));
+    }
+
     /// One index operation on `(role, sheet)`, with its allocations taken
     /// from the scope's stage when there is one, keeping the role totals.
     pub(super) fn index_op(&mut self, role: usize, sheet: u16, op: IndexOp) {
-        let stage = self
+        // The stage is sorted by (role, sheet) when sealed.
+        let stage = match self
             .stage
-            .iter_mut()
-            .find(|(r, s, _)| usize::from(*r) == role && *s == sheet)
-            .map(|x| &mut x.2);
+            .binary_search_by_key(&(role as u8, sheet), |(r, s, _)| (*r, *s))
+        {
+            Ok(i) => Some(&mut self.stage[i].2),
+            Err(_) => None,
+        };
         let (v, loc) = match role {
             DEP => (&mut self.idx.dep, &mut self.dep_loc),
             PREC => (&mut self.idx.prec, &mut self.prec_loc),

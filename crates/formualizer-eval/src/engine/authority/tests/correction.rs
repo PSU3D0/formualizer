@@ -107,6 +107,71 @@ fn mutation_accounting_work_is_independent_of_store_size() {
     assert!(a0 <= 32 && u0 <= 32, "{maxes:?}");
 }
 
+/// Re-review R2: a point edit's identity planning visits the mutated sheet
+/// only. S sheets hold one independent `=1` each; editing a formula on
+/// sheet 0, and appending a formula to a fresh sheet, cost the same work at
+/// every S.
+#[test]
+fn point_edit_work_is_independent_of_sheet_count() {
+    let mut maxes = Vec::new();
+    for sheets in [16u16, 64, 256, 1_024] {
+        let mut s = Store::new();
+        let mut max_append = 0;
+        for sh in 0..sheets {
+            let w = s.stats.plan_work;
+            s.set_formula((sh, 0, 0), &one(u64::from(sh), 1)).unwrap();
+            max_append = max_append.max(s.stats.plan_work - w);
+        }
+        let mut max_edit = 0;
+        for i in 0..64u64 {
+            let w = s.stats.plan_work;
+            s.set_formula((0, 0, 0), &one(10_000 + i, 2)).unwrap();
+            max_edit = max_edit.max(s.stats.plan_work - w);
+        }
+        s.check().unwrap();
+        maxes.push((sheets, max_append, max_edit));
+    }
+    eprintln!("R2 max work per mutation (sheets, append, edit): {maxes:?}");
+    let (_, a0, e0) = maxes[0];
+    for &(n, a, e) in &maxes {
+        assert!(a <= a0 && e <= e0, "work grew with {n} sheets: {maxes:?}");
+    }
+}
+
+/// Re-review N1: N formulas on sheet 0, formula i reading one value cell
+/// on its own sheet i + 1, cleared by one range clear. Index planning looks
+/// sheets up in O(log d), so the clear's work is O(N log N), where the
+/// linear touched-sheet search was Θ(N²).
+#[test]
+fn range_clear_over_distinct_target_sheets_is_not_quadratic() {
+    let mut runs = Vec::new();
+    for n in [256u32, 1_024, 4_096] {
+        let mut s = Store::new();
+        for r in 0..n {
+            let f = with_refs(vec![abs(0, 0, (r + 1) as u16)], 1, 1);
+            s.set_formula((0, r, 0), &f).unwrap();
+        }
+        let w = s.stats.plan_work;
+        s.clear_rect(0, Rect::new(0, 0, n - 1, 0)).unwrap();
+        let work = s.stats.plan_work - w;
+        assert_eq!(s.formula_count(), 0);
+        s.check().unwrap();
+        runs.push((n, work));
+    }
+    eprintln!("N1 range-clear work (n, work): {runs:?}");
+    for &(n, work) in &runs {
+        let log = u64::from(32 - n.leading_zeros());
+        assert!(
+            work <= 16 * u64::from(n) * log,
+            "clear of {n} formulas over {n} sheets did {work} work: {runs:?}"
+        );
+    }
+    // Quadrupling N must not come near sixteen-fold work.
+    for w in runs.windows(2) {
+        assert!(w[1].1 <= w[0].1 * 6, "super-linear growth: {runs:?}");
+    }
+}
+
 // ---------------------------------------------------------------- B3
 
 /// Run 128 warm-up steps, then 10,000 more; return the maximum retained

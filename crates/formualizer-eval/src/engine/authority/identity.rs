@@ -91,7 +91,13 @@ fn fwd_key(col: u32, row: u32) -> u64 {
 pub struct IdShadow {
     pub runs: SlabShadow,
     pub live_runs: usize,
+    /// Forward-map replicas for sheets `fwd_base..fwd_base + fwd.len()`: all
+    /// sheets for a build, only the mutated sheet for a mutation scope (so a
+    /// point edit never visits unrelated sheets).
     pub fwd: Vec<SlabShadow>,
+    pub fwd_base: usize,
+    /// Forward-directory list length after the replay.
+    pub fwd_dir_len: usize,
     pub fwd_dir_cap: usize,
     pub rev: SlabShadow,
     pub next_id: u64,
@@ -100,11 +106,22 @@ pub struct IdShadow {
 impl IdShadow {
     fn fwd(&mut self, sheet: u16) -> &mut SlabShadow {
         let s = sheet as usize;
-        if self.fwd.len() <= s {
-            self.fwd.resize(s + 1, SlabShadow::default());
+        assert!(
+            s >= self.fwd_base,
+            "identity shadow replayed outside its sheet window"
+        );
+        let i = s - self.fwd_base;
+        if self.fwd.len() <= i {
+            // Only sheets past the table's directory are fresh; a window
+            // shadow is created for the one sheet its scope touches.
+            debug_assert!(self.fwd_base == 0 || s >= self.fwd_dir_len);
+            self.fwd.resize(i + 1, SlabShadow::default());
+        }
+        if self.fwd_dir_len <= s {
+            self.fwd_dir_len = s + 1;
             self.fwd_dir_cap = self.fwd_dir_cap.max(s + 1);
         }
-        &mut self.fwd[s]
+        &mut self.fwd[i]
     }
 
     fn new_run(&mut self, sheet: u16) {
@@ -128,7 +145,8 @@ impl IdShadow {
         self.rev.alloc();
     }
 
-    /// Heap bytes of the replica state.
+    /// Heap bytes of the replica state (every sheet's forward map only for
+    /// a full shadow, `fwd_base == 0` with the whole directory).
     pub fn heap_bytes(&self) -> usize {
         self.runs.cap * size_of::<IdRun>()
             + self.fwd_dir_cap * size_of::<AvlMap>()
@@ -287,13 +305,16 @@ impl IdentityTable {
         self.fwd.get(s).map_or(0, AvlMap::heap_bytes)
     }
 
-    /// [`Self::shadow`] with the forward-directory list reserved for
-    /// `sheets` sheets, fallibly (the dry run then never allocates).
-    pub fn try_shadow(&self, sheets: usize) -> Result<IdShadow, ReserveError> {
+    /// A shadow of the runs, the reverse map and sheet `sheet`'s forward map
+    /// only: a mutation scope cuts and places runs on one sheet, and its
+    /// accounting and reservation then visit that sheet alone (O(1) in the
+    /// sheet count). The forward list is reserved fallibly.
+    pub fn try_shadow_sheet(&self, sheet: u16) -> Result<IdShadow, ReserveError> {
+        let s = sheet as usize;
         let mut fwd = Vec::new();
-        fwd.try_reserve_exact(self.fwd.len().max(sheets))
-            .map_err(|_| ReserveError)?;
-        fwd.extend(self.fwd.iter().map(AvlMap::shadow));
+        fwd.try_reserve_exact(1).map_err(|_| ReserveError)?;
+        fwd.push(self.fwd.get(s).map(AvlMap::shadow).unwrap_or_default());
+        let fwd_dir_len = self.fwd.len().max(s + 1);
         Ok(IdShadow {
             runs: SlabShadow {
                 slots: self.runs.len(),
@@ -302,7 +323,9 @@ impl IdentityTable {
             },
             live_runs: self.run_count(),
             fwd,
-            fwd_dir_cap: self.fwd.capacity(),
+            fwd_base: s,
+            fwd_dir_len,
+            fwd_dir_cap: self.fwd.capacity().max(fwd_dir_len),
             rev: self.rev.shadow(),
             next_id: u64::from(self.next_id),
         })
@@ -317,6 +340,8 @@ impl IdentityTable {
             },
             live_runs: self.run_count(),
             fwd: self.fwd.iter().map(AvlMap::shadow).collect(),
+            fwd_base: 0,
+            fwd_dir_len: self.fwd.len(),
             fwd_dir_cap: self.fwd.capacity(),
             rev: self.rev.shadow(),
             next_id: u64::from(self.next_id),
@@ -331,15 +356,16 @@ impl IdentityTable {
                 .try_reserve_exact(target.runs.cap - self.runs.len())
                 .map_err(|_| ReserveError)?;
         }
-        if target.fwd.len() > self.fwd.capacity() {
+        if target.fwd_dir_len > self.fwd.capacity() {
             self.fwd
-                .try_reserve_exact(target.fwd.len() - self.fwd.len())
+                .try_reserve_exact(target.fwd_dir_len - self.fwd.len())
                 .map_err(|_| ReserveError)?;
         }
-        while self.fwd.len() < target.fwd.len() {
+        while self.fwd.len() < target.fwd_dir_len {
             self.fwd.push(AvlMap::new());
         }
-        for (m, t) in self.fwd.iter_mut().zip(&target.fwd) {
+        let window = &mut self.fwd[target.fwd_base..target.fwd_base + target.fwd.len()];
+        for (m, t) in window.iter_mut().zip(&target.fwd) {
             let before = m.heap_bytes();
             let r = m.try_reserve_slots(t.cap);
             self.fwd_bytes += m.heap_bytes() - before;

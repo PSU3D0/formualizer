@@ -499,12 +499,12 @@ impl Store {
             (NODE, &node, &self.idx.node),
         ] {
             entries[role] = plan.account(v, &mut b);
-            work += plan.touched.len() as u64;
+            work += plan.touched.len() as u64 + plan.probes;
         }
 
         // Identity (the shadow's forward list is reserved for `sheet`, so
         // the replay never allocates).
-        let mut id_target = self.ids.try_shadow(sheet as usize + 1).map_err(alloc_err)?;
+        let mut id_target = self.ids.try_shadow_sheet(sheet).map_err(alloc_err)?;
         for (i, c) in cut.id_cuts.iter().enumerate() {
             IdentityTable::shadow_cut(&mut id_target, c, cut.keep == Some(i));
         }
@@ -524,11 +524,15 @@ impl Store {
             );
             b.grow(
                 cur.fwd_dir * size_of::<AvlMap>(),
-                id_target.fwd.len().max(cur.fwd_dir) * size_of::<AvlMap>(),
+                id_target.fwd_dir_cap.max(cur.fwd_dir) * size_of::<AvlMap>(),
             );
-            for (s, t) in id_target.fwd.iter().enumerate() {
+            // The window holds the mutated sheet only.
+            for (i, t) in id_target.fwd.iter().enumerate() {
                 work += 1;
-                b.grow(self.ids.fwd_bytes_of(s), t.cap * AvlMap::NODE_BYTES);
+                b.grow(
+                    self.ids.fwd_bytes_of(id_target.fwd_base + i),
+                    t.cap * AvlMap::NODE_BYTES,
+                );
             }
             b.grow(
                 cur.rev * AvlMap::NODE_BYTES,
@@ -715,6 +719,7 @@ impl Store {
                 self.stage_index(role, *s, sh)?;
             }
         }
+        self.seal_stage();
         Ok(())
     }
 
