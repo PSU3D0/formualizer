@@ -860,11 +860,7 @@ fn external_workbook_range_binds_as_one_source_table() {
 /// assignment failed with #NAME? whatever the end endpoint's shape.
 #[test]
 fn unbound_external_range_with_complete_start_fails_with_name_error() {
-    for formula in [
-        "=SUM([1]S!A1:A)",
-        "=SUM([1]S!A1:3)",
-        "=SUM([1]S!$A$1:$B$4)",
-    ] {
+    for formula in ["=SUM([1]S!A1:A)", "=SUM([1]S!A1:3)", "=SUM([1]S!$A$1:$B$4)"] {
         let mut engine: Engine<_> = Engine::new(SourceCtx::default(), EvalConfig::default());
         engine.add_sheet("Sheet1").unwrap();
         let err = engine
