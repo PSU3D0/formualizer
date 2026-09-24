@@ -110,14 +110,24 @@ impl DependencyGraph {
         Some(((sheet, row, col), facts))
     }
 
+    /// Rebuild the store from the graph's formulas (load, symbol revision,
+    /// large batch). Identities are kept (decision 9): the previous store's
+    /// live cells keep their ids and its counter continues. The candidate
+    /// goes through the store's admission; a rejection fails the host with
+    /// the typed error instead of installing a store above the budget.
     fn authority_rebuild(&mut self) {
         let input = self.authority_build_input();
         let budget = self.authority.store.budget;
-        self.authority.store = Store::build(input);
-        self.authority.store.budget = budget;
-        self.authority.symbol_rev = self.symbol_revision;
-        self.authority.builds += 1;
-        self.authority.state = HostState::Ready;
+        let prior = (self.authority.state != HostState::Unbuilt).then_some(&self.authority.store);
+        match Store::rebuild(input, prior, budget) {
+            Ok(store) => {
+                self.authority.store = store;
+                self.authority.symbol_rev = self.symbol_revision;
+                self.authority.builds += 1;
+                self.authority.state = HostState::Ready;
+            }
+            Err(e) => self.authority.state = HostState::Failed(e),
+        }
     }
 
     /// Bring the authority up to date with the graph's formulas.

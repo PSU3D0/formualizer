@@ -109,3 +109,166 @@ fn engine_fixtures_r1_r1x_oracles_delta_and_rebuild() {
     }
     assert!(total > 100_000, "{total} queries");
 }
+
+// ---------------------------------------------------------------- M1a correction B4, B5(b)
+
+/// Review B4 repro: a symbol-revision rebuild keeps every live id.
+#[test]
+fn review_symbol_rebuild_preserves_ids() {
+    use crate::engine::EvalConfig;
+    use crate::engine::named_range::{NameScope, NamedDefinition};
+    let mut e = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    e.set_cell_formula("Sheet1", 2, 1, parse("=1").unwrap())
+        .unwrap();
+    e.graph.authority().unwrap();
+    e.set_cell_formula("Sheet1", 1, 1, parse("=2").unwrap())
+        .unwrap();
+    e.graph.authority().unwrap();
+    let sid = e.graph.sheet_id("Sheet1").unwrap();
+    let a1 = (sid, 0, 0);
+    let a2 = (sid, 1, 0);
+    let before = (
+        e.graph.authority_host().store().ids().id_of(a1),
+        e.graph.authority_host().store().ids().id_of(a2),
+    );
+    let builds = e.graph.authority_host().builds();
+    e.define_name(
+        "UnrelatedReviewName",
+        NamedDefinition::Literal(LiteralValue::Number(7.0)),
+        NameScope::Workbook,
+    )
+    .unwrap();
+    e.graph.authority().unwrap();
+    assert!(e.graph.authority_host().builds() > builds, "a rebuild ran");
+    let after = (
+        e.graph.authority_host().store().ids().id_of(a1),
+        e.graph.authority_host().store().ids().id_of(a2),
+    );
+    assert_eq!(before, after, "symbol rebuild renumbered live formulas");
+}
+
+/// Review B5(b) repro: a rebuild obeys the retained budget.
+#[test]
+fn review_symbol_rebuild_obeys_retained_budget() {
+    use crate::engine::EvalConfig;
+    use crate::engine::named_range::{NameScope, NamedDefinition};
+    let mut e = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    e.set_cell_formula("Sheet1", 1, 1, parse("=1").unwrap())
+        .unwrap();
+    e.graph.authority().unwrap();
+    e.graph.authority_host_mut().store.budget.retained = Some(0);
+    e.define_name(
+        "UnrelatedReviewBudgetName",
+        NamedDefinition::Literal(LiteralValue::Number(7.0)),
+        NameScope::Workbook,
+    )
+    .unwrap();
+    match e.graph.authority() {
+        Err(super::super::store::AuthorityError::Admission { resource, .. }) => {
+            assert_eq!(resource, "retained")
+        }
+        other => panic!("rebuild ignored retained limit: {:?}", other.map(|_| ())),
+    }
+}
+
+/// Decision 9 under host rebuilds: random engine edits interleaved with
+/// forced rebuilds (symbol revision, and real `define_name` calls). At
+/// every sync, a cell that had a formula at the previous sync and still has
+/// one keeps its id, unless a value edit deleted that formula in between
+/// (then the new formula is a creation); a new formula cell never gets an
+/// id seen before (retired ids are not reused); the counter never goes
+/// back.
+#[test]
+fn ids_are_stable_across_edits_and_forced_rebuilds() {
+    use super::super::geom::Cell;
+    use crate::engine::named_range::{NameScope, NamedDefinition};
+    use rustc_hash::{FxHashMap, FxHashSet};
+    let mut rebuilds = 0u64;
+    let mut kept = 0u64;
+    let mut fresh = 0u64;
+    for seed in 0..16u64 {
+        let mut g = Rng(0x1D5 + seed * 7919);
+        let mut e = fixture_engine();
+        populate(&mut e, &mut g);
+        e.graph.authority().expect("authority ready");
+        let mut live: FxHashMap<Cell, u32> = FxHashMap::default();
+        let mut ever: FxHashSet<u32> = FxHashSet::default();
+        let mut next = 0u32;
+        let snapshot = |e: &Engine<TestWorkbook>| -> (FxHashMap<Cell, u32>, u32) {
+            let s = e.graph.authority_host().store();
+            let m = s
+                .formula_cells()
+                .into_iter()
+                .map(|c| (c, s.ids().id_of(c).expect("formula cell id")))
+                .collect();
+            (m, s.ids().next_id())
+        };
+        for step in 0..120 {
+            // Cells whose formula a value edit deleted in this batch: the
+            // host syncs at every dirty propagation, so a formula set after
+            // that in the same batch is a genuine creation (fresh id).
+            let mut deleted: FxHashSet<Cell> = FxHashSet::default();
+            for _ in 0..=g.below(4) {
+                let sheet = if g.chance(75) { "Sheet1" } else { "Data" };
+                let (r, c) = (g.below(ROWS) + 1, g.below(8) + 1);
+                if g.chance(30) {
+                    if e.set_cell_value(sheet, r, c, LiteralValue::Number(3.0))
+                        .is_ok()
+                    {
+                        let sid = e.graph.sheet_id(sheet).expect("sheet");
+                        deleted.insert((sid, r - 1, c - 1));
+                    }
+                } else {
+                    let t = MENU[g.below(MENU.len() as u32) as usize];
+                    let _ = e.set_cell_formula(sheet, r, c, parse(text(t, r)).unwrap());
+                }
+            }
+            let builds = e.graph.authority_host().builds();
+            if g.chance(20) {
+                e.graph.authority_host_mut().symbol_rev = u64::MAX;
+            } else if g.chance(5) {
+                let _ = e.define_name(
+                    &format!("IdProbeName{step}"),
+                    NamedDefinition::Literal(LiteralValue::Number(1.0)),
+                    NameScope::Workbook,
+                );
+            }
+            e.graph.authority().expect("authority ready");
+            rebuilds += e.graph.authority_host().builds() - builds;
+            let (now, counter) = snapshot(&e);
+            assert!(
+                counter >= next,
+                "seed {seed} step {step}: counter went back"
+            );
+            for (cell, id) in &now {
+                match live.get(cell) {
+                    Some(old) if !deleted.contains(cell) || old == id => {
+                        assert_eq!(old, id, "seed {seed} step {step}: {cell:?} renumbered");
+                        kept += 1;
+                    }
+                    _ => {
+                        assert!(
+                            !ever.contains(id),
+                            "seed {seed} step {step}: {cell:?} reused id {id}"
+                        );
+                        fresh += 1;
+                    }
+                }
+            }
+            e.graph.authority_host().store().check().unwrap();
+            ever.extend(now.values().copied());
+            live = now;
+            next = counter;
+        }
+        let rebuilt = rebuild_from_graph(&e);
+        assert_eq!(
+            e.graph.authority_host().store().digest(),
+            rebuilt.digest(),
+            "seed {seed}: maintained != rebuild"
+        );
+    }
+    assert!(
+        rebuilds > 100 && kept > 10_000 && fresh > 100,
+        "{rebuilds} {kept} {fresh}"
+    );
+}

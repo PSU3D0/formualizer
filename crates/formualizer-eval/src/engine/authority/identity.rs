@@ -206,6 +206,19 @@ impl IdentityTable {
         self.next_id
     }
 
+    pub fn limit(&self) -> Vid {
+        self.limit
+    }
+
+    /// An empty table whose counter continues at `next_id` (a rebuild that
+    /// keeps identities: decision 9, no id is ever reused).
+    pub fn continuing(next_id: Vid, limit: Vid) -> Self {
+        Self {
+            next_id,
+            ..Self::with_limit(limit)
+        }
+    }
+
     pub fn run_count(&self) -> usize {
         self.runs.len() - self.nfree_runs
     }
@@ -429,6 +442,33 @@ impl IdentityTable {
     /// The cells must have no id. Returns the run handle.
     pub fn place(&mut self, sheet: u16, row: u32, col: u32, len: u32, owner: u32) -> u32 {
         let first_id = self.alloc_ids(len);
+        let h = self.alloc_run(IdRun {
+            row_start: row,
+            len,
+            first_id,
+            col,
+            sheet,
+            flags: 0,
+            owner,
+        });
+        self.link(h);
+        h
+    }
+
+    /// Place a column run of `len` ids that already exist, `first_id ..`,
+    /// at `(sheet, row..row+len, col)` without touching the counter (a
+    /// rebuild keeping identities). The ids must be below the counter and
+    /// not live, and the cells must have no id.
+    pub fn place_existing(
+        &mut self,
+        sheet: u16,
+        row: u32,
+        col: u32,
+        len: u32,
+        first_id: Vid,
+        owner: u32,
+    ) -> u32 {
+        debug_assert!(u64::from(first_id) + u64::from(len) <= u64::from(self.next_id));
         let h = self.alloc_run(IdRun {
             row_start: row,
             len,

@@ -10,7 +10,40 @@ impl Store {
     /// Build from scratch. Groups are canon of their cells, owners get
     /// column-major contiguous ids (one run per column), and every
     /// container is allocated at its exact size.
-    pub fn build(mut input: Vec<BuildInput>) -> Store {
+    pub fn build(input: Vec<BuildInput>) -> Store {
+        Self::build_keeping(input, None)
+            .expect("identity counter at build")
+            .0
+    }
+
+    /// A host rebuild (load, symbol revision, large batch) under the same
+    /// admission as a mutation (§5.6, M1a correction B5): the candidate's
+    /// retained bytes are admitted against the retained budget, and the
+    /// coexisting previous store plus the build scratch against the scratch
+    /// budget. A rejected candidate is dropped; the caller keeps `prior`.
+    /// Identities are kept (decision 9, correction B4): every cell live in
+    /// `prior` keeps its id, and new formula cells get fresh ids from
+    /// `prior`'s counter.
+    pub fn rebuild(
+        input: Vec<BuildInput>,
+        prior: Option<&Store>,
+        budget: Budget,
+    ) -> Result<Store, AuthorityError> {
+        let (mut s, scratch) = Self::build_keeping(input, prior.map(Store::ids))?;
+        s.budget = budget;
+        let transient = scratch + prior.map_or(0, Store::heap_bytes);
+        s.admit(s.heap_bytes(), transient)?;
+        Ok(s)
+    }
+
+    /// The build, keeping the identities of `prior` when given. Returns the
+    /// store and an upper bound on the build's scratch bytes (the sum of
+    /// its temporary containers' capacities).
+    pub(crate) fn build_keeping(
+        mut input: Vec<BuildInput>,
+        prior: Option<&IdentityTable>,
+    ) -> Result<(Store, u64), AuthorityError> {
+        let mut scratch = input.capacity() * size_of::<BuildInput>();
         let mut s = Store::new();
         input.sort_unstable_by_key(|(c, _)| *c);
         input.dedup_by_key(|(c, _)| *c);
@@ -88,6 +121,20 @@ impl Store {
         s.egroups.shrink_entries();
         s.ngroups.shrink_entries();
 
+        {
+            use super::super::dir::hash_table_bytes;
+            let cells_bytes = |m: &FxHashMap<u32, Vec<Rect>>| {
+                hash_table_bytes::<(u32, Vec<Rect>)>(m.capacity())
+                    + m.values()
+                        .map(|v| v.capacity() * size_of::<Rect>())
+                        .sum::<usize>()
+            };
+            scratch += cells_bytes(&ecells)
+                + cells_bytes(&ncells)
+                + hash_table_bytes::<(u32, usize)>(rep_tokens.capacity())
+                + ungrouped.capacity() * size_of::<usize>();
+        }
+
         // Canon per group, in group order (deterministic).
         let mut work = CanonWork::default();
         let mut epieces: Vec<(u32, Vec<Rect>)> = ecells
@@ -101,6 +148,14 @@ impl Store {
             .collect();
         npieces.sort_unstable_by_key(|(g, _)| *g);
         s.stats.canon_work = work;
+        let pieces_bytes = |v: &[(u32, Vec<Rect>)]| {
+            v.iter()
+                .map(|(_, p)| p.capacity() * size_of::<Rect>())
+                .sum::<usize>()
+        };
+        scratch += (epieces.capacity() + npieces.capacity()) * size_of::<(u32, Vec<Rect>)>()
+            + pieces_bytes(&epieces)
+            + pieces_bytes(&npieces);
 
         // Records.
         let nrecs: usize = epieces.iter().map(|(_, p)| p.len()).sum();
@@ -147,6 +202,12 @@ impl Store {
         for (sheet, items) in prec_items.iter().enumerate().take(s.idx.prec.len()) {
             s.idx.prec[sheet].bulk_load(items, &mut s.prec_loc);
         }
+        let items_bytes = |v: &[Vec<(super::super::geom::BoxT, u32)>]| {
+            v.iter()
+                .map(|x| x.capacity() * size_of::<(super::super::geom::BoxT, u32)>())
+                .sum::<usize>()
+        };
+        scratch += items_bytes(&dep_items) + items_bytes(&prec_items);
         drop(dep_items);
         drop(prec_items);
 
@@ -200,41 +261,77 @@ impl Store {
         for (sheet, items) in node_items.iter().enumerate().take(s.idx.node.len()) {
             s.idx.node[sheet].bulk_load(items, &mut s.node_loc);
         }
+        scratch += items_bytes(&node_items);
 
-        // Identity: owners in (sheet, c0, r0) order, one run per column.
+        // Identity (decision 9): cells live in `prior` keep their ids; new
+        // cells get fresh ids from its counter, in (sheet, c0, r0) owner
+        // order. A run is a maximal row segment of one owner column whose
+        // ids are consecutive: all kept and id-contiguous in `prior`, or
+        // all new. Without `prior` this is one run per owner column.
+        if let Some(p) = prior {
+            s.ids = IdentityTable::continuing(p.next_id(), p.limit());
+        }
         placed.sort_unstable_by_key(|&o| {
             let w = &s.owners[o as usize];
             (w.sheet, w.dom.c0, w.dom.r0)
         });
-        let mut target = s.ids.shadow();
-        let nruns: u64 = placed
-            .iter()
-            .map(|&o| u64::from(s.owners[o as usize].dom.width()))
-            .sum();
+        let kept_id =
+            |sheet: u16, row: u32, col: u32| prior.and_then(|p| p.id_of((sheet, row, col)));
+        // (owner, column, first row, length, kept first id).
+        let mut segs: Vec<(u32, u32, u32, u32, Option<Vid>)> = Vec::new();
+        let mut fresh = 0u64;
         for &o in &placed {
             let w = s.owners[o as usize];
-            IdentityTable::shadow_place(&mut target, w.sheet, w.dom.width(), w.dom.area());
-        }
-        debug_assert_eq!(target.live_runs as u64, nruns);
-        s.ids
-            .check_alloc(input.len() as u64)
-            .expect("identity counter at build");
-        s.ids.try_reserve_for(&target).expect("build allocation");
-        let mut rows: Vec<(Vid, usize)> = Vec::new();
-        for &o in &placed {
-            let w = s.owners[o as usize];
-            let run_owner = if w.is_family() { FAMILY } else { o };
             for c in w.dom.c0..=w.dom.c1 {
-                let h = s.ids.place(w.sheet, w.dom.r0, c, w.dom.height(), run_owner);
-                let first = s.ids.run(h).first_id;
-                for r in 0..w.dom.height() {
-                    let f = &input[by_cell[&(w.sheet, w.dom.r0 + r, c)]].1;
-                    if !f.literals.is_empty() {
-                        rows.push((first + r, f.literals.len()));
+                let mut r = w.dom.r0;
+                while r <= w.dom.r1 {
+                    let first = kept_id(w.sheet, r, c);
+                    let mut len = 1u32;
+                    while r + len <= w.dom.r1 {
+                        let joins = match (first, kept_id(w.sheet, r + len, c)) {
+                            (None, None) => true,
+                            (Some(a), Some(b)) => u64::from(b) == u64::from(a) + u64::from(len),
+                            _ => false,
+                        };
+                        if !joins {
+                            break;
+                        }
+                        len += 1;
                     }
+                    if first.is_none() {
+                        fresh += u64::from(len);
+                    }
+                    segs.push((o, c, r, len, first));
+                    r += len;
                 }
             }
         }
+        let mut target = s.ids.shadow();
+        for &(o, _, _, len, first) in &segs {
+            let new = if first.is_none() { u64::from(len) } else { 0 };
+            IdentityTable::shadow_place(&mut target, s.owners[o as usize].sheet, 1, new);
+        }
+        s.ids.check_alloc(fresh).map_err(AuthorityError::Identity)?;
+        s.ids.try_reserve_for(&target).expect("build allocation");
+        let mut rows: Vec<(Vid, usize)> = Vec::new();
+        for &(o, c, r, len, first) in &segs {
+            let w = s.owners[o as usize];
+            let run_owner = if w.is_family() { FAMILY } else { o };
+            let h = match first {
+                None => s.ids.place(w.sheet, r, c, len, run_owner),
+                Some(f) => s.ids.place_existing(w.sheet, r, c, len, f, run_owner),
+            };
+            let first_id = s.ids.run(h).first_id;
+            for i in 0..len {
+                let f = &input[by_cell[&(w.sheet, r + i, c)]].1;
+                if !f.literals.is_empty() {
+                    rows.push((first_id + i, f.literals.len()));
+                }
+            }
+        }
+        scratch += segs.capacity() * size_of::<(u32, u32, u32, u32, Option<Vid>)>()
+            + placed.capacity() * 4
+            + rows.capacity() * size_of::<(Vid, usize)>();
         let plan = s.slots.plan(&[], &rows);
         s.slots.try_reserve(&plan).expect("build allocation");
         let mut payload: Vec<(Vid, &[ValueRef])> = Vec::with_capacity(rows.len());
@@ -243,6 +340,8 @@ impl Store {
             payload.push((id, &input[by_cell[&cell]].1.literals[..]));
         }
         s.slots.apply(&plan, &[], &payload);
-        s
+        scratch += payload.capacity() * size_of::<(Vid, &[ValueRef])>()
+            + super::super::dir::hash_table_bytes::<(Cell, usize)>(by_cell.capacity());
+        Ok((s, scratch as u64))
     }
 }
