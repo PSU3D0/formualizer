@@ -15,6 +15,10 @@
 //!   list
 //!   run --out DIR [--only SUBSTR[,SUBSTR]] [--edits N] [--closure-seeds N]
 //!       [--direct-seeds N]
+//!   losses --out DIR [--only SUBSTR]   edge records under the as-written
+//!       unit-stride canon (the build), a strided partition of the same
+//!       groups (stride loss) and Packet B's b′ keying (as-written or fully
+//!       fixed, whichever more dependencies share; FF-keying loss), SP-2 F-1
 //!
 //! Counts only; nothing here is timed.
 
@@ -652,6 +656,160 @@ fn run_one(id: &str, edits: usize, closure_seeds: usize, direct_seeds: usize) ->
     Ok(row)
 }
 
+// ------------------------------------------------------------ losses
+
+const MAX_STRIDE: u32 = 8;
+
+/// Packet B's greedy run cutting: contiguous, else a stride in 2..=8 with
+/// at least three members, else a singleton. Returns (start, end, step).
+fn cut_runs(sorted: &[u32]) -> Vec<(u32, u32, u32)> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < sorted.len() {
+        let start = sorted[i];
+        if i + 1 < sorted.len() && sorted[i + 1] == start + 1 {
+            let mut j = i + 1;
+            while j + 1 < sorted.len() && sorted[j + 1] == sorted[j] + 1 {
+                j += 1;
+            }
+            out.push((start, sorted[j], 1));
+            i = j + 1;
+            continue;
+        }
+        if i + 2 < sorted.len() {
+            let st = sorted[i + 1] - start;
+            if (2..=MAX_STRIDE).contains(&st) && sorted[i + 2] == sorted[i + 1] + st {
+                let mut j = i + 2;
+                while j + 1 < sorted.len() && sorted[j + 1] == sorted[j] + st {
+                    j += 1;
+                }
+                out.push((start, sorted[j], st));
+                i = j + 1;
+                continue;
+            }
+        }
+        out.push((start, start, 1));
+        i += 1;
+    }
+    out
+}
+
+/// Packet B's strided rectangle partition of a cell set: per column cut
+/// row runs, then per row lattice cut column runs. Returns the count.
+fn strided_count(cells: &mut [(u32, u32)]) -> usize {
+    cells.sort_unstable_by_key(|&(r, c)| (c, r));
+    let mut runs: Vec<((u32, u32, u32), u32)> = Vec::new();
+    let mut i = 0;
+    while i < cells.len() {
+        let col = cells[i].1;
+        let mut j = i;
+        while j < cells.len() && cells[j].1 == col {
+            j += 1;
+        }
+        let rows: Vec<u32> = cells[i..j].iter().map(|&(r, _)| r).collect();
+        for lat in cut_runs(&rows) {
+            runs.push((lat, col));
+        }
+        i = j;
+    }
+    runs.sort_unstable();
+    let mut n = 0;
+    let mut i = 0;
+    while i < runs.len() {
+        let lat = runs[i].0;
+        let mut j = i;
+        while j < runs.len() && runs[j].0 == lat {
+            j += 1;
+        }
+        let cols: Vec<u32> = runs[i..j].iter().map(|&(_, c)| c).collect();
+        n += cut_runs(&cols).len();
+        i = j;
+    }
+    n
+}
+
+fn losses_one(id: &str) -> Result<String> {
+    use formualizer_eval::engine::authority::canon::{CanonWork, canon};
+    use formualizer_eval::engine::authority::geom::Rect;
+    let snap = load(id)?;
+    let mut loaded = build_engine(&snap)?;
+    let engine = &mut loaded.engine;
+    let sum = probe::sync(engine).map_err(|e| anyhow!("{e}"))?;
+    let groups = probe::edge_groups(engine).map_err(|e| anyhow!("{e}"))?;
+    let canon_records: usize = groups.iter().map(|g| g.4.len()).sum();
+    let mut strided = 0usize;
+    let mut deps = 0u64;
+    // b′: each dependency keyed as written or fully fixed, whichever key
+    // more dependencies share (ties as written).
+    type FfKey = (u16, bool, u32, u32, u32, u32, u32, u16);
+    let mut ff_share: BTreeMap<FfKey, u64> = BTreeMap::new();
+    let mut expanded: Vec<Vec<(u32, u32)>> = Vec::with_capacity(groups.len());
+    for (_, _, _, _, rects) in &groups {
+        let mut cells: Vec<(u32, u32)> = Vec::new();
+        for r in rects {
+            for c in r.c0..=r.c1 {
+                for row in r.r0..=r.r1 {
+                    cells.push((row, c));
+                }
+            }
+        }
+        deps += cells.len() as u64;
+        expanded.push(cells);
+    }
+    let ff_key = |g: &(
+        u16,
+        bool,
+        u32,
+        formualizer_eval::engine::authority::proj::RefProj,
+        Vec<Rect>,
+    ),
+                  cell: (u32, u32)|
+     -> Option<FfKey> {
+        let t = g.3.instantiate(cell.0, cell.1)?;
+        Some((g.0, g.1, g.2, t.r0, t.c0, t.r1, t.c1, g.3.sheet))
+    };
+    for (g, cells) in groups.iter().zip(&expanded) {
+        for &cell in cells {
+            if let Some(k) = ff_key(g, cell) {
+                *ff_share.entry(k).or_default() += 1;
+            }
+        }
+    }
+    let mut aw_cells: Vec<Vec<Rect>> = vec![Vec::new(); groups.len()];
+    let mut ff_cells: BTreeMap<FfKey, Vec<Rect>> = BTreeMap::new();
+    for (gi, (g, cells)) in groups.iter().zip(&expanded).enumerate() {
+        let aw = cells.len() as u64;
+        for &cell in cells {
+            let k = ff_key(g, cell).expect("instantiates");
+            if ff_share[&k] > aw {
+                ff_cells
+                    .entry(k)
+                    .or_default()
+                    .push(Rect::cell(cell.0, cell.1));
+            } else {
+                aw_cells[gi].push(Rect::cell(cell.0, cell.1));
+            }
+        }
+    }
+    let mut w = CanonWork::default();
+    let mut ff_records = 0usize;
+    for cells in aw_cells.iter().filter(|c| !c.is_empty()) {
+        ff_records += canon(cells, &mut w).len();
+    }
+    for cells in ff_cells.values() {
+        ff_records += canon(cells, &mut w).len();
+    }
+    for cells in expanded.iter_mut() {
+        strided += strided_count(cells);
+    }
+    Ok(format!(
+        "{id}\t{}\t{deps}\t{canon_records}\t{strided}\t{ff_records}\t{:.4}\t{:.4}",
+        sum.formulas,
+        canon_records as f64 / strided.max(1) as f64,
+        canon_records as f64 / ff_records.max(1) as f64,
+    ))
+}
+
 struct Args(Vec<String>);
 impl Args {
     fn get(&self, key: &str) -> Option<String> {
@@ -701,6 +859,31 @@ fn main() -> Result<()> {
             }
             Ok(())
         }
-        _ => bail!("usage: authority-corpus list|run --out DIR [--only S] [--edits N]"),
+        "losses" => {
+            let out = PathBuf::from(args.get("--out").context("--out DIR")?);
+            std::fs::create_dir_all(&out)?;
+            let path = out.join("authority-losses.tsv");
+            let fresh = !path.exists();
+            let mut f = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)?;
+            if fresh {
+                writeln!(
+                    f,
+                    "workbook\tformulas\tdependencies\tcanon_records\tstrided_records\tbprime_canon_records\tstride_loss\tff_keying_loss"
+                )?;
+            }
+            for id in ids {
+                eprintln!("{id}");
+                match losses_one(&id) {
+                    Ok(line) => writeln!(f, "{line}")?,
+                    Err(e) => writeln!(f, "{id}\tERROR\t{e}")?,
+                }
+                f.flush()?;
+            }
+            Ok(())
+        }
+        _ => bail!("usage: authority-corpus list|run|losses --out DIR [--only S] [--edits N]"),
     }
 }

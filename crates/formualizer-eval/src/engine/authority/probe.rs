@@ -142,3 +142,26 @@ pub fn check<R>(e: &mut Engine<R>) -> Result<Result<(), String>, AuthorityError>
 pub fn stats<R>(e: &Engine<R>) -> super::store::Stats {
     e.graph.authority_host().store().stats.clone()
 }
+
+/// Every edge group: `(dependent sheet, tag is R1, lookup-slot key id or
+/// u32::MAX, projection, record rectangles)` (loss reports).
+pub fn edge_groups<R>(
+    e: &mut Engine<R>,
+) -> Result<Vec<(u16, bool, u32, super::proj::RefProj, Vec<Rect>)>, AuthorityError> {
+    e.graph.authority()?;
+    Ok(e.graph
+        .authority_host()
+        .store()
+        .edge_groups()
+        .filter(|(_, rects)| !rects.is_empty())
+        .map(|(k, rects)| {
+            (
+                k.dep_sheet,
+                k.tag == super::store::Tag::R1,
+                k.lk,
+                k.proj,
+                rects,
+            )
+        })
+        .collect())
+}
