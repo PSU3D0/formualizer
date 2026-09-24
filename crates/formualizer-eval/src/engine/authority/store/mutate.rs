@@ -1134,6 +1134,11 @@ impl Store {
                 reps += u32::from(self.repartition_nodes(g));
             }
         }
+        // The candidate lists are done; the compaction scope runs with
+        // nothing else of this scope alive.
+        drop(eg);
+        drop(ng);
+        self.scope_extra = 0;
         self.maybe_compact_lks();
         Ok(MutationReport {
             before,

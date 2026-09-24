@@ -580,7 +580,13 @@ impl<K: GroupKey> GroupTable<K> {
 
     /// Bytes of the index array a [`Self::rekey`] rebuilds into.
     pub fn rekey_stage_bytes(&self) -> usize {
-        self.index.slots.len() * size_of::<u32>()
+        let cap = self.index.slots.len();
+        if cap == 0 {
+            0
+        } else {
+            // The staged list's one slot, plus the array itself.
+            size_of::<Vec<u32>>() + cap * size_of::<u32>()
+        }
     }
 
     /// Allocate the index array for a [`Self::rekey`] (fallible).

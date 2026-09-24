@@ -1156,13 +1156,15 @@ impl Store {
         let lk_after = Directory::<LkKey>::compact_bytes(&plan) as u64;
         let before = self.heap_bytes();
         let after = before - lk_now + lk_after;
-        // Old and new directories, the remap and the rebuilt group index
-        // coexist until the apply frees the old ones.
-        let transient = (before
-            + lk_after
-            + (remap.capacity() * size_of::<u32>()) as u64
-            + self.egroups.rekey_stage_bytes() as u64)
-            .saturating_sub(after);
+        // Old and new directories, the remap, the staged group index and
+        // anything the enclosing scope still holds coexist until the apply
+        // frees the old containers. Moved key copies are not reallocated.
+        let peak = before
+            + (Directory::<LkKey>::compact_alloc_bytes(&plan)
+                + remap.capacity() * size_of::<u32>()
+                + self.egroups.rekey_stage_bytes()
+                + self.scope_extra) as u64;
+        let transient = peak.saturating_sub(after);
         if self.admit(after, transient).is_err() {
             self.stats.lk_compaction_skips += 1;
             return;
@@ -1180,6 +1182,7 @@ impl Store {
             self.stats.alloc_failures += 1;
             return;
         }
+        self.scope_peak = self.scope_peak.max(peak);
         // ---- apply: no allocation.
         self.egroups.rekey(|p| {
             let mut q = *p;

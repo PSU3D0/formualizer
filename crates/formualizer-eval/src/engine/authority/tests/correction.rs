@@ -454,6 +454,85 @@ fn lk_compaction_allocation_failures_skip_cleanly() {
     assert!(skipped > 0, "no failure landed in the compaction");
 }
 
+/// Final gate 2: a compaction's measured peak stays within the mutation's
+/// reported peak, with one-byte names (no slack from key heap), and a
+/// scratch budget below the compaction's transient skips it cleanly.
+#[test]
+fn lk_compaction_peak_is_admitted_and_reported() {
+    let names = "abcdefghijklmnopqrstuvwxyz";
+    let facts = |i: usize| {
+        let mut f = one(1, 1);
+        f.edges = vec![EdgeSpec {
+            proj: abs(5, 5, 0),
+            tag: Tag::R1,
+            origin: OriginSpec::Symbol(LkKey {
+                ctx: (i / 26) as u16,
+                kind: 1,
+                name: names[i % 26..i % 26 + 1].into(),
+            }),
+        }];
+        f
+    };
+    let mut s = Store::new();
+    let mut checked = 0;
+    for i in 0..400usize {
+        let f = facts(i);
+        let c = s.stats.lk_compactions;
+        let (r, m) = measure(None, || s.set_formula((0, 0, 0), &f).unwrap());
+        if s.stats.lk_compactions > c {
+            assert!(
+                m.peak as u64 <= r.predicted_peak_above_before,
+                "step {i}: measured peak {} above reported {}",
+                m.peak,
+                r.predicted_peak_above_before
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked > 5, "only {checked} compactions checked");
+    s.check().unwrap();
+
+    // Tight scratch: the compaction is skipped, nothing else changes. 200
+    // live keys make the compaction's transient larger than the edit's.
+    let mut base = Store::new();
+    for r in 1..=200u32 {
+        let mut f = one(1, 1);
+        f.edges = vec![EdgeSpec {
+            proj: abs(5, 5, 0),
+            tag: Tag::R1,
+            origin: OriginSpec::Symbol(LkKey {
+                ctx: 999,
+                kind: 1,
+                name: format!("live{r}").into_boxed_str(),
+            }),
+        }];
+        base.set_formula((0, r, 0), &f).unwrap();
+    }
+    let mut i = 0usize;
+    loop {
+        let mut probe = base.clone();
+        probe.set_formula((0, 0, 0), &facts(i)).unwrap();
+        if probe.stats.lk_compactions > 0 {
+            break;
+        }
+        base.set_formula((0, 0, 0), &facts(i)).unwrap();
+        i += 1;
+    }
+    let f = facts(i);
+    let mut unbudgeted = base.clone();
+    let r = unbudgeted.set_formula((0, 0, 0), &f).unwrap();
+    let mut tight = base.clone();
+    // Enough for the mutation, below the compaction's own transient.
+    tight.budget.scratch = Some(r.predicted_transient);
+    let before_lk = tight.lk_len();
+    tight.set_formula((0, 0, 0), &f).unwrap();
+    assert_eq!(tight.stats.lk_compactions, 0);
+    assert_eq!(tight.stats.lk_compaction_skips, 1);
+    assert_eq!(tight.lk_len(), before_lk + 1, "directory changed on skip");
+    assert_eq!(logical(&tight), logical(&unbudgeted));
+    tight.check().unwrap();
+}
+
 /// Final gate R5 (the review's repro): a zero-edge singleton on a high
 /// sheet builds no sheet-sized role directories, and the measured peak
 /// stays within retained + reported scratch.

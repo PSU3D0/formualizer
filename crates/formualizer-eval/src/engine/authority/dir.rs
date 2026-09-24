@@ -227,6 +227,12 @@ impl<K: Eq + Hash + Clone> Directory<K> {
         hash_table_bytes::<(K, u32)>(plan.map_cap) + plan.live * size_of::<K>() + 2 * plan.live_heap
     }
 
+    /// Bytes the compaction newly allocates: the fresh table and key
+    /// vector (the owned key copies are moved, not reallocated).
+    pub fn compact_alloc_bytes(plan: &CompactPlan) -> usize {
+        hash_table_bytes::<(K, u32)>(plan.map_cap) + plan.live * size_of::<K>()
+    }
+
     /// Allocate the compacted containers (fallible; nothing changes).
     pub fn try_stage_compact(
         &self,
