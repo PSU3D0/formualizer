@@ -47,6 +47,7 @@ mod column_operations;
 mod debug_vertex_lifecycle;
 mod dynamic_topo;
 mod named_ranges;
+mod range_expansion_size;
 mod range_operations;
 mod row_operations;
 mod sheet_duplication_named_range_dependents;

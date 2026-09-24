@@ -768,9 +768,13 @@ impl DependencyGraph {
                     .col()
                     .saturating_sub(range_ref.start.coord.col())
                     + 1;
-                let size = (width * height) as usize;
+                // A whole sheet is 2^34 cells: the product must not wrap in
+                // u32, and the limit is compared before narrowing (usize is
+                // 32-bit on WASM).
+                let size = u64::from(width) * u64::from(height);
+                let limit = u64::try_from(self.config.range_expansion_limit).unwrap_or(u64::MAX);
 
-                if size <= self.config.range_expansion_limit {
+                if size <= limit {
                     for row in range_ref.start.coord.row()..=range_ref.end.coord.row() {
                         for col in range_ref.start.coord.col()..=range_ref.end.coord.col() {
                             let coord = Coord::new(row, col, true, true);
