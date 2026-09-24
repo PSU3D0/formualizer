@@ -6,6 +6,12 @@
 // S2 emission primitive; remove allowance when the planning driver lands.
 #[allow(dead_code)]
 pub(crate) mod arc_emit;
+// S2 sweep primitive; remove allowance when the planning driver lands.
+#[allow(dead_code)]
+pub(crate) mod arc_sweep;
+// S2 topology stage; remove allowance when the full planning driver lands.
+#[allow(dead_code)]
+pub(crate) mod arc_topology;
 pub mod avl;
 pub mod canon;
 pub mod dir;
