@@ -37,6 +37,14 @@ impl TableSpecId {
     }
 }
 
+/// Function-node name that encodes a postfix call (`LAMBDA(x,x+1)(B1)`).
+///
+/// A call is stored as `Function { name: CALL_NODE_NAME, args: [callee, args..] }`
+/// so the arena keeps its callee and arguments without a new `AstNodeData`
+/// variant. The tokenizer never produces `#` in a function name, so no parsed
+/// function can collide with it.
+pub(crate) const CALL_NODE_NAME: &str = "#CALL";
+
 /// Compact representation of AST nodes in the arena
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum AstNodeData {

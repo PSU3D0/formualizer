@@ -46,6 +46,7 @@ mod bulk_ingest;
 mod column_operations;
 mod debug_vertex_lifecycle;
 mod dynamic_topo;
+mod lambda_call_arena;
 mod named_ranges;
 mod range_expansion_size;
 mod range_operations;
