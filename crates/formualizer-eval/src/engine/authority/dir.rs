@@ -7,7 +7,7 @@
 //! std `HashMap` implementation), and `try_reserve` is always called with
 //! the full count of new keys before a mutation inserts them, so predicted
 //! and actual capacity agree (checked by `directory_capacity_is_predicted`).
-//! Entries are reclaimed only by a rebuild. A mutation stages the owned
+//! Dead entries are dropped by a compaction (B-23) or a rebuild. A mutation stages the owned
 //! copies of its new keys before its apply (`stage`), so interning in the
 //! apply allocates nothing (M1a correction B5).
 
@@ -200,6 +200,73 @@ impl<K: Eq + Hash + Clone> Directory<K> {
         self.map.insert(k, id);
         self.key_heap += heap;
         id
+    }
+}
+
+/// Sizes of a compacted directory holding `live` keys with `live_heap`
+/// owned key bytes (M1a parent fix B-23).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CompactPlan {
+    pub live: usize,
+    pub live_heap: usize,
+    pub map_cap: usize,
+}
+
+impl<K: Eq + Hash + Clone> Directory<K> {
+    pub fn compact_plan(&self, live: usize, live_heap: usize) -> CompactPlan {
+        CompactPlan {
+            live,
+            live_heap,
+            map_cap: hash_capacity_after(0, 0, live),
+        }
+    }
+
+    /// Retained bytes after the compaction (the fresh map and key vector
+    /// are allocated at exactly `live`).
+    pub fn compact_bytes(plan: &CompactPlan) -> usize {
+        hash_table_bytes::<(K, u32)>(plan.map_cap) + plan.live * size_of::<K>() + 2 * plan.live_heap
+    }
+
+    /// Allocate the compacted containers (fallible; nothing changes).
+    pub fn try_stage_compact(
+        &self,
+        plan: &CompactPlan,
+    ) -> Result<(FxHashMap<K, u32>, Vec<K>), ReserveError> {
+        let mut map = FxHashMap::default();
+        map.try_reserve(plan.live).map_err(|_| ReserveError)?;
+        let mut keys = Vec::new();
+        keys.try_reserve_exact(plan.live)
+            .map_err(|_| ReserveError)?;
+        Ok((map, keys))
+    }
+
+    /// Keep the keys whose `remap` entry is not `dead`, renumbered to it
+    /// (live keys are renumbered in ascending old-id order), moving both
+    /// owned copies into the staged containers. Allocates nothing; frees
+    /// the old containers and the dead keys.
+    pub fn apply_compact(
+        &mut self,
+        remap: &[u32],
+        dead: u32,
+        staged: (FxHashMap<K, u32>, Vec<K>),
+        plan: &CompactPlan,
+    ) {
+        let old_map = std::mem::replace(&mut self.map, staged.0);
+        let old_keys = std::mem::replace(&mut self.keys, staged.1);
+        for (id, k) in old_keys.into_iter().enumerate() {
+            if remap[id] != dead {
+                debug_assert_eq!(remap[id] as usize, self.keys.len());
+                self.keys.push(k);
+            }
+        }
+        for (k, id) in old_map {
+            let n = remap[id as usize];
+            if n != dead {
+                self.map.insert(k, n);
+            }
+        }
+        debug_assert_eq!(self.map.capacity(), plan.map_cap, "compaction grew");
+        self.key_heap = plan.live_heap;
     }
 }
 

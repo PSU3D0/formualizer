@@ -327,6 +327,13 @@ pub struct Stats {
     pub alloc_failures: u64,
     /// Groups reclaimed when their last member left (B3).
     pub groups_reclaimed: u64,
+    /// LK directory compactions committed, and skipped (budget or
+    /// allocation; the directory keeps its dead keys until the next).
+    pub lk_compactions: u64,
+    pub lk_compaction_skips: u64,
+    /// Work of committed compactions: directory keys plus edge-group slots
+    /// visited (each compaction is O(keys + slots), no sheet-sized work).
+    pub lk_compaction_work: u64,
 }
 
 /// Exact counts and bytes of a mutation, predicted and actual.
@@ -1104,17 +1111,87 @@ impl Store {
         self.lks.len()
     }
 
-    /// Whether the append-only LK directory has outgrown the live state
-    /// (re-review R3). Every live key is referenced by a live edge group,
-    /// so once the directory holds more than twice the live edge groups
-    /// plus `formulas` (the host's formula count, the rebuild's cost) plus
-    /// a small constant, at least half of it is dead and the host rebuilds
-    /// (keeping identities, B-18), which drops dead keys. The directory is
-    /// then bounded by live state, and the rebuild's O(formulas + groups +
-    /// keys) cost is amortized over the interned keys and reclaimed groups
-    /// since the last one.
-    pub fn lk_compaction_due(&self, formulas: usize) -> bool {
-        self.lks.len() > 2 * (self.egroups.len() + formulas + 8)
+    /// Edge-group slots, live and free.
+    pub fn egroup_slots(&self) -> usize {
+        self.egroups.slots()
+    }
+
+    /// Compact the LK directory once dead keys dominate it (M1a parent fix
+    /// B-23, re-review R3). A key is live while a live edge group refers to
+    /// it; the directory is compacted when it holds more than twice the
+    /// edge-group slots plus a constant, so at least half its keys are dead.
+    /// The compaction renumbers the live keys and rekeys the edge groups:
+    /// O(keys + edge-group slots) work, paid for by the ≥ half of the keys
+    /// it drops (each interned once), with no sheet-sized or formula-sized
+    /// work. It runs as its own admitted scope after a mutation: planned,
+    /// admitted against the budget, reserved fallibly, then applied without
+    /// allocating. A rejection or allocation failure skips it (counted) and
+    /// changes nothing.
+    pub(super) fn maybe_compact_lks(&mut self) {
+        if self.lks.len() <= 2 * (self.egroups.slots() + 8) {
+            return;
+        }
+        let k = self.lks.len();
+        let mut remap: Vec<u32> = Vec::new();
+        if remap.try_reserve_exact(k).is_err() {
+            self.stats.lk_compaction_skips += 1;
+            return;
+        }
+        remap.resize(k, DEAD);
+        for (_, key, _) in self.egroups.iter() {
+            if key.lk != NO_LK {
+                remap[key.lk as usize] = 0;
+            }
+        }
+        let (mut live, mut live_heap) = (0u32, 0usize);
+        for (id, r) in remap.iter_mut().enumerate() {
+            if *r != DEAD {
+                *r = live;
+                live += 1;
+                live_heap += self.lks.key(id as u32).name.len();
+            }
+        }
+        let plan = self.lks.compact_plan(live as usize, live_heap);
+        let lk_now = self.lks.heap_bytes() as u64;
+        let lk_after = Directory::<LkKey>::compact_bytes(&plan) as u64;
+        let before = self.heap_bytes();
+        let after = before - lk_now + lk_after;
+        // Old and new directories, the remap and the rebuilt group index
+        // coexist until the apply frees the old ones.
+        let transient = (before
+            + lk_after
+            + (remap.capacity() * size_of::<u32>()) as u64
+            + self.egroups.rekey_stage_bytes() as u64)
+            .saturating_sub(after);
+        if self.admit(after, transient).is_err() {
+            self.stats.lk_compaction_skips += 1;
+            return;
+        }
+        let staged = match self.lks.try_stage_compact(&plan) {
+            Ok(x) => x,
+            Err(_) => {
+                self.stats.lk_compaction_skips += 1;
+                self.stats.alloc_failures += 1;
+                return;
+            }
+        };
+        if self.egroups.try_stage_rekey().is_err() {
+            self.stats.lk_compaction_skips += 1;
+            self.stats.alloc_failures += 1;
+            return;
+        }
+        // ---- apply: no allocation.
+        self.egroups.rekey(|p| {
+            let mut q = *p;
+            if q.lk != NO_LK {
+                q.lk = remap[q.lk as usize];
+            }
+            q
+        });
+        self.lks.apply_compact(&remap, DEAD, staged, &plan);
+        self.stats.lk_compactions += 1;
+        self.stats.lk_compaction_work += (k + self.egroups.slots()) as u64;
+        debug_assert_eq!(self.heap_bytes(), after, "compaction bytes");
     }
 
     pub fn lk_key(&self, lk: u32) -> &LkKey {

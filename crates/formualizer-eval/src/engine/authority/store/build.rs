@@ -74,14 +74,11 @@ impl Store {
         let mut ecells: FxHashMap<u32, Vec<Rect>> = FxHashMap::default();
         let mut ncells: FxHashMap<u32, Vec<Rect>> = FxHashMap::default();
         let mut ungrouped: Vec<usize> = Vec::new();
-        let mut max_sheet = 0usize;
         let mut by_cell: FxHashMap<Cell, usize> = FxHashMap::default();
         let mut rep_tokens: FxHashMap<u32, usize> = FxHashMap::default();
         for (i, (cell, f)) in input.iter().enumerate() {
             by_cell.insert(*cell, i);
-            max_sheet = max_sheet.max(cell.0 as usize + 1);
             for e in &f.edges {
-                max_sheet = max_sheet.max(e.proj.sheet as usize + 1);
                 let lk = match &e.origin {
                     OriginSpec::Text => NO_LK,
                     OriginSpec::Symbol(k) => {
@@ -191,11 +188,30 @@ impl Store {
         s.recs.reserve_exact(nrecs);
         s.dep_loc = vec![NONE; nrecs];
         s.prec_loc = vec![NONE; nrecs];
-        s.idx.dep = (0..max_sheet).map(|_| LevelIndex::default()).collect();
-        s.idx.prec = (0..max_sheet).map(|_| LevelIndex::default()).collect();
-        s.idx.node = (0..max_sheet).map(|_| LevelIndex::default()).collect();
-        let mut dep_items: Vec<Vec<(super::super::geom::BoxT, u32)>> = vec![Vec::new(); max_sheet];
-        let mut prec_items: Vec<Vec<(super::super::geom::BoxT, u32)>> = vec![Vec::new(); max_sheet];
+        // Each role's directories are sized to the last sheet it uses, not
+        // to the highest sheet any formula sits on (a sparse high sheet
+        // must not allocate sheet-sized directories that are then
+        // truncated; final gate R5).
+        let mut dep_used = 0usize;
+        let mut prec_used = 0usize;
+        for (g, pieces) in &epieces {
+            if !pieces.is_empty() {
+                let key = s.egroups.key(*g);
+                dep_used = dep_used.max(key.dep_sheet as usize + 1);
+                prec_used = prec_used.max(key.proj.sheet as usize + 1);
+            }
+        }
+        let node_used = npieces
+            .iter()
+            .filter(|(_, p)| p.iter().any(|r| !r.is_cell()))
+            .map(|(g, _)| s.ngroups.key(*g).0 as usize + 1)
+            .max()
+            .unwrap_or(0);
+        s.idx.dep = (0..dep_used).map(|_| LevelIndex::default()).collect();
+        s.idx.prec = (0..prec_used).map(|_| LevelIndex::default()).collect();
+        s.idx.node = (0..node_used).map(|_| LevelIndex::default()).collect();
+        let mut dep_items: Vec<Vec<(super::super::geom::BoxT, u32)>> = vec![Vec::new(); dep_used];
+        let mut prec_items: Vec<Vec<(super::super::geom::BoxT, u32)>> = vec![Vec::new(); prec_used];
         for (g, pieces) in epieces {
             let key = s.egroups.key(g);
             let grp = &mut s.egroups[g as usize];
@@ -217,14 +233,6 @@ impl Store {
                 prec_items[key.proj.sheet as usize].push((pb.as_box(), id));
             }
         }
-        // Index vectors only as long as the last sheet each role uses.
-        let used = |v: &[Vec<(super::super::geom::BoxT, u32)>]| {
-            v.iter().rposition(|x| !x.is_empty()).map_or(0, |i| i + 1)
-        };
-        s.idx.dep.truncate(used(&dep_items));
-        s.idx.dep.shrink_to_fit();
-        s.idx.prec.truncate(used(&prec_items));
-        s.idx.prec.shrink_to_fit();
         for (sheet, items) in dep_items.iter().enumerate().take(s.idx.dep.len()) {
             s.idx.dep[sheet].bulk_load(items, &mut s.dep_loc);
         }
@@ -240,7 +248,7 @@ impl Store {
         // (bounded by the role's total items).
         scratch += items_bytes(&dep_items)
             + items_bytes(&prec_items)
-            + 2 * max_sheet * size_of::<Vec<(super::super::geom::BoxT, u32)>>()
+            + (dep_used + prec_used) * size_of::<Vec<(super::super::geom::BoxT, u32)>>()
             + 2 * nrecs * LevelIndex::bulk_entry_bytes();
         drop(dep_items);
         drop(prec_items);
@@ -249,7 +257,7 @@ impl Store {
         let nowners = npieces.iter().map(|(_, p)| p.len()).sum::<usize>() + ungrouped.len();
         s.owners.reserve_exact(nowners);
         s.node_loc = vec![NONE; nowners];
-        let mut node_items: Vec<Vec<(super::super::geom::BoxT, u32)>> = vec![Vec::new(); max_sheet];
+        let mut node_items: Vec<Vec<(super::super::geom::BoxT, u32)>> = vec![Vec::new(); node_used];
         let mut placed: Vec<u32> = Vec::with_capacity(nowners);
         for (g, pieces) in npieces {
             let (sheet, _) = s.ngroups.key(g);
@@ -290,13 +298,11 @@ impl Store {
             });
             placed.push(id);
         }
-        s.idx.node.truncate(used(&node_items));
-        s.idx.node.shrink_to_fit();
         for (sheet, items) in node_items.iter().enumerate().take(s.idx.node.len()) {
             s.idx.node[sheet].bulk_load(items, &mut s.node_loc);
         }
         scratch += items_bytes(&node_items)
-            + max_sheet * size_of::<Vec<(super::super::geom::BoxT, u32)>>()
+            + node_used * size_of::<Vec<(super::super::geom::BoxT, u32)>>()
             + (s.nnodes as usize) * LevelIndex::bulk_entry_bytes();
 
         // Identity (decision 9): cells live in `prior` keep their ids; new

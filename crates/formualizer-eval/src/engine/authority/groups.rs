@@ -573,6 +573,52 @@ impl<K: GroupKey> GroupTable<K> {
         Ok(())
     }
 
+    /// Entry slots, live and free (the slab's length).
+    pub fn slots(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Bytes of the index array a [`Self::rekey`] rebuilds into.
+    pub fn rekey_stage_bytes(&self) -> usize {
+        self.index.slots.len() * size_of::<u32>()
+    }
+
+    /// Allocate the index array for a [`Self::rekey`] (fallible).
+    pub fn try_stage_rekey(&mut self) -> Result<(), ReserveError> {
+        self.drop_staged();
+        let cap = self.index.slots.len();
+        if cap == 0 {
+            return Ok(());
+        }
+        self.index
+            .staged
+            .try_reserve_exact(1)
+            .map_err(|_| ReserveError)?;
+        let mut v: Vec<u32> = Vec::new();
+        if v.try_reserve_exact(cap).is_err() {
+            self.drop_staged();
+            return Err(ReserveError);
+        }
+        self.index.staged.push(v);
+        Ok(())
+    }
+
+    /// Rewrite every live entry's packed key (ids are kept) and rebuild the
+    /// index at its capacity from the staged array. Allocates nothing after
+    /// [`Self::try_stage_rekey`].
+    pub fn rekey(&mut self, f: impl Fn(&K::Packed) -> K::Packed) {
+        for e in self.entries.iter_mut() {
+            if !e.g.is_free() {
+                e.key = f(&e.key);
+            }
+        }
+        let cap = self.index.slots.len();
+        if cap > 0 {
+            self.rebuild_index(cap);
+        }
+        self.drop_staged();
+    }
+
     /// Shrink the entry vector to its length (bulk build only).
     pub fn shrink_entries(&mut self) {
         self.entries.shrink_to_fit();

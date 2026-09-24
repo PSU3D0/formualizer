@@ -173,9 +173,9 @@ fn review_symbol_rebuild_obeys_retained_budget() {
 
 /// Re-review R3: fixed workbook names used across many (sheet, name)
 /// contexts, one live formula at a time, no symbol change. Each context
-/// interns a new LK key; the host rebuilds (keeping identities) once dead
-/// keys outgrow the live state, so the directory stays bounded instead of
-/// growing with the contexts ever used.
+/// interns a new LK key; the store compacts the directory once dead keys
+/// dominate it (B-23), so it stays bounded instead of growing with the
+/// contexts ever used, and no rebuild runs.
 #[test]
 fn fixed_names_across_many_contexts_keep_the_lk_directory_bounded() {
     use crate::engine::EvalConfig;
@@ -220,16 +220,14 @@ fn fixed_names_across_many_contexts_keep_the_lk_directory_bounded() {
         }
     }
     let host = e.graph.authority_host();
+    let stats = &host.store().stats;
     eprintln!(
         "R3: {contexts} contexts, max LK keys {max_lk}, compactions {}",
-        host.lk_compactions()
+        stats.lk_compactions
     );
-    assert!(host.lk_compactions() > 0, "no compaction ran");
-    assert_eq!(
-        host.builds() - builds,
-        host.lk_compactions(),
-        "only compactions rebuilt"
-    );
+    assert!(stats.lk_compactions > 0, "no compaction ran");
+    assert_eq!(stats.lk_compaction_skips, 0);
+    assert_eq!(host.builds(), builds, "a compaction must not rebuild");
     // One live name formula plus the anchor: the bound is 2·(groups +
     // formulas + 8) + 1 with a handful of live groups.
     assert!(max_lk <= 32, "LK directory grew with history: {max_lk}");

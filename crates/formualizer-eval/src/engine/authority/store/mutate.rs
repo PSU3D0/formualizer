@@ -1134,6 +1134,7 @@ impl Store {
                 reps += u32::from(self.repartition_nodes(g));
             }
         }
+        self.maybe_compact_lks();
         Ok(MutationReport {
             before,
             predicted,

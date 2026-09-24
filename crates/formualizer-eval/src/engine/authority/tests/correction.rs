@@ -328,6 +328,155 @@ fn rebuild_preflight_rejects_before_building() {
     assert!(alloc.peak < 4 * 1024, "{alloc:?}");
 }
 
+/// Final gate R3, store level: one live formula whose single symbol edge
+/// gets an ever-new LK key. The directory is compacted in place (no
+/// rebuild), so its bytes stay bounded; each compaction's work is paid by
+/// the dead keys it drops.
+#[test]
+fn ever_new_lk_keys_at_one_live_formula_stay_bounded() {
+    let step = |s: &mut Store, i: u32| {
+        let mut f = one(1, 1);
+        f.edges = vec![EdgeSpec {
+            proj: abs(5, 5, 0),
+            tag: Tag::R1,
+            origin: OriginSpec::Symbol(LkKey {
+                ctx: 0,
+                kind: 1,
+                name: format!("Key_{i:08}").into_boxed_str(),
+            }),
+        }];
+        s.set_formula((0, 0, 0), &f).unwrap();
+    };
+    let mut s = Store::new();
+    let mut warm = 0;
+    for i in 0..128 {
+        step(&mut s, i);
+        warm = warm.max(
+            s.bytes_breakdown()
+                .iter()
+                .find(|c| c.0 == "lk_dir")
+                .unwrap()
+                .1,
+        );
+    }
+    let mut late = 0;
+    for i in 128..10_128 {
+        step(&mut s, i);
+        late = late.max(
+            s.bytes_breakdown()
+                .iter()
+                .find(|c| c.0 == "lk_dir")
+                .unwrap()
+                .1,
+        );
+    }
+    s.check().unwrap();
+    eprintln!(
+        "R3 store: lk_dir warm {warm} late {late}, compactions {}",
+        s.stats.lk_compactions
+    );
+    assert!(s.lk_len() <= 2 * (s.egroup_slots() + 8) + 1);
+    assert!(
+        late <= warm,
+        "LK directory grew with history: {warm} -> {late}"
+    );
+    assert!(s.stats.lk_compactions > 100);
+    // Amortized: total compaction work stays within a constant per key ever
+    // interned (10,128 here), whatever the history.
+    assert!(
+        s.stats.lk_compaction_work <= 3 * 10_128,
+        "compaction work {}",
+        s.stats.lk_compaction_work
+    );
+}
+
+/// B-23: every allocation of a compaction may fail; the mutation still
+/// commits, the compaction is skipped (counted), and the logical state
+/// equals the unfailed run's.
+#[test]
+fn lk_compaction_allocation_failures_skip_cleanly() {
+    let key = |i: u32| LkKey {
+        ctx: 0,
+        kind: 1,
+        name: format!("Key_{i:08}").into_boxed_str(),
+    };
+    let facts = |i: u32| {
+        let mut f = one(1, 1);
+        f.edges = vec![EdgeSpec {
+            proj: abs(5, 5, 0),
+            tag: Tag::R1,
+            origin: OriginSpec::Symbol(key(i)),
+        }];
+        f
+    };
+    // Grow the directory to just below the trigger; the next set compacts.
+    let mut base = Store::new();
+    let mut i = 0;
+    loop {
+        let c = base.stats.lk_compactions;
+        let mut probe = base.clone();
+        probe.set_formula((0, 0, 0), &facts(i)).unwrap();
+        if probe.stats.lk_compactions > c {
+            break;
+        }
+        base.set_formula((0, 0, 0), &facts(i)).unwrap();
+        i += 1;
+    }
+    let next = facts(i);
+    let mut clean = base.clone();
+    let (_, m) = measure(None, || clean.set_formula((0, 0, 0), &next).unwrap());
+    assert!(clean.stats.lk_compactions > base.stats.lk_compactions);
+    let want = logical(&clean);
+    let mut skipped = 0;
+    for n in 1..=m.allocs {
+        let mut s = base.clone();
+        let skips = s.stats.lk_compaction_skips;
+        let (r, _) = measure(Some(n), || s.set_formula((0, 0, 0), &next));
+        s.check().unwrap();
+        match r {
+            Ok(_) => {
+                // `logical` excludes bytes, which differ when skipped.
+                assert_eq!(logical(&s), want, "allocation {n}");
+                if s.stats.lk_compaction_skips > skips {
+                    skipped += 1;
+                }
+            }
+            Err(e) => {
+                assert_eq!(e, AuthorityError::Alloc, "allocation {n}");
+                assert_eq!(logical(&s), logical(&base), "allocation {n}");
+            }
+        }
+    }
+    eprintln!(
+        "B-23 compaction fail-Nth: {} allocations, {skipped} skipped compactions",
+        m.allocs
+    );
+    assert!(skipped > 0, "no failure landed in the compaction");
+}
+
+/// Final gate R5 (the review's repro): a zero-edge singleton on a high
+/// sheet builds no sheet-sized role directories, and the measured peak
+/// stays within retained + reported scratch.
+#[test]
+fn review_sparse_high_sheet_build_peak_is_bounded() {
+    let ((s, scratch), alloc) = measure(None, || {
+        let mut f = Formula {
+            refs: vec![],
+            l: 1,
+            literal: 0,
+        }
+        .facts();
+        f.literals.clear();
+        Store::build_keeping(vec![((4095, 0, 0), f)], None).unwrap()
+    });
+    assert!(
+        alloc.peak as u64 <= s.heap_bytes() + scratch,
+        "peak={}, retained={}, scratch={scratch}",
+        alloc.peak,
+        s.heap_bytes()
+    );
+}
+
 // ---------------------------------------------------------------- B5
 
 /// Review B5(a) repro: zero scratch refuses the first literal-bearing
