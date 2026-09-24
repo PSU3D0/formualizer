@@ -567,3 +567,15 @@ impl VertexStore {
         (0..self.len).map(|i| VertexId((i as u32) + FIRST_NORMAL_VERTEX))
     }
 }
+
+/// Heap bytes of the vertex columns (Program 1 memory gate; feature-gated).
+#[cfg(feature = "unified_authority")]
+impl VertexStore {
+    pub(crate) fn authority_gate_heap_bytes(&self) -> usize {
+        self.coords.capacity() * size_of::<VertexAddr>()
+            + self.sheet_kind.capacity() * 4
+            + self.flags.capacity()
+            + self.value_ref.capacity() * 4
+            + self.edge_offset.capacity() * 4
+    }
+}

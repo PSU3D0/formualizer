@@ -21,6 +21,8 @@ c6_calibration = [
 dhat-heap = ["dep:dhat"]
 perf_instrumentation = ["formualizer-workbook/perf_instrumentation"]
 ironcalc_runner = ["dep:ironcalc"]
+# Program 1 M1a corpus harness for the unified authority; never default.
+unified_authority = ["formualizer_runner", "formualizer-eval/unified_authority"]
 
 [dependencies]
 anyhow = { workspace = true }
@@ -42,6 +44,11 @@ formualizer-common = { workspace = true }
 formualizer-eval = { workspace = true, features = ["formula_plane_diagnostics", "test-support"] }
 dhat = { version = "0.3", optional = true }
 ironcalc = { version = "0.7.1", optional = true }
+
+[[bin]]
+name = "authority-corpus"
+path = "src/bin/authority-corpus.rs"
+required-features = ["unified_authority"]
 
 [[bin]]
 name = "probe-layout-envelope"

@@ -440,6 +440,57 @@ impl DependencyGraph {
         v
     }
 
+    // ------------------------------------------------------------ memory gate
+
+    /// Heap bytes of the legacy dependency structures by component (Packet
+    /// B's accounting: capacities, hashbrown allocations; the per-sheet
+    /// vertex interval index is reported but excluded from the gate total,
+    /// which is conservative for the authority).
+    pub(crate) fn legacy_dependency_bytes(&self) -> Vec<(&'static str, usize)> {
+        use crate::engine::authority::dir::hash_table_bytes;
+        let (csr, delta, side) = self.edges.authority_gate_heap_bytes();
+        let range_deps = hash_table_bytes::<(VertexId, Vec<SharedRangeRef<'static>>)>(
+            self.formula_to_range_deps.capacity(),
+        ) + self
+            .formula_to_range_deps
+            .values()
+            .map(|v| v.capacity() * size_of::<SharedRangeRef<'static>>())
+            .sum::<usize>();
+        let stripes = hash_table_bytes::<(StripeKey, FxHashSet<VertexId>)>(
+            self.stripe_to_dependents.capacity(),
+        ) + self
+            .stripe_to_dependents
+            .values()
+            .map(|s| hash_table_bytes::<VertexId>(s.capacity()))
+            .sum::<usize>();
+        let names = hash_table_bytes::<(VertexId, Vec<VertexId>)>(self.vertex_to_names.capacity())
+            + hash_table_bytes::<(VertexId, FxHashSet<VertexId>)>(
+                self.cell_to_name_dependents.capacity(),
+            )
+            + hash_table_bytes::<(VertexId, Vec<VertexId>)>(
+                self.name_to_cell_dependencies.capacity(),
+            );
+        vec![
+            ("vertex_store", self.store.authority_gate_heap_bytes()),
+            ("csr_base", csr),
+            ("csr_delta", delta),
+            ("csr_side_tables", side),
+            (
+                "cell_to_vertex",
+                hash_table_bytes::<(CellRef, VertexId)>(self.cell_to_vertex.capacity()),
+            ),
+            (
+                "load_packed_to_vertex",
+                hash_table_bytes::<(PackedSheetCell, VertexId)>(
+                    self.load_packed_to_vertex.capacity(),
+                ),
+            ),
+            ("formula_to_range_deps", range_deps),
+            ("stripe_to_dependents", stripes),
+            ("name_links", names),
+        ]
+    }
+
     /// The build input the host would use for a full rebuild.
     pub(crate) fn authority_build_input(&self) -> Vec<BuildInput> {
         let vids: Vec<VertexId> = self.vertex_formulas.keys().copied().collect();

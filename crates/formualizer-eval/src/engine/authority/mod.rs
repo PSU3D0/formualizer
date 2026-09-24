@@ -13,6 +13,7 @@ pub mod groups;
 pub mod host;
 pub mod identity;
 pub mod level_index;
+pub mod probe;
 pub mod proj;
 pub mod slots;
 pub mod store;
