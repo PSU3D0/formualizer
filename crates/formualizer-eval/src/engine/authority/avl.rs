@@ -334,9 +334,14 @@ impl AvlMap {
 
     /// Greatest entry with key ≤ `key` (the §4.1 lookup lemma's search).
     pub fn pred(&self, key: u64) -> Option<(u64, u32)> {
+        self.pred_counted(key, &mut 0)
+    }
+
+    pub(super) fn pred_counted(&self, key: u64, work: &mut u64) -> Option<(u64, u32)> {
         let mut n = self.root;
         let mut best = None;
         while n != NIL {
+            *work += 1;
             let node = &self.nodes[n as usize];
             if node.key <= key {
                 best = Some((node.key, node.val));
@@ -373,11 +378,22 @@ impl AvlMap {
     /// allocating (the stack is a fixed array: the height is at most
     /// `1.44 log2(n + 2) < 64` for `n < 2^32`).
     pub fn range_visit(&self, lo: u64, hi: u64, visit: &mut dyn FnMut(u64, u32)) {
+        self.range_visit_counted(lo, hi, &mut 0, visit);
+    }
+
+    pub(super) fn range_visit_counted(
+        &self,
+        lo: u64,
+        hi: u64,
+        work: &mut u64,
+        visit: &mut dyn FnMut(u64, u32),
+    ) {
         let mut stack = [NIL; 64];
         let mut top = 0usize;
         let mut n = self.root;
         loop {
             while n != NIL {
+                *work += 1;
                 let node = &self.nodes[n as usize];
                 if node.key < lo {
                     n = node.right;
@@ -391,6 +407,7 @@ impl AvlMap {
                 break;
             }
             top -= 1;
+            *work += 1;
             let node = &self.nodes[stack[top] as usize];
             if node.key > hi {
                 break;

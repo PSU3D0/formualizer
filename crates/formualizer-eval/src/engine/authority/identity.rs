@@ -501,18 +501,36 @@ impl IdentityTable {
         r1: u32,
         visit: &mut dyn FnMut(u32),
     ) {
+        self.visit_runs_in_counted(sheet, col, r0, r1, visit);
+    }
+
+    pub(super) fn visit_runs_in_counted(
+        &self,
+        sheet: u16,
+        col: u32,
+        r0: u32,
+        r1: u32,
+        visit: &mut dyn FnMut(u32),
+    ) -> u64 {
         let Some(map) = self.fwd.get(sheet as usize) else {
-            return;
+            return 0;
         };
-        if let Some((key, h)) = map.pred(fwd_key(col, r0))
+        let mut work = 0;
+        if let Some((key, h)) = map.pred_counted(fwd_key(col, r0), &mut work)
             && (key >> 32) as u32 == col
             && self.runs[h as usize].end_row() >= r0
         {
             visit(h);
         }
         if r0 < r1 {
-            map.range_visit(fwd_key(col, r0 + 1), fwd_key(col, r1), &mut |_, h| visit(h));
+            map.range_visit_counted(
+                fwd_key(col, r0 + 1),
+                fwd_key(col, r1),
+                &mut work,
+                &mut |_, h| visit(h),
+            );
         }
+        work
     }
 
     /// Runs of `sheet` intersecting column `col`, rows `r0..=r1`.

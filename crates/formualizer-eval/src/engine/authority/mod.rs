@@ -14,6 +14,9 @@ pub(crate) mod arc_sweep;
 pub(crate) mod arc_topology;
 pub mod avl;
 pub mod canon;
+// S2 candidate discovery; remove when the complete planner is wired.
+#[allow(dead_code)]
+pub(crate) mod candidates;
 pub mod dir;
 pub mod dirty;
 pub mod extract;

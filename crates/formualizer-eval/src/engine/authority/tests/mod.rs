@@ -3,6 +3,7 @@ pub(crate) mod alloc;
 mod arc_emit;
 mod arc_sweep;
 mod build_oracle;
+mod candidates;
 mod correction;
 mod dirty;
 mod engine_relation;

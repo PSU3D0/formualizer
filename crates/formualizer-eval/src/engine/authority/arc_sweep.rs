@@ -40,6 +40,12 @@ impl SweepWork {
 pub(crate) enum SweepError {
     Authority(AuthorityError),
     InvalidInput,
+    /// Candidate query-column incidences, including geometrically empty hits.
+    DiscoveryLimit {
+        needed: u64,
+        limit: u64,
+        work: SweepWork,
+    },
 }
 impl From<AuthorityError> for SweepError {
     fn from(e: AuthorityError) -> Self {
@@ -137,12 +143,15 @@ fn sort(keys: &mut [Key], temp: &mut [Key], work: &mut SweepWork) {
 /// The caller has already computed exact images from refined piece/edge
 /// projections. No store scan, cell expansion, or per-probe binary search.
 /// Borrowed slices/probes are excluded from the supplied remaining budget.
-/// Counting discovery itself is not yet linked to a plan work/cancellation
-/// budget; do not treat the emitter's arc cap as covering this helper.
+/// `discovery_limit` caps query-column incidences during the sizing merge,
+/// before allocating or filling hit/event arrays. Empty row hits count too.
+/// It is separate from the emitter's structural/arc allowance; a future
+/// planner must pass the remaining per-plan discovery allowance at each level.
 pub(crate) fn sweep(
     slices: &[Slice],
     probes: &[Probe],
     limit: Option<u64>,
+    discovery_limit: Option<u64>,
 ) -> Result<Sweep, SweepError> {
     let mut work = SweepWork::default();
     if slices.len() > u32::MAX as usize {
@@ -228,6 +237,15 @@ pub(crate) fn sweep(
         let mut c = ptr;
         while c < cc.len() && cc[c] <= end {
             work.pairs += 1;
+            if let Some(limit) = discovery_limit
+                && work.pairs > limit
+            {
+                return Err(SweepError::DiscoveryLimit {
+                    needed: work.pairs,
+                    limit,
+                    work,
+                });
+            }
             pairs = pairs.checked_add(1).ok_or(AuthorityError::Alloc)?;
             c += 1;
         }

@@ -61,14 +61,17 @@ fn remaining(limit: Option<u64>, held: u64) -> Result<Option<u64>, AuthorityErro
 /// peak. Borrowed caller input is excluded from the supplied remaining limit.
 /// Pair/hit witnesses stay live for future affine classification. No result
 /// (including selfdep/SCCs) escapes on allocation or admission failure.
-/// `arc_limit` covers emission/structural charges only, NOT sweep discovery.
+/// `arc_limit` covers emission/structural charges; `discovery_limit` separately
+/// bounds query-column discovery before the quadratic hit arrays can be built.
 pub(crate) fn topology(
     slices: &[Slice],
     probes: &[Probe],
     scratch_limit: Option<u64>,
     arc_limit: Option<u64>,
+    discovery_limit: Option<u64>,
 ) -> Result<Topology, TopologyError> {
-    let sweep = sweep(slices, probes, scratch_limit).map_err(TopologyError::Sweep)?;
+    let sweep =
+        sweep(slices, probes, scratch_limit, discovery_limit).map_err(TopologyError::Sweep)?;
     let mut peak = sweep.peak_heap_bytes;
     let mut held = sweep.heap_bytes();
     let emission = emit(

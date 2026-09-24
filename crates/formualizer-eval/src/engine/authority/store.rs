@@ -980,6 +980,20 @@ impl Store {
 
     // ------------------------------------------------------------ queries
 
+    /// Families have sentinel run owners; discover their actual owner handles
+    /// through the maintained node index, exposing every index visit.
+    pub(super) fn visit_plan_owners(
+        &self,
+        sheet: u16,
+        domain: &Rect,
+        visit: &mut dyn FnMut(u32),
+    ) -> u64 {
+        self.idx
+            .node
+            .get(sheet as usize)
+            .map_or(0, |idx| idx.query(&domain.as_box(), visit))
+    }
+
     /// Allocation-free planner discovery over independently partitioned
     /// edge records. Returns actual dependent-index work; the caller counts
     /// incidences and admits its own output before filling it.
