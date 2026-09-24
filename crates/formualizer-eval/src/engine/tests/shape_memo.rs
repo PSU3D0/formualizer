@@ -811,3 +811,153 @@ fn oversized_payloads_are_not_retained() {
     assert_eq!(retained, 1, "{counts:?}");
     assert!(counts.specialization_hits > 0, "{counts:?}");
 }
+
+/// Ingest `cells` through a memoized and an unmemoized pipeline, assert
+/// every result is identical, and return the memo counts plus the memo's
+/// cumulative key-walk count after each cell (from a run without concurrent
+/// registrations).
+fn differential_key_walks(
+    engine: &mut Engine<TestWorkbook>,
+    cells: &Cells,
+) -> (MemoCounts, Vec<u64>) {
+    let inputs: Vec<_> = cells
+        .iter()
+        .map(|(sheet, row, col, text)| {
+            let ast_id = engine.intern_formula_ast(&parse(text).unwrap());
+            let sheet_id = engine.graph.sheet_id_mut(sheet);
+            (
+                ast_id,
+                CellRef::new(sheet_id, Coord::from_excel(*row, *col, true, true)),
+            )
+        })
+        .collect();
+    let mut memoized = Vec::new();
+    let (counts, walks) = with_stable_registry(|| {
+        memoized.clear();
+        let mut pipeline = engine.ingest_pipeline();
+        let mut walks = Vec::with_capacity(inputs.len());
+        for &(ast_id, placement) in &inputs {
+            memoized.push(
+                pipeline
+                    .ingest_formula(FormulaAstInput::RawArena(ast_id), placement, None)
+                    .unwrap(),
+            );
+            walks.push(pipeline.shape_memo_state().map_or(0, |memo| memo.key_walks));
+        }
+        (pipeline.memo_counts(), walks)
+    });
+    let mut reference = engine.ingest_pipeline().without_shape_memo();
+    for (memoized, &(ast_id, placement)) in memoized.iter().zip(&inputs) {
+        let expected = reference
+            .ingest_formula(FormulaAstInput::RawArena(ast_id), placement, None)
+            .unwrap();
+        if let Some(field) = ingested_formula_difference(memoized, &expected) {
+            panic!("{placement:?}: memoized result differs in {field}");
+        }
+    }
+    (counts, walks)
+}
+
+fn literal_distinct(col: u32, rows: std::ops::RangeInclusive<u32>) -> Cells {
+    family("Sheet1", col, rows, |r| {
+        format!("=VLOOKUP({r},$D$1:$E$100,2,FALSE)")
+    })
+}
+
+// No-reuse cutoff: a literal-distinct family never hits, so after the warmup
+// and the doubling windows only one formula in MAX_PROBE_STRIDE is walked.
+#[test]
+fn literal_distinct_family_backs_off_key_walks() {
+    use crate::engine::shape_memo::{MAX_PROBE_STRIDE, PROBE_WARMUP};
+    let mut engine = engine();
+    let n = 4_096u32;
+    let cells = literal_distinct(2, 1..=n);
+    let (counts, walks) = differential_key_walks(&mut engine, &cells);
+    assert_eq!(counts.specialization_hits, 0, "{counts:?}");
+    let total = *walks.last().unwrap();
+    // The warmup and the five halving windows before the cap walk
+    // 64 + 32 + ... + 2 formulas; the first capped window adds one.
+    let prefix = (PROBE_WARMUP * 7) as usize;
+    assert!(walks[prefix] <= 2 * PROBE_WARMUP, "{}", walks[prefix]);
+    let tail = total - walks[prefix];
+    let tail_len = (walks.len() - 1 - prefix) as u64;
+    assert!(
+        tail <= tail_len / MAX_PROBE_STRIDE + 1,
+        "{tail} of {tail_len}"
+    );
+    assert!(total < u64::from(n) / 16, "{total} of {n}");
+    // Every skipped formula is a bypass.
+    assert_eq!(
+        counts.bypasses,
+        u64::from(n) - counts.shape_misses,
+        "{counts:?}"
+    );
+}
+
+// A family that starts after a long literal-distinct prefix is still
+// discovered: three probes (first sighting, traced miss, hit) at the capped
+// stride, after which full probing resumes.
+#[test]
+fn late_family_after_literal_distinct_prefix_still_hits() {
+    use crate::engine::shape_memo::MAX_PROBE_STRIDE;
+    let mut engine = engine();
+    let prefix = 4_096u32;
+    let late = 1_024u32;
+    let mut cells = literal_distinct(2, 1..=prefix);
+    cells.extend(family("Sheet1", 3, 1..=late, |r| format!("=A{r}*2+1")));
+    let (counts, walks) = differential_key_walks(&mut engine, &cells);
+    let bound = 3 * MAX_PROBE_STRIDE;
+    assert!(
+        counts.specialization_hits >= u64::from(late) - bound,
+        "{counts:?}"
+    );
+    // After discovery every formula of the family is walked again.
+    let tail = (prefix + late - 1) as usize;
+    let from = tail - (late as usize - bound as usize - 1);
+    assert_eq!(
+        walks[tail] - walks[from],
+        (tail - from) as u64,
+        "{counts:?}"
+    );
+}
+
+// Interleaved families: a patterned family interleaved row by row with a
+// literal-distinct one keeps hitting, so probing never backs off; and more
+// round-robin families than the warmup covers are still found after the
+// cutoff engages.
+#[test]
+fn interleaved_families_keep_hitting_under_cutoff() {
+    let mut first = engine();
+    let n = 1_024u32;
+    let mut cells = Cells::new();
+    for r in 1..=n {
+        cells.push((
+            "Sheet1".into(),
+            r,
+            2,
+            format!("=VLOOKUP({r},$D$1:$E$100,2,FALSE)"),
+        ));
+        cells.push(("Sheet1".into(), r, 3, format!("=A{r}*2+1")));
+    }
+    let (counts, walks) = differential_key_walks(&mut first, &cells);
+    assert!(counts.specialization_hits >= u64::from(n) - 3, "{counts:?}");
+    // No formula after the first skipped the key walk.
+    assert_eq!(*walks.last().unwrap(), cells.len() as u64 - 1, "{counts:?}");
+
+    // 48 families round-robin need 2 * 48 attempts before the first hit,
+    // more than the warmup: the cutoff engages and still finds them.
+    let mut second = engine();
+    let families = 48u32;
+    let rows = 40u32;
+    let mut cells = Cells::new();
+    for r in 1..=rows {
+        for f in 0..families {
+            cells.push(("Sheet1".into(), r, 2 + f, format!("=A{r}*{f}+1")));
+        }
+    }
+    let (counts, _) = differential_key_walks(&mut second, &cells);
+    assert!(
+        counts.specialization_hits >= u64::from(families * (rows - 3)),
+        "{counts:?}"
+    );
+}

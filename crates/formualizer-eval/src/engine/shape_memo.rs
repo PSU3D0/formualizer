@@ -27,6 +27,18 @@
 //! sighting; the first sighting records just its hash. Streams of distinct
 //! shapes and one-formula pipelines therefore pay little beyond the walk.
 //!
+//! No-reuse cutoff: families that differ by a literal per row never repeat a
+//! shape, so their key walks and first-sighting inserts are pure cost. After
+//! [`PROBE_WARMUP`] consecutive memo attempts without a specialization hit,
+//! the memo probes only every `k`-th formula, with `k` doubling every further
+//! [`PROBE_WARMUP`] formulas up to [`MAX_PROBE_STRIDE`]; any hit restores
+//! full probing. Skipped formulas take the per-cell path. A warmup of 64
+//! covers the `2 * families` misses a row-major interleave of up to 32
+//! families pays before its first hit. A 64 stride cuts the walk to under 2%
+//! of formulas on a long literal-distinct run, and a family starting after
+//! such a run needs three probes (first sighting, traced miss, hit), so it is
+//! found within `3 * MAX_PROBE_STRIDE` of its formulas.
+//!
 //! Bounds (workbook content is untrusted input):
 //!
 //! - **Hash flooding.** Bucket hashes are keyed with a per-memo random seed,
@@ -85,6 +97,10 @@ pub(crate) const MAX_SHAPE_REFS: usize = 1_024;
 pub(crate) const MAX_SPECIALIZATION_BYTES: usize = 256 << 10;
 /// Estimated bytes of specialization payload retained per pipeline.
 pub(crate) const MAX_STORED_BYTES: usize = 64 << 20;
+/// Memo attempts without a specialization hit before probing backs off.
+pub(crate) const PROBE_WARMUP: u64 = 64;
+/// Largest back-off stride: at most one formula in this many is probed.
+pub(crate) const MAX_PROBE_STRIDE: u64 = 64;
 
 const T_EMPTY: u64 = 1;
 const T_INT: u64 = 2;
@@ -167,7 +183,7 @@ pub(crate) struct MemoCounts {
     pub(crate) specialization_misses: u64,
     /// Formulas that took the per-cell path (ineligible, first formula of
     /// the pipeline, first sighting, unmemoizable specialization, full memo,
-    /// replay error, or non-arena input).
+    /// replay error, skipped by the no-reuse cutoff, or non-arena input).
     pub(crate) bypasses: u64,
     /// Bypasses that were a shape's first sighting (subset of `bypasses`).
     pub(crate) first_sightings: u64,
@@ -210,6 +226,8 @@ pub(crate) struct ShapeMemo {
     stored_tokens: usize,
     /// Estimated specialization bytes charged against `MAX_STORED_BYTES`.
     stored_bytes: usize,
+    /// Memo attempts (probed or skipped) since the last specialization hit.
+    since_hit: u64,
     pub(crate) tokens: Vec<u64>,
     pub(crate) refs: Vec<CompactRefType>,
     /// Test hook: replace every bucket hash with this value (simulates
@@ -219,6 +237,9 @@ pub(crate) struct ShapeMemo {
     /// Test instrumentation: token-slice comparisons performed by lookups.
     #[cfg(test)]
     pub(crate) comparisons: u64,
+    /// Test instrumentation: key walks performed.
+    #[cfg(test)]
+    pub(crate) key_walks: u64,
 }
 
 #[cfg(test)]
@@ -242,12 +263,15 @@ impl Default for ShapeMemo {
             specializations: Default::default(),
             stored_tokens: 0,
             stored_bytes: 0,
+            since_hit: 0,
             tokens: Vec::new(),
             refs: Vec::new(),
             #[cfg(test)]
             forced_hash: FORCED_HASH.with(std::cell::Cell::get),
             #[cfg(test)]
             comparisons: 0,
+            #[cfg(test)]
+            key_walks: 0,
         }
     }
 }
@@ -274,6 +298,26 @@ impl ShapeMemo {
             self.stored_bytes = 0;
             self.validity = Some(validity);
         }
+    }
+
+    /// No-reuse cutoff: whether the current memo attempt should take the key
+    /// walk. Full probing for [`PROBE_WARMUP`] attempts after a hit, then a
+    /// stride that doubles every [`PROBE_WARMUP`] attempts up to
+    /// [`MAX_PROBE_STRIDE`].
+    pub(crate) fn should_probe(&mut self) -> bool {
+        self.since_hit += 1;
+        let past = self.since_hit.saturating_sub(PROBE_WARMUP);
+        if past == 0 {
+            return true;
+        }
+        let doublings = (past - 1) / PROBE_WARMUP + 1;
+        let stride = 1u64 << doublings.min(u64::from(MAX_PROBE_STRIDE.trailing_zeros()));
+        past.is_multiple_of(stride)
+    }
+
+    /// A specialization hit: restore full probing.
+    pub(crate) fn record_hit(&mut self) {
+        self.since_hit = 0;
     }
 
     fn bucket_hash(&self) -> u64 {
@@ -867,6 +911,39 @@ mod tests {
             ..validity()
         });
         assert_eq!(memo.footprint(), (0, 0, 0, 0));
+    }
+
+    // No-reuse cutoff schedule: full probing for the warmup, then a stride
+    // doubling every warmup window up to the cap, and full probing again
+    // after a hit.
+    #[test]
+    fn probe_stride_backs_off_and_resets_on_hit() {
+        let mut memo = ShapeMemo::default();
+        let probes: Vec<bool> = (0..10_000).map(|_| memo.should_probe()).collect();
+        let warm = PROBE_WARMUP as usize;
+        assert!(probes[..warm].iter().all(|&p| p));
+        let mut window = warm;
+        let mut stride = 2;
+        while stride <= MAX_PROBE_STRIDE as usize {
+            let end = if stride == MAX_PROBE_STRIDE as usize {
+                probes.len()
+            } else {
+                window + warm
+            };
+            let probed = probes[window..end].iter().filter(|&&p| p).count();
+            assert_eq!(probed, (end - window) / stride, "stride {stride}");
+            // Probes are evenly spaced: never more than `stride` apart.
+            let gaps = probes[window..end]
+                .split(|&p| p)
+                .map(<[bool]>::len)
+                .max()
+                .unwrap();
+            assert!(gaps < stride, "stride {stride}: gap {gaps}");
+            window = end;
+            stride *= 2;
+        }
+        memo.record_hit();
+        assert!((0..PROBE_WARMUP).all(|_| memo.should_probe()));
     }
 
     fn specialization_with_key(bytes: usize) -> Specialization {

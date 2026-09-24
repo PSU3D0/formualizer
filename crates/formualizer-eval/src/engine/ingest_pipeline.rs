@@ -272,6 +272,13 @@ impl<'a> IngestPipeline<'a> {
         // between cells, so it gets no memo.
         let validity = MemoValidity::current(self.function_provider);
         validity.provider_revision?;
+        if !memo.should_probe() {
+            return None;
+        }
+        #[cfg(test)]
+        {
+            memo.key_walks += 1;
+        }
         let eligible = shape_memo::shape_tokens(
             self.data_store,
             id,
@@ -315,6 +322,7 @@ impl<'a> IngestPipeline<'a> {
                         formula_text.clone(),
                     )
                     .ok()?;
+                memo.record_hit();
                 // Test builds re-derive every hit on the per-cell path.
                 #[cfg(test)]
                 self.verify_memo_hit(&formula, id, placement, formula_text.clone(), validity);
