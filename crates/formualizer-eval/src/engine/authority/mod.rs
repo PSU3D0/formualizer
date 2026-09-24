@@ -15,6 +15,9 @@ pub mod identity;
 pub mod level_index;
 pub mod probe;
 pub mod proj;
+// S2 input checkpoint; remove this allowance when the ARC driver lands.
+#[allow(dead_code)]
+pub(crate) mod refine;
 pub mod slots;
 pub mod store;
 pub mod template;

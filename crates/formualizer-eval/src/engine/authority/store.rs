@@ -980,6 +980,24 @@ impl Store {
 
     // ------------------------------------------------------------ queries
 
+    /// Allocation-free planner discovery over independently partitioned
+    /// edge records. Returns actual dependent-index work; the caller counts
+    /// incidences and admits its own output before filling it.
+    pub(super) fn visit_plan_edges(
+        &self,
+        sheet: u16,
+        domain: &Rect,
+        visit: &mut dyn FnMut(EdgeKey, Rect),
+    ) -> u64 {
+        let Some(idx) = self.idx.dep.get(sheet as usize) else {
+            return 0;
+        };
+        idx.query(&domain.as_box(), &mut |id| {
+            let rec = &self.recs[id as usize];
+            visit(self.egroups.key(rec.group), rec.dep);
+        })
+    }
+
     /// Direct dependents of cells `q` on `sheet` (§4.3 queries), as
     /// `(dependent sheet, rect)` pieces (they may overlap).
     pub fn direct_dependents(
