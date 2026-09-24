@@ -196,7 +196,7 @@ impl SlotStore {
     }
 
     fn insert(&mut self, id: Vid, row: &[ValueRef]) {
-        debug_assert!(row.len() <= MAX_ARITY);
+        assert!(row.len() <= MAX_ARITY, "slot row over {MAX_ARITY} literals");
         let page = &mut self.pages[(id >> 6) as usize];
         let bit = (id & 63) as u8;
         debug_assert_eq!(page.mask >> bit & 1, 0, "slot row exists");

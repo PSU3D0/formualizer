@@ -31,7 +31,11 @@ fn shift_opt(v: &mut Option<u32>, abs: bool, d: i64) {
 fn instantiate(ast: &mut ASTNode, dr: i64, dc: i64, lits: &mut std::slice::Iter<'_, LiteralValue>) {
     match &mut ast.node_type {
         ASTNodeType::Literal(v) => {
-            *v = lits.next().expect("a literal per slot").clone();
+            // A formula without a row keeps its template's literals (it is
+            // its own template).
+            if let Some(x) = lits.next() {
+                *v = x.clone();
+            }
         }
         ASTNodeType::Omitted => {}
         ASTNodeType::Reference { reference, .. } => match reference {
@@ -265,4 +269,25 @@ fn views_survive_punch_refill_and_repartition() {
     assert_eq!(store.digest(), rebuilt.digest());
     let o = rebuilt.owner_at((0, 0, 2)).unwrap();
     assert_eq!(rebuilt.owner_dom(o).1, Rect::new(0, 2, 29, 2));
+}
+
+/// A formula with more literals than a slot row holds stays an ungrouped
+/// singleton whose view is its own formula.
+#[test]
+fn formulas_over_the_slot_arity_stay_ungrouped() {
+    let mut e = engine();
+    let many: Vec<String> = (0..300).map(|k| k.to_string()).collect();
+    for r in 1..=3u32 {
+        let text = format!("=A{r}+SUM({})", many.join(","));
+        e.set_cell_formula("Sheet1", r, 2, parse(text).unwrap())
+            .unwrap();
+    }
+    let n = check_views(&mut e.graph);
+    assert_eq!(n, 3);
+    let store = e.graph.authority_host().store();
+    for r in 0..3u32 {
+        let o = store.owner_at((0, r, 1)).unwrap();
+        assert!(store.owner_group_key(o).is_none());
+    }
+    assert_eq!(store.slots().rows(), 0);
 }

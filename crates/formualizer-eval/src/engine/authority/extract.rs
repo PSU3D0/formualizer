@@ -278,7 +278,13 @@ pub fn extract_formula(
     ctx.edges.retain(|e| e.proj.instantiate(row, col).is_some());
     ctx.edges.sort_unstable();
     ctx.edges.dedup();
-    let t = template_facts(graph.data_store(), ast, row, col);
+    let mut t = template_facts(graph.data_store(), ast, row, col);
+    // A slot row holds at most 255 literals. A formula with more stays an
+    // ungrouped singleton without a row: its own AST is its template.
+    if t.literals.len() > super::slots::MAX_ARITY {
+        t.relocatable = false;
+        t.literals.clear();
+    }
     let mut flags = ctx.flags;
     if volatile {
         flags |= F_VOLATILE;
