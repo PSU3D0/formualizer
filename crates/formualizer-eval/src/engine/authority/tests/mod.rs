@@ -1,5 +1,7 @@
 mod admission;
+pub(crate) mod alloc;
 mod build_oracle;
+mod correction;
 mod dirty;
 mod engine_relation;
 pub(crate) mod fixtures;

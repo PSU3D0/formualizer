@@ -7,7 +7,9 @@
 //! std `HashMap` implementation), and `try_reserve` is always called with
 //! the full count of new keys before a mutation inserts them, so predicted
 //! and actual capacity agree (checked by `directory_capacity_is_predicted`).
-//! Entries are reclaimed only by a rebuild.
+//! Entries are reclaimed only by a rebuild. A mutation stages the owned
+//! copies of its new keys before its apply (`stage`), so interning in the
+//! apply allocates nothing (M1a correction B5).
 
 use super::avl::{ReserveError, grown};
 use rustc_hash::FxHashMap;
@@ -59,6 +61,8 @@ pub struct Directory<K: Eq + Hash + Clone> {
     keys: Vec<K>,
     /// Extra owned bytes per key (e.g. boxed token streams), summed.
     key_heap: usize,
+    /// Owned copies of pending new keys `(map copy, id-table copy, heap)`.
+    staged: Vec<(K, K, usize)>,
 }
 
 impl<K: Eq + Hash + Clone> Default for Directory<K> {
@@ -67,6 +71,7 @@ impl<K: Eq + Hash + Clone> Default for Directory<K> {
             map: FxHashMap::default(),
             keys: Vec::new(),
             key_heap: 0,
+            staged: Vec::new(),
         }
     }
 }
@@ -99,6 +104,64 @@ impl<K: Eq + Hash + Clone> Directory<K> {
         hash_table_bytes::<(K, u32)>(self.map.capacity())
             + self.keys.capacity() * size_of::<K>()
             + 2 * self.key_heap
+            + self.staged.capacity() * size_of::<(K, K, usize)>()
+            + self.staged.iter().map(|x| 2 * x.2).sum::<usize>()
+    }
+
+    /// `[(old, new)]` bytes of the hash table, the key vector and the owned
+    /// key heap after a plan.
+    pub fn plan_parts(&self, plan: DirPlan) -> [(usize, usize); 3] {
+        let cap = hash_capacity_after(self.map.len(), self.map.capacity(), plan.new_keys);
+        let keys_cap = grown(self.keys.capacity(), self.keys.len() + plan.new_keys);
+        [
+            (
+                hash_table_bytes::<(K, u32)>(self.map.capacity()),
+                hash_table_bytes::<(K, u32)>(cap),
+            ),
+            (
+                self.keys.capacity() * size_of::<K>(),
+                keys_cap * size_of::<K>(),
+            ),
+            (2 * self.key_heap, 2 * (self.key_heap + plan.new_key_heap)),
+        ]
+    }
+
+    /// Bytes of a stage list for `n` keys (the owned copies are counted by
+    /// `plan_parts`).
+    pub fn stage_list_bytes(n: usize) -> usize {
+        n * size_of::<(K, K, usize)>()
+    }
+
+    /// Hold owned copies of the pending new keys for `intern_staged`.
+    pub fn stage(&mut self, staged: Vec<(K, K, usize)>) {
+        self.staged = staged;
+    }
+
+    pub fn drop_staged(&mut self) {
+        self.staged = Vec::new();
+    }
+
+    /// Intern `k` from the staged copies (reserved beforehand): allocates
+    /// nothing.
+    pub fn intern_staged(&mut self, k: &K) -> u32 {
+        if let Some(id) = self.map.get(k) {
+            return *id;
+        }
+        let i = self
+            .staged
+            .iter()
+            .position(|x| x.0 == *k)
+            .expect("staged directory key");
+        let (a, b, heap) = self.staged.swap_remove(i);
+        if self.staged.is_empty() {
+            self.staged = Vec::new();
+        }
+        let id = self.keys.len() as u32;
+        debug_assert!(self.keys.len() < self.keys.capacity(), "unreserved key");
+        self.keys.push(b);
+        self.map.insert(a, id);
+        self.key_heap += heap;
+        id
     }
 
     /// Bytes after inserting a plan's new keys.

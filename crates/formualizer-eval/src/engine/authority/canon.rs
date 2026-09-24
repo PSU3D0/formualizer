@@ -10,7 +10,9 @@
 //! - Lemma C1: the output depends only on the cell set.
 //! - Lemma C2: at most `3k` rectangles for `k` disjoint inputs.
 
+use super::avl::{AvlMap, ReserveError};
 use super::geom::Rect;
+#[cfg(test)]
 use std::collections::BTreeMap;
 
 /// Counted sweep work (never timed).
@@ -27,38 +29,80 @@ impl CanonWork {
     }
 }
 
-/// Upper bound on the transient heap of `canon` for `k` inputs: the event
-/// list, both ordered maps (≤ k entries each, B-tree nodes at ≥ 5 of 11
-/// slots), per-column scratch and the output (≤ 3k). Charged to scratch
-/// before a repartition runs (SP-2 F-5).
+/// Upper bound on the heap `try_canon` allocates for `k` inputs (M1a
+/// correction B5: every container is reserved up front): the event list
+/// (`2k`), both arena maps (`k` nodes each), the interval-value slab and
+/// its free list, the per-column lists at their proven bounds for a column
+/// of `e ≤ 2k` events (spans, merged and after `4e`, before `3e`) and the
+/// output (`3k`, Lemma C2). Charged to scratch before a repartition runs
+/// (SP-2 F-5).
 pub fn scratch_bound(k: usize) -> usize {
-    let events = 2 * k * 16;
-    let maps = 2 * k.div_ceil(5).max(1) * 200;
-    let per_column = 3 * k * 24;
+    let e = 2 * k;
+    let events = e * size_of::<(u32, bool, u32, u32)>();
+    let maps = 2 * k * AvlMap::NODE_BYTES + k * (size_of::<(u32, u32)>() + size_of::<u32>());
+    let per_column = 4 * e * size_of::<(u32, u32)>() * 3 + 3 * e * size_of::<(u32, u32, u32)>();
     let output = 3 * k * size_of::<Rect>();
     events + maps + per_column + output
+}
+
+fn try_vec<T>(n: usize) -> Result<Vec<T>, ReserveError> {
+    let mut v = Vec::new();
+    v.try_reserve_exact(n).map_err(|_| ReserveError)?;
+    Ok(v)
+}
+
+/// Push within the reservation; grow fallibly if a bound was loose.
+fn tpush<T>(v: &mut Vec<T>, x: T) -> Result<(), ReserveError> {
+    if v.len() == v.capacity() {
+        v.try_reserve(1).map_err(|_| ReserveError)?;
+    }
+    v.push(x);
+    Ok(())
 }
 
 /// Unit-stride canonical partition of `rects`, which must be cell-disjoint.
 /// Output is sorted by `(c0, r0)`.
 pub fn canon(rects: &[Rect], work: &mut CanonWork) -> Vec<Rect> {
+    try_canon(rects, work).expect("canon allocation")
+}
+
+/// [`canon`] with every allocation reserved up front and fallible: on an
+/// allocation failure it returns `ReserveError` and nothing else changes.
+pub fn try_canon(rects: &[Rect], work: &mut CanonWork) -> Result<Vec<Rect>, ReserveError> {
+    let k = rects.len();
     // (column, is_add, r0, r1). DEL sorts before ADD in one column; the
     // result does not depend on the order within a column.
-    let mut ev: Vec<(u32, bool, u32, u32)> = Vec::with_capacity(rects.len() * 2);
+    let mut ev: Vec<(u32, bool, u32, u32)> = try_vec(2 * k)?;
     for r in rects {
         ev.push((r.c0, true, r.r0, r.r1));
         ev.push((r.c1 + 1, false, r.r0, r.r1));
     }
     ev.sort_unstable();
+    let mut emax = 0usize;
+    let mut i = 0;
+    while i < ev.len() {
+        let mut j = i;
+        while j < ev.len() && ev[j].0 == ev[i].0 {
+            j += 1;
+        }
+        emax = emax.max(j - i);
+        i = j;
+    }
     // Input intervals present in the current column: r0 -> r1 (disjoint).
-    let mut active: BTreeMap<u32, u32> = BTreeMap::new();
-    // Maximal intervals of the current column: start -> (end, start column).
-    let mut maximal: BTreeMap<u32, (u32, u32)> = BTreeMap::new();
-    let mut out = Vec::new();
-    let mut spans: Vec<(u32, u32)> = Vec::new();
-    let mut before: Vec<(u32, u32, u32)> = Vec::new();
-    let mut after: Vec<(u32, u32)> = Vec::new();
-    let mut merged: Vec<(u32, u32)> = Vec::new();
+    let mut active = AvlMap::new();
+    active.try_reserve_slots(k)?;
+    // Maximal intervals of the current column: start -> slot of
+    // (end, start column) in `mvals`.
+    let mut maximal = AvlMap::new();
+    maximal.try_reserve_slots(k)?;
+    let mut mvals: Vec<(u32, u32)> = try_vec(k)?;
+    let mut mfree: Vec<u32> = try_vec(k)?;
+    let mut out: Vec<Rect> = try_vec(3 * k)?;
+    let mut spans: Vec<(u32, u32)> = try_vec(4 * emax)?;
+    let mut before: Vec<(u32, u32, u32)> = try_vec(3 * emax)?;
+    let mut after: Vec<(u32, u32)> = try_vec(4 * emax)?;
+    let mut merged: Vec<(u32, u32)> = try_vec(4 * emax)?;
+    let mut oom = false;
     let mut i = 0;
     while i < ev.len() {
         let col = ev[i].0;
@@ -72,29 +116,38 @@ pub fn canon(rects: &[Rect], work: &mut CanonWork) -> Vec<Rect> {
         before.clear();
         for &(_, _, a, b) in &ev[i..j] {
             work.events += 1;
-            spans.push((a, b));
+            tpush(&mut spans, (a, b))?;
             let lo = a.saturating_sub(1);
             let hi = b.saturating_add(1);
-            if let Some((&s, &(e, sc))) = maximal.range(..=lo).next_back()
-                && e >= lo
-            {
-                before.push((s, e, sc));
+            if let Some((s, v)) = maximal.pred(u64::from(lo)) {
+                let (e, sc) = mvals[v as usize];
+                if e >= lo {
+                    tpush(&mut before, (s as u32, e, sc))?;
+                }
             }
-            for (&s, &(e, sc)) in maximal.range(lo.saturating_add(1)..=hi) {
-                before.push((s, e, sc));
+            maximal.range_visit(
+                u64::from(lo.saturating_add(1)),
+                u64::from(hi),
+                &mut |s, v| {
+                    let (e, sc) = mvals[v as usize];
+                    oom |= tpush(&mut before, (s as u32, e, sc)).is_err();
+                },
+            );
+            if oom {
+                return Err(ReserveError);
             }
         }
         before.sort_unstable();
         before.dedup();
         work.touched += before.len() as u64;
         for &(s, e, _) in &before {
-            spans.push((s, e));
+            tpush(&mut spans, (s, e))?;
         }
         for &(_, add, a, b) in &ev[i..j] {
             if add {
-                active.insert(a, b);
+                active.insert(u64::from(a), b);
             } else {
-                let removed = active.remove(&a);
+                let removed = active.remove(u64::from(a));
                 debug_assert_eq!(removed, Some(b), "canon input is not cell-disjoint");
             }
         }
@@ -105,32 +158,37 @@ pub fn canon(rects: &[Rect], work: &mut CanonWork) -> Vec<Rect> {
         for &(a, b) in &spans {
             match merged.last_mut() {
                 Some(last) if a <= last.1.saturating_add(1) => last.1 = last.1.max(b),
-                _ => merged.push((a, b)),
+                _ => tpush(&mut merged, (a, b))?,
             }
         }
         after.clear();
         for &(a, b) in &merged {
             let mut run: Option<(u32, u32)> = None;
-            for (&s, &e) in active.range(a..=b) {
+            active.range_visit(u64::from(a), u64::from(b), &mut |s, e| {
+                let s = s as u32;
                 run = match run {
                     Some((rs, re)) if s == re + 1 => Some((rs, e)),
                     Some(done) => {
-                        after.push(done);
+                        oom |= tpush(&mut after, done).is_err();
                         Some((s, e))
                     }
                     None => Some((s, e)),
                 };
-            }
+            });
             if let Some(done) = run {
-                after.push(done);
+                tpush(&mut after, done)?;
+            }
+            if oom {
+                return Err(ReserveError);
             }
         }
         work.touched += after.len() as u64;
         // before \ after: emit; after \ before: begin at `col`.
         for &(s, e, sc) in &before {
             if after.binary_search(&(s, e)).is_err() {
-                maximal.remove(&s);
-                out.push(Rect::new(s, sc, e, col - 1));
+                let v = maximal.remove(u64::from(s)).expect("maximal interval");
+                tpush(&mut mfree, v)?;
+                tpush(&mut out, Rect::new(s, sc, e, col - 1))?;
                 work.emitted += 1;
             }
         }
@@ -139,14 +197,24 @@ pub fn canon(rects: &[Rect], work: &mut CanonWork) -> Vec<Rect> {
                 .binary_search_by(|&(bs, be, _)| (bs, be).cmp(&(s, e)))
                 .is_ok();
             if !continues {
-                maximal.insert(s, (e, col));
+                let v = match mfree.pop() {
+                    Some(v) => {
+                        mvals[v as usize] = (e, col);
+                        v
+                    }
+                    None => {
+                        tpush(&mut mvals, (e, col))?;
+                        (mvals.len() - 1) as u32
+                    }
+                };
+                maximal.insert(u64::from(s), v);
             }
         }
         i = j;
     }
     debug_assert!(active.is_empty());
     out.sort_unstable_by_key(|r| (r.c0, r.r0));
-    out
+    Ok(out)
 }
 
 #[cfg(test)]

@@ -333,6 +333,7 @@ impl Store {
             + placed.capacity() * 4
             + rows.capacity() * size_of::<(Vid, usize)>();
         let plan = s.slots.plan(&[], &rows);
+        s.stats.slot_work += plan.work;
         s.slots.try_reserve(&plan).expect("build allocation");
         let mut payload: Vec<(Vid, &[ValueRef])> = Vec::with_capacity(rows.len());
         for &(id, _) in &rows {
@@ -341,7 +342,9 @@ impl Store {
         }
         s.slots.apply(&plan, &[], &payload);
         scratch += payload.capacity() * size_of::<(Vid, &[ValueRef])>()
+            + plan.scratch_bytes()
             + super::super::dir::hash_table_bytes::<(Cell, usize)>(by_cell.capacity());
+        s.init_accounting();
         Ok((s, scratch as u64))
     }
 }

@@ -366,7 +366,15 @@ impl AvlMap {
 
     /// Entries with `lo ≤ key ≤ hi`, in key order.
     pub fn range(&self, lo: u64, hi: u64, out: &mut Vec<(u64, u32)>) {
-        let mut stack: Vec<u32> = Vec::new();
+        self.range_visit(lo, hi, &mut |k, v| out.push((k, v)));
+    }
+
+    /// Visit the entries with `lo ≤ key ≤ hi` in key order, without
+    /// allocating (the stack is a fixed array: the height is at most
+    /// `1.44 log2(n + 2) < 64` for `n < 2^32`).
+    pub fn range_visit(&self, lo: u64, hi: u64, visit: &mut dyn FnMut(u64, u32)) {
+        let mut stack = [NIL; 64];
+        let mut top = 0usize;
         let mut n = self.root;
         loop {
             while n != NIL {
@@ -374,16 +382,20 @@ impl AvlMap {
                 if node.key < lo {
                     n = node.right;
                 } else {
-                    stack.push(n);
+                    stack[top] = n;
+                    top += 1;
                     n = node.left;
                 }
             }
-            let Some(top) = stack.pop() else { break };
-            let node = &self.nodes[top as usize];
+            if top == 0 {
+                break;
+            }
+            top -= 1;
+            let node = &self.nodes[stack[top] as usize];
             if node.key > hi {
                 break;
             }
-            out.push((node.key, node.val));
+            visit(node.key, node.val);
             n = node.right;
         }
     }

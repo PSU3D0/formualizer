@@ -15,16 +15,26 @@
 //! Mutations never merge in place: a refill creates a singleton record and
 //! owner, and the group's trigger re-forms families. That keeps the dry run
 //! exact (SP-2 F-4 is removed by construction, addendum B-4).
+//!
+//! M1a correction (addendum B-15…B-20): retained bytes and index entry
+//! counts are maintained incrementally from the touched containers, so a
+//! mutation's accounting is independent of the store size (B2; the full
+//! census is `census_heap_bytes`/`census_counts`, checked by `check`);
+//! empty groups and slot pages are reclaimed (B3); every allocation of a
+//! scope, planning scratch included, is fallible and happens before the
+//! first logical change, and the apply allocates nothing (B5).
 
+use super::avl::AvlMap;
 use super::canon::{self, CanonWork};
 use super::dir::{DirPlan, Directory};
 use super::geom::{Cell, Cover, Rect};
 pub use super::groups::Group;
 use super::groups::{
-    GroupKey, GroupTable, Members, l_hash, members_cap_after, members_heap, members_heap_for,
+    GroupKey, GroupPlan, GroupTable, Members, l_hash, members_cap_after, members_heap,
+    members_heap_for,
 };
-use super::identity::{CellCut, FAMILY, IdError, IdShadow, IdentityTable, Vid};
-use super::level_index::{IndexShadow, LevelIndex, NONE};
+use super::identity::{CellCut, FAMILY, IdError, IdRun, IdShadow, IdentityTable, Vid};
+use super::level_index::{IndexShadow, IndexStage, LevelIndex, NONE};
 use super::proj::RefProj;
 use super::slots::SlotStore;
 use crate::engine::arena::{AstNodeId, ValueRef};
@@ -282,6 +292,16 @@ pub struct Stats {
     pub canon_work: CanonWork,
     /// Index query work (`Q_idx`: buffer tests + tree nodes).
     pub index_work: u64,
+    /// Slot planning visits: rows, delta runs, touched pages (B1).
+    pub slot_work: u64,
+    /// Dry-run and accounting visits of mutations and repartitions, slot
+    /// planning included (B2): cut items, touched groups, index shadows,
+    /// identity sheets. Independent of the store size.
+    pub plan_work: u64,
+    /// Scopes refused or repartitions skipped because an allocation failed.
+    pub alloc_failures: u64,
+    /// Groups reclaimed when their last member left (B3).
+    pub groups_reclaimed: u64,
 }
 
 /// Exact counts and bytes of a mutation, predicted and actual.
@@ -316,6 +336,11 @@ pub struct MutationReport {
     pub observed_index_transient: u64,
     pub run_relabels: u64,
     pub repartitions: u32,
+    /// Predicted heap peak of the whole scope above `before.bytes`
+    /// (planning scratch, reservations, repartitions): an upper bound on
+    /// what the allocator can observe (checked by the counting-allocator
+    /// tests).
+    pub predicted_peak_above_before: u64,
 }
 
 /// A family piece left by a cut: `(group, dom, template, anchor, flags)`.
@@ -337,26 +362,27 @@ struct Cut {
     keep: Option<usize>,
 }
 
-/// A planned new formula at one cell.
+/// A planned new formula at one cell (borrowing the caller's facts: the
+/// plan copies nothing).
 #[derive(Clone, Debug)]
-struct NewFormula {
+struct NewFormula<'a> {
     cell: Cell,
     /// `(existing group or None, key)` per edge.
-    edges: Vec<(Option<u32>, PendingEdgeKey)>,
+    edges: Vec<(Option<u32>, PendingEdgeKey<'a>)>,
     /// Existing node group, or the key of a new one.
     ngroup: Option<Result<u32, (u16, u64)>>,
     template: AstNodeId,
-    literals: SmallVec<[ValueRef; 4]>,
+    literals: &'a [ValueRef],
     flags: u16,
     /// The id kept from the cell's previous formula.
     kept_id: Option<Vid>,
 }
 
 #[derive(Clone, Debug)]
-struct PendingEdgeKey {
+struct PendingEdgeKey<'a> {
     dep_sheet: u16,
     tag: Tag,
-    lk: Result<u32, LkKey>,
+    lk: Result<u32, &'a LkKey>,
     proj: RefProj,
 }
 
@@ -368,7 +394,9 @@ struct Indexes {
     node: Vec<LevelIndex>,
 }
 
-#[derive(Clone, Debug)]
+/// `Clone` recounts the maintained index totals (cloned containers have
+/// their lengths as capacities).
+#[derive(Debug)]
 pub struct Store {
     ids: IdentityTable,
     owners: Vec<Owner>,
@@ -386,9 +414,35 @@ pub struct Store {
     idx: Indexes,
     dep_loc: Vec<u32>,
     prec_loc: Vec<u32>,
+    /// Maintained index totals per role (dep, prec, node): heap bytes of
+    /// the indexes (not the index vectors) and stored entries.
+    idx_bytes: [usize; 3],
+    idx_entries: [usize; 3],
+    /// Index buffers pre-allocated for the running scope, per `(role,
+    /// sheet)`; empty between scopes.
+    stage: Vec<(u8, u16, IndexStage)>,
+    /// Predicted heap peak of the running scope, repartitions included
+    /// (absolute bytes), and scratch that outlives the mutation's apply.
+    scope_peak: u64,
+    scope_extra: usize,
     pub budget: Budget,
     pub stats: Stats,
 }
+
+#[cfg(test)]
+thread_local! {
+    static CENSUS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Censuses run on this thread (tests: none may run on a mutation path).
+#[cfg(test)]
+pub(crate) fn census_calls() -> u64 {
+    CENSUS.with(|c| c.get())
+}
+
+pub(super) const DEP: usize = 0;
+pub(super) const PREC: usize = 1;
+pub(super) const NODE: usize = 2;
 
 // ---------------------------------------------------------------- helpers
 
@@ -410,14 +464,6 @@ fn vec_bytes<T>(cap: usize) -> usize {
     cap * size_of::<T>()
 }
 
-fn grow_members(v: &mut Members, cap: usize) -> Result<(), AuthorityError> {
-    if cap > v.capacity() {
-        v.try_reserve_exact(cap - v.len())
-            .map_err(|_| AuthorityError::Alloc)?;
-    }
-    Ok(())
-}
-
 fn grow_exact<T>(v: &mut Vec<T>, total: usize) -> Result<(), AuthorityError> {
     if total > v.capacity() {
         v.try_reserve_exact(total - v.len())
@@ -426,62 +472,137 @@ fn grow_exact<T>(v: &mut Vec<T>, total: usize) -> Result<(), AuthorityError> {
     Ok(())
 }
 
-/// Planned growth of one index role.
+/// An index operation routed through [`Store::index_op`].
+#[derive(Clone, Copy, Debug)]
+pub(super) enum IndexOp {
+    Insert(super::geom::BoxT, u32),
+    Remove(u32),
+    Settle,
+}
+
+/// Planned operations on one index role: a shadow per touched sheet.
+#[derive(Debug)]
 struct IndexPlan {
-    shadows: Vec<Option<IndexShadow>>,
-    /// Sheet count after the plan (index vectors grow to it).
+    touched: Vec<(u16, IndexShadow)>,
+    /// Sheet count after the plan (the index vector grows to it).
     sheets: usize,
 }
 
 impl IndexPlan {
     fn new(idx: &[LevelIndex]) -> Self {
         Self {
-            shadows: vec![None; idx.len()],
+            touched: Vec::new(),
             sheets: idx.len(),
         }
     }
 
-    fn get<'a>(&'a mut self, idx: &[LevelIndex], s: u16) -> &'a mut IndexShadow {
-        let s = s as usize;
-        if self.shadows.len() <= s {
-            self.shadows.resize(s + 1, None);
-            self.sheets = self.sheets.max(s + 1);
-        }
-        self.shadows[s]
-            .get_or_insert_with(|| idx.get(s).map(LevelIndex::shadow).unwrap_or_default())
-    }
-
-    fn settle(&mut self) {
-        for sh in self.shadows.iter_mut().flatten() {
-            sh.settle();
-        }
-    }
-
-    /// (retained bytes, transient bytes above retained) after the plan.
-    fn bytes(&self, idx: &[LevelIndex]) -> (usize, usize) {
-        let cap = idx.len().max(self.sheets);
-        let mut retained = 0;
-        let mut transient = 0;
-        for s in 0..cap {
-            match self.shadows.get(s).and_then(Option::as_ref) {
-                Some(sh) => {
-                    retained += sh.heap_bytes();
-                    transient += sh.peak() - sh.heap_bytes();
+    fn get<'a>(
+        &'a mut self,
+        idx: &[LevelIndex],
+        s: u16,
+    ) -> Result<&'a mut IndexShadow, AuthorityError> {
+        let i = match self.touched.iter().position(|t| t.0 == s) {
+            Some(i) => i,
+            None => {
+                let sh = idx
+                    .get(s as usize)
+                    .map(LevelIndex::shadow)
+                    .unwrap_or_default();
+                // Shadows are large; grow by doubling from one.
+                if self.touched.len() == self.touched.capacity() {
+                    self.touched
+                        .try_reserve_exact(self.touched.len().max(1))
+                        .map_err(|_| AuthorityError::Alloc)?;
                 }
-                None => retained += idx.get(s).map_or(0, LevelIndex::heap_bytes),
+                self.touched.push((s, sh));
+                self.sheets = self.sheets.max(s as usize + 1);
+                self.touched.len() - 1
             }
-        }
-        (retained, transient)
+        };
+        Ok(&mut self.touched[i].1)
     }
 
-    fn entries(&self, idx: &[LevelIndex]) -> u64 {
-        let cap = idx.len().max(self.sheets);
-        (0..cap)
-            .map(|s| match self.shadows.get(s).and_then(Option::as_ref) {
-                Some(sh) => sh.entries(),
-                None => idx.get(s).map_or(0, LevelIndex::entries),
-            })
-            .sum::<usize>() as u64
+    fn settle(&mut self) -> Result<(), AuthorityError> {
+        for (_, sh) in self.touched.iter_mut() {
+            sh.try_settle().map_err(|_| AuthorityError::Alloc)?;
+        }
+        Ok(())
+    }
+
+    /// Account the plan: retained bytes of the touched indexes and of the
+    /// index vector, in-place growth, and the staged buffers. Returns the
+    /// change in stored entries.
+    fn account(&self, idx: &Vec<LevelIndex>, b: &mut mutate::Bytes) -> i64 {
+        let mut entries = 0i64;
+        for (s, sh) in &self.touched {
+            match idx.get(*s as usize) {
+                Some(cur) => {
+                    b.retained(cur.heap_bytes(), sh.heap_bytes());
+                    for (o, n) in sh.vec_growth(cur) {
+                        if n > o {
+                            b.alloc += n - o;
+                            b.max_old = b.max_old.max(o);
+                        }
+                    }
+                    entries += sh.entries() as i64 - cur.entries() as i64;
+                }
+                None => {
+                    let fresh = LevelIndex::default();
+                    b.retained(0, sh.heap_bytes());
+                    for (o, n) in sh.vec_growth(&fresh) {
+                        b.alloc += n - o;
+                    }
+                    entries += sh.entries() as i64;
+                }
+            }
+            b.alloc += sh.stage_bytes() + size_of::<(u8, u16, IndexStage)>();
+        }
+        b.grow(
+            vec_bytes::<LevelIndex>(idx.capacity()),
+            vec_bytes::<LevelIndex>(idx.capacity().max(self.sheets)),
+        );
+        entries
+    }
+
+    fn scratch_bytes(&self) -> usize {
+        self.touched.capacity() * size_of::<(u16, IndexShadow)>()
+            + self
+                .touched
+                .iter()
+                .map(|(_, sh)| sh.scratch_bytes())
+                .sum::<usize>()
+    }
+}
+
+impl Clone for Store {
+    fn clone(&self) -> Self {
+        let mut s = Self {
+            ids: self.ids.clone(),
+            owners: self.owners.clone(),
+            own_free: self.own_free,
+            own_nfree: self.own_nfree,
+            nnodes: self.nnodes,
+            ngroups: self.ngroups.clone(),
+            node_loc: self.node_loc.clone(),
+            slots: self.slots.clone(),
+            recs: self.recs.clone(),
+            rec_free: self.rec_free,
+            rec_nfree: self.rec_nfree,
+            egroups: self.egroups.clone(),
+            lks: self.lks.clone(),
+            idx: self.idx.clone(),
+            dep_loc: self.dep_loc.clone(),
+            prec_loc: self.prec_loc.clone(),
+            idx_bytes: self.idx_bytes,
+            idx_entries: self.idx_entries,
+            stage: self.stage.clone(),
+            scope_peak: self.scope_peak,
+            scope_extra: self.scope_extra,
+            budget: self.budget,
+            stats: self.stats.clone(),
+        };
+        s.init_accounting();
+        s
     }
 }
 
@@ -504,6 +625,11 @@ impl Default for Store {
             idx: Indexes::default(),
             dep_loc: Vec::new(),
             prec_loc: Vec::new(),
+            idx_bytes: [0; 3],
+            idx_entries: [0; 3],
+            stage: Vec::new(),
+            scope_peak: 0,
+            scope_extra: 0,
             budget: Budget::default(),
             stats: Stats::default(),
         }
@@ -536,7 +662,8 @@ impl Store {
         vec_bytes::<LevelIndex>(v.capacity()) + v.iter().map(LevelIndex::heap_bytes).sum::<usize>()
     }
 
-    /// Retained heap bytes: the capacity of every container (§5.1).
+    /// Retained heap bytes: the capacity of every container (§5.1). O(1):
+    /// every component's total is maintained (correction B2).
     pub fn heap_bytes(&self) -> u64 {
         (self.ids.heap_bytes()
             + vec_bytes::<Owner>(self.owners.capacity())
@@ -546,6 +673,27 @@ impl Store {
             + vec_bytes::<Rec>(self.recs.capacity())
             + self.egroups.heap_bytes()
             + self.lks.heap_bytes()
+            + vec_bytes::<LevelIndex>(self.idx.dep.capacity())
+            + vec_bytes::<LevelIndex>(self.idx.prec.capacity())
+            + vec_bytes::<LevelIndex>(self.idx.node.capacity())
+            + self.idx_bytes.iter().sum::<usize>()
+            + vec_bytes::<u32>(self.dep_loc.capacity())
+            + vec_bytes::<u32>(self.prec_loc.capacity())) as u64
+    }
+
+    /// [`Self::heap_bytes`] by a full walk of every container (the census:
+    /// tests and `check` only, never on the mutation path).
+    pub fn census_heap_bytes(&self) -> u64 {
+        #[cfg(test)]
+        CENSUS.with(|c| c.set(c.get() + 1));
+        (self.ids.census_bytes()
+            + vec_bytes::<Owner>(self.owners.capacity())
+            + self.ngroups.census_bytes()
+            + vec_bytes::<u32>(self.node_loc.capacity())
+            + self.slots.census_bytes()
+            + vec_bytes::<Rec>(self.recs.capacity())
+            + self.egroups.census_bytes()
+            + self.lks.heap_bytes()
             + Self::idx_bytes(&self.idx.dep)
             + Self::idx_bytes(&self.idx.prec)
             + Self::idx_bytes(&self.idx.node)
@@ -553,16 +701,16 @@ impl Store {
             + vec_bytes::<u32>(self.prec_loc.capacity())) as u64
     }
 
-    /// Retained bytes by component (reports).
+    /// Retained bytes by component (reports; a census).
     pub fn bytes_breakdown(&self) -> Vec<(&'static str, usize)> {
         vec![
-            ("identity", self.ids.heap_bytes()),
+            ("identity", self.ids.census_bytes()),
             ("owners", vec_bytes::<Owner>(self.owners.capacity())),
-            ("node_groups", self.ngroups.heap_bytes()),
+            ("node_groups", self.ngroups.census_bytes()),
             ("node_loc", vec_bytes::<u32>(self.node_loc.capacity())),
-            ("slots", self.slots.heap_bytes()),
+            ("slots", self.slots.census_bytes()),
             ("records", vec_bytes::<Rec>(self.recs.capacity())),
-            ("edge_groups", self.egroups.heap_bytes()),
+            ("edge_groups", self.egroups.census_bytes()),
             ("lk_dir", self.lks.heap_bytes()),
             ("dep_index", Self::idx_bytes(&self.idx.dep)),
             ("prec_index", Self::idx_bytes(&self.idx.prec)),
@@ -574,19 +722,131 @@ impl Store {
         ]
     }
 
+    /// Counts and bytes, O(1) (maintained totals).
     pub fn counts(&self) -> Counts {
-        let e = |v: &[LevelIndex]| v.iter().map(LevelIndex::entries).sum::<usize>() as u64;
         Counts {
             records: (self.recs.len() - self.rec_nfree) as u64,
             owners: (self.owners.len() - self.own_nfree) as u64,
             nodes: self.nnodes,
             runs: self.ids.run_count() as u64,
             next_id: u64::from(self.ids.next_id()),
+            dep_entries: self.idx_entries[DEP] as u64,
+            prec_entries: self.idx_entries[PREC] as u64,
+            node_entries: self.idx_entries[NODE] as u64,
+            slot_rows: self.slots.rows() as u64,
+            bytes: self.heap_bytes(),
+        }
+    }
+
+    /// [`Self::counts`] by a full census (tests and `check`).
+    pub fn census_counts(&self) -> Counts {
+        let e = |v: &[LevelIndex]| v.iter().map(LevelIndex::entries).sum::<usize>() as u64;
+        Counts {
             dep_entries: e(&self.idx.dep),
             prec_entries: e(&self.idx.prec),
             node_entries: e(&self.idx.node),
-            slot_rows: self.slots.rows() as u64,
-            bytes: self.heap_bytes(),
+            bytes: self.census_heap_bytes(),
+            ..self.counts()
+        }
+    }
+
+    /// The maintained totals equal the census (B2 cross-check).
+    pub fn check_accounting(&self) -> Result<(), String> {
+        let parts = [
+            ("identity", self.ids.heap_bytes(), self.ids.census_bytes()),
+            (
+                "edge groups",
+                self.egroups.heap_bytes(),
+                self.egroups.census_bytes(),
+            ),
+            (
+                "node groups",
+                self.ngroups.heap_bytes(),
+                self.ngroups.census_bytes(),
+            ),
+            ("slots", self.slots.heap_bytes(), self.slots.census_bytes()),
+        ];
+        for (name, a, b) in parts {
+            if a != b {
+                return Err(format!("{name}: maintained {a} != census {b}"));
+            }
+        }
+        for (role, v) in [
+            (DEP, &self.idx.dep),
+            (PREC, &self.idx.prec),
+            (NODE, &self.idx.node),
+        ] {
+            let b: usize = v.iter().map(LevelIndex::heap_bytes).sum();
+            if b != self.idx_bytes[role] {
+                return Err(format!(
+                    "index role {role}: maintained {} != census {b}",
+                    self.idx_bytes[role]
+                ));
+            }
+        }
+        let (c, k) = (self.counts(), self.census_counts());
+        if c != k {
+            return Err(format!("maintained counts {c:?} != census {k:?}"));
+        }
+        if !self.stage.is_empty() {
+            return Err("index stage left over from a scope".into());
+        }
+        Ok(())
+    }
+
+    /// Initialise the maintained totals from a census (after a build).
+    pub(super) fn init_accounting(&mut self) {
+        for (role, v) in [
+            (DEP, &self.idx.dep),
+            (PREC, &self.idx.prec),
+            (NODE, &self.idx.node),
+        ] {
+            self.idx_bytes[role] = v.iter().map(LevelIndex::heap_bytes).sum();
+            self.idx_entries[role] = v.iter().map(LevelIndex::entries).sum();
+        }
+        self.egroups.recount_members();
+        self.ngroups.recount_members();
+    }
+
+    // ------------------------------------------------------------ index ops
+
+    /// One index operation on `(role, sheet)`, with its allocations taken
+    /// from the scope's stage when there is one, keeping the role totals.
+    pub(super) fn index_op(&mut self, role: usize, sheet: u16, op: IndexOp) {
+        let stage = self
+            .stage
+            .iter_mut()
+            .find(|(r, s, _)| usize::from(*r) == role && *s == sheet)
+            .map(|x| &mut x.2);
+        let (v, loc) = match role {
+            DEP => (&mut self.idx.dep, &mut self.dep_loc),
+            PREC => (&mut self.idx.prec, &mut self.prec_loc),
+            _ => (&mut self.idx.node, &mut self.node_loc),
+        };
+        while v.len() <= sheet as usize {
+            debug_assert!(
+                v.len() < v.capacity() || stage.is_none(),
+                "unreserved index vector"
+            );
+            v.push(LevelIndex::default());
+        }
+        let idx = &mut v[sheet as usize];
+        let (b0, e0) = (idx.heap_bytes(), idx.entries());
+        match op {
+            IndexOp::Insert(b, id) => idx.insert_in(b, id, loc, stage),
+            IndexOp::Remove(id) => idx.remove(id, loc),
+            IndexOp::Settle => idx.settle_in(loc, stage),
+        }
+        let (b1, e1) = (idx.heap_bytes(), idx.entries());
+        self.idx_bytes[role] = self.idx_bytes[role] + b1 - b0;
+        self.idx_entries[role] = self.idx_entries[role] + e1 - e0;
+    }
+
+    fn index_ref(&self, role: usize) -> &Vec<LevelIndex> {
+        match role {
+            DEP => &self.idx.dep,
+            PREC => &self.idx.prec,
+            _ => &self.idx.node,
         }
     }
 

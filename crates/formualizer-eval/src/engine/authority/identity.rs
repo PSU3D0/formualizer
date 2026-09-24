@@ -141,6 +141,14 @@ impl IdShadow {
     }
 }
 
+/// Container capacities of an identity table (dry-run accounting).
+#[derive(Clone, Copy, Debug)]
+pub struct IdCaps {
+    pub runs: usize,
+    pub fwd_dir: usize,
+    pub rev: usize,
+}
+
 /// A contiguous part `lo..=hi` (offsets) of one run leaving it: retired,
 /// or — for a single cell — re-homed under a new owner with its id kept.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -166,16 +174,37 @@ impl CellCut {
     }
 }
 
-#[derive(Clone, Debug)]
+/// `Clone` recounts the maintained forward-map bytes: a cloned `Vec` has
+/// its length as capacity.
+#[derive(Debug)]
 pub struct IdentityTable {
     runs: Vec<IdRun>,
     /// Free run slots, linked through `first_id`; a free slot has `len == 0`.
     free_run: u32,
     nfree_runs: usize,
     fwd: Vec<AvlMap>,
+    /// Σ heap bytes of the forward maps (maintained; `heap_bytes` is O(1)).
+    fwd_bytes: usize,
     rev: AvlMap,
     next_id: Vid,
     limit: Vid,
+}
+
+impl Clone for IdentityTable {
+    fn clone(&self) -> Self {
+        let fwd: Vec<AvlMap> = self.fwd.clone();
+        let fwd_bytes = fwd.iter().map(AvlMap::heap_bytes).sum();
+        Self {
+            runs: self.runs.clone(),
+            free_run: self.free_run,
+            nfree_runs: self.nfree_runs,
+            fwd,
+            fwd_bytes,
+            rev: self.rev.clone(),
+            next_id: self.next_id,
+            limit: self.limit,
+        }
+    }
 }
 
 impl Default for IdentityTable {
@@ -196,6 +225,7 @@ impl IdentityTable {
             free_run: NO_VID,
             nfree_runs: 0,
             fwd: Vec::new(),
+            fwd_bytes: 0,
             rev: AvlMap::new(),
             next_id: 0,
             limit: limit.min(u32::MAX - 1),
@@ -230,8 +260,52 @@ impl IdentityTable {
     pub fn heap_bytes(&self) -> usize {
         self.runs.capacity() * size_of::<IdRun>()
             + self.fwd.capacity() * size_of::<AvlMap>()
+            + self.fwd_bytes
+            + self.rev.heap_bytes()
+    }
+
+    /// [`Self::heap_bytes`] by a walk over every forward map (accounting
+    /// check).
+    pub fn census_bytes(&self) -> usize {
+        self.runs.capacity() * size_of::<IdRun>()
+            + self.fwd.capacity() * size_of::<AvlMap>()
             + self.fwd.iter().map(AvlMap::heap_bytes).sum::<usize>()
             + self.rev.heap_bytes()
+    }
+
+    /// Current capacities `(runs, forward-directory list, reverse nodes)`.
+    pub fn shadow_caps(&self) -> IdCaps {
+        IdCaps {
+            runs: self.runs.capacity(),
+            fwd_dir: self.fwd.capacity(),
+            rev: self.rev.shadow().cap,
+        }
+    }
+
+    /// Heap bytes of sheet `s`'s forward map (0 if absent).
+    pub fn fwd_bytes_of(&self, s: usize) -> usize {
+        self.fwd.get(s).map_or(0, AvlMap::heap_bytes)
+    }
+
+    /// [`Self::shadow`] with the forward-directory list reserved for
+    /// `sheets` sheets, fallibly (the dry run then never allocates).
+    pub fn try_shadow(&self, sheets: usize) -> Result<IdShadow, ReserveError> {
+        let mut fwd = Vec::new();
+        fwd.try_reserve_exact(self.fwd.len().max(sheets))
+            .map_err(|_| ReserveError)?;
+        fwd.extend(self.fwd.iter().map(AvlMap::shadow));
+        Ok(IdShadow {
+            runs: SlabShadow {
+                slots: self.runs.len(),
+                free: self.nfree_runs,
+                cap: self.runs.capacity(),
+            },
+            live_runs: self.run_count(),
+            fwd,
+            fwd_dir_cap: self.fwd.capacity(),
+            rev: self.rev.shadow(),
+            next_id: u64::from(self.next_id),
+        })
     }
 
     pub fn shadow(&self) -> IdShadow {
@@ -266,7 +340,10 @@ impl IdentityTable {
             self.fwd.push(AvlMap::new());
         }
         for (m, t) in self.fwd.iter_mut().zip(&target.fwd) {
-            m.try_reserve_slots(t.cap)?;
+            let before = m.heap_bytes();
+            let r = m.try_reserve_slots(t.cap);
+            self.fwd_bytes += m.heap_bytes() - before;
+            r?;
         }
         self.rev.try_reserve_slots(target.rev.cap)?;
         Ok(())
@@ -356,6 +433,62 @@ impl IdentityTable {
         out
     }
 
+    /// [`Self::plan_cuts_rect`] into `out`, fallibly and without other
+    /// allocation.
+    pub fn try_plan_cuts_rect(
+        &self,
+        sheet: u16,
+        (r0, c0, r1, c1): (u32, u32, u32, u32),
+        out: &mut Vec<CellCut>,
+    ) -> Result<(), ReserveError> {
+        let mut err = false;
+        for col in c0..=c1 {
+            self.visit_runs_in(sheet, col, r0, r1, &mut |h| {
+                let run = self.runs[h as usize];
+                let lo = r0.max(run.row_start) - run.row_start;
+                let hi = r1.min(run.end_row()) - run.row_start;
+                if out.len() == out.capacity() && out.try_reserve(1).is_err() {
+                    err = true;
+                    return;
+                }
+                out.push(CellCut {
+                    run: h,
+                    run_value: run,
+                    lo,
+                    hi,
+                });
+            });
+            if err {
+                return Err(ReserveError);
+            }
+        }
+        Ok(())
+    }
+
+    /// Visit the runs of `sheet` intersecting column `col`, rows
+    /// `r0..=r1`, in row order, without allocating.
+    pub fn visit_runs_in(
+        &self,
+        sheet: u16,
+        col: u32,
+        r0: u32,
+        r1: u32,
+        visit: &mut dyn FnMut(u32),
+    ) {
+        let Some(map) = self.fwd.get(sheet as usize) else {
+            return;
+        };
+        if let Some((key, h)) = map.pred(fwd_key(col, r0))
+            && (key >> 32) as u32 == col
+            && self.runs[h as usize].end_row() >= r0
+        {
+            visit(h);
+        }
+        if r0 < r1 {
+            map.range_visit(fwd_key(col, r0 + 1), fwd_key(col, r1), &mut |_, h| visit(h));
+        }
+    }
+
     /// Runs of `sheet` intersecting column `col`, rows `r0..=r1`.
     pub fn runs_in(&self, sheet: u16, col: u32, r0: u32, r1: u32, out: &mut Vec<u32>) {
         let Some(map) = self.fwd.get(sheet as usize) else {
@@ -417,7 +550,11 @@ impl IdentityTable {
 
     fn link(&mut self, h: u32) {
         let r = self.runs[h as usize];
-        self.fwd_mut(r.sheet).insert(fwd_key(r.col, r.row_start), h);
+        let m = self.fwd_mut(r.sheet);
+        let before = m.heap_bytes();
+        m.insert(fwd_key(r.col, r.row_start), h);
+        let grew = m.heap_bytes() - before;
+        self.fwd_bytes += grew;
         self.rev.insert(u64::from(r.first_id), h);
     }
 

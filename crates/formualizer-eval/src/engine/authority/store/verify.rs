@@ -61,10 +61,12 @@ impl Store {
         d
     }
 
-    /// Structural invariants: ID1–ID5, owner partition, G-DISJ in every
-    /// group, the ownership lemma, index consistency, and the §5.7.3
-    /// memory statement for unsuspended groups.
+    /// Structural invariants: the maintained accounting equals the census
+    /// (B2), ID1–ID5, owner partition, G-DISJ in every group, the ownership
+    /// lemma, index consistency, and the §5.7.3 memory statement for
+    /// unsuspended groups.
     pub fn check(&self) -> Result<(), String> {
+        self.check_accounting()?;
         self.ids.check()?;
         // Formula cells, from the identity table.
         let mut formula = Cover::new();

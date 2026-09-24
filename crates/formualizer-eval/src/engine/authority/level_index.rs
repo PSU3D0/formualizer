@@ -23,6 +23,7 @@
 //! [`IndexShadow`] replays a remove → settle → insert sequence to predict
 //! entries, heap bytes and the transient peak exactly (admission, §5.1).
 
+use super::avl::ReserveError;
 use super::geom::BoxT;
 
 /// Buffer size and level-0 size.
@@ -62,16 +63,15 @@ fn is_point(b: &BoxT) -> bool {
 /// Transient entry used while merging levels.
 type Entry = (BoxT, u32, bool);
 
-/// Internal node counts per tree level for `n` leaves.
-fn internal_sizes(n: usize) -> Vec<usize> {
-    let mut v = Vec::new();
-    let mut k = n;
-    while k > 1 {
-        k = k.div_ceil(FAN);
-        v.push(k);
-    }
-    v
+/// Internal node counts per tree level for `n` leaves (bottom-up).
+fn internal_sizes(n: usize) -> impl Iterator<Item = usize> {
+    let step = |k: usize| (k > 1).then(|| k.div_ceil(FAN));
+    std::iter::successors(step(n), move |&k| step(k))
 }
+
+/// Most levels an index can have (a level's slot index has `SLOT_BITS`
+/// bits, so level `j` needs `BUF · 2^j ≤ 2^SLOT_BITS`).
+const MAX_LEVELS: usize = 24;
 
 /// A leaf layout of a static tree.
 trait Leaf: Copy {
@@ -130,10 +130,9 @@ impl<L: Leaf> Tree<L> {
         if n == 0 {
             return 0;
         }
-        let sizes = internal_sizes(n);
         n * L::BYTES
-            + sizes.iter().sum::<usize>() * size_of::<BoxT>()
-            + sizes.len() * size_of::<Vec<BoxT>>()
+            + internal_sizes(n).sum::<usize>() * size_of::<BoxT>()
+            + internal_sizes(n).count() * size_of::<Vec<BoxT>>()
             + n.div_ceil(64) * size_of::<u64>()
     }
 
@@ -148,18 +147,31 @@ impl<L: Leaf> Tree<L> {
             + self.dead.capacity() * size_of::<u64>()
     }
 
-    /// STR packing: sort by column centre, cut into vertical slabs, sort each
-    /// slab by row centre, then pack leaves of `FAN`. Deterministic.
-    fn build(entries: &mut [Entry], tag: u32, kind: u32, loc: &mut [u32]) -> Self {
+    /// STR packing into pre-allocated buffers (no allocation): sort by
+    /// column centre, cut into vertical slabs, sort each slab by row
+    /// centre, then pack leaves of `FAN`. Deterministic.
+    fn build_with(
+        entries: &mut [Entry],
+        tag: u32,
+        kind: u32,
+        loc: &mut [u32],
+        bufs: TreeBufs<L>,
+    ) -> Self {
         let n = entries.len();
+        let TreeBufs {
+            mut leaves,
+            mut nodes,
+            mut dead,
+        } = bufs;
         if n == 0 {
             return Self {
-                leaves: Vec::new(),
-                nodes: Vec::new(),
-                dead: Vec::new(),
+                leaves,
+                nodes,
+                dead,
                 ndead: 0,
             };
         }
+        debug_assert!(leaves.capacity() >= n && nodes.len() == internal_sizes(n).count());
         entries.sort_unstable_by_key(|e| (u64::from(e.0[1]) + u64::from(e.0[3]), e.1));
         let leaves_n = n.div_ceil(FAN);
         let slabs = (leaves_n as f64).sqrt().ceil().max(1.0) as usize;
@@ -167,8 +179,7 @@ impl<L: Leaf> Tree<L> {
         for chunk in entries.chunks_mut(slab) {
             chunk.sort_unstable_by_key(|e| (u64::from(e.0[0]) + u64::from(e.0[2]), e.1));
         }
-        let mut leaves = Vec::with_capacity(n);
-        let mut dead = vec![0u64; n.div_ceil(64)];
+        dead.resize(n.div_ceil(64), 0);
         let mut ndead = 0;
         for (slot, &(b, id, is_dead)) in entries.iter().enumerate() {
             leaves.push(L::make(&b, id));
@@ -179,10 +190,9 @@ impl<L: Leaf> Tree<L> {
                 loc[id as usize] = (tag << TAG_SHIFT) | kind | slot as u32;
             }
         }
-        let sizes = internal_sizes(n);
-        let mut nodes: Vec<Vec<BoxT>> = Vec::with_capacity(sizes.len());
-        for (k, &size) in sizes.iter().enumerate() {
-            let mut lvl = Vec::with_capacity(size);
+        for k in 0..nodes.len() {
+            let (lower, upper) = nodes.split_at_mut(k);
+            let lvl = &mut upper[0];
             if k == 0 {
                 for chunk in leaves.chunks(FAN) {
                     lvl.push(
@@ -193,11 +203,10 @@ impl<L: Leaf> Tree<L> {
                     );
                 }
             } else {
-                for chunk in nodes[k - 1].chunks(FAN) {
+                for chunk in lower[k - 1].chunks(FAN) {
                     lvl.push(chunk.iter().skip(1).fold(chunk[0], |a, b| union(&a, b)));
                 }
             }
-            nodes.push(lvl);
         }
         Self {
             leaves,
@@ -229,14 +238,20 @@ impl<L: Leaf> Tree<L> {
         if n == 0 {
             return;
         }
-        let top = self.nodes.len();
-        let mut stack: Vec<(usize, usize)> = Vec::with_capacity(16);
-        stack.push(if top == 0 {
+        let levels = self.nodes.len();
+        // Depth ≤ 8 for 2^25 leaves of fanout 16: at most 15 pending
+        // siblings per level plus one node's children, on a fixed stack
+        // (no heap).
+        let mut stack = [(0usize, 0usize); 192];
+        let mut top = 1;
+        stack[0] = if levels == 0 {
             (usize::MAX, 0)
         } else {
-            (top - 1, 0)
-        });
-        while let Some((lvl, i)) = stack.pop() {
+            (levels - 1, 0)
+        };
+        while top > 0 {
+            top -= 1;
+            let (lvl, i) = stack[top];
             *work += 1;
             if lvl == usize::MAX {
                 if overlaps(&self.leaves[i].bbox(), q) && !self.is_dead(i) {
@@ -254,13 +269,140 @@ impl<L: Leaf> Tree<L> {
             };
             let start = i * FAN;
             for c in start..(start + FAN).min(child_count) {
-                stack.push(if lvl == 0 {
+                stack[top] = if lvl == 0 {
                     (usize::MAX, c)
                 } else {
                     (lvl - 1, c)
-                });
+                };
+                top += 1;
             }
         }
+    }
+}
+
+/// Buffers of one static tree, allocated at their exact sizes: leaves,
+/// every internal level, the tombstone bitmap.
+#[derive(Clone, Debug)]
+struct TreeBufs<L> {
+    leaves: Vec<L>,
+    nodes: Vec<Vec<BoxT>>,
+    dead: Vec<u64>,
+}
+
+impl<L: Leaf> TreeBufs<L> {
+    fn try_new(n: usize) -> Result<Self, ReserveError> {
+        let mut b = Self {
+            leaves: Vec::new(),
+            nodes: Vec::new(),
+            dead: Vec::new(),
+        };
+        if n == 0 {
+            return Ok(b);
+        }
+        b.leaves.try_reserve_exact(n).map_err(|_| ReserveError)?;
+        b.dead
+            .try_reserve_exact(n.div_ceil(64))
+            .map_err(|_| ReserveError)?;
+        b.nodes
+            .try_reserve_exact(internal_sizes(n).count())
+            .map_err(|_| ReserveError)?;
+        for size in internal_sizes(n) {
+            let mut v = Vec::new();
+            v.try_reserve_exact(size).map_err(|_| ReserveError)?;
+            b.nodes.push(v);
+        }
+        Ok(b)
+    }
+
+    fn alloc(n: usize) -> Self {
+        Self::try_new(n).expect("level allocation")
+    }
+
+    fn heap_bytes(&self) -> usize {
+        self.leaves.capacity() * L::BYTES
+            + self.nodes.capacity() * size_of::<Vec<BoxT>>()
+            + self
+                .nodes
+                .iter()
+                .map(|v| v.capacity() * size_of::<BoxT>())
+                .sum::<usize>()
+            + self.dead.capacity() * size_of::<u64>()
+    }
+}
+
+/// Buffers of one level build: `(points, boxes)` leaves.
+#[derive(Clone, Debug)]
+struct LevelBufs {
+    points: TreeBufs<PointLeaf>,
+    boxes: TreeBufs<BoxLeaf>,
+}
+
+impl LevelBufs {
+    fn try_new(p: usize, b: usize) -> Result<Self, ReserveError> {
+        Ok(Self {
+            points: TreeBufs::try_new(p)?,
+            boxes: TreeBufs::try_new(b)?,
+        })
+    }
+}
+
+/// Every allocation a planned operation sequence on one index needs, made
+/// before the sequence runs (M1a correction B5: the apply allocates
+/// nothing). Produced by [`LevelIndex::try_stage`] from the dry run's
+/// [`IndexShadow`]; the level builds are consumed in the shadow's order.
+#[derive(Clone, Debug, Default)]
+pub struct IndexStage {
+    /// Level buffers, in reverse order of use.
+    levels: Vec<LevelBufs>,
+    /// Merge/rebuild buffer, reused by every build of the sequence.
+    temp: Vec<Entry>,
+}
+
+impl IndexStage {
+    /// Heap bytes held by the stage.
+    pub fn heap_bytes(&self) -> usize {
+        self.levels.capacity() * size_of::<LevelBufs>()
+            + self
+                .levels
+                .iter()
+                .map(|l| l.points.heap_bytes() + l.boxes.heap_bytes())
+                .sum::<usize>()
+            + self.temp.capacity() * size_of::<Entry>()
+    }
+}
+
+fn take_level_bufs(stage: Option<&mut IndexStage>, p: usize, b: usize) -> LevelBufs {
+    match stage.and_then(|s| s.levels.pop()) {
+        Some(l) => {
+            debug_assert_eq!(
+                (l.points.leaves.capacity(), l.boxes.leaves.capacity()),
+                (p, b),
+                "staged level out of order"
+            );
+            l
+        }
+        None => LevelBufs {
+            points: TreeBufs::alloc(p),
+            boxes: TreeBufs::alloc(b),
+        },
+    }
+}
+
+fn take_temp(stage: Option<&mut IndexStage>, n: usize) -> Vec<Entry> {
+    match stage {
+        Some(s) => {
+            let mut t = std::mem::take(&mut s.temp);
+            debug_assert!(t.capacity() >= n, "unstaged merge buffer");
+            t.clear();
+            t
+        }
+        None => Vec::with_capacity(n),
+    }
+}
+
+fn put_temp(stage: Option<&mut IndexStage>, t: Vec<Entry>) {
+    if let Some(s) = stage {
+        s.temp = t;
     }
 }
 
@@ -284,17 +426,27 @@ impl Level {
         self.points.ndead + self.boxes.ndead
     }
 
-    /// Build level `j` from entries (points and boxes mixed).
-    fn build(entries: &mut [Entry], j: usize, loc: &mut [u32]) -> Level {
+    /// Build level `j` from entries (points and boxes mixed) into `bufs`.
+    fn build_with(entries: &mut [Entry], j: usize, loc: &mut [u32], bufs: LevelBufs) -> Level {
         // Partition points first (stable w.r.t. ids is not needed: the tree
         // build sorts).
         let split = partition_points(entries);
         let (pts, bxs) = entries.split_at_mut(split);
         let tag = j as u32 + 1;
         Level {
-            points: Tree::build(pts, tag, POINT_BIT, loc),
-            boxes: Tree::build(bxs, tag, 0, loc),
+            points: Tree::build_with(pts, tag, POINT_BIT, loc, bufs.points),
+            boxes: Tree::build_with(bxs, tag, 0, loc, bufs.boxes),
         }
+    }
+
+    #[cfg(test)]
+    fn build(entries: &mut [Entry], j: usize, loc: &mut [u32]) -> Level {
+        let p = entries.iter().filter(|e| is_point(&e.0)).count();
+        let bufs = LevelBufs {
+            points: TreeBufs::alloc(p),
+            boxes: TreeBufs::alloc(entries.len() - p),
+        };
+        Self::build_with(entries, j, loc, bufs)
     }
 
     fn counts(&self) -> (usize, usize) {
@@ -382,9 +534,16 @@ impl LevelIndex {
     }
 
     pub fn insert(&mut self, b: BoxT, id: u32, loc: &mut [u32]) {
+        self.insert_in(b, id, loc, None);
+    }
+
+    /// Insert with every allocation taken from `stage` when given (the
+    /// store's apply: see [`Self::try_stage`]).
+    pub fn insert_in(&mut self, b: BoxT, id: u32, loc: &mut [u32], stage: Option<&mut IndexStage>) {
         // The buffer grows exactly (one entry at a time up to `BUF`), so an
         // index's bytes are proportional to its entries from the first one.
         if self.buf.len() == self.buf.capacity() {
+            debug_assert!(stage.is_none(), "unstaged buffer growth");
             self.buf.reserve_exact(1);
         }
         let point = is_point(&b);
@@ -393,7 +552,7 @@ impl LevelIndex {
         self.live += 1;
         self.live_points += u32::from(point);
         if self.buf.len() == BUF {
-            self.flush(loc);
+            self.flush(loc, stage);
         }
     }
 
@@ -428,9 +587,42 @@ impl LevelIndex {
 
     /// Rebuild when tombstones exceed half the live entries.
     pub fn settle(&mut self, loc: &mut [u32]) {
+        self.settle_in(loc, None);
+    }
+
+    /// [`Self::settle`] with allocations from `stage`.
+    pub fn settle_in(&mut self, loc: &mut [u32], stage: Option<&mut IndexStage>) {
         if self.dead > 0 && self.dead > self.live / 2 {
-            self.rebuild_all(loc);
+            self.rebuild_all(loc, stage);
         }
+    }
+
+    /// Reserve and pre-allocate everything the operation sequence the
+    /// shadow `sh` replayed will allocate (buffer and level-vector growth,
+    /// each level build, the merge buffer). Fallible; on error only spare
+    /// capacity may have grown.
+    pub fn try_stage(&mut self, sh: &IndexShadow) -> Result<IndexStage, ReserveError> {
+        if sh.buf_cap > self.buf.capacity() {
+            self.buf
+                .try_reserve_exact(sh.buf_cap - self.buf.len())
+                .map_err(|_| ReserveError)?;
+        }
+        if sh.levels_cap > self.levels.capacity() {
+            self.levels
+                .try_reserve_exact(sh.levels_cap - self.levels.len())
+                .map_err(|_| ReserveError)?;
+        }
+        let mut st = IndexStage::default();
+        st.levels
+            .try_reserve_exact(sh.events.len())
+            .map_err(|_| ReserveError)?;
+        for &(p, b) in sh.events.iter().rev() {
+            st.levels.push(LevelBufs::try_new(p as usize, b as usize)?);
+        }
+        st.temp
+            .try_reserve_exact(sh.temp_max)
+            .map_err(|_| ReserveError)?;
+        Ok(st)
     }
 
     fn take_level(lv: &Level, out: &mut Vec<Entry>) {
@@ -438,7 +630,7 @@ impl LevelIndex {
         lv.boxes.take(false, out);
     }
 
-    fn flush(&mut self, loc: &mut [u32]) {
+    fn flush(&mut self, loc: &mut [u32], mut stage: Option<&mut IndexStage>) {
         let j = self
             .levels
             .iter()
@@ -446,32 +638,40 @@ impl LevelIndex {
             .unwrap_or(self.levels.len());
         self.ensure_levels(j);
         let n = level_size(j);
-        let mut entries: Vec<Entry> = Vec::with_capacity(n);
         let temp = n * size_of::<Entry>();
+        let mut entries = take_temp(stage.as_deref_mut(), n);
         entries.extend(self.buf.iter().map(|&(b, id)| (b, id, false)));
         self.buf.clear();
-        let mut olds = Vec::with_capacity(j);
+        // Old levels are merged one by one and freed; the peak model below
+        // still counts them as coexisting with the new level (conservative).
+        let mut old_bytes = 0;
         for i in 0..j {
-            olds.push(self.levels[i].take().expect("levels below j are full"));
-        }
-        for lv in &olds {
-            Self::take_level(lv, &mut entries);
+            let lv = self.levels[i].take().expect("levels below j are full");
+            Self::take_level(&lv, &mut entries);
             self.dead -= lv.ndead() as u32;
+            old_bytes += lv.heap_bytes();
         }
         debug_assert_eq!(entries.len(), n);
-        let old_bytes: usize = olds.iter().map(Level::heap_bytes).sum();
-        let new = Level::build(&mut entries, j, loc);
+        let p = entries.iter().filter(|e| is_point(&e.0)).count();
+        let bufs = take_level_bufs(stage.as_deref_mut(), p, n - p);
+        let new = Level::build_with(&mut entries, j, loc, bufs);
         self.dead += new.ndead() as u32;
         // Peak: old levels, the merge buffer and the new level coexist.
         let now = self.heap_bytes() + old_bytes + temp + new.heap_bytes();
         self.peak = self.peak.max(now);
-        drop(olds);
         self.levels[j] = Some(new);
+        put_temp(stage, entries);
     }
 
     /// Lay out live entries: points first, the buffer takes `n mod BUF`,
-    /// the levels the binary digits of `n / BUF` in ascending order.
-    fn lay_out(&mut self, entries: &mut [Entry], loc: &mut [u32]) -> Vec<(usize, Level)> {
+    /// the levels the binary digits of `n / BUF` in ascending order. The
+    /// new levels are installed (the index holds no level on entry).
+    fn lay_out(
+        &mut self,
+        entries: &mut [Entry],
+        loc: &mut [u32],
+        mut stage: Option<&mut IndexStage>,
+    ) {
         let n = entries.len();
         let split = partition_points(entries);
         // Stable order inside each kind is irrelevant (levels sort), but
@@ -479,6 +679,7 @@ impl LevelIndex {
         debug_assert!(entries[..split].iter().all(|e| is_point(&e.0)));
         let r = n % BUF;
         if r > self.buf.capacity() {
+            debug_assert!(stage.is_none(), "unstaged buffer growth");
             self.buf.reserve_exact(r);
         }
         for &(b, id, _) in &entries[..r] {
@@ -486,41 +687,42 @@ impl LevelIndex {
             self.buf.push((b, id));
         }
         let full = n / BUF;
-        let mut news = Vec::new();
         let mut at = r;
         for j in 0..usize::BITS as usize {
             if full >> j & 1 == 1 {
                 let end = at + level_size(j);
-                news.push((j, Level::build(&mut entries[at..end], j, loc)));
+                let seg = &mut entries[at..end];
+                let p = seg.iter().filter(|e| is_point(&e.0)).count();
+                let bufs = take_level_bufs(stage.as_deref_mut(), p, seg.len() - p);
+                let lv = Level::build_with(seg, j, loc, bufs);
+                self.ensure_levels(j);
+                self.levels[j] = Some(lv);
                 at = end;
             }
         }
-        news
     }
 
-    fn rebuild_all(&mut self, loc: &mut [u32]) {
+    fn rebuild_all(&mut self, loc: &mut [u32], mut stage: Option<&mut IndexStage>) {
         let total = self.entries();
-        let mut entries: Vec<Entry> = Vec::with_capacity(total);
         let temp = total * size_of::<Entry>();
+        let mut entries = take_temp(stage.as_deref_mut(), total);
         entries.extend(self.buf.iter().map(|&(b, id)| (b, id, false)));
         self.buf.clear();
-        let olds: Vec<Level> = self.levels.iter_mut().filter_map(Option::take).collect();
-        for lv in &olds {
-            Self::take_level(lv, &mut entries);
+        let mut old_bytes = 0;
+        for slot in self.levels.iter_mut() {
+            if let Some(lv) = slot.take() {
+                Self::take_level(&lv, &mut entries);
+                old_bytes += lv.heap_bytes();
+            }
         }
         entries.retain(|e| !e.2);
         debug_assert_eq!(entries.len(), self.live as usize);
-        let old_bytes: usize = olds.iter().map(Level::heap_bytes).sum();
-        let news = self.lay_out(&mut entries, loc);
-        let new_bytes: usize = news.iter().map(|(_, l)| l.heap_bytes()).sum();
-        let now = self.heap_bytes() + old_bytes + temp + new_bytes;
+        self.lay_out(&mut entries, loc, stage.as_deref_mut());
+        // Peak: old levels, the merge buffer and the new levels coexist.
+        let now = self.heap_bytes() + old_bytes + temp;
         self.peak = self.peak.max(now);
-        drop(olds);
-        for (j, lv) in news {
-            self.ensure_levels(j);
-            self.levels[j] = Some(lv);
-        }
         self.dead = 0;
+        put_temp(stage, entries);
     }
 
     /// Bulk load into an empty index with the rebuild layout.
@@ -529,11 +731,7 @@ impl LevelIndex {
         let mut entries: Vec<Entry> = items.iter().map(|&(b, id)| (b, id, false)).collect();
         self.live = entries.len() as u32;
         self.live_points = entries.iter().filter(|e| is_point(&e.0)).count() as u32;
-        let news = self.lay_out(&mut entries, loc);
-        for (j, lv) in news {
-            self.ensure_levels(j);
-            self.levels[j] = Some(lv);
-        }
+        self.lay_out(&mut entries, loc, None);
     }
 
     /// Visit every live id whose box overlaps `q`. Returns the work done
@@ -557,44 +755,55 @@ impl LevelIndex {
         self.levels.iter().flatten().count()
     }
 
+    /// Counter-only replica (no heap allocation).
     pub fn shadow(&self) -> IndexShadow {
+        debug_assert!(self.levels.len() <= MAX_LEVELS);
         let buf_points = self.buf.iter().filter(|(b, _)| is_point(b)).count();
+        let mut levels = [None; MAX_LEVELS];
+        for (j, l) in self.levels.iter().enumerate() {
+            levels[j] = l.as_ref().map(|l| {
+                let (p, b) = l.counts();
+                (p, b, l.ndead())
+            });
+        }
         IndexShadow {
             buf_points,
             buf_boxes: self.buf.len() - buf_points,
             buf_cap: self.buf.capacity(),
-            levels: self
-                .levels
-                .iter()
-                .map(|l| {
-                    l.as_ref().map(|l| {
-                        let (p, b) = l.counts();
-                        (p, b, l.ndead())
-                    })
-                })
-                .collect(),
+            levels,
+            nlevels: self.levels.len(),
             levels_cap: self.levels.capacity(),
             live_points: self.live_points as usize,
             live_boxes: (self.live - self.live_points) as usize,
             dead: self.dead as usize,
             peak: self.heap_bytes(),
+            events: Vec::new(),
+            temp_max: 0,
         }
     }
 }
 
-/// Counter-only replica of a [`LevelIndex`] for dry runs.
+/// Counter-only replica of a [`LevelIndex`] for dry runs. Besides entries,
+/// bytes and the peak it records every level build the replayed sequence
+/// performs, so the real index can pre-allocate them ([`LevelIndex::try_stage`]).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct IndexShadow {
     buf_points: usize,
     buf_boxes: usize,
     buf_cap: usize,
-    /// Per level: `(points, boxes, dead)`.
-    levels: Vec<Option<(usize, usize, usize)>>,
+    /// Per level: `(points, boxes, dead)`; `nlevels` is the level vector's
+    /// length.
+    levels: [Option<(usize, usize, usize)>; MAX_LEVELS],
+    nlevels: usize,
     levels_cap: usize,
     live_points: usize,
     live_boxes: usize,
     dead: usize,
     peak: usize,
+    /// Level builds in order: `(points, boxes)` leaves.
+    events: Vec<(u32, u32)>,
+    /// Largest merge/rebuild buffer (entries).
+    temp_max: usize,
 }
 
 impl IndexShadow {
@@ -609,8 +818,7 @@ impl IndexShadow {
     pub fn heap_bytes(&self) -> usize {
         self.buf_cap * size_of::<(BoxT, u32)>()
             + self.levels_cap * size_of::<Option<Level>>()
-            + self
-                .levels
+            + self.levels[..self.nlevels]
                 .iter()
                 .flatten()
                 .map(|&(p, b, _)| Level::predicted_bytes(p, b))
@@ -621,15 +829,60 @@ impl IndexShadow {
         self.peak.max(self.heap_bytes())
     }
 
+    /// Bytes [`LevelIndex::try_stage`] pre-allocates as separate buffers:
+    /// every level build and the merge buffer.
+    pub fn stage_bytes(&self) -> usize {
+        self.events
+            .iter()
+            .map(|&(p, b)| Level::predicted_bytes(p as usize, b as usize))
+            .sum::<usize>()
+            + self.events.len() * size_of::<LevelBufs>()
+            + self.temp_max * size_of::<Entry>()
+    }
+
+    /// Heap of the shadow itself (planning scratch).
+    pub fn scratch_bytes(&self) -> usize {
+        self.events.capacity() * size_of::<(u32, u32)>()
+    }
+
+    /// Buffer and level-vector capacity growth `(bytes before, bytes
+    /// after)` relative to `idx` (grown in place by `try_stage`).
+    pub fn vec_growth(&self, idx: &LevelIndex) -> [(usize, usize); 2] {
+        [
+            (
+                idx.buf.capacity() * size_of::<(BoxT, u32)>(),
+                self.buf_cap.max(idx.buf.capacity()) * size_of::<(BoxT, u32)>(),
+            ),
+            (
+                idx.levels.capacity() * size_of::<Option<Level>>(),
+                self.levels_cap.max(idx.levels.capacity()) * size_of::<Option<Level>>(),
+            ),
+        ]
+    }
+
     fn ensure_levels(&mut self, j: usize) {
-        if self.levels.len() <= j {
+        debug_assert!(j < MAX_LEVELS, "index past {MAX_LEVELS} levels");
+        if self.nlevels <= j {
             self.levels_cap = self.levels_cap.max(j + 1);
-            self.levels.resize(j + 1, None);
+            self.nlevels = j + 1;
         }
+    }
+
+    fn event(&mut self, p: usize, b: usize) -> Result<(), ReserveError> {
+        if self.events.len() == self.events.capacity() {
+            self.events.try_reserve(1).map_err(|_| ReserveError)?;
+        }
+        self.events.push((p as u32, b as u32));
+        Ok(())
     }
 
     /// Insert one entry (`point` = 1×1 box).
     pub fn insert(&mut self, point: bool) {
+        self.try_insert(point).expect("shadow allocation");
+    }
+
+    /// [`Self::insert`], fallible (the event list may grow).
+    pub fn try_insert(&mut self, point: bool) -> Result<(), ReserveError> {
         if point {
             self.buf_points += 1;
             self.live_points += 1;
@@ -640,11 +893,10 @@ impl IndexShadow {
         let buf = self.buf_points + self.buf_boxes;
         self.buf_cap = self.buf_cap.max(buf);
         if buf == BUF {
-            let j = self
-                .levels
+            let j = self.levels[..self.nlevels]
                 .iter()
                 .position(Option::is_none)
-                .unwrap_or(self.levels.len());
+                .unwrap_or(self.nlevels);
             self.ensure_levels(j);
             let n = level_size(j);
             let (mut p, mut b, mut dead) = (self.buf_points, self.buf_boxes, 0);
@@ -664,7 +916,10 @@ impl IndexShadow {
                 + Level::predicted_bytes(p, b);
             self.peak = self.peak.max(now);
             self.levels[j] = Some((p, b, dead));
+            self.temp_max = self.temp_max.max(n);
+            self.event(p, b)?;
         }
+        Ok(())
     }
 
     /// Remove the entry at location code `loc`.
@@ -693,16 +948,21 @@ impl IndexShadow {
     }
 
     pub fn settle(&mut self) {
-        if self.dead > 0 && self.dead > self.live() / 2 {
-            self.rebuild_all();
-        }
+        self.try_settle().expect("shadow allocation");
     }
 
-    fn rebuild_all(&mut self) {
+    /// [`Self::settle`], fallible (the event list may grow).
+    pub fn try_settle(&mut self) -> Result<(), ReserveError> {
+        if self.dead > 0 && self.dead > self.live() / 2 {
+            self.rebuild_all()?;
+        }
+        Ok(())
+    }
+
+    fn rebuild_all(&mut self) -> Result<(), ReserveError> {
         let total = self.entries();
         let n = self.live();
-        let old_bytes: usize = self
-            .levels
+        let old_bytes: usize = self.levels[..self.nlevels]
             .iter()
             .flatten()
             .map(|&(p, b, _)| Level::predicted_bytes(p, b))
@@ -723,16 +983,19 @@ impl IndexShadow {
         self.buf_points = bp;
         self.buf_boxes = bb;
         let full = n / BUF;
+        self.temp_max = self.temp_max.max(total);
         for j in 0..usize::BITS as usize {
             if full >> j & 1 == 1 {
                 self.ensure_levels(j);
                 let (p, b) = take(level_size(j));
                 self.levels[j] = Some((p, b, 0));
+                self.event(p, b)?;
             }
         }
         let now = self.heap_bytes() + old_bytes + total * size_of::<Entry>();
         self.peak = self.peak.max(now);
         self.dead = 0;
+        Ok(())
     }
 }
 
