@@ -121,6 +121,10 @@ formula_plane_diagnostics = []
 benchmark_internal = []
 # Private test and integration support; never enabled by default.
 test-support = []
+# Program 1 (FORM-000169): the unified region-node dependency authority,
+# built beside the legacy graph during development. Temporary and never
+# default; the legacy graph stays the runtime authority when it is off.
+unified_authority = []
 
 [[example]]
 name = "perf_tranche_probe"
