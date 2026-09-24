@@ -9,6 +9,7 @@ pub(crate) mod fixtures;
 mod identity_props;
 mod nodes_slots;
 pub(crate) mod oracle;
+mod plan_graph;
 mod refinement;
 mod store_traces;
 pub(crate) mod support;

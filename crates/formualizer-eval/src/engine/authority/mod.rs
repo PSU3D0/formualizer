@@ -13,6 +13,9 @@ pub mod groups;
 pub mod host;
 pub mod identity;
 pub mod level_index;
+// S2 graph-kernel checkpoint; remove when the ARC driver lands.
+#[allow(dead_code)]
+pub(crate) mod plan_graph;
 pub mod probe;
 pub mod proj;
 // S2 input checkpoint; remove this allowance when the ARC driver lands.
