@@ -10,6 +10,23 @@
 
 const NIL: u32 = u32::MAX;
 
+/// Capacity after growing a container of capacity `cap` to hold `need`
+/// elements: unchanged if it fits, else at least 1.5× (amortized O(1)
+/// appends; growing by exactly the missing amount would copy the whole
+/// container on every growing edit). Deterministic, so a dry run predicts
+/// it exactly.
+pub fn grown(cap: usize, need: usize) -> usize {
+    if need <= cap {
+        cap
+    } else {
+        need.max(cap + cap / 2)
+    }
+}
+
+/// An exact reservation could not be made (allocation failure).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ReserveError;
+
 #[derive(Clone, Copy, Debug)]
 struct Node {
     key: u64,
@@ -51,7 +68,7 @@ impl SlabShadow {
             self.free -= 1;
         } else {
             self.slots += 1;
-            self.cap = self.cap.max(self.slots);
+            self.cap = grown(self.cap, self.slots);
         }
     }
 
@@ -99,13 +116,13 @@ impl AvlMap {
         }
     }
 
-    /// Reserve so that the next `n` inserts (after any removals already
-    /// applied) never reallocate beyond an exact size.
-    pub fn try_reserve_slots(&mut self, total_slots: usize) -> Result<(), ()> {
-        if total_slots > self.nodes.capacity() {
+    /// Grow the node slab to capacity `cap` (a shadow's predicted
+    /// capacity) so the pending inserts never reallocate.
+    pub fn try_reserve_slots(&mut self, cap: usize) -> Result<(), ReserveError> {
+        if cap > self.nodes.capacity() {
             self.nodes
-                .try_reserve_exact(total_slots - self.nodes.len())
-                .map_err(|_| ())?;
+                .try_reserve_exact(cap - self.nodes.len())
+                .map_err(|_| ReserveError)?;
         }
         Ok(())
     }
@@ -201,9 +218,10 @@ impl AvlMap {
     /// Insert a new key. Panics in debug builds if it exists.
     pub fn insert(&mut self, key: u64, val: u32) {
         if self.nodes.len() == self.nodes.capacity() && self.free == NIL {
-            // Unreserved growth: exact, one slot. Callers that account
-            // capacity reserve beforehand.
-            self.nodes.reserve_exact(1);
+            // Unreserved growth (callers that account capacity reserve
+            // beforehand): the same rule the shadow applies.
+            let cap = grown(self.nodes.capacity(), self.nodes.len() + 1);
+            self.nodes.reserve_exact(cap - self.nodes.len());
         }
         let root = self.root;
         self.root = self.insert_at(root, key, val);
@@ -429,9 +447,9 @@ mod tests {
             let k = x % 3000;
             if x % 5 < 2 {
                 assert_eq!(m.remove(k), b.remove(&k), "step {step}");
-            } else if !b.contains_key(&k) {
+            } else if let std::collections::btree_map::Entry::Vacant(v) = b.entry(k) {
                 m.insert(k, step);
-                b.insert(k, step);
+                v.insert(step);
             }
             if step % 101 == 0 {
                 m.check().unwrap();
@@ -464,8 +482,7 @@ mod tests {
         for _ in 0..90 {
             sh.alloc();
         }
-        let need = sh.slots;
-        m.try_reserve_slots(need).unwrap();
+        m.try_reserve_slots(sh.cap).unwrap();
         for k in 40..50u64 {
             m.remove(k);
         }

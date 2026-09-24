@@ -112,7 +112,7 @@ impl AxisMap {
         };
         let lo = a.max(i64::from(d0));
         let hi = b.min(i64::from(d1));
-        (lo <= hi).then(|| (lo as u32, hi as u32))
+        (lo <= hi).then_some((lo as u32, hi as u32))
     }
 
     /// `∪_{x ∈ [x0, x1]} [lo(x), hi(x)]` clipped to `[0, max]`. Monotone
@@ -122,7 +122,7 @@ impl AxisMap {
         let (_, hi) = self.window(x1, max);
         let lo = lo.max(0);
         let hi = hi.min(i64::from(max));
-        (lo <= hi).then(|| (lo as u32, hi as u32))
+        (lo <= hi).then_some((lo as u32, hi as u32))
     }
 }
 

@@ -23,7 +23,7 @@
 //! and an *apply*. The admission dry run (§5.1) replays the same plan on a
 //! counter-only [`IdShadow`], so predicted and actual slot use agree exactly.
 
-use super::avl::{AvlMap, SlabShadow};
+use super::avl::{AvlMap, ReserveError, SlabShadow, grown};
 use super::geom::Cell;
 
 pub type Vid = u32;
@@ -141,18 +141,28 @@ impl IdShadow {
     }
 }
 
-/// How a cell leaves or re-homes within its run.
+/// A contiguous part `lo..=hi` (offsets) of one run leaving it: retired,
+/// or — for a single cell — re-homed under a new owner with its id kept.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CellCut {
     pub run: u32,
     pub run_value: IdRun,
-    /// Offset of the cell inside the run.
-    pub offset: u32,
+    pub lo: u32,
+    pub hi: u32,
 }
 
 impl CellCut {
+    /// The first id in the cut (the cell's id for a single-cell cut).
     pub fn id(&self) -> Vid {
-        self.run_value.first_id + self.offset
+        self.run_value.first_id + self.lo
+    }
+
+    pub fn ids(&self) -> std::ops::RangeInclusive<Vid> {
+        self.run_value.first_id + self.lo..=self.run_value.first_id + self.hi
+    }
+
+    pub fn is_cell(&self) -> bool {
+        self.lo == self.hi
     }
 }
 
@@ -228,24 +238,24 @@ impl IdentityTable {
 
     /// Reserve every container to the sizes in `target` (a shadow produced
     /// by replaying the pending plan). Fallible; nothing is mutated on error.
-    pub fn try_reserve_for(&mut self, target: &IdShadow) -> Result<(), ()> {
-        if target.runs.slots > self.runs.capacity() {
+    pub fn try_reserve_for(&mut self, target: &IdShadow) -> Result<(), ReserveError> {
+        if target.runs.cap > self.runs.capacity() {
             self.runs
-                .try_reserve_exact(target.runs.slots - self.runs.len())
-                .map_err(|_| ())?;
+                .try_reserve_exact(target.runs.cap - self.runs.len())
+                .map_err(|_| ReserveError)?;
         }
         if target.fwd.len() > self.fwd.capacity() {
             self.fwd
                 .try_reserve_exact(target.fwd.len() - self.fwd.len())
-                .map_err(|_| ())?;
+                .map_err(|_| ReserveError)?;
         }
         while self.fwd.len() < target.fwd.len() {
             self.fwd.push(AvlMap::new());
         }
         for (m, t) in self.fwd.iter_mut().zip(&target.fwd) {
-            m.try_reserve_slots(t.slots)?;
+            m.try_reserve_slots(t.cap)?;
         }
-        self.rev.try_reserve_slots(target.rev.slots)?;
+        self.rev.try_reserve_slots(target.rev.cap)?;
         Ok(())
     }
 
@@ -301,11 +311,36 @@ impl IdentityTable {
     pub fn plan_cut(&self, cell: Cell) -> Option<CellCut> {
         let (id, h) = self.lookup(cell)?;
         let run = self.runs[h as usize];
+        let off = id - run.first_id;
         Some(CellCut {
             run: h,
             run_value: run,
-            offset: id - run.first_id,
+            lo: off,
+            hi: off,
         })
+    }
+
+    /// Cuts retiring every id in rows `r0..=r1`, columns `c0..=c1` of
+    /// `sheet`: one cut per intersecting run, column by column.
+    pub fn plan_cuts_rect(&self, sheet: u16, r0: u32, c0: u32, r1: u32, c1: u32) -> Vec<CellCut> {
+        let mut out = Vec::new();
+        let mut hs = Vec::new();
+        for col in c0..=c1 {
+            hs.clear();
+            self.runs_in(sheet, col, r0, r1, &mut hs);
+            for &h in &hs {
+                let run = self.runs[h as usize];
+                let lo = r0.max(run.row_start) - run.row_start;
+                let hi = r1.min(run.end_row()) - run.row_start;
+                out.push(CellCut {
+                    run: h,
+                    run_value: run,
+                    lo,
+                    hi,
+                });
+            }
+        }
+        out
     }
 
     /// Runs of `sheet` intersecting column `col`, rows `r0..=r1`.
@@ -338,7 +373,8 @@ impl IdentityTable {
             h
         } else {
             if self.runs.len() == self.runs.capacity() {
-                self.runs.reserve_exact(1);
+                let cap = grown(self.runs.capacity(), self.runs.len() + 1);
+                self.runs.reserve_exact(cap - self.runs.len());
             }
             self.runs.push(run);
             (self.runs.len() - 1) as u32
@@ -410,104 +446,78 @@ impl IdentityTable {
     pub fn shadow_cut(sh: &mut IdShadow, cut: &CellCut, keep: bool) {
         let r = cut.run_value;
         let last = r.len - 1;
-        match (r.len, cut.offset) {
-            (1, _) => {
-                if !keep {
-                    sh.drop_run(r.sheet);
-                }
+        debug_assert!(!keep || cut.is_cell());
+        if cut.lo == 0 && cut.hi == last {
+            if !keep {
+                sh.drop_run(r.sheet);
             }
-            (_, 0) => {
-                // Head: the rest is re-keyed; `keep` adds a run for the cell.
-                sh.rekey(r.sheet);
-                if keep {
-                    sh.new_run(r.sheet);
-                }
-            }
-            (_, o) if o == last => {
-                if keep {
-                    sh.new_run(r.sheet);
-                }
-            }
-            _ => {
-                sh.new_run(r.sheet);
-                if keep {
-                    sh.new_run(r.sheet);
-                }
-            }
+            return;
+        }
+        if cut.lo == 0 {
+            sh.rekey(r.sheet);
+        } else if cut.hi != last {
+            sh.new_run(r.sheet);
+        }
+        if keep {
+            sh.new_run(r.sheet);
         }
     }
 
-    /// Cut a cell out of its run. With `keep`, the cell keeps its id in a
-    /// run of its own owned by `owner` (a formula→formula owner change,
-    /// ID6); otherwise its id is retired (formula → value/empty). Returns
-    /// the cell's run handle when kept.
+    /// Remove offsets `lo..=hi` from a run. With `keep` (single cell only)
+    /// the cell keeps its id in a run of its own owned by `owner` (a
+    /// formula→formula owner change, ID6); otherwise the ids are retired.
+    /// Returns the cell's run handle when kept.
     pub fn apply_cut(&mut self, cut: &CellCut, keep: bool, owner: u32) -> Option<u32> {
         let h = cut.run;
         let r = self.runs[h as usize];
         debug_assert_eq!(r, cut.run_value, "stale cut plan");
-        let id = cut.id();
-        let row = r.row_start + cut.offset;
+        debug_assert!(!keep || cut.is_cell());
         let last = r.len - 1;
-        let single = |row: u32| IdRun {
-            row_start: row,
-            len: 1,
-            first_id: id,
-            col: r.col,
-            sheet: r.sheet,
-            flags: r.flags,
-            owner,
-        };
-        match (r.len, cut.offset) {
-            (1, _) => {
-                if keep {
-                    self.runs[h as usize].owner = owner;
-                    Some(h)
-                } else {
-                    self.unlink(h);
-                    self.free_run_slot(h);
-                    None
-                }
+        let (lo, hi) = (cut.lo, cut.hi);
+        if lo == 0 && hi == last {
+            if keep {
+                self.runs[h as usize].owner = owner;
+                return Some(h);
             }
-            (_, 0) => {
-                self.unlink(h);
-                {
-                    let run = &mut self.runs[h as usize];
-                    run.row_start += 1;
-                    run.first_id += 1;
-                    run.len -= 1;
-                }
-                self.link(h);
-                keep.then(|| {
-                    let n = self.alloc_run(single(row));
-                    self.link(n);
-                    n
-                })
-            }
-            (_, o) if o == last => {
-                self.runs[h as usize].len -= 1;
-                keep.then(|| {
-                    let n = self.alloc_run(single(row));
-                    self.link(n);
-                    n
-                })
-            }
-            (_, o) => {
-                self.runs[h as usize].len = o;
-                let below = IdRun {
-                    row_start: row + 1,
-                    len: last - o,
-                    first_id: id + 1,
-                    ..r
-                };
-                let b = self.alloc_run(below);
-                self.link(b);
-                keep.then(|| {
-                    let n = self.alloc_run(single(row));
-                    self.link(n);
-                    n
-                })
-            }
+            self.unlink(h);
+            self.free_run_slot(h);
+            return None;
         }
+        if lo == 0 {
+            self.unlink(h);
+            {
+                let run = &mut self.runs[h as usize];
+                run.row_start += hi + 1;
+                run.first_id += hi + 1;
+                run.len -= hi + 1;
+            }
+            self.link(h);
+        } else if hi == last {
+            self.runs[h as usize].len = lo;
+        } else {
+            self.runs[h as usize].len = lo;
+            let below = IdRun {
+                row_start: r.row_start + hi + 1,
+                len: last - hi,
+                first_id: r.first_id + hi + 1,
+                ..r
+            };
+            let b = self.alloc_run(below);
+            self.link(b);
+        }
+        keep.then(|| {
+            let n = self.alloc_run(IdRun {
+                row_start: r.row_start + lo,
+                len: 1,
+                first_id: r.first_id + lo,
+                col: r.col,
+                sheet: r.sheet,
+                flags: r.flags,
+                owner,
+            });
+            self.link(n);
+            n
+        })
     }
 
     /// Set the owner of a run (singleton ↔ family transitions).

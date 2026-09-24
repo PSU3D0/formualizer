@@ -7,6 +7,8 @@ pub mod avl;
 pub mod geom;
 pub mod identity;
 pub mod proj;
+pub mod slots;
+pub mod template;
 
 #[cfg(test)]
 mod tests;
