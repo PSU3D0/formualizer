@@ -26,13 +26,15 @@ pub(crate) fn unbound_external_range_defers(
 ) -> bool {
     match kind {
         formualizer_parse::parser::ExternalRefKind::Cell { .. } => false,
+        // The legacy tokenizer kept only the start endpoint with the workbook
+        // prefix, so its shape alone decided the outcome: a complete cell
+        // (`[1]S!A1:A`) became an external cell and failed with `#NAME?`,
+        // while a row- or column-only start became an unresolved name.
         formualizer_parse::parser::ExternalRefKind::Range {
             start_row,
             start_col,
-            end_row,
-            end_col,
             ..
-        } => start_row.is_none() || start_col.is_none() || end_row.is_none() || end_col.is_none(),
+        } => start_row.is_none() || start_col.is_none(),
     }
 }
 

@@ -855,6 +855,30 @@ fn external_workbook_range_binds_as_one_source_table() {
     );
 }
 
+/// A range whose start endpoint is a complete cell was an external cell
+/// followed by a local name before the parser kept it whole, so unbound
+/// assignment failed with #NAME? whatever the end endpoint's shape.
+#[test]
+fn unbound_external_range_with_complete_start_fails_with_name_error() {
+    for formula in [
+        "=SUM([1]S!A1:A)",
+        "=SUM([1]S!A1:3)",
+        "=SUM([1]S!$A$1:$B$4)",
+    ] {
+        let mut engine: Engine<_> = Engine::new(SourceCtx::default(), EvalConfig::default());
+        engine.add_sheet("Sheet1").unwrap();
+        let err = engine
+            .set_cell_formula(
+                "Sheet1",
+                1,
+                1,
+                formualizer_parse::parser::parse(formula).unwrap(),
+            )
+            .unwrap_err();
+        assert_eq!(err.kind, ExcelErrorKind::Name, "{formula}");
+    }
+}
+
 /// Whole-row/column external ranges loaded as two unresolved names before the
 /// parser kept them whole. They still load and evaluate to #REF! unbound.
 #[test]
