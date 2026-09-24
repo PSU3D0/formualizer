@@ -6,6 +6,7 @@
 pub mod avl;
 pub mod canon;
 pub mod dir;
+pub mod dirty;
 pub mod extract;
 pub mod geom;
 pub mod groups;
