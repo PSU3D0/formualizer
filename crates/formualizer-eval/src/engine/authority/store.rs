@@ -20,8 +20,10 @@ use super::canon::{self, CanonWork};
 use super::dir::{DirPlan, Directory};
 use super::geom::{Cell, Cover, Rect};
 pub use super::groups::Group;
-use super::groups::{GroupKey, GroupTable, Members, l_hash};
-use super::identity::{CellCut, FAMILY, IdError, IdentityTable, Vid};
+use super::groups::{
+    GroupKey, GroupTable, Members, l_hash, members_cap_after, members_heap, members_heap_for,
+};
+use super::identity::{CellCut, FAMILY, IdError, IdShadow, IdentityTable, Vid};
 use super::level_index::{IndexShadow, LevelIndex, NONE};
 use super::proj::RefProj;
 use super::slots::SlotStore;
@@ -821,6 +823,8 @@ impl Store {
 }
 
 mod build;
+mod mutate;
+mod repartition;
 mod verify;
 
 pub use build::BuildInput;
