@@ -38,7 +38,7 @@ Placeholders: `{r}`, `{c}` (column letter), `{r+k}`/`{r-k}`, `{c+k}`/`{c-k}`, `{
 
 `Expect` per step index: `Value`, `Oracle(closure)`, `NoErrors(sheet)`, `Parity` (Off versus Auth for every rendered cell), `Structure(StructureExpect)`. Structural fields come from two sources: `EngineBaselineStats` (`active_spans`, `arena_nodes`, `graph_vertices`, `graph_edges`) and recorded `fz.*` events counted cumulatively through the step (`placed_families`, `rejected_families`, `demotions` with optional reason, `topology_outcome`). A `StructureExpect` may be scoped by `mode` and `provenance`; unscoped expectations apply everywhere. Event-derived fields require a Recorder and fail loudly without one.
 
-`expected_failures` mark a tracked engine defect: the runner reports KNOWN with the reason instead of pass or fail. Never weaken an oracle to make a step pass.
+`expected_failures` mark a tracked engine defect for a mode and, optionally, one provenance. A matching failing run is reported as KNOWN (printed to stderr with the reason); a matching run that passes fails with "expected failure did not occur", so a marker is removed when its defect is fixed. Never weaken an oracle to make a step pass.
 
 ## Recorder
 

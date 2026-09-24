@@ -213,10 +213,23 @@ pub struct ScenarioSpec {
     pub expected_failures: Vec<ExpectedFailureSpec>,
 }
 
+/// A tracked defect: the run must fail in this mode (and provenance, when
+/// given). A matching run that passes is reported as a failure so the marker
+/// is removed when the defect is fixed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExpectedFailureSpec {
     pub mode: FormulaPlaneMode,
+    /// `None` applies to every provenance.
+    pub provenance: Option<Provenance>,
     pub reason: String,
+}
+impl ExpectedFailureSpec {
+    pub fn matches(&self, mode: FormulaPlaneMode, provenance: Provenance) -> bool {
+        self.mode == mode
+            && self
+                .provenance
+                .is_none_or(|expected| expected == provenance)
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

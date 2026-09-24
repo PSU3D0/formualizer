@@ -638,6 +638,7 @@ pub fn adapt_scenario(
                 ExpectedFailureMode::AuthOnly => FormulaPlaneMode::AuthoritativeExperimental,
                 ExpectedFailureMode::OffOnly => FormulaPlaneMode::Off,
             },
+            provenance: None,
             reason: failure.reason.to_owned(),
         })
         .collect();

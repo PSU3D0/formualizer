@@ -11,8 +11,9 @@ use formualizer_eval::engine::FormulaPlaneMode;
 use formualizer_workbook::Workbook;
 
 use crate::scenario::{
-    DemotionExpect, EnginePath, Expect, Family, LifecycleOp, Orientation, Provenance, Purpose,
-    ScenarioSize, ScenarioSpec, Script, SizeClass, Step, StructureExpect, Tags,
+    DemotionExpect, EnginePath, Expect, ExpectedFailureSpec, Family, LifecycleOp, Orientation,
+    Provenance, Purpose, ScenarioSize, ScenarioSpec, Script, SizeClass, Step, StructureExpect,
+    Tags,
 };
 use crate::shape::{Cell, Extent, Range, Role, Scale, Shape, r#gen};
 
@@ -670,8 +671,27 @@ pub fn witness(kind: Kind, rows: u32) -> ScenarioSpec {
             FormulaPlaneMode::AuthoritativeExperimental,
         ],
         sizes: vec![ScenarioSize::new(size_class(rows), rows)],
-        expected_failures: vec![],
+        expected_failures: known_failures(kind, rows),
     }
+}
+
+/// Tracked defects on the Program 1 base. At 16 rows only the fixed family
+/// promotes; after undo/redo of the interior override, the row insert
+/// republishes the family result over the override (18 instead of 7). The
+/// b102ba90 goldens carried the M3 perf-line fix (3ec4d547), which is not on
+/// this base. The Calamine reader never places spans (FORM-000128).
+fn known_failures(kind: Kind, rows: u32) -> Vec<ExpectedFailureSpec> {
+    if kind != Kind::Fixed || rows != 16 {
+        return vec![];
+    }
+    [Provenance::WorkbookApi, Provenance::XlsxUmya]
+        .into_iter()
+        .map(|provenance| ExpectedFailureSpec {
+            mode: FormulaPlaneMode::AuthoritativeExperimental,
+            provenance: Some(provenance),
+            reason: "base: a row insert over a promoted span republishes the family result over a live override (fixed on the M3 perf line by 3ec4d547, not on this base)".into(),
+        })
+        .collect()
 }
 
 fn size_class(rows: u32) -> SizeClass {

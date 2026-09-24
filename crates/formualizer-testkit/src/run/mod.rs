@@ -272,6 +272,11 @@ fn execute(
     } else {
         None
     };
+    let expected_failure = spec
+        .expected_failures
+        .iter()
+        .find(|expected| expected.matches(mode, materializer.provenance()))
+        .cloned();
     let executed = match execute_steps(
         &shape,
         &spec.script.0,
@@ -286,20 +291,24 @@ fn execute(
     ) {
         Ok(value) => value,
         Err(error) => {
-            if let Some(expected) = spec
-                .expected_failures
-                .iter()
-                .find(|expected| expected.mode == mode)
-            {
+            if let Some(expected) = expected_failure {
+                let known = format!("{}: {error}", expected.reason);
+                eprintln!("KNOWN {} {mode:?}: {known}", spec.id);
                 return RunReport {
                     steps: vec![],
                     failure: None,
-                    known_failure: Some(format!("{}: {error}", expected.reason)),
+                    known_failure: Some(known),
                 };
             }
             return failed(error);
         }
     };
+    if let Some(expected) = expected_failure {
+        return failed(format!(
+            "expected failure did not occur ({:?}): {}",
+            expected.provenance, expected.reason
+        ));
+    }
     RunReport {
         steps: executed.reports,
         failure: None,
