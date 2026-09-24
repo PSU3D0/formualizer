@@ -622,7 +622,7 @@ fn run_one(id: &str, edits: usize, closure_seeds: usize, direct_seeds: usize) ->
                     Ok(ast) => engine.set_cell_formula(sheet, k.1 + 1, k.2 + 1, ast),
                     Err(_) => continue,
                 },
-                _ => match formualizer_parse::parse(&format!("=({})+1", &text[1..])) {
+                _ => match formualizer_parse::parse(format!("=({})+1", &text[1..])) {
                     Ok(ast) => engine.set_cell_formula(sheet, k.1 + 1, k.2 + 1, ast),
                     Err(_) => continue,
                 },

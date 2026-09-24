@@ -143,11 +143,12 @@ pub fn stats<R>(e: &Engine<R>) -> super::store::Stats {
     e.graph.authority_host().store().stats.clone()
 }
 
-/// Every edge group: `(dependent sheet, tag is R1, lookup-slot key id or
-/// u32::MAX, projection, record rectangles)` (loss reports).
-pub fn edge_groups<R>(
-    e: &mut Engine<R>,
-) -> Result<Vec<(u16, bool, u32, super::proj::RefProj, Vec<Rect>)>, AuthorityError> {
+/// One edge group: dependent sheet, whether it is R1, lookup-slot key id
+/// (`u32::MAX` for text), projection, record rectangles.
+pub type EdgeGroupView = (u16, bool, u32, super::proj::RefProj, Vec<Rect>);
+
+/// Every non-empty edge group (loss reports).
+pub fn edge_groups<R>(e: &mut Engine<R>) -> Result<Vec<EdgeGroupView>, AuthorityError> {
     e.graph.authority()?;
     Ok(e.graph
         .authority_host()
