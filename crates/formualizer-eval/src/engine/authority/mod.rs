@@ -28,6 +28,9 @@ pub mod level_index;
 // S2 graph-kernel checkpoint; remove when the ARC driver lands.
 #[allow(dead_code)]
 pub(crate) mod plan_graph;
+// Store-to-topology assembly, pending classification and evaluator cutover.
+#[allow(dead_code)]
+pub(crate) mod planner;
 pub mod probe;
 pub mod proj;
 // S2 input checkpoint; remove this allowance when the ARC driver lands.

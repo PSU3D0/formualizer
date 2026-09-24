@@ -13,6 +13,7 @@ mod identity_props;
 mod nodes_slots;
 pub(crate) mod oracle;
 mod plan_graph;
+mod planner;
 mod refinement;
 mod store_traces;
 pub(crate) mod support;
