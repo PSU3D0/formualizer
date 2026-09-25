@@ -1644,15 +1644,6 @@ impl DependencyGraph {
         keys
     }
 
-    /// A symbol with binding key `key` appeared outside a symbol revision
-    /// (a sheet was added): the name nodes waiting on it re-derive at the
-    /// next sync.
-    pub(crate) fn authority_note_binding(&mut self, key: &str) {
-        if let Some(waiting) = self.authority.unbound.remove(key) {
-            self.authority.symbol_changes.names.extend(waiting);
-        }
-    }
-
     /// Set the symbol nodes of live names `names` from their definitions,
     /// recording the bindings each still waits on.
     fn authority_set_symbol_nodes(&mut self, names: &[VertexId]) -> Result<(), AuthorityError> {

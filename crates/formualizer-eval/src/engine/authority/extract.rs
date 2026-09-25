@@ -91,8 +91,10 @@ impl Ctx<'_> {
                         .and_then(|_| self.graph.renamed_sheet_alias(n))
                 });
                 if s.is_none() {
+                    // Not recorded as a binding miss: legacy never re-bound a
+                    // name to a sheet added later (its edges stay dead), and
+                    // the integration probe pins that (remove + re-add).
                     self.flags |= F_OPAQUE;
-                    self.miss(DependencyGraph::unbound_symbol_key("sheet", n));
                 }
                 s
             }

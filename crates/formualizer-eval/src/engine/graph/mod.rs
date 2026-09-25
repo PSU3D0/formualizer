@@ -1469,7 +1469,6 @@ impl DependencyGraph {
             return id;
         }
         let id = self.sheet_reg.id_for(name);
-        self.authority_note_binding(&Self::unbound_symbol_key("sheet", name));
         self.resolve_pending_symbol("sheet", name);
         id
     }
