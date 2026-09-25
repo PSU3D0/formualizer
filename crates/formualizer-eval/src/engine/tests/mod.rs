@@ -60,6 +60,7 @@ mod stripe_streaming_integration;
 mod stripe_tests;
 mod striped_dirty_propagation;
 mod structural_op_clears_computed_values;
+mod symbol_rebinding;
 mod tables;
 mod target_preparation;
 mod tarjan_differential;
