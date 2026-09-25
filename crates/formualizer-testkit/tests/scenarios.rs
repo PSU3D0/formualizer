@@ -131,14 +131,18 @@ fn main() {
         "framework.recorder-no-bleed",
         recorder_no_bleed,
     ));
-    trials.push(Trial::test(
-        "framework.wrong-structure-golden",
-        wrong_structure_golden,
-    ));
-    trials.push(Trial::test(
-        "framework.structure-goldens",
-        structure_goldens,
-    ));
+    // M2 span-internal: these check span placement goldens (active spans,
+    // placed/demoted families); with the FormulaPlane mode ignored
+    // (unified_authority) no span is placed, so they are reported ignored.
+    let spans_ignored = formualizer_testkit::run::formula_plane_mode_ignored();
+    trials.push(
+        Trial::test("framework.wrong-structure-golden", wrong_structure_golden)
+            .with_ignored_flag(spans_ignored),
+    );
+    trials.push(
+        Trial::test("framework.structure-goldens", structure_goldens)
+            .with_ignored_flag(spans_ignored),
+    );
     trials.push(Trial::test("framework.parity", parity_expectation));
     trials.push(Trial::test("framework.filters-by-tag", filters_by_tag));
     trials.push(Trial::test(

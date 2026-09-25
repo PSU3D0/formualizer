@@ -194,6 +194,23 @@ impl RunReport {
     }
 }
 
+/// True when the engine accepts and ignores the FormulaPlane mode (the
+/// `unified_authority` build, M2): no span is ever placed, so an
+/// `AuthoritativeExperimental` run is an `Off` run. Detected from the engine
+/// itself, which stores `Off` for a requested authoritative mode then.
+pub fn formula_plane_mode_ignored() -> bool {
+    static IGNORED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *IGNORED.get_or_init(|| {
+        let config = WorkbookConfig::interactive()
+            .with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
+        Workbook::new_with_config(config)
+            .engine()
+            .config
+            .formula_plane_mode
+            == FormulaPlaneMode::Off
+    })
+}
+
 pub fn run(
     spec: &ScenarioSpec,
     mode: FormulaPlaneMode,
@@ -272,10 +289,18 @@ fn execute(
     } else {
         None
     };
+    // With the mode ignored an authoritative run is an Off run: it carries
+    // Off's defect markers, and the span-placement defects pinned for the
+    // authoritative mode cannot occur.
+    let marker_mode = if formula_plane_mode_ignored() {
+        FormulaPlaneMode::Off
+    } else {
+        mode
+    };
     let expected_failure = spec
         .expected_failures
         .iter()
-        .find(|expected| expected.matches(mode, materializer.provenance()))
+        .find(|expected| expected.matches(marker_mode, materializer.provenance()))
         .cloned();
     let executed = match execute_steps(
         &shape,
@@ -711,11 +736,16 @@ fn check_structure(
         }
         Ok(())
     }
-    field(
-        "active_spans",
-        expected.active_spans.as_ref(),
-        stats.formula_plane_active_span_count,
-    )?;
+    // Span-placement fields are internal representation; with the mode
+    // ignored (unified_authority) no span is placed, so they are not checked.
+    let spans = !formula_plane_mode_ignored();
+    if spans {
+        field(
+            "active_spans",
+            expected.active_spans.as_ref(),
+            stats.formula_plane_active_span_count,
+        )?;
+    }
     field(
         "arena_nodes",
         expected.arena_nodes.as_ref(),
@@ -731,10 +761,11 @@ fn check_structure(
         expected.graph_edges.as_ref(),
         stats.graph_edge_count,
     )?;
-    if expected.demotions.is_some()
-        || expected.topology_outcome.is_some()
-        || expected.placed_families.is_some()
-        || expected.rejected_families.is_some()
+    if spans
+        && (expected.demotions.is_some()
+            || expected.topology_outcome.is_some()
+            || expected.placed_families.is_some()
+            || expected.rejected_families.is_some())
     {
         let bucket =
             bucket.ok_or_else(|| "structure event expectation requires a Recorder".to_owned())?;
