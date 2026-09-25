@@ -353,6 +353,23 @@ fn structural_span_region_isolated_to_edited_sheet() {
     );
 }
 
+/// The value assertion of `structural_span_region_isolated_to_edited_sheet`
+/// (its span dirty regions and eval report are span-internal).
+#[test]
+fn structural_span_region_isolated_to_edited_sheet_values() {
+    let mut engine = authoritative_engine();
+    engine.add_sheet("Sheet2").unwrap();
+    ingest_row_run_on_sheet(&mut engine, "Sheet1", 1000, 2);
+    ingest_row_run_on_sheet(&mut engine, "Sheet2", 1000, 2);
+    engine.evaluate_all().unwrap();
+    engine.insert_rows("Sheet1", 901, 1).unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet2", 999, 2),
+        Some(LiteralValue::Number(1000.0))
+    );
+}
+
 #[test]
 fn sheet_and_unrelated_name_table_lifecycle_do_not_dirty_surviving_spans() {
     use crate::engine::named_range::{NameScope, NamedDefinition};
@@ -560,6 +577,30 @@ fn structural_candidate_overflow_is_atomic_and_retryable() {
     );
 }
 
+/// The values of `structural_candidate_overflow_is_atomic_and_retryable`
+/// before and after its retried insertion (the span candidate-cap
+/// overflow has no seam under the authority).
+#[test]
+fn structural_candidate_overflow_is_atomic_and_retryable_values() {
+    let mut engine = build_row_run(120);
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 111, 1),
+        Some(LiteralValue::Number(111.0))
+    );
+    assert_eq!(engine.get_cell_value("Sheet1", 121, 1), None);
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 120, 2),
+        Some(LiteralValue::Number(121.0))
+    );
+
+    engine.insert_rows("Sheet1", 111, 1).unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 121, 2),
+        Some(LiteralValue::Number(121.0))
+    );
+}
+
 #[test]
 #[ignore = "M2 span-internal: asserts exact FormulaPlane span dirty regions after structural edits; no spans under the authority"]
 fn indexed_structural_selection_classifies_only_affected_candidate_among_many_sheets() {
@@ -600,6 +641,32 @@ fn indexed_structural_selection_classifies_only_affected_candidate_among_many_sh
             .span_eval_placement_count,
         10
     );
+    assert_eq!(
+        engine.get_cell_value("Unrelated23", 120, 2),
+        Some(LiteralValue::Number(121.0))
+    );
+}
+
+/// The value assertion of
+/// `indexed_structural_selection_classifies_only_affected_candidate_among_many_sheets`
+/// (its span candidate counts and eval report are span-internal).
+#[test]
+fn indexed_structural_selection_classifies_only_affected_candidate_among_many_sheets_values() {
+    const SHEETS: u32 = 24;
+    let mut engine = authoritative_engine();
+    for index in 0..SHEETS {
+        let sheet = if index == 0 {
+            "Sheet1".to_string()
+        } else {
+            let name = format!("Unrelated{index}");
+            engine.add_sheet(&name).unwrap();
+            name
+        };
+        ingest_row_run_on_sheet(&mut engine, &sheet, 120, 2);
+    }
+    engine.evaluate_all().unwrap();
+    engine.insert_rows("Sheet1", 111, 1).unwrap();
+    engine.evaluate_all().unwrap();
     assert_eq!(
         engine.get_cell_value("Unrelated23", 120, 2),
         Some(LiteralValue::Number(121.0))

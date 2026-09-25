@@ -332,6 +332,7 @@ fn unresolvable_named_range_pattern_routes_to_capacity_fallback() {
 /// (b) Dirty precision: edits inside the resolved named region re-evaluate
 /// the span; edits outside do not.
 #[test]
+#[ignore = "M2 span-internal (red-team audit: no assertion outside span_internal!): span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)"]
 fn named_range_edit_dirty_precision_is_region_bounded() {
     let mut engine = engine_with_mode(FormulaPlaneMode::AuthoritativeExperimental);
     seed_named_workbook(&mut engine);
@@ -893,6 +894,7 @@ fn logged_name_define_and_delete_demote_exact_dependents() {
 }
 
 #[test]
+#[ignore = "M2 span-internal (red-team audit: no assertion outside span_internal!): binds a FormulaPlane span object/report; spans are not placed under the authority (design section 10)"]
 fn logged_name_demotion_limit_and_fault_are_atomic_and_retryable() {
     use crate::engine::ChangeLog;
     use crate::engine::eval::FormulaSpanDemotionFault;
@@ -1087,6 +1089,73 @@ fn logged_name_undo_redo_faults_leave_history_and_authority_retryable() {
 
     engine.redo_logged(&mut undo, &mut log).unwrap();
     assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+    assert_eq!(
+        engine
+            .resolve_name_entry("Data", engine.graph.sheet_id(SHEET).unwrap())
+            .unwrap()
+            .definition,
+        new_definition
+    );
+    engine.evaluate_all().unwrap();
+    assert!(matches!(
+        engine.get_cell_value(SHEET, FIRST_ROW, 6),
+        Some(LiteralValue::Number(_))
+    ));
+}
+
+/// The behavioral assertions of
+/// `logged_name_undo_redo_faults_leave_history_and_authority_retryable`
+/// without its span-demotion faults (no seam under the authority): logged
+/// name update, undo and redo restore each definition, and the readers
+/// evaluate.
+#[test]
+fn logged_name_undo_redo_faults_leave_history_and_authority_retryable_values() {
+    use crate::engine::ChangeLog;
+    use crate::engine::graph::editor::undo_engine::UndoEngine;
+
+    let mut engine = engine_with_mode(FormulaPlaneMode::AuthoritativeExperimental);
+    seed_named_workbook(&mut engine);
+    for row in FIRST_ROW..=LAST_ROW {
+        engine
+            .set_cell_value(SHEET, row, 4, LiteralValue::Number(4_000.0 + row as f64))
+            .unwrap();
+    }
+    ingest_column(&mut engine, SHEET, 3, |r| format!("=SUM(Data)+A{r}"));
+    engine.evaluate_all().unwrap();
+
+    let old_definition = engine
+        .resolve_name_entry("Data", engine.graph.sheet_id(SHEET).unwrap())
+        .unwrap()
+        .definition
+        .clone();
+    let new_definition = range_def(&mut engine, SHEET, FIRST_ROW, 4, LAST_ROW, 4);
+    let mut log = ChangeLog::new();
+    engine
+        .update_name_with_logger(
+            &mut log,
+            "Data",
+            new_definition.clone(),
+            NameScope::Workbook,
+        )
+        .unwrap();
+    engine.evaluate_all().unwrap();
+
+    ingest_column(&mut engine, SHEET, 5, |r| format!("=SUM(Data)+A{r}"));
+    engine.evaluate_all().unwrap();
+    let mut undo = UndoEngine::new();
+    engine.undo_logged(&mut undo, &mut log).unwrap();
+    assert_eq!(
+        engine
+            .resolve_name_entry("Data", engine.graph.sheet_id(SHEET).unwrap())
+            .unwrap()
+            .definition,
+        old_definition
+    );
+    engine.evaluate_all().unwrap();
+
+    ingest_column(&mut engine, SHEET, 6, |r| format!("=SUM(Data)+A{r}"));
+    engine.evaluate_all().unwrap();
+    engine.redo_logged(&mut undo, &mut log).unwrap();
     assert_eq!(
         engine
             .resolve_name_entry("Data", engine.graph.sheet_id(SHEET).unwrap())

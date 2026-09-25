@@ -217,6 +217,46 @@ fn independent_iterative_island_preserves_accumulator_and_single_request_lifecyc
     }
 }
 
+/// The values and request lifecycle of
+/// `independent_iterative_island_preserves_accumulator_and_single_request_lifecycle`
+/// (its mixed-topology route events are span-internal).
+#[test]
+fn independent_iterative_island_preserves_accumulator_and_single_request_lifecycle_values() {
+    let config = EvalConfig::default()
+        .with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental)
+        .with_cycle(CycleConfig::iterate(1, 0.001));
+    let mut engine = Engine::new(TestWorkbook::default(), config);
+    let mut formulas = Vec::new();
+    for row in 1..=120 {
+        engine
+            .set_cell_value(SHEET, row, 1, LiteralValue::Number(row as f64))
+            .unwrap();
+        formulas.push(record(&mut engine, row, 2, &format!("=A{row}+1")));
+    }
+    engine
+        .ingest_formula_batches(vec![FormulaIngestBatch::new(SHEET, formulas)])
+        .unwrap();
+    engine
+        .set_cell_value(SHEET, 1, 3, LiteralValue::Number(5.0))
+        .unwrap();
+    engine
+        .set_cell_formula(SHEET, 1, 4, parse("=D1+C1").unwrap())
+        .unwrap();
+
+    for expected in [5.0, 10.0, 15.0] {
+        let epoch = engine.recalc_epoch;
+        let begins = engine.evaluation_request_begin_count_for_test();
+        engine.evaluate_all().unwrap();
+        assert_eq!(numeric_value(&engine, 1, 4), expected);
+        assert_eq!(engine.recalc_epoch, epoch.wrapping_add(1));
+        assert_eq!(
+            engine.evaluation_request_begin_count_for_test(),
+            begins + 1,
+            "the clock and iterative-redirty state must be sampled once per request"
+        );
+    }
+}
+
 fn assert_full_capacity_corpus_parity(
     off: &Engine<TestWorkbook>,
     authoritative: &Engine<TestWorkbook>,
@@ -295,6 +335,30 @@ fn cached_mixed_topology_matches_off_first_warm_and_post_edit() {
     assert_eq!(edited_stats.formula_plane_mixed_topology_cache_hits, 1);
     assert_eq!(edited_stats.formula_plane_dirty_pending_events, 0);
     assert!(edited_stats.formula_plane_dirty_region_events_recorded > region_events_before_edit);
+    assert_full_capacity_corpus_parity(&off, &authoritative);
+}
+
+/// The value parity of `cached_mixed_topology_matches_off_first_warm_and_post_edit`
+/// (first, warm and post-edit; its mixed-topology cache counters are
+/// span-internal). Both engines run the authority, so this pins mode
+/// invariance, not legacy parity.
+#[test]
+fn cached_mixed_topology_matches_off_first_warm_and_post_edit_values() {
+    let build = |mode| build_mixed_engine(mode, |row| format!("=SUM($A{row}:$B${ROWS})"));
+    let mut off = build(FormulaPlaneMode::Off);
+    let mut authoritative = build(FormulaPlaneMode::AuthoritativeExperimental);
+    off.evaluate_all().unwrap();
+    authoritative.evaluate_all().unwrap();
+    assert_full_capacity_corpus_parity(&off, &authoritative);
+    off.evaluate_all().unwrap();
+    authoritative.evaluate_all().unwrap();
+    assert_full_capacity_corpus_parity(&off, &authoritative);
+    for engine in [&mut off, &mut authoritative] {
+        engine
+            .set_cell_value(SHEET, ROWS / 2, 1, LiteralValue::Number(10_000.0))
+            .unwrap();
+        engine.evaluate_all().unwrap();
+    }
     assert_full_capacity_corpus_parity(&off, &authoritative);
 }
 
@@ -783,6 +847,7 @@ fn span_free_authoritative_workbook_never_builds_mixed_topology_cache() {
 }
 
 #[test]
+#[ignore = "M2 span-internal (red-team audit: no assertion outside span_internal!): binds a FormulaPlane span object/report; spans are not placed under the authority (design section 10)"]
 fn prepared_demotion_failure_keeps_revision_and_cache_success_invalidates_once() {
     use crate::engine::eval::FormulaSpanDemotionFault;
 

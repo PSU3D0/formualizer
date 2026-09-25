@@ -451,6 +451,30 @@ fn off_demotion_prepare_and_final_validation_failures_preserve_edit_name_and_ret
     }
 }
 
+/// The values `off_demotion_prepare_and_final_validation_failures_preserve_edit_name_and_retry`
+/// asserts after its retry (the injected span-demotion faults have no seam
+/// under the authority; commit-failure atomicity on the retained path is
+/// `formula_plane_commit_preflight_failure_preserves_stale_side_band_and_egress`
+/// and `mixed_commit_window_deadline_has_no_partial_publication_and_retry_converges_values`).
+#[test]
+fn off_demotion_prepare_and_final_validation_failures_preserve_edit_name_and_retry_values() {
+    let mut engine = build_never_evaluated_engine_with_active_spans();
+    engine
+        .set_cell_value("Sheet1", TARGET_ROW, 1, LiteralValue::Number(7.0))
+        .unwrap();
+    let name_vertex = define_target_name(&mut engine);
+    switch_to_off_with_spans(&mut engine);
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", TARGET_ROW, 1),
+        Some(LiteralValue::Number(7.0))
+    );
+    assert_eq!(
+        engine.evaluate_vertex(name_vertex).unwrap(),
+        LiteralValue::Number(14.0)
+    );
+}
+
 #[test]
 fn off_targeted_evaluation_demotes_before_resolving_never_evaluated_span() {
     let mut engine = switch_never_evaluated_engine_to_off();

@@ -409,6 +409,7 @@ fn formula_plane_sparse_general_recomputation_clears_only_written_offsets() {
 }
 
 #[test]
+#[ignore = "M2 span-internal (red-team audit: no assertion outside span_internal!): debug overlay format slots/counters of span chunks; per-cell format effects are stored differently (legacy Off oracle agrees with the authority)"]
 fn formula_plane_point_general_recomputation_clears_one_format_offset() {
     let mut engine = memoized_fixture(FormulaPlaneMode::AuthoritativeExperimental, false);
     engine.debug_reset_format_write_operation_counts();
@@ -511,32 +512,32 @@ fn formula_plane_mid_span_cancellation_preserves_stale_side_band_and_overlay() {
 
 #[test]
 fn formula_plane_commit_preflight_failure_preserves_stale_side_band_and_egress() {
-    span_internal!("binds a FormulaPlane span object/report; spans are not placed under the authority (design section 10)";
-        let mut engine = newly_active_span_with_real_legacy_date();
-        let before_value = engine.get_cell_value(SHEET, 1, 7);
-        let before_overlay_format = engine.debug_computed_overlay_format_0based(SHEET, 0, 6);
-        engine.fail_evaluation_commit_preflight_once_for_test();
+    let mut engine = newly_active_span_with_real_legacy_date();
+    let before_value = engine.get_cell_value(SHEET, 1, 7);
+    let before_overlay_format = engine.debug_computed_overlay_format_0based(SHEET, 0, 6);
+    engine.fail_evaluation_commit_preflight_once_for_test();
 
-        let error = engine.evaluate_all().unwrap_err();
-        let ExcelErrorExtra::Resource { detail } = &error.extra else {
-            panic!("expected typed resource failure, got {error:?}");
-        };
+    let error = engine.evaluate_all().unwrap_err();
+    let ExcelErrorExtra::Resource { detail } = &error.extra else {
+        panic!("expected typed resource failure, got {error:?}");
+    };
 
-        assert_eq!(detail.reason, ResourceExhaustionReason::Deadline);
-        assert_eq!(
-            engine.debug_derived_format_0based(SHEET, 0, 6),
-            Some(FormatId::DATE)
-        );
-        assert_eq!(engine.get_cell_value(SHEET, 1, 7), before_value);
-        assert_eq!(
-            engine.debug_computed_overlay_format_0based(SHEET, 0, 6),
-            before_overlay_format
-        );
-
-        engine.evaluate_all().unwrap();
-        assert_eq!(engine.debug_derived_format_0based(SHEET, 0, 6), None);
-        assert_eq!(engine.get_cell_value(SHEET, 1, 7), before_value);
+    assert_eq!(detail.reason, ResourceExhaustionReason::Deadline);
+    assert_eq!(
+        engine.debug_derived_format_0based(SHEET, 0, 6),
+        Some(FormatId::DATE)
     );
+    assert_eq!(engine.get_cell_value(SHEET, 1, 7), before_value);
+    assert_eq!(
+        engine.debug_computed_overlay_format_0based(SHEET, 0, 6),
+        before_overlay_format
+    );
+
+    engine.evaluate_all().unwrap();
+    span_internal!("the committed span's computed overlay replaces the derived format side band; per-cell formulas keep it";
+        assert_eq!(engine.debug_derived_format_0based(SHEET, 0, 6), None);
+    );
+    assert_eq!(engine.get_cell_value(SHEET, 1, 7), before_value);
 }
 
 #[test]

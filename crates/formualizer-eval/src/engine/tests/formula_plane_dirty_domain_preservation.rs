@@ -100,6 +100,7 @@ fn action_atomic_value_edits_use_dirty_closure_not_whole_all() {
 }
 
 #[test]
+#[ignore = "M2 span-internal (red-team audit: no assertion outside span_internal!): FormulaPlane span/ingest/eval-report internals; spans are not placed under the authority (design section 10)"]
 fn undo_redo_of_value_bulk_uses_dirty_closure_not_whole_all() {
     let mut engine = build_single_span_engine(1_000);
     let mut undo = UndoEngine::new();

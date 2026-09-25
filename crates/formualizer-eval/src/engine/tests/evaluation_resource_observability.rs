@@ -417,6 +417,44 @@ fn perpetual_cache_skip_preserves_values_streak_and_no_disk_policy() {
     }
 }
 
+/// The value assertion of `perpetual_cache_skip_preserves_values_streak_and_no_disk_policy`
+/// under each scratch policy (its topology-strategy and cache-skip
+/// counters are span-internal).
+#[test]
+fn perpetual_cache_skip_preserves_values_streak_and_no_disk_policy_values() {
+    for (policy, scratch_limit) in [
+        (DiskScratchPolicy::NativeTemporary, 20_000),
+        (DiskScratchPolicy::MemoryOnly, 30_000),
+        (DiskScratchPolicy::MemoryOnly, 19_000),
+    ] {
+        let mut engine = build_mode_engine(FormulaPlaneMode::AuthoritativeExperimental, None);
+        engine.config.max_formula_plane_cache_candidates = 0;
+        engine.set_evaluation_budgets_for_test(EvaluationBudgets {
+            scratch: ScratchResourceBudget {
+                total_bytes: Some(scratch_limit),
+                schedule_discovery_bytes: Some(scratch_limit),
+                disk_scratch_policy: Some(policy),
+                ..ScratchResourceBudget::default()
+            },
+            ..EvaluationBudgets::default()
+        });
+        for request in 1..=3_u64 {
+            if request > 1 {
+                engine
+                    .set_cell_value("Sheet1", request as u32, 1, LiteralValue::Number(10.0))
+                    .unwrap();
+            }
+            engine.evaluate_all().unwrap();
+            let stats = engine.last_evaluation_resource_request_stats().unwrap();
+            assert_eq!(stats.ledger.scratch_current, 0);
+        }
+        assert_eq!(
+            engine.get_cell_value("Sheet1", 100, 2),
+            Some(LiteralValue::Number(200.0))
+        );
+    }
+}
+
 #[test]
 fn off_shadow_and_authoritative_values_remain_equal() {
     let run = |mode| {

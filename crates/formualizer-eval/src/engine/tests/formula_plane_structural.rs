@@ -1221,6 +1221,57 @@ fn formula_plane_column_insert_splits_col_run_span_with_stationary_reads() {
     );
 }
 
+/// The values of `formula_plane_column_insert_splits_col_run_span_with_stationary_reads`
+/// with the row of `=$A$1*2` formulas written per cell (the test seeds a
+/// span directly, which cannot exist under the authority).
+#[test]
+fn formula_plane_column_insert_splits_col_run_span_with_stationary_reads_values() {
+    let mut engine = authoritative_engine();
+    engine
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(21.0))
+        .unwrap();
+    for col in 2..=101 {
+        engine
+            .set_cell_formula("Sheet1", 1, col, parse("=$A$1*2").unwrap())
+            .unwrap();
+    }
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 51),
+        Some(LiteralValue::Number(42.0))
+    );
+
+    engine.insert_columns("Sheet1", 50, 1).unwrap();
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 49),
+        Some(LiteralValue::Number(42.0))
+    );
+    assert_eq!(engine.get_cell_value("Sheet1", 1, 50), None);
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 51),
+        Some(LiteralValue::Number(42.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 102),
+        Some(LiteralValue::Number(42.0))
+    );
+
+    engine
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(10.0))
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 2),
+        Some(LiteralValue::Number(20.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 102),
+        Some(LiteralValue::Number(20.0))
+    );
+}
+
 #[test]
 #[ignore = "M2 span-internal: seeds a rect span directly into the FormulaPlane (crate-internal); spans cannot exist under the authority"]
 fn formula_plane_rect_span_row_insert_splits_into_two_rects() {
@@ -1263,6 +1314,47 @@ fn formula_plane_rect_span_row_insert_splits_into_two_rects() {
         assert_eq!(domains[0], PlacementDomain::rect(0, 0, 48, 1, 3));
         assert_eq!(domains[1], PlacementDomain::rect(0, 52, 102, 1, 3));
     }
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 49, 3),
+        Some(LiteralValue::Number(8.0))
+    );
+    assert_eq!(engine.get_cell_value("Sheet1", 50, 3), None);
+    assert_eq!(engine.get_cell_value("Sheet1", 52, 3), None);
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 53, 3),
+        Some(LiteralValue::Number(8.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 103, 4),
+        Some(LiteralValue::Number(8.0))
+    );
+}
+
+/// The values of `formula_plane_rect_span_row_insert_splits_into_two_rects`
+/// with the block of `=$A$1+1` formulas written per cell (the test seeds a
+/// span directly, which cannot exist under the authority).
+#[test]
+fn formula_plane_rect_span_row_insert_splits_into_two_rects_values() {
+    let mut engine = authoritative_engine();
+    engine
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(7.0))
+        .unwrap();
+    for row in 1..=100 {
+        for col in 2..=4 {
+            engine
+                .set_cell_formula("Sheet1", row, col, parse("=$A$1+1").unwrap())
+                .unwrap();
+        }
+    }
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 50, 3),
+        Some(LiteralValue::Number(8.0))
+    );
+
+    engine.insert_rows("Sheet1", 50, 3).unwrap();
     engine.evaluate_all().unwrap();
 
     assert_eq!(

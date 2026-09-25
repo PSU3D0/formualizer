@@ -365,6 +365,34 @@ fn formula_plane_shadow_deferred_build_graph_all_materializes_all_formulas() {
     );
 }
 
+/// The behavioral assertions of
+/// `formula_plane_shadow_deferred_build_graph_all_materializes_all_formulas`
+/// (its ingest-report counters are span-internal).
+#[test]
+fn formula_plane_shadow_deferred_build_graph_all_materializes_all_formulas_values() {
+    let cfg = EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::Shadow);
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+
+    engine
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(1.0))
+        .unwrap();
+    engine
+        .set_cell_value("Sheet1", 2, 1, LiteralValue::Number(2.0))
+        .unwrap();
+    engine.stage_formula_text("Sheet1", 1, 2, "=A1+1".to_string());
+    engine.stage_formula_text("Sheet1", 2, 2, "=A2+1".to_string());
+    assert_eq!(engine.staged_formula_count(), 2);
+
+    engine.build_graph_all().expect("build staged formulas");
+    engine.evaluate_all().expect("evaluate staged formulas");
+
+    assert_eq!(engine.staged_formula_count(), 0);
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 2, 2),
+        Some(LiteralValue::Number(3.0))
+    );
+}
+
 #[test]
 #[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
 fn formula_plane_authoritative_ingest_skips_accepted_span_graph_materialization() {
@@ -393,6 +421,45 @@ fn formula_plane_authoritative_ingest_skips_accepted_span_graph_materialization(
     assert_eq!(stats.formula_plane_active_span_count, 1);
     assert_eq!(stats.formula_plane_producer_result_entries, 1);
     assert_eq!(stats.formula_plane_consumer_read_entries, 1);
+
+    engine.evaluate_all().expect("span-only mixed evaluate_all");
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 2),
+        Some(LiteralValue::Number(2.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 2, 2),
+        Some(LiteralValue::Number(3.0))
+    );
+    assert_eq!(
+        engine
+            .evaluate_cell("Sheet1", 1, 2)
+            .expect("evaluate_cell routes through FormulaPlane coordinator"),
+        Some(LiteralValue::Number(2.0))
+    );
+}
+
+/// The value assertions of
+/// `formula_plane_authoritative_ingest_skips_accepted_span_graph_materialization`
+/// (its ingest-report and span counters are span-internal).
+#[test]
+fn formula_plane_authoritative_ingest_skips_accepted_span_graph_materialization_values() {
+    let cfg =
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+    let mut formulas = Vec::new();
+    for row in 1..=100 {
+        engine
+            .set_cell_value("Sheet1", row, 1, LiteralValue::Number(row as f64))
+            .unwrap();
+        formulas.push(record(&mut engine, row, 2, &format!("=A{row}+1")));
+    }
+
+    let batches = vec![FormulaIngestBatch::new("Sheet1", formulas)];
+    let report = engine
+        .ingest_formula_batches(batches)
+        .expect("authoritative ingest");
+    assert_eq!(report.formula_cells_seen, 100);
 
     engine.evaluate_all().expect("span-only mixed evaluate_all");
     assert_eq!(
@@ -1231,6 +1298,31 @@ fn formula_plane_remove_sheet_hosting_span_removes_active_span() {
     engine.remove_sheet(other_id).unwrap();
     assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
     assert!(engine.graph.sheet_id("Other").is_none());
+}
+
+/// The behavioral assertion of
+/// `formula_plane_remove_sheet_hosting_span_removes_active_span` (its span
+/// counters are span-internal).
+#[test]
+fn formula_plane_remove_sheet_hosting_span_removes_active_span_values() {
+    let cfg =
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+    let other_id = engine.add_sheet("Other").unwrap();
+    let mut formulas = Vec::new();
+    for row in 1..=100 {
+        engine
+            .set_cell_value("Other", row, 1, LiteralValue::Number(row as f64))
+            .unwrap();
+        formulas.push(record(&mut engine, row, 2, &format!("=A{row}+1")));
+    }
+
+    let batches = vec![FormulaIngestBatch::new("Other", formulas)];
+    engine.ingest_formula_batches(batches).unwrap();
+
+    engine.remove_sheet(other_id).unwrap();
+    assert!(engine.graph.sheet_id("Other").is_none());
+    engine.evaluate_all().unwrap();
 }
 
 #[test]
@@ -2610,6 +2702,7 @@ fn unrelated_commit_boundary_epoch_change_keeps_arithmetic_preparation() {
 }
 
 #[test]
+#[ignore = "M2 span-internal (red-team audit: no assertion outside span_internal!): span placement/ingest counters; formulas ingest per cell and spans are not placed under the authority (design §10)"]
 fn ordinary_supported_function_families_preserve_authoritative_behavior() {
     crate::builtins::load_builtins();
     let cfg =

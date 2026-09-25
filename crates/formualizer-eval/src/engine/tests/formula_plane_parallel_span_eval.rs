@@ -90,6 +90,7 @@ fn parallel_per_placement_produces_identical_results_to_sequential() {
 }
 
 #[test]
+#[ignore = "M2 span-internal (red-team audit: no assertion outside span_internal!): FormulaPlane span-eval report; no span evaluation under the authority"]
 fn parallel_below_threshold_uses_sequential_path() {
     // 50 < PARALLEL_PLACEMENT_THRESHOLD (=64). Use constant-result span
     // because non-constant spans below 100 cells demote to legacy.
@@ -106,6 +107,7 @@ fn parallel_below_threshold_uses_sequential_path() {
 }
 
 #[test]
+#[ignore = "M2 span-internal (red-team audit: no assertion outside span_internal!): binds a FormulaPlane span object/report; spans are not placed under the authority (design section 10)"]
 fn parallel_above_threshold_uses_parallel_path() {
     let mut engine = build_a_plus_one_family(1_000, true);
     engine.evaluate_all().unwrap();
@@ -119,6 +121,7 @@ fn parallel_above_threshold_uses_parallel_path() {
 }
 
 #[test]
+#[ignore = "M2 span-internal (red-team audit: no assertion outside span_internal!): binds a FormulaPlane span object/report; spans are not placed under the authority (design section 10)"]
 fn parallel_disabled_via_config_uses_sequential() {
     let mut engine = build_a_plus_one_family(1_000, false);
     engine.evaluate_all().unwrap();

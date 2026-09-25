@@ -141,6 +141,18 @@ fn formula_plane_parameterized_literals_fold_same_structure() {
     );
 }
 
+/// The value assertion of `formula_plane_parameterized_literals_fold_same_structure`
+/// (its span-binding checks are span-internal).
+#[test]
+fn formula_plane_parameterized_literals_fold_same_structure_values() {
+    let mut engine = sumifs_varying_literal_engine(100);
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 3),
+        Some(LiteralValue::Number(34.0))
+    );
+}
+
 #[test]
 #[ignore = "M2 span-internal: inspects the FormulaPlane literal binding store of an active span; no spans under the authority"]
 fn formula_plane_affine_row_literal_numbers_avoid_graph_materialization() {
@@ -160,6 +172,18 @@ fn formula_plane_affine_row_literal_numbers_avoid_graph_materialization() {
     );
 }
 
+/// The value assertion of `formula_plane_affine_row_literal_numbers_avoid_graph_materialization`
+/// (its ingest-report and binding-encoding checks are span-internal).
+#[test]
+fn formula_plane_affine_row_literal_numbers_avoid_graph_materialization_values() {
+    let mut engine = literal_formula_family(120, |row| row.to_string());
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 120, 2),
+        Some(LiteralValue::Number(240.0))
+    );
+}
+
 #[test]
 #[ignore = "M2 span-internal: inspects the FormulaPlane literal binding store of an active span; no spans under the authority"]
 fn formula_plane_non_integer_number_literals_remain_dictionary_encoded() {
@@ -169,6 +193,18 @@ fn formula_plane_non_integer_number_literals_remain_dictionary_encoded() {
         first_binding_encoding(&engine),
         LiteralBindingEncoding::Dictionary
     ));
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 10, 2),
+        Some(LiteralValue::Number(20.5))
+    );
+}
+
+/// The value assertion of `formula_plane_non_integer_number_literals_remain_dictionary_encoded`
+/// (its binding-encoding check is span-internal).
+#[test]
+fn formula_plane_non_integer_number_literals_remain_dictionary_encoded_values() {
+    let mut engine = literal_formula_family(120, |row| format!("{row}.5"));
     engine.evaluate_all().unwrap();
     assert_eq!(
         engine.get_cell_value("Sheet1", 10, 2),
@@ -281,6 +317,7 @@ fn formula_plane_binding_store_dictionary_encodes_repeated_vectors() {
 }
 
 #[test]
+#[ignore = "M2 span-internal (red-team audit: no assertion outside span_internal!): binds a FormulaPlane span object/report; spans are not placed under the authority (design section 10)"]
 fn formula_plane_binding_set_removed_with_span() {
     let mut engine = literal_formula_family(100, |row| (row % 3).to_string());
     span_internal!("binds a FormulaPlane span object/report; spans are not placed under the authority (design section 10)";
@@ -357,6 +394,7 @@ fn formula_plane_demoted_parameterized_span_materializes_bound_literals() {
 }
 
 #[test]
+#[ignore = "M2 span-internal (red-team audit: no assertion outside span_internal!): binds a FormulaPlane span object/report; spans are not placed under the authority (design section 10)"]
 fn formula_plane_memoizes_value_context_relative_cell_refs() {
     let mut engine = authoritative_engine();
     let mut formulas = Vec::new();
@@ -389,6 +427,7 @@ fn formula_plane_memoizes_value_context_relative_cell_refs() {
 }
 
 #[test]
+#[ignore = "M2 span-internal (red-team audit: no assertion outside span_internal!): binds a FormulaPlane span object/report; spans are not placed under the authority (design section 10)"]
 fn formula_plane_memoizes_varying_literal_slots() {
     let mut engine = sumifs_varying_literal_engine(120);
     engine.evaluate_all().unwrap();
@@ -400,6 +439,7 @@ fn formula_plane_memoizes_varying_literal_slots() {
 }
 
 #[test]
+#[ignore = "M2 span-internal (red-team audit: no assertion outside span_internal!): binds a FormulaPlane span object/report; spans are not placed under the authority (design section 10)"]
 fn formula_plane_memoizes_mixed_literal_and_value_ref_parameters() {
     let mut engine = authoritative_engine();
     let mut formulas = Vec::new();
@@ -454,6 +494,7 @@ fn formula_plane_memo_residual_relative_reference_includes_row_delta() {
 }
 
 #[test]
+#[ignore = "M2 span-internal (red-team audit: no assertion outside span_internal!): binds a FormulaPlane span object/report; spans are not placed under the authority (design section 10)"]
 fn formula_plane_memo_skips_all_unique_literal_bindings() {
     let mut engine = literal_formula_family(120, |row| row.to_string());
     engine.evaluate_all().unwrap();
@@ -465,6 +506,7 @@ fn formula_plane_memo_skips_all_unique_literal_bindings() {
 }
 
 #[test]
+#[ignore = "M2 span-internal (red-team audit: no assertion outside span_internal!): binds a FormulaPlane span object/report; spans are not placed under the authority (design section 10)"]
 fn formula_plane_memo_sampling_skips_all_unique_value_refs() {
     let mut engine = authoritative_engine();
     let mut formulas = Vec::new();
@@ -703,6 +745,7 @@ fn formula_plane_literal_binding_memory_cap_falls_back() {
 }
 
 #[test]
+#[ignore = "M2 span-internal (red-team audit: no assertion outside span_internal!): binds a FormulaPlane span object/report; spans are not placed under the authority (design section 10)"]
 fn formula_plane_memo_cache_is_per_evaluate_task() {
     let mut engine = sumifs_varying_literal_engine(120);
     engine.evaluate_all().unwrap();

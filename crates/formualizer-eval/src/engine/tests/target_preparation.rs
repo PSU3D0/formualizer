@@ -1384,6 +1384,7 @@ fn overlapping_families_package(sheet: &str, sheet_instance: u32) -> DeferredFor
 }
 
 #[test]
+#[ignore = "M2 span-internal (red-team audit: no assertion outside span_internal!): AuthoritativeExperimental widens target preparation to the workbook; the mode is ignored under the authority, which prepares as Off"]
 fn authoritative_mode_uses_prepare_all_compatibility_without_partial_c2_ownership() {
     let mut engine = engine(FormulaPlaneMode::AuthoritativeExperimental);
     engine.stage_formula_text("Outputs", 1, 1, "=1".into());
@@ -3038,6 +3039,33 @@ fn queued_cross_sheet_sum_completes_family_before_partial_ast_expansion() {
     );
     assert_eq!(selected.load(Ordering::SeqCst), 0);
     assert_eq!(whole.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        engine.evaluate_cell("Outputs", 1, 1).unwrap(),
+        Some(LiteralValue::Number(100.0))
+    );
+}
+
+/// The target value of
+/// `queued_cross_sheet_sum_completes_family_before_partial_ast_expansion`
+/// (its span, vertex, AST and replay counters are span-internal).
+#[test]
+fn queued_cross_sheet_sum_completes_family_before_partial_ast_expansion_values() {
+    let mut engine = engine(FormulaPlaneMode::AuthoritativeExperimental);
+    let (package, selected, whole) =
+        count_selected_family_package(complete_family_package("Inputs", 42, 2));
+    engine.source_formula_ingress().stage_deferred(package);
+    engine
+        .source_formula_ingress()
+        .stage_deferred(indexed_package("Outputs", &[(1, 1, "SUM(Inputs!B1:B100)")]));
+    engine
+        .prepare_graph_for_targets(
+            &[
+                EvaluationTarget::Range(RangeAddress::new("Inputs", 1, 2, 50, 2).unwrap()),
+                cell("Outputs", 1, 1),
+            ],
+            Default::default(),
+        )
+        .unwrap();
     assert_eq!(
         engine.evaluate_cell("Outputs", 1, 1).unwrap(),
         Some(LiteralValue::Number(100.0))

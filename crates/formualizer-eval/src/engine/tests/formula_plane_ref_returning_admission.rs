@@ -405,6 +405,7 @@ fn union_dependencies_dirty_taken_and_untaken_arms() {
 }
 
 #[test]
+#[ignore = "M2 span-internal (red-team audit: no assertion outside span_internal!): binds a FormulaPlane span object/report; spans are not placed under the authority (design section 10)"]
 fn memo_groups_equal_branch_triples() {
     let mut engine = engine(FormulaPlaneMode::AuthoritativeExperimental);
     let mut formulas = Vec::new();

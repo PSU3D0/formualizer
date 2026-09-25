@@ -118,6 +118,7 @@ fn num(engine: &Engine<TestWorkbook>, row: u32, col: u32) -> Option<f64> {
 /// so the backstop is genuinely exercised rather than short-circuited at
 /// ingest.
 #[test]
+#[ignore = "M2 span-internal (red-team audit: no assertion outside span_internal!): span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)"]
 fn array_producing_function_is_admitted_into_a_span() {
     let engine = fixture(FormulaPlaneMode::AuthoritativeExperimental);
     span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
