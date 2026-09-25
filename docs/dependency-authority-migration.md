@@ -43,13 +43,13 @@ Legacy behavior is the specification. It changed only where legacy published a s
 
 ## Performance and memory
 
-Measured on the Enron sample and the real-model corpus, against the last legacy build:
-- Retained heap after the first calculation is about 0.95× legacy.
-- Load is 0.57× legacy on Enron (1.09× on the two small real models, 134 ms against 146 ms).
-- First calculation after load is 0.81× on Enron and 0.84× on the real models.
-- Single-cell edit + recalculation p50 is 0.47–0.75× for value edits and 0.14–0.24× for formula edits.
+Measured on the Enron sample (27 workbooks) and the two real-model corpus workbooks, against the last legacy build (medians of two interleaved rounds):
+- Retained heap after the first calculation is 0.944× legacy on Enron and 0.945× on the real models. Three small workbooks stay slightly above legacy (at most 1.025×, about 0.3 MB): their formulas are row-wise families, and the authority keeps one identity run per column (about 84 bytes each).
+- Load is 0.56× legacy on Enron and 1.05× on the real models (134 ms against 126 ms: the authority is built when the load ends).
+- First calculation after load is 0.78× on Enron and 0.75× on the real models. A workbook made of thousands of small formula groups can take longer (at most about 25 ms more in the sample), because planning costs a few microseconds per group.
+- Single-cell edit + recalculation p50 is 0.47–0.72× for value edits and 0.13–0.24× for formula edits.
 
-Very small workbooks (a few thousand formulas) can take a few milliseconds longer on the first calculation, because the authority is built then.
+Defining, redefining or deleting a name, table or source after load costs work in that symbol and its readers only; it does not rebuild the dependency structure.
 
 ## Testing against legacy
 
