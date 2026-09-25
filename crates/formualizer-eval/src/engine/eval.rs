@@ -3555,6 +3555,10 @@ where
         } else {
             evaluate(self)
         };
+        #[cfg(feature = "unified_authority")]
+        if outermost && result.is_err() {
+            self.freshness_abort_pass();
+        }
         self.evaluation_resource_request_depth =
             self.evaluation_resource_request_depth.saturating_sub(1);
 
@@ -28364,8 +28368,20 @@ where
                     return self.source_table_to_range_view(table.as_ref(), &tref.specifier);
                 }
 
-                // Fallback: materialize via Resolver::resolve_range_like tranche 1
-                let boxed = self.resolve_range_like(&ReferenceType::Table(tref.clone()))?;
+                // Fallback: materialize via Resolver::resolve_range_like tranche 1.
+                // A table nobody defines (an unbound reference kept by the
+                // BestEffort preparation policy) is `#NAME?`, the kind Strict
+                // reports at preparation, not the resolver's "not implemented".
+                let boxed = self
+                    .resolve_range_like(&ReferenceType::Table(tref.clone()))
+                    .map_err(|e| {
+                        if e.kind == ExcelErrorKind::NImpl {
+                            ExcelError::new(ExcelErrorKind::Name)
+                                .with_message(format!("Unknown table: {}", tref.name))
+                        } else {
+                            e
+                        }
+                    })?;
                 let owned = boxed.materialise().into_owned();
                 Ok(RangeView::from_owned_rows(owned, self.config.date_system))
             }

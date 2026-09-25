@@ -141,7 +141,10 @@ fn review_symbol_rebuild_preserves_ids() {
         e.graph.authority_host().store().ids().id_of(a1),
         e.graph.authority_host().store().ids().id_of(a2),
     );
-    let builds = e.graph.authority_host().builds();
+    let applied = |e: &Engine<TestWorkbook>| {
+        e.graph.authority_host().builds() + e.graph.authority_host().symbol_incremental()
+    };
+    let before_revisions = applied(&e);
     e.define_name(
         "UnrelatedReviewName",
         NamedDefinition::Literal(LiteralValue::Number(7.0)),
@@ -149,7 +152,12 @@ fn review_symbol_rebuild_preserves_ids() {
     )
     .unwrap();
     e.graph.authority().unwrap();
-    assert!(e.graph.authority_host().builds() > builds, "a rebuild ran");
+    // Reclassified (internal representation): name revisions apply
+    // incrementally now (must-fix 1); what matters is that one was applied.
+    assert!(
+        applied(&e) > before_revisions,
+        "the symbol revision was applied"
+    );
     let after = (
         e.graph.authority_host().store().ids().id_of(a1),
         e.graph.authority_host().store().ids().id_of(a2),

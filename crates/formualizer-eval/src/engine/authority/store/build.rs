@@ -99,6 +99,32 @@ impl Store {
         Ok(s)
     }
 
+    /// Re-derive the binding-identity table from `live_symbols` (sorted)
+    /// without rebuilding the relation: the incremental symbol-revision
+    /// path. Surviving symbols keep their ids; new ones take ids from the
+    /// shared counter, exactly as a rebuild would.
+    pub(crate) fn resync_symbols(
+        &mut self,
+        live_symbols: &[SymbolId],
+    ) -> Result<(), AuthorityError> {
+        let remaining_retained = self
+            .budget
+            .retained
+            .map(|n| n.saturating_sub(self.heap_bytes() - self.symbols.heap_bytes()));
+        let (symbols, work) = SymbolTable::rebuild(
+            live_symbols,
+            &self.symbols,
+            &mut self.ids,
+            Budget {
+                retained: remaining_retained,
+                scratch: None,
+            },
+        )?;
+        self.symbols = symbols;
+        self.stats.symbol_work += work.visits;
+        Ok(())
+    }
+
     /// The build, keeping the identities of `prior` when given. Returns the
     /// store and an upper bound on the build's scratch bytes (the sum of
     /// its temporary containers' capacities).

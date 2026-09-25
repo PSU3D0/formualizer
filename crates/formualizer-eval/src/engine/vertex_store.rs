@@ -220,6 +220,11 @@ pub struct VertexStore {
 
     // Length tracking
     len: usize,
+
+    /// Some dirty flag was cleared since creation (nothing has been clean
+    /// before the first evaluation): lets load skip dependency closures,
+    /// which cannot change anything while every formula is dirty.
+    dirty_cleared: std::sync::atomic::AtomicBool,
 }
 
 impl Default for VertexStore {
@@ -237,6 +242,7 @@ impl VertexStore {
             value_ref: Vec::new(),
             edge_offset: Vec::new(),
             len: 0,
+            dirty_cleared: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -248,6 +254,7 @@ impl VertexStore {
             value_ref: Vec::with_capacity(capacity),
             edge_offset: Vec::with_capacity(capacity),
             len: 0,
+            dirty_cleared: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -454,6 +461,11 @@ impl VertexStore {
     }
 
     #[inline]
+    /// Whether any dirty flag was ever cleared (see the field).
+    pub(crate) fn dirty_ever_cleared(&self) -> bool {
+        self.dirty_cleared.load(Ordering::Relaxed)
+    }
+
     pub fn set_dirty(&self, id: VertexId, dirty: bool) {
         if id.0 < FIRST_NORMAL_VERTEX {
             return; // Skip invalid vertex IDs
@@ -465,7 +477,10 @@ impl VertexStore {
         if dirty {
             self.flags[idx].fetch_or(0x01, Ordering::Release);
         } else {
-            self.flags[idx].fetch_and(!0x01, Ordering::Release);
+            let before = self.flags[idx].fetch_and(!0x01, Ordering::Release);
+            if before & 0x01 != 0 {
+                self.dirty_cleared.store(true, Ordering::Relaxed);
+            }
         }
     }
 

@@ -8,8 +8,9 @@
 //!   until M3.
 //! - `pin.sheet-delete-readd`: cross-sheet readers across sheet delete and
 //!   re-add (the tombstone re-add path).
-//! - `pin.preparation-policy`: the preparation-failure outcome of each route
-//!   under today's policy (docs/preparation-error-policy.md).
+//! - `pin.preparation-policy` / `pin.preparation-policy-strict`: the
+//!   preparation outcome of each route under the default BestEffort policy and
+//!   under explicit Strict (docs/preparation-error-policy.md).
 //! - `pin.span.*`: the FormulaPlane span-ownership regressions of the M3 perf
 //!   line, ported as value-level scenarios. Where the base has the defect M3
 //!   fixed, the authoritative mode is a known failure that names it.
@@ -954,22 +955,30 @@ fn outcome_error(stage: &str, error: impl std::fmt::Display) -> String {
     }
 }
 
-fn policy_config(mode: FormulaPlaneMode, deferred: bool) -> WorkbookConfig {
+fn policy_config(mode: FormulaPlaneMode, deferred: bool, strict: bool) -> WorkbookConfig {
     let mut config = WorkbookConfig::interactive().with_formula_plane_mode(mode);
     config.eval.enable_parallel = false;
     config.eval.defer_graph_building = deferred;
+    if strict {
+        config.eval.preparation_policy = formualizer_eval::engine::PreparationPolicy::Strict;
+    }
     config
 }
 
 /// Runs one case through one route and reports the outcome of assignment or
 /// load, then of evaluation.
-fn policy_outcome(route: PolicyRoute, case: &PolicyCase, mode: FormulaPlaneMode) -> String {
+fn policy_outcome(
+    route: PolicyRoute,
+    case: &PolicyCase,
+    mode: FormulaPlaneMode,
+    strict: bool,
+) -> String {
     let mut wb = match route {
         PolicyRoute::WorkbookSetFormula
         | PolicyRoute::EngineEager
         | PolicyRoute::EngineDeferred => {
             let deferred = !matches!(route, PolicyRoute::EngineEager);
-            let mut wb = Workbook::new_with_config(policy_config(mode, deferred));
+            let mut wb = Workbook::new_with_config(policy_config(mode, deferred, strict));
             if let Err(error) = wb.add_sheet(SHEET) {
                 return format!("setup error {error}");
             }
@@ -1018,7 +1027,7 @@ fn policy_outcome(route: PolicyRoute, case: &PolicyCase, mode: FormulaPlaneMode)
             let Ok(crate::materialize::Artifact::Xlsx(path)) = artifact else {
                 return "setup error xlsx".into();
             };
-            let config = policy_config(mode, true);
+            let config = policy_config(mode, true, strict);
             use formualizer_workbook::{
                 CalamineAdapter, LoadStrategy, SpreadsheetReader, UmyaAdapter,
             };
@@ -1045,7 +1054,7 @@ fn policy_outcome(route: PolicyRoute, case: &PolicyCase, mode: FormulaPlaneMode)
     }
 }
 
-/// The preparation-failure table under today's policy, observed on the
+/// The preparation-failure table under the Strict policy (the default before decision 16), observed on the
 /// Program 1 base (legacy behavior, decision 11). Rows are cases, columns
 /// are routes in `POLICY_ROUTES` order. `Engine*` assignment validates
 /// immediately whatever `defer_graph_building` says; the Workbook and xlsx
@@ -1162,7 +1171,10 @@ fn expected_outcome(mode: FormulaPlaneMode, route: PolicyRoute, table: &str) -> 
 }
 
 /// Renders the observed table (for the semantics log and for re-observation).
-pub fn observe_preparation_policy(mode: FormulaPlaneMode) -> Vec<(&'static str, Vec<String>)> {
+pub fn observe_preparation_policy(
+    mode: FormulaPlaneMode,
+    strict: bool,
+) -> Vec<(&'static str, Vec<String>)> {
     POLICY_CASES
         .iter()
         .map(|case| {
@@ -1170,24 +1182,48 @@ pub fn observe_preparation_policy(mode: FormulaPlaneMode) -> Vec<(&'static str, 
                 case.id,
                 POLICY_ROUTES
                     .iter()
-                    .map(|route| policy_outcome(*route, case, mode))
+                    .map(|route| policy_outcome(*route, case, mode, strict))
                     .collect(),
             )
         })
         .collect()
 }
 
-fn preparation_policy() -> ScenarioSpec {
+/// The same cases under the default BestEffort policy (decision 16,
+/// 2026-09-25): an unbound sheet or table no longer fails assignment, load or
+/// evaluation; the cell evaluates to the error Strict reported at preparation
+/// (`#REF!` for a sheet, `#NAME?` for a table), which guards catch. External
+/// references are unchanged.
+fn best_effort_table() -> [(&'static str, [&'static str; 5]); 9] {
+    let mut table = POLICY_TABLE;
+    for (case, outcomes) in table.iter_mut() {
+        let value = match *case {
+            "missing-sheet" => "value #REF!",
+            "missing-sheet-guarded" => "value 456",
+            "missing-table" => "value #NAME?",
+            _ => continue,
+        };
+        *outcomes = [value; 5];
+    }
+    table
+}
+
+fn preparation_policy(strict: bool) -> ScenarioSpec {
     let shape = Shape::new().scale(Scale::rows(1)).sheet(SHEET, |s| {
         s.values(Range::cells([(1, 1)]), r#gen::constant(Cell::number(1.0)));
     });
     let mut pin = Pin::default();
     pin.steps.push(Step::Load);
-    pin.custom(|wb| {
+    pin.custom(move |wb| {
         let mode = wb.engine().config.formula_plane_mode;
-        let observed = observe_preparation_policy(mode);
+        let observed = observe_preparation_policy(mode, strict);
+        let table = if strict {
+            POLICY_TABLE
+        } else {
+            best_effort_table()
+        };
         let mut diffs = Vec::new();
-        for ((case, outcomes), (expected_case, expected)) in observed.iter().zip(POLICY_TABLE) {
+        for ((case, outcomes), (expected_case, expected)) in observed.iter().zip(table) {
             assert_eq!(*case, expected_case);
             for ((route, got), want) in POLICY_ROUTES.iter().zip(outcomes).zip(expected) {
                 let want = expected_outcome(mode, *route, want);
@@ -1204,9 +1240,20 @@ fn preparation_policy() -> ScenarioSpec {
             Err(diffs.join("; "))
         }
     });
+    let (id, description) = if strict {
+        (
+            "preparation-policy-strict",
+            "preparation-failure outcome per route under the explicit Strict policy",
+        )
+    } else {
+        (
+            "preparation-policy",
+            "preparation outcome per route under the default BestEffort policy",
+        )
+    };
     pin.spec(
-        "preparation-policy",
-        "preparation-failure outcome per route under today's policy",
+        id,
+        description,
         shape,
         1,
         vec![LifecycleOp::Load, LifecycleOp::Evaluate],
@@ -1240,7 +1287,8 @@ pub fn pin_registry() -> Vec<ScenarioSpec> {
         form117(false),
         form117(true),
         sheet_delete_readd(),
-        preparation_policy(),
+        preparation_policy(false),
+        preparation_policy(true),
     ];
     specs.extend(span_pins());
     specs

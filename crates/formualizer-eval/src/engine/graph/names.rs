@@ -295,6 +295,10 @@ impl DependencyGraph {
         }
 
         self.name_vertex_lookup.insert(vertex_id, (scope, key));
+        // Logged before the pending readers re-bind: a sync they trigger
+        // gives the name its symbol node before extracting them.
+        #[cfg(feature = "unified_authority")]
+        self.authority_note_symbol(Some(vertex_id));
         self.resolve_pending_name_references(scope, name);
         self.bump_symbol_revision();
 
@@ -454,6 +458,8 @@ impl DependencyGraph {
                 }
                 // Propagate from the rebound name vertex itself, after its
                 // edges are current, so the transitive closure is reached.
+                #[cfg(feature = "unified_authority")]
+                self.authority_note_symbol(Some(vertex));
                 self.mark_dirty_many(&[vertex]);
             }
 
@@ -546,6 +552,8 @@ impl DependencyGraph {
             // Dirty the affected set WITH propagation, once every dependency
             // edge above is current, so cells reading a formula-backed
             // dependent name recompute instead of serving a cached value.
+            #[cfg(feature = "unified_authority")]
+            self.authority_note_symbol(Some(named_range.vertex));
             self.mark_dirty_many(&dirty_sources);
             self.bump_symbol_revision();
             Ok(())
@@ -949,6 +957,10 @@ impl DependencyGraph {
                 .collect::<Vec<_>>(),
         );
         if changed {
+            #[cfg(feature = "unified_authority")]
+            for &(vertex, _, _) in &changed_names {
+                self.authority_note_symbol(Some(vertex));
+            }
             self.bump_symbol_revision();
         }
 

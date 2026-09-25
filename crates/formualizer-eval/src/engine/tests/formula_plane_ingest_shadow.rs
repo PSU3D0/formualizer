@@ -1049,12 +1049,22 @@ fn formula_plane_spill_commit_redirties_span_reading_spill_children() {
         engine.get_cell_value("Sheet1", 3, 1),
         Some(LiteralValue::Number(3.0))
     );
+    // Expected Δ, legacy stale (design §8.2 FR5): the spill commit re-dirties
+    // its readers and the same request replans, so they are already fresh
+    // here; legacy publishes them one evaluation late.
+    #[cfg(feature = "unified_authority")]
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 2, 2),
+        Some(LiteralValue::Number(12.0))
+    );
 
     let result = engine.evaluate_all().unwrap();
+    #[cfg(not(feature = "unified_authority"))]
     assert!(
         result.computed_vertices >= 2,
         "expected spill-region notification to re-evaluate span, got {result:?}"
     );
+    let _ = result;
     assert_eq!(
         engine.get_cell_value("Sheet1", 2, 2),
         Some(LiteralValue::Number(12.0))

@@ -4,8 +4,9 @@
 //! which stays the runtime evaluation path until M1b. The graph's formula
 //! map records every vertex whose formula changes; `authority_sync` turns
 //! those into authority mutations (set formula / clear) and rebuilds from
-//! scratch at load and when a symbol (name, table, sheet) changes, because
-//! symbol rebinding is M4. Structural edits, moves and sheet operations (M3)
+//! scratch at the first request after load and when a table or source
+//! changes; name definitions are applied incrementally (their symbol nodes
+//! and the direct readers of the changed nodes). Structural edits, moves and sheet operations (M3)
 //! capture the formula identities, and the next sync rebuilds from the
 //! already-transformed formulas keeping them (`history`). FormulaPlane spans
 //! are M2: while spans exist the host is in a typed "unsupported under
@@ -87,6 +88,20 @@ pub struct AuthorityHost {
     /// Bumped whenever some reader's observed set changes: the schedule
     /// cache key's `rev.dyn` (design §8.4).
     pub(crate) rev_dyn: u64,
+    /// Symbol definitions changed since the last sync (names by vertex;
+    /// `other` for tables and sources). A sync applies name changes
+    /// incrementally; anything else, or an unlogged symbol revision,
+    /// rebuilds.
+    pub(crate) symbol_changes: SymbolChanges,
+    /// Symbol revisions applied without a rebuild (tests, perf probes).
+    pub(crate) symbol_incremental: u64,
+}
+
+/// See [`AuthorityHost::symbol_changes`].
+#[derive(Debug, Default)]
+pub(crate) struct SymbolChanges {
+    pub(crate) names: Vec<VertexId>,
+    pub(crate) other: bool,
 }
 
 /// Name vertex ↔ symbol-plane row. Assigned at symbol-revision rebuilds;
@@ -244,6 +259,10 @@ impl AuthorityHost {
 
     pub fn symbols(&self) -> &SymbolSlots {
         &self.symbols
+    }
+
+    pub fn symbol_incremental(&self) -> u64 {
+        self.symbol_incremental
     }
 
     pub fn structural_rebuilds(&self) -> u64 {

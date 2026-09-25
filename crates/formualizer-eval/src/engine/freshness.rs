@@ -293,6 +293,23 @@ impl<R: EvaluationContext> Engine<R> {
             }
     }
 
+    /// A request failed with a pass still armed (a commit preflight, a
+    /// deadline, cancellation): legacy clears a pass's dirty flags only at
+    /// its end, so a failed pass leaves every scheduled vertex dirty. Put
+    /// back the flags that commit-time clearing already took.
+    pub(super) fn freshness_abort_pass(&mut self) {
+        if !self.freshness.armed {
+            return;
+        }
+        self.freshness.armed = false;
+        let committed: Vec<VertexId> = self.freshness.committed.drain().collect();
+        for v in committed {
+            if !self.graph.is_dirty(v) && self.graph.is_live_formula_vertex(v) {
+                self.graph.set_dirty(v, true);
+            }
+        }
+    }
+
     pub(super) fn freshness_has_hints(&self) -> bool {
         !self.freshness.hints.is_empty()
     }
