@@ -56,7 +56,8 @@ fn compare_with_policy(formulas: &[String], cycle: CycleConfig) {
                 &Rect::cell(cell.coord.row(), cell.coord.col()),
             );
         }
-        let (vdeps, augmented) = VirtualDepBuilder::new(&actual).build(&candidates);
+        let (vdeps, augmented) =
+            VirtualDepBuilder::new(&actual).build_with_range_members(&candidates);
         assert!(augmented.is_empty());
         let reference = Scheduler::new(&actual.graph)
             .create_schedule_with_virtual(&candidates, &vdeps)

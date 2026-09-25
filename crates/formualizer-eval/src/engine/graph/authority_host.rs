@@ -276,7 +276,10 @@ impl DependencyGraph {
                 self.authority.store = store;
                 self.authority.symbol_rev = self.symbol_revision;
                 self.authority.builds += 1;
+                self.authority.revision += 1;
+                self.authority.clear_observed();
                 self.authority.state = HostState::Ready;
+                self.authority_fill_vertex_of_id();
             }
             Err(e) => self.authority.state = HostState::Failed(e),
         }
@@ -324,6 +327,9 @@ impl DependencyGraph {
             .collect();
         cells.sort_unstable();
         cells.dedup();
+        for &v in &touched {
+            self.authority.forget_observed(v);
+        }
         for cell in cells {
             let current = self
                 .get_vertex_for_cell(&cell_ref(cell))
@@ -336,10 +342,16 @@ impl DependencyGraph {
                         None => self.authority_revivable(c),
                         Some(_) => None,
                     };
-                    match revive {
+                    let result = match revive {
                         Some(id) => self.authority.store.set_formula_reviving(c, &facts, id),
                         None => self.authority.store.set_formula(c, &facts),
+                    };
+                    if result.is_ok()
+                        && let (Some(v), Some(id)) = (current, self.authority.store.ids().id_of(c))
+                    {
+                        self.authority.set_vertex_of_id(id, v);
                     }
+                    result
                 }
                 None => {
                     if let Some(id) = before {
@@ -349,6 +361,7 @@ impl DependencyGraph {
                 }
             };
             self.authority.incremental_mutations += 1;
+            self.authority.revision += 1;
             if debug_checks()
                 && let Err(m) = self.authority.store.check()
             {
@@ -1004,6 +1017,48 @@ impl DependencyGraph {
                 .slot(v)
                 .map(|slot| (SYMBOL_SHEET, slot, 0)),
         }
+    }
+
+    /// Record the executor vertex of every formula id after a build.
+    fn authority_fill_vertex_of_id(&mut self) {
+        let next = self.authority.store.ids().next_id() as usize;
+        let mut table = std::mem::take(&mut self.authority.vertex_of_id);
+        table.clear();
+        table.resize(next, u32::MAX);
+        for &v in self.vertex_formulas.keys() {
+            if self.store.is_deleted(v) {
+                continue;
+            }
+            let Some(addr) = self.store.grid_addr(v) else {
+                continue;
+            };
+            let cell = (self.store.sheet_id(v), addr.row(), addr.col());
+            if let Some(id) = self.authority.store.ids().id_of(cell)
+                && let Some(slot) = table.get_mut(id as usize)
+            {
+                *slot = v.0;
+            }
+        }
+        self.authority.vertex_of_id = table;
+    }
+
+    /// The executor vertex of an ordered formula cell with authority id
+    /// `id`: the side array when its vertex still sits at `cell`, else the
+    /// cell map.
+    #[inline]
+    pub(crate) fn authority_vertex_of_formula(&self, id: u32, cell: Cell) -> Option<VertexId> {
+        if cell.0 != SYMBOL_SHEET
+            && let Some(v) = self.authority.vertex_of_id(id)
+            && !self.store.is_deleted(v)
+            && self.store.sheet_id(v) == cell.0
+            && self
+                .store
+                .grid_addr(v)
+                .is_some_and(|a| a.row() == cell.1 && a.col() == cell.2)
+        {
+            return Some(v);
+        }
+        self.authority_vertex_of_cell(cell)
     }
 
     /// The executor vertex of an authority cell (grid or symbol plane).

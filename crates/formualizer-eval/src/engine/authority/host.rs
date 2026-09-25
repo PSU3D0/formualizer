@@ -18,6 +18,9 @@ use super::store::{AuthorityError, Store};
 use crate::engine::VertexId;
 use rustc_hash::FxHashMap;
 
+/// An observed read `(sheet, r0, c0, r1, c1)`, 0-based inclusive.
+pub type ObservedRect = (u16, u32, u32, u32, u32);
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum HostState {
     /// Not built yet (a load is in progress or nothing was queried).
@@ -53,6 +56,9 @@ pub struct AuthorityHost {
     /// the authority's propagation of the same seeds.
     pub(crate) dirty: DirtyStore,
     pub(crate) builds: u64,
+    /// Bumped by every change to `store` (build, incremental mutation):
+    /// the schedule-cache key (design §8.4).
+    pub(crate) revision: u64,
     pub(crate) incremental_mutations: u64,
     pub(crate) diff: DiffCounters,
     /// Symbol nodes (design §4.1): every defined name is one node on the
@@ -67,6 +73,20 @@ pub struct AuthorityHost {
     /// Retired ids that undo/redo may restore (M3, §6).
     pub(crate) journal: IdJournal,
     pub(crate) structural_rebuilds: u64,
+    /// Authority formula id → executor vertex (`u32::MAX` = unknown), so
+    /// the Schedule adapter and demand walk translate ordered cells without
+    /// a per-cell hash lookup. Filled at every build and incremental
+    /// `set_formula`; ids are never reused (decision 9), and readers verify
+    /// the vertex still sits at the cell, falling back to the hash map.
+    pub(crate) vertex_of_id: Vec<u32>,
+    /// `rdi_dyn` (design §8.2, OR1): for each dynamic reader with a
+    /// published, fresh value, the rectangles its last evaluation read,
+    /// `(sheet, r0, c0, r1, c1)`. Plans order it after them; demand walks
+    /// them. Dropped when the formula changes and on every rebuild.
+    pub(crate) observed: FxHashMap<VertexId, Vec<ObservedRect>>,
+    /// Bumped whenever some reader's observed set changes: the schedule
+    /// cache key's `rev.dyn` (design §8.4).
+    pub(crate) rev_dyn: u64,
 }
 
 /// Name vertex ↔ symbol-plane row. Assigned at symbol-revision rebuilds;
@@ -155,6 +175,63 @@ impl AuthorityHost {
 
     pub fn builds(&self) -> u64 {
         self.builds
+    }
+
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    pub fn rev_dyn(&self) -> u64 {
+        self.rev_dyn
+    }
+
+    /// The observed reads of dynamic reader `reader`, if recorded.
+    pub fn observed(&self, reader: VertexId) -> Option<&[ObservedRect]> {
+        self.observed.get(&reader).map(Vec::as_slice)
+    }
+
+    /// Record `reader`'s reads from a fresh commit (normalized).
+    pub(crate) fn set_observed(&mut self, reader: VertexId, mut reads: Vec<ObservedRect>) {
+        reads.sort_unstable();
+        reads.dedup();
+        if self.observed.get(&reader) != Some(&reads) {
+            self.observed.insert(reader, reads);
+            self.rev_dyn += 1;
+        }
+    }
+
+    pub(crate) fn forget_observed(&mut self, reader: VertexId) {
+        if self.observed.remove(&reader).is_some() {
+            self.rev_dyn += 1;
+        }
+    }
+
+    pub(crate) fn clear_observed(&mut self) {
+        if !self.observed.is_empty() {
+            self.observed.clear();
+            self.rev_dyn += 1;
+        }
+    }
+
+    /// The executor vertex recorded for authority formula id `id`.
+    #[inline]
+    pub fn vertex_of_id(&self, id: u32) -> Option<VertexId> {
+        match self.vertex_of_id.get(id as usize) {
+            Some(&v) if v != u32::MAX => Some(VertexId(v)),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn set_vertex_of_id(&mut self, id: u32, vertex: VertexId) {
+        let i = id as usize;
+        if i >= self.vertex_of_id.len() {
+            self.vertex_of_id.resize(i + 1, u32::MAX);
+        }
+        self.vertex_of_id[i] = vertex.0;
+    }
+
+    pub fn vertex_of_id_bytes(&self) -> usize {
+        self.vertex_of_id.capacity() * size_of::<u32>()
     }
 
     pub fn incremental_mutations(&self) -> u64 {

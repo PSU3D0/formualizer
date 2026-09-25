@@ -389,9 +389,39 @@ impl<'a, R: EvaluationContext> VirtualDepBuilder<'a, R> {
     pub fn new(engine: &'a Engine<R>) -> Self {
         Self { engine }
     }
+    /// Plan hints for `candidates`. Under `unified_authority` a compressed
+    /// range read is an ordinary static edge of the relation (R-1), so the
+    /// planner already orders every formula inside the range before its
+    /// reader; only dynamic readers get hints (design §8.2). Enumerating the
+    /// range members costs |readers| × |range formulas| hints (100M for
+    /// 1,000 SUMIFS over a 100k formula column), and resolving their used
+    /// extent at plan time caches it before same-pass spills commit.
     pub fn build(
         &self,
         candidates: &[VertexId],
+    ) -> (
+        rustc_hash::FxHashMap<VertexId, Vec<VertexId>>,
+        Vec<VertexId>,
+    ) {
+        self.build_inner(candidates, !cfg!(feature = "unified_authority"))
+    }
+
+    /// Legacy's hints, range members included: what the legacy scheduler
+    /// (the test oracle) needs, since its range stripes carry no edges.
+    pub fn build_with_range_members(
+        &self,
+        candidates: &[VertexId],
+    ) -> (
+        rustc_hash::FxHashMap<VertexId, Vec<VertexId>>,
+        Vec<VertexId>,
+    ) {
+        self.build_inner(candidates, true)
+    }
+
+    fn build_inner(
+        &self,
+        candidates: &[VertexId],
+        range_members: bool,
     ) -> (
         rustc_hash::FxHashMap<VertexId, Vec<VertexId>>,
         Vec<VertexId>,
@@ -401,8 +431,24 @@ impl<'a, R: EvaluationContext> VirtualDepBuilder<'a, R> {
         let augmented_vertices: Vec<VertexId> = Vec::new(); // Will be populated in Phase 3
 
         for &v in candidates {
-            let mut deps = RangeVirtualDepProvider::get_virtual_deps(self.engine, v);
-            let dynamic_deps = DynamicRefVirtualDepProvider::get_virtual_deps(self.engine, v);
+            let mut deps = if range_members {
+                RangeVirtualDepProvider::get_virtual_deps(self.engine, v)
+            } else {
+                Vec::new()
+            };
+            // Under the authority a reader with an observed read set is
+            // planned from it (rdi_dyn, rectangle hints); the pre-probe is
+            // for first evaluations only (design §8.2).
+            #[cfg(feature = "unified_authority")]
+            let observed =
+                !range_members && self.engine.graph.authority_host().observed(v).is_some();
+            #[cfg(not(feature = "unified_authority"))]
+            let observed = false;
+            let dynamic_deps = if observed {
+                Vec::new()
+            } else {
+                DynamicRefVirtualDepProvider::get_virtual_deps(self.engine, v)
+            };
 
             deps.extend(dynamic_deps);
             deps.sort_unstable();

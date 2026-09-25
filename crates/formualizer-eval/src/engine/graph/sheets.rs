@@ -2,6 +2,8 @@ use super::ast_utils::update_internal_sheet_references;
 use super::*;
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 
+const TOMBSTONE_SHEET_PREFIX: &str = "__FZ_MISSING_SHEET__";
+
 impl DependencyGraph {
     /// Add a new sheet to the workbook.
     ///
@@ -195,7 +197,16 @@ impl DependencyGraph {
     }
 
     fn tombstone_marker(sheet_name: &str) -> String {
-        format!("__FZ_MISSING_SHEET__{sheet_name}")
+        format!("{TOMBSTONE_SHEET_PREFIX}{sheet_name}")
+    }
+
+    /// Whether `sheet_name` is a removed sheet's tombstone marker. Such a
+    /// reference stays a preparation failure (`#REF!`) under either
+    /// preparation policy: the tombstone registry heals it when the sheet
+    /// returns, and `heal_orphaned_formulas` relies on the formula staying
+    /// in the ref-error set until every removed sheet is back.
+    pub(crate) fn is_tombstone_sheet(sheet_name: &str) -> bool {
+        sheet_name.starts_with(TOMBSTONE_SHEET_PREFIX)
     }
 
     fn rewrite_formula_sheet_to_tombstone(&mut self, vertex_id: VertexId, sheet_name: &str) {

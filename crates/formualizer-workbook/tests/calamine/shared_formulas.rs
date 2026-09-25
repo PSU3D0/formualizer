@@ -542,6 +542,8 @@ fn assert_shared_load(mut adapter: CalamineAdapter) {
     assert_eq!(stats.shared_formula_tags_observed, Some(6));
 }
 
+use super::strict_interactive;
+
 #[test]
 fn cached_formula_values_remain_suppressed_when_parse_policy_keeps_cached_value() {
     for deferred in [false, true] {
@@ -2001,7 +2003,7 @@ fn mixed_shared_targets_demand_coordinates_not_family_dependencies() {
         FormulaPlaneMode::Shadow,
         FormulaPlaneMode::AuthoritativeExperimental,
     ] {
-        let mut config = WorkbookConfig::interactive();
+        let mut config = strict_interactive();
         config.eval.formula_plane_mode = mode;
         let mut wb = Workbook::from_reader(
             CalamineAdapter::open_bytes(mixed_isolation_xlsx()).unwrap(),
@@ -2091,7 +2093,7 @@ fn complete_shared_sum_target_preserves_compression_and_unrelated_errors() {
         (true, false, 0),
         (true, true, 0),
     ] {
-        let mut config = WorkbookConfig::interactive();
+        let mut config = strict_interactive();
         config.eval.formula_plane_mode = FormulaPlaneMode::AuthoritativeExperimental;
         let mut wb = Workbook::from_reader(
             CalamineAdapter::open_bytes(shared_sum_target_xlsx(1000, true, fragmented)).unwrap(),
@@ -2225,7 +2227,7 @@ fn complete_shared_target_related_broken_precedent_remains_an_exception() {
         xml.replace_range(start..end, "<c r=\"A700\"><f>NOSHEET!A1</f></c>");
         xml
     });
-    let mut config = WorkbookConfig::interactive();
+    let mut config = strict_interactive();
     config.eval.formula_plane_mode = FormulaPlaneMode::AuthoritativeExperimental;
     let mut wb = Workbook::from_reader(
         CalamineAdapter::open_bytes(bytes).unwrap(),
@@ -2539,7 +2541,7 @@ fn shared_target_source_order_ordinary_override_wins_without_old_dependencies() 
         FormulaPlaneMode::Shadow,
         FormulaPlaneMode::AuthoritativeExperimental,
     ] {
-        let mut config = WorkbookConfig::interactive();
+        let mut config = strict_interactive();
         config.eval.formula_plane_mode = mode;
         let mut wb = Workbook::from_reader(
             CalamineAdapter::open_bytes(bytes.clone()).unwrap(),
@@ -2573,7 +2575,7 @@ fn shared_locator_retained_admission_includes_anchor_capacity_after_failure() {
     let mut wb = Workbook::from_reader(
         CalamineAdapter::open_bytes(mixed_isolation_xlsx()).unwrap(),
         LoadStrategy::EagerAll,
-        WorkbookConfig::interactive(),
+        strict_interactive(),
     )
     .unwrap();
     let mut budgets = EvaluationBudgets::default();

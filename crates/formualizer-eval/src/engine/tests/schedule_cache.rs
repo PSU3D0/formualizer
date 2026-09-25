@@ -323,9 +323,21 @@ fn schedule_cache_shared_handles_do_not_expand_dynamic_or_range_eligibility() {
             engine.reset_recalc_reuse_probe();
             engine.evaluate_all().unwrap();
             let probe = engine.recalc_reuse_probe();
-            assert!(probe.schedule_cache_ineligible > 0);
-            assert_eq!(probe.schedule_shared_handles, 0);
-            assert!(engine.cached_static_schedule_for_test().is_none());
+            // Reclassified under unified_authority (internal representation):
+            // a range read is a static edge of the authority relation, so a
+            // range reader's schedule is cacheable; a dynamic reader is
+            // cacheable once it has an observed read set (its first
+            // evaluation, value 2, needs a pre-probe), keyed on rev.dyn
+            // (design §8.4).
+            if cfg!(feature = "unified_authority") && (!formula.contains("INDIRECT") || value == 3)
+            {
+                assert_eq!(probe.schedule_cache_ineligible, 0);
+                assert!(engine.cached_static_schedule_for_test().is_some());
+            } else {
+                assert!(probe.schedule_cache_ineligible > 0);
+                assert_eq!(probe.schedule_shared_handles, 0);
+                assert!(engine.cached_static_schedule_for_test().is_none());
+            }
             assert!(
                 matches!(engine.get_cell_value("Sheet1", 1, 2), Some(LiteralValue::Number(n)) if n == value as f64)
                     || engine.get_cell_value("Sheet1", 1, 2) == Some(LiteralValue::Int(value))

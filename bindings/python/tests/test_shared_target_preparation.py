@@ -7,6 +7,14 @@ import pytest
 import formualizer as fz
 
 
+def strict_config() -> fz.WorkbookConfig:
+    """These tests use a missing sheet or table to provoke a preparation
+    failure: that needs strict preparation, the default before 0.10."""
+    eval_config = fz.EvaluationConfig()
+    eval_config.strict_preparation = True
+    return fz.WorkbookConfig(eval_config=eval_config)
+
+
 def shared_bytes(path, records):
     namespace = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
     output = BytesIO()
@@ -48,7 +56,9 @@ def test_healthy_shared_member_does_not_demand_broken_master_precedent(
         xlsx_builder(populate),
         {"B1": (1, "B1:B2", "A1+1"), "B2": (1, None, None)},
     )
-    book = fz.Workbook.from_bytes(raw, span_evaluation=span_evaluation)
+    book = fz.Workbook.from_bytes(
+        raw, config=strict_config(), span_evaluation=span_evaluation
+    )
     assert book.evaluate_cell("S", 2, 2) == 42
     with pytest.raises(fz.ExcelEvaluationError):
         book.evaluate_cell("S", 1, 2)
@@ -82,6 +92,7 @@ def test_whole_shared_family_target_retains_unrelated_failure_and_edit_history(
     records["B1"] = (1, f"B1:B{count}", "A1+1")
     book = fz.Workbook.from_bytes(
         shared_bytes(xlsx_builder(populate), records),
+        config=strict_config(),
         span_evaluation=span_evaluation,
     )
     expected = count * (count + 1) // 2 + count

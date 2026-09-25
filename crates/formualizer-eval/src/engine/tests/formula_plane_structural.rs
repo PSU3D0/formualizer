@@ -851,7 +851,13 @@ fn formula_plane_delete_fully_contains_span_removes_it_and_clears_overlays() {
 
 #[test]
 fn formula_plane_ingest_rejects_unbounded_reference_to_unknown_sheet_without_creating_sheet() {
-    let mut engine = authoritative_engine();
+    // Explicit Strict: the rejection is the pre-0.10 default.
+    let mut engine = Engine::new(
+        TestWorkbook::default(),
+        EvalConfig::default()
+            .with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental)
+            .with_preparation_policy(crate::engine::PreparationPolicy::Strict),
+    );
     let formula = record(&mut engine, 1, 1, "=SUM(MissingSheet!A:A)");
 
     let result =

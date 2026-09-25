@@ -56,3 +56,13 @@ mod shared_formulas;
 mod sheet_load;
 #[cfg(feature = "umya")]
 mod temporal_roundtrip;
+
+/// `WorkbookConfig::interactive()` with `PreparationPolicy::Strict`. Tests
+/// that use a missing sheet to provoke a preparation failure opt into the
+/// pre-0.10 policy explicitly (the default became `BestEffort`).
+#[cfg(feature = "calamine")]
+pub(crate) fn strict_interactive() -> formualizer_workbook::WorkbookConfig {
+    let mut config = formualizer_workbook::WorkbookConfig::interactive();
+    config.eval.preparation_policy = formualizer_eval::engine::PreparationPolicy::Strict;
+    config
+}

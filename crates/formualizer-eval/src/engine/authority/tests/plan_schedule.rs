@@ -207,7 +207,8 @@ fn schedule_adapter_actual_legacy_scc_and_legality() {
         let vertices: Vec<_> = (0..formulas.len() as u32)
             .map(|r| *engine.graph.get_vertex_id_for_address(&addr(r)).unwrap())
             .collect();
-        let (vdeps, augmented) = VirtualDepBuilder::new(&engine).build(&vertices);
+        let (vdeps, augmented) =
+            VirtualDepBuilder::new(&engine).build_with_range_members(&vertices);
         assert!(augmented.is_empty());
         let legacy = Scheduler::new(&engine.graph)
             .create_schedule_with_virtual(&vertices, &vdeps)
