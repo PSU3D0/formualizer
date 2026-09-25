@@ -60,6 +60,28 @@ fn graph_sheet_registry<'context>(
     &context.graph.sheet_reg
 }
 
+/// `PreparationPolicy::BestEffort` on a collecting extraction: a missing
+/// sheet or table becomes a pending symbol link (re-bound when it is added)
+/// instead of a preparation error.
+fn defer_unbound(
+    context: &mut GraphReferenceContext<'_>,
+    kind: &str,
+    name: &str,
+    error: ExcelError,
+) -> Result<(), ExcelError> {
+    if !name.is_empty()
+        && context.unresolved_name_policy == UnresolvedNamePolicy::Collect
+        && context.graph.config.preparation_policy == crate::engine::PreparationPolicy::BestEffort
+    {
+        context
+            .unresolved_names
+            .insert(DependencyGraph::unbound_symbol_key(kind, name));
+        Ok(())
+    } else {
+        Err(error)
+    }
+}
+
 fn collect_graph_reference(
     context: &mut GraphReferenceContext<'_>,
     reference: crate::engine::refs::SemanticReference<'_>,
@@ -96,7 +118,10 @@ fn collect_graph_reference(
         },
         SemanticReference::Cell(cell) => {
             let sheet_id = match cell.sheet.name() {
-                Some(name) => context.graph.resolve_existing_sheet_id(name)?,
+                Some(name) => match context.graph.resolve_existing_sheet_id(name) {
+                    Ok(id) => id,
+                    Err(e) => return defer_unbound(context, "sheet", name, e),
+                },
                 None => context.current_sheet_id,
             };
             let address = CellRef::new(sheet_id, Coord::from_excel(cell.row, cell.col, true, true));
@@ -107,13 +132,18 @@ fn collect_graph_reference(
             Ok(())
         }
         SemanticReference::OpenRange(range) => {
+            let sheet_name = range.sheet.name();
             if let Some(SharedRef::Range(range)) = range.original.to_sheet_ref_lossy() {
                 let owned = range.into_owned();
                 // `Current` is the sheet the formula lives on.
-                let sheet_id = context
+                let sheet_id = match context
                     .graph
                     .sheet_reg()
-                    .resolve_locator(&owned.sheet, context.current_sheet_id)?;
+                    .resolve_locator(&owned.sheet, context.current_sheet_id)
+                {
+                    Ok(id) => id,
+                    Err(e) => return defer_unbound(context, "sheet", sheet_name.unwrap_or(""), e),
+                };
                 context.range_dependencies.push(SharedRangeRef {
                     sheet: SharedSheetLocator::Id(sheet_id),
                     start_row: owned.start_row,
@@ -137,7 +167,10 @@ fn collect_graph_reference(
             // remains independent from dependency planning's historical 16.
             if area <= context.graph.config.range_expansion_limit as u64 {
                 let sheet_id = match range.sheet.name() {
-                    Some(name) => context.graph.resolve_existing_sheet_id(name)?,
+                    Some(name) => match context.graph.resolve_existing_sheet_id(name) {
+                        Ok(id) => id,
+                        Err(e) => return defer_unbound(context, "sheet", name, e),
+                    },
                     None => context.current_sheet_id,
                 };
                 for row in sr..=er {
@@ -150,13 +183,24 @@ fn collect_graph_reference(
                         context.dependencies.insert(vertex);
                     }
                 }
-            } else if let Some(SharedRef::Range(range)) = range.original.to_sheet_ref_lossy() {
-                let owned = range.into_owned();
+            } else if let Some(SharedRef::Range(shared)) = range.original.to_sheet_ref_lossy() {
+                let owned = shared.into_owned();
                 // `Current` is the sheet the formula lives on.
-                let sheet_id = context
+                let sheet_id = match context
                     .graph
                     .sheet_reg()
-                    .resolve_locator(&owned.sheet, context.current_sheet_id)?;
+                    .resolve_locator(&owned.sheet, context.current_sheet_id)
+                {
+                    Ok(id) => id,
+                    Err(e) => {
+                        return defer_unbound(
+                            context,
+                            "sheet",
+                            range.sheet.name().unwrap_or(""),
+                            e,
+                        );
+                    }
+                };
                 context.range_dependencies.push(SharedRangeRef {
                     sheet: SharedSheetLocator::Id(sheet_id),
                     start_row: owned.start_row,
@@ -198,8 +242,13 @@ fn collect_graph_reference(
             {
                 context.dependencies.insert(source.vertex);
             } else {
-                return Err(ExcelError::new(ExcelErrorKind::Name)
-                    .with_message(format!("Undefined table: {}", table_reference.name)));
+                return defer_unbound(
+                    context,
+                    "table",
+                    &table_reference.name,
+                    ExcelError::new(ExcelErrorKind::Name)
+                        .with_message(format!("Undefined table: {}", table_reference.name)),
+                );
             }
             Ok(())
         }

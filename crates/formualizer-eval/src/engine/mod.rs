@@ -728,6 +728,20 @@ pub enum TemporalEgress {
     Serial,
 }
 
+/// What preparing a formula does with a reference to a sheet or table that
+/// does not exist (#454, docs/preparation-error-policy.md).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PreparationPolicy {
+    /// Preparation fails ("Sheet not found", "Undefined table"): today's
+    /// behavior and the default.
+    #[default]
+    Strict,
+    /// The formula is accepted with the reference unbound (it evaluates to
+    /// an error) and re-binds when the sheet or table is added, like an
+    /// undefined name does under either policy.
+    BestEffort,
+}
+
 /// Configuration for the evaluation engine
 #[derive(Debug, Clone)]
 pub struct EvalConfig {
@@ -844,6 +858,10 @@ pub struct EvalConfig {
     /// for on-demand graph construction during evaluation.
     pub defer_graph_building: bool,
 
+    /// Missing sheets and tables at preparation: fail (default) or bind
+    /// later. See [`PreparationPolicy`].
+    pub preparation_policy: PreparationPolicy,
+
     /// Enable virtual dependency convergence telemetry collection.
     ///
     /// When disabled, the engine avoids per-pass timing/edge-count bookkeeping.
@@ -917,6 +935,7 @@ impl Default for EvalConfig {
             temporal_egress: TemporalEgress::default(),
             formula_parse_policy: FormulaParsePolicy::Strict,
             defer_graph_building: false,
+            preparation_policy: PreparationPolicy::Strict,
             enable_virtual_dep_telemetry: false,
             formula_plane_mode: FormulaPlaneMode::Off,
             max_formula_plane_cache_candidates: 100_000,
@@ -929,6 +948,11 @@ impl Default for EvalConfig {
 
 impl EvalConfig {
     #[inline]
+    pub fn with_preparation_policy(mut self, policy: PreparationPolicy) -> Self {
+        self.preparation_policy = policy;
+        self
+    }
+
     pub fn with_range_expansion_limit(mut self, limit: usize) -> Self {
         self.range_expansion_limit = limit;
         self

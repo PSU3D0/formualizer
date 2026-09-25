@@ -5507,6 +5507,20 @@ impl core::fmt::Debug for formualizer_eval::engine::PreparationOutcome
 pub fn formualizer_eval::engine::PreparationOutcome::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for formualizer_eval::engine::PreparationOutcome
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::PreparationOutcome
+pub enum formualizer_eval::engine::PreparationPolicy
+pub formualizer_eval::engine::PreparationPolicy::BestEffort
+pub formualizer_eval::engine::PreparationPolicy::Strict
+impl core::clone::Clone for formualizer_eval::engine::PreparationPolicy
+pub fn formualizer_eval::engine::PreparationPolicy::clone(&self) -> formualizer_eval::engine::PreparationPolicy
+impl core::cmp::Eq for formualizer_eval::engine::PreparationPolicy
+impl core::cmp::PartialEq for formualizer_eval::engine::PreparationPolicy
+pub fn formualizer_eval::engine::PreparationPolicy::eq(&self, &formualizer_eval::engine::PreparationPolicy) -> bool
+impl core::default::Default for formualizer_eval::engine::PreparationPolicy
+pub fn formualizer_eval::engine::PreparationPolicy::default() -> formualizer_eval::engine::PreparationPolicy
+impl core::fmt::Debug for formualizer_eval::engine::PreparationPolicy
+pub fn formualizer_eval::engine::PreparationPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_eval::engine::PreparationPolicy
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::PreparationPolicy
 #[non_exhaustive] pub enum formualizer_eval::engine::PrepareScope
 pub formualizer_eval::engine::PrepareScope::Exact
 pub formualizer_eval::engine::PrepareScope::Sheets(alloc::vec::Vec<alloc::string::String>)
@@ -6330,6 +6344,7 @@ pub formualizer_eval::engine::EvalConfig::max_vertices: core::option::Option<usi
 pub formualizer_eval::engine::EvalConfig::pk_compaction_interval_ops: u64
 pub formualizer_eval::engine::EvalConfig::pk_reject_cycle_edges: bool
 pub formualizer_eval::engine::EvalConfig::pk_visit_budget: usize
+pub formualizer_eval::engine::EvalConfig::preparation_policy: formualizer_eval::engine::PreparationPolicy
 pub formualizer_eval::engine::EvalConfig::range_expansion_limit: usize
 pub formualizer_eval::engine::EvalConfig::sheet_index_mode: formualizer_eval::engine::SheetIndexMode
 pub formualizer_eval::engine::EvalConfig::spill: formualizer_eval::engine::SpillConfig
@@ -6355,6 +6370,7 @@ pub fn formualizer_eval::engine::EvalConfig::with_formula_overlay(self, bool) ->
 pub fn formualizer_eval::engine::EvalConfig::with_formula_parse_policy(self, formualizer_eval::engine::FormulaParsePolicy) -> Self
 pub fn formualizer_eval::engine::EvalConfig::with_formula_plane_mode(self, formualizer_eval::engine::FormulaPlaneMode) -> Self
 pub fn formualizer_eval::engine::EvalConfig::with_parallel(self, bool) -> Self
+pub fn formualizer_eval::engine::EvalConfig::with_preparation_policy(self, formualizer_eval::engine::PreparationPolicy) -> Self
 pub fn formualizer_eval::engine::EvalConfig::with_range_expansion_limit(self, usize) -> Self
 pub fn formualizer_eval::engine::EvalConfig::with_virtual_dep_telemetry(self, bool) -> Self
 impl core::clone::Clone for formualizer_eval::engine::EvalConfig

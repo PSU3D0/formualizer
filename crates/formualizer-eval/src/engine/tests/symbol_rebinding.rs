@@ -6,8 +6,8 @@
 //! the right order after it, and keep tracking its precedents afterwards.
 
 use crate::engine::named_range::{NameScope, NamedDefinition};
-use crate::engine::{Engine, EvalConfig};
-use crate::reference::{CellRef, Coord};
+use crate::engine::{Engine, EvalConfig, PreparationPolicy};
+use crate::reference::{CellRef, Coord, RangeRef};
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::{ExcelErrorKind, LiteralValue};
 use formualizer_parse::parser::parse;
@@ -143,4 +143,127 @@ fn sheet_added_after_an_eager_value_reader_tracks_edits() {
     set(&mut engine, "Other", 1, 2, 2.0);
     engine.evaluate_all().unwrap();
     assert_eq!(num(&engine, "Sheet1", 1, 1), Some(8.0));
+}
+
+fn best_effort(defer: bool) -> EvalConfig {
+    EvalConfig {
+        defer_graph_building: defer,
+        ..EvalConfig::default()
+    }
+    .with_preparation_policy(PreparationPolicy::BestEffort)
+}
+
+#[test]
+fn strict_policy_still_rejects_missing_sheet_and_table() {
+    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    assert_eq!(
+        engine.config.preparation_policy,
+        PreparationPolicy::Strict,
+        "legacy policy is the default"
+    );
+    assert!(
+        engine
+            .set_cell_formula("Sheet1", 1, 1, parse("=Nope!A1").unwrap())
+            .is_err()
+    );
+    assert!(
+        engine
+            .set_cell_formula("Sheet1", 1, 2, parse("=SUM(NoTable[X])").unwrap())
+            .is_err()
+    );
+}
+
+#[test]
+fn best_effort_sheet_added_later_binds_and_orders() {
+    for defer in [false, true] {
+        let mut engine = Engine::new(TestWorkbook::new(), best_effort(defer));
+        formula(&mut engine, "Sheet1", 1, 1, "=Later!A1*2");
+        formula(&mut engine, "Sheet1", 1, 2, "=SUM(Later!A1:A1000)");
+        engine.evaluate_all().unwrap();
+        assert_eq!(num(&engine, "Sheet1", 1, 1), None, "unbound while missing");
+
+        engine.add_sheet("Later").unwrap();
+        set(&mut engine, "Later", 1, 2, 4.0);
+        formula(&mut engine, "Later", 1, 1, "=B1+1");
+        engine.evaluate_all().unwrap();
+        assert_eq!(num(&engine, "Sheet1", 1, 1), Some(10.0), "defer={defer}");
+        assert_eq!(num(&engine, "Sheet1", 1, 2), Some(5.0), "defer={defer}");
+
+        set(&mut engine, "Later", 1, 2, 9.0);
+        engine.evaluate_all().unwrap();
+        assert_eq!(num(&engine, "Later", 1, 1), Some(10.0));
+        assert_eq!(num(&engine, "Sheet1", 1, 1), Some(20.0));
+        assert_eq!(num(&engine, "Sheet1", 1, 2), Some(10.0));
+    }
+}
+
+#[test]
+fn best_effort_sheet_created_implicitly_binds() {
+    let mut engine = Engine::new(TestWorkbook::new(), best_effort(false));
+    formula(&mut engine, "Sheet1", 1, 1, "=Later!A1+1");
+    engine.evaluate_all().unwrap();
+    // A value write creates the sheet without add_sheet.
+    set(&mut engine, "Later", 1, 1, 41.0);
+    engine.evaluate_all().unwrap();
+    assert_eq!(num(&engine, "Sheet1", 1, 1), Some(42.0));
+}
+
+#[test]
+fn best_effort_table_defined_later_binds_and_tracks_edits() {
+    for defer in [false, true] {
+        let mut engine = Engine::new(TestWorkbook::new(), best_effort(defer));
+        set(&mut engine, "Sheet1", 2, 1, 5.0);
+        set(&mut engine, "Sheet1", 3, 1, 7.0);
+        set(&mut engine, "Sheet1", 4, 1, 10.0);
+        formula(&mut engine, "Sheet1", 1, 4, "=SUM(Sales[Amount])");
+        // A formula outside the table reads the reader, so it must follow it.
+        formula(&mut engine, "Sheet1", 1, 5, "=D1+1");
+        engine.evaluate_all().unwrap();
+        assert_eq!(num(&engine, "Sheet1", 1, 4), None, "unbound while missing");
+
+        let sheet = engine.sheet_id("Sheet1").unwrap();
+        let range = RangeRef::new(
+            CellRef::new(sheet, Coord::from_excel(1, 1, true, true)),
+            CellRef::new(sheet, Coord::from_excel(4, 1, true, true)),
+        );
+        engine
+            .define_table("Sales", range, true, vec!["Amount".into()], false)
+            .unwrap();
+        engine.evaluate_all().unwrap();
+        assert_eq!(num(&engine, "Sheet1", 1, 4), Some(22.0), "defer={defer}");
+
+        assert_eq!(num(&engine, "Sheet1", 1, 5), Some(23.0));
+
+        set(&mut engine, "Sheet1", 2, 1, 1.0);
+        engine.evaluate_all().unwrap();
+        assert_eq!(num(&engine, "Sheet1", 1, 4), Some(18.0));
+        assert_eq!(num(&engine, "Sheet1", 1, 5), Some(19.0));
+    }
+}
+
+/// A formula inside a table's body read through a structured reference must
+/// run before the reader. Legacy orders the reader first (the table symbol
+/// carries no edge to body formulas): 12 then 18 here. The authority's table
+/// edge covers the body, so the reader follows A4. Expected Δ, legacy wrong.
+#[cfg(feature = "unified_authority")]
+#[test]
+fn structured_reader_follows_formula_in_table_body() {
+    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    set(&mut engine, "Sheet1", 2, 1, 5.0);
+    set(&mut engine, "Sheet1", 3, 1, 7.0);
+    let sheet = engine.sheet_id("Sheet1").unwrap();
+    let range = RangeRef::new(
+        CellRef::new(sheet, Coord::from_excel(1, 1, true, true)),
+        CellRef::new(sheet, Coord::from_excel(4, 1, true, true)),
+    );
+    engine
+        .define_table("Sales", range, true, vec!["Amount".into()], false)
+        .unwrap();
+    formula(&mut engine, "Sheet1", 4, 1, "=A2*2");
+    formula(&mut engine, "Sheet1", 1, 4, "=SUM(Sales[Amount])");
+    engine.evaluate_all().unwrap();
+    assert_eq!(num(&engine, "Sheet1", 1, 4), Some(22.0));
+    set(&mut engine, "Sheet1", 2, 1, 1.0);
+    engine.evaluate_all().unwrap();
+    assert_eq!(num(&engine, "Sheet1", 1, 4), Some(10.0));
 }
