@@ -142,3 +142,25 @@ impl SetText for Engine<TestWorkbook> {
             .unwrap();
     }
 }
+
+/// Expected Δ, legacy wrong: an open column read over a spill that commits
+/// earlier in the same pass. Legacy's range virtual deps resolve the column's
+/// used extent at plan time, which fills the per-snapshot used-bounds cache
+/// before the spill exists; the reader then sees only the anchor row (legacy
+/// gives SUM 1 / COUNT 1, and keeps it on later recalcs). The authority
+/// orders the anchor by its static range edge and probes nothing at plan
+/// time, so the reader sees the committed spill (Excel: 6 / 3).
+#[cfg(feature = "unified_authority")]
+#[test]
+fn open_column_reader_sees_spill_committed_earlier_in_pass() {
+    let mut engine = engine();
+    formula(&mut engine, 10, 3, "=SEQUENCE(3)");
+    formula(&mut engine, 1, 1, "=SUM(C:C)");
+    formula(&mut engine, 2, 1, "=COUNT(C:C)");
+    engine.evaluate_all().unwrap();
+    assert_eq!(num(&engine, 1, 1), Some(6.0));
+    assert_eq!(num(&engine, 2, 1), Some(3.0));
+    set(&mut engine, 1, 5, 1.0);
+    engine.evaluate_all().unwrap();
+    assert_eq!(num(&engine, 1, 1), Some(6.0));
+}

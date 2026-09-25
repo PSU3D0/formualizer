@@ -50,6 +50,9 @@ pub struct AuthorityHost {
     /// the authority's propagation of the same seeds.
     pub(crate) dirty: DirtyStore,
     pub(crate) builds: u64,
+    /// Bumped by every change to `store` (build, incremental mutation):
+    /// the schedule-cache key (design §8.4).
+    pub(crate) revision: u64,
     pub(crate) incremental_mutations: u64,
     pub(crate) diff: DiffCounters,
     /// Symbol nodes (design §4.1): every defined name is one node on the
@@ -58,6 +61,12 @@ pub struct AuthorityHost {
     /// planned with the cells, so a name's vertex is scheduled as a unit
     /// between its precedents and its readers.
     pub(crate) symbols: SymbolSlots,
+    /// Authority formula id → executor vertex (`u32::MAX` = unknown), so
+    /// the Schedule adapter and demand walk translate ordered cells without
+    /// a per-cell hash lookup. Filled at every build and incremental
+    /// `set_formula`; ids are never reused (decision 9), and readers verify
+    /// the vertex still sits at the cell, falling back to the hash map.
+    pub(crate) vertex_of_id: Vec<u32>,
 }
 
 /// Name vertex ↔ symbol-plane row. Assigned at symbol-revision rebuilds;
@@ -146,6 +155,31 @@ impl AuthorityHost {
 
     pub fn builds(&self) -> u64 {
         self.builds
+    }
+
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    /// The executor vertex recorded for authority formula id `id`.
+    #[inline]
+    pub fn vertex_of_id(&self, id: u32) -> Option<VertexId> {
+        match self.vertex_of_id.get(id as usize) {
+            Some(&v) if v != u32::MAX => Some(VertexId(v)),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn set_vertex_of_id(&mut self, id: u32, vertex: VertexId) {
+        let i = id as usize;
+        if i >= self.vertex_of_id.len() {
+            self.vertex_of_id.resize(i + 1, u32::MAX);
+        }
+        self.vertex_of_id[i] = vertex.0;
+    }
+
+    pub fn vertex_of_id_bytes(&self) -> usize {
+        self.vertex_of_id.capacity() * size_of::<u32>()
     }
 
     pub fn incremental_mutations(&self) -> u64 {

@@ -1756,9 +1756,20 @@ mod tests {
                 else {
                     panic!("expected original range");
                 };
+                // Legacy resolves Data!C:C to the anchor row only (10): its
+                // plan-time range probe caches the used extent before the
+                // spill commits. The authority probes nothing at plan time,
+                // so the committed spill child (row 11) is visible
+                // (reclassified; see dynamic_freshness.rs
+                // `open_column_reader_sees_spill_committed_earlier_in_pass`).
+                let rows = if cfg!(feature = "unified_authority") {
+                    11
+                } else {
+                    10
+                };
                 assert_eq!(
                     original.dims(),
-                    (10, 1),
+                    (rows, 1),
                     "probe must take the expansion branch"
                 );
                 let (AggregateArgument::Range(view), logical) =

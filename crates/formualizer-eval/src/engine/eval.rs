@@ -2198,6 +2198,9 @@ fn schedule_probe_retained_bytes(schedule: &crate::engine::Schedule) -> usize {
 #[derive(Debug, Clone)]
 struct CachedScheduleEntry {
     topology_epoch: u64,
+    /// Authority store revision the schedule was planned from (design §8.4;
+    /// always 0 without `unified_authority`).
+    authority_revision: u64,
     candidate_vertices: Vec<VertexId>,
     schedule: Arc<crate::engine::scheduler::Schedule>,
 }
@@ -25039,9 +25042,13 @@ where
         // Fold pending edge deltas once per schedule build so traversal uses
         // the zero-allocation CSR slices (#125).
         self.graph.flush_pending_edge_deltas();
+        // The cache key includes the authority revision: sync first.
+        #[cfg(feature = "unified_authority")]
+        self.graph.authority_sync();
         if self.can_use_static_schedule_cache(to_evaluate) {
             if let Some(cached) = self.cached_static_schedule.as_ref()
                 && cached.topology_epoch == self.topology_epoch
+                && cached.authority_revision == self.schedule_cache_authority_revision()
                 && cached.candidate_vertices.as_slice() == to_evaluate
             {
                 let meta = ScheduleBuildMeta {
@@ -25100,6 +25107,7 @@ where
                 }
                 self.cached_static_schedule = Some(CachedScheduleEntry {
                     topology_epoch: self.topology_epoch,
+                    authority_revision: self.schedule_cache_authority_revision(),
                     candidate_vertices: to_evaluate.to_vec(),
                     schedule: Arc::clone(&schedule),
                 });
@@ -25264,7 +25272,7 @@ where
             scratch_limit,
             |cell| {
                 self.graph
-                    .authority_vertex_of_cell((cell.sheet, cell.row, cell.col))
+                    .authority_vertex_of_formula(cell.id, (cell.sheet, cell.row, cell.col))
                     .ok_or_else(|| failure("missing executor identity".to_owned()))
             },
             |_work| {
@@ -25293,11 +25301,34 @@ where
         Ok(adapted.schedule)
     }
 
+    /// Static-schedule cache eligibility. Legacy excludes range readers:
+    /// their order comes from per-request range virtual deps. Under the
+    /// authority a range read is a static edge of the relation, so only
+    /// dynamic readers (whose hints are per request) are excluded, and the
+    /// key adds the authority revision (design §8.4).
     fn can_use_static_schedule_cache(&self, to_evaluate: &[VertexId]) -> bool {
-        !to_evaluate.is_empty()
-            && to_evaluate.iter().copied().all(|v| {
-                !self.graph.is_dynamic(v) && self.graph.get_range_dependencies(v).is_none()
-            })
+        #[cfg(feature = "unified_authority")]
+        {
+            !to_evaluate.is_empty() && to_evaluate.iter().all(|&v| !self.graph.is_dynamic(v))
+        }
+        #[cfg(not(feature = "unified_authority"))]
+        {
+            !to_evaluate.is_empty()
+                && to_evaluate.iter().copied().all(|v| {
+                    !self.graph.is_dynamic(v) && self.graph.get_range_dependencies(v).is_none()
+                })
+        }
+    }
+
+    fn schedule_cache_authority_revision(&self) -> u64 {
+        #[cfg(feature = "unified_authority")]
+        {
+            self.graph.authority_host().revision()
+        }
+        #[cfg(not(feature = "unified_authority"))]
+        {
+            0
+        }
     }
 
     fn start_virtual_dep_telemetry(&self) -> VirtualDepTelemetry {
@@ -25473,26 +25504,30 @@ where
         let mut to_evaluate: FxHashSet<VertexId> = FxHashSet::default();
         let mut vdeps: FxHashMap<VertexId, Vec<VertexId>> = FxHashMap::default();
         let mut visited: FxHashSet<Cell> = FxHashSet::default();
-        let mut stack: Vec<Cell> = Vec::new();
+        // (cell, authority id or NO_VID): the id lets the side array
+        // translate the cell without a hash lookup.
+        let mut stack: Vec<(Cell, u32)> = Vec::new();
         // Formula cells under `rect` on `sheet`: identity runs per column.
-        let push_formulas =
-            |stack: &mut Vec<Cell>, visited: &FxHashSet<Cell>, sheet: u16, rect: Rect| {
-                for col in rect.c0..=rect.c1 {
-                    ids.visit_runs_in(sheet, col, rect.r0, rect.r1, &mut |h| {
-                        let run = ids.run(h);
-                        let r0 = run.row_start.max(rect.r0);
-                        let r1 = (run.row_start + run.len - 1).min(rect.r1);
-                        for row in r0..=r1 {
-                            if !visited.contains(&(sheet, row, col)) {
-                                stack.push((sheet, row, col));
-                            }
+        let push_formulas = |stack: &mut Vec<(Cell, u32)>,
+                             visited: &FxHashSet<Cell>,
+                             sheet: u16,
+                             rect: Rect| {
+            for col in rect.c0..=rect.c1 {
+                ids.visit_runs_in(sheet, col, rect.r0, rect.r1, &mut |h| {
+                    let run = ids.run(h);
+                    let r0 = run.row_start.max(rect.r0);
+                    let r1 = (run.row_start + run.len - 1).min(rect.r1);
+                    for row in r0..=r1 {
+                        if !visited.contains(&(sheet, row, col)) {
+                            stack.push(((sheet, row, col), run.first_id + (row - run.row_start)));
                         }
-                    });
-                }
-            };
+                    }
+                });
+            }
+        };
         for &v in targets {
             if let Some(cell) = self.graph.authority_cell_of_vertex(v) {
-                stack.push(cell);
+                stack.push((cell, crate::engine::authority::identity::NO_VID));
             } else if let Some(table) = self.graph.table_by_vertex(v) {
                 // A table target has no node: its demand is its range's, as
                 // legacy's table vertex leads to the cells it covers.
@@ -25509,11 +25544,11 @@ where
         #[cfg(any(test, feature = "benchmark_internal"))]
         let (mut probe_vertices, mut probe_clean_formulas, mut probe_edges, mut probe_dynamic) =
             (0, 0, 0, 0);
-        while let Some(cell) = stack.pop() {
+        while let Some((cell, id)) = stack.pop() {
             if !visited.insert(cell) {
                 continue;
             }
-            let Some(v) = self.graph.authority_vertex_of_cell(cell) else {
+            let Some(v) = self.graph.authority_vertex_of_formula(id, cell) else {
                 continue;
             };
             if !self.graph.vertex_exists(v) {
@@ -25547,7 +25582,12 @@ where
             }
             for &(_, sheet, rect) in &hits {
                 if sheet == SYMBOL_SHEET {
-                    stack.extend((rect.r0..=rect.r1).map(|slot| (SYMBOL_SHEET, slot, 0)));
+                    stack.extend((rect.r0..=rect.r1).map(|slot| {
+                        (
+                            (SYMBOL_SHEET, slot, 0),
+                            crate::engine::authority::identity::NO_VID,
+                        )
+                    }));
                     continue;
                 }
                 push_formulas(&mut stack, &visited, sheet, rect);
@@ -25562,7 +25602,7 @@ where
                     for &u in deps {
                         vdeps.entry(v).or_default().push(u);
                         if let Some(c) = self.graph.authority_cell_of_vertex(u) {
-                            stack.push(c);
+                            stack.push((c, crate::engine::authority::identity::NO_VID));
                         }
                     }
                 }
