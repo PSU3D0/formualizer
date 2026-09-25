@@ -4,6 +4,9 @@
 
 pub mod addr;
 pub mod arrow_ingest;
+/// The dependency authority's internals. Public only for the benchmark and
+/// probe binaries (`formualizer-bench-core`); not a stable API.
+#[doc(hidden)]
 pub mod authority;
 pub mod cancel;
 pub(crate) mod convergence;

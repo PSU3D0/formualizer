@@ -1247,37 +1247,6 @@ impl core::default::Default for formualizer_eval::engine::cancel::CancelToken
 pub fn formualizer_eval::engine::cancel::CancelToken::default() -> formualizer_eval::engine::cancel::CancelToken
 impl core::fmt::Debug for formualizer_eval::engine::cancel::CancelToken
 pub fn formualizer_eval::engine::cancel::CancelToken::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub mod formualizer_eval::engine::csr_edges
-pub struct formualizer_eval::engine::csr_edges::CsrBuilder
-impl formualizer_eval::engine::csr_edges::CsrBuilder
-pub fn formualizer_eval::engine::csr_edges::CsrBuilder::add_edge(&mut self, usize, usize)
-pub fn formualizer_eval::engine::csr_edges::CsrBuilder::add_vertex(&mut self, formualizer_eval::engine::addr::VertexAddr) -> usize
-pub fn formualizer_eval::engine::csr_edges::CsrBuilder::build(self) -> formualizer_eval::engine::csr_edges::CsrEdges
-pub fn formualizer_eval::engine::csr_edges::CsrBuilder::new() -> Self
-impl core::default::Default for formualizer_eval::engine::csr_edges::CsrBuilder
-pub fn formualizer_eval::engine::csr_edges::CsrBuilder::default() -> Self
-pub struct formualizer_eval::engine::csr_edges::CsrEdges
-impl formualizer_eval::engine::csr_edges::CsrEdges
-pub fn formualizer_eval::engine::csr_edges::CsrEdges::builder() -> formualizer_eval::engine::csr_edges::CsrBuilder
-pub fn formualizer_eval::engine::csr_edges::CsrEdges::empty() -> Self
-pub fn formualizer_eval::engine::csr_edges::CsrEdges::from_adjacency(alloc::vec::Vec<(u32, alloc::vec::Vec<u32>)>, &[formualizer_eval::engine::addr::VertexAddr]) -> Self
-pub fn formualizer_eval::engine::csr_edges::CsrEdges::has_edge(&self, formualizer_eval::engine::vertex::VertexId, formualizer_eval::engine::vertex::VertexId) -> bool
-pub fn formualizer_eval::engine::csr_edges::CsrEdges::in_degree(&self, formualizer_eval::engine::vertex::VertexId) -> usize
-pub fn formualizer_eval::engine::csr_edges::CsrEdges::in_edges(&self, formualizer_eval::engine::vertex::VertexId) -> &[formualizer_eval::engine::vertex::VertexId]
-pub fn formualizer_eval::engine::csr_edges::CsrEdges::iter(&self) -> formualizer_eval::engine::csr_edges::CsrIterator<'_>
-pub fn formualizer_eval::engine::csr_edges::CsrEdges::memory_usage(&self) -> usize
-pub fn formualizer_eval::engine::csr_edges::CsrEdges::num_edges(&self) -> usize
-pub fn formualizer_eval::engine::csr_edges::CsrEdges::num_vertices(&self) -> usize
-pub fn formualizer_eval::engine::csr_edges::CsrEdges::out_degree(&self, formualizer_eval::engine::vertex::VertexId) -> usize
-pub fn formualizer_eval::engine::csr_edges::CsrEdges::out_edges(&self, formualizer_eval::engine::vertex::VertexId) -> &[formualizer_eval::engine::vertex::VertexId]
-impl core::clone::Clone for formualizer_eval::engine::csr_edges::CsrEdges
-pub fn formualizer_eval::engine::csr_edges::CsrEdges::clone(&self) -> formualizer_eval::engine::csr_edges::CsrEdges
-impl core::fmt::Debug for formualizer_eval::engine::csr_edges::CsrEdges
-pub fn formualizer_eval::engine::csr_edges::CsrEdges::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub struct formualizer_eval::engine::csr_edges::CsrIterator<'a>
-impl<'a> core::iter::traits::iterator::Iterator for formualizer_eval::engine::csr_edges::CsrIterator<'a>
-pub type formualizer_eval::engine::csr_edges::CsrIterator<'a>::Item = (formualizer_eval::engine::vertex::VertexId, &'a [formualizer_eval::engine::vertex::VertexId])
-pub fn formualizer_eval::engine::csr_edges::CsrIterator<'a>::next(&mut self) -> core::option::Option<Self::Item>
 pub mod formualizer_eval::engine::debug_views
 pub struct formualizer_eval::engine::debug_views::VertexView<'s>
 impl<'s> formualizer_eval::engine::debug_views::VertexView<'s>
@@ -1314,51 +1283,6 @@ pub fn formualizer_eval::engine::debug_views::VertexViewMut<'s>::set_volatile(&m
 pub fn formualizer_eval::engine::debug_views::VertexViewMut<'s>::sheet_id(&self) -> u16
 impl<'s> core::fmt::Debug for formualizer_eval::engine::debug_views::VertexViewMut<'s>
 pub fn formualizer_eval::engine::debug_views::VertexViewMut<'s>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub mod formualizer_eval::engine::delta_edges
-pub struct formualizer_eval::engine::delta_edges::CsrMutableEdges
-impl formualizer_eval::engine::delta_edges::CsrMutableEdges
-pub fn formualizer_eval::engine::delta_edges::CsrMutableEdges::add_edge(&mut self, formualizer_eval::engine::vertex::VertexId, formualizer_eval::engine::vertex::VertexId)
-pub fn formualizer_eval::engine::delta_edges::CsrMutableEdges::add_vertex(&mut self, formualizer_eval::engine::addr::VertexAddr, u32) -> usize
-pub fn formualizer_eval::engine::delta_edges::CsrMutableEdges::add_vertices_batch(&mut self, &[(formualizer_eval::engine::addr::VertexAddr, u32)])
-pub fn formualizer_eval::engine::delta_edges::CsrMutableEdges::adjacency_with_carried_forward_edges(&self, alloc::vec::Vec<(u32, alloc::vec::Vec<u32>)>) -> alloc::vec::Vec<(u32, alloc::vec::Vec<u32>)>
-pub fn formualizer_eval::engine::delta_edges::CsrMutableEdges::begin_batch(&mut self)
-pub fn formualizer_eval::engine::delta_edges::CsrMutableEdges::build_from_adjacency(&mut self, alloc::vec::Vec<(u32, alloc::vec::Vec<u32>)>, alloc::vec::Vec<formualizer_eval::engine::addr::VertexAddr>, alloc::vec::Vec<u32>)
-pub fn formualizer_eval::engine::delta_edges::CsrMutableEdges::delta_size(&self) -> usize
-pub fn formualizer_eval::engine::delta_edges::CsrMutableEdges::end_batch(&mut self)
-pub fn formualizer_eval::engine::delta_edges::CsrMutableEdges::in_edges(&self, formualizer_eval::engine::vertex::VertexId) -> &[formualizer_eval::engine::vertex::VertexId]
-pub fn formualizer_eval::engine::delta_edges::CsrMutableEdges::in_edges_merged(&self, formualizer_eval::engine::vertex::VertexId) -> alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>
-pub fn formualizer_eval::engine::delta_edges::CsrMutableEdges::in_edges_ref(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<&[formualizer_eval::engine::vertex::VertexId]>
-pub fn formualizer_eval::engine::delta_edges::CsrMutableEdges::new() -> Self
-pub fn formualizer_eval::engine::delta_edges::CsrMutableEdges::num_edges_exact(&self) -> usize
-pub fn formualizer_eval::engine::delta_edges::CsrMutableEdges::out_edges(&self, formualizer_eval::engine::vertex::VertexId) -> alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>
-pub fn formualizer_eval::engine::delta_edges::CsrMutableEdges::out_edges_ref(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<&[formualizer_eval::engine::vertex::VertexId]>
-pub fn formualizer_eval::engine::delta_edges::CsrMutableEdges::rebuild(&mut self)
-pub fn formualizer_eval::engine::delta_edges::CsrMutableEdges::rebuild_count(&self) -> u64
-pub fn formualizer_eval::engine::delta_edges::CsrMutableEdges::remove_edge(&mut self, formualizer_eval::engine::vertex::VertexId, formualizer_eval::engine::vertex::VertexId)
-pub fn formualizer_eval::engine::delta_edges::CsrMutableEdges::update_addr(&mut self, formualizer_eval::engine::vertex::VertexId, formualizer_eval::engine::addr::VertexAddr)
-pub fn formualizer_eval::engine::delta_edges::CsrMutableEdges::with_coords(alloc::vec::Vec<formualizer_eval::engine::addr::VertexAddr>) -> Self
-impl core::default::Default for formualizer_eval::engine::delta_edges::CsrMutableEdges
-pub fn formualizer_eval::engine::delta_edges::CsrMutableEdges::default() -> Self
-impl core::fmt::Debug for formualizer_eval::engine::delta_edges::CsrMutableEdges
-pub fn formualizer_eval::engine::delta_edges::CsrMutableEdges::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub struct formualizer_eval::engine::delta_edges::DeltaEdgeSlab
-impl formualizer_eval::engine::delta_edges::DeltaEdgeSlab
-pub fn formualizer_eval::engine::delta_edges::DeltaEdgeSlab::add_edge(&mut self, formualizer_eval::engine::vertex::VertexId, formualizer_eval::engine::vertex::VertexId)
-pub fn formualizer_eval::engine::delta_edges::DeltaEdgeSlab::additions_iter(&self) -> impl core::iter::traits::iterator::Iterator<Item = (&formualizer_eval::engine::vertex::VertexId, &rustc_hash::FxHashSet<formualizer_eval::engine::vertex::VertexId>)>
-pub fn formualizer_eval::engine::delta_edges::DeltaEdgeSlab::apply_to_csr(&self, &formualizer_eval::engine::csr_edges::CsrEdges, &[formualizer_eval::engine::addr::VertexAddr], &[u32]) -> formualizer_eval::engine::csr_edges::CsrEdges
-pub fn formualizer_eval::engine::delta_edges::DeltaEdgeSlab::clear(&mut self)
-pub fn formualizer_eval::engine::delta_edges::DeltaEdgeSlab::mark_dirty(&mut self)
-pub fn formualizer_eval::engine::delta_edges::DeltaEdgeSlab::merged_in_view(&self, &formualizer_eval::engine::csr_edges::CsrEdges, formualizer_eval::engine::vertex::VertexId) -> alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>
-pub fn formualizer_eval::engine::delta_edges::DeltaEdgeSlab::merged_view(&self, &formualizer_eval::engine::csr_edges::CsrEdges, formualizer_eval::engine::vertex::VertexId) -> alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>
-pub fn formualizer_eval::engine::delta_edges::DeltaEdgeSlab::needs_rebuild(&self) -> bool
-pub fn formualizer_eval::engine::delta_edges::DeltaEdgeSlab::new() -> Self
-pub fn formualizer_eval::engine::delta_edges::DeltaEdgeSlab::op_count(&self) -> usize
-pub fn formualizer_eval::engine::delta_edges::DeltaEdgeSlab::removals_for(&self, formualizer_eval::engine::vertex::VertexId) -> impl core::iter::traits::iterator::Iterator<Item = formualizer_eval::engine::vertex::VertexId> + '_
-pub fn formualizer_eval::engine::delta_edges::DeltaEdgeSlab::remove_edge(&mut self, formualizer_eval::engine::vertex::VertexId, formualizer_eval::engine::vertex::VertexId)
-impl core::default::Default for formualizer_eval::engine::delta_edges::DeltaEdgeSlab
-pub fn formualizer_eval::engine::delta_edges::DeltaEdgeSlab::default() -> Self
-impl core::fmt::Debug for formualizer_eval::engine::delta_edges::DeltaEdgeSlab
-pub fn formualizer_eval::engine::delta_edges::DeltaEdgeSlab::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub mod formualizer_eval::engine::effects
 pub enum formualizer_eval::engine::effects::Effect
 pub formualizer_eval::engine::effects::Effect::SpillClear
@@ -2622,14 +2546,28 @@ pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::set_enabl
 pub struct formualizer_eval::engine::graph::DependencyGraph
 pub formualizer_eval::engine::graph::DependencyGraph::tombstone_registry: formualizer_eval::engine::TombstoneRegistry
 impl formualizer_eval::engine::graph::DependencyGraph
-pub fn formualizer_eval::engine::graph::DependencyGraph::add_dependency_edge(&mut self, formualizer_eval::engine::vertex::VertexId, formualizer_eval::engine::vertex::VertexId) -> core::result::Result<(), formualizer_common::error::ExcelError>
-pub fn formualizer_eval::engine::graph::DependencyGraph::add_edges_nobatch(&mut self, formualizer_eval::engine::vertex::VertexId, &[formualizer_eval::engine::vertex::VertexId])
+pub fn formualizer_eval::engine::graph::DependencyGraph::add_sheet(&mut self, &str) -> core::result::Result<formualizer_eval::reference::SheetId, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::graph::DependencyGraph::duplicate_sheet(&mut self, formualizer_eval::reference::SheetId, &str) -> core::result::Result<formualizer_eval::reference::SheetId, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::graph::DependencyGraph::remove_sheet(&mut self, formualizer_eval::reference::SheetId) -> core::result::Result<(), formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::graph::DependencyGraph::rename_sheet(&mut self, formualizer_eval::reference::SheetId, &str) -> core::result::Result<(), formualizer_common::error::ExcelError>
+impl formualizer_eval::engine::graph::DependencyGraph
+pub fn formualizer_eval::engine::graph::DependencyGraph::adjust_named_ranges(&mut self, &formualizer_eval::engine::graph::editor::reference_adjuster::ShiftOperation) -> core::result::Result<(), formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::graph::DependencyGraph::define_name(&mut self, &str, formualizer_eval::engine::named_range::NamedDefinition, formualizer_eval::engine::named_range::NameScope) -> core::result::Result<(), formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::graph::DependencyGraph::delete_name(&mut self, &str, formualizer_eval::engine::named_range::NameScope) -> core::result::Result<(), formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::graph::DependencyGraph::mark_as_name_error(&mut self, formualizer_eval::engine::vertex::VertexId)
+pub fn formualizer_eval::engine::graph::DependencyGraph::named_range_by_vertex(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<&formualizer_eval::engine::named_range::NamedRange>
+pub fn formualizer_eval::engine::graph::DependencyGraph::named_ranges_iter(&self) -> impl core::iter::traits::iterator::Iterator<Item = (&alloc::string::String, &formualizer_eval::engine::named_range::NamedRange)>
+pub fn formualizer_eval::engine::graph::DependencyGraph::resolve_name(&self, &str, formualizer_eval::reference::SheetId) -> core::option::Option<&formualizer_eval::engine::named_range::NamedDefinition>
+pub fn formualizer_eval::engine::graph::DependencyGraph::resolve_name_entry(&self, &str, formualizer_eval::reference::SheetId) -> core::option::Option<&formualizer_eval::engine::named_range::NamedRange>
+pub fn formualizer_eval::engine::graph::DependencyGraph::resolve_name_entry_in_scope(&self, &str, formualizer_eval::engine::named_range::NameScope) -> core::option::Option<&formualizer_eval::engine::named_range::NamedRange>
+pub fn formualizer_eval::engine::graph::DependencyGraph::sheet_named_ranges_iter(&self) -> impl core::iter::traits::iterator::Iterator<Item = (&(formualizer_eval::reference::SheetId, alloc::string::String), &formualizer_eval::engine::named_range::NamedRange)>
+pub fn formualizer_eval::engine::graph::DependencyGraph::update_name(&mut self, &str, formualizer_eval::engine::named_range::NamedDefinition, formualizer_eval::engine::named_range::NameScope) -> core::result::Result<(), formualizer_common::error::ExcelError>
+impl formualizer_eval::engine::graph::DependencyGraph
 pub fn formualizer_eval::engine::graph::DependencyGraph::assign_formula_vertex(&mut self, formualizer_eval::engine::vertex::VertexId, formualizer_eval::engine::arena::ast::AstNodeId, bool, bool)
 pub fn formualizer_eval::engine::graph::DependencyGraph::assign_formula_vertex_load_fast(&mut self, formualizer_eval::engine::vertex::VertexId, formualizer_eval::engine::arena::ast::AstNodeId, bool, bool)
 pub fn formualizer_eval::engine::graph::DependencyGraph::baseline_stats(&self) -> formualizer_eval::engine::graph::GraphBaselineStats
 pub fn formualizer_eval::engine::graph::DependencyGraph::begin_batch(&mut self)
 pub fn formualizer_eval::engine::graph::DependencyGraph::begin_deferred_dirty(&mut self)
-pub fn formualizer_eval::engine::graph::DependencyGraph::build_edges_from_adjacency(&mut self, alloc::vec::Vec<(u32, alloc::vec::Vec<u32>)>, alloc::vec::Vec<formualizer_eval::engine::addr::VertexAddr>, alloc::vec::Vec<u32>)
 pub fn formualizer_eval::engine::graph::DependencyGraph::bulk_insert_values<I>(&mut self, &str, I) -> core::result::Result<(), formualizer_common::error::ExcelError> where I: core::iter::traits::collect::IntoIterator<Item = (u32, u32, formualizer_common::value::LiteralValue)>
 pub fn formualizer_eval::engine::graph::DependencyGraph::bulk_set_formulas<I>(&mut self, &str, I) -> core::result::Result<usize, formualizer_common::error::ExcelError> where I: core::iter::traits::collect::IntoIterator<Item = (u32, u32, formualizer_parse::parser::ASTNode)>
 pub fn formualizer_eval::engine::graph::DependencyGraph::bulk_set_formulas_with_volatility(&mut self, &str, alloc::vec::Vec<(u32, u32, formualizer_parse::parser::ASTNode)>, alloc::vec::Vec<bool>) -> core::result::Result<usize, formualizer_common::error::ExcelError>
@@ -2647,7 +2585,6 @@ pub fn formualizer_eval::engine::graph::DependencyGraph::ensure_vertices_batch(&
 pub fn formualizer_eval::engine::graph::DependencyGraph::ensure_vertices_batch_ordered(&mut self, &[(formualizer_eval::reference::SheetId, formualizer_common::coord::Coord)]) -> (alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>, alloc::vec::Vec<(formualizer_eval::engine::addr::VertexAddr, u32)>)
 pub fn formualizer_eval::engine::graph::DependencyGraph::ensure_vertices_batch_packed_ordered(&mut self, &[formualizer_common::address::PackedSheetCell]) -> (alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>, alloc::vec::Vec<(formualizer_eval::engine::addr::VertexAddr, u32)>)
 pub fn formualizer_eval::engine::graph::DependencyGraph::finalize_sheet_index(&mut self, &str)
-pub fn formualizer_eval::engine::graph::DependencyGraph::flush_pending_edge_deltas(&mut self)
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_cell_ref_for_vertex(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<formualizer_eval::reference::CellRef>
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_cell_value(&self, &str, u32, u32) -> core::option::Option<formualizer_common::value::LiteralValue>
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_cell_value_ref(&self, formualizer_common::address::SheetCellRef<'_>) -> core::option::Option<formualizer_common::value::LiteralValue>
@@ -2710,27 +2647,6 @@ pub fn formualizer_eval::engine::graph::DependencyGraph::vertex_has_formula(&sel
 pub fn formualizer_eval::engine::graph::DependencyGraph::vertices_with_formulas(&self) -> impl core::iter::traits::iterator::Iterator<Item = formualizer_eval::engine::vertex::VertexId> + '_
 pub fn formualizer_eval::engine::graph::DependencyGraph::vid_for_plan_idx(&self, &formualizer_eval::engine::plan::DependencyPlan, u32) -> core::option::Option<formualizer_eval::engine::vertex::VertexId>
 pub fn formualizer_eval::engine::graph::DependencyGraph::vid_for_sid_pc(&self, formualizer_eval::reference::SheetId, formualizer_common::coord::Coord) -> core::option::Option<formualizer_eval::engine::vertex::VertexId>
-impl formualizer_eval::engine::graph::DependencyGraph
-pub fn formualizer_eval::engine::graph::DependencyGraph::add_range_deps_from_keys(&mut self, formualizer_eval::engine::vertex::VertexId, &[formualizer_eval::engine::plan::RangeKey], formualizer_eval::reference::SheetId)
-pub fn formualizer_eval::engine::graph::DependencyGraph::add_range_edges(&mut self, formualizer_eval::engine::vertex::VertexId, &[formualizer_eval::reference::SharedRangeRef<'static>], formualizer_eval::reference::SheetId)
-pub fn formualizer_eval::engine::graph::DependencyGraph::get_range_dependencies(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<&alloc::vec::Vec<formualizer_eval::reference::SharedRangeRef<'static>>>
-impl formualizer_eval::engine::graph::DependencyGraph
-pub fn formualizer_eval::engine::graph::DependencyGraph::add_sheet(&mut self, &str) -> core::result::Result<formualizer_eval::reference::SheetId, formualizer_common::error::ExcelError>
-pub fn formualizer_eval::engine::graph::DependencyGraph::duplicate_sheet(&mut self, formualizer_eval::reference::SheetId, &str) -> core::result::Result<formualizer_eval::reference::SheetId, formualizer_common::error::ExcelError>
-pub fn formualizer_eval::engine::graph::DependencyGraph::remove_sheet(&mut self, formualizer_eval::reference::SheetId) -> core::result::Result<(), formualizer_common::error::ExcelError>
-pub fn formualizer_eval::engine::graph::DependencyGraph::rename_sheet(&mut self, formualizer_eval::reference::SheetId, &str) -> core::result::Result<(), formualizer_common::error::ExcelError>
-impl formualizer_eval::engine::graph::DependencyGraph
-pub fn formualizer_eval::engine::graph::DependencyGraph::adjust_named_ranges(&mut self, &formualizer_eval::engine::graph::editor::reference_adjuster::ShiftOperation) -> core::result::Result<(), formualizer_common::error::ExcelError>
-pub fn formualizer_eval::engine::graph::DependencyGraph::define_name(&mut self, &str, formualizer_eval::engine::named_range::NamedDefinition, formualizer_eval::engine::named_range::NameScope) -> core::result::Result<(), formualizer_common::error::ExcelError>
-pub fn formualizer_eval::engine::graph::DependencyGraph::delete_name(&mut self, &str, formualizer_eval::engine::named_range::NameScope) -> core::result::Result<(), formualizer_common::error::ExcelError>
-pub fn formualizer_eval::engine::graph::DependencyGraph::mark_as_name_error(&mut self, formualizer_eval::engine::vertex::VertexId)
-pub fn formualizer_eval::engine::graph::DependencyGraph::named_range_by_vertex(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<&formualizer_eval::engine::named_range::NamedRange>
-pub fn formualizer_eval::engine::graph::DependencyGraph::named_ranges_iter(&self) -> impl core::iter::traits::iterator::Iterator<Item = (&alloc::string::String, &formualizer_eval::engine::named_range::NamedRange)>
-pub fn formualizer_eval::engine::graph::DependencyGraph::resolve_name(&self, &str, formualizer_eval::reference::SheetId) -> core::option::Option<&formualizer_eval::engine::named_range::NamedDefinition>
-pub fn formualizer_eval::engine::graph::DependencyGraph::resolve_name_entry(&self, &str, formualizer_eval::reference::SheetId) -> core::option::Option<&formualizer_eval::engine::named_range::NamedRange>
-pub fn formualizer_eval::engine::graph::DependencyGraph::resolve_name_entry_in_scope(&self, &str, formualizer_eval::engine::named_range::NameScope) -> core::option::Option<&formualizer_eval::engine::named_range::NamedRange>
-pub fn formualizer_eval::engine::graph::DependencyGraph::sheet_named_ranges_iter(&self) -> impl core::iter::traits::iterator::Iterator<Item = (&(formualizer_eval::reference::SheetId, alloc::string::String), &formualizer_eval::engine::named_range::NamedRange)>
-pub fn formualizer_eval::engine::graph::DependencyGraph::update_name(&mut self, &str, formualizer_eval::engine::named_range::NamedDefinition, formualizer_eval::engine::named_range::NameScope) -> core::result::Result<(), formualizer_common::error::ExcelError>
 impl formualizer_eval::engine::graph::DependencyGraph
 pub fn formualizer_eval::engine::graph::DependencyGraph::define_source_scalar(&mut self, &str, core::option::Option<u64>) -> core::result::Result<(), formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::graph::DependencyGraph::define_source_table(&mut self, &str, core::option::Option<u64>) -> core::result::Result<(), formualizer_common::error::ExcelError>
@@ -2843,6 +2759,7 @@ impl serde_core::ser::Serialize for formualizer_eval::engine::inspect::InspectEr
 pub fn formualizer_eval::engine::inspect::InspectError::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 #[non_exhaustive] pub enum formualizer_eval::engine::inspect::InspectionUnavailableReason
 pub formualizer_eval::engine::inspect::InspectionUnavailableReason::DeferredDependencyGraph
+pub formualizer_eval::engine::inspect::InspectionUnavailableReason::DependencyAuthorityUnavailable
 impl core::clone::Clone for formualizer_eval::engine::inspect::InspectionUnavailableReason
 pub fn formualizer_eval::engine::inspect::InspectionUnavailableReason::clone(&self) -> formualizer_eval::engine::inspect::InspectionUnavailableReason
 impl core::cmp::Eq for formualizer_eval::engine::inspect::InspectionUnavailableReason
@@ -3461,56 +3378,82 @@ pub fn formualizer_eval::engine::live_edges::LiveEdgeCollector::record_rect(&sel
 pub fn formualizer_eval::engine::live_edges::LiveEdgeCollector::record_scalar(&self, formualizer_eval::reference::SheetId, u32, u32)
 pub fn formualizer_eval::engine::live_edges::LiveEdgeCollector::set_current(&self, u32)
 pub fn formualizer_eval::engine::live_edges::LiveEdgeCollector::take_edges(&self) -> rustc_hash::FxHashSet<(u32, u32)>
-pub struct formualizer_eval::engine::live_edges::RecordingContext<'a, R: formualizer_eval::traits::EvaluationContext>
-impl<'a, R: formualizer_eval::traits::EvaluationContext> formualizer_eval::engine::live_edges::RecordingContext<'a, R>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::new(&'a formualizer_eval::engine::eval::Engine<R>, &'a formualizer_eval::engine::live_edges::LiveEdgeCollector) -> Self
-impl<'a, R: formualizer_eval::traits::EvaluationContext> formualizer_eval::traits::EvaluationContext for formualizer_eval::engine::live_edges::RecordingContext<'a, R>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::backend_caps(&self) -> formualizer_eval::traits::BackendCaps
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::build_criteria_mask(&self, &formualizer_eval::engine::range_view::RangeView<'_>, usize, &formualizer_eval::args::CriteriaPredicate) -> core::option::Option<alloc::sync::Arc<arrow_array::array::boolean_array::BooleanArray>>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::build_lookup_index(&self, &formualizer_eval::engine::range_view::RangeView<'_>, formualizer_eval::engine::lookup_index_cache::LookupAxis) -> core::option::Option<alloc::sync::Arc<formualizer_eval::engine::lookup_index_cache::LookupIndex>>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::build_row_visibility_mask(&self, &formualizer_eval::engine::range_view::RangeView<'_>, formualizer_eval::engine::row_visibility::VisibilityMaskMode) -> core::option::Option<alloc::sync::Arc<arrow_array::array::boolean_array::BooleanArray>>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::cancellation_token(&self) -> core::option::Option<formualizer_eval::engine::cancel::CancelToken>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::chunk_hint(&self) -> core::option::Option<usize>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::clock(&self) -> &dyn formualizer_eval::timezone::ClockProvider
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::current_sheet_index(&self, &str) -> core::option::Option<usize>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::data_snapshot_id(&self) -> u64
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::date_system(&self) -> formualizer_common::value::DateSystem
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::format_class(&self, formualizer_eval::format::FormatId) -> core::option::Option<formualizer_common::numfmt::FormatClass>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::formula_text_at_cell(&self, formualizer_eval::reference::CellRef) -> core::result::Result<core::option::Option<alloc::string::String>, formualizer_common::error::ExcelError>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::inspect_reference(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<core::option::Option<formualizer_eval::traits::ReferenceInfo>, formualizer_common::error::ExcelError>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::locale(&self) -> formualizer_eval::locale::Locale
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::recalc_epoch(&self) -> u64
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::record_cell_derived_format(&self, &str, u32, u32, core::option::Option<formualizer_eval::format::FormatId>)
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::resolve_cell_format(&self, core::option::Option<&str>, u32, u32, &str) -> core::option::Option<formualizer_eval::format::FormatId>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::resolve_cell_reference_value(&self, core::option::Option<&str>, u32, u32, &str) -> core::result::Result<formualizer_common::value::LiteralValue, formualizer_common::error::ExcelError>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::resolve_range_view<'c>(&'c self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<formualizer_eval::engine::range_view::RangeView<'c>, formualizer_common::error::ExcelError>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::sheet_index_by_name(&self, &str) -> core::option::Option<usize>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::thread_pool(&self) -> core::option::Option<&alloc::sync::Arc<rayon_core::thread_pool::ThreadPool>>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::timezone(&self) -> &formualizer_eval::timezone::TimeZoneSpec
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::used_cols_for_rows(&self, &str, u32, u32) -> core::option::Option<(u32, u32)>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::used_rows_for_columns(&self, &str, u32, u32) -> core::option::Option<(u32, u32)>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::volatile_level(&self) -> formualizer_eval::traits::VolatileLevel
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::workbook_seed(&self) -> u64
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::workbook_sheet_count(&self) -> core::option::Option<usize>
-impl<'a, R: formualizer_eval::traits::EvaluationContext> formualizer_eval::traits::FunctionProvider for formualizer_eval::engine::live_edges::RecordingContext<'a, R>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::function_semantic_identity(&self, &str, &str, usize) -> core::option::Option<formualizer_eval::function_contract::FunctionSemanticIdentity>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::get_function(&self, &str, &str) -> core::option::Option<alloc::sync::Arc<dyn formualizer_eval::function::Function>>
-impl<'a, R: formualizer_eval::traits::EvaluationContext> formualizer_eval::traits::NamedRangeResolver for formualizer_eval::engine::live_edges::RecordingContext<'a, R>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::resolve_named_range_reference(&self, &str) -> core::result::Result<alloc::vec::Vec<alloc::vec::Vec<formualizer_common::value::LiteralValue>>, formualizer_common::error::ExcelError>
-impl<'a, R: formualizer_eval::traits::EvaluationContext> formualizer_eval::traits::RangeResolver for formualizer_eval::engine::live_edges::RecordingContext<'a, R>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::resolve_range_reference(&self, core::option::Option<&str>, core::option::Option<u32>, core::option::Option<u32>, core::option::Option<u32>, core::option::Option<u32>) -> core::result::Result<alloc::boxed::Box<dyn formualizer_eval::traits::Range>, formualizer_common::error::ExcelError>
-impl<'a, R: formualizer_eval::traits::EvaluationContext> formualizer_eval::traits::ReferenceResolver for formualizer_eval::engine::live_edges::RecordingContext<'a, R>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::resolve_cell_reference(&self, core::option::Option<&str>, u32, u32) -> core::result::Result<formualizer_common::value::LiteralValue, formualizer_common::error::ExcelError>
-impl<'a, R: formualizer_eval::traits::EvaluationContext> formualizer_eval::traits::Resolver for formualizer_eval::engine::live_edges::RecordingContext<'a, R>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::resolve_range_like(&self, &formualizer_parse::parser::ReferenceType) -> core::result::Result<alloc::boxed::Box<dyn formualizer_eval::traits::Range>, formualizer_common::error::ExcelError>
-impl<'a, R: formualizer_eval::traits::EvaluationContext> formualizer_eval::traits::SourceResolver for formualizer_eval::engine::live_edges::RecordingContext<'a, R>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::resolve_source_scalar(&self, &str) -> core::result::Result<formualizer_common::value::LiteralValue, formualizer_common::error::ExcelError>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::resolve_source_table(&self, &str) -> core::result::Result<alloc::boxed::Box<dyn formualizer_eval::traits::Table>, formualizer_common::error::ExcelError>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::source_scalar_version(&self, &str) -> core::option::Option<u64>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::source_table_version(&self, &str) -> core::option::Option<u64>
-impl<'a, R: formualizer_eval::traits::EvaluationContext> formualizer_eval::traits::TableResolver for formualizer_eval::engine::live_edges::RecordingContext<'a, R>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::resolve_table_reference(&self, &formualizer_parse::parser::TableReference) -> core::result::Result<alloc::boxed::Box<dyn formualizer_eval::traits::Table>, formualizer_common::error::ExcelError>
+impl formualizer_eval::engine::live_edges::ReadSink for formualizer_eval::engine::live_edges::LiveEdgeCollector
+pub fn formualizer_eval::engine::live_edges::LiveEdgeCollector::record_name(&self, &str)
+pub fn formualizer_eval::engine::live_edges::LiveEdgeCollector::record_rect(&self, formualizer_eval::reference::SheetId, u32, u32, u32, u32)
+pub fn formualizer_eval::engine::live_edges::LiveEdgeCollector::record_scalar(&self, formualizer_eval::reference::SheetId, u32, u32)
+pub struct formualizer_eval::engine::live_edges::ReadLog
+impl formualizer_eval::engine::live_edges::ReadLog
+pub fn formualizer_eval::engine::live_edges::ReadLog::take(&self) -> alloc::vec::Vec<formualizer_eval::engine::live_edges::ReadRect>
+impl core::default::Default for formualizer_eval::engine::live_edges::ReadLog
+pub fn formualizer_eval::engine::live_edges::ReadLog::default() -> formualizer_eval::engine::live_edges::ReadLog
+impl formualizer_eval::engine::live_edges::ReadSink for formualizer_eval::engine::live_edges::ReadLog
+pub fn formualizer_eval::engine::live_edges::ReadLog::record_name(&self, &str)
+pub fn formualizer_eval::engine::live_edges::ReadLog::record_rect(&self, formualizer_eval::reference::SheetId, u32, u32, u32, u32)
+pub fn formualizer_eval::engine::live_edges::ReadLog::record_scalar(&self, formualizer_eval::reference::SheetId, u32, u32)
+pub struct formualizer_eval::engine::live_edges::RecordingContext<'a, R: formualizer_eval::traits::EvaluationContext, S: formualizer_eval::engine::live_edges::ReadSink>
+impl<'a, R: formualizer_eval::traits::EvaluationContext, S: formualizer_eval::engine::live_edges::ReadSink> formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::new(&'a formualizer_eval::engine::eval::Engine<R>, &'a S) -> Self
+impl<'a, R: formualizer_eval::traits::EvaluationContext, S: formualizer_eval::engine::live_edges::ReadSink> formualizer_eval::traits::EvaluationContext for formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::backend_caps(&self) -> formualizer_eval::traits::BackendCaps
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::build_criteria_mask(&self, &formualizer_eval::engine::range_view::RangeView<'_>, usize, &formualizer_eval::args::CriteriaPredicate) -> core::option::Option<alloc::sync::Arc<arrow_array::array::boolean_array::BooleanArray>>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::build_lookup_index(&self, &formualizer_eval::engine::range_view::RangeView<'_>, formualizer_eval::engine::lookup_index_cache::LookupAxis) -> core::option::Option<alloc::sync::Arc<formualizer_eval::engine::lookup_index_cache::LookupIndex>>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::build_row_visibility_mask(&self, &formualizer_eval::engine::range_view::RangeView<'_>, formualizer_eval::engine::row_visibility::VisibilityMaskMode) -> core::option::Option<alloc::sync::Arc<arrow_array::array::boolean_array::BooleanArray>>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::cancellation_token(&self) -> core::option::Option<formualizer_eval::engine::cancel::CancelToken>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::chunk_hint(&self) -> core::option::Option<usize>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::clock(&self) -> &dyn formualizer_eval::timezone::ClockProvider
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::current_sheet_index(&self, &str) -> core::option::Option<usize>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::data_snapshot_id(&self) -> u64
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::date_system(&self) -> formualizer_common::value::DateSystem
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::format_class(&self, formualizer_eval::format::FormatId) -> core::option::Option<formualizer_common::numfmt::FormatClass>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::formula_text_at_cell(&self, formualizer_eval::reference::CellRef) -> core::result::Result<core::option::Option<alloc::string::String>, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::inspect_reference(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<core::option::Option<formualizer_eval::traits::ReferenceInfo>, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::locale(&self) -> formualizer_eval::locale::Locale
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::recalc_epoch(&self) -> u64
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::record_cell_derived_format(&self, &str, u32, u32, core::option::Option<formualizer_eval::format::FormatId>)
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::resolve_cell_format(&self, core::option::Option<&str>, u32, u32, &str) -> core::option::Option<formualizer_eval::format::FormatId>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::resolve_cell_reference_value(&self, core::option::Option<&str>, u32, u32, &str) -> core::result::Result<formualizer_common::value::LiteralValue, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::resolve_range_view<'c>(&'c self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<formualizer_eval::engine::range_view::RangeView<'c>, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::sheet_index_by_name(&self, &str) -> core::option::Option<usize>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::thread_pool(&self) -> core::option::Option<&alloc::sync::Arc<rayon_core::thread_pool::ThreadPool>>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::timezone(&self) -> &formualizer_eval::timezone::TimeZoneSpec
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::used_cols_for_rows(&self, &str, u32, u32) -> core::option::Option<(u32, u32)>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::used_rows_for_columns(&self, &str, u32, u32) -> core::option::Option<(u32, u32)>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::volatile_level(&self) -> formualizer_eval::traits::VolatileLevel
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::workbook_seed(&self) -> u64
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::workbook_sheet_count(&self) -> core::option::Option<usize>
+impl<'a, R: formualizer_eval::traits::EvaluationContext, S: formualizer_eval::engine::live_edges::ReadSink> formualizer_eval::traits::FunctionProvider for formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::function_semantic_identity(&self, &str, &str, usize) -> core::option::Option<formualizer_eval::function_contract::FunctionSemanticIdentity>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::get_function(&self, &str, &str) -> core::option::Option<alloc::sync::Arc<dyn formualizer_eval::function::Function>>
+impl<'a, R: formualizer_eval::traits::EvaluationContext, S: formualizer_eval::engine::live_edges::ReadSink> formualizer_eval::traits::NamedRangeResolver for formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::resolve_named_range_reference(&self, &str) -> core::result::Result<alloc::vec::Vec<alloc::vec::Vec<formualizer_common::value::LiteralValue>>, formualizer_common::error::ExcelError>
+impl<'a, R: formualizer_eval::traits::EvaluationContext, S: formualizer_eval::engine::live_edges::ReadSink> formualizer_eval::traits::RangeResolver for formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::resolve_range_reference(&self, core::option::Option<&str>, core::option::Option<u32>, core::option::Option<u32>, core::option::Option<u32>, core::option::Option<u32>) -> core::result::Result<alloc::boxed::Box<dyn formualizer_eval::traits::Range>, formualizer_common::error::ExcelError>
+impl<'a, R: formualizer_eval::traits::EvaluationContext, S: formualizer_eval::engine::live_edges::ReadSink> formualizer_eval::traits::ReferenceResolver for formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::resolve_cell_reference(&self, core::option::Option<&str>, u32, u32) -> core::result::Result<formualizer_common::value::LiteralValue, formualizer_common::error::ExcelError>
+impl<'a, R: formualizer_eval::traits::EvaluationContext, S: formualizer_eval::engine::live_edges::ReadSink> formualizer_eval::traits::Resolver for formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::resolve_range_like(&self, &formualizer_parse::parser::ReferenceType) -> core::result::Result<alloc::boxed::Box<dyn formualizer_eval::traits::Range>, formualizer_common::error::ExcelError>
+impl<'a, R: formualizer_eval::traits::EvaluationContext, S: formualizer_eval::engine::live_edges::ReadSink> formualizer_eval::traits::SourceResolver for formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::resolve_source_scalar(&self, &str) -> core::result::Result<formualizer_common::value::LiteralValue, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::resolve_source_table(&self, &str) -> core::result::Result<alloc::boxed::Box<dyn formualizer_eval::traits::Table>, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::source_scalar_version(&self, &str) -> core::option::Option<u64>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::source_table_version(&self, &str) -> core::option::Option<u64>
+impl<'a, R: formualizer_eval::traits::EvaluationContext, S: formualizer_eval::engine::live_edges::ReadSink> formualizer_eval::traits::TableResolver for formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::resolve_table_reference(&self, &formualizer_parse::parser::TableReference) -> core::result::Result<alloc::boxed::Box<dyn formualizer_eval::traits::Table>, formualizer_common::error::ExcelError>
+pub trait formualizer_eval::engine::live_edges::ReadSink: core::marker::Send + core::marker::Sync
+pub fn formualizer_eval::engine::live_edges::ReadSink::record_name(&self, &str)
+pub fn formualizer_eval::engine::live_edges::ReadSink::record_rect(&self, formualizer_eval::reference::SheetId, u32, u32, u32, u32)
+pub fn formualizer_eval::engine::live_edges::ReadSink::record_scalar(&self, formualizer_eval::reference::SheetId, u32, u32)
+impl formualizer_eval::engine::live_edges::ReadSink for formualizer_eval::engine::live_edges::LiveEdgeCollector
+pub fn formualizer_eval::engine::live_edges::LiveEdgeCollector::record_name(&self, &str)
+pub fn formualizer_eval::engine::live_edges::LiveEdgeCollector::record_rect(&self, formualizer_eval::reference::SheetId, u32, u32, u32, u32)
+pub fn formualizer_eval::engine::live_edges::LiveEdgeCollector::record_scalar(&self, formualizer_eval::reference::SheetId, u32, u32)
+impl formualizer_eval::engine::live_edges::ReadSink for formualizer_eval::engine::live_edges::ReadLog
+pub fn formualizer_eval::engine::live_edges::ReadLog::record_name(&self, &str)
+pub fn formualizer_eval::engine::live_edges::ReadLog::record_rect(&self, formualizer_eval::reference::SheetId, u32, u32, u32, u32)
+pub fn formualizer_eval::engine::live_edges::ReadLog::record_scalar(&self, formualizer_eval::reference::SheetId, u32, u32)
+pub type formualizer_eval::engine::live_edges::ReadRect = (formualizer_eval::reference::SheetId, u32, u32, u32, u32)
 pub mod formualizer_eval::engine::live_graph
 pub mod formualizer_eval::engine::lookup_index_cache
 pub enum formualizer_eval::engine::lookup_index_cache::LookupAxis
@@ -3605,7 +3548,6 @@ pub fn formualizer_eval::engine::named_range::NamedDefinition::fmt(&self, &mut c
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::named_range::NamedDefinition
 pub struct formualizer_eval::engine::named_range::NamedRange
 pub formualizer_eval::engine::named_range::NamedRange::definition: formualizer_eval::engine::named_range::NamedDefinition
-pub formualizer_eval::engine::named_range::NamedRange::dependents: rustc_hash::FxHashSet<formualizer_eval::engine::vertex::VertexId>
 pub formualizer_eval::engine::named_range::NamedRange::scope: formualizer_eval::engine::named_range::NameScope
 pub formualizer_eval::engine::named_range::NamedRange::vertex: formualizer_eval::engine::vertex::VertexId
 impl core::clone::Clone for formualizer_eval::engine::named_range::NamedRange
@@ -4501,12 +4443,6 @@ impl core::clone::Clone for formualizer_eval::engine::scheduler::Schedule
 pub fn formualizer_eval::engine::scheduler::Schedule::clone(&self) -> formualizer_eval::engine::scheduler::Schedule
 impl core::fmt::Debug for formualizer_eval::engine::scheduler::Schedule
 pub fn formualizer_eval::engine::scheduler::Schedule::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub struct formualizer_eval::engine::scheduler::Scheduler<'a>
-impl<'a> formualizer_eval::engine::scheduler::Scheduler<'a>
-pub fn formualizer_eval::engine::scheduler::Scheduler<'a>::create_schedule(&self, &[formualizer_eval::engine::vertex::VertexId]) -> core::result::Result<formualizer_eval::engine::scheduler::Schedule, formualizer_common::error::ExcelError>
-pub fn formualizer_eval::engine::scheduler::Scheduler<'a>::create_schedule_with_virtual(&self, &[formualizer_eval::engine::vertex::VertexId], &rustc_hash::FxHashMap<formualizer_eval::engine::vertex::VertexId, alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>>) -> core::result::Result<formualizer_eval::engine::scheduler::Schedule, formualizer_common::error::ExcelError>
-pub fn formualizer_eval::engine::scheduler::Scheduler<'a>::new(&'a formualizer_eval::engine::graph::DependencyGraph) -> Self
-pub fn formualizer_eval::engine::scheduler::Scheduler<'a>::tarjan_scc(&self, &[formualizer_eval::engine::vertex::VertexId]) -> core::result::Result<alloc::vec::Vec<alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>>, formualizer_common::error::ExcelError>
 pub mod formualizer_eval::engine::sheet_index
 pub struct formualizer_eval::engine::sheet_index::SheetIndex
 impl formualizer_eval::engine::sheet_index::SheetIndex
@@ -4592,68 +4528,6 @@ pub fn formualizer_eval::engine::spill::SpillManager::reserve(&mut self, &formua
 pub fn formualizer_eval::engine::spill::SpillManager::rollback(&mut self, formualizer_eval::engine::spill::SpillReservation)
 pub trait formualizer_eval::engine::spill::SpillWriter
 pub fn formualizer_eval::engine::spill::SpillWriter::write_row(&mut self, u32, &[formualizer_common::value::LiteralValue]) -> core::result::Result<(), formualizer_common::error::ExcelError>
-pub mod formualizer_eval::engine::topo
-pub mod formualizer_eval::engine::topo::pk
-pub struct formualizer_eval::engine::topo::pk::Cycle<N>
-pub formualizer_eval::engine::topo::pk::Cycle::path: alloc::vec::Vec<N>
-impl<N: core::clone::Clone> core::clone::Clone for formualizer_eval::engine::topo::pk::Cycle<N>
-pub fn formualizer_eval::engine::topo::pk::Cycle<N>::clone(&self) -> formualizer_eval::engine::topo::pk::Cycle<N>
-impl<N: core::fmt::Debug> core::fmt::Debug for formualizer_eval::engine::topo::pk::Cycle<N>
-pub fn formualizer_eval::engine::topo::pk::Cycle<N>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub struct formualizer_eval::engine::topo::pk::DynamicTopo<N: core::marker::Copy + core::cmp::Eq + core::hash::Hash + core::cmp::Ord>
-impl<N> formualizer_eval::engine::topo::pk::DynamicTopo<N> where N: core::marker::Copy + core::cmp::Eq + core::hash::Hash + core::cmp::Ord
-pub fn formualizer_eval::engine::topo::pk::DynamicTopo<N>::apply_bulk<G: formualizer_eval::engine::topo::pk::GraphView<N>>(&mut self, &G, &[(N, N)], &[(N, N)]) -> core::result::Result<formualizer_eval::engine::topo::pk::PkStats, formualizer_eval::engine::topo::pk::Cycle<N>>
-pub fn formualizer_eval::engine::topo::pk::DynamicTopo<N>::compact_ranks(&mut self)
-pub fn formualizer_eval::engine::topo::pk::DynamicTopo<N>::ensure_nodes(&mut self, impl core::iter::traits::collect::IntoIterator<Item = N>)
-pub fn formualizer_eval::engine::topo::pk::DynamicTopo<N>::layers_for<G: formualizer_eval::engine::topo::pk::GraphView<N>>(&self, &G, &[N], core::option::Option<usize>) -> alloc::vec::Vec<alloc::vec::Vec<N>>
-pub fn formualizer_eval::engine::topo::pk::DynamicTopo<N>::new(impl core::iter::traits::collect::IntoIterator<Item = N>, formualizer_eval::engine::topo::pk::PkConfig) -> Self
-pub fn formualizer_eval::engine::topo::pk::DynamicTopo<N>::rebuild_full<G: formualizer_eval::engine::topo::pk::GraphView<N>>(&mut self, &G)
-pub fn formualizer_eval::engine::topo::pk::DynamicTopo<N>::remove_edge(&mut self, N, N)
-pub fn formualizer_eval::engine::topo::pk::DynamicTopo<N>::topo_order(&self) -> &[N]
-pub fn formualizer_eval::engine::topo::pk::DynamicTopo<N>::try_add_edge<G: formualizer_eval::engine::topo::pk::GraphView<N>>(&mut self, &G, N, N) -> core::result::Result<formualizer_eval::engine::topo::pk::PkStats, formualizer_eval::engine::topo::pk::Cycle<N>>
-impl<N: core::fmt::Debug + core::marker::Copy + core::cmp::Eq + core::hash::Hash + core::cmp::Ord> core::fmt::Debug for formualizer_eval::engine::topo::pk::DynamicTopo<N>
-pub fn formualizer_eval::engine::topo::pk::DynamicTopo<N>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub struct formualizer_eval::engine::topo::pk::PkConfig
-pub formualizer_eval::engine::topo::pk::PkConfig::compaction_interval_ops: u64
-pub formualizer_eval::engine::topo::pk::PkConfig::visit_budget: usize
-impl core::clone::Clone for formualizer_eval::engine::topo::pk::PkConfig
-pub fn formualizer_eval::engine::topo::pk::PkConfig::clone(&self) -> formualizer_eval::engine::topo::pk::PkConfig
-impl core::default::Default for formualizer_eval::engine::topo::pk::PkConfig
-pub fn formualizer_eval::engine::topo::pk::PkConfig::default() -> Self
-impl core::fmt::Debug for formualizer_eval::engine::topo::pk::PkConfig
-pub fn formualizer_eval::engine::topo::pk::PkConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Copy for formualizer_eval::engine::topo::pk::PkConfig
-pub struct formualizer_eval::engine::topo::pk::PkStats
-pub formualizer_eval::engine::topo::pk::PkStats::dfs_visited: usize
-pub formualizer_eval::engine::topo::pk::PkStats::relabeled: usize
-impl core::clone::Clone for formualizer_eval::engine::topo::pk::PkStats
-pub fn formualizer_eval::engine::topo::pk::PkStats::clone(&self) -> formualizer_eval::engine::topo::pk::PkStats
-impl core::default::Default for formualizer_eval::engine::topo::pk::PkStats
-pub fn formualizer_eval::engine::topo::pk::PkStats::default() -> formualizer_eval::engine::topo::pk::PkStats
-impl core::fmt::Debug for formualizer_eval::engine::topo::pk::PkStats
-pub fn formualizer_eval::engine::topo::pk::PkStats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Copy for formualizer_eval::engine::topo::pk::PkStats
-pub trait formualizer_eval::engine::topo::pk::GraphView<N: core::marker::Copy + core::cmp::Eq + core::hash::Hash>
-pub fn formualizer_eval::engine::topo::pk::GraphView::exists(&self, N) -> bool
-pub fn formualizer_eval::engine::topo::pk::GraphView::predecessors(&self, N, &mut alloc::vec::Vec<N>)
-pub fn formualizer_eval::engine::topo::pk::GraphView::successors(&self, N, &mut alloc::vec::Vec<N>)
-impl formualizer_eval::engine::topo::pk::GraphView<formualizer_eval::engine::vertex::VertexId> for formualizer_eval::engine::topo::GraphAdapter<'_>
-pub fn formualizer_eval::engine::topo::GraphAdapter<'_>::exists(&self, formualizer_eval::engine::vertex::VertexId) -> bool
-pub fn formualizer_eval::engine::topo::GraphAdapter<'_>::predecessors(&self, formualizer_eval::engine::vertex::VertexId, &mut alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>)
-pub fn formualizer_eval::engine::topo::GraphAdapter<'_>::successors(&self, formualizer_eval::engine::vertex::VertexId, &mut alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>)
-pub struct formualizer_eval::engine::topo::GraphAdapter<'a>
-pub formualizer_eval::engine::topo::GraphAdapter::g: &'a formualizer_eval::engine::graph::DependencyGraph
-impl<'a> formualizer_eval::engine::topo::GraphAdapter<'a>
-pub fn formualizer_eval::engine::topo::GraphAdapter<'a>::new(&'a formualizer_eval::engine::graph::DependencyGraph) -> Self
-impl formualizer_eval::engine::topo::pk::GraphView<formualizer_eval::engine::vertex::VertexId> for formualizer_eval::engine::topo::GraphAdapter<'_>
-pub fn formualizer_eval::engine::topo::GraphAdapter<'_>::exists(&self, formualizer_eval::engine::vertex::VertexId) -> bool
-pub fn formualizer_eval::engine::topo::GraphAdapter<'_>::predecessors(&self, formualizer_eval::engine::vertex::VertexId, &mut alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>)
-pub fn formualizer_eval::engine::topo::GraphAdapter<'_>::successors(&self, formualizer_eval::engine::vertex::VertexId, &mut alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>)
-impl<'a> core::clone::Clone for formualizer_eval::engine::topo::GraphAdapter<'a>
-pub fn formualizer_eval::engine::topo::GraphAdapter<'a>::clone(&self) -> formualizer_eval::engine::topo::GraphAdapter<'a>
-impl<'a> core::fmt::Debug for formualizer_eval::engine::topo::GraphAdapter<'a>
-pub fn formualizer_eval::engine::topo::GraphAdapter<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<'a> core::marker::Copy for formualizer_eval::engine::topo::GraphAdapter<'a>
 pub mod formualizer_eval::engine::tuning
 pub struct formualizer_eval::engine::tuning::WarmupConfig
 pub formualizer_eval::engine::tuning::WarmupConfig::flat_cache_mb_cap: usize
@@ -4720,10 +4594,6 @@ impl core::hash::Hash for formualizer_eval::engine::vertex::VertexId
 pub fn formualizer_eval::engine::vertex::VertexId::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for formualizer_eval::engine::vertex::VertexId
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::vertex::VertexId
-impl formualizer_eval::engine::topo::pk::GraphView<formualizer_eval::engine::vertex::VertexId> for formualizer_eval::engine::topo::GraphAdapter<'_>
-pub fn formualizer_eval::engine::topo::GraphAdapter<'_>::exists(&self, formualizer_eval::engine::vertex::VertexId) -> bool
-pub fn formualizer_eval::engine::topo::GraphAdapter<'_>::predecessors(&self, formualizer_eval::engine::vertex::VertexId, &mut alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>)
-pub fn formualizer_eval::engine::topo::GraphAdapter<'_>::successors(&self, formualizer_eval::engine::vertex::VertexId, &mut alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>)
 pub mod formualizer_eval::engine::vertex_store
 #[repr(C, align(64))] pub struct formualizer_eval::engine::vertex_store::VertexStore
 impl formualizer_eval::engine::vertex_store::VertexStore
@@ -4743,11 +4613,13 @@ pub fn formualizer_eval::engine::vertex_store::VertexStore::kind(&self, formuali
 pub fn formualizer_eval::engine::vertex_store::VertexStore::len(&self) -> usize
 pub fn formualizer_eval::engine::vertex_store::VertexStore::mark_deleted(&self, formualizer_eval::engine::vertex::VertexId, bool)
 pub fn formualizer_eval::engine::vertex_store::VertexStore::new() -> Self
+pub fn formualizer_eval::engine::vertex_store::VertexStore::reads_range(&self, formualizer_eval::engine::vertex::VertexId) -> bool
 pub fn formualizer_eval::engine::vertex_store::VertexStore::reserve(&mut self, usize)
 pub fn formualizer_eval::engine::vertex_store::VertexStore::set_dirty(&self, formualizer_eval::engine::vertex::VertexId, bool)
 pub fn formualizer_eval::engine::vertex_store::VertexStore::set_dynamic(&self, formualizer_eval::engine::vertex::VertexId, bool)
 pub fn formualizer_eval::engine::vertex_store::VertexStore::set_edge_offset(&mut self, formualizer_eval::engine::vertex::VertexId, u32)
 pub fn formualizer_eval::engine::vertex_store::VertexStore::set_kind(&mut self, formualizer_eval::engine::vertex::VertexId, formualizer_eval::engine::vertex::VertexKind)
+pub fn formualizer_eval::engine::vertex_store::VertexStore::set_reads_range(&self, formualizer_eval::engine::vertex::VertexId, bool)
 pub fn formualizer_eval::engine::vertex_store::VertexStore::set_value_ref(&mut self, formualizer_eval::engine::vertex::VertexId, u32)
 pub fn formualizer_eval::engine::vertex_store::VertexStore::set_volatile(&self, formualizer_eval::engine::vertex::VertexId, bool)
 pub fn formualizer_eval::engine::vertex_store::VertexStore::sheet_id(&self, formualizer_eval::engine::vertex::VertexId) -> formualizer_eval::reference::SheetId
@@ -4824,11 +4696,10 @@ pub struct formualizer_eval::engine::virtual_deps::DynamicRefVirtualDepProvider
 impl formualizer_eval::engine::virtual_deps::DynamicRefVirtualDepProvider
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefVirtualDepProvider::get_virtual_deps<R: formualizer_eval::traits::EvaluationContext>(&formualizer_eval::engine::eval::Engine<R>, formualizer_eval::engine::vertex::VertexId) -> alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>
 pub struct formualizer_eval::engine::virtual_deps::RangeVirtualDepProvider
-impl formualizer_eval::engine::virtual_deps::RangeVirtualDepProvider
-pub fn formualizer_eval::engine::virtual_deps::RangeVirtualDepProvider::get_virtual_deps<R: formualizer_eval::traits::EvaluationContext>(&formualizer_eval::engine::eval::Engine<R>, formualizer_eval::engine::vertex::VertexId) -> alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>
 pub struct formualizer_eval::engine::virtual_deps::VirtualDepBuilder<'a, R: formualizer_eval::traits::EvaluationContext>
 impl<'a, R: formualizer_eval::traits::EvaluationContext> formualizer_eval::engine::virtual_deps::VirtualDepBuilder<'a, R>
 pub fn formualizer_eval::engine::virtual_deps::VirtualDepBuilder<'a, R>::build(&self, &[formualizer_eval::engine::vertex::VertexId]) -> (rustc_hash::FxHashMap<formualizer_eval::engine::vertex::VertexId, alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>>, alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>)
+pub fn formualizer_eval::engine::virtual_deps::VirtualDepBuilder<'a, R>::build_with_range_members(&self, &[formualizer_eval::engine::vertex::VertexId]) -> (rustc_hash::FxHashMap<formualizer_eval::engine::vertex::VertexId, alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>>, alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>)
 pub fn formualizer_eval::engine::virtual_deps::VirtualDepBuilder<'a, R>::new(&'a formualizer_eval::engine::eval::Engine<R>) -> Self
 pub enum formualizer_eval::engine::ArrowOp
 pub formualizer_eval::engine::ArrowOp::InsertCols
@@ -5932,14 +5803,28 @@ impl core::marker::StructuralPartialEq for formualizer_eval::engine::resource_le
 pub struct formualizer_eval::engine::DependencyGraph
 pub formualizer_eval::engine::DependencyGraph::tombstone_registry: formualizer_eval::engine::TombstoneRegistry
 impl formualizer_eval::engine::graph::DependencyGraph
-pub fn formualizer_eval::engine::graph::DependencyGraph::add_dependency_edge(&mut self, formualizer_eval::engine::vertex::VertexId, formualizer_eval::engine::vertex::VertexId) -> core::result::Result<(), formualizer_common::error::ExcelError>
-pub fn formualizer_eval::engine::graph::DependencyGraph::add_edges_nobatch(&mut self, formualizer_eval::engine::vertex::VertexId, &[formualizer_eval::engine::vertex::VertexId])
+pub fn formualizer_eval::engine::graph::DependencyGraph::add_sheet(&mut self, &str) -> core::result::Result<formualizer_eval::reference::SheetId, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::graph::DependencyGraph::duplicate_sheet(&mut self, formualizer_eval::reference::SheetId, &str) -> core::result::Result<formualizer_eval::reference::SheetId, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::graph::DependencyGraph::remove_sheet(&mut self, formualizer_eval::reference::SheetId) -> core::result::Result<(), formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::graph::DependencyGraph::rename_sheet(&mut self, formualizer_eval::reference::SheetId, &str) -> core::result::Result<(), formualizer_common::error::ExcelError>
+impl formualizer_eval::engine::graph::DependencyGraph
+pub fn formualizer_eval::engine::graph::DependencyGraph::adjust_named_ranges(&mut self, &formualizer_eval::engine::graph::editor::reference_adjuster::ShiftOperation) -> core::result::Result<(), formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::graph::DependencyGraph::define_name(&mut self, &str, formualizer_eval::engine::named_range::NamedDefinition, formualizer_eval::engine::named_range::NameScope) -> core::result::Result<(), formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::graph::DependencyGraph::delete_name(&mut self, &str, formualizer_eval::engine::named_range::NameScope) -> core::result::Result<(), formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::graph::DependencyGraph::mark_as_name_error(&mut self, formualizer_eval::engine::vertex::VertexId)
+pub fn formualizer_eval::engine::graph::DependencyGraph::named_range_by_vertex(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<&formualizer_eval::engine::named_range::NamedRange>
+pub fn formualizer_eval::engine::graph::DependencyGraph::named_ranges_iter(&self) -> impl core::iter::traits::iterator::Iterator<Item = (&alloc::string::String, &formualizer_eval::engine::named_range::NamedRange)>
+pub fn formualizer_eval::engine::graph::DependencyGraph::resolve_name(&self, &str, formualizer_eval::reference::SheetId) -> core::option::Option<&formualizer_eval::engine::named_range::NamedDefinition>
+pub fn formualizer_eval::engine::graph::DependencyGraph::resolve_name_entry(&self, &str, formualizer_eval::reference::SheetId) -> core::option::Option<&formualizer_eval::engine::named_range::NamedRange>
+pub fn formualizer_eval::engine::graph::DependencyGraph::resolve_name_entry_in_scope(&self, &str, formualizer_eval::engine::named_range::NameScope) -> core::option::Option<&formualizer_eval::engine::named_range::NamedRange>
+pub fn formualizer_eval::engine::graph::DependencyGraph::sheet_named_ranges_iter(&self) -> impl core::iter::traits::iterator::Iterator<Item = (&(formualizer_eval::reference::SheetId, alloc::string::String), &formualizer_eval::engine::named_range::NamedRange)>
+pub fn formualizer_eval::engine::graph::DependencyGraph::update_name(&mut self, &str, formualizer_eval::engine::named_range::NamedDefinition, formualizer_eval::engine::named_range::NameScope) -> core::result::Result<(), formualizer_common::error::ExcelError>
+impl formualizer_eval::engine::graph::DependencyGraph
 pub fn formualizer_eval::engine::graph::DependencyGraph::assign_formula_vertex(&mut self, formualizer_eval::engine::vertex::VertexId, formualizer_eval::engine::arena::ast::AstNodeId, bool, bool)
 pub fn formualizer_eval::engine::graph::DependencyGraph::assign_formula_vertex_load_fast(&mut self, formualizer_eval::engine::vertex::VertexId, formualizer_eval::engine::arena::ast::AstNodeId, bool, bool)
 pub fn formualizer_eval::engine::graph::DependencyGraph::baseline_stats(&self) -> formualizer_eval::engine::graph::GraphBaselineStats
 pub fn formualizer_eval::engine::graph::DependencyGraph::begin_batch(&mut self)
 pub fn formualizer_eval::engine::graph::DependencyGraph::begin_deferred_dirty(&mut self)
-pub fn formualizer_eval::engine::graph::DependencyGraph::build_edges_from_adjacency(&mut self, alloc::vec::Vec<(u32, alloc::vec::Vec<u32>)>, alloc::vec::Vec<formualizer_eval::engine::addr::VertexAddr>, alloc::vec::Vec<u32>)
 pub fn formualizer_eval::engine::graph::DependencyGraph::bulk_insert_values<I>(&mut self, &str, I) -> core::result::Result<(), formualizer_common::error::ExcelError> where I: core::iter::traits::collect::IntoIterator<Item = (u32, u32, formualizer_common::value::LiteralValue)>
 pub fn formualizer_eval::engine::graph::DependencyGraph::bulk_set_formulas<I>(&mut self, &str, I) -> core::result::Result<usize, formualizer_common::error::ExcelError> where I: core::iter::traits::collect::IntoIterator<Item = (u32, u32, formualizer_parse::parser::ASTNode)>
 pub fn formualizer_eval::engine::graph::DependencyGraph::bulk_set_formulas_with_volatility(&mut self, &str, alloc::vec::Vec<(u32, u32, formualizer_parse::parser::ASTNode)>, alloc::vec::Vec<bool>) -> core::result::Result<usize, formualizer_common::error::ExcelError>
@@ -5957,7 +5842,6 @@ pub fn formualizer_eval::engine::graph::DependencyGraph::ensure_vertices_batch(&
 pub fn formualizer_eval::engine::graph::DependencyGraph::ensure_vertices_batch_ordered(&mut self, &[(formualizer_eval::reference::SheetId, formualizer_common::coord::Coord)]) -> (alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>, alloc::vec::Vec<(formualizer_eval::engine::addr::VertexAddr, u32)>)
 pub fn formualizer_eval::engine::graph::DependencyGraph::ensure_vertices_batch_packed_ordered(&mut self, &[formualizer_common::address::PackedSheetCell]) -> (alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>, alloc::vec::Vec<(formualizer_eval::engine::addr::VertexAddr, u32)>)
 pub fn formualizer_eval::engine::graph::DependencyGraph::finalize_sheet_index(&mut self, &str)
-pub fn formualizer_eval::engine::graph::DependencyGraph::flush_pending_edge_deltas(&mut self)
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_cell_ref_for_vertex(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<formualizer_eval::reference::CellRef>
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_cell_value(&self, &str, u32, u32) -> core::option::Option<formualizer_common::value::LiteralValue>
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_cell_value_ref(&self, formualizer_common::address::SheetCellRef<'_>) -> core::option::Option<formualizer_common::value::LiteralValue>
@@ -6020,27 +5904,6 @@ pub fn formualizer_eval::engine::graph::DependencyGraph::vertex_has_formula(&sel
 pub fn formualizer_eval::engine::graph::DependencyGraph::vertices_with_formulas(&self) -> impl core::iter::traits::iterator::Iterator<Item = formualizer_eval::engine::vertex::VertexId> + '_
 pub fn formualizer_eval::engine::graph::DependencyGraph::vid_for_plan_idx(&self, &formualizer_eval::engine::plan::DependencyPlan, u32) -> core::option::Option<formualizer_eval::engine::vertex::VertexId>
 pub fn formualizer_eval::engine::graph::DependencyGraph::vid_for_sid_pc(&self, formualizer_eval::reference::SheetId, formualizer_common::coord::Coord) -> core::option::Option<formualizer_eval::engine::vertex::VertexId>
-impl formualizer_eval::engine::graph::DependencyGraph
-pub fn formualizer_eval::engine::graph::DependencyGraph::add_range_deps_from_keys(&mut self, formualizer_eval::engine::vertex::VertexId, &[formualizer_eval::engine::plan::RangeKey], formualizer_eval::reference::SheetId)
-pub fn formualizer_eval::engine::graph::DependencyGraph::add_range_edges(&mut self, formualizer_eval::engine::vertex::VertexId, &[formualizer_eval::reference::SharedRangeRef<'static>], formualizer_eval::reference::SheetId)
-pub fn formualizer_eval::engine::graph::DependencyGraph::get_range_dependencies(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<&alloc::vec::Vec<formualizer_eval::reference::SharedRangeRef<'static>>>
-impl formualizer_eval::engine::graph::DependencyGraph
-pub fn formualizer_eval::engine::graph::DependencyGraph::add_sheet(&mut self, &str) -> core::result::Result<formualizer_eval::reference::SheetId, formualizer_common::error::ExcelError>
-pub fn formualizer_eval::engine::graph::DependencyGraph::duplicate_sheet(&mut self, formualizer_eval::reference::SheetId, &str) -> core::result::Result<formualizer_eval::reference::SheetId, formualizer_common::error::ExcelError>
-pub fn formualizer_eval::engine::graph::DependencyGraph::remove_sheet(&mut self, formualizer_eval::reference::SheetId) -> core::result::Result<(), formualizer_common::error::ExcelError>
-pub fn formualizer_eval::engine::graph::DependencyGraph::rename_sheet(&mut self, formualizer_eval::reference::SheetId, &str) -> core::result::Result<(), formualizer_common::error::ExcelError>
-impl formualizer_eval::engine::graph::DependencyGraph
-pub fn formualizer_eval::engine::graph::DependencyGraph::adjust_named_ranges(&mut self, &formualizer_eval::engine::graph::editor::reference_adjuster::ShiftOperation) -> core::result::Result<(), formualizer_common::error::ExcelError>
-pub fn formualizer_eval::engine::graph::DependencyGraph::define_name(&mut self, &str, formualizer_eval::engine::named_range::NamedDefinition, formualizer_eval::engine::named_range::NameScope) -> core::result::Result<(), formualizer_common::error::ExcelError>
-pub fn formualizer_eval::engine::graph::DependencyGraph::delete_name(&mut self, &str, formualizer_eval::engine::named_range::NameScope) -> core::result::Result<(), formualizer_common::error::ExcelError>
-pub fn formualizer_eval::engine::graph::DependencyGraph::mark_as_name_error(&mut self, formualizer_eval::engine::vertex::VertexId)
-pub fn formualizer_eval::engine::graph::DependencyGraph::named_range_by_vertex(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<&formualizer_eval::engine::named_range::NamedRange>
-pub fn formualizer_eval::engine::graph::DependencyGraph::named_ranges_iter(&self) -> impl core::iter::traits::iterator::Iterator<Item = (&alloc::string::String, &formualizer_eval::engine::named_range::NamedRange)>
-pub fn formualizer_eval::engine::graph::DependencyGraph::resolve_name(&self, &str, formualizer_eval::reference::SheetId) -> core::option::Option<&formualizer_eval::engine::named_range::NamedDefinition>
-pub fn formualizer_eval::engine::graph::DependencyGraph::resolve_name_entry(&self, &str, formualizer_eval::reference::SheetId) -> core::option::Option<&formualizer_eval::engine::named_range::NamedRange>
-pub fn formualizer_eval::engine::graph::DependencyGraph::resolve_name_entry_in_scope(&self, &str, formualizer_eval::engine::named_range::NameScope) -> core::option::Option<&formualizer_eval::engine::named_range::NamedRange>
-pub fn formualizer_eval::engine::graph::DependencyGraph::sheet_named_ranges_iter(&self) -> impl core::iter::traits::iterator::Iterator<Item = (&(formualizer_eval::reference::SheetId, alloc::string::String), &formualizer_eval::engine::named_range::NamedRange)>
-pub fn formualizer_eval::engine::graph::DependencyGraph::update_name(&mut self, &str, formualizer_eval::engine::named_range::NamedDefinition, formualizer_eval::engine::named_range::NameScope) -> core::result::Result<(), formualizer_common::error::ExcelError>
 impl formualizer_eval::engine::graph::DependencyGraph
 pub fn formualizer_eval::engine::graph::DependencyGraph::define_source_scalar(&mut self, &str, core::option::Option<u64>) -> core::result::Result<(), formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::graph::DependencyGraph::define_source_table(&mut self, &str, core::option::Option<u64>) -> core::result::Result<(), formualizer_common::error::ExcelError>
@@ -6941,12 +6804,6 @@ impl core::clone::Clone for formualizer_eval::engine::scheduler::Schedule
 pub fn formualizer_eval::engine::scheduler::Schedule::clone(&self) -> formualizer_eval::engine::scheduler::Schedule
 impl core::fmt::Debug for formualizer_eval::engine::scheduler::Schedule
 pub fn formualizer_eval::engine::scheduler::Schedule::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub struct formualizer_eval::engine::Scheduler<'a>
-impl<'a> formualizer_eval::engine::scheduler::Scheduler<'a>
-pub fn formualizer_eval::engine::scheduler::Scheduler<'a>::create_schedule(&self, &[formualizer_eval::engine::vertex::VertexId]) -> core::result::Result<formualizer_eval::engine::scheduler::Schedule, formualizer_common::error::ExcelError>
-pub fn formualizer_eval::engine::scheduler::Scheduler<'a>::create_schedule_with_virtual(&self, &[formualizer_eval::engine::vertex::VertexId], &rustc_hash::FxHashMap<formualizer_eval::engine::vertex::VertexId, alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>>) -> core::result::Result<formualizer_eval::engine::scheduler::Schedule, formualizer_common::error::ExcelError>
-pub fn formualizer_eval::engine::scheduler::Scheduler<'a>::new(&'a formualizer_eval::engine::graph::DependencyGraph) -> Self
-pub fn formualizer_eval::engine::scheduler::Scheduler<'a>::tarjan_scc(&self, &[formualizer_eval::engine::vertex::VertexId]) -> core::result::Result<alloc::vec::Vec<alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>>, formualizer_common::error::ExcelError>
 pub struct formualizer_eval::engine::ScratchResourceBudget
 pub formualizer_eval::engine::ScratchResourceBudget::disk_scratch_policy: core::option::Option<formualizer_eval::engine::resource_ledger::DiskScratchPolicy>
 pub formualizer_eval::engine::ScratchResourceBudget::graph_source_bytes: core::option::Option<u64>
@@ -7155,10 +7012,6 @@ impl core::hash::Hash for formualizer_eval::engine::vertex::VertexId
 pub fn formualizer_eval::engine::vertex::VertexId::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for formualizer_eval::engine::vertex::VertexId
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::vertex::VertexId
-impl formualizer_eval::engine::topo::pk::GraphView<formualizer_eval::engine::vertex::VertexId> for formualizer_eval::engine::topo::GraphAdapter<'_>
-pub fn formualizer_eval::engine::topo::GraphAdapter<'_>::exists(&self, formualizer_eval::engine::vertex::VertexId) -> bool
-pub fn formualizer_eval::engine::topo::GraphAdapter<'_>::predecessors(&self, formualizer_eval::engine::vertex::VertexId, &mut alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>)
-pub fn formualizer_eval::engine::topo::GraphAdapter<'_>::successors(&self, formualizer_eval::engine::vertex::VertexId, &mut alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>)
 pub struct formualizer_eval::engine::VertexMeta
 pub formualizer_eval::engine::VertexMeta::coord: formualizer_eval::engine::addr::GridAddr
 pub formualizer_eval::engine::VertexMeta::flags: u8
@@ -9547,35 +9400,35 @@ pub fn formualizer_eval::traits::EvaluationContext::used_rows_for_columns(&self,
 pub fn formualizer_eval::traits::EvaluationContext::volatile_level(&self) -> formualizer_eval::traits::VolatileLevel
 pub fn formualizer_eval::traits::EvaluationContext::workbook_seed(&self) -> u64
 pub fn formualizer_eval::traits::EvaluationContext::workbook_sheet_count(&self) -> core::option::Option<usize>
-impl<'a, R: formualizer_eval::traits::EvaluationContext> formualizer_eval::traits::EvaluationContext for formualizer_eval::engine::live_edges::RecordingContext<'a, R>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::backend_caps(&self) -> formualizer_eval::traits::BackendCaps
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::build_criteria_mask(&self, &formualizer_eval::engine::range_view::RangeView<'_>, usize, &formualizer_eval::args::CriteriaPredicate) -> core::option::Option<alloc::sync::Arc<arrow_array::array::boolean_array::BooleanArray>>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::build_lookup_index(&self, &formualizer_eval::engine::range_view::RangeView<'_>, formualizer_eval::engine::lookup_index_cache::LookupAxis) -> core::option::Option<alloc::sync::Arc<formualizer_eval::engine::lookup_index_cache::LookupIndex>>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::build_row_visibility_mask(&self, &formualizer_eval::engine::range_view::RangeView<'_>, formualizer_eval::engine::row_visibility::VisibilityMaskMode) -> core::option::Option<alloc::sync::Arc<arrow_array::array::boolean_array::BooleanArray>>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::cancellation_token(&self) -> core::option::Option<formualizer_eval::engine::cancel::CancelToken>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::chunk_hint(&self) -> core::option::Option<usize>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::clock(&self) -> &dyn formualizer_eval::timezone::ClockProvider
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::current_sheet_index(&self, &str) -> core::option::Option<usize>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::data_snapshot_id(&self) -> u64
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::date_system(&self) -> formualizer_common::value::DateSystem
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::format_class(&self, formualizer_eval::format::FormatId) -> core::option::Option<formualizer_common::numfmt::FormatClass>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::formula_text_at_cell(&self, formualizer_eval::reference::CellRef) -> core::result::Result<core::option::Option<alloc::string::String>, formualizer_common::error::ExcelError>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::inspect_reference(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<core::option::Option<formualizer_eval::traits::ReferenceInfo>, formualizer_common::error::ExcelError>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::locale(&self) -> formualizer_eval::locale::Locale
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::recalc_epoch(&self) -> u64
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::record_cell_derived_format(&self, &str, u32, u32, core::option::Option<formualizer_eval::format::FormatId>)
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::resolve_cell_format(&self, core::option::Option<&str>, u32, u32, &str) -> core::option::Option<formualizer_eval::format::FormatId>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::resolve_cell_reference_value(&self, core::option::Option<&str>, u32, u32, &str) -> core::result::Result<formualizer_common::value::LiteralValue, formualizer_common::error::ExcelError>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::resolve_range_view<'c>(&'c self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<formualizer_eval::engine::range_view::RangeView<'c>, formualizer_common::error::ExcelError>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::sheet_index_by_name(&self, &str) -> core::option::Option<usize>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::thread_pool(&self) -> core::option::Option<&alloc::sync::Arc<rayon_core::thread_pool::ThreadPool>>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::timezone(&self) -> &formualizer_eval::timezone::TimeZoneSpec
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::used_cols_for_rows(&self, &str, u32, u32) -> core::option::Option<(u32, u32)>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::used_rows_for_columns(&self, &str, u32, u32) -> core::option::Option<(u32, u32)>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::volatile_level(&self) -> formualizer_eval::traits::VolatileLevel
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::workbook_seed(&self) -> u64
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::workbook_sheet_count(&self) -> core::option::Option<usize>
+impl<'a, R: formualizer_eval::traits::EvaluationContext, S: formualizer_eval::engine::live_edges::ReadSink> formualizer_eval::traits::EvaluationContext for formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::backend_caps(&self) -> formualizer_eval::traits::BackendCaps
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::build_criteria_mask(&self, &formualizer_eval::engine::range_view::RangeView<'_>, usize, &formualizer_eval::args::CriteriaPredicate) -> core::option::Option<alloc::sync::Arc<arrow_array::array::boolean_array::BooleanArray>>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::build_lookup_index(&self, &formualizer_eval::engine::range_view::RangeView<'_>, formualizer_eval::engine::lookup_index_cache::LookupAxis) -> core::option::Option<alloc::sync::Arc<formualizer_eval::engine::lookup_index_cache::LookupIndex>>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::build_row_visibility_mask(&self, &formualizer_eval::engine::range_view::RangeView<'_>, formualizer_eval::engine::row_visibility::VisibilityMaskMode) -> core::option::Option<alloc::sync::Arc<arrow_array::array::boolean_array::BooleanArray>>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::cancellation_token(&self) -> core::option::Option<formualizer_eval::engine::cancel::CancelToken>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::chunk_hint(&self) -> core::option::Option<usize>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::clock(&self) -> &dyn formualizer_eval::timezone::ClockProvider
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::current_sheet_index(&self, &str) -> core::option::Option<usize>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::data_snapshot_id(&self) -> u64
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::date_system(&self) -> formualizer_common::value::DateSystem
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::format_class(&self, formualizer_eval::format::FormatId) -> core::option::Option<formualizer_common::numfmt::FormatClass>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::formula_text_at_cell(&self, formualizer_eval::reference::CellRef) -> core::result::Result<core::option::Option<alloc::string::String>, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::inspect_reference(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<core::option::Option<formualizer_eval::traits::ReferenceInfo>, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::locale(&self) -> formualizer_eval::locale::Locale
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::recalc_epoch(&self) -> u64
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::record_cell_derived_format(&self, &str, u32, u32, core::option::Option<formualizer_eval::format::FormatId>)
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::resolve_cell_format(&self, core::option::Option<&str>, u32, u32, &str) -> core::option::Option<formualizer_eval::format::FormatId>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::resolve_cell_reference_value(&self, core::option::Option<&str>, u32, u32, &str) -> core::result::Result<formualizer_common::value::LiteralValue, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::resolve_range_view<'c>(&'c self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<formualizer_eval::engine::range_view::RangeView<'c>, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::sheet_index_by_name(&self, &str) -> core::option::Option<usize>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::thread_pool(&self) -> core::option::Option<&alloc::sync::Arc<rayon_core::thread_pool::ThreadPool>>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::timezone(&self) -> &formualizer_eval::timezone::TimeZoneSpec
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::used_cols_for_rows(&self, &str, u32, u32) -> core::option::Option<(u32, u32)>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::used_rows_for_columns(&self, &str, u32, u32) -> core::option::Option<(u32, u32)>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::volatile_level(&self) -> formualizer_eval::traits::VolatileLevel
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::workbook_seed(&self) -> u64
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::workbook_sheet_count(&self) -> core::option::Option<usize>
 impl<'a, R: formualizer_eval::traits::EvaluationContext> formualizer_eval::traits::EvaluationContext for formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::backend_caps(&self) -> formualizer_eval::traits::BackendCaps
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::build_criteria_mask(&self, &formualizer_eval::engine::range_view::RangeView<'_>, usize, &formualizer_eval::args::CriteriaPredicate) -> core::option::Option<alloc::sync::Arc<arrow_array::array::boolean_array::BooleanArray>>
@@ -9701,9 +9554,9 @@ pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::workbook_sheet_coun
 pub trait formualizer_eval::traits::FunctionProvider: core::marker::Send + core::marker::Sync
 pub fn formualizer_eval::traits::FunctionProvider::function_semantic_identity(&self, &str, &str, usize) -> core::option::Option<formualizer_eval::function_contract::FunctionSemanticIdentity>
 pub fn formualizer_eval::traits::FunctionProvider::get_function(&self, &str, &str) -> core::option::Option<alloc::sync::Arc<dyn formualizer_eval::function::Function>>
-impl<'a, R: formualizer_eval::traits::EvaluationContext> formualizer_eval::traits::FunctionProvider for formualizer_eval::engine::live_edges::RecordingContext<'a, R>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::function_semantic_identity(&self, &str, &str, usize) -> core::option::Option<formualizer_eval::function_contract::FunctionSemanticIdentity>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::get_function(&self, &str, &str) -> core::option::Option<alloc::sync::Arc<dyn formualizer_eval::function::Function>>
+impl<'a, R: formualizer_eval::traits::EvaluationContext, S: formualizer_eval::engine::live_edges::ReadSink> formualizer_eval::traits::FunctionProvider for formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::function_semantic_identity(&self, &str, &str, usize) -> core::option::Option<formualizer_eval::function_contract::FunctionSemanticIdentity>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::get_function(&self, &str, &str) -> core::option::Option<alloc::sync::Arc<dyn formualizer_eval::function::Function>>
 impl<'a, R: formualizer_eval::traits::EvaluationContext> formualizer_eval::traits::FunctionProvider for formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::function_semantic_identity(&self, &str, &str, usize) -> core::option::Option<formualizer_eval::function_contract::FunctionSemanticIdentity>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::get_function(&self, &str, &str) -> core::option::Option<alloc::sync::Arc<dyn formualizer_eval::function::Function>>
@@ -9712,8 +9565,8 @@ pub fn formualizer_eval::engine::eval::Engine<R>::function_semantic_identity(&se
 pub fn formualizer_eval::engine::eval::Engine<R>::get_function(&self, &str, &str) -> core::option::Option<alloc::sync::Arc<dyn formualizer_eval::function::Function>>
 pub trait formualizer_eval::traits::NamedRangeResolver: core::marker::Send + core::marker::Sync
 pub fn formualizer_eval::traits::NamedRangeResolver::resolve_named_range_reference(&self, &str) -> core::result::Result<alloc::vec::Vec<alloc::vec::Vec<formualizer_common::value::LiteralValue>>, formualizer_common::error::ExcelError>
-impl<'a, R: formualizer_eval::traits::EvaluationContext> formualizer_eval::traits::NamedRangeResolver for formualizer_eval::engine::live_edges::RecordingContext<'a, R>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::resolve_named_range_reference(&self, &str) -> core::result::Result<alloc::vec::Vec<alloc::vec::Vec<formualizer_common::value::LiteralValue>>, formualizer_common::error::ExcelError>
+impl<'a, R: formualizer_eval::traits::EvaluationContext, S: formualizer_eval::engine::live_edges::ReadSink> formualizer_eval::traits::NamedRangeResolver for formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::resolve_named_range_reference(&self, &str) -> core::result::Result<alloc::vec::Vec<alloc::vec::Vec<formualizer_common::value::LiteralValue>>, formualizer_common::error::ExcelError>
 impl<'a, R: formualizer_eval::traits::EvaluationContext> formualizer_eval::traits::NamedRangeResolver for formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::resolve_named_range_reference(&self, &str) -> core::result::Result<alloc::vec::Vec<alloc::vec::Vec<formualizer_common::value::LiteralValue>>, formualizer_common::error::ExcelError>
 impl<R> formualizer_eval::traits::NamedRangeResolver for formualizer_eval::engine::eval::Engine<R> where R: formualizer_eval::traits::EvaluationContext
@@ -9747,24 +9600,24 @@ pub fn formualizer_eval::traits::InMemoryRange::iter_rows<'a>(&'a self) -> alloc
 pub fn formualizer_eval::traits::InMemoryRange::materialise(&self) -> alloc::borrow::Cow<'_, [alloc::vec::Vec<formualizer_common::value::LiteralValue>]>
 pub trait formualizer_eval::traits::RangeResolver: core::marker::Send + core::marker::Sync
 pub fn formualizer_eval::traits::RangeResolver::resolve_range_reference(&self, core::option::Option<&str>, core::option::Option<u32>, core::option::Option<u32>, core::option::Option<u32>, core::option::Option<u32>) -> core::result::Result<alloc::boxed::Box<dyn formualizer_eval::traits::Range>, formualizer_common::error::ExcelError>
-impl<'a, R: formualizer_eval::traits::EvaluationContext> formualizer_eval::traits::RangeResolver for formualizer_eval::engine::live_edges::RecordingContext<'a, R>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::resolve_range_reference(&self, core::option::Option<&str>, core::option::Option<u32>, core::option::Option<u32>, core::option::Option<u32>, core::option::Option<u32>) -> core::result::Result<alloc::boxed::Box<dyn formualizer_eval::traits::Range>, formualizer_common::error::ExcelError>
+impl<'a, R: formualizer_eval::traits::EvaluationContext, S: formualizer_eval::engine::live_edges::ReadSink> formualizer_eval::traits::RangeResolver for formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::resolve_range_reference(&self, core::option::Option<&str>, core::option::Option<u32>, core::option::Option<u32>, core::option::Option<u32>, core::option::Option<u32>) -> core::result::Result<alloc::boxed::Box<dyn formualizer_eval::traits::Range>, formualizer_common::error::ExcelError>
 impl<'a, R: formualizer_eval::traits::EvaluationContext> formualizer_eval::traits::RangeResolver for formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::resolve_range_reference(&self, core::option::Option<&str>, core::option::Option<u32>, core::option::Option<u32>, core::option::Option<u32>, core::option::Option<u32>) -> core::result::Result<alloc::boxed::Box<dyn formualizer_eval::traits::Range>, formualizer_common::error::ExcelError>
 impl<R> formualizer_eval::traits::RangeResolver for formualizer_eval::engine::eval::Engine<R> where R: formualizer_eval::traits::EvaluationContext
 pub fn formualizer_eval::engine::eval::Engine<R>::resolve_range_reference(&self, core::option::Option<&str>, core::option::Option<u32>, core::option::Option<u32>, core::option::Option<u32>, core::option::Option<u32>) -> core::result::Result<alloc::boxed::Box<dyn formualizer_eval::traits::Range>, formualizer_common::error::ExcelError>
 pub trait formualizer_eval::traits::ReferenceResolver: core::marker::Send + core::marker::Sync
 pub fn formualizer_eval::traits::ReferenceResolver::resolve_cell_reference(&self, core::option::Option<&str>, u32, u32) -> core::result::Result<formualizer_common::value::LiteralValue, formualizer_common::error::ExcelError>
-impl<'a, R: formualizer_eval::traits::EvaluationContext> formualizer_eval::traits::ReferenceResolver for formualizer_eval::engine::live_edges::RecordingContext<'a, R>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::resolve_cell_reference(&self, core::option::Option<&str>, u32, u32) -> core::result::Result<formualizer_common::value::LiteralValue, formualizer_common::error::ExcelError>
+impl<'a, R: formualizer_eval::traits::EvaluationContext, S: formualizer_eval::engine::live_edges::ReadSink> formualizer_eval::traits::ReferenceResolver for formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::resolve_cell_reference(&self, core::option::Option<&str>, u32, u32) -> core::result::Result<formualizer_common::value::LiteralValue, formualizer_common::error::ExcelError>
 impl<'a, R: formualizer_eval::traits::EvaluationContext> formualizer_eval::traits::ReferenceResolver for formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::resolve_cell_reference(&self, core::option::Option<&str>, u32, u32) -> core::result::Result<formualizer_common::value::LiteralValue, formualizer_common::error::ExcelError>
 impl<R> formualizer_eval::traits::ReferenceResolver for formualizer_eval::engine::eval::Engine<R> where R: formualizer_eval::traits::EvaluationContext
 pub fn formualizer_eval::engine::eval::Engine<R>::resolve_cell_reference(&self, core::option::Option<&str>, u32, u32) -> core::result::Result<formualizer_common::value::LiteralValue, formualizer_common::error::ExcelError>
 pub trait formualizer_eval::traits::Resolver: formualizer_eval::traits::ReferenceResolver + formualizer_eval::traits::RangeResolver + formualizer_eval::traits::NamedRangeResolver + formualizer_eval::traits::TableResolver
 pub fn formualizer_eval::traits::Resolver::resolve_range_like(&self, &formualizer_parse::parser::ReferenceType) -> core::result::Result<alloc::boxed::Box<dyn formualizer_eval::traits::Range>, formualizer_common::error::ExcelError>
-impl<'a, R: formualizer_eval::traits::EvaluationContext> formualizer_eval::traits::Resolver for formualizer_eval::engine::live_edges::RecordingContext<'a, R>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::resolve_range_like(&self, &formualizer_parse::parser::ReferenceType) -> core::result::Result<alloc::boxed::Box<dyn formualizer_eval::traits::Range>, formualizer_common::error::ExcelError>
+impl<'a, R: formualizer_eval::traits::EvaluationContext, S: formualizer_eval::engine::live_edges::ReadSink> formualizer_eval::traits::Resolver for formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::resolve_range_like(&self, &formualizer_parse::parser::ReferenceType) -> core::result::Result<alloc::boxed::Box<dyn formualizer_eval::traits::Range>, formualizer_common::error::ExcelError>
 impl<'a, R: formualizer_eval::traits::EvaluationContext> formualizer_eval::traits::Resolver for formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::resolve_range_like(&self, &formualizer_parse::parser::ReferenceType) -> core::result::Result<alloc::boxed::Box<dyn formualizer_eval::traits::Range>, formualizer_common::error::ExcelError>
 impl<R> formualizer_eval::traits::Resolver for formualizer_eval::engine::eval::Engine<R> where R: formualizer_eval::traits::EvaluationContext
@@ -9774,11 +9627,11 @@ pub fn formualizer_eval::traits::SourceResolver::resolve_source_scalar(&self, &s
 pub fn formualizer_eval::traits::SourceResolver::resolve_source_table(&self, &str) -> core::result::Result<alloc::boxed::Box<dyn formualizer_eval::traits::Table>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::traits::SourceResolver::source_scalar_version(&self, &str) -> core::option::Option<u64>
 pub fn formualizer_eval::traits::SourceResolver::source_table_version(&self, &str) -> core::option::Option<u64>
-impl<'a, R: formualizer_eval::traits::EvaluationContext> formualizer_eval::traits::SourceResolver for formualizer_eval::engine::live_edges::RecordingContext<'a, R>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::resolve_source_scalar(&self, &str) -> core::result::Result<formualizer_common::value::LiteralValue, formualizer_common::error::ExcelError>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::resolve_source_table(&self, &str) -> core::result::Result<alloc::boxed::Box<dyn formualizer_eval::traits::Table>, formualizer_common::error::ExcelError>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::source_scalar_version(&self, &str) -> core::option::Option<u64>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::source_table_version(&self, &str) -> core::option::Option<u64>
+impl<'a, R: formualizer_eval::traits::EvaluationContext, S: formualizer_eval::engine::live_edges::ReadSink> formualizer_eval::traits::SourceResolver for formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::resolve_source_scalar(&self, &str) -> core::result::Result<formualizer_common::value::LiteralValue, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::resolve_source_table(&self, &str) -> core::result::Result<alloc::boxed::Box<dyn formualizer_eval::traits::Table>, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::source_scalar_version(&self, &str) -> core::option::Option<u64>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::source_table_version(&self, &str) -> core::option::Option<u64>
 impl<'a, R: formualizer_eval::traits::EvaluationContext> formualizer_eval::traits::SourceResolver for formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::resolve_source_scalar(&self, &str) -> core::result::Result<formualizer_common::value::LiteralValue, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::resolve_source_table(&self, &str) -> core::result::Result<alloc::boxed::Box<dyn formualizer_eval::traits::Table>, formualizer_common::error::ExcelError>
@@ -9813,8 +9666,8 @@ pub fn alloc::boxed::Box<dyn formualizer_eval::traits::Table>::headers_row(&self
 pub fn alloc::boxed::Box<dyn formualizer_eval::traits::Table>::totals_row(&self) -> core::option::Option<alloc::boxed::Box<dyn formualizer_eval::traits::Range>>
 pub trait formualizer_eval::traits::TableResolver: core::marker::Send + core::marker::Sync
 pub fn formualizer_eval::traits::TableResolver::resolve_table_reference(&self, &formualizer_parse::parser::TableReference) -> core::result::Result<alloc::boxed::Box<dyn formualizer_eval::traits::Table>, formualizer_common::error::ExcelError>
-impl<'a, R: formualizer_eval::traits::EvaluationContext> formualizer_eval::traits::TableResolver for formualizer_eval::engine::live_edges::RecordingContext<'a, R>
-pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R>::resolve_table_reference(&self, &formualizer_parse::parser::TableReference) -> core::result::Result<alloc::boxed::Box<dyn formualizer_eval::traits::Table>, formualizer_common::error::ExcelError>
+impl<'a, R: formualizer_eval::traits::EvaluationContext, S: formualizer_eval::engine::live_edges::ReadSink> formualizer_eval::traits::TableResolver for formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::resolve_table_reference(&self, &formualizer_parse::parser::TableReference) -> core::result::Result<alloc::boxed::Box<dyn formualizer_eval::traits::Table>, formualizer_common::error::ExcelError>
 impl<'a, R: formualizer_eval::traits::EvaluationContext> formualizer_eval::traits::TableResolver for formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::resolve_table_reference(&self, &formualizer_parse::parser::TableReference) -> core::result::Result<alloc::boxed::Box<dyn formualizer_eval::traits::Table>, formualizer_common::error::ExcelError>
 impl<R> formualizer_eval::traits::TableResolver for formualizer_eval::engine::eval::Engine<R> where R: formualizer_eval::traits::EvaluationContext
