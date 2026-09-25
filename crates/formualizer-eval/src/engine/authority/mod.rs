@@ -3,18 +3,18 @@
 //! Temporary and behind the never-default `unified_authority` feature. The
 //! legacy graph stays the runtime evaluation path until M1b.
 
-// S2 emission primitive; remove allowance when the planning driver lands.
+// Remove the temporary allowance when the evaluator calls the driver.
 #[allow(dead_code)]
 pub(crate) mod arc_emit;
-// S2 sweep primitive; remove allowance when the planning driver lands.
+// Remove the temporary allowance when the evaluator calls the driver.
 #[allow(dead_code)]
 pub(crate) mod arc_sweep;
-// S2 topology stage; remove allowance when the full planning driver lands.
+// Remove the temporary allowance when the evaluator calls the driver.
 #[allow(dead_code)]
 pub(crate) mod arc_topology;
 pub mod avl;
 pub mod canon;
-// S2 candidate discovery; remove when the complete planner is wired.
+// Remove the temporary allowance when the evaluator calls the driver.
 #[allow(dead_code)]
 pub(crate) mod candidates;
 pub mod dir;
@@ -25,15 +25,15 @@ pub mod groups;
 pub mod host;
 pub mod identity;
 pub mod level_index;
-// S2 graph-kernel checkpoint; remove when the ARC driver lands.
+// Remove the temporary allowance when the evaluator calls the driver.
 #[allow(dead_code)]
 pub(crate) mod plan_graph;
-// Store-to-topology assembly, pending classification and evaluator cutover.
+// Complete per-cell planning driver, pending evaluator/resource cutover.
 #[allow(dead_code)]
 pub(crate) mod planner;
 pub mod probe;
 pub mod proj;
-// S2 input checkpoint; remove this allowance when the ARC driver lands.
+// Remove the temporary allowance when the evaluator calls the driver.
 #[allow(dead_code)]
 pub(crate) mod refine;
 pub mod slots;

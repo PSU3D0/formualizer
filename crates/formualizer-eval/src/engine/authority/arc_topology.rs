@@ -13,6 +13,8 @@ pub(crate) enum TopologyError {
     Sweep(SweepError),
     Emit(EmitError),
     Graph(GraphError),
+    /// A realized pair witness could not produce a displacement box.
+    InvalidWitness,
 }
 impl From<AuthorityError> for TopologyError {
     fn from(e: AuthorityError) -> Self {
