@@ -333,7 +333,15 @@ impl DependencyGraph {
         let symbols_moved = self.authority.symbol_rev != self.symbol_revision
             || !self.authority.symbol_changes.names.is_empty()
             || self.authority.symbol_changes.other;
-        let mut rebuild = self.authority.state == HostState::Unbuilt;
+        // A bulk build is ~5x cheaper per formula than incremental
+        // `set_formula`. Rebuild when the store holds no grid formula yet
+        // and a batch arrives (the end of a load scope after an early empty
+        // build, e.g. from `add_sheet`: applying every loaded formula one by
+        // one made small-workbook loads ~1.6x legacy).
+        let grid_formulas = (self.authority.store.formula_count() as usize)
+            .saturating_sub(self.authority.symbols.len());
+        let mut rebuild =
+            self.authority.state == HostState::Unbuilt || (grid_formulas == 0 && touched.len() > 1);
         if !rebuild && symbols_moved {
             match self.authority_sync_symbols_incremental(&mut touched) {
                 Some(Ok(())) => {}
