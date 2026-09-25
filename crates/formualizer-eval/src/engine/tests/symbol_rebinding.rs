@@ -155,11 +155,14 @@ fn best_effort(defer: bool) -> EvalConfig {
 
 #[test]
 fn strict_policy_still_rejects_missing_sheet_and_table() {
-    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
     assert_eq!(
-        engine.config.preparation_policy,
-        PreparationPolicy::Strict,
-        "legacy policy is the default"
+        EvalConfig::default().preparation_policy,
+        PreparationPolicy::BestEffort,
+        "BestEffort is the default (decision 16)"
+    );
+    let mut engine = Engine::new(
+        TestWorkbook::new(),
+        EvalConfig::default().with_preparation_policy(PreparationPolicy::Strict),
     );
     assert!(
         engine

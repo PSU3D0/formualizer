@@ -732,13 +732,13 @@ pub enum TemporalEgress {
 /// does not exist (#454, docs/preparation-error-policy.md).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PreparationPolicy {
-    /// Preparation fails ("Sheet not found", "Undefined table"): today's
-    /// behavior and the default.
-    #[default]
+    /// Preparation fails ("Sheet not found", "Undefined table"), as before
+    /// 0.10. Explicit opt-in.
     Strict,
-    /// The formula is accepted with the reference unbound (it evaluates to
-    /// an error) and re-binds when the sheet or table is added, like an
-    /// undefined name does under either policy.
+    /// The default. The formula is accepted with the reference unbound (it
+    /// evaluates to an error) and re-binds when the sheet or table is added,
+    /// like an undefined name does under either policy.
+    #[default]
     BestEffort,
 }
 
@@ -858,8 +858,8 @@ pub struct EvalConfig {
     /// for on-demand graph construction during evaluation.
     pub defer_graph_building: bool,
 
-    /// Missing sheets and tables at preparation: fail (default) or bind
-    /// later. See [`PreparationPolicy`].
+    /// Missing sheets and tables at preparation: bind later (default) or
+    /// fail. See [`PreparationPolicy`].
     pub preparation_policy: PreparationPolicy,
 
     /// Enable virtual dependency convergence telemetry collection.
@@ -935,7 +935,7 @@ impl Default for EvalConfig {
             temporal_egress: TemporalEgress::default(),
             formula_parse_policy: FormulaParsePolicy::Strict,
             defer_graph_building: false,
-            preparation_policy: PreparationPolicy::Strict,
+            preparation_policy: PreparationPolicy::BestEffort,
             enable_virtual_dep_telemetry: false,
             formula_plane_mode: FormulaPlaneMode::Off,
             max_formula_plane_cache_candidates: 100_000,

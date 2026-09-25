@@ -1,5 +1,7 @@
 # Preparation errors and spreadsheet guards
 
+> **Since 0.10 the default is `PreparationPolicy::BestEffort`.** A reference to a missing sheet or table no longer fails preparation: the formula is accepted, evaluates to an error value while the target is missing (so `IFERROR` catches it), and re-binds when the sheet or table is added. The table below describes `PreparationPolicy::Strict`, which keeps the #454 boundary exactly and is an explicit opt-in (`EvalConfig::with_preparation_policy(PreparationPolicy::Strict)`, Python `EvaluationConfig.strict_preparation = True`). A reference to a sheet that was *removed* stays `#REF!` under both policies and heals through the removed-sheet mechanism when the sheet returns.
+
 Decision for [#454](https://github.com/PSU3D0/formualizer/issues/454): **retain the existing preparation-exception policy**. This correctness tranche adds no reference-error mode and does not turn binding failures into catchable cell values.
 
 ## Two different boundaries
@@ -48,4 +50,4 @@ That implementation is deferred. This document resolves the policy decision for 
 
 ## Regression coverage
 
-`crates/formualizer-workbook/tests/preparation_error_policy.rs` covers direct/nested guards, IFNA specificity, runtime laziness versus binding, full/target preparation failures, graph admission and pre-signalled cancellation. These tests protect the boundary; they are not a comprehensive external-provider or circularity matrix.
+`crates/formualizer-workbook/tests/preparation_error_policy.rs` covers the BestEffort default (`best_effort_unbound_reference_is_a_cell_error_that_guards_catch`) and, under explicit Strict, direct/nested guards, IFNA specificity, runtime laziness versus binding, full/target preparation failures, graph admission and pre-signalled cancellation. These tests protect the boundary; they are not a comprehensive external-provider or circularity matrix.

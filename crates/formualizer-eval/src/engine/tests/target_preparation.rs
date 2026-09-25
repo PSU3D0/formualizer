@@ -19,15 +19,31 @@ use crate::reference::{CellRef, Coord, RangeRef};
 use crate::test_workbook::TestWorkbook;
 
 fn engine(mode: FormulaPlaneMode) -> Engine<TestWorkbook> {
+    engine_with_policy(mode, crate::engine::PreparationPolicy::default())
+}
+
+fn engine_with_policy(
+    mode: FormulaPlaneMode,
+    policy: crate::engine::PreparationPolicy,
+) -> Engine<TestWorkbook> {
     static BUILTINS_READY: OnceLock<()> = OnceLock::new();
     BUILTINS_READY.get_or_init(crate::builtins::load_builtins);
-    let mut config = EvalConfig::default().with_formula_plane_mode(mode);
+    let mut config = EvalConfig::default()
+        .with_formula_plane_mode(mode)
+        .with_preparation_policy(policy);
     config.defer_graph_building = true;
     let mut engine = Engine::new(TestWorkbook::new(), config);
     for sheet in ["Inputs", "Middle", "Outputs"] {
         engine.add_sheet(sheet).unwrap();
     }
     engine
+}
+
+/// `engine(mode)` with the explicit Strict preparation policy: for tests that
+/// use a missing sheet to provoke a preparation failure (BestEffort became
+/// the default).
+fn strict_engine(mode: FormulaPlaneMode) -> Engine<TestWorkbook> {
+    engine_with_policy(mode, crate::engine::PreparationPolicy::Strict)
 }
 
 fn cell(sheet: &str, row: u32, col: u32) -> EvaluationTarget {
@@ -395,7 +411,7 @@ fn failed_source_preparation_retains_authority_for_retry() {
     ] {
         for imported in [false, true] {
             for targeted in [false, true] {
-                let mut engine = engine(mode);
+                let mut engine = strict_engine(mode);
                 let formulas = [
                     (1, 1, "1+2"),
                     (1, 2, "NOSHEET!A1"),
@@ -469,7 +485,7 @@ fn failed_source_preparation_retains_authority_for_retry() {
 
 #[test]
 fn failed_direct_preparation_retries_a_committed_source_prefix() {
-    let mut engine = engine(FormulaPlaneMode::AuthoritativeExperimental);
+    let mut engine = strict_engine(FormulaPlaneMode::AuthoritativeExperimental);
     engine
         .source_formula_ingress()
         .stage_deferred(complete_family_package("Outputs", 990, 1));
@@ -677,7 +693,7 @@ fn pending_spill_ordinary_and_indexed_blockers_are_not_prepared_and_retry() {
     for mode in [FormulaPlaneMode::Off, FormulaPlaneMode::Shadow] {
         for indexed in [false, true] {
             for blocker in ["99", "NOSHEET!A1"] {
-                let mut engine = engine(mode);
+                let mut engine = strict_engine(mode);
                 if indexed {
                     engine
                         .source_formula_ingress()
@@ -893,7 +909,7 @@ fn indexed_ordinary_package_targets_isolate_failures_and_retain_residual_source(
         FormulaPlaneMode::Shadow,
         FormulaPlaneMode::AuthoritativeExperimental,
     ] {
-        let mut engine = engine(mode);
+        let mut engine = strict_engine(mode);
         engine
             .source_formula_ingress()
             .stage_deferred(indexed_package(

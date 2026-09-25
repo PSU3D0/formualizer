@@ -39,6 +39,8 @@ fn inject_external_link_rels(bytes: Vec<u8>, idx: u32, target: &str) -> Vec<u8> 
     writer.finish().unwrap().into_inner()
 }
 
+use super::strict_interactive;
+
 #[test]
 fn calamine_extracts_formulas_and_normalizes_equals() {
     let path = build_workbook(|book| {
@@ -81,12 +83,8 @@ fn calamine_failed_preparation_preserves_source_inspection_and_history() {
     });
     for targeted in [false, true] {
         let adapter = CalamineAdapter::open_path(&path).unwrap();
-        let mut wb = Workbook::from_reader(
-            adapter,
-            LoadStrategy::EagerAll,
-            WorkbookConfig::interactive(),
-        )
-        .unwrap();
+        let mut wb =
+            Workbook::from_reader(adapter, LoadStrategy::EagerAll, strict_interactive()).unwrap();
         let original: Vec<_> = (1..=3)
             .map(|col| wb.get_formula("Sheet1", 1, col).unwrap())
             .collect();
@@ -143,12 +141,8 @@ fn calamine_ordinary_targets_isolate_unrelated_preparation_failures() {
         }
     });
     let adapter = CalamineAdapter::open_path(&path).unwrap();
-    let mut wb = Workbook::from_reader(
-        adapter,
-        LoadStrategy::EagerAll,
-        WorkbookConfig::interactive(),
-    )
-    .unwrap();
+    let mut wb =
+        Workbook::from_reader(adapter, LoadStrategy::EagerAll, strict_interactive()).unwrap();
     assert_eq!(
         wb.evaluate_cell("Sheet1", 1, 1).unwrap(),
         LiteralValue::Number(3.0)
@@ -206,7 +200,7 @@ fn calamine_locator_retained_admission_across_packages_and_failures() {
         let mut wb = Workbook::from_reader(
             CalamineAdapter::open_path(&path).unwrap(),
             LoadStrategy::EagerAll,
-            WorkbookConfig::interactive(),
+            strict_interactive(),
         )
         .unwrap();
         let prepare = |wb: &mut Workbook, sheet: &str, row, col| {

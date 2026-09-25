@@ -70,6 +70,7 @@ fn defer_unbound(
     error: ExcelError,
 ) -> Result<(), ExcelError> {
     if !name.is_empty()
+        && !(kind == "sheet" && DependencyGraph::is_tombstone_sheet(name))
         && context.unresolved_name_policy == UnresolvedNamePolicy::Collect
         && context.graph.config.preparation_policy == crate::engine::PreparationPolicy::BestEffort
     {

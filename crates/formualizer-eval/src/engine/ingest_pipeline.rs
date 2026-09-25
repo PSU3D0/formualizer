@@ -213,7 +213,10 @@ impl<'a> IngestPipeline<'a> {
         error: ExcelError,
     ) -> Result<(), ExcelError> {
         match name {
-            Some(name) if self.unbound_pending => {
+            Some(name)
+                if self.unbound_pending
+                    && !(kind == "sheet" && DependencyGraph::is_tombstone_sheet(name)) =>
+            {
                 plan.named_refs
                     .push(DependencyGraph::unbound_symbol_key(kind, name));
                 Ok(())
@@ -2650,7 +2653,11 @@ mod tests {
     #[test]
     fn frozen_ingest_walk_matches_reference_classes_scopes_and_errors() {
         ensure_builtins_registered();
-        let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+        // The frozen reference walk has only Strict semantics.
+        let mut engine = Engine::new(
+            TestWorkbook::new(),
+            EvalConfig::default().with_preparation_policy(crate::engine::PreparationPolicy::Strict),
+        );
         let sheet = engine.graph.sheet_id_mut("Sheet1");
         engine.graph.sheet_id_mut("Sheet2");
         let mut pipeline = engine.ingest_pipeline();
@@ -2747,7 +2754,10 @@ mod tests {
             let ast = parse(&formula).unwrap_or_else(|error| panic!("{formula}: {error}"));
             let mut engine = Engine::new(
                 TestWorkbook::new(),
-                EvalConfig::default().with_range_expansion_limit(limit),
+                EvalConfig::default()
+                    .with_range_expansion_limit(limit)
+                    // The frozen reference walk has only Strict semantics.
+                    .with_preparation_policy(crate::engine::PreparationPolicy::Strict),
             );
             let sheet = engine.graph.sheet_id_mut("Sheet1");
             engine.graph.sheet_id_mut("Sheet2");

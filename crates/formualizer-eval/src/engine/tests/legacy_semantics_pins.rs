@@ -163,7 +163,12 @@ fn oq_s2_4_move_qualifier_rendering() {
 #[test]
 fn oq_1_missing_target_kinds_and_phases_on_set_cell_formula() {
     let set = |formula: &str| {
-        let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+        // Pins the Strict preparation phase (explicit since 0.10's
+        // BestEffort default).
+        let mut engine = Engine::new(
+            TestWorkbook::new(),
+            EvalConfig::default().with_preparation_policy(crate::engine::PreparationPolicy::Strict),
+        );
         let result = engine.set_cell_formula("Sheet1", 1, 1, parse(formula).unwrap());
         (engine, result)
     };

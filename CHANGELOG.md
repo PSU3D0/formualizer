@@ -4,6 +4,10 @@ All notable changes to Formualizer will be documented in this file.
 
 ## Unreleased
 
+### Changed
+
+- **Preparation policy default is now `BestEffort`.** A formula that references a sheet or table that does not exist is accepted instead of failing preparation ("Sheet not found", "Undefined table"). It evaluates to an error value while the target is missing, which `IFERROR` and friends see like any other cell error, and it re-binds and recalculates when the sheet or table is added (`add_sheet`, implicit sheet creation, `define_table`). This applies to direct assignment, batch and deferred ingest, and imported workbooks. The previous behavior is kept exactly under `PreparationPolicy::Strict`: set `EvalConfig::preparation_policy` / `with_preparation_policy(PreparationPolicy::Strict)` in Rust, or `EvaluationConfig.strict_preparation = True` in Python (new property). References to a *removed* sheet are unchanged under both policies (`#REF!`, healed when the sheet returns). Tests that used a missing sheet to provoke a preparation failure now opt into `Strict` explicitly. See [preparation errors](docs/preparation-error-policy.md).
+
 ### Performance
 
 - Made repeated builtin loading a no-op once every builtin is registered. `load_builtins` runs from every formula-planning snapshot (once per ordered-fallback proposal on the Calamine authoritative route) and from template canonicalization, and it used to inspect the metadata of all ~409 builtins and take the registry write lock for each on every call. A completed pass is now remembered until a user registration displaces a builtin, and an already-registered builtin is detected under a read lock before any metadata inspection. User overrides of builtin names and their restoration by the next load behave as before. Remaining snapshot work is one metadata inspection per requested function.
