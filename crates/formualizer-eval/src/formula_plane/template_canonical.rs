@@ -1765,6 +1765,38 @@ mod tests {
         }
     }
 
+    /// FORM-000138 call-count evidence: 10,000 `canonicalize_template` calls.
+    #[test]
+    fn canonicalize_template_repeated_builtin_loading_call_counts() {
+        use crate::function_registry::registration_call_counts;
+        let _serial = crate::function_registry::tests::lock_builtin_displacement();
+        // Other tests' fixture displacements may land during a pass; settle
+        // on a completed pass with no displacement since it started.
+        while !crate::function_registry::builtins_loaded() {
+            crate::builtins::load_builtins();
+        }
+        let ast = parse("=SUM(A1:B2)+HYPGEOM.DIST(1,2,3,4,TRUE)").unwrap();
+        let displacements = crate::function_registry::tests::builtin_displacements();
+        let before = registration_call_counts();
+        for row in 1..=10_000 {
+            canonicalize_template(&ast, row, 3);
+        }
+        let after = registration_call_counts();
+        let load_builtins = after.load_builtins - before.load_builtins;
+        let register = after.register - before.register;
+        let inspect_semantics = after.inspect_semantics - before.inspect_semantics;
+        eprintln!(
+            "FORM-000138 canonicalize_template x10000: load_builtins={load_builtins} register={register} inspect_semantics={inspect_semantics}"
+        );
+        assert_eq!(load_builtins, 10_000);
+        // Only a concurrent displacement (another test's fixture) may force a
+        // full pass; builtins themselves inspect nothing on the fast path.
+        if crate::function_registry::tests::builtin_displacements() == displacements {
+            assert_eq!(register, 0);
+        }
+        assert!(inspect_semantics <= 1, "{inspect_semantics}");
+    }
+
     #[test]
     fn registry_semantic_identity_rejects_may_spill_lookup_and_tracks_generation() {
         let template = canonical("=XLOOKUP(A1,$D$1:$D$3,$E$1:$E$3)", 1, 2);
