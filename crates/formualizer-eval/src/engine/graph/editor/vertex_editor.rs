@@ -768,7 +768,7 @@ impl<'g> VertexEditor<'g> {
     /// and so cannot reach this, but the method is public, so refuse explicitly.
     pub fn move_vertex(&mut self, id: VertexId, new_coord: GridAddr) -> Result<(), EditorError> {
         #[cfg(feature = "unified_authority")]
-        self.graph.authority_mark_unsupported("move_vertex");
+        self.graph.authority_note_structural(false);
         // Check if vertex exists
         if !self.graph.vertex_exists(id) {
             return Err(EditorError::Excel(
@@ -916,7 +916,7 @@ impl<'g> VertexEditor<'g> {
         count: u32,
     ) -> Result<ShiftSummary, EditorError> {
         #[cfg(feature = "unified_authority")]
-        self.graph.authority_mark_unsupported("insert_rows");
+        self.graph.authority_note_structural(true);
         if count == 0 {
             return Ok(ShiftSummary::default());
         }
@@ -1040,7 +1040,7 @@ impl<'g> VertexEditor<'g> {
         count: u32,
     ) -> Result<ShiftSummary, EditorError> {
         #[cfg(feature = "unified_authority")]
-        self.graph.authority_mark_unsupported("delete_rows");
+        self.graph.authority_note_structural(true);
         if count == 0 {
             return Ok(ShiftSummary::default());
         }
@@ -1176,7 +1176,7 @@ impl<'g> VertexEditor<'g> {
         count: u32,
     ) -> Result<ShiftSummary, EditorError> {
         #[cfg(feature = "unified_authority")]
-        self.graph.authority_mark_unsupported("insert_columns");
+        self.graph.authority_note_structural(true);
         if count == 0 {
             return Ok(ShiftSummary::default());
         }
@@ -1300,7 +1300,7 @@ impl<'g> VertexEditor<'g> {
         count: u32,
     ) -> Result<ShiftSummary, EditorError> {
         #[cfg(feature = "unified_authority")]
-        self.graph.authority_mark_unsupported("delete_columns");
+        self.graph.authority_note_structural(true);
         if count == 0 {
             return Ok(ShiftSummary::default());
         }
@@ -1430,8 +1430,6 @@ impl<'g> VertexEditor<'g> {
 
     /// Shift rows down/up within a sheet (Excel's insert/delete rows)
     pub fn shift_rows(&mut self, sheet_id: SheetId, start_row: u32, delta: i32) {
-        #[cfg(feature = "unified_authority")]
-        self.graph.authority_mark_unsupported("shift_rows");
         if delta == 0 {
             return;
         }
@@ -1454,8 +1452,6 @@ impl<'g> VertexEditor<'g> {
 
     /// Shift columns left/right within a sheet (Excel's insert/delete columns)
     pub fn shift_columns(&mut self, sheet_id: SheetId, start_col: u32, delta: i32) {
-        #[cfg(feature = "unified_authority")]
-        self.graph.authority_mark_unsupported("shift_columns");
         if delta == 0 {
             return;
         }
@@ -1925,7 +1921,7 @@ impl<'g> VertexEditor<'g> {
         to_col: u32,
     ) -> Result<RangeSummary, EditorError> {
         #[cfg(feature = "unified_authority")]
-        self.graph.authority_mark_unsupported("move_range");
+        self.graph.authority_note_structural(true);
         // First copy the range
         let mut summary = self.copy_range(
             sheet_id,

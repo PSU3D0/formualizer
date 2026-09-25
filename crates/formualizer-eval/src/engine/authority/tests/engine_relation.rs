@@ -14,6 +14,16 @@ use formualizer_parse::parse;
 
 /// Full comparison of one engine state. Returns the number of queries.
 pub fn compare_all(e: &mut Engine<TestWorkbook>, ctx: &str) -> usize {
+    compare_with(e, ctx, true)
+}
+
+/// `compare_all` without Δ(e)/Δ(a): for states where legacy's own edges
+/// are known stale (FORM-117: after structural undo).
+pub fn compare_oracle(e: &mut Engine<TestWorkbook>, ctx: &str) -> usize {
+    compare_with(e, ctx, false)
+}
+
+fn compare_with(e: &mut Engine<TestWorkbook>, ctx: &str, legacy: bool) -> usize {
     let naive = Naive::build(&e.graph);
     let cells = query_cells(e);
     e.graph.authority().expect("authority ready");
@@ -58,7 +68,7 @@ pub fn compare_all(e: &mut Engine<TestWorkbook>, ctx: &str) -> usize {
     }
     // Δ(e) and Δ(a) against the legacy graph (the runtime authority).
     let digest = store.digest();
-    for &q in &cells {
+    for &q in cells.iter().filter(|_| legacy) {
         let mine = store_direct(store, q, TagFilter::All);
         assert_eq!(
             mine,

@@ -41,6 +41,20 @@ impl Store {
         prior: Option<&Store>,
         budget: Budget,
     ) -> Result<Store, AuthorityError> {
+        Self::rebuild_carrying(input, live_symbols, prior, None, budget)
+    }
+
+    /// [`Self::rebuild_with_symbols`] after a structural edit (M3): cell
+    /// ids come from `carried` (post-edit cell → id, every id below
+    /// `prior`'s counter, not live twice) instead of `prior`'s positions;
+    /// cells absent from it get fresh ids from `prior`'s counter.
+    pub(crate) fn rebuild_carrying(
+        input: Vec<BuildInput>,
+        live_symbols: Vec<SymbolId>,
+        prior: Option<&Store>,
+        carried: Option<&FxHashMap<Cell, Vid>>,
+        budget: Budget,
+    ) -> Result<Store, AuthorityError> {
         let symbol_input_bytes = (live_symbols.capacity() * size_of::<SymbolId>()) as u64;
         // Preflight before the build allocates: the input it consumes and
         // the previous store already coexist, so a scratch budget below
@@ -61,7 +75,7 @@ impl Store {
             input_bytes as u64 + symbol_input_bytes + prior.map_or(0, Store::heap_bytes),
         )?;
         drop(gate);
-        let (mut s, scratch) = Self::build_keeping(input, prior.map(Store::ids))?;
+        let (mut s, scratch) = Self::build_keeping_with(input, prior.map(Store::ids), carried)?;
         s.budget = budget;
         let transient = scratch + symbol_input_bytes + prior.map_or(0, Store::heap_bytes);
         s.admit(s.heap_bytes(), transient)?;
@@ -89,8 +103,18 @@ impl Store {
     /// store and an upper bound on the build's scratch bytes (the sum of
     /// its temporary containers' capacities).
     pub(crate) fn build_keeping(
+        input: Vec<BuildInput>,
+        prior: Option<&IdentityTable>,
+    ) -> Result<(Store, u64), AuthorityError> {
+        Self::build_keeping_with(input, prior, None)
+    }
+
+    /// [`Self::build_keeping`] with an explicit kept-id map (see
+    /// [`Self::rebuild_carrying`]); `prior` then supplies only the counter.
+    pub(crate) fn build_keeping_with(
         mut input: Vec<BuildInput>,
         prior: Option<&IdentityTable>,
+        carried: Option<&FxHashMap<Cell, Vid>>,
     ) -> Result<(Store, u64), AuthorityError> {
         // The input and everything it owns coexist with the whole build
         // (re-review R5).
@@ -350,8 +374,10 @@ impl Store {
             let w = &s.owners[o as usize];
             (w.sheet, w.dom.c0, w.dom.r0)
         });
-        let kept_id =
-            |sheet: u16, row: u32, col: u32| prior.and_then(|p| p.id_of((sheet, row, col)));
+        let kept_id = |sheet: u16, row: u32, col: u32| match carried {
+            Some(m) => m.get(&(sheet, row, col)).copied(),
+            None => prior.and_then(|p| p.id_of((sheet, row, col))),
+        };
         // (owner, column, first row, length, kept first id).
         let mut segs: Vec<(u32, u32, u32, u32, Option<Vid>)> = Vec::new();
         let mut fresh = 0u64;

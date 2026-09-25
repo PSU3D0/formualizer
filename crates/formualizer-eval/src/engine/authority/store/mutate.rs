@@ -133,18 +133,53 @@ impl Store {
         cell: Cell,
         facts: &FormulaFacts,
     ) -> Result<MutationReport, AuthorityError> {
-        self.mutate(cell.0, Rect::cell(cell.1, cell.2), Some((cell, facts)))
+        self.mutate(
+            cell.0,
+            Rect::cell(cell.1, cell.2),
+            Some((cell, facts)),
+            None,
+        )
+    }
+
+    /// [`Self::set_formula`] for history replay (ID4): a value/empty cell
+    /// gets the retired id `revive` back instead of a fresh one. The id
+    /// must have been allocated and must not be live. A cell that already
+    /// holds a formula keeps its own id.
+    pub fn set_formula_reviving(
+        &mut self,
+        cell: Cell,
+        facts: &FormulaFacts,
+        revive: Vid,
+    ) -> Result<MutationReport, AuthorityError> {
+        if revive >= self.ids.next_id() {
+            return Err(AuthorityError::Identity(IdError::Conflict(format!(
+                "id {revive} was never allocated"
+            ))));
+        }
+        if let Some(c) = self.ids.locate(revive)
+            && c != cell
+        {
+            return Err(AuthorityError::Identity(IdError::Conflict(format!(
+                "id {revive} is live at {c:?}"
+            ))));
+        }
+        self.mutate(
+            cell.0,
+            Rect::cell(cell.1, cell.2),
+            Some((cell, facts)),
+            Some(revive),
+        )
     }
 
     /// Clear the formula at `cell` (formula → value/empty). A cell without a
     /// formula is a no-op scope.
     pub fn clear_cell(&mut self, cell: Cell) -> Result<MutationReport, AuthorityError> {
-        self.mutate(cell.0, Rect::cell(cell.1, cell.2), None)
+        self.mutate(cell.0, Rect::cell(cell.1, cell.2), None, None)
     }
 
     /// Clear every formula in `q` on `sheet` (range clear).
     pub fn clear_rect(&mut self, sheet: u16, q: Rect) -> Result<MutationReport, AuthorityError> {
-        self.mutate(sheet, q, None)
+        self.mutate(sheet, q, None, None)
     }
 
     // ------------------------------------------------------------ plan
@@ -210,6 +245,7 @@ impl Store {
         cell: Cell,
         f: &'a FormulaFacts,
         cut: &Cut,
+        revive: Option<Vid>,
     ) -> Result<NewFormula<'a>, AuthorityError> {
         let mut edges = try_vec(f.edges.len())?;
         for e in &f.edges {
@@ -248,6 +284,7 @@ impl Store {
             literals: &f.literals[..],
             flags: f.flags,
             kept_id: cut.keep.map(|i| cut.id_cuts[i].id()),
+            revive: revive.filter(|_| cut.keep.is_none()),
         })
     }
 
@@ -512,9 +549,13 @@ impl Store {
         if let Some(n) = newf
             && n.kept_id.is_none()
         {
-            self.ids.check_alloc(1).map_err(AuthorityError::Identity)?;
-            new_id = Some(self.ids.next_id());
-            IdentityTable::shadow_place(&mut id_target, n.cell.0, 1, 1);
+            if n.revive.is_some() {
+                IdentityTable::shadow_place(&mut id_target, n.cell.0, 1, 0);
+            } else {
+                self.ids.check_alloc(1).map_err(AuthorityError::Identity)?;
+                new_id = Some(self.ids.next_id());
+                IdentityTable::shadow_place(&mut id_target, n.cell.0, 1, 1);
+            }
         }
         {
             let cur = self.ids.shadow_caps();
@@ -549,7 +590,11 @@ impl Store {
         let mut slot_rows: Vec<(Vid, &'a [ValueRef])> = try_vec(usize::from(newf.is_some()))?;
         let mut slot_inserts: Vec<(Vid, usize)> = try_vec(usize::from(newf.is_some()))?;
         if let Some(n) = newf {
-            let id = n.kept_id.or(new_id).expect("an id for the new formula");
+            let id = n
+                .kept_id
+                .or(n.revive)
+                .or(new_id)
+                .expect("an id for the new formula");
             slot_rows.push((id, n.literals));
             slot_inserts.push((id, n.literals.len()));
         }
@@ -939,10 +984,11 @@ impl Store {
         sheet: u16,
         q: &Rect,
         new: Option<(Cell, &'a FormulaFacts)>,
+        revive: Option<Vid>,
     ) -> Result<(Cut, Option<NewFormula<'a>>, Prediction<'a>), AuthorityError> {
         let cut = self.plan_cut(sheet, q, new.map(|(c, _)| c))?;
         let newf = match new {
-            Some((c, f)) => Some(self.plan_new(c, f, &cut)?),
+            Some((c, f)) => Some(self.plan_new(c, f, &cut, revive)?),
             None => None,
         };
         let pred = self.predict(sheet, &cut, newf.as_ref())?;
@@ -956,9 +1002,10 @@ impl Store {
         sheet: u16,
         q: Rect,
         new: Option<(Cell, &FormulaFacts)>,
+        revive: Option<Vid>,
     ) -> Result<MutationReport, AuthorityError> {
         let before = self.counts();
-        let (cut, newf, mut pred) = match self.plan_scope(sheet, &q, new) {
+        let (cut, newf, mut pred) = match self.plan_scope(sheet, &q, new, revive) {
             Ok(x) => x,
             Err(e) => {
                 self.stats.rejected += 1;
@@ -1079,14 +1126,20 @@ impl Store {
                     self.ids.set_owner(h, o);
                     relabels += 1;
                 }
-                None => {
-                    self.ids.place(sheet, n.cell.1, n.cell.2, 1, o);
-                }
+                None => match n.revive {
+                    Some(id) => {
+                        self.ids.place_existing(sheet, n.cell.1, n.cell.2, 1, id, o);
+                    }
+                    None => {
+                        self.ids.place(sheet, n.cell.1, n.cell.2, 1, o);
+                    }
+                },
             }
         }
         // 8: slot rows (ids known at the dry run).
         debug_assert!(
             newf.as_ref().is_none_or(|n| n.kept_id.is_some()
+                || n.revive.is_some()
                 || self.ids.id_of(n.cell) == pred.slot_rows.first().map(|r| r.0)),
             "dry-run id differs from the placed id"
         );

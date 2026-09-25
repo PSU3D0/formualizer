@@ -17,5 +17,6 @@ mod plan_schedule;
 mod planner;
 mod refinement;
 mod store_traces;
+mod structural;
 pub(crate) mod support;
 mod symbols;
