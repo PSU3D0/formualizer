@@ -147,6 +147,77 @@ fn review_symbol_rebuild_preserves_ids() {
     assert_eq!(before, after, "symbol rebuild renumbered live formulas");
 }
 
+/// Executable names receive real non-grid IDs in the maintained host, sharing
+/// the formula counter and surviving definition-only rebuilds.
+#[test]
+fn host_symbol_ids_share_formula_counter_and_survive_redefinition() {
+    use crate::engine::EvalConfig;
+    use crate::engine::named_range::{NameScope, NamedDefinition};
+    let mut e = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    e.set_cell_formula("Sheet1", 1, 1, parse("=1").unwrap())
+        .unwrap();
+    e.define_name(
+        "Tracked",
+        NamedDefinition::Literal(LiteralValue::Number(7.0)),
+        NameScope::Workbook,
+    )
+    .unwrap();
+    e.graph.authority().unwrap();
+    let symbol = e
+        .graph
+        .iter_vertex_ids()
+        .find_map(|v| e.graph.vertex_addr(v).as_symbol())
+        .unwrap();
+    let sid = e.graph.sheet_id("Sheet1").unwrap();
+    let store = e.graph.authority_host().store();
+    let cell_id = store.ids().id_of((sid, 0, 0)).unwrap();
+    let symbol_id = store.symbol_id(symbol).unwrap();
+    assert_ne!(cell_id, symbol_id);
+    assert_eq!(store.ids().locate(symbol_id), None);
+    let next = store.ids().next_id();
+    e.update_name(
+        "Tracked",
+        NamedDefinition::Literal(LiteralValue::Number(9.0)),
+        NameScope::Workbook,
+    )
+    .unwrap();
+    e.graph.authority().unwrap();
+    let store = e.graph.authority_host().store();
+    assert_eq!(store.symbol_id(symbol), Some(symbol_id));
+    assert_eq!(store.ids().id_of((sid, 0, 0)), Some(cell_id));
+    assert_eq!(store.ids().next_id(), next);
+    store.check().unwrap();
+    e.set_cell_formula("Sheet1", 2, 1, parse("=2").unwrap())
+        .unwrap();
+    e.graph.authority().unwrap();
+    let store = e.graph.authority_host().store();
+    assert_eq!(store.ids().id_of((sid, 1, 0)), Some(next));
+    assert_eq!(store.symbol_id(symbol), Some(symbol_id));
+    assert_eq!(store.heap_bytes(), store.census_heap_bytes());
+    let high_water = store.ids().next_id();
+    e.delete_name("Tracked", NameScope::Workbook).unwrap();
+    e.graph.authority().unwrap();
+    assert_eq!(e.graph.authority_host().store().symbol_id(symbol), None);
+    e.define_name(
+        "Tracked",
+        NamedDefinition::Literal(LiteralValue::Number(11.0)),
+        NameScope::Workbook,
+    )
+    .unwrap();
+    e.graph.authority().unwrap();
+    let recreated = e
+        .graph
+        .resolve_name_entry_in_scope("Tracked", NameScope::Workbook)
+        .unwrap()
+        .vertex;
+    let recreated_symbol = e.graph.vertex_addr(recreated).as_symbol().unwrap();
+    assert_ne!(recreated_symbol, symbol);
+    assert_eq!(
+        e.graph.authority_host().store().symbol_id(recreated_symbol),
+        Some(high_water)
+    );
+}
+
 /// Review B5(b) repro: a rebuild obeys the retained budget.
 #[test]
 fn review_symbol_rebuild_obeys_retained_budget() {

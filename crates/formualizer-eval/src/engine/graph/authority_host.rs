@@ -119,8 +119,54 @@ impl DependencyGraph {
         let input = self.authority_build_input();
         let budget = self.authority.store.budget;
         let prior = (self.authority.state != HostState::Unbuilt).then_some(&self.authority.store);
-        match Store::rebuild(input, prior, budget) {
-            Ok(store) => {
+        // Enumerate live binding maps, not the vertex slab: deleted vertices
+        // remain in the slab forever, so scanning it would charge live names
+        // for all historical cell edits. This is identity inventory only;
+        // executable symbol edges and planner units are installed separately.
+        let count = self.name_vertex_lookup.len()
+            + self.table_vertex_lookup.len()
+            + self.source_vertex_lookup.len();
+        let inventory_bytes = count * size_of::<SymbolAddr>();
+        let input_bytes = input.capacity() * size_of::<BuildInput>()
+            + input
+                .iter()
+                .map(|(_, f)| f.owned_heap_bytes())
+                .sum::<usize>();
+        let needed = (inventory_bytes + input_bytes) as u64 + prior.map_or(0, Store::heap_bytes);
+        if let Some(limit) = budget.scratch.filter(|&limit| needed > limit) {
+            self.authority.state = HostState::Failed(AuthorityError::Admission {
+                resource: "scratch",
+                needed,
+                limit,
+            });
+            return;
+        }
+        let mut symbols = Vec::new();
+        if symbols.try_reserve_exact(count).is_err() {
+            self.authority.state = HostState::Failed(AuthorityError::Alloc);
+            return;
+        }
+        let mut inventory_work = 0;
+        for &vid in self
+            .name_vertex_lookup
+            .keys()
+            .chain(self.table_vertex_lookup.keys())
+            .chain(self.source_vertex_lookup.keys())
+        {
+            inventory_work += 1;
+            if !self.store.is_deleted(vid)
+                && let Some(symbol) = self.store.addr(vid).as_symbol()
+            {
+                symbols.push(symbol);
+            }
+        }
+        symbols.sort_unstable_by(|a, b| {
+            inventory_work += 1;
+            a.cmp(b)
+        });
+        match Store::rebuild_with_symbols(input, symbols, prior, budget) {
+            Ok(mut store) => {
+                store.stats.symbol_work += inventory_work;
                 self.authority.store = store;
                 self.authority.symbol_rev = self.symbol_revision;
                 self.authority.builds += 1;

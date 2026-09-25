@@ -42,7 +42,7 @@ pub mod proj;
 pub(crate) mod refine;
 pub mod slots;
 pub mod store;
-// Symbol identity primitive; relation and host integration follow.
+// Maintained symbol identities; executable relation/planner integration follows.
 #[allow(dead_code)]
 pub(crate) mod symbols;
 pub mod template;

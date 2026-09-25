@@ -47,6 +47,132 @@ proptest! {
     }
 }
 
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(64))]
+    #[test]
+    fn store_mixed_cell_symbol_rebuilds_preserve_live_ids(
+        trace in prop::collection::vec((
+            prop::collection::btree_set(0u32..24, 0..12),
+            prop::collection::btree_set(0u32..24, 0..12),
+        ), 1..40)
+    ) {
+        use super::super::store::Store;
+        let mut prior = Store::new();
+        let mut cell_model = BTreeMap::new();
+        let mut symbol_model = BTreeMap::new();
+        let mut ever = BTreeSet::new();
+        let formula = super::support::Formula { refs: Vec::new(), l: 1, literal: 0 };
+        for (cells, symbols) in trace {
+            let input = cells.iter().map(|&row| ((0, row, 0), formula.facts())).collect();
+            let live = symbols.iter().copied().map(SymbolId::new).collect();
+            let next = Store::rebuild_with_symbols(input, live, Some(&prior), Budget::default()).unwrap();
+            let mut next_cells = BTreeMap::new();
+            let mut next_symbols = BTreeMap::new();
+            for row in cells {
+                let id = next.ids().id_of((0, row, 0)).unwrap();
+                if let Some(&kept) = cell_model.get(&row) {
+                    prop_assert_eq!(id, kept);
+                } else {
+                    prop_assert!(ever.insert(id));
+                    prop_assert!(id >= prior.ids().next_id());
+                }
+                next_cells.insert(row, id);
+            }
+            for key in symbols {
+                let id = next.symbol_id(SymbolId::new(key)).unwrap();
+                if let Some(&kept) = symbol_model.get(&key) {
+                    prop_assert_eq!(id, kept);
+                } else {
+                    prop_assert!(ever.insert(id));
+                    prop_assert!(id >= prior.ids().next_id());
+                }
+                prop_assert_eq!(next.ids().locate(id), None);
+                next_symbols.insert(key, id);
+            }
+            for &key in symbol_model.keys().filter(|k| !next_symbols.contains_key(k)) {
+                prop_assert_eq!(next.symbol_id(SymbolId::new(key)), None);
+            }
+            prop_assert!(next.ids().next_id() >= prior.ids().next_id());
+            next.check().unwrap();
+            prior = next;
+            cell_model = next_cells;
+            symbol_model = next_symbols;
+        }
+    }
+}
+
+#[test]
+fn store_rebuild_admits_symbols_and_preserves_shared_history() {
+    use super::super::store::Store;
+    let initial =
+        Store::rebuild_with_symbols(Vec::new(), keys(&[4, 8]), None, Budget::default()).unwrap();
+    let bytes = initial.heap_bytes();
+    assert_eq!(bytes, initial.census_heap_bytes());
+    assert_eq!(initial.symbol_id(SymbolId::new(4)), Some(0));
+    assert_eq!(initial.symbol_id(SymbolId::new(8)), Some(1));
+    assert_eq!(initial.ids().next_id(), 2);
+    initial.check().unwrap();
+    let before = initial.digest();
+    assert!(
+        Store::rebuild_with_symbols(
+            Vec::new(),
+            keys(&[4, 8, 12]),
+            Some(&initial),
+            Budget {
+                retained: Some(bytes),
+                scratch: None
+            },
+        )
+        .is_err()
+    );
+    assert!(
+        Store::rebuild_with_symbols(
+            Vec::new(),
+            keys(&[4, 8]),
+            Some(&initial),
+            Budget {
+                retained: None,
+                scratch: Some(bytes + 7)
+            },
+        )
+        .is_err()
+    );
+    assert_eq!(initial.digest(), before);
+    let failing_input = keys(&[4, 8, 12]);
+    let input_bytes = (failing_input.capacity() * size_of::<SymbolId>()) as i64;
+    let (failure, measured) = measure(Some(0), || {
+        Store::rebuild_with_symbols(Vec::new(), failing_input, Some(&initial), Budget::default())
+    });
+    assert!(matches!(failure, Err(AuthorityError::Alloc)));
+    assert!(measured.failed);
+    assert_eq!(
+        measured.net, -input_bytes,
+        "only consumed input was released"
+    );
+    assert_eq!(initial.ids().next_id(), 2);
+    assert_eq!(initial.symbol_id(SymbolId::new(4)), Some(0));
+    let same = Store::rebuild_with_symbols(
+        Vec::new(),
+        keys(&[4, 8]),
+        Some(&initial),
+        Budget {
+            retained: Some(bytes),
+            scratch: Some(bytes + 8),
+        },
+    )
+    .unwrap();
+    assert_eq!(same.symbol_id(SymbolId::new(4)), Some(0));
+    let empty = Store::rebuild_with_symbols(Vec::new(), Vec::new(), Some(&same), Budget::default())
+        .unwrap();
+    assert_eq!(empty.ids().next_id(), 2);
+    let restored =
+        Store::rebuild_with_symbols(Vec::new(), keys(&[4]), Some(&empty), Budget::default())
+            .unwrap();
+    assert_eq!(restored.symbol_id(SymbolId::new(4)), Some(2));
+    assert_eq!(restored.ids().next_id(), 3);
+    restored.check().unwrap();
+}
+
 fn keys(values: &[u32]) -> Vec<SymbolId> {
     values.iter().copied().map(SymbolId::new).collect()
 }

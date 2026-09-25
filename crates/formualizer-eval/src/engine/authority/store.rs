@@ -37,6 +37,7 @@ use super::identity::{CellCut, FAMILY, IdError, IdRun, IdShadow, IdentityTable, 
 use super::level_index::{IndexShadow, IndexStage, LevelIndex, NONE};
 use super::proj::RefProj;
 use super::slots::SlotStore;
+use super::symbols::{SymbolId, SymbolTable};
 use crate::engine::arena::{AstNodeId, ValueRef};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
@@ -317,6 +318,8 @@ pub struct Stats {
     pub canon_work: CanonWork,
     /// Index query work (`Q_idx`: buffer tests + tree nodes).
     pub index_work: u64,
+    /// Symbol inventory validation and identity-table merge visits at rebuild.
+    pub symbol_work: u64,
     /// Slot planning visits: rows, delta runs, touched pages (B1).
     pub slot_work: u64,
     /// Dry-run and accounting visits of mutations and repartitions, slot
@@ -431,6 +434,7 @@ struct Indexes {
 #[derive(Debug)]
 pub struct Store {
     ids: IdentityTable,
+    symbols: SymbolTable,
     owners: Vec<Owner>,
     own_free: u32,
     own_nfree: usize,
@@ -625,6 +629,7 @@ impl Clone for Store {
     fn clone(&self) -> Self {
         let mut s = Self {
             ids: self.ids.clone(),
+            symbols: self.symbols.clone(),
             owners: self.owners.clone(),
             own_free: self.own_free,
             own_nfree: self.own_nfree,
@@ -657,6 +662,7 @@ impl Default for Store {
     fn default() -> Self {
         Self {
             ids: IdentityTable::new(),
+            symbols: SymbolTable::default(),
             owners: Vec::new(),
             own_free: DEAD,
             own_nfree: 0,
@@ -699,6 +705,12 @@ impl Store {
         &self.ids
     }
 
+    // Consumed by host lifecycle tests; planner identity translation follows.
+    #[allow(dead_code)]
+    pub(crate) fn symbol_id(&self, symbol: SymbolId) -> Option<Vid> {
+        self.symbols.lookup(symbol)
+    }
+
     pub fn slots(&self) -> &SlotStore {
         &self.slots
     }
@@ -713,6 +725,7 @@ impl Store {
     /// every component's total is maintained (correction B2).
     pub fn heap_bytes(&self) -> u64 {
         (self.ids.heap_bytes()
+            + self.symbols.heap_bytes() as usize
             + vec_bytes::<Owner>(self.owners.capacity())
             + self.ngroups.heap_bytes()
             + vec_bytes::<u32>(self.node_loc.capacity())
@@ -734,6 +747,7 @@ impl Store {
         #[cfg(test)]
         CENSUS.with(|c| c.set(c.get() + 1));
         (self.ids.census_bytes()
+            + self.symbols.heap_bytes() as usize
             + vec_bytes::<Owner>(self.owners.capacity())
             + self.ngroups.census_bytes()
             + vec_bytes::<u32>(self.node_loc.capacity())
@@ -752,6 +766,7 @@ impl Store {
     pub fn bytes_breakdown(&self) -> Vec<(&'static str, usize)> {
         vec![
             ("identity", self.ids.census_bytes()),
+            ("symbols", self.symbols.heap_bytes() as usize),
             ("owners", vec_bytes::<Owner>(self.owners.capacity())),
             ("node_groups", self.ngroups.census_bytes()),
             ("node_loc", vec_bytes::<u32>(self.node_loc.capacity())),

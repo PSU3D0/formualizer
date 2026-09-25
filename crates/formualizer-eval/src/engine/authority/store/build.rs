@@ -29,6 +29,19 @@ impl Store {
         prior: Option<&Store>,
         budget: Budget,
     ) -> Result<Store, AuthorityError> {
+        Self::rebuild_with_symbols(input, Vec::new(), prior, budget)
+    }
+
+    /// Rebuild with a sorted live symbol inventory. Its full capacity is
+    /// charged as build scratch, including during cell-store construction.
+    /// Cell and symbol IDs share the candidate's counter and commit together.
+    pub(crate) fn rebuild_with_symbols(
+        input: Vec<BuildInput>,
+        live_symbols: Vec<SymbolId>,
+        prior: Option<&Store>,
+        budget: Budget,
+    ) -> Result<Store, AuthorityError> {
+        let symbol_input_bytes = (live_symbols.capacity() * size_of::<SymbolId>()) as u64;
         // Preflight before the build allocates: the input it consumes and
         // the previous store already coexist, so a scratch budget below
         // them rejects without building. The full preview (legacy's
@@ -43,11 +56,31 @@ impl Store {
             budget,
             ..Store::new()
         };
-        gate.admit(0, input_bytes as u64 + prior.map_or(0, Store::heap_bytes))?;
+        gate.admit(
+            0,
+            input_bytes as u64 + symbol_input_bytes + prior.map_or(0, Store::heap_bytes),
+        )?;
         drop(gate);
         let (mut s, scratch) = Self::build_keeping(input, prior.map(Store::ids))?;
         s.budget = budget;
-        let transient = scratch + prior.map_or(0, Store::heap_bytes);
+        let transient = scratch + symbol_input_bytes + prior.map_or(0, Store::heap_bytes);
+        s.admit(s.heap_bytes(), transient)?;
+        // The previous table is already included in `transient`. Admit the
+        // symbol output against the remaining retained capacity before allocating;
+        // do not charge the prior table twice as table-local scratch.
+        let remaining_retained = budget.retained.map(|n| n - s.heap_bytes());
+        let empty = SymbolTable::default();
+        let (symbols, work) = SymbolTable::rebuild(
+            &live_symbols,
+            prior.map_or(&empty, |p| &p.symbols),
+            &mut s.ids,
+            Budget {
+                retained: remaining_retained,
+                scratch: None,
+            },
+        )?;
+        s.symbols = symbols;
+        s.stats.symbol_work = work.visits;
         s.admit(s.heap_bytes(), transient)?;
         Ok(s)
     }

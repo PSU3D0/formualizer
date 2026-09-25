@@ -68,6 +68,7 @@ impl Store {
     pub fn check(&self) -> Result<(), String> {
         self.check_accounting()?;
         self.ids.check()?;
+        self.symbols.check(&self.ids)?;
         // Formula cells, from the identity table.
         let mut formula = Cover::new();
         let mut nformula = 0u64;

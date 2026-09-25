@@ -1,7 +1,7 @@
 //! Stable, non-grid symbol identities (design §4.1).
 //!
-//! This is the identity primitive for the symbol-revision rebuild path, not
-//! yet the symbol relation or scheduler integration. SymbolAddr is a binding
+//! The Store's symbol-revision rebuild path maintains this table alongside
+//! cell identities. Symbol relation and scheduling are separate. SymbolAddr is a binding
 //! identity, never a fabricated cell or the executor's VertexId.
 
 use super::identity::{IdError, IdentityTable, Vid};
@@ -33,6 +33,28 @@ pub(crate) struct SymbolWork {
 impl SymbolTable {
     pub(crate) fn heap_bytes(&self) -> u64 {
         (self.entries.capacity() * size_of::<Entry>()) as u64
+    }
+
+    /// Diagnostic invariant check; never run on a mutation's hot path.
+    pub(crate) fn check(&self, ids: &IdentityTable) -> Result<(), String> {
+        if self.next_id > ids.next_id() {
+            return Err("symbol high-water mark exceeds shared counter".into());
+        }
+        let mut previous = None;
+        let mut seen = std::collections::BTreeSet::new();
+        for entry in &self.entries {
+            if previous.is_some_and(|symbol| symbol >= entry.symbol) {
+                return Err("symbol keys are not strictly increasing".into());
+            }
+            if entry.vid >= self.next_id || ids.locate(entry.vid).is_some() {
+                return Err("symbol ID is outside its counter or aliases a cell".into());
+            }
+            if !seen.insert(entry.vid) {
+                return Err("two symbols share an ID".into());
+            }
+            previous = Some(entry.symbol);
+        }
+        Ok(())
     }
 
     pub(crate) fn lookup(&self, symbol: SymbolId) -> Option<Vid> {
