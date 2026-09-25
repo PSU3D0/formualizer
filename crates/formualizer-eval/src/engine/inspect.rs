@@ -896,7 +896,7 @@ impl<'a, R: EvaluationContext> FormulaPlaneInspectSource<'a, R> {
         // Defensive even though Shadow currently retains no active spans: this
         // gate also protects dependent-index routing if Shadow ever retains
         // spans or consumer-read entries.
-        if self.engine.config.formula_plane_mode != FormulaPlaneMode::AuthoritativeExperimental {
+        if self.engine.formula_plane_mode() != FormulaPlaneMode::AuthoritativeExperimental {
             return None;
         }
         let placement = PlacementCoord::new(key.sheet_id, key.row0, key.col0);
@@ -1073,7 +1073,7 @@ impl<'a, R: EvaluationContext> FormulaPlaneInspectSource<'a, R> {
         budget: &mut WorkBudget,
         visitor: &mut dyn DependentVisitor,
     ) -> QueryCompleteness {
-        if self.engine.config.formula_plane_mode != FormulaPlaneMode::AuthoritativeExperimental {
+        if self.engine.formula_plane_mode() != FormulaPlaneMode::AuthoritativeExperimental {
             return QueryCompleteness::Complete;
         }
         let authority = self.engine.graph.formula_authority();
