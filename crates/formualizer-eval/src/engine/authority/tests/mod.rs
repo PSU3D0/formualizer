@@ -18,3 +18,4 @@ mod planner;
 mod refinement;
 mod store_traces;
 pub(crate) mod support;
+mod symbols;

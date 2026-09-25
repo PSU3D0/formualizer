@@ -379,8 +379,8 @@ impl IdentityTable {
 
     /// Allocate `n` contiguous ids (checked; nothing changes on error).
     pub fn check_alloc(&self, n: u64) -> Result<(), IdError> {
-        let end = u64::from(self.next_id) + n;
-        if end > u64::from(self.limit) {
+        let end = u64::from(self.next_id).checked_add(n);
+        if end.is_none_or(|end| end > u64::from(self.limit)) {
             return Err(IdError::Exhausted {
                 requested: n,
                 next: self.next_id,
@@ -388,6 +388,13 @@ impl IdentityTable {
             });
         }
         Ok(())
+    }
+
+    /// Reserve identities for non-grid symbol nodes from the same counter.
+    /// Callers stage and admit all storage before committing this allocation.
+    pub(super) fn allocate_symbol_ids(&mut self, n: u32) -> Result<Vid, IdError> {
+        self.check_alloc(u64::from(n))?;
+        Ok(self.alloc_ids(n))
     }
 
     fn alloc_ids(&mut self, n: u32) -> Vid {

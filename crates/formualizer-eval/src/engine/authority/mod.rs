@@ -42,6 +42,9 @@ pub mod proj;
 pub(crate) mod refine;
 pub mod slots;
 pub mod store;
+// Symbol identity primitive; relation and host integration follow.
+#[allow(dead_code)]
+pub(crate) mod symbols;
 pub mod template;
 
 #[cfg(test)]
