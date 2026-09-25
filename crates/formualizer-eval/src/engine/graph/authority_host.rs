@@ -463,6 +463,32 @@ impl DependencyGraph {
         for (cell, id) in retired {
             self.authority.journal.retired(cell, id);
         }
+        // Symbol nodes (names) are not grid cells: structural edits do not
+        // move them, so a surviving name keeps its symbol-plane row and its
+        // id. Their facts are re-extracted from the already-transformed
+        // definitions (legacy rewrites name targets in the same edit).
+        let symbol_ids: Vec<(VertexId, Vid)> = {
+            let ids = self.authority.store.ids();
+            self.authority
+                .symbols
+                .iter()
+                .filter_map(|(slot, v)| ids.id_of((SYMBOL_SHEET, slot, 0)).map(|id| (v, id)))
+                .collect()
+        };
+        self.authority_sync_symbol_slots();
+        for (v, id) in symbol_ids {
+            if let Some(slot) = self.authority.symbols.slot(v)
+                && used.insert(id)
+            {
+                kept.insert((SYMBOL_SHEET, slot, 0), id);
+            }
+        }
+        input.extend(
+            self.authority
+                .symbols
+                .iter()
+                .filter_map(|(slot, v)| self.authority_symbol_input(slot, v)),
+        );
         let next_id = self.authority.store.ids().next_id();
         for cell in created {
             if let Some(id) = self.authority.journal.created(cell)

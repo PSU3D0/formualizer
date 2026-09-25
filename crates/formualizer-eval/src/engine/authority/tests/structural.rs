@@ -198,7 +198,11 @@ fn sheet_operations_carry_identities_and_rebind_on_readd() {
     e.remove_sheet(data).unwrap();
     let a = ids(&mut e);
     assert_carried(&b0, &a, c0, |c| (c.0 != data).then_some(c), "remove");
-    assert!(a.keys().all(|c| c.0 == s1));
+    // Names are symbol-plane nodes (core M1b); they survive the sheet.
+    assert!(
+        a.keys()
+            .all(|c| c.0 == s1 || c.0 == super::super::geom::SYMBOL_SHEET)
+    );
 
     // Re-adding it heals the orphans; the healed readers bind to the new
     // sheet (edges to it, equal to a rebuild and to legacy).
