@@ -656,7 +656,18 @@ impl<'g> BulkIngestBuilder<'g> {
             eprintln!("[fz][ingest] beginning finalize");
         }
 
+        // Admission's direct-edge count (legacy's CSR edges) is kept in
+        // every build; the CSR itself only in oracle builds.
+        #[cfg(not(any(test, feature = "legacy_oracle")))]
+        {
+            for (tvid_raw, row) in &edges_adj {
+                self.g
+                    .note_dep_edges(crate::engine::vertex::VertexId(*tvid_raw), row.len());
+            }
+            let _ = (&coord_accum, &id_accum);
+        }
         // Finalize: pick strategy based on graph size and number of edge rows
+        #[cfg(any(test, feature = "legacy_oracle"))]
         if !edges_adj.is_empty() {
             let _csr_phase_span = crate::engine::trace::fz_span!(
                 tracing::Level::INFO,
@@ -725,6 +736,10 @@ impl<'g> BulkIngestBuilder<'g> {
                     eprintln!("[fz][ingest] finalize: building CSR");
                 }
                 let t_csr0 = Instant::now();
+                for (tvid_raw, row) in &edges_adj {
+                    self.g
+                        .note_dep_edges(crate::engine::vertex::VertexId(*tvid_raw), row.len());
+                }
                 self.g
                     .build_edges_from_adjacency(edges_adj, coord_accum, id_accum);
                 if dbg {

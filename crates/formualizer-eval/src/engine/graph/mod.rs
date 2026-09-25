@@ -1071,6 +1071,7 @@ impl DependencyGraph {
         self.store.set_dynamic(vid, dynamic);
     }
 
+    #[cfg(any(test, feature = "legacy_oracle"))]
     /// Public wrapper for adding edges without beginning a batch (caller manages batch)
     pub fn add_edges_nobatch(&mut self, dependent: VertexId, dependencies: &[VertexId]) {
         self.add_dependent_edges_nobatch(dependent, dependencies);
@@ -1097,6 +1098,7 @@ impl DependencyGraph {
         self.store.len()
     }
 
+    #[cfg(any(test, feature = "legacy_oracle"))]
     /// Replace CSR edges in one shot from adjacency and coords
     pub fn build_edges_from_adjacency(
         &mut self,
@@ -4260,9 +4262,9 @@ impl DependencyGraph {
 
     /// Internal: Remove all edges for a vertex
     #[doc(hidden)]
-    pub fn remove_all_edges(&mut self, id: VertexId) {
+    pub(crate) fn remove_all_edges(&mut self, id: VertexId) {
         #[cfg(not(any(test, feature = "legacy_oracle")))]
-        let _ = (&id,);
+        self.remove_dependent_edges(id);
         #[cfg(any(test, feature = "legacy_oracle"))]
         {
             // Enter batch mode to avoid intermediate rebuilds
@@ -4377,7 +4379,7 @@ impl DependencyGraph {
 
     /// Update edge cache coordinate
     #[doc(hidden)]
-    pub fn update_edge_grid_addr(&mut self, id: VertexId, coord: GridAddr) {
+    pub(crate) fn update_edge_grid_addr(&mut self, id: VertexId, coord: GridAddr) {
         #[cfg(not(any(test, feature = "legacy_oracle")))]
         let _ = (&id, &coord);
         #[cfg(any(test, feature = "legacy_oracle"))]

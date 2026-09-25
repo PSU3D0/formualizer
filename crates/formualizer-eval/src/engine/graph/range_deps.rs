@@ -277,6 +277,7 @@ impl DependencyGraph {
         true
     }
 
+    #[cfg(any(test, feature = "legacy_oracle"))]
     /// Public wrapper to add range-dependent edges.
     pub fn add_range_edges(
         &mut self,
@@ -787,7 +788,7 @@ impl DependencyGraph {
     }
 
     /// Fast-path: add range dependencies using compact RangeKey.
-    pub fn add_range_deps_from_keys(
+    pub(crate) fn add_range_deps_from_keys(
         &mut self,
         dependent: VertexId,
         keys: &[crate::engine::plan::RangeKey],

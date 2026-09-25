@@ -40,13 +40,22 @@ pub mod vertex;
 pub mod virtual_deps;
 
 // New SoA modules
+/// Legacy dependency structures: a differential test oracle only (Program 1
+/// M5); the region-node authority (`authority`) is the runtime path.
+#[cfg(any(test, feature = "legacy_oracle"))]
 pub mod csr_edges;
 pub mod debug_views;
+/// Legacy dependency structures: a differential test oracle only (Program 1
+/// M5); the region-node authority (`authority`) is the runtime path.
+#[cfg(any(test, feature = "legacy_oracle"))]
 pub mod delta_edges;
 pub mod interval_tree;
 pub mod named_range;
 pub mod sheet_index;
 pub mod sheet_registry;
+/// Legacy dependency structures: a differential test oracle only (Program 1
+/// M5); the region-node authority (`authority`) is the runtime path.
+#[cfg(any(test, feature = "legacy_oracle"))]
 pub mod topo;
 pub(crate) mod trace;
 pub mod vertex_store;

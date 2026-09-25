@@ -360,7 +360,10 @@ mod imp {
                 let a = probe::closure(e, &[cell]);
                 a_ms += ms(t);
                 let t = Instant::now();
+                #[cfg(feature = "legacy_oracle")]
                 let l = probe::legacy_closure(e, &[cell]);
+                #[cfg(not(feature = "legacy_oracle"))]
+                let l: Vec<(u16, u32, u32)> = Vec::new();
                 l_ms += ms(t);
                 if let Ok(a) = a {
                     a_n += a.len();
