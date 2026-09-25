@@ -108,7 +108,9 @@ fn switch_to_off_with_spans(engine: &mut Engine<TestWorkbook>) {
 }
 
 fn assert_active_spans(engine: &Engine<TestWorkbook>) {
-    assert!(engine.graph.formula_authority().active_span_count() > 0);
+    span_internal!("active span count; spans are not placed under the authority (design §10)";
+        assert!(engine.graph.formula_authority().active_span_count() > 0);
+    );
 }
 
 fn assert_target_fresh(engine: &Engine<TestWorkbook>) {
@@ -345,6 +347,7 @@ fn authoritative_off_authoritative_toggle_keeps_demoted_formulas_correct() {
 }
 
 #[test]
+#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: injects span-demotion faults; no spans exist to demote")]
 fn off_demotion_prepare_and_final_validation_failures_preserve_edit_name_and_retry() {
     use crate::engine::eval::FormulaSpanDemotionFault;
 
@@ -546,15 +549,19 @@ fn authoritative_evaluate_all_cancellable_keeps_late_cancellation_behavior() {
     let error = engine.evaluate_all_cancellable(token.clone()).unwrap_err();
 
     assert_eq!(error.kind, ExcelErrorKind::Cancelled);
-    assert_eq!(
-        error.message.as_deref(),
-        Some("Evaluation cancelled during legacy island")
+    span_internal!("cancellation message names the FormulaPlane coordinator route (legacy island), which does not exist under the authority";
+        assert_eq!(
+            error.message.as_deref(),
+            Some("Evaluation cancelled during legacy island")
+        );
     );
     assert!(token.is_cancelled());
     assert_eq!(calls.load(Ordering::SeqCst), 1);
-    assert_eq!(
-        engine.get_cell_value("Sheet1", TARGET_ROW, TARGET_COL),
-        Some(LiteralValue::Number(TARGET_ROW as f64 * 2.0))
+    span_internal!("which cells publish before a mid-evaluation cancel follows the span coordinator's order (legacy island first); legacy Off computes B100 in the same layer first, 1000 (legacy Off oracle agrees with the authority)";
+        assert_eq!(
+            engine.get_cell_value("Sheet1", TARGET_ROW, TARGET_COL),
+            Some(LiteralValue::Number(TARGET_ROW as f64 * 2.0))
+        );
     );
 }
 
@@ -567,9 +574,11 @@ fn off_evaluate_all_cancellable_observes_mid_evaluation_cancel_with_retained_spa
     let error = engine.evaluate_all_cancellable(token).unwrap_err();
 
     assert_eq!(error.kind, ExcelErrorKind::Cancelled);
-    assert_eq!(
-        error.message.as_deref(),
-        Some("Parallel evaluation cancelled during execution")
+    span_internal!("cancellation message reflects the retained-span demotion route; without spans legacy Off reports cancellation between layers (legacy Off oracle agrees with the authority)";
+        assert_eq!(
+            error.message.as_deref(),
+            Some("Parallel evaluation cancelled during execution")
+        );
     );
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
@@ -585,7 +594,9 @@ fn authoritative_evaluate_all_logged_keeps_coordinator_logging_behavior() {
 
     engine.evaluate_all_logged(&mut log).unwrap();
 
-    assert!(log.events().is_empty());
+    span_internal!("AuthoritativeExperimental coordinator writes no changelog for spills; the mode is ignored under the authority and the legacy logged path records them";
+        assert!(log.events().is_empty());
+    );
     assert_eq!(
         engine.get_cell_value("Sheet1", 2, 3),
         Some(LiteralValue::Number(2.0))
@@ -718,7 +729,9 @@ fn off_evaluate_recalc_plan_honors_legacy_plan_with_retained_spans() {
 
     let result = engine.evaluate_recalc_plan(&plan).unwrap();
 
-    assert_eq!(result.computed_vertices, 200);
+    span_internal!("computed count reflects demoting 200 retained span placements; legacy Off without spans recomputes only the edited closure (oracle: 1)";
+        assert_eq!(result.computed_vertices, 200);
+    );
     assert_eq!(
         engine.get_cell_value("Sheet1", TARGET_ROW, TARGET_COL),
         Some(LiteralValue::Number(EXPECTED_TARGET))
@@ -779,5 +792,7 @@ fn evaluate_vertex_flushes_active_spans() {
     let value = engine.evaluate_vertex(input_vertex).unwrap();
 
     assert_eq!(value, LiteralValue::Number(EDITED_INPUT));
-    assert_target_fresh(&engine);
+    span_internal!("evaluate_vertex on a value vertex recomputes no dependents in legacy Off; the fresh target here came from the span flush";
+        assert_target_fresh(&engine);
+    );
 }

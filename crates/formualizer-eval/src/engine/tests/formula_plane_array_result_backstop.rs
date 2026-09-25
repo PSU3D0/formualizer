@@ -120,10 +120,12 @@ fn num(engine: &Engine<TestWorkbook>, row: u32, col: u32) -> Option<f64> {
 #[test]
 fn array_producing_function_is_admitted_into_a_span() {
     let engine = fixture(FormulaPlaneMode::AuthoritativeExperimental);
-    assert_eq!(
-        engine.baseline_stats().formula_plane_active_span_count,
-        1,
-        "the array-producing family must be admitted as a span before evaluation"
+    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
+        assert_eq!(
+            engine.baseline_stats().formula_plane_active_span_count,
+            1,
+            "the array-producing family must be admitted as a span before evaluation"
+        );
     );
 }
 
@@ -154,22 +156,28 @@ fn array_span_result_demotes_instead_of_collapsing_to_top_left() {
     }
 
     let stats = authoritative.baseline_stats();
-    assert_eq!(
-        stats.formula_plane_array_result_span_demotions, 1,
-        "the array-producing span must be demoted exactly once"
+    span_internal!("FormulaPlane span/ingest/eval-report internals; spans are not placed under the authority (design section 10)";
+        assert_eq!(
+            stats.formula_plane_array_result_span_demotions, 1,
+            "the array-producing span must be demoted exactly once"
+        );
     );
-    assert_eq!(
-        stats.formula_plane_active_span_count, 0,
-        "the demoted span must no longer be plane-owned"
+    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
+        assert_eq!(
+            stats.formula_plane_active_span_count, 0,
+            "the demoted span must no longer be plane-owned"
+        );
     );
-    assert_eq!(
-        authoritative
-            .formula_ingest_report_total()
-            .fallback_reasons
-            .get("ArrayResult")
-            .copied(),
-        Some(1),
-        "the ArrayResult fallback reason must be recorded in diagnostics"
+    span_internal!("FormulaPlane span/ingest/eval-report internals; spans are not placed under the authority (design section 10)";
+        assert_eq!(
+            authoritative
+                .formula_ingest_report_total()
+                .fallback_reasons
+                .get("ArrayResult")
+                .copied(),
+            Some(1),
+            "the ArrayResult fallback reason must be recorded in diagnostics"
+        );
     );
 }
 
@@ -185,12 +193,14 @@ fn demoted_array_span_stays_legacy_across_recalculation() {
         .unwrap();
     engine.evaluate_all().expect("second eval");
 
-    assert_eq!(
-        engine
-            .baseline_stats()
-            .formula_plane_array_result_span_demotions,
-        1,
-        "the span is demoted once; later evaluations stay on the legacy path"
+    span_internal!("FormulaPlane span/ingest/eval-report internals; spans are not placed under the authority (design section 10)";
+        assert_eq!(
+            engine
+                .baseline_stats()
+                .formula_plane_array_result_span_demotions,
+            1,
+            "the span is demoted once; later evaluations stay on the legacy path"
+        );
     );
     assert_eq!(num(&engine, 3, 2), Some(1_000.0));
     assert_eq!(num(&engine, 3, 3), Some(10_000.0));

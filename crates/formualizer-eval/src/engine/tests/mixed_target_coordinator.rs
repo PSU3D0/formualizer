@@ -111,7 +111,9 @@ fn mid_span_cancellation_engine(
         .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
         .unwrap();
     engine.evaluate_all().unwrap();
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    span_internal!("span count after ingest; spans are not placed under the authority (design §10)";
+        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    );
     (engine, calls, trip_at, cancel)
 }
 
@@ -177,37 +179,41 @@ fn independent_span_engine() -> Engine<TestWorkbook> {
         ])
         .unwrap();
     engine.evaluate_all().unwrap();
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
+    span_internal!("span count after ingest; spans are not placed under the authority (design §10)";
+        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
+    );
     engine
 }
 
 #[test]
 fn target_roots_distinguish_span_legacy_and_value_only_cells() {
-    let mut engine = build_engine_with_active_spans();
-    let roots = engine
-        .resolve_target_producers(&[cell("Sheet1", 100, 2), cell("Sheet1", 100, 1)])
-        .unwrap();
-    assert!(
-        roots
-            .iter()
-            .any(|root| matches!(root, TargetProducer::Span { .. }))
-    );
-    assert!(
-        roots
-            .iter()
-            .any(|root| matches!(root, TargetProducer::ValueOnly(_)))
-    );
+    span_internal!("binds a FormulaPlane span object/report; spans are not placed under the authority (design section 10)";
+        let mut engine = build_engine_with_active_spans();
+        let roots = engine
+            .resolve_target_producers(&[cell("Sheet1", 100, 2), cell("Sheet1", 100, 1)])
+            .unwrap();
+        assert!(
+            roots
+                .iter()
+                .any(|root| matches!(root, TargetProducer::Span { .. }))
+        );
+        assert!(
+            roots
+                .iter()
+                .any(|root| matches!(root, TargetProducer::ValueOnly(_)))
+        );
 
-    engine
-        .set_cell_formula("Sheet1", 100, 3, parse("=B100+1").unwrap())
-        .unwrap();
-    let roots = engine
-        .resolve_target_producers(&[cell("Sheet1", 100, 3)])
-        .unwrap();
-    assert!(
-        roots
-            .iter()
-            .any(|root| matches!(root, TargetProducer::Legacy(_)))
+        engine
+            .set_cell_formula("Sheet1", 100, 3, parse("=B100+1").unwrap())
+            .unwrap();
+        let roots = engine
+            .resolve_target_producers(&[cell("Sheet1", 100, 3)])
+            .unwrap();
+        assert!(
+            roots
+                .iter()
+                .any(|root| matches!(root, TargetProducer::Legacy(_)))
+        );
     );
 }
 
@@ -288,6 +294,7 @@ fn spill_child_target_resolves_to_anchor_producer() {
 }
 
 #[test]
+#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: tests the mixed span/legacy target coordinator (span dirty leases, replans, strategies); it does not run under the authority")]
 fn sparse_and_warm_target_requests_skip_mixed_topology_construction() {
     let config =
         EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
@@ -326,6 +333,7 @@ fn sparse_and_warm_target_requests_skip_mixed_topology_construction() {
 }
 
 #[test]
+#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: tests the mixed span/legacy target coordinator (span dirty leases, replans, strategies); it does not run under the authority")]
 fn target_evaluation_leaves_unrelated_dirty_span_branch_pending() {
     let mut engine = independent_span_engine();
     engine
@@ -352,6 +360,7 @@ fn target_evaluation_leaves_unrelated_dirty_span_branch_pending() {
 }
 
 #[test]
+#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: tests the mixed span/legacy target coordinator (span dirty leases, replans, strategies); it does not run under the authority")]
 fn target_cache_overflow_selects_exact_strategy_without_demotion() {
     let mut engine = independent_span_engine();
     engine
@@ -391,6 +400,7 @@ fn target_cache_overflow_selects_exact_strategy_without_demotion() {
 }
 
 #[test]
+#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: tests the mixed span/legacy target coordinator (span dirty leases, replans, strategies); it does not run under the authority")]
 fn capacity_fallback_acknowledges_full_selected_legacy_sublease_without_growth() {
     let mut engine = independent_span_engine();
     engine
@@ -441,12 +451,14 @@ fn cancellation_acknowledges_no_dirty_sublease_and_retry_converges() {
 }
 
 #[test]
+#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: tests the mixed span/legacy target coordinator (span dirty leases, replans, strategies); it does not run under the authority")]
 fn sequential_mid_span_cancellation_has_no_partial_publication_or_dirty_ack() {
     assert_mid_span_cancellation_is_transactional("__MID_SPAN_CANCEL_SEQUENTIAL__", false);
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
+#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: tests the mixed span/legacy target coordinator (span dirty leases, replans, strategies); it does not run under the authority")]
 fn parallel_mid_span_cancellation_has_no_partial_publication_or_dirty_ack() {
     assert_mid_span_cancellation_is_transactional("__MID_SPAN_CANCEL_PARALLEL__", true);
 }
@@ -533,6 +545,7 @@ fn targeted_two_now_epoch_does_not_recalculate_out_of_demand_volatile() {
 }
 
 #[test]
+#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: tests the mixed span/legacy target coordinator (span dirty leases, replans, strategies); it does not run under the authority")]
 fn authoritative_dynamic_reference_replans_under_one_request_ledger() {
     let config = EvalConfig::default()
         .with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental)
@@ -646,6 +659,7 @@ fn legacy_cell_routes_preserve_unknown_sheet_interning_and_empty_outputs() {
 }
 
 #[test]
+#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: tests the mixed span/legacy target coordinator (span dirty leases, replans, strategies); it does not run under the authority")]
 fn legacy_and_mixed_max_five_replans_share_typed_terminal_error_and_remain_dirty() {
     let mut legacy = Engine::new(TestWorkbook::default(), EvalConfig::default());
     legacy
@@ -705,6 +719,7 @@ fn legacy_and_mixed_max_five_replans_share_typed_terminal_error_and_remain_dirty
 }
 
 #[test]
+#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: injects a deadline into the mixed span/legacy commit window; the mixed coordinator does not run under the authority")]
 fn mixed_commit_window_deadline_has_no_partial_publication_and_retry_converges() {
     let mut engine = independent_span_engine();
     let before = engine.get_cell_value("Sheet1", 50, 2);

@@ -460,6 +460,7 @@ fn graph_caps_are_authoritative_and_atomic_across_staged_modes() {
 }
 
 #[test]
+#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: asserts span families avoid legacy vertex/materialization budget charges; under the authority formulas ingest per cell as legacy vertices")]
 fn authoritative_staged_spans_do_not_charge_hypothetical_legacy_vertices() {
     let mut config = EvalConfig::default()
         .with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental)
@@ -485,6 +486,7 @@ fn authoritative_staged_spans_do_not_charge_hypothetical_legacy_vertices() {
 }
 
 #[test]
+#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: charges FormulaPlane mixed-cache and span schedule-discovery memory; the span coordinator does not run under the authority")]
 fn c1b_activates_only_mixed_cache_and_schedule_discovery_memory() {
     let build = |budgets| {
         let mut engine = Engine::new(
@@ -667,7 +669,9 @@ fn cache_overflow_does_not_charge_existing_materialization_guard() {
     engine.evaluate_all().unwrap();
     let request = engine.last_evaluation_resource_request_stats().unwrap();
     assert_eq!(request.fallback_materialized_cells, 0);
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    span_internal!("span count after ingest; spans are not placed under the authority (design §10)";
+        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    );
     assert_eq!(
         engine.get_cell_value("Sheet1", 1, 3),
         Some(LiteralValue::Number(2.0))
@@ -706,7 +710,9 @@ fn skipped_topology_is_typed_atomic_and_never_cached() {
     engine
         .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", records)])
         .unwrap();
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    span_internal!("span count after ingest; spans are not placed under the authority (design §10)";
+        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    );
     engine.set_evaluation_budgets_for_test(EvaluationBudgets {
         admission: AdmissionResourceBudget {
             materialization_cells: Some(0),
@@ -716,20 +722,26 @@ fn skipped_topology_is_typed_atomic_and_never_cached() {
     });
     engine.evaluate_all().unwrap();
     let request = engine.last_evaluation_resource_request_stats().unwrap();
-    assert_eq!(
-        request.topology.cache_outcome,
-        FormulaPlaneTopologyCacheOutcome::SkippedOverflow
+    span_internal!("FormulaPlane span/ingest/eval-report internals; spans are not placed under the authority (design section 10)";
+        assert_eq!(
+            request.topology.cache_outcome,
+            FormulaPlaneTopologyCacheOutcome::SkippedOverflow
+        );
+        assert_eq!(
+            request.topology.incomplete_reason,
+            Some(EvaluationIncompleteReason::FormulaPlaneTopologyCandidates)
+        );
+        assert_eq!(request.topology.cache_skip_events, 1);
+        assert_eq!(engine.mixed_topology_index_builds_for_test(), 1);
     );
-    assert_eq!(
-        request.topology.incomplete_reason,
-        Some(EvaluationIncompleteReason::FormulaPlaneTopologyCandidates)
-    );
-    assert_eq!(request.topology.cache_skip_events, 1);
-    assert_eq!(engine.mixed_topology_index_builds_for_test(), 1);
     assert_eq!(request.ledger.scratch_current, 0);
     assert!(request.ledger.scratch_peak > 0);
-    assert!(!engine.mixed_topology_cache_present_for_test());
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    span_internal!("FormulaPlane span/ingest/eval-report internals; spans are not placed under the authority (design section 10)";
+        assert!(!engine.mixed_topology_cache_present_for_test());
+    );
+    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
+        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    );
     assert_eq!(
         engine.get_cell_value("Sheet1", 100, 2),
         Some(LiteralValue::Number(200.0))
@@ -767,6 +779,7 @@ fn evaluate_vertex_max_work_zero_matches_all_modes_without_publication() {
 }
 
 #[test]
+#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: prepares a span demotion under a vertex budget; no spans exist to demote")]
 fn explicit_vertex_budget_ignores_legacy_limit_at_shared_demotion_seam() {
     fn demote(budgets: EvaluationBudgets) -> Result<(), String> {
         let mut config = EvalConfig::default()

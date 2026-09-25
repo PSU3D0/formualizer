@@ -157,7 +157,9 @@ fn span_formula_api_relocates_first_middle_and_last_placement() {
         .unwrap();
     engine.evaluate_all().unwrap();
 
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
+        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    );
     assert_eq!(canonical_at(&engine, 1, 2), "=A1 + 1");
     assert_eq!(canonical_at(&engine, 50, 2), "=A50 + 1");
     assert_eq!(canonical_at(&engine, 100, 2), "=A100 + 1");
@@ -194,6 +196,7 @@ fn cross_sheet_span_relocation_uses_placement_coordinate() {
 }
 
 #[test]
+#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: drives relocation of an active span's template; no spans under the authority")]
 fn invalid_span_relocation_fails_closed_before_graph_lookup() {
     let mut engine = engine_with_mode(FormulaPlaneMode::AuthoritativeExperimental);
     let mut records = Vec::new();
@@ -240,7 +243,9 @@ fn equal_canonical_templates_from_distinct_anchors_keep_span_state_isolated() {
         ])
         .unwrap();
     engine.evaluate_all().unwrap();
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
+    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
+        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
+    );
 
     assert_eq!(canonical_at(&engine, 50, 2), "=A50 + 1");
     assert_eq!(canonical_at(&engine, 250, 2), "=A250 + 1");

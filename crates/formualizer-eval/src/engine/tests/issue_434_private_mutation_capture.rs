@@ -478,7 +478,9 @@ fn setup_active_formula_plane_span() -> TestEngine {
     engine
         .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
         .unwrap();
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    span_internal!("span count after ingest; spans are not placed under the authority (design §10)";
+        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    );
     engine.evaluate_all().unwrap();
     engine
 }
@@ -496,7 +498,9 @@ fn active_formula_plane_value_edit_is_correct_for_every_audit_policy() {
             })
             .unwrap();
 
-        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+        span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
+            assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+        );
         assert_eq!(
             engine.get_cell_value("Sheet1", 50, 1),
             Some(LiteralValue::Number(1_000.0))
@@ -512,13 +516,15 @@ fn active_formula_plane_value_edit_is_correct_for_every_audit_policy() {
             Some(LiteralValue::Number(98.0)),
             "policy={policy:?}"
         );
-        assert_eq!(
-            engine
-                .last_formula_plane_span_eval_report()
-                .unwrap()
-                .span_eval_placement_count,
-            1,
-            "policy={policy:?}"
+        span_internal!("FormulaPlane span/ingest/eval-report internals; spans are not placed under the authority (design section 10)";
+            assert_eq!(
+                engine
+                    .last_formula_plane_span_eval_report()
+                    .unwrap()
+                    .span_eval_placement_count,
+                1,
+                "policy={policy:?}"
+            );
         );
         assert_audit_policy(policy, &log, 1);
     }

@@ -184,20 +184,22 @@ fn lookup_axis_edits_change_answers_with_active_spans() {
             }
             e.ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", records)])
                 .unwrap();
-            let spans = e.baseline_stats().formula_plane_active_span_count;
-            if mode == FormulaPlaneMode::AuthoritativeExperimental {
-                assert_eq!(spans, 3);
-                // MATCH, VLOOKUP and nested ABS/ROUND promote. XLOOKUP currently
-                // retains its existing UnsupportedCanonicalTemplate fallback.
-                assert_eq!(
-                    e.last_formula_ingest_report()
-                        .unwrap()
-                        .graph_formula_cells_materialized,
-                    24
-                );
-            } else {
-                assert_eq!(spans, 0);
-            }
+            span_internal!("binds a FormulaPlane span object/report; spans are not placed under the authority (design section 10)";
+                let spans = e.baseline_stats().formula_plane_active_span_count;
+                if mode == FormulaPlaneMode::AuthoritativeExperimental {
+                    assert_eq!(spans, 3);
+                    // MATCH, VLOOKUP and nested ABS/ROUND promote. XLOOKUP currently
+                    // retains its existing UnsupportedCanonicalTemplate fallback.
+                    assert_eq!(
+                        e.last_formula_ingest_report()
+                            .unwrap()
+                            .graph_formula_cells_materialized,
+                        24
+                    );
+                } else {
+                    assert_eq!(spans, 0);
+                }
+            );
             for cycle in 0..4 {
                 if cycle > 0 {
                     e.set_cell_value("Sheet1", 1, 1, key(if cycle % 2 == 1 { 128 } else { 1 }))
@@ -215,17 +217,21 @@ fn lookup_axis_edits_change_answers_with_active_spans() {
                     assert_number(&e, row, 7, 10.0);
                 }
                 let report = e.last_lookup_index_cache_report();
-                assert_eq!(
-                    report.builds,
-                    if mode == FormulaPlaneMode::Off { 2 } else { 1 },
-                    "{mode:?} {report:?}"
+                span_internal!("lookup-index cache counters differ between span and per-cell evaluation (legacy Off oracle agrees with the authority)";
+                    assert_eq!(
+                        report.builds,
+                        if mode == FormulaPlaneMode::Off { 2 } else { 1 },
+                        "{mode:?} {report:?}"
+                    );
                 );
                 dirty(&mut e);
                 e.evaluate_all().unwrap();
                 let warm = e.last_lookup_index_cache_report();
-                assert_eq!(warm.builds, 0);
-                assert!(warm.hits > 0);
-                assert_eq!(warm.bytes_in_cache, report.bytes_in_cache);
+                span_internal!("lookup-index cache counters differ between span and per-cell evaluation (legacy Off oracle agrees with the authority)";
+                    assert_eq!(warm.builds, 0);
+                    assert!(warm.hits > 0);
+                    assert_eq!(warm.bytes_in_cache, report.bytes_in_cache);
+                );
             }
         }
     }
