@@ -28,6 +28,9 @@ pub mod level_index;
 // Remove the temporary allowance when the evaluator calls the driver.
 #[allow(dead_code)]
 pub(crate) mod plan_graph;
+// Executor adaptation, pending complete runtime/resource cutover.
+#[allow(dead_code)]
+pub(crate) mod plan_schedule;
 // Complete per-cell planning driver, pending evaluator/resource cutover.
 #[allow(dead_code)]
 pub(crate) mod planner;
