@@ -52,6 +52,14 @@ pub struct RefinedSlice {
     pub cell_references: u64,
 }
 
+impl RefinedSlice {
+    /// Heap bytes the result keeps (its output vectors).
+    pub(crate) fn retained_heap_bytes(&self) -> u64 {
+        (self.pieces.capacity() * size_of::<RefinedPiece>()
+            + self.edges.capacity() * size_of::<EdgeKey>()) as u64
+    }
+}
+
 #[derive(Clone, Copy, Default)]
 struct Event {
     row: u32,
@@ -92,7 +100,20 @@ fn reserved<T>(n: usize) -> Result<Vec<T>, AuthorityError> {
 /// Equal endpoints need no kind order: the sweep applies *all* events at a
 /// row before emitting [row, next_row). This is deliberately distinct from
 /// ARC's closed-interval START < Q_LO < Q_HI < END ordering.
+///
+/// Short lists (the common singleton or small-family column: a handful of
+/// events) use an in-place comparison sort instead: the radix passes cost
+/// three 256-bucket histograms regardless of length, which dominated
+/// planning of workbooks made of many small owners (perf gate, red team #4).
 fn sort_events(events: &mut [Event], temp: &mut [Event], work: &mut RefinementWork) {
+    const RADIX_MIN: usize = 64;
+    if events.len() < RADIX_MIN {
+        let n = events.len() as u64;
+        // Comparisons of an insertion/merge sort on n <= 64 elements.
+        work.sort += n * u64::from(64 - n.leading_zeros()).max(1);
+        events.sort_unstable_by_key(|e| e.row);
+        return;
+    }
     for shift in [0, 8, 16] {
         let mut counts = [0usize; 256];
         work.sort += 256; // histogram initialization

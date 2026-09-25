@@ -60,6 +60,16 @@ pub fn sync<R>(e: &mut Engine<R>) -> Result<Summary, AuthorityError> {
     })
 }
 
+/// Retained bytes by component: the store's census, then the host's side
+/// tables (benches).
+pub fn breakdown<R>(e: &Engine<R>) -> Vec<(&'static str, usize)> {
+    let host = e.graph.authority_host();
+    let mut v = host.store().bytes_breakdown();
+    v.push(("host_vertex_of_id", host.vertex_of_id_bytes()));
+    v.push(("host_symbol_slots", host.symbols().heap_bytes()));
+    v
+}
+
 /// The host's state (`Failed` carries the typed error).
 pub fn state<R>(e: &Engine<R>) -> HostState {
     e.graph.authority_host().state().clone()
@@ -260,6 +270,65 @@ pub fn plan_timing<R>(
         ordered.fallback_work,
         ordered.work,
     ))
+}
+
+/// Planning work split for a full recalculation plan (diagnostics):
+/// `(label, work)` per stage plus stage times in microseconds.
+pub fn plan_split<R>(e: &mut Engine<R>) -> Result<Vec<(String, u64)>, String> {
+    use super::planner;
+    use std::time::Instant;
+    e.graph.authority().map_err(|x| format!("{x:?}"))?;
+    let store = e.graph.authority_host().store();
+    let mut cover = super::geom::Cover::new();
+    for (s, r, c) in store.formula_cells() {
+        cover.insert_rect(s, &Rect::cell(r, c));
+    }
+    let t = Instant::now();
+    let cand = super::candidates::discover(store, &cover, None).map_err(|x| format!("{x:?}"))?;
+    let t_disc = t.elapsed().as_micros() as u64;
+    let mut out = vec![
+        ("discover_us".to_string(), t_disc),
+        ("discover_work".to_string(), cand.work.total()),
+        ("candidate_slices".to_string(), cand.slices.len() as u64),
+    ];
+    let t = Instant::now();
+    let mut n = 0u64;
+    for c in &cand.slices {
+        let (sheet, dom, _) = store.owner_dom(c.owner);
+        if let Some(d) = dom.intersect(&Rect::new(c.r0, c.col, c.r1, c.col)) {
+            store.visit_plan_edges(sheet, &d, &mut |_, _| n += 1);
+        }
+    }
+    out.push(("index_only_us".into(), t.elapsed().as_micros() as u64));
+    let t = Instant::now();
+    for c in &cand.slices {
+        let r = store
+            .refine_owner_column(c.owner, c.col, c.r0, c.r1, None)
+            .unwrap();
+        n += r.pieces.len() as u64;
+    }
+    out.push(("refine_once_us".into(), t.elapsed().as_micros() as u64));
+    out.push(("n".into(), n));
+    drop(cand);
+    let t = Instant::now();
+    let input = planner::input(store, &cover, None).map_err(|x| format!("{x:?}"))?;
+    out.push(("input_us".into(), t.elapsed().as_micros() as u64));
+    out.push(("input_work".into(), input.work));
+    out.push(("slices".into(), input.slices.len() as u64));
+    out.push(("probes".into(), input.probes.len() as u64));
+    let t = Instant::now();
+    let p = planner::prepare(store, &cover, None, None, None).map_err(|x| format!("{x:?}"))?;
+    out.push(("prepare_us".into(), t.elapsed().as_micros() as u64));
+    let tp = &p.topology;
+    out.push((format!("sweep {:?}", tp.sweep.work), tp.sweep.work.total()));
+    out.push((
+        format!("emit {:?}", tp.emission.work),
+        tp.emission.work.total(),
+    ));
+    out.push(("graph".into(), tp.graph.work.total()));
+    out.push(("components".into(), tp.components.work.total()));
+    out.push(("classify".into(), p.classification.work));
+    Ok(out)
 }
 
 /// Build cost split (must-fix 3): `(inputs, extract ns, store build ns)`

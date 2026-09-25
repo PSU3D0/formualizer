@@ -222,6 +222,18 @@ mod imp {
         let edits: usize = get("--edits").map(|s| s.parse()).transpose()?.unwrap_or(20);
         let feature = true; // the authority is always on
 
+        if std::env::var_os("FZ_PLAN_SPLIT").is_some() {
+            let adapter = CalamineAdapter::open_path(&path).map_err(|e| anyhow!("open: {e}"))?;
+            let mut wb =
+                Workbook::from_reader(adapter, LoadStrategy::EagerAll, WorkbookConfig::ephemeral())
+                    .map_err(|e| anyhow!("load: {e}"))?;
+            let split = formualizer_eval::engine::authority::probe::plan_split(wb.engine_mut())
+                .map_err(|e| anyhow!("{e}"))?;
+            for (k, v) in split {
+                println!("{v}\t{k}");
+            }
+            return Ok(());
+        }
         let tg = targets(&path, edits)?;
         let base = live();
 
@@ -284,6 +296,7 @@ mod imp {
                     "builds": s.builds, "incremental": s.incremental_mutations,
                     "sync_ms": sync_ms, "sync_growth": sync_growth,
                     "state": format!("{:?}", probe::state(wb.engine())).chars().take(160).collect::<String>(),
+                    "breakdown": probe::breakdown(wb.engine()).into_iter().map(|(k, v)| (k.to_string(), v)).collect::<BTreeMap<_, _>>(),
                 }),
                 Err(e) => {
                     serde_json::json!({"error": format!("{e:?}").chars().take(160).collect::<String>(),

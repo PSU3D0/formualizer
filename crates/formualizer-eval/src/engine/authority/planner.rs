@@ -81,11 +81,15 @@ fn remaining(limit: Option<u64>, held: u64) -> Result<Option<u64>, AuthorityErro
         .transpose()
 }
 
-/// Two refinement passes avoid a growing vector or one retained allocation per
-/// candidate. Both passes (including index queries and image construction) are
-/// counted. All candidates + aggregate capacity + current helper scratch coexist
-/// during filling, and are admitted together. No whole-store scan or cell
-/// expansion occurs. The borrowed cover and Store are caller-owned.
+/// One refinement per candidate: each candidate's refined pieces are kept
+/// until the exact output sizes are known, then copied into exactly
+/// reserved outputs and dropped (refining twice, once to size and once to
+/// fill, doubled the index queries and allocations per candidate, which
+/// dominated planning of workbooks made of many small owners). Everything
+/// that coexists is admitted together and counted in the peak: the
+/// candidates, the kept refinements (and the list holding them), each
+/// refinement's own temporaries, and the outputs. No whole-store scan or
+/// cell expansion occurs. The borrowed cover and Store are caller-owned.
 pub(crate) fn input(
     store: &Store,
     cover: &Cover,
@@ -98,6 +102,11 @@ pub(crate) fn input(
     let mut pieces = 0usize;
     let mut probes = 0usize;
     let mut references = 0u64;
+    let list_bytes = bytes::<super::refine::RefinedSlice>(candidates.slices.len())?;
+    let mut live = add(held, list_bytes)?;
+    remaining(scratch_limit, live)?;
+    peak = peak.max(live);
+    let mut refinements: Vec<super::refine::RefinedSlice> = reserve(candidates.slices.len())?;
     for c in &candidates.slices {
         work += 1;
         let refined = store.refine_owner_column(
@@ -105,9 +114,10 @@ pub(crate) fn input(
             c.col,
             c.r0,
             c.r1,
-            remaining(scratch_limit, held)?,
+            remaining(scratch_limit, live)?,
         )?;
-        peak = peak.max(add(held, refined.peak_heap_bytes)?);
+        peak = peak.max(add(live, refined.peak_heap_bytes)?);
+        live = add(live, refined.retained_heap_bytes())?;
         work += refined.work.total();
         references = add(references, refined.cell_references)?;
         pieces = pieces
@@ -122,12 +132,13 @@ pub(crate) fn input(
                 }
             }
         }
+        refinements.push(refined);
     }
     let aggregate = add(
         add(bytes::<Slice>(pieces)?, bytes::<PieceIdentity>(pieces)?)?,
         add(bytes::<Probe>(probes)?, bytes::<EdgeKey>(probes)?)?,
     )?;
-    let live = add(held, aggregate)?;
+    let live = add(live, aggregate)?;
     remaining(scratch_limit, live)?;
     peak = peak.max(live);
     let mut out = PlanningInput {
@@ -140,17 +151,8 @@ pub(crate) fn input(
         work: 0,
         peak_heap_bytes: 0,
     };
-    for c in &candidates.slices {
+    for (c, refined) in candidates.slices.iter().zip(&refinements) {
         work += 1;
-        let refined = store.refine_owner_column(
-            c.owner,
-            c.col,
-            c.r0,
-            c.r1,
-            remaining(scratch_limit, live)?,
-        )?;
-        peak = peak.max(add(live, refined.peak_heap_bytes)?);
-        work += refined.work.total();
         for piece in &refined.pieces {
             work += 1;
             let reader = out.slices.len();
@@ -183,6 +185,7 @@ pub(crate) fn input(
             out.identities[reader].probe_end = out.probes.len();
         }
     }
+    drop(refinements);
     debug_assert_eq!(out.slices.len(), pieces);
     debug_assert_eq!(out.probes.len(), probes);
     out.work = work;
