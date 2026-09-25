@@ -256,3 +256,64 @@ fn fr_static_reader_of_spill_child_follows_the_spill() {
         );
     }
 }
+
+/// rdi_dyn (design §8.2 OR1, §8.4): a fresh dynamic reader's reads become
+/// its observed set; later plans use it instead of a pre-probe, so steady
+/// recalcs with a stable target hit the static schedule cache, keyed on
+/// rev.dyn. Moving the target changes the observed set and stays correct.
+#[cfg(feature = "unified_authority")]
+#[test]
+fn observed_reads_plan_dynamic_readers_and_key_the_schedule_cache() {
+    let mut e = engine();
+    set(&mut e, 1, 1, 1.0);
+    formula(&mut e, 3, 1, "=A1*10"); // A3
+    formula(&mut e, 4, 1, "=A1*100"); // A4
+    e.engine_set_text("D1", "A3");
+    formula(&mut e, 1, 2, "=INDIRECT(D1)+1"); // X
+    formula(&mut e, 1, 3, "=B1*2"); // Z
+    e.evaluate_all().unwrap();
+    assert_eq!((num(&e, 1, 2), num(&e, 1, 3)), (Some(11.0), Some(22.0)));
+    let x = e
+        .graph
+        .get_vertex_for_cell(&crate::reference::CellRef::new(
+            e.sheet_id("Sheet1").unwrap(),
+            crate::reference::Coord::new(0, 1, true, true),
+        ))
+        .unwrap();
+    let observed = e.graph.authority_host().observed(x).map(<[_]>::to_vec);
+    assert!(
+        observed
+            .as_ref()
+            .is_some_and(|r| r.contains(&(e.sheet_id("Sheet1").unwrap(), 2, 0, 2, 0))),
+        "X observed A3: {observed:?}"
+    );
+    let rev = e.graph.authority_host().rev_dyn();
+    // Stable target: the second value-only recalc reuses the schedule.
+    set(&mut e, 1, 1, 2.0);
+    e.evaluate_all().unwrap();
+    set(&mut e, 1, 1, 3.0);
+    e.reset_recalc_reuse_probe();
+    e.evaluate_all().unwrap();
+    assert_eq!((num(&e, 1, 2), num(&e, 1, 3)), (Some(31.0), Some(62.0)));
+    assert_eq!(
+        e.graph.authority_host().rev_dyn(),
+        rev,
+        "same reads, same rev.dyn"
+    );
+    assert!(e.recalc_reuse_probe().schedule_cache_hits >= 1);
+    // Moving the target: the observed set (and rev.dyn) changes, values
+    // stay right.
+    e.engine_set_text("D1", "A4");
+    e.evaluate_all().unwrap();
+    assert_eq!((num(&e, 1, 2), num(&e, 1, 3)), (Some(301.0), Some(602.0)));
+    assert!(e.graph.authority_host().rev_dyn() > rev);
+    set(&mut e, 1, 1, 4.0);
+    e.evaluate_all().unwrap();
+    assert_eq!((num(&e, 1, 2), num(&e, 1, 3)), (Some(401.0), Some(802.0)));
+    // Editing the reader drops its observed set.
+    formula(&mut e, 1, 2, "=INDIRECT(D1)+2");
+    assert!(e.graph.authority().is_ok());
+    assert!(e.graph.authority_host().observed(x).is_none());
+    e.evaluate_all().unwrap();
+    assert_eq!(num(&e, 1, 2), Some(402.0));
+}

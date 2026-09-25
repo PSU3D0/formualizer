@@ -325,9 +325,12 @@ fn schedule_cache_shared_handles_do_not_expand_dynamic_or_range_eligibility() {
             let probe = engine.recalc_reuse_probe();
             // Reclassified under unified_authority (internal representation):
             // a range read is a static edge of the authority relation, so a
-            // range reader's schedule is cacheable (design §8.4); only
-            // dynamic readers stay ineligible.
-            if cfg!(feature = "unified_authority") && !formula.contains("INDIRECT") {
+            // range reader's schedule is cacheable; a dynamic reader is
+            // cacheable once it has an observed read set (its first
+            // evaluation, value 2, needs a pre-probe), keyed on rev.dyn
+            // (design §8.4).
+            if cfg!(feature = "unified_authority") && (!formula.contains("INDIRECT") || value == 3)
+            {
                 assert_eq!(probe.schedule_cache_ineligible, 0);
                 assert!(engine.cached_static_schedule_for_test().is_some());
             } else {

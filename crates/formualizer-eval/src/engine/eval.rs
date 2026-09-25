@@ -2205,9 +2205,9 @@ fn schedule_probe_retained_bytes(schedule: &crate::engine::Schedule) -> usize {
 #[derive(Debug, Clone)]
 struct CachedScheduleEntry {
     topology_epoch: u64,
-    /// Authority store revision the schedule was planned from (design §8.4;
-    /// always 0 without `unified_authority`).
-    authority_revision: u64,
+    /// Authority `(store revision, rev.dyn)` the schedule was planned from
+    /// (design §8.4; always 0 without `unified_authority`).
+    authority_revision: (u64, u64),
     candidate_vertices: Vec<VertexId>,
     schedule: Arc<crate::engine::scheduler::Schedule>,
 }
@@ -25271,6 +25271,31 @@ where
                 });
             }
         }
+        // rdi_dyn: order each dynamic reader after its observed reads.
+        let host = self.graph.authority_host();
+        for &id in candidates {
+            let Some(reads) = host.observed(id) else {
+                continue;
+            };
+            let Some(reader) = self.graph.authority_cell_of_vertex(id) else {
+                continue;
+            };
+            for &(sheet, r0, c0, r1, c1) in reads {
+                hints.push(planner::PlanHint {
+                    reader: (reader.0, reader.2, reader.1),
+                    edge: EdgeKey {
+                        dep_sheet: reader.0,
+                        tag: Tag::X,
+                        lk: u32::MAX,
+                        proj: RefProj {
+                            sheet,
+                            rows: AxisMap::fixed(r0, r1),
+                            cols: AxisMap::fixed(c0, c1),
+                        },
+                    },
+                });
+            }
+        }
         hints.sort_unstable_by_key(|hint| hint.reader);
         let checkpoint = ledger
             .as_ref()
@@ -25327,7 +25352,15 @@ where
     fn can_use_static_schedule_cache(&self, to_evaluate: &[VertexId]) -> bool {
         #[cfg(feature = "unified_authority")]
         {
-            !to_evaluate.is_empty() && to_evaluate.iter().all(|&v| !self.graph.is_dynamic(v))
+            // A dynamic reader is planned from its observed reads, which the
+            // key covers (rev.dyn); one without them needs a pre-probe, and
+            // request-scoped replan hints are never cached.
+            let host = self.graph.authority_host();
+            !to_evaluate.is_empty()
+                && !self.freshness_has_hints()
+                && to_evaluate
+                    .iter()
+                    .all(|&v| !self.graph.is_dynamic(v) || host.observed(v).is_some())
         }
         #[cfg(not(feature = "unified_authority"))]
         {
@@ -25338,14 +25371,17 @@ where
         }
     }
 
-    fn schedule_cache_authority_revision(&self) -> u64 {
+    fn schedule_cache_authority_revision(&self) -> (u64, u64) {
         #[cfg(feature = "unified_authority")]
         {
-            self.graph.authority_host().revision()
+            // rev.topology is `topology_epoch`; a symbol revision rebuilds the
+            // store, so it is part of `revision`.
+            let host = self.graph.authority_host();
+            (host.revision(), host.rev_dyn())
         }
         #[cfg(not(feature = "unified_authority"))]
         {
-            0
+            (0, 0)
         }
     }
 
@@ -25694,6 +25730,12 @@ where
                 #[cfg(any(test, feature = "benchmark_internal"))]
                 {
                     probe_dynamic += 1;
+                }
+                // rdi_dyn: the observed reads are demand precedents.
+                if let Some(reads) = self.graph.authority_host().observed(v) {
+                    for &(sheet, r0, c0, r1, c1) in reads {
+                        push_formulas(&mut stack, &visited, sheet, Rect::new(r0, c0, r1, c1));
+                    }
                 }
                 let (vdeps_map, _) = VirtualDepBuilder::new(self).build(&[v]);
                 // Pre-probe targets plus reads this request found dirty

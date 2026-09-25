@@ -27,6 +27,13 @@
 //!   dirty and the loop replans. Known extents of dirty anchors are ordered
 //!   first by plan hints (DirtyExtents), so that is the exception.
 //!
+//! - **Observed reads (`rdi_dyn`, OR1).** A fresh dynamic reader's reads
+//!   become its observed set in the authority host at commit. Plans order
+//!   the reader after them (rectangle hints, no pre-probe evaluation), the
+//!   demand walk follows them, and the schedule cache keys on their
+//!   revision (design §8.3–8.4). The pre-probe remains for readers without
+//!   an observed set (first evaluation, after an edit or a rebuild).
+//!
 //! Every pass of the replan loops is armed under the authority. Commit
 //! granularity is legacy's (a cell in sequential layers, a phase group in
 //! parallel layers); cycle units evaluate on their own recorded path and
@@ -37,7 +44,7 @@
 use super::Engine;
 use crate::engine::arena::AstNodeId;
 use crate::engine::authority::geom::SYMBOL_SHEET;
-use crate::engine::live_edges::{ReadLog, RecordingContext};
+use crate::engine::live_edges::{ReadLog, ReadRect, RecordingContext};
 use crate::engine::scheduler::{Schedule, ScheduleUnit};
 use crate::engine::vertex::VertexId;
 use crate::interpreter::Interpreter;
@@ -54,6 +61,9 @@ pub(crate) struct Freshness {
     /// Stale readers of the current pass and the dirty cells they read.
     /// Written from evaluation (possibly parallel), read at commit.
     stale: Mutex<FxHashMap<VertexId, Vec<VertexId>>>,
+    /// Reads of fresh dynamic evaluations, moved into the authority's
+    /// observed set (`rdi_dyn`) at their commit.
+    fresh_reads: Mutex<FxHashMap<VertexId, Vec<ReadRect>>>,
     /// A stale reader was dropped in the current unit (FR4).
     barrier: bool,
     /// Scheduled vertices the barrier kept from running.
@@ -86,6 +96,7 @@ impl<R: EvaluationContext> Engine<R> {
         f.committed.clear();
         f.stale_this_pass.clear();
         f.stale.get_mut().unwrap().clear();
+        f.fresh_reads.get_mut().unwrap().clear();
         f.armed = true;
     }
 
@@ -193,6 +204,16 @@ impl<R: EvaluationContext> Engine<R> {
     pub(super) fn freshness_mark_committed(&mut self, vertex: VertexId) {
         self.freshness.committed.insert(vertex);
         self.graph.clear_dirty_flags(&[vertex]);
+        // OR1: a published dynamic value's reads become its observed set.
+        if let Some(reads) = self
+            .freshness
+            .fresh_reads
+            .get_mut()
+            .unwrap()
+            .remove(&vertex)
+        {
+            self.graph.authority_host_mut().set_observed(vertex, reads);
+        }
     }
 
     /// End of a pass. Armed: clear what legacy clears except stale readers,
@@ -239,6 +260,10 @@ impl<R: EvaluationContext> Engine<R> {
             } else {
                 to_evaluate.iter().any(|&v| self.graph.is_dirty(v))
             }
+    }
+
+    pub(super) fn freshness_has_hints(&self) -> bool {
+        !self.freshness.hints.is_empty()
     }
 
     /// Replan hints recorded this request for `reader`.
@@ -294,8 +319,15 @@ impl<R: EvaluationContext> Engine<R> {
                     crate::engine::result_finalization::finalize_formula_result(cv.into_literal())
                 })
         };
-        let dirty = self.freshness_dirty_reads(vertex, &log.take());
-        if !dirty.is_empty() {
+        let reads = log.take();
+        let dirty = self.freshness_dirty_reads(vertex, &reads);
+        if dirty.is_empty() {
+            self.freshness
+                .fresh_reads
+                .lock()
+                .unwrap()
+                .insert(vertex, reads);
+        } else {
             self.freshness.stale.lock().unwrap().insert(vertex, dirty);
         }
         Some(result)

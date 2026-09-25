@@ -260,6 +260,7 @@ impl DependencyGraph {
                 self.authority.symbol_rev = self.symbol_revision;
                 self.authority.builds += 1;
                 self.authority.revision += 1;
+                self.authority.clear_observed();
                 self.authority.state = HostState::Ready;
                 self.authority_fill_vertex_of_id();
             }
@@ -302,6 +303,9 @@ impl DependencyGraph {
             .collect();
         cells.sort_unstable();
         cells.dedup();
+        for &v in &touched {
+            self.authority.forget_observed(v);
+        }
         for cell in cells {
             let current = self
                 .get_vertex_for_cell(&cell_ref(cell))
