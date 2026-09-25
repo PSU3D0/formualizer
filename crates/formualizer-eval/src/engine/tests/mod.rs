@@ -233,6 +233,7 @@ mod short_circuit_dispatch;
 mod approximate_lookup_ignored_entries;
 mod cell_hyperlink_sheet;
 mod format_channel_t1;
+mod int_symbol_structural_probe;
 mod m3_structural_cost_probe;
 mod shape_memo;
 mod temporal_lookup_semantics;
