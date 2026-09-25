@@ -21028,8 +21028,10 @@ where
         let mut cycle_errors = 0usize;
         let mut replans = 0usize;
         const MAX_REPLAN: usize = 5;
+        #[cfg(feature = "unified_authority")]
+        self.graph.authority_sync();
         loop {
-            let (precedents_to_eval, old_vdeps) = self.build_demand_subgraph(&root_vertices);
+            let (precedents_to_eval, old_vdeps) = self.demand_subgraph(&root_vertices)?;
             if precedents_to_eval.is_empty() {
                 break;
             }
@@ -24942,7 +24944,7 @@ where
         }
 
         // Build demand subgraph with virtual edges (same as evaluate_until)
-        let (precedents_to_eval, vdeps) = self.build_demand_subgraph(&target_vertex_ids);
+        let (precedents_to_eval, vdeps) = self.demand_subgraph(&target_vertex_ids)?;
 
         if precedents_to_eval.is_empty() {
             return Ok(EvalPlan {
@@ -25423,6 +25425,167 @@ where
 
     /// Build a demand-driven subgraph for the given targets, including ephemeral edges for
     /// compressed ranges, and returning the set of dirty/volatile precedents and virtual deps.
+    /// Demand candidates of `targets` and their dynamic plan hints: under
+    /// `unified_authority` from the authority's relation (design §8.3),
+    /// otherwise from the legacy graph.
+    #[allow(clippy::type_complexity)]
+    fn demand_subgraph(
+        &self,
+        targets: &[VertexId],
+    ) -> Result<
+        (
+            Vec<VertexId>,
+            rustc_hash::FxHashMap<VertexId, Vec<VertexId>>,
+        ),
+        ExcelError,
+    > {
+        #[cfg(feature = "unified_authority")]
+        return self.authority_demand_subgraph(targets);
+        #[cfg(not(feature = "unified_authority"))]
+        Ok(self.build_demand_subgraph(targets))
+    }
+
+    /// Design §8.3: traverse precedents from the targets over the
+    /// authority's static relation (symbol nodes are ordinary pieces) plus
+    /// the dynamic readers' virtual dependencies, and collect what legacy's
+    /// demand walk collects: dirty or volatile formula cells and every name
+    /// passed through. No legacy dependency structure is read.
+    #[cfg(feature = "unified_authority")]
+    #[allow(clippy::type_complexity)]
+    fn authority_demand_subgraph(
+        &self,
+        targets: &[VertexId],
+    ) -> Result<
+        (
+            Vec<VertexId>,
+            rustc_hash::FxHashMap<VertexId, Vec<VertexId>>,
+        ),
+        ExcelError,
+    > {
+        use crate::engine::authority::geom::{Cell, Rect, SYMBOL_SHEET};
+        use crate::engine::authority::store::TagFilter;
+        use rustc_hash::{FxHashMap, FxHashSet};
+        let store = self
+            .graph
+            .authority_plan_store()
+            .map_err(Self::authority_excel_error)?;
+        let ids = store.ids();
+        let mut to_evaluate: FxHashSet<VertexId> = FxHashSet::default();
+        let mut vdeps: FxHashMap<VertexId, Vec<VertexId>> = FxHashMap::default();
+        let mut visited: FxHashSet<Cell> = FxHashSet::default();
+        let mut stack: Vec<Cell> = Vec::new();
+        // Formula cells under `rect` on `sheet`: identity runs per column.
+        let push_formulas =
+            |stack: &mut Vec<Cell>, visited: &FxHashSet<Cell>, sheet: u16, rect: Rect| {
+                for col in rect.c0..=rect.c1 {
+                    ids.visit_runs_in(sheet, col, rect.r0, rect.r1, &mut |h| {
+                        let run = ids.run(h);
+                        let r0 = run.row_start.max(rect.r0);
+                        let r1 = (run.row_start + run.len - 1).min(rect.r1);
+                        for row in r0..=r1 {
+                            if !visited.contains(&(sheet, row, col)) {
+                                stack.push((sheet, row, col));
+                            }
+                        }
+                    });
+                }
+            };
+        for &v in targets {
+            if let Some(cell) = self.graph.authority_cell_of_vertex(v) {
+                stack.push(cell);
+            } else if let Some(table) = self.graph.table_by_vertex(v) {
+                // A table target has no node: its demand is its range's, as
+                // legacy's table vertex leads to the cells it covers.
+                let (s, e) = (table.range.start, table.range.end);
+                push_formulas(
+                    &mut stack,
+                    &visited,
+                    s.sheet_id,
+                    Rect::new(s.coord.row(), s.coord.col(), e.coord.row(), e.coord.col()),
+                );
+            }
+        }
+        let mut hits = Vec::new();
+        #[cfg(any(test, feature = "benchmark_internal"))]
+        let (mut probe_vertices, mut probe_clean_formulas, mut probe_edges, mut probe_dynamic) =
+            (0, 0, 0, 0);
+        while let Some(cell) = stack.pop() {
+            if !visited.insert(cell) {
+                continue;
+            }
+            let Some(v) = self.graph.authority_vertex_of_cell(cell) else {
+                continue;
+            };
+            if !self.graph.vertex_exists(v) {
+                continue;
+            }
+            #[cfg(any(test, feature = "benchmark_internal"))]
+            {
+                probe_vertices += 1;
+            }
+            match self.graph.get_vertex_kind(v) {
+                VertexKind::FormulaScalar | VertexKind::FormulaArray => {
+                    if self.graph.is_dirty(v) || self.graph.is_volatile(v) {
+                        to_evaluate.insert(v);
+                    } else {
+                        #[cfg(any(test, feature = "benchmark_internal"))]
+                        {
+                            probe_clean_formulas += 1;
+                        }
+                    }
+                }
+                VertexKind::NamedScalar | VertexKind::NamedArray => {
+                    to_evaluate.insert(v);
+                }
+                _ => {}
+            }
+            hits.clear();
+            store.direct_precedents(cell, TagFilter::All, &mut hits);
+            #[cfg(any(test, feature = "benchmark_internal"))]
+            {
+                probe_edges += hits.len();
+            }
+            for &(_, sheet, rect) in &hits {
+                if sheet == SYMBOL_SHEET {
+                    stack.extend((rect.r0..=rect.r1).map(|slot| (SYMBOL_SHEET, slot, 0)));
+                    continue;
+                }
+                push_formulas(&mut stack, &visited, sheet, rect);
+            }
+            if self.graph.is_dynamic(v) {
+                #[cfg(any(test, feature = "benchmark_internal"))]
+                {
+                    probe_dynamic += 1;
+                }
+                let (vdeps_map, _) = VirtualDepBuilder::new(self).build(&[v]);
+                if let Some(deps) = vdeps_map.get(&v) {
+                    for &u in deps {
+                        vdeps.entry(v).or_default().push(u);
+                        if let Some(c) = self.graph.authority_cell_of_vertex(u) {
+                            stack.push(c);
+                        }
+                    }
+                }
+            }
+        }
+        let mut result: Vec<VertexId> = to_evaluate.into_iter().collect();
+        result.sort_unstable();
+        for deps in vdeps.values_mut() {
+            deps.sort_unstable();
+            deps.dedup();
+        }
+        #[cfg(any(test, feature = "benchmark_internal"))]
+        {
+            let mut probe = self.recalc_reuse_probe.lock().unwrap();
+            probe.demand_builds += 1;
+            probe.demand_vertices += probe_vertices;
+            probe.demand_clean_formulas += probe_clean_formulas;
+            probe.demand_explicit_edges += probe_edges;
+            probe.demand_virtual_builder_calls += probe_dynamic;
+        }
+        Ok((result, vdeps))
+    }
+
     fn build_demand_subgraph(
         &self,
         target_vertices: &[VertexId],
