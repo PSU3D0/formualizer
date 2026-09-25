@@ -25710,11 +25710,10 @@ where
             }
         };
         for &v in targets {
-            if let Some(cell) = self.graph.authority_cell_of_vertex(v) {
-                stack.push((cell, crate::engine::authority::identity::NO_VID));
-            } else if let Some(table) = self.graph.table_by_vertex(v) {
-                // A table target has no node: its demand is its range's, as
-                // legacy's table vertex leads to the cells it covers.
+            if let Some(table) = self.graph.table_by_vertex(v) {
+                // A table's demand is its range's, as legacy's table vertex
+                // leads to the cells it covers (its symbol row has no
+                // precedents).
                 let (s, e) = (table.range.start, table.range.end);
                 push_formulas(
                     &mut stack,
@@ -25722,6 +25721,8 @@ where
                     s.sheet_id,
                     Rect::new(s.coord.row(), s.coord.col(), e.coord.row(), e.coord.col()),
                 );
+            } else if let Some(cell) = self.graph.authority_cell_of_vertex(v) {
+                stack.push((cell, crate::engine::authority::identity::NO_VID));
             }
         }
         let mut hits = Vec::new();

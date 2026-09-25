@@ -118,7 +118,7 @@ impl DependencyGraph {
             .insert(self.table_lookup_key(&original), original.clone());
         self.table_vertex_lookup.insert(vertex, original);
         #[cfg(feature = "unified_authority")]
-        self.authority_note_symbol(None);
+        self.authority_note_symbol(Some(vertex));
         self.bump_symbol_revision();
         self.resolve_pending_symbol("table", name);
         Ok(())
@@ -155,7 +155,7 @@ impl DependencyGraph {
         // Propagate to dependents.
         self.mark_dirty(vertex);
         #[cfg(feature = "unified_authority")]
-        self.authority_note_symbol(None);
+        self.authority_note_symbol(Some(vertex));
         self.bump_symbol_revision();
         Ok(())
     }
@@ -186,7 +186,7 @@ impl DependencyGraph {
         self.clear_formula_vertex_dirty(vertex);
         self.volatile_vertices.remove(&vertex);
         #[cfg(feature = "unified_authority")]
-        self.authority_note_symbol(None);
+        self.authority_note_symbol(Some(vertex));
         self.bump_symbol_revision();
 
         Ok(())

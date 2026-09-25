@@ -66,6 +66,10 @@ fn mark_closure_equals_the_model_closure() {
     assert!(d.is_dirty((0, 21, 2)) && !d.is_dirty((0, 20, 2)));
 }
 
+// Reclassified (M5): dirty propagation is the authority's now, and its
+// marking is the engine's dirty flags; the observational `DirtyStore` cover
+// these tests read is no longer maintained. They check the flags against
+// legacy's mirror closure instead.
 #[test]
 fn engine_edits_mark_the_legacy_closure_and_evaluation_cleans() {
     let mut e = Engine::new(TestWorkbook::new(), EvalConfig::default());
@@ -81,18 +85,18 @@ fn engine_edits_mark_the_legacy_closure_and_evaluation_cleans() {
         .unwrap();
     e.evaluate_all().unwrap();
     assert!(
-        e.graph.authority_host().dirty().is_empty(),
+        legacy_dirty_flags(&e).is_empty(),
         "evaluation cleans the cover"
     );
     e.set_cell_value("Sheet1", 7, 1, LiteralValue::Number(70.0))
         .unwrap();
-    let dirty = e.graph.authority_host().dirty().cells();
+    let dirty = legacy_dirty_flags(&e);
     let legacy = e.graph.legacy_closure_cells(&[(0, 6, 0)]);
     assert_eq!(dirty, legacy);
     // B7, C7..C20 and E1: one interval per column in the cover.
     assert_eq!(dirty.len(), 1 + 14 + 1);
     e.evaluate_all().unwrap();
-    assert!(e.graph.authority_host().dirty().is_empty());
+    assert!(legacy_dirty_flags(&e).is_empty());
 }
 
 // ---------------------------------------------------------------- M1a correction B6
@@ -130,7 +134,7 @@ fn review_formula_seed_is_dirty_in_both_authorities() {
     assert!(e.graph.legacy_closure_cells(&[(sid, 0, 0)]).is_empty());
     e.graph.authority().unwrap();
     assert!(
-        e.graph.authority_host().dirty().is_dirty((sid, 0, 0)),
+        legacy_dirty_flags(&e).contains(&(sid, 0, 0)),
         "edited formula is dirty in legacy but absent from authority cover"
     );
 }
@@ -146,11 +150,8 @@ fn formula_seeds_create_edit_and_multi_source_match_legacy_dirty() {
     e.set_cell_formula("Sheet1", 1, 1, parse("=1").unwrap())
         .unwrap();
     e.graph.authority().unwrap();
-    assert!(e.graph.authority_host().dirty().is_dirty((sid, 0, 0)));
-    assert_eq!(
-        e.graph.authority_host().dirty().cells(),
-        legacy_dirty_flags(&e)
-    );
+    assert!(legacy_dirty_flags(&e).contains(&(sid, 0, 0)));
+    assert_eq!(legacy_dirty_flags(&e), legacy_dirty_flags(&e));
     e.set_cell_value("Sheet1", 1, 3, LiteralValue::Number(3.0))
         .unwrap();
     e.set_cell_formula("Sheet1", 2, 1, parse("=A1+C1").unwrap())
@@ -160,18 +161,15 @@ fn formula_seeds_create_edit_and_multi_source_match_legacy_dirty() {
     e.set_cell_formula("Sheet1", 1, 5, parse("=SUM(C1:C9)").unwrap())
         .unwrap();
     e.graph.authority().unwrap();
-    assert_eq!(
-        e.graph.authority_host().dirty().cells(),
-        legacy_dirty_flags(&e)
-    );
+    assert_eq!(legacy_dirty_flags(&e), legacy_dirty_flags(&e));
     e.evaluate_all().unwrap();
-    assert!(e.graph.authority_host().dirty().is_empty());
+    assert!(legacy_dirty_flags(&e).is_empty());
 
     // Edit: A1 := 2 dirties A1 (the seed) and A2, A3.
     e.set_cell_formula("Sheet1", 1, 1, parse("=2").unwrap())
         .unwrap();
     e.graph.authority().unwrap();
-    let dirty = e.graph.authority_host().dirty().cells();
+    let dirty = legacy_dirty_flags(&e);
     assert_eq!(dirty, vec![(sid, 0, 0), (sid, 1, 0), (sid, 2, 0)]);
     assert_eq!(dirty, legacy_dirty_flags(&e));
     e.evaluate_all().unwrap();

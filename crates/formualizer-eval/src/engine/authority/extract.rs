@@ -277,11 +277,13 @@ fn collect(ctx: &mut Ctx<'_>, r: SemanticReference<'_>) -> Result<(), ExcelError
                         ctx.flatten_name_formula(&ast, scope, lk);
                     }
                 },
-                None => {
-                    if ctx.graph.resolve_source_scalar_entry(name).is_none() {
-                        ctx.flags |= F_OPAQUE;
+                None => match ctx.graph.resolve_source_scalar_entry(name) {
+                    // A source's row: invalidating the source dirties it.
+                    Some(source) => {
+                        ctx.push_symbol_node(source.vertex, &lk);
                     }
-                }
+                    None => ctx.flags |= F_OPAQUE,
+                },
             }
         }
         SemanticReference::Table(t) => match ctx.graph.resolve_table_entry(&t.name) {
@@ -292,6 +294,9 @@ fn collect(ctx: &mut Ctx<'_>, r: SemanticReference<'_>) -> Result<(), ExcelError
                     kind: LK_TABLE,
                     name: entry.name.clone().into_boxed_str(),
                 };
+                // The table's row: redefining or dirtying the table reaches
+                // its readers; the range edge orders them after the body.
+                ctx.push_symbol_node(entry.vertex, &lk);
                 ctx.push_fixed(
                     rr.start.sheet_id,
                     rr.start.coord.row(),
@@ -302,7 +307,19 @@ fn collect(ctx: &mut Ctx<'_>, r: SemanticReference<'_>) -> Result<(), ExcelError
                     lk,
                 );
             }
-            None => ctx.flags |= F_OPAQUE,
+            None => match ctx.graph.resolve_source_table_entry(&t.name) {
+                Some(source) => {
+                    let lk = LkKey {
+                        ctx: ctx.sheet,
+                        kind: LK_TABLE,
+                        name: source.name.clone().into_boxed_str(),
+                    };
+                    if !ctx.push_symbol_node(source.vertex, &lk) {
+                        ctx.flags |= F_OPAQUE;
+                    }
+                }
+                None => ctx.flags |= F_OPAQUE,
+            },
         },
         SemanticReference::ExternalSource(_)
         | SemanticReference::ThreeDimensional(_)

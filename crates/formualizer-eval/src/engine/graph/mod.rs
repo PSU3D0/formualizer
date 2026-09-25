@@ -2734,6 +2734,19 @@ impl DependencyGraph {
             self.deferred_dirty_pending.extend_from_slice(vertex_ids);
             return vertex_ids.to_vec();
         }
+        #[cfg(feature = "unified_authority")]
+        {
+            self.authority_mark_dirty(vertex_ids)
+        }
+        #[cfg(not(feature = "unified_authority"))]
+        {
+            self.legacy_mark_dirty_many(vertex_ids)
+        }
+    }
+
+    /// Legacy's dirty BFS over CSR edges, name links and range stripes.
+    #[cfg(not(feature = "unified_authority"))]
+    fn legacy_mark_dirty_many(&mut self, vertex_ids: &[VertexId]) -> Vec<VertexId> {
         let mut affected = FxHashSet::default();
         let mut to_visit = Vec::new();
         let mut visited_for_propagation = FxHashSet::default();
@@ -2799,9 +2812,6 @@ impl DependencyGraph {
 
         // Add to dirty set
         self.formula_dirty.legacy_extend(affected.iter().copied());
-
-        #[cfg(feature = "unified_authority")]
-        self.authority_observe_propagation(vertex_ids, &affected, true);
 
         // Return as Vec for compatibility
         affected.into_iter().collect()
@@ -3819,7 +3829,20 @@ impl DependencyGraph {
             self.deferred_dirty_pending.extend_from_slice(vertex_ids);
             return vertex_ids.to_vec();
         }
+        // The authority's closure is exact per source (legacy's bounding
+        // rectangle per sheet may over-dirty).
+        #[cfg(feature = "unified_authority")]
+        {
+            self.authority_mark_dirty(vertex_ids)
+        }
+        #[cfg(not(feature = "unified_authority"))]
+        {
+            self.legacy_mark_dirty_many_value_cells(vertex_ids)
+        }
+    }
 
+    #[cfg(not(feature = "unified_authority"))]
+    fn legacy_mark_dirty_many_value_cells(&mut self, vertex_ids: &[VertexId]) -> Vec<VertexId> {
         // Fold pending deltas once so the propagation loop below can use the
         // zero-allocation base `in_edges` slices. This is a deliberate
         // rebuild-on-read seam: one rebuild per bulk propagation, amortized
@@ -3881,8 +3904,6 @@ impl DependencyGraph {
         }
 
         self.formula_dirty.legacy_extend(affected.iter().copied());
-        #[cfg(feature = "unified_authority")]
-        self.authority_observe_propagation(vertex_ids, &affected, false);
         affected.into_iter().collect()
     }
 

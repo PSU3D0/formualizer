@@ -409,6 +409,13 @@ mod tests {
         assert_eq!(log.events().len(), 0);
     }
 
+    // Reclassified (M5, internal representation): asserts legacy's edge lists
+    // through a RemoveVertex undo (`ChangeEvent::RemoveVertex` edge fields are a
+    // decision-8 removal); values after undo are covered by the undo tests.
+    #[cfg_attr(
+        feature = "unified_authority",
+        ignore = "M5 legacy-internal: legacy edge lists across RemoveVertex undo"
+    )]
     #[test]
     fn test_remove_vertex_dependency_roundtrip() {
         use formualizer_parse::parser::parse;

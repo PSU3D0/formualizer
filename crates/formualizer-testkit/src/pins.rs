@@ -390,6 +390,11 @@ fn form117(followup: bool) -> ScenarioSpec {
         ),
         form117_undo_republished(),
     );
+    // Under the authority the undo's structural resync dirties the restored
+    // formula's closure, so FORM-000117 is fixed there (Program 1 M5).
+    if crate::run::formula_plane_mode_ignored() {
+        return spec;
+    }
     known(
         spec,
         &[

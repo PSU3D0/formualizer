@@ -95,6 +95,10 @@ pub struct AuthorityHost {
     pub(crate) symbol_changes: SymbolChanges,
     /// Symbol revisions applied without a rebuild (tests, perf probes).
     pub(crate) symbol_incremental: u64,
+    /// Dirty-propagation seeds waiting for the store to catch up (marked
+    /// mid structural edit, when the store is still pre-edit); their
+    /// closure is marked at the end of the next sync.
+    pub(crate) pending_dirty: Vec<VertexId>,
 }
 
 /// See [`AuthorityHost::symbol_changes`].

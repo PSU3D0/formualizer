@@ -286,8 +286,16 @@ impl DependencyGraph {
         }
     }
 
-    /// Bring the authority up to date with the graph's formulas.
+    /// Bring the authority up to date with the graph's formulas, then mark
+    /// the closure of dirty seeds that waited for it.
     pub(crate) fn authority_sync(&mut self) {
+        self.authority_sync_store();
+        if !self.authority.pending_dirty.is_empty() {
+            self.authority_flush_pending_dirty();
+        }
+    }
+
+    fn authority_sync_store(&mut self) {
         let touched = self.vertex_formulas.take_touched();
         // Spans are the one transient unsupported state: once they are gone
         // (demoted to per-cell formulas) the graph holds every formula again
@@ -547,6 +555,22 @@ impl DependencyGraph {
         self.authority.structural_rebuilds += 1;
     }
 
+    /// A top-level structural operation (row/column insert or delete, range
+    /// move, sheet operation) returned: resync from the transformed
+    /// formulas now, so dirty marks the operation queued reach their
+    /// closure before anyone reads a flag. Per-cell moves of an undo/redo
+    /// replay stay batched until the replay ends.
+    pub(crate) fn authority_end_structural(&mut self) {
+        if self.authority.carried.is_some()
+            && self.authority.journal.mode() != crate::engine::authority::history::Replay::Forward
+        {
+            return;
+        }
+        if self.authority.carried.is_some() || !self.authority.pending_dirty.is_empty() {
+            self.authority_sync();
+        }
+    }
+
     /// Undo/redo replay begins (`mode`) or ends (`Forward`). Pending edits
     /// are synced in the direction they were made, so the journal sees
     /// each transition in its own direction.
@@ -676,87 +700,177 @@ impl DependencyGraph {
 
     // ------------------------------------------------------------ hooks
 
-    /// Legacy dirty propagation from `seeds` just ran and dirtied
-    /// `legacy_affected`: mark the authority's propagation of the same
-    /// seeds (formula seeds and their closure, `DirtyStore::mark_propagation`)
-    /// and, when enabled, compare it with what legacy actually dirtied.
-    ///
-    /// Δ(a) filtering: legacy's affected set holds value sources (affected,
-    /// not dirtied) and symbol vertices (names, tables); only formula cells
-    /// are compared. `exact` is false for `mark_dirty_many_value_cells`,
-    /// whose range lookup uses the sources' bounding rectangle per sheet and
-    /// may over-dirty with several sources: there the authority must be a
-    /// subset, and legacy-only cells are counted as conservative, not as a
-    /// mismatch.
-    pub(super) fn authority_observe_propagation(
-        &mut self,
-        seeds: &[VertexId],
-        legacy_affected: &FxHashSet<VertexId>,
-        exact: bool,
-    ) {
-        // Mid structural operation the graph is half transformed: syncing
-        // here would rebuild from it and lose the capture. The dirty cover
-        // is observational and restarts at the structural rebuild.
-        if self.authority.carried.is_some() {
-            return;
+    fn is_dirtyable_kind(&self, v: VertexId) -> bool {
+        matches!(
+            self.store.kind(v),
+            VertexKind::FormulaScalar
+                | VertexKind::FormulaArray
+                | VertexKind::NamedScalar
+                | VertexKind::NamedArray
+        )
+    }
+
+    /// Dirty propagation (M5: the authority is the dependency path). Marks
+    /// every formula or name among `seeds` and the transitive dependents of
+    /// all seeds, like legacy's BFS; returns the affected set (the seeds,
+    /// value sources included, and the dependents). Three cases do not ask
+    /// the store:
+    /// - load before any flag was cleared: everything is dirty already
+    ///   (`authority_load_skips_closures`), only the seeds are marked;
+    /// - mid structural edit the store is pre-edit: the seeds wait in
+    ///   `pending_dirty` and their closure is marked right after the resync;
+    /// - a failed host (a typed error evaluation will report): every
+    ///   formula is marked, conservatively.
+    pub(super) fn authority_mark_dirty(&mut self, seeds: &[VertexId]) -> Vec<VertexId> {
+        let mut affected: FxHashSet<VertexId> = seeds.iter().copied().collect();
+        for &v in seeds {
+            if self.is_dirtyable_kind(v) {
+                self.store.set_dirty(v, true);
+            }
         }
-        if self.authority_load_skips_closures() {
-            return;
+        if !self.authority_load_skips_closures() {
+            if self.authority.carried.is_some() {
+                self.authority.pending_dirty.extend_from_slice(seeds);
+            } else {
+                self.authority_sync();
+                self.authority_mark_closure(seeds, &mut affected);
+            }
         }
-        self.authority_sync();
+        self.formula_dirty.legacy_extend(affected.iter().copied());
+        affected.into_iter().collect()
+    }
+
+    /// Mark the closure of `seeds` (the host is synced), adding it to
+    /// `affected`.
+    fn authority_mark_closure(&mut self, seeds: &[VertexId], affected: &mut FxHashSet<VertexId>) {
         if self.authority.state != HostState::Ready {
+            let all: Vec<VertexId> = self
+                .vertex_formulas
+                .keys()
+                .copied()
+                .chain(self.name_vertex_lookup.keys().copied())
+                .filter(|&v| !self.store.is_deleted(v))
+                .collect();
+            for v in all {
+                self.store.set_dirty(v, true);
+                affected.insert(v);
+            }
             return;
         }
+        let before = affected.len();
+        let closure = self.authority_closure_vertices(seeds);
+        self.dirty_propagation_visits += closure.len() as u64;
+        for &v in &closure {
+            self.store.set_dirty(v, true);
+            affected.insert(v);
+        }
+        let _ = before;
+        if diff_mode().is_some() {
+            self.authority_diff_propagation(seeds, &closure);
+        }
+    }
+
+    /// Mark the closure of seeds queued while the store lagged (after a
+    /// structural resync).
+    fn authority_flush_pending_dirty(&mut self) {
+        if self.authority.pending_dirty.is_empty() || self.authority.carried.is_some() {
+            return;
+        }
+        let seeds: Vec<VertexId> = std::mem::take(&mut self.authority.pending_dirty)
+            .into_iter()
+            .filter(|&v| self.store.vertex_exists(v) && !self.store.is_deleted(v))
+            .collect();
+        let mut affected = FxHashSet::default();
+        self.authority_mark_closure(&seeds, &mut affected);
+        self.formula_dirty.legacy_extend(affected.iter().copied());
+    }
+
+    /// The executor vertices of the transitive dependents (positive
+    /// length) of `seeds`: formula cells through the identity side array,
+    /// symbol rows to their name vertices.
+    pub(crate) fn authority_closure_vertices(&self, seeds: &[VertexId]) -> Vec<VertexId> {
+        let rects: Vec<(u16, Rect)> = seeds
+            .iter()
+            .filter_map(|&v| self.authority_cell_of_vertex(v))
+            .map(|c| (c.0, Rect::cell(c.1, c.2)))
+            .collect();
+        if rects.is_empty() {
+            return Vec::new();
+        }
+        let (cover, _) = self.authority.store.dependents(&rects, TagFilter::All);
+        let ids = self.authority.store.ids();
+        let mut out = Vec::new();
+        let mut runs = Vec::new();
+        for (s, c, a, b) in cover.column_intervals() {
+            if s == SYMBOL_SHEET {
+                out.extend((a..=b).filter_map(|r| self.authority.symbols.vertex(r)));
+                continue;
+            }
+            runs.clear();
+            ids.runs_in(s, c, a, b, &mut runs);
+            for &h in &runs {
+                let run = ids.run(h);
+                let r0 = run.row_start.max(a);
+                let r1 = (run.row_start + run.len - 1).min(b);
+                for row in r0..=r1 {
+                    let id = run.first_id + (row - run.row_start);
+                    if let Some(v) = self.authority_vertex_of_formula(id, (s, row, c)) {
+                        out.push(v);
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Differential self-check (`FZ_AUTHORITY_DIFF`): compare the
+    /// authority's closure of `seeds` with legacy's mirror (Δ(a)), and
+    /// direct dependents per seed (Δ(e)).
+    fn authority_diff_propagation(&mut self, seeds: &[VertexId], closure: &[VertexId]) {
+        let Some(mode) = diff_mode() else {
+            return;
+        };
         let cells: Vec<Cell> = seeds
             .iter()
             .filter_map(|&v| self.authority_cell_of_vertex(v))
             .collect();
-        if cells.is_empty() {
-            return;
-        }
-        let rects: Vec<(u16, Rect)> = cells.iter().map(|c| (c.0, Rect::cell(c.1, c.2))).collect();
-        let marked = self
-            .authority
-            .dirty
-            .mark_propagation(&self.authority.store, &rects);
-        let Some(mode) = diff_mode() else {
-            return;
-        };
         self.authority.diff.propagations += 1;
         if self.vertex_formulas.len() > DIFF_MAX_FORMULAS || cells.len() > DIFF_MAX_SEEDS {
             self.authority.diff.skipped += 1;
             return;
         }
-        let legacy = self.legacy_dirty_cells(legacy_affected);
-        let mine: Vec<Cell> = marked
-            .cells()
-            .into_iter()
+        let grid: Vec<Cell> = cells
+            .iter()
+            .copied()
             .filter(|c| c.0 != SYMBOL_SHEET)
             .collect();
+        let legacy = self.legacy_closure_cells(&grid);
+        let mut mine: Vec<Cell> = closure
+            .iter()
+            .filter_map(|&v| self.get_cell_ref(v).map(|c| cell_of(&c)))
+            .collect();
+        mine.sort_unstable();
+        mine.dedup();
         let mut problems: Vec<String> = Vec::new();
-        let only_legacy: Vec<&Cell> = legacy
-            .iter()
-            .filter(|c| mine.binary_search(c).is_err())
-            .collect();
-        let only_mine: Vec<&Cell> = mine
-            .iter()
-            .filter(|c| legacy.binary_search(c).is_err())
-            .collect();
-        if !only_mine.is_empty() || (exact && !only_legacy.is_empty()) {
+        if legacy != mine && cells.iter().all(|c| c.0 != SYMBOL_SHEET) {
             self.authority.diff.closure_mismatches += 1;
+            let only_legacy: Vec<&Cell> = legacy
+                .iter()
+                .filter(|c| mine.binary_search(c).is_err())
+                .collect();
+            let only_mine: Vec<&Cell> = mine
+                .iter()
+                .filter(|c| legacy.binary_search(c).is_err())
+                .collect();
             problems.push(format!(
-                "dirty seeds={cells:?} exact={exact} legacy={} authority={} only_legacy={:?} only_authority={:?}",
+                "dirty seeds={cells:?} legacy={} authority={} only_legacy={:?} only_authority={:?}",
                 legacy.len(),
                 mine.len(),
                 only_legacy.iter().take(8).collect::<Vec<_>>(),
                 only_mine.iter().take(8).collect::<Vec<_>>(),
             ));
         }
-        let conservative = only_mine.is_empty() && !exact && !only_legacy.is_empty();
-        if conservative {
-            self.authority.diff.closure_conservative += 1;
-        }
-        for &c in cells.iter().filter(|c| c.0 != SYMBOL_SHEET) {
+        for &c in grid.iter() {
             self.authority.diff.checked_seeds += 1;
             let legacy = self.legacy_direct_dependent_cells(c);
             let mine = Self::authority_direct_grid_dependents(
@@ -782,16 +896,7 @@ impl DependencyGraph {
                 }
             }
             DiffMode::Log(path) => {
-                // One CHECK line per compared propagation (seed count), then
-                // one line per mismatch.
                 let mut lines = vec![format!("{who}\tCHECK seeds={}", cells.len())];
-                if conservative {
-                    lines.push(format!(
-                        "{who}\tCONSERVATIVE seeds={} legacy_only={}",
-                        cells.len(),
-                        only_legacy.len()
-                    ));
-                }
                 lines.extend(problems);
                 append_lines(path, &lines);
             }
@@ -907,11 +1012,10 @@ impl DependencyGraph {
         v
     }
 
-    /// Run legacy's actual dirty propagation from `cells` (their vertices;
-    /// cells without a vertex are skipped) and return the formula cells it
-    /// dirtied, with the cover the authority marked for the same
-    /// propagation. The authority cover is cleared first, so the second
-    /// result is exactly this propagation's marking. Gates only.
+    /// Dirty propagation from `cells` (their vertices; cells without a
+    /// vertex are skipped): legacy's mirror closure (formula seeds plus
+    /// `legacy_closure_cells`) and the formula cells the authority's actual
+    /// propagation dirtied. Gates only.
     pub(crate) fn dirty_propagation_pair(
         &mut self,
         cells: &[Cell],
@@ -921,19 +1025,19 @@ impl DependencyGraph {
             .iter()
             .filter_map(|&c| self.get_vertex_for_cell(&cell_ref(c)))
             .collect();
-        self.authority.dirty.clear();
         let affected: FxHashSet<VertexId> = self.mark_dirty_many(&vids).into_iter().collect();
         if let HostState::Failed(e) = &self.authority.state {
             return Err(e.clone());
         }
-        let legacy = self.legacy_dirty_cells(&affected);
-        let mine = self
-            .authority
-            .dirty
-            .cells()
-            .into_iter()
-            .filter(|c| c.0 != SYMBOL_SHEET)
-            .collect();
+        let mine = self.legacy_dirty_cells(&affected);
+        let mut legacy = self.legacy_closure_cells(cells);
+        legacy.extend(
+            vids.iter()
+                .filter(|&&v| self.is_formula_cell_vertex(v))
+                .filter_map(|&v| self.get_cell_ref(v).map(|c| cell_of(&c))),
+        );
+        legacy.sort_unstable();
+        legacy.dedup();
         Ok((legacy, mine))
     }
 
@@ -1037,8 +1141,8 @@ impl DependencyGraph {
         true
     }
 
-    /// Log a symbol definition change for the next sync: `Some(name
-    /// vertex)` for a name, `None` for a table or source.
+    /// Log a symbol definition change for the next sync: `Some(vertex)` of
+    /// the name, table or source; `None` forces a rebuild.
     pub(crate) fn authority_note_symbol(&mut self, name: Option<VertexId>) {
         match name {
             Some(v) => self.authority.symbol_changes.names.push(v),
@@ -1068,6 +1172,9 @@ impl DependencyGraph {
         for &v in &changes.names {
             match self.authority.symbols.slot(v) {
                 Some(slot) => sources.push(slot),
+                // A new table or source: readers written before it exist
+                // unbound (no pending link); a rebuild binds them.
+                None if !self.name_vertex_lookup.contains_key(&v) => return None,
                 None => created = true,
             }
             if let Some((NameScope::Sheet(_), name)) = self.name_vertex_lookup.get(&v)
@@ -1102,7 +1209,10 @@ impl DependencyGraph {
         }
         let retired = self.authority_sync_symbol_slots();
         for slot in retired {
-            if let Err(e) = self.authority.store.clear_cell((SYMBOL_SHEET, slot, 0)) {
+            let cell = (SYMBOL_SHEET, slot, 0);
+            if self.authority.store.ids().id_of(cell).is_some()
+                && let Err(e) = self.authority.store.clear_cell(cell)
+            {
                 return Some(Err(e));
             }
         }
@@ -1155,12 +1265,18 @@ impl DependencyGraph {
         symbols
     }
 
-    /// Give every live name a symbol-plane row (surviving names keep theirs)
-    /// and drop the dirty marks of retired rows; returns the retired rows.
+    /// Give every live symbol (name, table, source) a symbol-plane row
+    /// (survivors keep theirs) and drop the dirty marks of retired rows;
+    /// returns the retired rows. Only names have facts at their row (their
+    /// definition's precedents); a table's or source's row is a plain cell
+    /// its readers point at, so dirtying the table or source vertex reaches
+    /// them through the closure.
     fn authority_sync_symbol_slots(&mut self) -> Vec<u32> {
         let mut live: Vec<VertexId> = self
             .name_vertex_lookup
             .keys()
+            .chain(self.table_vertex_lookup.keys())
+            .chain(self.source_vertex_lookup.keys())
             .copied()
             .filter(|&v| !self.store.is_deleted(v))
             .collect();

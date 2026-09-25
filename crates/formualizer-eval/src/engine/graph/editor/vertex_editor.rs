@@ -915,6 +915,18 @@ impl<'g> VertexEditor<'g> {
         before: u32,
         count: u32,
     ) -> Result<ShiftSummary, EditorError> {
+        let result = self.insert_rows_impl(sheet_id, before, count);
+        #[cfg(feature = "unified_authority")]
+        self.graph.authority_end_structural();
+        result
+    }
+
+    fn insert_rows_impl(
+        &mut self,
+        sheet_id: SheetId,
+        before: u32,
+        count: u32,
+    ) -> Result<ShiftSummary, EditorError> {
         #[cfg(feature = "unified_authority")]
         self.graph.authority_note_structural(true);
         if count == 0 {
@@ -1034,6 +1046,18 @@ impl<'g> VertexEditor<'g> {
 
     /// Delete rows at the specified position, shifting remaining rows up
     pub fn delete_rows(
+        &mut self,
+        sheet_id: SheetId,
+        start: u32,
+        count: u32,
+    ) -> Result<ShiftSummary, EditorError> {
+        let result = self.delete_rows_impl(sheet_id, start, count);
+        #[cfg(feature = "unified_authority")]
+        self.graph.authority_end_structural();
+        result
+    }
+
+    fn delete_rows_impl(
         &mut self,
         sheet_id: SheetId,
         start: u32,
@@ -1175,6 +1199,18 @@ impl<'g> VertexEditor<'g> {
         before: u32,
         count: u32,
     ) -> Result<ShiftSummary, EditorError> {
+        let result = self.insert_columns_impl(sheet_id, before, count);
+        #[cfg(feature = "unified_authority")]
+        self.graph.authority_end_structural();
+        result
+    }
+
+    fn insert_columns_impl(
+        &mut self,
+        sheet_id: SheetId,
+        before: u32,
+        count: u32,
+    ) -> Result<ShiftSummary, EditorError> {
         #[cfg(feature = "unified_authority")]
         self.graph.authority_note_structural(true);
         if count == 0 {
@@ -1294,6 +1330,18 @@ impl<'g> VertexEditor<'g> {
 
     /// Delete columns at the specified position, shifting remaining columns left
     pub fn delete_columns(
+        &mut self,
+        sheet_id: SheetId,
+        start: u32,
+        count: u32,
+    ) -> Result<ShiftSummary, EditorError> {
+        let result = self.delete_columns_impl(sheet_id, start, count);
+        #[cfg(feature = "unified_authority")]
+        self.graph.authority_end_structural();
+        result
+    }
+
+    fn delete_columns_impl(
         &mut self,
         sheet_id: SheetId,
         start: u32,
@@ -1910,6 +1958,32 @@ impl<'g> VertexEditor<'g> {
 
     /// Move a range to a new location (copy + clear source)
     pub fn move_range(
+        &mut self,
+        sheet_id: SheetId,
+        from_start_row: u32,
+        from_start_col: u32,
+        from_end_row: u32,
+        from_end_col: u32,
+        to_sheet_id: SheetId,
+        to_row: u32,
+        to_col: u32,
+    ) -> Result<RangeSummary, EditorError> {
+        let result = self.move_range_impl(
+            sheet_id,
+            from_start_row,
+            from_start_col,
+            from_end_row,
+            from_end_col,
+            to_sheet_id,
+            to_row,
+            to_col,
+        );
+        #[cfg(feature = "unified_authority")]
+        self.graph.authority_end_structural();
+        result
+    }
+
+    fn move_range_impl(
         &mut self,
         sheet_id: SheetId,
         from_start_row: u32,
