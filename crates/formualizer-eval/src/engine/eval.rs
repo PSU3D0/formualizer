@@ -29,6 +29,10 @@ use crate::engine::used_extent::{
     ExtentPolicy, OpenRangeBounds, resolve_used_extent_with_fallback,
 };
 use crate::engine::virtual_deps::{DynamicRefVirtualDepProvider, VirtualDepBuilder};
+
+#[cfg(feature = "unified_authority")]
+#[path = "freshness.rs"]
+mod freshness;
 use crate::engine::{
     ChangeLogger, CycleDetection, CyclePolicy, DependencyGraph, EvalConfig, EvaluationRequestKind,
     EvaluationRequestOutcome, EvaluationResourceBaselineStats, EvaluationResourceReason,
@@ -1349,6 +1353,9 @@ pub struct Engine<R> {
     inject_target_semantic_stale_once_for_test: bool,
     #[cfg(test)]
     force_virtual_dep_changes_remaining_for_test: usize,
+    /// Dynamic-read freshness state (design §8.2).
+    #[cfg(feature = "unified_authority")]
+    freshness: freshness::Freshness,
     #[cfg(test)]
     fail_evaluation_commit_preflight_once_for_test: bool,
     #[cfg(test)]
@@ -3143,6 +3150,8 @@ where
             inject_target_semantic_stale_once_for_test: false,
             #[cfg(test)]
             force_virtual_dep_changes_remaining_for_test: 0,
+            #[cfg(feature = "unified_authority")]
+            freshness: Default::default(),
             #[cfg(test)]
             fail_evaluation_commit_preflight_once_for_test: false,
             #[cfg(test)]
@@ -3313,6 +3322,8 @@ where
             inject_target_semantic_stale_once_for_test: false,
             #[cfg(test)]
             force_virtual_dep_changes_remaining_for_test: 0,
+            #[cfg(feature = "unified_authority")]
+            freshness: Default::default(),
             #[cfg(test)]
             fail_evaluation_commit_preflight_once_for_test: false,
             #[cfg(test)]
@@ -4105,6 +4116,8 @@ where
     /// take the per-recalc volatile clock sample. Called at the start of
     /// every evaluation request that walks schedule units.
     fn begin_evaluation_request(&mut self) {
+        #[cfg(feature = "unified_authority")]
+        self.freshness_begin_request();
         #[cfg(test)]
         {
             self.evaluation_request_begin_count_for_test = self
@@ -21060,7 +21073,8 @@ where
                 self.active_resource_ledger = ledger;
                 result?
             };
-            for &unit in &schedule.units {
+            self.begin_pass(&schedule);
+            for (unit_index, &unit) in schedule.units.iter().enumerate() {
                 self.cancellation_checkpoint("Evaluation cancelled before target schedule unit")?;
                 match unit {
                     ScheduleUnit::Cycle(index) => {
@@ -21090,14 +21104,13 @@ where
                         computed_vertices = computed_vertices.saturating_add(evaluated);
                     }
                 }
+                if self.stop_after_unit(&schedule, unit_index) {
+                    break;
+                }
             }
             let changed = self.changed_virtual_dep_vertices(&precedents_to_eval, &old_vdeps);
             self.resource_checkpoint(0)?;
-            self.graph.clear_dirty_flags(&precedents_to_eval);
-            for vertex in &changed {
-                self.graph.set_dirty(*vertex, true);
-            }
-            if changed.is_empty() {
+            if !self.finish_target_pass_dirty(&precedents_to_eval, &changed) {
                 break;
             }
             if replans >= MAX_REPLAN {
@@ -24404,7 +24417,8 @@ where
     ) -> Result<(usize, usize), ExcelError> {
         let mut computed_vertices = 0;
         let mut cycle_count = 0;
-        for &unit in &schedule.units {
+        self.begin_pass(schedule);
+        for (unit_index, &unit) in schedule.units.iter().enumerate() {
             match unit {
                 ScheduleUnit::Cycle(i) => {
                     if self.handle_cycle_unit(schedule.unit_cycle(i), None, None, None)? > 0 {
@@ -24419,6 +24433,9 @@ where
                         computed_vertices += self.evaluate_layer_sequential(layer)?;
                     }
                 }
+            }
+            if self.stop_after_unit(schedule, unit_index) {
+                break;
             }
         }
         Ok((computed_vertices, cycle_count))
@@ -24526,12 +24543,7 @@ where
             }
 
             self.resource_checkpoint(0)?;
-            self.graph.clear_dirty_flags(&to_evaluate);
-            for v in &changed_vertices {
-                self.graph.set_dirty(*v, true);
-            }
-
-            if changed_vertices.is_empty() {
+            if !self.finish_pass_dirty(&to_evaluate, &changed_vertices) {
                 if let Some(t) = telemetry.as_mut() {
                     t.bailout_reason = Some("converged");
                 }
@@ -24646,7 +24658,8 @@ where
                 Self::accumulate_schedule_meta(t, &meta);
             }
 
-            for &unit in &schedule.units {
+            self.begin_pass(&schedule);
+            for (unit_index, &unit) in schedule.units.iter().enumerate() {
                 match unit {
                     ScheduleUnit::Cycle(i) => {
                         if self.handle_cycle_unit(
@@ -24670,6 +24683,9 @@ where
                         }
                     }
                 }
+                if self.stop_after_unit(&schedule, unit_index) {
+                    break;
+                }
             }
 
             let changed_vertices = self.changed_virtual_dep_vertices(&to_evaluate, &old_vdeps);
@@ -24677,12 +24693,7 @@ where
                 t.changed_vdeps_total += changed_vertices.len();
             }
             self.resource_checkpoint(0)?;
-            self.graph.clear_dirty_flags(&to_evaluate);
-            for v in &changed_vertices {
-                self.graph.set_dirty(*v, true);
-            }
-
-            if changed_vertices.is_empty() {
+            if !self.finish_pass_dirty(&to_evaluate, &changed_vertices) {
                 if let Some(t) = telemetry.as_mut() {
                     t.bailout_reason = Some("converged");
                 }
@@ -25153,7 +25164,8 @@ where
             self.recalc_reuse_probe.lock().unwrap().schedule_builds += 1;
         }
         let builder = VirtualDepBuilder::new(self);
-        let (vdeps, augmented, builder_elapsed_ms, vdeps_edges) =
+        #[allow(unused_mut)]
+        let (mut vdeps, augmented, builder_elapsed_ms, vdeps_edges) =
             if self.config.enable_virtual_dep_telemetry {
                 let build_started = crate::instant::FzInstant::now();
                 let (vdeps, augmented) = builder.build(to_evaluate);
@@ -25165,6 +25177,12 @@ where
                 (vdeps, augmented, 0, 0)
             };
 
+        // Replan hints from stale dynamic reads earlier in this request.
+        #[cfg(feature = "unified_authority")]
+        {
+            self.freshness_merge_hints(to_evaluate, &mut vdeps);
+            self.freshness_extent_hints(to_evaluate, &mut vdeps);
+        }
         let mut final_evaluate = to_evaluate.to_vec();
         if !augmented.is_empty() {
             final_evaluate.extend(augmented);
@@ -25418,6 +25436,65 @@ where
         Ok(())
     }
 
+    /// End-of-pass dirty bookkeeping; true when the loop must replan.
+    /// Legacy: clear the pass, re-dirty readers whose pre-probe changed.
+    /// Under the authority an armed pass keeps stale and unreached vertices
+    /// dirty instead (design §8.2, `freshness.rs`).
+    fn finish_pass_dirty(&mut self, to_evaluate: &[VertexId], changed: &[VertexId]) -> bool {
+        self.finish_pass_dirty_scoped(to_evaluate, changed, true)
+    }
+
+    /// [`Self::finish_pass_dirty`] for a targeted pass: only its candidates
+    /// decide whether to replan.
+    fn finish_target_pass_dirty(&mut self, to_evaluate: &[VertexId], changed: &[VertexId]) -> bool {
+        self.finish_pass_dirty_scoped(to_evaluate, changed, false)
+    }
+
+    fn finish_pass_dirty_scoped(
+        &mut self,
+        to_evaluate: &[VertexId],
+        changed: &[VertexId],
+        #[allow(unused_variables)] whole_workbook: bool,
+    ) -> bool {
+        #[cfg(feature = "unified_authority")]
+        {
+            self.freshness_finish_pass(to_evaluate, changed, whole_workbook)
+        }
+        #[cfg(not(feature = "unified_authority"))]
+        {
+            self.graph.clear_dirty_flags(to_evaluate);
+            for &v in changed {
+                self.graph.set_dirty(v, true);
+            }
+            !changed.is_empty()
+        }
+    }
+
+    /// Start a pass over `schedule` (arms the freshness recorder).
+    fn begin_pass(
+        &mut self,
+        #[allow(unused_variables)] schedule: &crate::engine::scheduler::Schedule,
+    ) {
+        #[cfg(feature = "unified_authority")]
+        self.freshness_begin_pass(schedule);
+    }
+
+    /// FR4 layer barrier after unit `index`: true stops the pass.
+    fn stop_after_unit(
+        &mut self,
+        #[allow(unused_variables)] schedule: &crate::engine::scheduler::Schedule,
+        #[allow(unused_variables)] index: usize,
+    ) -> bool {
+        #[cfg(feature = "unified_authority")]
+        {
+            self.freshness_stop_after_unit(schedule, index)
+        }
+        #[cfg(not(feature = "unified_authority"))]
+        {
+            false
+        }
+    }
+
     fn changed_virtual_dep_vertices(
         &mut self,
         to_evaluate: &[VertexId],
@@ -25429,6 +25506,12 @@ where
         {
             self.force_virtual_dep_changes_remaining_for_test -= 1;
             return vec![vertex];
+        }
+        // An armed pass detects stale dynamic reads directly; the pre-probe
+        // comparison is legacy's substitute for that (design §8.2).
+        #[cfg(feature = "unified_authority")]
+        if self.freshness_armed() {
+            return Vec::new();
         }
         if !to_evaluate
             .iter()
@@ -25581,6 +25664,21 @@ where
                 probe_edges += hits.len();
             }
             for &(_, sheet, rect) in &hits {
+                // DirtyExtents: a dirty spill anchor whose extent meets this
+                // image is a demand precedent, ordered before `v` (§8.2).
+                if sheet != SYMBOL_SHEET {
+                    for anchor in self
+                        .graph
+                        .spill_anchors_in_region(sheet, rect.r0, rect.c0, rect.r1, rect.c1)
+                    {
+                        if anchor != v && self.graph.is_dirty(anchor) {
+                            vdeps.entry(v).or_default().push(anchor);
+                            if let Some(c) = self.graph.authority_cell_of_vertex(anchor) {
+                                stack.push((c, crate::engine::authority::identity::NO_VID));
+                            }
+                        }
+                    }
+                }
                 if sheet == SYMBOL_SHEET {
                     stack.extend((rect.r0..=rect.r1).map(|slot| {
                         (
@@ -25598,7 +25696,14 @@ where
                     probe_dynamic += 1;
                 }
                 let (vdeps_map, _) = VirtualDepBuilder::new(self).build(&[v]);
-                if let Some(deps) = vdeps_map.get(&v) {
+                // Pre-probe targets plus reads this request found dirty
+                // (design §8.3: demand walks rdi ∪ hints).
+                let hinted = self.freshness_hints(v).unwrap_or(&[]);
+                if let Some(deps) = vdeps_map
+                    .get(&v)
+                    .map(|deps| deps.iter().chain(hinted))
+                    .or(Some([].iter().chain(hinted)))
+                {
                     for &u in deps {
                         vdeps.entry(v).or_default().push(u);
                         if let Some(c) = self.graph.authority_cell_of_vertex(u) {
@@ -25850,7 +25955,8 @@ where
 
             // Walk units in condensation order, checking cancellation between
             // units (formerly between cycles and between layers).
-            for &unit in &schedule.units {
+            self.begin_pass(&schedule);
+            for (unit_index, &unit) in schedule.units.iter().enumerate() {
                 match unit {
                     ScheduleUnit::Cycle(i) => {
                         // Check cancellation between cycles
@@ -25898,6 +26004,9 @@ where
                         }
                     }
                 }
+                if self.stop_after_unit(&schedule, unit_index) {
+                    break;
+                }
             }
 
             let changed_vertices = self.changed_virtual_dep_vertices(&to_evaluate, &old_vdeps);
@@ -25905,12 +26014,7 @@ where
                 t.changed_vdeps_total += changed_vertices.len();
             }
             self.resource_checkpoint(0)?;
-            self.graph.clear_dirty_flags(&to_evaluate);
-            for v in &changed_vertices {
-                self.graph.set_dirty(*v, true);
-            }
-
-            if changed_vertices.is_empty() {
+            if !self.finish_pass_dirty(&to_evaluate, &changed_vertices) {
                 if let Some(t) = telemetry.as_mut() {
                     t.bailout_reason = Some("converged");
                 }
@@ -26670,6 +26774,12 @@ where
             .graph
             .get_cell_ref(vertex_id)
             .expect("cell ref for vertex");
+        #[cfg(feature = "unified_authority")]
+        if let Some(result) =
+            self.freshness_evaluate_recorded(vertex_id, sheet_name, cell_ref, ast_id)
+        {
+            return result;
+        }
         let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref);
 
         interpreter
@@ -29459,6 +29569,30 @@ where
         computed_value: LiteralValue,
         overwritable_formulas: Option<&rustc_hash::FxHashSet<VertexId>>,
     ) -> Result<Vec<Effect>, ExcelError> {
+        // FR3: a stale dynamic reader publishes nothing; FR2: anything else
+        // leaves the dirty set at its commit (design §8.2).
+        #[cfg(feature = "unified_authority")]
+        if self.freshness_armed() {
+            if self.freshness_drop_stale(vertex_id) {
+                return Ok(Vec::new());
+            }
+            let effects = self.plan_vertex_effects_unrecorded(
+                vertex_id,
+                computed_value,
+                overwritable_formulas,
+            )?;
+            self.freshness_mark_committed(vertex_id);
+            return Ok(effects);
+        }
+        self.plan_vertex_effects_unrecorded(vertex_id, computed_value, overwritable_formulas)
+    }
+
+    fn plan_vertex_effects_unrecorded(
+        &mut self,
+        vertex_id: VertexId,
+        computed_value: LiteralValue,
+        overwritable_formulas: Option<&rustc_hash::FxHashSet<VertexId>>,
+    ) -> Result<Vec<Effect>, ExcelError> {
         let kind = self.graph.get_vertex_kind(vertex_id);
         let is_formula = matches!(kind, VertexKind::FormulaScalar | VertexKind::FormulaArray);
 
@@ -30669,7 +30803,8 @@ where
 
                 // Walk units in condensation order: stamp cycles at their
                 // position, evaluate layers with ChangeLog recording.
-                for &unit in &schedule.units {
+                self.begin_pass(&schedule);
+                for (unit_index, &unit) in schedule.units.iter().enumerate() {
                     match unit {
                         ScheduleUnit::Cycle(i) => {
                             // Journal integration (design doc §4 last row): the
@@ -30692,6 +30827,9 @@ where
                                 self.evaluate_layer_logged(schedule.unit_layer(i), log)?;
                         }
                     }
+                    if self.stop_after_unit(&schedule, unit_index) {
+                        break;
+                    }
                 }
 
                 let changed_vertices = self.changed_virtual_dep_vertices(&to_evaluate, &old_vdeps);
@@ -30699,12 +30837,7 @@ where
                     t.changed_vdeps_total += changed_vertices.len();
                 }
                 self.resource_checkpoint(0)?;
-                self.graph.clear_dirty_flags(&to_evaluate);
-                for v in &changed_vertices {
-                    self.graph.set_dirty(*v, true);
-                }
-
-                if changed_vertices.is_empty() {
+                if !self.finish_pass_dirty(&to_evaluate, &changed_vertices) {
                     if let Some(t) = telemetry.as_mut() {
                         t.bailout_reason = Some("converged");
                     }

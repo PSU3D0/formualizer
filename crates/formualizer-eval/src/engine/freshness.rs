@@ -1,0 +1,348 @@
+//! Freshness of dynamic reads under `unified_authority` (design §8.2, M1c).
+//!
+//! Legacy orders a dynamic reader (INDIRECT, OFFSET) by a pre-probe that
+//! evaluates it against the current, possibly stale, state, and after the
+//! pass re-dirties only readers whose pre-probe changed. A reader whose real
+//! target was still dirty therefore publishes a stale value, and its static
+//! readers later in the pass clear their dirty bits with stale values too.
+//!
+//! This module enforces the freshness invariant FR for a recalculation pass:
+//! - **Recording.** A dynamic reader is evaluated through a
+//!   [`RecordingContext`] that logs every cell and range it resolves.
+//! - **Dirty-at-read (FR2).** The reader is *stale* if a read covers a
+//!   dirty formula cell other than itself, or the current spill extent of a
+//!   dirty anchor (DirtyExtents). D is the engine's dirty flags.
+//! - **No stale publication (FR3).** A stale reader's result is dropped at
+//!   its commit (`plan_vertex_effects` plans no effects); it stays dirty and
+//!   its reads become request-scoped replan hints.
+//! - **Commit clears (FR2/FR5).** Any other vertex leaves D when its effects
+//!   are planned, so a spill that commits later in the pass and re-dirties
+//!   an already committed reader is not undone by an end-of-pass clear.
+//! - **Layer barrier (FR4).** After a unit with a stale reader the pass
+//!   stops; later units stay dirty and the loop replans with the hints.
+//!
+//! - **Late extents (FR5).** A spill commit writes its children through
+//!   the graph, which re-dirties their readers; because committed vertices
+//!   were cleared at their commit, a reader that ran before the spill stays
+//!   dirty and the loop replans. Known extents of dirty anchors are ordered
+//!   first by plan hints (DirtyExtents), so that is the exception.
+//!
+//! Every pass of the replan loops is armed under the authority. Commit
+//! granularity is legacy's (a cell in sequential layers, a phase group in
+//! parallel layers); cycle units evaluate on their own recorded path and
+//! are cleared at pass end as before. A self read (`A1 = INDIRECT("A1")`)
+//! is not stale: legacy evaluates it to a value, and legacy is the spec
+//! (design §8.2 case 2 plans a Δ here; not adopted).
+
+use super::Engine;
+use crate::engine::arena::AstNodeId;
+use crate::engine::authority::geom::SYMBOL_SHEET;
+use crate::engine::live_edges::{ReadLog, RecordingContext};
+use crate::engine::scheduler::{Schedule, ScheduleUnit};
+use crate::engine::vertex::VertexId;
+use crate::interpreter::Interpreter;
+use crate::traits::EvaluationContext;
+use formualizer_common::{ExcelError, LiteralValue};
+use rustc_hash::{FxHashMap, FxHashSet};
+use std::sync::Mutex;
+
+/// Per-request freshness state.
+#[derive(Default)]
+pub(crate) struct Freshness {
+    /// The current pass enforces FR (its schedule has a dynamic reader).
+    armed: bool,
+    /// Stale readers of the current pass and the dirty cells they read.
+    /// Written from evaluation (possibly parallel), read at commit.
+    stale: Mutex<FxHashMap<VertexId, Vec<VertexId>>>,
+    /// A stale reader was dropped in the current unit (FR4).
+    barrier: bool,
+    /// Scheduled vertices the barrier kept from running.
+    skipped: Vec<VertexId>,
+    /// Vertices whose effects were planned (committed) in this pass.
+    committed: FxHashSet<VertexId>,
+    /// Stale readers dropped in this pass (they stay dirty).
+    stale_this_pass: Vec<VertexId>,
+    /// Request-scoped plan-only hints: reader → cells it read while dirty.
+    hints: FxHashMap<VertexId, Vec<VertexId>>,
+    /// Stale readers dropped over the request (tests, telemetry).
+    stale_total: u64,
+    /// Passes stopped at a barrier over the request.
+    barrier_stops: u64,
+}
+
+impl<R: EvaluationContext> Engine<R> {
+    /// Reset the request-scoped state (hints, counters).
+    pub(super) fn freshness_begin_request(&mut self) {
+        self.freshness = Freshness::default();
+    }
+
+    /// Start a pass: every pass under the authority is armed (commit-time
+    /// clearing costs what legacy's end-of-pass clear of the same vertices
+    /// costs, and it is what lets FR5 re-dirties survive).
+    pub(super) fn freshness_begin_pass(&mut self, _schedule: &Schedule) {
+        let f = &mut self.freshness;
+        f.barrier = false;
+        f.skipped.clear();
+        f.committed.clear();
+        f.stale_this_pass.clear();
+        f.stale.get_mut().unwrap().clear();
+        f.armed = true;
+    }
+
+    /// DirtyExtents (design §8.2, FR2 for static reads): order every dirty
+    /// spill anchor among `candidates` before the candidates whose static
+    /// images meet its current extent. A first spill or a grown extent is
+    /// not known here; FR5 re-dirties those readers at the spill commit.
+    pub(super) fn freshness_extent_hints(
+        &self,
+        candidates: &[VertexId],
+        vdeps: &mut FxHashMap<VertexId, Vec<VertexId>>,
+    ) {
+        use crate::engine::authority::geom::Rect;
+        use crate::engine::authority::store::TagFilter;
+        let anchors: Vec<(VertexId, u16, Rect)> = candidates
+            .iter()
+            .filter_map(|&v| {
+                let cells = self.graph.spill_cells_for_anchor(v)?;
+                let first = cells.first()?;
+                let (mut r0, mut c0, mut r1, mut c1) = (u32::MAX, u32::MAX, 0u32, 0u32);
+                for c in cells {
+                    r0 = r0.min(c.coord.row());
+                    c0 = c0.min(c.coord.col());
+                    r1 = r1.max(c.coord.row());
+                    c1 = c1.max(c.coord.col());
+                }
+                Some((v, first.sheet_id, Rect::new(r0, c0, r1, c1)))
+            })
+            .collect();
+        if anchors.is_empty() {
+            return;
+        }
+        let Ok(store) = self.graph.authority_plan_store() else {
+            return;
+        };
+        let wanted: FxHashSet<VertexId> = candidates.iter().copied().collect();
+        for (anchor, sheet, rect) in anchors {
+            let readers = store.direct_grid_dependents(sheet, &rect, TagFilter::All);
+            for (s, row, col) in readers.cells() {
+                let Some(reader) = self.graph.authority_vertex_of_cell((s, row, col)) else {
+                    continue;
+                };
+                if reader != anchor && wanted.contains(&reader) {
+                    let deps = vdeps.entry(reader).or_default();
+                    if !deps.contains(&anchor) {
+                        deps.push(anchor);
+                    }
+                }
+            }
+        }
+    }
+
+    /// `(stale readers dropped, barrier stops)` over the current request.
+    #[cfg(test)]
+    pub(crate) fn freshness_counters_for_test(&self) -> (u64, u64) {
+        (self.freshness.stale_total, self.freshness.barrier_stops)
+    }
+
+    pub(super) fn freshness_armed(&self) -> bool {
+        self.freshness.armed
+    }
+
+    /// FR4: after unit `index`, stop the pass if a stale reader was dropped;
+    /// the vertices of the remaining units stay dirty.
+    pub(super) fn freshness_stop_after_unit(&mut self, schedule: &Schedule, index: usize) -> bool {
+        if !self.freshness.armed || !self.freshness.barrier {
+            return false;
+        }
+        for &unit in &schedule.units[index + 1..] {
+            match unit {
+                ScheduleUnit::Layer(i) => self
+                    .freshness
+                    .skipped
+                    .extend_from_slice(&schedule.layers[i as usize].vertices),
+                ScheduleUnit::Cycle(i) => self
+                    .freshness
+                    .skipped
+                    .extend_from_slice(&schedule.cycles[i as usize]),
+            }
+        }
+        self.freshness.barrier_stops += 1;
+        true
+    }
+
+    /// Commit hook, before planning a vertex's effects: true when the
+    /// vertex is a stale reader whose result must not publish (FR3). Its
+    /// reads become replan hints and the unit raises the barrier (FR4).
+    pub(super) fn freshness_drop_stale(&mut self, vertex: VertexId) -> bool {
+        let Some(reads) = self.freshness.stale.get_mut().unwrap().remove(&vertex) else {
+            return false;
+        };
+        self.freshness.barrier = true;
+        self.freshness.stale_total += 1;
+        self.freshness.stale_this_pass.push(vertex);
+        let hints = self.freshness.hints.entry(vertex).or_default();
+        hints.extend(reads);
+        hints.sort_unstable();
+        hints.dedup();
+        true
+    }
+
+    /// Commit hook, after a vertex's effects were planned: it leaves the
+    /// dirty set now (FR2), so a later re-dirty (a spill committing over
+    /// its reads, FR5) survives the end of the pass.
+    pub(super) fn freshness_mark_committed(&mut self, vertex: VertexId) {
+        self.freshness.committed.insert(vertex);
+        self.graph.clear_dirty_flags(&[vertex]);
+    }
+
+    /// End of a pass. Armed: clear what legacy clears except stale readers,
+    /// barrier-skipped vertices and committed vertices re-dirtied after
+    /// their commit; returns whether the loop must replan: any formula still
+    /// dirty (`whole_workbook`), or any of the pass's candidates (targeted). Unarmed: legacy (clear all, re-dirty `changed`).
+    pub(super) fn freshness_finish_pass(
+        &mut self,
+        to_evaluate: &[VertexId],
+        changed: &[VertexId],
+        whole_workbook: bool,
+    ) -> bool {
+        if !self.freshness.armed {
+            self.graph.clear_dirty_flags(to_evaluate);
+            for &v in changed {
+                self.graph.set_dirty(v, true);
+            }
+            return !changed.is_empty();
+        }
+        self.freshness.armed = false;
+        let keep: FxHashSet<VertexId> = self
+            .freshness
+            .skipped
+            .iter()
+            .copied()
+            .chain(self.freshness.stale_this_pass.iter().copied())
+            .collect();
+        let clear: Vec<VertexId> = to_evaluate
+            .iter()
+            .copied()
+            .filter(|v| !keep.contains(v) && !self.freshness.committed.contains(v))
+            .collect();
+        self.graph.clear_dirty_flags(&clear);
+        // `changed` is only non-empty from the test hook that forces replans.
+        for &v in changed {
+            self.graph.set_dirty(v, true);
+        }
+        // Stale, unreached and re-dirtied (FR5) vertices are dirty; so is a
+        // reader outside this pass whose spill child was just written. A
+        // targeted request only answers for its own candidates.
+        !changed.is_empty()
+            || if whole_workbook {
+                self.graph.has_dirty_evaluation_vertices()
+            } else {
+                to_evaluate.iter().any(|&v| self.graph.is_dirty(v))
+            }
+    }
+
+    /// Replan hints recorded this request for `reader`.
+    pub(super) fn freshness_hints(&self, reader: VertexId) -> Option<&[VertexId]> {
+        self.freshness.hints.get(&reader).map(Vec::as_slice)
+    }
+
+    /// Merge the request's replan hints into planner hints for `candidates`.
+    pub(super) fn freshness_merge_hints(
+        &self,
+        candidates: &[VertexId],
+        vdeps: &mut FxHashMap<VertexId, Vec<VertexId>>,
+    ) {
+        if self.freshness.hints.is_empty() {
+            return;
+        }
+        for v in candidates {
+            if let Some(hints) = self.freshness.hints.get(v) {
+                let deps = vdeps.entry(*v).or_default();
+                deps.extend_from_slice(hints);
+                deps.sort_unstable();
+                deps.dedup();
+            }
+        }
+    }
+
+    /// Evaluate a dynamic reader through the recorder when the pass is
+    /// armed, finalizing the result exactly as `evaluate_vertex_immutable`
+    /// does. `None`: not recorded, evaluate normally.
+    pub(super) fn freshness_evaluate_recorded(
+        &self,
+        vertex: VertexId,
+        sheet_name: &str,
+        cell_ref: crate::reference::CellRef,
+        ast_id: AstNodeId,
+    ) -> Option<Result<LiteralValue, ExcelError>> {
+        if !self.freshness.armed || !self.graph.is_dynamic(vertex) {
+            return None;
+        }
+        let log = ReadLog::default();
+        let result = {
+            let ctx = RecordingContext::new(self, &log);
+            let interpreter = Interpreter::new_with_cell(&ctx, sheet_name, cell_ref);
+            interpreter
+                .evaluate_arena_ast(ast_id, self.graph.data_store(), self.graph.sheet_reg())
+                .map(|cv| {
+                    let format = cv.format_id();
+                    self.derived_format_results
+                        .write()
+                        .unwrap()
+                        .insert(vertex, format);
+                    self.record_derived_format(vertex, format);
+                    crate::engine::result_finalization::finalize_formula_result(cv.into_literal())
+                })
+        };
+        let dirty = self.freshness_dirty_reads(vertex, &log.take());
+        if !dirty.is_empty() {
+            self.freshness.stale.lock().unwrap().insert(vertex, dirty);
+        }
+        Some(result)
+    }
+
+    /// Formula vertices other than `reader` that are dirty and covered by
+    /// `reads`, plus dirty spill anchors whose extent meets a read.
+    fn freshness_dirty_reads(
+        &self,
+        reader: VertexId,
+        reads: &[(u16, u32, u32, u32, u32)],
+    ) -> Vec<VertexId> {
+        let mut out = Vec::new();
+        let Ok(store) = self.graph.authority_plan_store() else {
+            return out;
+        };
+        let ids = store.ids();
+        for &(sheet, r0, c0, r1, c1) in reads {
+            if sheet == SYMBOL_SHEET {
+                continue;
+            }
+            for col in c0..=c1 {
+                ids.visit_runs_in(sheet, col, r0, r1, &mut |h| {
+                    let run = ids.run(h);
+                    let a = run.row_start.max(r0);
+                    let b = (run.row_start + run.len - 1).min(r1);
+                    for row in a..=b {
+                        let id = run.first_id + (row - run.row_start);
+                        if let Some(v) = self
+                            .graph
+                            .authority_vertex_of_formula(id, (sheet, row, col))
+                            && v != reader
+                            && self.graph.is_dirty(v)
+                        {
+                            out.push(v);
+                        }
+                    }
+                });
+            }
+            for anchor in self.graph.spill_anchors_in_region(sheet, r0, c0, r1, c1) {
+                if anchor != reader && self.graph.is_dirty(anchor) {
+                    out.push(anchor);
+                }
+            }
+        }
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+}

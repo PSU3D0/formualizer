@@ -73,7 +73,7 @@ fn calamine_extracts_formulas_and_normalizes_equals() {
 fn calamine_failed_preparation_preserves_source_inspection_and_history() {
     use formualizer_common::CellAddress;
     use formualizer_eval::engine::inspect::SnapshotOptions;
-    use formualizer_workbook::{LoadStrategy, Workbook, WorkbookConfig};
+    use formualizer_workbook::{LoadStrategy, Workbook};
 
     let path = build_workbook(|book| {
         let sh = book.get_sheet_by_name_mut("Sheet1").unwrap();
@@ -133,7 +133,7 @@ fn calamine_failed_preparation_preserves_source_inspection_and_history() {
 
 #[test]
 fn calamine_ordinary_targets_isolate_unrelated_preparation_failures() {
-    use formualizer_workbook::{LoadStrategy, Workbook, WorkbookConfig};
+    use formualizer_workbook::{LoadStrategy, Workbook};
     let path = build_workbook(|book| {
         let sh = book.get_sheet_by_name_mut("Sheet1").unwrap();
         for (col, formula) in [(1, "1+2"), (2, "NOSHEET!A1"), (3, "B1+1"), (4, "A1+5")] {
@@ -185,7 +185,7 @@ fn calamine_ordinary_targets_isolate_unrelated_preparation_failures() {
 #[test]
 fn calamine_locator_retained_admission_across_packages_and_failures() {
     use formualizer_eval::engine::{EvaluationBudgets, ResourceExhaustionReason};
-    use formualizer_workbook::{LoadStrategy, Workbook, WorkbookConfig};
+    use formualizer_workbook::{LoadStrategy, Workbook};
     let path = build_workbook(|book| {
         book.new_sheet("Second").unwrap();
         for name in ["Sheet1", "Second"] {

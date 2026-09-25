@@ -2894,6 +2894,21 @@ impl DependencyGraph {
         result
     }
 
+    /// Whether a dirty (not merely volatile) vertex would be scheduled by
+    /// [`Self::get_evaluation_vertices`]: the freshness replan condition.
+    pub(crate) fn has_dirty_evaluation_vertices(&self) -> bool {
+        self.formula_dirty.legacy_iter().any(|&id| {
+            self.store.vertex_exists_active(id)
+                && matches!(
+                    self.store.kind(id),
+                    VertexKind::FormulaScalar
+                        | VertexKind::FormulaArray
+                        | VertexKind::NamedScalar
+                        | VertexKind::NamedArray
+                )
+        })
+    }
+
     /// Clear dirty flags after successful evaluation
     pub fn clear_dirty_flags(&mut self, vertices: &[VertexId]) {
         for &vertex_id in vertices {

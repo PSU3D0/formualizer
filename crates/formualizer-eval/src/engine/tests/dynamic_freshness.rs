@@ -164,3 +164,95 @@ fn open_column_reader_sees_spill_committed_earlier_in_pass() {
     engine.evaluate_all().unwrap();
     assert_eq!(num(&engine, 1, 1), Some(6.0));
 }
+
+/// Expected Δ, legacy wrong (design §8.2 case 1, FR3/FR4): the pre-probe
+/// cannot see the new target. X = INDIRECT(D1) where D1's address moves to
+/// A4 at the end of a dirty chain, so X runs before A4 in the first pass.
+/// Legacy publishes the stale X, lets its static readers Z and W clear with
+/// it, then re-dirties only X: Z = 5 and W = 10 stay wrong. The recorder
+/// sees X read dirty A4, drops X's result, stops the pass after X's layer
+/// and replans with the hint A4 → X.
+#[cfg(feature = "unified_authority")]
+#[test]
+fn fr_dynamic_reader_of_moved_dirty_target_never_publishes_stale() {
+    for targeted in [false, true] {
+        let mut e = engine();
+        set(&mut e, 1, 1, 1.0);
+        formula(&mut e, 2, 1, "=A1+1");
+        formula(&mut e, 3, 1, "=A2+1");
+        formula(&mut e, 4, 1, "=A3+1");
+        formula(&mut e, 1, 4, "=IF(A1>1,\"A4\",\"A1\")");
+        formula(&mut e, 1, 2, "=INDIRECT(D1)"); // X
+        formula(&mut e, 1, 3, "=B1+1"); // Z
+        formula(&mut e, 1, 5, "=C1*2"); // W
+        e.evaluate_all().unwrap();
+        assert_eq!(
+            (num(&e, 1, 2), num(&e, 1, 3), num(&e, 1, 5)),
+            (Some(1.0), Some(2.0), Some(4.0))
+        );
+        set(&mut e, 1, 1, 5.0);
+        if targeted {
+            e.evaluate_targets(&[EvaluationTarget::Cell {
+                sheet: "Sheet1".into(),
+                row: 1,
+                col: 5,
+            }])
+            .unwrap();
+        } else {
+            e.evaluate_all().unwrap();
+        }
+        assert_eq!(num(&e, 4, 1), Some(8.0), "targeted={targeted}");
+        assert_eq!(num(&e, 1, 2), Some(8.0), "targeted={targeted}");
+        assert_eq!(num(&e, 1, 3), Some(9.0), "targeted={targeted}");
+        assert_eq!(num(&e, 1, 5), Some(18.0), "targeted={targeted}");
+        let (stale, stops) = e.freshness_counters_for_test();
+        assert!(stale >= 1 && stops >= 1, "stale={stale} stops={stops}");
+    }
+}
+
+/// Expected Δ, legacy wrong (design §8.2 FR5 / DirtyExtents): a static
+/// reader of a spill child. C5 = B5*2 has an edge to B5 only; the anchor B1
+/// sits deeper in a dirty chain, so nothing orders it first. Legacy
+/// evaluates C5 before the spill commits and its end-of-pass clear erases
+/// the re-dirty from the spill write: C5 = 0 while B5 shows 5, on the first
+/// spill and on every later recalc. Under the authority the spill commit's
+/// re-dirty survives (commit-time clearing) and the loop replans; once the
+/// extent is known it is ordered first by a plan hint.
+#[cfg(feature = "unified_authority")]
+#[test]
+fn fr_static_reader_of_spill_child_follows_the_spill() {
+    // Not (first spill, targeted): C5's target closure never reaches the
+    // anchor while it has no extent, and C5 is not dirty, so a targeted
+    // request cannot know about the first spill (the same in legacy).
+    for (grow, targeted) in [(false, false), (true, false), (true, true)] {
+        let mut e = engine();
+        set(&mut e, 1, 1, if grow { 2.0 } else { 0.0 });
+        formula(&mut e, 5, 3, "=B5*2");
+        formula(&mut e, 6, 3, "=C5+1");
+        formula(&mut e, 1, 4, "=A1+1");
+        formula(&mut e, 2, 4, "=D1+1");
+        formula(&mut e, 3, 4, "=D2+1");
+        formula(&mut e, 1, 2, "=IF(D3>3,SEQUENCE(5),D3)");
+        e.evaluate_all().unwrap();
+        if grow {
+            assert_eq!((num(&e, 5, 2), num(&e, 5, 3)), (Some(5.0), Some(10.0)));
+        }
+        set(&mut e, 1, 1, 5.0);
+        if targeted {
+            e.evaluate_targets(&[EvaluationTarget::Cell {
+                sheet: "Sheet1".into(),
+                row: 6,
+                col: 3,
+            }])
+            .unwrap();
+        } else {
+            e.evaluate_all().unwrap();
+        }
+        let got = (num(&e, 5, 2), num(&e, 5, 3), num(&e, 6, 3));
+        assert_eq!(
+            got,
+            (Some(5.0), Some(10.0), Some(11.0)),
+            "grow={grow} targeted={targeted}"
+        );
+    }
+}
