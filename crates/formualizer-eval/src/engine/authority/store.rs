@@ -1074,6 +1074,30 @@ impl Store {
         })
     }
 
+    /// [`Self::direct_text_dependents`], streamed: `f(dependent sheet,
+    /// dependent rect)` per edge record until it returns false (bounded
+    /// inspection materializes nothing past its budget). Records come in
+    /// index order and may overlap. Returns whether the walk ran to the end.
+    pub fn visit_text_dependents(
+        &self,
+        sheet: u16,
+        q: &Rect,
+        f: &mut dyn FnMut(u16, Rect) -> bool,
+    ) -> bool {
+        let Some(idx) = self.idx.prec.get(sheet_slot(sheet)) else {
+            return true;
+        };
+        idx.query_until(&q.as_box(), &mut |id| {
+            let r = &self.recs[id as usize];
+            let key = self.egroups.key(r.group);
+            match key.proj.invert(&r.dep, q) {
+                Some(d) if key.lk == NO_LK => f(key.dep_sheet, d),
+                _ => true,
+            }
+        })
+        .1
+    }
+
     /// Direct dependents of `q` whose reference image has at most `limit`
     /// cells, through text-origin edges of grid formulas or any edge of a
     /// symbol row: the readers legacy held as expanded in-edges (a cell,

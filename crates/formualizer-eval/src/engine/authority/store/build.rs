@@ -99,30 +99,32 @@ impl Store {
         Ok(s)
     }
 
-    /// Re-derive the binding-identity table from `live_symbols` (sorted)
-    /// without rebuilding the relation: the incremental symbol-revision
-    /// path. Surviving symbols keep their ids; new ones take ids from the
-    /// shared counter, exactly as a rebuild would.
-    pub(crate) fn resync_symbols(
-        &mut self,
-        live_symbols: &[SymbolId],
-    ) -> Result<(), AuthorityError> {
+    /// Add one live symbol to the binding-identity table (the incremental
+    /// symbol-revision path; O(log S) amortized, a new symbol appends). A
+    /// symbol already live keeps its id; a new one takes the next id from
+    /// the shared counter, as a rebuild would.
+    pub(crate) fn insert_symbol(&mut self, symbol: SymbolId) -> Result<Vid, AuthorityError> {
         let remaining_retained = self
             .budget
             .retained
             .map(|n| n.saturating_sub(self.heap_bytes() - self.symbols.heap_bytes()));
-        let (symbols, work) = SymbolTable::rebuild(
-            live_symbols,
-            &self.symbols,
+        let (vid, work) = self.symbols.insert(
+            symbol,
             &mut self.ids,
             Budget {
                 retained: remaining_retained,
                 scratch: None,
             },
         )?;
-        self.symbols = symbols;
-        self.stats.symbol_work += work.visits;
-        Ok(())
+        self.stats.symbol_work += work;
+        Ok(vid)
+    }
+
+    /// Retire one symbol from the binding-identity table (incremental;
+    /// its id is never reused).
+    pub(crate) fn remove_symbol(&mut self, symbol: SymbolId) {
+        let work = self.symbols.remove(symbol);
+        self.stats.symbol_work += work;
     }
 
     /// The build, keeping the identities of `prior` when given. Returns the

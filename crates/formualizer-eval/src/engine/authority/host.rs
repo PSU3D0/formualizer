@@ -4,8 +4,9 @@
 //! which stays the runtime evaluation path until M1b. The graph's formula
 //! map records every vertex whose formula changes; `authority_sync` turns
 //! those into authority mutations (set formula / clear) and rebuilds from
-//! scratch at the first request after load and when a table or source
-//! changes; name definitions are applied incrementally (their symbol nodes
+//! scratch at the first request after load. Name, table and source
+//! revisions are applied incrementally, in work proportional to the changed
+//! symbols and their readers (their rows, binding identities, symbol nodes,
 //! and the direct readers of the changed nodes). Structural edits, moves and sheet operations (M3)
 //! capture the formula identities, and the next sync rebuilds from the
 //! already-transformed formulas keeping them (`history`). FormulaPlane spans
@@ -95,6 +96,19 @@ pub struct AuthorityHost {
     pub(crate) symbol_changes: SymbolChanges,
     /// Symbol revisions applied without a rebuild (tests, perf probes).
     pub(crate) symbol_incremental: u64,
+    /// Work of the incremental symbol syncs (rows assigned or retired,
+    /// binding entries, readers and nodes visited): the scaling gates'
+    /// counter.
+    pub(crate) symbol_sync_work: u64,
+    /// The symbol revision the operation that logged `symbol_changes` will
+    /// bump to (`authority_note_symbol`): a sync that applies the logged
+    /// changes before the bump is current with that revision.
+    pub(crate) symbol_rev_target: Option<u64>,
+    /// Name nodes whose definition names a symbol (name, table, source,
+    /// sheet) that is missing or has no node, by binding key: re-derived
+    /// when a symbol with that key appears. Entries may be stale (a node
+    /// since redefined or deleted); the re-derivation checks.
+    pub(crate) unbound: FxHashMap<Box<str>, rustc_hash::FxHashSet<VertexId>>,
     /// Dirty-propagation seeds waiting for the store to catch up (marked
     /// mid structural edit, when the store is still pre-edit); their
     /// closure is marked at the end of the next sync.
@@ -117,7 +131,8 @@ pub(crate) struct SymbolChanges {
 pub struct SymbolSlots {
     slot_of: FxHashMap<VertexId, u32>,
     vertex_of: Vec<Option<VertexId>>,
-    free: Vec<u32>,
+    /// Retired rows, lowest first.
+    free: std::collections::BinaryHeap<std::cmp::Reverse<u32>>,
 }
 
 impl SymbolSlots {
@@ -158,21 +173,40 @@ impl SymbolSlots {
                 retired.push(slot as u32);
             }
         }
-        self.free.extend(retired.iter().copied());
-        // Lowest rows first, so the plane stays dense.
-        self.free.sort_unstable_by(|a, b| b.cmp(a));
+        self.free
+            .extend(retired.iter().map(|&s| std::cmp::Reverse(s)));
         for &v in live {
-            if self.slot_of.contains_key(&v) {
-                continue;
+            if !self.slot_of.contains_key(&v) {
+                self.insert(v);
             }
-            let slot = self.free.pop().unwrap_or_else(|| {
-                self.vertex_of.push(None);
-                (self.vertex_of.len() - 1) as u32
-            });
-            self.vertex_of[slot as usize] = Some(v);
-            self.slot_of.insert(v, slot);
         }
         retired
+    }
+
+    /// Give `vertex` a row (the lowest free one, so the plane stays dense);
+    /// a vertex that has one keeps it. O(log free).
+    pub fn insert(&mut self, vertex: VertexId) -> u32 {
+        if let Some(&slot) = self.slot_of.get(&vertex) {
+            return slot;
+        }
+        let slot = match self.free.pop() {
+            Some(std::cmp::Reverse(slot)) => slot,
+            None => {
+                self.vertex_of.push(None);
+                (self.vertex_of.len() - 1) as u32
+            }
+        };
+        self.vertex_of[slot as usize] = Some(vertex);
+        self.slot_of.insert(vertex, slot);
+        slot
+    }
+
+    /// Retire `vertex`'s row, if it has one. O(log free).
+    pub fn remove(&mut self, vertex: VertexId) -> Option<u32> {
+        let slot = self.slot_of.remove(&vertex)?;
+        self.vertex_of[slot as usize] = None;
+        self.free.push(std::cmp::Reverse(slot));
+        Some(slot)
     }
 
     pub fn heap_bytes(&self) -> usize {
@@ -270,6 +304,17 @@ impl AuthorityHost {
 
     pub fn symbol_incremental(&self) -> u64 {
         self.symbol_incremental
+    }
+
+    pub fn symbol_sync_work(&self) -> u64 {
+        self.symbol_sync_work
+    }
+
+    /// Record that name node `vertex` waits on the symbols `keys`.
+    pub(crate) fn note_unbound(&mut self, vertex: VertexId, keys: Vec<Box<str>>) {
+        for key in keys {
+            self.unbound.entry(key).or_default().insert(vertex);
+        }
     }
 
     pub fn structural_rebuilds(&self) -> u64 {

@@ -58,8 +58,10 @@ impl DependencyGraph {
             version,
         };
         self.source_scalars.insert(name.to_string(), entry);
-        self.resolve_pending_name_references(NameScope::Workbook, name);
+        // Logged before the pending readers re-bind: a sync they trigger
+        // gives the source its symbol row before extracting them.
         self.authority_note_symbol(Some(vertex));
+        self.resolve_pending_name_references(NameScope::Workbook, name);
         self.bump_symbol_revision();
         Ok(())
     }
@@ -90,6 +92,9 @@ impl DependencyGraph {
         self.source_tables.insert(name.to_string(), entry);
         self.authority_note_symbol(Some(vertex));
         self.bump_symbol_revision();
+        // Formulas written before the source table re-bind to it (the
+        // authority's rebuild used to bind them; see final-notes decision 19).
+        self.resolve_pending_symbol("table", name);
         Ok(())
     }
 

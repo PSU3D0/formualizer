@@ -233,10 +233,12 @@ impl<L: Leaf> Tree<L> {
         }
     }
 
-    fn query(&self, q: &BoxT, work: &mut u64, visit: &mut dyn FnMut(u32)) {
+    /// Visit the live leaves meeting `q` until `visit` returns false;
+    /// returns false when it stopped early.
+    fn query(&self, q: &BoxT, work: &mut u64, visit: &mut dyn FnMut(u32) -> bool) -> bool {
         let n = self.leaves.len();
         if n == 0 {
-            return;
+            return true;
         }
         let levels = self.nodes.len();
         // Depth ≤ 8 for 2^25 leaves of fanout 16: at most 15 pending
@@ -254,8 +256,11 @@ impl<L: Leaf> Tree<L> {
             let (lvl, i) = stack[top];
             *work += 1;
             if lvl == usize::MAX {
-                if overlaps(&self.leaves[i].bbox(), q) && !self.is_dead(i) {
-                    visit(self.leaves[i].id());
+                if overlaps(&self.leaves[i].bbox(), q)
+                    && !self.is_dead(i)
+                    && !visit(self.leaves[i].id())
+                {
+                    return false;
                 }
                 continue;
             }
@@ -277,6 +282,7 @@ impl<L: Leaf> Tree<L> {
                 top += 1;
             }
         }
+        true
     }
 }
 
@@ -743,17 +749,28 @@ impl LevelIndex {
     /// Visit every live id whose box overlaps `q`. Returns the work done
     /// (buffer entries tested + tree nodes visited).
     pub fn query(&self, q: &BoxT, visit: &mut dyn FnMut(u32)) -> u64 {
+        self.query_until(q, &mut |id| {
+            visit(id);
+            true
+        })
+        .0
+    }
+
+    /// [`Self::query`] that stops as soon as `visit` returns false (bounded
+    /// inspection). Returns the work and whether the query ran to the end.
+    pub fn query_until(&self, q: &BoxT, visit: &mut dyn FnMut(u32) -> bool) -> (u64, bool) {
         let mut work = self.buf.len() as u64;
         for (b, id) in &self.buf {
-            if overlaps(b, q) {
-                visit(*id);
+            if overlaps(b, q) && !visit(*id) {
+                return (work, false);
             }
         }
         for lv in self.levels.iter().flatten() {
-            lv.points.query(q, &mut work, visit);
-            lv.boxes.query(q, &mut work, visit);
+            if !lv.points.query(q, &mut work, visit) || !lv.boxes.query(q, &mut work, visit) {
+                return (work, false);
+            }
         }
-        work
+        (work, true)
     }
 
     /// Number of non-empty levels.

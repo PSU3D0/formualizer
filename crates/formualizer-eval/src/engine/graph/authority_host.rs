@@ -5,7 +5,7 @@
 //! differential gates Δ(a) (dirty closure) and Δ(e) (direct dependents).
 
 use super::*;
-use crate::engine::authority::extract::{extract_formula, extract_symbol};
+use crate::engine::authority::extract::{extract_formula, extract_symbol_binding};
 use crate::engine::authority::geom::{Cell, Cover, Rect, SYMBOL_SHEET};
 use crate::engine::authority::host::{AuthorityHost, HostState};
 use crate::engine::authority::store::{AuthorityError, BuildInput, Store, TagFilter};
@@ -205,7 +205,8 @@ impl DependencyGraph {
     /// the typed error instead of installing a store above the budget.
     fn authority_rebuild(&mut self) {
         self.authority_sync_symbol_slots();
-        let input = self.authority_build_input();
+        let mut input = self.authority_formula_inputs();
+        input.extend(self.authority_symbol_inputs());
         self.authority_rebuild_from(input, None);
     }
 
@@ -274,7 +275,7 @@ impl DependencyGraph {
             Ok(mut store) => {
                 store.stats.symbol_work += inventory_work;
                 self.authority.store = store;
-                self.authority.symbol_rev = self.symbol_revision;
+                self.authority.symbol_rev = self.authority_applied_symbol_rev();
                 self.authority.symbol_changes = Default::default();
                 self.authority.builds += 1;
                 self.authority.revision += 1;
@@ -542,12 +543,7 @@ impl DependencyGraph {
                 kept.insert((SYMBOL_SHEET, slot, 0), id);
             }
         }
-        input.extend(
-            self.authority
-                .symbols
-                .iter()
-                .filter_map(|(slot, v)| self.authority_symbol_input(slot, v)),
-        );
+        input.extend(self.authority_symbol_inputs());
         let next_id = self.authority.store.ids().next_id();
         for cell in created {
             if let Some(id) = self.authority.journal.created(cell)
@@ -920,24 +916,40 @@ impl DependencyGraph {
         visitor: &mut dyn FnMut(Cell) -> bool,
     ) -> Result<bool, AuthorityError> {
         let store = self.authority_plan_store()?;
-        let mut hits = Vec::new();
-        store.direct_text_dependents(cell.0, &Rect::cell(cell.1, cell.2), &mut hits);
-        let mut cover = Cover::new();
-        for (s, r) in hits {
-            if s != SYMBOL_SHEET {
-                cover.insert_rect(s, &r);
-            }
+        if *remaining == 0 {
+            return Ok(false);
         }
-        for c in cover.cells() {
-            if *remaining == 0 {
-                return Ok(false);
+        // Streamed from the index: each reader is produced (and charged)
+        // once, and the walk stops at the budget, so a small budget
+        // enumerates no more than it reports (red team #2). `seen` holds
+        // only readers already reported.
+        let mut seen = Cover::new();
+        let mut miss: Vec<(u32, u32)> = Vec::new();
+        let mut complete = true;
+        store.visit_text_dependents(cell.0, &Rect::cell(cell.1, cell.2), &mut |s, d| {
+            if s == SYMBOL_SHEET {
+                return true;
             }
-            *remaining -= 1;
-            if !visitor(c) {
-                return Ok(true);
+            for c in d.c0..=d.c1 {
+                miss.clear();
+                seen.missing_in(s, c, d.r0, d.r1, &mut miss);
+                for &(a, b) in &miss {
+                    for r in a..=b {
+                        if *remaining == 0 {
+                            complete = false;
+                            return false;
+                        }
+                        *remaining -= 1;
+                        seen.insert_rect(s, &Rect::cell(r, c));
+                        if !visitor((s, r, c)) {
+                            return false;
+                        }
+                    }
+                }
             }
-        }
-        Ok(true)
+            true
+        });
+        Ok(complete)
     }
 
     /// Direct precedents of a formula cell: `(sheet, r0, c0, r1, c1)`.
@@ -1378,31 +1390,60 @@ impl DependencyGraph {
     /// The build input the host would use for a full rebuild: every formula
     /// cell, then every name's symbol node.
     pub(crate) fn authority_build_input(&self) -> Vec<BuildInput> {
-        let vids: Vec<VertexId> = self.vertex_formulas.keys().copied().collect();
-        let mut input: Vec<BuildInput> = vids
-            .into_iter()
-            .filter_map(|v| self.authority_formula_input(v))
-            .collect();
+        let mut input = self.authority_formula_inputs();
         input.extend(
             self.authority
                 .symbols
                 .iter()
-                .filter_map(|(slot, v)| self.authority_symbol_input(slot, v)),
+                .filter_map(|(slot, v)| self.authority_symbol_binding(slot, v).map(|(i, _)| i)),
         );
         input
     }
 
-    fn authority_symbol_input(&self, slot: u32, vertex: VertexId) -> Option<BuildInput> {
+    fn authority_formula_inputs(&self) -> Vec<BuildInput> {
+        let vids: Vec<VertexId> = self.vertex_formulas.keys().copied().collect();
+        vids.into_iter()
+            .filter_map(|v| self.authority_formula_input(v))
+            .collect()
+    }
+
+    /// Name `vertex`'s node at row `slot`, with the binding keys its
+    /// definition waits on.
+    fn authority_symbol_binding(
+        &self,
+        slot: u32,
+        vertex: VertexId,
+    ) -> Option<(BuildInput, Vec<Box<str>>)> {
         let (_, name) = self.name_vertex_lookup.get(&vertex)?;
         let entry = self.named_range_by_vertex(vertex)?;
-        let facts = extract_symbol(
+        let (facts, missing) = extract_symbol_binding(
             self,
             name,
             entry,
             self.is_volatile(vertex),
             self.is_dynamic(vertex),
         );
-        Some(((SYMBOL_SHEET, slot, 0), facts))
+        Some((((SYMBOL_SHEET, slot, 0), facts), missing))
+    }
+
+    /// Every name node's build input; the bindings they wait on replace
+    /// `AuthorityHost::unbound` (a rebuild re-derives every node).
+    fn authority_symbol_inputs(&mut self) -> Vec<BuildInput> {
+        let mut input = Vec::with_capacity(self.authority.symbols.len());
+        let mut unbound: Vec<(VertexId, Vec<Box<str>>)> = Vec::new();
+        for (slot, v) in self.authority.symbols.iter() {
+            if let Some((i, missing)) = self.authority_symbol_binding(slot, v) {
+                input.push(i);
+                if !missing.is_empty() {
+                    unbound.push((v, missing));
+                }
+            }
+        }
+        self.authority.unbound.clear();
+        for (v, missing) in unbound {
+            self.authority.note_unbound(v, missing);
+        }
+        input
     }
 
     /// Load (`first_load_assume_new`) before any dirty flag was ever
@@ -1427,38 +1468,66 @@ impl DependencyGraph {
     /// Log a symbol definition change for the next sync: `Some(vertex)` of
     /// the name, table or source; `None` forces a rebuild.
     pub(crate) fn authority_note_symbol(&mut self, name: Option<VertexId>) {
+        // Every logging site bumps the symbol revision once, after its
+        // logs: a sync in between applies the change for that revision.
+        self.authority.symbol_rev_target = Some(self.symbol_revision.wrapping_add(1));
         match name {
             Some(v) => self.authority.symbol_changes.names.push(v),
             None => self.authority.symbol_changes.other = true,
         }
     }
 
-    /// Apply logged name changes without a rebuild (M4): re-derive the
-    /// symbol nodes of the changed names (all nodes when a name is new, so
-    /// a name waiting on it binds), retire the rows of deleted names, and
-    /// add the direct readers of every changed node, and of a workbook name
-    /// a new sheet-scoped name shadows, to `touched` for re-extraction.
-    /// Readers bound to a cell or range name carry an edge to its target,
-    /// so a redefinition changes their facts; readers of a name formula
-    /// only point at the node. `None`: not applicable (tables, sources, or
-    /// a symbol revision nobody logged); the caller rebuilds.
+    /// Apply logged symbol changes without a rebuild (M4), in work
+    /// proportional to the changed symbols and their readers:
+    /// - a new name, table or source gets a symbol-plane row and a binding
+    ///   identity, and the name nodes waiting on its binding key re-derive;
+    /// - a changed symbol's name node re-derives, and its direct readers
+    ///   (and those of a workbook name a new sheet-scoped name shadows) go
+    ///   to `touched` (cells) or re-derive (name nodes): readers bound to a
+    ///   cell or range name carry an edge to its target, so a redefinition
+    ///   changes their facts;
+    /// - a deleted symbol's readers re-derive the same way, then its row
+    ///   and binding identity retire.
+    ///
+    /// Formula readers written before their symbol existed are re-bound by
+    /// the graph (pending links); name nodes by `AuthorityHost::unbound`.
+    /// `None`: an unlogged symbol change; the caller rebuilds.
     fn authority_sync_symbols_incremental(
         &mut self,
         touched: &mut Vec<VertexId>,
     ) -> Option<Result<(), AuthorityError>> {
         let changes = std::mem::take(&mut self.authority.symbol_changes);
-        if changes.other || changes.names.is_empty() {
+        if changes.other {
             return None;
         }
+        if changes.names.is_empty() {
+            // An unlogged symbol revision: rebuild. (A logged change applied
+            // before its revision bump already set `symbol_rev` to the
+            // bumped revision, so it does not come here.)
+            return None;
+        }
+        let mut work = 0u64;
+        let mut changed = changes.names;
+        changed.sort_unstable();
+        changed.dedup();
         let mut sources: Vec<u32> = Vec::new();
-        let mut created = false;
-        for &v in &changes.names {
-            match self.authority.symbols.slot(v) {
-                Some(slot) => sources.push(slot),
-                // A new table or source: readers written before it exist
-                // unbound (no pending link); a rebuild binds them.
-                None if !self.name_vertex_lookup.contains_key(&v) => return None,
-                None => created = true,
+        let mut created: Vec<VertexId> = Vec::new();
+        let mut retired: Vec<VertexId> = Vec::new();
+        let mut nodes: Vec<VertexId> = Vec::new();
+        for &v in &changed {
+            work += 1;
+            let live = self.authority_symbol_live(v);
+            match (live, self.authority.symbols.slot(v)) {
+                (true, Some(slot)) => sources.push(slot),
+                (true, None) => created.push(v),
+                (false, Some(slot)) => {
+                    sources.push(slot);
+                    retired.push(v);
+                }
+                (false, None) => {}
+            }
+            if live && self.name_vertex_lookup.contains_key(&v) {
+                nodes.push(v);
             }
             if let Some((NameScope::Sheet(_), name)) = self.name_vertex_lookup.get(&v)
                 && let Some(entry) = self.resolve_name_entry_in_scope(name, NameScope::Workbook)
@@ -1476,10 +1545,10 @@ impl DependencyGraph {
                 &mut hits,
             );
         }
-        let mut nodes: Vec<VertexId> = changes.names;
         for (sheet, r) in hits {
             for row in r.r0..=r.r1 {
                 for col in r.c0..=r.c1 {
+                    work += 1;
                     if let Some(v) = self.authority_vertex_of_cell((sheet, row, col)) {
                         if sheet == SYMBOL_SHEET {
                             nodes.push(v);
@@ -1490,42 +1559,111 @@ impl DependencyGraph {
                 }
             }
         }
-        let retired = self.authority_sync_symbol_slots();
-        for slot in retired {
-            let cell = (SYMBOL_SHEET, slot, 0);
-            if self.authority.store.ids().id_of(cell).is_some()
-                && let Err(e) = self.authority.store.clear_cell(cell)
+        for v in retired {
+            work += 1;
+            if let Some(slot) = self.authority.symbols.remove(v) {
+                let cell = (SYMBOL_SHEET, slot, 0);
+                self.authority
+                    .dirty
+                    .clean(SYMBOL_SHEET, &Rect::cell(slot, 0));
+                if self.authority.store.ids().id_of(cell).is_some()
+                    && let Err(e) = self.authority.store.clear_cell(cell)
+                {
+                    return Some(Err(e));
+                }
+            }
+            if let Some(symbol) = self.store.addr(v).as_symbol() {
+                self.authority.store.remove_symbol(symbol);
+            }
+        }
+        for &v in &created {
+            work += 1;
+            self.authority.symbols.insert(v);
+            for key in self.authority_binding_keys(v) {
+                if let Some(waiting) = self.authority.unbound.remove(&key) {
+                    work += waiting.len() as u64;
+                    nodes.extend(waiting);
+                }
+            }
+        }
+        nodes.sort_unstable();
+        nodes.dedup();
+        work += nodes.len() as u64;
+        if let Err(e) = self.authority_set_symbol_nodes(&nodes) {
+            return Some(Err(e));
+        }
+        // Binding identities after the nodes' cell ids, as a rebuild
+        // allocates them.
+        for &v in &created {
+            if let Some(symbol) = self.store.addr(v).as_symbol()
+                && let Err(e) = self.authority.store.insert_symbol(symbol)
             {
                 return Some(Err(e));
             }
         }
-        if created {
-            nodes = self.authority.symbols.iter().map(|(_, v)| v).collect();
-        }
-        nodes.sort_unstable();
-        nodes.dedup();
-        if let Err(e) = self.authority_set_symbol_nodes(&nodes) {
-            return Some(Err(e));
-        }
-        let live = self.authority_live_symbol_addrs();
-        if let Err(e) = self.authority.store.resync_symbols(&live) {
-            return Some(Err(e));
-        }
-        self.authority.symbol_rev = self.symbol_revision;
+        self.authority.symbol_sync_work += work;
+        self.authority.symbol_rev = self.authority_applied_symbol_rev();
         self.authority.symbol_incremental += 1;
         self.authority.revision += 1;
         Some(Ok(()))
     }
 
-    /// Set the symbol nodes of live names `names` from their definitions.
+    /// The symbol revision a sync that applied every logged change is
+    /// current with: the revision the logging operation's pending bump
+    /// will produce, else the current one.
+    fn authority_applied_symbol_rev(&mut self) -> u64 {
+        match self.authority.symbol_rev_target.take() {
+            Some(target) if target != self.symbol_revision => target,
+            _ => self.symbol_revision,
+        }
+    }
+
+    /// A live name, table or source vertex.
+    fn authority_symbol_live(&self, v: VertexId) -> bool {
+        (self.name_vertex_lookup.contains_key(&v)
+            || self.table_vertex_lookup.contains_key(&v)
+            || self.source_vertex_lookup.contains_key(&v))
+            && !self.store.is_deleted(v)
+    }
+
+    /// The binding keys under which references to symbol `v` wait
+    /// (`AuthorityHost::unbound`): a name's lookup key; a table's table
+    /// key; a source's name and table keys.
+    fn authority_binding_keys(&self, v: VertexId) -> Vec<Box<str>> {
+        let mut keys: Vec<Box<str>> = Vec::new();
+        if let Some((_, name)) = self.name_vertex_lookup.get(&v) {
+            keys.push(self.name_lookup_key(name).into_boxed_str());
+        }
+        if let Some(name) = self.table_vertex_lookup.get(&v) {
+            keys.push(Self::unbound_symbol_key("table", name).into_boxed_str());
+        }
+        if let Some(name) = self.source_vertex_lookup.get(&v) {
+            keys.push(self.name_lookup_key(name).into_boxed_str());
+            keys.push(Self::unbound_symbol_key("table", name).into_boxed_str());
+        }
+        keys
+    }
+
+    /// A symbol with binding key `key` appeared outside a symbol revision
+    /// (a sheet was added): the name nodes waiting on it re-derive at the
+    /// next sync.
+    pub(crate) fn authority_note_binding(&mut self, key: &str) {
+        if let Some(waiting) = self.authority.unbound.remove(key) {
+            self.authority.symbol_changes.names.extend(waiting);
+        }
+    }
+
+    /// Set the symbol nodes of live names `names` from their definitions,
+    /// recording the bindings each still waits on.
     fn authority_set_symbol_nodes(&mut self, names: &[VertexId]) -> Result<(), AuthorityError> {
         for &v in names {
             let Some(slot) = self.authority.symbols.slot(v) else {
                 continue;
             };
-            let Some((cell, facts)) = self.authority_symbol_input(slot, v) else {
+            let Some(((cell, facts), missing)) = self.authority_symbol_binding(slot, v) else {
                 continue;
             };
+            self.authority.note_unbound(v, missing);
             self.authority.store.set_formula(cell, &facts)?;
             self.authority.incremental_mutations += 1;
             self.authority.revision += 1;
@@ -1533,27 +1671,12 @@ impl DependencyGraph {
         Ok(())
     }
 
-    /// Live name, table and source binding identities, sorted (the
-    /// store's symbol table input).
-    fn authority_live_symbol_addrs(&self) -> Vec<crate::engine::addr::SymbolAddr> {
-        let mut symbols: Vec<_> = self
-            .name_vertex_lookup
-            .keys()
-            .chain(self.table_vertex_lookup.keys())
-            .chain(self.source_vertex_lookup.keys())
-            .filter(|&&vid| !self.store.is_deleted(vid))
-            .filter_map(|&vid| self.store.addr(vid).as_symbol())
-            .collect();
-        symbols.sort_unstable();
-        symbols
-    }
-
     /// Give every live symbol (name, table, source) a symbol-plane row
     /// (survivors keep theirs) and drop the dirty marks of retired rows;
     /// returns the retired rows. Only names have facts at their row (their
     /// definition's precedents); a table's or source's row is a plain cell
     /// its readers point at, so dirtying the table or source vertex reaches
-    /// them through the closure.
+    /// them through the closure. The rebuild path: O(S log S).
     fn authority_sync_symbol_slots(&mut self) -> Vec<u32> {
         let mut live: Vec<VertexId> = self
             .name_vertex_lookup

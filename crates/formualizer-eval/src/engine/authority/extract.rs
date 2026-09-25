@@ -49,6 +49,11 @@ struct Ctx<'a> {
     /// The current reference's sheet as a registry id, when the arena
     /// stored it that way (the reference itself then carries no sheet).
     sheet_key: Option<SheetId>,
+    /// Symbols the formula names that are missing or have no symbol node
+    /// yet, by binding key (a name's lookup key; `DependencyGraph::unbound_symbol_key` for
+    /// tables and sheets): the host
+    /// re-derives a name's node when one of them appears.
+    missing: Vec<Box<str>>,
 }
 
 fn bound(v1: u32, abs: bool, placement: u32, fixed: bool) -> Bound {
@@ -87,10 +92,15 @@ impl Ctx<'_> {
                 });
                 if s.is_none() {
                     self.flags |= F_OPAQUE;
+                    self.miss(DependencyGraph::unbound_symbol_key("sheet", n));
                 }
                 s
             }
         }
+    }
+
+    fn miss(&mut self, key: String) {
+        self.missing.push(key.into_boxed_str());
     }
 
     fn push(&mut self, proj: RefProj) {
@@ -180,6 +190,7 @@ impl Ctx<'_> {
             edges: Vec::new(),
             flags: 0,
             sheet_key: None,
+            missing: Vec::new(),
         };
         let _ = refs::visit_tree_references(
             ast,
@@ -188,6 +199,7 @@ impl Ctx<'_> {
             collect,
         );
         self.edges.append(&mut inner.edges);
+        self.missing.append(&mut inner.missing);
         self.flags |= inner.flags;
     }
 }
@@ -261,34 +273,43 @@ fn collect(ctx: &mut Ctx<'_>, r: SemanticReference<'_>) -> Result<(), ExcelError
                     // The node carries the formula's precedents.
                     NamedDefinition::Literal(_) | NamedDefinition::Formula { .. } => {}
                 },
-                Some(entry) => match &entry.definition {
-                    NamedDefinition::Cell(cr) => {
-                        let (r, c) = (cr.coord.row(), cr.coord.col());
-                        ctx.push_fixed(cr.sheet_id, r, c, r, c, Tag::R1, lk);
+                Some(entry) => {
+                    // No symbol node yet: re-derive once it has one.
+                    ctx.miss(lk.name.to_string());
+                    match &entry.definition {
+                        NamedDefinition::Cell(cr) => {
+                            let (r, c) = (cr.coord.row(), cr.coord.col());
+                            ctx.push_fixed(cr.sheet_id, r, c, r, c, Tag::R1, lk);
+                        }
+                        NamedDefinition::Range(rr) => {
+                            ctx.push_fixed(
+                                rr.start.sheet_id,
+                                rr.start.coord.row(),
+                                rr.start.coord.col(),
+                                rr.end.coord.row(),
+                                rr.end.coord.col(),
+                                Tag::R1,
+                                lk,
+                            );
+                        }
+                        NamedDefinition::Literal(_) => {}
+                        NamedDefinition::Formula { ast, .. } => {
+                            let (ast, scope) = (ast.clone(), entry.scope);
+                            ctx.flatten_name_formula(&ast, scope, lk);
+                        }
                     }
-                    NamedDefinition::Range(rr) => {
-                        ctx.push_fixed(
-                            rr.start.sheet_id,
-                            rr.start.coord.row(),
-                            rr.start.coord.col(),
-                            rr.end.coord.row(),
-                            rr.end.coord.col(),
-                            Tag::R1,
-                            lk,
-                        );
-                    }
-                    NamedDefinition::Literal(_) => {}
-                    NamedDefinition::Formula { ast, .. } => {
-                        let (ast, scope) = (ast.clone(), entry.scope);
-                        ctx.flatten_name_formula(&ast, scope, lk);
-                    }
-                },
+                }
                 None => match ctx.graph.resolve_source_scalar_entry(name) {
                     // A source's row: invalidating the source dirties it.
                     Some(source) => {
-                        ctx.push_symbol_node(source.vertex, &lk);
+                        if !ctx.push_symbol_node(source.vertex, &lk) {
+                            ctx.miss(lk.name.to_string());
+                        }
                     }
-                    None => ctx.flags |= F_OPAQUE,
+                    None => {
+                        ctx.flags |= F_OPAQUE;
+                        ctx.miss(lk.name.to_string());
+                    }
                 },
             }
         }
@@ -302,7 +323,9 @@ fn collect(ctx: &mut Ctx<'_>, r: SemanticReference<'_>) -> Result<(), ExcelError
                 };
                 // The table's row: redefining or dirtying the table reaches
                 // its readers; the range edge orders them after the body.
-                ctx.push_symbol_node(entry.vertex, &lk);
+                if !ctx.push_symbol_node(entry.vertex, &lk) {
+                    ctx.miss(DependencyGraph::unbound_symbol_key("table", &t.name));
+                }
                 ctx.push_fixed(
                     rr.start.sheet_id,
                     rr.start.coord.row(),
@@ -322,9 +345,13 @@ fn collect(ctx: &mut Ctx<'_>, r: SemanticReference<'_>) -> Result<(), ExcelError
                     };
                     if !ctx.push_symbol_node(source.vertex, &lk) {
                         ctx.flags |= F_OPAQUE;
+                        ctx.miss(DependencyGraph::unbound_symbol_key("table", &t.name));
                     }
                 }
-                None => ctx.flags |= F_OPAQUE,
+                None => {
+                    ctx.flags |= F_OPAQUE;
+                    ctx.miss(DependencyGraph::unbound_symbol_key("table", &t.name));
+                }
             },
         },
         SemanticReference::ExternalSource(_)
@@ -355,6 +382,7 @@ pub fn extract_formula(
         edges: Vec::new(),
         flags: 0,
         sheet_key: None,
+        missing: Vec::new(),
     };
     let _ = refs::visit_arena_references_keyed(
         ast,
@@ -402,6 +430,18 @@ pub fn extract_symbol(
     volatile: bool,
     dynamic: bool,
 ) -> FormulaFacts {
+    extract_symbol_binding(graph, name, entry, volatile, dynamic).0
+}
+
+/// [`extract_symbol`], with the binding keys of the symbols the definition
+/// names that are missing or have no node yet (sorted, deduplicated).
+pub fn extract_symbol_binding(
+    graph: &DependencyGraph,
+    name: &str,
+    entry: &NamedRange,
+    volatile: bool,
+    dynamic: bool,
+) -> (FormulaFacts, Vec<Box<str>>) {
     let scope_sheet = match entry.scope {
         NameScope::Sheet(id) => id,
         NameScope::Workbook => graph.default_sheet_id(),
@@ -421,6 +461,7 @@ pub fn extract_symbol(
         edges: Vec::new(),
         flags: 0,
         sheet_key: None,
+        missing: Vec::new(),
     };
     match &entry.definition {
         NamedDefinition::Cell(cr) => {
@@ -455,11 +496,17 @@ pub fn extract_symbol(
     if dynamic {
         flags |= F_DYNAMIC;
     }
-    FormulaFacts {
-        edges: ctx.edges,
-        ltokens: None,
-        template: AstNodeId::from_u32(u32::MAX),
-        literals: Default::default(),
-        flags,
-    }
+    let mut missing = ctx.missing;
+    missing.sort_unstable();
+    missing.dedup();
+    (
+        FormulaFacts {
+            edges: ctx.edges,
+            ltokens: None,
+            template: AstNodeId::from_u32(u32::MAX),
+            literals: Default::default(),
+            flags,
+        },
+        missing,
+    )
 }

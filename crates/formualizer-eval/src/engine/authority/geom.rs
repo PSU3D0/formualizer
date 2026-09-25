@@ -310,6 +310,15 @@ impl Cover {
         }
     }
 
+    /// The rows of `[a, b]` in column `col` of `sheet` not in the cover,
+    /// as intervals, appended to `out`.
+    pub fn missing_in(&self, sheet: u16, col: u32, a: u32, b: u32, out: &mut Vec<(u32, u32)>) {
+        match self.cols.get(&(sheet, col)) {
+            Some(set) => set.missing(a, b, out),
+            None => out.push((a, b)),
+        }
+    }
+
     /// Whether any cell of `r` is in the cover.
     pub fn intersects_rect(&self, sheet: u16, r: &Rect) -> bool {
         let mut miss = Vec::new();
