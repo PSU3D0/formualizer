@@ -486,7 +486,7 @@ fn back_to_back_deletes_retire_in_their_own_frames() {
     for r in 1..=20 {
         e.set_cell_value("Sheet1", r, 1, LiteralValue::Number(f64::from(r)))
             .unwrap();
-        e.set_cell_formula("Sheet1", r, 3, parse(&format!("=A{r}*2")).unwrap())
+        e.set_cell_formula("Sheet1", r, 3, parse(format!("=A{r}*2")).unwrap())
             .unwrap();
     }
     let s1 = e.graph.sheet_id("Sheet1").unwrap();
