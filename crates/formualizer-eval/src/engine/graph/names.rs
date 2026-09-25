@@ -677,6 +677,24 @@ impl DependencyGraph {
         }
     }
 
+    /// Pending-link key of an unbound sheet or table (`BestEffort`
+    /// preparation). The NUL prefix cannot occur in a valid defined name, so
+    /// it never collides with one; the name is folded like sheet and table
+    /// lookups are.
+    pub(crate) fn unbound_symbol_key(kind: &str, name: &str) -> String {
+        format!("\u{0}{kind}:{}", name.to_lowercase())
+    }
+
+    /// Re-bind formulas waiting on sheet or table `name` (`kind` is
+    /// `"sheet"` or `"table"`).
+    pub(crate) fn resolve_pending_symbol(&mut self, kind: &str, name: &str) {
+        if self.pending_name_links.is_empty() {
+            return;
+        }
+        let key = Self::unbound_symbol_key(kind, name);
+        self.resolve_pending_name_references(NameScope::Workbook, &key);
+    }
+
     pub(super) fn resolve_pending_name_references(&mut self, scope: NameScope, name: &str) {
         let key = self.name_lookup_key(name);
         if let Some(entries) = self.pending_name_links.remove(&key) {

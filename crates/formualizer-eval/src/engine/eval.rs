@@ -21081,8 +21081,10 @@ where
         let mut cycle_errors = 0usize;
         let mut replans = 0usize;
         const MAX_REPLAN: usize = 5;
+        #[cfg(feature = "unified_authority")]
+        self.graph.authority_sync();
         loop {
-            let (precedents_to_eval, old_vdeps) = self.build_demand_subgraph(&root_vertices);
+            let (precedents_to_eval, old_vdeps) = self.demand_subgraph(&root_vertices)?;
             if precedents_to_eval.is_empty() {
                 break;
             }
@@ -21098,6 +21100,7 @@ where
                 .create_schedule_with_virtual(&precedents_to_eval, &old_vdeps)?;
             #[cfg(feature = "unified_authority")]
             let schedule = {
+                self.graph.authority_sync();
                 let mut ledger = self.active_resource_ledger.take();
                 let result = self.create_authority_schedule(
                     &precedents_to_eval,
@@ -24377,21 +24380,27 @@ where
     /// gate. Admission and allocation failures are not scope exceptions.
     #[cfg(feature = "unified_authority")]
     fn require_unified_authority(&mut self) -> Result<(), ExcelError> {
+        self.graph
+            .authority()
+            .map(|_| ())
+            .map_err(Self::authority_excel_error)
+    }
+
+    #[cfg(feature = "unified_authority")]
+    fn authority_excel_error(error: crate::engine::authority::store::AuthorityError) -> ExcelError {
         use crate::engine::authority::store::AuthorityError;
-        self.graph.authority().map(|_| ()).map_err(|error| {
-            // Some unchanged behavioral tests assert only `error.kind`, hiding
-            // the operation in their panic. The opt-in gate trace proves which
-            // typed error was actually returned; it never changes that error.
-            #[cfg(test)]
-            if std::env::var_os("FZ_AUTHORITY_DEFERRED_TRACE").is_some() {
-                eprintln!("M1B_AUTHORITY_ERROR {error:?}");
-            }
-            let kind = match error {
-                AuthorityError::Unsupported { .. } => ExcelErrorKind::NImpl,
-                _ => ExcelErrorKind::Error,
-            };
-            ExcelError::new(kind).with_message(format!("unified_authority: {error:?}"))
-        })
+        // Some unchanged behavioral tests assert only `error.kind`, hiding
+        // the operation in their panic. The opt-in gate trace proves which
+        // typed error was actually returned; it never changes that error.
+        #[cfg(test)]
+        if std::env::var_os("FZ_AUTHORITY_DEFERRED_TRACE").is_some() {
+            eprintln!("M1B_AUTHORITY_ERROR {error:?}");
+        }
+        let kind = match error {
+            AuthorityError::Unsupported { .. } => ExcelErrorKind::NImpl,
+            _ => ExcelErrorKind::Error,
+        };
+        ExcelError::new(kind).with_message(format!("unified_authority: {error:?}"))
     }
 
     /// Evaluate all dirty/volatile vertices
@@ -24988,7 +24997,7 @@ where
         }
 
         // Build demand subgraph with virtual edges (same as evaluate_until)
-        let (precedents_to_eval, vdeps) = self.build_demand_subgraph(&target_vertex_ids);
+        let (precedents_to_eval, vdeps) = self.demand_subgraph(&target_vertex_ids)?;
 
         if precedents_to_eval.is_empty() {
             return Ok(EvalPlan {
@@ -25171,6 +25180,8 @@ where
         &mut self,
         to_evaluate: &[VertexId],
     ) -> Result<ScheduleBuildOutput, ExcelError> {
+        #[cfg(feature = "unified_authority")]
+        self.graph.authority_sync();
         let mut ledger = self.active_resource_ledger.take();
         let result = self.create_evaluation_schedule_uncached(to_evaluate, ledger.as_mut());
         self.active_resource_ledger = ledger;
@@ -25251,34 +25262,37 @@ where
                 .with_message(format!("unified_authority planner: {message}"))
         };
         self.cancellation_checkpoint("Evaluation cancelled before authority planning")?;
+        let store = self
+            .graph
+            .authority_plan_store()
+            .map_err(Self::authority_excel_error)?;
+        // Names are symbol-plane nodes (design §4.1): a name vertex plans as
+        // the unit at its node, between its precedents and its readers.
         let mut cover = Cover::new();
         for &id in candidates {
-            if let Some(cell) = self.graph.get_cell_ref_for_vertex(id) {
-                cover.insert_rect(
-                    cell.sheet_id,
-                    &Rect::cell(cell.coord.row(), cell.coord.col()),
-                );
+            if let Some((sheet, row, col)) = self.graph.authority_cell_of_vertex(id) {
+                cover.insert_rect(sheet, &Rect::cell(row, col));
             }
         }
         let mut hints = Vec::new();
         for (&reader, deps) in vdeps {
-            let Some(reader) = self.graph.get_cell_ref_for_vertex(reader) else {
+            let Some(reader) = self.graph.authority_cell_of_vertex(reader) else {
                 continue;
             };
             for &dependency in deps {
-                let Some(dep) = self.graph.get_cell_ref_for_vertex(dependency) else {
+                let Some(dep) = self.graph.authority_cell_of_vertex(dependency) else {
                     continue;
                 };
                 hints.push(planner::PlanHint {
-                    reader: (reader.sheet_id, reader.coord.col(), reader.coord.row()),
+                    reader: (reader.0, reader.2, reader.1),
                     edge: EdgeKey {
-                        dep_sheet: reader.sheet_id,
+                        dep_sheet: reader.0,
                         tag: Tag::X,
                         lk: u32::MAX,
                         proj: RefProj {
-                            sheet: dep.sheet_id,
-                            rows: AxisMap::fixed(dep.coord.row(), dep.coord.row()),
-                            cols: AxisMap::fixed(dep.coord.col(), dep.coord.col()),
+                            sheet: dep.0,
+                            rows: AxisMap::fixed(dep.1, dep.1),
+                            cols: AxisMap::fixed(dep.2, dep.2),
                         },
                     },
                 });
@@ -25292,15 +25306,8 @@ where
             .as_ref()
             .and_then(|ledger| ledger.schedule_discovery_limit())
             .map(|limit| limit.saturating_sub(checkpoint));
-        let ordered = planner::plan_with_hints(
-            self.graph.authority_host().store(),
-            &cover,
-            &hints,
-            scratch_limit,
-            None,
-            None,
-        )
-        .map_err(|error| failure(format!("{error:?}")))?;
+        let ordered = planner::plan_with_hints(store, &cover, &hints, scratch_limit, None, None)
+            .map_err(|error| failure(format!("{error:?}")))?;
         // max_work_units is an execution budget. Planning work must be capped
         // independently: charging it here changes the observable publication
         // boundary (e.g. a spill must commit before the next execution fails).
@@ -25309,10 +25316,8 @@ where
             ordered.heap_bytes(),
             scratch_limit,
             |cell| {
-                let address = CellRef::new(cell.sheet, Coord::new(cell.row, cell.col, true, true));
                 self.graph
-                    .get_vertex_id_for_address(&address)
-                    .copied()
+                    .authority_vertex_of_cell((cell.sheet, cell.row, cell.col))
                     .ok_or_else(|| failure("missing executor identity".to_owned()))
             },
             |_work| {
@@ -25473,6 +25478,167 @@ where
 
     /// Build a demand-driven subgraph for the given targets, including ephemeral edges for
     /// compressed ranges, and returning the set of dirty/volatile precedents and virtual deps.
+    /// Demand candidates of `targets` and their dynamic plan hints: under
+    /// `unified_authority` from the authority's relation (design §8.3),
+    /// otherwise from the legacy graph.
+    #[allow(clippy::type_complexity)]
+    fn demand_subgraph(
+        &self,
+        targets: &[VertexId],
+    ) -> Result<
+        (
+            Vec<VertexId>,
+            rustc_hash::FxHashMap<VertexId, Vec<VertexId>>,
+        ),
+        ExcelError,
+    > {
+        #[cfg(feature = "unified_authority")]
+        return self.authority_demand_subgraph(targets);
+        #[cfg(not(feature = "unified_authority"))]
+        Ok(self.build_demand_subgraph(targets))
+    }
+
+    /// Design §8.3: traverse precedents from the targets over the
+    /// authority's static relation (symbol nodes are ordinary pieces) plus
+    /// the dynamic readers' virtual dependencies, and collect what legacy's
+    /// demand walk collects: dirty or volatile formula cells and every name
+    /// passed through. No legacy dependency structure is read.
+    #[cfg(feature = "unified_authority")]
+    #[allow(clippy::type_complexity)]
+    fn authority_demand_subgraph(
+        &self,
+        targets: &[VertexId],
+    ) -> Result<
+        (
+            Vec<VertexId>,
+            rustc_hash::FxHashMap<VertexId, Vec<VertexId>>,
+        ),
+        ExcelError,
+    > {
+        use crate::engine::authority::geom::{Cell, Rect, SYMBOL_SHEET};
+        use crate::engine::authority::store::TagFilter;
+        use rustc_hash::{FxHashMap, FxHashSet};
+        let store = self
+            .graph
+            .authority_plan_store()
+            .map_err(Self::authority_excel_error)?;
+        let ids = store.ids();
+        let mut to_evaluate: FxHashSet<VertexId> = FxHashSet::default();
+        let mut vdeps: FxHashMap<VertexId, Vec<VertexId>> = FxHashMap::default();
+        let mut visited: FxHashSet<Cell> = FxHashSet::default();
+        let mut stack: Vec<Cell> = Vec::new();
+        // Formula cells under `rect` on `sheet`: identity runs per column.
+        let push_formulas =
+            |stack: &mut Vec<Cell>, visited: &FxHashSet<Cell>, sheet: u16, rect: Rect| {
+                for col in rect.c0..=rect.c1 {
+                    ids.visit_runs_in(sheet, col, rect.r0, rect.r1, &mut |h| {
+                        let run = ids.run(h);
+                        let r0 = run.row_start.max(rect.r0);
+                        let r1 = (run.row_start + run.len - 1).min(rect.r1);
+                        for row in r0..=r1 {
+                            if !visited.contains(&(sheet, row, col)) {
+                                stack.push((sheet, row, col));
+                            }
+                        }
+                    });
+                }
+            };
+        for &v in targets {
+            if let Some(cell) = self.graph.authority_cell_of_vertex(v) {
+                stack.push(cell);
+            } else if let Some(table) = self.graph.table_by_vertex(v) {
+                // A table target has no node: its demand is its range's, as
+                // legacy's table vertex leads to the cells it covers.
+                let (s, e) = (table.range.start, table.range.end);
+                push_formulas(
+                    &mut stack,
+                    &visited,
+                    s.sheet_id,
+                    Rect::new(s.coord.row(), s.coord.col(), e.coord.row(), e.coord.col()),
+                );
+            }
+        }
+        let mut hits = Vec::new();
+        #[cfg(any(test, feature = "benchmark_internal"))]
+        let (mut probe_vertices, mut probe_clean_formulas, mut probe_edges, mut probe_dynamic) =
+            (0, 0, 0, 0);
+        while let Some(cell) = stack.pop() {
+            if !visited.insert(cell) {
+                continue;
+            }
+            let Some(v) = self.graph.authority_vertex_of_cell(cell) else {
+                continue;
+            };
+            if !self.graph.vertex_exists(v) {
+                continue;
+            }
+            #[cfg(any(test, feature = "benchmark_internal"))]
+            {
+                probe_vertices += 1;
+            }
+            match self.graph.get_vertex_kind(v) {
+                VertexKind::FormulaScalar | VertexKind::FormulaArray => {
+                    if self.graph.is_dirty(v) || self.graph.is_volatile(v) {
+                        to_evaluate.insert(v);
+                    } else {
+                        #[cfg(any(test, feature = "benchmark_internal"))]
+                        {
+                            probe_clean_formulas += 1;
+                        }
+                    }
+                }
+                VertexKind::NamedScalar | VertexKind::NamedArray => {
+                    to_evaluate.insert(v);
+                }
+                _ => {}
+            }
+            hits.clear();
+            store.direct_precedents(cell, TagFilter::All, &mut hits);
+            #[cfg(any(test, feature = "benchmark_internal"))]
+            {
+                probe_edges += hits.len();
+            }
+            for &(_, sheet, rect) in &hits {
+                if sheet == SYMBOL_SHEET {
+                    stack.extend((rect.r0..=rect.r1).map(|slot| (SYMBOL_SHEET, slot, 0)));
+                    continue;
+                }
+                push_formulas(&mut stack, &visited, sheet, rect);
+            }
+            if self.graph.is_dynamic(v) {
+                #[cfg(any(test, feature = "benchmark_internal"))]
+                {
+                    probe_dynamic += 1;
+                }
+                let (vdeps_map, _) = VirtualDepBuilder::new(self).build(&[v]);
+                if let Some(deps) = vdeps_map.get(&v) {
+                    for &u in deps {
+                        vdeps.entry(v).or_default().push(u);
+                        if let Some(c) = self.graph.authority_cell_of_vertex(u) {
+                            stack.push(c);
+                        }
+                    }
+                }
+            }
+        }
+        let mut result: Vec<VertexId> = to_evaluate.into_iter().collect();
+        result.sort_unstable();
+        for deps in vdeps.values_mut() {
+            deps.sort_unstable();
+            deps.dedup();
+        }
+        #[cfg(any(test, feature = "benchmark_internal"))]
+        {
+            let mut probe = self.recalc_reuse_probe.lock().unwrap();
+            probe.demand_builds += 1;
+            probe.demand_vertices += probe_vertices;
+            probe.demand_clean_formulas += probe_clean_formulas;
+            probe.demand_explicit_edges += probe_edges;
+            probe.demand_virtual_builder_calls += probe_dynamic;
+        }
+        Ok((result, vdeps))
+    }
+
     fn build_demand_subgraph(
         &self,
         target_vertices: &[VertexId],

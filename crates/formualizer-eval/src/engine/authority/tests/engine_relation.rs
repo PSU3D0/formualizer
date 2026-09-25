@@ -212,9 +212,12 @@ fn host_symbol_ids_share_formula_counter_and_survive_redefinition() {
         .vertex;
     let recreated_symbol = e.graph.vertex_addr(recreated).as_symbol().unwrap();
     assert_ne!(recreated_symbol, symbol);
+    // Reclassified (symbol nodes, design §4.1): the rebuild first gives the
+    // recreated name's symbol-plane node a fresh cell id (the high-water
+    // mark), then its binding identity the next one.
     assert_eq!(
         e.graph.authority_host().store().symbol_id(recreated_symbol),
-        Some(high_water)
+        Some(high_water + 1)
     );
 }
 
@@ -301,7 +304,13 @@ fn fixed_names_across_many_contexts_keep_the_lk_directory_bounded() {
     assert_eq!(host.builds(), builds, "a compaction must not rebuild");
     // One live name formula plus the anchor: the bound is 2·(groups +
     // formulas + 8) + 1 with a handful of live groups.
-    assert!(max_lk <= 32, "LK directory grew with history: {max_lk}");
+    // Reclassified (symbol nodes, design §4.1): the 8 names are now 8 live
+    // symbol nodes, each holding its own LK key, so the live bound gains
+    // 2·8 keys. It still does not grow with the 64 contexts used.
+    assert!(
+        max_lk <= 32 + 2 * 8,
+        "LK directory grew with history: {max_lk}"
+    );
     assert_eq!(
         host.store().ids().id_of(anchor),
         anchor_id,

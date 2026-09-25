@@ -41,7 +41,8 @@ pub fn sync<R>(e: &mut Engine<R>) -> Result<Summary, AuthorityError> {
     let s = host.store();
     let c = s.counts();
     Ok(Summary {
-        formulas: s.formula_count(),
+        // Symbol nodes are not formula cells.
+        formulas: s.formula_count() - host.symbols().len() as u64,
         records: c.records,
         owners: c.owners,
         nodes: c.nodes,
@@ -71,18 +72,14 @@ pub fn settle_legacy<R>(e: &mut Engine<R>) {
 pub fn direct_dependents<R>(e: &mut Engine<R>, cell: Cell) -> Result<Vec<Cell>, AuthorityError> {
     e.graph.authority()?;
     let s = e.graph.authority_host().store();
-    let mut hits = Vec::new();
-    s.direct_dependents(
-        cell.0,
-        &Rect::cell(cell.1, cell.2),
-        TagFilter::All,
-        &mut hits,
-    );
-    let mut cover = super::geom::Cover::new();
-    for (sh, r) in hits {
-        cover.insert_rect(sh, &r);
-    }
-    Ok(cover.cells())
+    Ok(
+        crate::engine::graph::DependencyGraph::authority_direct_grid_dependents(
+            s,
+            cell.0,
+            &Rect::cell(cell.1, cell.2),
+        )
+        .cells(),
+    )
 }
 
 /// Authority dirty closure (transitive dependents) of `cells`.
@@ -90,7 +87,12 @@ pub fn closure<R>(e: &mut Engine<R>, cells: &[Cell]) -> Result<Vec<Cell>, Author
     e.graph.authority()?;
     let s = e.graph.authority_host().store();
     let seeds: Vec<(u16, Rect)> = cells.iter().map(|c| (c.0, Rect::cell(c.1, c.2))).collect();
-    Ok(s.dependents(&seeds, TagFilter::All).0.cells())
+    Ok(s.dependents(&seeds, TagFilter::All)
+        .0
+        .cells()
+        .into_iter()
+        .filter(|c| c.0 != super::geom::SYMBOL_SHEET)
+        .collect())
 }
 
 /// Authority direct precedent rectangles of one formula cell:
@@ -99,7 +101,7 @@ pub fn precedents<R>(e: &mut Engine<R>, cell: Cell) -> Result<Vec<(u16, Rect)>, 
     e.graph.authority()?;
     let s = e.graph.authority_host().store();
     let mut hits = Vec::new();
-    s.direct_precedents(cell, TagFilter::All, &mut hits);
+    s.direct_grid_precedents(cell, TagFilter::All, &mut hits);
     Ok(hits.into_iter().map(|(_, sh, r)| (sh, r)).collect())
 }
 
@@ -137,7 +139,13 @@ pub fn dirty_pair<R>(
 /// Formula cells the authority holds.
 pub fn formula_cells<R>(e: &mut Engine<R>) -> Result<Vec<Cell>, AuthorityError> {
     e.graph.authority()?;
-    Ok(e.graph.authority_host().store().formula_cells())
+    Ok(e.graph
+        .authority_host()
+        .store()
+        .formula_cells()
+        .into_iter()
+        .filter(|c| c.0 != super::geom::SYMBOL_SHEET)
+        .collect())
 }
 
 /// A fresh build from the engine's current formulas (not installed).

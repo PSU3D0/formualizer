@@ -27,7 +27,7 @@
 use super::avl::AvlMap;
 use super::canon::{self, CanonWork};
 use super::dir::{DirPlan, Directory};
-use super::geom::{Cell, Cover, Rect};
+use super::geom::{Cell, Cover, Rect, SYMBOL_SHEET, sheet_slot};
 pub use super::groups::Group;
 use super::groups::{
     GroupKey, GroupPlan, GroupTable, Members, l_hash, members_cap_after, members_heap,
@@ -264,6 +264,9 @@ pub enum AuthorityError {
     Unsupported {
         operation: &'static str,
     },
+    /// A read-only planning path found graph changes the host has not
+    /// synced yet; planning from the stale store would be wrong.
+    Stale,
 }
 
 impl std::fmt::Display for AuthorityError {
@@ -282,6 +285,7 @@ impl std::fmt::Display for AuthorityError {
             AuthorityError::Unsupported { operation } => {
                 write!(f, "{operation} is unsupported under unified_authority")
             }
+            AuthorityError::Stale => write!(f, "authority host has unsynced graph changes"),
         }
     }
 }
@@ -550,7 +554,7 @@ impl IndexPlan {
             Some(i) => i as usize,
             None => {
                 let sh = idx
-                    .get(s as usize)
+                    .get(sheet_slot(s))
                     .map(LevelIndex::shadow)
                     .unwrap_or_default();
                 // Shadows are large; grow by doubling from one.
@@ -565,7 +569,7 @@ impl IndexPlan {
                     .map_err(|_| AuthorityError::Alloc)?;
                 self.pos.insert(u64::from(s), self.touched.len() as u32);
                 self.touched.push((s, sh));
-                self.sheets = self.sheets.max(s as usize + 1);
+                self.sheets = self.sheets.max(sheet_slot(s) + 1);
                 self.touched.len() - 1
             }
         };
@@ -585,7 +589,7 @@ impl IndexPlan {
     fn account(&self, idx: &Vec<LevelIndex>, b: &mut mutate::Bytes) -> i64 {
         let mut entries = 0i64;
         for (s, sh) in &self.touched {
-            match idx.get(*s as usize) {
+            match idx.get(sheet_slot(*s)) {
                 Some(cur) => {
                     b.retained(cur.heap_bytes(), sh.heap_bytes());
                     for (o, n) in sh.vec_growth(cur) {
@@ -894,14 +898,14 @@ impl Store {
             PREC => (&mut self.idx.prec, &mut self.prec_loc),
             _ => (&mut self.idx.node, &mut self.node_loc),
         };
-        while v.len() <= sheet as usize {
+        while v.len() <= sheet_slot(sheet) {
             debug_assert!(
                 v.len() < v.capacity() || stage.is_none(),
                 "unreserved index vector"
             );
             v.push(LevelIndex::default());
         }
-        let idx = &mut v[sheet as usize];
+        let idx = &mut v[sheet_slot(sheet)];
         let (b0, e0) = (idx.heap_bytes(), idx.entries());
         match op {
             IndexOp::Insert(b, id) => idx.insert_in(b, id, loc, stage),
@@ -950,7 +954,7 @@ impl Store {
         if run.owner != FAMILY {
             return Some(run.owner);
         }
-        let idx = self.idx.node.get(cell.0 as usize)?;
+        let idx = self.idx.node.get(sheet_slot(cell.0))?;
         let mut found = None;
         idx.query(&[cell.1, cell.2, cell.1, cell.2], &mut |o| found = Some(o));
         debug_assert!(found.is_some(), "family run without a family node");
@@ -1005,7 +1009,7 @@ impl Store {
     ) -> u64 {
         self.idx
             .node
-            .get(sheet as usize)
+            .get(sheet_slot(sheet))
             .map_or(0, |idx| idx.query(&domain.as_box(), visit))
     }
 
@@ -1018,7 +1022,7 @@ impl Store {
         domain: &Rect,
         visit: &mut dyn FnMut(EdgeKey, Rect),
     ) -> u64 {
-        let Some(idx) = self.idx.dep.get(sheet as usize) else {
+        let Some(idx) = self.idx.dep.get(sheet_slot(sheet)) else {
             return 0;
         };
         idx.query(&domain.as_box(), &mut |id| {
@@ -1036,7 +1040,7 @@ impl Store {
         filter: TagFilter,
         out: &mut Vec<(u16, Rect)>,
     ) -> u64 {
-        let Some(idx) = self.idx.prec.get(sheet as usize) else {
+        let Some(idx) = self.idx.prec.get(sheet_slot(sheet)) else {
             return 0;
         };
         idx.query(&q.as_box(), &mut |id| {
@@ -1057,7 +1061,7 @@ impl Store {
         filter: TagFilter,
         out: &mut Vec<(Tag, u16, Rect)>,
     ) -> u64 {
-        let Some(idx) = self.idx.dep.get(cell.0 as usize) else {
+        let Some(idx) = self.idx.dep.get(sheet_slot(cell.0)) else {
             return 0;
         };
         idx.query(&[cell.1, cell.2, cell.1, cell.2], &mut |id| {
@@ -1069,6 +1073,54 @@ impl Store {
                 out.push((key.tag, key.proj.sheet, p));
             }
         })
+    }
+
+    /// Grid direct dependents of `q` on `sheet`, looking through symbol
+    /// nodes (a reader of a name whose node reads `q` is a direct
+    /// dependent of `q`, as legacy's name links make it). Symbol nodes form
+    /// a small graph; each is expanded once.
+    pub fn direct_grid_dependents(&self, sheet: u16, q: &Rect, filter: TagFilter) -> Cover {
+        let mut cover = Cover::new();
+        let mut seen = rustc_hash::FxHashSet::default();
+        let mut hits = Vec::new();
+        self.direct_dependents(sheet, q, filter, &mut hits);
+        while let Some((s, r)) = hits.pop() {
+            if s != SYMBOL_SHEET {
+                cover.insert_rect(s, &r);
+                continue;
+            }
+            for slot in r.r0..=r.r1 {
+                if seen.insert(slot) {
+                    self.direct_dependents(SYMBOL_SHEET, &Rect::cell(slot, 0), filter, &mut hits);
+                }
+            }
+        }
+        cover
+    }
+
+    /// Grid direct precedents of one cell, looking through symbol nodes
+    /// (a name's targets count as precedents of its readers). Each symbol
+    /// node is expanded once.
+    pub fn direct_grid_precedents(
+        &self,
+        cell: Cell,
+        filter: TagFilter,
+        out: &mut Vec<(Tag, u16, Rect)>,
+    ) {
+        let mut seen = rustc_hash::FxHashSet::default();
+        let mut hits = Vec::new();
+        self.direct_precedents(cell, filter, &mut hits);
+        while let Some((tag, s, r)) = hits.pop() {
+            if s != SYMBOL_SHEET {
+                out.push((tag, s, r));
+                continue;
+            }
+            for slot in r.r0..=r.r1 {
+                if seen.insert(slot) {
+                    self.direct_precedents((SYMBOL_SHEET, slot, 0), filter, &mut hits);
+                }
+            }
+        }
     }
 
     /// Transitive dependents (positive length) of `seeds`, by the

@@ -391,7 +391,7 @@ impl Store {
                 self.ids.coalesce_at(cell, &|a, b| {
                     let at = |row: u32, col: u32| {
                         let mut f = None;
-                        node_idx[a.sheet as usize]
+                        node_idx[sheet_slot(a.sheet)]
                             .query(&[row, col, row, col], &mut |x| f = Some(x));
                         f
                     };
@@ -424,7 +424,7 @@ impl Store {
         self.stage
             .iter()
             .map(|(r, s, _)| {
-                let i = &self.index_ref(usize::from(*r))[*s as usize];
+                let i = &self.index_ref(usize::from(*r))[sheet_slot(*s)];
                 (i.peak() - i.heap_bytes()) as u64
             })
             .sum()
@@ -434,7 +434,7 @@ impl Store {
     /// when a former singleton's run still names its dead owner).
     fn owner_at_fresh(&self, cell: Cell) -> u32 {
         let mut found = None;
-        if let Some(idx) = self.idx.node.get(cell.0 as usize) {
+        if let Some(idx) = self.idx.node.get(sheet_slot(cell.0)) {
             idx.query(&[cell.1, cell.2, cell.1, cell.2], &mut |o| found = Some(o));
         }
         if let Some(o) = found {

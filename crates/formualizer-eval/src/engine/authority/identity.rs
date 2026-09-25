@@ -24,7 +24,7 @@
 //! counter-only [`IdShadow`], so predicted and actual slot use agree exactly.
 
 use super::avl::{AvlMap, ReserveError, SlabShadow, grown};
-use super::geom::Cell;
+use super::geom::{Cell, sheet_slot};
 
 pub type Vid = u32;
 
@@ -105,7 +105,7 @@ pub struct IdShadow {
 
 impl IdShadow {
     fn fwd(&mut self, sheet: u16) -> &mut SlabShadow {
-        let s = sheet as usize;
+        let s = sheet_slot(sheet);
         assert!(
             s >= self.fwd_base,
             "identity shadow replayed outside its sheet window"
@@ -310,7 +310,7 @@ impl IdentityTable {
     /// accounting and reservation then visit that sheet alone (O(1) in the
     /// sheet count). The forward list is reserved fallibly.
     pub fn try_shadow_sheet(&self, sheet: u16) -> Result<IdShadow, ReserveError> {
-        let s = sheet as usize;
+        let s = sheet_slot(sheet);
         let mut fwd = Vec::new();
         fwd.try_reserve_exact(1).map_err(|_| ReserveError)?;
         fwd.push(self.fwd.get(s).map(AvlMap::shadow).unwrap_or_default());
@@ -409,7 +409,7 @@ impl IdentityTable {
     /// `cell → (id, run handle)`: the lookup lemma.
     pub fn lookup(&self, cell: Cell) -> Option<(Vid, u32)> {
         let (sheet, row, col) = cell;
-        let map = self.fwd.get(sheet as usize)?;
+        let map = self.fwd.get(sheet_slot(sheet))?;
         let (key, h) = map.pred(fwd_key(col, row))?;
         if (key >> 32) as u32 != col {
             return None;
@@ -519,7 +519,7 @@ impl IdentityTable {
         r1: u32,
         visit: &mut dyn FnMut(u32),
     ) -> u64 {
-        let Some(map) = self.fwd.get(sheet as usize) else {
+        let Some(map) = self.fwd.get(sheet_slot(sheet)) else {
             return 0;
         };
         let mut work = 0;
@@ -542,7 +542,7 @@ impl IdentityTable {
 
     /// Runs of `sheet` intersecting column `col`, rows `r0..=r1`.
     pub fn runs_in(&self, sheet: u16, col: u32, r0: u32, r1: u32, out: &mut Vec<u32>) {
-        let Some(map) = self.fwd.get(sheet as usize) else {
+        let Some(map) = self.fwd.get(sheet_slot(sheet)) else {
             return;
         };
         // The run with the greatest start ≤ r0 (it may start at r0).
@@ -587,7 +587,7 @@ impl IdentityTable {
     }
 
     fn fwd_mut(&mut self, sheet: u16) -> &mut AvlMap {
-        let s = sheet as usize;
+        let s = sheet_slot(sheet);
         if self.fwd.len() <= s {
             if self.fwd.capacity() <= s {
                 self.fwd.reserve_exact(s + 1 - self.fwd.len());
@@ -845,7 +845,7 @@ impl IdentityTable {
             by_id.push((r.first_id, r.first_id + r.len - 1));
             let fwd = self
                 .fwd
-                .get(r.sheet as usize)
+                .get(sheet_slot(r.sheet))
                 .and_then(|m| m.get(fwd_key(r.col, r.row_start)));
             if fwd != Some(h) {
                 return Err(format!("run {h} missing from the forward directory"));

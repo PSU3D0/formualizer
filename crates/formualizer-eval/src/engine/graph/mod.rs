@@ -213,6 +213,18 @@ impl FormulaMap {
     pub(crate) fn take_touched(&mut self) -> Vec<VertexId> {
         std::mem::take(&mut self.touched)
     }
+
+    /// Record a vertex whose dependencies were re-derived without a formula
+    /// change (a pending symbol became bound).
+    #[cfg(feature = "unified_authority")]
+    pub(crate) fn touch(&mut self, vertex: VertexId) {
+        self.touched.push(vertex);
+    }
+
+    #[cfg(feature = "unified_authority")]
+    pub(crate) fn has_touched(&self) -> bool {
+        !self.touched.is_empty()
+    }
 }
 
 /// SoA-based dependency graph implementation
@@ -1399,7 +1411,12 @@ impl DependencyGraph {
 
     /// Returns the ID for a sheet name, creating one if it doesn't exist.
     pub fn sheet_id_mut(&mut self, name: &str) -> SheetId {
-        self.sheet_reg.id_for(name)
+        if let Some(id) = self.sheet_reg.get_id(name) {
+            return id;
+        }
+        let id = self.sheet_reg.id_for(name);
+        self.resolve_pending_symbol("sheet", name);
+        id
     }
 
     pub fn sheet_id(&self, name: &str) -> Option<SheetId> {
@@ -1452,6 +1469,8 @@ impl DependencyGraph {
             ..
         } = self;
 
+        let unbound_pending =
+            config.preparation_policy == crate::engine::PreparationPolicy::BestEffort;
         let case_sensitive_names = config.case_sensitive_names;
         let names = NameRegistryView::new(move |name, current_sheet| {
             let found = if case_sensitive_names {
@@ -1560,6 +1579,7 @@ impl DependencyGraph {
             function_provider,
             policy,
         )
+        .with_unbound_pending(unbound_pending)
     }
 
     /// Converts a `CellRef` to a fully qualified A1-style string (e.g., "SheetName!A1").
@@ -4536,6 +4556,8 @@ impl DependencyGraph {
 
         self.add_dependent_edges(vertex_id, &new_dependencies);
         self.add_range_dependent_edges(vertex_id, &new_range_dependencies, sheet_id);
+        #[cfg(feature = "unified_authority")]
+        self.vertex_formulas.touch(vertex_id);
         let _ = self.mark_dirty(vertex_id);
     }
 }

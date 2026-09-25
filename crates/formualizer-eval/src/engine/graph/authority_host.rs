@@ -5,8 +5,8 @@
 //! differential gates Δ(a) (dirty closure) and Δ(e) (direct dependents).
 
 use super::*;
-use crate::engine::authority::extract::extract_formula;
-use crate::engine::authority::geom::{Cell, Cover, Rect};
+use crate::engine::authority::extract::{extract_formula, extract_symbol};
+use crate::engine::authority::geom::{Cell, Cover, Rect, SYMBOL_SHEET};
 use crate::engine::authority::host::{AuthorityHost, HostState};
 use crate::engine::authority::store::{AuthorityError, BuildInput, Store, TagFilter};
 use std::sync::OnceLock;
@@ -98,7 +98,7 @@ impl DependencyGraph {
         }
         let ast = *self.vertex_formulas.get(&vid)?;
         let (sheet, row, col) = cell_of(&cell);
-        let facts = extract_formula(
+        let mut facts = extract_formula(
             self,
             sheet,
             row,
@@ -107,7 +107,95 @@ impl DependencyGraph {
             self.is_volatile(vid),
             self.is_dynamic(vid),
         );
+        self.authority_apply_range_self_use(vid, (sheet, row, col), &mut facts);
         Some(((sheet, row, col), facts))
+    }
+
+    /// Legacy's #120 rule: a compressed range (open, or larger than the
+    /// expansion limit) covering its own formula's cell is a self-loop,
+    /// unless every use of it is a static `INDEX` whose selection excludes
+    /// the cell (`compressed_range_self_use`). In that case the edge keeps
+    /// the range minus the cell: up to four absolute pieces, and the formula
+    /// stays an ungrouped singleton because its edges are no longer the
+    /// template's.
+    fn authority_apply_range_self_use(
+        &self,
+        vid: VertexId,
+        cell: Cell,
+        facts: &mut crate::engine::authority::store::FormulaFacts,
+    ) {
+        use super::range_deps::RangeSelfUse;
+        use crate::engine::authority::proj::{AxisMap, Bound, RefProj};
+        use crate::engine::authority::store::OriginSpec;
+        let (sheet, row, col) = cell;
+        let limit = self.config.range_expansion_limit as u64;
+        let excluded = |e: &crate::engine::authority::store::EdgeSpec| -> Option<Rect> {
+            if !matches!(e.origin, OriginSpec::Text) || e.proj.sheet != sheet {
+                return None;
+            }
+            let img = e.proj.instantiate(row, col)?;
+            if !(img.r0 <= row && row <= img.r1 && img.c0 <= col && col <= img.c1) {
+                return None;
+            }
+            let (rows, cols) = (e.proj.rows, e.proj.cols);
+            let open = [rows.lo, rows.hi, cols.lo, cols.hi].contains(&Bound::Open);
+            let area = u64::from(img.r1 - img.r0 + 1) * u64::from(img.c1 - img.c0 + 1);
+            if !open && area <= limit {
+                return None;
+            }
+            let raw = |b: Bound, at: u32| match b {
+                Bound::Open => None,
+                Bound::Abs(v) => Some(v),
+                Bound::Rel(d) => u32::try_from(i64::from(at) + i64::from(d)).ok(),
+            };
+            let range = (
+                raw(rows.lo, row),
+                raw(rows.hi, row),
+                raw(cols.lo, col),
+                raw(cols.hi, col),
+            );
+            (self.compressed_range_self_use(vid, sheet, range) == RangeSelfUse::Excluded)
+                .then_some(img)
+        };
+        if !facts.edges.iter().any(|e| excluded(e).is_some()) {
+            return;
+        }
+        let mut edges = Vec::with_capacity(facts.edges.len() + 3);
+        for e in facts.edges.drain(..) {
+            let Some(img) = excluded(&e) else {
+                edges.push(e);
+                continue;
+            };
+            let mut piece = |r0: u32, c0: u32, r1: u32, c1: u32| {
+                if r0 <= r1 && c0 <= c1 {
+                    edges.push(crate::engine::authority::store::EdgeSpec {
+                        proj: RefProj {
+                            sheet,
+                            rows: AxisMap::fixed(r0, r1),
+                            cols: AxisMap::fixed(c0, c1),
+                        },
+                        tag: e.tag,
+                        origin: OriginSpec::Text,
+                    });
+                }
+            };
+            if row > img.r0 {
+                piece(img.r0, img.c0, row - 1, img.c1);
+            }
+            if row < img.r1 {
+                piece(row + 1, img.c0, img.r1, img.c1);
+            }
+            if col > img.c0 {
+                piece(row, img.c0, row, col - 1);
+            }
+            if col < img.c1 {
+                piece(row, col + 1, row, img.c1);
+            }
+        }
+        edges.sort_unstable();
+        edges.dedup();
+        facts.edges = edges;
+        facts.ltokens = None;
     }
 
     /// Rebuild the store from the graph's formulas (load, symbol revision,
@@ -116,6 +204,7 @@ impl DependencyGraph {
     /// goes through the store's admission; a rejection fails the host with
     /// the typed error instead of installing a store above the budget.
     fn authority_rebuild(&mut self) {
+        self.authority_sync_symbol_slots();
         let input = self.authority_build_input();
         let budget = self.authority.store.budget;
         let prior = (self.authority.state != HostState::Unbuilt).then_some(&self.authority.store);
@@ -179,6 +268,17 @@ impl DependencyGraph {
     /// Bring the authority up to date with the graph's formulas.
     pub(crate) fn authority_sync(&mut self) {
         let touched = self.vertex_formulas.take_touched();
+        // Spans are the one transient unsupported state: once they are gone
+        // (demoted to per-cell formulas) the graph holds every formula again
+        // and a rebuild is exact.
+        if self.authority.state
+            == HostState::Failed(AuthorityError::Unsupported {
+                operation: "formula_plane_spans",
+            })
+            && self.formula_authority.active_span_count() == 0
+        {
+            self.authority.state = HostState::Unbuilt;
+        }
         if matches!(self.authority.state, HostState::Failed(_)) {
             return;
         }
@@ -262,6 +362,28 @@ impl DependencyGraph {
         }
     }
 
+    /// The store a read-only planning path may use: the host must be
+    /// ready and synced with the graph (no pending formula changes, no
+    /// symbol revision since the last build, no FormulaPlane spans).
+    pub(crate) fn authority_plan_store(&self) -> Result<&Store, AuthorityError> {
+        if self.formula_authority.active_span_count() > 0 {
+            return Err(AuthorityError::Unsupported {
+                operation: "formula_plane_spans",
+            });
+        }
+        match &self.authority.state {
+            HostState::Failed(e) => Err(e.clone()),
+            HostState::Unbuilt => Err(AuthorityError::Stale),
+            HostState::Ready
+                if self.authority.symbol_rev != self.symbol_revision
+                    || self.vertex_formulas.has_touched() =>
+            {
+                Err(AuthorityError::Stale)
+            }
+            HostState::Ready => Ok(&self.authority.store),
+        }
+    }
+
     /// Mutable host access (tests: budgets).
     pub(crate) fn authority_host_mut(&mut self) -> &mut AuthorityHost {
         &mut self.authority
@@ -274,13 +396,7 @@ impl DependencyGraph {
     ) -> Result<Vec<CellRef>, AuthorityError> {
         let host = self.authority()?;
         let c = cell_of(&cell);
-        let mut hits = Vec::new();
-        host.store
-            .direct_dependents(c.0, &Rect::cell(c.1, c.2), TagFilter::All, &mut hits);
-        let mut cover = Cover::new();
-        for (s, r) in hits {
-            cover.insert_rect(s, &r);
-        }
+        let cover = Self::authority_direct_grid_dependents(&host.store, c.0, &Rect::cell(c.1, c.2));
         Ok(cover.cells().into_iter().map(cell_ref).collect())
     }
 
@@ -295,7 +411,12 @@ impl DependencyGraph {
             .map(|c| (c.sheet_id, Rect::cell(c.coord.row(), c.coord.col())))
             .collect();
         let (cover, _) = host.store.dependents(&seeds, TagFilter::All);
-        Ok(cover.cells().into_iter().map(cell_ref).collect())
+        Ok(cover
+            .cells()
+            .into_iter()
+            .filter(|c| c.0 != SYMBOL_SHEET)
+            .map(cell_ref)
+            .collect())
     }
 
     /// Direct precedents of a formula cell: `(sheet, r0, c0, r1, c1)`.
@@ -306,7 +427,7 @@ impl DependencyGraph {
         let host = self.authority()?;
         let mut hits = Vec::new();
         host.store
-            .direct_precedents(cell_of(&cell), TagFilter::All, &mut hits);
+            .direct_grid_precedents(cell_of(&cell), TagFilter::All, &mut hits);
         let mut v: Vec<_> = hits
             .into_iter()
             .map(|(_, s, r)| (s, r.r0, r.c0, r.r1, r.c1))
@@ -342,7 +463,7 @@ impl DependencyGraph {
         }
         let cells: Vec<Cell> = seeds
             .iter()
-            .filter_map(|&v| self.get_cell_ref(v).map(|c| cell_of(&c)))
+            .filter_map(|&v| self.authority_cell_of_vertex(v))
             .collect();
         if cells.is_empty() {
             return;
@@ -361,7 +482,11 @@ impl DependencyGraph {
             return;
         }
         let legacy = self.legacy_dirty_cells(legacy_affected);
-        let mine: Vec<Cell> = marked.cells();
+        let mine: Vec<Cell> = marked
+            .cells()
+            .into_iter()
+            .filter(|c| c.0 != SYMBOL_SHEET)
+            .collect();
         let mut problems: Vec<String> = Vec::new();
         let only_legacy: Vec<&Cell> = legacy
             .iter()
@@ -385,21 +510,15 @@ impl DependencyGraph {
         if conservative {
             self.authority.diff.closure_conservative += 1;
         }
-        for &c in &cells {
+        for &c in cells.iter().filter(|c| c.0 != SYMBOL_SHEET) {
             self.authority.diff.checked_seeds += 1;
             let legacy = self.legacy_direct_dependent_cells(c);
-            let mut hits = Vec::new();
-            self.authority.store.direct_dependents(
+            let mine = Self::authority_direct_grid_dependents(
+                &self.authority.store,
                 c.0,
                 &Rect::cell(c.1, c.2),
-                TagFilter::All,
-                &mut hits,
-            );
-            let mut cover = Cover::new();
-            for (s, r) in hits {
-                cover.insert_rect(s, &r);
-            }
-            let mine = cover.cells();
+            )
+            .cells();
             if legacy != mine {
                 self.authority.diff.direct_mismatches += 1;
                 problems.push(format!(
@@ -439,8 +558,7 @@ impl DependencyGraph {
             return;
         }
         for &v in vertices {
-            if let Some(c) = self.get_cell_ref(v) {
-                let (s, r, col) = cell_of(&c);
+            if let Some((s, r, col)) = self.authority_cell_of_vertex(v) {
                 self.authority.dirty.clean(s, &Rect::cell(r, col));
             }
         }
@@ -563,7 +681,14 @@ impl DependencyGraph {
             return Err(e.clone());
         }
         let legacy = self.legacy_dirty_cells(&affected);
-        Ok((legacy, self.authority.dirty.cells()))
+        let mine = self
+            .authority
+            .dirty
+            .cells()
+            .into_iter()
+            .filter(|c| c.0 != SYMBOL_SHEET)
+            .collect();
+        Ok((legacy, mine))
     }
 
     // ------------------------------------------------------------ memory gate
@@ -617,11 +742,78 @@ impl DependencyGraph {
         ]
     }
 
-    /// The build input the host would use for a full rebuild.
+    /// The build input the host would use for a full rebuild: every formula
+    /// cell, then every name's symbol node.
     pub(crate) fn authority_build_input(&self) -> Vec<BuildInput> {
         let vids: Vec<VertexId> = self.vertex_formulas.keys().copied().collect();
-        vids.into_iter()
+        let mut input: Vec<BuildInput> = vids
+            .into_iter()
             .filter_map(|v| self.authority_formula_input(v))
-            .collect()
+            .collect();
+        input.extend(
+            self.authority
+                .symbols
+                .iter()
+                .filter_map(|(slot, v)| self.authority_symbol_input(slot, v)),
+        );
+        input
+    }
+
+    fn authority_symbol_input(&self, slot: u32, vertex: VertexId) -> Option<BuildInput> {
+        let (_, name) = self.name_vertex_lookup.get(&vertex)?;
+        let entry = self.named_range_by_vertex(vertex)?;
+        let facts = extract_symbol(
+            self,
+            name,
+            entry,
+            self.is_volatile(vertex),
+            self.is_dynamic(vertex),
+        );
+        Some(((SYMBOL_SHEET, slot, 0), facts))
+    }
+
+    /// Give every live name a symbol-plane row (surviving names keep theirs)
+    /// and drop the dirty marks of retired rows.
+    fn authority_sync_symbol_slots(&mut self) {
+        let mut live: Vec<VertexId> = self
+            .name_vertex_lookup
+            .keys()
+            .copied()
+            .filter(|&v| !self.store.is_deleted(v))
+            .collect();
+        live.sort_unstable();
+        for slot in self.authority.symbols.sync(&live) {
+            self.authority
+                .dirty
+                .clean(SYMBOL_SHEET, &Rect::cell(slot, 0));
+        }
+    }
+
+    /// The authority cell of an executor vertex: its grid cell, or its
+    /// symbol-plane node for a name.
+    pub(crate) fn authority_cell_of_vertex(&self, v: VertexId) -> Option<Cell> {
+        match self.get_cell_ref(v) {
+            Some(c) => Some(cell_of(&c)),
+            None => self
+                .authority
+                .symbols
+                .slot(v)
+                .map(|slot| (SYMBOL_SHEET, slot, 0)),
+        }
+    }
+
+    /// The executor vertex of an authority cell (grid or symbol plane).
+    pub(crate) fn authority_vertex_of_cell(&self, cell: Cell) -> Option<VertexId> {
+        if cell.0 == SYMBOL_SHEET {
+            self.authority.symbols.vertex(cell.1)
+        } else {
+            self.get_vertex_for_cell(&cell_ref(cell))
+        }
+    }
+
+    /// Direct dependents of `(sheet, q)` among grid cells, looking through
+    /// symbol nodes transparently.
+    pub(crate) fn authority_direct_grid_dependents(store: &Store, sheet: u16, q: &Rect) -> Cover {
+        store.direct_grid_dependents(sheet, q, TagFilter::All)
     }
 }

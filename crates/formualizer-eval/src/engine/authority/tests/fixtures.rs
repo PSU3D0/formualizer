@@ -4,7 +4,7 @@
 //! a formula menu covering every R-1/R-1X reference form.
 
 use super::super::geom::{Cell, Cover, Rect};
-use super::super::store::{BuildInput, Store, TagFilter};
+use super::super::store::{Store, TagFilter};
 use super::support::Rng;
 use crate::engine::named_range::{NameScope, NamedDefinition};
 use crate::engine::{Engine, EvalConfig};
@@ -136,47 +136,30 @@ pub fn query_cells(e: &Engine<TestWorkbook>) -> Vec<Cell> {
 }
 
 pub fn rebuild_from_graph(e: &Engine<TestWorkbook>) -> Store {
-    let g = &e.graph;
-    let input: Vec<BuildInput> = g
-        .vertices_with_formulas()
-        .filter_map(|v| {
-            let cr = g.get_cell_ref(v)?;
-            let ast = g.get_formula_id(v)?;
-            let (s, r, c) = (cr.sheet_id, cr.coord.row(), cr.coord.col());
-            Some((
-                (s, r, c),
-                super::super::extract::extract_formula(
-                    g,
-                    s,
-                    r,
-                    c,
-                    ast,
-                    g.is_volatile(v),
-                    g.is_dynamic(v),
-                ),
-            ))
-        })
-        .collect();
-    Store::build(input)
+    // Reclassified (symbol nodes, design §4.1): the host's own build input,
+    // which adds each name's symbol-plane node to the formula cells.
+    Store::build(e.graph.authority_build_input())
 }
 
+// Reclassified (symbol nodes, design §4.1): names are symbol-plane nodes,
+// so the grid relation the oracles define looks through them.
 pub fn store_direct(s: &Store, q: Cell, f: TagFilter) -> Vec<Cell> {
-    let mut hits = Vec::new();
-    s.direct_dependents(q.0, &Rect::cell(q.1, q.2), f, &mut hits);
-    let mut cover = Cover::new();
-    for (sh, r) in hits {
-        cover.insert_rect(sh, &r);
-    }
-    cover.cells()
+    s.direct_grid_dependents(q.0, &Rect::cell(q.1, q.2), f)
+        .cells()
 }
 
 pub fn store_closure(s: &Store, q: Cell, f: TagFilter) -> Vec<Cell> {
-    s.dependents(&[(q.0, Rect::cell(q.1, q.2))], f).0.cells()
+    s.dependents(&[(q.0, Rect::cell(q.1, q.2))], f)
+        .0
+        .cells()
+        .into_iter()
+        .filter(|c| c.0 != super::super::geom::SYMBOL_SHEET)
+        .collect()
 }
 
 pub fn store_precedent_cells(s: &Store, cell: Cell, f: TagFilter) -> Vec<Cell> {
     let mut hits = Vec::new();
-    s.direct_precedents(cell, f, &mut hits);
+    s.direct_grid_precedents(cell, f, &mut hits);
     let mut cover = Cover::new();
     for (_, sh, r) in hits {
         if let Some(r) = r.intersect(&Rect::new(0, 0, ROWS, COLS)) {

@@ -12,6 +12,8 @@
 
 use super::dirty::DirtyStore;
 use super::store::{AuthorityError, Store};
+use crate::engine::VertexId;
+use rustc_hash::FxHashMap;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum HostState {
@@ -50,6 +52,83 @@ pub struct AuthorityHost {
     pub(crate) builds: u64,
     pub(crate) incremental_mutations: u64,
     pub(crate) diff: DiffCounters,
+    /// Symbol nodes (design §4.1): every defined name is one node on the
+    /// symbol plane (`geom::SYMBOL_SHEET`, row = slot, column 0), with its
+    /// references as precedents and its readers as dependents. The plane is
+    /// planned with the cells, so a name's vertex is scheduled as a unit
+    /// between its precedents and its readers.
+    pub(crate) symbols: SymbolSlots,
+}
+
+/// Name vertex ↔ symbol-plane row. Assigned at symbol-revision rebuilds;
+/// a surviving name keeps its row (and so its authority id).
+#[derive(Debug, Default)]
+pub struct SymbolSlots {
+    slot_of: FxHashMap<VertexId, u32>,
+    vertex_of: Vec<Option<VertexId>>,
+    free: Vec<u32>,
+}
+
+impl SymbolSlots {
+    pub fn slot(&self, vertex: VertexId) -> Option<u32> {
+        self.slot_of.get(&vertex).copied()
+    }
+
+    pub fn vertex(&self, slot: u32) -> Option<VertexId> {
+        self.vertex_of.get(slot as usize).copied().flatten()
+    }
+
+    pub fn len(&self) -> usize {
+        self.slot_of.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.slot_of.is_empty()
+    }
+
+    /// Live `(slot, vertex)` pairs in slot order.
+    pub fn iter(&self) -> impl Iterator<Item = (u32, VertexId)> + '_ {
+        self.vertex_of
+            .iter()
+            .enumerate()
+            .filter_map(|(s, v)| v.map(|v| (s as u32, v)))
+    }
+
+    /// Keep the rows of names still in `live` (sorted), retire the rest and
+    /// give new names the lowest free rows. Returns the retired rows.
+    pub fn sync(&mut self, live: &[VertexId]) -> Vec<u32> {
+        let mut retired = Vec::new();
+        for (slot, entry) in self.vertex_of.iter_mut().enumerate() {
+            if let Some(v) = *entry
+                && live.binary_search(&v).is_err()
+            {
+                *entry = None;
+                self.slot_of.remove(&v);
+                retired.push(slot as u32);
+            }
+        }
+        self.free.extend(retired.iter().copied());
+        // Lowest rows first, so the plane stays dense.
+        self.free.sort_unstable_by(|a, b| b.cmp(a));
+        for &v in live {
+            if self.slot_of.contains_key(&v) {
+                continue;
+            }
+            let slot = self.free.pop().unwrap_or_else(|| {
+                self.vertex_of.push(None);
+                (self.vertex_of.len() - 1) as u32
+            });
+            self.vertex_of[slot as usize] = Some(v);
+            self.slot_of.insert(v, slot);
+        }
+        retired
+    }
+
+    pub fn heap_bytes(&self) -> usize {
+        super::dir::hash_table_bytes::<(VertexId, u32)>(self.slot_of.capacity())
+            + self.vertex_of.capacity() * size_of::<Option<VertexId>>()
+            + self.free.capacity() * size_of::<u32>()
+    }
 }
 
 impl AuthorityHost {
@@ -75,5 +154,9 @@ impl AuthorityHost {
 
     pub fn diff_counters(&self) -> &DiffCounters {
         &self.diff
+    }
+
+    pub fn symbols(&self) -> &SymbolSlots {
+        &self.symbols
     }
 }

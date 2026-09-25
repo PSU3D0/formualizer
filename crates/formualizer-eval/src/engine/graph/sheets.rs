@@ -17,6 +17,7 @@ impl DependencyGraph {
 
         // Heal formulas that were waiting on this sheet name.
         self.heal_orphaned_formulas(name);
+        self.resolve_pending_symbol("sheet", name);
         Ok(sheet_id)
     }
 

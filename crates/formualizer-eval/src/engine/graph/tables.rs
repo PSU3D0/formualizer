@@ -118,6 +118,7 @@ impl DependencyGraph {
             .insert(self.table_lookup_key(&original), original.clone());
         self.table_vertex_lookup.insert(vertex, original);
         self.bump_symbol_revision();
+        self.resolve_pending_symbol("table", name);
         Ok(())
     }
 
