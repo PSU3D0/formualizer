@@ -662,7 +662,10 @@ fn structural_delete_whole_column_values_match_fresh_formula_and_formula_plane_f
 }
 
 #[test]
-#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: seeds a span directly into the FormulaPlane (crate-internal); spans cannot exist under the authority")]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: seeds a span directly into the FormulaPlane (crate-internal); spans cannot exist under the authority"
+)]
 fn reconstructed_ast_fallback_is_used_for_whole_result_summaries() {
     use crate::formula_plane::producer::{
         DirtyProjectionRule, SpanReadDependency, SpanReadSummary,
@@ -730,7 +733,10 @@ fn reconstructed_ast_fallback_is_used_for_whole_result_summaries() {
 }
 
 #[test]
-#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: marks FormulaPlane spans/regions dirty through graph internals; no spans under the authority")]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: marks FormulaPlane spans/regions dirty through graph internals; no spans under the authority"
+)]
 fn dirty_snapshots_cover_whole_span_and_incomplete_closure_fallbacks() {
     use crate::engine::graph::WholeSpanDirtyReason;
     use crate::formula_plane::region_index::Region;

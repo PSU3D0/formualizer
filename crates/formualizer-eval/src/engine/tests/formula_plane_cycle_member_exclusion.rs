@@ -277,7 +277,10 @@ fn span_member_in_runtime_cycle_is_demoted_and_circ() {
 }
 
 #[test]
-#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: tests the span-demotion transaction (exact refs, faults, leases); no spans exist to demote under the authority")]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: tests the span-demotion transaction (exact refs, faults, leases); no spans exist to demote under the authority"
+)]
 fn cycle_retry_lease_extension_preserves_later_identical_span_event() {
     let mut engine = build_workbook(CycleDetection::Static);
     engine.rerecord_cycle_retry_span_after_lease_extension_for_test();
@@ -554,7 +557,10 @@ fn snapshot_demotion_state(engine: &Engine<TestWorkbook>) -> DemotionStateSnapsh
 }
 
 #[test]
-#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: tests the span-demotion transaction (exact refs, faults, leases); no spans exist to demote under the authority")]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: tests the span-demotion transaction (exact refs, faults, leases); no spans exist to demote under the authority"
+)]
 fn two_sheet_span_demotion_fault_matrix_preserves_exact_transaction_state() {
     use crate::engine::eval::FormulaSpanDemotionFault;
 
@@ -586,7 +592,10 @@ fn two_sheet_span_demotion_fault_matrix_preserves_exact_transaction_state() {
 }
 
 #[test]
-#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: tests the span-demotion transaction (exact refs, faults, leases); no spans exist to demote under the authority")]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: tests the span-demotion transaction (exact refs, faults, leases); no spans exist to demote under the authority"
+)]
 fn stale_second_exact_ref_cannot_commit_first_span() {
     use crate::engine::eval::FormulaSpanDemotionError;
 
@@ -626,7 +635,10 @@ fn stale_second_exact_ref_cannot_commit_first_span() {
 }
 
 #[test]
-#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: tests the span-demotion transaction (exact refs, faults, leases); no spans exist to demote under the authority")]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: tests the span-demotion transaction (exact refs, faults, leases); no spans exist to demote under the authority"
+)]
 fn two_sheet_cyclic_demotion_is_one_atomic_batch() {
     use crate::engine::eval::FormulaSpanDemotionFault;
 
@@ -717,7 +729,10 @@ fn prepared_span_demotion_rejects_stale_authority_before_graph_mutation() {
 }
 
 #[test]
-#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: tests the span-demotion transaction (exact refs, faults, leases); no spans exist to demote under the authority")]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: tests the span-demotion transaction (exact refs, faults, leases); no spans exist to demote under the authority"
+)]
 fn exact_ref_preparation_rejects_invalid_generation_without_mutation() {
     let mut engine = build_workbook(CycleDetection::Static);
     let mut refs = engine.graph.formula_authority().active_span_refs();
@@ -741,7 +756,10 @@ fn exact_ref_preparation_rejects_invalid_generation_without_mutation() {
 }
 
 #[test]
-#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: tests the span-demotion transaction (exact refs, faults, leases); no spans exist to demote under the authority")]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: tests the span-demotion transaction (exact refs, faults, leases); no spans exist to demote under the authority"
+)]
 fn span_demotion_preparation_checks_existing_load_limits_without_mutation() {
     let mut engine = build_workbook(CycleDetection::Static);
     let refs = engine.graph.formula_authority().active_span_refs();

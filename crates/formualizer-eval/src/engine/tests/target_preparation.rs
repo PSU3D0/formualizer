@@ -1712,7 +1712,10 @@ fn plane_append_failure_materializes_every_direct_coordinate_without_losing_last
 }
 
 #[test]
-#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: asserts span families avoid legacy vertex/materialization budget charges; under the authority formulas ingest per cell as legacy vertices")]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: asserts span families avoid legacy vertex/materialization budget charges; under the authority formulas ingest per cell as legacy vertices"
+)]
 fn authoritative_direct_package_does_not_charge_hypothetical_legacy_materialization() {
     let mut engine = engine(FormulaPlaneMode::AuthoritativeExperimental);
     engine
@@ -2933,7 +2936,10 @@ fn count_selected_family_package(
 }
 
 #[test]
-#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: asserts span families avoid legacy vertex/materialization budget charges; under the authority formulas ingest per cell as legacy vertices")]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: asserts span families avoid legacy vertex/materialization budget charges; under the authority formulas ingest per cell as legacy vertices"
+)]
 fn complete_indexed_family_preparation_never_replays_descendants_and_is_transactional() {
     for fault in [
         TargetPreparationFault::AfterDiscovery,
@@ -2995,7 +3001,10 @@ fn complete_indexed_family_preparation_never_replays_descendants_and_is_transact
 }
 
 #[test]
-#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: counts source-family span preparation replays; families are never promoted to spans under the authority")]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: counts source-family span preparation replays; families are never promoted to spans under the authority"
+)]
 fn queued_cross_sheet_sum_completes_family_before_partial_ast_expansion() {
     let mut engine = engine(FormulaPlaneMode::AuthoritativeExperimental);
     let (package, selected, whole) =
@@ -3029,7 +3038,10 @@ fn queued_cross_sheet_sum_completes_family_before_partial_ast_expansion() {
 }
 
 #[test]
-#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: asserts span families avoid legacy vertex/materialization budget charges; under the authority formulas ingest per cell as legacy vertices")]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: asserts span families avoid legacy vertex/materialization budget charges; under the authority formulas ingest per cell as legacy vertices"
+)]
 fn many_explicit_member_roots_coalesce_once_without_quadratic_discovery() {
     let mut engine = engine(FormulaPlaneMode::AuthoritativeExperimental);
     let (package, selected, whole) =
@@ -3056,7 +3068,10 @@ fn many_explicit_member_roots_coalesce_once_without_quadratic_discovery() {
 }
 
 #[test]
-#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: drives indexed source-family span append/replay preparation; families are never promoted to spans under the authority")]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: drives indexed source-family span append/replay preparation; families are never promoted to spans under the authority"
+)]
 fn complete_indexed_family_late_append_fallback_replays_only_on_rejection() {
     let mut engine = engine(FormulaPlaneMode::AuthoritativeExperimental);
     engine

@@ -196,7 +196,10 @@ fn cross_sheet_span_relocation_uses_placement_coordinate() {
 }
 
 #[test]
-#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: drives relocation of an active span's template; no spans under the authority")]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: drives relocation of an active span's template; no spans under the authority"
+)]
 fn invalid_span_relocation_fails_closed_before_graph_lookup() {
     let mut engine = engine_with_mode(FormulaPlaneMode::AuthoritativeExperimental);
     let mut records = Vec::new();

@@ -586,7 +586,10 @@ fn state(engine: &Engine<TestWorkbook>) -> String {
 }
 
 #[test]
-#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: tests the FormulaPlane source-family span transaction (prepare/commit/replay, report counters); families are never promoted to spans under the authority")]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: tests the FormulaPlane source-family span transaction (prepare/commit/replay, report counters); families are never promoted to spans under the authority"
+)]
 fn deferred_partition_commits_through_composed_transaction() {
     let mut engine = deferred_engine();
     let source = family(Shape::Row, 110);
@@ -606,7 +609,10 @@ fn deferred_partition_commits_through_composed_transaction() {
 }
 
 #[test]
-#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: tests the FormulaPlane source-family span transaction (prepare/commit/replay, report counters); families are never promoted to spans under the authority")]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: tests the FormulaPlane source-family span transaction (prepare/commit/replay, report counters); families are never promoted to spans under the authority"
+)]
 fn deferred_invalidated_partition_keeps_ordinary_exception_ownership() {
     let mut engine = deferred_engine();
     let source = family(Shape::Row, 115);
@@ -630,7 +636,10 @@ fn deferred_invalidated_partition_keeps_ordinary_exception_ownership() {
 }
 
 #[test]
-#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: tests the FormulaPlane source-family span transaction (prepare/commit/replay, report counters); families are never promoted to spans under the authority")]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: tests the FormulaPlane source-family span transaction (prepare/commit/replay, report counters); families are never promoted to spans under the authority"
+)]
 fn deferred_partition_precommit_fault_replays_whole_family_once() {
     let mut engine = deferred_engine();
     let source = family(Shape::Row, 111);
@@ -657,7 +666,10 @@ fn deferred_partition_precommit_fault_replays_whole_family_once() {
 }
 
 #[test]
-#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: tests the FormulaPlane source-family span transaction (prepare/commit/replay, report counters); families are never promoted to spans under the authority")]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: tests the FormulaPlane source-family span transaction (prepare/commit/replay, report counters); families are never promoted to spans under the authority"
+)]
 fn deferred_partition_provider_change_falls_back_before_mutation() {
     let (mut engine, revision) = make_engine_and_revision();
     engine.config.defer_graph_building = true;
@@ -686,7 +698,10 @@ fn deferred_partition_provider_change_falls_back_before_mutation() {
 }
 
 #[test]
-#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: tests the FormulaPlane source-family span transaction (prepare/commit/replay, report counters); families are never promoted to spans under the authority")]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: tests the FormulaPlane source-family span transaction (prepare/commit/replay, report counters); families are never promoted to spans under the authority"
+)]
 fn deferred_cross_fragment_dependency_replays_without_partial_authority() {
     let mut engine = deferred_engine();
     let source = cross_fragment_family(114, false);
@@ -712,7 +727,10 @@ fn deferred_cross_fragment_dependency_replays_without_partial_authority() {
 }
 
 #[test]
-#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: tests the FormulaPlane source-family span transaction (prepare/commit/replay, report counters); families are never promoted to spans under the authority")]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: tests the FormulaPlane source-family span transaction (prepare/commit/replay, report counters); families are never promoted to spans under the authority"
+)]
 fn deferred_partition_late_replay_failure_leaves_current_family_unmodified() {
     let mut engine = deferred_engine();
     let source = family(Shape::Row, 112);
@@ -747,7 +765,10 @@ fn deferred_partition_late_replay_failure_leaves_current_family_unmodified() {
 }
 
 #[test]
-#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: tests the FormulaPlane source-family span transaction (prepare/commit/replay, report counters); families are never promoted to spans under the authority")]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: tests the FormulaPlane source-family span transaction (prepare/commit/replay, report counters); families are never promoted to spans under the authority"
+)]
 fn eager_partition_initial_replay_rejects_missing_and_extra_legacy_ownership() {
     for extra in [false, true] {
         let mut engine = make_engine();
@@ -815,7 +836,10 @@ fn eager_partition_initial_replay_rejects_missing_and_extra_legacy_ownership() {
 }
 
 #[test]
-#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: tests the FormulaPlane source-family span transaction (prepare/commit/replay, report counters); families are never promoted to spans under the authority")]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: tests the FormulaPlane source-family span transaction (prepare/commit/replay, report counters); families are never promoted to spans under the authority"
+)]
 fn clean_families_follow_source_order_not_shared_index_order() {
     struct EmptyReplay;
     impl DeferredFormulaReplay for EmptyReplay {
@@ -911,7 +935,10 @@ fn clean_families_follow_source_order_not_shared_index_order() {
 }
 
 #[test]
-#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: tests the FormulaPlane source-family span transaction (prepare/commit/replay, report counters); families are never promoted to spans under the authority")]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: tests the FormulaPlane source-family span transaction (prepare/commit/replay, report counters); families are never promoted to spans under the authority"
+)]
 fn deferred_clean_families_follow_source_order_not_shared_index_order() {
     let later_low_si = SourceFormulaFamily {
         source_order: crate::engine::SourceFormulaOrder::new(10),
@@ -988,7 +1015,10 @@ fn deferred_clean_families_follow_source_order_not_shared_index_order() {
 }
 
 #[test]
-#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: tests the FormulaPlane source-family span transaction (prepare/commit/replay, report counters); families are never promoted to spans under the authority")]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: tests the FormulaPlane source-family span transaction (prepare/commit/replay, report counters); families are never promoted to spans under the authority"
+)]
 fn late_fallback_replay_failure_keeps_current_family_untouched_and_publishes_prior_clean_commit() {
     let mut engine = make_engine();
     let source = family(Shape::Row, 99);
@@ -1082,7 +1112,10 @@ fn late_fallback_replay_failure_keeps_current_family_untouched_and_publishes_pri
 }
 
 #[test]
-#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: tests the FormulaPlane source-family span transaction (prepare/commit/replay, report counters); families are never promoted to spans under the authority")]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: tests the FormulaPlane source-family span transaction (prepare/commit/replay, report counters); families are never promoted to spans under the authority"
+)]
 fn late_fallback_parse_failure_keeps_current_family_untouched_and_reports_prior_commit() {
     let mut engine = make_engine();
     engine.config.formula_parse_policy = FormulaParsePolicy::Strict;
@@ -1171,7 +1204,10 @@ fn late_fallback_parse_failure_keeps_current_family_untouched_and_reports_prior_
 }
 
 #[test]
-#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: tests the FormulaPlane source-family span transaction (prepare/commit/replay, report counters); families are never promoted to spans under the authority")]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: tests the FormulaPlane source-family span transaction (prepare/commit/replay, report counters); families are never promoted to spans under the authority"
+)]
 fn late_fallback_success_reports_exact_whole_family_e2_deltas_once() {
     let mut engine = make_engine();
     let source = family(Shape::Row, 100);
@@ -1258,7 +1294,10 @@ fn late_fallback_success_reports_exact_whole_family_e2_deltas_once() {
 }
 
 #[test]
-#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: tests the FormulaPlane source-family span transaction (prepare/commit/replay, report counters); families are never promoted to spans under the authority")]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: tests the FormulaPlane source-family span transaction (prepare/commit/replay, report counters); families are never promoted to spans under the authority"
+)]
 fn provider_change_after_fallback_validation_fails_before_mutation() {
     let (mut engine, revision) = make_engine_and_revision();
     let source = family(Shape::Row, 101);
@@ -1517,7 +1556,10 @@ fn stale_disposition_provider_and_registry_choose_exact_family_replay() {
 }
 
 #[test]
-#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: tests the FormulaPlane source-family span transaction (prepare/commit/replay, report counters); families are never promoted to spans under the authority")]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: tests the FormulaPlane source-family span transaction (prepare/commit/replay, report counters); families are never promoted to spans under the authority"
+)]
 fn exact_relative_replay_owns_relocated_ast_text_plan_and_value() {
     let mut engine = make_engine();
     let source = relative_replay_family(39);
@@ -1697,7 +1739,10 @@ fn e4_legacy_table_and_source_metadata_changes_replay_before_mutation() {
 }
 
 #[test]
-#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: tests the FormulaPlane source-family span transaction (prepare/commit/replay, report counters); families are never promoted to spans under the authority")]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: tests the FormulaPlane source-family span transaction (prepare/commit/replay, report counters); families are never promoted to spans under the authority"
+)]
 fn row_column_and_rect_success_commit_graph_then_plane_and_return_local_deltas() {
     for (index, shape) in [Shape::Row, Shape::Column, Shape::Rect]
         .into_iter()

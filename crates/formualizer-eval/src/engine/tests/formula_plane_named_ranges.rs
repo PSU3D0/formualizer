@@ -1002,7 +1002,10 @@ fn generic_edit_with_logger_rejects_and_rolls_back_name_mutations() {
 }
 
 #[test]
-#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: injects span-demotion faults into logged name undo/redo; no spans exist to demote")]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: injects span-demotion faults into logged name undo/redo; no spans exist to demote"
+)]
 fn logged_name_undo_redo_faults_leave_history_and_authority_retryable() {
     use crate::engine::ChangeLog;
     use crate::engine::eval::FormulaSpanDemotionFault;

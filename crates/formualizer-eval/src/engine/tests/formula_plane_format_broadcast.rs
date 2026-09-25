@@ -480,7 +480,10 @@ fn formula_plane_mixed_actual_and_none_chunks_choose_independent_format_effects(
 }
 
 #[test]
-#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: cancels mid span evaluation via a span-eval hook; no span evaluation under the authority")]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: cancels mid span evaluation via a span-eval hook; no span evaluation under the authority"
+)]
 fn formula_plane_mid_span_cancellation_preserves_stale_side_band_and_overlay() {
     let mut engine = newly_active_span_with_real_legacy_date();
     let before_value = engine.get_cell_value(SHEET, 1, 7);

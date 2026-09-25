@@ -9407,8 +9407,7 @@ where
                         direct_complete_families = direct_complete_families.saturating_add(1);
                         direct_complete_cells =
                             direct_complete_cells.saturating_add(prepared.member_count);
-                        if self.formula_plane_mode()
-                            == FormulaPlaneMode::AuthoritativeExperimental
+                        if self.formula_plane_mode() == FormulaPlaneMode::AuthoritativeExperimental
                         {
                             disposition.set_family_direct(family.source_id);
                         }
@@ -13010,8 +13009,7 @@ where
                             .fallback_reasons
                             .entry(reason.clone())
                             .or_default() += package.direct_families as u64;
-                        if self.formula_plane_mode()
-                            == FormulaPlaneMode::AuthoritativeExperimental
+                        if self.formula_plane_mode() == FormulaPlaneMode::AuthoritativeExperimental
                         {
                             self.materialize_target_package_direct_records(
                                 package,
@@ -13615,8 +13613,7 @@ where
                     ingest_delta.edge_rows_avoided_shadow = ingest_delta
                         .edge_rows_avoided_shadow
                         .saturating_add(package.direct_cells);
-                    if self.formula_plane_mode() == FormulaPlaneMode::AuthoritativeExperimental
-                    {
+                    if self.formula_plane_mode() == FormulaPlaneMode::AuthoritativeExperimental {
                         ingest_delta.source_family_promoted = ingest_delta
                             .source_family_promoted
                             .saturating_add(package.direct_families as u64);
@@ -20088,8 +20085,7 @@ where
                 } else {
                     engine.evaluate_legacy_target_roots(&roots, None)?;
                 }
-            } else if engine.formula_plane_mode()
-                == FormulaPlaneMode::AuthoritativeExperimental
+            } else if engine.formula_plane_mode() == FormulaPlaneMode::AuthoritativeExperimental
                 && engine.graph.formula_authority().active_span_count() > 0
             {
                 engine.begin_evaluation_request();

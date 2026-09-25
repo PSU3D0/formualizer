@@ -155,7 +155,10 @@ fn build_col_run(cols: u32) -> Engine<TestWorkbook> {
 }
 
 #[test]
-#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: asserts exact FormulaPlane span dirty regions after structural edits; no spans under the authority")]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: asserts exact FormulaPlane span dirty regions after structural edits; no spans under the authority"
+)]
 fn row_structural_before_inside_after_publish_exact_bounded_span_regions() {
     let mut inside = build_row_run(1000);
     let sheet_id = inside.graph.sheet_id("Sheet1").unwrap();
@@ -215,7 +218,10 @@ fn row_structural_before_inside_after_publish_exact_bounded_span_regions() {
 }
 
 #[test]
-#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: asserts exact FormulaPlane span dirty regions after structural edits; no spans under the authority")]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: asserts exact FormulaPlane span dirty regions after structural edits; no spans under the authority"
+)]
 fn row_delete_tail_recomputes_only_compacted_interval() {
     let mut engine = build_row_run(1000);
     let sheet_id = engine.graph.sheet_id("Sheet1").unwrap();
@@ -241,7 +247,10 @@ fn row_delete_tail_recomputes_only_compacted_interval() {
 }
 
 #[test]
-#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: asserts exact FormulaPlane span dirty regions after structural edits; no spans under the authority")]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: asserts exact FormulaPlane span dirty regions after structural edits; no spans under the authority"
+)]
 fn column_structural_inside_and_after_are_precise() {
     let mut inside = build_col_run(1000);
     let sheet_id = inside.graph.sheet_id("Sheet1").unwrap();
@@ -309,7 +318,10 @@ fn ingest_row_run_on_sheet(
 }
 
 #[test]
-#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: asserts exact FormulaPlane span dirty regions after structural edits; no spans under the authority")]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: asserts exact FormulaPlane span dirty regions after structural edits; no spans under the authority"
+)]
 fn structural_span_region_isolated_to_edited_sheet() {
     let mut engine = authoritative_engine();
     engine.add_sheet("Sheet2").unwrap();
@@ -469,7 +481,10 @@ fn structural_insert_action_undo_redo_preserves_values_without_unlogged_span_geo
 }
 
 #[test]
-#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: expects a FormulaPlane structural candidate-cap overflow error; no span candidates exist")]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: expects a FormulaPlane structural candidate-cap overflow error; no span candidates exist"
+)]
 fn structural_candidate_overflow_is_atomic_and_retryable() {
     let mut engine = build_row_run(120);
     let refs_before = engine.graph.formula_authority().active_span_refs();
@@ -561,7 +576,10 @@ fn structural_candidate_overflow_is_atomic_and_retryable() {
 }
 
 #[test]
-#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: asserts exact FormulaPlane span dirty regions after structural edits; no spans under the authority")]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: asserts exact FormulaPlane span dirty regions after structural edits; no spans under the authority"
+)]
 fn indexed_structural_selection_classifies_only_affected_candidate_among_many_sheets() {
     const SHEETS: u32 = 24;
     let mut engine = authoritative_engine();
