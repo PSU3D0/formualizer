@@ -21045,6 +21045,7 @@ where
                 .create_schedule_with_virtual(&precedents_to_eval, &old_vdeps)?;
             #[cfg(feature = "unified_authority")]
             let schedule = {
+                self.graph.authority_sync();
                 let mut ledger = self.active_resource_ledger.take();
                 let result = self.create_authority_schedule(
                     &precedents_to_eval,
@@ -24324,21 +24325,27 @@ where
     /// gate. Admission and allocation failures are not scope exceptions.
     #[cfg(feature = "unified_authority")]
     fn require_unified_authority(&mut self) -> Result<(), ExcelError> {
+        self.graph
+            .authority()
+            .map(|_| ())
+            .map_err(Self::authority_excel_error)
+    }
+
+    #[cfg(feature = "unified_authority")]
+    fn authority_excel_error(error: crate::engine::authority::store::AuthorityError) -> ExcelError {
         use crate::engine::authority::store::AuthorityError;
-        self.graph.authority().map(|_| ()).map_err(|error| {
-            // Some unchanged behavioral tests assert only `error.kind`, hiding
-            // the operation in their panic. The opt-in gate trace proves which
-            // typed error was actually returned; it never changes that error.
-            #[cfg(test)]
-            if std::env::var_os("FZ_AUTHORITY_DEFERRED_TRACE").is_some() {
-                eprintln!("M1B_AUTHORITY_ERROR {error:?}");
-            }
-            let kind = match error {
-                AuthorityError::Unsupported { .. } => ExcelErrorKind::NImpl,
-                _ => ExcelErrorKind::Error,
-            };
-            ExcelError::new(kind).with_message(format!("unified_authority: {error:?}"))
-        })
+        // Some unchanged behavioral tests assert only `error.kind`, hiding
+        // the operation in their panic. The opt-in gate trace proves which
+        // typed error was actually returned; it never changes that error.
+        #[cfg(test)]
+        if std::env::var_os("FZ_AUTHORITY_DEFERRED_TRACE").is_some() {
+            eprintln!("M1B_AUTHORITY_ERROR {error:?}");
+        }
+        let kind = match error {
+            AuthorityError::Unsupported { .. } => ExcelErrorKind::NImpl,
+            _ => ExcelErrorKind::Error,
+        };
+        ExcelError::new(kind).with_message(format!("unified_authority: {error:?}"))
     }
 
     /// Evaluate all dirty/volatile vertices
@@ -25118,6 +25125,8 @@ where
         &mut self,
         to_evaluate: &[VertexId],
     ) -> Result<ScheduleBuildOutput, ExcelError> {
+        #[cfg(feature = "unified_authority")]
+        self.graph.authority_sync();
         let mut ledger = self.active_resource_ledger.take();
         let result = self.create_evaluation_schedule_uncached(to_evaluate, ledger.as_mut());
         self.active_resource_ledger = ledger;
@@ -25198,34 +25207,37 @@ where
                 .with_message(format!("unified_authority planner: {message}"))
         };
         self.cancellation_checkpoint("Evaluation cancelled before authority planning")?;
+        let store = self
+            .graph
+            .authority_plan_store()
+            .map_err(Self::authority_excel_error)?;
+        // Names are symbol-plane nodes (design §4.1): a name vertex plans as
+        // the unit at its node, between its precedents and its readers.
         let mut cover = Cover::new();
         for &id in candidates {
-            if let Some(cell) = self.graph.get_cell_ref_for_vertex(id) {
-                cover.insert_rect(
-                    cell.sheet_id,
-                    &Rect::cell(cell.coord.row(), cell.coord.col()),
-                );
+            if let Some((sheet, row, col)) = self.graph.authority_cell_of_vertex(id) {
+                cover.insert_rect(sheet, &Rect::cell(row, col));
             }
         }
         let mut hints = Vec::new();
         for (&reader, deps) in vdeps {
-            let Some(reader) = self.graph.get_cell_ref_for_vertex(reader) else {
+            let Some(reader) = self.graph.authority_cell_of_vertex(reader) else {
                 continue;
             };
             for &dependency in deps {
-                let Some(dep) = self.graph.get_cell_ref_for_vertex(dependency) else {
+                let Some(dep) = self.graph.authority_cell_of_vertex(dependency) else {
                     continue;
                 };
                 hints.push(planner::PlanHint {
-                    reader: (reader.sheet_id, reader.coord.col(), reader.coord.row()),
+                    reader: (reader.0, reader.2, reader.1),
                     edge: EdgeKey {
-                        dep_sheet: reader.sheet_id,
+                        dep_sheet: reader.0,
                         tag: Tag::X,
                         lk: u32::MAX,
                         proj: RefProj {
-                            sheet: dep.sheet_id,
-                            rows: AxisMap::fixed(dep.coord.row(), dep.coord.row()),
-                            cols: AxisMap::fixed(dep.coord.col(), dep.coord.col()),
+                            sheet: dep.0,
+                            rows: AxisMap::fixed(dep.1, dep.1),
+                            cols: AxisMap::fixed(dep.2, dep.2),
                         },
                     },
                 });
@@ -25239,15 +25251,8 @@ where
             .as_ref()
             .and_then(|ledger| ledger.schedule_discovery_limit())
             .map(|limit| limit.saturating_sub(checkpoint));
-        let ordered = planner::plan_with_hints(
-            self.graph.authority_host().store(),
-            &cover,
-            &hints,
-            scratch_limit,
-            None,
-            None,
-        )
-        .map_err(|error| failure(format!("{error:?}")))?;
+        let ordered = planner::plan_with_hints(store, &cover, &hints, scratch_limit, None, None)
+            .map_err(|error| failure(format!("{error:?}")))?;
         // max_work_units is an execution budget. Planning work must be capped
         // independently: charging it here changes the observable publication
         // boundary (e.g. a spill must commit before the next execution fails).
@@ -25256,10 +25261,8 @@ where
             ordered.heap_bytes(),
             scratch_limit,
             |cell| {
-                let address = CellRef::new(cell.sheet, Coord::new(cell.row, cell.col, true, true));
                 self.graph
-                    .get_vertex_id_for_address(&address)
-                    .copied()
+                    .authority_vertex_of_cell((cell.sheet, cell.row, cell.col))
                     .ok_or_else(|| failure("missing executor identity".to_owned()))
             },
             |_work| {

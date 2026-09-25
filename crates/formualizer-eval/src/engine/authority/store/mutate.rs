@@ -152,7 +152,7 @@ impl Store {
     fn plan_cut(&self, sheet: u16, q: &Rect, keep: Option<Cell>) -> Result<Cut, AuthorityError> {
         let mut cut = Cut::default();
         let mut oom = false;
-        if let Some(idx) = self.idx.dep.get(sheet as usize) {
+        if let Some(idx) = self.idx.dep.get(sheet_slot(sheet)) {
             idx.query(&q.as_box(), &mut |id| {
                 oom |= tpush(&mut cut.recs, id).is_err();
             });
@@ -176,7 +176,7 @@ impl Store {
             });
         }
         // Owners: families through the node index, singletons through runs.
-        if let Some(idx) = self.idx.node.get(sheet as usize) {
+        if let Some(idx) = self.idx.node.get(sheet_slot(sheet)) {
             idx.query(&q.as_box(), &mut |o| {
                 oom |= tpush(&mut cut.owners, o).is_err();
             });
@@ -735,11 +735,11 @@ impl Store {
             PREC => &mut self.idx.prec,
             _ => &mut self.idx.node,
         };
-        while v.len() <= sheet as usize {
+        while v.len() <= sheet_slot(sheet) {
             debug_assert!(v.len() < v.capacity(), "unreserved index vector");
             v.push(LevelIndex::default());
         }
-        let idx = &mut v[sheet as usize];
+        let idx = &mut v[sheet_slot(sheet)];
         let before = idx.heap_bytes();
         let st = idx.try_stage(sh);
         idx.reset_peak();
@@ -755,7 +755,7 @@ impl Store {
         self.stage
             .iter()
             .map(|(r, s, _)| {
-                let i = &self.index_ref(usize::from(*r))[*s as usize];
+                let i = &self.index_ref(usize::from(*r))[sheet_slot(*s)];
                 (i.peak() - i.heap_bytes()) as u64
             })
             .sum()
@@ -889,7 +889,7 @@ impl Store {
             template,
             anchor,
         };
-        while self.idx.node.len() <= sheet as usize {
+        while self.idx.node.len() <= sheet_slot(sheet) {
             debug_assert!(self.idx.node.len() < self.idx.node.capacity());
             self.idx.node.push(LevelIndex::default());
         }

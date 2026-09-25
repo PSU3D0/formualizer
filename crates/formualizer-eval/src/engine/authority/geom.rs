@@ -10,6 +10,18 @@ pub const MAX_ROW: u32 = 1_048_575;
 /// Last column index of the grid (0-based).
 pub const MAX_COL: u32 = 16_383;
 
+/// The symbol plane: a reserved store sheet holding one node per defined
+/// name (design §4.1). It is never a workbook sheet id (the engine's sheet
+/// registry would need 65,535 sheets to reach it).
+pub const SYMBOL_SHEET: u16 = u16::MAX;
+
+/// Position of `sheet` in the store's per-sheet vectors. The symbol plane
+/// takes slot 0, so it costs one entry, not a 65,536-entry directory.
+#[inline]
+pub fn sheet_slot(sheet: u16) -> usize {
+    usize::from(sheet.wrapping_add(1))
+}
+
 /// A unit-stride rectangle: rows `r0..=r1`, columns `c0..=c1`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Rect {

@@ -213,6 +213,11 @@ impl FormulaMap {
     pub(crate) fn take_touched(&mut self) -> Vec<VertexId> {
         std::mem::take(&mut self.touched)
     }
+
+    #[cfg(feature = "unified_authority")]
+    pub(crate) fn has_touched(&self) -> bool {
+        !self.touched.is_empty()
+    }
 }
 
 /// SoA-based dependency graph implementation

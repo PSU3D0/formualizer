@@ -7,13 +7,17 @@
 //! | reference (as classified by `refs::classify`) | edges | tag, origin |
 //! |---|---|---|
 //! | cell, finite range, open range (own or named sheet) | the rectangle, bounds relative/absolute as written | R1, text |
-//! | name defined as a cell or finite range | the target, absolute | R1, symbol (LK) |
-//! | name defined as a formula | the name formula's references, flattened through nested names | X, symbol (LK) |
-//! | name defined as a literal; source scalar/table; external | none (symbol only) | — |
+//! | any defined name | the name's symbol node (`SYMBOL_SHEET`, its slot) | X, symbol (LK) |
+//! | name defined as a cell or finite range | also the target, absolute | R1, symbol (LK) |
+//! | source scalar/table; external | none (symbol only) | — |
+//!
+//! A name's own node (`extract_symbol`) has the name formula's references
+//! (absolute, in the name's scope; nested names are edges to their nodes) or
+//! its cell/range target as X precedents, owned by the name's LK.
 //! | table | the table's whole range, as legacy registers it | X, symbol (LK) |
 //! | unresolved name, unknown sheet, 3-D, unsupported | none; formula marked opaque | — |
 
-use super::geom::{MAX_COL, MAX_ROW};
+use super::geom::{MAX_COL, MAX_ROW, SYMBOL_SHEET};
 use super::proj::{AxisMap, Bound, RefProj};
 use super::store::{
     EdgeSpec, F_DYNAMIC, F_OPAQUE, F_VOLATILE, FormulaFacts, LkKey, OriginSpec, Tag,
@@ -22,7 +26,7 @@ use super::template::template_facts;
 use crate::SheetId;
 use crate::engine::arena::AstNodeId;
 use crate::engine::graph::DependencyGraph;
-use crate::engine::named_range::{NameScope, NamedDefinition};
+use crate::engine::named_range::{NameScope, NamedDefinition, NamedRange};
 use crate::engine::refs::{self, LocalBindingStyle, SemanticReference};
 use formualizer_common::ExcelError;
 use formualizer_parse::parser::ASTNode;
@@ -112,6 +116,28 @@ impl Ctx<'_> {
         });
     }
 
+    /// An X edge to the symbol node of name vertex `vertex`, if the host
+    /// has placed one (it has for every live name once synced).
+    fn push_symbol_node(&mut self, vertex: crate::engine::VertexId, lk: &LkKey) -> bool {
+        let Some(slot) = self.graph.authority_host().symbols().slot(vertex) else {
+            return false;
+        };
+        let lk = match &self.symbol {
+            Some(outer) => outer.clone(),
+            None => lk.clone(),
+        };
+        self.edges.push(EdgeSpec {
+            proj: RefProj {
+                sheet: SYMBOL_SHEET,
+                rows: AxisMap::fixed(slot, slot),
+                cols: AxisMap::fixed(0, 0),
+            },
+            tag: Tag::X,
+            origin: OriginSpec::Symbol(lk),
+        });
+        true
+    }
+
     fn name_lk(&self, name: &str) -> LkKey {
         LkKey {
             ctx: self.sheet,
@@ -189,6 +215,25 @@ fn collect(ctx: &mut Ctx<'_>, r: SemanticReference<'_>) -> Result<(), ExcelError
         SemanticReference::Name(name) => {
             let lk = ctx.name_lk(name);
             match ctx.graph.resolve_name_entry(name, ctx.sheet) {
+                Some(entry) if ctx.push_symbol_node(entry.vertex, &lk) => match &entry.definition {
+                    NamedDefinition::Cell(cr) => {
+                        let (r, c) = (cr.coord.row(), cr.coord.col());
+                        ctx.push_fixed(cr.sheet_id, r, c, r, c, Tag::R1, lk);
+                    }
+                    NamedDefinition::Range(rr) => {
+                        ctx.push_fixed(
+                            rr.start.sheet_id,
+                            rr.start.coord.row(),
+                            rr.start.coord.col(),
+                            rr.end.coord.row(),
+                            rr.end.coord.col(),
+                            Tag::R1,
+                            lk,
+                        );
+                    }
+                    // The node carries the formula's precedents.
+                    NamedDefinition::Literal(_) | NamedDefinition::Formula { .. } => {}
+                },
                 Some(entry) => match &entry.definition {
                     NamedDefinition::Cell(cr) => {
                         let (r, c) = (cr.coord.row(), cr.coord.col());
@@ -297,6 +342,78 @@ pub fn extract_formula(
         ltokens: t.relocatable.then(|| t.tokens.into_boxed_slice()),
         template: ast,
         literals: t.literals,
+        flags,
+    }
+}
+
+/// The facts of a name's symbol node at `(SYMBOL_SHEET, slot, 0)`: its
+/// precedents in the name's scope, all absolute, X and owned by its LK. The
+/// node is an ungrouped singleton whose template is never evaluated through
+/// the arena (the executor evaluates the name vertex itself).
+pub fn extract_symbol(
+    graph: &DependencyGraph,
+    name: &str,
+    entry: &NamedRange,
+    volatile: bool,
+    dynamic: bool,
+) -> FormulaFacts {
+    let scope_sheet = match entry.scope {
+        NameScope::Sheet(id) => id,
+        NameScope::Workbook => graph.default_sheet_id(),
+    };
+    let lk = LkKey {
+        ctx: scope_sheet,
+        kind: LK_NAME,
+        name: graph.name_lookup_key(name).into_boxed_str(),
+    };
+    let mut ctx = Ctx {
+        graph,
+        sheet: scope_sheet,
+        row: 0,
+        col: 0,
+        symbol: Some(lk.clone()),
+        depth: 1,
+        edges: Vec::new(),
+        flags: 0,
+    };
+    match &entry.definition {
+        NamedDefinition::Cell(cr) => {
+            let (r, c) = (cr.coord.row(), cr.coord.col());
+            ctx.push_fixed(cr.sheet_id, r, c, r, c, Tag::X, lk);
+        }
+        NamedDefinition::Range(rr) => ctx.push_fixed(
+            rr.start.sheet_id,
+            rr.start.coord.row(),
+            rr.start.coord.col(),
+            rr.end.coord.row(),
+            rr.end.coord.col(),
+            Tag::X,
+            lk,
+        ),
+        NamedDefinition::Literal(_) => {}
+        NamedDefinition::Formula { ast, .. } => {
+            let _ = refs::visit_tree_references(
+                ast,
+                &mut ctx,
+                |_, _, _| LocalBindingStyle::None,
+                collect,
+            );
+        }
+    }
+    ctx.edges.sort_unstable();
+    ctx.edges.dedup();
+    let mut flags = ctx.flags;
+    if volatile {
+        flags |= F_VOLATILE;
+    }
+    if dynamic {
+        flags |= F_DYNAMIC;
+    }
+    FormulaFacts {
+        edges: ctx.edges,
+        ltokens: None,
+        template: AstNodeId::from_u32(u32::MAX),
+        literals: Default::default(),
         flags,
     }
 }

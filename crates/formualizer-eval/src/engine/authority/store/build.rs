@@ -230,14 +230,14 @@ impl Store {
         for (g, pieces) in &epieces {
             if !pieces.is_empty() {
                 let key = s.egroups.key(*g);
-                dep_used = dep_used.max(key.dep_sheet as usize + 1);
-                prec_used = prec_used.max(key.proj.sheet as usize + 1);
+                dep_used = dep_used.max(sheet_slot(key.dep_sheet) + 1);
+                prec_used = prec_used.max(sheet_slot(key.proj.sheet) + 1);
             }
         }
         let node_used = npieces
             .iter()
             .filter(|(_, p)| p.iter().any(|r| !r.is_cell()))
-            .map(|(g, _)| s.ngroups.key(*g).0 as usize + 1)
+            .map(|(g, _)| sheet_slot(s.ngroups.key(*g).0) + 1)
             .max()
             .unwrap_or(0);
         s.idx.dep = (0..dep_used).map(|_| LevelIndex::default()).collect();
@@ -258,12 +258,12 @@ impl Store {
                     group: g,
                     pos: (grp.members.len() - 1) as u32,
                 });
-                dep_items[key.dep_sheet as usize].push((p.as_box(), id));
+                dep_items[sheet_slot(key.dep_sheet)].push((p.as_box(), id));
                 let pb = key
                     .proj
                     .forward(&p)
                     .expect("members instantiate on the grid");
-                prec_items[key.proj.sheet as usize].push((pb.as_box(), id));
+                prec_items[sheet_slot(key.proj.sheet)].push((pb.as_box(), id));
             }
         }
         for (sheet, items) in dep_items.iter().enumerate().take(s.idx.dep.len()) {
@@ -312,7 +312,7 @@ impl Store {
                 });
                 if !p.is_cell() {
                     s.nnodes += 1;
-                    node_items[sheet as usize].push((p.as_box(), id));
+                    node_items[sheet_slot(sheet)].push((p.as_box(), id));
                 }
                 placed.push(id);
             }

@@ -4,7 +4,7 @@ use formualizer_common::LiteralValue;
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum RangeSelfUse {
+pub(super) enum RangeSelfUse {
     NoMatch,
     Excluded,
     IncludedOrUnknown,
@@ -373,7 +373,7 @@ impl DependencyGraph {
     /// used-bound growth still invalidates the formula; only the synthetic #120
     /// self-loop is omitted when the selected reference cannot contain the
     /// formula cell.
-    fn compressed_range_self_use(
+    pub(super) fn compressed_range_self_use(
         &self,
         dependent: VertexId,
         range_sheet: SheetId,
