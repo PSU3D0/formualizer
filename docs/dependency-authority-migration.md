@@ -15,7 +15,7 @@ Most users need no change. The following low-level surfaces exposed legacy inter
 | `DependencyGraph::get_dependents`, `get_dependencies`, `get_range_dependencies` | `Engine::dependents`, `Engine::precedents`, `Engine::trace` (inspection API). |
 | `DependencyGraph::add_dependency_edge`, `add_edges_nobatch`, `build_edges_from_adjacency`, `add_range_edges` | Nothing: dependencies come from formulas. Set a formula instead of adding an edge. |
 | `DependencyGraph::rebuild_edges`, `flush_pending_edge_deltas`, `edges_delta_size`, `edges_rebuild_count` | Nothing: there are no edge deltas. |
-| `NamedRange::dependents` (public field) | `Engine::dependents` on the name's target cells, or evaluate through the name. |
+| `NamedRange::dependents` (public field) | No equivalent. The public API has no query for the formulas and names that read a defined name. `Engine::dependents` and `Engine::trace` do not return them: inspection reports readers through cell and range references only, excluding name- and table-mediated readers, as legacy's inspection did. |
 
 These became crate-private: `DependencyGraph::remove_all_edges`, `update_edge_grid_addr`, `add_range_deps_from_keys`.
 

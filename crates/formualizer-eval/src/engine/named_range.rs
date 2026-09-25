@@ -41,9 +41,9 @@ pub struct NamedRange {
     pub definition: NamedDefinition,
     pub scope: NameScope,
     /// Formulas that reference this name: legacy's name link map, kept
-    /// only by the test oracle (Program 1 M5). The dependency authority
-    /// answers a name's readers (`Engine::dependents` on its target, or
-    /// re-evaluation through the name).
+    /// only by the test oracle (Program 1 M5). Normal builds have no public
+    /// equivalent: inspection (`Engine::dependents`) excludes name-mediated
+    /// readers, as legacy's inspection did.
     #[cfg(any(test, feature = "legacy_oracle"))]
     pub dependents: FxHashSet<VertexId>,
     /// Vertex representing this named range within the dependency graph

@@ -404,13 +404,10 @@ fn undo_structural_insert_restores_ids_and_relation() {
 }
 
 /// Design §6.4 FORM-117 pattern: after undoing a structural insert, an
-/// edit to a precedent recalculates its dependents. Legacy fails it (the
-/// default build computes the same stale C1 = 10): runtime dirtying still
-/// follows legacy's edges, which the undo leaves stale. The authority's
-/// relation is right (`undo_structural_insert_restores_ids_and_relation`);
-/// this passes once dirtying comes from the authority.
+/// edit to a precedent recalculates its dependents. Legacy failed it (a
+/// stale C1 = 10: its dirtying followed edges the undo left stale); dirty
+/// propagation comes from the authority now.
 #[test]
-#[ignore = "FORM-117: legacy dirtying after structural undo; needs the authority dirty-closure cutover"]
 fn undo_structural_insert_then_edit_precedent_recalcs() {
     let mut e = form117_engine();
     let mut undo = UndoEngine::new();
