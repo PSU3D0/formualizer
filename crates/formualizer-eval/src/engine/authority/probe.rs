@@ -198,7 +198,7 @@ pub fn edge_groups<R>(e: &mut Engine<R>) -> Result<Vec<EdgeGroupView>, Authority
 
 /// M5 recon timing: plan every formula cell the way a full recalculation
 /// does (cover of all formula cells, `planner::prepare` + ordering, then the
-/// Schedule adapter). Returns `(cells, cover_ms, prepare_ms, order_ms,
+/// Schedule adapter with the production id → vertex translation). Returns `(cells, cover_ms, prepare_ms, order_ms,
 /// adapt_ms, fallback_components, fallback_work, work)`.
 #[allow(clippy::type_complexity)]
 pub fn plan_timing<R>(
@@ -230,13 +230,8 @@ pub fn plan_timing<R>(
         ordered.heap_bytes(),
         None,
         |cell| {
-            let address = crate::reference::CellRef::new(
-                cell.sheet,
-                crate::reference::Coord::new(cell.row, cell.col, true, true),
-            );
             e.graph
-                .get_vertex_id_for_address(&address)
-                .copied()
+                .authority_vertex_of_formula(cell.id, (cell.sheet, cell.row, cell.col))
                 .ok_or_else(|| {
                     formualizer_common::ExcelError::new(formualizer_common::ExcelErrorKind::Error)
                 })
