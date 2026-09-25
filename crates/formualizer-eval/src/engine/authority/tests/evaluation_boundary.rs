@@ -15,7 +15,17 @@ fn unsupported_structural_state_rejects_all_evaluation_routes() {
         .set_cell_formula("Sheet1", 1, 1, parse("=1").unwrap())
         .unwrap();
     engine.evaluate_all().unwrap();
-    engine.insert_rows("Sheet1", 1, 1).unwrap();
+    engine
+        .set_cell_value(
+            "Sheet1",
+            2,
+            1,
+            formualizer_common::LiteralValue::Number(1.0),
+        )
+        .unwrap();
+    // Any out-of-scope state (structural edits left scope in M3): the
+    // typed error is the host's, whatever the operation.
+    engine.graph.authority_mark_unsupported("insert_rows");
     let before = engine.get_cell_value("Sheet1", 2, 1);
     let check = |error: ExcelError| {
         assert_eq!(error.kind, ExcelErrorKind::NImpl);

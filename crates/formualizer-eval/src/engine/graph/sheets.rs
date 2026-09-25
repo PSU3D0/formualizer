@@ -23,7 +23,7 @@ impl DependencyGraph {
     /// Remove a sheet from the workbook.
     pub fn remove_sheet(&mut self, sheet_id: SheetId) -> Result<(), ExcelError> {
         #[cfg(feature = "unified_authority")]
-        self.authority_note_structural();
+        self.authority_note_structural(true);
         let old_name = self.sheet_reg.name(sheet_id).to_string();
         if old_name.is_empty() {
             return Err(ExcelError::new(ExcelErrorKind::Value).with_message("Sheet does not exist"));
@@ -250,7 +250,7 @@ impl DependencyGraph {
     /// Rename an existing sheet.
     pub fn rename_sheet(&mut self, sheet_id: SheetId, new_name: &str) -> Result<(), ExcelError> {
         #[cfg(feature = "unified_authority")]
-        self.authority_note_structural();
+        self.authority_note_structural(true);
         if new_name.is_empty() || new_name.len() > 255 {
             return Err(ExcelError::new(ExcelErrorKind::Value).with_message("Invalid sheet name"));
         }
@@ -304,7 +304,7 @@ impl DependencyGraph {
         new_name: &str,
     ) -> Result<SheetId, ExcelError> {
         #[cfg(feature = "unified_authority")]
-        self.authority_note_structural();
+        self.authority_note_structural(true);
         if new_name.is_empty() || new_name.len() > 255 {
             return Err(ExcelError::new(ExcelErrorKind::Value).with_message("Invalid sheet name"));
         }

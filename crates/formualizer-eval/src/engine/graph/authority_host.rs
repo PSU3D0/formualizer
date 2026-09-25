@@ -217,23 +217,24 @@ impl DependencyGraph {
             self.authority_rebuild();
             return;
         }
-        let mut cells: Vec<(Cell, VertexId)> = touched
+        let mut cells: Vec<Cell> = touched
             .iter()
             .filter(|&&v| self.store.vertex_exists(v))
-            .filter_map(|&v| self.get_cell_ref(v).map(|c| (cell_of(&c), v)))
+            .filter_map(|&v| self.get_cell_ref(v).map(|c| cell_of(&c)))
             .collect();
-        cells.sort_unstable_by_key(|&(c, _)| c);
-        cells.dedup_by_key(|&mut (c, _)| c);
-        for (cell, touched_vertex) in cells {
-            let at_cell = self.get_vertex_for_cell(&cell_ref(cell));
-            let current = at_cell.filter(|v| self.vertex_formulas.contains_key(v));
+        cells.sort_unstable();
+        cells.dedup();
+        for cell in cells {
+            let current = self
+                .get_vertex_for_cell(&cell_ref(cell))
+                .filter(|v| self.vertex_formulas.contains_key(v));
             let before = self.authority.store.ids().id_of(cell);
             let result = match current.and_then(|v| self.authority_formula_input(v)) {
                 Some((c, mut facts)) => {
                     self.authority_verify_l(c.0, &mut facts);
-                    let revive = match (before, current) {
-                        (None, Some(v)) => self.authority_revivable(v),
-                        _ => None,
+                    let revive = match before {
+                        None => self.authority_revivable(c),
+                        Some(_) => None,
                     };
                     match revive {
                         Some(id) => self.authority.store.set_formula_reviving(c, &facts, id),
@@ -242,8 +243,7 @@ impl DependencyGraph {
                 }
                 None => {
                     if let Some(id) = before {
-                        let v = at_cell.unwrap_or(touched_vertex);
-                        self.authority.journal.retired(v, id);
+                        self.authority.journal.retired(cell, id);
                     }
                     self.authority.store.clear_cell(cell)
                 }
@@ -269,9 +269,9 @@ impl DependencyGraph {
     /// restores there, if it can be placed (allocated and not live).
     fn authority_revivable(
         &mut self,
-        v: VertexId,
+        cell: Cell,
     ) -> Option<crate::engine::authority::identity::Vid> {
-        let id = self.authority.journal.created(v)?;
+        let id = self.authority.journal.created(cell)?;
         let ids = self.authority.store.ids();
         (id < ids.next_id() && ids.locate(id).is_none()).then_some(id)
     }
@@ -280,12 +280,20 @@ impl DependencyGraph {
     /// graph (M3). Capture every formula identity by legacy vertex (legacy
     /// keeps a moved cell's `VertexId`) from the synced store; the next
     /// sync rebuilds from the transformed formulas keeping them
-    /// (decision 9). Captured once per sync window: later structural
-    /// mutations before the sync reuse it. O(F) scratch, like legacy's own
-    /// per-edit formula walk.
-    pub(crate) fn authority_note_structural(&mut self) {
+    /// (decision 9). O(F) scratch, like legacy's own per-edit formula walk.
+    ///
+    /// `op` marks an operation boundary (row/column insert or delete, range
+    /// move, sheet operation): a capture still open from an earlier
+    /// operation is synced first, so ids an operation retires are recorded
+    /// in the frame just before it, the one its undo restores. Per-vertex
+    /// moves (`move_vertex`, which replay issues once per moved cell) share
+    /// the open capture.
+    pub(crate) fn authority_note_structural(&mut self, op: bool) {
         if self.authority.carried.is_some() {
-            return;
+            if !op {
+                return;
+            }
+            self.authority_sync();
         }
         match self.authority.state {
             // Nothing has an id yet, or nothing is kept: the next sync
@@ -297,13 +305,19 @@ impl DependencyGraph {
         if self.authority.state != HostState::Ready {
             return;
         }
+        // From the formula side, like the build input: `cell_to_vertex` may
+        // name another vertex at a formula's cell.
         let mut carried = crate::engine::authority::history::Carried::default();
-        for (_, run) in self.authority.store.ids().live_runs() {
-            for i in 0..run.len {
-                let cell = (run.sheet, run.row_start + i, run.col);
-                if let Some(v) = self.get_vertex_for_cell(&cell_ref(cell)) {
-                    carried.insert(v, run.first_id + i);
-                }
+        carried.reserve(self.authority.store.formula_count() as usize);
+        let ids = self.authority.store.ids();
+        for &v in self.vertex_formulas.keys() {
+            if self.store.is_deleted(v) {
+                continue;
+            }
+            if let Some(cell) = self.get_cell_ref(v).map(|c| cell_of(&c))
+                && let Some(id) = ids.id_of(cell)
+            {
+                carried.insert(v, (id, cell));
             }
         }
         self.authority.carried = Some(carried);
@@ -324,34 +338,34 @@ impl DependencyGraph {
         let mut kept: FxHashMap<Cell, Vid> = FxHashMap::default();
         kept.reserve(vids.len());
         let mut used: FxHashSet<Vid> = FxHashSet::default();
-        let mut created: Vec<(Cell, VertexId)> = Vec::new();
+        let mut created: Vec<Cell> = Vec::new();
         for v in vids {
             let Some((cell, facts)) = self.authority_formula_input(v) else {
                 continue;
             };
-            // A vertex that is no longer the one at its cell is stale.
-            if self.get_vertex_for_cell(&cell_ref(cell)) != Some(v) {
-                continue;
-            }
             match carried.remove(&v) {
-                Some(id) => {
-                    used.insert(id);
+                Some((id, _)) if used.insert(id) => {
                     kept.insert(cell, id);
                 }
-                None => created.push((cell, v)),
+                _ => created.push(cell),
             }
             input.push((cell, facts));
         }
         // Whatever remains lost its formula (deleted, cleared, or its
         // sheet removed): retire the id.
-        let mut retired: Vec<(VertexId, Vid)> = carried.into_iter().collect();
+        let mut retired: Vec<(Cell, Vid)> = carried
+            .into_values()
+            .filter(|(id, _)| !used.contains(id))
+            .map(|(id, cell)| (cell, id))
+            .collect();
         retired.sort_unstable();
-        for (v, id) in retired {
-            self.authority.journal.retired(v, id);
+        retired.dedup();
+        for (cell, id) in retired {
+            self.authority.journal.retired(cell, id);
         }
         let next_id = self.authority.store.ids().next_id();
-        for (cell, v) in created {
-            if let Some(id) = self.authority.journal.created(v)
+        for cell in created {
+            if let Some(id) = self.authority.journal.created(cell)
                 && id < next_id
                 && used.insert(id)
             {
@@ -373,11 +387,6 @@ impl DependencyGraph {
             self.authority_sync();
         }
         self.authority.journal.set_mode(mode);
-    }
-
-    /// Replay re-created the cell of removed vertex `old` on vertex `new`.
-    pub(crate) fn authority_note_revived(&mut self, old: VertexId, new: VertexId) {
-        self.authority.journal.revived(old, new);
     }
 
     /// Live formula id at `cell` (tests: identity stability).
@@ -496,6 +505,12 @@ impl DependencyGraph {
         legacy_affected: &FxHashSet<VertexId>,
         exact: bool,
     ) {
+        // Mid structural operation the graph is half transformed: syncing
+        // here would rebuild from it and lose the capture. The dirty cover
+        // is observational and restarts at the structural rebuild.
+        if self.authority.carried.is_some() {
+            return;
+        }
         self.authority_sync();
         if self.authority.state != HostState::Ready {
             return;
