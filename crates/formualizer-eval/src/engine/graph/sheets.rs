@@ -321,6 +321,14 @@ impl DependencyGraph {
         }
 
         self.sheet_reg.rename(sheet_id, new_name)?;
+        // Name formulas are not rewritten by a rename (legacy): one that
+        // spells the old name kept its edges to this sheet's cells, so an
+        // edit there re-evaluates it (to #REF!). The authority keeps that
+        // edge through this alias; a sheet that takes the name ends it.
+        let old_key = old_name.to_ascii_lowercase();
+        self.renamed_sheet_aliases
+            .retain(|k, _| *k != new_name.to_ascii_lowercase());
+        self.renamed_sheet_aliases.insert(old_key, sheet_id);
 
         self.begin_batch();
 

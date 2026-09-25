@@ -297,7 +297,9 @@ impl DependencyGraph {
             return;
         }
         self.authority_sync_store();
-        if !self.authority.pending_dirty.is_empty() {
+        if !self.authority.pending_dirty.is_empty()
+            || !self.authority.pending_direct_dirty.is_empty()
+        {
             self.authority_flush_pending_dirty();
         }
     }
@@ -573,7 +575,10 @@ impl DependencyGraph {
         {
             return;
         }
-        if self.authority.carried.is_some() || !self.authority.pending_dirty.is_empty() {
+        if self.authority.carried.is_some()
+            || !self.authority.pending_dirty.is_empty()
+            || !self.authority.pending_direct_dirty.is_empty()
+        {
             self.authority_sync();
         }
     }
@@ -745,16 +750,20 @@ impl DependencyGraph {
         self.authority
             .store
             .visit_dependent_images(sheet, &band, &mut |ds, row, col, img| {
+                // An open range (whole column `A:A`, whole row `1:1`)
+                // straddles an insertion at its first row/column too.
+                let open_rows = img.r0 == 0 && img.r1 == MAX_ROW;
+                let open_cols = img.c0 == 0 && img.c1 == MAX_COL;
                 let axis = match edit {
                     StructuralEdit::DeleteRows { start, end } => img.r0 <= end && img.r1 >= start,
                     StructuralEdit::InsertRows { before } => {
-                        (img.r0 == 0 || img.r0 < before) && before <= img.r1
+                        (open_rows || img.r0 < before) && before <= img.r1
                     }
                     StructuralEdit::DeleteColumns { start, end } => {
                         img.c0 <= end && img.c1 >= start
                     }
                     StructuralEdit::InsertColumns { before } => {
-                        (img.c0 == 0 || img.c0 < before) && before <= img.c1
+                        (open_cols || img.c0 < before) && before <= img.c1
                     }
                 };
                 let (cross0, cross1) = match edit {
@@ -812,6 +821,13 @@ impl DependencyGraph {
     /// Queue `vertex` as a dirty-propagation seed for after the resync.
     pub(crate) fn authority_queue_dirty(&mut self, vertex: VertexId) {
         self.authority.pending_dirty.push(vertex);
+    }
+
+    /// Queue `vertex` for `mark_dependents_dirty` after the resync: its
+    /// direct in-edge readers (legacy's in-edges) get their dirty flag,
+    /// without propagation, as legacy did.
+    pub(crate) fn authority_queue_direct_dirty(&mut self, vertex: VertexId) {
+        self.authority.pending_direct_dirty.push(vertex);
     }
 
     /// Sync unless a load scope or a structural capture is open.
@@ -1017,7 +1033,20 @@ impl DependencyGraph {
     /// Mark the closure of seeds queued while the store lagged (after a
     /// structural resync).
     fn authority_flush_pending_dirty(&mut self) {
-        if self.authority.pending_dirty.is_empty() || self.authority.carried.is_some() {
+        if self.authority.carried.is_some() {
+            return;
+        }
+        let direct = std::mem::take(&mut self.authority.pending_direct_dirty);
+        for v in direct {
+            if !self.store.vertex_exists(v) || self.store.is_deleted(v) {
+                continue;
+            }
+            for reader in self.authority_in_edge_readers(v) {
+                self.store.set_dirty(reader, true);
+                self.formula_dirty.legacy_insert(reader);
+            }
+        }
+        if self.authority.pending_dirty.is_empty() {
             return;
         }
         let seeds: Vec<VertexId> = std::mem::take(&mut self.authority.pending_dirty)

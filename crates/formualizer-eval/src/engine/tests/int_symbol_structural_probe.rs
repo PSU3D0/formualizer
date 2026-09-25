@@ -462,3 +462,38 @@ fn duplicated_sheet_scoped_name_feeds_copied_readers() {
     assert_eq!(e.get_cell_value("Data", 1, 1), Some(n(91.0)));
     assert_eq!(e.get_cell_value("Data2", 1, 1), Some(n(71.0)));
 }
+
+/// Regressions found by the probe at M5 (legacy values; the probe diff is
+/// the oracle): a table at the top of its sheet does not straddle a row
+/// insertion at row 1, and moving the cells of a table (deleting a column
+/// before it) flags only legacy's direct in-edge readers, so a structured
+/// reference reader keeps its value; a name formula that spells a renamed
+/// sheet's old name re-evaluates to #REF! when that sheet's cells change.
+#[test]
+fn m5_table_shift_and_renamed_sheet_name_keep_legacy_values() {
+    let mut e = setup();
+    e.evaluate_all().unwrap();
+    assert_eq!(e.get_cell_value("Sheet1", 8, 1), Some(n(40.0)));
+    e.insert_rows("Tbl", 1, 2).unwrap();
+    e.evaluate_all().unwrap();
+    assert_eq!(e.get_cell_value("Sheet1", 8, 1), Some(n(40.0)));
+
+    let mut e = setup();
+    e.evaluate_all().unwrap();
+    e.delete_columns("Tbl", 2, 1).unwrap();
+    e.evaluate_all().unwrap();
+    assert_eq!(e.get_cell_value("Sheet1", 8, 1), Some(n(40.0)));
+
+    let mut e = setup();
+    e.evaluate_all().unwrap();
+    let d = sid(&e, "Data");
+    e.rename_sheet(d, "Facts").unwrap();
+    e.evaluate_all().unwrap();
+    assert_eq!(e.get_cell_value("Sheet1", 3, 1), Some(n(140.0)));
+    e.set_cell_value("Facts", 3, 2, n(1.0)).unwrap();
+    e.evaluate_all().unwrap();
+    assert!(matches!(
+        e.get_cell_value("Sheet1", 3, 1),
+        Some(LiteralValue::Error(ref err)) if err.kind == formualizer_common::ExcelErrorKind::Ref
+    ));
+}

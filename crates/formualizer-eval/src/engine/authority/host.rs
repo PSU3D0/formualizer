@@ -99,6 +99,9 @@ pub struct AuthorityHost {
     /// mid structural edit, when the store is still pre-edit); their
     /// closure is marked at the end of the next sync.
     pub(crate) pending_dirty: Vec<VertexId>,
+    /// `mark_dependents_dirty` vertices waiting for the resync (their direct
+    /// in-edge readers are flagged, not propagated).
+    pub(crate) pending_direct_dirty: Vec<VertexId>,
 }
 
 /// See [`AuthorityHost::symbol_changes`].

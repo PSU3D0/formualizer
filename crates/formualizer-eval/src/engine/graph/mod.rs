@@ -237,6 +237,10 @@ pub struct DependencyGraph {
     dep_edge_total: usize,
     /// Formulas with `VertexStore::reads_range` set.
     range_reader_count: usize,
+    /// Old (lower-cased) name -> sheet, for sheets renamed away from it:
+    /// name formulas that still spell it keep their edges (see
+    /// `rename_sheet`).
+    renamed_sheet_aliases: FxHashMap<String, SheetId>,
 
     // Arena-based value and formula storage
     data_store: DataStore,
@@ -1299,6 +1303,7 @@ impl DependencyGraph {
             edges: CsrMutableEdges::new(),
             dep_edge_total: 0,
             range_reader_count: 0,
+            renamed_sheet_aliases: FxHashMap::default(),
             data_store: DataStore::new(),
             vertex_values: FxHashMap::default(),
             vertex_formulas: FormulaMap::default(),
@@ -2991,6 +2996,15 @@ impl DependencyGraph {
         self.dep_edge_total += n;
     }
 
+    /// The sheet a renamed sheet's old name still denotes for name
+    /// formulas, unless a live sheet has that name.
+    pub(crate) fn renamed_sheet_alias(&self, name: &str) -> Option<SheetId> {
+        self.renamed_sheet_aliases
+            .get(&name.to_ascii_lowercase())
+            .copied()
+            .filter(|&id| self.sheet_reg.name(id) != name)
+    }
+
     /// Whether `vertex`'s formula reads a compressed range.
     pub(crate) fn reads_compressed_range(&self, vertex: VertexId) -> bool {
         self.store.reads_range(vertex)
@@ -4329,29 +4343,14 @@ impl DependencyGraph {
     /// Internal: Mark all direct dependents as dirty
     #[doc(hidden)]
     pub fn mark_dependents_dirty(&mut self, id: VertexId) {
-        // Mid structural edit (or load) the store lags: queue the vertex;
-        // its closure (a superset of the direct readers) is marked after
-        // the resync.
+        // Legacy flagged its CSR in-edge readers (cell references, ranges
+        // within the expansion limit, names), without propagation. Mid
+        // structural edit (or load) the store lags: queue it for the resync.
         if self.authority_defers_marks() {
-            self.authority_queue_dirty(id);
+            self.authority_queue_direct_dirty(id);
             return;
         }
-        self.authority_sync();
-        let dependents: Vec<VertexId> = match self.authority_cell_of_vertex(id) {
-            Some((sheet, row, col)) => {
-                crate::engine::graph::DependencyGraph::authority_direct_grid_dependents(
-                    self.authority_host().store(),
-                    sheet,
-                    &crate::engine::authority::geom::Rect::cell(row, col),
-                )
-                .cells()
-                .into_iter()
-                .filter_map(|c| self.authority_vertex_of_cell(c))
-                .collect()
-            }
-            None => Vec::new(),
-        };
-        for dep_id in dependents {
+        for dep_id in self.authority_in_edge_readers(id) {
             self.store.set_dirty(dep_id, true);
             self.formula_dirty.legacy_insert(dep_id);
         }

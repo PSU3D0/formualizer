@@ -78,7 +78,13 @@ impl Ctx<'_> {
         match name {
             None => Some(self.sheet),
             Some(n) => {
-                let s = self.graph.sheet_id(n);
+                // Inside a name's definition, a renamed sheet's old name
+                // still reaches that sheet (legacy kept the name's edges).
+                let s = self.graph.sheet_id(n).or_else(|| {
+                    self.symbol
+                        .as_ref()
+                        .and_then(|_| self.graph.renamed_sheet_alias(n))
+                });
                 if s.is_none() {
                     self.flags |= F_OPAQUE;
                 }
