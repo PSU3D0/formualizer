@@ -252,3 +252,17 @@ pub fn plan_timing<R>(
         ordered.work,
     ))
 }
+
+/// Build cost split (must-fix 3): `(inputs, extract ns, store build ns)`
+/// for a fresh full build of the current graph.
+pub fn build_split<R>(e: &Engine<R>) -> (usize, u128, u128) {
+    let t = std::time::Instant::now();
+    let input = e.graph.authority_build_input();
+    let extract = t.elapsed().as_nanos();
+    let n = input.len();
+    let t = std::time::Instant::now();
+    let store = Store::build(input);
+    let build = t.elapsed().as_nanos();
+    drop(store);
+    (n, extract, build)
+}

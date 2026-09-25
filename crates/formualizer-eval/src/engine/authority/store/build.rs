@@ -248,12 +248,12 @@ impl Store {
         let mut work = CanonWork::default();
         let mut epieces: Vec<(u32, Vec<Rect>)> = ecells
             .into_iter()
-            .map(|(g, cells)| (g, canon::canon(&cells, &mut work)))
+            .map(|(g, mut cells)| (g, canon::canon_cells(&mut cells, &mut work)))
             .collect();
         epieces.sort_unstable_by_key(|(g, _)| *g);
         let mut npieces: Vec<(u32, Vec<Rect>)> = ncells
             .into_iter()
-            .map(|(g, cells)| (g, canon::canon(&cells, &mut work)))
+            .map(|(g, mut cells)| (g, canon::canon_cells(&mut cells, &mut work)))
             .collect();
         npieces.sort_unstable_by_key(|(g, _)| *g);
         s.stats.canon_work = work;

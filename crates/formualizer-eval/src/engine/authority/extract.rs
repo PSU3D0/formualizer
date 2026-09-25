@@ -46,6 +46,9 @@ struct Ctx<'a> {
     depth: u32,
     edges: Vec<EdgeSpec>,
     flags: u16,
+    /// The current reference's sheet as a registry id, when the arena
+    /// stored it that way (the reference itself then carries no sheet).
+    sheet_key: Option<SheetId>,
 }
 
 fn bound(v1: u32, abs: bool, placement: u32, fixed: bool) -> Bound {
@@ -66,6 +69,12 @@ fn opt_bound(v1: Option<u32>, abs: bool, placement: u32, fixed: bool) -> Bound {
 
 impl Ctx<'_> {
     fn resolve_sheet(&mut self, name: Option<&str>) -> Option<SheetId> {
+        // An id-keyed reference resolves through its registry name, exactly
+        // as the reconstructed name would.
+        let name = match (name, self.sheet_key) {
+            (None, Some(id)) => Some(self.graph.sheet_reg().name(id)),
+            _ => name,
+        };
         match name {
             None => Some(self.sheet),
             Some(n) => {
@@ -164,6 +173,7 @@ impl Ctx<'_> {
             depth: self.depth + 1,
             edges: Vec::new(),
             flags: 0,
+            sheet_key: None,
         };
         let _ = refs::visit_tree_references(
             ast,
@@ -174,6 +184,17 @@ impl Ctx<'_> {
         self.edges.append(&mut inner.edges);
         self.flags |= inner.flags;
     }
+}
+
+fn collect_keyed(
+    ctx: &mut Ctx<'_>,
+    r: SemanticReference<'_>,
+    sheet_key: Option<SheetId>,
+) -> Result<(), ExcelError> {
+    ctx.sheet_key = sheet_key;
+    let result = collect(ctx, r);
+    ctx.sheet_key = None;
+    result
 }
 
 fn collect(ctx: &mut Ctx<'_>, r: SemanticReference<'_>) -> Result<(), ExcelError> {
@@ -310,13 +331,14 @@ pub fn extract_formula(
         depth: 0,
         edges: Vec::new(),
         flags: 0,
+        sheet_key: None,
     };
-    let _ = refs::visit_arena_references(
+    let _ = refs::visit_arena_references_keyed(
         ast,
         &mut ctx,
         |c| c.graph.data_store(),
         |c| c.graph.sheet_reg(),
-        collect,
+        collect_keyed,
     );
     // Keep only references that instantiate at the cell (all do for an
     // installed formula), then deduplicate: R is a set.
@@ -375,6 +397,7 @@ pub fn extract_symbol(
         depth: 1,
         edges: Vec::new(),
         flags: 0,
+        sheet_key: None,
     };
     match &entry.definition {
         NamedDefinition::Cell(cr) => {

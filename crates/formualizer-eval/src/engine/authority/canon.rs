@@ -66,6 +66,45 @@ pub fn canon(rects: &[Rect], work: &mut CanonWork) -> Vec<Rect> {
     try_canon(rects, work).expect("canon allocation")
 }
 
+/// [`canon`] of distinct single cells (the build's group members), without
+/// the sweep: sort by `(col, row)` and run-length the rows into each
+/// column's maximal intervals, then sort by interval and merge runs of
+/// consecutive columns. Same output as `canon` (Lemma C1: it depends only
+/// on the cell set); `cells` is reordered in place. Work is counted as one
+/// event per cell and one emission per rectangle.
+pub fn canon_cells(cells: &mut [Rect], work: &mut CanonWork) -> Vec<Rect> {
+    debug_assert!(cells.iter().all(Rect::is_cell));
+    cells.sort_unstable_by_key(|r| (r.c0, r.r0));
+    work.events += cells.len() as u64;
+    // (r0, r1, col): each column's maximal row intervals.
+    let mut runs: Vec<(u32, u32, u32)> = Vec::with_capacity(cells.len().min(1024));
+    for r in cells.iter() {
+        match runs.last_mut() {
+            Some(last) if last.2 == r.c0 && last.1 + 1 == r.r0 => last.1 = r.r0,
+            _ => runs.push((r.r0, r.r0, r.c0)),
+        }
+    }
+    runs.sort_unstable();
+    let mut out: Vec<Rect> = Vec::with_capacity(runs.len());
+    let mut open: Option<(u32, u32, u32, u32)> = None;
+    for (r0, r1, c) in runs {
+        open = match open {
+            Some((a, b, c0, c1)) if a == r0 && b == r1 && c1 + 1 == c => Some((a, b, c0, c)),
+            Some((a, b, c0, c1)) => {
+                out.push(Rect::new(a, c0, b, c1));
+                Some((r0, r1, c, c))
+            }
+            None => Some((r0, r1, c, c)),
+        };
+    }
+    if let Some((a, b, c0, c1)) = open {
+        out.push(Rect::new(a, c0, b, c1));
+    }
+    out.sort_unstable_by_key(|r| (r.c0, r.r0));
+    work.emitted += out.len() as u64;
+    out
+}
+
 /// [`canon`] with every allocation reserved up front and fallible: on an
 /// allocation failure it returns `ReserveError` and nothing else changes.
 pub fn try_canon(rects: &[Rect], work: &mut CanonWork) -> Result<Vec<Rect>, ReserveError> {
@@ -323,6 +362,9 @@ mod tests {
             prop_assert_eq!(&canon(&frag, &mut w), &got);
             // Idempotence.
             prop_assert_eq!(&canon(&got, &mut w), &got);
+            // The build's cell fast path agrees.
+            let mut frag = frag;
+            prop_assert_eq!(&canon_cells(&mut frag, &mut w), &got);
         }
     }
 
