@@ -534,7 +534,14 @@ fn non_binding_work_budgets_are_plane_independent_but_binding_budgets_are_not() 
             "binding work budgets are representation-dependent"
         );
     );
+    // Reclassified (M5, internal representation): a binding work budget
+    // counts legacy's edge visits, stripe candidates and range checks; the
+    // authority charges one unit per reported reader (13 units: the spill
+    // member query, then 12 readers). Truncation is asserted below.
+    #[cfg(not(feature = "unified_authority"))]
     assert_eq!(legacy.dependents.len(), 6);
+    #[cfg(feature = "unified_authority")]
+    assert_eq!(legacy.dependents.len(), 12);
     span_internal!("the span engine's budget-truncated dependents differ by representation; under the authority both engines are per cell and answer like legacy";
         assert_eq!(plane.dependents.len(), 10);
     );

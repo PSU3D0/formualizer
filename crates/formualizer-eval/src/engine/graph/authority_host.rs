@@ -614,6 +614,20 @@ impl DependencyGraph {
         }
     }
 
+    /// Sync unless a load scope or a structural capture is open.
+    pub(crate) fn authority_sync_eager(&mut self) {
+        if !self.first_load_assume_new && self.authority.carried.is_none() {
+            self.authority_sync();
+        }
+    }
+
+    /// Sync when the host is built and no structural capture is open.
+    pub(crate) fn authority_sync_if_ready(&mut self) {
+        if self.authority.state == HostState::Ready && self.authority.carried.is_none() {
+            self.authority_sync();
+        }
+    }
+
     /// Sync, then the host if it is ready.
     pub(crate) fn authority(&mut self) -> Result<&AuthorityHost, AuthorityError> {
         self.authority_sync();
@@ -678,6 +692,36 @@ impl DependencyGraph {
             .filter(|c| c.0 != SYMBOL_SHEET)
             .map(cell_ref)
             .collect())
+    }
+
+    /// Inspection's direct readers of `cell` (text-origin edges, grid
+    /// formula cells), bounded by `remaining` work units (one per reader);
+    /// `Ok(false)` when the budget ran out. Needs a synced host.
+    pub(crate) fn authority_visit_text_dependents(
+        &self,
+        cell: Cell,
+        remaining: &mut u64,
+        visitor: &mut dyn FnMut(Cell) -> bool,
+    ) -> Result<bool, AuthorityError> {
+        let store = self.authority_plan_store()?;
+        let mut hits = Vec::new();
+        store.direct_text_dependents(cell.0, &Rect::cell(cell.1, cell.2), &mut hits);
+        let mut cover = Cover::new();
+        for (s, r) in hits {
+            if s != SYMBOL_SHEET {
+                cover.insert_rect(s, &r);
+            }
+        }
+        for c in cover.cells() {
+            if *remaining == 0 {
+                return Ok(false);
+            }
+            *remaining -= 1;
+            if !visitor(c) {
+                return Ok(true);
+            }
+        }
+        Ok(true)
     }
 
     /// Direct precedents of a formula cell: `(sheet, r0, c0, r1, c1)`.

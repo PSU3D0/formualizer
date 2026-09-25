@@ -1056,6 +1056,24 @@ impl Store {
         })
     }
 
+    /// Direct dependents of `q` through edges the formula text spells
+    /// (not through a name, table or source): what legacy's inspection
+    /// reports as a cell's readers. `(dependent sheet, rect)` pieces.
+    pub fn direct_text_dependents(&self, sheet: u16, q: &Rect, out: &mut Vec<(u16, Rect)>) -> u64 {
+        let Some(idx) = self.idx.prec.get(sheet_slot(sheet)) else {
+            return 0;
+        };
+        idx.query(&q.as_box(), &mut |id| {
+            let r = &self.recs[id as usize];
+            let key = self.egroups.key(r.group);
+            if key.lk == NO_LK
+                && let Some(d) = key.proj.invert(&r.dep, q)
+            {
+                out.push((key.dep_sheet, d));
+            }
+        })
+    }
+
     /// Direct precedents of one formula cell: `(tag, target sheet, rect)`.
     pub fn direct_precedents(
         &self,

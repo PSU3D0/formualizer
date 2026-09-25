@@ -959,13 +959,21 @@ impl DependencyGraph {
     }
 
     /// Enable/disable the first-load fast path for value inserts.
+    ///
+    /// Leaving the load scope builds the dependency authority once (it was
+    /// not synced during the load; see `authority_load_skips_closures`).
     pub fn set_first_load_assume_new(&mut self, enabled: bool) {
-        if self.first_load_assume_new && !enabled {
+        let leaving = self.first_load_assume_new && !enabled;
+        if leaving {
             self.flush_load_packed_mappings();
         } else if enabled {
             self.load_packed_to_vertex.clear();
         }
         self.first_load_assume_new = enabled;
+        #[cfg(feature = "unified_authority")]
+        if leaving {
+            self.authority_sync();
+        }
     }
 
     #[doc(hidden)]
@@ -1605,6 +1613,10 @@ impl DependencyGraph {
 
     pub(crate) fn bump_symbol_revision(&mut self) {
         self.symbol_revision = self.symbol_revision.wrapping_add(1);
+        // Keep a built authority current, so read-only plans (`&self`) see
+        // the new binding; during a load or a structural edit it waits.
+        #[cfg(feature = "unified_authority")]
+        self.authority_sync_if_ready();
     }
 
     pub(crate) fn authority_revisions(&self) -> (u64, u64, u64) {

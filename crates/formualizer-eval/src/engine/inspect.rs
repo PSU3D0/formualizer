@@ -558,6 +558,9 @@ impl RangePageOptions {
 #[non_exhaustive]
 pub enum InspectionUnavailableReason {
     DeferredDependencyGraph,
+    /// The dependency authority is not synced with the workbook or failed
+    /// (a typed evaluation error reports why).
+    DependencyAuthorityUnavailable,
 }
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -1827,6 +1830,34 @@ impl<R: EvaluationContext> Engine<R> {
                 member.sheet_id,
                 Coord::new(member.row0, member.col0, true, true),
             );
+            // Under the authority: the direct readers through text-origin
+            // edges (legacy's in-edges and covering range readers, which
+            // exclude name- and table-mediated readers).
+            #[cfg(feature = "unified_authority")]
+            {
+                let _ = &member_ref;
+                let complete = self
+                    .graph
+                    .authority_visit_text_dependents(
+                        (member.sheet_id, member.row0, member.col0),
+                        &mut work.remaining,
+                        &mut |(sheet_id, row0, col0)| {
+                            record(CellKey {
+                                sheet_id,
+                                row0,
+                                col0,
+                            })
+                        },
+                    )
+                    .map_err(|_| InspectError::DependencyStateUnavailable {
+                        reason: InspectionUnavailableReason::DependencyAuthorityUnavailable,
+                    })?;
+                if !complete {
+                    incomplete = true;
+                    break;
+                }
+            }
+            #[cfg(not(feature = "unified_authority"))]
             if let Some(vertex) = self.graph.get_vertex_for_cell(&member_ref) {
                 let complete = self.graph.visit_direct_dependents_bounded(
                     vertex,
@@ -1839,18 +1870,21 @@ impl<R: EvaluationContext> Engine<R> {
                 }
             }
 
-            struct Visitor<'a, F>(&'a mut F);
-            impl<F: FnMut(CellKey) -> bool> DependentVisitor for Visitor<'_, F> {
-                fn visit(&mut self, dependent: CellKey) -> bool {
-                    (self.0)(dependent)
-                }
-            }
-            let mut visitor = Visitor(&mut record);
-            if source.visit_dependents_covering(member, work, &mut visitor)?
-                == QueryCompleteness::Incomplete
+            #[cfg(not(feature = "unified_authority"))]
             {
-                incomplete = true;
-                break;
+                struct Visitor<'a, F>(&'a mut F);
+                impl<F: FnMut(CellKey) -> bool> DependentVisitor for Visitor<'_, F> {
+                    fn visit(&mut self, dependent: CellKey) -> bool {
+                        (self.0)(dependent)
+                    }
+                }
+                let mut visitor = Visitor(&mut record);
+                if source.visit_dependents_covering(member, work, &mut visitor)?
+                    == QueryCompleteness::Incomplete
+                {
+                    incomplete = true;
+                    break;
+                }
             }
         }
 

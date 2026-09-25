@@ -6436,6 +6436,11 @@ where
             debug_assert!(released.is_ok());
         }
         self.has_edited = true;
+        // Eager sync at a topology edit, so read-only (`&self`) plans and
+        // inspection see a current authority (not during a load or an open
+        // structural capture).
+        #[cfg(feature = "unified_authority")]
+        self.graph.authority_sync_eager();
     }
 
     fn mark_all_formula_vertices_dirty(&mut self) {
