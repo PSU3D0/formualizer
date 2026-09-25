@@ -438,6 +438,7 @@ impl DependencyGraph {
                 _ => {}
             }
 
+            #[cfg(any(test, feature = "legacy_oracle"))]
             named_range.dependents.clear();
             let name_vertex = self.allocate_name_vertex(named_range.scope);
             if matches!(named_range.definition, NamedDefinition::Range(_)) {

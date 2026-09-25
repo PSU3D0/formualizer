@@ -262,6 +262,7 @@ impl DependencyGraph {
         let named_range = NamedRange {
             definition: final_definition,
             scope,
+            #[cfg(any(test, feature = "legacy_oracle"))]
             dependents: FxHashSet::default(),
             vertex: vertex_id,
         };

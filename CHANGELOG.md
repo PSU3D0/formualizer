@@ -6,6 +6,21 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Changed
 
+- **The region-node dependency authority replaces the legacy dependency graph** (Program 1, FORM-000169). Dirty propagation, the evaluation schedule and cycles, targeted-evaluation demand, `get_eval_plan`, inspection (`dependents`/`precedents`/`trace`) and structural-edit invalidation all come from one structure. It stores each formula family (cells filled from one template) as a single node with relative edges, not one vertex and edge list per cell. Evaluation stays per cell, and vertex identities are unchanged. On the Enron sample and the real-model corpus, retained heap is about 0.95× the last legacy build, load 0.57× (Enron), first calculation 0.81–0.84×, and edit + recalculation p50 0.47–0.75× for value edits and 0.14–0.24× for formula edits. Values are unchanged except where legacy published stale results:
+  - dynamic references (INDIRECT/OFFSET) whose target is still dirty re-plan in the same recalculation;
+  - readers of newly spilled cells recalculate in the same request, and a whole-column reader sees a spill committed earlier in the same pass;
+  - `Table[Col]` readers order after formulas in the table body;
+  - restored formulas stay current after undoing a row/column insert or delete (FORM-000117);
+  - a missing table under the `BestEffort` default evaluates to `#NAME?` (was `#N/IMPL!`).
+
+  Also changed: inspection work budgets charge one unit per reported reader, and `FormulaPlaneMode` is accepted and ignored (spans are never placed). See [migrating to the dependency authority](docs/dependency-authority-migration.md).
+- **Breaking (low-level API):** legacy's dependency structures are available only with the new `legacy_oracle` feature of `formualizer-eval` (a differential-testing aid, never a runtime path). The following are gone from normal builds:
+  - modules `engine::csr_edges`, `engine::delta_edges`, `engine::topo`;
+  - `engine::Scheduler`;
+  - `DependencyGraph::{get_dependents, get_dependencies, get_range_dependencies, add_dependency_edge, add_edges_nobatch, build_edges_from_adjacency, add_range_edges, rebuild_edges, flush_pending_edge_deltas, edges_delta_size, edges_rebuild_count}`;
+  - the public field `NamedRange::dependents`.
+
+  `EvalConfig`'s Pearce–Kelly and stripe knobs are accepted and ignored. `ChangeEvent::RemoveVertex`'s edge fields and `VertexSnapshot::out_edges` are always empty. `InspectionUnavailableReason` gains `DependencyAuthorityUnavailable`. The `unified_authority` feature is a no-op. The [migration note](docs/dependency-authority-migration.md) lists replacements.
 - **Preparation policy default is now `BestEffort`.** A formula that references a sheet or table that does not exist is accepted instead of failing preparation ("Sheet not found", "Undefined table"). It evaluates to an error value while the target is missing, which `IFERROR` and friends see like any other cell error, and it re-binds and recalculates when the sheet or table is added (`add_sheet`, implicit sheet creation, `define_table`). This applies to direct assignment, batch and deferred ingest, and imported workbooks. The previous behavior is kept exactly under `PreparationPolicy::Strict`: set `EvalConfig::preparation_policy` / `with_preparation_policy(PreparationPolicy::Strict)` in Rust, or `EvaluationConfig.strict_preparation = True` in Python (new property). References to a *removed* sheet are unchanged under both policies (`#REF!`, healed when the sheet returns). Tests that used a missing sheet to provoke a preparation failure now opt into `Strict` explicitly. See [preparation errors](docs/preparation-error-policy.md).
 
 ### Performance

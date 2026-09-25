@@ -904,7 +904,8 @@ impl<'g> VertexEditor<'g> {
         Ok(summary)
     }
 
-    /// Add an edge between two vertices
+    /// No-op kept for journal replay of old `EdgeAdded` events: the
+    /// dependency authority derives every edge from formulas.
     pub fn add_edge(&mut self, from: VertexId, to: VertexId) -> bool {
         if from == to {
             return false; // Prevent self-loops
@@ -915,7 +916,7 @@ impl<'g> VertexEditor<'g> {
         true
     }
 
-    /// Remove an edge between two vertices
+    /// No-op kept for journal replay of old `EdgeRemoved` events.
     pub fn remove_edge(&mut self, _from: VertexId, _to: VertexId) -> bool {
         // TODO: Remove edge through proper API when available
         true

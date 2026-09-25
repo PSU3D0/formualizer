@@ -814,7 +814,9 @@ pub struct EvalConfig {
     pub stripe_height: u32,
     /// Width of stripe blocks for dense range indexing  
     pub stripe_width: u32,
-    /// Enable block stripes for dense ranges (vs row/column stripes only)
+    /// Enable block stripes for dense ranges (vs row/column stripes only).
+    /// Deprecated, ignored at runtime: range stripes exist only in
+    /// `legacy_oracle` builds (Program 1 M5).
     pub enable_block_stripes: bool,
 
     /// Spill behavior configuration (conflicts, bounds, buffering)
@@ -825,7 +827,10 @@ pub struct EvalConfig {
     /// `CycleDetection::Runtime` is opt-in (RFC #112).
     pub cycle: CycleConfig,
 
-    /// Use dynamic topological ordering (Pearce-Kelly algorithm)
+    /// Use dynamic topological ordering (Pearce-Kelly algorithm).
+    /// Deprecated, ignored at runtime: the dependency authority's planner
+    /// orders evaluation; this and the `pk_*` / `max_layer_width` knobs
+    /// below affect only `legacy_oracle` builds (Program 1 M5).
     pub use_dynamic_topo: bool,
     /// Maximum nodes to visit before falling back to full rebuild
     pub pk_visit_budget: usize,
