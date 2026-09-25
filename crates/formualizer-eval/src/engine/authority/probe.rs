@@ -195,3 +195,65 @@ pub fn edge_groups<R>(e: &mut Engine<R>) -> Result<Vec<EdgeGroupView>, Authority
         })
         .collect())
 }
+
+/// M5 recon timing: plan every formula cell the way a full recalculation
+/// does (cover of all formula cells, `planner::prepare` + ordering, then the
+/// Schedule adapter). Returns `(cells, cover_ms, prepare_ms, order_ms,
+/// adapt_ms, fallback_components, fallback_work, work)`.
+#[allow(clippy::type_complexity)]
+pub fn plan_timing<R>(
+    e: &mut Engine<R>,
+) -> Result<(usize, f64, f64, f64, f64, u64, u64, u64), String> {
+    use super::{plan_schedule, planner};
+    use std::time::Instant;
+    let ms = |t: Instant| t.elapsed().as_secs_f64() * 1000.0;
+    e.graph.authority().map_err(|x| format!("{x:?}"))?;
+    let t = Instant::now();
+    let cells = e.graph.authority_host().store().formula_cells();
+    let mut cover = super::geom::Cover::new();
+    for &(s, r, c) in &cells {
+        cover.insert_rect(s, &Rect::cell(r, c));
+    }
+    let cover_ms = ms(t);
+    let store = e.graph.authority_host().store();
+    let t = Instant::now();
+    let prepared =
+        planner::prepare(store, &cover, None, None, None).map_err(|x| format!("{x:?}"))?;
+    let prepare_ms = ms(t);
+    drop(prepared);
+    let t = Instant::now();
+    let ordered = planner::plan(store, &cover, None, None, None).map_err(|x| format!("{x:?}"))?;
+    let order_ms = ms(t) - prepare_ms;
+    let t = Instant::now();
+    let adapted = plan_schedule::schedule(
+        &ordered.cells,
+        ordered.heap_bytes(),
+        None,
+        |cell| {
+            let address = crate::reference::CellRef::new(
+                cell.sheet,
+                crate::reference::Coord::new(cell.row, cell.col, true, true),
+            );
+            e.graph
+                .get_vertex_id_for_address(&address)
+                .copied()
+                .ok_or_else(|| {
+                    formualizer_common::ExcelError::new(formualizer_common::ExcelErrorKind::Error)
+                })
+        },
+        |_| Ok(()),
+    )
+    .map_err(|x| format!("{x:?}"))?;
+    let adapt_ms = ms(t);
+    drop(adapted);
+    Ok((
+        cells.len(),
+        cover_ms,
+        prepare_ms,
+        order_ms,
+        adapt_ms,
+        ordered.fallback_components,
+        ordered.fallback_work,
+        ordered.work,
+    ))
+}
