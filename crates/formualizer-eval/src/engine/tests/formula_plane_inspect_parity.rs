@@ -545,9 +545,7 @@ fn non_binding_work_budgets_are_plane_independent_but_binding_budgets_are_not() 
             omitted: None,
         }
     );
-    span_internal!("the span engine's budget-truncated dependents differ by representation; under the authority both engines are per cell and answer like legacy";
-        assert_eq!(legacy.truncation, plane.truncation);
-    );
+    assert_eq!(legacy.truncation, plane.truncation);
 }
 
 #[test]

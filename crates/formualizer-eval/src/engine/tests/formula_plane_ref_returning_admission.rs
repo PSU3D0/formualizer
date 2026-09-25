@@ -325,13 +325,11 @@ fn range_arm_firewall_preserves_spills_and_scalar_consumption() {
         authoritative.get_cell_value("Sheet1", 1, 7),
         Some(LiteralValue::Number(600.0))
     );
-    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
-        assert_eq!(
-            authoritative
-                .baseline_stats()
-                .formula_plane_active_span_count,
-            0
-        );
+    assert_eq!(
+        authoritative
+            .baseline_stats()
+            .formula_plane_active_span_count,
+        0
     );
 }
 
@@ -506,9 +504,7 @@ fn guarded_self_reference_stays_legacy_via_internal_dependency() {
         ));
     }
     let report = ingest(&mut engine, "Sheet1", formulas);
-    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
-        assert_eq!(report.shadow_accepted_span_cells, 0, "{report:?}");
-    );
+    assert_eq!(report.shadow_accepted_span_cells, 0, "{report:?}");
     span_internal!("FormulaPlane span/ingest/eval-report internals; spans are not placed under the authority (design section 10)";
         assert_eq!(
             report.fallback_reasons.get("InternalDependency"),
@@ -553,9 +549,7 @@ fn conditional_cycle_demotes_and_runtime_witnessing_converges() {
         .unwrap();
     let result = engine.evaluate_all().unwrap();
     assert_eq!(result.cycle_errors, 0);
-    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
-        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
-    );
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
     span_internal!("FormulaPlane span/ingest/eval-report internals; spans are not placed under the authority (design section 10)";
         assert_eq!(
             engine

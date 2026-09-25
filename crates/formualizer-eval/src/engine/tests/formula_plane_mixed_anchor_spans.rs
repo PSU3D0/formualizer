@@ -312,9 +312,7 @@ fn self_reading_expanding_range_family_rejects_with_internal_dependency() {
         .ingest_formula_batches(vec![FormulaIngestBatch::new(SHEET, formulas)])
         .expect("ingest formulas");
 
-    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
-        assert_eq!(report.shadow_accepted_span_cells, 0);
-    );
+    assert_eq!(report.shadow_accepted_span_cells, 0);
     span_internal!("FormulaPlane span/ingest/eval-report internals; spans are not placed under the authority (design section 10)";
         assert_eq!(
             report
@@ -327,9 +325,7 @@ fn self_reading_expanding_range_family_rejects_with_internal_dependency() {
             report.fallback_reasons
         );
     );
-    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
-        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
-    );
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
 
     engine.evaluate_all().unwrap();
     for row in [2, ROWS / 2, ROWS + 1] {

@@ -1441,10 +1441,8 @@ fn demanding_one_family_consumes_whole_package_and_retains_unrelated_package() {
                 );
             }
             FormulaPlaneMode::Off | FormulaPlaneMode::Shadow => {
-                span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
-                    assert_eq!(stats.formula_plane_active_span_count, 0);
-                    assert_eq!(stats.graph_formula_vertex_count, 200);
-                );
+                assert_eq!(stats.formula_plane_active_span_count, 0);
+                assert_eq!(stats.graph_formula_vertex_count, 200);
             }
         }
 
@@ -1488,10 +1486,8 @@ fn fragmented_package_reuses_complete_disposition_with_exact_exception() {
                 );
             }
             FormulaPlaneMode::Off | FormulaPlaneMode::Shadow => {
-                span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
-                    assert_eq!(stats.formula_plane_active_span_count, 0);
-                    assert_eq!(stats.graph_formula_vertex_count, 301);
-                );
+                assert_eq!(stats.formula_plane_active_span_count, 0);
+                assert_eq!(stats.graph_formula_vertex_count, 301);
             }
         }
     }
@@ -1696,10 +1692,8 @@ fn plane_append_failure_materializes_every_direct_coordinate_without_losing_last
         .unwrap();
     assert_eq!(report.outcome, PreparationOutcome::Prepared);
     assert!(!engine.has_staged_formulas());
-    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
-        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
-        assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 2);
-    );
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 2);
     span_internal!("ingest report fallback reason for a FormulaPlane append; no span append under the authority";
         assert!(
             engine

@@ -227,11 +227,9 @@ fn lookup_axis_edits_change_answers_with_active_spans() {
                 dirty(&mut e);
                 e.evaluate_all().unwrap();
                 let warm = e.last_lookup_index_cache_report();
-                span_internal!("lookup-index cache counters differ between span and per-cell evaluation (legacy Off oracle agrees with the authority)";
-                    assert_eq!(warm.builds, 0);
-                    assert!(warm.hits > 0);
-                    assert_eq!(warm.bytes_in_cache, report.bytes_in_cache);
-                );
+                assert_eq!(warm.builds, 0);
+                assert!(warm.hits > 0);
+                assert_eq!(warm.bytes_in_cache, report.bytes_in_cache);
             }
         }
     }

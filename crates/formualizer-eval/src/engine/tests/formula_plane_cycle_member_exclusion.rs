@@ -174,11 +174,9 @@ fn span_member_in_static_cycle_is_demoted_and_circ() {
         assert_eq!(request.topology.candidates_observed, 4);
         assert_eq!(request.topology.edges_observed, 4);
     );
-    span_internal!("span/demotion counter; spans are not placed under the authority (design §10)";
-        assert_eq!(
-            resource_baseline.topology_cache_builds,
-            stats.formula_plane_mixed_topology_cache_builds,
-        );
+    assert_eq!(
+        resource_baseline.topology_cache_builds,
+        stats.formula_plane_mixed_topology_cache_builds,
     );
     span_internal!("FormulaPlane mixed-topology observation totals; the span coordinator does not run under the authority";
         assert_eq!(resource_baseline.topology_candidates_observed_total, 4);
@@ -186,11 +184,9 @@ fn span_member_in_static_cycle_is_demoted_and_circ() {
     span_internal!("FormulaPlane mixed-topology observation totals; the span coordinator does not run under the authority";
         assert_eq!(resource_baseline.topology_edges_observed_total, 4);
     );
-    span_internal!("FormulaPlane span/ingest/eval-report internals; spans are not placed under the authority (design section 10)";
-        assert_eq!(
-            resource_baseline.topology_retained_bytes_observed_max,
-            request.topology.retained_bytes_observed,
-        );
+    assert_eq!(
+        resource_baseline.topology_retained_bytes_observed_max,
+        request.topology.retained_bytes_observed,
     );
     span_internal!("span/demotion counter; spans are not placed under the authority (design §10)";
         assert_eq!(
@@ -693,7 +689,6 @@ fn two_sheet_cyclic_demotion_is_one_atomic_batch() {
 }
 
 #[test]
-#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: tests the span-demotion transaction (exact refs, faults, leases); no spans exist to demote under the authority")]
 fn prepared_span_demotion_rejects_stale_authority_before_graph_mutation() {
     let mut engine = build_workbook(CycleDetection::Static);
     let refs = engine.graph.formula_authority().active_span_refs();

@@ -103,9 +103,7 @@ fn formula_plane_column_delete_inside_span_region_still_demotes() {
 
     engine.delete_columns("Sheet1", 3, 1).unwrap();
 
-    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
-        assert!(active_span_count(&engine) < 5);
-    );
+    assert!(active_span_count(&engine) < 5);
     engine.evaluate_all().unwrap();
     assert_number(&engine, 40, 2, 41.0);
     assert_number(&engine, 40, 3, 43.0);
@@ -134,9 +132,7 @@ fn formula_plane_column_delete_inside_span_read_region_still_demotes() {
 
     engine.delete_columns("Sheet1", 1, 1).unwrap();
 
-    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
-        assert_eq!(active_span_count(&engine), 0);
-    );
+    assert_eq!(active_span_count(&engine), 0);
 }
 
 #[test]

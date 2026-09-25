@@ -736,9 +736,7 @@ fn skipped_topology_is_typed_atomic_and_never_cached() {
     );
     assert_eq!(request.ledger.scratch_current, 0);
     assert!(request.ledger.scratch_peak > 0);
-    span_internal!("FormulaPlane span/ingest/eval-report internals; spans are not placed under the authority (design section 10)";
-        assert!(!engine.mixed_topology_cache_present_for_test());
-    );
+    assert!(!engine.mixed_topology_cache_present_for_test());
     span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
         assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
     );

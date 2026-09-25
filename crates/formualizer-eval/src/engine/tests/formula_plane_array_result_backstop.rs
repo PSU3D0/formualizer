@@ -162,11 +162,9 @@ fn array_span_result_demotes_instead_of_collapsing_to_top_left() {
             "the array-producing span must be demoted exactly once"
         );
     );
-    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
-        assert_eq!(
-            stats.formula_plane_active_span_count, 0,
-            "the demoted span must no longer be plane-owned"
-        );
+    assert_eq!(
+        stats.formula_plane_active_span_count, 0,
+        "the demoted span must no longer be plane-owned"
     );
     span_internal!("FormulaPlane span/ingest/eval-report internals; spans are not placed under the authority (design section 10)";
         assert_eq!(

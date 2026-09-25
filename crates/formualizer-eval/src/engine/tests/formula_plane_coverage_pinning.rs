@@ -207,12 +207,10 @@ fn fp_coverage_corpus_pins_section_verdicts_and_values() {
                 );
             }
             SectionVerdict::Reject { placement_reason } => {
-                span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
-                    assert_eq!(
-                        report.shadow_accepted_span_cells, 0,
-                        "section {}: expected zero span-accepted cells; histogram: {:?}",
-                        section.name, report.fallback_reasons
-                    );
+                assert_eq!(
+                    report.shadow_accepted_span_cells, 0,
+                    "section {}: expected zero span-accepted cells; histogram: {:?}",
+                    section.name, report.fallback_reasons
                 );
                 let count = report
                     .fallback_reasons

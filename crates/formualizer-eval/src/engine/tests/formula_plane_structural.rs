@@ -522,9 +522,7 @@ fn formula_plane_authoritative_row_insert_on_cross_sheet_read_sheet_demotes_span
     engine.evaluate_all().unwrap();
 
     engine.insert_rows("Data", 3, 1).unwrap();
-    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
-        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
-    );
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
     engine.evaluate_all().unwrap();
 
     assert_eq!(
@@ -564,9 +562,7 @@ fn formula_plane_authoritative_range_precedent_dirty_propagation_through_structu
     engine.evaluate_all().unwrap();
 
     engine.insert_rows("Data", 50, 1).unwrap();
-    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
-        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
-    );
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
 }
 
 #[test]
@@ -655,9 +651,7 @@ fn formula_plane_row_delete_demotes_unique_literal_bindings_instead_of_miscompac
     // Per-placement literal bindings need their binding-id vector compacted.
     // Until that exists, demote rather than keeping a shifted span with stale
     // ordinal-to-binding mappings.
-    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
-        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
-    );
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
     engine.evaluate_all().unwrap();
 
     assert_eq!(
@@ -792,9 +786,7 @@ fn formula_plane_delete_on_read_range_sheet_straddles_and_demotes() {
     engine.evaluate_all().unwrap();
 
     engine.delete_rows("Data", 5, 1).unwrap();
-    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
-        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
-    );
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
     engine.evaluate_all().unwrap();
 
     // Issue #168 policy: absolute bounds track structural deletes, so
@@ -826,9 +818,7 @@ fn formula_plane_full_read_delete_demotes_to_ref_error_literals() {
     engine.evaluate_all().unwrap();
 
     engine.delete_rows("Data", 1, 1).unwrap();
-    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
-        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
-    );
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
     engine.evaluate_all().unwrap();
 
     match engine.get_cell_value("Sheet1", 50, 1) {
@@ -849,9 +839,7 @@ fn formula_plane_delete_fully_contains_span_removes_it_and_clears_overlays() {
     let mut engine = build_single_formula_column_family(100);
 
     engine.delete_columns("Sheet1", 2, 1).unwrap();
-    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
-        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
-    );
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
     engine.evaluate_all().unwrap();
 
     assert_eq!(

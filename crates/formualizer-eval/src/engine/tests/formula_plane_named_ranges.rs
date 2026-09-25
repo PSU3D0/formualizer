@@ -291,7 +291,9 @@ fn offset_backed_name_fails_closed_with_span_producers() {
         auth.get_cell_value(SHEET, 1, 2),
         Some(LiteralValue::Number(10.0))
     );
-    assert_eq!(auth.formula_plane_capacity_bailouts(), 1);
+    span_internal!("FormulaPlane capacity-bailout counter; no span producers exist under the authority (oracle: legacy Off reports 0)";
+        assert_eq!(auth.formula_plane_capacity_bailouts(), 1);
+    );
 }
 
 #[test]
@@ -322,7 +324,9 @@ fn unresolvable_named_range_pattern_routes_to_capacity_fallback() {
         engine.get_cell_value(SHEET, 1, 2),
         Some(LiteralValue::Number(1.0))
     );
-    assert_eq!(engine.formula_plane_capacity_bailouts(), 1);
+    span_internal!("FormulaPlane capacity-bailout counter; no span producers exist under the authority (oracle: legacy Off reports 0)";
+        assert_eq!(engine.formula_plane_capacity_bailouts(), 1);
+    );
 }
 
 /// (b) Dirty precision: edits inside the resolved named region re-evaluate
@@ -412,12 +416,10 @@ fn update_name_to_new_region_invalidates_spans_and_tracks_new_region() {
             .unwrap();
     }
     // The span resolved the old region; the invalidation hook must demote it.
-    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
-        assert_eq!(
-            auth.baseline_stats().formula_plane_active_span_count,
-            0,
-            "update_name must demote the name-dependent span"
-        );
+    assert_eq!(
+        auth.baseline_stats().formula_plane_active_span_count,
+        0,
+        "update_name must demote the name-dependent span"
     );
     auth.evaluate_all().unwrap();
     off.evaluate_all().unwrap();
@@ -463,12 +465,10 @@ fn sheet_scoped_define_after_ingest_invalidates_workbook_resolved_spans() {
             .define_name("Data", def, NameScope::Sheet(sheet_id))
             .unwrap();
     }
-    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
-        assert_eq!(
-            auth.baseline_stats().formula_plane_active_span_count,
-            0,
-            "shadowing define must demote spans that resolved through workbook scope"
-        );
+    assert_eq!(
+        auth.baseline_stats().formula_plane_active_span_count,
+        0,
+        "shadowing define must demote spans that resolved through workbook scope"
     );
     auth.evaluate_all().unwrap();
     off.evaluate_all().unwrap();
@@ -509,12 +509,10 @@ fn formula_name_define_demotes_active_dependent_span_and_succeeds() {
         )
         .expect("define_name must demote FormulaPlane dependents like update_name");
 
-    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
-        assert_eq!(
-            engine.baseline_stats().formula_plane_active_span_count,
-            0,
-            "formula-backed shadowing define must demote the dependent span"
-        );
+    assert_eq!(
+        engine.baseline_stats().formula_plane_active_span_count,
+        0,
+        "formula-backed shadowing define must demote the dependent span"
     );
     engine.evaluate_all().unwrap();
     assert_eq!(
@@ -710,9 +708,7 @@ fn name_covering_own_result_column_rejects_with_internal_dependency() {
     let report = ingest_column(&mut auth, SHEET, 3, |r| format!("=SUM(SelfRegion)*0+B{r}"));
     let _ = ingest_column(&mut off, SHEET, 3, |r| format!("=SUM(SelfRegion)*0+B{r}"));
 
-    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
-        assert_eq!(report.shadow_accepted_span_cells, 0);
-    );
+    assert_eq!(report.shadow_accepted_span_cells, 0);
     span_internal!("FormulaPlane span/ingest/eval-report internals; spans are not placed under the authority (design section 10)";
         assert_eq!(
             report
@@ -725,9 +721,7 @@ fn name_covering_own_result_column_rejects_with_internal_dependency() {
             report.fallback_reasons
         );
     );
-    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
-        assert_eq!(auth.baseline_stats().formula_plane_active_span_count, 0);
-    );
+    assert_eq!(auth.baseline_stats().formula_plane_active_span_count, 0);
 
     auth.evaluate_all().unwrap();
     off.evaluate_all().unwrap();
@@ -879,9 +873,7 @@ fn logged_name_define_and_delete_demote_exact_dependents() {
     engine
         .define_name_with_logger(&mut log, "Data", shadow, NameScope::Sheet(sheet_id))
         .unwrap();
-    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
-        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
-    );
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
     engine.evaluate_all().unwrap();
 
     ingest_column(&mut engine, SHEET, 5, |r| format!("=SUM(Data)+A{r}"));
@@ -892,9 +884,7 @@ fn logged_name_define_and_delete_demote_exact_dependents() {
     engine
         .delete_name_with_logger(&mut log, "Data", NameScope::Sheet(sheet_id))
         .unwrap();
-    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
-        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
-    );
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
     engine.evaluate_all().unwrap();
     assert!(matches!(
         engine.get_cell_value(SHEET, FIRST_ROW, 5),

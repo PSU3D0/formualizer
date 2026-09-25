@@ -442,12 +442,10 @@ fn structural_insert_action_undo_redo_preserves_values_without_unlogged_span_geo
         })
         .unwrap();
     undo.push_action(journal);
-    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
-        assert_eq!(
-            active_span_count(&engine),
-            0,
-            "journaled geometry is materialized"
-        );
+    assert_eq!(
+        active_span_count(&engine),
+        0,
+        "journaled geometry is materialized"
     );
     engine.evaluate_all().unwrap();
     assert_eq!(
