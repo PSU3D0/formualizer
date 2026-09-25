@@ -26,13 +26,11 @@ impl DependencyGraph {
     /// Remove a sheet from the workbook.
     pub fn remove_sheet(&mut self, sheet_id: SheetId) -> Result<(), ExcelError> {
         let result = self.remove_sheet_impl(sheet_id);
-        #[cfg(feature = "unified_authority")]
         self.authority_end_structural();
         result
     }
 
     fn remove_sheet_impl(&mut self, sheet_id: SheetId) -> Result<(), ExcelError> {
-        #[cfg(feature = "unified_authority")]
         self.authority_note_structural(true);
         let old_name = self.sheet_reg.name(sheet_id).to_string();
         if old_name.is_empty() {
@@ -269,13 +267,11 @@ impl DependencyGraph {
     /// Rename an existing sheet.
     pub fn rename_sheet(&mut self, sheet_id: SheetId, new_name: &str) -> Result<(), ExcelError> {
         let result = self.rename_sheet_impl(sheet_id, new_name);
-        #[cfg(feature = "unified_authority")]
         self.authority_end_structural();
         result
     }
 
     fn rename_sheet_impl(&mut self, sheet_id: SheetId, new_name: &str) -> Result<(), ExcelError> {
-        #[cfg(feature = "unified_authority")]
         self.authority_note_structural(true);
         if new_name.is_empty() || new_name.len() > 255 {
             return Err(ExcelError::new(ExcelErrorKind::Value).with_message("Invalid sheet name"));
@@ -330,7 +326,6 @@ impl DependencyGraph {
         new_name: &str,
     ) -> Result<SheetId, ExcelError> {
         let result = self.duplicate_sheet_impl(source_sheet_id, new_name);
-        #[cfg(feature = "unified_authority")]
         self.authority_end_structural();
         result
     }
@@ -340,7 +335,6 @@ impl DependencyGraph {
         source_sheet_id: SheetId,
         new_name: &str,
     ) -> Result<SheetId, ExcelError> {
-        #[cfg(feature = "unified_authority")]
         self.authority_note_structural(true);
         if new_name.is_empty() || new_name.len() > 255 {
             return Err(ExcelError::new(ExcelErrorKind::Value).with_message("Invalid sheet name"));

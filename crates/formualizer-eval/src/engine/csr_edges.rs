@@ -605,7 +605,6 @@ impl CsrBuilder {
 }
 
 /// Heap bytes of the CSR arrays (Program 1 memory gate; feature-gated).
-#[cfg(feature = "unified_authority")]
 impl CsrEdges {
     pub(crate) fn authority_gate_heap_bytes(&self) -> usize {
         (self.offsets.capacity() + self.reverse_offsets.capacity()) * size_of::<u32>()

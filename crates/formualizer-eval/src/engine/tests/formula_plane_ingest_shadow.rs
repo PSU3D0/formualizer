@@ -331,10 +331,7 @@ fn formula_plane_off_ingest_reports_graph_materialized_formulas() {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"
-)]
+#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
 fn formula_plane_shadow_deferred_build_graph_all_materializes_all_formulas() {
     let cfg = EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::Shadow);
     let mut engine = Engine::new(TestWorkbook::default(), cfg);
@@ -369,10 +366,7 @@ fn formula_plane_shadow_deferred_build_graph_all_materializes_all_formulas() {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"
-)]
+#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
 fn formula_plane_authoritative_ingest_skips_accepted_span_graph_materialization() {
     let cfg =
         EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
@@ -418,10 +412,7 @@ fn formula_plane_authoritative_ingest_skips_accepted_span_graph_materialization(
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"
-)]
+#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
 fn formula_text_resolves_authoritative_source_family_placements() {
     let cfg =
         EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
@@ -993,10 +984,7 @@ fn formula_plane_authoritative_fallback_only_still_evaluates_legacy() {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"
-)]
+#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
 fn formula_plane_shadow_build_graph_for_sheets_reports_selected_sheet_only() {
     let cfg = EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::Shadow);
     let mut engine = Engine::new(TestWorkbook::default(), cfg);
@@ -1052,18 +1040,12 @@ fn formula_plane_spill_commit_redirties_span_reading_spill_children() {
     // Expected Δ, legacy stale (design §8.2 FR5): the spill commit re-dirties
     // its readers and the same request replans, so they are already fresh
     // here; legacy publishes them one evaluation late.
-    #[cfg(feature = "unified_authority")]
     assert_eq!(
         engine.get_cell_value("Sheet1", 2, 2),
         Some(LiteralValue::Number(12.0))
     );
 
     let result = engine.evaluate_all().unwrap();
-    #[cfg(not(feature = "unified_authority"))]
-    assert!(
-        result.computed_vertices >= 2,
-        "expected spill-region notification to re-evaluate span, got {result:?}"
-    );
     let _ = result;
     assert_eq!(
         engine.get_cell_value("Sheet1", 2, 2),
@@ -1227,10 +1209,7 @@ fn formula_plane_remove_sheet_redirties_surviving_spans() {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"
-)]
+#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
 fn formula_plane_remove_sheet_hosting_span_removes_active_span() {
     let cfg =
         EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
@@ -1255,10 +1234,7 @@ fn formula_plane_remove_sheet_hosting_span_removes_active_span() {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"
-)]
+#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
 fn generic_source_family_preparation_accepts_complete_domains_and_rejects_explicit_authority() {
     let cfg =
         EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
@@ -1507,10 +1483,7 @@ fn deferred_poisoned_lock_failure_restores_package_without_publication() {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"
-)]
+#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
 fn source_family_preparation_rejects_cross_engine_finalization_before_authority() {
     let cfg =
         EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
@@ -1552,10 +1525,7 @@ fn source_family_preparation_rejects_cross_engine_finalization_before_authority(
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"
-)]
+#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
 fn partitioned_shadow_prepares_all_fragments_from_one_analysis_without_authority() {
     let family = PartitionedSourceFormulaFamily {
         source_order: crate::engine::SourceFormulaOrder::new(0),
@@ -1630,10 +1600,7 @@ fn partitioned_shadow_prepares_all_fragments_from_one_analysis_without_authority
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"
-)]
+#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
 fn partitioned_shadow_rejects_the_whole_family_when_one_fragment_fails() {
     let family = PartitionedSourceFormulaFamily {
         source_order: crate::engine::SourceFormulaOrder::new(0),
@@ -1696,10 +1663,7 @@ fn partitioned_shadow_rejects_the_whole_family_when_one_fragment_fails() {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"
-)]
+#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
 fn compressed_modes_accept_registry_resolved_nested_function_relocation() {
     fn family(text: &str) -> SourceFormulaFamily {
         SourceFormulaFamily {
@@ -1761,10 +1725,7 @@ fn compressed_modes_accept_registry_resolved_nested_function_relocation() {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"
-)]
+#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
 fn compressed_shadow_replays_when_runtime_provider_identity_mismatches_registry() {
     struct LocalAbs;
     impl crate::function::Function for LocalAbs {
@@ -1813,10 +1774,7 @@ fn compressed_shadow_replays_when_runtime_provider_identity_mismatches_registry(
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"
-)]
+#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
 fn authoritative_function_closure_admits_explicit_safe_custom_and_replays_untrusted_custom() {
     struct ExplicitSafe;
     impl crate::function::Function for ExplicitSafe {
@@ -1884,10 +1842,7 @@ fn authoritative_function_closure_admits_explicit_safe_custom_and_replays_untrus
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"
-)]
+#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
 fn compressed_nested_functions_use_one_semantic_snapshot_across_authority_planning() {
     struct NestedSafe(&'static str);
     impl crate::function::Function for NestedSafe {
@@ -1954,10 +1909,7 @@ fn compressed_nested_functions_use_one_semantic_snapshot_across_authority_planni
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"
-)]
+#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
 fn authoritative_replays_every_exceptional_function_semantic_category() {
     for (source_index, text) in [
         (1, "RAND()+A1"),
@@ -1998,10 +1950,7 @@ fn authoritative_replays_every_exceptional_function_semantic_category() {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"
-)]
+#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
 fn compressed_shadow_replays_exceptional_and_unresolved_function_semantics() {
     for (source_index, text) in [
         (1, "RAND()+A1"),
@@ -2046,10 +1995,7 @@ fn compressed_shadow_replays_exceptional_and_unresolved_function_semantics() {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"
-)]
+#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
 fn compressed_shadow_counts_only_preparation_work_that_occurs() {
     let cfg = EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::Shadow);
     let mut engine = Engine::new(TestWorkbook::default(), cfg);
@@ -2091,10 +2037,7 @@ fn compressed_shadow_counts_only_preparation_work_that_occurs() {
     );
 }
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"
-)]
+#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
 fn authoritative_clean_parse_rejection_publishes_attempted_work_once() {
     let mut engine = Engine::new(
         TestWorkbook::default(),
@@ -2176,10 +2119,7 @@ fn provider_revision_replay(family_id: SourceFamilyId) -> ExactTestReplay {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"
-)]
+#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
 fn unversioned_provider_function_family_fails_closed_to_replay() {
     let mut engine = Engine::new(
         TestWorkbook::default().without_planning_revision(),
@@ -2195,10 +2135,7 @@ fn unversioned_provider_function_family_fails_closed_to_replay() {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"
-)]
+#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
 fn initially_stale_provider_reason_and_fallback_counts_publish_once() {
     let workbook = TestWorkbook::default();
     let revision = workbook.planning_revision_handle();
@@ -2243,10 +2180,7 @@ fn initially_stale_provider_reason_and_fallback_counts_publish_once() {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"
-)]
+#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
 fn later_source_order_error_publishes_prior_preparation_commit() {
     let mut engine = Engine::new(
         TestWorkbook::default(),
@@ -2329,10 +2263,7 @@ fn later_source_order_error_publishes_prior_preparation_commit() {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"
-)]
+#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
 fn provider_flip_after_prior_ordered_fallback_demotes_later_function_clean_family() {
     let workbook = TestWorkbook::default();
     let revision = workbook.planning_revision_handle();
@@ -2385,10 +2316,7 @@ fn provider_flip_after_prior_ordered_fallback_demotes_later_function_clean_famil
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"
-)]
+#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
 fn provider_revision_change_between_preparation_and_commit_replays_exactly() {
     let workbook = TestWorkbook::default();
     let revision = workbook.planning_revision_handle();
@@ -2437,10 +2365,7 @@ fn provider_revision_change_between_preparation_and_commit_replays_exactly() {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"
-)]
+#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
 fn provider_revision_change_after_commit_demotes_before_evaluation() {
     let workbook = TestWorkbook::default();
     let revision = workbook.planning_revision_handle();
@@ -2480,10 +2405,7 @@ fn provider_revision_change_after_commit_demotes_before_evaluation() {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"
-)]
+#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
 fn unrelated_semantic_epoch_change_does_not_replay_arithmetic_preparation() {
     crate::builtins::load_builtins();
     let cfg =
@@ -2553,10 +2475,7 @@ fn unrelated_semantic_epoch_change_does_not_replay_arithmetic_preparation() {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"
-)]
+#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
 fn unrelated_commit_boundary_registration_keeps_function_preparation() {
     struct UnrelatedFunction;
     impl crate::function::Function for UnrelatedFunction {
@@ -2629,10 +2548,7 @@ fn unrelated_commit_boundary_registration_keeps_function_preparation() {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"
-)]
+#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
 fn unrelated_commit_boundary_epoch_change_keeps_arithmetic_preparation() {
     crate::builtins::load_builtins();
     let cfg =

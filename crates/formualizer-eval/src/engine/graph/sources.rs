@@ -59,7 +59,6 @@ impl DependencyGraph {
         };
         self.source_scalars.insert(name.to_string(), entry);
         self.resolve_pending_name_references(NameScope::Workbook, name);
-        #[cfg(feature = "unified_authority")]
         self.authority_note_symbol(Some(vertex));
         self.bump_symbol_revision();
         Ok(())
@@ -89,7 +88,6 @@ impl DependencyGraph {
             version,
         };
         self.source_tables.insert(name.to_string(), entry);
-        #[cfg(feature = "unified_authority")]
         self.authority_note_symbol(Some(vertex));
         self.bump_symbol_revision();
         Ok(())

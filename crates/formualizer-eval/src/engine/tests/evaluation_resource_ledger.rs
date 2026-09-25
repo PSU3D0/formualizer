@@ -460,10 +460,7 @@ fn graph_caps_are_authoritative_and_atomic_across_staged_modes() {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: asserts span families avoid legacy vertex/materialization budget charges; under the authority formulas ingest per cell as legacy vertices"
-)]
+#[ignore = "M2 span-internal: asserts span families avoid legacy vertex/materialization budget charges; under the authority formulas ingest per cell as legacy vertices"]
 fn authoritative_staged_spans_do_not_charge_hypothetical_legacy_vertices() {
     let mut config = EvalConfig::default()
         .with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental)
@@ -489,10 +486,7 @@ fn authoritative_staged_spans_do_not_charge_hypothetical_legacy_vertices() {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: charges FormulaPlane mixed-cache and span schedule-discovery memory; the span coordinator does not run under the authority"
-)]
+#[ignore = "M2 span-internal: charges FormulaPlane mixed-cache and span schedule-discovery memory; the span coordinator does not run under the authority"]
 fn c1b_activates_only_mixed_cache_and_schedule_discovery_memory() {
     let build = |budgets| {
         let mut engine = Engine::new(
@@ -783,10 +777,7 @@ fn evaluate_vertex_max_work_zero_matches_all_modes_without_publication() {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: prepares a span demotion under a vertex budget; no spans exist to demote"
-)]
+#[ignore = "M2 span-internal: prepares a span demotion under a vertex budget; no spans exist to demote"]
 fn explicit_vertex_budget_ignores_legacy_limit_at_shared_demotion_seam() {
     fn demote(budgets: EvaluationBudgets) -> Result<(), String> {
         let mut config = EvalConfig::default()

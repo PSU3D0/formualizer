@@ -403,7 +403,7 @@ impl<'a, R: EvaluationContext> VirtualDepBuilder<'a, R> {
         rustc_hash::FxHashMap<VertexId, Vec<VertexId>>,
         Vec<VertexId>,
     ) {
-        self.build_inner(candidates, !cfg!(feature = "unified_authority"))
+        self.build_inner(candidates, false)
     }
 
     /// Legacy's hints, range members included: what the legacy scheduler
@@ -439,11 +439,8 @@ impl<'a, R: EvaluationContext> VirtualDepBuilder<'a, R> {
             // Under the authority a reader with an observed read set is
             // planned from it (rdi_dyn, rectangle hints); the pre-probe is
             // for first evaluations only (design §8.2).
-            #[cfg(feature = "unified_authority")]
             let observed =
                 !range_members && self.engine.graph.authority_host().observed(v).is_some();
-            #[cfg(not(feature = "unified_authority"))]
-            let observed = false;
             let dynamic_deps = if observed {
                 Vec::new()
             } else {

@@ -8,7 +8,7 @@
 /// skips them too.
 macro_rules! span_internal {
     ($reason:literal; $($body:tt)*) => {
-        if !cfg!(feature = "unified_authority")
+        if !true
             && std::env::var_os("FZ_M2_FORCE_PLANE_OFF").is_none()
         {
             $($body)*

@@ -946,7 +946,6 @@ impl Default for CsrMutableEdges {
 
 /// Heap bytes of the mutable edge store (Program 1 memory gate;
 /// feature-gated): `(csr base, delta slab, side tables)`.
-#[cfg(feature = "unified_authority")]
 impl CsrMutableEdges {
     pub(crate) fn authority_gate_heap_bytes(&self) -> (usize, usize, usize) {
         use crate::engine::authority::dir::hash_table_bytes;

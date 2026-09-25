@@ -150,7 +150,6 @@ impl SetText for Engine<TestWorkbook> {
 /// gives SUM 1 / COUNT 1, and keeps it on later recalcs). The authority
 /// orders the anchor by its static range edge and probes nothing at plan
 /// time, so the reader sees the committed spill (Excel: 6 / 3).
-#[cfg(feature = "unified_authority")]
 #[test]
 fn open_column_reader_sees_spill_committed_earlier_in_pass() {
     let mut engine = engine();
@@ -172,7 +171,6 @@ fn open_column_reader_sees_spill_committed_earlier_in_pass() {
 /// it, then re-dirties only X: Z = 5 and W = 10 stay wrong. The recorder
 /// sees X read dirty A4, drops X's result, stops the pass after X's layer
 /// and replans with the hint A4 → X.
-#[cfg(feature = "unified_authority")]
 #[test]
 fn fr_dynamic_reader_of_moved_dirty_target_never_publishes_stale() {
     for (targeted, parallel) in [(false, false), (true, false), (false, true), (true, true)] {
@@ -235,7 +233,6 @@ fn fr_dynamic_reader_of_moved_dirty_target_never_publishes_stale() {
 /// spill and on every later recalc. Under the authority the spill commit's
 /// re-dirty survives (commit-time clearing) and the loop replans; once the
 /// extent is known it is ordered first by a plan hint.
-#[cfg(feature = "unified_authority")]
 #[test]
 fn fr_static_reader_of_spill_child_follows_the_spill() {
     // Not (first spill, targeted): C5's target closure never reaches the
@@ -278,7 +275,6 @@ fn fr_static_reader_of_spill_child_follows_the_spill() {
 /// its observed set; later plans use it instead of a pre-probe, so steady
 /// recalcs with a stable target hit the static schedule cache, keyed on
 /// rev.dyn. Moving the target changes the observed set and stays correct.
-#[cfg(feature = "unified_authority")]
 #[test]
 fn observed_reads_plan_dynamic_readers_and_key_the_schedule_cache() {
     let mut e = engine();

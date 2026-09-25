@@ -38,11 +38,7 @@ fn m3_structural_cost_probe() {
             .unwrap();
         let t = Instant::now();
         e.evaluate_all().unwrap();
-        eprintln!(
-            "M3PROBE feature={} G1 edit (n dirty) eval {:?}",
-            cfg!(feature = "unified_authority"),
-            t.elapsed()
-        );
+        eprintln!("M3PROBE authority G1 edit (n dirty) eval {:?}", t.elapsed());
     }
     for (name, op) in [
         ("insert_rows top", 0),
@@ -59,7 +55,6 @@ fn m3_structural_cost_probe() {
         }
         let edit = t.elapsed();
         let t = Instant::now();
-        #[cfg(feature = "unified_authority")]
         e.graph.authority().unwrap();
         let resync = t.elapsed();
         let t = Instant::now();
@@ -72,8 +67,7 @@ fn m3_structural_cost_probe() {
         let t = Instant::now();
         e.evaluate_all().unwrap();
         eprintln!(
-            "M3PROBE feature={} {name}: edit {edit:?} resync {resync:?} eval {eval:?} | value-edit eval {:?}",
-            cfg!(feature = "unified_authority"),
+            "M3PROBE authority {name}: edit {edit:?} resync {resync:?} eval {eval:?} | value-edit eval {:?}",
             t.elapsed()
         );
     }

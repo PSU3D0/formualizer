@@ -1833,7 +1833,6 @@ impl<R: EvaluationContext> Engine<R> {
             // Under the authority: the direct readers through text-origin
             // edges (legacy's in-edges and covering range readers, which
             // exclude name- and table-mediated readers).
-            #[cfg(feature = "unified_authority")]
             {
                 let _ = &member_ref;
                 let complete = self
@@ -1853,35 +1852,6 @@ impl<R: EvaluationContext> Engine<R> {
                         reason: InspectionUnavailableReason::DependencyAuthorityUnavailable,
                     })?;
                 if !complete {
-                    incomplete = true;
-                    break;
-                }
-            }
-            #[cfg(not(feature = "unified_authority"))]
-            if let Some(vertex) = self.graph.get_vertex_for_cell(&member_ref) {
-                let complete = self.graph.visit_direct_dependents_bounded(
-                    vertex,
-                    &mut work.remaining,
-                    &mut |dependent| self.key_for_vertex(dependent).is_none_or(&mut record),
-                );
-                if !complete {
-                    incomplete = true;
-                    break;
-                }
-            }
-
-            #[cfg(not(feature = "unified_authority"))]
-            {
-                struct Visitor<'a, F>(&'a mut F);
-                impl<F: FnMut(CellKey) -> bool> DependentVisitor for Visitor<'_, F> {
-                    fn visit(&mut self, dependent: CellKey) -> bool {
-                        (self.0)(dependent)
-                    }
-                }
-                let mut visitor = Visitor(&mut record);
-                if source.visit_dependents_covering(member, work, &mut visitor)?
-                    == QueryCompleteness::Incomplete
-                {
                     incomplete = true;
                     break;
                 }

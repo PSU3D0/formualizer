@@ -146,10 +146,7 @@ fn single_span_read_regions(engine: &Engine<TestWorkbook>) -> Vec<Region> {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: asserts a span's union read region; no spans under the authority"
-)]
+#[ignore = "M2 span-internal: asserts a span's union read region; no spans under the authority"]
 fn tail_read_span_union_read_region_is_single_column_interval() {
     let engine = build_tail_read_engine();
     let sheet_id = engine.graph.sheet_id(SHEET).expect("sheet id for Sheet1");
@@ -165,10 +162,7 @@ fn tail_read_span_union_read_region_is_single_column_interval() {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: asserts a span's union read region; no spans under the authority"
-)]
+#[ignore = "M2 span-internal: asserts a span's union read region; no spans under the authority"]
 fn running_total_span_union_read_region_is_single_column_interval() {
     let engine = build_running_total_engine();
     let sheet_id = engine.graph.sheet_id(SHEET).expect("sheet id for Sheet1");

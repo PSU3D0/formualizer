@@ -4,7 +4,6 @@
 
 pub mod addr;
 pub mod arrow_ingest;
-#[cfg(feature = "unified_authority")]
 pub mod authority;
 pub mod cancel;
 pub(crate) mod convergence;

@@ -326,11 +326,7 @@ mod enabled {
                     std::fs::create_dir_all(d)?;
                 }
                 let mut file = std::fs::File::create(&path)?;
-                writeln!(
-                    file,
-                    "# authority-values unified_authority={}",
-                    cfg!(feature = "unified_authority")
-                )?;
+                writeln!(file, "# authority-values")?;
                 for id in ids {
                     eprintln!("{id}");
                     let mut out = Out {

@@ -118,10 +118,7 @@ fn tail_sum(row: u32) -> f64 {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: tests the FormulaPlane mixed span/legacy topology cache and routing; the span coordinator does not run under the authority"
-)]
+#[ignore = "M2 span-internal: tests the FormulaPlane mixed span/legacy topology cache and routing; the span coordinator does not run under the authority"]
 fn mixed_tail_reads_complete_in_one_authoritative_pass() {
     // Single-column tail reads: with degenerate-span normalization these
     // index as per-column intervals, so legacy point-result queries on other
@@ -175,10 +172,7 @@ fn mixed_tail_reads_complete_in_one_authoritative_pass() {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: tests the FormulaPlane mixed span/legacy topology cache and routing; the span coordinator does not run under the authority"
-)]
+#[ignore = "M2 span-internal: tests the FormulaPlane mixed span/legacy topology cache and routing; the span coordinator does not run under the authority"]
 fn independent_iterative_island_preserves_accumulator_and_single_request_lifecycle() {
     let config = EvalConfig::default()
         .with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental)
@@ -239,10 +233,7 @@ fn assert_full_capacity_corpus_parity(
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: tests the FormulaPlane mixed span/legacy topology cache and routing; the span coordinator does not run under the authority"
-)]
+#[ignore = "M2 span-internal: tests the FormulaPlane mixed span/legacy topology cache and routing; the span coordinator does not run under the authority"]
 fn cached_mixed_topology_matches_off_first_warm_and_post_edit() {
     let build = |mode| build_mixed_engine(mode, |row| format!("=SUM($A{row}:$B${ROWS})"));
     let mut off = build(FormulaPlaneMode::Off);
@@ -403,10 +394,7 @@ fn capacity_visible_snapshot(
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: tests the FormulaPlane mixed span/legacy topology cache and routing; the span coordinator does not run under the authority"
-)]
+#[ignore = "M2 span-internal: tests the FormulaPlane mixed span/legacy topology cache and routing; the span coordinator does not run under the authority"]
 fn cache_skip_ignores_materialization_cap_and_retains_exact_state() {
     let mut engine = build_mixed_engine(FormulaPlaneMode::AuthoritativeExperimental, |row| {
         format!("=SUM($A{row}:$B${ROWS})")
@@ -445,10 +433,7 @@ fn cache_skip_ignores_materialization_cap_and_retains_exact_state() {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: tests the FormulaPlane mixed span/legacy topology cache and routing; the span coordinator does not run under the authority"
-)]
+#[ignore = "M2 span-internal: tests the FormulaPlane mixed span/legacy topology cache and routing; the span coordinator does not run under the authority"]
 fn non_cycle_unsafe_fallback_faults_preserve_epochs_pending_lease_and_values() {
     use crate::engine::eval::FormulaSpanDemotionFault;
 
@@ -669,10 +654,7 @@ fn assert_mutation_invalidates_cache_once(
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: tests the FormulaPlane mixed span/legacy topology cache and routing; the span coordinator does not run under the authority"
-)]
+#[ignore = "M2 span-internal: tests the FormulaPlane mixed span/legacy topology cache and routing; the span coordinator does not run under the authority"]
 fn mixed_topology_cache_mutation_class_invalidation_audit() {
     use crate::engine::named_range::{NameScope, NamedDefinition};
     use crate::reference::{CellRef, Coord, RangeRef};
@@ -718,10 +700,7 @@ fn mixed_topology_cache_mutation_class_invalidation_audit() {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: tests the FormulaPlane mixed span/legacy topology cache and routing; the span coordinator does not run under the authority"
-)]
+#[ignore = "M2 span-internal: tests the FormulaPlane mixed span/legacy topology cache and routing; the span coordinator does not run under the authority"]
 fn mixed_topology_cache_rejects_stale_span_ref_even_without_epoch_change() {
     let mut engine = cached_topology_engine();
     engine.evaluate_all().unwrap();
@@ -843,10 +822,7 @@ fn prepared_demotion_failure_keeps_revision_and_cache_success_invalidates_once()
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: tests the FormulaPlane mixed span/legacy topology cache and routing; the span coordinator does not run under the authority"
-)]
+#[ignore = "M2 span-internal: tests the FormulaPlane mixed span/legacy topology cache and routing; the span coordinator does not run under the authority"]
 fn warm_cache_can_bypass_retained_schedule_into_exact_ladder() {
     use crate::engine::{
         DiskScratchPolicy, EvaluationBudgets, FormulaPlaneTopologyCacheOutcome,
@@ -886,10 +862,7 @@ fn warm_cache_can_bypass_retained_schedule_into_exact_ladder() {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: tests the FormulaPlane mixed span/legacy topology cache and routing; the span coordinator does not run under the authority"
-)]
+#[ignore = "M2 span-internal: tests the FormulaPlane mixed span/legacy topology cache and routing; the span coordinator does not run under the authority"]
 fn stale_cached_topology_is_dropped_when_cap_key_rebuild_skips() {
     let mut engine = cached_topology_engine();
     engine.evaluate_all().unwrap();
@@ -913,10 +886,7 @@ fn stale_cached_topology_is_dropped_when_cap_key_rebuild_skips() {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: tests the FormulaPlane mixed span/legacy topology cache and routing; the span coordinator does not run under the authority"
-)]
+#[ignore = "M2 span-internal: tests the FormulaPlane mixed span/legacy topology cache and routing; the span coordinator does not run under the authority"]
 fn cache_edge_and_memory_caps_use_exact_request_topology() {
     for limit_kind in ["edges", "memory"] {
         let mut engine = build_mixed_engine(FormulaPlaneMode::AuthoritativeExperimental, |row| {

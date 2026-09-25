@@ -1161,10 +1161,7 @@ fn formula_plane_row_insert_split_halves_have_exact_read_summaries() {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: seeds a ColRun span directly into the FormulaPlane (crate-internal); spans cannot exist under the authority"
-)]
+#[ignore = "M2 span-internal: seeds a ColRun span directly into the FormulaPlane (crate-internal); spans cannot exist under the authority"]
 fn formula_plane_column_insert_splits_col_run_span_with_stationary_reads() {
     use crate::formula_plane::runtime::PlacementDomain;
     let mut engine = authoritative_engine();
@@ -1225,10 +1222,7 @@ fn formula_plane_column_insert_splits_col_run_span_with_stationary_reads() {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: seeds a rect span directly into the FormulaPlane (crate-internal); spans cannot exist under the authority"
-)]
+#[ignore = "M2 span-internal: seeds a rect span directly into the FormulaPlane (crate-internal); spans cannot exist under the authority"]
 fn formula_plane_rect_span_row_insert_splits_into_two_rects() {
     use crate::formula_plane::runtime::PlacementDomain;
     let mut engine = authoritative_engine();

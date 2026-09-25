@@ -767,7 +767,6 @@ impl<'g> VertexEditor<'g> {
     /// name-hijacked cell (#304). Every in-tree caller iterates `grid_vertices_in_sheet`
     /// and so cannot reach this, but the method is public, so refuse explicitly.
     pub fn move_vertex(&mut self, id: VertexId, new_coord: GridAddr) -> Result<(), EditorError> {
-        #[cfg(feature = "unified_authority")]
         self.graph.authority_note_structural(false);
         // Check if vertex exists
         if !self.graph.vertex_exists(id) {
@@ -916,7 +915,6 @@ impl<'g> VertexEditor<'g> {
         count: u32,
     ) -> Result<ShiftSummary, EditorError> {
         let result = self.insert_rows_impl(sheet_id, before, count);
-        #[cfg(feature = "unified_authority")]
         self.graph.authority_end_structural();
         result
     }
@@ -927,7 +925,6 @@ impl<'g> VertexEditor<'g> {
         before: u32,
         count: u32,
     ) -> Result<ShiftSummary, EditorError> {
-        #[cfg(feature = "unified_authority")]
         self.graph.authority_note_structural(true);
         if count == 0 {
             return Ok(ShiftSummary::default());
@@ -1052,7 +1049,6 @@ impl<'g> VertexEditor<'g> {
         count: u32,
     ) -> Result<ShiftSummary, EditorError> {
         let result = self.delete_rows_impl(sheet_id, start, count);
-        #[cfg(feature = "unified_authority")]
         self.graph.authority_end_structural();
         result
     }
@@ -1063,7 +1059,6 @@ impl<'g> VertexEditor<'g> {
         start: u32,
         count: u32,
     ) -> Result<ShiftSummary, EditorError> {
-        #[cfg(feature = "unified_authority")]
         self.graph.authority_note_structural(true);
         if count == 0 {
             return Ok(ShiftSummary::default());
@@ -1200,7 +1195,6 @@ impl<'g> VertexEditor<'g> {
         count: u32,
     ) -> Result<ShiftSummary, EditorError> {
         let result = self.insert_columns_impl(sheet_id, before, count);
-        #[cfg(feature = "unified_authority")]
         self.graph.authority_end_structural();
         result
     }
@@ -1211,7 +1205,6 @@ impl<'g> VertexEditor<'g> {
         before: u32,
         count: u32,
     ) -> Result<ShiftSummary, EditorError> {
-        #[cfg(feature = "unified_authority")]
         self.graph.authority_note_structural(true);
         if count == 0 {
             return Ok(ShiftSummary::default());
@@ -1336,7 +1329,6 @@ impl<'g> VertexEditor<'g> {
         count: u32,
     ) -> Result<ShiftSummary, EditorError> {
         let result = self.delete_columns_impl(sheet_id, start, count);
-        #[cfg(feature = "unified_authority")]
         self.graph.authority_end_structural();
         result
     }
@@ -1347,7 +1339,6 @@ impl<'g> VertexEditor<'g> {
         start: u32,
         count: u32,
     ) -> Result<ShiftSummary, EditorError> {
-        #[cfg(feature = "unified_authority")]
         self.graph.authority_note_structural(true);
         if count == 0 {
             return Ok(ShiftSummary::default());
@@ -1978,7 +1969,6 @@ impl<'g> VertexEditor<'g> {
             to_row,
             to_col,
         );
-        #[cfg(feature = "unified_authority")]
         self.graph.authority_end_structural();
         result
     }
@@ -1994,7 +1984,6 @@ impl<'g> VertexEditor<'g> {
         to_row: u32,
         to_col: u32,
     ) -> Result<RangeSummary, EditorError> {
-        #[cfg(feature = "unified_authority")]
         self.graph.authority_note_structural(true);
         // First copy the range
         let mut summary = self.copy_range(

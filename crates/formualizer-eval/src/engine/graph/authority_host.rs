@@ -288,7 +288,14 @@ impl DependencyGraph {
 
     /// Bring the authority up to date with the graph's formulas, then mark
     /// the closure of dirty seeds that waited for it.
+    ///
+    /// Never inside a load scope (`first_load_assume_new`): the loader's
+    /// cell map is flushed only when the scope ends, so formulas would not
+    /// be found at their cells; the scope's end syncs.
     pub(crate) fn authority_sync(&mut self) {
+        if self.first_load_assume_new {
+            return;
+        }
         self.authority_sync_store();
         if !self.authority.pending_dirty.is_empty() {
             self.authority_flush_pending_dirty();
@@ -773,7 +780,7 @@ impl DependencyGraph {
             }
         }
         if !self.authority_load_skips_closures() {
-            if self.authority.carried.is_some() {
+            if self.authority.carried.is_some() || self.first_load_assume_new {
                 self.authority.pending_dirty.extend_from_slice(seeds);
             } else {
                 self.authority_sync();

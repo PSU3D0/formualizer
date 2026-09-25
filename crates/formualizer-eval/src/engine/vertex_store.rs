@@ -584,7 +584,6 @@ impl VertexStore {
 }
 
 /// Heap bytes of the vertex columns (Program 1 memory gate; feature-gated).
-#[cfg(feature = "unified_authority")]
 impl VertexStore {
     pub(crate) fn authority_gate_heap_bytes(&self) -> usize {
         self.coords.capacity() * size_of::<VertexAddr>()

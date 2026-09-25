@@ -124,7 +124,7 @@ test-support = []
 # Program 1 (FORM-000169): the unified region-node dependency authority,
 # built beside the legacy graph during development. Temporary and never
 # default; the legacy graph stays the runtime authority when it is off.
-unified_authority = []
+unified_authority = [] # deprecated no-op: the authority is always on (Program 1 M5)
 
 [[example]]
 name = "perf_tranche_probe"

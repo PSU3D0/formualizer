@@ -23,7 +23,6 @@ pub struct GraphInstrumentation {
 }
 
 mod ast_utils;
-#[cfg(feature = "unified_authority")]
 pub(crate) mod authority_host;
 pub mod editor;
 mod formula_analysis;
@@ -172,7 +171,6 @@ pub struct GraphBaselineStats {
 #[derive(Debug, Default)]
 pub(crate) struct FormulaMap {
     map: FxHashMap<VertexId, AstNodeId>,
-    #[cfg(feature = "unified_authority")]
     touched: Vec<VertexId>,
 }
 
@@ -188,7 +186,6 @@ impl std::ops::Deref for FormulaMap {
 impl FormulaMap {
     #[inline]
     pub(crate) fn insert(&mut self, vertex: VertexId, ast: AstNodeId) -> Option<AstNodeId> {
-        #[cfg(feature = "unified_authority")]
         self.touched.push(vertex);
         self.map.insert(vertex, ast)
     }
@@ -196,7 +193,6 @@ impl FormulaMap {
     #[inline]
     pub(crate) fn remove(&mut self, vertex: &VertexId) -> Option<AstNodeId> {
         let old = self.map.remove(vertex);
-        #[cfg(feature = "unified_authority")]
         if old.is_some() {
             self.touched.push(*vertex);
         }
@@ -209,19 +205,16 @@ impl FormulaMap {
     }
 
     /// Vertices whose formula changed since the last call.
-    #[cfg(feature = "unified_authority")]
     pub(crate) fn take_touched(&mut self) -> Vec<VertexId> {
         std::mem::take(&mut self.touched)
     }
 
     /// Record a vertex whose dependencies were re-derived without a formula
     /// change (a pending symbol became bound).
-    #[cfg(feature = "unified_authority")]
     pub(crate) fn touch(&mut self, vertex: VertexId) {
         self.touched.push(vertex);
     }
 
-    #[cfg(feature = "unified_authority")]
     pub(crate) fn has_touched(&self) -> bool {
         !self.touched.is_empty()
     }
@@ -370,7 +363,6 @@ pub struct DependencyGraph {
     formula_authority: FormulaAuthority,
     /// Program 1 unified authority, maintained beside the legacy graph
     /// while the feature is in development (never default).
-    #[cfg(feature = "unified_authority")]
     authority: crate::engine::authority::host::AuthorityHost,
 
     // Dynamic topology orderer (Pearce–Kelly) maintained alongside edges when enabled
@@ -970,7 +962,6 @@ impl DependencyGraph {
             self.load_packed_to_vertex.clear();
         }
         self.first_load_assume_new = enabled;
-        #[cfg(feature = "unified_authority")]
         if leaving {
             self.authority_sync();
         }
@@ -1323,7 +1314,6 @@ impl DependencyGraph {
             topology_revision: 0,
             symbol_revision: 0,
             formula_authority: FormulaAuthority::default(),
-            #[cfg(feature = "unified_authority")]
             authority: Default::default(),
             pk_order: None,
             spill_anchor_to_cells: FxHashMap::default(),
@@ -1615,7 +1605,6 @@ impl DependencyGraph {
         self.symbol_revision = self.symbol_revision.wrapping_add(1);
         // Keep a built authority current, so read-only plans (`&self`) see
         // the new binding; during a load or a structural edit it waits.
-        #[cfg(feature = "unified_authority")]
         self.authority_sync_if_ready();
     }
 
@@ -2746,87 +2735,7 @@ impl DependencyGraph {
             self.deferred_dirty_pending.extend_from_slice(vertex_ids);
             return vertex_ids.to_vec();
         }
-        #[cfg(feature = "unified_authority")]
-        {
-            self.authority_mark_dirty(vertex_ids)
-        }
-        #[cfg(not(feature = "unified_authority"))]
-        {
-            self.legacy_mark_dirty_many(vertex_ids)
-        }
-    }
-
-    /// Legacy's dirty BFS over CSR edges, name links and range stripes.
-    #[cfg(not(feature = "unified_authority"))]
-    fn legacy_mark_dirty_many(&mut self, vertex_ids: &[VertexId]) -> Vec<VertexId> {
-        let mut affected = FxHashSet::default();
-        let mut to_visit = Vec::new();
-        let mut visited_for_propagation = FxHashSet::default();
-
-        for &vertex_id in vertex_ids {
-            // Only mark the source vertex as dirty if it's a formula.
-            // Value cells don't get marked dirty themselves but are still
-            // affected.
-            let is_formula = matches!(
-                self.store.kind(vertex_id),
-                VertexKind::FormulaScalar
-                    | VertexKind::FormulaArray
-                    | VertexKind::NamedScalar
-                    | VertexKind::NamedArray
-            );
-
-            if is_formula {
-                to_visit.push(vertex_id);
-            } else {
-                // Value cells are affected (for tracking) but not marked dirty
-                affected.insert(vertex_id);
-            }
-
-            // Initial propagation from direct and range dependents
-            {
-                // Get dependents (vertices that depend on this vertex)
-                if let Some(dependents) = self.dependents_slice(vertex_id) {
-                    to_visit.extend(dependents.iter().copied());
-                } else {
-                    let dependents = self.get_dependents(vertex_id);
-                    to_visit.extend(dependents);
-                }
-
-                if let Some(name_set) = self.cell_to_name_dependents.get(&vertex_id) {
-                    for &name_vertex in name_set {
-                        to_visit.push(name_vertex);
-                    }
-                }
-
-                to_visit.extend(self.collect_range_dependents_for_vertex(vertex_id));
-            }
-        }
-
-        while let Some(id) = to_visit.pop() {
-            if !visited_for_propagation.insert(id) {
-                continue; // Already processed
-            }
-            self.dirty_propagation_visits += 1;
-            affected.insert(id);
-
-            // Mark vertex as dirty
-            self.store.set_dirty(id, true);
-
-            // Add direct dependents to visit list
-            if let Some(dependents) = self.dependents_slice(id) {
-                to_visit.extend(dependents.iter().copied());
-            } else {
-                let dependents = self.get_dependents(id);
-                to_visit.extend(dependents);
-            }
-            to_visit.extend(self.collect_range_dependents_for_vertex(id));
-        }
-
-        // Add to dirty set
-        self.formula_dirty.legacy_extend(affected.iter().copied());
-
-        // Return as Vec for compatibility
-        affected.into_iter().collect()
+        self.authority_mark_dirty(vertex_ids)
     }
 
     /// Total vertices processed by dirty-propagation BFS loops since graph
@@ -2937,7 +2846,6 @@ impl DependencyGraph {
             self.store.set_dirty(vertex_id, false);
             self.formula_dirty.legacy_remove(&vertex_id);
         }
-        #[cfg(feature = "unified_authority")]
         self.authority_observe_clean(vertices);
     }
 
@@ -3843,80 +3751,7 @@ impl DependencyGraph {
         }
         // The authority's closure is exact per source (legacy's bounding
         // rectangle per sheet may over-dirty).
-        #[cfg(feature = "unified_authority")]
-        {
-            self.authority_mark_dirty(vertex_ids)
-        }
-        #[cfg(not(feature = "unified_authority"))]
-        {
-            self.legacy_mark_dirty_many_value_cells(vertex_ids)
-        }
-    }
-
-    #[cfg(not(feature = "unified_authority"))]
-    fn legacy_mark_dirty_many_value_cells(&mut self, vertex_ids: &[VertexId]) -> Vec<VertexId> {
-        // Fold pending deltas once so the propagation loop below can use the
-        // zero-allocation base `in_edges` slices. This is a deliberate
-        // rebuild-on-read seam: one rebuild per bulk propagation, amortized
-        // (the per-vertex alternative would allocate a merged Vec per visit).
-        if self.edges.delta_size() > 0 {
-            self.edges.rebuild();
-        }
-
-        let mut affected: FxHashSet<VertexId> = FxHashSet::default();
-        let mut to_visit: Vec<VertexId> = Vec::new();
-        let mut visited_for_propagation: FxHashSet<VertexId> = FxHashSet::default();
-
-        // Value sources are affected but not marked dirty themselves.
-        for &src in vertex_ids {
-            affected.insert(src);
-        }
-
-        // Collect initial direct dependents and name dependents.
-        for &src in vertex_ids {
-            to_visit.extend(self.edges.in_edges(src));
-            if let Some(name_set) = self.cell_to_name_dependents.get(&src) {
-                for &name_vertex in name_set {
-                    to_visit.push(name_vertex);
-                }
-            }
-        }
-
-        // Collect range dependents in bulk using spill rect bounds per sheet.
-        let mut bounds_by_sheet: FxHashMap<SheetId, (u32, u32, u32, u32)> = FxHashMap::default();
-        for &src in vertex_ids {
-            let view = self.store.view(src);
-            let sid = view.sheet_id();
-            let r = view.row();
-            let c = view.col();
-            bounds_by_sheet
-                .entry(sid)
-                .and_modify(|b| {
-                    b.0 = b.0.min(r);
-                    b.1 = b.1.max(r);
-                    b.2 = b.2.min(c);
-                    b.3 = b.3.max(c);
-                })
-                .or_insert((r, r, c, c));
-        }
-
-        for (sid, (sr, er, sc, ec)) in bounds_by_sheet {
-            to_visit.extend(self.collect_range_dependents_for_rect(sid, sr, sc, er, ec));
-        }
-
-        while let Some(id) = to_visit.pop() {
-            if !visited_for_propagation.insert(id) {
-                continue;
-            }
-            self.dirty_propagation_visits += 1;
-            affected.insert(id);
-            self.store.set_dirty(id, true);
-            to_visit.extend(self.edges.in_edges(id));
-            to_visit.extend(self.collect_range_dependents_for_vertex(id));
-        }
-
-        self.formula_dirty.legacy_extend(affected.iter().copied());
-        affected.into_iter().collect()
+        self.authority_mark_dirty(vertex_ids)
     }
 
     fn collect_range_dependents_for_vertex(&self, vertex_id: VertexId) -> Vec<VertexId> {
@@ -4604,7 +4439,6 @@ impl DependencyGraph {
 
         self.add_dependent_edges(vertex_id, &new_dependencies);
         self.add_range_dependent_edges(vertex_id, &new_range_dependencies, sheet_id);
-        #[cfg(feature = "unified_authority")]
         self.vertex_formulas.touch(vertex_id);
         let _ = self.mark_dirty(vertex_id);
     }

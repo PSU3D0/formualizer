@@ -220,7 +220,7 @@ mod imp {
         let path = get("--xlsx").ok_or_else(|| anyhow!("--xlsx PATH"))?;
         let mode = get("--mode").unwrap_or_else(|| "ephemeral".into());
         let edits: usize = get("--edits").map(|s| s.parse()).transpose()?.unwrap_or(20);
-        let feature = cfg!(feature = "unified_authority");
+        let feature = true; // the authority is always on
 
         let tg = targets(&path, edits)?;
         let base = live();
@@ -240,7 +240,6 @@ mod imp {
         // evaluation so its cost is timed apart from planning/execution.
         #[allow(unused_mut)]
         let mut presync_ms = f64::NAN;
-        #[cfg(feature = "unified_authority")]
         if args.iter().any(|a| a == "--presync") {
             let t = Instant::now();
             let _ = formualizer_eval::engine::authority::probe::sync(wb.engine_mut());
@@ -268,7 +267,6 @@ mod imp {
         // is a no-op when the host is already built (timed to prove it).
         #[allow(unused_mut)]
         let mut auth = serde_json::json!(null);
-        #[cfg(feature = "unified_authority")]
         {
             use formualizer_eval::engine::authority::probe;
             let t = Instant::now();
@@ -341,7 +339,6 @@ mod imp {
         // against legacy's closure mirror on the same seeds.
         #[allow(unused_mut)]
         let mut decomp = serde_json::json!(null);
-        #[cfg(feature = "unified_authority")]
         {
             use formualizer_eval::engine::authority::probe;
             let e = wb.engine_mut();

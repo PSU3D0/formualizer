@@ -569,11 +569,7 @@ fn target_probe_keeps_clean_ancestry_discovery_and_sparse_dirty_ownership() {
         assert_eq!(clean.demand_builds, 1);
         // Reclassified (unified_authority demand, design §8.3): the authority
         // walks formula pieces and names only, not the 2 value precedents.
-        let value_precedents = if cfg!(feature = "unified_authority") {
-            0
-        } else {
-            2
-        };
+        let value_precedents = if true { 0 } else { 2 };
         assert_eq!(clean.demand_vertices, depth as usize + 2 + value_precedents);
         assert_eq!(clean.demand_clean_formulas, depth as usize + 2);
         assert_eq!(clean.target_schedule_builds, 0);

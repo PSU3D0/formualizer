@@ -162,10 +162,8 @@ impl GraphUndoBatch {
     }
 
     pub fn undo(&self, graph: &mut DependencyGraph) -> Result<(), EditorError> {
-        #[cfg(feature = "unified_authority")]
         graph.authority_set_replay(crate::engine::authority::history::Replay::Undo);
         let replayed = self.undo_events(graph);
-        #[cfg(feature = "unified_authority")]
         graph.authority_set_replay(crate::engine::authority::history::Replay::Forward);
         replayed
     }
@@ -190,13 +188,11 @@ impl GraphUndoBatch {
     }
 
     pub fn redo(&self, graph: &mut DependencyGraph) -> Result<(), EditorError> {
-        #[cfg(feature = "unified_authority")]
         graph.authority_set_replay(crate::engine::authority::history::Replay::Redo);
         let replayed = self
             .events
             .iter()
             .try_for_each(|ev| apply_forward_change_event(graph, ev));
-        #[cfg(feature = "unified_authority")]
         graph.authority_set_replay(crate::engine::authority::history::Replay::Forward);
         replayed
     }

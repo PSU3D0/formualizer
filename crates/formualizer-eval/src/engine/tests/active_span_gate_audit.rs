@@ -347,10 +347,7 @@ fn authoritative_off_authoritative_toggle_keeps_demoted_formulas_correct() {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: injects span-demotion faults; no spans exist to demote"
-)]
+#[ignore = "M2 span-internal: injects span-demotion faults; no spans exist to demote"]
 fn off_demotion_prepare_and_final_validation_failures_preserve_edit_name_and_retry() {
     use crate::engine::eval::FormulaSpanDemotionFault;
 

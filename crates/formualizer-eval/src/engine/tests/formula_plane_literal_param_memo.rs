@@ -129,10 +129,7 @@ fn sumifs_varying_literal_engine(rows: u32) -> Engine<TestWorkbook> {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: inspects the FormulaPlane literal binding store of an active span; no spans under the authority"
-)]
+#[ignore = "M2 span-internal: inspects the FormulaPlane literal binding store of an active span; no spans under the authority"]
 fn formula_plane_parameterized_literals_fold_same_structure() {
     let mut engine = sumifs_varying_literal_engine(100);
     assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
@@ -145,10 +142,7 @@ fn formula_plane_parameterized_literals_fold_same_structure() {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: inspects the FormulaPlane literal binding store of an active span; no spans under the authority"
-)]
+#[ignore = "M2 span-internal: inspects the FormulaPlane literal binding store of an active span; no spans under the authority"]
 fn formula_plane_affine_row_literal_numbers_avoid_graph_materialization() {
     let mut engine = literal_formula_family(120, |row| row.to_string());
     let report = engine.last_formula_ingest_report().unwrap();
@@ -167,10 +161,7 @@ fn formula_plane_affine_row_literal_numbers_avoid_graph_materialization() {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: inspects the FormulaPlane literal binding store of an active span; no spans under the authority"
-)]
+#[ignore = "M2 span-internal: inspects the FormulaPlane literal binding store of an active span; no spans under the authority"]
 fn formula_plane_non_integer_number_literals_remain_dictionary_encoded() {
     let mut engine = literal_formula_family(120, |row| format!("{row}.5"));
     assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
@@ -220,10 +211,7 @@ fn formula_plane_affine_literal_run_segmentation_isolates_outlier() {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: inspects the FormulaPlane literal binding store of an active span; no spans under the authority"
-)]
+#[ignore = "M2 span-internal: inspects the FormulaPlane literal binding store of an active span; no spans under the authority"]
 fn formula_plane_exact_canonical_key_retained_for_diagnostics() {
     let engine = literal_formula_family(100, |row| (row % 3).to_string());
     let (exact, parameterized) = first_template_keys(&engine);
@@ -286,10 +274,7 @@ fn formula_plane_empty_literal_parameterizes() {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: inspects the FormulaPlane literal binding store of an active span; no spans under the authority"
-)]
+#[ignore = "M2 span-internal: inspects the FormulaPlane literal binding store of an active span; no spans under the authority"]
 fn formula_plane_binding_store_dictionary_encodes_repeated_vectors() {
     let engine = literal_formula_family(120, |row| (row % 3).to_string());
     assert_eq!(span_binding_unique_count(&engine), 3);

@@ -1762,11 +1762,7 @@ mod tests {
                 // so the committed spill child (row 11) is visible
                 // (reclassified; see dynamic_freshness.rs
                 // `open_column_reader_sees_spill_committed_earlier_in_pass`).
-                let rows = if cfg!(feature = "unified_authority") {
-                    11
-                } else {
-                    10
-                };
+                let rows = if true { 11 } else { 10 };
                 assert_eq!(
                     original.dims(),
                     (rows, 1),

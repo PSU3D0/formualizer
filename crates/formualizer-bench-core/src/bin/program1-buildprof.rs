@@ -2,7 +2,7 @@
 //! extraction and store build on one workbook (release, feature build).
 //! `program1-buildprof --xlsx PATH [--reps N]`
 
-#[cfg(feature = "unified_authority")]
+#[cfg(feature = "formualizer_runner")]
 fn main() -> anyhow::Result<()> {
     use formualizer_workbook::{
         CalamineAdapter, LoadStrategy, SpreadsheetReader, Workbook, WorkbookConfig,
@@ -33,7 +33,7 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(not(feature = "unified_authority"))]
+#[cfg(not(feature = "formualizer_runner"))]
 fn main() {
-    eprintln!("build with --features unified_authority");
+    eprintln!("build with --features formualizer_runner");
 }

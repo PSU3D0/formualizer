@@ -77,7 +77,6 @@ impl UndoEngine {
                 reason: "Non-tail undo not supported".into(),
             });
         }
-        #[cfg(feature = "unified_authority")]
         graph.authority_set_replay(crate::engine::authority::history::Replay::Undo);
         let replayed = (|| {
             let mut editor = VertexEditor::new(graph);
@@ -86,7 +85,6 @@ impl UndoEngine {
             }
             Ok::<_, EditorError>(())
         })();
-        #[cfg(feature = "unified_authority")]
         graph.authority_set_replay(crate::engine::authority::history::Replay::Forward);
         replayed?;
 
@@ -114,7 +112,6 @@ impl UndoEngine {
             // we apply events by value below.
             let ret = batch.clone();
 
-            #[cfg(feature = "unified_authority")]
             graph.authority_set_replay(crate::engine::authority::history::Replay::Redo);
             let replayed = (|| {
                 for item in batch {
@@ -215,7 +212,6 @@ impl UndoEngine {
                 }
                 Ok::<_, EditorError>(())
             })();
-            #[cfg(feature = "unified_authority")]
             graph.authority_set_replay(crate::engine::authority::history::Replay::Forward);
             replayed?;
             log.end_compound();
@@ -412,10 +408,7 @@ mod tests {
     // Reclassified (M5, internal representation): asserts legacy's edge lists
     // through a RemoveVertex undo (`ChangeEvent::RemoveVertex` edge fields are a
     // decision-8 removal); values after undo are covered by the undo tests.
-    #[cfg_attr(
-        feature = "unified_authority",
-        ignore = "M5 legacy-internal: legacy edge lists across RemoveVertex undo"
-    )]
+    #[ignore = "M5 legacy-internal: legacy edge lists across RemoveVertex undo"]
     #[test]
     fn test_remove_vertex_dependency_roundtrip() {
         use formualizer_parse::parser::parse;

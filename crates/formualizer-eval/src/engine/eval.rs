@@ -1,6 +1,6 @@
 use crate::SheetId;
 use crate::arrow_store::{OverlayFragment, OverlayValue, SheetStore};
-#[cfg(any(not(feature = "unified_authority"), test))]
+#[cfg(test)]
 use crate::engine::Scheduler;
 use crate::engine::arena::AstNodeId;
 use crate::engine::eval_delta::{
@@ -30,7 +30,6 @@ use crate::engine::used_extent::{
 };
 use crate::engine::virtual_deps::{DynamicRefVirtualDepProvider, VirtualDepBuilder};
 
-#[cfg(feature = "unified_authority")]
 #[path = "freshness.rs"]
 mod freshness;
 use crate::engine::{
@@ -1354,7 +1353,6 @@ pub struct Engine<R> {
     #[cfg(test)]
     force_virtual_dep_changes_remaining_for_test: usize,
     /// Dynamic-read freshness state (design §8.2).
-    #[cfg(feature = "unified_authority")]
     freshness: freshness::Freshness,
     #[cfg(test)]
     fail_evaluation_commit_preflight_once_for_test: bool,
@@ -2991,27 +2989,10 @@ pub struct EvalPlan {
 }
 
 /// Whether the configured FormulaPlane mode is ignored (spans never placed):
-/// always under `unified_authority`. Test builds of the default
-/// configuration also honour `FZ_M2_FORCE_PLANE_OFF`, the M2 triage oracle
-/// (legacy with spans off, which the authority must reproduce).
+/// always, since the dependency authority is the runtime path (design §10).
 #[inline]
 fn plane_mode_ignored() -> bool {
-    #[cfg(feature = "unified_authority")]
-    {
-        true
-    }
-    #[cfg(all(
-        not(feature = "unified_authority"),
-        any(test, feature = "test-support")
-    ))]
-    {
-        static FORCED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        *FORCED.get_or_init(|| std::env::var_os("FZ_M2_FORCE_PLANE_OFF").is_some())
-    }
-    #[cfg(not(any(feature = "unified_authority", test, feature = "test-support")))]
-    {
-        false
-    }
+    true
 }
 
 /// Test-support probe for sibling-crate tests: true when span placement is
@@ -3194,7 +3175,6 @@ where
             inject_target_semantic_stale_once_for_test: false,
             #[cfg(test)]
             force_virtual_dep_changes_remaining_for_test: 0,
-            #[cfg(feature = "unified_authority")]
             freshness: Default::default(),
             #[cfg(test)]
             fail_evaluation_commit_preflight_once_for_test: false,
@@ -3366,7 +3346,6 @@ where
             inject_target_semantic_stale_once_for_test: false,
             #[cfg(test)]
             force_virtual_dep_changes_remaining_for_test: 0,
-            #[cfg(feature = "unified_authority")]
             freshness: Default::default(),
             #[cfg(test)]
             fail_evaluation_commit_preflight_once_for_test: false,
@@ -3555,7 +3534,6 @@ where
         } else {
             evaluate(self)
         };
-        #[cfg(feature = "unified_authority")]
         if outermost && result.is_err() {
             self.freshness_abort_pass();
         }
@@ -4164,7 +4142,6 @@ where
     /// take the per-recalc volatile clock sample. Called at the start of
     /// every evaluation request that walks schedule units.
     fn begin_evaluation_request(&mut self) {
-        #[cfg(feature = "unified_authority")]
         self.freshness_begin_request();
         #[cfg(test)]
         {
@@ -4173,7 +4150,6 @@ where
                 .saturating_add(1);
         }
         self.last_cycle_telemetry = CycleTelemetry::default();
-        #[cfg(feature = "unified_authority")]
         self.graph.authority_sync();
         // Defensive: consumed at the end of the previous request; a request
         // that errored out mid-walk must not leak its members into this one.
@@ -5544,7 +5520,6 @@ where
         );
 
         // 1) Roll back the dependency graph.
-        #[cfg(feature = "unified_authority")]
         self.graph
             .authority_set_replay(crate::engine::authority::history::Replay::Undo);
         let rolled_back = (|| {
@@ -5568,7 +5543,6 @@ where
             }
             Ok::<_, crate::engine::EditorError>(())
         })();
-        #[cfg(feature = "unified_authority")]
         self.graph
             .authority_set_replay(crate::engine::authority::history::Replay::Forward);
         rolled_back?;
@@ -6439,7 +6413,6 @@ where
         // Eager sync at a topology edit, so read-only (`&self`) plans and
         // inspection see a current authority (not during a load or an open
         // structural capture).
-        #[cfg(feature = "unified_authority")]
         self.graph.authority_sync_eager();
     }
 
@@ -20916,7 +20889,6 @@ where
         scope: &crate::engine::PrepareScope,
         delta: Option<&mut DeltaCollector>,
     ) -> Result<EvalResult, ExcelError> {
-        #[cfg(feature = "unified_authority")]
         self.require_unified_authority()?;
         self.transition_off_mode_spans_to_legacy()?;
         if matches!(scope, crate::engine::PrepareScope::Workbook)
@@ -21114,7 +21086,6 @@ where
         let mut cycle_errors = 0usize;
         let mut replans = 0usize;
         const MAX_REPLAN: usize = 5;
-        #[cfg(feature = "unified_authority")]
         self.graph.authority_sync();
         loop {
             let (precedents_to_eval, old_vdeps) = self.demand_subgraph(&root_vertices)?;
@@ -21128,10 +21099,6 @@ where
                     .unwrap()
                     .target_schedule_builds += 1;
             }
-            #[cfg(not(feature = "unified_authority"))]
-            let schedule = Scheduler::new(&self.graph)
-                .create_schedule_with_virtual(&precedents_to_eval, &old_vdeps)?;
-            #[cfg(feature = "unified_authority")]
             let schedule = {
                 self.graph.authority_sync();
                 let mut ledger = self.active_resource_ledger.take();
@@ -24411,7 +24378,6 @@ where
     /// or execute a legacy schedule. The public error type is unchanged; NImpl
     /// carries the exact internal Unsupported operation for the deferred-scope
     /// gate. Admission and allocation failures are not scope exceptions.
-    #[cfg(feature = "unified_authority")]
     fn require_unified_authority(&mut self) -> Result<(), ExcelError> {
         self.graph
             .authority()
@@ -24419,7 +24385,6 @@ where
             .map_err(Self::authority_excel_error)
     }
 
-    #[cfg(feature = "unified_authority")]
     fn authority_excel_error(error: crate::engine::authority::store::AuthorityError) -> ExcelError {
         use crate::engine::authority::store::AuthorityError;
         // Some unchanged behavioral tests assert only `error.kind`, hiding
@@ -24466,7 +24431,6 @@ where
     /// coordinator; the coordinator itself composes with private legacy
     /// primitives for legacy-only work.
     fn evaluate_all_coordinator(&mut self) -> Result<EvalResult, ExcelError> {
-        #[cfg(feature = "unified_authority")]
         self.require_unified_authority()?;
         self.transition_off_mode_spans_to_legacy()?;
         self.begin_evaluation_request();
@@ -24686,7 +24650,6 @@ where
         if self.config.defer_graph_building {
             self.build_graph_all()?;
         }
-        #[cfg(feature = "unified_authority")]
         self.require_unified_authority()?;
         self.transition_off_mode_spans_to_legacy()?;
         self.begin_evaluation_request();
@@ -25056,10 +25019,6 @@ where
         }
 
         // Create schedule for the minimal subgraph honoring virtual edges
-        #[cfg(not(feature = "unified_authority"))]
-        let schedule = Scheduler::new(&self.graph)
-            .create_schedule_with_virtual(&precedents_to_eval, &vdeps)?;
-        #[cfg(feature = "unified_authority")]
         let schedule = self.create_authority_schedule(&precedents_to_eval, &vdeps, None)?;
 
         // Build layer information
@@ -25124,7 +25083,6 @@ where
         // the zero-allocation CSR slices (#125).
         self.graph.flush_pending_edge_deltas();
         // The cache key includes the authority revision: sync first.
-        #[cfg(feature = "unified_authority")]
         self.graph.authority_sync();
         if self.can_use_static_schedule_cache(to_evaluate) {
             if let Some(cached) = self.cached_static_schedule.as_ref()
@@ -25216,7 +25174,6 @@ where
         &mut self,
         to_evaluate: &[VertexId],
     ) -> Result<ScheduleBuildOutput, ExcelError> {
-        #[cfg(feature = "unified_authority")]
         self.graph.authority_sync();
         let mut ledger = self.active_resource_ledger.take();
         let result = self.create_evaluation_schedule_uncached(to_evaluate, ledger.as_mut());
@@ -25248,7 +25205,6 @@ where
             };
 
         // Replan hints from stale dynamic reads earlier in this request.
-        #[cfg(feature = "unified_authority")]
         {
             self.freshness_merge_hints(to_evaluate, &mut vdeps);
             self.freshness_extent_hints(to_evaluate, &mut vdeps);
@@ -25262,16 +25218,6 @@ where
 
         let use_virtual = !vdeps.is_empty();
 
-        #[cfg(not(feature = "unified_authority"))]
-        let schedule = {
-            let scheduler = Scheduler::new(&self.graph);
-            if use_virtual {
-                scheduler.create_schedule_with_virtual(&final_evaluate, &vdeps)?
-            } else {
-                scheduler.create_schedule(&final_evaluate)?
-            }
-        };
-        #[cfg(feature = "unified_authority")]
         let schedule = self.create_authority_schedule(&final_evaluate, &vdeps, ledger)?;
 
         let meta = ScheduleBuildMeta {
@@ -25287,7 +25233,6 @@ where
         Ok((schedule, vdeps, meta))
     }
 
-    #[cfg(feature = "unified_authority")]
     fn create_authority_schedule(
         &self,
         candidates: &[VertexId],
@@ -25420,7 +25365,6 @@ where
     /// dynamic readers (whose hints are per request) are excluded, and the
     /// key adds the authority revision (design §8.4).
     fn can_use_static_schedule_cache(&self, to_evaluate: &[VertexId]) -> bool {
-        #[cfg(feature = "unified_authority")]
         {
             // A dynamic reader is planned from its observed reads, which the
             // key covers (rev.dyn); one without them needs a pre-probe, and
@@ -25432,26 +25376,14 @@ where
                     .iter()
                     .all(|&v| !self.graph.is_dynamic(v) || host.observed(v).is_some())
         }
-        #[cfg(not(feature = "unified_authority"))]
-        {
-            !to_evaluate.is_empty()
-                && to_evaluate.iter().copied().all(|v| {
-                    !self.graph.is_dynamic(v) && self.graph.get_range_dependencies(v).is_none()
-                })
-        }
     }
 
     fn schedule_cache_authority_revision(&self) -> (u64, u64) {
-        #[cfg(feature = "unified_authority")]
         {
             // rev.topology is `topology_epoch`; a symbol revision rebuilds the
             // store, so it is part of `revision`.
             let host = self.graph.authority_host();
             (host.revision(), host.rev_dyn())
-        }
-        #[cfg(not(feature = "unified_authority"))]
-        {
-            (0, 0)
         }
     }
 
@@ -25562,18 +25494,7 @@ where
         changed: &[VertexId],
         #[allow(unused_variables)] whole_workbook: bool,
     ) -> bool {
-        #[cfg(feature = "unified_authority")]
-        {
-            self.freshness_finish_pass(to_evaluate, changed, whole_workbook)
-        }
-        #[cfg(not(feature = "unified_authority"))]
-        {
-            self.graph.clear_dirty_flags(to_evaluate);
-            for &v in changed {
-                self.graph.set_dirty(v, true);
-            }
-            !changed.is_empty()
-        }
+        self.freshness_finish_pass(to_evaluate, changed, whole_workbook)
     }
 
     /// Start a pass over `schedule` (arms the freshness recorder).
@@ -25581,7 +25502,6 @@ where
         &mut self,
         #[allow(unused_variables)] schedule: &crate::engine::scheduler::Schedule,
     ) {
-        #[cfg(feature = "unified_authority")]
         self.freshness_begin_pass(schedule);
     }
 
@@ -25591,14 +25511,7 @@ where
         #[allow(unused_variables)] schedule: &crate::engine::scheduler::Schedule,
         #[allow(unused_variables)] index: usize,
     ) -> bool {
-        #[cfg(feature = "unified_authority")]
-        {
-            self.freshness_stop_after_unit(schedule, index)
-        }
-        #[cfg(not(feature = "unified_authority"))]
-        {
-            false
-        }
+        self.freshness_stop_after_unit(schedule, index)
     }
 
     fn changed_virtual_dep_vertices(
@@ -25615,7 +25528,6 @@ where
         }
         // An armed pass detects stale dynamic reads directly; the pre-probe
         // comparison is legacy's substitute for that (design §8.2).
-        #[cfg(feature = "unified_authority")]
         if self.freshness_armed() {
             return Vec::new();
         }
@@ -25659,10 +25571,7 @@ where
         ),
         ExcelError,
     > {
-        #[cfg(feature = "unified_authority")]
-        return self.authority_demand_subgraph(targets);
-        #[cfg(not(feature = "unified_authority"))]
-        Ok(self.build_demand_subgraph(targets))
+        self.authority_demand_subgraph(targets)
     }
 
     /// Design §8.3: traverse precedents from the targets over the
@@ -25670,7 +25579,6 @@ where
     /// the dynamic readers' virtual dependencies, and collect what legacy's
     /// demand walk collects: dirty or volatile formula cells and every name
     /// passed through. No legacy dependency structure is read.
-    #[cfg(feature = "unified_authority")]
     #[allow(clippy::type_complexity)]
     fn authority_demand_subgraph(
         &self,
@@ -26014,7 +25922,6 @@ where
                 ExcelError::new(ExcelErrorKind::Cancelled).with_message(message.to_string())
             );
         }
-        #[cfg(feature = "unified_authority")]
         self.require_unified_authority()?;
         self.transition_off_mode_spans_to_legacy()?;
         self.begin_evaluation_request();
@@ -26887,7 +26794,6 @@ where
             .graph
             .get_cell_ref(vertex_id)
             .expect("cell ref for vertex");
-        #[cfg(feature = "unified_authority")]
         if let Some(result) =
             self.freshness_evaluate_recorded(vertex_id, sheet_name, cell_ref, ast_id)
         {
@@ -29663,7 +29569,7 @@ where
     }
 }
 
-#[cfg(all(test, feature = "unified_authority"))]
+#[cfg(test)]
 #[path = "tests/authority_schedule_execution.rs"]
 mod authority_schedule_execution;
 
@@ -29696,7 +29602,6 @@ where
     ) -> Result<Vec<Effect>, ExcelError> {
         // FR3: a stale dynamic reader publishes nothing; FR2: anything else
         // leaves the dirty set at its commit (design §8.2).
-        #[cfg(feature = "unified_authority")]
         if self.freshness_armed() {
             if self.freshness_drop_stale(vertex_id) {
                 return Ok(Vec::new());
@@ -30539,7 +30444,6 @@ where
 
             // FR3: a parallel group is one commit unit; one stale reader
             // drops the whole group (it stays dirty and replans).
-            #[cfg(feature = "unified_authority")]
             self.freshness_gate_group(group);
             match results {
                 Ok(vertex_results) => {
@@ -30664,7 +30568,6 @@ where
 
             // FR3: a parallel group is one commit unit; one stale reader
             // drops the whole group (it stays dirty and replans).
-            #[cfg(feature = "unified_authority")]
             self.freshness_gate_group(group);
             match results {
                 Ok(vertex_results) => {
@@ -30798,7 +30701,6 @@ where
 
             // FR3: a parallel group is one commit unit; one stale reader
             // drops the whole group (it stays dirty and replans).
-            #[cfg(feature = "unified_authority")]
             self.freshness_gate_group(group);
             match results {
                 Ok(vertex_results) => {
@@ -30898,7 +30800,6 @@ where
         if self.config.defer_graph_building {
             self.build_graph_all()?;
         }
-        #[cfg(feature = "unified_authority")]
         self.require_unified_authority()?;
         self.transition_off_mode_spans_to_legacy()?;
         self.begin_evaluation_request();

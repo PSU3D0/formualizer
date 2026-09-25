@@ -170,10 +170,7 @@ fn deferred_preparation_records_selected_and_restored_staging() {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: observes FormulaPlane topology build/hit/overflow and span dirty leases; the span coordinator does not run under the authority"
-)]
+#[ignore = "M2 span-internal: observes FormulaPlane topology build/hit/overflow and span dirty leases; the span coordinator does not run under the authority"]
 fn topology_build_hit_and_overflow_materialization_are_exactly_observed() {
     let mut cached = build_mode_engine(FormulaPlaneMode::AuthoritativeExperimental, None);
     assert_eq!(cached.baseline_stats().formula_plane_active_span_count, 1);
@@ -346,10 +343,7 @@ fn candidate_overflow_retains_topology_for_next_request_hit() {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: asserts FormulaPlane mixed-topology strategy and cache-skip stats; the span coordinator does not run under the authority"
-)]
+#[ignore = "M2 span-internal: asserts FormulaPlane mixed-topology strategy and cache-skip stats; the span coordinator does not run under the authority"]
 fn perpetual_cache_skip_preserves_values_streak_and_no_disk_policy() {
     for (policy, scratch_limit, expected) in [
         (

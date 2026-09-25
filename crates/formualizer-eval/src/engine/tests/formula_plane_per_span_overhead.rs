@@ -71,10 +71,7 @@ fn formula_plane_evaluate_all_handles_many_same_sheet_spans() {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "unified_authority",
-    ignore = "M2 span-internal: counts span-template relocation validation walks; no span templates under the authority"
-)]
+#[ignore = "M2 span-internal: counts span-template relocation validation walks; no span templates under the authority"]
 fn formula_plane_relocatable_validation_is_cached_per_template() {
     let mut engine = authoritative_engine();
     let rows = 128u32;

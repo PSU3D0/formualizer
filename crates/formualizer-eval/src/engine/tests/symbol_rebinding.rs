@@ -248,7 +248,6 @@ fn best_effort_table_defined_later_binds_and_tracks_edits() {
 /// run before the reader. Legacy orders the reader first (the table symbol
 /// carries no edge to body formulas): 12 then 18 here. The authority's table
 /// edge covers the body, so the reader follows A4. Expected Δ, legacy wrong.
-#[cfg(feature = "unified_authority")]
 #[test]
 fn structured_reader_follows_formula_in_table_body() {
     let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
