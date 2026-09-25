@@ -664,6 +664,7 @@ fn structural_delete_whole_column_values_match_fresh_formula_and_formula_plane_f
 }
 
 #[test]
+#[cfg_attr(feature = "unified_authority", ignore = "M2 span-internal: seeds a span directly into the FormulaPlane (crate-internal); spans cannot exist under the authority")]
 fn reconstructed_ast_fallback_is_used_for_whole_result_summaries() {
     use crate::formula_plane::producer::{
         DirtyProjectionRule, SpanReadDependency, SpanReadSummary,
@@ -682,46 +683,42 @@ fn reconstructed_ast_fallback_is_used_for_whole_result_summaries() {
     let domain = PlacementDomain::row_run(sheet_id, 0, SPAN_ROWS - 1, 2);
     let result_region = Region::from_domain(&domain);
     let authority = authoritative.graph.formula_authority_mut();
-    span_internal!("binds a FormulaPlane span object/report; spans are not placed under the authority (design section 10)";
-        let template_id = authority.plane.intern_template(
-            Arc::<str>::from("inspect-whole-result-fallback"),
-            ast_id,
-            1,
-            3,
-            Some(Arc::<str>::from(formula)),
-        );
-        let summary_id = authority.plane.insert_span_read_summary(SpanReadSummary {
-            result_region,
-            dependencies: vec![SpanReadDependency {
-                read_region: Region::point(sheet_id, 0, 0),
-                projection: DirtyProjectionRule::WholeResult,
-            }],
-        });
-        authority.plane.insert_span(NewFormulaSpan {
-            sheet_id,
-            template_id,
-            result_region: ResultRegion::scalar_cells(domain.clone()),
-            domain,
-            intrinsic_mask_id: None,
-            read_summary_id: Some(summary_id),
-            binding_set_id: None,
-            is_constant_result: false,
-        });
+    let template_id = authority.plane.intern_template(
+        Arc::<str>::from("inspect-whole-result-fallback"),
+        ast_id,
+        1,
+        3,
+        Some(Arc::<str>::from(formula)),
     );
+    let summary_id = authority.plane.insert_span_read_summary(SpanReadSummary {
+        result_region,
+        dependencies: vec![SpanReadDependency {
+            read_region: Region::point(sheet_id, 0, 0),
+            projection: DirtyProjectionRule::WholeResult,
+        }],
+    });
+    authority.plane.insert_span(NewFormulaSpan {
+        sheet_id,
+        template_id,
+        result_region: ResultRegion::scalar_cells(domain.clone()),
+        domain,
+        intrinsic_mask_id: None,
+        read_summary_id: Some(summary_id),
+        binding_set_id: None,
+        is_constant_result: false,
+    });
     authority.rebuild_indexes();
 
     reset_formula_plane_reference_path_counts();
     let report = authoritative
         .precedents(&address(64, 3), &PrecedentOptions::default())
         .unwrap();
-    span_internal!("FormulaPlane span/ingest/eval-report internals; spans are not placed under the authority (design section 10)";
-        assert_eq!(
-            formula_plane_reference_path_counts(),
-            FormulaPlaneReferencePathCounts {
-                template: 0,
-                ast_fallback: 1,
-            }
-        );
+    assert_eq!(
+        formula_plane_reference_path_counts(),
+        FormulaPlaneReferencePathCounts {
+            template: 0,
+            ast_fallback: 1,
+        }
     );
     assert_eq!(report.precedents.len(), 3);
     assert_eq!(
