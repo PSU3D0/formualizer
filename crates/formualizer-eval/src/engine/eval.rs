@@ -2980,6 +2980,38 @@ pub struct EvalPlan {
     pub target_cells: Vec<String>,
 }
 
+/// Whether the configured FormulaPlane mode is ignored (spans never placed):
+/// always under `unified_authority`. Test builds of the default
+/// configuration also honour `FZ_M2_FORCE_PLANE_OFF`, the M2 triage oracle
+/// (legacy with spans off, which the authority must reproduce).
+#[inline]
+fn plane_mode_ignored() -> bool {
+    #[cfg(feature = "unified_authority")]
+    {
+        true
+    }
+    #[cfg(all(
+        not(feature = "unified_authority"),
+        any(test, feature = "test-support")
+    ))]
+    {
+        static FORCED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *FORCED.get_or_init(|| std::env::var_os("FZ_M2_FORCE_PLANE_OFF").is_some())
+    }
+    #[cfg(not(any(feature = "unified_authority", test, feature = "test-support")))]
+    {
+        false
+    }
+}
+
+/// Test-support probe for sibling-crate tests: true when span placement is
+/// off because the FormulaPlane mode is ignored (see `plane_mode_ignored`).
+#[cfg(feature = "test-support")]
+#[doc(hidden)]
+pub fn formula_plane_mode_ignored_for_test() -> bool {
+    plane_mode_ignored()
+}
+
 impl<R> Engine<R>
 where
     R: EvaluationContext,
@@ -2991,6 +3023,18 @@ where
     /// rejects these at build; this re-validates configs assembled via
     /// struct literals.
     pub fn new(resolver: R, config: EvalConfig) -> Self {
+        // Under the unified authority the FormulaPlane mode is accepted and
+        // ignored (design §10). Normalizing the stored mode keeps external
+        // readers of `config` (loaders choosing a span-preparation route) on
+        // the per-cell path; engine reads go through `formula_plane_mode()`.
+        let config = if plane_mode_ignored() {
+            EvalConfig {
+                formula_plane_mode: FormulaPlaneMode::Off,
+                ..config
+            }
+        } else {
+            config
+        };
         if let Err(msg) = config.cycle.validate() {
             panic!("invalid CycleConfig: {msg}");
         }
@@ -3466,7 +3510,7 @@ where
                 "evaluate",
                 "evaluate.request",
                 kind = request_kind,
-                mode = ?self.config.formula_plane_mode
+                mode = ?self.formula_plane_mode()
             )
         });
         if outermost {
@@ -3477,7 +3521,7 @@ where
             self.active_evaluation_resource_request = Some(EvaluationResourceRequestStats::new(
                 request_id,
                 kind,
-                self.config.formula_plane_mode,
+                self.formula_plane_mode(),
                 self.staged_formula_count(),
             ));
             self.evaluation_resource_baseline.record_started(request_id);
@@ -5034,7 +5078,7 @@ where
         names: impl IntoIterator<Item = &'a str>,
     ) -> Result<Option<(PreparedFormulaSpanDemotion, Vec<CellRef>)>, crate::engine::EditorError>
     {
-        if self.config.formula_plane_mode == FormulaPlaneMode::Off {
+        if self.formula_plane_mode() == FormulaPlaneMode::Off {
             return Ok(None);
         }
         let refs = self.exact_name_dependent_span_refs(names);
@@ -5131,7 +5175,7 @@ where
         version: Option<u64>,
     ) -> Result<(), ExcelError> {
         self.graph.set_source_scalar_version(name, version)?;
-        if self.config.formula_plane_mode != FormulaPlaneMode::Off {
+        if self.formula_plane_mode() != FormulaPlaneMode::Off {
             self.graph
                 .mark_all_formula_spans_dirty(WholeSpanDirtyReason::GlobalInvalidation);
         }
@@ -5144,7 +5188,7 @@ where
         version: Option<u64>,
     ) -> Result<(), ExcelError> {
         self.graph.set_source_table_version(name, version)?;
-        if self.config.formula_plane_mode != FormulaPlaneMode::Off {
+        if self.formula_plane_mode() != FormulaPlaneMode::Off {
             self.graph
                 .mark_all_formula_spans_dirty(WholeSpanDirtyReason::GlobalInvalidation);
         }
@@ -5153,7 +5197,7 @@ where
 
     pub fn invalidate_source(&mut self, name: &str) -> Result<(), ExcelError> {
         self.graph.invalidate_source(name)?;
-        if self.config.formula_plane_mode != FormulaPlaneMode::Off {
+        if self.formula_plane_mode() != FormulaPlaneMode::Off {
             self.graph
                 .mark_all_formula_spans_dirty(WholeSpanDirtyReason::GlobalInvalidation);
         }
@@ -6406,6 +6450,19 @@ where
 
     pub fn staged_formula_count(&self) -> usize {
         self.staged_formulas.values().map(StagedSheet::len).sum()
+    }
+
+    /// The FormulaPlane mode the engine acts on. Under `unified_authority`
+    /// spans are never placed: formulas ingest per cell and the authority's
+    /// families are the regions (design §10), so the configured mode is
+    /// accepted and ignored.
+    #[inline]
+    pub(crate) fn formula_plane_mode(&self) -> FormulaPlaneMode {
+        if plane_mode_ignored() {
+            FormulaPlaneMode::Off
+        } else {
+            self.config.formula_plane_mode
+        }
     }
 
     /// Stage a formula text instead of inserting into the graph (used when deferring is enabled).
@@ -8070,7 +8127,7 @@ where
             exact_replay: None,
             replay_disposition: crate::engine::FormulaReplayDisposition::default(),
         };
-        if self.config.formula_plane_mode != FormulaPlaneMode::AuthoritativeExperimental {
+        if self.formula_plane_mode() != FormulaPlaneMode::AuthoritativeExperimental {
             return preparation;
         }
 
@@ -8183,7 +8240,7 @@ where
         preparation
             .replay_disposition
             .extend_suppressed_excel_coords(suppressed.iter().copied());
-        if self.config.formula_plane_mode != FormulaPlaneMode::AuthoritativeExperimental {
+        if self.formula_plane_mode() != FormulaPlaneMode::AuthoritativeExperimental {
             return Ok(preparation);
         }
         #[cfg(feature = "benchmark_internal")]
@@ -8831,7 +8888,7 @@ where
         scratch: &mut u64,
     ) -> Result<(), ExcelError> {
         if selected.is_empty()
-            || self.config.formula_plane_mode != FormulaPlaneMode::AuthoritativeExperimental
+            || self.formula_plane_mode() != FormulaPlaneMode::AuthoritativeExperimental
         {
             return Ok(());
         }
@@ -9099,7 +9156,7 @@ where
             scratch,
         )?;
         if !allow_partial_shared
-            && self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental
+            && self.formula_plane_mode() == FormulaPlaneMode::AuthoritativeExperimental
         {
             let source = self
                 .staged_formulas
@@ -9369,7 +9426,7 @@ where
         let mut anchor_parses = 0u64;
         let mut anchor_asts = 0u64;
         let mut anchor_analyses = 0u64;
-        if self.config.formula_plane_mode != FormulaPlaneMode::Off {
+        if self.formula_plane_mode() != FormulaPlaneMode::Off {
             for family in &families {
                 self.target_preparation_checkpoint(deadline, 1)?;
                 if invalidated.contains(&family.source_id) {
@@ -9385,8 +9442,7 @@ where
                         direct_complete_families = direct_complete_families.saturating_add(1);
                         direct_complete_cells =
                             direct_complete_cells.saturating_add(prepared.member_count);
-                        if self.config.formula_plane_mode
-                            == FormulaPlaneMode::AuthoritativeExperimental
+                        if self.formula_plane_mode() == FormulaPlaneMode::AuthoritativeExperimental
                         {
                             disposition.set_family_direct(family.source_id);
                         }
@@ -9481,7 +9537,7 @@ where
                         .or_default() += 1;
                     continue;
                 }
-                if self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental {
+                if self.formula_plane_mode() == FormulaPlaneMode::AuthoritativeExperimental {
                     let mut candidate = disposition.clone();
                     if let Err(reason) = candidate.register_partition(source, true) {
                         *source_report
@@ -10785,7 +10841,7 @@ where
             tracing::Level::INFO,
             "ingest",
             "ingest.batch",
-            mode = ?self.config.formula_plane_mode,
+            mode = ?self.formula_plane_mode(),
             route,
             formula_cells = formula_cells_seen
         );
@@ -10795,7 +10851,7 @@ where
         #[cfg(not(feature = "benchmark_internal"))]
         let benchmark_forced_replay = false;
         let (mut report, materialize_batches, planned_materialize) = if benchmark_forced_replay
-            && self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental
+            && self.formula_plane_mode() == FormulaPlaneMode::AuthoritativeExperimental
         {
             let mut report =
                 FormulaIngestReport::with_mode(FormulaPlaneMode::AuthoritativeExperimental);
@@ -10804,7 +10860,7 @@ where
                 .insert("ForcedReplay".to_string(), formula_cells_seen);
             (report, batches, BTreeMap::new())
         } else {
-            match self.config.formula_plane_mode {
+            match self.formula_plane_mode() {
                 FormulaPlaneMode::Off => (
                     FormulaIngestReport::with_mode(FormulaPlaneMode::Off),
                     batches,
@@ -11123,7 +11179,7 @@ where
             symbols: self.graph.symbol_revision(),
             semantic,
             provider,
-            formula_plane_mode: self.config.formula_plane_mode,
+            formula_plane_mode: self.formula_plane_mode(),
             deterministic_mode: self.config.deterministic_mode.clone(),
             budgets: self.evaluation_resource_budgets.clone(),
             span_refs,
@@ -11894,7 +11950,7 @@ where
         let mut selected_package_sheets = FxHashSet::default();
         let mut selected_package_points: BTreeMap<String, BTreeSet<(u32, u32)>> = BTreeMap::new();
         let mut prepared_packages: Vec<PreparedTargetSourcePackage> = Vec::new();
-        let authoritative_with_ordinary = self.config.formula_plane_mode
+        let authoritative_with_ordinary = self.formula_plane_mode()
             == FormulaPlaneMode::AuthoritativeExperimental
             && self.staged_formula_index.ordinary_count() != 0;
         let has_unknown_package_sheet = self
@@ -12285,7 +12341,7 @@ where
                 if let Some(selected) = selected_package_points.get(&region.sheet) {
                     points.retain(|point| !selected.contains(point));
                 }
-                let coalesce_shared = self.config.formula_plane_mode
+                let coalesce_shared = self.formula_plane_mode()
                     == FormulaPlaneMode::AuthoritativeExperimental
                     && self
                         .staged_formulas
@@ -12859,7 +12915,7 @@ where
         )?;
 
         if package_encountered
-            || (self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental
+            || (self.formula_plane_mode() == FormulaPlaneMode::AuthoritativeExperimental
                 && !prepared.is_empty())
         {
             Self::widen_target_preparation(
@@ -12988,8 +13044,7 @@ where
                             .fallback_reasons
                             .entry(reason.clone())
                             .or_default() += package.direct_families as u64;
-                        if self.config.formula_plane_mode
-                            == FormulaPlaneMode::AuthoritativeExperimental
+                        if self.formula_plane_mode() == FormulaPlaneMode::AuthoritativeExperimental
                         {
                             self.materialize_target_package_direct_records(
                                 package,
@@ -13353,7 +13408,7 @@ where
             .graph
             .apply_prevalidated_legacy_graph_plan(legacy_graph);
         let plane_report =
-            if self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental {
+            if self.formula_plane_mode() == FormulaPlaneMode::AuthoritativeExperimental {
                 formula_plane.map(|append| {
                     self.graph
                         .formula_authority_mut()
@@ -13452,7 +13507,7 @@ where
         }
         self.formula_parse_diagnostics.extend(pending_diagnostics);
         if !prepared.is_empty() || !prepared_packages.is_empty() {
-            let mut ingest_delta = FormulaIngestReport::with_mode(self.config.formula_plane_mode);
+            let mut ingest_delta = FormulaIngestReport::with_mode(self.formula_plane_mode());
             ingest_delta.formula_cells_seen = (prepared.len() as u64).saturating_add(
                 prepared_packages
                     .iter()
@@ -13525,7 +13580,7 @@ where
                         .or_default();
                     *total = total.saturating_add(*count);
                 }
-                if self.config.formula_plane_mode == FormulaPlaneMode::Off {
+                if self.formula_plane_mode() == FormulaPlaneMode::Off {
                     ingest_delta.source_family_fallback = ingest_delta
                         .source_family_fallback
                         .saturating_add(source.families_seen);
@@ -13593,8 +13648,7 @@ where
                     ingest_delta.edge_rows_avoided_shadow = ingest_delta
                         .edge_rows_avoided_shadow
                         .saturating_add(package.direct_cells);
-                    if self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental
-                    {
+                    if self.formula_plane_mode() == FormulaPlaneMode::AuthoritativeExperimental {
                         ingest_delta.source_family_promoted = ingest_delta
                             .source_family_promoted
                             .saturating_add(package.direct_families as u64);
@@ -13897,7 +13951,7 @@ where
                     .filter(|family| !package.invalidated.contains(&family.source_id))
                     .cloned()
                     .collect();
-                if self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental {
+                if self.formula_plane_mode() == FormulaPlaneMode::AuthoritativeExperimental {
                     let mut preparation = self.prepare_source_formula_proposals(
                         sheet,
                         &eligible,
@@ -14539,7 +14593,7 @@ where
         row0: u32,
         col0: u32,
     ) -> Result<(), crate::engine::EditorError> {
-        if self.config.formula_plane_mode == FormulaPlaneMode::Off {
+        if self.formula_plane_mode() == FormulaPlaneMode::Off {
             return Ok(());
         }
         let placement = PlacementCoord::new(sheet_id, row0, col0);
@@ -16754,7 +16808,7 @@ where
     }
 
     fn transition_off_mode_spans_to_legacy(&mut self) -> Result<bool, ExcelError> {
-        if self.config.formula_plane_mode != FormulaPlaneMode::Off {
+        if self.formula_plane_mode() != FormulaPlaneMode::Off {
             return Ok(false);
         }
         let span_refs = self.graph.formula_authority().active_span_refs();
@@ -19459,7 +19513,7 @@ where
 
     fn record_formula_plane_structural_change(&mut self, scope: StructuralScope) {
         self.invalidate_pending_spills(scope);
-        if self.config.formula_plane_mode == FormulaPlaneMode::Off {
+        if self.formula_plane_mode() == FormulaPlaneMode::Off {
             return;
         }
 
@@ -20059,15 +20113,14 @@ where
                 let roots = [crate::engine::target_preparation::TargetProducer::Legacy(
                     vertex_id,
                 )];
-                if engine.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental
+                if engine.formula_plane_mode() == FormulaPlaneMode::AuthoritativeExperimental
                     && engine.graph.formula_authority().active_span_count() > 0
                 {
                     engine.evaluate_authoritative_formula_plane_targets(&roots, None)?;
                 } else {
                     engine.evaluate_legacy_target_roots(&roots, None)?;
                 }
-            } else if engine.config.formula_plane_mode
-                == FormulaPlaneMode::AuthoritativeExperimental
+            } else if engine.formula_plane_mode() == FormulaPlaneMode::AuthoritativeExperimental
                 && engine.graph.formula_authority().active_span_count() > 0
             {
                 engine.begin_evaluation_request();
@@ -20884,7 +20937,7 @@ where
         self.begin_evaluation_request();
         self.graph.flush_pending_edge_deltas();
         let workbook_scope = matches!(scope, crate::engine::PrepareScope::Workbook);
-        if self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental
+        if self.formula_plane_mode() == FormulaPlaneMode::AuthoritativeExperimental
             && self.graph.formula_authority().active_span_count() > 0
         {
             if workbook_scope {
@@ -20893,7 +20946,7 @@ where
                 self.evaluate_authoritative_formula_plane_targets(&roots, delta)
             }
         } else {
-            if self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental {
+            if self.formula_plane_mode() == FormulaPlaneMode::AuthoritativeExperimental {
                 self.observe_topology_strategy(FormulaPlaneTopologyStrategy::SkippedNoActiveSpans);
             }
             if workbook_scope {
@@ -21241,7 +21294,7 @@ where
                 let _source_cache = self.source_cache_session();
                 let transitioned = self.transition_off_mode_spans_to_legacy()?;
                 self.begin_evaluation_request();
-                if self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental
+                if self.formula_plane_mode() == FormulaPlaneMode::AuthoritativeExperimental
                     && self.graph.formula_authority().active_span_count() > 0
                 {
                     return self.evaluate_authoritative_formula_plane_all();
@@ -24384,7 +24437,7 @@ where
         self.require_unified_authority()?;
         self.transition_off_mode_spans_to_legacy()?;
         self.begin_evaluation_request();
-        if self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental {
+        if self.formula_plane_mode() == FormulaPlaneMode::AuthoritativeExperimental {
             return self.evaluate_authoritative_formula_plane_all();
         }
         self.evaluate_all_legacy_impl()
@@ -24605,7 +24658,7 @@ where
         self.require_unified_authority()?;
         self.transition_off_mode_spans_to_legacy()?;
         self.begin_evaluation_request();
-        if self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental
+        if self.formula_plane_mode() == FormulaPlaneMode::AuthoritativeExperimental
             && self.graph.formula_authority().active_span_count() > 0
         {
             return self.evaluate_authoritative_formula_plane(None, Some(delta));
@@ -25744,7 +25797,7 @@ where
             self.build_graph_all()?;
         }
         if cancel_flag.load(Ordering::Relaxed) {
-            let message = if self.config.formula_plane_mode
+            let message = if self.formula_plane_mode()
                 == FormulaPlaneMode::AuthoritativeExperimental
                 && self.graph.formula_authority().active_span_count() > 0
             {
@@ -25760,7 +25813,7 @@ where
         self.require_unified_authority()?;
         self.transition_off_mode_spans_to_legacy()?;
         self.begin_evaluation_request();
-        if self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental
+        if self.formula_plane_mode() == FormulaPlaneMode::AuthoritativeExperimental
             && self.graph.formula_authority().active_span_count() > 0
         {
             if cancel_flag.load(Ordering::Relaxed) {
@@ -30591,7 +30644,7 @@ where
         self.require_unified_authority()?;
         self.transition_off_mode_spans_to_legacy()?;
         self.begin_evaluation_request();
-        if self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental
+        if self.formula_plane_mode() == FormulaPlaneMode::AuthoritativeExperimental
             && self.graph.formula_authority().active_span_count() > 0
         {
             return self.evaluate_authoritative_formula_plane_all();

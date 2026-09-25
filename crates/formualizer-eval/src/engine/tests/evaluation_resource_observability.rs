@@ -170,6 +170,10 @@ fn deferred_preparation_records_selected_and_restored_staging() {
 }
 
 #[test]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: observes FormulaPlane topology build/hit/overflow and span dirty leases; the span coordinator does not run under the authority"
+)]
 fn topology_build_hit_and_overflow_materialization_are_exactly_observed() {
     let mut cached = build_mode_engine(FormulaPlaneMode::AuthoritativeExperimental, None);
     assert_eq!(cached.baseline_stats().formula_plane_active_span_count, 1);
@@ -276,31 +280,35 @@ fn candidate_overflow_retains_topology_for_next_request_hit() {
     engine
         .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
         .unwrap();
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 3);
+    span_internal!("span count after ingest; spans are not placed under the authority (design §10)";
+        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 3);
+    );
 
     engine.evaluate_all().unwrap();
     let overflow = engine.last_evaluation_resource_request_stats().unwrap();
-    assert_eq!(
-        overflow.topology.cache_outcome,
-        FormulaPlaneTopologyCacheOutcome::Built
+    span_internal!("FormulaPlane span/ingest/eval-report internals; spans are not placed under the authority (design section 10)";
+        assert_eq!(
+            overflow.topology.cache_outcome,
+            FormulaPlaneTopologyCacheOutcome::Built
+        );
+        assert_eq!(
+            overflow.topology.strategy,
+            FormulaPlaneTopologyStrategy::ExactPagedIndexed
+        );
+        assert_eq!(overflow.topology.candidate_cap, Some(1));
+        assert_eq!(
+            overflow.topology.overflow_reason,
+            Some(EvaluationResourceReason::FormulaPlaneTopologyCandidates)
+        );
+        assert_eq!(overflow.topology.candidates_observed, 2);
+        assert_eq!(overflow.topology.edges_observed, 1);
+        assert_eq!(overflow.topology.candidate_cap_hits, 1);
+        assert_eq!(overflow.topology.cache_build_events, 1);
+        assert_eq!(overflow.topology.cache_skip_events, 0);
+        assert_eq!(overflow.topology.cache_skip_streak, 0);
+        assert!(overflow.topology.retained_bytes_observed > 0);
+        assert!(engine.mixed_topology_cache_present_for_test());
     );
-    assert_eq!(
-        overflow.topology.strategy,
-        FormulaPlaneTopologyStrategy::ExactPagedIndexed
-    );
-    assert_eq!(overflow.topology.candidate_cap, Some(1));
-    assert_eq!(
-        overflow.topology.overflow_reason,
-        Some(EvaluationResourceReason::FormulaPlaneTopologyCandidates)
-    );
-    assert_eq!(overflow.topology.candidates_observed, 2);
-    assert_eq!(overflow.topology.edges_observed, 1);
-    assert_eq!(overflow.topology.candidate_cap_hits, 1);
-    assert_eq!(overflow.topology.cache_build_events, 1);
-    assert_eq!(overflow.topology.cache_skip_events, 0);
-    assert_eq!(overflow.topology.cache_skip_streak, 0);
-    assert!(overflow.topology.retained_bytes_observed > 0);
-    assert!(engine.mixed_topology_cache_present_for_test());
     assert_eq!(
         engine.get_cell_value("Sheet1", 100, 4),
         Some(LiteralValue::Number(202.0))
@@ -311,20 +319,22 @@ fn candidate_overflow_retains_topology_for_next_request_hit() {
         .unwrap();
     engine.evaluate_all().unwrap();
     let hit = engine.last_evaluation_resource_request_stats().unwrap();
-    assert_eq!(
-        hit.topology.cache_outcome,
-        FormulaPlaneTopologyCacheOutcome::Hit
+    span_internal!("FormulaPlane span/ingest/eval-report internals; spans are not placed under the authority (design section 10)";
+        assert_eq!(
+            hit.topology.cache_outcome,
+            FormulaPlaneTopologyCacheOutcome::Hit
+        );
+        assert_eq!(
+            hit.topology.strategy,
+            FormulaPlaneTopologyStrategy::ExactPagedIndexed
+        );
+        assert_eq!(hit.topology.cache_hit_events, 1);
+        assert_eq!(hit.topology.cache_build_events, 0);
+        assert_eq!(hit.topology.cache_skip_events, 0);
+        assert_eq!(hit.topology.producers_observed, 0);
+        assert_eq!(hit.topology.candidates_observed, 0);
+        assert_eq!(hit.topology.edges_observed, 0);
     );
-    assert_eq!(
-        hit.topology.strategy,
-        FormulaPlaneTopologyStrategy::ExactPagedIndexed
-    );
-    assert_eq!(hit.topology.cache_hit_events, 1);
-    assert_eq!(hit.topology.cache_build_events, 0);
-    assert_eq!(hit.topology.cache_skip_events, 0);
-    assert_eq!(hit.topology.producers_observed, 0);
-    assert_eq!(hit.topology.candidates_observed, 0);
-    assert_eq!(hit.topology.edges_observed, 0);
     assert_eq!(
         engine.get_cell_value("Sheet1", 1, 4),
         Some(LiteralValue::Number(20.0))
@@ -336,6 +346,10 @@ fn candidate_overflow_retains_topology_for_next_request_hit() {
 }
 
 #[test]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: asserts FormulaPlane mixed-topology strategy and cache-skip stats; the span coordinator does not run under the authority"
+)]
 fn perpetual_cache_skip_preserves_values_streak_and_no_disk_policy() {
     for (policy, scratch_limit, expected) in [
         (

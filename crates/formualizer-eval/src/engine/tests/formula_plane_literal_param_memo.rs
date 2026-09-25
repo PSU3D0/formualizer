@@ -129,6 +129,10 @@ fn sumifs_varying_literal_engine(rows: u32) -> Engine<TestWorkbook> {
 }
 
 #[test]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: inspects the FormulaPlane literal binding store of an active span; no spans under the authority"
+)]
 fn formula_plane_parameterized_literals_fold_same_structure() {
     let mut engine = sumifs_varying_literal_engine(100);
     assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
@@ -141,6 +145,10 @@ fn formula_plane_parameterized_literals_fold_same_structure() {
 }
 
 #[test]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: inspects the FormulaPlane literal binding store of an active span; no spans under the authority"
+)]
 fn formula_plane_affine_row_literal_numbers_avoid_graph_materialization() {
     let mut engine = literal_formula_family(120, |row| row.to_string());
     let report = engine.last_formula_ingest_report().unwrap();
@@ -159,6 +167,10 @@ fn formula_plane_affine_row_literal_numbers_avoid_graph_materialization() {
 }
 
 #[test]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: inspects the FormulaPlane literal binding store of an active span; no spans under the authority"
+)]
 fn formula_plane_non_integer_number_literals_remain_dictionary_encoded() {
     let mut engine = literal_formula_family(120, |row| format!("{row}.5"));
     assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
@@ -186,10 +198,12 @@ fn formula_plane_affine_literal_run_segmentation_isolates_outlier() {
     }
     ingest(&mut engine, formulas);
     let report = engine.last_formula_ingest_report().unwrap();
-    assert_eq!(report.shadow_accepted_span_cells, 259);
-    assert_eq!(report.graph_formula_cells_materialized, 1);
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
-    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 1);
+    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
+        assert_eq!(report.shadow_accepted_span_cells, 259);
+        assert_eq!(report.graph_formula_cells_materialized, 1);
+        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
+        assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 1);
+    );
     engine.evaluate_all().unwrap();
     assert_eq!(
         engine.get_cell_value("Sheet1", 129, 2),
@@ -206,6 +220,10 @@ fn formula_plane_affine_literal_run_segmentation_isolates_outlier() {
 }
 
 #[test]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: inspects the FormulaPlane literal binding store of an active span; no spans under the authority"
+)]
 fn formula_plane_exact_canonical_key_retained_for_diagnostics() {
     let engine = literal_formula_family(100, |row| (row % 3).to_string());
     let (exact, parameterized) = first_template_keys(&engine);
@@ -268,6 +286,10 @@ fn formula_plane_empty_literal_parameterizes() {
 }
 
 #[test]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: inspects the FormulaPlane literal binding store of an active span; no spans under the authority"
+)]
 fn formula_plane_binding_store_dictionary_encodes_repeated_vectors() {
     let engine = literal_formula_family(120, |row| (row % 3).to_string());
     assert_eq!(span_binding_unique_count(&engine), 3);
@@ -276,40 +298,42 @@ fn formula_plane_binding_store_dictionary_encodes_repeated_vectors() {
 #[test]
 fn formula_plane_binding_set_removed_with_span() {
     let mut engine = literal_formula_family(100, |row| (row % 3).to_string());
-    let (span_ref, binding_set_id) = {
-        let authority = engine.graph.formula_authority();
-        let span = authority.plane.spans.active_spans().next().unwrap();
-        (
-            FormulaSpanRef {
-                id: span.id,
-                generation: span.generation,
-                version: span.version,
-            },
-            span.binding_set_id.unwrap(),
-        )
-    };
-    assert!(
+    span_internal!("binds a FormulaPlane span object/report; spans are not placed under the authority (design section 10)";
+        let (span_ref, binding_set_id) = {
+            let authority = engine.graph.formula_authority();
+            let span = authority.plane.spans.active_spans().next().unwrap();
+            (
+                FormulaSpanRef {
+                    id: span.id,
+                    generation: span.generation,
+                    version: span.version,
+                },
+                span.binding_set_id.unwrap(),
+            )
+        };
+        assert!(
+            engine
+                .graph
+                .formula_authority()
+                .plane
+                .binding_sets
+                .get(binding_set_id)
+                .is_some()
+        );
         engine
             .graph
-            .formula_authority()
+            .formula_authority_mut()
             .plane
-            .binding_sets
-            .get(binding_set_id)
-            .is_some()
-    );
-    engine
-        .graph
-        .formula_authority_mut()
-        .plane
-        .remove_span(span_ref);
-    assert!(
-        engine
-            .graph
-            .formula_authority()
-            .plane
-            .binding_sets
-            .get(binding_set_id)
-            .is_none()
+            .remove_span(span_ref);
+        assert!(
+            engine
+                .graph
+                .formula_authority()
+                .plane
+                .binding_sets
+                .get(binding_set_id)
+                .is_none()
+        );
     );
 }
 
@@ -326,12 +350,16 @@ fn formula_plane_demoted_parameterized_span_materializes_bound_literals() {
         formulas.push(record(&mut engine, row, 4, &format!("=A{row}-3")));
     }
     ingest(&mut engine, formulas);
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 3);
+    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
+        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 3);
+    );
     engine.evaluate_all().unwrap();
     engine.delete_columns("Sheet1", 3, 1).unwrap();
     // Span shifting preserves col B and shifts col D into col C. The deleted
     // col C span is removed without materializing per-cell formulas.
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
+    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
+        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
+    );
     engine.evaluate_all().unwrap();
     assert_eq!(
         engine.get_cell_value("Sheet1", 5, 2),
@@ -368,18 +396,22 @@ fn formula_plane_memoizes_value_context_relative_cell_refs() {
     }
     ingest(&mut engine, formulas);
     engine.evaluate_all().unwrap();
-    let report = engine.last_formula_plane_span_eval_report().unwrap();
-    assert_eq!(report.memo_eval_count, 3);
-    assert_eq!(report.memo_broadcast_count, 117);
+    span_internal!("binds a FormulaPlane span object/report; spans are not placed under the authority (design section 10)";
+        let report = engine.last_formula_plane_span_eval_report().unwrap();
+        assert_eq!(report.memo_eval_count, 3);
+        assert_eq!(report.memo_broadcast_count, 117);
+    );
 }
 
 #[test]
 fn formula_plane_memoizes_varying_literal_slots() {
     let mut engine = sumifs_varying_literal_engine(120);
     engine.evaluate_all().unwrap();
-    let report = engine.last_formula_plane_span_eval_report().unwrap();
-    assert_eq!(report.memo_eval_count, 3);
-    assert_eq!(report.memo_broadcast_count, 117);
+    span_internal!("binds a FormulaPlane span object/report; spans are not placed under the authority (design section 10)";
+        let report = engine.last_formula_plane_span_eval_report().unwrap();
+        assert_eq!(report.memo_eval_count, 3);
+        assert_eq!(report.memo_broadcast_count, 117);
+    );
 }
 
 #[test]
@@ -394,9 +426,11 @@ fn formula_plane_memoizes_mixed_literal_and_value_ref_parameters() {
     }
     ingest(&mut engine, formulas);
     engine.evaluate_all().unwrap();
-    let report = engine.last_formula_plane_span_eval_report().unwrap();
-    assert_eq!(report.memo_eval_count, 6);
-    assert_eq!(report.memo_broadcast_count, 114);
+    span_internal!("binds a FormulaPlane span object/report; spans are not placed under the authority (design section 10)";
+        let report = engine.last_formula_plane_span_eval_report().unwrap();
+        assert_eq!(report.memo_eval_count, 6);
+        assert_eq!(report.memo_broadcast_count, 114);
+    );
 }
 
 #[test]
@@ -424,8 +458,10 @@ fn formula_plane_memo_residual_relative_reference_includes_row_delta() {
     engine.evaluate_all().unwrap();
     // The relative range is not value-parameterized, so row deltas make the sample unique and
     // memoization is skipped rather than reusing the A-row value across all placements.
-    let report = engine.last_formula_plane_span_eval_report().unwrap();
-    assert_eq!(report.memo_eval_count, 0);
+    span_internal!("binds a FormulaPlane span object/report; spans are not placed under the authority (design section 10)";
+        let report = engine.last_formula_plane_span_eval_report().unwrap();
+        assert_eq!(report.memo_eval_count, 0);
+    );
     assert_eq!(
         engine.get_cell_value("Sheet1", 7, 5),
         Some(LiteralValue::Number(18.0))
@@ -436,9 +472,11 @@ fn formula_plane_memo_residual_relative_reference_includes_row_delta() {
 fn formula_plane_memo_skips_all_unique_literal_bindings() {
     let mut engine = literal_formula_family(120, |row| row.to_string());
     engine.evaluate_all().unwrap();
-    let report = engine.last_formula_plane_span_eval_report().unwrap();
-    assert_eq!(report.memo_eval_count, 0);
-    assert_eq!(report.sample_only_key_build_count, 64);
+    span_internal!("binds a FormulaPlane span object/report; spans are not placed under the authority (design section 10)";
+        let report = engine.last_formula_plane_span_eval_report().unwrap();
+        assert_eq!(report.memo_eval_count, 0);
+        assert_eq!(report.sample_only_key_build_count, 64);
+    );
 }
 
 #[test]
@@ -453,9 +491,11 @@ fn formula_plane_memo_sampling_skips_all_unique_value_refs() {
     }
     ingest(&mut engine, formulas);
     engine.evaluate_all().unwrap();
-    let report = engine.last_formula_plane_span_eval_report().unwrap();
-    assert_eq!(report.memo_eval_count, 0);
-    assert_eq!(report.sample_only_key_build_count, 64);
+    span_internal!("binds a FormulaPlane span object/report; spans are not placed under the authority (design section 10)";
+        let report = engine.last_formula_plane_span_eval_report().unwrap();
+        assert_eq!(report.memo_eval_count, 0);
+        assert_eq!(report.sample_only_key_build_count, 64);
+    );
 }
 
 #[test]
@@ -681,26 +721,28 @@ fn formula_plane_literal_binding_memory_cap_falls_back() {
 fn formula_plane_memo_cache_is_per_evaluate_task() {
     let mut engine = sumifs_varying_literal_engine(120);
     engine.evaluate_all().unwrap();
-    let first = engine
-        .last_formula_plane_span_eval_report()
-        .unwrap()
-        .memo_eval_count;
-    let global_before = engine
-        .baseline_stats()
-        .formula_plane_dirty_global_invalidations;
-    engine.graph.mark_all_formula_spans_dirty(
-        crate::engine::graph::WholeSpanDirtyReason::GlobalInvalidation,
-    );
-    assert_eq!(
-        engine
+    span_internal!("binds a FormulaPlane span object/report; spans are not placed under the authority (design section 10)";
+        let first = engine
+            .last_formula_plane_span_eval_report()
+            .unwrap()
+            .memo_eval_count;
+        let global_before = engine
             .baseline_stats()
-            .formula_plane_dirty_global_invalidations,
-        global_before + 1
+            .formula_plane_dirty_global_invalidations;
+        engine.graph.mark_all_formula_spans_dirty(
+            crate::engine::graph::WholeSpanDirtyReason::GlobalInvalidation,
+        );
+        assert_eq!(
+            engine
+                .baseline_stats()
+                .formula_plane_dirty_global_invalidations,
+            global_before + 1
+        );
+        engine.evaluate_all().unwrap();
+        let second = engine
+            .last_formula_plane_span_eval_report()
+            .unwrap()
+            .memo_eval_count;
+        assert_eq!((first, second), (3, 3));
     );
-    engine.evaluate_all().unwrap();
-    let second = engine
-        .last_formula_plane_span_eval_report()
-        .unwrap()
-        .memo_eval_count;
-    assert_eq!((first, second), (3, 3));
 }

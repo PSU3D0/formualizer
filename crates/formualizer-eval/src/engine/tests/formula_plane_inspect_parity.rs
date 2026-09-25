@@ -107,14 +107,18 @@ fn build_pair(literal: u32) -> (Engine<TestWorkbook>, Engine<TestWorkbook>) {
 
     let off_stats = off.baseline_stats();
     let authoritative_stats = authoritative.baseline_stats();
-    assert_eq!(
-        authoritative_stats.formula_plane_active_span_count, 2,
-        "authoritative parity fixture did not retain both FormulaPlane families"
+    span_internal!("span count after ingest; spans are not placed under the authority (design §10)";
+        assert_eq!(
+            authoritative_stats.formula_plane_active_span_count, 2,
+            "authoritative parity fixture did not retain both FormulaPlane families"
+        );
     );
     assert_eq!(off_stats.formula_plane_active_span_count, 0);
-    assert_ne!(
-        off_stats.graph_formula_vertex_count, authoritative_stats.graph_formula_vertex_count,
-        "parity fixture used identical formula representations"
+    span_internal!("legacy formula vertex counts differ only when spans own families; both engines ingest per cell under the authority";
+        assert_ne!(
+            off_stats.graph_formula_vertex_count, authoritative_stats.graph_formula_vertex_count,
+            "parity fixture used identical formula representations"
+        );
     );
     (off, authoritative)
 }
@@ -302,13 +306,15 @@ fn formula_plane_span_adapter_reports_per_placement_source_ordered_precedents() 
     let report = authoritative
         .precedents(&cell, &PrecedentOptions::default())
         .unwrap();
-    assert_eq!(
-        formula_plane_reference_path_counts(),
-        FormulaPlaneReferencePathCounts {
-            template: 1,
-            ast_fallback: 0,
-        },
-        "accepted affine shapes must use retained source-ordered templates"
+    span_internal!("FormulaPlane span/ingest/eval-report internals; spans are not placed under the authority (design section 10)";
+        assert_eq!(
+            formula_plane_reference_path_counts(),
+            FormulaPlaneReferencePathCounts {
+                template: 1,
+                ast_fallback: 0,
+            },
+            "accepted affine shapes must use retained source-ordered templates"
+        );
     );
     assert_eq!(report.precedents.len(), 3);
     assert_eq!(
@@ -371,11 +377,13 @@ fn formula_plane_per_placement_literal_bindings_preserve_canonical_formula_inspe
     };
     let off = build(FormulaPlaneMode::Off);
     let authoritative = build(FormulaPlaneMode::AuthoritativeExperimental);
-    assert_eq!(
-        authoritative
-            .baseline_stats()
-            .formula_plane_active_span_count,
-        1
+    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
+        assert_eq!(
+            authoritative
+                .baseline_stats()
+                .formula_plane_active_span_count,
+            1
+        );
     );
     for row in [1, 64, SPAN_ROWS] {
         assert_snapshot_parity(
@@ -465,11 +473,13 @@ fn truncated_dependents_select_the_address_least_discovered_candidates_in_both_m
 
     for (plane_col_base, legacy_col_base) in [(3, 24), (24, 3)] {
         let (off, authoritative) = build_mixed_reader_pair(plane_col_base, legacy_col_base);
-        assert_eq!(
-            authoritative
-                .baseline_stats()
-                .formula_plane_active_span_count,
-            3
+        span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
+            assert_eq!(
+                authoritative
+                    .baseline_stats()
+                    .formula_plane_active_span_count,
+                3
+            );
         );
         for max_results in 1..=8 {
             assert_dependent_parity(
@@ -518,12 +528,16 @@ fn non_binding_work_budgets_are_plane_independent_but_binding_budgets_are_not() 
     let mut plane = authoritative.dependents(&address(64, 2), &options).unwrap();
     legacy.stamp = ZERO_STAMP;
     plane.stamp = ZERO_STAMP;
-    assert_ne!(
-        legacy, plane,
-        "binding work budgets are representation-dependent"
+    span_internal!("asserts span and legacy representations answer binding budgets differently; both engines are per cell under the authority";
+        assert_ne!(
+            legacy, plane,
+            "binding work budgets are representation-dependent"
+        );
     );
     assert_eq!(legacy.dependents.len(), 6);
-    assert_eq!(plane.dependents.len(), 10);
+    span_internal!("the span engine's budget-truncated dependents differ by representation; under the authority both engines are per cell and answer like legacy";
+        assert_eq!(plane.dependents.len(), 10);
+    );
     assert_eq!(
         legacy.truncation,
         TruncationReport {
@@ -648,6 +662,10 @@ fn structural_delete_whole_column_values_match_fresh_formula_and_formula_plane_f
 }
 
 #[test]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: seeds a span directly into the FormulaPlane (crate-internal); spans cannot exist under the authority"
+)]
 fn reconstructed_ast_fallback_is_used_for_whole_result_summaries() {
     use crate::formula_plane::producer::{
         DirtyProjectionRule, SpanReadDependency, SpanReadSummary,
@@ -715,6 +733,10 @@ fn reconstructed_ast_fallback_is_used_for_whole_result_summaries() {
 }
 
 #[test]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: marks FormulaPlane spans/regions dirty through graph internals; no spans under the authority"
+)]
 fn dirty_snapshots_cover_whole_span_and_incomplete_closure_fallbacks() {
     use crate::engine::graph::WholeSpanDirtyReason;
     use crate::formula_plane::region_index::Region;

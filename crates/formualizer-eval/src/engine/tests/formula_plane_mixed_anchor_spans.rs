@@ -83,13 +83,17 @@ fn build_tail_read_engine() -> Engine<TestWorkbook> {
     let report = engine
         .ingest_formula_batches(vec![FormulaIngestBatch::new(SHEET, formulas)])
         .expect("ingest formulas");
-    assert_eq!(
-        report.shadow_accepted_span_cells,
-        u64::from(ROWS),
-        "tail-read family must span; histogram: {:?}",
-        report.fallback_reasons
+    span_internal!("ingest report span-acceptance counter; no span placement under the authority";
+        assert_eq!(
+            report.shadow_accepted_span_cells,
+            u64::from(ROWS),
+            "tail-read family must span; histogram: {:?}",
+            report.fallback_reasons
+        );
     );
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    span_internal!("span count after ingest; spans are not placed under the authority (design §10)";
+        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    );
     engine
 }
 
@@ -106,13 +110,17 @@ fn build_running_total_engine() -> Engine<TestWorkbook> {
     let report = engine
         .ingest_formula_batches(vec![FormulaIngestBatch::new(SHEET, formulas)])
         .expect("ingest formulas");
-    assert_eq!(
-        report.shadow_accepted_span_cells,
-        u64::from(ROWS),
-        "running-total family must span; histogram: {:?}",
-        report.fallback_reasons
+    span_internal!("ingest report span-acceptance counter; no span placement under the authority";
+        assert_eq!(
+            report.shadow_accepted_span_cells,
+            u64::from(ROWS),
+            "running-total family must span; histogram: {:?}",
+            report.fallback_reasons
+        );
     );
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    span_internal!("span count after ingest; spans are not placed under the authority (design §10)";
+        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    );
     engine
 }
 
@@ -138,6 +146,10 @@ fn single_span_read_regions(engine: &Engine<TestWorkbook>) -> Vec<Region> {
 }
 
 #[test]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: asserts a span's union read region; no spans under the authority"
+)]
 fn tail_read_span_union_read_region_is_single_column_interval() {
     let engine = build_tail_read_engine();
     let sheet_id = engine.graph.sheet_id(SHEET).expect("sheet id for Sheet1");
@@ -153,6 +165,10 @@ fn tail_read_span_union_read_region_is_single_column_interval() {
 }
 
 #[test]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: asserts a span's union read region; no spans under the authority"
+)]
 fn running_total_span_union_read_region_is_single_column_interval() {
     let engine = build_running_total_engine();
     let sheet_id = engine.graph.sheet_id(SHEET).expect("sheet id for Sheet1");
@@ -169,10 +185,12 @@ fn tail_read_edit_recalc_is_bounded_by_affected_placement_interval() {
     let mut engine = build_tail_read_engine();
 
     engine.evaluate_all().unwrap();
-    let first = engine
-        .last_formula_plane_span_eval_report()
-        .expect("first eval must run the authoritative span pass");
-    assert_eq!(first.span_eval_placement_count, u64::from(ROWS));
+    span_internal!("binds a FormulaPlane span object/report; spans are not placed under the authority (design section 10)";
+        let first = engine
+            .last_formula_plane_span_eval_report()
+            .expect("first eval must run the authoritative span pass");
+        assert_eq!(first.span_eval_placement_count, u64::from(ROWS));
+    );
     for row in [1, 2, ROWS / 2, ROWS] {
         assert_eq!(
             numeric_value(&engine, row, 3),
@@ -191,14 +209,16 @@ fn tail_read_edit_recalc_is_bounded_by_affected_placement_interval() {
         .unwrap();
     engine.evaluate_all().unwrap();
 
-    let report = engine
-        .last_formula_plane_span_eval_report()
-        .expect("edit recalc must evaluate span work");
-    assert_eq!(
-        report.span_eval_placement_count,
-        u64::from(EDIT_ROW),
-        "tail-read dirty work must be the affected placement interval, not \
-         the whole span: {report:?}"
+    span_internal!("binds a FormulaPlane span object/report; spans are not placed under the authority (design section 10)";
+        let report = engine
+            .last_formula_plane_span_eval_report()
+            .expect("edit recalc must evaluate span work");
+        assert_eq!(
+            report.span_eval_placement_count,
+            u64::from(EDIT_ROW),
+            "tail-read dirty work must be the affected placement interval, not \
+             the whole span: {report:?}"
+        );
     );
 
     let delta = 1_000.0 - EDIT_ROW as f64;
@@ -222,10 +242,12 @@ fn running_total_edit_recalc_is_bounded_by_affected_placement_interval() {
     let mut engine = build_running_total_engine();
 
     engine.evaluate_all().unwrap();
-    let first = engine
-        .last_formula_plane_span_eval_report()
-        .expect("first eval must run the authoritative span pass");
-    assert_eq!(first.span_eval_placement_count, u64::from(ROWS));
+    span_internal!("binds a FormulaPlane span object/report; spans are not placed under the authority (design section 10)";
+        let first = engine
+            .last_formula_plane_span_eval_report()
+            .expect("first eval must run the authoritative span pass");
+        assert_eq!(first.span_eval_placement_count, u64::from(ROWS));
+    );
     for row in [2, ROWS / 2, ROWS + 1] {
         assert_eq!(
             numeric_value(&engine, row, 3),
@@ -244,14 +266,16 @@ fn running_total_edit_recalc_is_bounded_by_affected_placement_interval() {
         .unwrap();
     engine.evaluate_all().unwrap();
 
-    let report = engine
-        .last_formula_plane_span_eval_report()
-        .expect("edit recalc must evaluate span work");
-    assert_eq!(
-        report.span_eval_placement_count,
-        u64::from(ROWS + 1 - EDIT_ROW + 1), // rows 395..=401 inclusive
-        "running-total dirty work must be the affected placement interval, \
-         not the whole span: {report:?}"
+    span_internal!("binds a FormulaPlane span object/report; spans are not placed under the authority (design section 10)";
+        let report = engine
+            .last_formula_plane_span_eval_report()
+            .expect("edit recalc must evaluate span work");
+        assert_eq!(
+            report.span_eval_placement_count,
+            u64::from(ROWS + 1 - EDIT_ROW + 1), // rows 395..=401 inclusive
+            "running-total dirty work must be the affected placement interval, \
+             not the whole span: {report:?}"
+        );
     );
 
     let delta = 5_000.0 - EDIT_ROW as f64;
@@ -295,15 +319,17 @@ fn self_reading_expanding_range_family_rejects_with_internal_dependency() {
         .expect("ingest formulas");
 
     assert_eq!(report.shadow_accepted_span_cells, 0);
-    assert_eq!(
-        report
-            .fallback_reasons
-            .get("InternalDependency")
-            .copied()
-            .unwrap_or(0),
-        u64::from(ROWS),
-        "histogram: {:?}",
-        report.fallback_reasons
+    span_internal!("FormulaPlane span/ingest/eval-report internals; spans are not placed under the authority (design section 10)";
+        assert_eq!(
+            report
+                .fallback_reasons
+                .get("InternalDependency")
+                .copied()
+                .unwrap_or(0),
+            u64::from(ROWS),
+            "histogram: {:?}",
+            report.fallback_reasons
+        );
     );
     assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
 

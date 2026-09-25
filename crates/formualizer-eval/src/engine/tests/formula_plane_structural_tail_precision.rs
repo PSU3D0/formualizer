@@ -60,7 +60,9 @@ fn build_column_family(rows: u32) -> Engine<TestWorkbook> {
     engine
         .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
         .unwrap();
-    assert_eq!(active_span_count(&engine), 5);
+    span_internal!("span count after ingest; spans are not placed under the authority (design §10)";
+        assert_eq!(active_span_count(&engine), 5);
+    );
     engine.evaluate_all().unwrap();
     engine
 }
@@ -68,20 +70,26 @@ fn build_column_family(rows: u32) -> Engine<TestWorkbook> {
 #[test]
 fn column_delete_outside_span_region_with_dirty_closure_no_recompute() {
     let mut engine = build_column_family(1000);
-    assert_eq!(active_span_count(&engine), 5);
+    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
+        assert_eq!(active_span_count(&engine), 5);
+    );
     for col in 2..=6 {
         assert_number(&engine, 123, col, 123.0 + f64::from(col - 1));
     }
 
     engine.delete_columns("Sheet1", 7, 1).unwrap();
 
-    assert_eq!(active_span_count(&engine), 5);
+    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
+        assert_eq!(active_span_count(&engine), 5);
+    );
     for col in 2..=6 {
         assert_number(&engine, 123, col, 123.0 + f64::from(col - 1));
     }
     let result = engine.evaluate_all().unwrap();
     assert_eq!(result.computed_vertices, 0, "result={result:?}");
-    assert_eq!(active_span_count(&engine), 5);
+    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
+        assert_eq!(active_span_count(&engine), 5);
+    );
     for col in 2..=6 {
         assert_number(&engine, 987, col, 987.0 + f64::from(col - 1));
     }
@@ -90,17 +98,23 @@ fn column_delete_outside_span_region_with_dirty_closure_no_recompute() {
 #[test]
 fn column_insert_outside_span_region_with_dirty_closure_no_recompute() {
     let mut engine = build_column_family(1000);
-    assert_eq!(active_span_count(&engine), 5);
+    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
+        assert_eq!(active_span_count(&engine), 5);
+    );
 
     engine.insert_columns("Sheet1", 7, 1).unwrap();
 
-    assert_eq!(active_span_count(&engine), 5);
+    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
+        assert_eq!(active_span_count(&engine), 5);
+    );
     for col in 2..=6 {
         assert_number(&engine, 321, col, 321.0 + f64::from(col - 1));
     }
     let result = engine.evaluate_all().unwrap();
     assert_eq!(result.computed_vertices, 0, "result={result:?}");
-    assert_eq!(active_span_count(&engine), 5);
+    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
+        assert_eq!(active_span_count(&engine), 5);
+    );
     for col in 2..=6 {
         assert_number(&engine, 654, col, 654.0 + f64::from(col - 1));
     }
@@ -118,7 +132,9 @@ fn build_row_run(rows: u32) -> Engine<TestWorkbook> {
     engine
         .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
         .unwrap();
-    assert_eq!(active_span_count(&engine), 1);
+    span_internal!("span count after ingest; spans are not placed under the authority (design §10)";
+        assert_eq!(active_span_count(&engine), 1);
+    );
     engine.evaluate_all().unwrap();
     engine
 }
@@ -139,6 +155,10 @@ fn build_col_run(cols: u32) -> Engine<TestWorkbook> {
 }
 
 #[test]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: asserts exact FormulaPlane span dirty regions after structural edits; no spans under the authority"
+)]
 fn row_structural_before_inside_after_publish_exact_bounded_span_regions() {
     let mut inside = build_row_run(1000);
     let sheet_id = inside.graph.sheet_id("Sheet1").unwrap();
@@ -198,6 +218,10 @@ fn row_structural_before_inside_after_publish_exact_bounded_span_regions() {
 }
 
 #[test]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: asserts exact FormulaPlane span dirty regions after structural edits; no spans under the authority"
+)]
 fn row_delete_tail_recomputes_only_compacted_interval() {
     let mut engine = build_row_run(1000);
     let sheet_id = engine.graph.sheet_id("Sheet1").unwrap();
@@ -223,6 +247,10 @@ fn row_delete_tail_recomputes_only_compacted_interval() {
 }
 
 #[test]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: asserts exact FormulaPlane span dirty regions after structural edits; no spans under the authority"
+)]
 fn column_structural_inside_and_after_are_precise() {
     let mut inside = build_col_run(1000);
     let sheet_id = inside.graph.sheet_id("Sheet1").unwrap();
@@ -290,6 +318,10 @@ fn ingest_row_run_on_sheet(
 }
 
 #[test]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: asserts exact FormulaPlane span dirty regions after structural edits; no spans under the authority"
+)]
 fn structural_span_region_isolated_to_edited_sheet() {
     let mut engine = authoritative_engine();
     engine.add_sheet("Sheet2").unwrap();
@@ -373,37 +405,39 @@ fn sheet_and_unrelated_name_table_lifecycle_do_not_dirty_surviving_spans() {
         .unwrap();
     assert_eq!(engine.graph.pending_formula_dirty_event_count(), 0);
 
-    let refs_before_duplicate = engine.graph.formula_authority().active_span_refs();
-    engine.duplicate_sheet("Sheet1", "Copy").unwrap();
-    let surviving = engine.graph.formula_authority().active_span_refs();
-    assert_eq!(surviving.len(), 1, "only the source-sheet span is demoted");
-    assert!(refs_before_duplicate.contains(&surviving[0]));
-    assert_eq!(engine.graph.pending_formula_dirty_event_count(), 0);
-    engine.evaluate_all().unwrap();
-    assert!(engine.last_formula_plane_span_eval_report().is_none());
+    span_internal!("binds a FormulaPlane span object/report; spans are not placed under the authority (design section 10)";
+        let refs_before_duplicate = engine.graph.formula_authority().active_span_refs();
+        engine.duplicate_sheet("Sheet1", "Copy").unwrap();
+        let surviving = engine.graph.formula_authority().active_span_refs();
+        assert_eq!(surviving.len(), 1, "only the source-sheet span is demoted");
+        assert!(refs_before_duplicate.contains(&surviving[0]));
+        assert_eq!(engine.graph.pending_formula_dirty_event_count(), 0);
+        engine.evaluate_all().unwrap();
+        assert!(engine.last_formula_plane_span_eval_report().is_none());
 
-    engine.add_sheet("Empty").unwrap();
-    let empty_id = engine.graph.sheet_id("Empty").unwrap();
-    let globals_before = engine
-        .baseline_stats()
-        .formula_plane_dirty_global_invalidations;
-    engine.remove_sheet(empty_id).unwrap();
-    assert_eq!(
-        engine.graph.formula_authority().active_span_refs(),
-        surviving
-    );
-    assert_eq!(
-        engine
-            .graph
-            .pending_formula_dirty_whole_spans()
-            .collect::<Vec<_>>(),
-        surviving
-    );
-    assert_eq!(
-        engine
+        engine.add_sheet("Empty").unwrap();
+        let empty_id = engine.graph.sheet_id("Empty").unwrap();
+        let globals_before = engine
             .baseline_stats()
-            .formula_plane_dirty_global_invalidations,
-        globals_before + 1
+            .formula_plane_dirty_global_invalidations;
+        engine.remove_sheet(empty_id).unwrap();
+        assert_eq!(
+            engine.graph.formula_authority().active_span_refs(),
+            surviving
+        );
+        assert_eq!(
+            engine
+                .graph
+                .pending_formula_dirty_whole_spans()
+                .collect::<Vec<_>>(),
+            surviving
+        );
+        assert_eq!(
+            engine
+                .baseline_stats()
+                .formula_plane_dirty_global_invalidations,
+            globals_before + 1
+        );
     );
 }
 
@@ -447,6 +481,10 @@ fn structural_insert_action_undo_redo_preserves_values_without_unlogged_span_geo
 }
 
 #[test]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: expects a FormulaPlane structural candidate-cap overflow error; no span candidates exist"
+)]
 fn structural_candidate_overflow_is_atomic_and_retryable() {
     let mut engine = build_row_run(120);
     let refs_before = engine.graph.formula_authority().active_span_refs();
@@ -538,6 +576,10 @@ fn structural_candidate_overflow_is_atomic_and_retryable() {
 }
 
 #[test]
+#[cfg_attr(
+    feature = "unified_authority",
+    ignore = "M2 span-internal: asserts exact FormulaPlane span dirty regions after structural edits; no spans under the authority"
+)]
 fn indexed_structural_selection_classifies_only_affected_candidate_among_many_sheets() {
     const SHEETS: u32 = 24;
     let mut engine = authoritative_engine();

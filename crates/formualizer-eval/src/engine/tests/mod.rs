@@ -1,3 +1,21 @@
+/// Program 1 M2 reclassification (unified-design/test-classification.md):
+/// the wrapped statements assert FormulaPlane span internals (placement,
+/// span stores, span-count ingest reports, demotion, span scheduling).
+/// Under `unified_authority` spans are never placed (design §10), so they
+/// are skipped there; the reason literal records why at each site. The body
+/// still type-checks in every build. `FZ_M2_FORCE_PLANE_OFF` (default build
+/// only) runs the legacy engine with spans off as the triage oracle, so it
+/// skips them too.
+macro_rules! span_internal {
+    ($reason:literal; $($body:tt)*) => {
+        if !cfg!(feature = "unified_authority")
+            && std::env::var_os("FZ_M2_FORCE_PLANE_OFF").is_none()
+        {
+            $($body)*
+        }
+    };
+}
+
 mod active_span_gate_audit;
 mod adopt_file_sheets;
 mod arena_debug;
