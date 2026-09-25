@@ -29082,6 +29082,10 @@ where
     }
 }
 
+#[cfg(all(test, feature = "unified_authority"))]
+#[path = "tests/authority_schedule_execution.rs"]
+mod authority_schedule_execution;
+
 #[cfg(test)]
 #[path = "tests/pending_spill.rs"]
 mod pending_spill_tests;
