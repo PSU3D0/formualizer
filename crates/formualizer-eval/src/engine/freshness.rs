@@ -72,6 +72,9 @@ pub(crate) struct Freshness {
     committed: FxHashSet<VertexId>,
     /// Stale readers dropped in this pass (they stay dirty).
     stale_this_pass: Vec<VertexId>,
+    /// Fresh members of a parallel group that also held a stale reader:
+    /// dropped with it (the group is one commit unit), no hints of their own.
+    group_dropped: FxHashSet<VertexId>,
     /// Request-scoped plan-only hints: reader → cells it read while dirty.
     hints: FxHashMap<VertexId, Vec<VertexId>>,
     /// Stale readers dropped over the request (tests, telemetry).
@@ -95,6 +98,7 @@ impl<R: EvaluationContext> Engine<R> {
         f.skipped.clear();
         f.committed.clear();
         f.stale_this_pass.clear();
+        f.group_dropped.clear();
         f.stale.get_mut().unwrap().clear();
         f.fresh_reads.get_mut().unwrap().clear();
         f.armed = true;
@@ -185,6 +189,16 @@ impl<R: EvaluationContext> Engine<R> {
     /// vertex is a stale reader whose result must not publish (FR3). Its
     /// reads become replan hints and the unit raises the barrier (FR4).
     pub(super) fn freshness_drop_stale(&mut self, vertex: VertexId) -> bool {
+        if self.freshness.group_dropped.remove(&vertex) {
+            self.freshness
+                .fresh_reads
+                .get_mut()
+                .unwrap()
+                .remove(&vertex);
+            self.freshness.stale_this_pass.push(vertex);
+            self.freshness.barrier = true;
+            return true;
+        }
         let Some(reads) = self.freshness.stale.get_mut().unwrap().remove(&vertex) else {
             return false;
         };
@@ -196,6 +210,23 @@ impl<R: EvaluationContext> Engine<R> {
         hints.sort_unstable();
         hints.dedup();
         true
+    }
+
+    /// A parallel group is one commit unit (design §8.2): if any member is
+    /// stale after the group's evaluation, every member is dropped.
+    pub(super) fn freshness_gate_group(&mut self, group: &[VertexId]) {
+        if !self.freshness.armed {
+            return;
+        }
+        let stale = self.freshness.stale.get_mut().unwrap();
+        if stale.is_empty() || !group.iter().any(|v| stale.contains_key(v)) {
+            return;
+        }
+        for &v in group {
+            if !stale.contains_key(&v) {
+                self.freshness.group_dropped.insert(v);
+            }
+        }
     }
 
     /// Commit hook, after a vertex's effects were planned: it leaves the

@@ -175,8 +175,22 @@ fn open_column_reader_sees_spill_committed_earlier_in_pass() {
 #[cfg(feature = "unified_authority")]
 #[test]
 fn fr_dynamic_reader_of_moved_dirty_target_never_publishes_stale() {
-    for targeted in [false, true] {
-        let mut e = engine();
+    for (targeted, parallel) in [(false, false), (true, false), (false, true), (true, true)] {
+        // Parallel: X shares its layer with S = LEN(D1)*10; the group is one
+        // commit unit, so S is dropped with the stale X and re-runs.
+        let mut e = if parallel {
+            Engine::new(
+                TestWorkbook::new(),
+                EvalConfig {
+                    enable_parallel: true,
+                    max_threads: Some(4),
+                    ..EvalConfig::default()
+                },
+            )
+        } else {
+            engine()
+        };
+        formula(&mut e, 1, 6, "=LEN(D1)*10"); // S
         set(&mut e, 1, 1, 1.0);
         formula(&mut e, 2, 1, "=A1+1");
         formula(&mut e, 3, 1, "=A2+1");
@@ -205,6 +219,9 @@ fn fr_dynamic_reader_of_moved_dirty_target_never_publishes_stale() {
         assert_eq!(num(&e, 1, 2), Some(8.0), "targeted={targeted}");
         assert_eq!(num(&e, 1, 3), Some(9.0), "targeted={targeted}");
         assert_eq!(num(&e, 1, 5), Some(18.0), "targeted={targeted}");
+        if !targeted {
+            assert_eq!(num(&e, 1, 6), Some(20.0), "parallel={parallel}");
+        }
         let (stale, stops) = e.freshness_counters_for_test();
         assert!(stale >= 1 && stops >= 1, "stale={stale} stops={stops}");
     }

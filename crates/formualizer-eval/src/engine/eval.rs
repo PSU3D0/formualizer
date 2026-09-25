@@ -30454,6 +30454,10 @@ where
                         .collect()
                 });
 
+            // FR3: a parallel group is one commit unit; one stale reader
+            // drops the whole group (it stays dirty and replans).
+            #[cfg(feature = "unified_authority")]
+            self.freshness_gate_group(group);
             match results {
                 Ok(vertex_results) => {
                     // Arrays first, then scalars — establishes spill regions before
@@ -30575,6 +30579,10 @@ where
                         .collect()
                 });
 
+            // FR3: a parallel group is one commit unit; one stale reader
+            // drops the whole group (it stays dirty and replans).
+            #[cfg(feature = "unified_authority")]
+            self.freshness_gate_group(group);
             match results {
                 Ok(vertex_results) => {
                     let mut arrays: Vec<(VertexId, LiteralValue)> = Vec::new();
@@ -30705,6 +30713,10 @@ where
                         .collect()
                 });
 
+            // FR3: a parallel group is one commit unit; one stale reader
+            // drops the whole group (it stays dirty and replans).
+            #[cfg(feature = "unified_authority")]
+            self.freshness_gate_group(group);
             match results {
                 Ok(vertex_results) => {
                     let mut arrays: Vec<(VertexId, LiteralValue)> = Vec::new();
