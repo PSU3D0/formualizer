@@ -1,5 +1,7 @@
 use crate::SheetId;
 use crate::arrow_store::{OverlayFragment, OverlayValue, SheetStore};
+#[cfg(any(not(feature = "unified_authority"), test))]
+use crate::engine::Scheduler;
 use crate::engine::arena::AstNodeId;
 use crate::engine::eval_delta::{
     DeltaCollector, DeltaMode, EvalDelta, EvalDeltaCompatibilityPolicy,
@@ -34,8 +36,8 @@ use crate::engine::{
     FormulaIngestRecord, FormulaIngestReport, FormulaParseDiagnostic, FormulaParsePolicy,
     FormulaPlaneMode, FormulaPlaneRoute, FormulaPlaneRouteEvent, FormulaPlaneRoutePhase,
     FormulaPlaneRouteTransitionReason, FormulaPlaneTopologyCacheOutcome,
-    FormulaPlaneTopologyStrategy, ResourceLedger, RowVisibilitySource, ScheduleUnit, Scheduler,
-    VertexId, VertexKind, VisibilityMaskMode,
+    FormulaPlaneTopologyStrategy, ResourceLedger, RowVisibilitySource, ScheduleUnit, VertexId,
+    VertexKind, VisibilityMaskMode,
 };
 use crate::formula_plane::placement::prepare_anchor_once_fragment;
 use crate::formula_plane::placement::{
@@ -21038,9 +21040,20 @@ where
                     .unwrap()
                     .target_schedule_builds += 1;
             }
-            let scheduler = Scheduler::new(&self.graph);
-            let schedule =
-                scheduler.create_schedule_with_virtual(&precedents_to_eval, &old_vdeps)?;
+            #[cfg(not(feature = "unified_authority"))]
+            let schedule = Scheduler::new(&self.graph)
+                .create_schedule_with_virtual(&precedents_to_eval, &old_vdeps)?;
+            #[cfg(feature = "unified_authority")]
+            let schedule = {
+                let mut ledger = self.active_resource_ledger.take();
+                let result = self.create_authority_schedule(
+                    &precedents_to_eval,
+                    &old_vdeps,
+                    ledger.as_mut(),
+                );
+                self.active_resource_ledger = ledger;
+                result?
+            };
             for &unit in &schedule.units {
                 self.cancellation_checkpoint("Evaluation cancelled before target schedule unit")?;
                 match unit {
@@ -21117,7 +21130,7 @@ where
                 cycles: Vec::new(),
             }
         } else {
-            self.create_evaluation_schedule_uncached(&vertices)?.0
+            self.create_evaluation_schedule_uncached(&vertices, None)?.0
         };
         self.validate_recalc_plan_key(&key)?;
         Ok(RecalcPlan {
@@ -24950,8 +24963,11 @@ where
         }
 
         // Create schedule for the minimal subgraph honoring virtual edges
-        let scheduler = Scheduler::new(&self.graph);
-        let schedule = scheduler.create_schedule_with_virtual(&precedents_to_eval, &vdeps)?;
+        #[cfg(not(feature = "unified_authority"))]
+        let schedule = Scheduler::new(&self.graph)
+            .create_schedule_with_virtual(&precedents_to_eval, &vdeps)?;
+        #[cfg(feature = "unified_authority")]
+        let schedule = self.create_authority_schedule(&precedents_to_eval, &vdeps, None)?;
 
         // Build layer information
         let mut layers = Vec::new();
@@ -25042,7 +25058,7 @@ where
             }
 
             let (schedule, vdeps, mut meta) =
-                self.create_evaluation_schedule_uncached(to_evaluate)?;
+                self.create_evaluation_schedule_active(to_evaluate)?;
             meta.schedule_cache_hit = false;
             meta.schedule_cache_eligible = true;
             #[cfg(any(test, feature = "benchmark_internal"))]
@@ -25085,7 +25101,7 @@ where
             return Ok((schedule, vdeps, meta));
         }
 
-        let (schedule, vdeps, mut meta) = self.create_evaluation_schedule_uncached(to_evaluate)?;
+        let (schedule, vdeps, mut meta) = self.create_evaluation_schedule_active(to_evaluate)?;
         meta.schedule_cache_hit = false;
         meta.schedule_cache_eligible = false;
         #[cfg(any(test, feature = "benchmark_internal"))]
@@ -25098,9 +25114,20 @@ where
         Ok((EvaluationSchedule::Owned(schedule), vdeps, meta))
     }
 
+    fn create_evaluation_schedule_active(
+        &mut self,
+        to_evaluate: &[VertexId],
+    ) -> Result<ScheduleBuildOutput, ExcelError> {
+        let mut ledger = self.active_resource_ledger.take();
+        let result = self.create_evaluation_schedule_uncached(to_evaluate, ledger.as_mut());
+        self.active_resource_ledger = ledger;
+        result
+    }
+
     fn create_evaluation_schedule_uncached(
         &self,
         to_evaluate: &[VertexId],
+        #[allow(unused_variables)] ledger: Option<&mut ResourceLedger>,
     ) -> Result<ScheduleBuildOutput, ExcelError> {
         #[cfg(any(test, feature = "benchmark_internal"))]
         {
@@ -25128,12 +25155,17 @@ where
 
         let use_virtual = !vdeps.is_empty();
 
-        let scheduler = Scheduler::new(&self.graph);
-        let schedule = if use_virtual {
-            scheduler.create_schedule_with_virtual(&final_evaluate, &vdeps)?
-        } else {
-            scheduler.create_schedule(&final_evaluate)?
+        #[cfg(not(feature = "unified_authority"))]
+        let schedule = {
+            let scheduler = Scheduler::new(&self.graph);
+            if use_virtual {
+                scheduler.create_schedule_with_virtual(&final_evaluate, &vdeps)?
+            } else {
+                scheduler.create_schedule(&final_evaluate)?
+            }
         };
+        #[cfg(feature = "unified_authority")]
+        let schedule = self.create_authority_schedule(&final_evaluate, &vdeps, ledger)?;
 
         let meta = ScheduleBuildMeta {
             candidate_vertices: to_evaluate.len(),
