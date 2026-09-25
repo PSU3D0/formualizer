@@ -168,7 +168,10 @@ fn graph_and_scc_every_allocation_is_fallible_and_peak_is_exact() {
     for nth in 0..scc_measure.allocs {
         let (failed, m) = measure(Some(nth), || graph.components(None));
         assert!(m.failed);
-        assert_eq!(failed.unwrap_err(), AuthorityError::Alloc);
+        assert_eq!(
+            failed.unwrap_err(),
+            GraphError::Authority(AuthorityError::Alloc)
+        );
         assert_eq!(m.net, 0);
     }
     for limit in [0, graph.peak_heap_bytes - 1] {
@@ -187,11 +190,11 @@ fn graph_and_scc_every_allocation_is_fallible_and_peak_is_exact() {
         let (failed, m) = measure(None, || graph.components(Some(limit)));
         assert_eq!(
             failed.unwrap_err(),
-            AuthorityError::Admission {
+            GraphError::Authority(AuthorityError::Admission {
                 resource: "scratch",
                 needed: components.peak_heap_bytes,
                 limit,
-            }
+            })
         );
         assert_eq!(m.allocs, 0);
     }
@@ -219,6 +222,106 @@ fn graph_and_scc_every_allocation_is_fallible_and_peak_is_exact() {
         combined.peak,
         combined.net
     );
+}
+
+#[test]
+fn graph_control_cancels_every_checkpoint_without_retaining_scratch() {
+    use formualizer_common::{ExcelError, ExcelErrorKind};
+    let arcs: Vec<_> = (0..8192).map(|i| (i, (i + 1) % 8192)).collect();
+    let error = ExcelError::new(ExcelErrorKind::Value);
+    for components in [false, true] {
+        let graph = PlanGraph::build(8192, &arcs, None).unwrap();
+        let mut calls = 0;
+        let mut charged = 0;
+        let mut checkpoint = |delta| {
+            assert!(delta <= 4096);
+            if calls == 0 {
+                assert_eq!(delta, 0);
+            }
+            calls += 1;
+            charged += delta;
+            Ok(())
+        };
+        let expected = if components {
+            graph
+                .components_controlled(None, &mut checkpoint)
+                .unwrap()
+                .work
+                .total()
+        } else {
+            PlanGraph::build_controlled(8192, &arcs, None, &mut checkpoint)
+                .unwrap()
+                .work
+                .total()
+        };
+        assert_eq!(charged, expected);
+        assert!(calls > 3);
+        for fail_at in 0..calls {
+            let mut seen = 0;
+            let mut checkpoint = |_| {
+                let fail = seen == fail_at;
+                seen += 1;
+                if fail { Err(error.clone()) } else { Ok(()) }
+            };
+            let (failed, heap) = measure(None, || {
+                if components {
+                    graph
+                        .components_controlled(None, &mut checkpoint)
+                        .map(|_| ())
+                } else {
+                    PlanGraph::build_controlled(8192, &arcs, None, &mut checkpoint).map(|_| ())
+                }
+            });
+            assert_eq!(failed, Err(GraphError::Runtime(error.clone())));
+            assert_eq!(seen, fail_at + 1);
+            assert_eq!(heap.net, 0);
+            if fail_at == 0 {
+                assert_eq!(heap.allocs, 0);
+            }
+        }
+    }
+}
+
+#[test]
+fn graph_control_charges_actual_engine_work_ledger() {
+    use crate::engine::resource_ledger::{EvaluationBudgets, ResourceLedger};
+    use formualizer_common::{ExcelErrorExtra, ResourceExhaustionReason};
+    let arcs: Vec<_> = (0..8192).map(|i| (i, (i + 1) % 8192)).collect();
+    let graph = PlanGraph::build(8192, &arcs, None).unwrap();
+    let total = graph.work.total() + graph.components(None).unwrap().work.total();
+    for limit in [0, 4095, total - 1, total] {
+        let mut budgets = EvaluationBudgets::default();
+        budgets.work.max_work_units = Some(limit);
+        let mut ledger = ResourceLedger::new(Some(172), budgets);
+        let ((), heap) = measure(None, || {
+            let result = (|| {
+                let graph = PlanGraph::build_controlled(8192, &arcs, None, |delta| {
+                    ledger.charge_work(delta).map_err(|e| e.into_excel_error())
+                })?;
+                graph.components_controlled(None, |delta| {
+                    ledger.charge_work(delta).map_err(|e| e.into_excel_error())
+                })?;
+                Ok::<_, GraphError>(())
+            })();
+            if limit == total {
+                result.unwrap();
+                assert_eq!(ledger.snapshot().work_charged, total);
+            } else {
+                let GraphError::Runtime(error) = result.unwrap_err() else {
+                    panic!("wrong error")
+                };
+                let ExcelErrorExtra::Resource { detail } = error.extra else {
+                    panic!("missing resource detail")
+                };
+                assert_eq!(detail.reason, ResourceExhaustionReason::WorkUnits);
+                assert_eq!(detail.limit, limit);
+                assert_eq!(detail.request_id, Some(172));
+                assert!(detail.observed > limit);
+                assert!(detail.observed - limit <= 4096);
+            }
+        });
+        assert_eq!(heap.net, 0);
+    }
 }
 
 #[test]

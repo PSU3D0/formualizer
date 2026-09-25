@@ -6,7 +6,9 @@
 //! (every inter-component arc has source > destination), allowing later level
 //! propagation without sorting or rebuilding a condensation graph.
 
+use super::plan_control::PlanControl;
 use super::store::AuthorityError;
+use formualizer_common::ExcelError;
 
 const NONE: usize = usize::MAX;
 
@@ -28,6 +30,7 @@ impl GraphWork {
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum GraphError {
     Authority(AuthorityError),
+    Runtime(ExcelError),
     /// A planner construction bug, never a cycle or an unsupported feature.
     InvalidEndpoint,
 }
@@ -35,6 +38,12 @@ pub(crate) enum GraphError {
 impl From<AuthorityError> for GraphError {
     fn from(error: AuthorityError) -> Self {
         Self::Authority(error)
+    }
+}
+
+impl From<ExcelError> for GraphError {
+    fn from(error: ExcelError) -> Self {
+        Self::Runtime(error)
     }
 }
 
@@ -68,11 +77,19 @@ fn reserve<T>(len: usize) -> Result<Vec<T>, AuthorityError> {
     Ok(out)
 }
 
-fn fill(out: &mut Vec<usize>, len: usize, value: usize, work: &mut GraphWork) {
+fn fill(
+    out: &mut Vec<usize>,
+    len: usize,
+    value: usize,
+    work: &mut GraphWork,
+    control: &mut PlanControl<impl FnMut(u64) -> Result<(), ExcelError>>,
+) -> Result<(), GraphError> {
     for _ in 0..len {
         work.initialize += 1;
+        control.tick()?;
         out.push(value);
     }
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -93,6 +110,18 @@ impl PlanGraph {
         arcs: &[(usize, usize)],
         scratch_limit: Option<u64>,
     ) -> Result<Self, GraphError> {
+        Self::build_controlled(nodes, arcs, scratch_limit, |_| Ok(()))
+    }
+
+    /// The callback receives bounded actual work deltas, including entry and
+    /// final checkpoints. Cancellation/resource errors propagate unchanged.
+    pub fn build_controlled(
+        nodes: usize,
+        arcs: &[(usize, usize)],
+        scratch_limit: Option<u64>,
+        checkpoint: impl FnMut(u64) -> Result<(), ExcelError>,
+    ) -> Result<Self, GraphError> {
+        let mut control = PlanControl::new(checkpoint)?;
         let offset_len = nodes.checked_add(1).ok_or(AuthorityError::Alloc)?;
         let peak = add(
             bytes::<usize>(offset_len)?,
@@ -103,11 +132,12 @@ impl PlanGraph {
         let mut targets = reserve(arcs.len())?;
         let mut cursor = reserve(nodes)?;
         let mut work = GraphWork::default();
-        fill(&mut offsets, offset_len, 0, &mut work);
-        fill(&mut targets, arcs.len(), 0, &mut work);
-        fill(&mut cursor, nodes, 0, &mut work);
+        fill(&mut offsets, offset_len, 0, &mut work, &mut control)?;
+        fill(&mut targets, arcs.len(), 0, &mut work, &mut control)?;
+        fill(&mut cursor, nodes, 0, &mut work, &mut control)?;
         for &(from, to) in arcs {
             work.edges += 1;
+            control.tick()?;
             if from >= nodes || to >= nodes {
                 return Err(GraphError::InvalidEndpoint);
             }
@@ -115,14 +145,17 @@ impl PlanGraph {
         }
         for (node, position) in cursor.iter_mut().enumerate() {
             work.vertices += 1;
+            control.tick()?;
             *position = offsets[node];
             offsets[node + 1] += *position;
         }
         for &(from, to) in arcs {
             work.edges += 1;
+            control.tick()?;
             targets[cursor[from]] = to;
             cursor[from] += 1;
         }
+        control.flush()?;
         Ok(Self {
             offsets,
             targets,
@@ -146,7 +179,18 @@ impl PlanGraph {
     /// Iterative Tarjan, O(nodes + arcs), no recursion or per-component heap.
     /// Every vector is admitted simultaneously before allocation. The supplied
     /// remaining limit excludes this graph and all other live caller storage.
-    pub fn components(&self, scratch_limit: Option<u64>) -> Result<Components, AuthorityError> {
+    pub fn components(&self, scratch_limit: Option<u64>) -> Result<Components, GraphError> {
+        self.components_controlled(scratch_limit, |_| Ok(()))
+    }
+
+    /// Checks inside initialization, arc traversal, DFS and SCC member pops,
+    /// not merely between SCCs (one SCC can contain the entire workbook).
+    pub fn components_controlled(
+        &self,
+        scratch_limit: Option<u64>,
+        checkpoint: impl FnMut(u64) -> Result<(), ExcelError>,
+    ) -> Result<Components, GraphError> {
+        let mut control = PlanControl::new(checkpoint)?;
         let n = self.node_count();
         let offsets_len = n.checked_add(1).ok_or(AuthorityError::Alloc)?;
         // Output: component_of, members, offsets. Temporary: index, low,
@@ -168,14 +212,15 @@ impl PlanGraph {
         let mut active = reserve(n)?;
         let mut dfs = reserve(n)?;
         let mut work = GraphWork::default();
-        fill(&mut component_of, n, NONE, &mut work);
-        fill(&mut index, n, NONE, &mut work);
-        fill(&mut low, n, 0, &mut work);
-        fill(&mut next_arc, n, 0, &mut work);
-        fill(&mut offsets, 1, 0, &mut work);
+        fill(&mut component_of, n, NONE, &mut work, &mut control)?;
+        fill(&mut index, n, NONE, &mut work, &mut control)?;
+        fill(&mut low, n, 0, &mut work, &mut control)?;
+        fill(&mut next_arc, n, 0, &mut work, &mut control)?;
+        fill(&mut offsets, 1, 0, &mut work, &mut control)?;
         let mut serial = 0;
         for root in 0..n {
             work.vertices += 1;
+            control.tick()?;
             if index[root] != NONE {
                 continue;
             }
@@ -186,9 +231,11 @@ impl PlanGraph {
             dfs.push(root);
             while let Some(&node) = dfs.last() {
                 work.dfs += 1;
+                control.tick()?;
                 let neighbors = self.successors(node);
                 if next_arc[node] < neighbors.len() {
                     work.edges += 1;
+                    control.tick()?;
                     let to = neighbors[next_arc[node]];
                     next_arc[node] += 1;
                     if index[to] == NONE {
@@ -206,6 +253,7 @@ impl PlanGraph {
                         let component = offsets.len() - 1;
                         loop {
                             work.members += 1;
+                            control.tick()?;
                             let member = active.pop().expect("Tarjan root is on active stack");
                             component_of[member] = component;
                             members.push(member);
@@ -221,6 +269,7 @@ impl PlanGraph {
                 }
             }
         }
+        control.flush()?;
         Ok(Components {
             component_of,
             members,

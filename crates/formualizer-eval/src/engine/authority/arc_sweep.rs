@@ -4,7 +4,9 @@
 
 use super::arc_emit::{Column, Hit};
 use super::geom::{MAX_COL, MAX_ROW, Rect};
+use super::plan_control::PlanControl;
 use super::store::AuthorityError;
+use formualizer_common::ExcelError;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Slice {
@@ -39,6 +41,7 @@ impl SweepWork {
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum SweepError {
     Authority(AuthorityError),
+    Runtime(ExcelError),
     InvalidInput,
     /// Candidate query-column incidences, including geometrically empty hits.
     DiscoveryLimit {
@@ -50,6 +53,12 @@ pub(crate) enum SweepError {
 impl From<AuthorityError> for SweepError {
     fn from(e: AuthorityError) -> Self {
         Self::Authority(e)
+    }
+}
+
+impl From<ExcelError> for SweepError {
+    fn from(error: ExcelError) -> Self {
+        Self::Runtime(error)
     }
 }
 
@@ -109,35 +118,46 @@ fn event_key(column: usize, row: u32, kind: u64) -> u64 {
 }
 
 /// Eight byte passes, stable, no comparison-sort tail and no heap histogram.
-fn sort(keys: &mut [Key], temp: &mut [Key], work: &mut SweepWork) {
+fn sort(
+    keys: &mut [Key],
+    temp: &mut [Key],
+    work: &mut SweepWork,
+    control: &mut PlanControl<impl FnMut(u64) -> Result<(), ExcelError>>,
+) -> Result<(), SweepError> {
     if keys.is_empty() {
-        return;
+        return Ok(());
     }
     for shift in (0..64).step_by(8) {
         let mut counts = [0usize; 256];
         work.sort += 256;
+        control.charge(256)?;
         for k in keys.iter() {
             work.sort += 1;
+            control.tick()?;
             counts[((k.key >> shift) & 255) as usize] += 1;
         }
         let mut pos = 0;
         for c in &mut counts {
             work.sort += 1;
+            control.tick()?;
             let n = *c;
             *c = pos;
             pos += n;
         }
         for &k in keys.iter() {
             work.sort += 1;
+            control.tick()?;
             let digit = ((k.key >> shift) & 255) as usize;
             temp[counts[digit]] = k;
             counts[digit] += 1;
         }
         for (k, t) in keys.iter_mut().zip(temp.iter()) {
             work.sort += 1;
+            control.tick()?;
             *k = *t;
         }
     }
+    Ok(())
 }
 
 /// The caller has already computed exact images from refined piece/edge
@@ -153,6 +173,17 @@ pub(crate) fn sweep(
     limit: Option<u64>,
     discovery_limit: Option<u64>,
 ) -> Result<Sweep, SweepError> {
+    sweep_controlled(slices, probes, limit, discovery_limit, |_| Ok(()))
+}
+
+pub(crate) fn sweep_controlled(
+    slices: &[Slice],
+    probes: &[Probe],
+    limit: Option<u64>,
+    discovery_limit: Option<u64>,
+    checkpoint: impl FnMut(u64) -> Result<(), ExcelError>,
+) -> Result<Sweep, SweepError> {
+    let mut control = PlanControl::new(checkpoint)?;
     let mut work = SweepWork::default();
     if slices.len() > u32::MAX as usize {
         return Err(SweepError::InvalidInput);
@@ -161,6 +192,7 @@ pub(crate) fn sweep(
     let mut previous: Option<Slice> = None;
     for &s in slices {
         work.input += 1;
+        control.tick()?;
         if s.col > MAX_COL || s.r0 > s.r1 || s.r1 > MAX_ROW {
             return Err(SweepError::InvalidInput);
         }
@@ -179,6 +211,7 @@ pub(crate) fn sweep(
     }
     for q in probes {
         work.input += 1;
+        control.tick()?;
         if q.reader >= slices.len()
             || q.image.r0 > q.image.r1
             || q.image.c0 > q.image.c1
@@ -201,6 +234,7 @@ pub(crate) fn sweep(
     let mut start_temp = reserve(probes.len())?;
     for (i, s) in slices.iter().enumerate() {
         work.input += 1;
+        control.tick()?;
         let key = colkey(s.sheet, s.col);
         if cc.last() != Some(&key) {
             cc.push(key);
@@ -214,22 +248,26 @@ pub(crate) fn sweep(
     }
     for (i, q) in probes.iter().enumerate() {
         work.input += 1;
+        control.tick()?;
         starts.push(Key {
             key: colkey(q.sheet, q.image.c0),
             payload: i,
         });
         start_temp.push(Key::default());
         work.initialize += 1;
+        control.tick()?;
     }
-    sort(&mut starts, &mut start_temp, &mut work);
+    sort(&mut starts, &mut start_temp, &mut work, &mut control)?;
     // First merge sizes exact query-column incidences. The fill merge repeats
     // the identical work, and both passes increment the counters.
     let mut pairs = 0usize;
     let mut ptr = 0;
     for k in &starts {
         work.input += 1;
+        control.tick()?;
         while ptr < cc.len() && cc[ptr] < k.key {
             work.columns += 1;
+            control.tick()?;
             ptr += 1;
         }
         let q = &probes[k.payload];
@@ -237,6 +275,7 @@ pub(crate) fn sweep(
         let mut c = ptr;
         while c < cc.len() && cc[c] <= end {
             work.pairs += 1;
+            control.tick()?;
             if let Some(limit) = discovery_limit
                 && work.pairs > limit
             {
@@ -271,8 +310,10 @@ pub(crate) fn sweep(
     let mut temp = reserve(key_count)?;
     for (column, col) in cols.iter().enumerate() {
         work.columns += 1;
+        control.tick()?;
         for s in &slices[col.start..col.end] {
             work.keys += 2;
+            control.charge(2)?;
             keys.push(Key {
                 key: event_key(column, s.r0, 0),
                 payload: 0,
@@ -286,8 +327,10 @@ pub(crate) fn sweep(
     ptr = 0;
     for k in &starts {
         work.input += 1;
+        control.tick()?;
         while ptr < cc.len() && cc[ptr] < k.key {
             work.columns += 1;
+            control.tick()?;
             ptr += 1;
         }
         let q = &probes[k.payload];
@@ -295,6 +338,7 @@ pub(crate) fn sweep(
         let mut c = ptr;
         while c < cc.len() && cc[c] <= end {
             work.pairs += 1;
+            control.tick()?;
             let id = hits.len();
             hits.push(Hit {
                 reader: q.reader,
@@ -312,17 +356,20 @@ pub(crate) fn sweep(
                 payload: id,
             });
             work.keys += 2;
+            control.charge(2)?;
             c += 1;
         }
     }
-    temp.extend((0..key_count).map(|_| {
+    for _ in 0..key_count {
         work.initialize += 1;
-        Key::default()
-    }));
-    sort(&mut keys, &mut temp, &mut work);
+        temp.push(Key::default());
+        control.tick()?;
+    }
+    sort(&mut keys, &mut temp, &mut work, &mut control)?;
     let (mut current, mut started, mut ended) = (usize::MAX, 0, 0);
     for k in keys {
         work.keys += 1;
+        control.tick()?;
         let column = (k.key >> 22) as usize;
         if column != current {
             current = column;
@@ -336,6 +383,7 @@ pub(crate) fn sweep(
             _ => ended += 1,
         }
     }
+    control.flush()?;
     Ok(Sweep {
         columns: cols,
         hits,

@@ -406,6 +406,75 @@ fn arc_sweep_discovery_cap_precedes_quadratic_allocation_even_without_hits() {
 }
 
 #[test]
+fn arc_topology_control_cancels_inside_every_stage_and_charges_exact_work() {
+    use crate::engine::authority::arc_topology::topology_controlled;
+    use formualizer_common::{ExcelError, ExcelErrorKind};
+    let n = 1024;
+    let slices: Vec<_> = (0..n)
+        .map(|r| Slice {
+            sheet: 0,
+            col: 0,
+            r0: r as u32,
+            r1: r as u32,
+        })
+        .collect();
+    let probes: Vec<_> = (0..n)
+        .map(|reader| Probe {
+            reader,
+            sheet: 0,
+            image: Rect::new(0, 0, n as u32 - 1, 0),
+        })
+        .collect();
+    let mut calls = 0;
+    let mut charged = 0;
+    let mut entries = 0;
+    let out = topology_controlled(&slices, &probes, None, None, None, |delta| {
+        assert!(delta <= 4096);
+        calls += 1;
+        charged += delta;
+        entries += usize::from(delta == 0);
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(charged, out.total_work());
+    assert_eq!(entries, 4);
+    let error = ExcelError::new(ExcelErrorKind::Value);
+    let mut stages = [false; 3];
+    for fail_at in 0..calls {
+        let mut seen = 0;
+        let (result, heap) = measure(None, || {
+            topology_controlled(&slices, &probes, None, None, None, |_| {
+                let fail = seen == fail_at;
+                seen += 1;
+                if fail { Err(error.clone()) } else { Ok(()) }
+            })
+        });
+        let returned = match result.unwrap_err() {
+            TopologyError::Sweep(SweepError::Runtime(e)) => {
+                stages[0] = true;
+                e
+            }
+            TopologyError::Emit(EmitError::Runtime(e)) => {
+                stages[1] = true;
+                e
+            }
+            TopologyError::Graph(GraphError::Runtime(e)) => {
+                stages[2] = true;
+                e
+            }
+            e => panic!("unexpected error: {e:?}"),
+        };
+        assert_eq!(returned, error);
+        assert_eq!(seen, fail_at + 1);
+        assert_eq!(heap.net, 0);
+        if fail_at == 0 {
+            assert_eq!(heap.allocs, 0);
+        }
+    }
+    assert_eq!(stages, [true; 3]);
+}
+
+#[test]
 fn arc_topology_all_stage_allocations_and_simultaneous_peaks() {
     let n = 127;
     let slices: Vec<_> = (0..n)

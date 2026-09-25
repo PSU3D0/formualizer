@@ -1,11 +1,13 @@
 //! ARC topology stage over sorted refined slices and their exact images.
-//! Not the complete planner: candidate discovery, classification/affine/cell
-//! fallback, levels, cancellation and the engine resource ledger are pending.
+//! Controlled topology only: candidate discovery, refinement, classification,
+//! fallback and levels belong to the enclosing planner. The runtime caller
+//! must supply cancellation/work charging and admit all live caller storage.
 
-use super::arc_emit::{Emission, EmitError, emit};
-use super::arc_sweep::{Probe, Slice, Sweep, SweepError, sweep};
+use super::arc_emit::{Emission, EmitError, emit_controlled};
+use super::arc_sweep::{Probe, Slice, Sweep, SweepError, sweep_controlled};
 use super::plan_graph::{Components, GraphError, PlanGraph};
 use super::store::AuthorityError;
+use formualizer_common::ExcelError;
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum TopologyError {
@@ -72,29 +74,59 @@ pub(crate) fn topology(
     arc_limit: Option<u64>,
     discovery_limit: Option<u64>,
 ) -> Result<Topology, TopologyError> {
-    let sweep =
-        sweep(slices, probes, scratch_limit, discovery_limit).map_err(TopologyError::Sweep)?;
+    topology_controlled(
+        slices,
+        probes,
+        scratch_limit,
+        arc_limit,
+        discovery_limit,
+        |_| Ok(()),
+    )
+}
+
+/// Every topology stage checks cancellation and charges actual work at its
+/// inner loops. The callback is request-local and shared across all stages.
+pub(crate) fn topology_controlled(
+    slices: &[Slice],
+    probes: &[Probe],
+    scratch_limit: Option<u64>,
+    arc_limit: Option<u64>,
+    discovery_limit: Option<u64>,
+    mut checkpoint: impl FnMut(u64) -> Result<(), ExcelError>,
+) -> Result<Topology, TopologyError> {
+    let sweep = sweep_controlled(
+        slices,
+        probes,
+        scratch_limit,
+        discovery_limit,
+        &mut checkpoint,
+    )
+    .map_err(TopologyError::Sweep)?;
     let mut peak = sweep.peak_heap_bytes;
     let mut held = sweep.heap_bytes();
-    let emission = emit(
+    let emission = emit_controlled(
         slices.len(),
         &sweep.columns,
         &sweep.hits,
         remaining(scratch_limit, held)?,
         arc_limit,
+        &mut checkpoint,
     )
     .map_err(TopologyError::Emit)?;
     peak = peak.max(add(held, emission.peak_heap_bytes)?);
     held = add(held, emission.heap_bytes())?;
-    let graph = PlanGraph::build(
+    let graph = PlanGraph::build_controlled(
         emission.nodes,
         &emission.arcs,
         remaining(scratch_limit, held)?,
+        &mut checkpoint,
     )
     .map_err(TopologyError::Graph)?;
     peak = peak.max(add(held, graph.peak_heap_bytes)?);
     held = add(held, graph.heap_bytes())?;
-    let components = graph.components(remaining(scratch_limit, held)?)?;
+    let components = graph
+        .components_controlled(remaining(scratch_limit, held)?, &mut checkpoint)
+        .map_err(TopologyError::Graph)?;
     peak = peak.max(add(held, components.peak_heap_bytes)?);
     Ok(Topology {
         sweep,

@@ -6,7 +6,9 @@
 //! this module does not discover them or assert a whole-planner bound.
 //! Ownership is one-way: real -> leaf -> parent -> reader.
 
+use super::plan_control::PlanControl;
 use super::store::AuthorityError;
+use formualizer_common::ExcelError;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Column {
@@ -54,6 +56,7 @@ impl EmitWork {
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum EmitError {
     Authority(AuthorityError),
+    Runtime(ExcelError),
     InvalidInput,
     /// Emitted reader arcs + owner/tree arcs + auxiliary nodes. No partial
     /// graph escapes. The caller must also cap/count sweep work separately.
@@ -67,6 +70,12 @@ pub(crate) enum EmitError {
 impl From<AuthorityError> for EmitError {
     fn from(error: AuthorityError) -> Self {
         Self::Authority(error)
+    }
+}
+
+impl From<ExcelError> for EmitError {
+    fn from(error: ExcelError) -> Self {
+        Self::Runtime(error)
     }
 }
 
@@ -153,16 +162,19 @@ fn canonical(
     n: usize,
     work: &mut EmitWork,
     mut emit: impl FnMut(usize),
-) {
+    control: &mut PlanControl<impl FnMut(u64) -> Result<(), ExcelError>>,
+) -> Result<(), EmitError> {
     if lo == 0 && hi == n {
         work.canonical += 1;
+        control.tick()?;
         emit(1);
-        return;
+        return Ok(());
     }
     lo += n;
     hi += n;
     while lo < hi {
         work.canonical += 1;
+        control.tick()?;
         if lo & 1 != 0 {
             emit(lo);
             lo += 1;
@@ -174,6 +186,7 @@ fn canonical(
         lo /= 2;
         hi /= 2;
     }
+    Ok(())
 }
 
 /// Exact reservation using a counted sizing pass, followed by a counted
@@ -187,10 +200,23 @@ pub(crate) fn emit(
     scratch_limit: Option<u64>,
     arc_limit: Option<u64>,
 ) -> Result<Emission, EmitError> {
+    emit_controlled(real, columns, hits, scratch_limit, arc_limit, |_| Ok(()))
+}
+
+pub(crate) fn emit_controlled(
+    real: usize,
+    columns: &[Column],
+    hits: &[Hit],
+    scratch_limit: Option<u64>,
+    arc_limit: Option<u64>,
+    checkpoint: impl FnMut(u64) -> Result<(), ExcelError>,
+) -> Result<Emission, EmitError> {
+    let mut control = PlanControl::new(checkpoint)?;
     let mut work = EmitWork::default();
     let mut previous = 0;
     for col in columns {
         work.columns += 1;
+        control.tick()?;
         if col.start != previous || col.start >= col.end || col.end > real {
             return Err(EmitError::InvalidInput);
         }
@@ -204,6 +230,7 @@ pub(crate) fn emit(
     let mut bases = reserve(columns.len())?;
     for _ in columns {
         work.initialize += 1;
+        control.tick()?;
         bases.push(usize::MAX);
     }
     let mut nodes = real;
@@ -215,6 +242,7 @@ pub(crate) fn emit(
     let mut charged = 0u64;
     for hit in hits {
         work.hits += 1;
+        control.tick()?;
         let Some(col) = columns.get(hit.column) else {
             return Err(EmitError::InvalidInput);
         };
@@ -228,6 +256,7 @@ pub(crate) fn emit(
             witnesses = witnesses.checked_add(k).ok_or(AuthorityError::Alloc)?;
             for precedent in hit.start..hit.end {
                 work.pairwise += 1;
+                control.tick()?;
                 if precedent != hit.reader {
                     reader_arcs = add(reader_arcs, 1)?;
                     charge(&mut charged, 1, arc_limit, work)?;
@@ -253,7 +282,8 @@ pub(crate) fn emit(
                 n,
                 &mut work,
                 |_| count += 1,
-            );
+                &mut control,
+            )?;
             reader_arcs = add(reader_arcs, count)?;
             charge(&mut charged, count, arc_limit, work)?;
         }
@@ -271,12 +301,14 @@ pub(crate) fn emit(
     let mut arcs = reserve(arc_count)?;
     let mut pair_witnesses = reserve(witnesses)?;
     let mut selfdep = reserve(real)?;
-    selfdep.extend((0..real).map(|_| {
+    for _ in 0..real {
         work.initialize += 1;
-        0
-    }));
+        control.tick()?;
+        selfdep.push(0);
+    }
     for (hit_id, hit) in hits.iter().enumerate() {
         work.hits += 1;
+        control.tick()?;
         let col = &columns[hit.column];
         if hit.start <= hit.reader && hit.reader < hit.end {
             selfdep[hit.reader] = 1;
@@ -285,6 +317,7 @@ pub(crate) fn emit(
         if hit.end - hit.start <= threshold(n) {
             for precedent in hit.start..hit.end {
                 work.pairwise += 1;
+                control.tick()?;
                 pair_witnesses.push(PairWitness {
                     hit: hit_id,
                     precedent,
@@ -303,26 +336,31 @@ pub(crate) fn emit(
                 |node| {
                     arcs.push((base + node - 1, hit.reader));
                 },
-            );
+                &mut control,
+            )?;
         }
     }
     for (col, &base) in columns.iter().zip(&bases) {
         work.columns += 1;
+        control.tick()?;
         if base == usize::MAX {
             continue;
         }
         let n = col.end - col.start;
         for node in 2..2 * n {
             work.structural += 1;
+            control.tick()?;
             arcs.push((base + node - 1, base + node / 2 - 1));
         }
         for offset in 0..n {
             work.structural += 1;
+            control.tick()?;
             arcs.push((col.start + offset, base + n + offset - 1));
         }
     }
     debug_assert_eq!(arcs.len(), arc_count);
     debug_assert_eq!(pair_witnesses.len(), witnesses);
+    control.flush()?;
     Ok(Emission {
         nodes,
         arcs,

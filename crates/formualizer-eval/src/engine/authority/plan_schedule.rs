@@ -2,6 +2,7 @@
 //! allocate empty layers. Runtime IDs are explicitly resolved from cells: the
 //! authority's private identity allocator is not the executor's allocator.
 
+use super::plan_control::PlanControl;
 use super::planner::OrderedCell;
 use super::store::AuthorityError;
 use crate::engine::scheduler::{Layer, Schedule, ScheduleUnit};
@@ -104,27 +105,6 @@ fn reserve<T>(n: usize) -> Result<Vec<T>, AuthorityError> {
     Ok(out)
 }
 
-struct Work<F> {
-    total: u64,
-    pending: u64,
-    checkpoint: F,
-}
-impl<F: FnMut(u64) -> Result<(), ExcelError>> Work<F> {
-    fn tick(&mut self) -> Result<(), ExcelError> {
-        self.total += 1;
-        self.pending += 1;
-        if self.pending == 4096 {
-            self.flush()?;
-        }
-        Ok(())
-    }
-    fn flush(&mut self) -> Result<(), ExcelError> {
-        (self.checkpoint)(self.pending)?;
-        self.pending = 0;
-        Ok(())
-    }
-}
-
 /// `checkpoint` receives actual work deltas (at most 4096) for resource charging
 /// and cancellation, including a zero-work entry checkpoint and a final flush.
 /// The borrowed `cells` and other still-live planner capacities must be included
@@ -137,12 +117,7 @@ pub(crate) fn schedule(
     mut translate: impl FnMut(&OrderedCell) -> Result<VertexId, ExcelError>,
     checkpoint: impl FnMut(u64) -> Result<(), ExcelError>,
 ) -> Result<ExecutablePlan, ScheduleError> {
-    let mut work = Work {
-        total: 0,
-        pending: 0,
-        checkpoint,
-    };
-    work.flush()?;
+    let mut work = PlanControl::new(checkpoint)?;
     let n = cells.len();
     let sorting = sum(held_bytes, sum(bytes::<Entry>(n)?, bytes::<Entry>(n)?)?)?;
     admit(limit, sorting)?;
@@ -250,7 +225,7 @@ pub(crate) fn schedule(
     Ok(ExecutablePlan {
         schedule,
         entries,
-        work: work.total,
+        work: work.total(),
         peak_heap_bytes: sorting.max(simultaneous),
     })
 }
