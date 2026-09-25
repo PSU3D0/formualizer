@@ -25148,6 +25148,114 @@ where
         Ok((schedule, vdeps, meta))
     }
 
+    #[cfg(feature = "unified_authority")]
+    fn create_authority_schedule(
+        &self,
+        candidates: &[VertexId],
+        vdeps: &FxHashMap<VertexId, Vec<VertexId>>,
+        mut ledger: Option<&mut ResourceLedger>,
+    ) -> Result<crate::engine::scheduler::Schedule, ExcelError> {
+        use crate::engine::authority::{
+            geom::{Cover, Rect},
+            plan_schedule, planner,
+            proj::{AxisMap, RefProj},
+            store::{EdgeKey, Tag},
+        };
+        let failure = |message: String| {
+            ExcelError::new(ExcelErrorKind::Error)
+                .with_message(format!("unified_authority planner: {message}"))
+        };
+        self.cancellation_checkpoint("Evaluation cancelled before authority planning")?;
+        let mut cover = Cover::new();
+        for &id in candidates {
+            if let Some(cell) = self.graph.get_cell_ref_for_vertex(id) {
+                cover.insert_rect(
+                    cell.sheet_id,
+                    &Rect::cell(cell.coord.row(), cell.coord.col()),
+                );
+            }
+        }
+        let mut hints = Vec::new();
+        for (&reader, deps) in vdeps {
+            let Some(reader) = self.graph.get_cell_ref_for_vertex(reader) else {
+                continue;
+            };
+            for &dependency in deps {
+                let Some(dep) = self.graph.get_cell_ref_for_vertex(dependency) else {
+                    continue;
+                };
+                hints.push(planner::PlanHint {
+                    reader: (reader.sheet_id, reader.coord.col(), reader.coord.row()),
+                    edge: EdgeKey {
+                        dep_sheet: reader.sheet_id,
+                        tag: Tag::X,
+                        lk: u32::MAX,
+                        proj: RefProj {
+                            sheet: dep.sheet_id,
+                            rows: AxisMap::fixed(dep.coord.row(), dep.coord.row()),
+                            cols: AxisMap::fixed(dep.coord.col(), dep.coord.col()),
+                        },
+                    },
+                });
+            }
+        }
+        hints.sort_unstable_by_key(|hint| hint.reader);
+        let checkpoint = ledger
+            .as_ref()
+            .map_or(0, |ledger| ledger.scratch_checkpoint());
+        let scratch_limit = ledger
+            .as_ref()
+            .and_then(|ledger| ledger.schedule_discovery_limit())
+            .map(|limit| limit.saturating_sub(checkpoint));
+        let ordered = planner::plan_with_hints(
+            self.graph.authority_host().store(),
+            &cover,
+            &hints,
+            scratch_limit,
+            None,
+            None,
+        )
+        .map_err(|error| failure(format!("{error:?}")))?;
+        // max_work_units is an execution budget. Planning work must be capped
+        // independently: charging it here changes the observable publication
+        // boundary (e.g. a spill must commit before the next execution fails).
+        let adapted = plan_schedule::schedule(
+            &ordered.cells,
+            ordered.heap_bytes(),
+            scratch_limit,
+            |cell| {
+                let address = CellRef::new(cell.sheet, Coord::new(cell.row, cell.col, true, true));
+                self.graph
+                    .get_vertex_id_for_address(&address)
+                    .copied()
+                    .ok_or_else(|| failure("missing executor identity".to_owned()))
+            },
+            |_work| {
+                self.cancellation_checkpoint("Evaluation cancelled during authority planning")?;
+                if let Some(ledger) = ledger.as_deref_mut() {
+                    ledger
+                        .checkpoint_deadline()
+                        .map_err(crate::engine::ResourceLedgerError::into_excel_error)?;
+                }
+                Ok(())
+            },
+        )
+        .map_err(|error| match error {
+            plan_schedule::ScheduleError::Runtime(error) => error,
+            other => failure(format!("{other:?}")),
+        })?;
+        if let Some(ledger) = ledger {
+            let peak = ordered.peak_heap_bytes.max(adapted.peak_heap_bytes);
+            ledger
+                .reserve_schedule_discovery(peak)
+                .map_err(crate::engine::ResourceLedgerError::into_excel_error)?;
+            ledger
+                .release_scratch(peak)
+                .map_err(crate::engine::ResourceLedgerError::into_excel_error)?;
+        }
+        Ok(adapted.schedule)
+    }
+
     fn can_use_static_schedule_cache(&self, to_evaluate: &[VertexId]) -> bool {
         !to_evaluate.is_empty()
             && to_evaluate.iter().copied().all(|v| {

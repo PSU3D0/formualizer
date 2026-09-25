@@ -201,6 +201,15 @@ pub(crate) fn prepare(
     discovery_limit: Option<u64>,
 ) -> Result<PreparedPlan, TopologyError> {
     let input = input(store, cover, scratch_limit)?;
+    prepare_input(input, scratch_limit, arc_limit, discovery_limit)
+}
+
+fn prepare_input(
+    input: PlanningInput,
+    scratch_limit: Option<u64>,
+    arc_limit: Option<u64>,
+    discovery_limit: Option<u64>,
+) -> Result<PreparedPlan, TopologyError> {
     let held = input.heap_bytes();
     let topology = topology(
         &input.slices,
@@ -682,6 +691,117 @@ pub(crate) fn plan(
     discovery_limit: Option<u64>,
 ) -> Result<OrderedPlan, TopologyError> {
     let prepared = prepare(store, cover, scratch_limit, arc_limit, discovery_limit)?;
+    plan_prepared(prepared, scratch_limit, arc_limit, discovery_limit)
+}
+
+/// Request-local exact cell hint. Sorted by (sheet, column, row).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PlanHint {
+    pub reader: (u16, u32, u32),
+    pub edge: EdgeKey,
+}
+
+/// Hint-bearing requests refine the static pieces to cells before adding
+/// absolute point hints. Thus a hint never becomes a dependency of neighboring
+/// cells in a family, and the existing ARC SCC/affine machinery stays exact.
+pub(crate) fn plan_with_hints(
+    store: &Store,
+    cover: &Cover,
+    hints: &[PlanHint],
+    scratch_limit: Option<u64>,
+    arc_limit: Option<u64>,
+    discovery_limit: Option<u64>,
+) -> Result<OrderedPlan, TopologyError> {
+    if hints.is_empty() {
+        return plan(store, cover, scratch_limit, arc_limit, discovery_limit);
+    }
+    let source = input(store, cover, scratch_limit)?;
+    let n = usize::try_from(source.cells).map_err(|_| AuthorityError::Alloc)?;
+    let mut probes = hints.len();
+    let mut work = source.work;
+    for (slice, id) in source.slices.iter().zip(&source.identities) {
+        work += 1;
+        probes = probes
+            .checked_add((slice.r1 - slice.r0 + 1) as usize * (id.probe_end - id.probe_start))
+            .ok_or(AuthorityError::Alloc)?;
+    }
+    let aggregate = add(
+        add(bytes::<Slice>(n)?, bytes::<PieceIdentity>(n)?)?,
+        add(bytes::<Probe>(probes)?, bytes::<EdgeKey>(probes)?)?,
+    )?;
+    let live = add(source.heap_bytes(), aggregate)?;
+    remaining(scratch_limit, live)?;
+    let mut expanded = PlanningInput {
+        slices: reserve(n)?,
+        identities: reserve(n)?,
+        probes: reserve(probes)?,
+        edges: reserve(probes)?,
+        cells: source.cells,
+        references: add(source.references, hints.len() as u64)?,
+        work: 0,
+        peak_heap_bytes: source.peak_heap_bytes.max(live),
+    };
+    let mut hint = 0;
+    for (slice, id) in source.slices.iter().zip(&source.identities) {
+        for row in slice.r0..=slice.r1 {
+            work += 1;
+            let reader = expanded.slices.len();
+            expanded.slices.push(Slice {
+                r0: row,
+                r1: row,
+                ..*slice
+            });
+            let start = expanded.probes.len();
+            let domain = super::geom::Rect::cell(row, slice.col);
+            for &edge in &source.edges[id.probe_start..id.probe_end] {
+                work += 1;
+                if let Some(image) = edge.proj.forward(&domain) {
+                    expanded.probes.push(Probe {
+                        reader,
+                        sheet: edge.proj.sheet,
+                        image,
+                    });
+                    expanded.edges.push(edge);
+                }
+            }
+            let key = (slice.sheet, slice.col, row);
+            while hint < hints.len() && hints[hint].reader < key {
+                work += 1;
+                hint += 1;
+            }
+            while hint < hints.len() && hints[hint].reader == key {
+                work += 1;
+                let edge = hints[hint].edge;
+                if let Some(image) = edge.proj.forward(&domain) {
+                    expanded.probes.push(Probe {
+                        reader,
+                        sheet: edge.proj.sheet,
+                        image,
+                    });
+                    expanded.edges.push(edge);
+                }
+                hint += 1;
+            }
+            expanded.identities.push(PieceIdentity {
+                owner: id.owner,
+                first_id: id.first_id + row - slice.r0,
+                probe_start: start,
+                probe_end: expanded.probes.len(),
+            });
+        }
+    }
+    expanded.work = work;
+    drop(source);
+    let prepared = prepare_input(expanded, scratch_limit, arc_limit, discovery_limit)?;
+    plan_prepared(prepared, scratch_limit, arc_limit, discovery_limit)
+}
+
+fn plan_prepared(
+    prepared: PreparedPlan,
+    scratch_limit: Option<u64>,
+    arc_limit: Option<u64>,
+    discovery_limit: Option<u64>,
+) -> Result<OrderedPlan, TopologyError> {
     let count = usize::try_from(prepared.input.cells).map_err(|_| AuthorityError::Alloc)?;
     let output_bytes = bytes::<OrderedCell>(count)?;
     let starts_bytes = bytes::<u64>(prepared.topology.components.len())?;
