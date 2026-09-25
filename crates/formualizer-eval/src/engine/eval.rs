@@ -5480,7 +5480,10 @@ where
         );
 
         // 1) Roll back the dependency graph.
-        {
+        #[cfg(feature = "unified_authority")]
+        self.graph
+            .authority_set_replay(crate::engine::authority::history::Replay::Undo);
+        let rolled_back = (|| {
             let mut editor = crate::engine::VertexEditor::new(&mut self.graph);
             let mut compound_stack: Vec<usize> = Vec::new();
             for ev in events.iter().rev() {
@@ -5499,7 +5502,12 @@ where
                     }
                 }
             }
-        }
+            Ok::<_, crate::engine::EditorError>(())
+        })();
+        #[cfg(feature = "unified_authority")]
+        self.graph
+            .authority_set_replay(crate::engine::authority::history::Replay::Forward);
+        rolled_back?;
 
         // 2) Roll back engine row-visibility metadata.
         for ev in events.iter().rev() {

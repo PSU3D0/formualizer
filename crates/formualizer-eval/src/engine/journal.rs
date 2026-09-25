@@ -162,6 +162,15 @@ impl GraphUndoBatch {
     }
 
     pub fn undo(&self, graph: &mut DependencyGraph) -> Result<(), EditorError> {
+        #[cfg(feature = "unified_authority")]
+        graph.authority_set_replay(crate::engine::authority::history::Replay::Undo);
+        let replayed = self.undo_events(graph);
+        #[cfg(feature = "unified_authority")]
+        graph.authority_set_replay(crate::engine::authority::history::Replay::Forward);
+        replayed
+    }
+
+    fn undo_events(&self, graph: &mut DependencyGraph) -> Result<(), EditorError> {
         let mut editor = VertexEditor::new(graph);
         let mut compound_stack: Vec<usize> = Vec::new();
         for ev in self.events.iter().rev() {
@@ -181,10 +190,15 @@ impl GraphUndoBatch {
     }
 
     pub fn redo(&self, graph: &mut DependencyGraph) -> Result<(), EditorError> {
-        for ev in &self.events {
-            apply_forward_change_event(graph, ev)?;
-        }
-        Ok(())
+        #[cfg(feature = "unified_authority")]
+        graph.authority_set_replay(crate::engine::authority::history::Replay::Redo);
+        let replayed = self
+            .events
+            .iter()
+            .try_for_each(|ev| apply_forward_change_event(graph, ev));
+        #[cfg(feature = "unified_authority")]
+        graph.authority_set_replay(crate::engine::authority::history::Replay::Forward);
+        replayed
     }
 }
 

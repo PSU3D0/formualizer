@@ -5,12 +5,15 @@
 //! map records every vertex whose formula changes; `authority_sync` turns
 //! those into authority mutations (set formula / clear) and rebuilds from
 //! scratch at load and when a symbol (name, table, sheet) changes, because
-//! symbol rebinding is M4. Structural edits and sheet rename/removal are M3:
-//! they put the host into a typed "unsupported under unified_authority"
-//! state, and every query answers that error instead of a stale relation.
-//! FormulaPlane spans are M2: while spans exist the same state applies.
+//! symbol rebinding is M4. Structural edits, moves and sheet operations (M3)
+//! capture the formula identities, and the next sync rebuilds from the
+//! already-transformed formulas keeping them (`history`). FormulaPlane spans
+//! are M2: while spans exist the host is in a typed "unsupported under
+//! unified_authority" state, and every query answers that error instead of
+//! a stale relation.
 
 use super::dirty::DirtyStore;
+use super::history::{Carried, IdJournal};
 use super::store::{AuthorityError, Store};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -50,6 +53,12 @@ pub struct AuthorityHost {
     pub(crate) builds: u64,
     pub(crate) incremental_mutations: u64,
     pub(crate) diff: DiffCounters,
+    /// Identities captured before pending structural mutations; `Some`
+    /// makes the next sync a rebuild that keeps them (M3).
+    pub(crate) carried: Option<Carried>,
+    /// Retired ids that undo/redo may restore (M3, §6).
+    pub(crate) journal: IdJournal,
+    pub(crate) structural_rebuilds: u64,
 }
 
 impl AuthorityHost {
@@ -75,5 +84,13 @@ impl AuthorityHost {
 
     pub fn diff_counters(&self) -> &DiffCounters {
         &self.diff
+    }
+
+    pub fn structural_rebuilds(&self) -> u64 {
+        self.structural_rebuilds
+    }
+
+    pub fn journal(&self) -> &IdJournal {
+        &self.journal
     }
 }

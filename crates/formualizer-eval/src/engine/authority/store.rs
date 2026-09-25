@@ -411,6 +411,8 @@ struct NewFormula<'a> {
     flags: u16,
     /// The id kept from the cell's previous formula.
     kept_id: Option<Vid>,
+    /// A retired id history replay restores (M3; only without `kept_id`).
+    revive: Option<Vid>,
 }
 
 #[derive(Clone, Debug)]

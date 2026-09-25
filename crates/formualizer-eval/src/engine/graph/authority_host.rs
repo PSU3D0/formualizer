@@ -117,6 +117,16 @@ impl DependencyGraph {
     /// the typed error instead of installing a store above the budget.
     fn authority_rebuild(&mut self) {
         let input = self.authority_build_input();
+        self.authority_rebuild_from(input, None);
+    }
+
+    /// The rebuild itself; `carried` (post-edit cell → id) replaces the
+    /// prior store's positional identities after a structural edit.
+    fn authority_rebuild_from(
+        &mut self,
+        input: Vec<BuildInput>,
+        carried: Option<&FxHashMap<Cell, crate::engine::authority::identity::Vid>>,
+    ) {
         let budget = self.authority.store.budget;
         let prior = (self.authority.state != HostState::Unbuilt).then_some(&self.authority.store);
         // Enumerate live binding maps, not the vertex slab: deleted vertices
@@ -132,7 +142,14 @@ impl DependencyGraph {
                 .iter()
                 .map(|(_, f)| f.owned_heap_bytes())
                 .sum::<usize>();
-        let needed = (inventory_bytes + input_bytes) as u64 + prior.map_or(0, Store::heap_bytes);
+        let carried_bytes = carried.map_or(0, |m| {
+            crate::engine::authority::dir::hash_table_bytes::<(
+                Cell,
+                crate::engine::authority::identity::Vid,
+            )>(m.capacity())
+        });
+        let needed = (inventory_bytes + input_bytes + carried_bytes) as u64
+            + prior.map_or(0, Store::heap_bytes);
         if let Some(limit) = budget.scratch.filter(|&limit| needed > limit) {
             self.authority.state = HostState::Failed(AuthorityError::Admission {
                 resource: "scratch",
@@ -164,7 +181,7 @@ impl DependencyGraph {
             inventory_work += 1;
             a.cmp(b)
         });
-        match Store::rebuild_with_symbols(input, symbols, prior, budget) {
+        match Store::rebuild_carrying(input, symbols, prior, carried, budget) {
             Ok(mut store) => {
                 store.stats.symbol_work += inventory_work;
                 self.authority.store = store;
@@ -186,30 +203,50 @@ impl DependencyGraph {
             self.authority_mark_unsupported("formula_plane_spans");
             return;
         }
+        if let Some(carried) = self.authority.carried.take() {
+            self.authority_structural_rebuild(carried);
+            return;
+        }
         let rebuild = self.authority.state == HostState::Unbuilt
             || self.authority.symbol_rev != self.symbol_revision
             || (touched.len() > 4096 && touched.len() * 4 > self.vertex_formulas.len());
         if rebuild {
+            // Identities stay positional here: no cell moved since the
+            // last sync. Transitions are not journaled (a large batch or a
+            // symbol revision is not replayed id by id).
             self.authority_rebuild();
             return;
         }
-        let mut cells: Vec<Cell> = touched
+        let mut cells: Vec<(Cell, VertexId)> = touched
             .iter()
             .filter(|&&v| self.store.vertex_exists(v))
-            .filter_map(|&v| self.get_cell_ref(v).map(|c| cell_of(&c)))
+            .filter_map(|&v| self.get_cell_ref(v).map(|c| (cell_of(&c), v)))
             .collect();
-        cells.sort_unstable();
-        cells.dedup();
-        for cell in cells {
-            let current = self
-                .get_vertex_for_cell(&cell_ref(cell))
-                .filter(|v| self.vertex_formulas.contains_key(v));
+        cells.sort_unstable_by_key(|&(c, _)| c);
+        cells.dedup_by_key(|&mut (c, _)| c);
+        for (cell, touched_vertex) in cells {
+            let at_cell = self.get_vertex_for_cell(&cell_ref(cell));
+            let current = at_cell.filter(|v| self.vertex_formulas.contains_key(v));
+            let before = self.authority.store.ids().id_of(cell);
             let result = match current.and_then(|v| self.authority_formula_input(v)) {
                 Some((c, mut facts)) => {
                     self.authority_verify_l(c.0, &mut facts);
-                    self.authority.store.set_formula(c, &facts)
+                    let revive = match (before, current) {
+                        (None, Some(v)) => self.authority_revivable(v),
+                        _ => None,
+                    };
+                    match revive {
+                        Some(id) => self.authority.store.set_formula_reviving(c, &facts, id),
+                        None => self.authority.store.set_formula(c, &facts),
+                    }
                 }
-                None => self.authority.store.clear_cell(cell),
+                None => {
+                    if let Some(id) = before {
+                        let v = at_cell.unwrap_or(touched_vertex);
+                        self.authority.journal.retired(v, id);
+                    }
+                    self.authority.store.clear_cell(cell)
+                }
             };
             self.authority.incremental_mutations += 1;
             if debug_checks()
@@ -226,6 +263,129 @@ impl DependencyGraph {
                 return;
             }
         }
+    }
+
+    /// A formula appeared at vertex `v`: the retired id history replay
+    /// restores there, if it can be placed (allocated and not live).
+    fn authority_revivable(
+        &mut self,
+        v: VertexId,
+    ) -> Option<crate::engine::authority::identity::Vid> {
+        let id = self.authority.journal.created(v)?;
+        let ids = self.authority.store.ids();
+        (id < ids.next_id() && ids.locate(id).is_none()).then_some(id)
+    }
+
+    /// A structural edit, move or sheet operation is about to mutate the
+    /// graph (M3). Capture every formula identity by legacy vertex (legacy
+    /// keeps a moved cell's `VertexId`) from the synced store; the next
+    /// sync rebuilds from the transformed formulas keeping them
+    /// (decision 9). Captured once per sync window: later structural
+    /// mutations before the sync reuse it. O(F) scratch, like legacy's own
+    /// per-edit formula walk.
+    pub(crate) fn authority_note_structural(&mut self) {
+        if self.authority.carried.is_some() {
+            return;
+        }
+        match self.authority.state {
+            // Nothing has an id yet, or nothing is kept: the next sync
+            // builds from scratch or stays failed.
+            HostState::Unbuilt | HostState::Failed(_) => return,
+            HostState::Ready => {}
+        }
+        self.authority_sync();
+        if self.authority.state != HostState::Ready {
+            return;
+        }
+        let mut carried = crate::engine::authority::history::Carried::default();
+        for (_, run) in self.authority.store.ids().live_runs() {
+            for i in 0..run.len {
+                let cell = (run.sheet, run.row_start + i, run.col);
+                if let Some(v) = self.get_vertex_for_cell(&cell_ref(cell)) {
+                    carried.insert(v, run.first_id + i);
+                }
+            }
+        }
+        self.authority.carried = Some(carried);
+    }
+
+    /// The rebuild after structural mutations: carried vertices keep their
+    /// ids at their new cells, carried vertices without a formula retire
+    /// theirs, and new formulas take a replayed id when history restores
+    /// one, else a fresh id.
+    fn authority_structural_rebuild(
+        &mut self,
+        mut carried: crate::engine::authority::history::Carried,
+    ) {
+        use crate::engine::authority::identity::Vid;
+        let mut vids: Vec<VertexId> = self.vertex_formulas.keys().copied().collect();
+        vids.sort_unstable();
+        let mut input = Vec::with_capacity(vids.len());
+        let mut kept: FxHashMap<Cell, Vid> = FxHashMap::default();
+        kept.reserve(vids.len());
+        let mut used: FxHashSet<Vid> = FxHashSet::default();
+        let mut created: Vec<(Cell, VertexId)> = Vec::new();
+        for v in vids {
+            let Some((cell, facts)) = self.authority_formula_input(v) else {
+                continue;
+            };
+            // A vertex that is no longer the one at its cell is stale.
+            if self.get_vertex_for_cell(&cell_ref(cell)) != Some(v) {
+                continue;
+            }
+            match carried.remove(&v) {
+                Some(id) => {
+                    used.insert(id);
+                    kept.insert(cell, id);
+                }
+                None => created.push((cell, v)),
+            }
+            input.push((cell, facts));
+        }
+        // Whatever remains lost its formula (deleted, cleared, or its
+        // sheet removed): retire the id.
+        let mut retired: Vec<(VertexId, Vid)> = carried.into_iter().collect();
+        retired.sort_unstable();
+        for (v, id) in retired {
+            self.authority.journal.retired(v, id);
+        }
+        let next_id = self.authority.store.ids().next_id();
+        for (cell, v) in created {
+            if let Some(id) = self.authority.journal.created(v)
+                && id < next_id
+                && used.insert(id)
+            {
+                kept.insert(cell, id);
+            }
+        }
+        // The dirty cover is in pre-edit coordinates; it is observational
+        // (legacy's dirty flags drive scheduling) and restarts here.
+        self.authority.dirty.clear();
+        self.authority_rebuild_from(input, Some(&kept));
+        self.authority.structural_rebuilds += 1;
+    }
+
+    /// Undo/redo replay begins (`mode`) or ends (`Forward`). Pending edits
+    /// are synced in the direction they were made, so the journal sees
+    /// each transition in its own direction.
+    pub(crate) fn authority_set_replay(&mut self, mode: crate::engine::authority::history::Replay) {
+        if self.authority.state == HostState::Ready || self.authority.carried.is_some() {
+            self.authority_sync();
+        }
+        self.authority.journal.set_mode(mode);
+    }
+
+    /// Replay re-created the cell of removed vertex `old` on vertex `new`.
+    pub(crate) fn authority_note_revived(&mut self, old: VertexId, new: VertexId) {
+        self.authority.journal.revived(old, new);
+    }
+
+    /// Live formula id at `cell` (tests: identity stability).
+    pub(crate) fn authority_id_at(
+        &mut self,
+        cell: CellRef,
+    ) -> Option<crate::engine::authority::identity::Vid> {
+        self.authority().ok()?.store.ids().id_of(cell_of(&cell))
     }
 
     /// A formula joins an existing node group only if its L tokens equal
