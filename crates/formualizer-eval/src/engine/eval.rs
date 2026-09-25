@@ -12134,49 +12134,46 @@ where
                             end_col: cell.coord.col() + 1,
                         });
                     }
-                    for dependency in self.graph.get_dependencies(vertex) {
-                        self.target_preparation_checkpoint(options.deadline, 1)?;
-                        symbol_vertices.push_back(dependency);
-                    }
-                    if let Some(range_dependencies) = self
-                        .graph
-                        .formula_range_dependencies(vertex)
-                        .map(<[_]>::to_vec)
-                    {
-                        for range in range_dependencies {
-                            self.target_preparation_checkpoint(options.deadline, 1)?;
-                            // `Current` is the sheet the formula lives on.
-                            let context_sheet = self.graph.get_vertex_sheet_id(vertex);
-                            let Ok(sheet_id) =
-                                self.resolve_sheet_locator(&range.sheet, context_sheet)
-                            else {
-                                if Self::widen_target_preparation(
-                                    options.opaque_policy,
-                                    &mut scope,
-                                    &mut reasons,
-                                    OpaqueReason::UnresolvedCrossSheetBinding,
-                                )? {
-                                    break;
+                    // The formula's direct precedents, from the authority:
+                    // cells and ranges become regions, symbol rows (names,
+                    // tables, sources) their vertices.
+                    match self.graph.authority_vertex_precedents(vertex) {
+                        Some(precedents) => {
+                            for (sheet_id, rect) in precedents {
+                                self.target_preparation_checkpoint(options.deadline, 1)?;
+                                if sheet_id == crate::engine::authority::geom::SYMBOL_SHEET {
+                                    for slot in rect.r0..=rect.r1 {
+                                        if let Some(symbol) =
+                                            self.graph.authority_host().symbols().vertex(slot)
+                                        {
+                                            symbol_vertices.push_back(symbol);
+                                        }
+                                    }
+                                    continue;
                                 }
+                                let sheet = self.graph.sheet_name(sheet_id).to_string();
+                                regions.push_back(PreparationRegion {
+                                    sheet,
+                                    sheet_id,
+                                    start_row: rect.r0 + 1,
+                                    start_col: rect.c0 + 1,
+                                    end_row: (rect.r1 + 1)
+                                        .min(self.workbook_load_limits.max_sheet_rows),
+                                    end_col: (rect.c1 + 1)
+                                        .min(self.workbook_load_limits.max_sheet_cols),
+                                });
+                            }
+                        }
+                        // The authority cannot answer (failed host): widen.
+                        None => {
+                            if Self::widen_target_preparation(
+                                options.opaque_policy,
+                                &mut scope,
+                                &mut reasons,
+                                OpaqueReason::UnresolvedCrossSheetBinding,
+                            )? {
                                 continue;
-                            };
-                            let sheet = self.graph.sheet_name(sheet_id).to_string();
-                            regions.push_back(PreparationRegion {
-                                sheet,
-                                sheet_id,
-                                start_row: range.start_row.map_or(1, |bound| bound.index + 1),
-                                start_col: range.start_col.map_or(1, |bound| bound.index + 1),
-                                end_row: range
-                                    .end_row
-                                    .map_or(self.workbook_load_limits.max_sheet_rows, |bound| {
-                                        bound.index + 1
-                                    }),
-                                end_col: range
-                                    .end_col
-                                    .map_or(self.workbook_load_limits.max_sheet_cols, |bound| {
-                                        bound.index + 1
-                                    }),
-                            });
+                            }
                         }
                     }
                     if let Some(name) = self.graph.named_range_by_vertex(vertex).cloned() {
@@ -17047,7 +17044,7 @@ where
         sheet: &str,
         sheet_id: SheetId,
     ) -> crate::engine::graph::StructuralOccupancy {
-        if !self.graph.has_compressed_range_dependencies() {
+        if !self.graph.has_compressed_range_readers() {
             return crate::engine::graph::StructuralOccupancy::default();
         }
         let mut occupancy = self.graph.structural_occupancy(sheet_id);
@@ -20115,6 +20112,7 @@ where
             );
             if is_formula {
                 engine.begin_evaluation_request();
+                #[cfg(any(test, feature = "legacy_oracle"))]
                 engine.graph.flush_pending_edge_deltas();
                 let roots = [crate::engine::target_preparation::TargetProducer::Legacy(
                     vertex_id,
@@ -20130,6 +20128,7 @@ where
                 && engine.graph.formula_authority().active_span_count() > 0
             {
                 engine.begin_evaluation_request();
+                #[cfg(any(test, feature = "legacy_oracle"))]
                 engine.graph.flush_pending_edge_deltas();
                 engine.evaluate_authoritative_formula_plane(None, None)?;
             }
@@ -20940,6 +20939,7 @@ where
             roots = widened_roots.into_vec();
         }
         self.begin_evaluation_request();
+        #[cfg(any(test, feature = "legacy_oracle"))]
         self.graph.flush_pending_edge_deltas();
         let workbook_scope = matches!(scope, crate::engine::PrepareScope::Workbook);
         if self.formula_plane_mode() == FormulaPlaneMode::AuthoritativeExperimental
@@ -21219,6 +21219,7 @@ where
             engine.validate_deterministic_mode()?;
             let _source_cache = engine.source_cache_session();
             let preparation = engine.prepare_graph_for_routed_evaluation(targets, &options)?;
+            #[cfg(any(test, feature = "legacy_oracle"))]
             engine.graph.flush_pending_edge_deltas();
             let topology = if matches!(
                 preparation.widened_scope,
@@ -21267,6 +21268,7 @@ where
         &mut self,
         plan: &RecalcPlan,
     ) -> Result<EvalResult, ExcelError> {
+        #[cfg(any(test, feature = "legacy_oracle"))]
         self.graph.flush_pending_edge_deltas();
         self.validate_recalc_plan_key(&plan.key)?;
         self.cancellation_checkpoint("Evaluation cancelled before recalculation plan execution")?;
@@ -22192,7 +22194,7 @@ where
                 entry_count = entry_count.saturating_add(1);
                 units = units.saturating_add(index_units(point));
             }
-            for dependency in self.graph.get_dependencies(vertex) {
+            for dependency in self.graph.span_path_legacy_dependencies(vertex) {
                 if let Some(cell) = self.graph.get_cell_ref_for_vertex(dependency) {
                     let point = Region::point(cell.sheet_id, cell.coord.row(), cell.coord.col());
                     entry_count = entry_count.saturating_add(1);
@@ -22200,7 +22202,7 @@ where
                 }
             }
             let vertex_sheet = self.graph.get_vertex_sheet_id(vertex);
-            if let Some(ranges) = self.graph.get_range_dependencies(vertex) {
+            if let Some(ranges) = self.graph.span_path_legacy_range_dependencies(vertex) {
                 for range in ranges {
                     if let Ok(Some(region)) =
                         self.shared_range_to_region_pattern(range, vertex_sheet)
@@ -22254,13 +22256,13 @@ where
             if span_boundary_sheets.contains(&cell.sheet_id) {
                 return None;
             }
-            for dependency in self.graph.get_dependencies(*vertex) {
+            for dependency in self.graph.span_path_legacy_dependencies(*vertex) {
                 let dependency_cell = self.graph.get_cell_ref_for_vertex(dependency)?;
                 if span_boundary_sheets.contains(&dependency_cell.sheet_id) {
                     return None;
                 }
             }
-            if let Some(ranges) = self.graph.get_range_dependencies(*vertex) {
+            if let Some(ranges) = self.graph.span_path_legacy_range_dependencies(*vertex) {
                 for range in ranges {
                     let region = self
                         .shared_range_to_region_pattern(range, cell.sheet_id)
@@ -22519,7 +22521,7 @@ where
             .iter()
             .map(|vertex| {
                 self.graph
-                    .get_dependencies(*vertex)
+                    .span_path_legacy_dependencies(*vertex)
                     .into_iter()
                     .filter(|dependency| membership_set.contains(dependency))
                     .count()
@@ -22628,7 +22630,7 @@ where
                 let result_region =
                     Region::point(cell.sheet_id, cell.coord.row(), cell.coord.col());
                 let mut seen = rustc_hash::FxHashSet::default();
-                for dep in self.graph.get_dependencies(*vertex) {
+                for dep in self.graph.span_path_legacy_dependencies(*vertex) {
                     let Some(dep_cell) = self.graph.get_cell_ref_for_vertex(dep) else {
                         // Named/table/source vertices do not have a trustworthy
                         // regional boundary summary. Preserve the global planner.
@@ -22653,7 +22655,7 @@ where
                         );
                     }
                 }
-                if let Some(ranges) = self.graph.get_range_dependencies(*vertex) {
+                if let Some(ranges) = self.graph.span_path_legacy_range_dependencies(*vertex) {
                     for range in ranges {
                         let Some(read_region) =
                             self.shared_range_to_region_pattern(range, cell.sheet_id)?
@@ -22857,7 +22859,7 @@ where
             let context_sheet = self.graph.get_vertex_sheet_id(vertex);
             for range in self
                 .graph
-                .get_range_dependencies(vertex)
+                .span_path_legacy_range_dependencies(vertex)
                 .into_iter()
                 .flatten()
             {
@@ -23053,7 +23055,7 @@ where
                 let FormulaProducerId::Legacy(vertex) = consumer else {
                     continue;
                 };
-                for dependency in self.graph.get_dependencies(vertex) {
+                for dependency in self.graph.span_path_legacy_dependencies(vertex) {
                     let direct = FormulaProducerId::Legacy(dependency);
                     if !try_add_edge(
                         direct,
@@ -23099,7 +23101,7 @@ where
                 let context_sheet = self.graph.get_vertex_sheet_id(vertex);
                 for range in self
                     .graph
-                    .get_range_dependencies(vertex)
+                    .span_path_legacy_range_dependencies(vertex)
                     .into_iter()
                     .flatten()
                 {
@@ -25081,6 +25083,7 @@ where
         }
         // Fold pending edge deltas once per schedule build so traversal uses
         // the zero-allocation CSR slices (#125).
+        #[cfg(any(test, feature = "legacy_oracle"))]
         self.graph.flush_pending_edge_deltas();
         // The cache key includes the authority revision: sync first.
         self.graph.authority_sync();
@@ -25829,7 +25832,7 @@ where
             // using stale values for those cells. The kind check at the top
             // of the loop still gates which vertices end up in
             // ``to_evaluate``; only Formula vertices are scheduled.
-            if let Some(dependencies) = self.graph.dependencies_slice(v) {
+            if let Some(dependencies) = self.graph.span_path_legacy_dependencies_slice(v) {
                 for &dep in dependencies {
                     #[cfg(any(test, feature = "benchmark_internal"))]
                     {
@@ -25840,7 +25843,7 @@ where
                     }
                 }
             } else {
-                for dep in self.graph.get_dependencies(v) {
+                for dep in self.graph.span_path_legacy_dependencies(v) {
                     #[cfg(any(test, feature = "benchmark_internal"))]
                     {
                         probe_edges += 1;
@@ -26209,14 +26212,16 @@ where
                 }
 
                 // Continue traversal to dependencies (precedents)
-                if let Some(dependencies) = self.graph.dependencies_slice(vertex_id) {
+                if let Some(dependencies) =
+                    self.graph.span_path_legacy_dependencies_slice(vertex_id)
+                {
                     for &dep_id in dependencies {
                         if !visited.contains(&dep_id) {
                             stack.push(dep_id);
                         }
                     }
                 } else {
-                    let dependencies = self.graph.get_dependencies(vertex_id);
+                    let dependencies = self.graph.span_path_legacy_dependencies(vertex_id);
                     for dep_id in dependencies {
                         if !visited.contains(&dep_id) {
                             stack.push(dep_id);
@@ -30129,7 +30134,7 @@ where
         vertex_id: VertexId,
         computed_writes: &mut ComputedWriteBuffer,
     ) -> Result<(), ExcelError> {
-        if self.graph.get_range_dependencies(vertex_id).is_some() {
+        if self.graph.reads_compressed_range(vertex_id) {
             self.flush_computed_write_buffer(computed_writes)?;
         }
         Ok(())
@@ -30413,7 +30418,7 @@ where
         let mut phase1: Vec<VertexId> = Vec::new();
         let mut phase2: Vec<VertexId> = Vec::new();
         for &vid in &layer.vertices {
-            if self.graph.get_range_dependencies(vid).is_some() {
+            if self.graph.reads_compressed_range(vid) {
                 phase2.push(vid);
             } else {
                 phase1.push(vid);
@@ -30538,7 +30543,7 @@ where
         let mut phase1: Vec<VertexId> = Vec::new();
         let mut phase2: Vec<VertexId> = Vec::new();
         for &vid in &layer.vertices {
-            if self.graph.get_range_dependencies(vid).is_some() {
+            if self.graph.reads_compressed_range(vid) {
                 phase2.push(vid);
             } else {
                 phase1.push(vid);
@@ -30663,7 +30668,7 @@ where
         let mut phase1: Vec<VertexId> = Vec::new();
         let mut phase2: Vec<VertexId> = Vec::new();
         for &vid in &layer.vertices {
-            if self.graph.get_range_dependencies(vid).is_some() {
+            if self.graph.reads_compressed_range(vid) {
                 phase2.push(vid);
             } else {
                 phase1.push(vid);

@@ -621,6 +621,199 @@ impl DependencyGraph {
         }
     }
 
+    /// Direct readers of symbol `symbol` (a name, table or source): the
+    /// formula cells and names with an edge to its row. Conservative (every
+    /// formula and name) when the host is not ready.
+    pub(crate) fn authority_symbol_readers(&mut self, symbol: VertexId) -> Vec<VertexId> {
+        self.authority_sync_eager();
+        let slot = self.authority.symbols.slot(symbol);
+        if self.authority.state != HostState::Ready
+            || self.authority.carried.is_some()
+            || self.first_load_assume_new
+        {
+            let mut all: Vec<VertexId> = self
+                .vertex_formulas
+                .keys()
+                .copied()
+                .chain(self.name_vertex_lookup.keys().copied())
+                .filter(|&v| v != symbol && !self.store.is_deleted(v))
+                .collect();
+            all.sort_unstable();
+            return all;
+        }
+        let Some(slot) = slot else {
+            return Vec::new();
+        };
+        let mut hits = Vec::new();
+        self.authority.store.direct_dependents(
+            SYMBOL_SHEET,
+            &Rect::cell(slot, 0),
+            TagFilter::All,
+            &mut hits,
+        );
+        let mut out = Vec::new();
+        for (sheet, r) in hits {
+            for row in r.r0..=r.r1 {
+                for col in r.c0..=r.c1 {
+                    if let Some(v) = self.authority_vertex_of_cell((sheet, row, col))
+                        && v != symbol
+                    {
+                        out.push(v);
+                    }
+                }
+            }
+        }
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+
+    /// The readers legacy held as in-edges of `vertex` (cell references,
+    /// ranges within `range_expansion_limit`, names over it): the cells
+    /// `remove_vertex` marks `#REF!`. Read from the current store (the
+    /// pre-edit store inside a structural operation, before anything moved).
+    pub(crate) fn authority_in_edge_readers(&mut self, vertex: VertexId) -> Vec<VertexId> {
+        if self.authority.carried.is_none() {
+            self.authority_sync_eager();
+        }
+        if self.authority.state != HostState::Ready {
+            return Vec::new();
+        }
+        let Some(cell) = self.authority_cell_of_vertex(vertex) else {
+            return Vec::new();
+        };
+        let limit = u64::try_from(self.config.range_expansion_limit)
+            .unwrap_or(u64::MAX)
+            .max(1);
+        let mut hits = Vec::new();
+        self.authority.store.direct_small_dependents(
+            cell.0,
+            &Rect::cell(cell.1, cell.2),
+            limit,
+            &mut hits,
+        );
+        let mut out = Vec::new();
+        for (sheet, r) in hits {
+            for row in r.r0..=r.r1 {
+                for col in r.c0..=r.c1 {
+                    if let Some(v) = self.authority_vertex_of_cell((sheet, row, col))
+                        && v != vertex
+                    {
+                        out.push(v);
+                    }
+                }
+            }
+        }
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+
+    /// Readers whose range contents a structural edit on `sheet` changes
+    /// without their text changing: legacy's compressed-range rule per
+    /// reader image (an insertion strictly inside the image, or an image
+    /// meeting the deleted band) with the editor's cross-axis occupancy.
+    /// Cell references never straddle; readers whose text the edit
+    /// rewrites are dirtied by the rewrite. From the pre-edit store; every
+    /// formula when the host is not ready.
+    pub(crate) fn authority_structural_band_readers(
+        &mut self,
+        sheet: SheetId,
+        edit: StructuralEdit,
+        occupancy: &StructuralOccupancy,
+    ) -> Vec<VertexId> {
+        if self.authority.carried.is_none() {
+            self.authority_sync_eager();
+        }
+        if self.authority.state != HostState::Ready {
+            let mut all: Vec<VertexId> = self.vertex_formulas.keys().copied().collect();
+            all.sort_unstable();
+            return all;
+        }
+        use crate::engine::authority::geom::{MAX_COL, MAX_ROW};
+        let band = match edit {
+            StructuralEdit::DeleteRows { start, end } => Rect::new(start, 0, end, MAX_COL),
+            StructuralEdit::InsertRows { before } => {
+                Rect::new(before.saturating_sub(1), 0, before, MAX_COL)
+            }
+            StructuralEdit::DeleteColumns { start, end } => Rect::new(0, start, MAX_ROW, end),
+            StructuralEdit::InsertColumns { before } => {
+                Rect::new(0, before.saturating_sub(1), MAX_ROW, before)
+            }
+        };
+        let mut cells: Vec<Cell> = Vec::new();
+        self.authority
+            .store
+            .visit_dependent_images(sheet, &band, &mut |ds, row, col, img| {
+                let axis = match edit {
+                    StructuralEdit::DeleteRows { start, end } => img.r0 <= end && img.r1 >= start,
+                    StructuralEdit::InsertRows { before } => {
+                        (img.r0 == 0 || img.r0 < before) && before <= img.r1
+                    }
+                    StructuralEdit::DeleteColumns { start, end } => {
+                        img.c0 <= end && img.c1 >= start
+                    }
+                    StructuralEdit::InsertColumns { before } => {
+                        (img.c0 == 0 || img.c0 < before) && before <= img.c1
+                    }
+                };
+                let (cross0, cross1) = match edit {
+                    StructuralEdit::InsertRows { .. } | StructuralEdit::DeleteRows { .. } => {
+                        (img.c0, img.c1)
+                    }
+                    StructuralEdit::InsertColumns { .. } | StructuralEdit::DeleteColumns { .. } => {
+                        (img.r0, img.r1)
+                    }
+                };
+                if axis && StructuralOccupancy::cross_axis_occupied(occupancy, edit, cross0, cross1)
+                {
+                    cells.push((ds, row, col));
+                }
+            });
+        cells.sort_unstable();
+        cells.dedup();
+        let mut out: Vec<VertexId> = cells
+            .into_iter()
+            .filter_map(|c| self.authority_vertex_of_cell(c))
+            .collect();
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+
+    /// Direct precedents `(sheet, rect)` of `vertex`'s formula cell (symbol
+    /// rows included, not looked through); `None` when the host cannot
+    /// answer.
+    pub(crate) fn authority_vertex_precedents(
+        &mut self,
+        vertex: VertexId,
+    ) -> Option<Vec<(u16, Rect)>> {
+        self.authority_sync_eager();
+        if self.authority.state != HostState::Ready || self.vertex_formulas.has_touched() {
+            return None;
+        }
+        let cell = self.authority_cell_of_vertex(vertex)?;
+        let mut hits = Vec::new();
+        self.authority
+            .store
+            .direct_precedents(cell, TagFilter::All, &mut hits);
+        let mut out: Vec<(u16, Rect)> = hits.into_iter().map(|(_, s, r)| (s, r)).collect();
+        out.sort_unstable();
+        out.dedup();
+        Some(out)
+    }
+
+    /// Whether dirty marks must wait for a resync (structural capture open
+    /// or load scope).
+    pub(crate) fn authority_defers_marks(&self) -> bool {
+        self.authority.carried.is_some() || self.first_load_assume_new
+    }
+
+    /// Queue `vertex` as a dirty-propagation seed for after the resync.
+    pub(crate) fn authority_queue_dirty(&mut self, vertex: VertexId) {
+        self.authority.pending_dirty.push(vertex);
+    }
+
     /// Sync unless a load scope or a structural capture is open.
     pub(crate) fn authority_sync_eager(&mut self) {
         if !self.first_load_assume_new && self.authority.carried.is_none() {
@@ -878,78 +1071,83 @@ impl DependencyGraph {
     /// authority's closure of `seeds` with legacy's mirror (Δ(a)), and
     /// direct dependents per seed (Δ(e)).
     fn authority_diff_propagation(&mut self, seeds: &[VertexId], closure: &[VertexId]) {
-        let Some(mode) = diff_mode() else {
-            return;
-        };
-        let cells: Vec<Cell> = seeds
-            .iter()
-            .filter_map(|&v| self.authority_cell_of_vertex(v))
-            .collect();
-        self.authority.diff.propagations += 1;
-        if self.vertex_formulas.len() > DIFF_MAX_FORMULAS || cells.len() > DIFF_MAX_SEEDS {
-            self.authority.diff.skipped += 1;
-            return;
-        }
-        let grid: Vec<Cell> = cells
-            .iter()
-            .copied()
-            .filter(|c| c.0 != SYMBOL_SHEET)
-            .collect();
-        let legacy = self.legacy_closure_cells(&grid);
-        let mut mine: Vec<Cell> = closure
-            .iter()
-            .filter_map(|&v| self.get_cell_ref(v).map(|c| cell_of(&c)))
-            .collect();
-        mine.sort_unstable();
-        mine.dedup();
-        let mut problems: Vec<String> = Vec::new();
-        if legacy != mine && cells.iter().all(|c| c.0 != SYMBOL_SHEET) {
-            self.authority.diff.closure_mismatches += 1;
-            let only_legacy: Vec<&Cell> = legacy
+        #[cfg(not(any(test, feature = "legacy_oracle")))]
+        let _ = (&seeds, &closure);
+        #[cfg(any(test, feature = "legacy_oracle"))]
+        {
+            let Some(mode) = diff_mode() else {
+                return;
+            };
+            let cells: Vec<Cell> = seeds
                 .iter()
-                .filter(|c| mine.binary_search(c).is_err())
+                .filter_map(|&v| self.authority_cell_of_vertex(v))
                 .collect();
-            let only_mine: Vec<&Cell> = mine
+            self.authority.diff.propagations += 1;
+            if self.vertex_formulas.len() > DIFF_MAX_FORMULAS || cells.len() > DIFF_MAX_SEEDS {
+                self.authority.diff.skipped += 1;
+                return;
+            }
+            let grid: Vec<Cell> = cells
                 .iter()
-                .filter(|c| legacy.binary_search(c).is_err())
+                .copied()
+                .filter(|c| c.0 != SYMBOL_SHEET)
                 .collect();
-            problems.push(format!(
+            let legacy = self.legacy_closure_cells(&grid);
+            let mut mine: Vec<Cell> = closure
+                .iter()
+                .filter_map(|&v| self.get_cell_ref(v).map(|c| cell_of(&c)))
+                .collect();
+            mine.sort_unstable();
+            mine.dedup();
+            let mut problems: Vec<String> = Vec::new();
+            if legacy != mine && cells.iter().all(|c| c.0 != SYMBOL_SHEET) {
+                self.authority.diff.closure_mismatches += 1;
+                let only_legacy: Vec<&Cell> = legacy
+                    .iter()
+                    .filter(|c| mine.binary_search(c).is_err())
+                    .collect();
+                let only_mine: Vec<&Cell> = mine
+                    .iter()
+                    .filter(|c| legacy.binary_search(c).is_err())
+                    .collect();
+                problems.push(format!(
                 "dirty seeds={cells:?} legacy={} authority={} only_legacy={:?} only_authority={:?}",
                 legacy.len(),
                 mine.len(),
                 only_legacy.iter().take(8).collect::<Vec<_>>(),
                 only_mine.iter().take(8).collect::<Vec<_>>(),
             ));
-        }
-        for &c in grid.iter() {
-            self.authority.diff.checked_seeds += 1;
-            let legacy = self.legacy_direct_dependent_cells(c);
-            let mine = Self::authority_direct_grid_dependents(
-                &self.authority.store,
-                c.0,
-                &Rect::cell(c.1, c.2),
-            )
-            .cells();
-            if legacy != mine {
-                self.authority.diff.direct_mismatches += 1;
-                problems.push(format!(
-                    "direct seed={c:?} legacy={legacy:?} authority={mine:?}"
-                ));
             }
-        }
-        let thread = std::thread::current();
-        let who = thread.name().unwrap_or("?");
-        match mode {
-            DiffMode::Count => {}
-            DiffMode::Strict => {
-                if !problems.is_empty() {
-                    panic!("unified_authority differential mismatch in {who}: {problems:?}");
+            for &c in grid.iter() {
+                self.authority.diff.checked_seeds += 1;
+                let legacy = self.legacy_direct_dependent_cells(c);
+                let mine = Self::authority_direct_grid_dependents(
+                    &self.authority.store,
+                    c.0,
+                    &Rect::cell(c.1, c.2),
+                )
+                .cells();
+                if legacy != mine {
+                    self.authority.diff.direct_mismatches += 1;
+                    problems.push(format!(
+                        "direct seed={c:?} legacy={legacy:?} authority={mine:?}"
+                    ));
                 }
             }
-            DiffMode::Log(path) => {
-                let mut lines = vec![format!("{who}\tCHECK seeds={}", cells.len())];
-                lines.extend(problems);
-                append_lines(path, &lines);
+            let thread = std::thread::current();
+            let who = thread.name().unwrap_or("?");
+            match mode {
+                DiffMode::Count => {}
+                DiffMode::Strict => {
+                    if !problems.is_empty() {
+                        panic!("unified_authority differential mismatch in {who}: {problems:?}");
+                    }
+                }
+                DiffMode::Log(path) => {
+                    let mut lines = vec![format!("{who}\tCHECK seeds={}", cells.len())];
+                    lines.extend(problems);
+                    append_lines(path, &lines);
+                }
             }
         }
     }
@@ -976,6 +1174,7 @@ impl DependencyGraph {
             && self.vertex_formulas.contains_key(&v)
     }
 
+    #[cfg(any(test, feature = "legacy_oracle"))]
     /// Legacy's direct dependents of one cell: CSR in-edges, name links and
     /// precise range subscriptions, expanding symbol vertices (names,
     /// tables, sources) transparently. Sorted formula cells.
@@ -1018,6 +1217,7 @@ impl DependencyGraph {
         v
     }
 
+    #[cfg(any(test, feature = "legacy_oracle"))]
     /// Legacy's dirty closure of `cells` with exact per-source semantics
     /// (`mark_dirty_many`'s BFS without its bounding-rect shortcut and
     /// without mutating dirty flags): formula cells reached by a path of
@@ -1050,6 +1250,7 @@ impl DependencyGraph {
         v
     }
 
+    #[cfg(any(test, feature = "legacy_oracle"))]
     /// Formula cells among what a legacy dirty propagation affected (the
     /// Δ(a) comparator: value sources and symbol vertices are filtered out).
     /// Sorted.
@@ -1063,6 +1264,7 @@ impl DependencyGraph {
         v
     }
 
+    #[cfg(any(test, feature = "legacy_oracle"))]
     /// Dirty propagation from `cells` (their vertices; cells without a
     /// vertex are skipped): legacy's mirror closure (formula seeds plus
     /// `legacy_closure_cells`) and the formula cells the authority's actual
@@ -1094,6 +1296,7 @@ impl DependencyGraph {
 
     // ------------------------------------------------------------ memory gate
 
+    #[cfg(any(test, feature = "legacy_oracle"))]
     /// Heap bytes of the legacy dependency structures by component (Packet
     /// B's accounting: capacities, hashbrown allocations; the per-sheet
     /// vertex interval index is reported but excluded from the gate total,

@@ -51,7 +51,10 @@ pub fn sync<R>(e: &mut Engine<R>) -> Result<Summary, AuthorityError> {
         edge_groups: s.edge_group_count(),
         node_groups: s.node_group_count(),
         authority_bytes: c.bytes,
+        #[cfg(any(test, feature = "legacy_oracle"))]
         legacy_bytes: e.graph.legacy_dependency_bytes(),
+        #[cfg(not(any(test, feature = "legacy_oracle")))]
+        legacy_bytes: Vec::new(),
         builds: host.builds(),
         incremental_mutations: host.incremental_mutations(),
     })
@@ -65,7 +68,10 @@ pub fn state<R>(e: &Engine<R>) -> HostState {
 /// Fold pending legacy CSR deltas into the base (legacy's settled state,
 /// as after a first evaluation).
 pub fn settle_legacy<R>(e: &mut Engine<R>) {
+    #[cfg(any(test, feature = "legacy_oracle"))]
     e.graph.flush_pending_edge_deltas();
+    #[cfg(not(any(test, feature = "legacy_oracle")))]
+    let _ = e;
 }
 
 /// Authority direct dependents (R-1X) of one cell.
@@ -105,16 +111,19 @@ pub fn precedents<R>(e: &mut Engine<R>, cell: Cell) -> Result<Vec<(u16, Rect)>, 
     Ok(hits.into_iter().map(|(_, sh, r)| (sh, r)).collect())
 }
 
+#[cfg(any(test, feature = "legacy_oracle"))]
 /// Legacy direct dependents of one cell (the Δ(e) comparator).
 pub fn legacy_direct_dependents<R>(e: &Engine<R>, cell: Cell) -> Vec<Cell> {
     e.graph.legacy_direct_dependent_cells(cell)
 }
 
+#[cfg(any(test, feature = "legacy_oracle"))]
 /// Legacy dirty closure of `cells` (the Δ(a) comparator).
 pub fn legacy_closure<R>(e: &Engine<R>, cells: &[Cell]) -> Vec<Cell> {
     e.graph.legacy_closure_cells(cells)
 }
 
+#[cfg(any(test, feature = "legacy_oracle"))]
 /// Δ(a) comparator: run legacy's actual dirty propagation from `cells`
 /// and return `(legacy dirty formula cells, authority marking of the same
 /// propagation)`, both sorted; `None` when no seed has a legacy vertex.

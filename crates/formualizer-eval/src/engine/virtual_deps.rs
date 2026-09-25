@@ -328,6 +328,7 @@ impl RangeVirtualDepProvider {
         )
     }
 
+    #[cfg(any(test, feature = "legacy_oracle"))]
     pub fn get_virtual_deps<R: EvaluationContext>(
         engine: &Engine<R>,
         v: VertexId,
@@ -431,11 +432,16 @@ impl<'a, R: EvaluationContext> VirtualDepBuilder<'a, R> {
         let augmented_vertices: Vec<VertexId> = Vec::new(); // Will be populated in Phase 3
 
         for &v in candidates {
+            // Range members are legacy's hints (its stripes carry no
+            // scheduling edges): the oracle scheduler's input only.
+            #[cfg(any(test, feature = "legacy_oracle"))]
             let mut deps = if range_members {
                 RangeVirtualDepProvider::get_virtual_deps(self.engine, v)
             } else {
                 Vec::new()
             };
+            #[cfg(not(any(test, feature = "legacy_oracle")))]
+            let mut deps = Vec::new();
             // Under the authority a reader with an observed read set is
             // planned from it (rdi_dyn, rectangle hints); the pre-probe is
             // for first evaluations only (design §8.2).

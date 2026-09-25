@@ -498,6 +498,28 @@ impl VertexStore {
         }
     }
 
+    /// The formula reads a compressed range (one legacy kept as range
+    /// dependencies instead of expanded edges): flush pending writes before
+    /// evaluating it, and the structural-occupancy shortcut.
+    #[inline]
+    pub fn reads_range(&self, id: VertexId) -> bool {
+        self.flags(id) & 0x10 != 0
+    }
+
+    #[inline]
+    pub fn set_reads_range(&self, id: VertexId, on: bool) {
+        if id.0 < FIRST_NORMAL_VERTEX {
+            return;
+        }
+        if let Some(idx) = self.vertex_id_to_index(id) {
+            if on {
+                self.flags[idx].fetch_or(0x10, Ordering::Release);
+            } else {
+                self.flags[idx].fetch_and(!0x10, Ordering::Release);
+            }
+        }
+    }
+
     #[inline]
     pub fn set_dynamic(&self, id: VertexId, dynamic: bool) {
         if id.0 < FIRST_NORMAL_VERTEX {

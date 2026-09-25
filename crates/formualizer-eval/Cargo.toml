@@ -121,10 +121,13 @@ formula_plane_diagnostics = []
 benchmark_internal = []
 # Private test and integration support; never enabled by default.
 test-support = []
-# Program 1 (FORM-000169): the unified region-node dependency authority,
-# built beside the legacy graph during development. Temporary and never
-# default; the legacy graph stays the runtime authority when it is off.
-unified_authority = [] # deprecated no-op: the authority is always on (Program 1 M5)
+# Deprecated no-op: the region-node dependency authority (Program 1,
+# FORM-000169) is the only runtime dependency path.
+unified_authority = []
+# Build legacy's dependency structures (CSR/delta edges, range stripes, name
+# links) beside the authority as a differential test oracle. Test builds of
+# this crate always have them; never a runtime path.
+legacy_oracle = []
 
 [[example]]
 name = "perf_tranche_probe"

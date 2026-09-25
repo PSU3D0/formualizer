@@ -802,6 +802,14 @@ impl<R: EvaluationContext> InspectSource for LegacyInspectSource<'_, R> {
         budget: &mut WorkBudget,
         visitor: &mut dyn DependentVisitor,
     ) -> Result<QueryCompleteness, InspectError> {
+        // Legacy's stripe readers exist only in oracle builds; the authority
+        // path (`collect_dependents`) does not come here.
+        #[cfg(not(any(test, feature = "legacy_oracle")))]
+        let complete = {
+            let _ = (cell, budget, visitor);
+            true
+        };
+        #[cfg(any(test, feature = "legacy_oracle"))]
         let complete = self.engine.graph.visit_range_dependents_covering_bounded(
             cell.sheet_id,
             cell.row0,

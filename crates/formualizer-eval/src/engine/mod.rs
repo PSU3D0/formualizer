@@ -111,7 +111,11 @@ pub use resource_observability::{
     FormulaPlaneTopologyRequestStats, FormulaPlaneTopologyStrategy,
 };
 pub use row_visibility::{RowVisibilitySource, VisibilityMaskMode};
-pub use scheduler::{Layer, Schedule, ScheduleUnit, Scheduler};
+/// Legacy's Tarjan/layer scheduler: a test oracle only (M5; the authority's
+/// planner builds every `Schedule`).
+#[cfg(any(test, feature = "legacy_oracle"))]
+pub use scheduler::Scheduler;
+pub use scheduler::{Layer, Schedule, ScheduleUnit};
 pub use target_preparation::{
     EvaluationTarget, OpaquePreparePolicy, OpaqueReason, PreparationOutcome, PreparationRevision,
     PrepareScope, PreparedTargetGraphReport, RequestId, TableSelection, TargetEvalOptions,

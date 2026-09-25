@@ -1,8 +1,12 @@
+#[cfg(any(test, feature = "legacy_oracle"))]
 use super::DependencyGraph;
 use super::vertex::VertexId;
+#[cfg(any(test, feature = "legacy_oracle"))]
 use formualizer_common::ExcelError;
+#[cfg(any(test, feature = "legacy_oracle"))]
 use rustc_hash::{FxHashMap, FxHashSet};
 
+#[cfg(any(test, feature = "legacy_oracle"))]
 pub struct Scheduler<'a> {
     graph: &'a DependencyGraph,
 }
@@ -61,6 +65,7 @@ impl Schedule {
     }
 }
 
+#[cfg(any(test, feature = "legacy_oracle"))]
 impl<'a> Scheduler<'a> {
     pub fn new(graph: &'a DependencyGraph) -> Self {
         Self { graph }

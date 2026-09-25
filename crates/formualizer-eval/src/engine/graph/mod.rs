@@ -42,11 +42,13 @@ pub(crate) use tables::TableEntry;
 
 use super::addr::{GridAddr, SymbolAddr, VertexAddr};
 use super::arena::{AstNodeId, DataStore, ValueRef};
+#[cfg(any(test, feature = "legacy_oracle"))]
 use super::delta_edges::CsrMutableEdges;
 use super::ingest_pipeline::{DependencyPlanRow, FormulaAstInput};
 use super::sheet_index::SheetIndex;
 use super::vertex::{VertexId, VertexKind};
 use super::vertex_store::{FIRST_NORMAL_VERTEX, VertexStore};
+#[cfg(any(test, feature = "legacy_oracle"))]
 use crate::engine::topo::{
     GraphAdapter,
     pk::{DynamicTopo, PkConfig},
@@ -227,7 +229,14 @@ pub struct DependencyGraph {
     store: VertexStore,
 
     // Edge storage with delta slab
+    #[cfg(any(test, feature = "legacy_oracle"))]
     edges: CsrMutableEdges,
+    /// Direct dependency edges legacy would hold (the sum of the per-vertex
+    /// counts kept in the vertex store's `edge_offset` column): admission's
+    /// `GraphEdges` measure, maintained without the CSR.
+    dep_edge_total: usize,
+    /// Formulas with `VertexStore::reads_range` set.
+    range_reader_count: usize,
 
     // Arena-based value and formula storage
     data_store: DataStore,
@@ -280,10 +289,12 @@ pub struct DependencyGraph {
 
     // NEW: Specialized managers for range dependencies (Hybrid Model)
     /// Maps a formula vertex to the ranges it depends on.
+    #[cfg(any(test, feature = "legacy_oracle"))]
     formula_to_range_deps: FxHashMap<VertexId, Vec<SharedRangeRef<'static>>>,
 
     /// Maps a stripe to formulas that depend on it via a compressed range.
     /// CRITICAL: VertexIds are deduplicated within each stripe to avoid quadratic blow-ups.
+    #[cfg(any(test, feature = "legacy_oracle"))]
     stripe_to_dependents: FxHashMap<StripeKey, FxHashSet<VertexId>>,
 
     // Sheet-level sparse indexes for O(log n + k) range queries
@@ -314,6 +325,7 @@ pub struct DependencyGraph {
     sheet_named_ranges_lookup: FxHashMap<(SheetId, String), String>,
 
     /// Reverse mapping: vertex -> names it uses (by vertex id)
+    #[cfg(any(test, feature = "legacy_oracle"))]
     vertex_to_names: FxHashMap<VertexId, Vec<VertexId>>,
 
     /// Lookup for name vertex -> (scope, name) to avoid map scans
@@ -348,8 +360,10 @@ pub struct DependencyGraph {
     symbol_vertex_seq: u32,
 
     /// Mapping from cell vertices to named range vertices that depend on them
+    #[cfg(any(test, feature = "legacy_oracle"))]
     cell_to_name_dependents: FxHashMap<VertexId, FxHashSet<VertexId>>,
     /// Cached list of cell dependencies per named range vertex (for teardown)
+    #[cfg(any(test, feature = "legacy_oracle"))]
     name_to_cell_dependencies: FxHashMap<VertexId, Vec<VertexId>>,
 
     // Evaluation configuration
@@ -366,6 +380,7 @@ pub struct DependencyGraph {
     authority: crate::engine::authority::host::AuthorityHost,
 
     // Dynamic topology orderer (Pearce–Kelly) maintained alongside edges when enabled
+    #[cfg(any(test, feature = "legacy_oracle"))]
     pk_order: Option<DynamicTopo<VertexId>>,
 
     // Spill registry: anchor -> cells, and reverse mapping for blockers.
@@ -508,7 +523,7 @@ impl DependencyGraph {
         GraphBaselineStats {
             graph_vertex_count: self.store.len(),
             graph_formula_vertex_count: self.vertex_formulas.len(),
-            graph_edge_count: self.edges.num_edges_exact(),
+            graph_edge_count: self.dep_edge_total,
             dirty_vertex_count: self.formula_dirty.legacy_len(),
             evaluation_vertex_count: self.get_evaluation_vertices().len(),
             formula_ast_root_count: self.vertex_formulas.len(),
@@ -870,6 +885,7 @@ impl DependencyGraph {
         if !add_batch.is_empty() {
             #[cfg(feature = "perf_instrumentation")]
             let te0 = PerfInstant::now();
+            #[cfg(any(test, feature = "legacy_oracle"))]
             self.edges.add_vertices_batch(&add_batch);
             #[cfg(feature = "perf_instrumentation")]
             {
@@ -1088,12 +1104,17 @@ impl DependencyGraph {
         coords: Vec<VertexAddr>,
         vertex_ids: Vec<u32>,
     ) {
-        // Merge in base/delta out-edges for vertices the formula-target
-        // adjacency doesn't cover (e.g. named-range pass-through vertices)
-        // before handing the final adjacency to the pure builder.
-        let adjacency = self.edges.adjacency_with_carried_forward_edges(adjacency);
-        self.edges
-            .build_from_adjacency(adjacency, coords, vertex_ids);
+        #[cfg(not(any(test, feature = "legacy_oracle")))]
+        let _ = (&adjacency, &coords, &vertex_ids);
+        #[cfg(any(test, feature = "legacy_oracle"))]
+        {
+            // Merge in base/delta out-edges for vertices the formula-target
+            // adjacency doesn't cover (e.g. named-range pass-through vertices)
+            // before handing the final adjacency to the pure builder.
+            let adjacency = self.edges.adjacency_with_carried_forward_edges(adjacency);
+            self.edges
+                .build_from_adjacency(adjacency, coords, vertex_ids);
+        }
     }
     /// Compute min/max used row among vertices within [start_col..=end_col] on a sheet.
     pub fn used_row_bounds_for_columns(
@@ -1269,9 +1290,13 @@ impl DependencyGraph {
         let mut sheet_reg = SheetRegistry::new();
         let default_sheet_id = sheet_reg.id_for(&config.default_sheet_name);
 
+        #[cfg_attr(not(any(test, feature = "legacy_oracle")), allow(unused_mut))]
         let mut g = Self {
             store: VertexStore::new(),
+            #[cfg(any(test, feature = "legacy_oracle"))]
             edges: CsrMutableEdges::new(),
+            dep_edge_total: 0,
+            range_reader_count: 0,
             data_store: DataStore::new(),
             vertex_values: FxHashMap::default(),
             vertex_formulas: FormulaMap::default(),
@@ -1288,7 +1313,9 @@ impl DependencyGraph {
             deferred_dirty_pending: Vec::new(),
             volatile_vertices: FxHashSet::default(),
             ref_error_vertices: FxHashSet::default(),
+            #[cfg(any(test, feature = "legacy_oracle"))]
             formula_to_range_deps: FxHashMap::default(),
+            #[cfg(any(test, feature = "legacy_oracle"))]
             stripe_to_dependents: FxHashMap::default(),
             sheet_indexes: FxHashMap::default(),
             sheet_reg,
@@ -1297,6 +1324,7 @@ impl DependencyGraph {
             named_ranges_lookup: FxHashMap::default(),
             sheet_named_ranges: FxHashMap::default(),
             sheet_named_ranges_lookup: FxHashMap::default(),
+            #[cfg(any(test, feature = "legacy_oracle"))]
             vertex_to_names: FxHashMap::default(),
             name_vertex_lookup: FxHashMap::default(),
             pending_name_links: FxHashMap::default(),
@@ -1308,13 +1336,16 @@ impl DependencyGraph {
             source_tables: FxHashMap::default(),
             source_vertex_lookup: FxHashMap::default(),
             symbol_vertex_seq: 0,
+            #[cfg(any(test, feature = "legacy_oracle"))]
             cell_to_name_dependents: FxHashMap::default(),
+            #[cfg(any(test, feature = "legacy_oracle"))]
             name_to_cell_dependencies: FxHashMap::default(),
             config: config.clone(),
             topology_revision: 0,
             symbol_revision: 0,
             formula_authority: FormulaAuthority::default(),
             authority: Default::default(),
+            #[cfg(any(test, feature = "legacy_oracle"))]
             pk_order: None,
             spill_anchor_to_cells: FxHashMap::default(),
             spill_cell_to_anchor: std::collections::HashMap::with_hasher(CoordBuildHasher),
@@ -1329,6 +1360,7 @@ impl DependencyGraph {
             prepared_legacy_graph_failure_for_test: false,
         };
 
+        #[cfg(any(test, feature = "legacy_oracle"))]
         if config.use_dynamic_topo {
             // Seed with currently active vertices (likely empty at startup)
             let nodes = g
@@ -1351,6 +1383,7 @@ impl DependencyGraph {
         g
     }
 
+    #[cfg(any(test, feature = "legacy_oracle"))]
     /// When dynamic topology is enabled, compute layers for a subset using PK ordering.
     pub(crate) fn pk_layers_for(&self, subset: &[VertexId]) -> Option<Vec<crate::engine::Layer>> {
         let pk = self.pk_order.as_ref()?;
@@ -1364,6 +1397,7 @@ impl DependencyGraph {
         )
     }
 
+    #[cfg(any(test, feature = "legacy_oracle"))]
     #[inline]
     pub(crate) fn dynamic_topo_enabled(&self) -> bool {
         self.pk_order.is_some()
@@ -1381,13 +1415,28 @@ impl DependencyGraph {
         self.instr.lock().map(|g| g.clone()).unwrap_or_default()
     }
 
+    /// Whether legacy's Pearce-Kelly order is maintained (oracle builds with
+    /// `use_dynamic_topo`); never at runtime.
+    pub(crate) fn pk_active(&self) -> bool {
+        #[cfg(any(test, feature = "legacy_oracle"))]
+        {
+            self.pk_order.is_some()
+        }
+        #[cfg(not(any(test, feature = "legacy_oracle")))]
+        {
+            false
+        }
+    }
+
     /// Begin batch operations - defer CSR rebuilds until end_batch() is called
     pub fn begin_batch(&mut self) {
+        #[cfg(any(test, feature = "legacy_oracle"))]
         self.edges.begin_batch();
     }
 
     /// End batch operations and trigger CSR rebuild if needed
     pub fn end_batch(&mut self) {
+        #[cfg(any(test, feature = "legacy_oracle"))]
         self.edges.end_batch();
     }
 
@@ -1616,6 +1665,7 @@ impl DependencyGraph {
         )
     }
 
+    #[cfg(any(test, feature = "legacy_oracle"))]
     pub(crate) fn formula_range_dependencies(
         &self,
         vertex: VertexId,
@@ -1707,7 +1757,7 @@ impl DependencyGraph {
         let cell = CellRef::new(sheet_id, Coord::from_excel(row, col, true, true));
         let existing = self.cell_to_vertex.get(&cell).copied();
         let stats = self.baseline_stats();
-        let removed_edges = existing.map_or(0, |vertex| self.get_dependencies(vertex).len());
+        let removed_edges = existing.map_or(0, |vertex| self.store.edge_offset(vertex) as usize);
         Ok(crate::engine::resource_ledger::GraphAdmission {
             final_vertices: stats
                 .graph_vertex_count
@@ -1746,7 +1796,7 @@ impl DependencyGraph {
             let reference = CellRef::new(sheet_id, Coord::from_excel(*row, *col, true, true));
             if let Some(vertex) = self.cell_to_vertex.get(&reference).copied() {
                 removed_edges = removed_edges
-                    .checked_add(self.get_dependencies(vertex).len())
+                    .checked_add(self.store.edge_offset(vertex) as usize)
                     .ok_or_else(|| ExcelError::new(ExcelErrorKind::NImpl))?;
             } else {
                 added_vertices = added_vertices
@@ -1783,7 +1833,7 @@ impl DependencyGraph {
             let target_ref = CellRef::new(*sheet_id, Coord::from_excel(*row, *col, true, true));
             if let Some(vertex) = self.cell_to_vertex.get(&target_ref).copied() {
                 removed_edges = removed_edges
-                    .checked_add(self.get_dependencies(vertex).len())
+                    .checked_add(self.store.edge_offset(vertex) as usize)
                     .ok_or_else(|| {
                         ExcelError::new(ExcelErrorKind::NImpl)
                             .with_message("graph edge count overflow")
@@ -1977,7 +2027,7 @@ impl DependencyGraph {
                 .store
                 .allocate(VertexAddr::grid(position), sheet_id, 0x01); // dirty flag
 
-            // Add vertex coordinate for CSR
+            #[cfg(any(test, feature = "legacy_oracle"))]
             self.edges
                 .add_vertex(VertexAddr::grid(position), vertex_id.0);
 
@@ -2056,6 +2106,7 @@ impl DependencyGraph {
         let vertex_id = self
             .store
             .allocate(VertexAddr::grid(position), sheet_id, 0x00); // not dirty
+        #[cfg(any(test, feature = "legacy_oracle"))]
         self.edges
             .add_vertex(VertexAddr::grid(position), vertex_id.0);
         self.sheet_index_mut(sheet_id)
@@ -2153,6 +2204,7 @@ impl DependencyGraph {
         let t_after_alloc = Instant::now();
         if !new_vertices.is_empty() {
             let t_edges_start = Instant::now();
+            #[cfg(any(test, feature = "legacy_oracle"))]
             self.edges.add_vertices_batch(&new_vertices);
             let t_edges_done = Instant::now();
 
@@ -2765,6 +2817,7 @@ impl DependencyGraph {
     /// future propagations. Evaluation entry points `debug_assert` that no
     /// scope is active.
     pub fn begin_deferred_dirty(&mut self) {
+        #[cfg(any(test, feature = "legacy_oracle"))]
         self.edges.begin_batch();
         self.deferred_dirty_depth += 1;
     }
@@ -2778,6 +2831,7 @@ impl DependencyGraph {
             self.deferred_dirty_depth > 0,
             "end_deferred_dirty without matching begin_deferred_dirty"
         );
+        #[cfg(any(test, feature = "legacy_oracle"))]
         self.edges.end_batch();
         self.deferred_dirty_depth = self.deferred_dirty_depth.saturating_sub(1);
         if self.deferred_dirty_depth > 0 {
@@ -2914,7 +2968,7 @@ impl DependencyGraph {
             .store
             .allocate(VertexAddr::grid(position), addr.sheet_id, 0x00);
 
-        // Add vertex coordinate for CSR
+        #[cfg(any(test, feature = "legacy_oracle"))]
         self.edges
             .add_vertex(VertexAddr::grid(position), vertex_id.0);
 
@@ -2927,89 +2981,186 @@ impl DependencyGraph {
         vertex_id
     }
 
-    fn add_dependent_edges(&mut self, dependent: VertexId, dependencies: &[VertexId]) {
-        // Batch to avoid repeated CSR rebuilds and keep reverse edges current
-        self.edges.begin_batch();
+    /// Record `n` direct dependency edges of `dependent` (admission count).
+    pub(crate) fn note_dep_edges(&mut self, dependent: VertexId, n: usize) {
+        let now = self.store.edge_offset(dependent) as usize + n;
+        self.store
+            .set_edge_offset(dependent, u32::try_from(now).unwrap_or(u32::MAX));
+        self.dep_edge_total += n;
+    }
 
-        // If PK enabled, update order using a short-lived adapter without holding &mut self
-        // Track dependencies that should be skipped if rejecting cycle-creating edges
-        let mut skip_deps: rustc_hash::FxHashSet<VertexId> = rustc_hash::FxHashSet::default();
-        if self.pk_order.is_some()
-            && let Some(mut pk) = self.pk_order.take()
+    /// Whether `vertex`'s formula reads a compressed range.
+    pub(crate) fn reads_compressed_range(&self, vertex: VertexId) -> bool {
+        self.store.reads_range(vertex)
+    }
+
+    /// Legacy's dependency list, for the FormulaPlane span paths only (mixed
+    /// topology, span demand). Spans are never placed under the authority,
+    /// so outside oracle builds these paths are unreachable: debug builds
+    /// assert that, release builds answer empty. Follow-up: delete them
+    /// with the span machinery.
+    pub(crate) fn span_path_legacy_dependencies(&self, vertex: VertexId) -> Vec<VertexId> {
+        #[cfg(any(test, feature = "legacy_oracle"))]
         {
-            pk.ensure_nodes(std::iter::once(dependent));
-            pk.ensure_nodes(dependencies.iter().copied());
+            self.get_dependencies(vertex)
+        }
+        #[cfg(not(any(test, feature = "legacy_oracle")))]
+        {
+            debug_assert!(false, "FormulaPlane span path reached without spans");
+            let _ = vertex;
+            Vec::new()
+        }
+    }
+
+    /// See [`Self::span_path_legacy_dependencies`] (no slice outside oracle
+    /// builds; callers fall back to the owned list).
+    pub(crate) fn span_path_legacy_dependencies_slice(
+        &self,
+        vertex: VertexId,
+    ) -> Option<&[VertexId]> {
+        #[cfg(any(test, feature = "legacy_oracle"))]
+        {
+            self.dependencies_slice(vertex)
+        }
+        #[cfg(not(any(test, feature = "legacy_oracle")))]
+        {
+            let _ = vertex;
+            None
+        }
+    }
+
+    /// See [`Self::span_path_legacy_dependencies`].
+    pub(crate) fn span_path_legacy_range_dependencies(
+        &self,
+        vertex: VertexId,
+    ) -> Option<&Vec<SharedRangeRef<'static>>> {
+        #[cfg(any(test, feature = "legacy_oracle"))]
+        {
+            self.get_range_dependencies(vertex)
+        }
+        #[cfg(not(any(test, feature = "legacy_oracle")))]
+        {
+            debug_assert!(false, "FormulaPlane span path reached without spans");
+            let _ = vertex;
+            None
+        }
+    }
+
+    /// `vertex` reads a compressed range (see `VertexStore::reads_range`).
+    pub(crate) fn note_reads_range(&mut self, vertex: VertexId) {
+        if !self.store.reads_range(vertex) {
+            self.store.set_reads_range(vertex, true);
+            self.range_reader_count += 1;
+        }
+    }
+
+    /// Whether any formula reads a compressed range.
+    pub(crate) fn has_compressed_range_readers(&self) -> bool {
+        self.range_reader_count > 0
+    }
+
+    /// Drop `vertex`'s direct dependency edges from the admission count.
+    pub(crate) fn forget_dep_edges(&mut self, vertex: VertexId) {
+        let n = self.store.edge_offset(vertex) as usize;
+        if n > 0 {
+            self.store.set_edge_offset(vertex, 0);
+            self.dep_edge_total = self.dep_edge_total.saturating_sub(n);
+        }
+    }
+
+    fn add_dependent_edges(&mut self, dependent: VertexId, dependencies: &[VertexId]) {
+        self.note_dep_edges(dependent, dependencies.len());
+        #[cfg(any(test, feature = "legacy_oracle"))]
+        {
+            // Batch to avoid repeated CSR rebuilds and keep reverse edges current
+            #[cfg(any(test, feature = "legacy_oracle"))]
+            self.edges.begin_batch();
+
+            // If PK enabled, update order using a short-lived adapter without holding &mut self
+            // Track dependencies that should be skipped if rejecting cycle-creating edges
+            let mut skip_deps: rustc_hash::FxHashSet<VertexId> = rustc_hash::FxHashSet::default();
+            if self.pk_order.is_some()
+                && let Some(mut pk) = self.pk_order.take()
             {
-                let adapter = GraphAdapter { g: self };
-                for &dep_id in dependencies {
-                    match pk.try_add_edge(&adapter, dep_id, dependent) {
-                        Ok(_) => {}
-                        Err(_cycle) => {
-                            if self.config.pk_reject_cycle_edges {
-                                skip_deps.insert(dep_id);
-                            } else {
-                                pk.rebuild_full(&adapter);
+                pk.ensure_nodes(std::iter::once(dependent));
+                pk.ensure_nodes(dependencies.iter().copied());
+                {
+                    let adapter = GraphAdapter { g: self };
+                    for &dep_id in dependencies {
+                        match pk.try_add_edge(&adapter, dep_id, dependent) {
+                            Ok(_) => {}
+                            Err(_cycle) => {
+                                if self.config.pk_reject_cycle_edges {
+                                    skip_deps.insert(dep_id);
+                                } else {
+                                    pk.rebuild_full(&adapter);
+                                }
                             }
                         }
                     }
-                }
-            } // drop adapter
-            self.pk_order = Some(pk);
-        }
-
-        // Now mutate engine edges; if rejecting cycles, re-check and skip those that would create cycles
-        for &dep_id in dependencies {
-            if self.config.pk_reject_cycle_edges && skip_deps.contains(&dep_id) {
-                continue;
+                } // drop adapter
+                self.pk_order = Some(pk);
             }
-            self.edges.add_edge(dependent, dep_id);
-            #[cfg(test)]
-            {
-                if let Ok(mut g) = self.instr.lock() {
-                    g.edges_added += 1;
+
+            // Now mutate engine edges; if rejecting cycles, re-check and skip those that would create cycles
+            for &dep_id in dependencies {
+                if self.config.pk_reject_cycle_edges && skip_deps.contains(&dep_id) {
+                    continue;
+                }
+                self.edges.add_edge(dependent, dep_id);
+                #[cfg(test)]
+                {
+                    if let Ok(mut g) = self.instr.lock() {
+                        g.edges_added += 1;
+                    }
                 }
             }
-        }
 
-        self.edges.end_batch();
+            #[cfg(any(test, feature = "legacy_oracle"))]
+            self.edges.end_batch();
+        }
     }
 
     /// Like add_dependent_edges, but assumes caller is managing edges.begin_batch/end_batch
     fn add_dependent_edges_nobatch(&mut self, dependent: VertexId, dependencies: &[VertexId]) {
-        // If PK enabled, update order using a short-lived adapter without holding &mut self
-        let mut skip_deps: rustc_hash::FxHashSet<VertexId> = rustc_hash::FxHashSet::default();
-        if self.pk_order.is_some()
-            && let Some(mut pk) = self.pk_order.take()
+        self.note_dep_edges(dependent, dependencies.len());
+        #[cfg(any(test, feature = "legacy_oracle"))]
         {
-            pk.ensure_nodes(std::iter::once(dependent));
-            pk.ensure_nodes(dependencies.iter().copied());
+            // If PK enabled, update order using a short-lived adapter without holding &mut self
+            let mut skip_deps: rustc_hash::FxHashSet<VertexId> = rustc_hash::FxHashSet::default();
+            if self.pk_order.is_some()
+                && let Some(mut pk) = self.pk_order.take()
             {
-                let adapter = GraphAdapter { g: self };
-                for &dep_id in dependencies {
-                    match pk.try_add_edge(&adapter, dep_id, dependent) {
-                        Ok(_) => {}
-                        Err(_cycle) => {
-                            if self.config.pk_reject_cycle_edges {
-                                skip_deps.insert(dep_id);
-                            } else {
-                                pk.rebuild_full(&adapter);
+                pk.ensure_nodes(std::iter::once(dependent));
+                pk.ensure_nodes(dependencies.iter().copied());
+                {
+                    let adapter = GraphAdapter { g: self };
+                    for &dep_id in dependencies {
+                        match pk.try_add_edge(&adapter, dep_id, dependent) {
+                            Ok(_) => {}
+                            Err(_cycle) => {
+                                if self.config.pk_reject_cycle_edges {
+                                    skip_deps.insert(dep_id);
+                                } else {
+                                    pk.rebuild_full(&adapter);
+                                }
                             }
                         }
                     }
                 }
+                self.pk_order = Some(pk);
             }
-            self.pk_order = Some(pk);
-        }
 
-        for &dep_id in dependencies {
-            if self.config.pk_reject_cycle_edges && skip_deps.contains(&dep_id) {
-                continue;
-            }
-            self.edges.add_edge(dependent, dep_id);
-            #[cfg(test)]
-            {
-                if let Ok(mut g) = self.instr.lock() {
-                    g.edges_added += 1;
+            for &dep_id in dependencies {
+                if self.config.pk_reject_cycle_edges && skip_deps.contains(&dep_id) {
+                    continue;
+                }
+                self.edges.add_edge(dependent, dep_id);
+                #[cfg(test)]
+                {
+                    if let Ok(mut g) = self.instr.lock() {
+                        g.edges_added += 1;
+                    }
                 }
             }
         }
@@ -3115,6 +3266,7 @@ impl DependencyGraph {
         self.formula_dirty
             .legacy_extend(target_vids.iter().copied());
 
+        #[cfg(any(test, feature = "legacy_oracle"))]
         self.edges.begin_batch();
         for (i, tvid) in target_vids.iter().copied().enumerate() {
             let plan = &planned[i].3;
@@ -3177,11 +3329,13 @@ impl DependencyGraph {
             }
             self.add_range_dependent_edges(tvid, &plan.range_deps, sheet_id);
         }
+        #[cfg(any(test, feature = "legacy_oracle"))]
         self.edges.end_batch();
 
         Ok(planned.len())
     }
 
+    #[cfg(any(test, feature = "legacy_oracle"))]
     /// Public (crate) helper to add a single dependency edge (dependent -> dependency) used for restoration/undo.
     pub fn add_dependency_edge(
         &mut self,
@@ -3231,117 +3385,134 @@ impl DependencyGraph {
     }
 
     fn remove_dependent_edges(&mut self, vertex: VertexId) {
-        // Remove all outgoing edges from this vertex (its dependencies)
-        let dependencies = self.edges.out_edges(vertex);
-
-        self.edges.begin_batch();
-        if self.pk_order.is_some()
-            && let Some(mut pk) = self.pk_order.take()
+        self.forget_dep_edges(vertex);
+        if self.store.reads_range(vertex) {
+            self.store.set_reads_range(vertex, false);
+            self.range_reader_count = self.range_reader_count.saturating_sub(1);
+        }
+        #[cfg(any(test, feature = "legacy_oracle"))]
         {
-            for dep in &dependencies {
-                pk.remove_edge(*dep, vertex);
+            // Remove all outgoing edges from this vertex (its dependencies)
+            let dependencies = self.edges.out_edges(vertex);
+
+            #[cfg(any(test, feature = "legacy_oracle"))]
+            self.edges.begin_batch();
+            if self.pk_order.is_some()
+                && let Some(mut pk) = self.pk_order.take()
+            {
+                for dep in &dependencies {
+                    pk.remove_edge(*dep, vertex);
+                }
+                self.pk_order = Some(pk);
             }
-            self.pk_order = Some(pk);
-        }
-        for dep in dependencies {
-            self.edges.remove_edge(vertex, dep);
-        }
-        self.edges.end_batch();
+            for dep in dependencies {
+                self.edges.remove_edge(vertex, dep);
+            }
+            #[cfg(any(test, feature = "legacy_oracle"))]
+            self.edges.end_batch();
 
-        // Remove range dependencies and clean up stripes
-        if let Some(old_ranges) = self.formula_to_range_deps.remove(&vertex) {
-            let old_sheet_id = self.store.sheet_id(vertex);
+            // Remove range dependencies and clean up stripes
+            if let Some(old_ranges) = self.formula_to_range_deps.remove(&vertex) {
+                let old_sheet_id = self.store.sheet_id(vertex);
 
-            for range in &old_ranges {
-                // `Current` is the sheet the moved formula used to live on.
-                let sheet_id = self
-                    .sheet_reg
-                    .resolve_locator(&range.sheet, old_sheet_id)
-                    .unwrap_or(old_sheet_id);
-                let s_row = range.start_row.map(|b| b.index);
-                let e_row = range.end_row.map(|b| b.index);
-                let s_col = range.start_col.map(|b| b.index);
-                let e_col = range.end_col.map(|b| b.index);
+                for range in &old_ranges {
+                    // `Current` is the sheet the moved formula used to live on.
+                    let sheet_id = self
+                        .sheet_reg
+                        .resolve_locator(&range.sheet, old_sheet_id)
+                        .unwrap_or(old_sheet_id);
+                    let s_row = range.start_row.map(|b| b.index);
+                    let e_row = range.end_row.map(|b| b.index);
+                    let s_col = range.start_col.map(|b| b.index);
+                    let e_col = range.end_col.map(|b| b.index);
 
-                let mut keys_to_clean = FxHashSet::default();
+                    let mut keys_to_clean = FxHashSet::default();
 
-                let col_stripes = (s_row.is_none() && e_row.is_none())
-                    || (s_col.is_some() && e_col.is_some() && (s_row.is_none() || e_row.is_none()));
-                let row_stripes = (s_col.is_none() && e_col.is_none())
-                    || (s_row.is_some() && e_row.is_some() && (s_col.is_none() || e_col.is_none()));
+                    let col_stripes = (s_row.is_none() && e_row.is_none())
+                        || (s_col.is_some()
+                            && e_col.is_some()
+                            && (s_row.is_none() || e_row.is_none()));
+                    let row_stripes = (s_col.is_none() && e_col.is_none())
+                        || (s_row.is_some()
+                            && e_row.is_some()
+                            && (s_col.is_none() || e_col.is_none()));
 
-                if col_stripes && !row_stripes {
-                    let sc = s_col.unwrap_or(0);
-                    let ec = e_col.unwrap_or(sc);
-                    for col in sc..=ec {
-                        keys_to_clean.insert(StripeKey {
-                            sheet_id,
-                            stripe_type: StripeType::Column,
-                            index: col,
-                        });
-                    }
-                } else if row_stripes && !col_stripes {
-                    let sr = s_row.unwrap_or(0);
-                    let er = e_row.unwrap_or(sr);
-                    for row in sr..=er {
-                        keys_to_clean.insert(StripeKey {
-                            sheet_id,
-                            stripe_type: StripeType::Row,
-                            index: row,
-                        });
-                    }
-                } else {
-                    let start_row = s_row.unwrap_or(0);
-                    let start_col = s_col.unwrap_or(0);
-                    let end_row = e_row.unwrap_or(start_row);
-                    let end_col = e_col.unwrap_or(start_col);
-
-                    let height = end_row.saturating_sub(start_row) + 1;
-                    let width = end_col.saturating_sub(start_col) + 1;
-
-                    if self.config.enable_block_stripes && height > 1 && width > 1 {
-                        let start_block_row = start_row / BLOCK_H;
-                        let end_block_row = end_row / BLOCK_H;
-                        let start_block_col = start_col / BLOCK_W;
-                        let end_block_col = end_col / BLOCK_W;
-
-                        for block_row in start_block_row..=end_block_row {
-                            for block_col in start_block_col..=end_block_col {
-                                keys_to_clean.insert(StripeKey {
-                                    sheet_id,
-                                    stripe_type: StripeType::Block,
-                                    index: block_index(block_row * BLOCK_H, block_col * BLOCK_W),
-                                });
-                            }
-                        }
-                    } else if height > width {
-                        for col in start_col..=end_col {
+                    if col_stripes && !row_stripes {
+                        let sc = s_col.unwrap_or(0);
+                        let ec = e_col.unwrap_or(sc);
+                        for col in sc..=ec {
                             keys_to_clean.insert(StripeKey {
                                 sheet_id,
                                 stripe_type: StripeType::Column,
                                 index: col,
                             });
                         }
-                    } else {
-                        for row in start_row..=end_row {
+                    } else if row_stripes && !col_stripes {
+                        let sr = s_row.unwrap_or(0);
+                        let er = e_row.unwrap_or(sr);
+                        for row in sr..=er {
                             keys_to_clean.insert(StripeKey {
                                 sheet_id,
                                 stripe_type: StripeType::Row,
                                 index: row,
                             });
                         }
-                    }
-                }
+                    } else {
+                        let start_row = s_row.unwrap_or(0);
+                        let start_col = s_col.unwrap_or(0);
+                        let end_row = e_row.unwrap_or(start_row);
+                        let end_col = e_col.unwrap_or(start_col);
 
-                for key in keys_to_clean {
-                    if let Some(dependents) = self.stripe_to_dependents.get_mut(&key) {
-                        dependents.remove(&vertex);
-                        if dependents.is_empty() {
-                            self.stripe_to_dependents.remove(&key);
-                            #[cfg(test)]
-                            {
-                                if let Ok(mut g) = self.instr.lock() {
-                                    g.stripe_removes += 1;
+                        let height = end_row.saturating_sub(start_row) + 1;
+                        let width = end_col.saturating_sub(start_col) + 1;
+
+                        if self.config.enable_block_stripes && height > 1 && width > 1 {
+                            let start_block_row = start_row / BLOCK_H;
+                            let end_block_row = end_row / BLOCK_H;
+                            let start_block_col = start_col / BLOCK_W;
+                            let end_block_col = end_col / BLOCK_W;
+
+                            for block_row in start_block_row..=end_block_row {
+                                for block_col in start_block_col..=end_block_col {
+                                    keys_to_clean.insert(StripeKey {
+                                        sheet_id,
+                                        stripe_type: StripeType::Block,
+                                        index: block_index(
+                                            block_row * BLOCK_H,
+                                            block_col * BLOCK_W,
+                                        ),
+                                    });
+                                }
+                            }
+                        } else if height > width {
+                            for col in start_col..=end_col {
+                                keys_to_clean.insert(StripeKey {
+                                    sheet_id,
+                                    stripe_type: StripeType::Column,
+                                    index: col,
+                                });
+                            }
+                        } else {
+                            for row in start_row..=end_row {
+                                keys_to_clean.insert(StripeKey {
+                                    sheet_id,
+                                    stripe_type: StripeType::Row,
+                                    index: row,
+                                });
+                            }
+                        }
+                    }
+
+                    for key in keys_to_clean {
+                        if let Some(dependents) = self.stripe_to_dependents.get_mut(&key) {
+                            dependents.remove(&vertex);
+                            if dependents.is_empty() {
+                                self.stripe_to_dependents.remove(&key);
+                                #[cfg(test)]
+                                {
+                                    if let Ok(mut g) = self.instr.lock() {
+                                        g.stripe_removes += 1;
+                                    }
                                 }
                             }
                         }
@@ -3754,6 +3925,7 @@ impl DependencyGraph {
         self.authority_mark_dirty(vertex_ids)
     }
 
+    #[cfg(any(test, feature = "legacy_oracle"))]
     fn collect_range_dependents_for_vertex(&self, vertex_id: VertexId) -> Vec<VertexId> {
         // Only a vertex with a position can sit inside a range. A symbol has none.
         let Some(position) = self.store.grid_addr(vertex_id) else {
@@ -3768,6 +3940,7 @@ impl DependencyGraph {
         )
     }
 
+    #[cfg(any(test, feature = "legacy_oracle"))]
     fn collect_range_dependents_for_rect(
         &self,
         sheet_id: SheetId,
@@ -3996,6 +4169,7 @@ impl DependencyGraph {
         &self.cell_to_vertex
     }
 
+    #[cfg(any(test, feature = "legacy_oracle"))]
     /// Borrow dependencies of a vertex when no pending edge delta exists.
     ///
     /// This enables zero-allocation traversal in hot scheduler paths.
@@ -4004,11 +4178,13 @@ impl DependencyGraph {
         self.edges.out_edges_ref(vertex_id)
     }
 
+    #[cfg(any(test, feature = "legacy_oracle"))]
     /// Get the dependencies of a vertex (for scheduler)
     pub(crate) fn get_dependencies(&self, vertex_id: VertexId) -> Vec<VertexId> {
         self.edges.out_edges(vertex_id)
     }
 
+    #[cfg(any(test, feature = "legacy_oracle"))]
     /// Check if a vertex has a self-loop
     pub(crate) fn has_self_loop(&self, vertex_id: VertexId) -> bool {
         if let Some(deps) = self.dependencies_slice(vertex_id) {
@@ -4018,6 +4194,7 @@ impl DependencyGraph {
         }
     }
 
+    #[cfg(any(test, feature = "legacy_oracle"))]
     /// Borrow dependents of a vertex when no pending edge delta exists.
     ///
     /// This enables zero-allocation traversal in hot scheduler paths.
@@ -4026,6 +4203,7 @@ impl DependencyGraph {
         self.edges.in_edges_ref(vertex_id)
     }
 
+    #[cfg(any(test, feature = "legacy_oracle"))]
     /// Get dependents of a vertex (vertices that depend on this vertex)
     ///
     /// Delta-aware: pending edge mutations that have not been folded into the
@@ -4035,6 +4213,7 @@ impl DependencyGraph {
         self.edges.in_edges_merged(vertex_id)
     }
 
+    #[cfg(any(test, feature = "legacy_oracle"))]
     /// Bounded, delta-aware incoming-edge visitor used by read-only
     /// introspection. Unlike `get_dependents`, this never constructs the full
     /// in-degree before the caller's work limit can stop discovery.
@@ -4062,8 +4241,11 @@ impl DependencyGraph {
         let value_ref = self.vertex_values.get(&id).copied();
         let formula_ref = self.vertex_formulas.get(&id).copied();
 
-        // Get outgoing edges (dependencies)
+        // Outgoing edges (dependencies): legacy's, in oracle builds only.
+        #[cfg(any(test, feature = "legacy_oracle"))]
         let out_edges = self.get_dependencies(id);
+        #[cfg(not(any(test, feature = "legacy_oracle")))]
+        let out_edges = Vec::new();
 
         crate::engine::VertexSnapshot {
             coord,
@@ -4079,29 +4261,36 @@ impl DependencyGraph {
     /// Internal: Remove all edges for a vertex
     #[doc(hidden)]
     pub fn remove_all_edges(&mut self, id: VertexId) {
-        // Enter batch mode to avoid intermediate rebuilds
-        self.edges.begin_batch();
-
-        // Remove outgoing edges (this vertex's dependencies)
-        self.remove_dependent_edges(id);
-
-        // Remove incoming edges (vertices that depend on this vertex).
-        // get_dependents is delta-aware, so no rebuild is needed here (#125).
-        let dependents = self.get_dependents(id);
-        if self.pk_order.is_some()
-            && let Some(mut pk) = self.pk_order.take()
+        #[cfg(not(any(test, feature = "legacy_oracle")))]
+        let _ = (&id,);
+        #[cfg(any(test, feature = "legacy_oracle"))]
         {
-            for dependent in &dependents {
-                pk.remove_edge(id, *dependent);
-            }
-            self.pk_order = Some(pk);
-        }
-        for dependent in dependents {
-            self.edges.remove_edge(dependent, id);
-        }
+            // Enter batch mode to avoid intermediate rebuilds
+            #[cfg(any(test, feature = "legacy_oracle"))]
+            self.edges.begin_batch();
 
-        // Exit batch mode and rebuild once with all changes
-        self.edges.end_batch();
+            // Remove outgoing edges (this vertex's dependencies)
+            self.remove_dependent_edges(id);
+
+            // Remove incoming edges (vertices that depend on this vertex).
+            // get_dependents is delta-aware, so no rebuild is needed here (#125).
+            let dependents = self.get_dependents(id);
+            if self.pk_order.is_some()
+                && let Some(mut pk) = self.pk_order.take()
+            {
+                for dependent in &dependents {
+                    pk.remove_edge(id, *dependent);
+                }
+                self.pk_order = Some(pk);
+            }
+            for dependent in dependents {
+                self.edges.remove_edge(dependent, id);
+            }
+
+            // Exit batch mode and rebuild once with all changes
+            #[cfg(any(test, feature = "legacy_oracle"))]
+            self.edges.end_batch();
+        }
     }
 
     /// Internal: Mark vertex as having #REF! error
@@ -4138,7 +4327,28 @@ impl DependencyGraph {
     /// Internal: Mark all direct dependents as dirty
     #[doc(hidden)]
     pub fn mark_dependents_dirty(&mut self, id: VertexId) {
-        let dependents = self.get_dependents(id);
+        // Mid structural edit (or load) the store lags: queue the vertex;
+        // its closure (a superset of the direct readers) is marked after
+        // the resync.
+        if self.authority_defers_marks() {
+            self.authority_queue_dirty(id);
+            return;
+        }
+        self.authority_sync();
+        let dependents: Vec<VertexId> = match self.authority_cell_of_vertex(id) {
+            Some((sheet, row, col)) => {
+                crate::engine::graph::DependencyGraph::authority_direct_grid_dependents(
+                    self.authority_host().store(),
+                    sheet,
+                    &crate::engine::authority::geom::Rect::cell(row, col),
+                )
+                .cells()
+                .into_iter()
+                .filter_map(|c| self.authority_vertex_of_cell(c))
+                .collect()
+            }
+            None => Vec::new(),
+        };
         for dep_id in dependents {
             self.store.set_dirty(dep_id, true);
             self.formula_dirty.legacy_insert(dep_id);
@@ -4168,7 +4378,12 @@ impl DependencyGraph {
     /// Update edge cache coordinate
     #[doc(hidden)]
     pub fn update_edge_grid_addr(&mut self, id: VertexId, coord: GridAddr) {
-        self.edges.update_addr(id, VertexAddr::grid(coord));
+        #[cfg(not(any(test, feature = "legacy_oracle")))]
+        let _ = (&id, &coord);
+        #[cfg(any(test, feature = "legacy_oracle"))]
+        {
+            self.edges.update_addr(id, VertexAddr::grid(coord));
+        }
     }
 
     /// Mark vertex as deleted (tombstone)
@@ -4212,12 +4427,14 @@ impl DependencyGraph {
         self.store.is_deleted(id)
     }
 
+    #[cfg(any(test, feature = "legacy_oracle"))]
     /// Force edge rebuild (internal use)
     #[doc(hidden)]
     pub fn rebuild_edges(&mut self) {
         self.edges.rebuild();
     }
 
+    #[cfg(any(test, feature = "legacy_oracle"))]
     /// Fold pending edge deltas into the CSR base ahead of a read-heavy phase
     /// (scheduling/evaluation), restoring the zero-allocation slice fast
     /// paths. No-op when no deltas are pending. This is the read-side half of
@@ -4227,12 +4444,14 @@ impl DependencyGraph {
         self.edges.rebuild();
     }
 
+    #[cfg(any(test, feature = "legacy_oracle"))]
     /// Get delta size (internal use)
     #[doc(hidden)]
     pub fn edges_delta_size(&self) -> usize {
         self.edges.delta_size()
     }
 
+    #[cfg(any(test, feature = "legacy_oracle"))]
     /// Number of full CSR rebuilds performed so far (observability; used by
     /// the #125 rebuild-amortization regression tests).
     #[doc(hidden)]
