@@ -2980,6 +2980,38 @@ pub struct EvalPlan {
     pub target_cells: Vec<String>,
 }
 
+/// Whether the configured FormulaPlane mode is ignored (spans never placed):
+/// always under `unified_authority`. Test builds of the default
+/// configuration also honour `FZ_M2_FORCE_PLANE_OFF`, the M2 triage oracle
+/// (legacy with spans off, which the authority must reproduce).
+#[inline]
+fn plane_mode_ignored() -> bool {
+    #[cfg(feature = "unified_authority")]
+    {
+        true
+    }
+    #[cfg(all(
+        not(feature = "unified_authority"),
+        any(test, feature = "test-support")
+    ))]
+    {
+        static FORCED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *FORCED.get_or_init(|| std::env::var_os("FZ_M2_FORCE_PLANE_OFF").is_some())
+    }
+    #[cfg(not(any(feature = "unified_authority", test, feature = "test-support")))]
+    {
+        false
+    }
+}
+
+/// Test-support probe for sibling-crate tests: true when span placement is
+/// off because the FormulaPlane mode is ignored (see `plane_mode_ignored`).
+#[cfg(feature = "test-support")]
+#[doc(hidden)]
+pub fn formula_plane_mode_ignored_for_test() -> bool {
+    plane_mode_ignored()
+}
+
 impl<R> Engine<R>
 where
     R: EvaluationContext,
@@ -2991,6 +3023,18 @@ where
     /// rejects these at build; this re-validates configs assembled via
     /// struct literals.
     pub fn new(resolver: R, config: EvalConfig) -> Self {
+        // Under the unified authority the FormulaPlane mode is accepted and
+        // ignored (design §10). Normalizing the stored mode keeps external
+        // readers of `config` (loaders choosing a span-preparation route) on
+        // the per-cell path; engine reads go through `formula_plane_mode()`.
+        let config = if plane_mode_ignored() {
+            EvalConfig {
+                formula_plane_mode: FormulaPlaneMode::Off,
+                ..config
+            }
+        } else {
+            config
+        };
         if let Err(msg) = config.cycle.validate() {
             panic!("invalid CycleConfig: {msg}");
         }
@@ -6414,18 +6458,9 @@ where
     /// accepted and ignored.
     #[inline]
     pub(crate) fn formula_plane_mode(&self) -> FormulaPlaneMode {
-        #[cfg(feature = "unified_authority")]
-        {
+        if plane_mode_ignored() {
             FormulaPlaneMode::Off
-        }
-        #[cfg(not(feature = "unified_authority"))]
-        {
-            // Test-only oracle for M2 triage: the legacy engine with spans
-            // off, which is what the authority must reproduce.
-            #[cfg(test)]
-            if std::env::var_os("FZ_M2_FORCE_PLANE_OFF").is_some() {
-                return FormulaPlaneMode::Off;
-            }
+        } else {
             self.config.formula_plane_mode
         }
     }
