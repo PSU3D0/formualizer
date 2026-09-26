@@ -279,8 +279,7 @@ struct PreparationRegion {
     end_col: u32,
 }
 
-// Span roots dedupe by exact demanded-region identity. Overlapping, non-identical
-// regions remain ordered entries; downstream demand treats those entries as a union.
+// Target roots dedupe by identity; they keep their first-seen order.
 struct OrderedTargetProducers {
     ordered: Vec<crate::engine::target_preparation::TargetProducer>,
     seen: FxHashSet<crate::engine::target_preparation::TargetProducer>,
@@ -457,7 +456,7 @@ type PreparedStagedFormulaBatches = (
 );
 
 /// Backend-neutral source-family ingress. Adapters may prepare candidates and
-/// submit exact replay, but FormulaPlane authority remains engine-owned.
+/// submit exact replay; every formula is still materialized per cell.
 #[doc(hidden)]
 pub struct SourceFormulaIngress<'a, R> {
     engine: &'a mut Engine<R>,
@@ -1055,9 +1054,7 @@ pub struct Engine<R> {
     /// Function-registry semantic epoch and runtime-provider revision as of
     /// the last time retained SCCs were reconciled against them. A newer
     /// epoch dirties only the retained members whose formula calls a changed
-    /// function (or every member when the change log is incomplete), the
-    /// same rule FormulaPlane spans use in
-    /// [`Self::observe_function_semantic_epoch`].
+    /// function (or every member when the change log is incomplete).
     retained_scc_function_epoch_seen: u64,
     retained_scc_provider_revision_seen: Option<u64>,
     /// Retained members that were already dirty when the current request
@@ -1082,11 +1079,9 @@ pub struct Engine<R> {
     /// something iterated — zero cost otherwise.
     iterative_state_values: FxHashMap<VertexId, LiteralValue>,
 
-    /// Global function-registry semantic epoch observed after the latest
-    /// conservative FormulaPlane invalidation.
+    /// Global function-registry semantic epoch last observed.
     function_semantic_epoch_seen: u64,
-    /// Runtime-provider semantic revision observed after the latest conservative
-    /// FormulaPlane invalidation.
+    /// Runtime-provider semantic revision last observed.
     function_provider_revision_seen: Option<u64>,
 
     #[cfg(feature = "tracing")]
@@ -3739,7 +3734,6 @@ where
     pub fn add_sheet(&mut self, name: &str) -> Result<SheetId, ExcelError> {
         let id = self.graph.add_sheet(name)?;
         self.ensure_arrow_sheet(name);
-        // Adding a sheet does not change any existing span result or dependency.
         self.mark_topology_edited();
         Ok(id)
     }
@@ -4138,7 +4132,7 @@ where
         self.graph.get_evaluation_vertices()
     }
 
-    /// Return read-only baseline counters for FormulaPlane/dispatch benchmarking.
+    /// Return read-only baseline counters for dispatch benchmarking.
     pub fn baseline_stats(&self) -> EngineBaselineStats {
         let graph = self.graph.baseline_stats();
         EngineBaselineStats {
@@ -5226,8 +5220,8 @@ where
                 }
             }
             LoggedEditImpact::Topology => {
-                // FormulaPlane demotion and some structural entry points already
-                // publish topology invalidation. Do not bump the same batch twice.
+                // Some structural entry points already publish topology
+                // invalidation. Do not bump the same batch twice.
                 if self.topology_epoch == baseline.topology_epoch {
                     self.mark_topology_edited();
                 }
@@ -12162,7 +12156,7 @@ where
             }
             ChangeEvent::VertexMoved { .. } | ChangeEvent::FormulaAdjusted { .. } => {
                 // Structural entry points publish their axis delta once after
-                // graph, Arrow, and span geometry commits.
+                // the graph and Arrow commits.
             }
             ChangeEvent::SetRowVisibility { sheet_id, row0, .. } => {
                 self.record_structural_change(StructuralScope::Region(Region::whole_row(
@@ -13896,10 +13890,8 @@ where
         self.evaluate_all_coordinator()
     }
 
-    /// Central FormulaPlane-aware coordinator for `evaluate_all`. In
-    /// `AuthoritativeExperimental` mode every call enters the FormulaPlane
-    /// coordinator; the coordinator itself composes with private legacy
-    /// primitives for legacy-only work.
+    /// Coordinator for `evaluate_all`: starts the evaluation request and runs
+    /// the per-cell pass.
     fn evaluate_all_coordinator(&mut self) -> Result<EvalResult, ExcelError> {
         self.require_unified_authority()?;
         self.begin_evaluation_request();
@@ -13941,17 +13933,12 @@ where
         Ok((computed_vertices, cycle_count))
     }
 
-    /// Legacy `evaluate_all` body, reachable from the FormulaPlane coordinator
-    /// when no active spans exist or FormulaPlane authority is not in
-    /// `AuthoritativeExperimental` mode. This is now an internal primitive; it
-    /// must not be invoked directly from public APIs.
+    /// Per-cell `evaluate_all` body, reached through the coordinator. This is
+    /// an internal primitive; it must not be invoked directly from public APIs.
     ///
     /// Does NOT call `begin_evaluation_request` (cycle-telemetry reset +
-    /// per-recalc clock sample): the FormulaPlane coordinator composes this
-    /// primitive *after* `evaluate_legacy_cycle_prepass` may have accumulated
-    /// counts (G8 demotion path), and both sub-passes belong to ONE request /
-    /// one clock sample; request begin happens at the public entry points /
-    /// coordinators instead.
+    /// per-recalc clock sample): request begin happens at the public entry
+    /// points / coordinators, so one request keeps one clock sample.
     fn evaluate_all_legacy_impl(&mut self) -> Result<EvalResult, ExcelError> {
         self.reset_virtual_dep_telemetry_if_disabled();
         let _span_eval =
