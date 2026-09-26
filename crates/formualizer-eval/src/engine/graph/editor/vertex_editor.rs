@@ -491,12 +491,19 @@ impl<'g> VertexEditor<'g> {
                         let cell_ref = self.graph.make_cell_ref_internal(sid, c.row(), c.col());
                         self.set_cell_formula(cell_ref, f);
                     }
-                    for dep in old_dependencies {
-                        self.graph.add_dependency_edge(new_id, dep)?;
+                    // Legacy's edges are rebuilt from the restored formula
+                    // (the authority reads formulas, not recorded edges).
+                    #[cfg(any(test, feature = "legacy_oracle"))]
+                    {
+                        for dep in old_dependencies {
+                            self.graph.add_dependency_edge(new_id, dep)?;
+                        }
+                        for parent in old_dependents {
+                            self.graph.add_dependency_edge(parent, new_id)?;
+                        }
                     }
-                    for parent in old_dependents {
-                        self.graph.add_dependency_edge(parent, new_id)?;
-                    }
+                    #[cfg(not(any(test, feature = "legacy_oracle")))]
+                    let _ = (old_dependencies, old_dependents, new_id);
                 }
             }
             ChangeEvent::DefineName { name, scope, .. } => {
@@ -671,8 +678,8 @@ impl<'g> VertexEditor<'g> {
             });
         }
 
-        // Get dependents before removing edges (delta-aware; no rebuild needed)
-        let dependents = self.graph.get_dependents(id);
+        // Its direct readers (legacy's in-edges) before anything changes.
+        let dependents = self.graph.authority_in_edge_readers(id);
 
         // Capture old state (dependencies & dependents) BEFORE edge removal
         let (
@@ -693,8 +700,15 @@ impl<'g> VertexEditor<'g> {
             (
                 self.graph.get_value(id),
                 self.get_formula_ast(id),
-                self.graph.get_dependencies(id), // outgoing deps
-                dependents.clone(),              // captured earlier
+                // Outgoing edges: legacy's, in oracle builds only.
+                {
+                    #[cfg(any(test, feature = "legacy_oracle"))]
+                    let deps = self.graph.get_dependencies(id);
+                    #[cfg(not(any(test, feature = "legacy_oracle")))]
+                    let deps = Vec::new();
+                    deps
+                },
+                dependents.clone(), // captured earlier
                 coord,
                 Some(sheet_id),
                 Some(kind),
@@ -767,6 +781,7 @@ impl<'g> VertexEditor<'g> {
     /// name-hijacked cell (#304). Every in-tree caller iterates `grid_vertices_in_sheet`
     /// and so cannot reach this, but the method is public, so refuse explicitly.
     pub fn move_vertex(&mut self, id: VertexId, new_coord: GridAddr) -> Result<(), EditorError> {
+        self.graph.authority_note_structural(false);
         // Check if vertex exists
         if !self.graph.vertex_exists(id) {
             return Err(EditorError::Excel(
@@ -873,7 +888,7 @@ impl<'g> VertexEditor<'g> {
 
             // Mark dependents as dirty. get_dependents is delta-aware, so no
             // CSR rebuild is required even when edits are pending (#125).
-            let dependents = self.graph.get_dependents(id);
+            let dependents = self.graph.authority_in_edge_readers(id);
             for dep in &dependents {
                 self.graph.set_dirty(*dep, true);
             }
@@ -889,7 +904,8 @@ impl<'g> VertexEditor<'g> {
         Ok(summary)
     }
 
-    /// Add an edge between two vertices
+    /// No-op kept for journal replay of old `EdgeAdded` events: the
+    /// dependency authority derives every edge from formulas.
     pub fn add_edge(&mut self, from: VertexId, to: VertexId) -> bool {
         if from == to {
             return false; // Prevent self-loops
@@ -900,7 +916,7 @@ impl<'g> VertexEditor<'g> {
         true
     }
 
-    /// Remove an edge between two vertices
+    /// No-op kept for journal replay of old `EdgeRemoved` events.
     pub fn remove_edge(&mut self, _from: VertexId, _to: VertexId) -> bool {
         // TODO: Remove edge through proper API when available
         true
@@ -913,6 +929,18 @@ impl<'g> VertexEditor<'g> {
         before: u32,
         count: u32,
     ) -> Result<ShiftSummary, EditorError> {
+        let result = self.insert_rows_impl(sheet_id, before, count);
+        self.graph.authority_end_structural();
+        result
+    }
+
+    fn insert_rows_impl(
+        &mut self,
+        sheet_id: SheetId,
+        before: u32,
+        count: u32,
+    ) -> Result<ShiftSummary, EditorError> {
+        self.graph.authority_note_structural(true);
         if count == 0 {
             return Ok(ShiftSummary::default());
         }
@@ -921,10 +949,9 @@ impl<'g> VertexEditor<'g> {
 
         // Begin batch for efficiency
         self.begin_batch();
-
         let conservative = crate::engine::graph::StructuralOccupancy::conservative();
         let occupancy = self.structural_occupancy.as_ref().unwrap_or(&conservative);
-        let range_dependents = self.graph.compressed_range_dependents_for_structural_edit(
+        let range_dependents = self.graph.authority_structural_band_readers(
             sheet_id,
             crate::engine::graph::StructuralEdit::InsertRows { before },
             occupancy,
@@ -1035,6 +1062,18 @@ impl<'g> VertexEditor<'g> {
         start: u32,
         count: u32,
     ) -> Result<ShiftSummary, EditorError> {
+        let result = self.delete_rows_impl(sheet_id, start, count);
+        self.graph.authority_end_structural();
+        result
+    }
+
+    fn delete_rows_impl(
+        &mut self,
+        sheet_id: SheetId,
+        start: u32,
+        count: u32,
+    ) -> Result<ShiftSummary, EditorError> {
+        self.graph.authority_note_structural(true);
         if count == 0 {
             return Ok(ShiftSummary::default());
         }
@@ -1058,7 +1097,7 @@ impl<'g> VertexEditor<'g> {
             .collect();
         let conservative = crate::engine::graph::StructuralOccupancy::conservative();
         let occupancy = self.structural_occupancy.as_ref().unwrap_or(&conservative);
-        let range_dependents = self.graph.compressed_range_dependents_for_structural_edit(
+        let range_dependents = self.graph.authority_structural_band_readers(
             sheet_id,
             crate::engine::graph::StructuralEdit::DeleteRows {
                 start,
@@ -1169,6 +1208,18 @@ impl<'g> VertexEditor<'g> {
         before: u32,
         count: u32,
     ) -> Result<ShiftSummary, EditorError> {
+        let result = self.insert_columns_impl(sheet_id, before, count);
+        self.graph.authority_end_structural();
+        result
+    }
+
+    fn insert_columns_impl(
+        &mut self,
+        sheet_id: SheetId,
+        before: u32,
+        count: u32,
+    ) -> Result<ShiftSummary, EditorError> {
+        self.graph.authority_note_structural(true);
         if count == 0 {
             return Ok(ShiftSummary::default());
         }
@@ -1177,10 +1228,9 @@ impl<'g> VertexEditor<'g> {
 
         // Begin batch for efficiency
         self.begin_batch();
-
         let conservative = crate::engine::graph::StructuralOccupancy::conservative();
         let occupancy = self.structural_occupancy.as_ref().unwrap_or(&conservative);
-        let range_dependents = self.graph.compressed_range_dependents_for_structural_edit(
+        let range_dependents = self.graph.authority_structural_band_readers(
             sheet_id,
             crate::engine::graph::StructuralEdit::InsertColumns { before },
             occupancy,
@@ -1291,6 +1341,18 @@ impl<'g> VertexEditor<'g> {
         start: u32,
         count: u32,
     ) -> Result<ShiftSummary, EditorError> {
+        let result = self.delete_columns_impl(sheet_id, start, count);
+        self.graph.authority_end_structural();
+        result
+    }
+
+    fn delete_columns_impl(
+        &mut self,
+        sheet_id: SheetId,
+        start: u32,
+        count: u32,
+    ) -> Result<ShiftSummary, EditorError> {
+        self.graph.authority_note_structural(true);
         if count == 0 {
             return Ok(ShiftSummary::default());
         }
@@ -1314,7 +1376,7 @@ impl<'g> VertexEditor<'g> {
             .collect();
         let conservative = crate::engine::graph::StructuralOccupancy::conservative();
         let occupancy = self.structural_occupancy.as_ref().unwrap_or(&conservative);
-        let range_dependents = self.graph.compressed_range_dependents_for_structural_edit(
+        let range_dependents = self.graph.authority_structural_band_readers(
             sheet_id,
             crate::engine::graph::StructuralEdit::DeleteColumns {
                 start,
@@ -1910,6 +1972,32 @@ impl<'g> VertexEditor<'g> {
         to_row: u32,
         to_col: u32,
     ) -> Result<RangeSummary, EditorError> {
+        let result = self.move_range_impl(
+            sheet_id,
+            from_start_row,
+            from_start_col,
+            from_end_row,
+            from_end_col,
+            to_sheet_id,
+            to_row,
+            to_col,
+        );
+        self.graph.authority_end_structural();
+        result
+    }
+
+    fn move_range_impl(
+        &mut self,
+        sheet_id: SheetId,
+        from_start_row: u32,
+        from_start_col: u32,
+        from_end_row: u32,
+        from_end_col: u32,
+        to_sheet_id: SheetId,
+        to_row: u32,
+        to_col: u32,
+    ) -> Result<RangeSummary, EditorError> {
+        self.graph.authority_note_structural(true);
         // First copy the range
         let mut summary = self.copy_range(
             sheet_id,

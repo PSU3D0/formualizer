@@ -395,6 +395,12 @@ impl<'g> BulkIngestBuilder<'g> {
                     batch_count += 1;
 
                     let tp0 = Instant::now();
+                    let phase_span = crate::engine::trace::fz_span!(
+                        tracing::Level::INFO,
+                        "builder",
+                        "builder.phase",
+                        phase = "plan"
+                    );
                     let mut prepared: Vec<Option<(AstNodeId, DependencyPlanRow)>> =
                         (0..chunk.len()).map(|_| None).collect();
                     let mut pipeline_inputs = Vec::new();
@@ -466,6 +472,7 @@ impl<'g> BulkIngestBuilder<'g> {
                     let plan = dependency_plan_from_rows(self.g.sheet_reg(), stage.id, &row_plans);
                     edges_adj.reserve(plan.formula_targets.len());
                     t_plan_ms += tp0.elapsed().as_millis();
+                    drop(phase_span);
                     n_targets += plan.formula_targets.len();
                     n_globals += plan.global_cells.len();
 
@@ -474,6 +481,12 @@ impl<'g> BulkIngestBuilder<'g> {
 
                     // Ensure targets and referenced cells exist using batch allocation when missing.
                     let te0 = Instant::now();
+                    let phase_span = crate::engine::trace::fz_span!(
+                        tracing::Level::INFO,
+                        "builder",
+                        "builder.phase",
+                        phase = "ensure"
+                    );
                     let (all_vids, add_batch) = self
                         .g
                         .ensure_vertices_batch_packed_ordered(&plan.vertex_pool_packed);
@@ -485,9 +498,16 @@ impl<'g> BulkIngestBuilder<'g> {
                         }
                     }
                     t_ensure_ms += te0.elapsed().as_millis();
+                    drop(phase_span);
 
                     // Assign formula vertices using the canonical AST ids and flags produced by the pipeline.
                     let ta0 = Instant::now();
+                    let phase_span = crate::engine::trace::fz_span!(
+                        tracing::Level::INFO,
+                        "builder",
+                        "builder.phase",
+                        phase = "assign"
+                    );
                     self.g.reserve_formula_metadata(plan.formula_targets.len());
 
                     let mut dep_vids: Vec<VertexId> = Vec::with_capacity(plan.global_cells.len());
@@ -524,9 +544,22 @@ impl<'g> BulkIngestBuilder<'g> {
                     }
                     total_formulas += target_vids.len();
                     t_assign_ms += ta0.elapsed().as_millis();
+                    drop(phase_span);
 
                     // Collect edges into adjacency rows for a later one-shot CSR build.
                     let ted0 = Instant::now();
+                    let phase_span = crate::engine::trace::fz_span!(
+                        tracing::Level::INFO,
+                        "builder",
+                        "builder.phase",
+                        phase = "edges"
+                    );
+                    let ranges_phase_span = crate::engine::trace::fz_span!(
+                        tracing::Level::INFO,
+                        "builder",
+                        "builder.phase",
+                        phase = "ranges"
+                    );
                     for (fi, &tvid) in target_vids.iter().enumerate() {
                         let mut row: smallvec::SmallVec<[u32; 8]> = smallvec::SmallVec::new();
                         if let Some(indices) = plan.per_formula_cells.get(fi) {
@@ -590,6 +623,8 @@ impl<'g> BulkIngestBuilder<'g> {
                         }
                         edges_adj.push((tvid.0, row.into_vec()));
                     }
+                    drop(ranges_phase_span);
+                    drop(phase_span);
                     t_edges_ms += ted0.elapsed().as_millis();
                 }
 
@@ -621,8 +656,25 @@ impl<'g> BulkIngestBuilder<'g> {
             eprintln!("[fz][ingest] beginning finalize");
         }
 
+        // Admission's direct-edge count (legacy's CSR edges) is kept in
+        // every build; the CSR itself only in oracle builds.
+        #[cfg(not(any(test, feature = "legacy_oracle")))]
+        {
+            for (tvid_raw, row) in &edges_adj {
+                self.g
+                    .note_dep_edges(crate::engine::vertex::VertexId(*tvid_raw), row.len());
+            }
+            let _ = (&coord_accum, &id_accum);
+        }
         // Finalize: pick strategy based on graph size and number of edge rows
+        #[cfg(any(test, feature = "legacy_oracle"))]
         if !edges_adj.is_empty() {
+            let _csr_phase_span = crate::engine::trace::fz_span!(
+                tracing::Level::INFO,
+                "builder",
+                "builder.phase",
+                phase = "csr"
+            );
             let rows = edges_adj.len();
             let total_vertices_now = self.g.vertex_count();
             let t_fin0 = Instant::now();
@@ -684,6 +736,10 @@ impl<'g> BulkIngestBuilder<'g> {
                     eprintln!("[fz][ingest] finalize: building CSR");
                 }
                 let t_csr0 = Instant::now();
+                for (tvid_raw, row) in &edges_adj {
+                    self.g
+                        .note_dep_edges(crate::engine::vertex::VertexId(*tvid_raw), row.len());
+                }
                 self.g
                     .build_edges_from_adjacency(edges_adj, coord_accum, id_accum);
                 if dbg {
@@ -707,6 +763,14 @@ impl<'g> BulkIngestBuilder<'g> {
 
         // Restore config
         self.g.set_sheet_index_mode(self.cfg_saved.sheet_index_mode);
+        crate::engine::trace::fz_event!(
+            tracing::Level::INFO,
+            "builder",
+            "builder.summary",
+            vertices = total_vertices,
+            edges = total_edges,
+            formulas = total_formulas
+        );
         Ok(BulkIngestSummary {
             sheets: 0, // could populate later
             vertices: total_vertices,

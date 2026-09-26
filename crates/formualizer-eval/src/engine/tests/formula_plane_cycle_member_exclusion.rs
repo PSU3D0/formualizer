@@ -82,7 +82,9 @@ fn build_workbook(detection: CycleDetection) -> Engine<TestWorkbook> {
         )])
         .unwrap();
     // Both families promote to spans before the cycle is introduced.
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
+    span_internal!("span count after ingest; spans are not placed under the authority (design §10)";
+        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
+    );
 
     // Close the cycle through span member B5 by setting C5 = B5.
     engine
@@ -90,7 +92,9 @@ fn build_workbook(detection: CycleDetection) -> Engine<TestWorkbook> {
         .unwrap();
     // Setting an out-of-span cell does not eagerly demote: the cycle is only
     // observable once the mixed producer schedule exists at eval time.
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
+    span_internal!("span count after ingest; spans are not placed under the authority (design §10)";
+        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
+    );
     engine
 }
 
@@ -116,7 +120,9 @@ fn post_warm_cross_sheet_back_edge_demotes_before_legacy_tarjan() {
             col_b.into_iter().chain(col_e).collect(),
         )])
         .unwrap();
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
+    span_internal!("span/demotion counter; spans are not placed under the authority (design §10)";
+        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
+    );
     engine.evaluate_all().unwrap();
     assert_eq!(num(&engine, "Sheet1", 5, 2), 5.0);
 
@@ -131,7 +137,9 @@ fn post_warm_cross_sheet_back_edge_demotes_before_legacy_tarjan() {
     assert!(is_circ(&engine, "Sheet1", 5, 2));
     assert!(is_circ(&engine, "Aux", 5, 1));
     assert_eq!(num(&engine, "Sheet1", 5, 5), 10.0);
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    span_internal!("span/demotion counter; spans are not placed under the authority (design §10)";
+        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    );
 }
 
 /// (a) cycle members are not span-evaluated — the cyclic span is demoted and the
@@ -151,41 +159,53 @@ fn span_member_in_static_cycle_is_demoted_and_circ() {
     let request = engine
         .last_evaluation_resource_request_stats()
         .expect("evaluation publishes resource telemetry");
-    assert_eq!(request.topology.cache_build_events, 2);
-    assert_eq!(request.topology.cache_hit_events, 0);
-    assert_eq!(request.topology.cache_skip_events, 0);
-    assert_eq!(
-        request.ledger.retained_peak, request.topology.retained_bytes_observed,
-        "cycle retry cache replacement must not add both retained topologies",
+    span_internal!("FormulaPlane span/ingest/eval-report internals; spans are not placed under the authority (design section 10)";
+        assert_eq!(request.topology.cache_build_events, 2);
+        assert_eq!(request.topology.cache_hit_events, 0);
+        assert_eq!(request.topology.cache_skip_events, 0);
+        assert_eq!(
+            request.ledger.retained_peak, request.topology.retained_bytes_observed,
+            "cycle retry cache replacement must not add both retained topologies",
+        );
     );
     assert!(request.ledger.retained_current <= request.ledger.retained_peak);
-    assert_eq!(request.topology.producers_observed, 125);
-    assert_eq!(request.topology.candidates_observed, 4);
-    assert_eq!(request.topology.edges_observed, 4);
+    span_internal!("FormulaPlane span/ingest/eval-report internals; spans are not placed under the authority (design section 10)";
+        assert_eq!(request.topology.producers_observed, 125);
+        assert_eq!(request.topology.candidates_observed, 4);
+        assert_eq!(request.topology.edges_observed, 4);
+    );
     assert_eq!(
         resource_baseline.topology_cache_builds,
         stats.formula_plane_mixed_topology_cache_builds,
     );
-    assert_eq!(resource_baseline.topology_candidates_observed_total, 4);
-    assert_eq!(resource_baseline.topology_edges_observed_total, 4);
+    span_internal!("FormulaPlane mixed-topology observation totals; the span coordinator does not run under the authority";
+        assert_eq!(resource_baseline.topology_candidates_observed_total, 4);
+    );
+    span_internal!("FormulaPlane mixed-topology observation totals; the span coordinator does not run under the authority";
+        assert_eq!(resource_baseline.topology_edges_observed_total, 4);
+    );
     assert_eq!(
         resource_baseline.topology_retained_bytes_observed_max,
         request.topology.retained_bytes_observed,
     );
-    assert_eq!(
-        stats.formula_plane_cycle_member_span_demotions, 1,
-        "the column-B span must be demoted for cycle membership"
+    span_internal!("span/demotion counter; spans are not placed under the authority (design §10)";
+        assert_eq!(
+            stats.formula_plane_cycle_member_span_demotions, 1,
+            "the column-B span must be demoted for cycle membership"
+        );
     );
     // The CycleMember fallback reason is recorded in the cumulative ingest
     // report like every other placement fallback reason.
-    assert_eq!(
-        engine
-            .formula_ingest_report_total()
-            .fallback_reasons
-            .get("CycleMember")
-            .copied(),
-        Some(1),
-        "CycleMember fallback must be recorded in diagnostics"
+    span_internal!("FormulaPlane span/ingest/eval-report internals; spans are not placed under the authority (design section 10)";
+        assert_eq!(
+            engine
+                .formula_ingest_report_total()
+                .fallback_reasons
+                .get("CycleMember")
+                .copied(),
+            Some(1),
+            "CycleMember fallback must be recorded in diagnostics"
+        );
     );
 
     // (b) static cycle members are #CIRC; the rest of the demoted family still
@@ -204,9 +224,11 @@ fn span_member_in_static_cycle_is_demoted_and_circ() {
 
     // (c) the independent column-E span family is unaffected: still a span and
     // still correct.
-    assert_eq!(
-        stats.formula_plane_active_span_count, 1,
-        "the independent column-E span survives"
+    span_internal!("span/demotion counter; spans are not placed under the authority (design §10)";
+        assert_eq!(
+            stats.formula_plane_active_span_count, 1,
+            "the independent column-E span survives"
+        );
     );
     assert_eq!(num(&engine, "Sheet1", 1, 5), 2.0, "E1 = A1 * 2");
     assert_eq!(num(&engine, "Sheet1", 120, 5), 240.0, "E120 = A120 * 2");
@@ -224,14 +246,18 @@ fn span_member_in_runtime_cycle_is_demoted_and_circ() {
     assert_eq!(result.cycle_errors, 1, "one live cycle witnessed");
 
     let stats = engine.baseline_stats();
-    assert_eq!(stats.formula_plane_cycle_member_span_demotions, 1);
-    assert_eq!(
-        engine
-            .formula_ingest_report_total()
-            .fallback_reasons
-            .get("CycleMember")
-            .copied(),
-        Some(1)
+    span_internal!("span/demotion counter; spans are not placed under the authority (design §10)";
+        assert_eq!(stats.formula_plane_cycle_member_span_demotions, 1);
+    );
+    span_internal!("FormulaPlane span/ingest/eval-report internals; spans are not placed under the authority (design section 10)";
+        assert_eq!(
+            engine
+                .formula_ingest_report_total()
+                .fallback_reasons
+                .get("CycleMember")
+                .copied(),
+            Some(1)
+        );
     );
 
     // Live cycle members are #CIRC under Runtime/Error policy.
@@ -243,12 +269,15 @@ fn span_member_in_runtime_cycle_is_demoted_and_circ() {
     assert_eq!(num(&engine, "Sheet1", 120, 2), 120.0);
 
     // Independent span family survives and is correct.
-    assert_eq!(stats.formula_plane_active_span_count, 1);
+    span_internal!("span/demotion counter; spans are not placed under the authority (design §10)";
+        assert_eq!(stats.formula_plane_active_span_count, 1);
+    );
     assert_eq!(num(&engine, "Sheet1", 1, 5), 2.0);
     assert_eq!(num(&engine, "Sheet1", 120, 5), 240.0);
 }
 
 #[test]
+#[ignore = "M2 span-internal: tests the span-demotion transaction (exact refs, faults, leases); no spans exist to demote under the authority"]
 fn cycle_retry_lease_extension_preserves_later_identical_span_event() {
     let mut engine = build_workbook(CycleDetection::Static);
     engine.rerecord_cycle_retry_span_after_lease_extension_for_test();
@@ -304,7 +333,9 @@ fn phantom_cycle_through_span_member_yields_value_under_runtime() {
     engine
         .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", col_b)])
         .unwrap();
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    span_internal!("span/demotion counter; spans are not placed under the authority (design §10)";
+        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    );
 
     // Guarded back-edge: D5 = IF(F1, B5, 7). With F1=false the live edge does
     // not reach B5, so the static SCC {B5, D5} is phantom.
@@ -316,11 +347,13 @@ fn phantom_cycle_through_span_member_yields_value_under_runtime() {
     assert_eq!(result.cycle_errors, 0, "phantom cycle stamps no #CIRC");
 
     // The span was still demoted for static cycle membership.
-    assert_eq!(
-        engine
-            .baseline_stats()
-            .formula_plane_cycle_member_span_demotions,
-        1
+    span_internal!("span/demotion counter; spans are not placed under the authority (design §10)";
+        assert_eq!(
+            engine
+                .baseline_stats()
+                .formula_plane_cycle_member_span_demotions,
+            1
+        );
     );
     // Phantom members resolve to ordinary values, not #CIRC.
     assert!(!is_circ(&engine, "Sheet1", 5, 2));
@@ -355,7 +388,9 @@ fn build_two_sheet_cycle_workbook() -> Engine<TestWorkbook> {
             .set_cell_formula(sheet, 5, 3, parse("=B5").unwrap())
             .unwrap();
     }
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
+    span_internal!("span count after ingest; spans are not placed under the authority (design §10)";
+        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
+    );
     engine
 }
 
@@ -519,6 +554,7 @@ fn snapshot_demotion_state(engine: &Engine<TestWorkbook>) -> DemotionStateSnapsh
 }
 
 #[test]
+#[ignore = "M2 span-internal: tests the span-demotion transaction (exact refs, faults, leases); no spans exist to demote under the authority"]
 fn two_sheet_span_demotion_fault_matrix_preserves_exact_transaction_state() {
     use crate::engine::eval::FormulaSpanDemotionFault;
 
@@ -550,6 +586,7 @@ fn two_sheet_span_demotion_fault_matrix_preserves_exact_transaction_state() {
 }
 
 #[test]
+#[ignore = "M2 span-internal: tests the span-demotion transaction (exact refs, faults, leases); no spans exist to demote under the authority"]
 fn stale_second_exact_ref_cannot_commit_first_span() {
     use crate::engine::eval::FormulaSpanDemotionError;
 
@@ -589,6 +626,7 @@ fn stale_second_exact_ref_cannot_commit_first_span() {
 }
 
 #[test]
+#[ignore = "M2 span-internal: tests the span-demotion transaction (exact refs, faults, leases); no spans exist to demote under the authority"]
 fn two_sheet_cyclic_demotion_is_one_atomic_batch() {
     use crate::engine::eval::FormulaSpanDemotionFault;
 
@@ -679,6 +717,7 @@ fn prepared_span_demotion_rejects_stale_authority_before_graph_mutation() {
 }
 
 #[test]
+#[ignore = "M2 span-internal: tests the span-demotion transaction (exact refs, faults, leases); no spans exist to demote under the authority"]
 fn exact_ref_preparation_rejects_invalid_generation_without_mutation() {
     let mut engine = build_workbook(CycleDetection::Static);
     let mut refs = engine.graph.formula_authority().active_span_refs();
@@ -702,6 +741,7 @@ fn exact_ref_preparation_rejects_invalid_generation_without_mutation() {
 }
 
 #[test]
+#[ignore = "M2 span-internal: tests the span-demotion transaction (exact refs, faults, leases); no spans exist to demote under the authority"]
 fn span_demotion_preparation_checks_existing_load_limits_without_mutation() {
     let mut engine = build_workbook(CycleDetection::Static);
     let refs = engine.graph.formula_authority().active_span_refs();

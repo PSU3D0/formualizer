@@ -6,6 +6,7 @@
 pub mod pk;
 
 use crate::engine::graph::DependencyGraph;
+#[cfg(any(test, feature = "legacy_oracle"))]
 use crate::engine::vertex::VertexId;
 
 /// Adapter to expose the engine's dependency graph as a conceptual DAG view
@@ -21,6 +22,7 @@ impl<'a> GraphAdapter<'a> {
     }
 }
 
+#[cfg(any(test, feature = "legacy_oracle"))]
 impl pk::GraphView<VertexId> for GraphAdapter<'_> {
     fn successors(&self, n: VertexId, out: &mut Vec<VertexId>) {
         // Conceptual successors of a precedent are dependents in our storage

@@ -105,12 +105,14 @@ fn fill_down_fixture(mode: FormulaPlaneMode) -> Engine<TestWorkbook> {
     }
     let report = ingest(&mut engine, "Sheet1", formulas);
     if mode == FormulaPlaneMode::AuthoritativeExperimental {
-        assert_eq!(
-            report.shadow_accepted_span_cells,
-            u64::from(ROWS) * 4,
-            "{report:?}"
+        span_internal!("ingest report span/fallback counters; no span placement under the authority";
+            assert_eq!(
+                report.shadow_accepted_span_cells,
+                u64::from(ROWS) * 4,
+                "{report:?}"
+            );
+            assert_eq!(report.shadow_fallback_cells, 0, "{report:?}");
         );
-        assert_eq!(report.shadow_fallback_cells, 0, "{report:?}");
     }
     engine.evaluate_all().unwrap();
     engine
@@ -126,11 +128,13 @@ fn reference_returning_fill_down_parity_covers_anchors_and_cross_sheet_arms() {
         "Sheet1",
         (1..=ROWS).flat_map(|row| (5..=8).map(move |col| (row, col))),
     );
-    assert_eq!(
-        authoritative
-            .baseline_stats()
-            .formula_plane_active_span_count,
-        4
+    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
+        assert_eq!(
+            authoritative
+                .baseline_stats()
+                .formula_plane_active_span_count,
+            4
+        );
     );
 }
 
@@ -185,12 +189,14 @@ fn semantic_fixture(mode: FormulaPlaneMode) -> Engine<TestWorkbook> {
     }
     let report = ingest(&mut engine, "Sheet1", formulas);
     if mode == FormulaPlaneMode::AuthoritativeExperimental {
-        assert_eq!(
-            report.shadow_accepted_span_cells,
-            cases.len() as u64 * u64::from(ROWS),
-            "{report:?}"
+        span_internal!("ingest report span/fallback counters; no span placement under the authority";
+            assert_eq!(
+                report.shadow_accepted_span_cells,
+                cases.len() as u64 * u64::from(ROWS),
+                "{report:?}"
+            );
+            assert_eq!(report.shadow_fallback_cells, 0, "{report:?}");
         );
-        assert_eq!(report.shadow_fallback_cells, 0, "{report:?}");
     }
     engine.evaluate_all().unwrap();
     engine
@@ -259,8 +265,10 @@ fn iferror_wrapped_if_remains_legacy_but_value_identical() {
             .collect();
         let report = ingest(target, "Sheet1", records);
         if target.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental {
-            assert_eq!(report.shadow_accepted_span_cells, 0);
-            assert_eq!(report.shadow_fallback_cells, u64::from(ROWS));
+            span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
+                assert_eq!(report.shadow_accepted_span_cells, 0);
+                assert_eq!(report.shadow_fallback_cells, u64::from(ROWS));
+            );
         }
         target.evaluate_all().unwrap();
     }
@@ -294,8 +302,10 @@ fn spill_firewall_fixture(mode: FormulaPlaneMode) -> Engine<TestWorkbook> {
         .collect();
     let report = ingest(&mut engine, "Sheet1", records);
     if mode == FormulaPlaneMode::AuthoritativeExperimental {
-        assert_eq!(report.shadow_accepted_span_cells, 0, "{report:?}");
-        assert_eq!(report.shadow_fallback_cells, 4, "{report:?}");
+        span_internal!("ingest report span/fallback counters; no span placement under the authority";
+            assert_eq!(report.shadow_accepted_span_cells, 0, "{report:?}");
+            assert_eq!(report.shadow_fallback_cells, 4, "{report:?}");
+        );
     }
     engine.evaluate_all().unwrap();
     engine
@@ -356,12 +366,14 @@ fn union_dependencies_dirty_taken_and_untaken_arms() {
         engine.get_cell_value("Sheet1", 10, 4),
         Some(LiteralValue::Number(77.0))
     );
-    assert_eq!(
-        engine
-            .last_formula_plane_span_eval_report()
-            .unwrap()
-            .span_eval_placement_count,
-        1
+    span_internal!("FormulaPlane span/ingest/eval-report internals; spans are not placed under the authority (design section 10)";
+        assert_eq!(
+            engine
+                .last_formula_plane_span_eval_report()
+                .unwrap()
+                .span_eval_placement_count,
+            1
+        );
     );
 
     engine
@@ -372,12 +384,14 @@ fn union_dependencies_dirty_taken_and_untaken_arms() {
         engine.get_cell_value("Sheet1", 10, 4),
         Some(LiteralValue::Number(77.0))
     );
-    assert_eq!(
-        engine
-            .last_formula_plane_span_eval_report()
-            .unwrap()
-            .span_eval_placement_count,
-        1
+    span_internal!("FormulaPlane span/ingest/eval-report internals; spans are not placed under the authority (design section 10)";
+        assert_eq!(
+            engine
+                .last_formula_plane_span_eval_report()
+                .unwrap()
+                .span_eval_placement_count,
+            1
+        );
     );
 
     engine
@@ -391,6 +405,7 @@ fn union_dependencies_dirty_taken_and_untaken_arms() {
 }
 
 #[test]
+#[ignore = "M2 span-internal (red-team audit: no assertion outside span_internal!): binds a FormulaPlane span object/report; spans are not placed under the authority (design section 10)"]
 fn memo_groups_equal_branch_triples() {
     let mut engine = engine(FormulaPlaneMode::AuthoritativeExperimental);
     let mut formulas = Vec::new();
@@ -414,12 +429,14 @@ fn memo_groups_equal_branch_triples() {
     }
     ingest(&mut engine, "Sheet1", formulas);
     engine.evaluate_all().unwrap();
-    let report = engine.last_formula_plane_span_eval_report().unwrap();
-    assert_eq!(report.memo_eval_count, 1, "{report:?}");
-    assert_eq!(
-        report.memo_broadcast_count,
-        u64::from(ROWS - 1),
-        "{report:?}"
+    span_internal!("binds a FormulaPlane span object/report; spans are not placed under the authority (design section 10)";
+        let report = engine.last_formula_plane_span_eval_report().unwrap();
+        assert_eq!(report.memo_eval_count, 1, "{report:?}");
+        assert_eq!(
+            report.memo_broadcast_count,
+            u64::from(ROWS - 1),
+            "{report:?}"
+        );
     );
 }
 
@@ -460,12 +477,14 @@ fn memo_preserves_equal_values_with_different_selected_formats() {
         "Sheet1",
         (1..=ROWS).map(|row| (row, 4)),
     );
-    let report = authoritative.last_formula_plane_span_eval_report().unwrap();
-    assert_eq!(report.memo_eval_count, 2, "{report:?}");
-    assert_eq!(
-        report.memo_broadcast_count,
-        u64::from(ROWS - 2),
-        "{report:?}"
+    span_internal!("binds a FormulaPlane span object/report; spans are not placed under the authority (design section 10)";
+        let report = authoritative.last_formula_plane_span_eval_report().unwrap();
+        assert_eq!(report.memo_eval_count, 2, "{report:?}");
+        assert_eq!(
+            report.memo_broadcast_count,
+            u64::from(ROWS - 2),
+            "{report:?}"
+        );
     );
 }
 
@@ -487,9 +506,11 @@ fn guarded_self_reference_stays_legacy_via_internal_dependency() {
     }
     let report = ingest(&mut engine, "Sheet1", formulas);
     assert_eq!(report.shadow_accepted_span_cells, 0, "{report:?}");
-    assert_eq!(
-        report.fallback_reasons.get("InternalDependency"),
-        Some(&u64::from(ROWS))
+    span_internal!("FormulaPlane span/ingest/eval-report internals; spans are not placed under the authority (design section 10)";
+        assert_eq!(
+            report.fallback_reasons.get("InternalDependency"),
+            Some(&u64::from(ROWS))
+        );
     );
     engine.evaluate_all().unwrap();
     assert!(matches!(
@@ -521,19 +542,23 @@ fn conditional_cycle_demotes_and_runtime_witnessing_converges() {
         ));
     }
     ingest(&mut engine, "Sheet1", formulas);
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
+        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    );
     engine
         .set_cell_formula("Sheet1", 5, 3, parse("=B5").unwrap())
         .unwrap();
     let result = engine.evaluate_all().unwrap();
     assert_eq!(result.cycle_errors, 0);
     assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
-    assert_eq!(
-        engine
-            .formula_ingest_report_total()
-            .fallback_reasons
-            .get("CycleMember"),
-        Some(&1)
+    span_internal!("FormulaPlane span/ingest/eval-report internals; spans are not placed under the authority (design section 10)";
+        assert_eq!(
+            engine
+                .formula_ingest_report_total()
+                .fallback_reasons
+                .get("CycleMember"),
+            Some(&1)
+        );
     );
     assert_eq!(
         engine.get_cell_value("Sheet1", 5, 2),

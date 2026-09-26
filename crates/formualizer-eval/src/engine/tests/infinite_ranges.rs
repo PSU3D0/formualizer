@@ -18,7 +18,11 @@ fn range_limit_config(limit: usize) -> EvalConfig {
 #[test]
 fn unbounded_reference_to_unknown_sheet_errors_without_creating_sheet() {
     let wb = TestWorkbook::new();
-    let mut engine = Engine::new(wb, range_limit_config(16));
+    // Explicit Strict: the rejection is the pre-0.10 default.
+    let mut engine = Engine::new(
+        wb,
+        range_limit_config(16).with_preparation_policy(crate::engine::PreparationPolicy::Strict),
+    );
 
     let result = engine.set_cell_formula("Sheet1", 1, 1, parse("=SUM(MissingSheet!A:A)").unwrap());
 

@@ -4,6 +4,10 @@
 
 pub mod addr;
 pub mod arrow_ingest;
+/// The dependency authority's internals. Public only for the benchmark and
+/// probe binaries (`formualizer-bench-core`); not a stable API.
+#[doc(hidden)]
+pub mod authority;
 pub mod cancel;
 pub(crate) mod convergence;
 pub mod effects;
@@ -39,14 +43,24 @@ pub mod vertex;
 pub mod virtual_deps;
 
 // New SoA modules
+/// Legacy dependency structures: a differential test oracle only (Program 1
+/// M5); the region-node authority (`authority`) is the runtime path.
+#[cfg(any(test, feature = "legacy_oracle"))]
 pub mod csr_edges;
 pub mod debug_views;
+/// Legacy dependency structures: a differential test oracle only (Program 1
+/// M5); the region-node authority (`authority`) is the runtime path.
+#[cfg(any(test, feature = "legacy_oracle"))]
 pub mod delta_edges;
 pub mod interval_tree;
 pub mod named_range;
 pub mod sheet_index;
 pub mod sheet_registry;
+/// Legacy dependency structures: a differential test oracle only (Program 1
+/// M5); the region-node authority (`authority`) is the runtime path.
+#[cfg(any(test, feature = "legacy_oracle"))]
 pub mod topo;
+pub(crate) mod trace;
 pub mod vertex_store;
 
 // Phase 1: Arena modules
@@ -109,7 +123,11 @@ pub use resource_observability::{
     FormulaPlaneTopologyRequestStats, FormulaPlaneTopologyStrategy,
 };
 pub use row_visibility::{RowVisibilitySource, VisibilityMaskMode};
-pub use scheduler::{Layer, Schedule, ScheduleUnit, Scheduler};
+/// Legacy's Tarjan/layer scheduler: a test oracle only (M5; the authority's
+/// planner builds every `Schedule`).
+#[cfg(any(test, feature = "legacy_oracle"))]
+pub use scheduler::Scheduler;
+pub use scheduler::{Layer, Schedule, ScheduleUnit};
 pub use target_preparation::{
     EvaluationTarget, OpaquePreparePolicy, OpaqueReason, PreparationOutcome, PreparationRevision,
     PrepareScope, PreparedTargetGraphReport, RequestId, TableSelection, TargetEvalOptions,
@@ -725,6 +743,20 @@ pub enum TemporalEgress {
     Serial,
 }
 
+/// What preparing a formula does with a reference to a sheet or table that
+/// does not exist (#454, docs/preparation-error-policy.md).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PreparationPolicy {
+    /// Preparation fails ("Sheet not found", "Undefined table"), as before
+    /// 0.10. Explicit opt-in.
+    Strict,
+    /// The default. The formula is accepted with the reference unbound (it
+    /// evaluates to an error) and re-binds when the sheet or table is added,
+    /// like an undefined name does under either policy.
+    #[default]
+    BestEffort,
+}
+
 /// Configuration for the evaluation engine
 #[derive(Debug, Clone)]
 pub struct EvalConfig {
@@ -785,7 +817,9 @@ pub struct EvalConfig {
     pub stripe_height: u32,
     /// Width of stripe blocks for dense range indexing  
     pub stripe_width: u32,
-    /// Enable block stripes for dense ranges (vs row/column stripes only)
+    /// Enable block stripes for dense ranges (vs row/column stripes only).
+    /// Deprecated, ignored at runtime: range stripes exist only in
+    /// `legacy_oracle` builds (Program 1 M5).
     pub enable_block_stripes: bool,
 
     /// Spill behavior configuration (conflicts, bounds, buffering)
@@ -796,7 +830,10 @@ pub struct EvalConfig {
     /// `CycleDetection::Runtime` is opt-in (RFC #112).
     pub cycle: CycleConfig,
 
-    /// Use dynamic topological ordering (Pearce-Kelly algorithm)
+    /// Use dynamic topological ordering (Pearce-Kelly algorithm).
+    /// Deprecated, ignored at runtime: the dependency authority's planner
+    /// orders evaluation; this and the `pk_*` / `max_layer_width` knobs
+    /// below affect only `legacy_oracle` builds (Program 1 M5).
     pub use_dynamic_topo: bool,
     /// Maximum nodes to visit before falling back to full rebuild
     pub pk_visit_budget: usize,
@@ -840,6 +877,10 @@ pub struct EvalConfig {
     /// Defer dependency graph building: ingest values immediately but stage formulas
     /// for on-demand graph construction during evaluation.
     pub defer_graph_building: bool,
+
+    /// Missing sheets and tables at preparation: bind later (default) or
+    /// fail. See [`PreparationPolicy`].
+    pub preparation_policy: PreparationPolicy,
 
     /// Enable virtual dependency convergence telemetry collection.
     ///
@@ -914,6 +955,7 @@ impl Default for EvalConfig {
             temporal_egress: TemporalEgress::default(),
             formula_parse_policy: FormulaParsePolicy::Strict,
             defer_graph_building: false,
+            preparation_policy: PreparationPolicy::BestEffort,
             enable_virtual_dep_telemetry: false,
             formula_plane_mode: FormulaPlaneMode::Off,
             max_formula_plane_cache_candidates: 100_000,
@@ -926,6 +968,11 @@ impl Default for EvalConfig {
 
 impl EvalConfig {
     #[inline]
+    pub fn with_preparation_policy(mut self, policy: PreparationPolicy) -> Self {
+        self.preparation_policy = policy;
+        self
+    }
+
     pub fn with_range_expansion_limit(mut self, limit: usize) -> Self {
         self.range_expansion_limit = limit;
         self

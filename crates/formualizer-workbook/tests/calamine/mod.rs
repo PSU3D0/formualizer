@@ -1,3 +1,15 @@
+/// Program 1 M2 reclassification (see formualizer-eval `engine/tests/mod.rs`):
+/// the wrapped statements assert FormulaPlane span internals. They are
+/// skipped when the engine ignores the FormulaPlane mode (unified authority,
+/// or the `FZ_M2_FORCE_PLANE_OFF` oracle); the reason literal records why.
+macro_rules! span_internal {
+    ($reason:literal; $($body:tt)*) => {
+        if !formualizer_eval::engine::eval::formula_plane_mode_ignored_for_test() {
+            $($body)*
+        }
+    };
+}
+
 // Shared test helpers (umya workbook builders, etc.)
 #[path = "../common.rs"]
 mod common;
@@ -44,3 +56,13 @@ mod shared_formulas;
 mod sheet_load;
 #[cfg(feature = "umya")]
 mod temporal_roundtrip;
+
+/// `WorkbookConfig::interactive()` with `PreparationPolicy::Strict`. Tests
+/// that use a missing sheet to provoke a preparation failure opt into the
+/// pre-0.10 policy explicitly (the default became `BestEffort`).
+#[cfg(feature = "calamine")]
+pub(crate) fn strict_interactive() -> formualizer_workbook::WorkbookConfig {
+    let mut config = formualizer_workbook::WorkbookConfig::interactive();
+    config.eval.preparation_policy = formualizer_eval::engine::PreparationPolicy::Strict;
+    config
+}

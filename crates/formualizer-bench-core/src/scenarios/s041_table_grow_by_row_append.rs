@@ -4,8 +4,8 @@ use formualizer_workbook::Workbook;
 
 use super::common::{ScaleState, fixture_path, has_evaluated_formulas, numeric};
 use super::{
-    EditPlan, ExpectedFailure, ExpectedFailureMode, FixtureMetadata, Scenario, ScenarioBuildCtx,
-    ScenarioFixture, ScenarioInvariant, ScenarioPhase, ScenarioTag,
+    EditPlan, ExpectedFailure, ExpectedFailureMode, FixtureMetadata, RunnerFailure, Scenario,
+    ScenarioBuildCtx, ScenarioFixture, ScenarioInvariant, ScenarioPhase, ScenarioTag,
 };
 
 const INITIAL_TABLE_ROWS: u32 = 100;
@@ -46,10 +46,18 @@ impl Scenario for S041TableGrowByRowAppend {
             ExpectedFailure {
                 mode: ExpectedFailureMode::OffOnly,
                 reason: "Workbook public API has no extend_table / update_table. PM follow-up: add Workbook surface for table growth.",
+                runner_failure: RunnerFailure::Action {
+                    step: 1,
+                    message: "Backend error in parser: #NAME?: Undefined table: Table1",
+                },
             },
             ExpectedFailure {
                 mode: ExpectedFailureMode::AuthOnly,
                 reason: "Workbook public API has no extend_table / update_table. PM follow-up: add Workbook surface for table growth.",
+                runner_failure: RunnerFailure::Action {
+                    step: 1,
+                    message: r#"Backend error in parser: #VALUE!: ExcelError { kind: Name, message: Some("Undefined table: Table1"), context: None, extra: None }"#,
+                },
             },
         ]
     }

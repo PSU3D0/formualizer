@@ -431,18 +431,17 @@ impl DataStore {
                 self.asts.insert_array(rows_count, cols_count, elements)
             }
 
-            // Postfix call (e.g. LAMBDA immediate-invocation). The arena does
-            // not yet have a dedicated node kind for this, and full evaluator
-            // semantics are out of scope for the parser-side change. Store an
-            // unsupported-formula error literal so that downstream evaluation
-            // surfaces a clear #N/A!-style error instead of silently producing
-            // a wrong result.
-            ASTNodeType::Call { .. } => {
-                let value_ref = self.store_value(LiteralValue::Error(
-                    ExcelError::new(ExcelErrorKind::NImpl)
-                        .with_message("Immediate-invocation calls are not yet supported"),
-                ));
-                self.asts.insert_literal(value_ref)
+            // Postfix call (e.g. LAMBDA immediate-invocation), stored as a
+            // reserved-name function node whose first argument is the callee.
+            ASTNodeType::Call { callee, args } => {
+                let mut arg_ids = Vec::with_capacity(args.len() + 1);
+                arg_ids.push(self.convert_ast_node(callee, sheet_registry));
+                arg_ids.extend(
+                    args.iter()
+                        .map(|arg| self.convert_ast_node(arg, sheet_registry)),
+                );
+                self.asts
+                    .insert_function(super::ast::CALL_NODE_NAME, arg_ids)
             }
         }
     }
@@ -638,11 +637,16 @@ impl DataStore {
             AstNodeData::Function { name_id, .. } => {
                 let name = self.asts.resolve_string(*name_id).to_string();
                 let arg_ids = self.asts.get_function_args(id)?;
-                let args: Vec<ASTNode> = arg_ids
+                let mut args: Vec<ASTNode> = arg_ids
                     .iter()
                     .filter_map(|&arg_id| self.reconstruct_ast_node(arg_id, sheet_registry))
                     .collect();
-                ASTNodeType::Function { name, args }
+                if name == super::ast::CALL_NODE_NAME && !args.is_empty() {
+                    let callee = Box::new(args.remove(0));
+                    ASTNodeType::Call { callee, args }
+                } else {
+                    ASTNodeType::Function { name, args }
+                }
             }
 
             AstNodeData::Array { rows, cols, .. } => {

@@ -28,7 +28,7 @@ pub use reference::SheetId;
 mod macros;
 #[cfg(test)]
 pub mod test_utils;
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(any(test, feature = "test-support", feature = "tracing"))]
 #[doc(hidden)]
 pub mod test_workbook;
 

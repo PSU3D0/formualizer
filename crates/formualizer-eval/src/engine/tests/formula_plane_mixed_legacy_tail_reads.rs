@@ -99,12 +99,14 @@ fn build_mixed_engine(
         .ingest_formula_batches(vec![FormulaIngestBatch::new(SHEET, formulas)])
         .expect("ingest formulas");
     if mode == FormulaPlaneMode::AuthoritativeExperimental {
-        assert_eq!(
-            report.shadow_accepted_span_cells,
-            u64::from(ROWS),
-            "only the B column family may span; tail readers must stay legacy \
-             (histogram: {:?})",
-            report.fallback_reasons
+        span_internal!("ingest report span-acceptance counter; no span placement under the authority";
+            assert_eq!(
+                report.shadow_accepted_span_cells,
+                u64::from(ROWS),
+                "only the B column family may span; tail readers must stay legacy \
+                 (histogram: {:?})",
+                report.fallback_reasons
+            );
         );
     }
     engine
@@ -116,6 +118,7 @@ fn tail_sum(row: u32) -> f64 {
 }
 
 #[test]
+#[ignore = "M2 span-internal: tests the FormulaPlane mixed span/legacy topology cache and routing; the span coordinator does not run under the authority"]
 fn mixed_tail_reads_complete_in_one_authoritative_pass() {
     // Single-column tail reads: with degenerate-span normalization these
     // index as per-column intervals, so legacy point-result queries on other
@@ -169,6 +172,7 @@ fn mixed_tail_reads_complete_in_one_authoritative_pass() {
 }
 
 #[test]
+#[ignore = "M2 span-internal: tests the FormulaPlane mixed span/legacy topology cache and routing; the span coordinator does not run under the authority"]
 fn independent_iterative_island_preserves_accumulator_and_single_request_lifecycle() {
     let config = EvalConfig::default()
         .with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental)
@@ -213,6 +217,46 @@ fn independent_iterative_island_preserves_accumulator_and_single_request_lifecyc
     }
 }
 
+/// The values and request lifecycle of
+/// `independent_iterative_island_preserves_accumulator_and_single_request_lifecycle`
+/// (its mixed-topology route events are span-internal).
+#[test]
+fn independent_iterative_island_preserves_accumulator_and_single_request_lifecycle_values() {
+    let config = EvalConfig::default()
+        .with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental)
+        .with_cycle(CycleConfig::iterate(1, 0.001));
+    let mut engine = Engine::new(TestWorkbook::default(), config);
+    let mut formulas = Vec::new();
+    for row in 1..=120 {
+        engine
+            .set_cell_value(SHEET, row, 1, LiteralValue::Number(row as f64))
+            .unwrap();
+        formulas.push(record(&mut engine, row, 2, &format!("=A{row}+1")));
+    }
+    engine
+        .ingest_formula_batches(vec![FormulaIngestBatch::new(SHEET, formulas)])
+        .unwrap();
+    engine
+        .set_cell_value(SHEET, 1, 3, LiteralValue::Number(5.0))
+        .unwrap();
+    engine
+        .set_cell_formula(SHEET, 1, 4, parse("=D1+C1").unwrap())
+        .unwrap();
+
+    for expected in [5.0, 10.0, 15.0] {
+        let epoch = engine.recalc_epoch;
+        let begins = engine.evaluation_request_begin_count_for_test();
+        engine.evaluate_all().unwrap();
+        assert_eq!(numeric_value(&engine, 1, 4), expected);
+        assert_eq!(engine.recalc_epoch, epoch.wrapping_add(1));
+        assert_eq!(
+            engine.evaluation_request_begin_count_for_test(),
+            begins + 1,
+            "the clock and iterative-redirty state must be sampled once per request"
+        );
+    }
+}
+
 fn assert_full_capacity_corpus_parity(
     off: &Engine<TestWorkbook>,
     authoritative: &Engine<TestWorkbook>,
@@ -229,6 +273,7 @@ fn assert_full_capacity_corpus_parity(
 }
 
 #[test]
+#[ignore = "M2 span-internal: tests the FormulaPlane mixed span/legacy topology cache and routing; the span coordinator does not run under the authority"]
 fn cached_mixed_topology_matches_off_first_warm_and_post_edit() {
     let build = |mode| build_mixed_engine(mode, |row| format!("=SUM($A{row}:$B${ROWS})"));
     let mut off = build(FormulaPlaneMode::Off);
@@ -290,6 +335,30 @@ fn cached_mixed_topology_matches_off_first_warm_and_post_edit() {
     assert_eq!(edited_stats.formula_plane_mixed_topology_cache_hits, 1);
     assert_eq!(edited_stats.formula_plane_dirty_pending_events, 0);
     assert!(edited_stats.formula_plane_dirty_region_events_recorded > region_events_before_edit);
+    assert_full_capacity_corpus_parity(&off, &authoritative);
+}
+
+/// The value parity of `cached_mixed_topology_matches_off_first_warm_and_post_edit`
+/// (first, warm and post-edit; its mixed-topology cache counters are
+/// span-internal). Both engines run the authority, so this pins mode
+/// invariance, not legacy parity.
+#[test]
+fn cached_mixed_topology_matches_off_first_warm_and_post_edit_values() {
+    let build = |mode| build_mixed_engine(mode, |row| format!("=SUM($A{row}:$B${ROWS})"));
+    let mut off = build(FormulaPlaneMode::Off);
+    let mut authoritative = build(FormulaPlaneMode::AuthoritativeExperimental);
+    off.evaluate_all().unwrap();
+    authoritative.evaluate_all().unwrap();
+    assert_full_capacity_corpus_parity(&off, &authoritative);
+    off.evaluate_all().unwrap();
+    authoritative.evaluate_all().unwrap();
+    assert_full_capacity_corpus_parity(&off, &authoritative);
+    for engine in [&mut off, &mut authoritative] {
+        engine
+            .set_cell_value(SHEET, ROWS / 2, 1, LiteralValue::Number(10_000.0))
+            .unwrap();
+        engine.evaluate_all().unwrap();
+    }
     assert_full_capacity_corpus_parity(&off, &authoritative);
 }
 
@@ -389,6 +458,7 @@ fn capacity_visible_snapshot(
 }
 
 #[test]
+#[ignore = "M2 span-internal: tests the FormulaPlane mixed span/legacy topology cache and routing; the span coordinator does not run under the authority"]
 fn cache_skip_ignores_materialization_cap_and_retains_exact_state() {
     let mut engine = build_mixed_engine(FormulaPlaneMode::AuthoritativeExperimental, |row| {
         format!("=SUM($A{row}:$B${ROWS})")
@@ -427,6 +497,7 @@ fn cache_skip_ignores_materialization_cap_and_retains_exact_state() {
 }
 
 #[test]
+#[ignore = "M2 span-internal: tests the FormulaPlane mixed span/legacy topology cache and routing; the span coordinator does not run under the authority"]
 fn non_cycle_unsafe_fallback_faults_preserve_epochs_pending_lease_and_values() {
     use crate::engine::eval::FormulaSpanDemotionFault;
 
@@ -510,7 +581,9 @@ fn cache_skip_never_enters_capacity_demotion_fault_seams() {
             .evaluate_all()
             .expect("capacity skip must bypass demotion");
         assert_eq!(engine.formula_plane_capacity_bailouts(), 0);
-        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+        span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
+            assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+        );
     }
 }
 
@@ -540,7 +613,9 @@ fn build_selective_capacity_engine() -> (Engine<TestWorkbook>, Vec<crate::engine
     let report = engine
         .ingest_formula_batches(vec![FormulaIngestBatch::new(SHEET, formulas)])
         .unwrap();
-    assert_eq!(report.shadow_accepted_span_cells, u64::from(2 * ROWS));
+    span_internal!("ingest report span-acceptance counter; no span placement under the authority";
+        assert_eq!(report.shadow_accepted_span_cells, u64::from(2 * ROWS));
+    );
 
     let sheet_id = engine.graph.sheet_id(SHEET).unwrap();
     let tail_vertices = (1..=ROWS)
@@ -566,8 +641,10 @@ fn cache_skip_retains_all_scheduled_and_clean_span_authority() {
     engine.evaluate_all().expect("exact cache-skip evaluation");
 
     assert_eq!(engine.formula_plane_capacity_bailouts(), 0);
-    assert_eq!(engine.graph.formula_authority().active_span_refs(), refs);
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
+    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
+        assert_eq!(engine.graph.formula_authority().active_span_refs(), refs);
+        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
+    );
     assert_eq!(numeric_value(&engine, ROWS / 2, 2), 10_001.0);
     assert_eq!(numeric_value(&engine, ROWS / 2, 5), 3_001.0);
 }
@@ -641,6 +718,7 @@ fn assert_mutation_invalidates_cache_once(
 }
 
 #[test]
+#[ignore = "M2 span-internal: tests the FormulaPlane mixed span/legacy topology cache and routing; the span coordinator does not run under the authority"]
 fn mixed_topology_cache_mutation_class_invalidation_audit() {
     use crate::engine::named_range::{NameScope, NamedDefinition};
     use crate::reference::{CellRef, Coord, RangeRef};
@@ -686,6 +764,7 @@ fn mixed_topology_cache_mutation_class_invalidation_audit() {
 }
 
 #[test]
+#[ignore = "M2 span-internal: tests the FormulaPlane mixed span/legacy topology cache and routing; the span coordinator does not run under the authority"]
 fn mixed_topology_cache_rejects_stale_span_ref_even_without_epoch_change() {
     let mut engine = cached_topology_engine();
     engine.evaluate_all().unwrap();
@@ -717,28 +796,30 @@ fn mixed_topology_cache_rejects_stale_span_ref_even_without_epoch_change() {
 fn stale_exact_span_region_event_is_ignored_after_generation_change() {
     let mut engine = cached_topology_engine();
     engine.evaluate_all().unwrap();
-    let span_ref = engine.graph.formula_authority().active_span_refs()[0];
-    let result_region = {
-        let span = engine
+    span_internal!("binds a FormulaPlane span object/report; spans are not placed under the authority (design section 10)";
+        let span_ref = engine.graph.formula_authority().active_span_refs()[0];
+        let result_region = {
+            let span = engine
+                .graph
+                .formula_authority()
+                .plane
+                .spans
+                .get(span_ref)
+                .unwrap();
+            crate::formula_plane::region_index::Region::from_domain(&span.domain)
+        };
+        engine
             .graph
-            .formula_authority()
+            .mark_formula_span_region_dirty(span_ref, result_region);
+        engine
+            .graph
+            .formula_authority_mut()
             .plane
             .spans
-            .get(span_ref)
-            .unwrap();
-        crate::formula_plane::region_index::Region::from_domain(&span.domain)
-    };
-    engine
-        .graph
-        .mark_formula_span_region_dirty(span_ref, result_region);
-    engine
-        .graph
-        .formula_authority_mut()
-        .plane
-        .spans
-        .get_mut_for_test(span_ref)
-        .unwrap()
-        .version = span_ref.version.wrapping_add(1);
+            .get_mut_for_test(span_ref)
+            .unwrap()
+            .version = span_ref.version.wrapping_add(1);
+    );
 
     engine.evaluate_all().unwrap();
 
@@ -766,43 +847,47 @@ fn span_free_authoritative_workbook_never_builds_mixed_topology_cache() {
 }
 
 #[test]
+#[ignore = "M2 span-internal (red-team audit: no assertion outside span_internal!): binds a FormulaPlane span object/report; spans are not placed under the authority (design section 10)"]
 fn prepared_demotion_failure_keeps_revision_and_cache_success_invalidates_once() {
     use crate::engine::eval::FormulaSpanDemotionFault;
 
     let mut failed = cached_topology_engine();
     failed.evaluate_all().unwrap();
-    let refs = failed.graph.formula_authority().active_span_refs();
-    let revision = failed.graph_topology_revision_for_test();
-    let stats = failed.baseline_stats();
-    failed.set_formula_span_demotion_fault_for_test(FormulaSpanDemotionFault::BeforeFirstMutation);
-    let prepared = failed.prepare_formula_span_demotion(&refs).unwrap();
-    assert!(
-        failed
-            .commit_prepared_formula_span_demotion(prepared)
-            .is_err()
-    );
-    assert_eq!(failed.graph_topology_revision_for_test(), revision);
-    assert!(failed.mixed_topology_cache_present_for_test());
-    assert_eq!(
-        failed
-            .baseline_stats()
-            .formula_plane_mixed_topology_cache_builds,
-        stats.formula_plane_mixed_topology_cache_builds
-    );
+    span_internal!("binds a FormulaPlane span object/report; spans are not placed under the authority (design section 10)";
+        let refs = failed.graph.formula_authority().active_span_refs();
+        let revision = failed.graph_topology_revision_for_test();
+        let stats = failed.baseline_stats();
+        failed.set_formula_span_demotion_fault_for_test(FormulaSpanDemotionFault::BeforeFirstMutation);
+        let prepared = failed.prepare_formula_span_demotion(&refs).unwrap();
+        assert!(
+            failed
+                .commit_prepared_formula_span_demotion(prepared)
+                .is_err()
+        );
+        assert_eq!(failed.graph_topology_revision_for_test(), revision);
+        assert!(failed.mixed_topology_cache_present_for_test());
+        assert_eq!(
+            failed
+                .baseline_stats()
+                .formula_plane_mixed_topology_cache_builds,
+            stats.formula_plane_mixed_topology_cache_builds
+        );
 
-    let mut committed = cached_topology_engine();
-    committed.evaluate_all().unwrap();
-    let refs = committed.graph.formula_authority().active_span_refs();
-    let revision = committed.graph_topology_revision_for_test();
-    let prepared = committed.prepare_formula_span_demotion(&refs).unwrap();
-    committed
-        .commit_prepared_formula_span_demotion(prepared)
-        .unwrap();
-    assert_eq!(committed.graph_topology_revision_for_test(), revision + 1);
-    assert!(!committed.mixed_topology_cache_present_for_test());
+        let mut committed = cached_topology_engine();
+        committed.evaluate_all().unwrap();
+        let refs = committed.graph.formula_authority().active_span_refs();
+        let revision = committed.graph_topology_revision_for_test();
+        let prepared = committed.prepare_formula_span_demotion(&refs).unwrap();
+        committed
+            .commit_prepared_formula_span_demotion(prepared)
+            .unwrap();
+        assert_eq!(committed.graph_topology_revision_for_test(), revision + 1);
+        assert!(!committed.mixed_topology_cache_present_for_test());
+    );
 }
 
 #[test]
+#[ignore = "M2 span-internal: tests the FormulaPlane mixed span/legacy topology cache and routing; the span coordinator does not run under the authority"]
 fn warm_cache_can_bypass_retained_schedule_into_exact_ladder() {
     use crate::engine::{
         DiskScratchPolicy, EvaluationBudgets, FormulaPlaneTopologyCacheOutcome,
@@ -842,6 +927,7 @@ fn warm_cache_can_bypass_retained_schedule_into_exact_ladder() {
 }
 
 #[test]
+#[ignore = "M2 span-internal: tests the FormulaPlane mixed span/legacy topology cache and routing; the span coordinator does not run under the authority"]
 fn stale_cached_topology_is_dropped_when_cap_key_rebuild_skips() {
     let mut engine = cached_topology_engine();
     engine.evaluate_all().unwrap();
@@ -865,6 +951,7 @@ fn stale_cached_topology_is_dropped_when_cap_key_rebuild_skips() {
 }
 
 #[test]
+#[ignore = "M2 span-internal: tests the FormulaPlane mixed span/legacy topology cache and routing; the span coordinator does not run under the authority"]
 fn cache_edge_and_memory_caps_use_exact_request_topology() {
     for limit_kind in ["edges", "memory"] {
         let mut engine = build_mixed_engine(FormulaPlaneMode::AuthoritativeExperimental, |row| {

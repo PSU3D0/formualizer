@@ -167,6 +167,9 @@ pub(crate) struct IngestPipeline<'a> {
     shape_memo: Option<Box<ShapeMemo>>,
     memo_enabled: bool,
     arena_formulas_seen: bool,
+    /// `PreparationPolicy::BestEffort`: a missing sheet or table becomes a
+    /// pending symbol link instead of a preparation error.
+    unbound_pending: bool,
 }
 
 impl<'a> IngestPipeline<'a> {
@@ -191,6 +194,34 @@ impl<'a> IngestPipeline<'a> {
             shape_memo: None,
             memo_enabled: true,
             arena_formulas_seen: false,
+            unbound_pending: false,
+        }
+    }
+
+    pub(crate) fn with_unbound_pending(mut self, on: bool) -> Self {
+        self.unbound_pending = on;
+        self
+    }
+
+    /// Under `BestEffort`, record an unresolvable sheet/table as a pending
+    /// symbol link (it re-binds when added); otherwise keep the error.
+    fn defer_unbound(
+        &self,
+        kind: &str,
+        name: Option<&str>,
+        plan: &mut DependencyPlanRow,
+        error: ExcelError,
+    ) -> Result<(), ExcelError> {
+        match name {
+            Some(name)
+                if self.unbound_pending
+                    && !(kind == "sheet" && DependencyGraph::is_tombstone_sheet(name)) =>
+            {
+                plan.named_refs
+                    .push(DependencyGraph::unbound_symbol_key(kind, name));
+                Ok(())
+            }
+            _ => Err(error),
         }
     }
 
@@ -694,6 +725,9 @@ impl<'a> IngestPipeline<'a> {
                     if self.sources.resolve_table(name).is_some() {
                         plan.source_refs.push(name.to_string());
                         Ok(())
+                    } else if crate::engine::refs::unbound_external_range_defers(&ext.kind) {
+                        plan.named_refs.push(name.to_string());
+                        Ok(())
                     } else {
                         Err(ExcelError::new(ExcelErrorKind::Name)
                             .with_message(format!("Undefined table: {name}")))
@@ -701,7 +735,11 @@ impl<'a> IngestPipeline<'a> {
                 }
             },
             SemanticReference::Cell(cell) => {
-                let sheet_id = self.resolve_reference_sheet(cell.sheet.name(), current_sheet_id)?;
+                let sheet_id =
+                    match self.resolve_reference_sheet(cell.sheet.name(), current_sheet_id) {
+                        Ok(id) => id,
+                        Err(e) => return self.defer_unbound("sheet", cell.sheet.name(), plan, e),
+                    };
                 plan.direct_cell_deps.push(CellRef::new(
                     sheet_id,
                     Coord::from_excel(cell.row, cell.col, true, true),
@@ -709,9 +747,13 @@ impl<'a> IngestPipeline<'a> {
                 Ok(())
             }
             SemanticReference::OpenRange(range) => {
+                let sheet_name = range.sheet.name();
                 if let Some(SharedRef::Range(range)) = range.original.to_sheet_ref_lossy() {
                     let owned = range.into_owned();
-                    let sheet_id = self.resolve_shared_sheet(owned.sheet, current_sheet_id)?;
+                    let sheet_id = match self.resolve_shared_sheet(owned.sheet, current_sheet_id) {
+                        Ok(id) => id,
+                        Err(e) => return self.defer_unbound("sheet", sheet_name, plan, e),
+                    };
                     plan.range_deps.push(SharedRangeRef {
                         sheet: SharedSheetLocator::Id(sheet_id),
                         start_row: owned.start_row,
@@ -736,8 +778,12 @@ impl<'a> IngestPipeline<'a> {
                 if self.policy.expand_small_ranges
                     && area <= self.policy.range_expansion_limit as u64
                 {
-                    let sheet_id =
-                        self.resolve_reference_sheet(range.sheet.name(), current_sheet_id)?;
+                    let sheet_id = match self
+                        .resolve_reference_sheet(range.sheet.name(), current_sheet_id)
+                    {
+                        Ok(id) => id,
+                        Err(e) => return self.defer_unbound("sheet", range.sheet.name(), plan, e),
+                    };
                     for row in sr..=er {
                         for col in sc..=ec {
                             plan.direct_cell_deps.push(CellRef::new(
@@ -746,9 +792,12 @@ impl<'a> IngestPipeline<'a> {
                             ));
                         }
                     }
-                } else if let Some(SharedRef::Range(range)) = range.original.to_sheet_ref_lossy() {
-                    let owned = range.into_owned();
-                    let sheet_id = self.resolve_shared_sheet(owned.sheet, current_sheet_id)?;
+                } else if let Some(SharedRef::Range(shared)) = range.original.to_sheet_ref_lossy() {
+                    let owned = shared.into_owned();
+                    let sheet_id = match self.resolve_shared_sheet(owned.sheet, current_sheet_id) {
+                        Ok(id) => id,
+                        Err(e) => return self.defer_unbound("sheet", range.sheet.name(), plan, e),
+                    };
                     plan.range_deps.push(SharedRangeRef {
                         sheet: SharedSheetLocator::Id(sheet_id),
                         start_row: owned.start_row,
@@ -777,8 +826,13 @@ impl<'a> IngestPipeline<'a> {
                     plan.source_refs.push(tref.name.clone());
                     Ok(())
                 } else {
-                    Err(ExcelError::new(ExcelErrorKind::Name)
-                        .with_message(format!("Undefined table: {}", tref.name)))
+                    self.defer_unbound(
+                        "table",
+                        Some(&tref.name),
+                        plan,
+                        ExcelError::new(ExcelErrorKind::Name)
+                            .with_message(format!("Undefined table: {}", tref.name)),
+                    )
                 }
             }
             SemanticReference::ThreeDimensional(_) | SemanticReference::Unsupported(_) => Ok(()),
@@ -2599,7 +2653,11 @@ mod tests {
     #[test]
     fn frozen_ingest_walk_matches_reference_classes_scopes_and_errors() {
         ensure_builtins_registered();
-        let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+        // The frozen reference walk has only Strict semantics.
+        let mut engine = Engine::new(
+            TestWorkbook::new(),
+            EvalConfig::default().with_preparation_policy(crate::engine::PreparationPolicy::Strict),
+        );
         let sheet = engine.graph.sheet_id_mut("Sheet1");
         engine.graph.sheet_id_mut("Sheet2");
         let mut pipeline = engine.ingest_pipeline();
@@ -2696,7 +2754,10 @@ mod tests {
             let ast = parse(&formula).unwrap_or_else(|error| panic!("{formula}: {error}"));
             let mut engine = Engine::new(
                 TestWorkbook::new(),
-                EvalConfig::default().with_range_expansion_limit(limit),
+                EvalConfig::default()
+                    .with_range_expansion_limit(limit)
+                    // The frozen reference walk has only Strict semantics.
+                    .with_preparation_policy(crate::engine::PreparationPolicy::Strict),
             );
             let sheet = engine.graph.sheet_id_mut("Sheet1");
             engine.graph.sheet_id_mut("Sheet2");

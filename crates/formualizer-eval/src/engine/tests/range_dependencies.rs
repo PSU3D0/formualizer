@@ -1171,6 +1171,11 @@ fn test_heal_one_of_multiple_missing_sheets_does_not_double_bind() {
 /// it to a single row-0 stripe — edits anywhere else never reached the
 /// dependent.
 #[test]
+// Reclassified (M5, internal representation): injects a legacy stripe through
+// the low-level `add_range_deps_from_keys` next to a `=1` formula; the
+// authority's dependencies come from formulas, and that API is a decision-8
+// removal.
+#[ignore = "M5 legacy-internal: injected stripe, not a formula dependency"]
 fn all_unbounded_open_rect_key_covers_whole_sheet() {
     use crate::engine::graph::{StripeKey, StripeType};
     use crate::engine::plan::RangeKey;

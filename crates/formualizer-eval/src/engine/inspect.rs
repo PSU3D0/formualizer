@@ -558,6 +558,9 @@ impl RangePageOptions {
 #[non_exhaustive]
 pub enum InspectionUnavailableReason {
     DeferredDependencyGraph,
+    /// The dependency authority is not synced with the workbook or failed
+    /// (a typed evaluation error reports why).
+    DependencyAuthorityUnavailable,
 }
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -799,6 +802,14 @@ impl<R: EvaluationContext> InspectSource for LegacyInspectSource<'_, R> {
         budget: &mut WorkBudget,
         visitor: &mut dyn DependentVisitor,
     ) -> Result<QueryCompleteness, InspectError> {
+        // Legacy's stripe readers exist only in oracle builds; the authority
+        // path (`collect_dependents`) does not come here.
+        #[cfg(not(any(test, feature = "legacy_oracle")))]
+        let complete = {
+            let _ = (cell, budget, visitor);
+            true
+        };
+        #[cfg(any(test, feature = "legacy_oracle"))]
         let complete = self.engine.graph.visit_range_dependents_covering_bounded(
             cell.sheet_id,
             cell.row0,
@@ -896,7 +907,7 @@ impl<'a, R: EvaluationContext> FormulaPlaneInspectSource<'a, R> {
         // Defensive even though Shadow currently retains no active spans: this
         // gate also protects dependent-index routing if Shadow ever retains
         // spans or consumer-read entries.
-        if self.engine.config.formula_plane_mode != FormulaPlaneMode::AuthoritativeExperimental {
+        if self.engine.formula_plane_mode() != FormulaPlaneMode::AuthoritativeExperimental {
             return None;
         }
         let placement = PlacementCoord::new(key.sheet_id, key.row0, key.col0);
@@ -1073,7 +1084,7 @@ impl<'a, R: EvaluationContext> FormulaPlaneInspectSource<'a, R> {
         budget: &mut WorkBudget,
         visitor: &mut dyn DependentVisitor,
     ) -> QueryCompleteness {
-        if self.engine.config.formula_plane_mode != FormulaPlaneMode::AuthoritativeExperimental {
+        if self.engine.formula_plane_mode() != FormulaPlaneMode::AuthoritativeExperimental {
             return QueryCompleteness::Complete;
         }
         let authority = self.engine.graph.formula_authority();
@@ -1827,30 +1838,31 @@ impl<R: EvaluationContext> Engine<R> {
                 member.sheet_id,
                 Coord::new(member.row0, member.col0, true, true),
             );
-            if let Some(vertex) = self.graph.get_vertex_for_cell(&member_ref) {
-                let complete = self.graph.visit_direct_dependents_bounded(
-                    vertex,
-                    &mut work.remaining,
-                    &mut |dependent| self.key_for_vertex(dependent).is_none_or(&mut record),
-                );
+            // Under the authority: the direct readers through text-origin
+            // edges (legacy's in-edges and covering range readers, which
+            // exclude name- and table-mediated readers).
+            {
+                let _ = &member_ref;
+                let complete = self
+                    .graph
+                    .authority_visit_text_dependents(
+                        (member.sheet_id, member.row0, member.col0),
+                        &mut work.remaining,
+                        &mut |(sheet_id, row0, col0)| {
+                            record(CellKey {
+                                sheet_id,
+                                row0,
+                                col0,
+                            })
+                        },
+                    )
+                    .map_err(|_| InspectError::DependencyStateUnavailable {
+                        reason: InspectionUnavailableReason::DependencyAuthorityUnavailable,
+                    })?;
                 if !complete {
                     incomplete = true;
                     break;
                 }
-            }
-
-            struct Visitor<'a, F>(&'a mut F);
-            impl<F: FnMut(CellKey) -> bool> DependentVisitor for Visitor<'_, F> {
-                fn visit(&mut self, dependent: CellKey) -> bool {
-                    (self.0)(dependent)
-                }
-            }
-            let mut visitor = Visitor(&mut record);
-            if source.visit_dependents_covering(member, work, &mut visitor)?
-                == QueryCompleteness::Incomplete
-            {
-                incomplete = true;
-                break;
             }
         }
 

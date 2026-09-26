@@ -2,6 +2,8 @@ use super::ast_utils::update_internal_sheet_references;
 use super::*;
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 
+const TOMBSTONE_SHEET_PREFIX: &str = "__FZ_MISSING_SHEET__";
+
 impl DependencyGraph {
     /// Add a new sheet to the workbook.
     ///
@@ -17,11 +19,72 @@ impl DependencyGraph {
 
         // Heal formulas that were waiting on this sheet name.
         self.heal_orphaned_formulas(name);
+        self.resolve_pending_symbol("sheet", name);
         Ok(sheet_id)
     }
 
     /// Remove a sheet from the workbook.
     pub fn remove_sheet(&mut self, sheet_id: SheetId) -> Result<(), ExcelError> {
+        let result = self.remove_sheet_impl(sheet_id);
+        self.authority_end_structural();
+        result
+    }
+
+    /// Formula vertices with a cell or range reference to `sheet_id` in
+    /// their text (names are handled through their definitions).
+    fn formulas_referencing_sheet(&self, sheet_id: SheetId) -> Vec<VertexId> {
+        use crate::engine::refs::{self, SemanticReference};
+        struct Probe<'a> {
+            graph: &'a DependencyGraph,
+            sheet_id: SheetId,
+            hit: bool,
+        }
+        fn visit(
+            p: &mut Probe<'_>,
+            r: SemanticReference<'_>,
+            key: Option<SheetId>,
+        ) -> Result<(), ExcelError> {
+            let name = match &r {
+                SemanticReference::Cell(c) => c.sheet.name(),
+                SemanticReference::FiniteRange(rg) | SemanticReference::OpenRange(rg) => {
+                    rg.sheet.name()
+                }
+                _ => return Ok(()),
+            };
+            let id = match (key, name) {
+                (Some(id), _) => Some(id),
+                (None, Some(n)) => p.graph.sheet_id(n),
+                (None, None) => None,
+            };
+            if id == Some(p.sheet_id) {
+                p.hit = true;
+            }
+            Ok(())
+        }
+        let mut out = Vec::new();
+        for (&v, &ast) in self.vertex_formulas.iter() {
+            let mut probe = Probe {
+                graph: self,
+                sheet_id,
+                hit: false,
+            };
+            let _ = refs::visit_arena_references_keyed(
+                ast,
+                &mut probe,
+                |p| p.graph.data_store(),
+                |p| p.graph.sheet_reg(),
+                visit,
+            );
+            if probe.hit {
+                out.push(v);
+            }
+        }
+        out.sort_unstable();
+        out
+    }
+
+    fn remove_sheet_impl(&mut self, sheet_id: SheetId) -> Result<(), ExcelError> {
+        self.authority_note_structural(true);
         let old_name = self.sheet_reg.name(sheet_id).to_string();
         if old_name.is_empty() {
             return Err(ExcelError::new(ExcelErrorKind::Value).with_message("Sheet does not exist"));
@@ -44,32 +107,10 @@ impl DependencyGraph {
             .map(|(id, _)| id)
             .collect();
 
-        // Formulas can reference this sheet either through explicit dependency edges
-        // (expanded refs) or compressed range deps. Track both.
-        let mut formulas_to_update: rustc_hash::FxHashSet<VertexId> =
-            rustc_hash::FxHashSet::default();
-
-        for &formula_id in self.vertex_formulas.keys() {
-            let deps = self.edges.out_edges(formula_id);
-            if deps
-                .iter()
-                .any(|&dep_id| self.store.sheet_id(dep_id) == sheet_id)
-            {
-                formulas_to_update.insert(formula_id);
-            }
-        }
-
-        for (&formula_id, ranges) in &self.formula_to_range_deps {
-            if ranges.iter().any(|r| match r.sheet {
-                SharedSheetLocator::Id(id) => id == sheet_id,
-                SharedSheetLocator::Name(ref n) => n.as_ref() == old_name,
-                SharedSheetLocator::Current => false,
-            }) {
-                formulas_to_update.insert(formula_id);
-            }
-        }
-
-        let formulas_to_update: Vec<VertexId> = formulas_to_update.into_iter().collect();
+        // Formulas that reference this sheet: every cell or range reference
+        // whose sheet is this one, from the formula text (legacy read its
+        // edges and compressed range deps; same set).
+        let formulas_to_update = self.formulas_referencing_sheet(sheet_id);
 
         for &formula_id in &formulas_to_update {
             self.tombstone_registry
@@ -96,7 +137,6 @@ impl DependencyGraph {
                     nr.definition = NamedDefinition::Literal(ref_err.clone());
                     name_vertices_to_update.push(nr.vertex);
                     dirty_vertices.push(nr.vertex);
-                    dirty_vertices.extend(nr.dependents.iter().copied());
                 }
                 NamedDefinition::Range(r)
                     if r.start.sheet_id == sheet_id || r.end.sheet_id == sheet_id =>
@@ -104,7 +144,6 @@ impl DependencyGraph {
                     nr.definition = NamedDefinition::Literal(ref_err.clone());
                     name_vertices_to_update.push(nr.vertex);
                     dirty_vertices.push(nr.vertex);
-                    dirty_vertices.extend(nr.dependents.iter().copied());
                 }
                 _ => {}
             }
@@ -115,7 +154,6 @@ impl DependencyGraph {
                     nr.definition = NamedDefinition::Literal(ref_err.clone());
                     name_vertices_to_update.push(nr.vertex);
                     dirty_vertices.push(nr.vertex);
-                    dirty_vertices.extend(nr.dependents.iter().copied());
                 }
                 NamedDefinition::Range(r)
                     if r.start.sheet_id == sheet_id || r.end.sheet_id == sheet_id =>
@@ -123,7 +161,6 @@ impl DependencyGraph {
                     nr.definition = NamedDefinition::Literal(ref_err.clone());
                     name_vertices_to_update.push(nr.vertex);
                     dirty_vertices.push(nr.vertex);
-                    dirty_vertices.extend(nr.dependents.iter().copied());
                 }
                 _ => {}
             }
@@ -133,9 +170,11 @@ impl DependencyGraph {
         for vid in name_vertices_to_update {
             self.update_vertex_value(vid, ref_err.clone());
         }
-        for vid in dirty_vertices {
+        for &vid in &dirty_vertices {
             self.mark_vertex_dirty(vid);
         }
+        // Their readers, through the names' closure (after the resync).
+        self.mark_dirty_many(&dirty_vertices);
 
         for vertex_id in vertices_to_delete {
             if let Some(cell_ref) = self.get_cell_ref_for_vertex(vertex_id) {
@@ -192,7 +231,16 @@ impl DependencyGraph {
     }
 
     fn tombstone_marker(sheet_name: &str) -> String {
-        format!("__FZ_MISSING_SHEET__{sheet_name}")
+        format!("{TOMBSTONE_SHEET_PREFIX}{sheet_name}")
+    }
+
+    /// Whether `sheet_name` is a removed sheet's tombstone marker. Such a
+    /// reference stays a preparation failure (`#REF!`) under either
+    /// preparation policy: the tombstone registry heals it when the sheet
+    /// returns, and `heal_orphaned_formulas` relies on the formula staying
+    /// in the ref-error set until every removed sheet is back.
+    pub(crate) fn is_tombstone_sheet(sheet_name: &str) -> bool {
+        sheet_name.starts_with(TOMBSTONE_SHEET_PREFIX)
     }
 
     fn rewrite_formula_sheet_to_tombstone(&mut self, vertex_id: VertexId, sheet_name: &str) {
@@ -247,6 +295,13 @@ impl DependencyGraph {
     }
     /// Rename an existing sheet.
     pub fn rename_sheet(&mut self, sheet_id: SheetId, new_name: &str) -> Result<(), ExcelError> {
+        let result = self.rename_sheet_impl(sheet_id, new_name);
+        self.authority_end_structural();
+        result
+    }
+
+    fn rename_sheet_impl(&mut self, sheet_id: SheetId, new_name: &str) -> Result<(), ExcelError> {
+        self.authority_note_structural(true);
         if new_name.is_empty() || new_name.len() > 255 {
             return Err(ExcelError::new(ExcelErrorKind::Value).with_message("Invalid sheet name"));
         }
@@ -266,6 +321,14 @@ impl DependencyGraph {
         }
 
         self.sheet_reg.rename(sheet_id, new_name)?;
+        // Name formulas are not rewritten by a rename (legacy): one that
+        // spells the old name kept its edges to this sheet's cells, so an
+        // edit there re-evaluates it (to #REF!). The authority keeps that
+        // edge through this alias; a sheet that takes the name ends it.
+        let old_key = old_name.to_ascii_lowercase();
+        self.renamed_sheet_aliases
+            .retain(|k, _| *k != new_name.to_ascii_lowercase());
+        self.renamed_sheet_aliases.insert(old_key, sheet_id);
 
         self.begin_batch();
 
@@ -299,6 +362,17 @@ impl DependencyGraph {
         source_sheet_id: SheetId,
         new_name: &str,
     ) -> Result<SheetId, ExcelError> {
+        let result = self.duplicate_sheet_impl(source_sheet_id, new_name);
+        self.authority_end_structural();
+        result
+    }
+
+    fn duplicate_sheet_impl(
+        &mut self,
+        source_sheet_id: SheetId,
+        new_name: &str,
+    ) -> Result<SheetId, ExcelError> {
+        self.authority_note_structural(true);
         if new_name.is_empty() || new_name.len() > 255 {
             return Err(ExcelError::new(ExcelErrorKind::Value).with_message("Invalid sheet name"));
         }
@@ -332,6 +406,7 @@ impl DependencyGraph {
             let new_id = self
                 .store
                 .allocate(VertexAddr::grid(*coord), new_sheet_id, 0x01);
+            #[cfg(any(test, feature = "legacy_oracle"))]
             self.edges.add_vertex(VertexAddr::grid(*coord), new_id.0);
             self.sheet_index_mut(new_sheet_id)
                 .add_vertex(*coord, new_id);
@@ -371,6 +446,7 @@ impl DependencyGraph {
                 _ => {}
             }
 
+            #[cfg(any(test, feature = "legacy_oracle"))]
             named_range.dependents.clear();
             let name_vertex = self.allocate_name_vertex(named_range.scope);
             if matches!(named_range.definition, NamedDefinition::Range(_)) {

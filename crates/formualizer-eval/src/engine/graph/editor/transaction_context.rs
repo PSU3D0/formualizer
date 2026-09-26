@@ -161,6 +161,15 @@ impl<'g> TransactionContext<'g> {
 
     /// Apply rollback for a list of changes
     fn apply_rollback(&mut self, changes: Vec<ChangeEvent>) -> Result<(), TransactionError> {
+        self.graph
+            .authority_set_replay(crate::engine::authority::history::Replay::Undo);
+        let rolled_back = self.apply_rollback_events(changes);
+        self.graph
+            .authority_set_replay(crate::engine::authority::history::Replay::Forward);
+        rolled_back
+    }
+
+    fn apply_rollback_events(&mut self, changes: Vec<ChangeEvent>) -> Result<(), TransactionError> {
         // Disable logging during rollback to avoid recording rollback operations
         self.change_log.set_enabled(false);
 

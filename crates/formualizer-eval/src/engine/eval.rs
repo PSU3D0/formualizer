@@ -1,5 +1,7 @@
 use crate::SheetId;
 use crate::arrow_store::{OverlayFragment, OverlayValue, SheetStore};
+#[cfg(test)]
+use crate::engine::Scheduler;
 use crate::engine::arena::AstNodeId;
 use crate::engine::eval_delta::{
     DeltaCollector, DeltaMode, EvalDelta, EvalDeltaCompatibilityPolicy,
@@ -27,6 +29,9 @@ use crate::engine::used_extent::{
     ExtentPolicy, OpenRangeBounds, resolve_used_extent_with_fallback,
 };
 use crate::engine::virtual_deps::{DynamicRefVirtualDepProvider, VirtualDepBuilder};
+
+#[path = "freshness.rs"]
+mod freshness;
 use crate::engine::{
     ChangeLogger, CycleDetection, CyclePolicy, DependencyGraph, EvalConfig, EvaluationRequestKind,
     EvaluationRequestOutcome, EvaluationResourceBaselineStats, EvaluationResourceReason,
@@ -34,8 +39,8 @@ use crate::engine::{
     FormulaIngestRecord, FormulaIngestReport, FormulaParseDiagnostic, FormulaParsePolicy,
     FormulaPlaneMode, FormulaPlaneRoute, FormulaPlaneRouteEvent, FormulaPlaneRoutePhase,
     FormulaPlaneRouteTransitionReason, FormulaPlaneTopologyCacheOutcome,
-    FormulaPlaneTopologyStrategy, ResourceLedger, RowVisibilitySource, ScheduleUnit, Scheduler,
-    VertexId, VertexKind, VisibilityMaskMode,
+    FormulaPlaneTopologyStrategy, ResourceLedger, RowVisibilitySource, ScheduleUnit, VertexId,
+    VertexKind, VisibilityMaskMode,
 };
 use crate::formula_plane::placement::prepare_anchor_once_fragment;
 use crate::formula_plane::placement::{
@@ -786,6 +791,17 @@ impl ComputedWriteBuffer {
         self.estimated_bytes
     }
 
+    #[cfg(feature = "tracing")]
+    fn traced_cell_count(&self) -> usize {
+        self.writes
+            .iter()
+            .map(|write| match write {
+                ComputedWrite::Cell { .. } => 1,
+                ComputedWrite::Rect { values, .. } => values.iter().map(Vec::len).sum(),
+            })
+            .sum()
+    }
+
     #[inline]
     pub(crate) fn writes(&self) -> &[ComputedWrite] {
         &self.writes
@@ -1087,6 +1103,17 @@ impl ComputedWriteChunkPlan {
     }
 }
 
+#[cfg(feature = "tracing")]
+#[derive(Default)]
+struct TraceEvaluationCounters {
+    computed_vertices: usize,
+    span_tasks: u64,
+    span_placements: u64,
+    memo_hits: u64,
+    skipped_punchouts: u64,
+    cycles: usize,
+}
+
 pub struct Engine<R> {
     pub(crate) graph: DependencyGraph,
     resolver: R,
@@ -1311,6 +1338,8 @@ pub struct Engine<R> {
 
     #[cfg(test)]
     last_formula_plane_span_eval_report: Option<SpanEvalReport>,
+    #[cfg(feature = "tracing")]
+    trace_evaluation_counters: TraceEvaluationCounters,
     #[cfg(test)]
     evaluation_request_begin_count_for_test: u64,
     #[cfg(any(test, feature = "test-support"))]
@@ -1323,6 +1352,8 @@ pub struct Engine<R> {
     inject_target_semantic_stale_once_for_test: bool,
     #[cfg(test)]
     force_virtual_dep_changes_remaining_for_test: usize,
+    /// Dynamic-read freshness state (design §8.2).
+    freshness: freshness::Freshness,
     #[cfg(test)]
     fail_evaluation_commit_preflight_once_for_test: bool,
     #[cfg(test)]
@@ -2172,6 +2203,9 @@ fn schedule_probe_retained_bytes(schedule: &crate::engine::Schedule) -> usize {
 #[derive(Debug, Clone)]
 struct CachedScheduleEntry {
     topology_epoch: u64,
+    /// Authority `(store revision, rev.dyn)` the schedule was planned from
+    /// (design §8.4; always 0 without `unified_authority`).
+    authority_revision: (u64, u64),
     candidate_vertices: Vec<VertexId>,
     schedule: Arc<crate::engine::scheduler::Schedule>,
 }
@@ -2954,6 +2988,21 @@ pub struct EvalPlan {
     pub target_cells: Vec<String>,
 }
 
+/// Whether the configured FormulaPlane mode is ignored (spans never placed):
+/// always, since the dependency authority is the runtime path (design §10).
+#[inline]
+fn plane_mode_ignored() -> bool {
+    true
+}
+
+/// Test-support probe for sibling-crate tests: true when span placement is
+/// off because the FormulaPlane mode is ignored (see `plane_mode_ignored`).
+#[cfg(feature = "test-support")]
+#[doc(hidden)]
+pub fn formula_plane_mode_ignored_for_test() -> bool {
+    plane_mode_ignored()
+}
+
 impl<R> Engine<R>
 where
     R: EvaluationContext,
@@ -2965,6 +3014,18 @@ where
     /// rejects these at build; this re-validates configs assembled via
     /// struct literals.
     pub fn new(resolver: R, config: EvalConfig) -> Self {
+        // Under the unified authority the FormulaPlane mode is accepted and
+        // ignored (design §10). Normalizing the stored mode keeps external
+        // readers of `config` (loaders choosing a span-preparation route) on
+        // the per-cell path; engine reads go through `formula_plane_mode()`.
+        let config = if plane_mode_ignored() {
+            EvalConfig {
+                formula_plane_mode: FormulaPlaneMode::Off,
+                ..config
+            }
+        } else {
+            config
+        };
         if let Err(msg) = config.cycle.validate() {
             panic!("invalid CycleConfig: {msg}");
         }
@@ -3100,6 +3161,8 @@ where
             function_provider_revision_seen,
             #[cfg(test)]
             last_formula_plane_span_eval_report: None,
+            #[cfg(feature = "tracing")]
+            trace_evaluation_counters: TraceEvaluationCounters::default(),
             #[cfg(test)]
             evaluation_request_begin_count_for_test: 0,
             #[cfg(any(test, feature = "test-support"))]
@@ -3112,6 +3175,7 @@ where
             inject_target_semantic_stale_once_for_test: false,
             #[cfg(test)]
             force_virtual_dep_changes_remaining_for_test: 0,
+            freshness: Default::default(),
             #[cfg(test)]
             fail_evaluation_commit_preflight_once_for_test: false,
             #[cfg(test)]
@@ -3268,6 +3332,8 @@ where
             function_provider_revision_seen,
             #[cfg(test)]
             last_formula_plane_span_eval_report: None,
+            #[cfg(feature = "tracing")]
+            trace_evaluation_counters: TraceEvaluationCounters::default(),
             #[cfg(test)]
             evaluation_request_begin_count_for_test: 0,
             #[cfg(any(test, feature = "test-support"))]
@@ -3280,6 +3346,7 @@ where
             inject_target_semantic_stale_once_for_test: false,
             #[cfg(test)]
             force_virtual_dep_changes_remaining_for_test: 0,
+            freshness: Default::default(),
             #[cfg(test)]
             fail_evaluation_commit_preflight_once_for_test: false,
             #[cfg(test)]
@@ -3413,6 +3480,32 @@ where
         evaluate: impl FnOnce(&mut Self) -> Result<T, ExcelError>,
     ) -> Result<T, ExcelError> {
         let outermost = self.evaluation_resource_request_depth == 0;
+        #[cfg(feature = "tracing")]
+        if outermost {
+            self.trace_evaluation_counters = TraceEvaluationCounters::default();
+        }
+        #[cfg(feature = "tracing")]
+        let request_kind = if matches!(
+            kind,
+            EvaluationRequestKind::Full
+                | EvaluationRequestKind::FullWithDelta
+                | EvaluationRequestKind::FullCancellable
+                | EvaluationRequestKind::FullLogged
+        ) {
+            "full"
+        } else {
+            "targeted"
+        };
+        #[cfg(feature = "tracing")]
+        let _request_span = outermost.then(|| {
+            crate::engine::trace::fz_span!(
+                tracing::Level::INFO,
+                "evaluate",
+                "evaluate.request",
+                kind = request_kind,
+                mode = ?self.formula_plane_mode()
+            )
+        });
         if outermost {
             let request_id = self.next_evaluation_resource_request_id;
             self.next_evaluation_resource_request_id = request_id
@@ -3421,7 +3514,7 @@ where
             self.active_evaluation_resource_request = Some(EvaluationResourceRequestStats::new(
                 request_id,
                 kind,
-                self.config.formula_plane_mode,
+                self.formula_plane_mode(),
                 self.staged_formula_count(),
             ));
             self.evaluation_resource_baseline.record_started(request_id);
@@ -3441,6 +3534,9 @@ where
         } else {
             evaluate(self)
         };
+        if outermost && result.is_err() {
+            self.freshness_abort_pass();
+        }
         self.evaluation_resource_request_depth =
             self.evaluation_resource_request_depth.saturating_sub(1);
 
@@ -3489,6 +3585,21 @@ where
             stats.phases.evaluation_ns = total_ns.saturating_sub(attributed);
             self.evaluation_resource_baseline.record_finished(&stats);
             self.last_evaluation_resource_request = Some(stats);
+            crate::engine::trace::fz_event!(
+                tracing::Level::INFO,
+                "evaluate",
+                "evaluate.summary",
+                computed_vertices = self.trace_evaluation_counters.computed_vertices,
+                span_tasks = self.trace_evaluation_counters.span_tasks,
+                span_placements = self.trace_evaluation_counters.span_placements,
+                memo_hits = self.trace_evaluation_counters.memo_hits,
+                skipped_punchouts = self.trace_evaluation_counters.skipped_punchouts,
+                cycles = self.trace_evaluation_counters.cycles,
+                cancelled = matches!(
+                    &result,
+                    Err(error) if error.kind == ExcelErrorKind::Cancelled
+                )
+            );
         }
         result
     }
@@ -4031,6 +4142,7 @@ where
     /// take the per-recalc volatile clock sample. Called at the start of
     /// every evaluation request that walks schedule units.
     fn begin_evaluation_request(&mut self) {
+        self.freshness_begin_request();
         #[cfg(test)]
         {
             self.evaluation_request_begin_count_for_test = self
@@ -4038,6 +4150,7 @@ where
                 .saturating_add(1);
         }
         self.last_cycle_telemetry = CycleTelemetry::default();
+        self.graph.authority_sync();
         // Defensive: consumed at the end of the previous request; a request
         // that errored out mid-walk must not leak its members into this one.
         self.pending_iterative_redirty.clear();
@@ -4961,7 +5074,7 @@ where
         names: impl IntoIterator<Item = &'a str>,
     ) -> Result<Option<(PreparedFormulaSpanDemotion, Vec<CellRef>)>, crate::engine::EditorError>
     {
-        if self.config.formula_plane_mode == FormulaPlaneMode::Off {
+        if self.formula_plane_mode() == FormulaPlaneMode::Off {
             return Ok(None);
         }
         let refs = self.exact_name_dependent_span_refs(names);
@@ -5058,7 +5171,7 @@ where
         version: Option<u64>,
     ) -> Result<(), ExcelError> {
         self.graph.set_source_scalar_version(name, version)?;
-        if self.config.formula_plane_mode != FormulaPlaneMode::Off {
+        if self.formula_plane_mode() != FormulaPlaneMode::Off {
             self.graph
                 .mark_all_formula_spans_dirty(WholeSpanDirtyReason::GlobalInvalidation);
         }
@@ -5071,7 +5184,7 @@ where
         version: Option<u64>,
     ) -> Result<(), ExcelError> {
         self.graph.set_source_table_version(name, version)?;
-        if self.config.formula_plane_mode != FormulaPlaneMode::Off {
+        if self.formula_plane_mode() != FormulaPlaneMode::Off {
             self.graph
                 .mark_all_formula_spans_dirty(WholeSpanDirtyReason::GlobalInvalidation);
         }
@@ -5080,7 +5193,7 @@ where
 
     pub fn invalidate_source(&mut self, name: &str) -> Result<(), ExcelError> {
         self.graph.invalidate_source(name)?;
-        if self.config.formula_plane_mode != FormulaPlaneMode::Off {
+        if self.formula_plane_mode() != FormulaPlaneMode::Off {
             self.graph
                 .mark_all_formula_spans_dirty(WholeSpanDirtyReason::GlobalInvalidation);
         }
@@ -5407,7 +5520,9 @@ where
         );
 
         // 1) Roll back the dependency graph.
-        {
+        self.graph
+            .authority_set_replay(crate::engine::authority::history::Replay::Undo);
+        let rolled_back = (|| {
             let mut editor = crate::engine::VertexEditor::new(&mut self.graph);
             let mut compound_stack: Vec<usize> = Vec::new();
             for ev in events.iter().rev() {
@@ -5426,7 +5541,11 @@ where
                     }
                 }
             }
-        }
+            Ok::<_, crate::engine::EditorError>(())
+        })();
+        self.graph
+            .authority_set_replay(crate::engine::authority::history::Replay::Forward);
+        rolled_back?;
 
         // 2) Roll back engine row-visibility metadata.
         for ev in events.iter().rev() {
@@ -5777,6 +5896,14 @@ where
                 self.record_formula_plane_change_for_event(&item.event);
             }
         }
+        crate::engine::trace::fz_event!(
+            tracing::Level::INFO,
+            "history",
+            "history.replay",
+            op = "undo",
+            events_replayed = batch.len(),
+            ownership_resyncs = batch.len()
+        );
         Ok(())
     }
 
@@ -5815,6 +5942,14 @@ where
                 self.record_formula_plane_change_for_event(&item.event);
             }
         }
+        crate::engine::trace::fz_event!(
+            tracing::Level::INFO,
+            "history",
+            "history.replay",
+            op = "redo",
+            events_replayed = batch.len(),
+            ownership_resyncs = batch.len()
+        );
         Ok(())
     }
 
@@ -5861,6 +5996,16 @@ where
             }
         }
 
+        #[cfg(feature = "tracing")]
+        let events_replayed = journal.graph.events.len();
+        crate::engine::trace::fz_event!(
+            tracing::Level::INFO,
+            "history",
+            "history.replay",
+            op = "undo",
+            events_replayed,
+            ownership_resyncs = events_replayed
+        );
         undo.push_redo_action(journal);
         Ok(())
     }
@@ -5908,6 +6053,16 @@ where
             }
         }
 
+        #[cfg(feature = "tracing")]
+        let events_replayed = journal.graph.events.len();
+        crate::engine::trace::fz_event!(
+            tracing::Level::INFO,
+            "history",
+            "history.replay",
+            op = "redo",
+            events_replayed,
+            ownership_resyncs = events_replayed
+        );
         undo.push_done_action(journal);
         Ok(())
     }
@@ -6255,6 +6410,10 @@ where
             debug_assert!(released.is_ok());
         }
         self.has_edited = true;
+        // Eager sync at a topology edit, so read-only (`&self`) plans and
+        // inspection see a current authority (not during a load or an open
+        // structural capture).
+        self.graph.authority_sync_eager();
     }
 
     fn mark_all_formula_vertices_dirty(&mut self) {
@@ -6297,6 +6456,19 @@ where
 
     pub fn staged_formula_count(&self) -> usize {
         self.staged_formulas.values().map(StagedSheet::len).sum()
+    }
+
+    /// The FormulaPlane mode the engine acts on. Under `unified_authority`
+    /// spans are never placed: formulas ingest per cell and the authority's
+    /// families are the regions (design §10), so the configured mode is
+    /// accepted and ignored.
+    #[inline]
+    pub(crate) fn formula_plane_mode(&self) -> FormulaPlaneMode {
+        if plane_mode_ignored() {
+            FormulaPlaneMode::Off
+        } else {
+            self.config.formula_plane_mode
+        }
     }
 
     /// Stage a formula text instead of inserting into the graph (used when deferring is enabled).
@@ -7544,7 +7716,29 @@ where
                 .push(idx);
         }
 
-        for ((_sheet_id, _canonical_hash, _col), candidate_indices) in groups {
+        crate::engine::trace::fz_event!(
+            tracing::Level::INFO,
+            "family",
+            "family.grouping",
+            groups = groups.len(),
+            singleton_groups = groups.values().filter(|members| members.len() == 1).count(),
+            max_group_cells = groups.values().map(Vec::len).max().unwrap_or(0)
+        );
+        for (&(sheet_id, canonical_hash, col), members) in &groups {
+            if members.len() >= 2 {
+                crate::engine::trace::fz_event!(
+                    tracing::Level::DEBUG,
+                    "family",
+                    "family.grouped",
+                    sheet = sheet_id,
+                    template_hash = canonical_hash,
+                    col,
+                    cells = members.len()
+                );
+            }
+        }
+
+        for ((sheet_id, canonical_hash, _col), candidate_indices) in groups {
             let sheet_name = pending_candidates[candidate_indices[0]].0.clone();
             let mut plans_by_coord: BTreeMap<(u32, u32), Vec<DependencyPlanRow>> = BTreeMap::new();
             for idx in &candidate_indices {
@@ -7618,6 +7812,19 @@ where
                         )
                     };
                     Self::accumulate_formula_plane_placement_report(&mut report, &placement_report);
+                    if let Some(FormulaPlacementResult::Legacy { reason, .. }) =
+                        placement_report.results.first()
+                    {
+                        crate::engine::trace::fz_event!(
+                            tracing::Level::INFO,
+                            "family",
+                            "family.rejected",
+                            sheet = sheet_id,
+                            template_hash = canonical_hash,
+                            reason = ?reason,
+                            cells = placement_report.counters.legacy_cells
+                        );
+                    }
 
                     // Index candidates by placement once per component. The
                     // previous per-result linear `find` made this fallback
@@ -7926,7 +8133,7 @@ where
             exact_replay: None,
             replay_disposition: crate::engine::FormulaReplayDisposition::default(),
         };
-        if self.config.formula_plane_mode != FormulaPlaneMode::AuthoritativeExperimental {
+        if self.formula_plane_mode() != FormulaPlaneMode::AuthoritativeExperimental {
             return preparation;
         }
 
@@ -8039,7 +8246,7 @@ where
         preparation
             .replay_disposition
             .extend_suppressed_excel_coords(suppressed.iter().copied());
-        if self.config.formula_plane_mode != FormulaPlaneMode::AuthoritativeExperimental {
+        if self.formula_plane_mode() != FormulaPlaneMode::AuthoritativeExperimental {
             return Ok(preparation);
         }
         #[cfg(feature = "benchmark_internal")]
@@ -8687,7 +8894,7 @@ where
         scratch: &mut u64,
     ) -> Result<(), ExcelError> {
         if selected.is_empty()
-            || self.config.formula_plane_mode != FormulaPlaneMode::AuthoritativeExperimental
+            || self.formula_plane_mode() != FormulaPlaneMode::AuthoritativeExperimental
         {
             return Ok(());
         }
@@ -8955,7 +9162,7 @@ where
             scratch,
         )?;
         if !allow_partial_shared
-            && self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental
+            && self.formula_plane_mode() == FormulaPlaneMode::AuthoritativeExperimental
         {
             let source = self
                 .staged_formulas
@@ -9225,7 +9432,7 @@ where
         let mut anchor_parses = 0u64;
         let mut anchor_asts = 0u64;
         let mut anchor_analyses = 0u64;
-        if self.config.formula_plane_mode != FormulaPlaneMode::Off {
+        if self.formula_plane_mode() != FormulaPlaneMode::Off {
             for family in &families {
                 self.target_preparation_checkpoint(deadline, 1)?;
                 if invalidated.contains(&family.source_id) {
@@ -9241,8 +9448,7 @@ where
                         direct_complete_families = direct_complete_families.saturating_add(1);
                         direct_complete_cells =
                             direct_complete_cells.saturating_add(prepared.member_count);
-                        if self.config.formula_plane_mode
-                            == FormulaPlaneMode::AuthoritativeExperimental
+                        if self.formula_plane_mode() == FormulaPlaneMode::AuthoritativeExperimental
                         {
                             disposition.set_family_direct(family.source_id);
                         }
@@ -9337,7 +9543,7 @@ where
                         .or_default() += 1;
                     continue;
                 }
-                if self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental {
+                if self.formula_plane_mode() == FormulaPlaneMode::AuthoritativeExperimental {
                     let mut candidate = disposition.clone();
                     if let Err(reason) = candidate.register_partition(source, true) {
                         *source_report
@@ -10625,13 +10831,33 @@ where
     ) -> Result<FormulaIngestReport, ExcelError> {
         self.observe_function_semantic_epoch()?;
         let formula_cells_seen = batches.iter().map(|batch| batch.len() as u64).sum();
+        #[cfg(feature = "tracing")]
+        let arena_nodes_before = self.graph.data_store().memory_usage().total_ast_nodes;
+        #[cfg(feature = "tracing")]
+        let route = if !partitioned_families.is_empty() {
+            "partitioned"
+        } else if !compressed_families.is_empty() {
+            "compressed_source"
+        } else if source_report.is_some() {
+            "replay"
+        } else {
+            "ordinary"
+        };
+        let _ingest_span = crate::engine::trace::fz_span!(
+            tracing::Level::INFO,
+            "ingest",
+            "ingest.batch",
+            mode = ?self.formula_plane_mode(),
+            route,
+            formula_cells = formula_cells_seen
+        );
         #[cfg(feature = "benchmark_internal")]
         let benchmark_forced_replay =
             std::env::var_os("FORMUALIZER_BENCH_FORCE_FORMULA_FAMILY_REPLAY").is_some();
         #[cfg(not(feature = "benchmark_internal"))]
         let benchmark_forced_replay = false;
         let (mut report, materialize_batches, planned_materialize) = if benchmark_forced_replay
-            && self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental
+            && self.formula_plane_mode() == FormulaPlaneMode::AuthoritativeExperimental
         {
             let mut report =
                 FormulaIngestReport::with_mode(FormulaPlaneMode::AuthoritativeExperimental);
@@ -10640,7 +10866,7 @@ where
                 .insert("ForcedReplay".to_string(), formula_cells_seen);
             (report, batches, BTreeMap::new())
         } else {
-            match self.config.formula_plane_mode {
+            match self.formula_plane_mode() {
                 FormulaPlaneMode::Off => (
                     FormulaIngestReport::with_mode(FormulaPlaneMode::Off),
                     batches,
@@ -10785,6 +11011,24 @@ where
             report.graph_edges_created = summary.edges as u64;
         }
 
+        crate::engine::trace::fz_event!(
+            tracing::Level::INFO,
+            "ingest",
+            "ingest.summary",
+            candidate_cells = report.shadow_candidate_cells,
+            accepted_span_cells = report.shadow_accepted_span_cells,
+            fallback_cells = report.shadow_fallback_cells,
+            spans_created = report.shadow_spans_created,
+            templates_interned = report.shadow_templates_interned,
+            graph_vertices_created = report.graph_vertices_created,
+            graph_edges_created = report.graph_edges_created,
+            arena_nodes_delta = self
+                .graph
+                .data_store()
+                .memory_usage()
+                .total_ast_nodes
+                .saturating_sub(arena_nodes_before)
+        );
         if publish_report {
             self.record_formula_ingest_report(report.clone());
         }
@@ -10941,7 +11185,7 @@ where
             symbols: self.graph.symbol_revision(),
             semantic,
             provider,
-            formula_plane_mode: self.config.formula_plane_mode,
+            formula_plane_mode: self.formula_plane_mode(),
             deterministic_mode: self.config.deterministic_mode.clone(),
             budgets: self.evaluation_resource_budgets.clone(),
             span_refs,
@@ -11712,7 +11956,7 @@ where
         let mut selected_package_sheets = FxHashSet::default();
         let mut selected_package_points: BTreeMap<String, BTreeSet<(u32, u32)>> = BTreeMap::new();
         let mut prepared_packages: Vec<PreparedTargetSourcePackage> = Vec::new();
-        let authoritative_with_ordinary = self.config.formula_plane_mode
+        let authoritative_with_ordinary = self.formula_plane_mode()
             == FormulaPlaneMode::AuthoritativeExperimental
             && self.staged_formula_index.ordinary_count() != 0;
         let has_unknown_package_sheet = self
@@ -11890,49 +12134,46 @@ where
                             end_col: cell.coord.col() + 1,
                         });
                     }
-                    for dependency in self.graph.get_dependencies(vertex) {
-                        self.target_preparation_checkpoint(options.deadline, 1)?;
-                        symbol_vertices.push_back(dependency);
-                    }
-                    if let Some(range_dependencies) = self
-                        .graph
-                        .formula_range_dependencies(vertex)
-                        .map(<[_]>::to_vec)
-                    {
-                        for range in range_dependencies {
-                            self.target_preparation_checkpoint(options.deadline, 1)?;
-                            // `Current` is the sheet the formula lives on.
-                            let context_sheet = self.graph.get_vertex_sheet_id(vertex);
-                            let Ok(sheet_id) =
-                                self.resolve_sheet_locator(&range.sheet, context_sheet)
-                            else {
-                                if Self::widen_target_preparation(
-                                    options.opaque_policy,
-                                    &mut scope,
-                                    &mut reasons,
-                                    OpaqueReason::UnresolvedCrossSheetBinding,
-                                )? {
-                                    break;
+                    // The formula's direct precedents, from the authority:
+                    // cells and ranges become regions, symbol rows (names,
+                    // tables, sources) their vertices.
+                    match self.graph.authority_vertex_precedents(vertex) {
+                        Some(precedents) => {
+                            for (sheet_id, rect) in precedents {
+                                self.target_preparation_checkpoint(options.deadline, 1)?;
+                                if sheet_id == crate::engine::authority::geom::SYMBOL_SHEET {
+                                    for slot in rect.r0..=rect.r1 {
+                                        if let Some(symbol) =
+                                            self.graph.authority_host().symbols().vertex(slot)
+                                        {
+                                            symbol_vertices.push_back(symbol);
+                                        }
+                                    }
+                                    continue;
                                 }
+                                let sheet = self.graph.sheet_name(sheet_id).to_string();
+                                regions.push_back(PreparationRegion {
+                                    sheet,
+                                    sheet_id,
+                                    start_row: rect.r0 + 1,
+                                    start_col: rect.c0 + 1,
+                                    end_row: (rect.r1 + 1)
+                                        .min(self.workbook_load_limits.max_sheet_rows),
+                                    end_col: (rect.c1 + 1)
+                                        .min(self.workbook_load_limits.max_sheet_cols),
+                                });
+                            }
+                        }
+                        // The authority cannot answer (failed host): widen.
+                        None => {
+                            if Self::widen_target_preparation(
+                                options.opaque_policy,
+                                &mut scope,
+                                &mut reasons,
+                                OpaqueReason::UnresolvedCrossSheetBinding,
+                            )? {
                                 continue;
-                            };
-                            let sheet = self.graph.sheet_name(sheet_id).to_string();
-                            regions.push_back(PreparationRegion {
-                                sheet,
-                                sheet_id,
-                                start_row: range.start_row.map_or(1, |bound| bound.index + 1),
-                                start_col: range.start_col.map_or(1, |bound| bound.index + 1),
-                                end_row: range
-                                    .end_row
-                                    .map_or(self.workbook_load_limits.max_sheet_rows, |bound| {
-                                        bound.index + 1
-                                    }),
-                                end_col: range
-                                    .end_col
-                                    .map_or(self.workbook_load_limits.max_sheet_cols, |bound| {
-                                        bound.index + 1
-                                    }),
-                            });
+                            }
                         }
                     }
                     if let Some(name) = self.graph.named_range_by_vertex(vertex).cloned() {
@@ -12103,7 +12344,7 @@ where
                 if let Some(selected) = selected_package_points.get(&region.sheet) {
                     points.retain(|point| !selected.contains(point));
                 }
-                let coalesce_shared = self.config.formula_plane_mode
+                let coalesce_shared = self.formula_plane_mode()
                     == FormulaPlaneMode::AuthoritativeExperimental
                     && self
                         .staged_formulas
@@ -12677,7 +12918,7 @@ where
         )?;
 
         if package_encountered
-            || (self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental
+            || (self.formula_plane_mode() == FormulaPlaneMode::AuthoritativeExperimental
                 && !prepared.is_empty())
         {
             Self::widen_target_preparation(
@@ -12806,8 +13047,7 @@ where
                             .fallback_reasons
                             .entry(reason.clone())
                             .or_default() += package.direct_families as u64;
-                        if self.config.formula_plane_mode
-                            == FormulaPlaneMode::AuthoritativeExperimental
+                        if self.formula_plane_mode() == FormulaPlaneMode::AuthoritativeExperimental
                         {
                             self.materialize_target_package_direct_records(
                                 package,
@@ -13171,7 +13411,7 @@ where
             .graph
             .apply_prevalidated_legacy_graph_plan(legacy_graph);
         let plane_report =
-            if self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental {
+            if self.formula_plane_mode() == FormulaPlaneMode::AuthoritativeExperimental {
                 formula_plane.map(|append| {
                     self.graph
                         .formula_authority_mut()
@@ -13270,7 +13510,7 @@ where
         }
         self.formula_parse_diagnostics.extend(pending_diagnostics);
         if !prepared.is_empty() || !prepared_packages.is_empty() {
-            let mut ingest_delta = FormulaIngestReport::with_mode(self.config.formula_plane_mode);
+            let mut ingest_delta = FormulaIngestReport::with_mode(self.formula_plane_mode());
             ingest_delta.formula_cells_seen = (prepared.len() as u64).saturating_add(
                 prepared_packages
                     .iter()
@@ -13343,7 +13583,7 @@ where
                         .or_default();
                     *total = total.saturating_add(*count);
                 }
-                if self.config.formula_plane_mode == FormulaPlaneMode::Off {
+                if self.formula_plane_mode() == FormulaPlaneMode::Off {
                     ingest_delta.source_family_fallback = ingest_delta
                         .source_family_fallback
                         .saturating_add(source.families_seen);
@@ -13411,8 +13651,7 @@ where
                     ingest_delta.edge_rows_avoided_shadow = ingest_delta
                         .edge_rows_avoided_shadow
                         .saturating_add(package.direct_cells);
-                    if self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental
-                    {
+                    if self.formula_plane_mode() == FormulaPlaneMode::AuthoritativeExperimental {
                         ingest_delta.source_family_promoted = ingest_delta
                             .source_family_promoted
                             .saturating_add(package.direct_families as u64);
@@ -13715,7 +13954,7 @@ where
                     .filter(|family| !package.invalidated.contains(&family.source_id))
                     .cloned()
                     .collect();
-                if self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental {
+                if self.formula_plane_mode() == FormulaPlaneMode::AuthoritativeExperimental {
                     let mut preparation = self.prepare_source_formula_proposals(
                         sheet,
                         &eligible,
@@ -14357,7 +14596,7 @@ where
         row0: u32,
         col0: u32,
     ) -> Result<(), crate::engine::EditorError> {
-        if self.config.formula_plane_mode == FormulaPlaneMode::Off {
+        if self.formula_plane_mode() == FormulaPlaneMode::Off {
             return Ok(());
         }
         let placement = PlacementCoord::new(sheet_id, row0, col0);
@@ -14638,7 +14877,20 @@ where
         // #171: after an axis edit, retained read-summary relocation cannot be
         // used as a proof of disconnection. Fail closed for this engine.
         self.legacy_island_structural_summaries_trusted = false;
-        self.demote_spans_for_structural_op_impl(Some(op), affected_region, true)
+        #[cfg(feature = "tracing")]
+        let spans_before = self.graph.formula_authority().active_span_count();
+        let result = self.demote_spans_for_structural_op_impl(Some(op), affected_region, true);
+        #[cfg(feature = "tracing")]
+        let spans_after = self.graph.formula_authority().active_span_count();
+        crate::engine::trace::fz_event!(
+            tracing::Level::INFO,
+            "structural",
+            "structural.edit",
+            op = ?op,
+            spans_before,
+            spans_after
+        );
+        result
     }
 
     fn indexed_structural_candidate_span_refs(
@@ -16101,8 +16353,24 @@ where
             planned_by_sheet
         };
         {
+            #[cfg(feature = "tracing")]
+            let cascade = span_plans.len();
             let authority = self.graph.formula_authority_mut();
             for plan in &span_plans {
+                #[cfg(feature = "tracing")]
+                if let Some(reason) = op
+                    && let Some(span) = authority.plane.spans.get(plan.span_ref)
+                {
+                    crate::engine::trace::fz_event!(
+                        tracing::Level::INFO,
+                        "span",
+                        "span.demoted",
+                        span_id = plan.span_ref.id.0,
+                        reason = ?reason,
+                        cells = span.domain.cell_count(),
+                        cascade
+                    );
+                }
                 authority
                     .plane
                     .remove_overlays_for_source_span(plan.span_ref);
@@ -16464,6 +16732,14 @@ where
         &mut self,
         prepared: PreparedFormulaSpanDemotion,
     ) -> Result<FormulaSpanDemotionReport, FormulaSpanDemotionError> {
+        self.commit_prepared_formula_span_demotion_with_trace(prepared, None)
+    }
+
+    fn commit_prepared_formula_span_demotion_with_trace(
+        &mut self,
+        prepared: PreparedFormulaSpanDemotion,
+        _trace_reason: Option<PlacementFallbackReason>,
+    ) -> Result<FormulaSpanDemotionReport, FormulaSpanDemotionError> {
         self.prepared_legacy_admission(&prepared.legacy_graph, prepared.placement_count as u64)
             .map_err(FormulaSpanDemotionError::Resource)?;
         if prepared.fault == FormulaSpanDemotionFault::FinalLegacyGraphValidation {
@@ -16505,8 +16781,24 @@ where
         let _ = self
             .graph
             .apply_prevalidated_legacy_graph_plan(legacy_graph);
+        #[cfg(feature = "tracing")]
+        let cascade = span_refs.len();
         let authority = self.graph.formula_authority_mut();
         for span_ref in &span_refs {
+            #[cfg(feature = "tracing")]
+            if let Some(reason) = _trace_reason
+                && let Some(span) = authority.plane.spans.get(*span_ref)
+            {
+                crate::engine::trace::fz_event!(
+                    tracing::Level::INFO,
+                    "span",
+                    "span.demoted",
+                    span_id = span_ref.id.0,
+                    reason = ?reason,
+                    cells = span.domain.cell_count(),
+                    cascade
+                );
+            }
             authority.plane.remove_overlays_for_source_span(*span_ref);
             let _ = authority.plane.remove_span(*span_ref);
         }
@@ -16519,7 +16811,7 @@ where
     }
 
     fn transition_off_mode_spans_to_legacy(&mut self) -> Result<bool, ExcelError> {
-        if self.config.formula_plane_mode != FormulaPlaneMode::Off {
+        if self.formula_plane_mode() != FormulaPlaneMode::Off {
             return Ok(false);
         }
         let span_refs = self.graph.formula_authority().active_span_refs();
@@ -16616,7 +16908,10 @@ where
                 }
             })?;
         let report = self
-            .commit_prepared_formula_span_demotion(prepared)
+            .commit_prepared_formula_span_demotion_with_trace(
+                prepared,
+                Some(PlacementFallbackReason::CycleMember),
+            )
             .map_err(|error| {
                 ExcelError::new(ExcelErrorKind::NImpl).with_message(format!(
                     "FormulaPlane cycle-member span demotion commit failed: {error}"
@@ -16664,7 +16959,10 @@ where
                 }
             })?;
         let report = self
-            .commit_prepared_formula_span_demotion(prepared)
+            .commit_prepared_formula_span_demotion_with_trace(
+                prepared,
+                Some(PlacementFallbackReason::ArrayResult),
+            )
             .map_err(|error| {
                 ExcelError::new(ExcelErrorKind::NImpl).with_message(format!(
                     "FormulaPlane array-result span demotion commit failed: {error}"
@@ -16746,7 +17044,7 @@ where
         sheet: &str,
         sheet_id: SheetId,
     ) -> crate::engine::graph::StructuralOccupancy {
-        if !self.graph.has_compressed_range_dependencies() {
+        if !self.graph.has_compressed_range_readers() {
             return crate::engine::graph::StructuralOccupancy::default();
         }
         let mut occupancy = self.graph.structural_occupancy(sheet_id);
@@ -19218,7 +19516,7 @@ where
 
     fn record_formula_plane_structural_change(&mut self, scope: StructuralScope) {
         self.invalidate_pending_spills(scope);
-        if self.config.formula_plane_mode == FormulaPlaneMode::Off {
+        if self.formula_plane_mode() == FormulaPlaneMode::Off {
             return;
         }
 
@@ -19814,22 +20112,23 @@ where
             );
             if is_formula {
                 engine.begin_evaluation_request();
+                #[cfg(any(test, feature = "legacy_oracle"))]
                 engine.graph.flush_pending_edge_deltas();
                 let roots = [crate::engine::target_preparation::TargetProducer::Legacy(
                     vertex_id,
                 )];
-                if engine.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental
+                if engine.formula_plane_mode() == FormulaPlaneMode::AuthoritativeExperimental
                     && engine.graph.formula_authority().active_span_count() > 0
                 {
                     engine.evaluate_authoritative_formula_plane_targets(&roots, None)?;
                 } else {
                     engine.evaluate_legacy_target_roots(&roots, None)?;
                 }
-            } else if engine.config.formula_plane_mode
-                == FormulaPlaneMode::AuthoritativeExperimental
+            } else if engine.formula_plane_mode() == FormulaPlaneMode::AuthoritativeExperimental
                 && engine.graph.formula_authority().active_span_count() > 0
             {
                 engine.begin_evaluation_request();
+                #[cfg(any(test, feature = "legacy_oracle"))]
                 engine.graph.flush_pending_edge_deltas();
                 engine.evaluate_authoritative_formula_plane(None, None)?;
             }
@@ -20589,6 +20888,7 @@ where
         scope: &crate::engine::PrepareScope,
         delta: Option<&mut DeltaCollector>,
     ) -> Result<EvalResult, ExcelError> {
+        self.require_unified_authority()?;
         self.transition_off_mode_spans_to_legacy()?;
         if matches!(scope, crate::engine::PrepareScope::Workbook)
             && let Some(stats) = self.active_evaluation_resource_request.as_mut()
@@ -20639,9 +20939,10 @@ where
             roots = widened_roots.into_vec();
         }
         self.begin_evaluation_request();
+        #[cfg(any(test, feature = "legacy_oracle"))]
         self.graph.flush_pending_edge_deltas();
         let workbook_scope = matches!(scope, crate::engine::PrepareScope::Workbook);
-        if self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental
+        if self.formula_plane_mode() == FormulaPlaneMode::AuthoritativeExperimental
             && self.graph.formula_authority().active_span_count() > 0
         {
             if workbook_scope {
@@ -20650,7 +20951,7 @@ where
                 self.evaluate_authoritative_formula_plane_targets(&roots, delta)
             }
         } else {
-            if self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental {
+            if self.formula_plane_mode() == FormulaPlaneMode::AuthoritativeExperimental {
                 self.observe_topology_strategy(FormulaPlaneTopologyStrategy::SkippedNoActiveSpans);
             }
             if workbook_scope {
@@ -20785,8 +21086,9 @@ where
         let mut cycle_errors = 0usize;
         let mut replans = 0usize;
         const MAX_REPLAN: usize = 5;
+        self.graph.authority_sync();
         loop {
-            let (precedents_to_eval, old_vdeps) = self.build_demand_subgraph(&root_vertices);
+            let (precedents_to_eval, old_vdeps) = self.demand_subgraph(&root_vertices)?;
             if precedents_to_eval.is_empty() {
                 break;
             }
@@ -20797,10 +21099,19 @@ where
                     .unwrap()
                     .target_schedule_builds += 1;
             }
-            let scheduler = Scheduler::new(&self.graph);
-            let schedule =
-                scheduler.create_schedule_with_virtual(&precedents_to_eval, &old_vdeps)?;
-            for &unit in &schedule.units {
+            let schedule = {
+                self.graph.authority_sync();
+                let mut ledger = self.active_resource_ledger.take();
+                let result = self.create_authority_schedule(
+                    &precedents_to_eval,
+                    &old_vdeps,
+                    ledger.as_mut(),
+                );
+                self.active_resource_ledger = ledger;
+                result?
+            };
+            self.begin_pass(&schedule);
+            for (unit_index, &unit) in schedule.units.iter().enumerate() {
                 self.cancellation_checkpoint("Evaluation cancelled before target schedule unit")?;
                 match unit {
                     ScheduleUnit::Cycle(index) => {
@@ -20830,14 +21141,13 @@ where
                         computed_vertices = computed_vertices.saturating_add(evaluated);
                     }
                 }
+                if self.stop_after_unit(&schedule, unit_index) {
+                    break;
+                }
             }
             let changed = self.changed_virtual_dep_vertices(&precedents_to_eval, &old_vdeps);
             self.resource_checkpoint(0)?;
-            self.graph.clear_dirty_flags(&precedents_to_eval);
-            for vertex in &changed {
-                self.graph.set_dirty(*vertex, true);
-            }
-            if changed.is_empty() {
+            if !self.finish_target_pass_dirty(&precedents_to_eval, &changed) {
                 break;
             }
             if replans >= MAX_REPLAN {
@@ -20876,7 +21186,7 @@ where
                 cycles: Vec::new(),
             }
         } else {
-            self.create_evaluation_schedule_uncached(&vertices)?.0
+            self.create_evaluation_schedule_uncached(&vertices, None)?.0
         };
         self.validate_recalc_plan_key(&key)?;
         Ok(RecalcPlan {
@@ -20909,6 +21219,7 @@ where
             engine.validate_deterministic_mode()?;
             let _source_cache = engine.source_cache_session();
             let preparation = engine.prepare_graph_for_routed_evaluation(targets, &options)?;
+            #[cfg(any(test, feature = "legacy_oracle"))]
             engine.graph.flush_pending_edge_deltas();
             let topology = if matches!(
                 preparation.widened_scope,
@@ -20957,6 +21268,7 @@ where
         &mut self,
         plan: &RecalcPlan,
     ) -> Result<EvalResult, ExcelError> {
+        #[cfg(any(test, feature = "legacy_oracle"))]
         self.graph.flush_pending_edge_deltas();
         self.validate_recalc_plan_key(&plan.key)?;
         self.cancellation_checkpoint("Evaluation cancelled before recalculation plan execution")?;
@@ -20984,7 +21296,7 @@ where
                 let _source_cache = self.source_cache_session();
                 let transitioned = self.transition_off_mode_spans_to_legacy()?;
                 self.begin_evaluation_request();
-                if self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental
+                if self.formula_plane_mode() == FormulaPlaneMode::AuthoritativeExperimental
                     && self.graph.formula_authority().active_span_count() > 0
                 {
                     return self.evaluate_authoritative_formula_plane_all();
@@ -21204,6 +21516,12 @@ where
         const MAX_RUNTIME_REPLAN: usize = 5;
         let mut array_result_demotions = 0usize;
         const MAX_ARRAY_RESULT_DEMOTIONS: usize = 64;
+        #[cfg(feature = "tracing")]
+        let mut published_layers = 0usize;
+        #[cfg(feature = "tracing")]
+        let mut published_buffer_cells_total = 0usize;
+        #[cfg(feature = "tracing")]
+        let mut published_buffer_cells_max = 0usize;
         let mut virtual_telemetry = self
             .config
             .enable_virtual_dep_telemetry
@@ -21431,7 +21749,7 @@ where
             // loop breaks out immediately, leaving that layer's write buffer
             // unflushed, so nothing from the offending span is published.
             let mut array_result_span: Option<FormulaSpanRef> = None;
-            'layers: for layer in schedule.layers {
+            'layers: for (layer_index, layer) in schedule.layers.into_iter().enumerate() {
                 self.cancellation_checkpoint("Evaluation cancelled before mixed layer")?;
                 let mut buffer = ComputedWriteBuffer::default();
                 let mut sink = SpanComputedWriteSink::new(&mut buffer);
@@ -21467,6 +21785,8 @@ where
                             #[cfg(test)]
                             let mut last_group_report = None;
                             let mut selected_group_work = 0_u64;
+                            #[cfg(feature = "tracing")]
+                            let mut trace_group = TraceEvaluationCounters::default();
                             while work_index < work_items.len() {
                                 let FormulaProducerId::Span(group_span_id) =
                                     work_items[work_index].producer
@@ -21534,6 +21854,23 @@ where
                                             )));
                                     }
                                 };
+                                #[cfg(feature = "tracing")]
+                                {
+                                    trace_group.span_tasks = trace_group
+                                        .span_tasks
+                                        .saturating_add(report.span_eval_task_count);
+                                    trace_group.span_placements = trace_group
+                                        .span_placements
+                                        .saturating_add(report.span_eval_placement_count);
+                                    trace_group.memo_hits = trace_group.memo_hits.saturating_add(
+                                        report
+                                            .memo_eval_count
+                                            .saturating_add(report.memo_broadcast_count),
+                                    );
+                                    trace_group.skipped_punchouts = trace_group
+                                        .skipped_punchouts
+                                        .saturating_add(report.skipped_overlay_punchout_count);
+                                }
                                 #[cfg(test)]
                                 {
                                     last_group_report = Some(report.clone());
@@ -21543,6 +21880,20 @@ where
                                 computed_vertices = computed_vertices
                                     .saturating_add(report.span_eval_placement_count as usize);
                                 work_index = work_index.saturating_add(1);
+                            }
+                            #[cfg(feature = "tracing")]
+                            {
+                                let trace = &mut self.trace_evaluation_counters;
+                                trace.span_tasks =
+                                    trace.span_tasks.saturating_add(trace_group.span_tasks);
+                                trace.span_placements = trace
+                                    .span_placements
+                                    .saturating_add(trace_group.span_placements);
+                                trace.memo_hits =
+                                    trace.memo_hits.saturating_add(trace_group.memo_hits);
+                                trace.skipped_punchouts = trace
+                                    .skipped_punchouts
+                                    .saturating_add(trace_group.skipped_punchouts);
                             }
                             // Charge the exact selected placement regions before
                             // their transaction-local value buffer is published.
@@ -21594,6 +21945,22 @@ where
                 self.cancellation_checkpoint("Evaluation cancelled before mixed layer flush")?;
                 if let Some(delta) = delta.as_deref_mut() {
                     self.record_computed_write_buffer_delta(&buffer, delta);
+                }
+                crate::engine::trace::fz_event!(
+                    tracing::Level::DEBUG,
+                    "layer",
+                    "layer.flushed",
+                    layer = layer_index,
+                    producers = work_items.len(),
+                    buffer_cells = buffer.traced_cell_count()
+                );
+                #[cfg(feature = "tracing")]
+                {
+                    let buffer_cells = buffer.traced_cell_count();
+                    published_layers = published_layers.saturating_add(1);
+                    published_buffer_cells_total =
+                        published_buffer_cells_total.saturating_add(buffer_cells);
+                    published_buffer_cells_max = published_buffer_cells_max.max(buffer_cells);
                 }
                 self.flush_authoritative_computed_write_buffer(&mut buffer)?;
             }
@@ -21716,6 +22083,19 @@ where
             self.redirty_for_next_recalc();
             self.checked_ack_formula_dirty_sublease_observed(formula_dirty, &owned_dirty_events)?;
             self.recalc_epoch = self.recalc_epoch.wrapping_add(1);
+            #[cfg(feature = "tracing")]
+            {
+                self.trace_evaluation_counters.computed_vertices = computed_vertices;
+                self.trace_evaluation_counters.cycles = prepass_cycle_errors;
+            }
+            crate::engine::trace::fz_event!(
+                tracing::Level::INFO,
+                "publication",
+                "publication.summary",
+                layers = published_layers,
+                buffer_cells_total = published_buffer_cells_total,
+                buffer_cells_max = published_buffer_cells_max
+            );
             return Ok(EvalResult {
                 computed_vertices,
                 cycle_errors: prepass_cycle_errors,
@@ -21814,7 +22194,7 @@ where
                 entry_count = entry_count.saturating_add(1);
                 units = units.saturating_add(index_units(point));
             }
-            for dependency in self.graph.get_dependencies(vertex) {
+            for dependency in self.graph.span_path_legacy_dependencies(vertex) {
                 if let Some(cell) = self.graph.get_cell_ref_for_vertex(dependency) {
                     let point = Region::point(cell.sheet_id, cell.coord.row(), cell.coord.col());
                     entry_count = entry_count.saturating_add(1);
@@ -21822,7 +22202,7 @@ where
                 }
             }
             let vertex_sheet = self.graph.get_vertex_sheet_id(vertex);
-            if let Some(ranges) = self.graph.get_range_dependencies(vertex) {
+            if let Some(ranges) = self.graph.span_path_legacy_range_dependencies(vertex) {
                 for range in ranges {
                     if let Ok(Some(region)) =
                         self.shared_range_to_region_pattern(range, vertex_sheet)
@@ -21876,13 +22256,13 @@ where
             if span_boundary_sheets.contains(&cell.sheet_id) {
                 return None;
             }
-            for dependency in self.graph.get_dependencies(*vertex) {
+            for dependency in self.graph.span_path_legacy_dependencies(*vertex) {
                 let dependency_cell = self.graph.get_cell_ref_for_vertex(dependency)?;
                 if span_boundary_sheets.contains(&dependency_cell.sheet_id) {
                     return None;
                 }
             }
-            if let Some(ranges) = self.graph.get_range_dependencies(*vertex) {
+            if let Some(ranges) = self.graph.span_path_legacy_range_dependencies(*vertex) {
                 for range in ranges {
                     let region = self
                         .shared_range_to_region_pattern(range, cell.sheet_id)
@@ -22141,7 +22521,7 @@ where
             .iter()
             .map(|vertex| {
                 self.graph
-                    .get_dependencies(*vertex)
+                    .span_path_legacy_dependencies(*vertex)
                     .into_iter()
                     .filter(|dependency| membership_set.contains(dependency))
                     .count()
@@ -22250,7 +22630,7 @@ where
                 let result_region =
                     Region::point(cell.sheet_id, cell.coord.row(), cell.coord.col());
                 let mut seen = rustc_hash::FxHashSet::default();
-                for dep in self.graph.get_dependencies(*vertex) {
+                for dep in self.graph.span_path_legacy_dependencies(*vertex) {
                     let Some(dep_cell) = self.graph.get_cell_ref_for_vertex(dep) else {
                         // Named/table/source vertices do not have a trustworthy
                         // regional boundary summary. Preserve the global planner.
@@ -22275,7 +22655,7 @@ where
                         );
                     }
                 }
-                if let Some(ranges) = self.graph.get_range_dependencies(*vertex) {
+                if let Some(ranges) = self.graph.span_path_legacy_range_dependencies(*vertex) {
                     for range in ranges {
                         let Some(read_region) =
                             self.shared_range_to_region_pattern(range, cell.sheet_id)?
@@ -22479,7 +22859,7 @@ where
             let context_sheet = self.graph.get_vertex_sheet_id(vertex);
             for range in self
                 .graph
-                .get_range_dependencies(vertex)
+                .span_path_legacy_range_dependencies(vertex)
                 .into_iter()
                 .flatten()
             {
@@ -22675,7 +23055,7 @@ where
                 let FormulaProducerId::Legacy(vertex) = consumer else {
                     continue;
                 };
-                for dependency in self.graph.get_dependencies(vertex) {
+                for dependency in self.graph.span_path_legacy_dependencies(vertex) {
                     let direct = FormulaProducerId::Legacy(dependency);
                     if !try_add_edge(
                         direct,
@@ -22721,7 +23101,7 @@ where
                 let context_sheet = self.graph.get_vertex_sheet_id(vertex);
                 for range in self
                     .graph
-                    .get_range_dependencies(vertex)
+                    .span_path_legacy_range_dependencies(vertex)
                     .into_iter()
                     .flatten()
                 {
@@ -23083,6 +23463,24 @@ where
             strategy,
             &compile_stats,
             topology_started.elapsed(),
+        );
+        #[cfg(feature = "tracing")]
+        let (topology_outcome, fence_reason) = match cache_outcome {
+            FormulaPlaneTopologyCacheOutcome::Hit => ("hit", "none"),
+            FormulaPlaneTopologyCacheOutcome::Built => ("built", "none"),
+            FormulaPlaneTopologyCacheOutcome::SkippedDynamicLegacy => ("fenced", "dynamic_legacy"),
+            FormulaPlaneTopologyCacheOutcome::SkippedOverflow => ("fenced", "overflow"),
+            FormulaPlaneTopologyCacheOutcome::NotUsed => ("fenced", "key_changed"),
+        };
+        crate::engine::trace::fz_event!(
+            tracing::Level::INFO,
+            "topology",
+            "topology.compiled",
+            outcome = topology_outcome,
+            fence_reason,
+            producers = compile_stats.producers,
+            relationships = compile_stats.relationships,
+            legacy_vertices = baseline.graph_vertex_count
         );
         if let Some(stats) = self.active_evaluation_resource_request.as_mut() {
             stats.topology.cache_skip_streak = self.mixed_topology_cache_skip_streak;
@@ -23914,6 +24312,15 @@ where
         match schedule_result {
             Ok(output) => {
                 scratch_release_result?;
+                crate::engine::trace::fz_event!(
+                    tracing::Level::INFO,
+                    "schedule",
+                    "schedule.built",
+                    layers = output.0.layers.len(),
+                    producers = output.0.stats.unique_producers,
+                    cycle_fallbacks = output.0.stats.cycle_count,
+                    contracted_islands = usize::from(!output.5.dirty_vertices.is_empty())
+                );
                 Ok(output)
             }
             Err(error) => {
@@ -23969,8 +24376,36 @@ where
         }
     }
 
+    /// Refuse out-of-scope authority states before evaluation can demote spans
+    /// or execute a legacy schedule. The public error type is unchanged; NImpl
+    /// carries the exact internal Unsupported operation for the deferred-scope
+    /// gate. Admission and allocation failures are not scope exceptions.
+    fn require_unified_authority(&mut self) -> Result<(), ExcelError> {
+        self.graph
+            .authority()
+            .map(|_| ())
+            .map_err(Self::authority_excel_error)
+    }
+
+    fn authority_excel_error(error: crate::engine::authority::store::AuthorityError) -> ExcelError {
+        use crate::engine::authority::store::AuthorityError;
+        // Some unchanged behavioral tests assert only `error.kind`, hiding
+        // the operation in their panic. The opt-in gate trace proves which
+        // typed error was actually returned; it never changes that error.
+        #[cfg(test)]
+        if std::env::var_os("FZ_AUTHORITY_DEFERRED_TRACE").is_some() {
+            eprintln!("M1B_AUTHORITY_ERROR {error:?}");
+        }
+        let kind = match error {
+            AuthorityError::Unsupported { .. } => ExcelErrorKind::NImpl,
+            _ => ExcelErrorKind::Error,
+        };
+        ExcelError::new(kind).with_message(format!("unified_authority: {error:?}"))
+    }
+
     /// Evaluate all dirty/volatile vertices
     pub fn evaluate_all(&mut self) -> Result<EvalResult, ExcelError> {
+        // `evaluate_all_unobserved` owns the `observe_function_semantic_epoch` guard.
         self.observe_evaluation_resource_request(EvaluationRequestKind::Full, |engine| {
             engine.evaluate_all_unobserved()
         })
@@ -23998,9 +24433,10 @@ where
     /// coordinator; the coordinator itself composes with private legacy
     /// primitives for legacy-only work.
     fn evaluate_all_coordinator(&mut self) -> Result<EvalResult, ExcelError> {
+        self.require_unified_authority()?;
         self.transition_off_mode_spans_to_legacy()?;
         self.begin_evaluation_request();
-        if self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental {
+        if self.formula_plane_mode() == FormulaPlaneMode::AuthoritativeExperimental {
             return self.evaluate_authoritative_formula_plane_all();
         }
         self.evaluate_all_legacy_impl()
@@ -24017,7 +24453,8 @@ where
     ) -> Result<(usize, usize), ExcelError> {
         let mut computed_vertices = 0;
         let mut cycle_count = 0;
-        for &unit in &schedule.units {
+        self.begin_pass(schedule);
+        for (unit_index, &unit) in schedule.units.iter().enumerate() {
             match unit {
                 ScheduleUnit::Cycle(i) => {
                     if self.handle_cycle_unit(schedule.unit_cycle(i), None, None, None)? > 0 {
@@ -24032,6 +24469,9 @@ where
                         computed_vertices += self.evaluate_layer_sequential(layer)?;
                     }
                 }
+            }
+            if self.stop_after_unit(schedule, unit_index) {
+                break;
             }
         }
         Ok((computed_vertices, cycle_count))
@@ -24100,8 +24540,8 @@ where
     /// coordinators instead.
     fn evaluate_all_legacy_impl(&mut self) -> Result<EvalResult, ExcelError> {
         self.reset_virtual_dep_telemetry_if_disabled();
-        #[cfg(feature = "tracing")]
-        let _span_eval = tracing::info_span!("evaluate_all").entered();
+        let _span_eval =
+            crate::engine::trace::fz_span!(tracing::Level::INFO, "evaluate", "evaluate.legacy");
         let start = crate::instant::FzInstant::now();
         let mut computed_vertices = 0;
         let mut cycle_errors = 0;
@@ -24139,12 +24579,7 @@ where
             }
 
             self.resource_checkpoint(0)?;
-            self.graph.clear_dirty_flags(&to_evaluate);
-            for v in &changed_vertices {
-                self.graph.set_dirty(*v, true);
-            }
-
-            if changed_vertices.is_empty() {
+            if !self.finish_pass_dirty(&to_evaluate, &changed_vertices) {
                 if let Some(t) = telemetry.as_mut() {
                     t.bailout_reason = Some("converged");
                 }
@@ -24217,16 +24652,20 @@ where
         if self.config.defer_graph_building {
             self.build_graph_all()?;
         }
+        self.require_unified_authority()?;
         self.transition_off_mode_spans_to_legacy()?;
         self.begin_evaluation_request();
-        if self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental
+        if self.formula_plane_mode() == FormulaPlaneMode::AuthoritativeExperimental
             && self.graph.formula_authority().active_span_count() > 0
         {
             return self.evaluate_authoritative_formula_plane(None, Some(delta));
         }
         self.reset_virtual_dep_telemetry_if_disabled();
-        #[cfg(feature = "tracing")]
-        let _span_eval = tracing::info_span!("evaluate_all_with_delta").entered();
+        let _span_eval = crate::engine::trace::fz_span!(
+            tracing::Level::INFO,
+            "evaluate",
+            "evaluate.legacy_delta"
+        );
         let start = crate::instant::FzInstant::now();
         let mut computed_vertices = 0;
         let mut cycle_errors = 0;
@@ -24254,7 +24693,8 @@ where
                 Self::accumulate_schedule_meta(t, &meta);
             }
 
-            for &unit in &schedule.units {
+            self.begin_pass(&schedule);
+            for (unit_index, &unit) in schedule.units.iter().enumerate() {
                 match unit {
                     ScheduleUnit::Cycle(i) => {
                         if self.handle_cycle_unit(
@@ -24278,6 +24718,9 @@ where
                         }
                     }
                 }
+                if self.stop_after_unit(&schedule, unit_index) {
+                    break;
+                }
             }
 
             let changed_vertices = self.changed_virtual_dep_vertices(&to_evaluate, &old_vdeps);
@@ -24285,12 +24728,7 @@ where
                 t.changed_vdeps_total += changed_vertices.len();
             }
             self.resource_checkpoint(0)?;
-            self.graph.clear_dirty_flags(&to_evaluate);
-            for v in &changed_vertices {
-                self.graph.set_dirty(*v, true);
-            }
-
-            if changed_vertices.is_empty() {
+            if !self.finish_pass_dirty(&to_evaluate, &changed_vertices) {
                 if let Some(t) = telemetry.as_mut() {
                     t.bailout_reason = Some("converged");
                 }
@@ -24555,7 +24993,7 @@ where
         }
 
         // Build demand subgraph with virtual edges (same as evaluate_until)
-        let (precedents_to_eval, vdeps) = self.build_demand_subgraph(&target_vertex_ids);
+        let (precedents_to_eval, vdeps) = self.demand_subgraph(&target_vertex_ids)?;
 
         if precedents_to_eval.is_empty() {
             return Ok(EvalPlan {
@@ -24583,8 +25021,7 @@ where
         }
 
         // Create schedule for the minimal subgraph honoring virtual edges
-        let scheduler = Scheduler::new(&self.graph);
-        let schedule = scheduler.create_schedule_with_virtual(&precedents_to_eval, &vdeps)?;
+        let schedule = self.create_authority_schedule(&precedents_to_eval, &vdeps, None)?;
 
         // Build layer information
         let mut layers = Vec::new();
@@ -24646,10 +25083,14 @@ where
         }
         // Fold pending edge deltas once per schedule build so traversal uses
         // the zero-allocation CSR slices (#125).
+        #[cfg(any(test, feature = "legacy_oracle"))]
         self.graph.flush_pending_edge_deltas();
+        // The cache key includes the authority revision: sync first.
+        self.graph.authority_sync();
         if self.can_use_static_schedule_cache(to_evaluate) {
             if let Some(cached) = self.cached_static_schedule.as_ref()
                 && cached.topology_epoch == self.topology_epoch
+                && cached.authority_revision == self.schedule_cache_authority_revision()
                 && cached.candidate_vertices.as_slice() == to_evaluate
             {
                 let meta = ScheduleBuildMeta {
@@ -24675,7 +25116,7 @@ where
             }
 
             let (schedule, vdeps, mut meta) =
-                self.create_evaluation_schedule_uncached(to_evaluate)?;
+                self.create_evaluation_schedule_active(to_evaluate)?;
             meta.schedule_cache_hit = false;
             meta.schedule_cache_eligible = true;
             #[cfg(any(test, feature = "benchmark_internal"))]
@@ -24708,6 +25149,7 @@ where
                 }
                 self.cached_static_schedule = Some(CachedScheduleEntry {
                     topology_epoch: self.topology_epoch,
+                    authority_revision: self.schedule_cache_authority_revision(),
                     candidate_vertices: to_evaluate.to_vec(),
                     schedule: Arc::clone(&schedule),
                 });
@@ -24718,7 +25160,7 @@ where
             return Ok((schedule, vdeps, meta));
         }
 
-        let (schedule, vdeps, mut meta) = self.create_evaluation_schedule_uncached(to_evaluate)?;
+        let (schedule, vdeps, mut meta) = self.create_evaluation_schedule_active(to_evaluate)?;
         meta.schedule_cache_hit = false;
         meta.schedule_cache_eligible = false;
         #[cfg(any(test, feature = "benchmark_internal"))]
@@ -24731,16 +25173,29 @@ where
         Ok((EvaluationSchedule::Owned(schedule), vdeps, meta))
     }
 
+    fn create_evaluation_schedule_active(
+        &mut self,
+        to_evaluate: &[VertexId],
+    ) -> Result<ScheduleBuildOutput, ExcelError> {
+        self.graph.authority_sync();
+        let mut ledger = self.active_resource_ledger.take();
+        let result = self.create_evaluation_schedule_uncached(to_evaluate, ledger.as_mut());
+        self.active_resource_ledger = ledger;
+        result
+    }
+
     fn create_evaluation_schedule_uncached(
         &self,
         to_evaluate: &[VertexId],
+        #[allow(unused_variables)] ledger: Option<&mut ResourceLedger>,
     ) -> Result<ScheduleBuildOutput, ExcelError> {
         #[cfg(any(test, feature = "benchmark_internal"))]
         {
             self.recalc_reuse_probe.lock().unwrap().schedule_builds += 1;
         }
         let builder = VirtualDepBuilder::new(self);
-        let (vdeps, augmented, builder_elapsed_ms, vdeps_edges) =
+        #[allow(unused_mut)]
+        let (mut vdeps, augmented, builder_elapsed_ms, vdeps_edges) =
             if self.config.enable_virtual_dep_telemetry {
                 let build_started = crate::instant::FzInstant::now();
                 let (vdeps, augmented) = builder.build(to_evaluate);
@@ -24752,6 +25207,11 @@ where
                 (vdeps, augmented, 0, 0)
             };
 
+        // Replan hints from stale dynamic reads earlier in this request.
+        {
+            self.freshness_merge_hints(to_evaluate, &mut vdeps);
+            self.freshness_extent_hints(to_evaluate, &mut vdeps);
+        }
         let mut final_evaluate = to_evaluate.to_vec();
         if !augmented.is_empty() {
             final_evaluate.extend(augmented);
@@ -24761,12 +25221,7 @@ where
 
         let use_virtual = !vdeps.is_empty();
 
-        let scheduler = Scheduler::new(&self.graph);
-        let schedule = if use_virtual {
-            scheduler.create_schedule_with_virtual(&final_evaluate, &vdeps)?
-        } else {
-            scheduler.create_schedule(&final_evaluate)?
-        };
+        let schedule = self.create_authority_schedule(&final_evaluate, &vdeps, ledger)?;
 
         let meta = ScheduleBuildMeta {
             candidate_vertices: to_evaluate.len(),
@@ -24781,11 +25236,158 @@ where
         Ok((schedule, vdeps, meta))
     }
 
+    fn create_authority_schedule(
+        &self,
+        candidates: &[VertexId],
+        vdeps: &FxHashMap<VertexId, Vec<VertexId>>,
+        mut ledger: Option<&mut ResourceLedger>,
+    ) -> Result<crate::engine::scheduler::Schedule, ExcelError> {
+        use crate::engine::authority::{
+            geom::{Cover, Rect},
+            plan_schedule, planner,
+            proj::{AxisMap, RefProj},
+            store::{EdgeKey, Tag},
+        };
+        let failure = |message: String| {
+            ExcelError::new(ExcelErrorKind::Error)
+                .with_message(format!("unified_authority planner: {message}"))
+        };
+        self.cancellation_checkpoint("Evaluation cancelled before authority planning")?;
+        let store = self
+            .graph
+            .authority_plan_store()
+            .map_err(Self::authority_excel_error)?;
+        // Names are symbol-plane nodes (design §4.1): a name vertex plans as
+        // the unit at its node, between its precedents and its readers.
+        let mut cover = Cover::new();
+        for &id in candidates {
+            if let Some((sheet, row, col)) = self.graph.authority_cell_of_vertex(id) {
+                cover.insert_rect(sheet, &Rect::cell(row, col));
+            }
+        }
+        let mut hints = Vec::new();
+        for (&reader, deps) in vdeps {
+            let Some(reader) = self.graph.authority_cell_of_vertex(reader) else {
+                continue;
+            };
+            for &dependency in deps {
+                let Some(dep) = self.graph.authority_cell_of_vertex(dependency) else {
+                    continue;
+                };
+                hints.push(planner::PlanHint {
+                    reader: (reader.0, reader.2, reader.1),
+                    edge: EdgeKey {
+                        dep_sheet: reader.0,
+                        tag: Tag::X,
+                        lk: u32::MAX,
+                        proj: RefProj {
+                            sheet: dep.0,
+                            rows: AxisMap::fixed(dep.1, dep.1),
+                            cols: AxisMap::fixed(dep.2, dep.2),
+                        },
+                    },
+                });
+            }
+        }
+        // rdi_dyn: order each dynamic reader after its observed reads.
+        let host = self.graph.authority_host();
+        for &id in candidates {
+            let Some(reads) = host.observed(id) else {
+                continue;
+            };
+            let Some(reader) = self.graph.authority_cell_of_vertex(id) else {
+                continue;
+            };
+            for &(sheet, r0, c0, r1, c1) in reads {
+                hints.push(planner::PlanHint {
+                    reader: (reader.0, reader.2, reader.1),
+                    edge: EdgeKey {
+                        dep_sheet: reader.0,
+                        tag: Tag::X,
+                        lk: u32::MAX,
+                        proj: RefProj {
+                            sheet,
+                            rows: AxisMap::fixed(r0, r1),
+                            cols: AxisMap::fixed(c0, c1),
+                        },
+                    },
+                });
+            }
+        }
+        hints.sort_unstable_by_key(|hint| hint.reader);
+        let checkpoint = ledger
+            .as_ref()
+            .map_or(0, |ledger| ledger.scratch_checkpoint());
+        let scratch_limit = ledger
+            .as_ref()
+            .and_then(|ledger| ledger.schedule_discovery_limit())
+            .map(|limit| limit.saturating_sub(checkpoint));
+        let ordered = planner::plan_with_hints(store, &cover, &hints, scratch_limit, None, None)
+            .map_err(|error| failure(format!("{error:?}")))?;
+        // max_work_units is an execution budget. Planning work must be capped
+        // independently: charging it here changes the observable publication
+        // boundary (e.g. a spill must commit before the next execution fails).
+        let adapted = plan_schedule::schedule(
+            &ordered.cells,
+            ordered.heap_bytes(),
+            scratch_limit,
+            |cell| {
+                self.graph
+                    .authority_vertex_of_formula(cell.id, (cell.sheet, cell.row, cell.col))
+                    .ok_or_else(|| failure("missing executor identity".to_owned()))
+            },
+            |_work| {
+                self.cancellation_checkpoint("Evaluation cancelled during authority planning")?;
+                if let Some(ledger) = ledger.as_deref_mut() {
+                    ledger
+                        .checkpoint_deadline()
+                        .map_err(crate::engine::ResourceLedgerError::into_excel_error)?;
+                }
+                Ok(())
+            },
+        )
+        .map_err(|error| match error {
+            plan_schedule::ScheduleError::Runtime(error) => error,
+            other => failure(format!("{other:?}")),
+        })?;
+        if let Some(ledger) = ledger {
+            let peak = ordered.peak_heap_bytes.max(adapted.peak_heap_bytes);
+            ledger
+                .reserve_schedule_discovery(peak)
+                .map_err(crate::engine::ResourceLedgerError::into_excel_error)?;
+            ledger
+                .release_scratch(peak)
+                .map_err(crate::engine::ResourceLedgerError::into_excel_error)?;
+        }
+        Ok(adapted.schedule)
+    }
+
+    /// Static-schedule cache eligibility. Legacy excludes range readers:
+    /// their order comes from per-request range virtual deps. Under the
+    /// authority a range read is a static edge of the relation, so only
+    /// dynamic readers (whose hints are per request) are excluded, and the
+    /// key adds the authority revision (design §8.4).
     fn can_use_static_schedule_cache(&self, to_evaluate: &[VertexId]) -> bool {
-        !to_evaluate.is_empty()
-            && to_evaluate.iter().copied().all(|v| {
-                !self.graph.is_dynamic(v) && self.graph.get_range_dependencies(v).is_none()
-            })
+        {
+            // A dynamic reader is planned from its observed reads, which the
+            // key covers (rev.dyn); one without them needs a pre-probe, and
+            // request-scoped replan hints are never cached.
+            let host = self.graph.authority_host();
+            !to_evaluate.is_empty()
+                && !self.freshness_has_hints()
+                && to_evaluate
+                    .iter()
+                    .all(|&v| !self.graph.is_dynamic(v) || host.observed(v).is_some())
+        }
+    }
+
+    fn schedule_cache_authority_revision(&self) -> (u64, u64) {
+        {
+            // rev.topology is `topology_epoch`; a symbol revision rebuilds the
+            // store, so it is part of `revision`.
+            let host = self.graph.authority_host();
+            (host.revision(), host.rev_dyn())
+        }
     }
 
     fn start_virtual_dep_telemetry(&self) -> VirtualDepTelemetry {
@@ -24875,6 +25477,46 @@ where
         Ok(())
     }
 
+    /// End-of-pass dirty bookkeeping; true when the loop must replan.
+    /// Legacy: clear the pass, re-dirty readers whose pre-probe changed.
+    /// Under the authority an armed pass keeps stale and unreached vertices
+    /// dirty instead (design §8.2, `freshness.rs`).
+    fn finish_pass_dirty(&mut self, to_evaluate: &[VertexId], changed: &[VertexId]) -> bool {
+        self.finish_pass_dirty_scoped(to_evaluate, changed, true)
+    }
+
+    /// [`Self::finish_pass_dirty`] for a targeted pass: only its candidates
+    /// decide whether to replan.
+    fn finish_target_pass_dirty(&mut self, to_evaluate: &[VertexId], changed: &[VertexId]) -> bool {
+        self.finish_pass_dirty_scoped(to_evaluate, changed, false)
+    }
+
+    fn finish_pass_dirty_scoped(
+        &mut self,
+        to_evaluate: &[VertexId],
+        changed: &[VertexId],
+        #[allow(unused_variables)] whole_workbook: bool,
+    ) -> bool {
+        self.freshness_finish_pass(to_evaluate, changed, whole_workbook)
+    }
+
+    /// Start a pass over `schedule` (arms the freshness recorder).
+    fn begin_pass(
+        &mut self,
+        #[allow(unused_variables)] schedule: &crate::engine::scheduler::Schedule,
+    ) {
+        self.freshness_begin_pass(schedule);
+    }
+
+    /// FR4 layer barrier after unit `index`: true stops the pass.
+    fn stop_after_unit(
+        &mut self,
+        #[allow(unused_variables)] schedule: &crate::engine::scheduler::Schedule,
+        #[allow(unused_variables)] index: usize,
+    ) -> bool {
+        self.freshness_stop_after_unit(schedule, index)
+    }
+
     fn changed_virtual_dep_vertices(
         &mut self,
         to_evaluate: &[VertexId],
@@ -24886,6 +25528,11 @@ where
         {
             self.force_virtual_dep_changes_remaining_for_test -= 1;
             return vec![vertex];
+        }
+        // An armed pass detects stale dynamic reads directly; the pre-probe
+        // comparison is legacy's substitute for that (design §8.2).
+        if self.freshness_armed() {
+            return Vec::new();
         }
         if !to_evaluate
             .iter()
@@ -24913,6 +25560,201 @@ where
 
     /// Build a demand-driven subgraph for the given targets, including ephemeral edges for
     /// compressed ranges, and returning the set of dirty/volatile precedents and virtual deps.
+    /// Demand candidates of `targets` and their dynamic plan hints: under
+    /// `unified_authority` from the authority's relation (design §8.3),
+    /// otherwise from the legacy graph.
+    #[allow(clippy::type_complexity)]
+    fn demand_subgraph(
+        &self,
+        targets: &[VertexId],
+    ) -> Result<
+        (
+            Vec<VertexId>,
+            rustc_hash::FxHashMap<VertexId, Vec<VertexId>>,
+        ),
+        ExcelError,
+    > {
+        self.authority_demand_subgraph(targets)
+    }
+
+    /// Design §8.3: traverse precedents from the targets over the
+    /// authority's static relation (symbol nodes are ordinary pieces) plus
+    /// the dynamic readers' virtual dependencies, and collect what legacy's
+    /// demand walk collects: dirty or volatile formula cells and every name
+    /// passed through. No legacy dependency structure is read.
+    #[allow(clippy::type_complexity)]
+    fn authority_demand_subgraph(
+        &self,
+        targets: &[VertexId],
+    ) -> Result<
+        (
+            Vec<VertexId>,
+            rustc_hash::FxHashMap<VertexId, Vec<VertexId>>,
+        ),
+        ExcelError,
+    > {
+        use crate::engine::authority::geom::{Cell, Rect, SYMBOL_SHEET};
+        use crate::engine::authority::store::TagFilter;
+        use rustc_hash::{FxHashMap, FxHashSet};
+        let store = self
+            .graph
+            .authority_plan_store()
+            .map_err(Self::authority_excel_error)?;
+        let ids = store.ids();
+        let mut to_evaluate: FxHashSet<VertexId> = FxHashSet::default();
+        let mut vdeps: FxHashMap<VertexId, Vec<VertexId>> = FxHashMap::default();
+        let mut visited: FxHashSet<Cell> = FxHashSet::default();
+        // (cell, authority id or NO_VID): the id lets the side array
+        // translate the cell without a hash lookup.
+        let mut stack: Vec<(Cell, u32)> = Vec::new();
+        // Formula cells under `rect` on `sheet`: identity runs per column.
+        let push_formulas = |stack: &mut Vec<(Cell, u32)>,
+                             visited: &FxHashSet<Cell>,
+                             sheet: u16,
+                             rect: Rect| {
+            for col in rect.c0..=rect.c1 {
+                ids.visit_runs_in(sheet, col, rect.r0, rect.r1, &mut |h| {
+                    let run = ids.run(h);
+                    let r0 = run.row_start.max(rect.r0);
+                    let r1 = (run.row_start + run.len - 1).min(rect.r1);
+                    for row in r0..=r1 {
+                        if !visited.contains(&(sheet, row, col)) {
+                            stack.push(((sheet, row, col), run.first_id + (row - run.row_start)));
+                        }
+                    }
+                });
+            }
+        };
+        for &v in targets {
+            if let Some(table) = self.graph.table_by_vertex(v) {
+                // A table's demand is its range's, as legacy's table vertex
+                // leads to the cells it covers (its symbol row has no
+                // precedents).
+                let (s, e) = (table.range.start, table.range.end);
+                push_formulas(
+                    &mut stack,
+                    &visited,
+                    s.sheet_id,
+                    Rect::new(s.coord.row(), s.coord.col(), e.coord.row(), e.coord.col()),
+                );
+            } else if let Some(cell) = self.graph.authority_cell_of_vertex(v) {
+                stack.push((cell, crate::engine::authority::identity::NO_VID));
+            }
+        }
+        let mut hits = Vec::new();
+        #[cfg(any(test, feature = "benchmark_internal"))]
+        let (mut probe_vertices, mut probe_clean_formulas, mut probe_edges, mut probe_dynamic) =
+            (0, 0, 0, 0);
+        while let Some((cell, id)) = stack.pop() {
+            if !visited.insert(cell) {
+                continue;
+            }
+            let Some(v) = self.graph.authority_vertex_of_formula(id, cell) else {
+                continue;
+            };
+            if !self.graph.vertex_exists(v) {
+                continue;
+            }
+            #[cfg(any(test, feature = "benchmark_internal"))]
+            {
+                probe_vertices += 1;
+            }
+            match self.graph.get_vertex_kind(v) {
+                VertexKind::FormulaScalar | VertexKind::FormulaArray => {
+                    if self.graph.is_dirty(v) || self.graph.is_volatile(v) {
+                        to_evaluate.insert(v);
+                    } else {
+                        #[cfg(any(test, feature = "benchmark_internal"))]
+                        {
+                            probe_clean_formulas += 1;
+                        }
+                    }
+                }
+                VertexKind::NamedScalar | VertexKind::NamedArray => {
+                    to_evaluate.insert(v);
+                }
+                _ => {}
+            }
+            hits.clear();
+            store.direct_precedents(cell, TagFilter::All, &mut hits);
+            #[cfg(any(test, feature = "benchmark_internal"))]
+            {
+                probe_edges += hits.len();
+            }
+            for &(_, sheet, rect) in &hits {
+                // DirtyExtents: a dirty spill anchor whose extent meets this
+                // image is a demand precedent, ordered before `v` (§8.2).
+                if sheet != SYMBOL_SHEET {
+                    for anchor in self
+                        .graph
+                        .spill_anchors_in_region(sheet, rect.r0, rect.c0, rect.r1, rect.c1)
+                    {
+                        if anchor != v && self.graph.is_dirty(anchor) {
+                            vdeps.entry(v).or_default().push(anchor);
+                            if let Some(c) = self.graph.authority_cell_of_vertex(anchor) {
+                                stack.push((c, crate::engine::authority::identity::NO_VID));
+                            }
+                        }
+                    }
+                }
+                if sheet == SYMBOL_SHEET {
+                    stack.extend((rect.r0..=rect.r1).map(|slot| {
+                        (
+                            (SYMBOL_SHEET, slot, 0),
+                            crate::engine::authority::identity::NO_VID,
+                        )
+                    }));
+                    continue;
+                }
+                push_formulas(&mut stack, &visited, sheet, rect);
+            }
+            if self.graph.is_dynamic(v) {
+                #[cfg(any(test, feature = "benchmark_internal"))]
+                {
+                    probe_dynamic += 1;
+                }
+                // rdi_dyn: the observed reads are demand precedents.
+                if let Some(reads) = self.graph.authority_host().observed(v) {
+                    for &(sheet, r0, c0, r1, c1) in reads {
+                        push_formulas(&mut stack, &visited, sheet, Rect::new(r0, c0, r1, c1));
+                    }
+                }
+                let (vdeps_map, _) = VirtualDepBuilder::new(self).build(&[v]);
+                // Pre-probe targets plus reads this request found dirty
+                // (design §8.3: demand walks rdi ∪ hints).
+                let hinted = self.freshness_hints(v).unwrap_or(&[]);
+                if let Some(deps) = vdeps_map
+                    .get(&v)
+                    .map(|deps| deps.iter().chain(hinted))
+                    .or(Some([].iter().chain(hinted)))
+                {
+                    for &u in deps {
+                        vdeps.entry(v).or_default().push(u);
+                        if let Some(c) = self.graph.authority_cell_of_vertex(u) {
+                            stack.push((c, crate::engine::authority::identity::NO_VID));
+                        }
+                    }
+                }
+            }
+        }
+        let mut result: Vec<VertexId> = to_evaluate.into_iter().collect();
+        result.sort_unstable();
+        for deps in vdeps.values_mut() {
+            deps.sort_unstable();
+            deps.dedup();
+        }
+        #[cfg(any(test, feature = "benchmark_internal"))]
+        {
+            let mut probe = self.recalc_reuse_probe.lock().unwrap();
+            probe.demand_builds += 1;
+            probe.demand_vertices += probe_vertices;
+            probe.demand_clean_formulas += probe_clean_formulas;
+            probe.demand_explicit_edges += probe_edges;
+            probe.demand_virtual_builder_calls += probe_dynamic;
+        }
+        Ok((result, vdeps))
+    }
+
     fn build_demand_subgraph(
         &self,
         target_vertices: &[VertexId],
@@ -24920,9 +25762,12 @@ where
         Vec<VertexId>,
         rustc_hash::FxHashMap<VertexId, Vec<VertexId>>,
     ) {
-        #[cfg(feature = "tracing")]
-        let _span =
-            tracing::info_span!("demand_subgraph", targets = target_vertices.len()).entered();
+        let _span = crate::engine::trace::fz_span!(
+            tracing::Level::INFO,
+            "evaluate",
+            "evaluate.demand_subgraph",
+            targets = target_vertices.len()
+        );
         use rustc_hash::{FxHashMap, FxHashSet};
 
         let mut to_evaluate: FxHashSet<VertexId> = FxHashSet::default();
@@ -24987,7 +25832,7 @@ where
             // using stale values for those cells. The kind check at the top
             // of the loop still gates which vertices end up in
             // ``to_evaluate``; only Formula vertices are scheduled.
-            if let Some(dependencies) = self.graph.dependencies_slice(v) {
+            if let Some(dependencies) = self.graph.span_path_legacy_dependencies_slice(v) {
                 for &dep in dependencies {
                     #[cfg(any(test, feature = "benchmark_internal"))]
                     {
@@ -24998,7 +25843,7 @@ where
                     }
                 }
             } else {
-                for dep in self.graph.get_dependencies(v) {
+                for dep in self.graph.span_path_legacy_dependencies(v) {
                     #[cfg(any(test, feature = "benchmark_internal"))]
                     {
                         probe_edges += 1;
@@ -25068,7 +25913,7 @@ where
             self.build_graph_all()?;
         }
         if cancel_flag.load(Ordering::Relaxed) {
-            let message = if self.config.formula_plane_mode
+            let message = if self.formula_plane_mode()
                 == FormulaPlaneMode::AuthoritativeExperimental
                 && self.graph.formula_authority().active_span_count() > 0
             {
@@ -25080,9 +25925,10 @@ where
                 ExcelError::new(ExcelErrorKind::Cancelled).with_message(message.to_string())
             );
         }
+        self.require_unified_authority()?;
         self.transition_off_mode_spans_to_legacy()?;
         self.begin_evaluation_request();
-        if self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental
+        if self.formula_plane_mode() == FormulaPlaneMode::AuthoritativeExperimental
             && self.graph.formula_authority().active_span_count() > 0
         {
             if cancel_flag.load(Ordering::Relaxed) {
@@ -25132,7 +25978,8 @@ where
 
             // Walk units in condensation order, checking cancellation between
             // units (formerly between cycles and between layers).
-            for &unit in &schedule.units {
+            self.begin_pass(&schedule);
+            for (unit_index, &unit) in schedule.units.iter().enumerate() {
                 match unit {
                     ScheduleUnit::Cycle(i) => {
                         // Check cancellation between cycles
@@ -25180,6 +26027,9 @@ where
                         }
                     }
                 }
+                if self.stop_after_unit(&schedule, unit_index) {
+                    break;
+                }
             }
 
             let changed_vertices = self.changed_virtual_dep_vertices(&to_evaluate, &old_vdeps);
@@ -25187,12 +26037,7 @@ where
                 t.changed_vdeps_total += changed_vertices.len();
             }
             self.resource_checkpoint(0)?;
-            self.graph.clear_dirty_flags(&to_evaluate);
-            for v in &changed_vertices {
-                self.graph.set_dirty(*v, true);
-            }
-
-            if changed_vertices.is_empty() {
+            if !self.finish_pass_dirty(&to_evaluate, &changed_vertices) {
                 if let Some(t) = telemetry.as_mut() {
                     t.bailout_reason = Some("converged");
                 }
@@ -25367,14 +26212,16 @@ where
                 }
 
                 // Continue traversal to dependencies (precedents)
-                if let Some(dependencies) = self.graph.dependencies_slice(vertex_id) {
+                if let Some(dependencies) =
+                    self.graph.span_path_legacy_dependencies_slice(vertex_id)
+                {
                     for &dep_id in dependencies {
                         if !visited.contains(&dep_id) {
                             stack.push(dep_id);
                         }
                     }
                 } else {
-                    let dependencies = self.graph.get_dependencies(vertex_id);
+                    let dependencies = self.graph.span_path_legacy_dependencies(vertex_id);
                     for dep_id in dependencies {
                         if !visited.contains(&dep_id) {
                             stack.push(dep_id);
@@ -25952,6 +26799,11 @@ where
             .graph
             .get_cell_ref(vertex_id)
             .expect("cell ref for vertex");
+        if let Some(result) =
+            self.freshness_evaluate_recorded(vertex_id, sheet_name, cell_ref, ast_id)
+        {
+            return result;
+        }
         let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref);
 
         interpreter
@@ -27027,7 +27879,16 @@ where
                     }
                     formualizer_parse::parser::ExternalRefKind::Range { .. } => {
                         let Some(source) = self.graph.resolve_source_table_entry(name) else {
-                            return Err(ExcelError::new(ExcelErrorKind::Name)
+                            // A deferred (whole-row/column) external range
+                            // evaluates to #REF!, as it did before the parser
+                            // kept it whole (see `unbound_external_range_defers`).
+                            let kind =
+                                if crate::engine::refs::unbound_external_range_defers(&ext.kind) {
+                                    ExcelErrorKind::Ref
+                                } else {
+                                    ExcelErrorKind::Name
+                                };
+                            return Err(ExcelError::new(kind)
                                 .with_message(format!("Undefined table: {name}")));
                         };
                         let version = source
@@ -27424,8 +28285,20 @@ where
                     return self.source_table_to_range_view(table.as_ref(), &tref.specifier);
                 }
 
-                // Fallback: materialize via Resolver::resolve_range_like tranche 1
-                let boxed = self.resolve_range_like(&ReferenceType::Table(tref.clone()))?;
+                // Fallback: materialize via Resolver::resolve_range_like tranche 1.
+                // A table nobody defines (an unbound reference kept by the
+                // BestEffort preparation policy) is `#NAME?`, the kind Strict
+                // reports at preparation, not the resolver's "not implemented".
+                let boxed = self
+                    .resolve_range_like(&ReferenceType::Table(tref.clone()))
+                    .map_err(|e| {
+                        if e.kind == ExcelErrorKind::NImpl {
+                            ExcelError::new(ExcelErrorKind::Name)
+                                .with_message(format!("Unknown table: {}", tref.name))
+                        } else {
+                            e
+                        }
+                    })?;
                 let owned = boxed.materialise().into_owned();
                 Ok(RangeView::from_owned_rows(owned, self.config.date_system))
             }
@@ -28702,6 +29575,10 @@ where
 }
 
 #[cfg(test)]
+#[path = "tests/authority_schedule_execution.rs"]
+mod authority_schedule_execution;
+
+#[cfg(test)]
 #[path = "tests/pending_spill.rs"]
 mod pending_spill_tests;
 
@@ -28723,6 +29600,29 @@ where
     /// during the planning phase.  Value-changing mutations are deferred to
     /// `apply_effect`.
     pub(crate) fn plan_vertex_effects(
+        &mut self,
+        vertex_id: VertexId,
+        computed_value: LiteralValue,
+        overwritable_formulas: Option<&rustc_hash::FxHashSet<VertexId>>,
+    ) -> Result<Vec<Effect>, ExcelError> {
+        // FR3: a stale dynamic reader publishes nothing; FR2: anything else
+        // leaves the dirty set at its commit (design §8.2).
+        if self.freshness_armed() {
+            if self.freshness_drop_stale(vertex_id) {
+                return Ok(Vec::new());
+            }
+            let effects = self.plan_vertex_effects_unrecorded(
+                vertex_id,
+                computed_value,
+                overwritable_formulas,
+            )?;
+            self.freshness_mark_committed(vertex_id);
+            return Ok(effects);
+        }
+        self.plan_vertex_effects_unrecorded(vertex_id, computed_value, overwritable_formulas)
+    }
+
+    fn plan_vertex_effects_unrecorded(
         &mut self,
         vertex_id: VertexId,
         computed_value: LiteralValue,
@@ -29234,7 +30134,7 @@ where
         vertex_id: VertexId,
         computed_writes: &mut ComputedWriteBuffer,
     ) -> Result<(), ExcelError> {
-        if self.graph.get_range_dependencies(vertex_id).is_some() {
+        if self.graph.reads_compressed_range(vertex_id) {
             self.flush_computed_write_buffer(computed_writes)?;
         }
         Ok(())
@@ -29518,7 +30418,7 @@ where
         let mut phase1: Vec<VertexId> = Vec::new();
         let mut phase2: Vec<VertexId> = Vec::new();
         for &vid in &layer.vertices {
-            if self.graph.get_range_dependencies(vid).is_some() {
+            if self.graph.reads_compressed_range(vid) {
                 phase2.push(vid);
             } else {
                 phase1.push(vid);
@@ -29547,6 +30447,9 @@ where
                         .collect()
                 });
 
+            // FR3: a parallel group is one commit unit; one stale reader
+            // drops the whole group (it stays dirty and replans).
+            self.freshness_gate_group(group);
             match results {
                 Ok(vertex_results) => {
                     // Arrays first, then scalars — establishes spill regions before
@@ -29640,7 +30543,7 @@ where
         let mut phase1: Vec<VertexId> = Vec::new();
         let mut phase2: Vec<VertexId> = Vec::new();
         for &vid in &layer.vertices {
-            if self.graph.get_range_dependencies(vid).is_some() {
+            if self.graph.reads_compressed_range(vid) {
                 phase2.push(vid);
             } else {
                 phase1.push(vid);
@@ -29668,6 +30571,9 @@ where
                         .collect()
                 });
 
+            // FR3: a parallel group is one commit unit; one stale reader
+            // drops the whole group (it stays dirty and replans).
+            self.freshness_gate_group(group);
             match results {
                 Ok(vertex_results) => {
                     let mut arrays: Vec<(VertexId, LiteralValue)> = Vec::new();
@@ -29762,7 +30668,7 @@ where
         let mut phase1: Vec<VertexId> = Vec::new();
         let mut phase2: Vec<VertexId> = Vec::new();
         for &vid in &layer.vertices {
-            if self.graph.get_range_dependencies(vid).is_some() {
+            if self.graph.reads_compressed_range(vid) {
                 phase2.push(vid);
             } else {
                 phase1.push(vid);
@@ -29798,6 +30704,9 @@ where
                         .collect()
                 });
 
+            // FR3: a parallel group is one commit unit; one stale reader
+            // drops the whole group (it stays dirty and replans).
+            self.freshness_gate_group(group);
             match results {
                 Ok(vertex_results) => {
                     let mut arrays: Vec<(VertexId, LiteralValue)> = Vec::new();
@@ -29896,9 +30805,10 @@ where
         if self.config.defer_graph_building {
             self.build_graph_all()?;
         }
+        self.require_unified_authority()?;
         self.transition_off_mode_spans_to_legacy()?;
         self.begin_evaluation_request();
-        if self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental
+        if self.formula_plane_mode() == FormulaPlaneMode::AuthoritativeExperimental
             && self.graph.formula_authority().active_span_count() > 0
         {
             return self.evaluate_authoritative_formula_plane_all();
@@ -29936,7 +30846,8 @@ where
 
                 // Walk units in condensation order: stamp cycles at their
                 // position, evaluate layers with ChangeLog recording.
-                for &unit in &schedule.units {
+                self.begin_pass(&schedule);
+                for (unit_index, &unit) in schedule.units.iter().enumerate() {
                     match unit {
                         ScheduleUnit::Cycle(i) => {
                             // Journal integration (design doc §4 last row): the
@@ -29959,6 +30870,9 @@ where
                                 self.evaluate_layer_logged(schedule.unit_layer(i), log)?;
                         }
                     }
+                    if self.stop_after_unit(&schedule, unit_index) {
+                        break;
+                    }
                 }
 
                 let changed_vertices = self.changed_virtual_dep_vertices(&to_evaluate, &old_vdeps);
@@ -29966,12 +30880,7 @@ where
                     t.changed_vdeps_total += changed_vertices.len();
                 }
                 self.resource_checkpoint(0)?;
-                self.graph.clear_dirty_flags(&to_evaluate);
-                for v in &changed_vertices {
-                    self.graph.set_dirty(*v, true);
-                }
-
-                if changed_vertices.is_empty() {
+                if !self.finish_pass_dirty(&to_evaluate, &changed_vertices) {
                     if let Some(t) = telemetry.as_mut() {
                         t.bailout_reason = Some("converged");
                     }

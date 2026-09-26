@@ -9,13 +9,20 @@ use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 use rustc_hash::FxHashMap;
 use std::{borrow::Cow, sync::Arc};
 
-use crate::engine::arena::ast::SheetKey;
+use crate::engine::arena::ast::{CALL_NODE_NAME, SheetKey};
 use crate::engine::arena::{AstNodeData, AstNodeId, CompactRefType, DataStore};
 use crate::engine::sheet_registry::SheetRegistry;
 use crate::engine::used_extent::{
     ExtentPolicy, OpenRangeBounds, resolve_used_extent_with_fallback,
 };
 use crate::formula_plane::template_canonical::LiteralSlotId;
+
+/// Postfix calls (`LAMBDA(x,x+1)(B1)`) are parsed and stored but not evaluated;
+/// the parsed tree and its arena copy fail the same way.
+fn call_expression_error() -> ExcelError {
+    ExcelError::new(ExcelErrorKind::NImpl)
+        .with_message("Immediate-invocation calls are not yet supported")
+}
 
 pub(crate) fn probe_range_dimensions<C: EvaluationContext + ?Sized>(
     context: &C,
@@ -350,6 +357,9 @@ impl<'a> Interpreter<'a> {
             }
             AstNodeData::Function { name_id, .. } => {
                 let name = data_store.resolve_ast_string(*name_id);
+                if name == CALL_NODE_NAME {
+                    return Err(call_expression_error());
+                }
                 let fun = self.context.get_function("", name).ok_or_else(|| {
                     ExcelError::new(ExcelErrorKind::Name)
                         .with_message(format!("Unknown function: {name}"))
@@ -414,6 +424,9 @@ impl<'a> Interpreter<'a> {
             return Some(self.evaluate_arena_ast_as_reference(node_id, data_store, sheet_registry));
         };
         let name = data_store.resolve_ast_string(*name_id);
+        if name == CALL_NODE_NAME {
+            return Some(Err(call_expression_error()));
+        }
         let fun = match self.context.get_function("", name) {
             Some(fun) => fun,
             None => {
@@ -771,6 +784,9 @@ impl<'a> Interpreter<'a> {
             }
             AstNodeData::Function { name_id, .. } => {
                 let name = data_store.resolve_ast_string(*name_id);
+                if name == CALL_NODE_NAME {
+                    return Err(call_expression_error());
+                }
                 let args = data_store.get_args(node_id).ok_or_else(|| {
                     ExcelError::new(ExcelErrorKind::Value).with_message("Missing function args")
                 })?;
@@ -847,8 +863,7 @@ impl<'a> Interpreter<'a> {
                 .map(crate::traits::CalcValue::Scalar),
             ASTNodeType::BinaryOp { op, left, right } => self.eval_binary(op, left, right),
             ASTNodeType::Function { name, args } => self.eval_function_to_calc(name, args),
-            ASTNodeType::Call { .. } => Err(ExcelError::new(ExcelErrorKind::NImpl)
-                .with_message("Immediate-invocation calls are not yet supported")),
+            ASTNodeType::Call { .. } => Err(call_expression_error()),
             ASTNodeType::Array(rows) => self.eval_array_literal_to_calc(rows),
         }
     }
@@ -910,8 +925,7 @@ impl<'a> Interpreter<'a> {
                 }
                 self.eval_function_to_calc(name, args)
             }
-            ASTNodeType::Call { .. } => Err(ExcelError::new(ExcelErrorKind::NImpl)
-                .with_message("Immediate-invocation calls are not yet supported")),
+            ASTNodeType::Call { .. } => Err(call_expression_error()),
             ASTNodeType::Array(rows) => self.eval_array_literal_to_calc(rows),
         }
     }

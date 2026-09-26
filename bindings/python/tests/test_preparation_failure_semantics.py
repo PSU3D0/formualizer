@@ -8,6 +8,14 @@ import pytest
 import formualizer as fz
 
 
+def strict_config() -> fz.WorkbookConfig:
+    """These tests use a missing sheet or table to provoke a preparation
+    failure: that needs strict preparation, the default before 0.10."""
+    eval_config = fz.EvaluationConfig()
+    eval_config.strict_preparation = True
+    return fz.WorkbookConfig(eval_config=eval_config)
+
+
 def imported(formulas: dict[str, str]) -> fz.Workbook:
     source = openpyxl.Workbook()
     sheet = source.active
@@ -17,7 +25,7 @@ def imported(formulas: dict[str, str]) -> fz.Workbook:
         sheet[address] = formula
     output = BytesIO()
     source.save(output)
-    return fz.Workbook.from_bytes(output.getvalue())
+    return fz.Workbook.from_bytes(output.getvalue(), config=strict_config())
 
 
 @pytest.mark.parametrize("targeted", [False, True])
