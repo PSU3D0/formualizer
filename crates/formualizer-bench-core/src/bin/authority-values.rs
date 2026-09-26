@@ -195,9 +195,14 @@ mod enabled {
         h.finish()
     }
 
+    /// A value cell `(sheet, row, col)`.
+    type ValueSite = (String, u32, u32);
+    /// A formula cell `(sheet, row, col, text)`.
+    type FormulaSite = (String, u32, u32, String);
+
     /// Edit sites taken from the loaded workbook: numeric value cells and
     /// formula cells (with their text), in a deterministic order.
-    fn sites(wb: &Workbook) -> (Vec<(String, u32, u32)>, Vec<(String, u32, u32, String)>) {
+    fn sites(wb: &Workbook) -> (Vec<ValueSite>, Vec<FormulaSite>) {
         let mut values = Vec::new();
         let mut formulas = Vec::new();
         for sheet in wb.sheet_names() {
