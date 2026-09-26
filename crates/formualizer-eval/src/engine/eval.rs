@@ -14582,12 +14582,6 @@ where
     /// formula package can hold arena ids.
     fn maybe_compress_formulas(&mut self) {
         if !self.config.formula_compression || self.has_staged_formulas() {
-            if std::env::var_os("FZ_DBG_COMPRESS").is_some() {
-                eprintln!(
-                    "compress: engine skip staged {}",
-                    self.has_staged_formulas()
-                );
-            }
             return;
         }
         let builds = self.graph.authority_host().builds;
@@ -14595,11 +14589,7 @@ where
             return;
         }
         self.compressed_at_build = Some(builds);
-        let t = std::time::Instant::now();
         self.graph.compress_family_formulas();
-        if std::env::var_os("FZ_DBG_COMPRESS").is_some() {
-            eprintln!("compress took {:?}", t.elapsed());
-        }
     }
 
     fn create_evaluation_schedule_active(

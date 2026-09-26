@@ -2252,13 +2252,6 @@ impl DependencyGraph {
     /// are live (staged or deferred formula packages).
     pub(crate) fn compress_family_formulas(&mut self) -> usize {
         if self.authority.state != HostState::Ready || self.vertex_formulas.has_touched() {
-            if std::env::var_os("FZ_DBG_COMPRESS").is_some() {
-                eprintln!(
-                    "compress: skipped state {:?} touched {}",
-                    self.authority.state,
-                    self.vertex_formulas.has_touched()
-                );
-            }
             return 0;
         }
         let owners: Vec<_> = self
@@ -2355,30 +2348,8 @@ impl DependencyGraph {
                 }
             }
         }
-        if std::env::var_os("FZ_DBG_COMPRESS").is_some() {
-            eprintln!(
-                "compress: state ok, compressed {compressed}, nodes {}",
-                self.data_store.ast_node_count()
-            );
-        }
-        if std::env::var_os("FZ_DBG_COMPRESS").is_some() {
-            eprintln!(
-                "compress: store before {:?}",
-                self.data_store.memory_usage()
-            );
-        }
         if compressed > 0 {
-            let t = std::time::Instant::now();
             self.compact_formula_arena();
-            if std::env::var_os("FZ_DBG_COMPRESS").is_some() {
-                eprintln!(
-                    "compress: nodes after {} compaction {:?} ast strings {} total {}",
-                    self.data_store.ast_node_count(),
-                    t.elapsed(),
-                    self.data_store.ast_strings().memory_usage(),
-                    self.data_store.memory_usage().ast_bytes,
-                );
-            }
         }
         compressed
     }
