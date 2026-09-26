@@ -101,6 +101,32 @@ impl StringInterner {
     }
 
     /// Check if a string is already interned
+    /// Free the text of every id whose `live` flag is false (ids past
+    /// `live` are kept). Ids stay stable: a freed slot resolves to `""` and
+    /// its text is no longer found by `get_id`/`intern` (re-interning makes
+    /// a new id). Callers guarantee freed ids are never resolved again.
+    pub(crate) fn free_dead(&mut self, live: &[bool]) {
+        let empty: Arc<str> = Arc::from("");
+        let kept = self
+            .strings
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| live.get(*i).copied().unwrap_or(true))
+            .count();
+        if kept == self.strings.len() {
+            return;
+        }
+        let mut lookup = FxHashMap::with_capacity_and_hasher(kept, Default::default());
+        for (i, slot) in self.strings.iter_mut().enumerate() {
+            if live.get(i).copied().unwrap_or(true) {
+                lookup.entry(slot.clone()).or_insert(StringId(i as u32));
+            } else {
+                *slot = empty.clone();
+            }
+        }
+        self.lookup = lookup;
+    }
+
     pub fn contains(&self, s: &str) -> bool {
         self.lookup.contains_key(s)
     }

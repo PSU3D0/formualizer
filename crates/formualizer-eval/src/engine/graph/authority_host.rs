@@ -2361,14 +2361,22 @@ impl DependencyGraph {
                 self.data_store.ast_node_count()
             );
         }
+        if std::env::var_os("FZ_DBG_COMPRESS").is_some() {
+            eprintln!(
+                "compress: store before {:?}",
+                self.data_store.memory_usage()
+            );
+        }
         if compressed > 0 {
             let t = std::time::Instant::now();
             self.compact_formula_arena();
             if std::env::var_os("FZ_DBG_COMPRESS").is_some() {
                 eprintln!(
-                    "compress: nodes after {} compaction {:?}",
+                    "compress: nodes after {} compaction {:?} ast strings {} total {}",
                     self.data_store.ast_node_count(),
-                    t.elapsed()
+                    t.elapsed(),
+                    self.data_store.ast_strings().memory_usage(),
+                    self.data_store.memory_usage().ast_bytes,
                 );
             }
         }

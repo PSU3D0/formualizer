@@ -636,6 +636,64 @@ impl AstArena {
                 remap[i] = new_id.0;
             }
         }
+        // Free the texts no kept node names (reference texts of dropped
+        // members, mostly). Ids stay stable: the authority's tokens hold
+        // operator, function and name ids of live templates.
+        let mut live = vec![false; self.strings.len()];
+        let mut mark = |id: super::string_interner::StringId| {
+            if let Some(slot) = live.get_mut(id.as_u32() as usize) {
+                *slot = true;
+            }
+        };
+        for entry in &nodes {
+            match &entry.data {
+                AstNodeData::Reference {
+                    original_id,
+                    ref_type,
+                } => {
+                    mark(*original_id);
+                    match ref_type {
+                        CompactRefType::Cell { sheet, .. }
+                        | CompactRefType::Range { sheet, .. } => {
+                            if let Some(SheetKey::Name(id)) = sheet {
+                                mark(*id);
+                            }
+                        }
+                        CompactRefType::External {
+                            raw_id,
+                            book_id,
+                            sheet_id,
+                            ..
+                        } => {
+                            mark(*raw_id);
+                            mark(*book_id);
+                            mark(*sheet_id);
+                        }
+                        CompactRefType::NamedRange(id) => mark(*id),
+                        CompactRefType::Table { name_id, .. } => mark(*name_id),
+                        CompactRefType::Cell3D {
+                            sheet_first,
+                            sheet_last,
+                            ..
+                        }
+                        | CompactRefType::Range3D {
+                            sheet_first,
+                            sheet_last,
+                            ..
+                        } => {
+                            mark(*sheet_first);
+                            mark(*sheet_last);
+                        }
+                    }
+                }
+                AstNodeData::UnaryOp { op_id, .. } | AstNodeData::BinaryOp { op_id, .. } => {
+                    mark(*op_id)
+                }
+                AstNodeData::Function { name_id, .. } => mark(*name_id),
+                AstNodeData::Literal(_) | AstNodeData::Omitted | AstNodeData::Array { .. } => {}
+            }
+        }
+        self.strings.free_dead(&live);
         nodes.shrink_to_fit();
         function_args.shrink_to_fit();
         array_elements.shrink_to_fit();
