@@ -438,6 +438,10 @@ pub struct IngestBuilder {
 
     // Per-column per-lane non-null counters for current chunk
     lane_counts: Vec<LaneCounts>,
+    // Text payload bytes the previous chunk used per column; sizes the next reserve.
+    next_text_bytes: Vec<usize>,
+    // Builders were consumed by a chunk flush and must be re-created before the next row.
+    needs_provision: bool,
 
     // Accumulated chunks
     chunks: Vec<Vec<ColumnChunk>>, // indexed by col
@@ -473,8 +477,10 @@ impl IngestBuilder {
             bool_builders: (0..ncols)
                 .map(|_| BooleanBuilder::with_capacity(chunk_rows))
                 .collect(),
+            // Text payload bytes are reserved lazily: most lanes never see text,
+            // and a text lane grows its value buffer on first use.
             text_builders: (0..ncols)
-                .map(|_| StringBuilder::with_capacity(chunk_rows, chunk_rows * 12))
+                .map(|_| StringBuilder::with_capacity(chunk_rows, 0))
                 .collect(),
             err_builders: (0..ncols)
                 .map(|_| UInt8Builder::with_capacity(chunk_rows))
@@ -484,6 +490,8 @@ impl IngestBuilder {
                 .collect(),
             format_builders: (0..ncols).map(|_| Vec::with_capacity(chunk_rows)).collect(),
             lane_counts: vec![LaneCounts::default(); ncols],
+            next_text_bytes: vec![0; ncols],
+            needs_provision: false,
             chunks,
             row_in_chunk: 0,
             total_rows: 0,
@@ -494,6 +502,7 @@ impl IngestBuilder {
     /// Text borrows are copied into the internal StringBuilder.
     pub fn append_row_cells<'a>(&mut self, row: &[CellIngest<'a>]) -> Result<(), ExcelError> {
         assert_eq!(row.len(), self.ncols, "row width mismatch");
+        self.provision_if_needed();
         for (c, cell) in row.iter().enumerate() {
             self.format_builders[c].push(match cell {
                 CellIngest::DateSerial(serial) if serial.fract().abs() > f64::EPSILON => {
@@ -584,6 +593,7 @@ impl IngestBuilder {
         I: ExactSizeIterator<Item = CellIngest<'a>>,
     {
         assert_eq!(iter.len(), self.ncols, "row width mismatch");
+        self.provision_if_needed();
         for (c, cell) in iter.enumerate() {
             self.format_builders[c].push(match cell {
                 CellIngest::DateSerial(serial) if serial.fract().abs() > f64::EPSILON => {
@@ -670,6 +680,7 @@ impl IngestBuilder {
     /// Append a single row of values. Length must match `ncols`.
     pub fn append_row(&mut self, row: &[LiteralValue]) -> Result<(), ExcelError> {
         assert_eq!(row.len(), self.ncols, "row width mismatch");
+        self.provision_if_needed();
 
         for (c, v) in row.iter().enumerate() {
             self.format_builders[c].push(match v {
@@ -792,6 +803,27 @@ impl IngestBuilder {
         Ok(())
     }
 
+    /// Re-create full-capacity lane builders after a chunk flush. Deferred to
+    /// the next appended row so a terminal flush (partial or exactly at a chunk
+    /// boundary) never allocates builders that [`Self::finish`] would drop.
+    #[inline]
+    fn provision_if_needed(&mut self) {
+        if !self.needs_provision {
+            return;
+        }
+        self.needs_provision = false;
+        for c in 0..self.ncols {
+            self.num_builders[c] = Float64Builder::with_capacity(self.chunk_rows);
+            self.bool_builders[c] = BooleanBuilder::with_capacity(self.chunk_rows);
+            // The text payload reserve follows what this column's previous chunk used.
+            self.text_builders[c] =
+                StringBuilder::with_capacity(self.chunk_rows, self.next_text_bytes[c]);
+            self.err_builders[c] = UInt8Builder::with_capacity(self.chunk_rows);
+            self.tag_builders[c] = UInt8Builder::with_capacity(self.chunk_rows);
+            self.format_builders[c] = Vec::with_capacity(self.chunk_rows);
+        }
+    }
+
     fn finish_chunk(&mut self) {
         if self.row_in_chunk == 0 {
             return;
@@ -808,10 +840,13 @@ impl IngestBuilder {
             } else {
                 Some(Arc::new(self.bool_builders[c].finish()))
             };
+            let mut text_bytes = 0usize;
             let text_ref: Option<ArrayRef> = if self.lane_counts[c].n_text == 0 {
                 None
             } else {
-                Some(Arc::new(self.text_builders[c].finish()))
+                let text = self.text_builders[c].finish();
+                text_bytes = text.values().len();
+                Some(Arc::new(text))
             };
             let errors_arc: Option<Arc<UInt8Array>> = if self.lane_counts[c].n_err == 0 {
                 None
@@ -845,24 +880,16 @@ impl IngestBuilder {
             };
             self.chunks[c].push(chunk);
 
-            // re-init builders for next chunk
-            self.num_builders[c] = Float64Builder::with_capacity(self.chunk_rows);
-            self.bool_builders[c] = BooleanBuilder::with_capacity(self.chunk_rows);
-            self.text_builders[c] =
-                StringBuilder::with_capacity(self.chunk_rows, self.chunk_rows * 12);
-            self.err_builders[c] = UInt8Builder::with_capacity(self.chunk_rows);
-            self.tag_builders[c] = UInt8Builder::with_capacity(self.chunk_rows);
-            self.format_builders[c] = Vec::with_capacity(self.chunk_rows);
             self.lane_counts[c] = LaneCounts::default();
+            self.next_text_bytes[c] = text_bytes;
         }
         self.row_in_chunk = 0;
+        self.needs_provision = true;
     }
 
     pub fn finish(mut self) -> ArrowSheet {
-        // flush partial chunk
-        if self.row_in_chunk > 0 {
-            self.finish_chunk();
-        }
+        // flush partial chunk; builders for a next chunk are never provisioned
+        self.finish_chunk();
 
         let mut columns = Vec::with_capacity(self.ncols);
         for (idx, chunks) in self.chunks.into_iter().enumerate() {
@@ -4915,6 +4942,105 @@ pub struct ColumnShape {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// FORM-000130: lazy next-chunk provisioning and the text reserve policy
+    /// must not change chunk layout, lane presence, null semantics or formats,
+    /// at exact chunk multiples, partial terminal chunks and lane transitions.
+    #[test]
+    fn ingest_builder_chunk_boundaries_and_lane_transitions_are_preserved() {
+        let date = chrono::NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
+        let value_at = |i: usize| match i % 7 {
+            0 | 1 if i < 8 => LiteralValue::Number(i as f64),
+            0 => LiteralValue::Text(format!("t{i}")),
+            1 => LiteralValue::Boolean(i.is_multiple_of(2)),
+            2 => LiteralValue::Empty,
+            3 => LiteralValue::Error(ExcelError::new(ExcelErrorKind::Div)),
+            4 => LiteralValue::Date(date),
+            5 => LiteralValue::Pending,
+            _ => LiteralValue::Int(i as i64),
+        };
+        // The same rows as borrowed ingest cells (the reader load paths).
+        fn cell_at(value: LiteralValue, i: usize, text: &str) -> CellIngest<'_> {
+            match value {
+                LiteralValue::Number(n) => CellIngest::Number(n),
+                LiteralValue::Text(_) => CellIngest::Text(text),
+                LiteralValue::Boolean(b) => CellIngest::Boolean(b),
+                LiteralValue::Empty => CellIngest::Empty,
+                LiteralValue::Error(e) => CellIngest::ErrorCode(map_error_code(e.kind)),
+                LiteralValue::Date(_) => CellIngest::DateSerial(i as f64 + 45_000.0),
+                LiteralValue::Pending => CellIngest::Pending,
+                LiteralValue::Int(n) => CellIngest::Number(n as f64),
+                other => unreachable!("{other:?}"),
+            }
+        }
+        let cases = [(0usize, 4usize), (4, 4), (8, 4), (9, 4), (3, 4), (23, 5)];
+        for ((rows, chunk_rows), path) in cases
+            .into_iter()
+            .flat_map(|case| ["row", "cells", "cells_iter"].map(|path| (case, path)))
+        {
+            let mut ingest =
+                IngestBuilder::new("S", 2, chunk_rows, crate::engine::DateSystem::Excel1900);
+            for i in 0..rows {
+                let text = format!("t{i}");
+                let number = CellIngest::Number(i as f64);
+                match path {
+                    "row" => ingest
+                        .append_row(&[value_at(i), LiteralValue::Number(i as f64)])
+                        .unwrap(),
+                    "cells" => ingest
+                        .append_row_cells(&[cell_at(value_at(i), i, &text), number])
+                        .unwrap(),
+                    _ => ingest
+                        .append_row_cells_iter([cell_at(value_at(i), i, &text), number].into_iter())
+                        .unwrap(),
+                }
+            }
+            let sheet = ingest.finish();
+            let expected_chunks = rows.div_ceil(chunk_rows);
+            assert_eq!(sheet.nrows as usize, rows);
+            assert_eq!(sheet.chunk_starts.len(), expected_chunks);
+            for (ci, col) in sheet.columns.iter().enumerate() {
+                assert_eq!(col.chunks.len(), expected_chunks, "col {ci} rows {rows}");
+                for (k, chunk) in col.chunks.iter().enumerate() {
+                    let start = k * chunk_rows;
+                    let len = chunk_rows.min(rows - start);
+                    assert_eq!(chunk.meta.len, len);
+                    assert_eq!(chunk.type_tag.len(), len);
+                    for lane_len in [
+                        chunk.numbers.as_ref().map(|a| a.len()),
+                        chunk.booleans.as_ref().map(|a| a.len()),
+                        chunk.text.as_ref().map(|a| a.len()),
+                        chunk.errors.as_ref().map(|a| a.len()),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    {
+                        assert_eq!(lane_len, len, "materialized lanes span the chunk");
+                    }
+                    assert_eq!(chunk.text.is_some(), chunk.meta.non_null_text > 0);
+                    assert_eq!(chunk.numbers.is_some(), chunk.meta.non_null_num > 0);
+                }
+            }
+            for i in 0..rows {
+                let got = sheet.get_cell_value(i, 0);
+                match value_at(i) {
+                    // Dates round-trip through the numeric lane with a DATE format.
+                    LiteralValue::Date(_) => {
+                        assert_eq!(sheet.format_id(i, 0), Some(FormatId::DATE))
+                    }
+                    LiteralValue::Error(e) => {
+                        assert!(matches!(got, LiteralValue::Error(g) if g.kind == e.kind))
+                    }
+                    LiteralValue::Int(n) => assert_eq!(got, LiteralValue::Number(n as f64)),
+                    expected => assert_eq!(
+                        expected, got,
+                        "{path} row {i} rows {rows} chunk {chunk_rows}"
+                    ),
+                }
+                assert_eq!(sheet.get_cell_value(i, 1), LiteralValue::Number(i as f64));
+            }
+        }
+    }
 
     #[test]
     fn explicit_format_precedence_and_general_filter_are_stable() {
