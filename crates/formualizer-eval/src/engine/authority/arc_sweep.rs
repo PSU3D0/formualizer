@@ -127,35 +127,36 @@ fn sort(
     if keys.is_empty() {
         return Ok(());
     }
+    // Work is accounted per pass exactly as the element-wise loops count
+    // it (256 buckets twice, three element passes), charged in batches.
+    // A pass whose byte is equal in every key is a no-op of a stable sort
+    // and is skipped (its work is still charged).
+    let n = keys.len() as u64;
+    let first = keys[0].key;
+    let differs = keys.iter().fold(0u64, |d, k| d | (k.key ^ first));
     for shift in (0..64).step_by(8) {
+        let pass = 512 + 3 * n;
+        work.sort += pass;
+        control.charge(pass)?;
+        if (differs >> shift) & 255 == 0 {
+            continue;
+        }
         let mut counts = [0usize; 256];
-        work.sort += 256;
-        control.charge(256)?;
         for k in keys.iter() {
-            work.sort += 1;
-            control.tick()?;
             counts[((k.key >> shift) & 255) as usize] += 1;
         }
         let mut pos = 0;
         for c in &mut counts {
-            work.sort += 1;
-            control.tick()?;
             let n = *c;
             *c = pos;
             pos += n;
         }
         for &k in keys.iter() {
-            work.sort += 1;
-            control.tick()?;
             let digit = ((k.key >> shift) & 255) as usize;
             temp[counts[digit]] = k;
             counts[digit] += 1;
         }
-        for (k, t) in keys.iter_mut().zip(temp.iter()) {
-            work.sort += 1;
-            control.tick()?;
-            *k = *t;
-        }
+        keys.copy_from_slice(&temp[..keys.len()]);
     }
     Ok(())
 }

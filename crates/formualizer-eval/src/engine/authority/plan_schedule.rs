@@ -201,8 +201,8 @@ pub(crate) fn schedule(
         // sort: skip them (typically all but a few of the 32).
         let first = entries[0].keys();
         let mut differs = [0u64; 4];
+        work.charge(n as u64)?;
         for entry in &entries {
-            work.tick()?;
             let keys = entry.keys();
             for k in 0..4 {
                 differs[k] |= keys[k] ^ first[k];
@@ -212,23 +212,19 @@ pub(crate) fn schedule(
             if (differs[pass / 8] >> ((pass % 8) * 8)) & 255 == 0 {
                 continue;
             }
+            // Two bucket passes and two element passes, charged in batches.
+            work.charge(512 + 2 * n as u64)?;
             let mut hist = [0usize; 256];
-            for _ in &hist {
-                work.tick()?;
-            }
             for entry in &entries {
-                work.tick()?;
                 hist[entry.digit(pass)] += 1;
             }
             let mut start = 0;
             for count in &mut hist {
-                work.tick()?;
                 let n = *count;
                 *count = start;
                 start += n;
             }
             for entry in &entries {
-                work.tick()?;
                 let digit = entry.digit(pass);
                 temp[hist[digit]] = *entry;
                 hist[digit] += 1;
