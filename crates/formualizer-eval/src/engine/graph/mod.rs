@@ -855,7 +855,14 @@ impl DependencyGraph {
         let t0 = crate::instant::FzInstant::now();
         let count = self.load_packed_to_vertex.len();
         self.cell_to_vertex.reserve(count);
-        for (&packed, &vid) in &self.load_packed_to_vertex {
+        // Take the map so its allocation is released after the flush: it is
+        // only used during a first load and would otherwise keep its capacity
+        // (about 60 B per loaded formula) for the life of the graph.
+        let packed_mappings = std::mem::replace(
+            &mut self.load_packed_to_vertex,
+            std::collections::HashMap::with_hasher(CoordBuildHasher),
+        );
+        for (packed, vid) in packed_mappings {
             let coord = AbsCoord::new(packed.row0(), packed.col0());
             let addr = CellRef::new(
                 packed.sheet_id(),
@@ -863,7 +870,6 @@ impl DependencyGraph {
             );
             self.cell_to_vertex.insert(addr, vid);
         }
-        self.load_packed_to_vertex.clear();
         if debug {
             eprintln!(
                 "[fz][load] flush_load_packed_mappings: {} entries in {:.1} ms",
