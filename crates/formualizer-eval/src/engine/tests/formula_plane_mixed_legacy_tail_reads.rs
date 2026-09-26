@@ -105,6 +105,23 @@ fn tail_sum(row: u32) -> f64 {
     ((ROWS as u64 + row as u64) * (ROWS as u64 - row as u64 + 1) / 2) as f64
 }
 
+/// The values of the removed `mixed_tail_reads_complete_in_one_authoritative_pass`
+/// (its span-routing assertions were span-internal): a gapped family of
+/// `A{r}+1` beside alternating `SUM($A{r}:$A$600)` / `...+0` tails.
+#[test]
+fn mixed_tail_reads_values() {
+    let mut engine = build_mixed_engine(FormulaPlaneMode::AuthoritativeExperimental, |row| {
+        format!("=SUM($A{row}:$A${ROWS})")
+    });
+    for _ in 0..2 {
+        engine.evaluate_all().unwrap();
+        for row in [1, 2, ROWS / 2, ROWS] {
+            assert_eq!(numeric_value(&engine, row, 2), row as f64 + 1.0);
+            assert_eq!(numeric_value(&engine, row, 4), tail_sum(row));
+        }
+    }
+}
+
 /// The values and request lifecycle of
 /// `independent_iterative_island_preserves_accumulator_and_single_request_lifecycle`
 /// (its mixed-topology route events are span-internal).

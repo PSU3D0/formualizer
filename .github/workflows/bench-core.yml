@@ -59,6 +59,11 @@ jobs:
         cargo clippy -p formualizer-bench-core
         --features formualizer_runner --all-targets -- -D warnings
 
+    - name: Bench-core unit tests (moved formula-run scanner code)
+      run: >-
+        cargo test -p formualizer-bench-core
+        --features formualizer_runner --lib
+
     - name: Parity harness smoke test
       run: >-
         cargo test -p formualizer-bench-core
