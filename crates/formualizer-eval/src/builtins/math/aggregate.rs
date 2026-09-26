@@ -67,6 +67,10 @@ pub struct SumFn;
 impl Function for SumFn {
     func_caps!(PURE, REDUCTION, NUMERIC_ONLY, STREAM_OK, PARALLEL_ARGS);
 
+    fn family_kernel(&self) -> Option<crate::function::FamilyKernel> {
+        Some(crate::function::FamilyKernel::Sum)
+    }
+
     fn name(&self) -> &'static str {
         "SUM"
     }
@@ -308,6 +312,10 @@ pub struct AverageFn;
 /// [formualizer-docgen:schema:end]
 impl Function for AverageFn {
     func_caps!(PURE, REDUCTION, NUMERIC_ONLY, STREAM_OK);
+
+    fn family_kernel(&self) -> Option<crate::function::FamilyKernel> {
+        Some(crate::function::FamilyKernel::Average)
+    }
 
     fn name(&self) -> &'static str {
         "AVERAGE"

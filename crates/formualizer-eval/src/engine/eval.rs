@@ -1,6 +1,8 @@
 use crate::SheetId;
 
+mod exact;
 mod family;
+mod kernels;
 use crate::arrow_store::{OverlayFragment, OverlayValue, SheetStore};
 #[cfg(test)]
 use crate::engine::Scheduler;

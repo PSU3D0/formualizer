@@ -149,3 +149,99 @@ fn family_windows_rows_cross_sheet_and_chained_layers() {
         ],
     });
 }
+
+fn run_with(case: &Case, config: EvalConfig) -> Vec<Vec<String>> {
+    let mut e = Engine::new(TestWorkbook::new(), config);
+    for &((s, r, c), ref v) in &case.values {
+        e.set_cell_value(s, r, c, v.clone()).unwrap();
+    }
+    for &((s, r, c), ref f) in &case.formulas {
+        e.set_cell_formula(s, r, c, parse(f).unwrap()).unwrap();
+    }
+    let snapshot = |e: &Engine<TestWorkbook>| {
+        case.formulas
+            .iter()
+            .map(|&((s, r, c), _)| key(e.get_cell_value(s, r, c)))
+            .collect::<Vec<_>>()
+    };
+    let mut out = Vec::new();
+    e.evaluate_all().unwrap();
+    out.push(snapshot(&e));
+    for &((s, r, c), ref v) in &case.edits {
+        e.set_cell_value(s, r, c, v.clone()).unwrap();
+        e.evaluate_all().unwrap();
+        out.push(snapshot(&e));
+    }
+    out
+}
+
+/// Windowed, anchored, row-wise and cross-sheet SUM/AVERAGE over mixed
+/// lanes (errors, text, booleans, empties, -0.0) and computed inputs:
+/// kernels on, kernels off (tier 1) and the per-cell oracle agree.
+#[test]
+fn family_aggregate_kernels_match_per_cell() {
+    let mut values = Vec::new();
+    let mut formulas = Vec::new();
+    let n = 70_000u32; // spans several Arrow chunks
+    for r in (1..=n).step_by(97) {
+        values.push((("Sheet1", r, 1), mixed_value(r)));
+    }
+    for r in 1..=N {
+        values.push((("Sheet1", r, 1), mixed_value(r)));
+        for c in 2..=6 {
+            values.push((("Sheet1", r, c), mixed_value(r * 7 + c)));
+        }
+        values.push((("Data", r, 2), mixed_value(r + 3)));
+        formulas.push((("Sheet1", r, 8), format!("=SUM(A{r}:A{})", r + 4)));
+        formulas.push((("Sheet1", r, 9), format!("=AVERAGE(B{r}:F{r})")));
+        formulas.push((("Sheet1", r, 10), format!("=SUM($A$1:A{r})")));
+        formulas.push((
+            ("Sheet1", r, 11),
+            format!("=AVERAGE(A{r},C{r},Data!B{r}:B{})", r + 1),
+        ));
+        formulas.push((("Sheet1", r, 12), format!("=SUM(H{r}:I{r})")));
+        formulas.push((
+            ("Sheet1", r, 13),
+            format!("=SUM(A{}:A{})", r * 500, r * 500 + 40_000),
+        ));
+        formulas.push((("Sheet1", r, 14), format!("=AVERAGE(D{r})")));
+    }
+    let case = Case {
+        values,
+        formulas,
+        edits: vec![
+            (("Sheet1", 4, 1), LiteralValue::Number(-0.0)),
+            (("Sheet1", 9, 3), LiteralValue::Text("x".into())),
+            (
+                ("Data", 10, 2),
+                LiteralValue::Error(formualizer_common::ExcelError::new(
+                    formualizer_common::ExcelErrorKind::Div,
+                )),
+            ),
+            (("Sheet1", 20_000, 1), LiteralValue::Number(1e308)),
+        ],
+    };
+    for parallel in [false, true] {
+        let base = EvalConfig {
+            enable_parallel: parallel,
+            ..arrow_eval_config()
+        };
+        let oracle = run_with(
+            &case,
+            EvalConfig {
+                family_execution: false,
+                ..base.clone()
+            },
+        );
+        let tier1 = run_with(
+            &case,
+            EvalConfig {
+                family_kernels: false,
+                ..base.clone()
+            },
+        );
+        let kernels = run_with(&case, base);
+        assert_eq!(tier1, oracle, "tier 1, parallel={parallel}");
+        assert_eq!(kernels, oracle, "kernels, parallel={parallel}");
+    }
+}

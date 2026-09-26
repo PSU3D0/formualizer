@@ -205,6 +205,9 @@ where
         let (template, anchor) = store.owner_template(run.owner);
         let ds = self.graph.data_store();
         let reg = self.graph.sheet_reg();
+        if let Some(values) = self.try_run_kernel(run, members, ds, template, anchor) {
+            return values;
+        }
         let literals = LiteralPlan::new(ds, template, anchor);
         let sheet_name = self.graph.sheet_name(run.sheet);
         let col_delta = i64::from(run.col) - i64::from(anchor.1);
@@ -262,6 +265,47 @@ where
             out.push(value);
         }
         out
+    }
+
+    /// Tier 3: a range kernel for the whole run, when the template has one.
+    fn try_run_kernel(
+        &self,
+        run: LayerRun,
+        members: &[VertexId],
+        ds: &crate::engine::arena::DataStore,
+        template: AstNodeId,
+        anchor: (u32, u32),
+    ) -> Option<Vec<LiteralValue>> {
+        if !self.config.family_kernels {
+            return None;
+        }
+        let kernel = super::kernels::AggregateKernel::plan(self, ds, template, run.sheet)?;
+        let values = kernel.run(self, anchor, run.row0, members.len(), run.col)?;
+        for (i, &v) in members.iter().enumerate() {
+            let cell = crate::reference::CellRef::new(
+                run.sheet,
+                Coord::new(run.row0 + i as u32, run.col, true, true),
+            );
+            self.record_derived_format_at(cell, None);
+            #[cfg(debug_assertions)]
+            {
+                let oracle = self
+                    .evaluate_vertex_immutable(v)
+                    .unwrap_or_else(LiteralValue::Error);
+                assert!(
+                    same_value(&oracle, &values[i]),
+                    "family kernel differs from the per-cell path at {cell:?}: {:?} vs {:?}",
+                    values[i],
+                    oracle
+                );
+            }
+            #[cfg(not(debug_assertions))]
+            let _ = v;
+        }
+        #[cfg(test)]
+        self.family_members_for_test
+            .fetch_add(members.len() as u64, std::sync::atomic::Ordering::Relaxed);
+        Some(values)
     }
 
     /// `Some(false)`: the member's literals are the template's (no binding).
@@ -335,5 +379,18 @@ where
     pub(crate) fn family_members_for_test(&self) -> u64 {
         self.family_members_for_test
             .load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+/// Value identity for differential checks: numbers by bits (NaN as a
+/// class), errors by kind, everything else by equality.
+#[cfg(any(test, debug_assertions))]
+pub(crate) fn same_value(a: &LiteralValue, b: &LiteralValue) -> bool {
+    match (a, b) {
+        (LiteralValue::Number(x), LiteralValue::Number(y)) => {
+            x.to_bits() == y.to_bits() || (x.is_nan() && y.is_nan())
+        }
+        (LiteralValue::Error(x), LiteralValue::Error(y)) => x.kind == y.kind,
+        _ => a == b,
     }
 }

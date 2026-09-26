@@ -105,10 +105,28 @@ bitflags::bitflags! {
 /// This trait uses a capability-based model (`FnCaps`) to declare function
 /// properties, enabling the evaluation engine to select the most optimal
 /// execution path (e.g., scalar, vectorized, parallel).
+/// Engine-internal identity of a built-in function with a family kernel.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FamilyKernel {
+    Sum,
+    Average,
+}
+
 pub trait Function: Send + Sync + 'static {
     /// Capability flags for this function
     fn caps(&self) -> FnCaps {
         FnCaps::PURE
+    }
+
+    /// Engine-internal: the family kernel that reproduces this function
+    /// exactly over a family run. Only the built-in implementations return
+    /// `Some`; an override registered under the same name keeps `None`, so
+    /// the engine evaluates it through `eval`.
+    #[doc(hidden)]
+    fn family_kernel(&self) -> Option<FamilyKernel> {
+        None
     }
 
     fn name(&self) -> &'static str;
