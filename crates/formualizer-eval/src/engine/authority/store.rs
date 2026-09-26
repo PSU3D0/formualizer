@@ -938,6 +938,11 @@ impl Store {
             + c.nodes * entry
     }
 
+    /// Whether the store holds any grid (non-symbol) formula. O(1).
+    pub fn has_grid_formulas(&self) -> bool {
+        self.ids.has_grid_runs()
+    }
+
     pub fn formula_count(&self) -> u64 {
         self.ids.live_runs().map(|(_, r)| u64::from(r.len)).sum()
     }

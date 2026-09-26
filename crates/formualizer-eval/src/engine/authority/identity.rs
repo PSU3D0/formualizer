@@ -24,7 +24,7 @@
 //! counter-only [`IdShadow`], so predicted and actual slot use agree exactly.
 
 use super::avl::{AvlMap, ReserveError, SlabShadow, grown};
-use super::geom::{Cell, sheet_slot};
+use super::geom::{Cell, SYMBOL_SHEET, sheet_slot};
 
 pub type Vid = u32;
 
@@ -200,6 +200,9 @@ pub struct IdentityTable {
     /// Free run slots, linked through `first_id`; a free slot has `len == 0`.
     free_run: u32,
     nfree_runs: usize,
+    /// Live runs off the symbol plane (maintained at the two slot choke
+    /// points, so "does the store hold a grid formula" is O(1)).
+    grid_runs: usize,
     fwd: Vec<AvlMap>,
     /// Σ heap bytes of the forward maps (maintained; `heap_bytes` is O(1)).
     fwd_bytes: usize,
@@ -216,6 +219,7 @@ impl Clone for IdentityTable {
             runs: self.runs.clone(),
             free_run: self.free_run,
             nfree_runs: self.nfree_runs,
+            grid_runs: self.grid_runs,
             fwd,
             fwd_bytes,
             rev: self.rev.clone(),
@@ -242,6 +246,7 @@ impl IdentityTable {
             runs: Vec::new(),
             free_run: NO_VID,
             nfree_runs: 0,
+            grid_runs: 0,
             fwd: Vec::new(),
             fwd_bytes: 0,
             rev: AvlMap::new(),
@@ -265,6 +270,11 @@ impl IdentityTable {
             next_id,
             ..Self::with_limit(limit)
         }
+    }
+
+    /// Whether any live run lies off the symbol plane (O(1)).
+    pub fn has_grid_runs(&self) -> bool {
+        self.grid_runs > 0
     }
 
     pub fn run_count(&self) -> usize {
@@ -562,6 +572,9 @@ impl IdentityTable {
     // ------------------------------------------------------------ run slots
 
     fn alloc_run(&mut self, run: IdRun) -> u32 {
+        if run.sheet != SYMBOL_SHEET {
+            self.grid_runs += 1;
+        }
         if self.free_run != NO_VID {
             let h = self.free_run;
             self.free_run = self.runs[h as usize].first_id;
@@ -579,6 +592,9 @@ impl IdentityTable {
     }
 
     fn free_run_slot(&mut self, h: u32) {
+        if self.runs[h as usize].sheet != SYMBOL_SHEET {
+            self.grid_runs -= 1;
+        }
         let r = &mut self.runs[h as usize];
         r.len = 0;
         r.first_id = self.free_run;
@@ -820,8 +836,12 @@ impl IdentityTable {
 
     // ------------------------------------------------------------ checks
 
-    /// Every live run `(handle, run)`, in no particular order.
+    /// Every live run `(handle, run)`, in no particular order. Walks every
+    /// run slot (tests count the slots walked: no mutation or symbol path
+    /// may walk them).
     pub fn live_runs(&self) -> impl Iterator<Item = (u32, &IdRun)> + '_ {
+        #[cfg(test)]
+        RUN_WALK.with(|c| c.set(c.get() + self.runs.len() as u64));
         self.runs
             .iter()
             .enumerate()
@@ -836,8 +856,12 @@ impl IdentityTable {
         let mut by_col: Vec<(u16, u32, u32, u32)> = Vec::new();
         let mut by_id: Vec<(u32, u32)> = Vec::new();
         let mut live = 0usize;
+        let mut grid = 0usize;
         for (h, r) in self.live_runs() {
             live += 1;
+            if r.sheet != SYMBOL_SHEET {
+                grid += 1;
+            }
             if u64::from(r.first_id) + u64::from(r.len) > u64::from(self.next_id) {
                 return Err(format!("run {h} holds ids past the counter"));
             }
@@ -856,6 +880,12 @@ impl IdentityTable {
         }
         if live != self.run_count() {
             return Err("free-slot accounting".into());
+        }
+        if grid != self.grid_runs {
+            return Err(format!(
+                "grid run count {} != maintained {}",
+                grid, self.grid_runs
+            ));
         }
         let fwd_len: usize = self.fwd.iter().map(AvlMap::len).sum();
         if fwd_len != live || self.rev.len() != live {
@@ -882,4 +912,15 @@ impl IdentityTable {
         self.rev.check()?;
         Ok(())
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    static RUN_WALK: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Run slots walked by [`IdentityTable::live_runs`] on this thread (tests).
+#[cfg(test)]
+pub(crate) fn run_slots_walked() -> u64 {
+    RUN_WALK.with(|c| c.get())
 }

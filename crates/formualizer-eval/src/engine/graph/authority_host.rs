@@ -338,10 +338,10 @@ impl DependencyGraph {
         // and a batch arrives (the end of a load scope after an early empty
         // build, e.g. from `add_sheet`: applying every loaded formula one by
         // one made small-workbook loads ~1.6x legacy).
-        let grid_formulas = (self.authority.store.formula_count() as usize)
-            .saturating_sub(self.authority.symbols.len());
-        let mut rebuild =
-            self.authority.state == HostState::Unbuilt || (grid_formulas == 0 && touched.len() > 1);
+        // O(1): a maintained count, not a walk of the identity runs (a
+        // per-sync walk made unrelated post-load mutations quadratic).
+        let mut rebuild = self.authority.state == HostState::Unbuilt
+            || (touched.len() > 1 && !self.authority.store.has_grid_formulas());
         if !rebuild && symbols_moved {
             match self.authority_sync_symbols_incremental(&mut touched) {
                 Some(Ok(())) => {}

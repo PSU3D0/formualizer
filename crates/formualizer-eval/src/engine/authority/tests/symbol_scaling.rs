@@ -16,14 +16,23 @@ use formualizer_parse::parser::parse;
 fn work(e: &Engine<TestWorkbook>) -> u64 {
     let host = e.graph.authority_host();
     let st = &host.store().stats;
-    host.symbol_sync_work() + st.index_work + st.plan_work + st.slot_work + st.symbol_work
+    host.symbol_sync_work()
+        + st.index_work
+        + st.plan_work
+        + st.slot_work
+        + st.symbol_work
+        + crate::engine::authority::identity::run_slots_walked()
 }
 
-/// An engine with `formulas` independent formula cells, built.
+/// An engine with `formulas` independent formula cells, built. The
+/// formulas sit on every other row, so each keeps its own identity run
+/// (contiguous formulas would coalesce into one run and hide per-run work;
+/// pre-landing check §1).
 fn engine(formulas: u32) -> Engine<TestWorkbook> {
     let mut e = Engine::new(TestWorkbook::new(), EvalConfig::default());
-    for r in 1..=formulas {
-        e.set_cell_value("Sheet1", r, 1, LiteralValue::Number(f64::from(r)))
+    for i in 1..=formulas {
+        let r = 2 * i;
+        e.set_cell_value("Sheet1", r, 1, LiteralValue::Number(f64::from(i)))
             .unwrap();
         e.set_cell_formula("Sheet1", r, 2, parse("=A1*2+1").unwrap())
             .unwrap();
@@ -53,8 +62,9 @@ fn measure(
         builds,
         "a symbol revision rebuilt the authority"
     );
+    let done = work(&e) - before;
     e.graph.authority_host().store().check().unwrap();
-    work(&e) - before
+    done
 }
 
 /// Linear in the number of ops and independent of the formula count: the
