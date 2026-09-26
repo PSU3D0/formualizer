@@ -100,6 +100,7 @@ pub use journal::{ActionJournal, ArrowOp, ArrowUndoBatch, GraphUndoBatch};
 pub use target_preparation::PrepareTargetsOptions;
 // Use SoA implementation
 pub use formualizer_common::{ResourceExhaustionDetail, ResourceExhaustionReason};
+pub use graph::FormulaView;
 pub use graph::snapshot::VertexSnapshot;
 pub use graph::{
     ChangeEvent, DependencyGraph, DependencyRef, GraphBaselineStats, OperationSummary, StripeKey,
@@ -912,6 +913,13 @@ pub struct EvalConfig {
     /// aggregates reduce each member's slice without per-call range
     /// resolution. `false` keeps tier 1 for every run. Values are identical.
     pub family_kernels: bool,
+
+    /// Program 2 compression: after the dependency authority is built,
+    /// family members whose formula is their node's template relocated
+    /// store a reference to the template instead of their own AST, and
+    /// the formula arena drops the unreachable trees. Formulas read back
+    /// identically either way.
+    pub formula_compression: bool,
 }
 
 impl Default for EvalConfig {
@@ -975,6 +983,7 @@ impl Default for EvalConfig {
             lookup_index_cache_max_bytes: 64 * 1024 * 1024,
             family_execution: true,
             family_kernels: true,
+            formula_compression: true,
         }
     }
 }

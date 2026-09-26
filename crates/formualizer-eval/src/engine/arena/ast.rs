@@ -517,6 +517,141 @@ impl AstArena {
         hasher.finish()
     }
 
+    /// Keep only the nodes reachable from `roots` (Program 2 compression:
+    /// family members' own trees become garbage once they reference their
+    /// template). Returns the remap, indexed by old id: `u32::MAX` for a
+    /// dropped node. Strings and table specifiers are kept as they are;
+    /// node metadata travels with its node. Every holder of an id must be
+    /// remapped by the caller.
+    pub(crate) fn compact(&mut self, roots: impl IntoIterator<Item = AstNodeId>) -> Vec<u32> {
+        let old_len = self.nodes.len();
+        let mut remap = vec![u32::MAX; old_len];
+        let mut nodes: Vec<AstNodeEntry> = Vec::new();
+        let mut dedup_map: FxHashMap<u64, AstNodeId> = FxHashMap::default();
+        let mut function_args: Vec<AstNodeId> = Vec::new();
+        let mut array_elements: Vec<AstNodeId> = Vec::new();
+        // Iterative post-order: (id, children pushed).
+        let mut stack: Vec<(u32, bool)> = Vec::new();
+        for root in roots {
+            let r = root.0 as usize;
+            if r >= old_len || remap[r] != u32::MAX {
+                continue;
+            }
+            stack.push((root.0, false));
+            while let Some((id, expanded)) = stack.pop() {
+                let i = id as usize;
+                if remap[i] != u32::MAX {
+                    continue;
+                }
+                let entry = &self.nodes[i];
+                let children: smallvec::SmallVec<[AstNodeId; 8]> = match &entry.data {
+                    AstNodeData::UnaryOp { expr_id, .. } => smallvec::smallvec![*expr_id],
+                    AstNodeData::BinaryOp {
+                        left_id, right_id, ..
+                    } => smallvec::smallvec![*left_id, *right_id],
+                    AstNodeData::Function {
+                        args_offset,
+                        args_count,
+                        ..
+                    } => self.function_args
+                        [*args_offset as usize..*args_offset as usize + *args_count as usize]
+                        .iter()
+                        .copied()
+                        .collect(),
+                    AstNodeData::Array {
+                        rows,
+                        cols,
+                        elements_offset,
+                    } => {
+                        let n = *rows as usize * *cols as usize;
+                        self.array_elements
+                            [*elements_offset as usize..*elements_offset as usize + n]
+                            .iter()
+                            .copied()
+                            .collect()
+                    }
+                    AstNodeData::Literal(_)
+                    | AstNodeData::Omitted
+                    | AstNodeData::Reference { .. } => smallvec::SmallVec::new(),
+                };
+                if !expanded && children.iter().any(|c| remap[c.0 as usize] == u32::MAX) {
+                    stack.push((id, true));
+                    for c in children.iter().rev() {
+                        if remap[c.0 as usize] == u32::MAX {
+                            stack.push((c.0, false));
+                        }
+                    }
+                    continue;
+                }
+                let m = |c: AstNodeId| AstNodeId(remap[c.0 as usize]);
+                let data = match &entry.data {
+                    AstNodeData::UnaryOp { op_id, expr_id } => AstNodeData::UnaryOp {
+                        op_id: *op_id,
+                        expr_id: m(*expr_id),
+                    },
+                    AstNodeData::BinaryOp {
+                        op_id,
+                        left_id,
+                        right_id,
+                    } => AstNodeData::BinaryOp {
+                        op_id: *op_id,
+                        left_id: m(*left_id),
+                        right_id: m(*right_id),
+                    },
+                    AstNodeData::Function {
+                        name_id,
+                        args_count,
+                        ..
+                    } => {
+                        let args_offset = function_args.len() as u32;
+                        function_args.extend(children.iter().map(|&c| m(c)));
+                        AstNodeData::Function {
+                            name_id: *name_id,
+                            args_offset,
+                            args_count: *args_count,
+                        }
+                    }
+                    AstNodeData::Array { rows, cols, .. } => {
+                        let elements_offset = array_elements.len() as u32;
+                        array_elements.extend(children.iter().map(|&c| m(c)));
+                        AstNodeData::Array {
+                            rows: *rows,
+                            cols: *cols,
+                            elements_offset,
+                        }
+                    }
+                    other => other.clone(),
+                };
+                let meta = entry.meta;
+                let hash = self.hash_node(&data);
+                let new_id = match dedup_map.get(&hash) {
+                    Some(&existing) if nodes[existing.0 as usize].data == data => existing,
+                    _ => {
+                        let new_id = AstNodeId(nodes.len() as u32);
+                        nodes.push(AstNodeEntry { data, meta });
+                        dedup_map.insert(hash, new_id);
+                        new_id
+                    }
+                };
+                remap[i] = new_id.0;
+            }
+        }
+        nodes.shrink_to_fit();
+        function_args.shrink_to_fit();
+        array_elements.shrink_to_fit();
+        dedup_map.shrink_to_fit();
+        self.nodes = nodes;
+        self.dedup_map = dedup_map;
+        self.function_args = function_args;
+        self.array_elements = array_elements;
+        remap
+    }
+
+    /// Number of stored nodes.
+    pub(crate) fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
+
     /// Get statistics about the arena
     pub fn stats(&self) -> AstArenaStats {
         AstArenaStats {

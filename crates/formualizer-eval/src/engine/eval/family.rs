@@ -346,6 +346,8 @@ where
         cell: (u16, u32, u32),
     ) {
         use crate::engine::authority::template::template_facts;
+        // A compressed member was checked against its template when it
+        // was compressed.
         let Some(own) = self.graph.get_formula_id(v) else {
             return;
         };

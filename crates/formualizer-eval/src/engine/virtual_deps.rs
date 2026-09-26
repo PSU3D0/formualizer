@@ -476,7 +476,7 @@ impl DynamicRefVirtualDepProvider {
         if !engine.graph.is_dynamic(v) {
             return (Vec::new(), Vec::new());
         }
-        let Some(ast_id) = engine.graph.get_formula_id(v) else {
+        let Some(view) = engine.graph.formula_view(v) else {
             return (Vec::new(), Vec::new());
         };
         let sheet_id = engine.graph.get_vertex_sheet_id(v);
@@ -487,8 +487,8 @@ impl DynamicRefVirtualDepProvider {
             .get_cell_ref(v)
             .unwrap_or_else(|| engine.graph.make_cell_ref(sheet_name, 0, 0));
         let interpreter = Interpreter::new_with_cell(&collector, sheet_name, cell_ref);
-        let _ = interpreter.evaluate_arena_ast(
-            ast_id,
+        let _ = interpreter.evaluate_formula_view(
+            view,
             engine.graph.data_store(),
             engine.graph.sheet_reg(),
         );

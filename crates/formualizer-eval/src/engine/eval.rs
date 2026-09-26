@@ -932,6 +932,8 @@ pub struct Engine<R> {
     derived_format_operations_for_test: std::sync::atomic::AtomicU64,
     #[cfg(test)]
     family_members_for_test: std::sync::atomic::AtomicU64,
+    /// Authority build last compressed (`maybe_compress_formulas`).
+    compressed_at_build: Option<u64>,
     #[cfg(test)]
     computed_overlay_set_explicit_entry_operations_for_test: u64,
     #[cfg(test)]
@@ -2461,6 +2463,7 @@ where
             derived_format_operations_for_test: std::sync::atomic::AtomicU64::new(0),
             #[cfg(test)]
             family_members_for_test: std::sync::atomic::AtomicU64::new(0),
+            compressed_at_build: None,
             #[cfg(test)]
             computed_overlay_set_explicit_entry_operations_for_test: 0,
             #[cfg(test)]
@@ -2608,6 +2611,7 @@ where
             derived_format_operations_for_test: std::sync::atomic::AtomicU64::new(0),
             #[cfg(test)]
             family_members_for_test: std::sync::atomic::AtomicU64::new(0),
+            compressed_at_build: None,
             #[cfg(test)]
             computed_overlay_set_explicit_entry_operations_for_test: 0,
             #[cfg(test)]
@@ -4483,10 +4487,7 @@ where
         let coord = Coord::from_excel(row, col, true, true);
         let cell = CellRef::new(sheet_id, coord);
         let vid = self.graph.get_vertex_for_cell(&cell)?;
-        let ast_id = self.graph.get_formula_id(vid)?;
-        self.graph
-            .data_store()
-            .retrieve_ast(ast_id, self.graph.sheet_reg())
+        self.graph.get_formula(vid)
     }
 
     pub fn define_name_with_logger(
@@ -5296,7 +5297,7 @@ where
         summary: &crate::engine::graph::editor::vertex_editor::ShiftSummary,
     ) {
         for vertex in &summary.vertices_moved {
-            if self.graph.get_formula_id(*vertex).is_some() {
+            if self.graph.has_formula(*vertex) {
                 self.graph.mark_vertex_dirty(*vertex);
             }
         }
@@ -12558,11 +12559,7 @@ where
         let coord = Coord::from_excel(row, col, true, true);
         let cell = CellRef::new(sheet_id, coord);
         if let Some(vid) = self.graph.get_vertex_for_cell(&cell) {
-            let ast = self.graph.get_formula_id(vid).and_then(|ast_id| {
-                self.graph
-                    .data_store()
-                    .retrieve_ast(ast_id, self.graph.sheet_reg())
-            });
+            let ast = self.graph.get_formula(vid);
             Some((ast, v))
         } else if v.is_some() {
             Some((None, v))
@@ -12682,10 +12679,10 @@ where
         let kind = self.graph.get_vertex_kind(vertex_id);
         let sheet_id = self.graph.get_vertex_sheet_id(vertex_id);
 
-        let ast_id = match kind {
+        let view = match kind {
             VertexKind::FormulaScalar | VertexKind::FormulaArray => {
-                if let Some(ast_id) = self.graph.get_formula_id(vertex_id) {
-                    ast_id
+                if let Some(view) = self.graph.formula_view(vertex_id) {
+                    view
                 } else {
                     return Ok(LiteralValue::Number(0.0));
                 }
@@ -12726,8 +12723,11 @@ where
             .expect("cell ref for vertex");
         let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref);
 
-        let result =
-            interpreter.evaluate_arena_ast(ast_id, self.graph.data_store(), self.graph.sheet_reg());
+        let result = interpreter.evaluate_formula_view(
+            view,
+            self.graph.data_store(),
+            self.graph.sheet_reg(),
+        );
 
         // If array result, perform spill from the anchor cell
         match result {
@@ -14577,11 +14577,37 @@ where
         Ok((EvaluationSchedule::Owned(schedule), vdeps, meta))
     }
 
+    /// Compress family formulas once per authority build (see
+    /// `EvalConfig::formula_compression`), when no staged or deferred
+    /// formula package can hold arena ids.
+    fn maybe_compress_formulas(&mut self) {
+        if !self.config.formula_compression || self.has_staged_formulas() {
+            if std::env::var_os("FZ_DBG_COMPRESS").is_some() {
+                eprintln!(
+                    "compress: engine skip staged {}",
+                    self.has_staged_formulas()
+                );
+            }
+            return;
+        }
+        let builds = self.graph.authority_host().builds;
+        if self.compressed_at_build == Some(builds) {
+            return;
+        }
+        self.compressed_at_build = Some(builds);
+        let t = std::time::Instant::now();
+        self.graph.compress_family_formulas();
+        if std::env::var_os("FZ_DBG_COMPRESS").is_some() {
+            eprintln!("compress took {:?}", t.elapsed());
+        }
+    }
+
     fn create_evaluation_schedule_active(
         &mut self,
         to_evaluate: &[VertexId],
     ) -> Result<ScheduleBuildOutput, ExcelError> {
         self.graph.authority_sync();
+        self.maybe_compress_formulas();
         let mut ledger = self.active_resource_ledger.take();
         let result = self.create_evaluation_schedule_uncached(to_evaluate, ledger.as_mut());
         self.active_resource_ledger = ledger;
@@ -15494,10 +15520,10 @@ where
         let kind = self.graph.get_vertex_kind(vertex_id);
         let sheet_id = self.graph.get_vertex_sheet_id(vertex_id);
 
-        let ast_id = match kind {
+        let view = match kind {
             VertexKind::FormulaScalar | VertexKind::FormulaArray => {
-                if let Some(ast_id) = self.graph.get_formula_id(vertex_id) {
-                    ast_id
+                if let Some(view) = self.graph.formula_view(vertex_id) {
+                    view
                 } else {
                     return Ok(LiteralValue::Number(0.0));
                 }
@@ -15642,14 +15668,14 @@ where
             .get_cell_ref(vertex_id)
             .expect("cell ref for vertex");
         if let Some(result) =
-            self.freshness_evaluate_recorded(vertex_id, sheet_name, cell_ref, ast_id)
+            self.freshness_evaluate_recorded(vertex_id, sheet_name, cell_ref, view)
         {
             return result;
         }
         let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref);
 
         interpreter
-            .evaluate_arena_ast(ast_id, self.graph.data_store(), self.graph.sheet_reg())
+            .evaluate_formula_view(view, self.graph.data_store(), self.graph.sheet_reg())
             .map(|cv| {
                 let format = cv.format_id();
                 self.record_derived_format(vertex_id, format);
@@ -18038,7 +18064,7 @@ where
 
         match kind {
             VertexKind::FormulaScalar | VertexKind::FormulaArray => {
-                let Some(ast_id) = self.graph.get_formula_id(vertex_id) else {
+                let Some(view) = self.graph.formula_view(vertex_id) else {
                     return Ok(LiteralValue::Number(0.0)); // G14 quirk
                 };
                 let sheet_name = self.graph.sheet_name(sheet_id);
@@ -18048,7 +18074,7 @@ where
                     .expect("cell ref for vertex");
                 let interpreter = Interpreter::new_with_cell(ctx, sheet_name, cell_ref);
                 interpreter
-                    .evaluate_arena_ast(ast_id, self.graph.data_store(), self.graph.sheet_reg())
+                    .evaluate_formula_view(view, self.graph.data_store(), self.graph.sheet_reg())
                     .map(|cv| {
                         let format = cv.format_id();
                         self.record_derived_format(vertex_id, format);

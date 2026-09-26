@@ -212,3 +212,83 @@ mod tests {
         );
     }
 }
+
+/// Instantiate a family member from its template (Program 2 compression):
+/// relocate every relative axis by the offset, and write each reference
+/// text as the rendering of the relocated reference when the template's
+/// text is its own reference's rendering, else keep the template's text.
+/// This is the rule `compress_family_formulas` checks a member against.
+pub(crate) fn instantiate_member_ast(
+    ast: &ASTNode,
+    row_delta: i64,
+    col_delta: i64,
+) -> Result<ASTNode, ExcelError> {
+    let mut out = relocate_ast_for_template_placement(ast, row_delta, col_delta)?;
+    rerender_originals(ast, &mut out);
+    Ok(out)
+}
+
+fn rerender_originals(template: &ASTNode, member: &mut ASTNode) {
+    match (&template.node_type, &mut member.node_type) {
+        (
+            ASTNodeType::Reference {
+                original: t_original,
+                reference: t_reference,
+            },
+            ASTNodeType::Reference {
+                original,
+                reference,
+            },
+        ) => {
+            if *t_original == t_reference.normalise() {
+                *original = reference.normalise();
+            }
+        }
+        (ASTNodeType::UnaryOp { expr: t, .. }, ASTNodeType::UnaryOp { expr: m, .. }) => {
+            rerender_originals(t, m)
+        }
+        (
+            ASTNodeType::BinaryOp {
+                left: tl,
+                right: tr,
+                ..
+            },
+            ASTNodeType::BinaryOp {
+                left: ml,
+                right: mr,
+                ..
+            },
+        ) => {
+            rerender_originals(tl, ml);
+            rerender_originals(tr, mr);
+        }
+        (ASTNodeType::Function { args: ta, .. }, ASTNodeType::Function { args: ma, .. }) => {
+            for (t, m) in ta.iter().zip(ma.iter_mut()) {
+                rerender_originals(t, m);
+            }
+        }
+        (
+            ASTNodeType::Call {
+                callee: tc,
+                args: ta,
+            },
+            ASTNodeType::Call {
+                callee: mc,
+                args: ma,
+            },
+        ) => {
+            rerender_originals(tc, mc);
+            for (t, m) in ta.iter().zip(ma.iter_mut()) {
+                rerender_originals(t, m);
+            }
+        }
+        (ASTNodeType::Array(tr), ASTNodeType::Array(mr)) => {
+            for (trow, mrow) in tr.iter().zip(mr.iter_mut()) {
+                for (t, m) in trow.iter().zip(mrow.iter_mut()) {
+                    rerender_originals(t, m);
+                }
+            }
+        }
+        _ => {}
+    }
+}

@@ -62,7 +62,10 @@ impl DependencyGraph {
             Ok(())
         }
         let mut out = Vec::new();
-        for (&v, &ast) in self.vertex_formulas.iter() {
+        for (&v, f) in self.vertex_formulas.iter() {
+            // Sheet references do not change under relocation: a member's
+            // template names the member's sheets.
+            let ast = f.root();
             let mut probe = Probe {
                 graph: self,
                 sheet_id,
@@ -244,10 +247,7 @@ impl DependencyGraph {
     }
 
     fn rewrite_formula_sheet_to_tombstone(&mut self, vertex_id: VertexId, sheet_name: &str) {
-        let Some(ast_id) = self.vertex_formulas.get(&vertex_id).copied() else {
-            return;
-        };
-        let Some(ast) = self.data_store.retrieve_ast(ast_id, &self.sheet_reg) else {
+        let Some(ast) = self.get_formula(vertex_id) else {
             return;
         };
 
@@ -266,10 +266,7 @@ impl DependencyGraph {
         let marker = Self::tombstone_marker(sheet_name);
 
         for vertex_id in orphans {
-            let Some(ast_id) = self.vertex_formulas.get(&vertex_id).copied() else {
-                continue;
-            };
-            let Some(ast) = self.data_store.retrieve_ast(ast_id, &self.sheet_reg) else {
+            let Some(ast) = self.get_formula(vertex_id) else {
                 continue;
             };
 
@@ -338,9 +335,7 @@ impl DependencyGraph {
         // Update still-valid references that explicitly mentioned the renamed sheet.
         let formulas_to_update: Vec<VertexId> = self.vertex_formulas.keys().copied().collect();
         for formula_id in formulas_to_update {
-            if let Some(ast_id) = self.vertex_formulas.get(&formula_id)
-                && let Some(ast) = self.data_store.retrieve_ast(*ast_id, &self.sheet_reg)
-            {
+            if let Some(ast) = self.get_formula(formula_id) {
                 let mut updated_ast = ast.clone();
                 updated_ast.update_sheet_references(Some(&old_name), new_name);
 
@@ -475,8 +470,7 @@ impl DependencyGraph {
 
         for (old_id, _) in &source_vertices {
             if let Some(&new_id) = vertex_mapping.get(old_id)
-                && let Some(&ast_id) = self.vertex_formulas.get(old_id)
-                && let Some(ast) = self.data_store.retrieve_ast(ast_id, &self.sheet_reg)
+                && let Some(ast) = self.get_formula(*old_id)
             {
                 let updated_ast = update_internal_sheet_references(
                     &ast,

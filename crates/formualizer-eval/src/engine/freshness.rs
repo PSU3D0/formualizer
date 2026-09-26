@@ -42,7 +42,6 @@
 //! (design §8.2 case 2 plans a Δ here; not adopted).
 
 use super::Engine;
-use crate::engine::arena::AstNodeId;
 use crate::engine::authority::geom::SYMBOL_SHEET;
 use crate::engine::live_edges::{ReadLog, ReadRect, RecordingContext};
 use crate::engine::scheduler::{Schedule, ScheduleUnit};
@@ -364,7 +363,7 @@ impl<R: EvaluationContext> Engine<R> {
         vertex: VertexId,
         sheet_name: &str,
         cell_ref: crate::reference::CellRef,
-        ast_id: AstNodeId,
+        view: crate::engine::graph::FormulaView,
     ) -> Option<Result<LiteralValue, ExcelError>> {
         if !self.freshness.armed || !self.graph.is_dynamic(vertex) {
             return None;
@@ -374,7 +373,7 @@ impl<R: EvaluationContext> Engine<R> {
             let ctx = RecordingContext::new(self, &log);
             let interpreter = Interpreter::new_with_cell(&ctx, sheet_name, cell_ref);
             interpreter
-                .evaluate_arena_ast(ast_id, self.graph.data_store(), self.graph.sheet_reg())
+                .evaluate_formula_view(view, self.graph.data_store(), self.graph.sheet_reg())
                 .map(|cv| {
                     let format = cv.format_id();
                     self.record_derived_format(vertex, format);

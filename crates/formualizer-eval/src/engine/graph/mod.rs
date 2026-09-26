@@ -161,18 +161,53 @@ pub struct GraphBaselineStats {
     pub formula_ast_node_count: usize,
 }
 
-/// Formula AST of every formula vertex. Reads go through `Deref`; writes
-/// go through `insert`/`remove`, which, with the `unified_authority`
-/// feature, also record the touched vertex so the authority can follow
-/// formula edits (Program 1 M1a). Without the feature this is the map.
+/// How a formula vertex stores its formula (Program 2 compression).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FormulaRef {
+    /// The vertex's own arena AST, valid at its cell.
+    Own(AstNodeId),
+    /// A family member: its formula is `template` (valid at `anchor`,
+    /// 0-based) relocated to the member's cell, with the same literals and
+    /// reference texts (checked when the member was compressed).
+    Member {
+        template: AstNodeId,
+        anchor: (u32, u32),
+    },
+}
+
+impl FormulaRef {
+    /// The arena root the formula is read from (its own AST, or the shared
+    /// template).
+    #[inline]
+    pub(crate) fn root(self) -> AstNodeId {
+        match self {
+            FormulaRef::Own(id) | FormulaRef::Member { template: id, .. } => id,
+        }
+    }
+
+    /// The vertex's own AST, if it has one.
+    #[inline]
+    pub(crate) fn own(self) -> Option<AstNodeId> {
+        match self {
+            FormulaRef::Own(id) => Some(id),
+            FormulaRef::Member { .. } => None,
+        }
+    }
+}
+
+/// The formula of every formula vertex. Reads go through `Deref`;
+/// writes go through `insert`/`remove`, which also record the touched
+/// vertex so the authority can follow formula edits (Program 1 M1a).
+/// Compressing a vertex to a family member is not a formula change and is
+/// not recorded.
 #[derive(Debug, Default)]
 pub(crate) struct FormulaMap {
-    map: FxHashMap<VertexId, AstNodeId>,
+    map: FxHashMap<VertexId, FormulaRef>,
     touched: Vec<VertexId>,
 }
 
 impl std::ops::Deref for FormulaMap {
-    type Target = FxHashMap<VertexId, AstNodeId>;
+    type Target = FxHashMap<VertexId, FormulaRef>;
 
     #[inline]
     fn deref(&self) -> &Self::Target {
@@ -182,13 +217,43 @@ impl std::ops::Deref for FormulaMap {
 
 impl FormulaMap {
     #[inline]
-    pub(crate) fn insert(&mut self, vertex: VertexId, ast: AstNodeId) -> Option<AstNodeId> {
+    pub(crate) fn insert(&mut self, vertex: VertexId, ast: AstNodeId) -> Option<FormulaRef> {
         self.touched.push(vertex);
-        self.map.insert(vertex, ast)
+        self.map.insert(vertex, FormulaRef::Own(ast))
+    }
+
+    /// Replace a vertex's own AST with a family reference (same formula).
+    #[inline]
+    pub(crate) fn compress(&mut self, vertex: VertexId, template: AstNodeId, anchor: (u32, u32)) {
+        if let Some(slot) = self.map.get_mut(&vertex) {
+            *slot = FormulaRef::Member { template, anchor };
+        }
+    }
+
+    /// Replace a member reference with the member's own (instantiated) AST
+    /// (same formula; not recorded as touched).
+    #[inline]
+    pub(crate) fn decompress(&mut self, vertex: VertexId, own: AstNodeId) {
+        if let Some(slot) = self.map.get_mut(&vertex) {
+            *slot = FormulaRef::Own(own);
+        }
+    }
+
+    /// Remap every stored arena id (after an arena compaction).
+    pub(crate) fn remap(&mut self, map: &impl Fn(AstNodeId) -> AstNodeId) {
+        for slot in self.map.values_mut() {
+            *slot = match *slot {
+                FormulaRef::Own(id) => FormulaRef::Own(map(id)),
+                FormulaRef::Member { template, anchor } => FormulaRef::Member {
+                    template: map(template),
+                    anchor,
+                },
+            };
+        }
     }
 
     #[inline]
-    pub(crate) fn remove(&mut self, vertex: &VertexId) -> Option<AstNodeId> {
+    pub(crate) fn remove(&mut self, vertex: &VertexId) -> Option<FormulaRef> {
         let old = self.map.remove(vertex);
         if old.is_some() {
             self.touched.push(*vertex);
@@ -215,6 +280,21 @@ impl FormulaMap {
     pub(crate) fn has_touched(&self) -> bool {
         !self.touched.is_empty()
     }
+}
+
+/// A formula cell's formula as a template plus offset (design §11).
+///
+/// Evaluating or rendering `template` with the interpreter's reference
+/// offset `(row_delta, col_delta)` yields exactly this cell's formula.
+/// `template` alone is the formula of the family's anchor cell and is
+/// shared by every member; for a formula stored on its own cell the deltas
+/// are zero.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct FormulaView {
+    pub template: AstNodeId,
+    pub row_delta: i64,
+    pub col_delta: i64,
 }
 
 /// SoA-based dependency graph implementation
@@ -3906,7 +3986,7 @@ impl DependencyGraph {
     /// holds a formula (a cell overwritten with a literal keeps its vertex
     /// but drops its formula).
     pub(crate) fn is_live_formula_vertex(&self, vertex_id: VertexId) -> bool {
-        self.store.vertex_exists_active(vertex_id) && self.get_formula_id(vertex_id).is_some()
+        self.store.vertex_exists_active(vertex_id) && self.has_formula(vertex_id)
     }
 
     /// Check if a vertex exists
@@ -3928,8 +4008,51 @@ impl DependencyGraph {
         self.store.sheet_id(vertex_id)
     }
 
+    /// The vertex's own arena formula root. `None` for a compressed family
+    /// member (its formula is a shared template at an offset; use
+    /// [`Self::formula_view`] or [`Self::get_formula`]).
     pub fn get_formula_id(&self, vertex_id: VertexId) -> Option<AstNodeId> {
-        self.vertex_formulas.get(&vertex_id).copied()
+        self.vertex_formulas.get(&vertex_id).and_then(|f| f.own())
+    }
+
+    /// The formula of a formula vertex as a template plus offset.
+    pub fn formula_view(&self, vertex_id: VertexId) -> Option<FormulaView> {
+        let f = *self.vertex_formulas.get(&vertex_id)?;
+        Some(match f {
+            FormulaRef::Own(template) => FormulaView {
+                template,
+                row_delta: 0,
+                col_delta: 0,
+            },
+            FormulaRef::Member { template, anchor } => {
+                let addr = self.store.grid_addr(vertex_id)?;
+                FormulaView {
+                    template,
+                    row_delta: i64::from(addr.row()) - i64::from(anchor.0),
+                    col_delta: i64::from(addr.col()) - i64::from(anchor.1),
+                }
+            }
+        })
+    }
+
+    /// Whether the vertex holds a formula (own or compressed).
+    pub(crate) fn has_formula(&self, vertex_id: VertexId) -> bool {
+        self.vertex_formulas.contains_key(&vertex_id)
+    }
+
+    /// Ensure the vertex stores its own AST (instantiating a compressed
+    /// member), and return it. Paths that rewrite one cell's formula use
+    /// this before editing.
+    pub(crate) fn own_formula_id(&mut self, vertex_id: VertexId) -> Option<AstNodeId> {
+        match *self.vertex_formulas.get(&vertex_id)? {
+            FormulaRef::Own(id) => Some(id),
+            FormulaRef::Member { .. } => {
+                let ast = self.get_formula(vertex_id)?;
+                let id = self.data_store.store_ast(&ast, &self.sheet_reg);
+                self.vertex_formulas.decompress(vertex_id, id);
+                Some(id)
+            }
+        }
     }
 
     pub(crate) fn formula_vertices(&self) -> Vec<VertexId> {
@@ -3961,8 +4084,19 @@ impl DependencyGraph {
     ///
     /// Not used in hot paths; reconstructs from arena.
     pub fn get_formula(&self, vertex_id: VertexId) -> Option<ASTNode> {
-        let ast_id = self.get_formula_id(vertex_id)?;
-        self.data_store.retrieve_ast(ast_id, &self.sheet_reg)
+        let view = self.formula_view(vertex_id)?;
+        let ast = self
+            .data_store
+            .retrieve_ast(view.template, &self.sheet_reg)?;
+        if view.row_delta == 0 && view.col_delta == 0 {
+            return Some(ast);
+        }
+        crate::engine::template::relocate::instantiate_member_ast(
+            &ast,
+            view.row_delta,
+            view.col_delta,
+        )
+        .ok()
     }
 
     /// Get the value stored for a vertex
@@ -4113,7 +4247,7 @@ impl DependencyGraph {
 
         // Get value and formula references
         let value_ref = self.vertex_values.get(&id).copied();
-        let formula_ref = self.vertex_formulas.get(&id).copied();
+        let formula_ref = self.vertex_formulas.get(&id).map(|f| f.root());
 
         // Outgoing edges (dependencies): legacy's, in oracle builds only.
         #[cfg(any(test, feature = "legacy_oracle"))]

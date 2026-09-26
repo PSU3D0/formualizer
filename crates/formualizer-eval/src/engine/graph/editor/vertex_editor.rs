@@ -402,11 +402,7 @@ impl<'g> VertexEditor<'g> {
     }
 
     fn get_formula_ast(&self, id: VertexId) -> Option<ASTNode> {
-        self.graph.get_formula_id(id).and_then(|ast_id| {
-            self.graph
-                .data_store()
-                .retrieve_ast(ast_id, self.graph.sheet_reg())
-        })
+        self.graph.get_formula(id)
     }
 
     fn snapshot_named_definitions(&self) -> FxHashMap<(NameScope, String), NamedDefinition> {
@@ -845,6 +841,8 @@ impl<'g> VertexEditor<'g> {
                     ),
                 ));
             }
+            // A compressed member's formula is relative to its cell.
+            let _ = self.graph.own_formula_id(id);
             self.graph.set_grid_addr(id, coord);
             self.graph.update_edge_grid_addr(id, coord);
             summary.coord_changed = true;

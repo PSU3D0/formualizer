@@ -96,13 +96,18 @@ impl DependencyGraph {
         if self.store.is_deleted(vid) {
             return None;
         }
-        let ast = *self.vertex_formulas.get(&vid)?;
         let (sheet, row, col) = cell_of(&cell);
+        // A compressed member's facts are its template's at the anchor
+        // (relative, so equal to the member's own).
+        let (ast, (arow, acol)) = match *self.vertex_formulas.get(&vid)? {
+            super::FormulaRef::Own(ast) => (ast, (row, col)),
+            super::FormulaRef::Member { template, anchor } => (template, anchor),
+        };
         let mut facts = extract_formula(
             self,
             sheet,
-            row,
-            col,
+            arow,
+            acol,
             ast,
             self.is_volatile(vid),
             self.is_dynamic(vid),
@@ -439,6 +444,10 @@ impl DependencyGraph {
     /// moves (`move_vertex`, which replay issues once per moved cell) share
     /// the open capture.
     pub(crate) fn authority_note_structural(&mut self, op: bool) {
+        // Structural edits move cells and rewrite formulas one vertex at a
+        // time: members get their own ASTs back first (Program 2
+        // compression resumes after the next authority build).
+        self.decompress_family_formulas();
         if self.authority.carried.is_some() {
             if !op {
                 return;
@@ -1743,5 +1752,541 @@ impl DependencyGraph {
     /// symbol nodes transparently.
     pub(crate) fn authority_direct_grid_dependents(store: &Store, sheet: u16, q: &Rect) -> Cover {
         store.direct_grid_dependents(sheet, q, TagFilter::All)
+    }
+}
+
+// ------------------------------------------------------------ compression
+
+/// A `fmt::Write` that checks the written text equals `expected`
+/// without allocating.
+struct TextEq<'a> {
+    expected: &'a str,
+    at: usize,
+    ok: bool,
+}
+
+impl std::fmt::Write for TextEq<'_> {
+    fn write_str(&mut self, s: &str) -> std::fmt::Result {
+        if self.ok {
+            let end = self.at + s.len();
+            if self.expected.get(self.at..end) == Some(s) {
+                self.at = end;
+            } else {
+                self.ok = false;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Whether `text` is the rendering of `reference`.
+fn is_rendering(text: &str, reference: &formualizer_parse::parser::ReferenceType) -> bool {
+    use std::fmt::Write as _;
+    let mut w = TextEq {
+        expected: text,
+        at: 0,
+        ok: true,
+    };
+    let _ = write!(w, "{reference}");
+    w.ok && w.at == text.len()
+}
+
+/// Append `[$]COL` (1-based) to `out`.
+fn push_col(out: &mut smallvec::SmallVec<[u8; 32]>, col: u32, abs: bool) {
+    if abs {
+        out.push(b'$');
+    }
+    let mut letters = [0u8; 8];
+    let mut n = 0;
+    let mut c = col;
+    while c > 0 {
+        let rem = ((c - 1) % 26) as u8;
+        letters[n] = b'A' + rem;
+        n += 1;
+        c = (c - 1) / 26;
+    }
+    for i in (0..n).rev() {
+        out.push(letters[i]);
+    }
+}
+
+/// Append `[$]ROW` to `out`.
+fn push_row(out: &mut smallvec::SmallVec<[u8; 32]>, row: u32, abs: bool) {
+    if abs {
+        out.push(b'$');
+    }
+    let mut digits = [0u8; 10];
+    let mut n = 0;
+    let mut r = row;
+    loop {
+        digits[n] = b'0' + (r % 10) as u8;
+        n += 1;
+        r /= 10;
+        if r == 0 {
+            break;
+        }
+    }
+    for i in (0..n).rev() {
+        out.push(digits[i]);
+    }
+}
+
+/// The coordinate part of `ReferenceType`'s rendering of a cell or range
+/// (everything after `Sheet!`), without allocating; `None` for other kinds.
+fn coords_rendering(
+    r: &crate::engine::arena::CompactRefType,
+) -> Option<smallvec::SmallVec<[u8; 32]>> {
+    use crate::engine::arena::CompactRefType as R;
+    let mut out = smallvec::SmallVec::new();
+    match *r {
+        R::Cell {
+            row,
+            col,
+            row_abs,
+            col_abs,
+            ..
+        } => {
+            push_col(&mut out, col, col_abs);
+            push_row(&mut out, row, row_abs);
+        }
+        R::Range {
+            start_row,
+            start_col,
+            end_row,
+            end_col,
+            start_row_abs,
+            start_col_abs,
+            end_row_abs,
+            end_col_abs,
+            ..
+        } => {
+            let part = |out: &mut smallvec::SmallVec<[u8; 32]>,
+                        col: Option<u32>,
+                        col_abs,
+                        row: Option<u32>,
+                        row_abs| {
+                if let Some(c) = col {
+                    push_col(out, c, col_abs);
+                }
+                if let Some(r) = row {
+                    push_row(out, r, row_abs);
+                }
+            };
+            let open = |v: u32, sentinel: u32| (v != sentinel).then_some(v);
+            part(
+                &mut out,
+                open(start_col, 0),
+                start_col_abs,
+                open(start_row, 0),
+                start_row_abs,
+            );
+            out.push(b':');
+            part(
+                &mut out,
+                open(end_col, u32::MAX),
+                end_col_abs,
+                open(end_row, u32::MAX),
+                end_row_abs,
+            );
+        }
+        _ => return None,
+    }
+    Some(out)
+}
+
+/// Per template: for each reference node in the walk order of
+/// [`ast_equal_relocated`], whether its text is its reference's rendering
+/// (the instantiation rule re-renders those texts).
+fn template_rendered_refs(
+    ds: &crate::engine::arena::DataStore,
+    reg: &crate::engine::sheet_registry::SheetRegistry,
+    tmpl: AstNodeId,
+) -> Vec<bool> {
+    use crate::engine::arena::AstNodeData as N;
+    let mut out = Vec::new();
+    let mut stack = vec![tmpl];
+    while let Some(b) = stack.pop() {
+        let Some(nb) = ds.get_node(b) else {
+            continue;
+        };
+        match nb {
+            N::Reference {
+                original_id,
+                ref_type,
+            } => {
+                let text = ds.resolve_ast_string(*original_id);
+                out.push(is_rendering(
+                    text,
+                    &ds.reconstruct_reference_type_for_eval(ref_type, reg),
+                ));
+            }
+            N::UnaryOp { expr_id, .. } => stack.push(*expr_id),
+            N::BinaryOp {
+                left_id, right_id, ..
+            } => {
+                stack.push(*left_id);
+                stack.push(*right_id);
+            }
+            N::Function { .. } => {
+                if let Some(x) = ds.get_args(b) {
+                    stack.extend(x.iter().copied());
+                }
+            }
+            N::Array { .. } => {
+                if let Some((_, _, x)) = ds.get_array_elems(b) {
+                    stack.extend(x.iter().copied());
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Whether arena tree `own` is exactly `tmpl` relocated by `(dr, dc)` as
+/// [`crate::engine::template::relocate::instantiate_member_ast`] builds
+/// it: same shape, operators, function names, literal values (numbers by
+/// bits), every relative axis of every cell or range reference shifted by
+/// the offset, named references unchanged, and each reference text given
+/// by the instantiation rule (`rendered[k]`: re-rendered when the
+/// template's text is its reference's rendering, else the template's
+/// text). Any other reference kind declines. `stack` is scratch.
+#[allow(clippy::too_many_arguments)]
+fn ast_equal_relocated(
+    ds: &crate::engine::arena::DataStore,
+    reg: &crate::engine::sheet_registry::SheetRegistry,
+    own: AstNodeId,
+    tmpl: AstNodeId,
+    dr: i64,
+    dc: i64,
+    rendered: &[bool],
+    stack: &mut Vec<(AstNodeId, AstNodeId)>,
+) -> bool {
+    use crate::engine::arena::{AstNodeData as N, CompactRefType as R};
+    let shift = |v: u32, abs: bool, d: i64| -> Option<u32> {
+        if abs {
+            return Some(v);
+        }
+        let x = i64::from(v) + d;
+        (1..=i64::from(u32::MAX)).contains(&x).then_some(x as u32)
+    };
+    // Open bounds (start 0, end u32::MAX) stay open under relocation.
+    let shift_start = |v: u32, abs: bool, d: i64| if v == 0 { Some(0) } else { shift(v, abs, d) };
+    let shift_end = |v: u32, abs: bool, d: i64| {
+        if v == u32::MAX {
+            Some(u32::MAX)
+        } else {
+            shift(v, abs, d)
+        }
+    };
+    let mut ref_index = 0usize;
+    stack.clear();
+    stack.push((own, tmpl));
+    while let Some((a, b)) = stack.pop() {
+        let (Some(na), Some(nb)) = (ds.get_node(a), ds.get_node(b)) else {
+            return false;
+        };
+        match (na, nb) {
+            (N::Literal(x), N::Literal(y)) => {
+                if x != y {
+                    let (x, y) = (ds.retrieve_value(*x), ds.retrieve_value(*y));
+                    let same = match (&x, &y) {
+                        (LiteralValue::Number(p), LiteralValue::Number(q)) => {
+                            p.to_bits() == q.to_bits()
+                        }
+                        _ => x == y,
+                    };
+                    if !same {
+                        return false;
+                    }
+                }
+            }
+            (N::Omitted, N::Omitted) => {}
+            (
+                N::Reference {
+                    original_id: oa,
+                    ref_type: ra,
+                },
+                N::Reference {
+                    original_id: ob,
+                    ref_type: rb,
+                },
+            ) => {
+                let Some(&rerender) = rendered.get(ref_index) else {
+                    return false;
+                };
+                ref_index += 1;
+                if let R::NamedRange(_) = rb {
+                    if ra != rb || oa != ob {
+                        return false;
+                    }
+                    continue;
+                }
+                let relocated = match *rb {
+                    R::Cell {
+                        sheet,
+                        row,
+                        col,
+                        row_abs,
+                        col_abs,
+                    } => match (shift(row, row_abs, dr), shift(col, col_abs, dc)) {
+                        (Some(row), Some(col)) => R::Cell {
+                            sheet,
+                            row,
+                            col,
+                            row_abs,
+                            col_abs,
+                        },
+                        _ => return false,
+                    },
+                    R::Range {
+                        sheet,
+                        start_row,
+                        start_col,
+                        end_row,
+                        end_col,
+                        start_row_abs,
+                        start_col_abs,
+                        end_row_abs,
+                        end_col_abs,
+                    } => match (
+                        shift_start(start_row, start_row_abs, dr),
+                        shift_start(start_col, start_col_abs, dc),
+                        shift_end(end_row, end_row_abs, dr),
+                        shift_end(end_col, end_col_abs, dc),
+                    ) {
+                        (Some(start_row), Some(start_col), Some(end_row), Some(end_col)) => {
+                            R::Range {
+                                sheet,
+                                start_row,
+                                start_col,
+                                end_row,
+                                end_col,
+                                start_row_abs,
+                                start_col_abs,
+                                end_row_abs,
+                                end_col_abs,
+                            }
+                        }
+                        _ => return false,
+                    },
+                    _ => return false,
+                };
+                if *ra != relocated {
+                    return false;
+                }
+                let text_ok = if rerender {
+                    // The template text is its reference's rendering, so it
+                    // is `Sheet!` (unchanged by relocation) + coordinates.
+                    let own_text = ds.resolve_ast_string(*oa);
+                    let tmpl_text = ds.resolve_ast_string(*ob);
+                    match (coords_rendering(rb), coords_rendering(ra)) {
+                        (Some(tc), Some(mc)) if tc.len() <= tmpl_text.len() => {
+                            let prefix = &tmpl_text[..tmpl_text.len() - tc.len()];
+                            own_text.len() == prefix.len() + mc.len()
+                                && own_text.as_bytes()[..prefix.len()] == *prefix.as_bytes()
+                                && own_text.as_bytes()[prefix.len()..] == mc[..]
+                        }
+                        _ => {
+                            is_rendering(own_text, &ds.reconstruct_reference_type_for_eval(ra, reg))
+                        }
+                    }
+                } else {
+                    oa == ob
+                };
+                if !text_ok {
+                    return false;
+                }
+            }
+            (
+                N::UnaryOp {
+                    op_id: oa,
+                    expr_id: ea,
+                },
+                N::UnaryOp {
+                    op_id: ob,
+                    expr_id: eb,
+                },
+            ) => {
+                if oa != ob {
+                    return false;
+                }
+                stack.push((*ea, *eb));
+            }
+            (
+                N::BinaryOp {
+                    op_id: oa,
+                    left_id: la,
+                    right_id: ra,
+                },
+                N::BinaryOp {
+                    op_id: ob,
+                    left_id: lb,
+                    right_id: rb,
+                },
+            ) => {
+                if oa != ob {
+                    return false;
+                }
+                stack.push((*la, *lb));
+                stack.push((*ra, *rb));
+            }
+            (
+                N::Function {
+                    name_id: fa,
+                    args_count: ca,
+                    ..
+                },
+                N::Function {
+                    name_id: fb,
+                    args_count: cb,
+                    ..
+                },
+            ) => {
+                if fa != fb || ca != cb {
+                    return false;
+                }
+                let (Some(xa), Some(xb)) = (ds.get_args(a), ds.get_args(b)) else {
+                    return false;
+                };
+                stack.extend(xa.iter().copied().zip(xb.iter().copied()));
+            }
+            (N::Array { .. }, N::Array { .. }) => {
+                let (Some((r1, c1, xa)), Some((r2, c2, xb))) =
+                    (ds.get_array_elems(a), ds.get_array_elems(b))
+                else {
+                    return false;
+                };
+                if (r1, c1) != (r2, c2) {
+                    return false;
+                }
+                stack.extend(xa.iter().copied().zip(xb.iter().copied()));
+            }
+            _ => return false,
+        }
+    }
+    ref_index == rendered.len()
+}
+
+impl DependencyGraph {
+    /// Program 2 compression (P2-M2): every non-dynamic member of a family
+    /// node whose own formula is exactly the node's template relocated to
+    /// it references the template instead; then the arena keeps only live
+    /// roots (formula vertices and authority owners). Returns the number of
+    /// members compressed. The caller guarantees no other arena id holders
+    /// are live (staged or deferred formula packages).
+    pub(crate) fn compress_family_formulas(&mut self) -> usize {
+        if self.authority.state != HostState::Ready || self.vertex_formulas.has_touched() {
+            if std::env::var_os("FZ_DBG_COMPRESS").is_some() {
+                eprintln!(
+                    "compress: skipped state {:?} touched {}",
+                    self.authority.state,
+                    self.vertex_formulas.has_touched()
+                );
+            }
+            return 0;
+        }
+        let owners: Vec<_> = self
+            .authority
+            .store
+            .family_owners()
+            .filter(|&(_, _, flags, _, _)| flags & crate::engine::authority::store::F_DYNAMIC == 0)
+            .collect();
+        let mut compressed = 0usize;
+        let mut stack = Vec::new();
+        for (sheet, dom, _, template, anchor) in owners {
+            let rendered = template_rendered_refs(&self.data_store, &self.sheet_reg, template);
+            for col in dom.c0..=dom.c1 {
+                for row in dom.r0..=dom.r1 {
+                    let Some(v) = self.get_vertex_for_cell(&cell_ref((sheet, row, col))) else {
+                        continue;
+                    };
+                    let Some(&super::FormulaRef::Own(own)) = self.vertex_formulas.get(&v) else {
+                        continue;
+                    };
+                    if own == template || self.store.is_dynamic(v) {
+                        continue;
+                    }
+                    let dr = i64::from(row) - i64::from(anchor.0);
+                    let dc = i64::from(col) - i64::from(anchor.1);
+                    if !ast_equal_relocated(
+                        &self.data_store,
+                        &self.sheet_reg,
+                        own,
+                        template,
+                        dr,
+                        dc,
+                        &rendered,
+                        &mut stack,
+                    ) {
+                        continue;
+                    }
+                    #[cfg(debug_assertions)]
+                    let before = self.get_formula(v);
+                    self.vertex_formulas.compress(v, template, anchor);
+                    #[cfg(debug_assertions)]
+                    assert_eq!(
+                        self.get_formula(v),
+                        before,
+                        "compressed member {:?} does not instantiate to its own formula",
+                        (sheet, row, col)
+                    );
+                    compressed += 1;
+                }
+            }
+        }
+        if std::env::var_os("FZ_DBG_COMPRESS").is_some() {
+            eprintln!(
+                "compress: state ok, compressed {compressed}, nodes {}",
+                self.data_store.ast_node_count()
+            );
+        }
+        if compressed > 0 {
+            let t = std::time::Instant::now();
+            self.compact_formula_arena();
+            if std::env::var_os("FZ_DBG_COMPRESS").is_some() {
+                eprintln!(
+                    "compress: nodes after {} compaction {:?}",
+                    self.data_store.ast_node_count(),
+                    t.elapsed()
+                );
+            }
+        }
+        compressed
+    }
+
+    /// Give every compressed member its own AST again (same formulas).
+    pub(crate) fn decompress_family_formulas(&mut self) {
+        let members: Vec<VertexId> = self
+            .vertex_formulas
+            .iter()
+            .filter(|(_, f)| matches!(f, super::FormulaRef::Member { .. }))
+            .map(|(&v, _)| v)
+            .collect();
+        for v in members {
+            let _ = self.own_formula_id(v);
+        }
+    }
+
+    /// Drop arena nodes unreachable from live formulas and authority
+    /// owners, remapping both.
+    pub(crate) fn compact_formula_arena(&mut self) {
+        let roots: Vec<AstNodeId> = self
+            .vertex_formulas
+            .values()
+            .map(|f| f.root())
+            .chain(self.authority.store.owner_templates())
+            .collect();
+        let remap = self.data_store.compact_asts(roots);
+        let map = |id: AstNodeId| {
+            let new = remap
+                .get(id.as_u32() as usize)
+                .copied()
+                .unwrap_or(id.as_u32());
+            debug_assert_ne!(new, u32::MAX, "live formula root dropped");
+            AstNodeId::from_u32(new)
+        };
+        self.vertex_formulas.remap(&map);
+        self.authority.store.remap_templates(&remap);
     }
 }

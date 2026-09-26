@@ -998,6 +998,36 @@ impl Store {
         Some((o.template, o.anchor, off, self.slots.get(id)))
     }
 
+    /// Live family owners: `(sheet, domain, flags, template, anchor)`.
+    pub fn family_owners(
+        &self,
+    ) -> impl Iterator<Item = (u16, Rect, u16, AstNodeId, (u32, u32))> + '_ {
+        self.owners
+            .iter()
+            .filter(|o| o.group != DEAD && o.is_family())
+            .map(|o| (o.sheet, o.dom, o.flags, o.template, o.anchor))
+    }
+
+    /// Every live owner's template root (arena compaction roots).
+    pub fn owner_templates(&self) -> impl Iterator<Item = AstNodeId> + '_ {
+        self.owners
+            .iter()
+            .filter(|o| o.group != DEAD)
+            .map(|o| o.template)
+    }
+
+    /// Remap every live owner's template after an arena compaction.
+    /// `remap` is indexed by old id (`u32::MAX`: dropped); ids outside it
+    /// (sentinels) are kept.
+    pub fn remap_templates(&mut self, remap: &[u32]) {
+        for o in self.owners.iter_mut().filter(|o| o.group != DEAD) {
+            if let Some(&new) = remap.get(o.template.as_u32() as usize) {
+                debug_assert_ne!(new, u32::MAX, "live owner template dropped");
+                o.template = AstNodeId::from_u32(new);
+            }
+        }
+    }
+
     /// An owner's template and the anchor it is valid at.
     pub fn owner_template(&self, o: u32) -> (AstNodeId, (u32, u32)) {
         let w = &self.owners[o as usize];

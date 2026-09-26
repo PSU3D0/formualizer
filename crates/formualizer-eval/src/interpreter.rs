@@ -483,6 +483,27 @@ impl<'a> Interpreter<'a> {
             .map(|reference| reference.into_owned())
     }
 
+    /// Evaluate a formula given as a template plus offset (a compressed
+    /// family member, or a formula on its own cell at offset zero).
+    pub(crate) fn evaluate_formula_view(
+        &self,
+        view: crate::engine::graph::FormulaView,
+        data_store: &DataStore,
+        sheet_registry: &SheetRegistry,
+    ) -> Result<crate::traits::CalcValue<'a>, ExcelError> {
+        if view.row_delta == 0 && view.col_delta == 0 {
+            self.evaluate_arena_ast(view.template, data_store, sheet_registry)
+        } else {
+            self.evaluate_arena_ast_with_offset(
+                view.template,
+                view.row_delta,
+                view.col_delta,
+                data_store,
+                sheet_registry,
+            )
+        }
+    }
+
     pub(crate) fn evaluate_arena_ast_with_offset(
         &self,
         node_id: AstNodeId,

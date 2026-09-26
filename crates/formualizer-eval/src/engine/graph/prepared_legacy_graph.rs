@@ -235,7 +235,7 @@ impl DependencyGraph {
     fn existing_target_state(&self, id: VertexId) -> ExistingTargetState {
         ExistingTargetState {
             kind: self.store.kind(id),
-            ast_id: self.vertex_formulas.get(&id).copied(),
+            ast_id: self.vertex_formulas.get(&id).map(|f| f.root()),
             value_ref: self.vertex_values.get(&id).copied(),
             dirty: self.is_dirty(id),
             volatile: self.store.is_volatile(id),
