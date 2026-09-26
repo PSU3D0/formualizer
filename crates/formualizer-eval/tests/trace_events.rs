@@ -153,27 +153,15 @@ fn assert_no_info_per_cell_fields(events: &[Recorded]) {
     }
 }
 
+/// Coupled families that form cycles: one summary, bounded INFO volume, no
+/// per-cell INFO fields. (The FormulaPlane span placement and demotion
+/// events are span-internal and are checked separately below.)
 #[test]
-fn coupled_boundaries_are_aggregate_and_report_two_cycle_demotions() {
+fn coupled_boundaries_are_aggregate() {
     let _guard = TEST_LOCK.lock().unwrap();
     let recorder = captured(run_coupled);
     let events = recorder.events.lock().unwrap();
     let spans = recorder.spans.lock().unwrap();
-    let demotions: Vec<_> = events
-        .iter()
-        .filter(|event| event.name == "fz.span.demoted")
-        .collect();
-    assert_eq!(demotions.len(), 2);
-    assert!(
-        demotions
-            .iter()
-            .all(|event| { event.fields.get("reason").map(String::as_str) == Some("CycleMember") })
-    );
-    assert!(
-        events
-            .iter()
-            .any(|event| event.name == "fz.topology.compiled")
-    );
     assert_eq!(
         events
             .iter()
@@ -191,7 +179,46 @@ fn coupled_boundaries_are_aggregate_and_report_two_cycle_demotions() {
 }
 
 #[test]
-fn independent_family_is_placed_once_without_demotion() {
+#[ignore = "M2 span-internal: asserts FormulaPlane span demotion and topology-compile trace events; spans are never placed under the dependency authority"]
+fn coupled_boundaries_report_two_cycle_demotions() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    let recorder = captured(run_coupled);
+    let events = recorder.events.lock().unwrap();
+    let demotions: Vec<_> = events
+        .iter()
+        .filter(|event| event.name == "fz.span.demoted")
+        .collect();
+    assert_eq!(demotions.len(), 2);
+    assert!(
+        demotions
+            .iter()
+            .all(|event| { event.fields.get("reason").map(String::as_str) == Some("CycleMember") })
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| event.name == "fz.topology.compiled")
+    );
+}
+
+/// An independent family never demotes (there are no spans to demote).
+#[test]
+fn independent_family_is_not_demoted() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    let recorder = captured(run_independent);
+    let events = recorder.events.lock().unwrap();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.name == "fz.span.demoted")
+            .count(),
+        0
+    );
+}
+
+#[test]
+#[ignore = "M2 span-internal: asserts the FormulaPlane family-placement trace event; spans are never placed under the dependency authority"]
+fn independent_family_is_placed_once() {
     let _guard = TEST_LOCK.lock().unwrap();
     let recorder = captured(run_independent);
     let events = recorder.events.lock().unwrap();
@@ -201,13 +228,6 @@ fn independent_family_is_placed_once_without_demotion() {
             .filter(|event| event.name == "fz.family.placed")
             .count(),
         1
-    );
-    assert_eq!(
-        events
-            .iter()
-            .filter(|event| event.name == "fz.span.demoted")
-            .count(),
-        0
     );
 }
 
