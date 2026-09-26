@@ -192,7 +192,6 @@ fn cross_sheet_span_relocation_uses_placement_coordinate() {
     );
 }
 
-
 #[test]
 fn equal_canonical_templates_from_distinct_anchors_keep_span_state_isolated() {
     let mut engine = engine_with_mode(FormulaPlaneMode::AuthoritativeExperimental);

@@ -271,7 +271,6 @@ impl CanonicalTemplateLabels {
         self.reject_reasons.is_empty()
     }
 
-
     #[cfg(test)]
     pub(crate) fn contains_reject_kind(&self, kind: CanonicalRejectKind) -> bool {
         self.reject_reasons
@@ -1131,7 +1130,6 @@ pub(crate) fn normalize_function_name(name: &str) -> String {
         }
     }
 }
-
 
 pub(crate) fn resolve_canonical_function_with_provider(
     provider: Option<&dyn crate::traits::FunctionProvider>,

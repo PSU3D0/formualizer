@@ -178,7 +178,6 @@ fn coupled_boundaries_are_aggregate() {
     assert_no_info_per_cell_fields(&events);
 }
 
-
 /// An independent family never demotes (there are no spans to demote).
 #[test]
 fn independent_family_is_not_demoted() {
@@ -193,7 +192,6 @@ fn independent_family_is_not_demoted() {
         0
     );
 }
-
 
 fn assert_one_summary(recorder: &Recorder, cancelled: bool) {
     let events = recorder.events.lock().unwrap();

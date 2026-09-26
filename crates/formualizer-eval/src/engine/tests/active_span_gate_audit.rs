@@ -107,8 +107,7 @@ fn switch_to_off_with_spans(engine: &mut Engine<TestWorkbook>) {
     engine.config.formula_plane_mode = FormulaPlaneMode::Off;
 }
 
-fn assert_active_spans(engine: &Engine<TestWorkbook>) {
-}
+fn assert_active_spans(engine: &Engine<TestWorkbook>) {}
 
 fn assert_target_fresh(engine: &Engine<TestWorkbook>) {
     assert_eq!(
@@ -286,7 +285,6 @@ fn authoritative_off_authoritative_toggle_keeps_demoted_formulas_correct() {
         Some(LiteralValue::Number(18.0))
     );
 }
-
 
 /// The values `off_demotion_prepare_and_final_validation_failures_preserve_edit_name_and_retry`
 /// asserts after its retry (the injected span-demotion faults have no seam

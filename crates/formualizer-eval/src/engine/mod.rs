@@ -34,11 +34,11 @@ pub mod resource_observability;
 pub(crate) mod result_finalization;
 pub mod row_visibility;
 pub mod scheduler;
-#[doc(hidden)]
-pub mod template;
 pub(crate) mod shape_memo;
 pub mod spill;
 mod target_preparation;
+#[doc(hidden)]
+pub mod template;
 pub(crate) mod used_extent;
 pub mod vertex;
 pub mod virtual_deps;
@@ -146,12 +146,12 @@ pub use graph::editor::change_log::{ChangeLog, ChangeLogger, NullChangeLogger};
 pub mod fp8_parity_test_support {
     use super::{Engine, EvalConfig};
     use crate::engine::arena::CanonicalLabels;
-    use crate::engine::template::dependency_summary::summarize_canonical_template;
-    use crate::engine::template::read_summary::SpanReadSummary;
-    use crate::engine::template::domain::{PlacementDomain, ResultRegion};
     use crate::engine::template::canonical::{
         CanonicalRejectReason, CanonicalTemplateFlag, canonicalize_template,
     };
+    use crate::engine::template::dependency_summary::summarize_canonical_template;
+    use crate::engine::template::domain::{PlacementDomain, ResultRegion};
+    use crate::engine::template::read_summary::SpanReadSummary;
     use crate::reference::{CellRef, Coord};
     use crate::traits::EvaluationContext;
     use formualizer_common::{ExcelError, LiteralValue};

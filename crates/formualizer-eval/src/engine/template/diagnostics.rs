@@ -22,10 +22,6 @@ pub struct FormulaPlaneTemplateDiagnostic {
     pub expression_debug: String,
 }
 
-
-
-
-
 #[doc(hidden)]
 pub fn canonical_template_diagnostic(
     ast: &ASTNode,
@@ -63,13 +59,6 @@ pub fn canonical_template_diagnostic(
         expression_debug: format!("{:?}", template.expr),
     }
 }
-
-
-
-
-
-
-
 
 fn template_flag_label(flag: &CanonicalTemplateFlag) -> &'static str {
     match flag {

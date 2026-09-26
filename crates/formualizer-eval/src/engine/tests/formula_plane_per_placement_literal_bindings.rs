@@ -52,8 +52,7 @@ fn build_family(
     engine
 }
 
-fn assert_span_count(engine: &Engine<TestWorkbook>, expected: usize) {
-}
+fn assert_span_count(engine: &Engine<TestWorkbook>, expected: usize) {}
 
 fn cell_value(engine: &Engine<TestWorkbook>, row: u32, col: u32) -> LiteralValue {
     engine

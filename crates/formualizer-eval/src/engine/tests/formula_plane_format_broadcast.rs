@@ -5,7 +5,7 @@ use formualizer_common::{ExcelErrorExtra, LiteralValue, ResourceExhaustionReason
 use formualizer_parse::parser::parse;
 
 use crate::engine::{
-    CancelToken, Engine, EvalConfig, FormulaIngestBatch, FormulaIngestRecord, FormulaPlaneMode,
+    Engine, EvalConfig, FormulaIngestBatch, FormulaIngestRecord, FormulaPlaneMode,
 };
 use crate::format::FormatId;
 use crate::test_workbook::TestWorkbook;
@@ -371,7 +371,6 @@ fn formula_plane_sparse_general_recomputation_clears_only_written_offsets() {
     );
 }
 
-
 #[test]
 fn formula_plane_mixed_actual_and_none_chunks_choose_independent_format_effects() {
     let mut engine = engine(FormulaPlaneMode::AuthoritativeExperimental);
@@ -406,7 +405,6 @@ fn formula_plane_mixed_actual_and_none_chunks_choose_independent_format_effects(
     assert_computed_overlay_formats(&engine, 2, |_| Some(FormatId::DATE));
     assert_computed_overlay_formats(&engine, 5, |_| None);
 }
-
 
 #[test]
 fn formula_plane_commit_preflight_failure_preserves_stale_side_band_and_egress() {

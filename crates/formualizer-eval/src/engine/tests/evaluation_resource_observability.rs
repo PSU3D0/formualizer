@@ -8,8 +8,8 @@ use formualizer_parse::parser::parse;
 use crate::engine::{
     DiskScratchPolicy, Engine, EvalConfig, EvaluationBudgets, EvaluationRequestKind,
     EvaluationRequestOutcome, EvaluationResourceClass, EvaluationResourceReason,
-    FormulaDirtyLeaseOutcome, FormulaIngestBatch, FormulaIngestRecord, FormulaPlaneMode,
-    FormulaPlaneTopologyCacheOutcome, FormulaPlaneTopologyStrategy, ScratchResourceBudget,
+    FormulaIngestBatch, FormulaIngestRecord, FormulaPlaneMode, FormulaPlaneTopologyStrategy,
+    ScratchResourceBudget,
 };
 use crate::test_workbook::TestWorkbook;
 
@@ -169,7 +169,6 @@ fn deferred_preparation_records_selected_and_restored_staging() {
     assert_eq!(failed.staged_formula_count(), 2);
 }
 
-
 #[test]
 fn candidate_overflow_retains_topology_for_next_request_hit() {
     let mut config =
@@ -210,7 +209,6 @@ fn candidate_overflow_retains_topology_for_next_request_hit() {
         Some(LiteralValue::Number(202.0))
     );
 }
-
 
 /// The value assertion of `perpetual_cache_skip_preserves_values_streak_and_no_disk_policy`
 /// under each scratch policy (its topology-strategy and cache-skip

@@ -89,9 +89,6 @@ fn parallel_per_placement_produces_identical_results_to_sequential() {
     }
 }
 
-
-
-
 #[test]
 fn parallel_with_lookup_cache_no_corruption() {
     let rows = 10_000;

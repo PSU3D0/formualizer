@@ -1,23 +1,11 @@
 //! Internal FormulaPlane runtime store vocabulary for FP6.1.
 
-
 use rustc_hash::FxHashMap;
-
 
 use crate::SheetId;
 use crate::engine::arena::AstNodeId;
 
-use super::canonical::{
-    CanonicalReference, LiteralSlotId, SlotContext,
-};
-
-
-
-
-
-
-
-
+use super::canonical::{CanonicalReference, LiteralSlotId, SlotContext};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum PlacementDomain {
@@ -51,20 +39,7 @@ impl PlacementDomain {
             col,
         }
     }
-
-
-
-
-
-
-
-
 }
-
-
-
-
-
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct ResultRegion {
@@ -80,7 +55,6 @@ impl ResultRegion {
         &self.domain
     }
 }
-
 
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -99,81 +73,4 @@ pub(crate) struct TemplateSlotMap {
     pub(crate) literal_slots_by_arena_node: FxHashMap<AstNodeId, LiteralSlotId>,
     pub(crate) residual_relative_row: bool,
     pub(crate) residual_relative_col: bool,
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-#[cfg(test)]
-mod tests {
-    use std::sync::Arc;
-    use crate::engine::VertexId;
-    use formualizer_common::LiteralValue;
-    use formualizer_parse::parser::{ASTNode, ASTNodeType};
-
-    use super::*;
-    use crate::engine::arena::DataStore;
-    use crate::engine::sheet_registry::SheetRegistry;
-
-    fn literal_ast_id(value: i64) -> AstNodeId {
-        let mut data_store = DataStore::new();
-        let sheet_registry = SheetRegistry::new();
-        data_store.store_ast(
-            &ASTNode::new(ASTNodeType::Literal(LiteralValue::Int(value)), None),
-            &sheet_registry,
-        )
-    }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 }

@@ -114,7 +114,6 @@ fn num(engine: &Engine<TestWorkbook>, row: u32, col: u32) -> Option<f64> {
     }
 }
 
-
 /// The plane must never publish the top-left element across the span: the span
 /// is demoted before anything is published and the legacy spill planner owns
 /// the result, so authoritative and Off agree on every cell.

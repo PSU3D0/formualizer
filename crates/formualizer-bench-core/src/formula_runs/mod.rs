@@ -5,7 +5,9 @@
 //! column runs and counts candidate partitions. It is descriptive only.
 
 pub mod ids;
+#[allow(clippy::too_many_arguments)]
 pub mod span_counters;
+#[allow(clippy::too_many_arguments)]
 pub mod span_store;
 
 pub use ids::*;

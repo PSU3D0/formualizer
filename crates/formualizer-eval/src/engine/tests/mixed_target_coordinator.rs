@@ -114,7 +114,6 @@ fn mid_span_cancellation_engine(
     (engine, calls, trip_at, cancel)
 }
 
-
 fn independent_span_engine() -> Engine<TestWorkbook> {
     let config =
         EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
@@ -242,8 +241,6 @@ fn spill_child_target_resolves_to_anchor_producer() {
     assert_eq!(engine.graph.get_cell_ref(root).unwrap().coord.row(), 0);
 }
 
-
-
 /// The target-evaluation values of
 /// `target_evaluation_leaves_unrelated_dirty_span_branch_pending` (its span
 /// dirty-event counts are span-internal): evaluating one target leaves an
@@ -271,7 +268,6 @@ fn target_evaluation_leaves_unrelated_dirty_span_branch_pending_values() {
     );
 }
 
-
 /// The target value of `target_cache_overflow_selects_exact_strategy_without_demotion`
 /// (its span count and topology strategy are span-internal).
 #[test]
@@ -296,7 +292,6 @@ fn target_cache_overflow_selects_exact_strategy_without_demotion_values() {
         Some(LiteralValue::Number(223.0))
     );
 }
-
 
 /// The target values of
 /// `capacity_fallback_acknowledges_full_selected_legacy_sublease_without_growth`
@@ -346,8 +341,6 @@ fn cancellation_acknowledges_no_dirty_sublease_and_retry_converges() {
         Some(LiteralValue::Number(246.0))
     );
 }
-
-
 
 #[test]
 fn mixed_target_delta_contains_real_span_changes_and_compatibility_cells() {
@@ -429,7 +422,6 @@ fn targeted_two_now_epoch_does_not_recalculate_out_of_demand_volatile() {
         .unwrap();
     assert!(engine.graph.is_dirty(unrelated_vertex));
 }
-
 
 /// The target value and request ledger of
 /// `authoritative_dynamic_reference_replans_under_one_request_ledger` (its
@@ -540,7 +532,6 @@ fn legacy_cell_routes_preserve_unknown_sheet_interning_and_empty_outputs() {
     );
 }
 
-
 /// The replan-exhaustion behavior of
 /// `legacy_and_mixed_max_five_replans_share_typed_terminal_error_and_remain_dirty`
 /// (its span dirty-event counts are span-internal).
@@ -594,7 +585,6 @@ fn legacy_and_mixed_max_five_replans_share_typed_terminal_error_and_remain_dirty
         Some(LiteralValue::Number(247.0))
     );
 }
-
 
 #[test]
 fn routed_evaluation_retries_semantic_stale_before_preparation_mutation() {

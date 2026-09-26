@@ -34,7 +34,6 @@ use formualizer_parse::parser::parse;
 
 use crate::engine::{
     CycleConfig, Engine, EvalConfig, FormulaIngestBatch, FormulaIngestRecord, FormulaPlaneMode,
-    FormulaPlaneRoute, FormulaPlaneRoutePhase,
 };
 use crate::test_workbook::TestWorkbook;
 
@@ -98,8 +97,6 @@ fn build_mixed_engine(
     let report = engine
         .ingest_formula_batches(vec![FormulaIngestBatch::new(SHEET, formulas)])
         .expect("ingest formulas");
-    if mode == FormulaPlaneMode::AuthoritativeExperimental {
-    }
     engine
 }
 
@@ -107,8 +104,6 @@ fn tail_sum(row: u32) -> f64 {
     // SUM of r..=ROWS with A{r} = r.
     ((ROWS as u64 + row as u64) * (ROWS as u64 - row as u64 + 1) / 2) as f64
 }
-
-
 
 /// The values and request lifecycle of
 /// `independent_iterative_island_preserves_accumulator_and_single_request_lifecycle`
@@ -164,7 +159,6 @@ fn assert_full_capacity_corpus_parity(
         }
     }
 }
-
 
 /// The value parity of `cached_mixed_topology_matches_off_first_warm_and_post_edit`
 /// (first, warm and post-edit; its mixed-topology cache counters are
@@ -231,8 +225,6 @@ fn capacity_visible_snapshot(
     }
     values
 }
-
-
 
 fn build_selective_capacity_engine() -> (Engine<TestWorkbook>, Vec<crate::engine::VertexId>) {
     use crate::reference::{CellRef, Coord};
@@ -301,9 +293,6 @@ fn cached_topology_engine() -> Engine<TestWorkbook> {
     })
 }
 
-
-
-
 #[test]
 fn stale_exact_span_region_event_is_ignored_after_generation_change() {
     let mut engine = cached_topology_engine();
@@ -330,7 +319,3 @@ fn span_free_authoritative_workbook_never_builds_mixed_topology_cache() {
     assert_eq!(stats.formula_plane_mixed_topology_cache_builds, 0);
     assert_eq!(stats.formula_plane_mixed_topology_cache_hits, 0);
 }
-
-
-
-

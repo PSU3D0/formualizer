@@ -16,16 +16,16 @@ use crate::engine::shape_memo::{
     self, MemoValidity, ShapeLookup, ShapeMemo, Specialization, VisitTrace,
 };
 use crate::engine::sheet_registry::SheetRegistry;
-use crate::engine::vertex::VertexId;
+use crate::engine::template::canonical::{CanonicalExpr, LiteralSlotDescriptor};
 use crate::engine::template::dependency_summary::{AnalyzerContext, function_argument_context};
-use crate::engine::template::slots::{build_template_slot_map, value_ref_slot_descriptors};
+use crate::engine::template::domain::{TemplateSlotMap, ValueRefSlotDescriptor};
 use crate::engine::template::read_summary::{
     AxisProjection, DirtyProjectionRule, ProjectionFallbackReason, ReadProjection,
     SpanReadDependency, SpanReadSummary,
 };
 use crate::engine::template::region::Region;
-use crate::engine::template::domain::{TemplateSlotMap, ValueRefSlotDescriptor};
-use crate::engine::template::canonical::{CanonicalExpr, LiteralSlotDescriptor};
+use crate::engine::template::slots::{build_template_slot_map, value_ref_slot_descriptors};
+use crate::engine::vertex::VertexId;
 use crate::function::FnCaps;
 use crate::reference::{CellRef, Coord, RangeRef, SharedRangeRef, SharedRef, SharedSheetLocator};
 use crate::traits::FunctionProvider;
@@ -1567,11 +1567,12 @@ fn compute_read_projections(
                 )
             }
             ASTNodeType::Function { name, args } => {
-                let function = crate::engine::template::canonical::resolve_canonical_function_with_provider(
-                    function_provider,
-                    name,
-                    args.len(),
-                );
+                let function =
+                    crate::engine::template::canonical::resolve_canonical_function_with_provider(
+                        function_provider,
+                        name,
+                        args.len(),
+                    );
                 let contract = function
                     .contract
                     .ok_or(ProjectionFallbackReason::UnsupportedDependencySummary)?;

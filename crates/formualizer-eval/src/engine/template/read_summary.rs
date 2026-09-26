@@ -5,31 +5,13 @@
 //! dirty projections. It does not wire FormulaPlane into graph dirty routing,
 //! scheduling, ingest cut-over, or evaluation.
 
-
-
 use crate::SheetId;
 use crate::engine::sheet_registry::SheetRegistry;
 
-use super::dependency_summary::{FormulaClass, FormulaDependencySummary, PrecedentPattern};
-use super::region::{
-    AxisRange, Region, };
-use super::domain::ResultRegion;
 use super::canonical::{AxisRef, SheetBinding};
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+use super::dependency_summary::{FormulaClass, FormulaDependencySummary, PrecedentPattern};
+use super::domain::ResultRegion;
+use super::region::{AxisRange, Region};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SpanReadSummary {
@@ -132,9 +114,6 @@ pub(crate) struct SpanReadDependency {
     pub(crate) projection: DirtyProjectionRule,
 }
 
-
-
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct ReadProjection {
     pub(crate) target_sheet_id: SheetId,
@@ -161,7 +140,6 @@ pub(crate) enum DirtyProjectionRule {
 }
 
 impl DirtyProjectionRule {
-
     pub(crate) fn read_region_for_result(
         self,
         sheet_id: SheetId,
@@ -220,7 +198,6 @@ impl DirtyProjectionRule {
             }
         }
     }
-
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -256,7 +233,6 @@ impl AxisProjection {
             Self::Absolute { index } => Ok(BoundedRange::new(index, index)),
         }
     }
-
 }
 
 fn axis_ref_is_finite_projection(axis: &AxisRef) -> bool {
@@ -282,8 +258,6 @@ fn range_source_extent_for_result(
     Ok(start_extent.union(end_extent))
 }
 
-
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum ProjectionFallbackReason {
     UnsupportedDependencySummary,
@@ -300,14 +274,6 @@ pub(crate) enum ProjectionFallbackReason {
     MissingProducerResultRegion,
     FixedPointIterationLimit,
 }
-
-
-
-
-
-
-
-
 
 /// Finite axis range — guaranteed `Point` or `Span` (not `From`/`To`/`All`).
 /// Invariant: low <= high.
@@ -333,12 +299,10 @@ impl BoundedRange {
         }
     }
 
-
     #[inline]
     fn is_point(self) -> bool {
         self.low == self.high
     }
-
 
     #[inline]
     fn union(self, other: Self) -> Self {
@@ -357,8 +321,6 @@ fn bounded_extents(pattern: Region) -> Option<(BoundedRange, BoundedRange)> {
     ))
 }
 
-
-
 fn region_from_bounded_extents(
     sheet_id: SheetId,
     rows: BoundedRange,
@@ -372,7 +334,6 @@ fn region_from_bounded_extents(
     })
 }
 
-
 fn add_offset(value: u32, offset: i64) -> Result<u32, ProjectionFallbackReason> {
     let value = i64::from(value);
     let shifted = value
@@ -381,26 +342,15 @@ fn add_offset(value: u32, offset: i64) -> Result<u32, ProjectionFallbackReason> 
     u32::try_from(shifted).map_err(|_| ProjectionFallbackReason::CoordinateOverflow)
 }
 
-
-
-
-
-
-
-
-
-
 #[cfg(test)]
 mod tests {
-    use crate::engine::VertexId;
+
     use formualizer_parse::parser::parse;
 
+    use super::super::canonical::canonicalize_template;
     use super::super::dependency_summary::summarize_canonical_template;
     use super::super::domain::PlacementDomain;
-    use super::super::canonical::canonicalize_template;
     use super::*;
-
-
 
     fn dependency_summary(formula: &str, row: u32, col: u32) -> FormulaDependencySummary {
         let ast = parse(formula).unwrap_or_else(|err| panic!("parse {formula}: {err}"));
@@ -451,11 +401,6 @@ mod tests {
         assert_eq!(err, ProjectionFallbackReason::UnsupportedSheetBinding);
     }
 
-
-
-
-
-
     #[test]
     fn whole_column_range_read_regions_emit_whole_cols() {
         let result = Region::col_interval(7, 5, 0, 99);
@@ -501,12 +446,6 @@ mod tests {
         );
     }
 
-
-
-
-
-
-
     #[test]
     fn relative_projection_rejects_underflowing_read_region() {
         let projection = DirtyProjectionRule::AffineCell {
@@ -520,24 +459,4 @@ mod tests {
             Err(ProjectionFallbackReason::CoordinateOverflow)
         );
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 }

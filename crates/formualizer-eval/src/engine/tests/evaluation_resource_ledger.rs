@@ -2,19 +2,18 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use formualizer_common::{ExcelErrorExtra, LiteralValue, ResourceExhaustionReason};
-use formualizer_parse::parser::parse;
 use crate::engine::named_range::{NameScope, NamedDefinition};
 use crate::engine::resource_ledger::{resolve_evaluation_budgets, split_legacy_memory_bytes};
 use crate::engine::{
     AdmissionResourceBudget, ChangeLog, DeadlineResourceBudget, DiskScratchPolicy, Engine,
-    EvalConfig, EvaluationBudgets, EvaluationIncompleteReason, FormulaIngestBatch,
-    FormulaIngestRecord, FormulaPlaneMode, FormulaPlaneTopologyCacheOutcome,
+    EvalConfig, EvaluationBudgets, FormulaIngestBatch, FormulaIngestRecord, FormulaPlaneMode,
     LegacyResourceConfigDisposition, ResourceEnvelope, ResourceLedger, RetainedResourceBudget,
     ScratchResourceBudget, VertexId, VertexKind, WorkResourceBudget,
 };
 use crate::reference::{CellRef, Coord, RangeRef};
 use crate::test_workbook::TestWorkbook;
+use formualizer_common::{ExcelErrorExtra, LiteralValue, ResourceExhaustionReason};
+use formualizer_parse::parser::parse;
 
 fn formula_engine(mode: FormulaPlaneMode, budgets: EvaluationBudgets) -> Engine<TestWorkbook> {
     let mut engine = Engine::new(
@@ -410,8 +409,7 @@ fn deferred_preparation_work_and_deadline_failures_are_retry_safe() {
 }
 
 #[test]
-fn structural_topology_incompleteness_is_not_mislabeled_as_a_cap() {
-}
+fn structural_topology_incompleteness_is_not_mislabeled_as_a_cap() {}
 
 #[test]
 fn graph_caps_are_authoritative_and_atomic_across_staged_modes() {
@@ -451,8 +449,6 @@ fn graph_caps_are_authoritative_and_atomic_across_staged_modes() {
         assert_eq!(engine.staged_formula_count(), 1);
     }
 }
-
-
 
 #[test]
 fn exact_schedule_work_error_releases_reserved_scratch() {
@@ -657,7 +653,6 @@ fn evaluate_vertex_max_work_zero_matches_all_modes_without_publication() {
         assert_eq!(engine.get_cell_value("Sheet1", 1, 1), before);
     }
 }
-
 
 #[test]
 fn logged_resource_failures_close_groups_and_keep_dirty_retryable() {

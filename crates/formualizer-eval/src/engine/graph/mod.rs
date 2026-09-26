@@ -419,19 +419,6 @@ impl DependencyGraph {
         &self.config
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
     pub(crate) fn clear_formula_vertex_dirty(&mut self, vertex_id: VertexId) {
         self.store.set_dirty(vertex_id, false);
         self.formula_dirty.legacy_remove(&vertex_id);
@@ -2916,9 +2903,6 @@ impl DependencyGraph {
     pub(crate) fn reads_compressed_range(&self, vertex: VertexId) -> bool {
         self.store.reads_range(vertex)
     }
-
-
-
 
     /// `vertex` reads a compressed range (see `VertexStore::reads_range`).
     pub(crate) fn note_reads_range(&mut self, vertex: VertexId) {

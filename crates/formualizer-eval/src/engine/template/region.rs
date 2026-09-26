@@ -3,16 +3,9 @@
 //! This module is internal FormulaPlane substrate only. It does not wire dirty
 //! routing into the engine, graph, scheduler, or evaluator.
 
-
-
 use crate::SheetId;
 
-use super::domain::{PlacementDomain};
-
-
-
-
-
+use super::domain::PlacementDomain;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct Region {
@@ -32,16 +25,12 @@ impl Region {
         (self.rows, self.cols)
     }
 
-
     #[inline]
     pub(crate) fn intersects(&self, other: &Self) -> bool {
         self.sheet_id == other.sheet_id
             && self.rows.intersects(other.rows)
             && self.cols.intersects(other.cols)
     }
-
-
-
 
     pub(crate) fn point(sheet_id: SheetId, row: u32, col: u32) -> Self {
         Self {
@@ -117,7 +106,6 @@ impl Region {
         }
     }
 
-
     pub(crate) fn from_domain(domain: &PlacementDomain) -> Self {
         match domain {
             PlacementDomain::RowRun {
@@ -157,8 +145,6 @@ impl Region {
             cols: self.cols.normalized(),
         }
     }
-
-
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -206,9 +192,6 @@ impl AxisRange {
         }
     }
 
-
-
-
     #[inline]
     pub(crate) fn query_bounds(self) -> (u32, u32) {
         match self {
@@ -220,8 +203,6 @@ impl AxisRange {
         }
     }
 
-
-
     /// Degenerate one-coordinate spans become points; see
     /// [`Region::normalized`].
     #[inline]
@@ -231,52 +212,12 @@ impl AxisRange {
             other => other,
         }
     }
-
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 #[cfg(test)]
 mod tests {
-    use rustc_hash::FxHashSet;
-    use std::time::Instant;
-
-    use crate::engine::template::read_summary::{AxisProjection, DirtyProjectionRule};
 
     use super::*;
-
-
 
     #[test]
     fn axis_range_intersects_truth_table() {
@@ -330,7 +271,6 @@ mod tests {
         assert!(All.intersects(All));
     }
 
-
     #[test]
     fn axis_range_query_bounds_each_kind() {
         use AxisRange::*;
@@ -341,46 +281,7 @@ mod tests {
         assert_eq!(To(4).query_bounds(), (0, 4));
         assert_eq!(All.query_bounds(), (0, u32::MAX));
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 }
 
 #[cfg(test)]
-mod structural_stripe_tests {
-    use super::*;
-
-
-}
+mod structural_stripe_tests {}

@@ -7,7 +7,6 @@
 
 use std::collections::BTreeSet;
 
-
 use super::canonical::{
     AxisRef, CanonicalExpr, CanonicalFunctionId, CanonicalReference, CanonicalReferenceContext,
     CanonicalRejectReason, CanonicalTemplate, SheetBinding, UnsupportedReferenceKind,
@@ -54,7 +53,6 @@ impl FormulaDependencySummary {
             }
         })
     }
-
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -99,29 +97,6 @@ pub(crate) enum DependencyRejectReason {
     FunctionUnsupported { name: String },
     UnsupportedAstNode { node: String },
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 pub(crate) fn summarize_canonical_template(
     template: &CanonicalTemplate,
@@ -583,7 +558,6 @@ fn axis_is_finite_cell(axis: &AxisRef) -> bool {
     )
 }
 
-
 /// Range bound combinations a precedent pattern can carry.
 ///
 /// All-finite ranges may mix placement-relative and absolute bounds freely
@@ -636,63 +610,6 @@ fn is_supported_pointwise_binary_operator(op: &str) -> bool {
 fn is_reference_returning_binary_operator(op: &str) -> bool {
     matches!(op, ":" | "," | " ")
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 #[cfg(test)]
 pub(crate) fn summarize_dependencies(
@@ -770,9 +687,7 @@ mod tests {
 
     use super::*;
     use formualizer_parse::parse;
-    use formualizer_parse::parser::{ASTNode, CollectPolicy};
-
-    use crate::engine::graph::DependencyGraph;
+    use formualizer_parse::parser::ASTNode;
 
     fn ast(formula: &str) -> ASTNode {
         parse(formula).unwrap_or_else(|err| panic!("parse {formula}: {err}"))
@@ -814,8 +729,6 @@ mod tests {
         summary.reject_reasons.iter().any(matches)
     }
 
-
-
     fn template_summary_map(
         entries: Vec<(&str, FormulaDependencySummary)>,
     ) -> BTreeMap<String, FormulaDependencySummary> {
@@ -824,9 +737,6 @@ mod tests {
             .map(|(source_template_id, summary)| (source_template_id.to_string(), summary))
             .collect()
     }
-
-
-
 
     #[test]
     fn formula_plane_dependency_summary_static_pointwise_addition_collects_cells() {
@@ -914,10 +824,6 @@ mod tests {
             ]
         );
     }
-
-
-
-
 
     #[test]
     fn formula_plane_dependency_summary_static_literals_and_unary_collects_cells() {
@@ -1551,17 +1457,4 @@ mod tests {
             &DependencyRejectReason::ImplicitIntersectionUnsupported
         ));
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
 }

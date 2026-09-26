@@ -67,7 +67,6 @@ fn add_single_formula_column_family(engine: &mut Engine<TestWorkbook>, sheet: &s
         .unwrap();
 }
 
-
 fn build_cross_sheet_span_engine(rows: u32) -> (Engine<TestWorkbook>, SheetId, SheetId) {
     let mut engine = authoritative_engine();
     let data_a_sheet_id = engine.add_sheet("DataA").unwrap();
@@ -844,16 +843,13 @@ fn formula_plane_origin_shift_with_stationary_value_ref_does_not_memo_broadcast_
 // Mid-domain insert span splitting (SpanShiftPlan::Split, conservative v1)
 // ---------------------------------------------------------------------------
 
-
 #[test]
 fn formula_plane_row_insert_split_halves_have_exact_read_summaries() {
     let mut engine = build_single_formula_column_family(100);
 
     engine.insert_rows("Sheet1", 40, 2).unwrap();
 
-    {
-        use crate::engine::template::domain::PlacementDomain;
-    }
+    {}
 
     engine.evaluate_all().unwrap();
     assert_eq!(
@@ -889,7 +885,6 @@ fn formula_plane_row_insert_split_halves_have_exact_read_summaries() {
         Some(LiteralValue::Number(4000.0))
     );
 }
-
 
 /// The values of `formula_plane_column_insert_splits_col_run_span_with_stationary_reads`
 /// with the row of `=$A$1*2` formulas written per cell (the test seeds a
@@ -941,7 +936,6 @@ fn formula_plane_column_insert_splits_col_run_span_with_stationary_reads_values(
         Some(LiteralValue::Number(20.0))
     );
 }
-
 
 /// The values of `formula_plane_rect_span_row_insert_splits_into_two_rects`
 /// with the block of `=$A$1+1` formulas written per cell (the test seeds a
@@ -1001,11 +995,8 @@ fn formula_plane_row_insert_split_demotes_unique_literal_bindings() {
         .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
         .unwrap();
     engine.evaluate_all().unwrap();
-    let promoted = engine.baseline_stats().formula_plane_active_span_count;
 
     engine.insert_rows("Sheet1", 40, 1).unwrap();
-    if promoted == 1 {
-    }
     engine.evaluate_all().unwrap();
 
     assert_eq!(
@@ -1045,7 +1036,6 @@ fn formula_plane_repeated_mid_span_row_inserts_stay_split_and_linear() {
         let started = std::time::Instant::now();
         engine.insert_rows("Sheet1", before, 1).unwrap();
         let elapsed = started.elapsed();
-
 
         if !cfg!(debug_assertions) {
             let limit = std::time::Duration::from_secs(1);

@@ -197,7 +197,6 @@ fn span_member_in_runtime_cycle_is_demoted_and_circ() {
     assert_eq!(num(&engine, "Sheet1", 120, 5), 240.0);
 }
 
-
 /// A phantom (guarded, live-acyclic) cycle through a span member must not stamp
 /// `#CIRC` under `CycleDetection::Runtime`: the span is still demoted (its
 /// member is a *static* SCC candidate), but live-edge evaluation resolves the
@@ -266,17 +265,9 @@ fn build_two_sheet_cycle_workbook() -> Engine<TestWorkbook> {
     engine
 }
 
-
-
-
-
-
-
-
-
 #[test]
 fn prepared_span_demotion_rejects_stale_authority_before_graph_mutation() {
-    let mut engine = build_workbook(CycleDetection::Static);
+    let engine = build_workbook(CycleDetection::Static);
     let before = engine.baseline_stats();
     let after = engine.baseline_stats();
     assert_eq!(after.graph_vertex_count, before.graph_vertex_count);
@@ -287,5 +278,3 @@ fn prepared_span_demotion_rejects_stale_authority_before_graph_mutation() {
     assert_eq!(after.graph_edge_count, before.graph_edge_count);
     assert_eq!(after.dirty_vertex_count, before.dirty_vertex_count);
 }
-
-

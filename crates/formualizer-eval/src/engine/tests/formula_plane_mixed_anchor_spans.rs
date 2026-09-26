@@ -31,7 +31,6 @@ use formualizer_parse::parser::parse;
 use crate::engine::{
     Engine, EvalConfig, FormulaIngestBatch, FormulaIngestRecord, FormulaPlaneMode,
 };
-use crate::engine::template::region::Region;
 use crate::test_workbook::TestWorkbook;
 
 const SHEET: &str = "Sheet1";
@@ -107,9 +106,6 @@ fn interval_sum(a: u64, b: u64) -> f64 {
     ((a + b) * (b - a + 1) / 2) as f64
 }
 
-
-
-
 #[test]
 fn tail_read_edit_recalc_is_bounded_by_affected_placement_interval() {
     let mut engine = build_tail_read_engine();
@@ -132,7 +128,6 @@ fn tail_read_edit_recalc_is_bounded_by_affected_placement_interval() {
         })
         .unwrap();
     engine.evaluate_all().unwrap();
-
 
     let delta = 1_000.0 - EDIT_ROW as f64;
     assert_eq!(
@@ -172,7 +167,6 @@ fn running_total_edit_recalc_is_bounded_by_affected_placement_interval() {
         })
         .unwrap();
     engine.evaluate_all().unwrap();
-
 
     let delta = 5_000.0 - EDIT_ROW as f64;
     // Placements before the edit row never read it and keep their values.

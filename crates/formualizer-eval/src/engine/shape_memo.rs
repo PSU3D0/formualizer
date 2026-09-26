@@ -68,9 +68,9 @@
 use crate::SheetId;
 use crate::engine::arena::value_ref::ValueType;
 use crate::engine::arena::{AstNodeData, AstNodeId, CompactRefType, DataStore, SheetKey};
-use crate::engine::template::read_summary::{ProjectionFallbackReason, ReadProjection};
-use crate::engine::template::domain::ValueRefSlotDescriptor;
 use crate::engine::template::canonical::{CanonicalExpr, LiteralSlotDescriptor};
+use crate::engine::template::domain::ValueRefSlotDescriptor;
+use crate::engine::template::read_summary::{ProjectionFallbackReason, ReadProjection};
 use crate::reference::CellRef;
 use formualizer_common::LiteralValue;
 use rustc_hash::FxHashMap;

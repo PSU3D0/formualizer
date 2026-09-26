@@ -7,9 +7,9 @@ use anyhow::{Context, Result, bail};
 use clap::Parser;
 use formualizer_bench_core::BenchmarkSuite;
 use formualizer_bench_core::formula_runs::{
-    CandidateRunOrientation, FormulaPlaneCandidateCell, FormulaRejectReason, FormulaRunShape,
-    FormulaRunStore, FormulaRunStoreBuildReport, SpanGapKind, SpanPartitionCounterOptions,
-    SpanPartitionCounters, TemplateSupportStatus, compute_span_partition_counters,
+    CandidateRunOrientation, FormulaPlaneCandidateCell, FormulaRunStore,
+    FormulaRunStoreBuildReport, SpanPartitionCounterOptions, SpanPartitionCounters,
+    compute_span_partition_counters,
 };
 use formualizer_eval::engine::template::diagnostics::{
     FormulaPlaneTemplateDiagnostic, canonical_template_diagnostic,
@@ -50,7 +50,6 @@ struct ScannedFormula {
     canonical: String,
     labels: BTreeSet<String>,
     parse_ok: bool,
-    ast: Option<ASTNode>,
     authority: Option<FormulaPlaneTemplateDiagnostic>,
 }
 
@@ -208,12 +207,6 @@ struct FormulaPlaneCandidateCounters {
     candidate_runs: Vec<FormulaPlaneCandidateRunSummary>,
 }
 
-
-
-
-
-
-
 #[derive(Debug, Clone)]
 struct GraphMaterializationStats {
     source: String,
@@ -248,8 +241,6 @@ struct MaterializationAccounting {
     estimated_avoidable_graph_edges_basis: &'static str,
     runtime_win_claimed: bool,
 }
-
-
 
 #[derive(Debug, Serialize)]
 struct ScanOutput {
@@ -327,8 +318,6 @@ impl From<SpanPartitionCounters> for FormulaPlaneCandidateCounters {
         }
     }
 }
-
-
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -604,7 +593,6 @@ fn classify_formulas(raw: Vec<RawFormula>) -> Vec<ScannedFormula> {
                         canonical,
                         labels,
                         parse_ok: true,
-                        ast: Some(ast),
                         authority: Some(authority),
                     }
                 }
@@ -618,7 +606,6 @@ fn classify_formulas(raw: Vec<RawFormula>) -> Vec<ScannedFormula> {
                         canonical,
                         labels,
                         parse_ok: false,
-                        ast: None,
                         authority: None,
                     }
                 }
@@ -1272,34 +1259,6 @@ fn compact_representation_ratio(report: &FormulaRunStoreBuildReport, run_count: 
     report.formula_cell_count as f64 / compact_representation_denominator(report, run_count) as f64
 }
 
-fn template_status_label(status: TemplateSupportStatus) -> &'static str {
-    match status {
-        TemplateSupportStatus::Supported => "supported",
-        TemplateSupportStatus::ParseError => "parse_error",
-        TemplateSupportStatus::Unsupported => "unsupported",
-        TemplateSupportStatus::Dynamic => "dynamic",
-        TemplateSupportStatus::Volatile => "volatile",
-        TemplateSupportStatus::Mixed => "mixed",
-    }
-}
-
-fn run_shape_label(shape: FormulaRunShape) -> &'static str {
-    match shape {
-        FormulaRunShape::Row => "row",
-        FormulaRunShape::Column => "column",
-        FormulaRunShape::Singleton => "singleton",
-    }
-}
-
-fn reject_reason_label(reason: FormulaRejectReason) -> &'static str {
-    match reason {
-        FormulaRejectReason::ParseError => "parse_error",
-        FormulaRejectReason::Unsupported => "unsupported",
-        FormulaRejectReason::Dynamic => "dynamic",
-        FormulaRejectReason::Volatile => "volatile",
-    }
-}
-
 fn run_stats(
     template_id: &str,
     formulas: &[ScannedFormula],
@@ -1458,9 +1417,8 @@ mod tests {
     #[test]
     fn dependency_summaries_reject_unsupported_templates_without_mapping() {
         let scanned = classify_formulas(vec![raw_formula("B1", 1, 2, "A1:A10")]);
-        let output = summarize(PathBuf::from("unsupported.xlsx"), scanned, None)
+        let _output = summarize(PathBuf::from("unsupported.xlsx"), scanned, None)
             .expect("summarize unsupported workbook");
-
     }
 
     #[test]

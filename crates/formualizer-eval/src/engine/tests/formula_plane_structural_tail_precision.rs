@@ -115,10 +115,6 @@ fn build_row_run(rows: u32) -> Engine<TestWorkbook> {
     engine
 }
 
-
-
-
-
 #[test]
 fn failed_duplicate_validation_publishes_no_structural_dirty_delta() {
     let mut engine = build_row_run(120);
@@ -152,7 +148,6 @@ fn ingest_row_run_on_sheet(
         .ingest_formula_batches(vec![FormulaIngestBatch::new(sheet, formulas)])
         .unwrap();
 }
-
 
 /// The value assertion of `structural_span_region_isolated_to_edited_sheet`
 /// (its span dirty regions and eval report are span-internal).
@@ -207,7 +202,6 @@ fn sheet_and_unrelated_name_table_lifecycle_do_not_dirty_surviving_spans() {
             false,
         )
         .unwrap();
-
 }
 
 #[test]
@@ -249,7 +243,6 @@ fn structural_insert_action_undo_redo_preserves_values_without_unlogged_span_geo
     );
 }
 
-
 /// The values of `structural_candidate_overflow_is_atomic_and_retryable`
 /// before and after its retried insertion (the span candidate-cap
 /// overflow has no seam under the authority).
@@ -273,7 +266,6 @@ fn structural_candidate_overflow_is_atomic_and_retryable_values() {
         Some(LiteralValue::Number(121.0))
     );
 }
-
 
 /// The value assertion of
 /// `indexed_structural_selection_classifies_only_affected_candidate_among_many_sheets`

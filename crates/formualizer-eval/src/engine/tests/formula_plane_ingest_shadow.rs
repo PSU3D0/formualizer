@@ -1,19 +1,16 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use super::common::abs_cell_ref;
 use crate::engine::{
     AdmissionResourceBudget, DeferredFormulaPackage, DeferredFormulaReplay, DeferredReplayFormula,
     Engine, EvalConfig, EvaluationBudgets, ExplicitPartitionLegacyMembers,
-    ExplicitSourceFamilyMembers, FormulaCompressedSourceBatch, FormulaCompressedSourceReport,
-    FormulaIngestBatch, FormulaIngestRecord, FormulaParsePolicy, FormulaPlaneMode,
-    FormulaReplayDisposition, PartitionLegacyMember, PartitionLegacyMemberKind,
+    FormulaCompressedSourceReport, FormulaIngestBatch, FormulaIngestRecord, FormulaParsePolicy,
+    FormulaPlaneMode, FormulaReplayDisposition, PartitionLegacyMember, PartitionLegacyMemberKind,
     PartitionReconciliation, PartitionedSourceFormulaFamily, PlacementDomainTransport,
     RowVisibilitySource, SourceCoord, SourceFamilyId, SourceFamilyMembers, SourceFormulaFamily,
     SourceRect,
 };
 use crate::test_workbook::TestWorkbook;
-use crate::traits::EvaluationContext;
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::parse;
 
@@ -330,7 +327,6 @@ fn formula_plane_off_ingest_reports_graph_materialized_formulas() {
     );
 }
 
-
 /// The behavioral assertions of
 /// `formula_plane_shadow_deferred_build_graph_all_materializes_all_formulas`
 /// (its ingest-report counters are span-internal).
@@ -358,7 +354,6 @@ fn formula_plane_shadow_deferred_build_graph_all_materializes_all_formulas_value
         Some(LiteralValue::Number(3.0))
     );
 }
-
 
 /// The value assertions of
 /// `formula_plane_authoritative_ingest_skips_accepted_span_graph_materialization`
@@ -398,7 +393,6 @@ fn formula_plane_authoritative_ingest_skips_accepted_span_graph_materialization_
         Some(LiteralValue::Number(2.0))
     );
 }
-
 
 #[test]
 fn formula_plane_authoritative_cross_sheet_family_promotes_and_dirty_propagates() {
@@ -866,7 +860,6 @@ fn formula_plane_authoritative_fallback_only_still_evaluates_legacy() {
     );
 }
 
-
 #[test]
 fn formula_plane_spill_commit_redirties_span_reading_spill_children() {
     let cfg =
@@ -1026,7 +1019,6 @@ fn formula_plane_remove_sheet_redirties_surviving_spans() {
     );
 }
 
-
 /// The behavioral assertion of
 /// `formula_plane_remove_sheet_hosting_span_removes_active_span` (its span
 /// counters are span-internal).
@@ -1051,7 +1043,6 @@ fn formula_plane_remove_sheet_hosting_span_removes_active_span_values() {
     assert!(engine.graph.sheet_id("Other").is_none());
     engine.evaluate_all().unwrap();
 }
-
 
 #[test]
 fn selected_multi_sheet_build_preserves_caller_order_and_shared_parse_cache() {
@@ -1211,16 +1202,6 @@ fn deferred_poisoned_lock_failure_restores_package_without_publication() {
     }
 }
 
-
-
-
-
-
-
-
-
-
-
 fn provider_revision_family(source_index: usize) -> SourceFormulaFamily {
     SourceFormulaFamily {
         source_order: crate::engine::SourceFormulaOrder::new(source_index as u64),
@@ -1246,16 +1227,6 @@ fn provider_revision_replay(family_id: SourceFamilyId) -> ExactTestReplay {
             .collect(),
     }
 }
-
-
-
-
-
-
-
-
-
-
 
 #[test]
 fn changed_function_ast_discovery_covers_stale_prefix_unresolved_and_calls() {

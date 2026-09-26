@@ -1,10 +1,10 @@
 use crate::engine::VertexId;
 use crate::engine::VertexKind;
 use crate::engine::eval::Engine;
+use crate::engine::template::region::Region;
 use crate::engine::used_extent::{
     ExtentPolicy, OpenRangeBounds, ResolvedExtent, resolve_used_extent_with_fallback,
 };
-use crate::engine::template::region::Region;
 use crate::traits::{
     EvaluationContext, FunctionProvider, NamedRangeResolver, Range, RangeResolver,
     ReferenceResolver, Resolver, SourceResolver, Table, TableResolver,

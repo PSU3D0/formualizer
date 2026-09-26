@@ -163,7 +163,6 @@ fn named_range_family_promotes_to_span_with_value_parity() {
     let report = ingest_column(&mut auth, SHEET, 3, |r| format!("=SUM(Data)+A{r}"));
     let _ = ingest_column(&mut off, SHEET, 3, |r| format!("=SUM(Data)+A{r}"));
 
-
     auth.evaluate_all().unwrap();
     off.evaluate_all().unwrap();
     assert_column_parity("first eval", SHEET, 3, &auth, &off);
@@ -302,7 +301,6 @@ fn unresolvable_named_range_pattern_routes_to_capacity_fallback() {
         Some(LiteralValue::Number(1.0))
     );
 }
-
 
 /// (c) THE load-bearing invalidation test: update_name to a different region
 /// must demote the span so cells re-resolve. Without the hook the span keeps
@@ -740,7 +738,6 @@ fn logged_name_define_and_delete_demote_exact_dependents() {
     ));
 }
 
-
 #[test]
 fn generic_edit_with_logger_rejects_and_rolls_back_name_mutations() {
     use crate::engine::ChangeLog;
@@ -769,7 +766,6 @@ fn generic_edit_with_logger_rejects_and_rolls_back_name_mutations() {
         old_definition
     );
 }
-
 
 /// The behavioral assertions of
 /// `logged_name_undo_redo_faults_leave_history_and_authority_retryable`
@@ -840,7 +836,6 @@ fn logged_name_undo_redo_faults_leave_history_and_authority_retryable_values() {
 
 #[test]
 fn direct_name_update_demotes_disjoint_spans_as_one_retryable_batch() {
-
     let mut engine = engine_with_mode(FormulaPlaneMode::AuthoritativeExperimental);
     seed_named_workbook(&mut engine);
     for row in FIRST_ROW..=LAST_ROW {

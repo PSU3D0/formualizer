@@ -391,7 +391,7 @@ fn strict_opaque_policy_is_preserved_for_package_fallback_and_authoritative_comp
         assert!(fallback.has_staged_formulas(), "{formula}");
     }
 
-    let mut authoritative = engine(FormulaPlaneMode::AuthoritativeExperimental);
+    let authoritative = engine(FormulaPlaneMode::AuthoritativeExperimental);
 }
 
 #[test]
@@ -1369,7 +1369,6 @@ fn overlapping_families_package(sheet: &str, sheet_instance: u32) -> DeferredFor
     )
 }
 
-
 #[test]
 fn empty_deferred_package_does_not_force_unrelated_ordinary_target_compatibility() {
     let mut engine = engine(FormulaPlaneMode::Shadow);
@@ -1417,8 +1416,7 @@ fn demanding_one_family_consumes_whole_package_and_retains_unrelated_package() {
         assert!(engine.get_staged_formula_text("Middle", 1, 2).is_some());
         let stats = engine.baseline_stats();
         match mode {
-            FormulaPlaneMode::AuthoritativeExperimental => {
-            }
+            FormulaPlaneMode::AuthoritativeExperimental => {}
             FormulaPlaneMode::Off | FormulaPlaneMode::Shadow => {
                 assert_eq!(stats.formula_plane_active_span_count, 0);
                 assert_eq!(stats.graph_formula_vertex_count, 200);
@@ -1454,8 +1452,7 @@ fn fragmented_package_reuses_complete_disposition_with_exact_exception() {
         assert_eq!(ingest.source_spool_replays, 1, "{mode:?} {ingest:?}");
         let stats = engine.baseline_stats();
         match mode {
-            FormulaPlaneMode::AuthoritativeExperimental => {
-            }
+            FormulaPlaneMode::AuthoritativeExperimental => {}
             FormulaPlaneMode::Off | FormulaPlaneMode::Shadow => {
                 assert_eq!(stats.formula_plane_active_span_count, 0);
                 assert_eq!(stats.graph_formula_vertex_count, 301);
@@ -1668,7 +1665,6 @@ fn plane_append_failure_materializes_every_direct_coordinate_without_losing_last
         Some(LiteralValue::Number(42.0))
     );
 }
-
 
 #[test]
 fn direct_heavy_package_honors_target_work_budget_and_remains_staged() {
@@ -2861,8 +2857,6 @@ fn count_selected_family_package(
     (package.with_complete_coordinate_coverage(), selected, whole)
 }
 
-
-
 /// The target value of
 /// `queued_cross_sheet_sum_completes_family_before_partial_ast_expansion`
 /// (its span, vertex, AST and replay counters are span-internal).
@@ -2889,8 +2883,6 @@ fn queued_cross_sheet_sum_completes_family_before_partial_ast_expansion_values()
         Some(LiteralValue::Number(100.0))
     );
 }
-
-
 
 #[test]
 fn indexed_shared_precommit_faults_preserve_source_and_authority_proof() {

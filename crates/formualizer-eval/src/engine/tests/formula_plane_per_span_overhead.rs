@@ -60,7 +60,6 @@ fn formula_plane_evaluate_all_handles_many_same_sheet_spans() {
     );
 }
 
-
 /// The value assertion of `formula_plane_relocatable_validation_is_cached_per_template`
 /// (its span counters and template-walk counts are span-internal).
 #[test]

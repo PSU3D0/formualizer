@@ -4,12 +4,10 @@ use chrono::{Duration, NaiveDate, NaiveTime};
 use formualizer_common::{ErrorContext, ExcelError, ExcelErrorExtra, ExcelErrorKind, LiteralValue};
 use formualizer_parse::parser::{ASTNode, ASTNodeType, parse};
 
+use crate::engine::template::canonical::{CanonicalRejectKind, SlotContext, canonicalize_template};
+use crate::engine::template::slots::value_ref_slot_descriptors;
 use crate::engine::{
     Engine, EvalConfig, FormulaIngestBatch, FormulaIngestRecord, FormulaPlaneMode,
-};
-use crate::engine::template::slots::{value_ref_slot_descriptors};
-use crate::engine::template::canonical::{
-    CanonicalRejectKind, SlotContext, canonicalize_template,
 };
 use crate::test_workbook::TestWorkbook;
 
@@ -35,9 +33,6 @@ fn ingest(engine: &mut Engine<TestWorkbook>, formulas: Vec<FormulaIngestRecord>)
         .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
         .unwrap();
 }
-
-
-
 
 fn literal_formula_family(rows: u32, literal: impl Fn(u32) -> String) -> Engine<TestWorkbook> {
     let mut engine = authoritative_engine();
@@ -79,7 +74,6 @@ fn sumifs_varying_literal_engine(rows: u32) -> Engine<TestWorkbook> {
     engine
 }
 
-
 /// The value assertion of `formula_plane_parameterized_literals_fold_same_structure`
 /// (its span-binding checks are span-internal).
 #[test]
@@ -92,7 +86,6 @@ fn formula_plane_parameterized_literals_fold_same_structure_values() {
     );
 }
 
-
 /// The value assertion of `formula_plane_affine_row_literal_numbers_avoid_graph_materialization`
 /// (its ingest-report and binding-encoding checks are span-internal).
 #[test]
@@ -104,7 +97,6 @@ fn formula_plane_affine_row_literal_numbers_avoid_graph_materialization_values()
         Some(LiteralValue::Number(240.0))
     );
 }
-
 
 /// The value assertion of `formula_plane_non_integer_number_literals_remain_dictionary_encoded`
 /// (its binding-encoding check is span-internal).
@@ -145,7 +137,6 @@ fn formula_plane_affine_literal_run_segmentation_isolates_outlier() {
         Some(LiteralValue::Number(260.0))
     );
 }
-
 
 #[test]
 fn formula_plane_literal_slot_wildcards_kind_but_binding_preserves_type() {
@@ -200,8 +191,6 @@ fn formula_plane_empty_literal_parameterizes() {
     }
 }
 
-
-
 #[test]
 fn formula_plane_demoted_parameterized_span_materializes_bound_literals() {
     let mut engine = authoritative_engine();
@@ -227,9 +216,6 @@ fn formula_plane_demoted_parameterized_span_materializes_bound_literals() {
         Some(LiteralValue::Number(2.0))
     );
 }
-
-
-
 
 #[test]
 fn formula_plane_memo_residual_relative_reference_includes_row_delta() {
@@ -260,11 +246,8 @@ fn formula_plane_memo_residual_relative_reference_includes_row_delta() {
     );
 }
 
-
-
 #[test]
-fn formula_plane_parameter_key_uses_number_bits() {
-}
+fn formula_plane_parameter_key_uses_number_bits() {}
 
 #[test]
 fn formula_plane_parameter_key_nan_reflexive() {
@@ -272,8 +255,7 @@ fn formula_plane_parameter_key_nan_reflexive() {
 }
 
 #[test]
-fn formula_plane_parameter_key_negative_zero_distinct() {
-}
+fn formula_plane_parameter_key_negative_zero_distinct() {}
 
 #[test]
 fn formula_plane_parameter_key_dates_and_durations_are_typed() {
@@ -363,6 +345,3 @@ fn formula_plane_criteria_range_not_value_parameterized() {
             .all(|slot| slot.context != SlotContext::CriteriaRangeArg)
     );
 }
-
-
-

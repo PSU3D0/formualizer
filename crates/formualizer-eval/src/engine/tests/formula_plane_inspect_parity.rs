@@ -611,8 +611,6 @@ fn structural_delete_whole_column_values_match_fresh_formula_and_formula_plane_f
     assert_eq!(plane.value, plane_oracle.value);
 }
 
-
-
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(12))]
 

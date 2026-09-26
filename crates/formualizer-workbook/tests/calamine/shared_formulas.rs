@@ -685,7 +685,7 @@ fn authoritative_eager_commits_row_col_and_rect_domains_directly() {
         let mut adapter =
             CalamineAdapter::open_bytes(constant_shared_shape_xlsx(&refs, declared_ref)).unwrap();
         adapter.stream_into_engine(&mut engine).unwrap();
-        let report = engine.last_formula_ingest_report().unwrap();
+        let _report = engine.last_formula_ingest_report().unwrap();
     }
 }
 
@@ -837,8 +837,6 @@ fn fragmented_constant_family_prepares_once_and_authority_commits_eager_and_defe
             assert_eq!(report.graph_formula_cells_materialized, 5, "{report:?}");
             assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
         }
-        if mode == FormulaPlaneMode::Shadow {
-        }
     }
 }
 
@@ -978,7 +976,7 @@ fn eager_mixed_clean_and_fragmented_families_commit_without_cross_family_stalene
     adapter.stream_into_engine(&mut engine).unwrap();
     engine.evaluate_all().unwrap();
 
-    let report = engine.last_formula_ingest_report().unwrap();
+    let _report = engine.last_formula_ingest_report().unwrap();
     assert_eq!(
         engine.get_cell_value("Sheet1", 120, 2),
         Some(LiteralValue::Number(121.0))
@@ -1017,7 +1015,7 @@ fn authoritative_nested_function_family_matches_replay_edits_formula_lookup_and_
     for deferred in [false, true] {
         let mut replay = loaded(FormulaPlaneMode::Off, deferred);
         let mut direct = loaded(FormulaPlaneMode::AuthoritativeExperimental, deferred);
-        let report = direct.last_formula_ingest_report().unwrap();
+        let _report = direct.last_formula_ingest_report().unwrap();
 
         for row in [1, 50, 100] {
             assert_eq!(
@@ -1097,7 +1095,7 @@ fn authoritative_deferred_package_builds_direct_without_descendant_staging() {
     assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
     engine.build_graph_all().unwrap();
 
-    let report = engine.last_formula_ingest_report().unwrap();
+    let _report = engine.last_formula_ingest_report().unwrap();
     assert!(!engine.has_staged_formulas());
 }
 
@@ -1548,7 +1546,7 @@ fn compressed_modes_accept_nested_registry_functions_with_authoritative_promotio
         .unwrap()
         .stream_into_engine(&mut shadow)
         .unwrap();
-    let report = shadow.last_formula_ingest_report().unwrap();
+    let _report = shadow.last_formula_ingest_report().unwrap();
     assert_eq!(shadow.baseline_stats().formula_plane_active_span_count, 0);
 
     let mut authoritative = Engine::new(
@@ -1559,12 +1557,12 @@ fn compressed_modes_accept_nested_registry_functions_with_authoritative_promotio
         .unwrap()
         .stream_into_engine(&mut authoritative)
         .unwrap();
-    let report = authoritative.last_formula_ingest_report().unwrap();
+    let _report = authoritative.last_formula_ingest_report().unwrap();
 }
 
 #[test]
 fn compressed_shadow_rejects_unsupported_syntax_and_boundary_overflow() {
-    for (formula, reason) in [
+    for (formula, _reason) in [
         ("RAND()+A1", "AnchorFunctionSemanticsUnsupported"),
         ("A1048576+1", "UnsupportedAnchorReference"),
     ] {
@@ -1966,7 +1964,7 @@ fn complete_shared_sum_target_preserves_compression_and_unrelated_errors() {
                     RangeAddress::new("Sheet1", 1, 2, 500, 4).unwrap(),
                 )],
             };
-            let mut budgets = formualizer_eval::engine::EvaluationBudgets::default();
+            let budgets = formualizer_eval::engine::EvaluationBudgets::default();
             wb.engine_mut()
                 .prepare_graph_for_targets(
                     &targets,
@@ -1988,7 +1986,7 @@ fn complete_shared_sum_target_preserves_compression_and_unrelated_errors() {
             LiteralValue::Number(expected),
             "fragmented={fragmented} partial={partial_first} same={same_request}"
         );
-        let stats = wb.engine().baseline_stats();
+        let _stats = wb.engine().baseline_stats();
         assert_eq!(wb.engine().staged_formula_count(), 3);
         assert!(wb.evaluate_cell("Sheet1", 1, 5).is_err());
         assert!(wb.evaluate_cell("Sheet1", 1, 6).is_err());

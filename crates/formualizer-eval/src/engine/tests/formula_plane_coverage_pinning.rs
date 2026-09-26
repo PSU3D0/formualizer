@@ -187,8 +187,7 @@ fn fp_coverage_corpus_pins_section_verdicts_and_values() {
         );
 
         match section.verdict {
-            SectionVerdict::Span => {
-            }
+            SectionVerdict::Span => {}
             SectionVerdict::Reject { placement_reason } => {
                 assert_eq!(
                     report.shadow_accepted_span_cells, 0,
@@ -284,8 +283,7 @@ fn fp_coverage_corpus_combined_totals() {
             *expected_histogram.entry(placement_reason).or_default() += n;
         }
     }
-    for (reason, count) in &expected_histogram {
-    }
+    for (reason, count) in &expected_histogram {}
 
     engine.evaluate_all().expect("evaluate combined");
 }

@@ -104,8 +104,6 @@ fn fill_down_fixture(mode: FormulaPlaneMode) -> Engine<TestWorkbook> {
         ));
     }
     let report = ingest(&mut engine, "Sheet1", formulas);
-    if mode == FormulaPlaneMode::AuthoritativeExperimental {
-    }
     engine.evaluate_all().unwrap();
     engine
 }
@@ -172,8 +170,6 @@ fn semantic_fixture(mode: FormulaPlaneMode) -> Engine<TestWorkbook> {
         }
     }
     let report = ingest(&mut engine, "Sheet1", formulas);
-    if mode == FormulaPlaneMode::AuthoritativeExperimental {
-    }
     engine.evaluate_all().unwrap();
     engine
 }
@@ -240,8 +236,6 @@ fn iferror_wrapped_if_remains_legacy_but_value_identical() {
             .map(|row| record(target, "Sheet1", row, 4, formula))
             .collect();
         let report = ingest(target, "Sheet1", records);
-        if target.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental {
-        }
         target.evaluate_all().unwrap();
     }
     assert_cells_equal(
@@ -273,8 +267,6 @@ fn spill_firewall_fixture(mode: FormulaPlaneMode) -> Engine<TestWorkbook> {
         .map(|(col, formula)| record(&mut engine, "Sheet1", 1, *col, formula))
         .collect();
     let report = ingest(&mut engine, "Sheet1", records);
-    if mode == FormulaPlaneMode::AuthoritativeExperimental {
-    }
     engine.evaluate_all().unwrap();
     engine
 }
@@ -353,7 +345,6 @@ fn union_dependencies_dirty_taken_and_untaken_arms() {
         Some(LiteralValue::Number(88.0))
     );
 }
-
 
 #[test]
 fn memo_preserves_equal_values_with_different_selected_formats() {

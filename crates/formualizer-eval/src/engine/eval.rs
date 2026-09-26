@@ -29,15 +29,14 @@ use crate::engine::virtual_deps::VirtualDepBuilder;
 
 #[path = "freshness.rs"]
 mod freshness;
+use crate::engine::template::region::Region;
 use crate::engine::{
     ChangeLogger, CycleDetection, CyclePolicy, DependencyGraph, EvalConfig, EvaluationRequestKind,
-    EvaluationRequestOutcome, EvaluationResourceBaselineStats,
-    EvaluationResourceRequestStats, FormulaDirtyLeaseOutcome, FormulaIngestBatch,
-    FormulaIngestRecord, FormulaIngestReport, FormulaParseDiagnostic, FormulaParsePolicy,
-    FormulaPlaneMode, ResourceLedger, RowVisibilitySource, ScheduleUnit, VertexId,
-    VertexKind, VisibilityMaskMode,
+    EvaluationRequestOutcome, EvaluationResourceBaselineStats, EvaluationResourceRequestStats,
+    FormulaDirtyLeaseOutcome, FormulaIngestBatch, FormulaIngestRecord, FormulaIngestReport,
+    FormulaParseDiagnostic, FormulaParsePolicy, FormulaPlaneMode, ResourceLedger,
+    RowVisibilitySource, ScheduleUnit, VertexId, VertexKind, VisibilityMaskMode,
 };
-use crate::engine::template::region::Region;
 use crate::function::FnCaps;
 use crate::interpreter::Interpreter;
 use crate::reference::{CellRef, Coord, RangeRef};
@@ -442,18 +441,6 @@ impl PreparedTargetSourcePackage {
 type PreparedFormulaBatches = Vec<FormulaIngestBatch>;
 type StagedFormulaBatches = Vec<(String, StagedSheet)>;
 
-
-
-
-
-
-
-
-
-
-
-
-
 type CompressedReplayBatch = (
     FormulaIngestBatch,
     crate::engine::FormulaCompressedSourceBatch,
@@ -616,7 +603,6 @@ impl ComputedWriteBuffer {
             .sum()
     }
 
-
     pub(crate) fn push_cell(
         &mut self,
         sheet_id: SheetId,
@@ -744,7 +730,6 @@ pub(crate) enum ComputedWriteChunkFormatEffect {
     ClearStale(ComputedWriteFormatClear),
     SetExplicit(Vec<(usize, Option<crate::format::FormatId>)>),
 }
-
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ComputedWriteChunkPlan {
@@ -1133,7 +1118,6 @@ pub struct Engine<R> {
     after_eager_proposal_commit_hook: Option<Box<dyn FnOnce() + Send + Sync>>,
 }
 
-
 /// This wrapper is intentionally thin for ticket 614 (commit-only): it delegates to existing
 /// `Engine` edit methods and does not create changelog boundaries or implement rollback.
 impl<R: EvaluationContext> Engine<R> {
@@ -1229,12 +1213,11 @@ where
                     old_formula.clone(),
                 );
             })?;
-            self.engine
-                .record_structural_change(StructuralScope::Cell {
-                    sheet: addr.sheet_id,
-                    row: addr.coord.row(),
-                    col: addr.coord.col(),
-                });
+            self.engine.record_structural_change(StructuralScope::Cell {
+                sheet: addr.sheet_id,
+                row: addr.coord.row(),
+                col: addr.coord.col(),
+            });
 
             if let Some(undo_ptr) = self.arrow_undo {
                 // 1) Spill snapshot operations (computed overlay rect restore).
@@ -1332,12 +1315,11 @@ where
                     );
                 }
             })?;
-            self.engine
-                .record_structural_change(StructuralScope::Cell {
-                    sheet: addr.sheet_id,
-                    row: addr.coord.row(),
-                    col: addr.coord.col(),
-                });
+            self.engine.record_structural_change(StructuralScope::Cell {
+                sheet: addr.sheet_id,
+                row: addr.coord.row(),
+                col: addr.coord.col(),
+            });
 
             if let Some(undo_ptr) = self.arrow_undo {
                 let new_events = &unsafe { (&*capture_ptr).events() }[start_len..];
@@ -1902,14 +1884,6 @@ impl std::ops::Deref for EvaluationSchedule {
         }
     }
 }
-
-
-
-
-
-
-
-
 
 type ScheduleBuildOutput = (
     crate::engine::scheduler::Schedule,
@@ -2956,7 +2930,6 @@ where
         self.set_evaluation_resource_budgets(budgets);
     }
 
-
     fn preflight_evaluation_commit_window(
         &mut self,
         bounded_writes: usize,
@@ -3073,7 +3046,6 @@ where
             );
         }
     }
-
 
     fn reserve_topology_scratch(&mut self, bytes: u64) -> Result<(), ExcelError> {
         self.active_resource_ledger
@@ -3227,14 +3199,6 @@ where
                 .saturating_add(Self::duration_ns(report.commit_window));
         }
     }
-
-
-
-
-
-
-
-
 
     /// Begin a new evaluation request: reset per-recalc cycle telemetry and
     /// take the per-recalc volatile clock sample. Called at the start of
@@ -4067,9 +4031,9 @@ where
         self.graph.validate_define_name(name, scope)?;
         self.graph.define_name(name, definition, scope)?;
         self.record_structural_change(StructuralScope::AllSheets);
-        
-            self.mark_topology_edited();
-        
+
+        self.mark_topology_edited();
+
         Ok(())
     }
 
@@ -4082,9 +4046,9 @@ where
         self.graph.validate_existing_name(name, scope)?;
         self.graph.update_name(name, definition, scope)?;
         self.record_structural_change(StructuralScope::AllSheets);
-        
-            self.mark_topology_edited();
-        
+
+        self.mark_topology_edited();
+
         Ok(())
     }
 
@@ -4092,15 +4056,11 @@ where
         self.graph.validate_existing_name(name, scope)?;
         self.graph.delete_name(name, scope)?;
         self.record_structural_change(StructuralScope::AllSheets);
-        
-            self.mark_topology_edited();
-        
+
+        self.mark_topology_edited();
+
         Ok(())
     }
-
-
-
-
 
     pub fn define_table(
         &mut self,
@@ -4538,15 +4498,15 @@ where
         self.graph
             .validate_define_name(name, scope)
             .map_err(crate::engine::EditorError::Excel)?;
-        
+
         {
             let mut editor = crate::engine::VertexEditor::with_logger(&mut self.graph, log);
             editor.define_name(name, definition, scope)?;
         }
         self.record_structural_change(StructuralScope::AllSheets);
-        
-            self.mark_topology_edited();
-        
+
+        self.mark_topology_edited();
+
         Ok(())
     }
 
@@ -4565,9 +4525,9 @@ where
             editor.update_name(name, definition, scope)?;
         }
         self.record_structural_change(StructuralScope::AllSheets);
-        
-            self.mark_topology_edited();
-        
+
+        self.mark_topology_edited();
+
         Ok(())
     }
 
@@ -4585,9 +4545,9 @@ where
             editor.delete_name(name, scope)?;
         }
         self.record_structural_change(StructuralScope::AllSheets);
-        
-            self.mark_topology_edited();
-        
+
+        self.mark_topology_edited();
+
         Ok(())
     }
 
@@ -5365,7 +5325,6 @@ where
         self.staged_formulas.values().map(StagedSheet::len).sum()
     }
 
-
     /// Stage a formula text instead of inserting into the graph (used when deferring is enabled).
     pub fn stage_formula_text(&mut self, sheet: &str, row: u32, col: u32, text: String) {
         self.staged_formulas
@@ -5569,7 +5528,6 @@ where
         self.fail_evaluation_commit_preflight_once_for_test = true;
     }
 
-
     #[cfg(test)]
     pub(crate) fn set_target_preparation_fault_for_test(
         &mut self,
@@ -5620,14 +5578,10 @@ where
             })
     }
 
-
     #[cfg(test)]
     pub(crate) fn evaluation_request_begin_count_for_test(&self) -> u64 {
         self.evaluation_request_begin_count_for_test
     }
-
-
-
 
     #[cfg(test)]
     pub(crate) fn set_before_legacy_fallback_final_provider_sample_hook(
@@ -5645,8 +5599,6 @@ where
         self.after_eager_proposal_commit_hook = Some(Box::new(hook));
     }
 
-
-
     #[cfg(test)]
     pub(crate) fn topology_epoch_for_test(&self) -> u64 {
         self.topology_epoch
@@ -5657,30 +5609,11 @@ where
         self.graph.topology_revision()
     }
 
-
     fn record_formula_ingest_report(&mut self, report: FormulaIngestReport) {
         self.formula_ingest_report_total.mode = report.mode;
         self.formula_ingest_report_total.accumulate(&report);
         self.last_formula_ingest_report = Some(report);
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     fn collect_planning_function_requests(
         ast: &ASTNode,
@@ -5715,7 +5648,6 @@ where
         }
     }
 
-
     fn prepared_function_semantics_changed(
         &self,
         preparation: &crate::engine::FormulaCompressedPreparation,
@@ -5725,10 +5657,8 @@ where
             return false;
         }
 
-        guard.semantic_changes_affect_requests_since(
-            preparation.function_semantic_epoch,
-            Vec::new(),
-        )
+        guard
+            .semantic_changes_affect_requests_since(preparation.function_semantic_epoch, Vec::new())
     }
 
     pub(crate) fn prepare_source_formula_families(
@@ -5736,7 +5666,7 @@ where
         sheet_name: &str,
         families: &[crate::engine::SourceFormulaFamily],
     ) -> crate::engine::FormulaCompressedPreparation {
-        let preparation = crate::engine::FormulaCompressedPreparation {
+        crate::engine::FormulaCompressedPreparation {
             engine_token: Arc::clone(&self.source_formula_token),
             function_semantic_epoch: crate::function_registry::semantic_epoch(),
             function_provider_revision: None,
@@ -5749,9 +5679,7 @@ where
             fragmented_rejected_anchor_counts: [0; 3],
             exact_replay: None,
             replay_disposition: crate::engine::FormulaReplayDisposition::default(),
-        };
-        
-            return preparation;
+        }
     }
 
     fn prepare_source_formula_proposals(
@@ -5781,8 +5709,7 @@ where
         preparation
             .replay_disposition
             .extend_suppressed_excel_coords(suppressed.iter().copied());
-        
-            return Ok(preparation);
+        Ok(preparation)
     }
 
     fn formula_batch_from_exact_replay(
@@ -5829,10 +5756,6 @@ where
         Ok(FormulaIngestBatch::new(sheet_name.to_string(), formulas))
     }
 
-
-
-
-
     fn prepare_target_combined_legacy_graph(
         &self,
         packages: &[PreparedTargetSourcePackage],
@@ -5866,7 +5789,6 @@ where
             })?;
         Ok((graph, formula_count))
     }
-
 
     fn replay_target_coordinates(
         &mut self,
@@ -5902,19 +5824,6 @@ where
         Ok(records)
     }
 
-    fn prepare_complete_target_selections(
-        &mut self,
-        sheet: &str,
-        selected: &mut BTreeSet<(u32, u32)>,
-        previous: &BTreeSet<(u32, u32)>,
-        prepared: &mut PreparedTargetSourcePackage,
-        deadline: Option<std::time::Instant>,
-        scratch: &mut u64,
-    ) -> Result<(), ExcelError> {
-        
-            return Ok(());
-    }
-
     fn prepare_target_exact_source_selection(
         &mut self,
         sheet: &str,
@@ -5937,7 +5846,7 @@ where
         {
             return Ok(None);
         }
-        let mut selected_points: BTreeSet<_> = coordinates
+        let selected_points: BTreeSet<_> = coordinates
             .into_iter()
             .filter(|point| !package.suppressed.contains(point))
             .collect();
@@ -5964,15 +5873,7 @@ where
         let source_report = package.accounting_report();
         prepared.source_report = source_report;
         prepared.disposition = routing.clone();
-        self.prepare_complete_target_selections(
-            sheet,
-            &mut selected_points,
-            previous,
-            &mut prepared,
-            deadline,
-            scratch,
-        )?;
-        
+
         let replay_points: BTreeSet<_> = selected_points
             .iter()
             .copied()
@@ -7623,7 +7524,6 @@ where
         Ok(roots.into_vec())
     }
 
-
     /// Transactionally prepare the complete ordinary staged demand closure for typed targets.
     ///
     /// This method prepares graph topology only. It does not evaluate target values.
@@ -8192,7 +8092,7 @@ where
                 if let Some(selected) = selected_package_points.get(&region.sheet) {
                     points.retain(|point| !selected.contains(point));
                 }
-                
+
                 if let Some(selected) = selected_package_points.get(&region.sheet) {
                     points.retain(|point| !selected.contains(point));
                 }
@@ -8259,7 +8159,6 @@ where
                     .as_ref()
                     .is_none_or(|points| !points.is_empty())
                 {
-
                     let mut final_fallback = BTreeMap::new();
                     for record in package.fallback_records() {
                         final_fallback.insert((record.row, record.col), record.clone());
@@ -9295,14 +9194,13 @@ where
                         .or_default();
                     *total = total.saturating_add(*count);
                 }
-                
-                    ingest_delta.source_family_fallback = ingest_delta
-                        .source_family_fallback
-                        .saturating_add(source.families_seen);
-                    ingest_delta.source_family_fallback_cells = ingest_delta
-                        .source_family_fallback_cells
-                        .saturating_add(source.family_cells_seen);
-                
+
+                ingest_delta.source_family_fallback = ingest_delta
+                    .source_family_fallback
+                    .saturating_add(source.families_seen);
+                ingest_delta.source_family_fallback_cells = ingest_delta
+                    .source_family_fallback_cells
+                    .saturating_add(source.family_cells_seen);
             }
             self.record_formula_ingest_report(ingest_delta);
         }
@@ -9562,41 +9460,39 @@ where
                     .filter(|family| !package.invalidated.contains(&family.source_id))
                     .cloned()
                     .collect();
-                
-                    let mut replay_disposition = crate::engine::FormulaReplayDisposition::default();
-                    for partition in &eligible_partitions {
-                        replay_disposition
-                            .register_partition(partition, false)
-                            .map_err(|reason| {
-                                ExcelError::new(ExcelErrorKind::Value).with_message(reason)
-                            })?;
-                    }
+
+                let mut replay_disposition = crate::engine::FormulaReplayDisposition::default();
+                for partition in &eligible_partitions {
                     replay_disposition
-                        .extend_suppressed_excel_coords(package.suppressed.iter().copied());
-                    let replayed = package
-                        .replay
-                        .lock()
-                        .map_err(|_| {
-                            ExcelError::new(ExcelErrorKind::Value)
-                                .with_message("deferred formula spool lock poisoned")
-                        })?
-                        .replay(&replay_disposition)
-                        .map_err(|message| {
-                            ExcelError::new(ExcelErrorKind::Value).with_message(message)
+                        .register_partition(partition, false)
+                        .map_err(|reason| {
+                            ExcelError::new(ExcelErrorKind::Value).with_message(reason)
                         })?;
-                    entries.extend(replayed.into_iter().map(|record| {
-                        (
-                            record.row,
-                            record.col,
-                            record.text,
-                            Some((record.source_order, record.family, record.partition_owner)),
-                        )
-                    }));
-                    let mut report = package.accounting_report();
-                    report.source_spool_replays = report.source_spool_replays.saturating_add(1);
-                    deferred_fallback =
-                        Some((report, package.families.clone(), eligible_partitions));
-                
+                }
+                replay_disposition
+                    .extend_suppressed_excel_coords(package.suppressed.iter().copied());
+                let replayed = package
+                    .replay
+                    .lock()
+                    .map_err(|_| {
+                        ExcelError::new(ExcelErrorKind::Value)
+                            .with_message("deferred formula spool lock poisoned")
+                    })?
+                    .replay(&replay_disposition)
+                    .map_err(|message| {
+                        ExcelError::new(ExcelErrorKind::Value).with_message(message)
+                    })?;
+                entries.extend(replayed.into_iter().map(|record| {
+                    (
+                        record.row,
+                        record.col,
+                        record.text,
+                        Some((record.source_order, record.family, record.partition_owner)),
+                    )
+                }));
+                let mut report = package.accounting_report();
+                report.source_spool_replays = report.source_spool_replays.saturating_add(1);
+                deferred_fallback = Some((report, package.families.clone(), eligible_partitions));
             }
 
             let mut formulas = Vec::new();
@@ -9900,9 +9796,9 @@ where
         let sheet_id = self.ensure_known_sheet_id(sheet)?;
         let row0 = Self::normalize_row_1based(row_1based)?;
         if self.set_row_hidden_by_sheet_id(sheet_id, row0, hidden, source) {
-            self.record_structural_change(StructuralScope::Region(
-                Region::whole_row(sheet_id, row0),
-            ));
+            self.record_structural_change(StructuralScope::Region(Region::whole_row(
+                sheet_id, row0,
+            )));
             self.mark_data_edited();
         }
         Ok(())
@@ -9921,9 +9817,9 @@ where
             Self::normalize_row_range_1based(start_row_1based, end_row_1based)?;
         if self.set_rows_hidden_by_sheet_id(sheet_id, start_row0, end_row0, hidden, source) {
             if start_row0 == end_row0 {
-                self.record_structural_change(StructuralScope::Region(
-                    Region::whole_row(sheet_id, start_row0),
-                ));
+                self.record_structural_change(StructuralScope::Region(Region::whole_row(
+                    sheet_id, start_row0,
+                )));
             } else {
                 self.record_structural_change(StructuralScope::Sheet(sheet_id));
             }
@@ -10030,7 +9926,6 @@ where
         Some(mask)
     }
 
-
     fn observe_function_semantic_epoch(&mut self) -> Result<bool, ExcelError> {
         let changes =
             crate::function_registry::semantic_changes_since(self.function_semantic_epoch_seen);
@@ -10117,8 +10012,6 @@ where
         }
     }
 
-
-
     fn structural_row_region(sheet_id: SheetId, start_row0: u32) -> Region {
         Region::rows_from(sheet_id, start_row0)
     }
@@ -10127,29 +10020,10 @@ where
         Region::cols_from(sheet_id, start_col0)
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     #[cfg(test)]
     pub(crate) fn force_non_cycle_schedule_fallback_for_test(&mut self) {
         self.force_non_cycle_schedule_fallback_for_test = true;
     }
-
-
-
-
-
 
     fn materialize_deferred_sheet_before_structural_edit(
         &mut self,
@@ -10837,8 +10711,6 @@ where
         }
     }
 
-
-
     fn clear_computed_overlay_after_row(&mut self, sheet: &str, start_row0: usize) {
         if !(self.config.arrow_storage_enabled && self.config.write_formula_overlay_enabled) {
             return;
@@ -11293,8 +11165,6 @@ where
         }
     }
 
-
-
     fn clear_cell_format_state(&mut self, sheet: &str, cell: CellRef) {
         self.derived_formats.write().unwrap().remove(&cell);
         self.derived_format_results
@@ -11733,9 +11603,6 @@ where
     ) -> ComputedWriteCoalescingPlan {
         self.plan_computed_write_coalescing(buffer)
     }
-
-
-
 
     pub(crate) fn flush_computed_write_buffer(
         &mut self,
@@ -12298,9 +12165,9 @@ where
                 // graph, Arrow, and span geometry commits.
             }
             ChangeEvent::SetRowVisibility { sheet_id, row0, .. } => {
-                self.record_structural_change(StructuralScope::Region(
-                    Region::whole_row(*sheet_id, *row0),
-                ));
+                self.record_structural_change(StructuralScope::Region(Region::whole_row(
+                    *sheet_id, *row0,
+                )));
             }
             ChangeEvent::AddVertex { .. }
             | ChangeEvent::RemoveVertex { .. }
@@ -12675,7 +12542,6 @@ where
         let ec0 = ec.saturating_sub(1) as usize;
         asheet.range_view(sr0, sc0, er0, ec0)
     }
-
 
     /// Get formula AST (if any) and current stored value for a cell
     pub fn get_cell(
@@ -13972,27 +13838,12 @@ where
             }
         }
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 }
 
 impl<R> Engine<R>
 where
     R: EvaluationContext,
 {
-
     /// Refuse out-of-scope authority states before evaluation can demote spans
     /// or execute a legacy schedule. The public error type is unchanged; NImpl
     /// carries the exact internal Unsupported operation for the deferred-scope
@@ -14089,7 +13940,6 @@ where
         }
         Ok((computed_vertices, cycle_count))
     }
-
 
     /// Legacy `evaluate_all` body, reachable from the FormulaPlane coordinator
     /// when no active spans exist or FormulaPlane authority is not in
@@ -14975,8 +14825,6 @@ where
         }
     }
 
-
-
     /// End-of-pass dirty bookkeeping; true when the loop must replan.
     /// Legacy: clear the pass, re-dirty readers whose pre-probe changed.
     /// Under the authority an armed pass keeps stale and unreached vertices
@@ -15255,7 +15103,6 @@ where
         Ok((result, vdeps))
     }
 
-
     /// Helper: convert 1-based column index to Excel-style letters (1 -> A, 27 -> AA)
     fn col_to_letters(col: u32) -> String {
         col_letters_from_1based(col).expect("column index must be >= 1")
@@ -15531,7 +15378,6 @@ where
             _ => false,
         }
     }
-
 
     /// Evaluate a layer sequentially
     fn evaluate_layer_sequential(

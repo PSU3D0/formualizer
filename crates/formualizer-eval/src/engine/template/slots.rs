@@ -18,15 +18,13 @@ pub(crate) fn value_ref_slot_descriptors(expr: &CanonicalExpr) -> Vec<ValueRefSl
             CanonicalExpr::Literal(_) | CanonicalExpr::Omitted => {}
             CanonicalExpr::Reference { context, reference } => {
                 let slot_context = match context {
-                    super::canonical::CanonicalReferenceContext::Value => {
-                        SlotContext::Value
-                    }
+                    super::canonical::CanonicalReferenceContext::Value => SlotContext::Value,
                     super::canonical::CanonicalReferenceContext::Reference => {
                         SlotContext::Reference
                     }
-                    super::canonical::CanonicalReferenceContext::CallArgument {
-                        ..
-                    } => SlotContext::CallArgument,
+                    super::canonical::CanonicalReferenceContext::CallArgument { .. } => {
+                        SlotContext::CallArgument
+                    }
                     super::canonical::CanonicalReferenceContext::FunctionArgument {
                         function,
                         arg_index,
@@ -91,18 +89,6 @@ fn finite_relative_cell(reference: &CanonicalReference) -> bool {
         _ => false,
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-
 
 pub(crate) fn build_template_slot_map(
     origin_ast_id: AstNodeId,
@@ -186,15 +172,13 @@ fn residual_relative_axes(expr: &CanonicalExpr) -> (bool, bool) {
             CanonicalExpr::Literal(_) | CanonicalExpr::Omitted => {}
             CanonicalExpr::Reference { context, reference } => {
                 let slot_context = match context {
-                    super::canonical::CanonicalReferenceContext::Value => {
-                        SlotContext::Value
-                    }
+                    super::canonical::CanonicalReferenceContext::Value => SlotContext::Value,
                     super::canonical::CanonicalReferenceContext::Reference => {
                         SlotContext::Reference
                     }
-                    super::canonical::CanonicalReferenceContext::CallArgument {
-                        ..
-                    } => SlotContext::CallArgument,
+                    super::canonical::CanonicalReferenceContext::CallArgument { .. } => {
+                        SlotContext::CallArgument
+                    }
                     super::canonical::CanonicalReferenceContext::FunctionArgument {
                         function,
                         arg_index,
@@ -240,72 +224,4 @@ fn residual_relative_axes(expr: &CanonicalExpr) -> (bool, bool) {
     let mut col = false;
     walk(expr, &mut row, &mut col);
     (row, col)
-}
-
-
-
-
-
-
-
-
-#[cfg(test)]
-mod tests {
-    use std::sync::Arc;
-    use formualizer_parse::parser::parse;
-
-    use super::*;
-    use crate::engine::arena::{CanonicalLabels, DataStore};
-    use crate::engine::ingest_pipeline::DependencyPlanRow;
-    use crate::engine::sheet_registry::SheetRegistry;
-    use crate::reference::CellRef;
-
-
-    fn column_label(mut zero_based_col: u32) -> String {
-        let mut chars = Vec::new();
-        loop {
-            let rem = zero_based_col % 26;
-            chars.push((b'A' + rem as u8) as char);
-            zero_based_col /= 26;
-            if zero_based_col == 0 {
-                break;
-            }
-            zero_based_col -= 1;
-        }
-        chars.iter().rev().collect()
-    }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 }

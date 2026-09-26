@@ -86,7 +86,6 @@ fn action_atomic_value_edits_use_dirty_closure_not_whole_all() {
     engine.evaluate_all().unwrap();
 }
 
-
 #[test]
 fn per_cell_formula_write_demotion_dirties_only_true_closure() {
     let mut engine = build_two_span_engine(200);
