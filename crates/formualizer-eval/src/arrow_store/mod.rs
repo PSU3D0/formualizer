@@ -2596,6 +2596,8 @@ pub(crate) struct OverlaySelectStats {
     pub(crate) row_scalar_fallbacks: usize,
     pub(crate) point_entries_applied: usize,
     pub(crate) fragment_intersections: usize,
+    /// Short point-only ranges merged per offset (no builders or zip).
+    pub(crate) small_point_selects: usize,
 }
 
 #[cfg(test)]
@@ -2691,6 +2693,37 @@ impl<'a> OverlayCascade<'a> {
         self.user.has_any_in_range(range.clone()) || self.computed.has_any_in_range(range)
     }
 
+    /// For a short range that no fragment of either layer touches: per
+    /// position `(index, user point, computed point)`.
+    #[allow(clippy::type_complexity)]
+    fn small_points_only(
+        &self,
+        range: core::ops::Range<usize>,
+    ) -> Option<
+        impl Iterator<Item = (usize, Option<&'a OverlayValue>, Option<&'a OverlayValue>)> + 'a,
+    > {
+        const SMALL: usize = 16;
+        if range.len() > SMALL
+            || self
+                .user
+                .fragments
+                .iter()
+                .chain(self.computed.fragments.iter())
+                .any(|f| f.has_any_in_range(range.clone()))
+        {
+            return None;
+        }
+        let (user, computed) = (self.user, self.computed);
+        let start = range.start;
+        Some(range.map(move |off| {
+            (
+                off - start,
+                user.points.get(&off),
+                computed.points.get(&off),
+            )
+        }))
+    }
+
     pub(crate) fn select_numbers(
         &self,
         range: core::ops::Range<usize>,
@@ -2717,6 +2750,21 @@ impl<'a> OverlayCascade<'a> {
 
         if !self.has_any_in_range(range.clone()) {
             return Arc::new(base.clone());
+        }
+        if let Some(small) = self.small_points_only(range.clone()) {
+            record_overlay_select_stats(|stats| stats.small_point_selects += 1);
+            // Per offset: user point, else computed point, else base (the
+            // layering below, without the builders and zip).
+            let values: Vec<Option<f64>> = small
+                .map(|(i, user, computed)| match user.or(computed) {
+                    Some(v) => {
+                        record_overlay_select_stats(|stats| stats.point_entries_applied += 1);
+                        v.numeric_lane_value()
+                    }
+                    None => base.is_valid(i).then(|| base.value(i)),
+                })
+                .collect();
+            return Arc::new(Float64Array::from(values));
         }
 
         record_overlay_select_stats(|stats| stats.partial_overlay_builds += 1);
@@ -2889,6 +2937,19 @@ impl<'a> OverlayCascade<'a> {
 
         if !self.has_any_in_range(range.clone()) {
             return Arc::new(base.clone());
+        }
+        if let Some(small) = self.small_points_only(range.clone()) {
+            record_overlay_select_stats(|stats| stats.small_point_selects += 1);
+            let values: Vec<Option<u8>> = small
+                .map(|(i, user, computed)| match user.or(computed) {
+                    Some(v) => {
+                        record_overlay_select_stats(|stats| stats.point_entries_applied += 1);
+                        v.error_lane_value()
+                    }
+                    None => base.is_valid(i).then(|| base.value(i)),
+                })
+                .collect();
+            return Arc::new(UInt8Array::from(values));
         }
 
         record_overlay_select_stats(|stats| stats.partial_overlay_builds += 1);
@@ -6814,7 +6875,10 @@ mod tests {
         assert!(numbers.is_null(1));
         assert_eq!(numbers.value(2), 3.0);
         let stats = snapshot_overlay_select_stats();
-        assert_eq!(stats.zip_select_calls, 1);
+        // A short point-only range is merged per offset (Program 2), not
+        // through the builders and zip.
+        assert_eq!(stats.small_point_selects, 1);
+        assert_eq!(stats.zip_select_calls, 0);
         assert_eq!(stats.point_entries_applied, 1);
         assert_eq!(stats.row_scalar_fallbacks, 0);
     }
