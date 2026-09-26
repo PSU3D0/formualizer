@@ -2435,7 +2435,12 @@ impl Overlay {
 
     #[inline]
     pub(crate) fn has_any_in_range(&self, range: core::ops::Range<usize>) -> bool {
-        self.points.keys().any(|k| range.contains(k))
+        let points = if range.len() < self.points.len() {
+            range.clone().any(|off| self.points.contains_key(&off))
+        } else {
+            self.points.keys().any(|k| range.contains(k))
+        };
+        points
             || self
                 .fragments
                 .iter()
@@ -2483,6 +2488,34 @@ impl Overlay {
     }
 
     /// Iterate over physical point entries only.
+    /// Visit the points at offsets in `range`: probing each offset when the
+    /// range is shorter than the point map (a small read must not scan every
+    /// point of the chunk), else scanning the map. Each offset is visited at
+    /// most once, so the visit order does not matter to callers.
+    #[inline]
+    pub(crate) fn for_each_point_in_range(
+        &self,
+        range: core::ops::Range<usize>,
+        mut visit: impl FnMut(usize, &OverlayValue),
+    ) {
+        if self.points.is_empty() {
+            return;
+        }
+        if range.len() < self.points.len() {
+            for off in range {
+                if let Some(value) = self.points.get(&off) {
+                    visit(off, value);
+                }
+            }
+        } else {
+            for (off, value) in &self.points {
+                if range.contains(off) {
+                    visit(*off, value);
+                }
+            }
+        }
+    }
+
     pub(crate) fn iter_points(&self) -> impl Iterator<Item = (&usize, &OverlayValue)> {
         self.points.iter()
     }
@@ -3343,12 +3376,10 @@ impl<'a> OverlayCascade<'a> {
         Self::apply_fragment_layer(layer, range.clone(), slots, |payload, idx| {
             payload.number_at(idx)
         });
-        for (off, value) in layer.iter_points() {
-            if range.contains(off) {
-                slots.set(*off - range.start, value.numeric_lane_value());
-                record_overlay_select_stats(|stats| stats.point_entries_applied += 1);
-            }
-        }
+        layer.for_each_point_in_range(range.clone(), |off, value| {
+            slots.set(off - range.start, value.numeric_lane_value());
+            record_overlay_select_stats(|stats| stats.point_entries_applied += 1);
+        });
     }
 
     fn apply_boolean_layer(
@@ -3359,12 +3390,10 @@ impl<'a> OverlayCascade<'a> {
         Self::apply_fragment_layer(layer, range.clone(), slots, |payload, idx| {
             payload.boolean_at(idx)
         });
-        for (off, value) in layer.iter_points() {
-            if range.contains(off) {
-                slots.set(*off - range.start, value.boolean_lane_value());
-                record_overlay_select_stats(|stats| stats.point_entries_applied += 1);
-            }
-        }
+        layer.for_each_point_in_range(range.clone(), |off, value| {
+            slots.set(off - range.start, value.boolean_lane_value());
+            record_overlay_select_stats(|stats| stats.point_entries_applied += 1);
+        });
     }
 
     fn apply_text_layer(
@@ -3375,15 +3404,13 @@ impl<'a> OverlayCascade<'a> {
         Self::apply_fragment_layer(layer, range.clone(), slots, |payload, idx| {
             payload.text_at(idx).map(ToString::to_string)
         });
-        for (off, value) in layer.iter_points() {
-            if range.contains(off) {
-                slots.set(
-                    *off - range.start,
-                    value.text_lane_value().map(ToString::to_string),
-                );
-                record_overlay_select_stats(|stats| stats.point_entries_applied += 1);
-            }
-        }
+        layer.for_each_point_in_range(range.clone(), |off, value| {
+            slots.set(
+                off - range.start,
+                value.text_lane_value().map(ToString::to_string),
+            );
+            record_overlay_select_stats(|stats| stats.point_entries_applied += 1);
+        });
     }
 
     fn apply_error_layer(
@@ -3394,12 +3421,10 @@ impl<'a> OverlayCascade<'a> {
         Self::apply_fragment_layer(layer, range.clone(), slots, |payload, idx| {
             payload.error_at(idx)
         });
-        for (off, value) in layer.iter_points() {
-            if range.contains(off) {
-                slots.set(*off - range.start, value.error_lane_value());
-                record_overlay_select_stats(|stats| stats.point_entries_applied += 1);
-            }
-        }
+        layer.for_each_point_in_range(range.clone(), |off, value| {
+            slots.set(off - range.start, value.error_lane_value());
+            record_overlay_select_stats(|stats| stats.point_entries_applied += 1);
+        });
     }
 
     fn apply_type_tag_layer(
@@ -3410,12 +3435,10 @@ impl<'a> OverlayCascade<'a> {
         Self::apply_fragment_layer(layer, range.clone(), slots, |payload, idx| {
             payload.type_tag_at(idx).map(|tag| tag as u8)
         });
-        for (off, value) in layer.iter_points() {
-            if range.contains(off) {
-                slots.set(*off - range.start, Some(value.type_tag() as u8));
-                record_overlay_select_stats(|stats| stats.point_entries_applied += 1);
-            }
-        }
+        layer.for_each_point_in_range(range.clone(), |off, value| {
+            slots.set(off - range.start, Some(value.type_tag() as u8));
+            record_overlay_select_stats(|stats| stats.point_entries_applied += 1);
+        });
     }
 
     fn apply_lowered_text_layer(
@@ -3424,12 +3447,10 @@ impl<'a> OverlayCascade<'a> {
         slots: &mut OverlaySlots<String>,
     ) {
         Self::apply_fragment_layer(layer, range.clone(), slots, Self::payload_lowered_text_at);
-        for (off, value) in layer.iter_points() {
-            if range.contains(off) {
-                slots.set(*off - range.start, value.lowered_text_value());
-                record_overlay_select_stats(|stats| stats.point_entries_applied += 1);
-            }
-        }
+        layer.for_each_point_in_range(range.clone(), |off, value| {
+            slots.set(off - range.start, value.lowered_text_value());
+            record_overlay_select_stats(|stats| stats.point_entries_applied += 1);
+        });
     }
 
     fn apply_fragment_layer<T>(
