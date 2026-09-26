@@ -7,8 +7,11 @@
 //!
 //! ```bash
 //! program1-perf --xlsx PATH [--mode ephemeral|interactive] [--edits N]
+//!               [--no-alloc-count]
 //! ```
-//! Prints one JSON line.
+//! Prints one JSON line. The counting allocator contends under the parallel
+//! evaluator, so take parallel wall-clock comparisons from
+//! `--no-alloc-count` runs (heap fields are null there).
 
 #[cfg(feature = "formualizer_runner")]
 mod imp {
@@ -19,14 +22,45 @@ mod imp {
     };
     use std::alloc::{GlobalAlloc, Layout, System};
     use std::collections::{BTreeMap, BTreeSet};
-    use std::sync::atomic::{AtomicIsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
     use std::time::Instant;
 
     struct Counting;
-    static LIVE: AtomicIsize = AtomicIsize::new(0);
-    static PEAK: AtomicIsize = AtomicIsize::new(0);
+
+    /// The counters sit on one cache line of their own. Every allocation
+    /// writes them from every rayon worker. As two loose statics the linker
+    /// could split them across two lines and share those lines with hot
+    /// engine and parking_lot statics. That false sharing made parallel
+    /// first-eval timings depend on unrelated code layout: the same source
+    /// measured +40% in one build and nothing in another.
+    ///
+    /// Even when isolated, the shared counter serializes allocation across
+    /// the pool. Parallel first eval runs several times slower than with the
+    /// system allocator alone. Use `--no-alloc-count` for wall-clock A/B; the
+    /// heap fields are then reported as null.
+    #[repr(align(128))]
+    struct Counters {
+        live: AtomicIsize,
+        peak: AtomicIsize,
+        enabled: AtomicBool,
+    }
+    static COUNTERS: Counters = Counters {
+        live: AtomicIsize::new(0),
+        peak: AtomicIsize::new(0),
+        enabled: AtomicBool::new(true),
+    };
+    const _: () = assert!(std::mem::align_of::<Counters>() >= 128);
+    static LIVE: &AtomicIsize = &COUNTERS.live;
+    static PEAK: &AtomicIsize = &COUNTERS.peak;
+
+    fn counting() -> bool {
+        COUNTERS.enabled.load(Ordering::Relaxed)
+    }
 
     fn bump(d: isize) {
+        if !counting() {
+            return;
+        }
         let now = LIVE.fetch_add(d, Ordering::Relaxed) + d;
         if d > 0 {
             PEAK.fetch_max(now, Ordering::Relaxed);
@@ -221,6 +255,9 @@ mod imp {
         let mode = get("--mode").unwrap_or_else(|| "ephemeral".into());
         let edits: usize = get("--edits").map(|s| s.parse()).transpose()?.unwrap_or(20);
         let feature = true; // the authority is always on
+        if args.iter().any(|a| a == "--no-alloc-count") {
+            COUNTERS.enabled.store(false, Ordering::SeqCst);
+        }
 
         if std::env::var_os("FZ_PLAN_SPLIT").is_some() {
             let adapter = CalamineAdapter::open_path(&path).map_err(|e| anyhow!("open: {e}"))?;
@@ -399,8 +436,9 @@ mod imp {
             });
         }
 
-        let out = serde_json::json!({
+        let mut out = serde_json::json!({
             "workbook": path,
+            "alloc_count": counting(),
             "build": if feature { "authority" } else { "legacy" },
             "mode": mode,
             "formulas": tg.formula_count,
@@ -434,6 +472,24 @@ mod imp {
             "authority": auth,
             "decomp": decomp,
         });
+        if !counting() {
+            for key in [
+                "live_after_load",
+                "live_after_eval",
+                "peak_through_eval",
+                "live_after_edits",
+            ] {
+                out[key] = serde_json::Value::Null;
+            }
+            for (section, key) in [
+                ("authority", "sync_growth"),
+                ("decomp", "authority_build_heap"),
+            ] {
+                if let Some(v) = out[section].get_mut(key) {
+                    *v = serde_json::Value::Null;
+                }
+            }
+        }
         println!("{out}");
         drop(wb);
         Ok(())
