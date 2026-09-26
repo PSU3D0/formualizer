@@ -31,6 +31,7 @@ pub mod resource_observability;
 pub(crate) mod result_finalization;
 pub mod row_visibility;
 pub mod scheduler;
+pub(crate) mod shape_memo;
 pub mod spill;
 mod target_preparation;
 pub(crate) mod used_extent;

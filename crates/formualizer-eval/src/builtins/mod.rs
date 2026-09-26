@@ -19,6 +19,17 @@ pub(crate) use utils::criteria_match;
 mod tests;
 
 pub fn load_builtins() {
+    crate::function_registry::count_load_builtins_call();
+    if crate::function_registry::builtins_loaded() {
+        return;
+    }
+    let pass = crate::function_registry::begin_builtin_load_pass();
+    register_all_builtins();
+    crate::function_registry::finish_builtin_load_pass(pass);
+}
+
+/// Register every builtin module; `load_builtins` without the shortcut.
+pub(crate) fn register_all_builtins() {
     database::register_builtins();
     datetime::register_builtins();
     engineering::register_builtins();
