@@ -18,7 +18,7 @@ use super::dirty::DirtyStore;
 use super::history::{Carried, IdJournal};
 use super::store::{AuthorityError, Store};
 use crate::engine::VertexId;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 /// An observed read `(sheet, r0, c0, r1, c1)`, 0-based inclusive.
 pub type ObservedRect = (u16, u32, u32, u32, u32);
@@ -81,6 +81,10 @@ pub struct AuthorityHost {
     /// `set_formula`; ids are never reused (decision 9), and readers verify
     /// the vertex still sits at the cell, falling back to the hash map.
     pub(crate) vertex_of_id: Vec<u32>,
+    /// Program 2 compression: formula vertices with a reference text that
+    /// is not its reference's rendering (recorded when the authority reads
+    /// the formula). Such a member keeps its own AST.
+    pub(crate) texts_unrendered: std::sync::Mutex<FxHashSet<VertexId>>,
     /// `rdi_dyn` (design §8.2, OR1): for each dynamic reader with a
     /// published, fresh value, the rectangles its last evaluation read,
     /// `(sheet, r0, c0, r1, c1)`. Plans order it after them; demand walks

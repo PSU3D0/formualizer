@@ -113,6 +113,9 @@ impl DependencyGraph {
             self.is_dynamic(vid),
         );
         self.authority_apply_range_self_use(vid, (sheet, row, col), &mut facts);
+        if !formula_texts_rendered(&self.data_store, &self.sheet_reg, ast) {
+            self.authority.texts_unrendered.lock().unwrap().insert(vid);
+        }
         Some(((sheet, row, col), facts))
     }
 
@@ -1894,6 +1897,78 @@ fn coords_rendering(
     Some(out)
 }
 
+/// Literal rows equal by value (numbers by bits).
+fn literal_rows_equal(
+    ds: &crate::engine::arena::DataStore,
+    a: &[crate::engine::arena::ValueRef],
+    b: &[crate::engine::arena::ValueRef],
+) -> bool {
+    a.len() == b.len()
+        && a.iter().zip(b).all(|(x, y)| {
+            x == y || {
+                let (x, y) = (ds.retrieve_value(*x), ds.retrieve_value(*y));
+                match (&x, &y) {
+                    (LiteralValue::Number(p), LiteralValue::Number(q)) => {
+                        p.to_bits() == q.to_bits()
+                    }
+                    _ => x == y,
+                }
+            }
+        })
+}
+
+/// Whether every reference text of `ast` is its reference's rendering
+/// (the instantiation rule reproduces such texts at any offset).
+fn formula_texts_rendered(
+    ds: &crate::engine::arena::DataStore,
+    reg: &crate::engine::sheet_registry::SheetRegistry,
+    ast: AstNodeId,
+) -> bool {
+    use crate::engine::arena::{AstNodeData as N, CompactRefType as R};
+    let mut stack: smallvec::SmallVec<[AstNodeId; 16]> = smallvec::smallvec![ast];
+    while let Some(id) = stack.pop() {
+        let Some(node) = ds.get_node(id) else {
+            return false;
+        };
+        match node {
+            N::Reference {
+                original_id,
+                ref_type,
+            } => {
+                let text = ds.resolve_ast_string(*original_id);
+                let ok = match ref_type {
+                    R::Cell { sheet: None, .. } | R::Range { sheet: None, .. } => {
+                        coords_rendering(ref_type).is_some_and(|c| text.as_bytes() == &c[..])
+                    }
+                    _ => is_rendering(text, &ds.reconstruct_reference_type_for_eval(ref_type, reg)),
+                };
+                if !ok {
+                    return false;
+                }
+            }
+            N::UnaryOp { expr_id, .. } => stack.push(*expr_id),
+            N::BinaryOp {
+                left_id, right_id, ..
+            } => {
+                stack.push(*left_id);
+                stack.push(*right_id);
+            }
+            N::Function { .. } => {
+                if let Some(x) = ds.get_args(id) {
+                    stack.extend(x.iter().copied());
+                }
+            }
+            N::Array { .. } => {
+                if let Some((_, _, x)) = ds.get_array_elems(id) {
+                    stack.extend(x.iter().copied());
+                }
+            }
+            N::Literal(_) | N::Omitted => {}
+        }
+    }
+    true
+}
+
 /// Per template: for each reference node in the walk order of
 /// [`ast_equal_relocated`], whether its text is its reference's rendering
 /// (the instantiation rule re-renders those texts).
@@ -2193,33 +2268,79 @@ impl DependencyGraph {
             .filter(|&(_, _, flags, _, _)| flags & crate::engine::authority::store::F_DYNAMIC == 0)
             .collect();
         let mut compressed = 0usize;
-        let mut stack = Vec::new();
+        let unrendered = std::mem::take(&mut *self.authority.texts_unrendered.lock().unwrap());
         for (sheet, dom, _, template, anchor) in owners {
-            let rendered = template_rendered_refs(&self.data_store, &self.sheet_reg, template);
+            // Members share the template's literal-erased relative tokens
+            // (the authority groups by them); what they may not share is
+            // literals (checked against the slot row) and reference texts
+            // (checked when the authority read each formula).
+            let anchor_vertex = self
+                .authority
+                .store
+                .ids()
+                .id_of((sheet, anchor.0, anchor.1))
+                .and_then(|id| self.authority_vertex_of_formula(id, (sheet, anchor.0, anchor.1)));
+            let Some(anchor_vertex) = anchor_vertex else {
+                continue;
+            };
+            if unrendered.contains(&anchor_vertex) {
+                continue;
+            }
+            let tmpl_literals = crate::engine::authority::template::template_facts(
+                &self.data_store,
+                template,
+                anchor.0,
+                anchor.1,
+            )
+            .literals;
             for col in dom.c0..=dom.c1 {
+                // Members of a column are one identity run (consecutive
+                // ids); the vertex of an id is an array read. Checked by
+                // cell, with the cell map as the fallback.
+                let id0 = self.authority.store.ids().id_of((sheet, dom.r0, col));
                 for row in dom.r0..=dom.r1 {
-                    let Some(v) = self.get_vertex_for_cell(&cell_ref((sheet, row, col))) else {
+                    let cell = (sheet, row, col);
+                    let v = id0
+                        .and_then(|id0| {
+                            self.authority_vertex_of_formula(id0 + (row - dom.r0), cell)
+                        })
+                        .or_else(|| self.get_vertex_for_cell(&cell_ref(cell)));
+                    let Some(v) = v else {
                         continue;
                     };
                     let Some(&super::FormulaRef::Own(own)) = self.vertex_formulas.get(&v) else {
                         continue;
                     };
-                    if own == template || self.store.is_dynamic(v) {
+                    if own == template || self.store.is_dynamic(v) || unrendered.contains(&v) {
                         continue;
                     }
-                    let dr = i64::from(row) - i64::from(anchor.0);
-                    let dc = i64::from(col) - i64::from(anchor.1);
-                    if !ast_equal_relocated(
-                        &self.data_store,
-                        &self.sheet_reg,
-                        own,
-                        template,
-                        dr,
-                        dc,
-                        &rendered,
-                        &mut stack,
-                    ) {
+                    let Some(id) = self.authority.store.ids().id_of(cell) else {
                         continue;
+                    };
+                    let row_lits = self.authority.store.slots().get(id).unwrap_or(&[]);
+                    if !literal_rows_equal(&self.data_store, row_lits, &tmpl_literals) {
+                        continue;
+                    }
+                    #[cfg(debug_assertions)]
+                    {
+                        let dr = i64::from(row) - i64::from(anchor.0);
+                        let dc = i64::from(col) - i64::from(anchor.1);
+                        let rendered =
+                            template_rendered_refs(&self.data_store, &self.sheet_reg, template);
+                        let mut stack = Vec::new();
+                        assert!(
+                            ast_equal_relocated(
+                                &self.data_store,
+                                &self.sheet_reg,
+                                own,
+                                template,
+                                dr,
+                                dc,
+                                &rendered,
+                                &mut stack,
+                            ),
+                            "family member {cell:?} is not its template relocated"
+                        );
                     }
                     #[cfg(debug_assertions)]
                     let before = self.get_formula(v);
@@ -2228,8 +2349,7 @@ impl DependencyGraph {
                     assert_eq!(
                         self.get_formula(v),
                         before,
-                        "compressed member {:?} does not instantiate to its own formula",
-                        (sheet, row, col)
+                        "compressed member {cell:?} does not instantiate to its own formula"
                     );
                     compressed += 1;
                 }
