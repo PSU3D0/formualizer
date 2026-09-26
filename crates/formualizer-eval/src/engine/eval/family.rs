@@ -122,14 +122,24 @@ where
         cancel_flag: Option<&AtomicBool>,
     ) -> Result<Vec<(VertexId, LiteralValue)>, ExcelError> {
         use rayon::prelude::*;
-        const RUN_CHUNK: u32 = 256;
+        // Enough tasks to balance the pool (a run of expensive members, e.g.
+        // SUMIFS over a fact table, must not collapse into a few tasks).
+        let total: usize = units
+            .iter()
+            .map(|u| match u {
+                LayerUnit::Cell(_) => 1,
+                LayerUnit::Run(run) => run.len as usize,
+            })
+            .sum();
+        let threads = rayon::current_num_threads().max(1);
+        let run_chunk = (total / (threads * 8)).clamp(1, 256) as u32;
         let mut split: Vec<LayerUnit> = Vec::with_capacity(units.len());
         for &unit in units {
             match unit {
-                LayerUnit::Run(run) if run.len > RUN_CHUNK => {
+                LayerUnit::Run(run) if run.len > run_chunk => {
                     let mut k = 0;
                     while k < run.len {
-                        let len = RUN_CHUNK.min(run.len - k);
+                        let len = run_chunk.min(run.len - k);
                         split.push(LayerUnit::Run(LayerRun {
                             start: run.start + k,
                             len,
