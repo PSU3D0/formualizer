@@ -274,9 +274,26 @@ mod imp {
         let tg = targets(&path, edits)?;
         let base = live();
 
-        let config = match mode.as_str() {
+        #[allow(unused_mut)]
+        let mut config = match mode.as_str() {
             "interactive" => WorkbookConfig::interactive(),
             _ => WorkbookConfig::ephemeral(),
+        };
+        // --seq: sequential evaluation (no rayon layer pool).
+        if args.iter().any(|a| a == "--seq") {
+            config.eval.enable_parallel = false;
+        }
+        // --digest-each: fold a value digest after every edit into
+        // `digest_edits` (the values gate "after every edit").
+        let digest_each = args.iter().any(|a| a == "--digest-each");
+        let mut digest_edits: u64 = 0xcbf2_9ce4_8422_2325;
+        let mut fold_edit = |wb: &Workbook| {
+            if digest_each {
+                for b in digest(wb, &tg.all).bytes() {
+                    digest_edits ^= b as u64;
+                    digest_edits = digest_edits.wrapping_mul(0x100_0000_01b3);
+                }
+            }
         };
         let t = Instant::now();
         let adapter = CalamineAdapter::open_path(&path).map_err(|e| anyhow!("open: {e}"))?;
@@ -365,6 +382,7 @@ mod imp {
             v_edit.push(e);
             v_recalc.push(rc);
             v_total.push(e + rc);
+            fold_edit(&wb);
         }
         // Formula edits: re-set a formula to its own text, then evaluate_all.
         let (mut f_total, mut f_computed, mut f_errors) = (vec![], 0usize, 0usize);
@@ -379,6 +397,7 @@ mod imp {
                 Err(_) => f_errors += 1,
             }
             f_total.push(ms(t));
+            fold_edit(&wb);
         }
         let live_end = live() - base;
         let digest_end = digest(&wb, &tg.all);
@@ -469,6 +488,7 @@ mod imp {
             "formula_total_sum_ms": f_total.iter().sum::<f64>(),
             "digest_first": digest_first,
             "digest_end": digest_end,
+            "digest_edits": if digest_each { format!("{digest_edits:016x}") } else { String::new() },
             "authority": auth,
             "decomp": decomp,
         });
