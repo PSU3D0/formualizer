@@ -5,7 +5,7 @@ use crate::engine::used_extent::{
 };
 use crate::engine::virtual_deps::{DynamicRefCollector, RangeVirtualDepProvider};
 use crate::engine::{Engine, FormulaPlaneMode};
-use crate::formula_plane::region_index::Region;
+use crate::engine::template::region::Region;
 use crate::interpreter::probe_range_dimensions;
 use crate::test_workbook::TestWorkbook;
 use crate::traits::EvaluationContext;

@@ -152,9 +152,6 @@ fn newly_active_span_with_real_legacy_date() -> Engine<TestWorkbook> {
     engine
         .ingest_formula_batches(vec![FormulaIngestBatch::new(SHEET, formulas)])
         .unwrap();
-    span_internal!("span count after ingest; spans are not placed under the authority (design §10)";
-        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
-    );
     assert_eq!(
         engine.debug_derived_format_0based(SHEET, 0, 6),
         Some(FormatId::DATE)
@@ -177,15 +174,6 @@ fn formula_plane_constant_result_broadcast_preserves_date_format_parity() {
     assert_eq!(authoritative_results, off_results);
     assert!(off_results.iter().all(|value| value == &expected));
     assert_computed_overlay_formats(&authoritative, 7, |_| Some(FormatId::DATE));
-    span_internal!("FormulaPlane span/ingest/eval-report internals; spans are not placed under the authority (design section 10)";
-        assert_eq!(
-            authoritative
-                .last_formula_plane_span_eval_report()
-                .unwrap()
-                .span_eval_placement_count,
-            ROWS as u64
-        );
-    );
 }
 
 #[test]
@@ -194,15 +182,6 @@ fn formula_plane_source_general_run_falls_through_to_computed_format_parity() {
     let authoritative = arrow_source_lane_fixture(FormulaPlaneMode::AuthoritativeExperimental);
     let date = NaiveDate::from_ymd_opt(2024, 12, 1).unwrap();
 
-    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
-        assert_eq!(off.baseline_stats().formula_plane_active_span_count, 0);
-        assert_eq!(
-            authoritative
-                .baseline_stats()
-                .formula_plane_active_span_count,
-            1
-        );
-    );
     assert_eq!(
         authoritative.debug_computed_overlay_format_0based(SHEET, 1, 1),
         Some(FormatId::DATE)
@@ -236,11 +215,6 @@ fn formula_plane_memo_broadcast_preserves_equal_date_format_parity() {
     assert_eq!(authoritative_results, off_results);
     assert!(off_results.iter().all(|value| value == &expected));
     assert_computed_overlay_formats(&authoritative, 2, |_| Some(FormatId::DATE));
-    span_internal!("binds a FormulaPlane span object/report; spans are not placed under the authority (design section 10)";
-        let report = authoritative.last_formula_plane_span_eval_report().unwrap();
-        assert_eq!(report.memo_eval_count, 1, "{report:?}");
-        assert_eq!(report.memo_broadcast_count, (ROWS - 1) as u64, "{report:?}");
-    );
 }
 
 #[test]
@@ -262,11 +236,6 @@ fn formula_plane_memo_broadcast_preserves_mixed_format_parity() {
     assert_computed_overlay_formats(&authoritative, 2, |row| {
         (row % 2 == 1).then_some(FormatId::DATE)
     });
-    span_internal!("binds a FormulaPlane span object/report; spans are not placed under the authority (design section 10)";
-        let report = authoritative.last_formula_plane_span_eval_report().unwrap();
-        assert_eq!(report.memo_eval_count, 2, "{report:?}");
-        assert_eq!(report.memo_broadcast_count, (ROWS - 2) as u64, "{report:?}");
-    );
 }
 
 #[test]
@@ -300,9 +269,6 @@ fn formula_plane_admission_invariant_purges_stale_legacy_side_band() {
         .collect();
     ingest(&mut engine, formulas);
 
-    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
-        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
-    );
     assert_eq!(engine.debug_derived_format_0based(SHEET, 0, 6), None);
     assert_eq!(
         engine.get_cell_value(SHEET, 1, 7),
@@ -339,9 +305,6 @@ fn formula_plane_real_legacy_date_to_general_transition_matches_authoritative_ad
         .collect();
     ingest(&mut engine, formulas);
 
-    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
-        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
-    );
     assert_eq!(engine.debug_derived_format_0based(SHEET, 0, 6), None);
     assert_eq!(
         engine.get_cell_value(SHEET, 1, 7),
@@ -408,36 +371,6 @@ fn formula_plane_sparse_general_recomputation_clears_only_written_offsets() {
     );
 }
 
-#[test]
-#[ignore = "M2 span-internal (red-team audit: no assertion outside span_internal!): debug overlay format slots/counters of span chunks; per-cell format effects are stored differently (legacy Off oracle agrees with the authority)"]
-fn formula_plane_point_general_recomputation_clears_one_format_offset() {
-    let mut engine = memoized_fixture(FormulaPlaneMode::AuthoritativeExperimental, false);
-    engine.debug_reset_format_write_operation_counts();
-    engine
-        .set_cell_value(SHEET, 2, 1, LiteralValue::Number(100.0))
-        .unwrap();
-
-    engine.evaluate_all().unwrap();
-
-    span_internal!("debug overlay format slots/counters of span chunks; per-cell format effects are stored differently (legacy Off oracle agrees with the authority)";
-        assert_eq!(
-            engine.debug_computed_overlay_format_0based(SHEET, 0, 1),
-            Some(FormatId::DATE)
-        );
-        assert_eq!(
-            engine.debug_computed_overlay_format_0based(SHEET, 1, 1),
-            None
-        );
-        assert_eq!(
-            engine.debug_computed_overlay_format_0based(SHEET, 2, 1),
-            Some(FormatId::DATE)
-        );
-        assert_eq!(
-            engine.debug_format_write_operation_counts(),
-            (0, 0, 0, 0, 1)
-        );
-    );
-}
 
 #[test]
 fn formula_plane_mixed_actual_and_none_chunks_choose_independent_format_effects() {
@@ -472,43 +405,8 @@ fn formula_plane_mixed_actual_and_none_chunks_choose_independent_format_effects(
 
     assert_computed_overlay_formats(&engine, 2, |_| Some(FormatId::DATE));
     assert_computed_overlay_formats(&engine, 5, |_| None);
-    span_internal!("debug format-write counters of the span broadcast; per-cell ingest writes per cell (legacy Off oracle agrees with the authority)";
-        assert_eq!(
-            engine.debug_format_write_operation_counts(),
-            (0, ROWS as u64, 1, 1, 0)
-        );
-    );
 }
 
-#[test]
-#[ignore = "M2 span-internal: cancels mid span evaluation via a span-eval hook; no span evaluation under the authority"]
-fn formula_plane_mid_span_cancellation_preserves_stale_side_band_and_overlay() {
-    let mut engine = newly_active_span_with_real_legacy_date();
-    let before_value = engine.get_cell_value(SHEET, 1, 7);
-    let before_overlay_format = engine.debug_computed_overlay_format_0based(SHEET, 0, 6);
-    engine.cancel_before_formula_plane_layer_commit_once_for_test();
-
-    let error = engine
-        .evaluate_all_cancellable(CancelToken::new())
-        .unwrap_err();
-
-    assert_eq!(error.kind, formualizer_common::ExcelErrorKind::Cancelled);
-    assert!(
-        engine
-            .last_formula_plane_span_eval_report()
-            .is_some_and(|report| report.span_eval_placement_count == ROWS as u64),
-        "span evaluation must complete before the deterministic cancellation hook"
-    );
-    assert_eq!(
-        engine.debug_derived_format_0based(SHEET, 0, 6),
-        Some(FormatId::DATE)
-    );
-    assert_eq!(engine.get_cell_value(SHEET, 1, 7), before_value);
-    assert_eq!(
-        engine.debug_computed_overlay_format_0based(SHEET, 0, 6),
-        before_overlay_format
-    );
-}
 
 #[test]
 fn formula_plane_commit_preflight_failure_preserves_stale_side_band_and_egress() {
@@ -534,9 +432,6 @@ fn formula_plane_commit_preflight_failure_preserves_stale_side_band_and_egress()
     );
 
     engine.evaluate_all().unwrap();
-    span_internal!("the committed span's computed overlay replaces the derived format side band; per-cell formulas keep it";
-        assert_eq!(engine.debug_derived_format_0based(SHEET, 0, 6), None);
-    );
     assert_eq!(engine.get_cell_value(SHEET, 1, 7), before_value);
 }
 
@@ -556,12 +451,6 @@ fn formula_plane_general_100k_span_has_zero_per_cell_format_operations() {
     engine.debug_reset_format_write_operation_counts();
     ingest(&mut engine, formulas);
 
-    span_internal!("debug format-write counters of the span broadcast; per-cell ingest writes per cell (legacy Off oracle agrees with the authority)";
-        assert_eq!(
-            engine.debug_format_write_operation_counts(),
-            (0, 0, 0, 0, 0)
-        );
-    );
     assert!(!engine.debug_computed_overlay_chunk_has_formats_0based(SHEET, 0, 1));
     assert!(!engine.debug_computed_overlay_chunk_has_formats_0based(SHEET, FAST_ROWS - 1, 1));
 }

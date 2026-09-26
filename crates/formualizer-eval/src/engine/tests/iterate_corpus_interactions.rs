@@ -86,9 +86,6 @@ fn iterating_scc_inside_fp_authoritative_mode_end_to_end() {
             col_b.into_iter().chain(col_e).collect(),
         )])
         .unwrap();
-    span_internal!("span count after ingest; spans are not placed under the authority (design §10)";
-        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
-    );
 
     // Close the live cycle through span member B5.
     set_formula(&mut engine, "Sheet1", 5, 3, "=B5");
@@ -96,12 +93,6 @@ fn iterating_scc_inside_fp_authoritative_mode_end_to_end() {
 
     // The cyclic span demoted; the CycleMember fallback reason is recorded.
     let stats = engine.baseline_stats();
-    span_internal!("FormulaPlane span/ingest/eval-report internals; spans are not placed under the authority (design section 10)";
-        assert_eq!(stats.formula_plane_cycle_member_span_demotions, 1);
-    );
-    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
-        assert_eq!(stats.formula_plane_active_span_count, 1);
-    );
 
     // Iterate semantics on the demoted members: B5 = A5 + C5 accumulates
     // A5 = 5 per pass (member order B5 then C5) → cap 4 ⇒ 20.

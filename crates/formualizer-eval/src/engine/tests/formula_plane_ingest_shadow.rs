@@ -330,40 +330,6 @@ fn formula_plane_off_ingest_reports_graph_materialized_formulas() {
     );
 }
 
-#[test]
-#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
-fn formula_plane_shadow_deferred_build_graph_all_materializes_all_formulas() {
-    let cfg = EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::Shadow);
-    let mut engine = Engine::new(TestWorkbook::default(), cfg);
-
-    engine
-        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(1.0))
-        .unwrap();
-    engine
-        .set_cell_value("Sheet1", 2, 1, LiteralValue::Number(2.0))
-        .unwrap();
-    engine.stage_formula_text("Sheet1", 1, 2, "=A1+1".to_string());
-    engine.stage_formula_text("Sheet1", 2, 2, "=A2+1".to_string());
-    assert_eq!(engine.staged_formula_count(), 2);
-
-    engine.build_graph_all().expect("build staged formulas");
-    engine.evaluate_all().expect("evaluate staged formulas");
-
-    let report = engine
-        .last_formula_ingest_report()
-        .expect("formula ingest report");
-    assert_eq!(report.mode, FormulaPlaneMode::Shadow);
-    assert_eq!(report.formula_cells_seen, 2);
-    assert_eq!(report.graph_formula_cells_materialized, 2);
-    assert_eq!(report.shadow_accepted_span_cells, 0);
-    assert_eq!(report.graph_formula_vertices_avoided_shadow, 0);
-    assert_eq!(engine.staged_formula_count(), 0);
-    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 2);
-    assert_eq!(
-        engine.get_cell_value("Sheet1", 2, 2),
-        Some(LiteralValue::Number(3.0))
-    );
-}
 
 /// The behavioral assertions of
 /// `formula_plane_shadow_deferred_build_graph_all_materializes_all_formulas`
@@ -393,51 +359,6 @@ fn formula_plane_shadow_deferred_build_graph_all_materializes_all_formulas_value
     );
 }
 
-#[test]
-#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
-fn formula_plane_authoritative_ingest_skips_accepted_span_graph_materialization() {
-    let cfg =
-        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
-    let mut engine = Engine::new(TestWorkbook::default(), cfg);
-    let mut formulas = Vec::new();
-    for row in 1..=100 {
-        engine
-            .set_cell_value("Sheet1", row, 1, LiteralValue::Number(row as f64))
-            .unwrap();
-        formulas.push(record(&mut engine, row, 2, &format!("=A{row}+1")));
-    }
-
-    let batches = vec![FormulaIngestBatch::new("Sheet1", formulas)];
-    let report = engine
-        .ingest_formula_batches(batches)
-        .expect("authoritative ingest");
-
-    assert_eq!(report.mode, FormulaPlaneMode::AuthoritativeExperimental);
-    assert_eq!(report.formula_cells_seen, 100);
-    assert_eq!(report.shadow_accepted_span_cells, 100);
-    assert_eq!(report.graph_formula_cells_materialized, 0);
-    let stats = engine.baseline_stats();
-    assert_eq!(stats.graph_formula_vertex_count, 0);
-    assert_eq!(stats.formula_plane_active_span_count, 1);
-    assert_eq!(stats.formula_plane_producer_result_entries, 1);
-    assert_eq!(stats.formula_plane_consumer_read_entries, 1);
-
-    engine.evaluate_all().expect("span-only mixed evaluate_all");
-    assert_eq!(
-        engine.get_cell_value("Sheet1", 1, 2),
-        Some(LiteralValue::Number(2.0))
-    );
-    assert_eq!(
-        engine.get_cell_value("Sheet1", 2, 2),
-        Some(LiteralValue::Number(3.0))
-    );
-    assert_eq!(
-        engine
-            .evaluate_cell("Sheet1", 1, 2)
-            .expect("evaluate_cell routes through FormulaPlane coordinator"),
-        Some(LiteralValue::Number(2.0))
-    );
-}
 
 /// The value assertions of
 /// `formula_plane_authoritative_ingest_skips_accepted_span_graph_materialization`
@@ -478,72 +399,6 @@ fn formula_plane_authoritative_ingest_skips_accepted_span_graph_materialization_
     );
 }
 
-#[test]
-#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
-fn formula_text_resolves_authoritative_source_family_placements() {
-    let cfg =
-        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
-    let mut engine = Engine::new(TestWorkbook::default(), cfg);
-    engine.add_sheet("Inspect").unwrap();
-
-    let family = SourceFormulaFamily {
-        source_order: crate::engine::SourceFormulaOrder::new(0),
-        source_id: SourceFamilyId {
-            sheet_instance: 1,
-            source_index: 1,
-        },
-        anchor_coord0: SourceCoord { row: 0, col: 1 },
-        anchor_text: Arc::from("A1+1"),
-        members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
-            row_start: 0,
-            row_end: 99,
-            col: 1,
-        }),
-        member_count: 100,
-    };
-    let preparation = engine.prepare_source_formula_families("Sheet1", &[family]);
-    assert_eq!(preparation.direct_family_count(), 1);
-    engine
-        .source_formula_ingress()
-        .finish_prepared(vec![(
-            FormulaIngestBatch::new("Sheet1", Vec::new()),
-            FormulaCompressedSourceReport::default(),
-            preparation,
-        )])
-        .unwrap();
-
-    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
-
-    let source_sheet = engine.graph.sheet_id("Sheet1").unwrap();
-    for (inspect_row, source_row, expected) in [
-        (1, 1, "=A1 + 1"),
-        (2, 50, "=A50 + 1"),
-        (3, 100, "=A100 + 1"),
-    ] {
-        let source = abs_cell_ref(source_sheet, source_row, 2);
-        assert_eq!(
-            engine.formula_text_at_cell(source).unwrap().as_deref(),
-            Some(expected)
-        );
-        engine
-            .set_cell_formula(
-                "Inspect",
-                inspect_row,
-                1,
-                parse(format!("=FORMULATEXT(Sheet1!B{source_row})")).unwrap(),
-            )
-            .unwrap();
-    }
-
-    engine.evaluate_all().unwrap();
-    for (row, expected) in [(1, "=A1 + 1"), (2, "=A50 + 1"), (3, "=A100 + 1")] {
-        assert_eq!(
-            engine.get_cell_value("Inspect", row, 1),
-            Some(LiteralValue::Text(expected.into()))
-        );
-    }
-}
 
 #[test]
 fn formula_plane_authoritative_cross_sheet_family_promotes_and_dirty_propagates() {
@@ -563,10 +418,6 @@ fn formula_plane_authoritative_cross_sheet_family_promotes_and_dirty_propagates(
     let report = engine
         .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
         .expect("authoritative ingest");
-    span_internal!("span placement/ingest counters; formulas ingest per cell and spans are not placed under the authority (design §10)";
-        assert_eq!(report.graph_formula_cells_materialized, 0);
-        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
-    );
 
     engine.evaluate_all().expect("initial cross-sheet evaluate");
     assert_eq!(
@@ -616,9 +467,6 @@ fn formula_plane_authoritative_sum_static_range_family_promotes() {
     engine
         .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
         .expect("authoritative ingest");
-    span_internal!("span placement/ingest counters; formulas ingest per cell and spans are not placed under the authority (design §10)";
-        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
-    );
 
     engine.evaluate_all().expect("initial range evaluate");
     assert_eq!(
@@ -677,9 +525,6 @@ fn formula_plane_authoritative_sumifs_family_promotes() {
         .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
         .expect("authoritative ingest");
     let stats = engine.baseline_stats();
-    span_internal!("span placement/ingest counters; formulas ingest per cell and spans are not placed under the authority (design §10)";
-        assert_eq!(stats.formula_plane_active_span_count, 1);
-    );
 
     engine.evaluate_all().expect("initial sumifs evaluate");
     assert_eq!(
@@ -732,9 +577,6 @@ fn formula_plane_authoritative_constant_sumifs_family_promotes_via_broadcast() {
         .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
         .expect("authoritative ingest");
     let stats = engine.baseline_stats();
-    span_internal!("span placement/ingest counters; formulas ingest per cell and spans are not placed under the authority (design §10)";
-        assert_eq!(stats.formula_plane_active_span_count, 1);
-    );
 
     engine
         .evaluate_all()
@@ -875,10 +717,6 @@ fn formula_plane_authoritative_promotes_100_cell_non_constant_run() {
         .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
         .expect("authoritative ingest");
     let stats = engine.baseline_stats();
-    span_internal!("span placement/ingest counters; formulas ingest per cell and spans are not placed under the authority (design §10)";
-        assert_eq!(stats.formula_plane_active_span_count, 1);
-        assert_eq!(stats.graph_formula_vertex_count, 0);
-    );
 
     engine.evaluate_all().expect("evaluate promoted formulas");
     for row in 1..=100 {
@@ -908,10 +746,6 @@ fn formula_plane_authoritative_evaluate_all_orders_span_chain() {
         .ingest_formula_batches(batches)
         .expect("authoritative ingest");
 
-    span_internal!("span placement/ingest counters; formulas ingest per cell and spans are not placed under the authority (design §10)";
-        assert_eq!(report.graph_formula_cells_materialized, 0);
-        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
-    );
     engine.evaluate_all().expect("span chain evaluate_all");
     assert_eq!(
         engine.get_cell_value("Sheet1", 1, 3),
@@ -940,17 +774,7 @@ fn formula_plane_authoritative_mixed_accept_and_fallback_materializes_only_fallb
         .ingest_formula_batches(batches)
         .expect("authoritative ingest");
 
-    span_internal!("span placement/ingest counters; formulas ingest per cell and spans are not placed under the authority (design §10)";
-        assert_eq!(report.formula_cells_seen, 101);
-        assert_eq!(report.shadow_accepted_span_cells, 100);
-        assert_eq!(report.shadow_fallback_cells, 1);
-        assert_eq!(report.graph_formula_cells_materialized, 1);
-    );
     let stats = engine.baseline_stats();
-    span_internal!("span placement/ingest counters; formulas ingest per cell and spans are not placed under the authority (design §10)";
-        assert_eq!(stats.graph_formula_vertex_count, 1);
-        assert_eq!(stats.formula_plane_active_span_count, 1);
-    );
     engine
         .evaluate_all()
         .expect("mixed independent legacy/span runtime");
@@ -979,10 +803,6 @@ fn formula_plane_authoritative_mixed_span_to_legacy_sum_evaluates() {
         .ingest_formula_batches(batches)
         .expect("authoritative ingest");
 
-    span_internal!("span placement/ingest counters; formulas ingest per cell and spans are not placed under the authority (design §10)";
-        assert_eq!(report.shadow_accepted_span_cells, 100);
-        assert_eq!(report.graph_formula_cells_materialized, 1);
-    );
     engine.evaluate_all().expect("span to legacy runtime");
     assert_eq!(
         engine.get_cell_value("Sheet1", 1, 4),
@@ -1010,10 +830,6 @@ fn formula_plane_authoritative_mixed_legacy_to_span_evaluates() {
         .ingest_formula_batches(batches)
         .expect("authoritative ingest");
 
-    span_internal!("span placement/ingest counters; formulas ingest per cell and spans are not placed under the authority (design §10)";
-        assert_eq!(report.shadow_accepted_span_cells, 100);
-        assert_eq!(report.graph_formula_cells_materialized, 1);
-    );
     engine.evaluate_all().expect("legacy to span runtime");
     assert_eq!(
         engine.get_cell_value("Sheet1", 1, 2),
@@ -1050,30 +866,6 @@ fn formula_plane_authoritative_fallback_only_still_evaluates_legacy() {
     );
 }
 
-#[test]
-#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
-fn formula_plane_shadow_build_graph_for_sheets_reports_selected_sheet_only() {
-    let cfg = EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::Shadow);
-    let mut engine = Engine::new(TestWorkbook::default(), cfg);
-    engine.add_sheet("Other").unwrap();
-
-    engine.stage_formula_text("Sheet1", 1, 1, "=1+1".to_string());
-    engine.stage_formula_text("Other", 1, 1, "=1+2".to_string());
-
-    engine
-        .build_graph_for_sheets(["Sheet1"])
-        .expect("build selected sheet");
-
-    let report = engine
-        .last_formula_ingest_report()
-        .expect("formula ingest report");
-    assert_eq!(report.mode, FormulaPlaneMode::Shadow);
-    assert_eq!(report.formula_cells_seen, 1);
-    assert_eq!(report.graph_formula_cells_materialized, 1);
-    assert_eq!(engine.staged_formula_count(), 1);
-    assert!(engine.get_staged_formula_text("Other", 1, 1).is_some());
-    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 1);
-}
 
 #[test]
 fn formula_plane_spill_commit_redirties_span_reading_spill_children() {
@@ -1087,9 +879,6 @@ fn formula_plane_spill_commit_redirties_span_reading_spill_children() {
     }
     let batches = vec![FormulaIngestBatch::new("Sheet1", formulas)];
     let report = engine.ingest_formula_batches(batches).unwrap();
-    span_internal!("span placement/ingest counters; formulas ingest per cell and spans are not placed under the authority (design §10)";
-        assert_eq!(report.shadow_accepted_span_cells, 100);
-    );
     engine.evaluate_all().unwrap();
     assert_eq!(
         engine.get_cell_value("Sheet1", 2, 2),
@@ -1140,19 +929,10 @@ fn formula_plane_source_invalidation_uses_conservative_whole_span_dirty() {
 
     let batches = vec![FormulaIngestBatch::new("Sheet1", formulas)];
     let report = engine.ingest_formula_batches(batches).unwrap();
-    span_internal!("span placement/ingest counters; formulas ingest per cell and spans are not placed under the authority (design §10)";
-        assert_eq!(report.shadow_accepted_span_cells, 100);
-    );
     engine.evaluate_all().unwrap();
 
     engine.invalidate_source("Feed").unwrap();
     let result = engine.evaluate_all().unwrap();
-    span_internal!("span-conservative whole-span redirty count; the formulas do not read the source, so legacy Off recomputes none (legacy Off oracle agrees with the authority)";
-        assert!(
-            result.computed_vertices >= 100,
-            "expected source invalidation to re-evaluate active spans, got {result:?}"
-        );
-    );
     assert_eq!(
         engine.get_cell_value("Sheet1", 2, 2),
         Some(LiteralValue::Number(6.0))
@@ -1180,12 +960,6 @@ fn formula_plane_row_visibility_change_redirties_absolute_anchor_span() {
         .set_row_hidden("Sheet1", 1, true, RowVisibilitySource::Manual)
         .unwrap();
     let result = engine.evaluate_all().unwrap();
-    span_internal!("span-conservative whole-span redirty count; legacy Off recomputes only true dependents (legacy Off oracle agrees with the authority)";
-        assert!(
-            result.computed_vertices >= 100,
-            "expected whole-row visibility notification to re-evaluate span, got {result:?}"
-        );
-    );
     assert_eq!(
         engine.get_cell_value("Sheet1", 1, 2),
         Some(LiteralValue::Number(6.0))
@@ -1214,28 +988,8 @@ fn formula_plane_insert_rows_dirties_only_shifted_span_interval() {
         .baseline_stats()
         .formula_plane_dirty_global_invalidations;
     engine.insert_rows("Sheet1", 10, 1).unwrap();
-    span_internal!("span dirty-region internals; no spans under the authority";
-        assert_eq!(
-            engine
-                .graph
-                .pending_formula_dirty_span_regions()
-                .map(|(_, region)| region)
-                .collect::<Vec<_>>(),
-            vec![crate::formula_plane::region_index::Region::rect(
-                sheet_id, 10, 100, 1, 1
-            )]
-        );
-    );
     let result = engine.evaluate_all().unwrap();
     assert_eq!(result.computed_vertices, 91, "result={result:?}");
-    span_internal!("span dirty-region internals; no spans under the authority";
-        assert_eq!(
-            engine
-                .baseline_stats()
-                .formula_plane_dirty_global_invalidations,
-            globals_before
-        );
-    );
     assert_eq!(
         engine.get_cell_value("Sheet1", 11, 2),
         Some(LiteralValue::Number(6.0))
@@ -1258,9 +1012,6 @@ fn formula_plane_remove_sheet_redirties_surviving_spans() {
 
     let batches = vec![FormulaIngestBatch::new("Sheet1", formulas)];
     let report = engine.ingest_formula_batches(batches).unwrap();
-    span_internal!("span placement/ingest counters; formulas ingest per cell and spans are not placed under the authority (design §10)";
-        assert_eq!(report.shadow_accepted_span_cells, 100);
-    );
     engine.evaluate_all().unwrap();
 
     engine.remove_sheet(data_id).unwrap();
@@ -1275,30 +1026,6 @@ fn formula_plane_remove_sheet_redirties_surviving_spans() {
     );
 }
 
-#[test]
-#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
-fn formula_plane_remove_sheet_hosting_span_removes_active_span() {
-    let cfg =
-        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
-    let mut engine = Engine::new(TestWorkbook::default(), cfg);
-    let other_id = engine.add_sheet("Other").unwrap();
-    let mut formulas = Vec::new();
-    for row in 1..=100 {
-        engine
-            .set_cell_value("Other", row, 1, LiteralValue::Number(row as f64))
-            .unwrap();
-        formulas.push(record(&mut engine, row, 2, &format!("=A{row}+1")));
-    }
-
-    let batches = vec![FormulaIngestBatch::new("Other", formulas)];
-    let report = engine.ingest_formula_batches(batches).unwrap();
-    assert_eq!(report.shadow_accepted_span_cells, 100);
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
-
-    engine.remove_sheet(other_id).unwrap();
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
-    assert!(engine.graph.sheet_id("Other").is_none());
-}
 
 /// The behavioral assertion of
 /// `formula_plane_remove_sheet_hosting_span_removes_active_span` (its span
@@ -1325,96 +1052,6 @@ fn formula_plane_remove_sheet_hosting_span_removes_active_span_values() {
     engine.evaluate_all().unwrap();
 }
 
-#[test]
-#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
-fn generic_source_family_preparation_accepts_complete_domains_and_rejects_explicit_authority() {
-    let cfg =
-        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
-    let mut engine = Engine::new(TestWorkbook::default(), cfg);
-    let id = |source_index| SourceFamilyId {
-        sheet_instance: 1,
-        source_index,
-    };
-    let complete = vec![
-        SourceFormulaFamily {
-            source_order: crate::engine::SourceFormulaOrder::new(0),
-            source_id: id(1),
-            anchor_coord0: SourceCoord { row: 0, col: 0 },
-            anchor_text: Arc::from("1+1"),
-            members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
-                row_start: 0,
-                row_end: 2,
-                col: 0,
-            }),
-            member_count: 3,
-        },
-        SourceFormulaFamily {
-            source_order: crate::engine::SourceFormulaOrder::new(0),
-            source_id: id(2),
-            anchor_coord0: SourceCoord { row: 0, col: 2 },
-            anchor_text: Arc::from("1+1"),
-            members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::ColRun {
-                row: 0,
-                col_start: 2,
-                col_end: 4,
-            }),
-            member_count: 3,
-        },
-        SourceFormulaFamily {
-            source_order: crate::engine::SourceFormulaOrder::new(0),
-            source_id: id(3),
-            anchor_coord0: SourceCoord { row: 4, col: 4 },
-            anchor_text: Arc::from("1+1"),
-            members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::Rect(
-                SourceRect {
-                    start: SourceCoord { row: 4, col: 4 },
-                    end: SourceCoord { row: 5, col: 5 },
-                },
-            )),
-            member_count: 4,
-        },
-        SourceFormulaFamily {
-            source_order: crate::engine::SourceFormulaOrder::new(0),
-            source_id: id(4),
-            anchor_coord0: SourceCoord { row: 8, col: 8 },
-            anchor_text: Arc::from("1+1"),
-            members: SourceFamilyMembers::ExplicitMembers(
-                ExplicitSourceFamilyMembers::try_new(vec![
-                    SourceCoord { row: 8, col: 8 },
-                    SourceCoord { row: 9, col: 8 },
-                ])
-                .unwrap(),
-            ),
-            member_count: 2,
-        },
-    ];
-
-    let preparation = engine.prepare_source_formula_families("Sheet1", &complete);
-    assert_eq!(preparation.direct_family_count(), 3);
-    assert_eq!(preparation.direct_cell_count(), 10);
-    assert_eq!(
-        preparation.rejected.get(&id(4)).map(String::as_str),
-        Some("ExplicitMembersRequireExactRecords")
-    );
-
-    let mut limits = engine.workbook_load_limits().clone();
-    limits.max_sheet_rows = 2;
-    limits.max_sheet_logical_cells = 2;
-    engine.set_workbook_load_limits(limits);
-    let limited = engine.prepare_source_formula_families("Sheet1", &complete[..1]);
-    assert_eq!(
-        limited.rejected.get(&id(1)).map(String::as_str),
-        Some("CompleteDomainOutOfBounds")
-    );
-
-    engine.force_source_family_fallback_for_test(true);
-    let forced = engine.prepare_source_formula_families("Sheet1", &complete[..1]);
-    assert_eq!(forced.direct_family_count(), 0);
-    assert_eq!(
-        forced.rejected.get(&id(1)).map(String::as_str),
-        Some("ForcedReplay")
-    );
-}
 
 #[test]
 fn selected_multi_sheet_build_preserves_caller_order_and_shared_parse_cache() {
@@ -1574,615 +1211,15 @@ fn deferred_poisoned_lock_failure_restores_package_without_publication() {
     }
 }
 
-#[test]
-#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
-fn source_family_preparation_rejects_cross_engine_finalization_before_authority() {
-    let cfg =
-        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
-    let mut origin = Engine::new(TestWorkbook::default(), cfg.clone());
-    let mut other = Engine::new(TestWorkbook::default(), cfg);
-    let family = SourceFormulaFamily {
-        source_order: crate::engine::SourceFormulaOrder::new(0),
-        source_id: SourceFamilyId {
-            sheet_instance: 1,
-            source_index: 1,
-        },
-        anchor_coord0: SourceCoord { row: 0, col: 0 },
-        anchor_text: Arc::from("1+1"),
-        members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
-            row_start: 0,
-            row_end: 2,
-            col: 0,
-        }),
-        member_count: 3,
-    };
-    let preparation = origin.prepare_source_formula_families("Sheet1", &[family]);
-    assert_eq!(preparation.direct_family_count(), 1);
-    let before = other.formula_ingest_report_total().clone();
 
-    let error = other
-        .source_formula_ingress()
-        .finish_prepared(vec![(
-            FormulaIngestBatch::new("Sheet1", Vec::new()),
-            FormulaCompressedSourceReport::default(),
-            preparation,
-        )])
-        .unwrap_err();
 
-    assert!(error.to_string().contains("belongs to another engine"));
-    assert_eq!(other.formula_ingest_report_total(), &before);
-    assert!(other.last_formula_ingest_report().is_none());
-    assert_eq!(other.baseline_stats().formula_plane_active_span_count, 0);
-    assert_eq!(other.baseline_stats().graph_formula_vertex_count, 0);
-}
 
-#[test]
-#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
-fn partitioned_shadow_prepares_all_fragments_from_one_analysis_without_authority() {
-    let family = PartitionedSourceFormulaFamily {
-        source_order: crate::engine::SourceFormulaOrder::new(0),
-        source_id: SourceFamilyId {
-            sheet_instance: 90,
-            source_index: 1,
-        },
-        template_origin0: SourceCoord { row: 0, col: 1 },
-        template_text: Arc::from("SUM($A$1)+1"),
-        declared: SourceRect {
-            start: SourceCoord { row: 0, col: 1 },
-            end: SourceCoord { row: 7, col: 1 },
-        },
-        surviving_member_count: 7,
-        fragments: vec![
-            PlacementDomainTransport::RowRun {
-                row_start: 0,
-                row_end: 2,
-                col: 1,
-            },
-            PlacementDomainTransport::RowRun {
-                row_start: 4,
-                row_end: 6,
-                col: 1,
-            },
-        ],
-        legacy_members: ExplicitPartitionLegacyMembers::try_new(vec![PartitionLegacyMember {
-            coord: SourceCoord { row: 3, col: 1 },
-            kind: PartitionLegacyMemberKind::SharedFamilyMember,
-        }])
-        .unwrap(),
-        reconciliation: PartitionReconciliation {
-            shared_members: 7,
-            ordinary_exceptions: 0,
-            holes: 1,
-        },
-    };
-    let source_report = FormulaCompressedSourceReport {
-        source_fragmentable_families: 1,
-        source_fragmentable_cells: 7,
-        source_hole_exclusions: 1,
-        ..FormulaCompressedSourceReport::default()
-    };
-    let mut engine = Engine::new(
-        TestWorkbook::default(),
-        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::Shadow),
-    );
-    let report = engine
-        .ingest_compressed_formula_source_batches(vec![(
-            FormulaIngestBatch::new("Sheet1", Vec::new()),
-            FormulaCompressedSourceBatch::with_proposals(
-                "Sheet1",
-                source_report,
-                Vec::new(),
-                vec![family],
-            ),
-        )])
-        .unwrap();
 
-    assert_eq!(report.source_anchor_parses, 1, "{report:?}");
-    assert_eq!(report.source_anchor_asts, 1, "{report:?}");
-    assert_eq!(report.source_anchor_analyses, 1, "{report:?}");
-    assert_eq!(report.source_partition_analyses_reused, 1, "{report:?}");
-    assert_eq!(report.source_partitioned_families_prepared, 1, "{report:?}");
-    assert_eq!(report.source_partition_fragments_prepared, 2, "{report:?}");
-    assert_eq!(report.source_partition_span_cells_prepared, 6, "{report:?}");
-    assert_eq!(report.source_partition_fallback_cells, 1, "{report:?}");
-    assert_eq!(report.source_partition_function_semantics, 1, "{report:?}");
-    assert_eq!(report.source_partition_holes, 1, "{report:?}");
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
-    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
-}
 
-#[test]
-#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
-fn partitioned_shadow_rejects_the_whole_family_when_one_fragment_fails() {
-    let family = PartitionedSourceFormulaFamily {
-        source_order: crate::engine::SourceFormulaOrder::new(0),
-        source_id: SourceFamilyId {
-            sheet_instance: 90,
-            source_index: 2,
-        },
-        template_origin0: SourceCoord { row: 0, col: 1 },
-        template_text: Arc::from("A1048575+1"),
-        declared: SourceRect {
-            start: SourceCoord { row: 0, col: 1 },
-            end: SourceCoord { row: 3, col: 1 },
-        },
-        surviving_member_count: 4,
-        fragments: vec![
-            PlacementDomainTransport::RowRun {
-                row_start: 0,
-                row_end: 1,
-                col: 1,
-            },
-            PlacementDomainTransport::RowRun {
-                row_start: 2,
-                row_end: 3,
-                col: 1,
-            },
-        ],
-        legacy_members: ExplicitPartitionLegacyMembers::try_new(Vec::new()).unwrap(),
-        reconciliation: PartitionReconciliation {
-            shared_members: 4,
-            ordinary_exceptions: 0,
-            holes: 0,
-        },
-    };
-    let mut engine = Engine::new(
-        TestWorkbook::default(),
-        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::Shadow),
-    );
-    let report = engine
-        .ingest_compressed_formula_source_batches(vec![(
-            FormulaIngestBatch::new("Sheet1", Vec::new()),
-            FormulaCompressedSourceBatch::with_proposals(
-                "Sheet1",
-                FormulaCompressedSourceReport {
-                    source_fragmentable_families: 1,
-                    source_fragmentable_cells: 4,
-                    ..FormulaCompressedSourceReport::default()
-                },
-                Vec::new(),
-                vec![family],
-            ),
-        )])
-        .unwrap();
 
-    assert_eq!(report.source_partitioned_families_prepared, 0, "{report:?}");
-    assert_eq!(report.source_partitioned_families_rejected, 1, "{report:?}");
-    assert_eq!(report.source_partition_fragments_prepared, 0, "{report:?}");
-    assert_eq!(report.shadow_accepted_span_cells, 0, "{report:?}");
-    assert_eq!(report.shadow_fallback_cells, 4, "{report:?}");
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
-}
 
-#[test]
-#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
-fn compressed_modes_accept_registry_resolved_nested_function_relocation() {
-    fn family(text: &str) -> SourceFormulaFamily {
-        SourceFormulaFamily {
-            source_order: crate::engine::SourceFormulaOrder::new(0),
-            source_id: SourceFamilyId {
-                sheet_instance: 91,
-                source_index: 1,
-            },
-            anchor_coord0: SourceCoord { row: 0, col: 1 },
-            anchor_text: Arc::from(text),
-            members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
-                row_start: 0,
-                row_end: 99,
-                col: 1,
-            }),
-            member_count: 100,
-        }
-    }
 
-    let mut shadow = Engine::new(
-        TestWorkbook::default(),
-        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::Shadow),
-    );
-    let report = shadow
-        .ingest_compressed_formula_source_batches(vec![(
-            FormulaIngestBatch::new("Sheet1", Vec::new()),
-            FormulaCompressedSourceBatch::with_families(
-                "Sheet1",
-                FormulaCompressedSourceReport::default(),
-                vec![family("SUM(A1:A1)+_xlfn.ABS(A1)")],
-            ),
-        )])
-        .unwrap();
-    assert_eq!(report.source_compressed_families_prepared, 1, "{report:?}");
-    assert_eq!(shadow.baseline_stats().formula_plane_active_span_count, 0);
 
-    let mut authoritative = Engine::new(
-        TestWorkbook::default(),
-        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental),
-    );
-    for text in [
-        "SUM(A1:A1)+_xlfn.ABS(A1)",
-        "ROUND(A1,0)",
-        "COUNTIF(A1:A1,\">0\")",
-        "VLOOKUP(A1,A1:A1,1,FALSE)",
-        "ROUND(ABS(A1)+SUM(A1:A1)+COUNTIF(A1:A1,\">0\")+VLOOKUP(A1,A1:A1,1,FALSE),0)",
-    ] {
-        let preparation = authoritative
-            .source_formula_ingress()
-            .prepare_families("Sheet1", &[family(text)])
-            .unwrap();
-        assert_eq!(
-            preparation.direct_family_count(),
-            1,
-            "{text}: {:?}",
-            preparation.rejected
-        );
-    }
-}
-
-#[test]
-#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
-fn compressed_shadow_replays_when_runtime_provider_identity_mismatches_registry() {
-    struct LocalAbs;
-    impl crate::function::Function for LocalAbs {
-        fn name(&self) -> &'static str {
-            "ABS"
-        }
-        fn eval<'a, 'b, 'c>(
-            &self,
-            _args: &'c [crate::traits::ArgumentHandle<'a, 'b>],
-            _ctx: &dyn crate::traits::FunctionContext<'b>,
-        ) -> Result<crate::traits::CalcValue<'b>, formualizer_common::ExcelError> {
-            Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(9)))
-        }
-    }
-    crate::builtins::load_builtins();
-    let workbook = TestWorkbook::default().with_function(Arc::new(LocalAbs));
-    let cfg = EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::Shadow);
-    let mut engine = Engine::new(workbook, cfg);
-    let family = SourceFormulaFamily {
-        source_order: crate::engine::SourceFormulaOrder::new(0),
-        source_id: SourceFamilyId {
-            sheet_instance: 93,
-            source_index: 1,
-        },
-        anchor_coord0: SourceCoord { row: 0, col: 1 },
-        anchor_text: Arc::from("ABS(A1)"),
-        members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
-            row_start: 0,
-            row_end: 99,
-            col: 1,
-        }),
-        member_count: 100,
-    };
-    let report = engine
-        .ingest_compressed_formula_source_batches(vec![(
-            FormulaIngestBatch::new("Sheet1", Vec::new()),
-            FormulaCompressedSourceBatch::with_families(
-                "Sheet1",
-                FormulaCompressedSourceReport::default(),
-                vec![family],
-            ),
-        )])
-        .unwrap();
-    assert_eq!(report.source_compressed_families_prepared, 0, "{report:?}");
-    assert_eq!(report.shadow_fallback_cells, 100, "{report:?}");
-}
-
-#[test]
-#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
-fn authoritative_function_closure_admits_explicit_safe_custom_and_replays_untrusted_custom() {
-    struct ExplicitSafe;
-    impl crate::function::Function for ExplicitSafe {
-        fn name(&self) -> &'static str {
-            "SWATCH5_EXPLICIT_SAFE"
-        }
-        fn semantic_contract(
-            &self,
-            _arity: usize,
-        ) -> Option<crate::function_contract::FunctionSemanticContract> {
-            Some(crate::function_contract::FunctionSemanticContract::trusted_builtin_default(None))
-        }
-        fn eval<'a, 'b, 'c>(
-            &self,
-            _args: &'c [crate::traits::ArgumentHandle<'a, 'b>],
-            _ctx: &dyn crate::traits::FunctionContext<'b>,
-        ) -> Result<crate::traits::CalcValue<'b>, formualizer_common::ExcelError> {
-            Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(7)))
-        }
-    }
-    struct Untrusted;
-    impl crate::function::Function for Untrusted {
-        fn name(&self) -> &'static str {
-            "SWATCH5_UNTRUSTED"
-        }
-        fn eval<'a, 'b, 'c>(
-            &self,
-            _args: &'c [crate::traits::ArgumentHandle<'a, 'b>],
-            _ctx: &dyn crate::traits::FunctionContext<'b>,
-        ) -> Result<crate::traits::CalcValue<'b>, formualizer_common::ExcelError> {
-            Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(9)))
-        }
-    }
-    fn family(index: usize, text: &str) -> SourceFormulaFamily {
-        SourceFormulaFamily {
-            source_order: crate::engine::SourceFormulaOrder::new(0),
-            source_id: SourceFamilyId {
-                sheet_instance: 95,
-                source_index: index,
-            },
-            anchor_coord0: SourceCoord { row: 0, col: 1 },
-            anchor_text: Arc::from(text),
-            members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
-                row_start: 0,
-                row_end: 99,
-                col: 1,
-            }),
-            member_count: 100,
-        }
-    }
-
-    crate::function_registry::register_function(Arc::new(ExplicitSafe));
-    crate::function_registry::register_function(Arc::new(Untrusted));
-    let mut engine = Engine::new(
-        TestWorkbook::default(),
-        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental),
-    );
-    let safe = engine
-        .prepare_source_formula_families("Sheet1", &[family(1, "SWATCH5_EXPLICIT_SAFE()+A1")]);
-    assert_eq!(safe.direct_family_count(), 1);
-    let untrusted =
-        engine.prepare_source_formula_families("Sheet1", &[family(2, "SWATCH5_UNTRUSTED()+A1")]);
-    assert_eq!(untrusted.direct_family_count(), 0);
-    assert_eq!(untrusted.rejected.len(), 1);
-}
-
-#[test]
-#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
-fn compressed_nested_functions_use_one_semantic_snapshot_across_authority_planning() {
-    struct NestedSafe(&'static str);
-    impl crate::function::Function for NestedSafe {
-        fn name(&self) -> &'static str {
-            self.0
-        }
-        fn min_args(&self) -> usize {
-            1
-        }
-        fn arg_schema(&self) -> &'static [crate::args::ArgSchema] {
-            static SCHEMA: std::sync::LazyLock<Vec<crate::args::ArgSchema>> =
-                std::sync::LazyLock::new(|| vec![crate::args::ArgSchema::any()]);
-            &SCHEMA
-        }
-        fn semantic_contract(
-            &self,
-            _arity: usize,
-        ) -> Option<crate::function_contract::FunctionSemanticContract> {
-            Some(crate::function_contract::FunctionSemanticContract::trusted_builtin_default(None))
-        }
-        fn eval<'a, 'b, 'c>(
-            &self,
-            _args: &'c [crate::traits::ArgumentHandle<'a, 'b>],
-            _ctx: &dyn crate::traits::FunctionContext<'b>,
-        ) -> Result<crate::traits::CalcValue<'b>, formualizer_common::ExcelError> {
-            Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(1)))
-        }
-    }
-
-    crate::function_registry::register_function(Arc::new(NestedSafe("E1_NESTED_OUTER")));
-    crate::function_registry::register_function(Arc::new(NestedSafe("E1_NESTED_INNER")));
-    let mut engine = Engine::new(
-        TestWorkbook::default(),
-        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental),
-    );
-    let family = SourceFormulaFamily {
-        source_order: crate::engine::SourceFormulaOrder::new(0),
-        source_id: SourceFamilyId {
-            sheet_instance: 951,
-            source_index: 1,
-        },
-        anchor_coord0: SourceCoord { row: 0, col: 1 },
-        anchor_text: Arc::from("E1_NESTED_OUTER(E1_NESTED_INNER(A1))"),
-        members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
-            row_start: 0,
-            row_end: 99,
-            col: 1,
-        }),
-        member_count: 100,
-    };
-
-    let preparation = engine.prepare_source_formula_families("Sheet1", &[family]);
-    assert_eq!(
-        preparation.direct_family_count(),
-        1,
-        "{:?}",
-        preparation.rejected
-    );
-    assert!(preparation.function_semantics_used);
-    assert_eq!(
-        preparation.function_semantic_epoch,
-        crate::function_registry::semantic_epoch()
-    );
-}
-
-#[test]
-#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
-fn authoritative_replays_every_exceptional_function_semantic_category() {
-    for (source_index, text) in [
-        (1, "RAND()+A1"),
-        (2, "OFFSET(A1,0,0)"),
-        (3, "LET(x,A1,x)"),
-        (4, "UNREGISTERED_CLOSURE_FN(A1)"),
-        (5, "SEQUENCE(1,1)"),
-        (6, "CELL(\"filename\",A1)"),
-        (7, "INDEX(A1:A2,1)"),
-        (8, "ROW()"),
-        (9, "IF(TRUE,A1,0)"),
-        (10, "IFERROR(A1,0)"),
-    ] {
-        let mut engine = Engine::new(
-            TestWorkbook::default(),
-            EvalConfig::default()
-                .with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental),
-        );
-        let family = SourceFormulaFamily {
-            source_order: crate::engine::SourceFormulaOrder::new(0),
-            source_id: SourceFamilyId {
-                sheet_instance: 96,
-                source_index,
-            },
-            anchor_coord0: SourceCoord { row: 0, col: 1 },
-            anchor_text: Arc::from(text),
-            members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
-                row_start: 0,
-                row_end: 99,
-                col: 1,
-            }),
-            member_count: 100,
-        };
-        let preparation = engine.prepare_source_formula_families("Sheet1", &[family]);
-        assert_eq!(preparation.direct_family_count(), 0, "{text}");
-        assert_eq!(preparation.rejected.len(), 1, "{text}");
-    }
-}
-
-#[test]
-#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
-fn compressed_shadow_replays_exceptional_and_unresolved_function_semantics() {
-    for (source_index, text) in [
-        (1, "RAND()+A1"),
-        (2, "OFFSET(A1,0,0)"),
-        (3, "LET(x,A1,x)"),
-        (4, "UNREGISTERED_CLOSURE_FN(A1)"),
-    ] {
-        let cfg = EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::Shadow);
-        let mut engine = Engine::new(TestWorkbook::default(), cfg);
-        let family = SourceFormulaFamily {
-            source_order: crate::engine::SourceFormulaOrder::new(0),
-            source_id: SourceFamilyId {
-                sheet_instance: 92,
-                source_index,
-            },
-            anchor_coord0: SourceCoord { row: 0, col: 1 },
-            anchor_text: Arc::from(text),
-            members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
-                row_start: 0,
-                row_end: 99,
-                col: 1,
-            }),
-            member_count: 100,
-        };
-        let report = engine
-            .ingest_compressed_formula_source_batches(vec![(
-                FormulaIngestBatch::new("Sheet1", Vec::new()),
-                FormulaCompressedSourceBatch::with_families(
-                    "Sheet1",
-                    FormulaCompressedSourceReport::default(),
-                    vec![family],
-                ),
-            )])
-            .unwrap();
-        assert_eq!(
-            report.source_compressed_families_prepared, 0,
-            "{text}: {report:?}"
-        );
-        assert_eq!(report.shadow_fallback_cells, 100, "{text}: {report:?}");
-        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
-    }
-}
-
-#[test]
-#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
-fn compressed_shadow_counts_only_preparation_work_that_occurs() {
-    let cfg = EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::Shadow);
-    let mut engine = Engine::new(TestWorkbook::default(), cfg);
-    let family = SourceFormulaFamily {
-        source_order: crate::engine::SourceFormulaOrder::new(0),
-        source_id: SourceFamilyId {
-            sheet_instance: 1,
-            source_index: 1,
-        },
-        anchor_coord0: SourceCoord { row: 1, col: 0 },
-        anchor_text: Arc::from("1+1"),
-        members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
-            row_start: 0,
-            row_end: 2,
-            col: 0,
-        }),
-        member_count: 3,
-    };
-    let batch = FormulaIngestBatch::new("Sheet1", Vec::new());
-    let compressed = FormulaCompressedSourceBatch::with_families(
-        "Sheet1",
-        FormulaCompressedSourceReport::default(),
-        vec![family],
-    );
-
-    let report = engine
-        .ingest_compressed_formula_source_batches(vec![(batch, compressed)])
-        .unwrap();
-
-    assert_eq!(report.source_anchor_parses, 0);
-    assert_eq!(report.source_anchor_asts, 0);
-    assert_eq!(report.source_anchor_analyses, 0);
-    assert_eq!(report.source_descendant_strings_avoided, 0);
-    assert_eq!(report.source_descendant_events_avoided, 0);
-    assert_eq!(report.source_descendant_analyses_avoided, 0);
-    assert_eq!(
-        report.fallback_reasons.get("CompleteDomainMemberMismatch"),
-        Some(&1)
-    );
-}
-#[test]
-#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
-fn authoritative_clean_parse_rejection_publishes_attempted_work_once() {
-    let mut engine = Engine::new(
-        TestWorkbook::default(),
-        EvalConfig::default()
-            .with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental)
-            .with_formula_parse_policy(FormulaParsePolicy::KeepCachedValue),
-    );
-    let family_id = SourceFamilyId {
-        sheet_instance: 970,
-        source_index: 1,
-    };
-    let family = SourceFormulaFamily {
-        source_order: crate::engine::SourceFormulaOrder::new(0),
-        source_id: family_id,
-        anchor_coord0: SourceCoord { row: 0, col: 1 },
-        anchor_text: Arc::from("("),
-        members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
-            row_start: 0,
-            row_end: 0,
-            col: 1,
-        }),
-        member_count: 1,
-    };
-    let mut preparation = engine
-        .source_formula_ingress()
-        .prepare_families("Sheet1", &[family])
-        .unwrap();
-    preparation.eager_replay.push(DeferredReplayFormula {
-        source_order: crate::engine::SourceFormulaOrder::new(0),
-        row: 1,
-        col: 2,
-        text: "(".to_string(),
-        family: Some(family_id),
-        partition_owner: None,
-    });
-    let report = engine
-        .source_formula_ingress()
-        .finish_prepared(vec![(
-            FormulaIngestBatch::new("Sheet1", Vec::new()),
-            FormulaCompressedSourceReport {
-                families_seen: 1,
-                family_cells_seen: 1,
-                replay_families: 1,
-                replay_cells: 1,
-                ..Default::default()
-            },
-            preparation,
-        )])
-        .unwrap();
-    assert_eq!(report.source_anchor_parses, 1, "{report:?}");
-    assert_eq!(report.source_anchor_asts, 0, "{report:?}");
-    assert_eq!(report.source_anchor_analyses, 0, "{report:?}");
-}
 
 fn provider_revision_family(source_index: usize) -> SourceFormulaFamily {
     SourceFormulaFamily {
@@ -2210,515 +1247,15 @@ fn provider_revision_replay(family_id: SourceFamilyId) -> ExactTestReplay {
     }
 }
 
-#[test]
-#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
-fn unversioned_provider_function_family_fails_closed_to_replay() {
-    let mut engine = Engine::new(
-        TestWorkbook::default().without_planning_revision(),
-        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental),
-    );
-    let preparation =
-        engine.prepare_source_formula_families("Sheet1", &[provider_revision_family(1)]);
-    assert_eq!(preparation.direct_family_count(), 0);
-    assert_eq!(
-        preparation.rejected.values().next().map(String::as_str),
-        Some("FunctionProviderRevisionUnavailable")
-    );
-}
 
-#[test]
-#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
-fn initially_stale_provider_reason_and_fallback_counts_publish_once() {
-    let workbook = TestWorkbook::default();
-    let revision = workbook.planning_revision_handle();
-    let mut engine = Engine::new(
-        workbook,
-        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental),
-    );
-    let family = provider_revision_family(20);
-    let family_id = family.source_id;
-    let preparation = engine
-        .source_formula_ingress()
-        .prepare_families("Sheet1", &[family])
-        .unwrap()
-        .with_exact_replay(
-            Arc::new(std::sync::Mutex::new(Box::new(provider_revision_replay(
-                family_id,
-            )))),
-            BTreeSet::new(),
-        );
-    revision.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
-    let report = engine
-        .source_formula_ingress()
-        .finish_prepared(vec![(
-            FormulaIngestBatch::new("Sheet1", Vec::new()),
-            FormulaCompressedSourceReport {
-                families_seen: 1,
-                family_cells_seen: 100,
-                ..Default::default()
-            },
-            preparation,
-        )])
-        .unwrap();
-    assert_eq!(
-        report
-            .fallback_reasons
-            .get("FunctionProviderRevisionChanged"),
-        Some(&1),
-        "{report:?}"
-    );
-    assert_eq!(report.source_family_fallback, 1, "{report:?}");
-    assert_eq!(report.source_family_fallback_cells, 100, "{report:?}");
-}
 
-#[test]
-#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
-fn later_source_order_error_publishes_prior_preparation_commit() {
-    let mut engine = Engine::new(
-        TestWorkbook::default(),
-        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental),
-    );
-    let first_family = SourceFormulaFamily {
-        source_order: crate::engine::SourceFormulaOrder::new(0),
-        source_id: SourceFamilyId {
-            sheet_instance: 500,
-            source_index: 99,
-        },
-        anchor_coord0: SourceCoord { row: 0, col: 5 },
-        anchor_text: Arc::from("$A$1+1"),
-        members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
-            row_start: 0,
-            row_end: 1,
-            col: 5,
-        }),
-        member_count: 2,
-    };
-    let first = engine
-        .source_formula_ingress()
-        .prepare_families("Sheet1", &[first_family])
-        .unwrap();
-    let mut second = engine
-        .source_formula_ingress()
-        .prepare_families("Sheet2", &[])
-        .unwrap();
-    let duplicate_family = SourceFamilyId {
-        sheet_instance: 501,
-        source_index: 2,
-    };
-    second.eager_replay = vec![
-        DeferredReplayFormula {
-            source_order: crate::engine::SourceFormulaOrder::new(5),
-            row: 1,
-            col: 1,
-            text: "=1+1".to_string(),
-            family: Some(duplicate_family),
-            partition_owner: None,
-        },
-        DeferredReplayFormula {
-            source_order: crate::engine::SourceFormulaOrder::new(5),
-            row: 2,
-            col: 1,
-            text: "=1+2".to_string(),
-            family: Some(duplicate_family),
-            partition_owner: None,
-        },
-    ];
-    let error = engine
-        .source_formula_ingress()
-        .finish_prepared(vec![
-            (
-                FormulaIngestBatch::new("Sheet1", Vec::new()),
-                FormulaCompressedSourceReport {
-                    families_seen: 1,
-                    family_cells_seen: 2,
-                    ..Default::default()
-                },
-                first,
-            ),
-            (
-                FormulaIngestBatch::new("Sheet2", Vec::new()),
-                FormulaCompressedSourceReport::default(),
-                second,
-            ),
-        ])
-        .unwrap_err();
-    assert!(
-        error
-            .to_string()
-            .contains("duplicate exact-replay source-order proof"),
-        "{error}"
-    );
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
-    let published = engine.last_formula_ingest_report().unwrap();
-    assert_eq!(published.source_family_promoted, 1, "{published:?}");
-    assert_eq!(published.source_family_promoted_cells, 2, "{published:?}");
-}
 
-#[test]
-#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
-fn provider_flip_after_prior_ordered_fallback_demotes_later_function_clean_family() {
-    let workbook = TestWorkbook::default();
-    let revision = workbook.planning_revision_handle();
-    let mut engine = Engine::new(
-        workbook,
-        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental),
-    );
-    let family = provider_revision_family(10);
-    let family_id = family.source_id;
-    let preparation = engine
-        .source_formula_ingress()
-        .prepare_families("Sheet1", &[family])
-        .unwrap()
-        .with_exact_replay(
-            Arc::new(std::sync::Mutex::new(Box::new(provider_revision_replay(
-                family_id,
-            )))),
-            BTreeSet::new(),
-        );
-    let ordinary_ast = engine.intern_formula_ast(&parse("=1+1").unwrap());
-    let ordinary = FormulaIngestRecord::new(1, 4, ordinary_ast, Some(Arc::from("=1+1")))
-        .with_source_proof(crate::engine::SourceFormulaOrder::new(0), None, None);
-    engine.set_after_eager_proposal_commit_hook(move || {
-        revision.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
-    });
 
-    let report = engine
-        .source_formula_ingress()
-        .finish_prepared(vec![(
-            FormulaIngestBatch::new("Sheet1", vec![ordinary]),
-            FormulaCompressedSourceReport {
-                families_seen: 1,
-                family_cells_seen: 100,
-                ..Default::default()
-            },
-            preparation,
-        )])
-        .unwrap();
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
-    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 101);
-    assert_eq!(report.source_family_fallback, 1, "{report:?}");
-    assert_eq!(report.source_family_fallback_cells, 100, "{report:?}");
-    assert_eq!(
-        report
-            .fallback_reasons
-            .get("CleanFormulaPlaneAppend:FunctionProviderRevisionChanged"),
-        Some(&1),
-        "{report:?}"
-    );
-}
 
-#[test]
-#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
-fn provider_revision_change_between_preparation_and_commit_replays_exactly() {
-    let workbook = TestWorkbook::default();
-    let revision = workbook.planning_revision_handle();
-    let mut engine = Engine::new(
-        workbook,
-        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental),
-    );
-    let family = provider_revision_family(2);
-    let family_id = family.source_id;
-    let preparation = engine
-        .source_formula_ingress()
-        .prepare_families("Sheet1", &[family])
-        .unwrap()
-        .with_exact_replay(
-            Arc::new(std::sync::Mutex::new(Box::new(provider_revision_replay(
-                family_id,
-            )))),
-            BTreeSet::new(),
-        );
-    assert_eq!(preparation.direct_family_count(), 1);
-    engine.set_before_prepared_span_commit_hook(move || {
-        revision.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
-    });
 
-    let report = engine
-        .source_formula_ingress()
-        .finish_prepared(vec![(
-            FormulaIngestBatch::new("Sheet1", Vec::new()),
-            FormulaCompressedSourceReport {
-                families_seen: 1,
-                family_cells_seen: 100,
-                ..Default::default()
-            },
-            preparation,
-        )])
-        .unwrap();
 
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
-    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 100);
-    assert_eq!(
-        report
-            .fallback_reasons
-            .get("FunctionProviderRevisionChanged"),
-        Some(&1)
-    );
-}
 
-#[test]
-#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
-fn provider_revision_change_after_commit_demotes_before_evaluation() {
-    let workbook = TestWorkbook::default();
-    let revision = workbook.planning_revision_handle();
-    let mut engine = Engine::new(
-        workbook,
-        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental),
-    );
-    let family = provider_revision_family(3);
-    let family_id = family.source_id;
-    let preparation = engine
-        .source_formula_ingress()
-        .prepare_families("Sheet1", &[family])
-        .unwrap()
-        .with_exact_replay(
-            Arc::new(std::sync::Mutex::new(Box::new(provider_revision_replay(
-                family_id,
-            )))),
-            BTreeSet::new(),
-        );
-    engine
-        .source_formula_ingress()
-        .finish_prepared(vec![(
-            FormulaIngestBatch::new("Sheet1", Vec::new()),
-            FormulaCompressedSourceReport {
-                families_seen: 1,
-                family_cells_seen: 100,
-                ..Default::default()
-            },
-            preparation,
-        )])
-        .unwrap();
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
 
-    revision.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
-    engine.evaluate_all().unwrap();
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
-}
-
-#[test]
-#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
-fn unrelated_semantic_epoch_change_does_not_replay_arithmetic_preparation() {
-    crate::builtins::load_builtins();
-    let cfg =
-        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
-    let mut engine = Engine::new(TestWorkbook::default(), cfg);
-    let family = SourceFormulaFamily {
-        source_order: crate::engine::SourceFormulaOrder::new(0),
-        source_id: SourceFamilyId {
-            sheet_instance: 1,
-            source_index: 7,
-        },
-        anchor_coord0: SourceCoord { row: 0, col: 1 },
-        anchor_text: Arc::from("A1+1"),
-        members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
-            row_start: 0,
-            row_end: 99,
-            col: 1,
-        }),
-        member_count: 100,
-    };
-    let replay = ExactTestReplay {
-        formulas: (1..=100)
-            .map(|row| {
-                (
-                    row,
-                    2,
-                    format!("=A{row}+1"),
-                    Some(SourceFamilyId {
-                        sheet_instance: 1,
-                        source_index: 7,
-                    }),
-                )
-            })
-            .collect(),
-    };
-    let preparation = engine
-        .source_formula_ingress()
-        .prepare_families("Sheet1", &[family])
-        .unwrap()
-        .with_exact_replay(
-            Arc::new(std::sync::Mutex::new(Box::new(replay))),
-            BTreeSet::new(),
-        );
-    assert_eq!(preparation.direct_family_count(), 1);
-
-    crate::function_registry::register_alias("", "__PREPARED_STALE_EPOCH_FIXTURE__", "", "ABS");
-    let report = engine
-        .source_formula_ingress()
-        .finish_prepared(vec![(
-            FormulaIngestBatch::new("Sheet1", Vec::new()),
-            FormulaCompressedSourceReport {
-                families_seen: 1,
-                family_cells_seen: 100,
-                ..Default::default()
-            },
-            preparation,
-        )])
-        .unwrap();
-
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
-    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
-    assert!(
-        !report
-            .fallback_reasons
-            .contains_key("FunctionSemanticEpochChanged")
-    );
-}
-
-#[test]
-#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
-fn unrelated_commit_boundary_registration_keeps_function_preparation() {
-    struct UnrelatedFunction;
-    impl crate::function::Function for UnrelatedFunction {
-        fn name(&self) -> &'static str {
-            "__UNRELATED_FUNCTION_PREPARATION_CHANGE__"
-        }
-
-        fn eval<'a, 'b, 'c>(
-            &self,
-            _args: &'c [crate::traits::ArgumentHandle<'a, 'b>],
-            _ctx: &dyn crate::traits::FunctionContext<'b>,
-        ) -> Result<crate::traits::CalcValue<'b>, formualizer_common::ExcelError> {
-            Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(0)))
-        }
-    }
-
-    crate::builtins::load_builtins();
-    let mut engine = Engine::new(
-        TestWorkbook::default(),
-        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental),
-    );
-    let family = provider_revision_family(30);
-    let family_id = family.source_id;
-    let preparation = engine
-        .source_formula_ingress()
-        .prepare_families("Sheet1", &[family])
-        .unwrap()
-        .with_exact_replay(
-            Arc::new(std::sync::Mutex::new(Box::new(provider_revision_replay(
-                family_id,
-            )))),
-            BTreeSet::new(),
-        );
-    assert_eq!(preparation.direct_family_count(), 1);
-
-    engine.set_before_prepared_span_commit_hook(|| {
-        crate::function_registry::register_function(Arc::new(UnrelatedFunction));
-        crate::function_registry::register_alias(
-            "",
-            "__UNRELATED_FUNCTION_PREPARATION_ALIAS__",
-            "",
-            "ABS",
-        );
-    });
-    let report = engine
-        .source_formula_ingress()
-        .finish_prepared(vec![(
-            FormulaIngestBatch::new("Sheet1", Vec::new()),
-            FormulaCompressedSourceReport {
-                families_seen: 1,
-                family_cells_seen: 100,
-                ..Default::default()
-            },
-            preparation,
-        )])
-        .unwrap();
-
-    assert_eq!(
-        engine.baseline_stats().formula_plane_active_span_count,
-        1,
-        "{report:?}"
-    );
-    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
-    assert!(
-        !report
-            .fallback_reasons
-            .contains_key("FunctionSemanticEpochChanged"),
-        "{report:?}"
-    );
-}
-
-#[test]
-#[ignore = "M2 span-internal: tests FormulaPlane source-family preparation and ingest-report counters; families are never promoted to spans under the authority"]
-fn unrelated_commit_boundary_epoch_change_keeps_arithmetic_preparation() {
-    crate::builtins::load_builtins();
-    let cfg =
-        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
-    let mut engine = Engine::new(TestWorkbook::default(), cfg);
-    let family_id = SourceFamilyId {
-        sheet_instance: 1,
-        source_index: 8,
-    };
-    let family = SourceFormulaFamily {
-        source_order: crate::engine::SourceFormulaOrder::new(0),
-        source_id: family_id,
-        anchor_coord0: SourceCoord { row: 0, col: 1 },
-        anchor_text: Arc::from("A1+1"),
-        members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
-            row_start: 0,
-            row_end: 99,
-            col: 1,
-        }),
-        member_count: 100,
-    };
-    let replay = ExactTestReplay {
-        formulas: (1..=100)
-            .map(|row| (row, 2, format!("=A{row}+1"), Some(family_id)))
-            .collect(),
-    };
-    let preparation = engine
-        .source_formula_ingress()
-        .prepare_families("Sheet1", &[family])
-        .unwrap()
-        .with_exact_replay(
-            Arc::new(std::sync::Mutex::new(Box::new(replay))),
-            BTreeSet::new(),
-        );
-    engine.set_before_prepared_span_commit_hook(|| {
-        crate::function_registry::register_alias("", "__PREPARED_COMMIT_RACE_FIXTURE__", "", "ABS");
-    });
-
-    engine
-        .source_formula_ingress()
-        .finish_prepared(vec![(
-            FormulaIngestBatch::new("Sheet1", Vec::new()),
-            FormulaCompressedSourceReport {
-                families_seen: 1,
-                family_cells_seen: 100,
-                ..Default::default()
-            },
-            preparation,
-        )])
-        .unwrap();
-
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
-    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
-    engine.evaluate_all().unwrap();
-    assert_eq!(
-        engine.get_cell_value("Sheet1", 100, 2),
-        Some(LiteralValue::Number(1.0))
-    );
-}
-
-#[test]
-#[ignore = "M2 span-internal (red-team audit: no assertion outside span_internal!): span placement/ingest counters; formulas ingest per cell and spans are not placed under the authority (design §10)"]
-fn ordinary_supported_function_families_preserve_authoritative_behavior() {
-    crate::builtins::load_builtins();
-    let cfg =
-        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
-    let mut engine = Engine::new(TestWorkbook::default(), cfg);
-    let formulas = (1..=100)
-        .map(|row| record(&mut engine, row, 2, &format!("=ABS(A{row})")))
-        .collect();
-    engine
-        .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
-        .unwrap();
-    span_internal!("span placement/ingest counters; formulas ingest per cell and spans are not placed under the authority (design §10)";
-        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
-        assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
-    );
-}
 
 #[test]
 fn changed_function_ast_discovery_covers_stale_prefix_unresolved_and_calls() {
@@ -2756,35 +1293,6 @@ fn changed_function_ast_discovery_covers_stale_prefix_unresolved_and_calls() {
         &callee_changed,
         &changed
     ));
-}
-
-#[test]
-fn deferred_fragmented_build_reuses_bounded_source_transaction_without_rebuild() {
-    let source = include_str!("../eval.rs");
-    let start = source
-        .find("fn prepare_staged_formula_batches(")
-        .expect("deferred preparation function");
-    let end = source[start..]
-        .find("pub fn begin_bulk_ingest_arrow(")
-        .map(|offset| start + offset)
-        .expect("end of deferred preparation function");
-    let body = &source[start..end];
-    assert!(body.contains("prepare_source_formula_proposals("));
-    assert!(body.contains("exact_replay_record_is_prepared_partition_legacy("));
-    assert!(!body.contains("rebuild_indexes"));
-    assert!(!body.contains("baseline_stats"));
-
-    let finish = source
-        .find("fn finish_compressed_formula_sources(")
-        .expect("shared source finalization function");
-    let finish_end = source[finish..]
-        .find("pub(crate) fn ingest_compressed_formula_source_batches(")
-        .map(|offset| finish + offset)
-        .expect("end of shared source finalization function");
-    let finish_body = &source[finish..finish_end];
-    assert!(finish_body.contains("commit_fragmented_source_transaction("));
-    assert!(finish_body.contains("apply_prevalidated_legacy_graph_plan("));
-    assert!(!finish_body.contains("rebuild_indexes"));
 }
 
 #[test]

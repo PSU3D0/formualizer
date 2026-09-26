@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use crate::formula_plane::placement::PreparedAnchorOncePlacement;
 
 /// Zero-based source coordinate retained during workbook ingest.
 #[doc(hidden)]
@@ -1341,13 +1340,6 @@ pub struct FormulaCompressedSourceBatch {
     partitioned_families: Vec<PartitionedSourceFormulaFamily>,
 }
 
-pub(crate) struct PreparedFragmentedSourceProposal {
-    pub(crate) source: PartitionedSourceFormulaFamily,
-    pub(crate) prepared: super::fragmented_transaction::PreparedPartitionedSourceFamily,
-    pub(crate) legacy: Vec<super::fragmented_transaction::PreparedFragmentedLegacyFormula>,
-    pub(crate) replay: Arc<std::sync::Mutex<Box<dyn DeferredFormulaReplay>>>,
-}
-
 /// Opaque eager preparation owned by Engine between adapter classification and replay.
 /// The adapter can inspect dispositions but cannot commit FormulaPlane authority.
 #[doc(hidden)]
@@ -1357,14 +1349,7 @@ pub struct FormulaCompressedPreparation {
     pub(crate) function_provider_revision: Option<u64>,
     pub(crate) function_semantics_used: bool,
     pub(crate) sheet_name: Arc<str>,
-    pub(crate) prepared: Vec<(
-        SourceFamilyId,
-        SourceFormulaOrder,
-        PreparedAnchorOncePlacement,
-    )>,
     pub(crate) rejected: BTreeMap<SourceFamilyId, String>,
-    pub(crate) fragmented: Vec<PreparedFragmentedSourceProposal>,
-    pub(crate) fragmented_sources: BTreeMap<SourceFamilyId, PartitionedSourceFormulaFamily>,
     pub(crate) eager_replay: Vec<DeferredReplayFormula>,
     pub(crate) preparation_spool_replays: u64,
     pub(crate) clean_rejected_anchor_counts: [u64; 3],
@@ -1386,19 +1371,20 @@ impl FormulaCompressedPreparation {
         self
     }
 
-    pub fn is_direct(&self, family: SourceFamilyId) -> bool {
-        self.prepared.iter().any(|(id, _, _)| *id == family)
+    /// Always `false`: source families are never promoted to spans (the
+    /// FormulaPlane mode is accepted and ignored).
+    pub fn is_direct(&self, _family: SourceFamilyId) -> bool {
+        false
     }
 
+    /// Always `0`; see [`Self::is_direct`].
     pub fn direct_family_count(&self) -> usize {
-        self.prepared.len()
+        0
     }
 
+    /// Always `0`; see [`Self::is_direct`].
     pub fn direct_cell_count(&self) -> u64 {
-        self.prepared
-            .iter()
-            .map(|(_, _, prepared)| prepared.member_count)
-            .sum()
+        0
     }
 }
 

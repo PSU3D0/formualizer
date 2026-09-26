@@ -271,6 +271,8 @@ impl CanonicalTemplateLabels {
         self.reject_reasons.is_empty()
     }
 
+
+    #[cfg(test)]
     pub(crate) fn contains_reject_kind(&self, kind: CanonicalRejectKind) -> bool {
         self.reject_reasons
             .iter()
@@ -1130,14 +1132,6 @@ pub(crate) fn normalize_function_name(name: &str) -> String {
     }
 }
 
-pub(crate) fn resolve_canonical_function(name: &str, arity: usize) -> CanonicalFunctionId {
-    crate::builtins::load_builtins();
-    resolve_canonical_function_with_provider(
-        Some(&crate::function_registry::GlobalRegistryFunctionProvider),
-        name,
-        arity,
-    )
-}
 
 pub(crate) fn resolve_canonical_function_with_provider(
     provider: Option<&dyn crate::traits::FunctionProvider>,

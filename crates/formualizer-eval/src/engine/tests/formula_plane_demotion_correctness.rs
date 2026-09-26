@@ -36,9 +36,6 @@ fn build_single_span_column() -> Engine<TestWorkbook> {
     engine
         .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
         .unwrap();
-    span_internal!("span count after ingest; spans are not placed under the authority (design §10)";
-        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
-    );
     engine.evaluate_all().unwrap();
     engine
 }
@@ -162,9 +159,6 @@ fn sheet_remove_then_add_with_cross_sheet_formulas_recomputes_correctly() {
 #[test]
 fn sheet_add_with_no_orphans_does_not_demote_unrelated_spans() {
     let mut engine = build_single_span_column();
-    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
-        assert!(engine.baseline_stats().formula_plane_active_span_count >= 1);
-    );
 
     engine.add_sheet("Newcomer").unwrap();
     engine.evaluate_all().unwrap();

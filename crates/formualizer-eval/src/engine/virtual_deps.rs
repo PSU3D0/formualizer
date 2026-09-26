@@ -4,7 +4,7 @@ use crate::engine::eval::Engine;
 use crate::engine::used_extent::{
     ExtentPolicy, OpenRangeBounds, ResolvedExtent, resolve_used_extent_with_fallback,
 };
-use crate::formula_plane::region_index::Region;
+use crate::engine::template::region::Region;
 use crate::traits::{
     EvaluationContext, FunctionProvider, NamedRangeResolver, Range, RangeResolver,
     ReferenceResolver, Resolver, SourceResolver, Table, TableResolver,

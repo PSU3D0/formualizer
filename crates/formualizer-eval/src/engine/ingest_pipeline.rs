@@ -17,15 +17,15 @@ use crate::engine::shape_memo::{
 };
 use crate::engine::sheet_registry::SheetRegistry;
 use crate::engine::vertex::VertexId;
-use crate::formula_plane::dependency_summary::{AnalyzerContext, function_argument_context};
-use crate::formula_plane::placement::{build_template_slot_map, value_ref_slot_descriptors};
-use crate::formula_plane::producer::{
+use crate::engine::template::dependency_summary::{AnalyzerContext, function_argument_context};
+use crate::engine::template::slots::{build_template_slot_map, value_ref_slot_descriptors};
+use crate::engine::template::read_summary::{
     AxisProjection, DirtyProjectionRule, ProjectionFallbackReason, ReadProjection,
     SpanReadDependency, SpanReadSummary,
 };
-use crate::formula_plane::region_index::Region;
-use crate::formula_plane::runtime::{TemplateSlotMap, ValueRefSlotDescriptor};
-use crate::formula_plane::template_canonical::{CanonicalExpr, LiteralSlotDescriptor};
+use crate::engine::template::region::Region;
+use crate::engine::template::domain::{TemplateSlotMap, ValueRefSlotDescriptor};
+use crate::engine::template::canonical::{CanonicalExpr, LiteralSlotDescriptor};
 use crate::function::FnCaps;
 use crate::reference::{CellRef, Coord, RangeRef, SharedRangeRef, SharedRef, SharedSheetLocator};
 use crate::traits::FunctionProvider;
@@ -525,7 +525,7 @@ impl<'a> IngestPipeline<'a> {
         let anchor_row = placement.coord.row().saturating_add(1);
         let anchor_col = placement.coord.col().saturating_add(1);
         let canonical_template =
-            crate::formula_plane::template_canonical::canonicalize_template_with_provider(
+            crate::engine::template::canonical::canonicalize_template_with_provider(
                 &ast_for_oracles,
                 anchor_row,
                 anchor_col,
@@ -1226,7 +1226,7 @@ fn reference_returning_projection_shape(
         }
         ASTNodeType::Function { name, args } => {
             let function =
-                crate::formula_plane::template_canonical::resolve_canonical_function_with_provider(
+                crate::engine::template::canonical::resolve_canonical_function_with_provider(
                     function_provider,
                     name,
                     args.len(),
@@ -1567,7 +1567,7 @@ fn compute_read_projections(
                 )
             }
             ASTNodeType::Function { name, args } => {
-                let function = crate::formula_plane::template_canonical::resolve_canonical_function_with_provider(
+                let function = crate::engine::template::canonical::resolve_canonical_function_with_provider(
                     function_provider,
                     name,
                     args.len(),
@@ -1635,7 +1635,7 @@ fn compute_read_projections(
 pub(crate) fn span_read_summary_from_projections(
     placement: CellRef,
     projections: &[ReadProjection],
-) -> Result<SpanReadSummary, crate::formula_plane::producer::ProjectionFallbackReason> {
+) -> Result<SpanReadSummary, crate::engine::template::read_summary::ProjectionFallbackReason> {
     let result_region = Region::col_interval(
         placement.sheet_id,
         placement.coord.col(),

@@ -188,23 +188,6 @@ fn fp_coverage_corpus_pins_section_verdicts_and_values() {
 
         match section.verdict {
             SectionVerdict::Span => {
-                span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
-                    assert_eq!(
-                        report.shadow_accepted_span_cells, n,
-                        "section {}: expected all {n} cells span-accepted; fallback histogram: {:?}",
-                        section.name, report.fallback_reasons
-                    );
-                    assert_eq!(
-                        report.shadow_fallback_cells, 0,
-                        "section {}: unexpected legacy cells; histogram: {:?}",
-                        section.name, report.fallback_reasons
-                    );
-                    assert!(
-                        report.shadow_spans_created >= 1,
-                        "section {}: expected at least one span",
-                        section.name
-                    );
-                );
             }
             SectionVerdict::Reject { placement_reason } => {
                 assert_eq!(
@@ -217,13 +200,6 @@ fn fp_coverage_corpus_pins_section_verdicts_and_values() {
                     .get(placement_reason)
                     .copied()
                     .unwrap_or(0);
-                span_internal!("FormulaPlane span/ingest/eval-report internals; spans are not placed under the authority (design section 10)";
-                    assert_eq!(
-                        count, n,
-                        "section {}: expected fallback reason {placement_reason:?} x{n}; histogram: {:?}",
-                        section.name, report.fallback_reasons
-                    );
-                );
             }
         }
 
@@ -301,13 +277,6 @@ fn fp_coverage_corpus_combined_totals() {
     let expected_reject_sections = corpus.sections.len() as u64 - expected_span_sections;
 
     assert_eq!(report.formula_cells_seen, corpus.total_formula_cells());
-    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
-        assert_eq!(
-            report.shadow_accepted_span_cells,
-            expected_span_sections * n
-        );
-        assert_eq!(report.shadow_fallback_cells, expected_reject_sections * n);
-    );
 
     let mut expected_histogram: BTreeMap<&'static str, u64> = BTreeMap::new();
     for section in &corpus.sections {
@@ -316,14 +285,6 @@ fn fp_coverage_corpus_combined_totals() {
         }
     }
     for (reason, count) in &expected_histogram {
-        span_internal!("FormulaPlane span/ingest/eval-report internals; spans are not placed under the authority (design section 10)";
-            assert_eq!(
-                report.fallback_reasons.get(*reason).copied().unwrap_or(0),
-                *count,
-                "combined histogram for {reason}: {:?}",
-                report.fallback_reasons
-            );
-        );
     }
 
     engine.evaluate_all().expect("evaluate combined");
@@ -338,7 +299,7 @@ fn fp_coverage_corpus_pins_canonical_reject_kinds() {
     for section in &corpus.sections {
         let cell = section.formulas.first().expect("non-empty section");
         let ast = parse(&cell.formula).unwrap();
-        let diag = crate::formula_plane::diagnostics::canonical_template_diagnostic(
+        let diag = crate::engine::template::diagnostics::canonical_template_diagnostic(
             &ast, cell.row, cell.col,
         );
         for expected in section.expected_canonical_reject_kinds {

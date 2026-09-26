@@ -612,7 +612,7 @@ impl CalamineAdapter {
             return false;
         };
         let Ok(relocated) =
-            formualizer_eval::formula_plane::structural::relocate_ast_for_template_placement(
+            formualizer_eval::engine::template::relocate::relocate_ast_for_template_placement(
                 &anchor,
                 i64::from(coord0.row) - i64::from(family.anchor_coord0.row),
                 i64::from(coord0.col) - i64::from(family.anchor_coord0.col),

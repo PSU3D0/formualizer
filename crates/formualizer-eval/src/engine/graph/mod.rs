@@ -2,7 +2,6 @@ use crate::SheetId;
 use crate::engine::TombstoneRegistry;
 use crate::engine::named_range::{NameScope, NamedDefinition, NamedRange};
 use crate::engine::sheet_registry::SheetRegistry;
-use crate::formula_plane::authority::FormulaAuthority;
 use formualizer_common::{
     CoordBuildHasher, ExcelError, ExcelErrorKind, LiteralValue, PackedSheetCell,
 };
@@ -56,10 +55,6 @@ use crate::engine::topo::{
 use crate::reference::{CellRef, Coord, SharedRangeRef, SharedRef, SharedSheetLocator};
 use formualizer_common::Coord as AbsCoord;
 use formula_dirty::FormulaDirtyState;
-pub(crate) use formula_dirty::{
-    FormulaDirtyEventSnapshot, FormulaDirtyLease, FormulaDirtyStats, FormulaDirtySublease,
-    WholeSpanDirtyReason,
-};
 // topo::pk wiring will be integrated behind config.use_dynamic_topo in a follow-up step
 
 struct RegistryFunctionProvider;
@@ -377,8 +372,6 @@ pub struct DependencyGraph {
     /// Monotonic name, table, and external-source binding revision.
     symbol_revision: u64,
 
-    // Graph-owned FormulaPlane authority shell. Inert until a later runtime cut-over.
-    formula_authority: FormulaAuthority,
     /// Program 1 unified authority, maintained beside the legacy graph
     /// while the feature is in development (never default).
     authority: crate::engine::authority::host::AuthorityHost,
@@ -426,95 +419,18 @@ impl DependencyGraph {
         &self.config
     }
 
-    pub(crate) fn formula_authority(&self) -> &FormulaAuthority {
-        &self.formula_authority
-    }
 
-    pub(crate) fn formula_authority_mut(&mut self) -> &mut FormulaAuthority {
-        &mut self.formula_authority
-    }
 
-    pub(crate) fn mark_formula_region_dirty(
-        &mut self,
-        region: crate::formula_plane::region_index::Region,
-    ) {
-        self.formula_dirty.record_region(region);
-    }
 
-    pub(crate) fn mark_formula_span_region_dirty(
-        &mut self,
-        span_ref: crate::formula_plane::runtime::FormulaSpanRef,
-        region: crate::formula_plane::region_index::Region,
-    ) {
-        self.formula_dirty.record_span_region(span_ref, region);
-    }
 
-    pub(crate) fn mark_formula_spans_dirty(
-        &mut self,
-        spans: impl IntoIterator<Item = crate::formula_plane::runtime::FormulaSpanRef>,
-        reason: WholeSpanDirtyReason,
-    ) {
-        self.formula_dirty.record_whole_spans(spans, reason);
-    }
 
-    pub(crate) fn mark_all_formula_spans_dirty(&mut self, reason: WholeSpanDirtyReason) {
-        let spans = self.formula_authority.active_span_refs();
-        self.formula_dirty.record_whole_spans(spans, reason);
-    }
 
-    pub(crate) fn lease_formula_dirty(&mut self) -> FormulaDirtyLease {
-        self.formula_dirty.lease()
-    }
 
-    pub(crate) fn extend_formula_dirty_lease(
-        &mut self,
-        lease: FormulaDirtyLease,
-    ) -> Option<FormulaDirtyLease> {
-        self.formula_dirty.extend(lease)
-    }
 
-    pub(crate) fn ack_formula_dirty(&mut self, lease: FormulaDirtyLease) -> bool {
-        self.formula_dirty.ack(lease)
-    }
 
-    pub(crate) fn ack_formula_dirty_sublease(&mut self, sublease: FormulaDirtySublease) -> bool {
-        self.formula_dirty.ack_sublease(sublease)
-    }
 
-    pub(crate) fn release_formula_dirty_lease(&mut self, lease: FormulaDirtyLease) -> bool {
-        self.formula_dirty.release(lease)
-    }
 
-    pub(crate) fn pending_formula_dirty_regions(
-        &self,
-    ) -> impl Iterator<Item = crate::formula_plane::region_index::Region> + '_ {
-        self.formula_dirty.pending_regions()
-    }
 
-    pub(crate) fn pending_formula_dirty_span_regions(
-        &self,
-    ) -> impl Iterator<
-        Item = (
-            crate::formula_plane::runtime::FormulaSpanRef,
-            crate::formula_plane::region_index::Region,
-        ),
-    > + '_ {
-        self.formula_dirty.pending_span_regions()
-    }
-
-    pub(crate) fn pending_formula_dirty_whole_spans(
-        &self,
-    ) -> impl Iterator<Item = crate::formula_plane::runtime::FormulaSpanRef> + '_ {
-        self.formula_dirty.pending_whole_spans()
-    }
-
-    pub(crate) fn pending_formula_dirty_event_count(&self) -> usize {
-        self.formula_dirty.pending_event_count()
-    }
-
-    pub(crate) fn formula_dirty_stats(&self) -> FormulaDirtyStats {
-        self.formula_dirty.stats()
-    }
 
     pub(crate) fn clear_formula_vertex_dirty(&mut self, vertex_id: VertexId) {
         self.store.set_dirty(vertex_id, false);
@@ -1350,7 +1266,6 @@ impl DependencyGraph {
             config: config.clone(),
             topology_revision: 0,
             symbol_revision: 0,
-            formula_authority: FormulaAuthority::default(),
             authority: Default::default(),
             #[cfg(any(test, feature = "legacy_oracle"))]
             pk_order: None,
@@ -1662,14 +1577,6 @@ impl DependencyGraph {
         // Keep a built authority current, so read-only plans (`&self`) see
         // the new binding; during a load or a structural edit it waits.
         self.authority_sync_if_ready();
-    }
-
-    pub(crate) fn authority_revisions(&self) -> (u64, u64, u64) {
-        (
-            self.formula_authority.plane.epoch().0,
-            self.formula_authority.indexes_epoch(),
-            self.formula_authority.indexed_plane_epoch(),
-        )
     }
 
     #[cfg(any(test, feature = "legacy_oracle"))]
@@ -3010,57 +2917,8 @@ impl DependencyGraph {
         self.store.reads_range(vertex)
     }
 
-    /// Legacy's dependency list, for the FormulaPlane span paths only (mixed
-    /// topology, span demand). Spans are never placed under the authority,
-    /// so outside oracle builds these paths are unreachable: debug builds
-    /// assert that, release builds answer empty. Follow-up: delete them
-    /// with the span machinery.
-    pub(crate) fn span_path_legacy_dependencies(&self, vertex: VertexId) -> Vec<VertexId> {
-        #[cfg(any(test, feature = "legacy_oracle"))]
-        {
-            self.get_dependencies(vertex)
-        }
-        #[cfg(not(any(test, feature = "legacy_oracle")))]
-        {
-            debug_assert!(false, "FormulaPlane span path reached without spans");
-            let _ = vertex;
-            Vec::new()
-        }
-    }
 
-    /// See [`Self::span_path_legacy_dependencies`] (no slice outside oracle
-    /// builds; callers fall back to the owned list).
-    pub(crate) fn span_path_legacy_dependencies_slice(
-        &self,
-        vertex: VertexId,
-    ) -> Option<&[VertexId]> {
-        #[cfg(any(test, feature = "legacy_oracle"))]
-        {
-            self.dependencies_slice(vertex)
-        }
-        #[cfg(not(any(test, feature = "legacy_oracle")))]
-        {
-            let _ = vertex;
-            None
-        }
-    }
 
-    /// See [`Self::span_path_legacy_dependencies`].
-    pub(crate) fn span_path_legacy_range_dependencies(
-        &self,
-        vertex: VertexId,
-    ) -> Option<&Vec<SharedRangeRef<'static>>> {
-        #[cfg(any(test, feature = "legacy_oracle"))]
-        {
-            self.get_range_dependencies(vertex)
-        }
-        #[cfg(not(any(test, feature = "legacy_oracle")))]
-        {
-            debug_assert!(false, "FormulaPlane span path reached without spans");
-            let _ = vertex;
-            None
-        }
-    }
 
     /// `vertex` reads a compressed range (see `VertexStore::reads_range`).
     pub(crate) fn note_reads_range(&mut self, vertex: VertexId) {

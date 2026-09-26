@@ -324,14 +324,6 @@ fn legacy_delete_rows_matches_formula_plane_authority_on_issue_306_fixture() {
     };
     let mut legacy = build(FormulaPlaneMode::Off);
     let mut authoritative = build(FormulaPlaneMode::AuthoritativeExperimental);
-    span_internal!("span count after ingest; spans are not placed under the authority (design §10)";
-        assert_eq!(
-            authoritative
-                .baseline_stats()
-                .formula_plane_active_span_count,
-            1
-        );
-    );
 
     for engine in [&mut legacy, &mut authoritative] {
         engine.delete_rows(SHEET, 60, 1).unwrap();

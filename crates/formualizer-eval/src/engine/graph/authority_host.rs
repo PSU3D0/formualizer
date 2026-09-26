@@ -307,22 +307,7 @@ impl DependencyGraph {
 
     fn authority_sync_store(&mut self) {
         let touched = self.vertex_formulas.take_touched();
-        // Spans are the one transient unsupported state: once they are gone
-        // (demoted to per-cell formulas) the graph holds every formula again
-        // and a rebuild is exact.
-        if self.authority.state
-            == HostState::Failed(AuthorityError::Unsupported {
-                operation: "formula_plane_spans",
-            })
-            && self.formula_authority.active_span_count() == 0
-        {
-            self.authority.state = HostState::Unbuilt;
-        }
         if matches!(self.authority.state, HostState::Failed(_)) {
-            return;
-        }
-        if self.formula_authority.active_span_count() > 0 {
-            self.authority_mark_unsupported("formula_plane_spans");
             return;
         }
         if let Some(carried) = self.authority.carried.take() {
@@ -859,13 +844,8 @@ impl DependencyGraph {
 
     /// The store a read-only planning path may use: the host must be
     /// ready and synced with the graph (no pending formula changes, no
-    /// symbol revision since the last build, no FormulaPlane spans).
+    /// symbol revision since the last build).
     pub(crate) fn authority_plan_store(&self) -> Result<&Store, AuthorityError> {
-        if self.formula_authority.active_span_count() > 0 {
-            return Err(AuthorityError::Unsupported {
-                operation: "formula_plane_spans",
-            });
-        }
         match &self.authority.state {
             HostState::Failed(e) => Err(e.clone()),
             HostState::Unbuilt => Err(AuthorityError::Stale),

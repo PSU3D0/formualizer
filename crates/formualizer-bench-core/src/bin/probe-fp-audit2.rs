@@ -36,7 +36,7 @@ mod probe {
     use formualizer_eval::engine::{
         Engine, EvalConfig, FormulaIngestBatch, FormulaIngestRecord, FormulaPlaneMode,
     };
-    use formualizer_eval::formula_plane::diagnostics::canonical_template_diagnostic;
+    use formualizer_eval::engine::template::diagnostics::canonical_template_diagnostic;
     use formualizer_eval::test_workbook::TestWorkbook;
     use formualizer_parse::parser::parse;
     use serde::Serialize;

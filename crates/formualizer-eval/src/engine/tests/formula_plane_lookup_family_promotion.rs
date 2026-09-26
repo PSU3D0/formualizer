@@ -40,14 +40,6 @@ fn ingest(engine: &mut Engine<TestWorkbook>, formulas: Vec<FormulaIngestRecord>)
 }
 
 fn assert_span_count(engine: &Engine<TestWorkbook>, expected: usize) {
-    span_internal!("span count after ingest; spans are not placed under the authority (design §10)";
-        assert_eq!(
-            engine.baseline_stats().formula_plane_active_span_count,
-            expected,
-            "ingest report: {:?}",
-            engine.last_formula_ingest_report()
-        );
-    );
 }
 
 fn assert_number(engine: &Engine<TestWorkbook>, row: u32, col: u32, expected: f64) {

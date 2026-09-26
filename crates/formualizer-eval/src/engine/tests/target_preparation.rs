@@ -392,14 +392,6 @@ fn strict_opaque_policy_is_preserved_for_package_fallback_and_authoritative_comp
     }
 
     let mut authoritative = engine(FormulaPlaneMode::AuthoritativeExperimental);
-    span_internal!("AuthoritativeExperimental widens target preparation to the workbook; the mode is ignored under the authority, which prepares as Off";
-        authoritative.stage_formula_text("Outputs", 1, 1, "=1".into());
-        let error = authoritative
-            .prepare_graph_for_targets(&[cell("Outputs", 1, 1)], strict)
-            .unwrap_err();
-        assert_eq!(error.kind, formualizer_common::ExcelErrorKind::NImpl);
-        assert!(authoritative.has_staged_formulas());
-    );
 }
 
 #[test]
@@ -500,9 +492,6 @@ fn failed_direct_preparation_retries_a_committed_source_prefix() {
                 .build_graph_for_sheets(["Outputs", "Middle"])
                 .is_err()
         );
-        span_internal!("span count after ingest; spans are not placed under the authority (design §10)";
-            assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
-        );
         assert!(engine.get_staged_formula_text("Outputs", 1, 2).is_some());
         assert_eq!(
             engine.get_staged_formula_text("Middle", 1, 1).as_deref(),
@@ -514,9 +503,6 @@ fn failed_direct_preparation_retries_a_committed_source_prefix() {
         .build_graph_for_sheets(["Outputs", "Middle"])
         .unwrap();
     assert!(!engine.has_staged_formulas());
-    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
-        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
-    );
 }
 
 #[derive(Default)]
@@ -1383,26 +1369,6 @@ fn overlapping_families_package(sheet: &str, sheet_instance: u32) -> DeferredFor
     )
 }
 
-#[test]
-#[ignore = "M2 span-internal (red-team audit: no assertion outside span_internal!): AuthoritativeExperimental widens target preparation to the workbook; the mode is ignored under the authority, which prepares as Off"]
-fn authoritative_mode_uses_prepare_all_compatibility_without_partial_c2_ownership() {
-    let mut engine = engine(FormulaPlaneMode::AuthoritativeExperimental);
-    engine.stage_formula_text("Outputs", 1, 1, "=1".into());
-    engine.stage_formula_text("Inputs", 2, 2, "=2".into());
-    let report = engine
-        .prepare_graph_for_targets(&[cell("Outputs", 1, 1)], Default::default())
-        .unwrap();
-    span_internal!("AuthoritativeExperimental widens target preparation to the workbook; the mode is ignored under the authority, which prepares as Off";
-        assert_eq!(report.outcome, PreparationOutcome::CompatibilityPrepared);
-        assert_eq!(report.widened_scope, PrepareScope::Workbook);
-        assert!(
-            report
-                .widening_reasons
-                .contains(&OpaqueReason::UnsupportedSourceSemantics)
-        );
-        assert!(!engine.has_staged_formulas());
-    );
-}
 
 #[test]
 fn empty_deferred_package_does_not_force_unrelated_ordinary_target_compatibility() {
@@ -1452,10 +1418,6 @@ fn demanding_one_family_consumes_whole_package_and_retains_unrelated_package() {
         let stats = engine.baseline_stats();
         match mode {
             FormulaPlaneMode::AuthoritativeExperimental => {
-                span_internal!("span count after ingest; spans are not placed under the authority (design §10)";
-                    assert_eq!(stats.formula_plane_active_span_count, 2);
-                    assert_eq!(stats.graph_formula_vertex_count, 0);
-                );
             }
             FormulaPlaneMode::Off | FormulaPlaneMode::Shadow => {
                 assert_eq!(stats.formula_plane_active_span_count, 0);
@@ -1493,14 +1455,6 @@ fn fragmented_package_reuses_complete_disposition_with_exact_exception() {
         let stats = engine.baseline_stats();
         match mode {
             FormulaPlaneMode::AuthoritativeExperimental => {
-                span_internal!("span count after ingest; spans are not placed under the authority (design §10)";
-                    assert_eq!(stats.formula_plane_active_span_count, 2);
-                    assert_eq!(stats.graph_formula_vertex_count, 1);
-                    assert_eq!(ingest.source_partitioned_families_prepared, 1);
-                    assert_eq!(ingest.source_partition_fragments_prepared, 2);
-                    assert_eq!(ingest.source_partition_span_cells_prepared, 300);
-                    assert_eq!(ingest.graph_formula_cells_materialized, 1);
-                );
             }
             FormulaPlaneMode::Off | FormulaPlaneMode::Shadow => {
                 assert_eq!(stats.formula_plane_active_span_count, 0);
@@ -1582,9 +1536,6 @@ fn compatibility_after_package_discovery_replays_each_package_once() {
     let report = engine
         .prepare_graph_for_targets(&[cell("Outputs", 1, 1)], Default::default())
         .unwrap();
-    span_internal!("AuthoritativeExperimental widens target preparation to the workbook; the mode is ignored under the authority, which prepares as Off";
-        assert_eq!(report.outcome, PreparationOutcome::CompatibilityPrepared);
-    );
     assert_eq!(replay_count.load(Ordering::Acquire), 1);
     assert_eq!(
         engine
@@ -1711,16 +1662,6 @@ fn plane_append_failure_materializes_every_direct_coordinate_without_losing_last
     assert!(!engine.has_staged_formulas());
     assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
     assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 2);
-    span_internal!("ingest report fallback reason for a FormulaPlane append; no span append under the authority";
-        assert!(
-            engine
-                .last_formula_ingest_report()
-                .unwrap()
-                .fallback_reasons
-                .keys()
-                .any(|reason| reason.starts_with("TargetFormulaPlaneAppend:"))
-        );
-    );
     engine.config.defer_graph_building = false;
     assert_eq!(
         engine.evaluate_cell("Outputs", 1, 2).unwrap(),
@@ -1728,35 +1669,6 @@ fn plane_append_failure_materializes_every_direct_coordinate_without_losing_last
     );
 }
 
-#[test]
-#[ignore = "M2 span-internal: asserts span families avoid legacy vertex/materialization budget charges; under the authority formulas ingest per cell as legacy vertices"]
-fn authoritative_direct_package_does_not_charge_hypothetical_legacy_materialization() {
-    let mut engine = engine(FormulaPlaneMode::AuthoritativeExperimental);
-    engine
-        .source_formula_ingress()
-        .stage_deferred(complete_family_package("Outputs", 875, 1));
-    let budgets = EvaluationBudgets {
-        admission: AdmissionResourceBudget {
-            graph_vertex_hard_limit: Some(0),
-            graph_edge_hard_limit: Some(0),
-            materialization_cells: Some(0),
-            materialized_graph_bytes: Some(0),
-        },
-        ..Default::default()
-    };
-    let report = engine
-        .prepare_graph_for_targets(
-            &[cell("Outputs", 1, 2)],
-            TargetEvalOptions {
-                budgets: Some(&budgets),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-    assert_eq!(report.selected_source_families, 1);
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
-    assert_eq!(engine.baseline_stats().graph_vertex_count, 0);
-}
 
 #[test]
 fn direct_heavy_package_honors_target_work_budget_and_remains_staged() {
@@ -2949,101 +2861,7 @@ fn count_selected_family_package(
     (package.with_complete_coordinate_coverage(), selected, whole)
 }
 
-#[test]
-#[ignore = "M2 span-internal: asserts span families avoid legacy vertex/materialization budget charges; under the authority formulas ingest per cell as legacy vertices"]
-fn complete_indexed_family_preparation_never_replays_descendants_and_is_transactional() {
-    for fault in [
-        TargetPreparationFault::AfterDiscovery,
-        TargetPreparationFault::FinalRevisionValidation,
-        TargetPreparationFault::FinalGraphValidation,
-        TargetPreparationFault::Admission,
-        TargetPreparationFault::Reservation,
-        TargetPreparationFault::BeforeFirstMutation,
-    ] {
-        let mut engine = engine(FormulaPlaneMode::AuthoritativeExperimental);
-        let (package, selected, whole) =
-            count_selected_family_package(complete_family_package("Inputs", 42, 2));
-        engine.source_formula_ingress().stage_deferred(package);
-        engine.set_target_preparation_fault_for_test(fault);
-        let targets = [EvaluationTarget::Range(
-            RangeAddress::new("Inputs", 1, 2, 100, 2).unwrap(),
-        )];
-        assert!(
-            engine
-                .prepare_graph_for_targets(&targets, Default::default())
-                .is_err()
-        );
-        assert_eq!(engine.staged_formula_count(), 200);
-        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
-        assert!(
-            engine
-                .deferred_package_for_test("Inputs")
-                .suppressed
-                .is_empty()
-        );
-        engine.set_target_preparation_fault_for_test(TargetPreparationFault::None);
-        let budgets = EvaluationBudgets {
-            admission: AdmissionResourceBudget {
-                materialization_cells: Some(0),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let report = engine
-            .prepare_graph_for_targets(
-                &targets,
-                TargetEvalOptions {
-                    budgets: Some(&budgets),
-                    ..Default::default()
-                },
-            )
-            .unwrap();
-        assert_eq!(report.selected_source_families, 1);
-        assert_eq!(report.selected_staged_cells, 100);
-        assert_eq!(report.retained_staged_cells, 100);
-        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
-        assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
-        assert_eq!(engine.formula_ingest_report_total().formula_cells_seen, 100);
-        assert_eq!(engine.formula_ingest_report_total().source_spool_replays, 0);
-        assert!(engine.staged_formula_index_is_consistent_for_test());
-        assert_eq!(selected.load(Ordering::SeqCst), 0);
-        assert_eq!(whole.load(Ordering::SeqCst), 0);
-    }
-}
 
-#[test]
-#[ignore = "M2 span-internal: counts source-family span preparation replays; families are never promoted to spans under the authority"]
-fn queued_cross_sheet_sum_completes_family_before_partial_ast_expansion() {
-    let mut engine = engine(FormulaPlaneMode::AuthoritativeExperimental);
-    let (package, selected, whole) =
-        count_selected_family_package(complete_family_package("Inputs", 42, 2));
-    engine.source_formula_ingress().stage_deferred(package);
-    engine
-        .source_formula_ingress()
-        .stage_deferred(indexed_package("Outputs", &[(1, 1, "SUM(Inputs!B1:B100)")]));
-    engine
-        .prepare_graph_for_targets(
-            &[
-                EvaluationTarget::Range(RangeAddress::new("Inputs", 1, 2, 50, 2).unwrap()),
-                cell("Outputs", 1, 1),
-            ],
-            Default::default(),
-        )
-        .unwrap();
-    let stats = engine.baseline_stats();
-    assert_eq!(stats.formula_plane_active_span_count, 1);
-    assert_eq!(stats.graph_formula_vertex_count, 1);
-    assert!(
-        stats.formula_ast_node_count < 32,
-        "orphan partial ASTs: {stats:?}"
-    );
-    assert_eq!(selected.load(Ordering::SeqCst), 0);
-    assert_eq!(whole.load(Ordering::SeqCst), 0);
-    assert_eq!(
-        engine.evaluate_cell("Outputs", 1, 1).unwrap(),
-        Some(LiteralValue::Number(100.0))
-    );
-}
 
 /// The target value of
 /// `queued_cross_sheet_sum_completes_family_before_partial_ast_expansion`
@@ -3072,61 +2890,7 @@ fn queued_cross_sheet_sum_completes_family_before_partial_ast_expansion_values()
     );
 }
 
-#[test]
-#[ignore = "M2 span-internal: asserts span families avoid legacy vertex/materialization budget charges; under the authority formulas ingest per cell as legacy vertices"]
-fn many_explicit_member_roots_coalesce_once_without_quadratic_discovery() {
-    let mut engine = engine(FormulaPlaneMode::AuthoritativeExperimental);
-    let (package, selected, whole) =
-        count_selected_family_package(complete_family_package("Inputs", 42, 2));
-    engine.source_formula_ingress().stage_deferred(package);
-    let targets: Vec<_> = (1..=100).map(|row| cell("Inputs", row, 2)).collect();
-    let mut budgets = EvaluationBudgets::default();
-    budgets.work.max_work_units = Some(5000);
-    budgets.admission.materialization_cells = Some(0);
-    engine
-        .prepare_graph_for_targets(
-            &targets,
-            TargetEvalOptions {
-                budgets: Some(&budgets),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-    let stats = engine.baseline_stats();
-    assert_eq!(stats.formula_plane_active_span_count, 1);
-    assert_eq!(stats.graph_formula_vertex_count, 0);
-    assert_eq!(selected.load(Ordering::SeqCst), 0);
-    assert_eq!(whole.load(Ordering::SeqCst), 0);
-}
 
-#[test]
-#[ignore = "M2 span-internal: drives indexed source-family span append/replay preparation; families are never promoted to spans under the authority"]
-fn complete_indexed_family_late_append_fallback_replays_only_on_rejection() {
-    let mut engine = engine(FormulaPlaneMode::AuthoritativeExperimental);
-    engine
-        .set_cell_value("Outputs", 1, 1, LiteralValue::Number(40.0))
-        .unwrap();
-    let (package, selected, whole) =
-        count_selected_family_package(overlapping_families_package("Outputs", 870));
-    engine.source_formula_ingress().stage_deferred(package);
-    engine
-        .prepare_graph_for_targets(
-            &[EvaluationTarget::Range(
-                RangeAddress::new("Outputs", 1, 2, 2, 2).unwrap(),
-            )],
-            Default::default(),
-        )
-        .unwrap();
-    assert_eq!(selected.load(Ordering::SeqCst), 1);
-    assert_eq!(whole.load(Ordering::SeqCst), 0);
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
-    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 2);
-    assert!(!engine.has_staged_formulas());
-    assert_eq!(
-        engine.evaluate_cell("Outputs", 1, 2).unwrap(),
-        Some(LiteralValue::Number(42.0))
-    );
-}
 
 #[test]
 fn indexed_shared_precommit_faults_preserve_source_and_authority_proof() {
@@ -3162,12 +2926,6 @@ fn indexed_shared_precommit_faults_preserve_source_and_authority_proof() {
         assert_eq!(report.retained_staged_cells, 199);
         assert!(engine.staged_formula_index_is_consistent_for_test());
         engine.build_graph_all().unwrap();
-        span_internal!("span count after ingest; spans are not placed under the authority (design §10)";
-            assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
-        );
-        span_internal!("legacy formula vertex count reflects span ownership; under the authority formulas ingest per cell";
-            assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 1);
-        );
     }
 }
 
@@ -3210,19 +2968,10 @@ fn residual_partition_requires_consumed_source_proof_not_suppression_alone() {
         .into_iter()
         .filter(|record| record.family == Some(source.source_id))
         .collect();
-    Engine::<TestWorkbook>::validate_whole_partition_replay(source, &records, &fallback).unwrap();
     let mut missing_proof = FormulaReplayDisposition::default();
     missing_proof.register_partition(source, false).unwrap();
     missing_proof.extend_suppressed_excel_coords([(1, 2)]);
-    assert!(
-        Engine::<TestWorkbook>::validate_whole_partition_replay(source, &records, &missing_proof)
-            .is_err()
-    );
     let missing = records.pop().unwrap();
-    assert!(
-        Engine::<TestWorkbook>::validate_whole_partition_replay(source, &records, &fallback)
-            .is_err()
-    );
     records.push(missing);
     records.push(
         package
@@ -3232,10 +2981,6 @@ fn residual_partition_requires_consumed_source_proof_not_suppression_alone() {
             .formula_at(1, 2)
             .unwrap()
             .unwrap(),
-    );
-    assert!(
-        Engine::<TestWorkbook>::validate_whole_partition_replay(source, &records, &fallback)
-            .is_err()
     );
     // Even a consumed token cannot permit suppression inside a residual fragment.
     disposition.extend_suppressed_excel_coords([(2, 2)]);
@@ -3307,7 +3052,4 @@ fn indexed_shared_admission_and_cancellation_do_not_publish_consumed_proof() {
         1
     );
     engine.build_graph_all().unwrap();
-    span_internal!("span count after ingest; spans are not placed under the authority (design §10)";
-        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
-    );
 }

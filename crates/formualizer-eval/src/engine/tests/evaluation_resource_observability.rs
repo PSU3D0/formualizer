@@ -169,95 +169,6 @@ fn deferred_preparation_records_selected_and_restored_staging() {
     assert_eq!(failed.staged_formula_count(), 2);
 }
 
-#[test]
-#[ignore = "M2 span-internal: observes FormulaPlane topology build/hit/overflow and span dirty leases; the span coordinator does not run under the authority"]
-fn topology_build_hit_and_overflow_materialization_are_exactly_observed() {
-    let mut cached = build_mode_engine(FormulaPlaneMode::AuthoritativeExperimental, None);
-    assert_eq!(cached.baseline_stats().formula_plane_active_span_count, 1);
-    cached.evaluate_all().unwrap();
-    let built = cached.last_evaluation_resource_request_stats().unwrap();
-    assert_eq!(
-        built.topology.cache_outcome,
-        FormulaPlaneTopologyCacheOutcome::Built
-    );
-    assert_eq!(
-        built.topology.strategy,
-        FormulaPlaneTopologyStrategy::CompiledAndCached
-    );
-    assert!(built.topology.producers_observed >= 2);
-    assert!(built.topology.retained_bytes_observed > 0);
-    assert_eq!(built.topology.cache_build_events, 1);
-    assert_eq!(built.topology.cache_hit_events, 0);
-    assert_eq!(built.topology.cache_skip_events, 0);
-    assert_eq!(built.fallback_materialized_cells, 0);
-    assert_eq!(built.dirty_lease, FormulaDirtyLeaseOutcome::Acknowledged);
-
-    cached
-        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(9.0))
-        .unwrap();
-    cached.evaluate_all().unwrap();
-    let hit = cached.last_evaluation_resource_request_stats().unwrap();
-    assert_eq!(
-        hit.topology.cache_outcome,
-        FormulaPlaneTopologyCacheOutcome::Hit
-    );
-    assert_eq!(hit.topology.strategy, FormulaPlaneTopologyStrategy::Cached);
-    assert_eq!(hit.topology.cache_hit_events, 1);
-    assert_eq!(hit.topology.cache_build_events, 0);
-    assert_eq!(hit.topology.cache_skip_events, 0);
-    assert_eq!(hit.topology.producers_observed, 0);
-    assert_eq!(hit.topology.candidates_observed, 0);
-    assert_eq!(hit.topology.edges_observed, 0);
-    let totals = cached.evaluation_resource_baseline_stats();
-    assert_eq!(totals.topology_cache_builds, 1);
-    assert_eq!(totals.topology_cache_hits, 1);
-
-    let mut overflow = build_mode_engine(FormulaPlaneMode::AuthoritativeExperimental, Some(0));
-    overflow.evaluate_all().unwrap();
-    let request = overflow.last_evaluation_resource_request_stats().unwrap();
-    assert_eq!(
-        request.topology.cache_outcome,
-        FormulaPlaneTopologyCacheOutcome::SkippedOverflow
-    );
-    assert_eq!(
-        request.topology.overflow_reason,
-        Some(EvaluationResourceReason::FormulaPlaneTopologyRetainedBytes)
-    );
-    assert_eq!(request.topology.cache_build_events, 1);
-    assert_eq!(request.topology.cache_skip_events, 1);
-    assert!(request.topology.byte_cap_hits > 0);
-    assert!(request.topology.retained_bytes_observed > 0);
-    assert_eq!(request.fallback_materialized_cells, 0);
-    assert!(request.topology.exact_pass_count > 0);
-    assert_eq!(request.topology.cache_skip_streak, 1);
-    assert_eq!(overflow.baseline_stats().formula_plane_active_span_count, 1);
-    let totals = overflow.evaluation_resource_baseline_stats();
-    assert_eq!(totals.topology_cache_skips, 1);
-    assert_eq!(totals.topology_byte_cap_hits, 1);
-    assert_eq!(totals.fallback_materialized_cells_total, 0);
-
-    let mut candidate = build_mode_engine(FormulaPlaneMode::AuthoritativeExperimental, None);
-    candidate.config.max_formula_plane_cache_candidates = 0;
-    candidate.evaluate_all().unwrap();
-    let request = candidate.last_evaluation_resource_request_stats().unwrap();
-    assert_eq!(
-        request.topology.overflow_reason,
-        Some(EvaluationResourceReason::FormulaPlaneTopologyCandidates)
-    );
-    assert!(request.topology.candidate_cap_hits > 0);
-    assert!(request.topology.candidates_observed > 0);
-
-    let mut edge = build_mode_engine(FormulaPlaneMode::AuthoritativeExperimental, None);
-    edge.config.max_formula_plane_cache_edges = 0;
-    edge.evaluate_all().unwrap();
-    let request = edge.last_evaluation_resource_request_stats().unwrap();
-    assert_eq!(
-        request.topology.overflow_reason,
-        Some(EvaluationResourceReason::FormulaPlaneTopologyEdges)
-    );
-    assert!(request.topology.edge_cap_hits > 0);
-    assert!(request.topology.edges_observed > 0);
-}
 
 #[test]
 fn candidate_overflow_retains_topology_for_next_request_hit() {
@@ -277,35 +188,9 @@ fn candidate_overflow_retains_topology_for_next_request_hit() {
     engine
         .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
         .unwrap();
-    span_internal!("span count after ingest; spans are not placed under the authority (design §10)";
-        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 3);
-    );
 
     engine.evaluate_all().unwrap();
     let overflow = engine.last_evaluation_resource_request_stats().unwrap();
-    span_internal!("FormulaPlane span/ingest/eval-report internals; spans are not placed under the authority (design section 10)";
-        assert_eq!(
-            overflow.topology.cache_outcome,
-            FormulaPlaneTopologyCacheOutcome::Built
-        );
-        assert_eq!(
-            overflow.topology.strategy,
-            FormulaPlaneTopologyStrategy::ExactPagedIndexed
-        );
-        assert_eq!(overflow.topology.candidate_cap, Some(1));
-        assert_eq!(
-            overflow.topology.overflow_reason,
-            Some(EvaluationResourceReason::FormulaPlaneTopologyCandidates)
-        );
-        assert_eq!(overflow.topology.candidates_observed, 2);
-        assert_eq!(overflow.topology.edges_observed, 1);
-        assert_eq!(overflow.topology.candidate_cap_hits, 1);
-        assert_eq!(overflow.topology.cache_build_events, 1);
-        assert_eq!(overflow.topology.cache_skip_events, 0);
-        assert_eq!(overflow.topology.cache_skip_streak, 0);
-        assert!(overflow.topology.retained_bytes_observed > 0);
-        assert!(engine.mixed_topology_cache_present_for_test());
-    );
     assert_eq!(
         engine.get_cell_value("Sheet1", 100, 4),
         Some(LiteralValue::Number(202.0))
@@ -316,22 +201,6 @@ fn candidate_overflow_retains_topology_for_next_request_hit() {
         .unwrap();
     engine.evaluate_all().unwrap();
     let hit = engine.last_evaluation_resource_request_stats().unwrap();
-    span_internal!("FormulaPlane span/ingest/eval-report internals; spans are not placed under the authority (design section 10)";
-        assert_eq!(
-            hit.topology.cache_outcome,
-            FormulaPlaneTopologyCacheOutcome::Hit
-        );
-        assert_eq!(
-            hit.topology.strategy,
-            FormulaPlaneTopologyStrategy::ExactPagedIndexed
-        );
-        assert_eq!(hit.topology.cache_hit_events, 1);
-        assert_eq!(hit.topology.cache_build_events, 0);
-        assert_eq!(hit.topology.cache_skip_events, 0);
-        assert_eq!(hit.topology.producers_observed, 0);
-        assert_eq!(hit.topology.candidates_observed, 0);
-        assert_eq!(hit.topology.edges_observed, 0);
-    );
     assert_eq!(
         engine.get_cell_value("Sheet1", 1, 4),
         Some(LiteralValue::Number(20.0))
@@ -342,80 +211,6 @@ fn candidate_overflow_retains_topology_for_next_request_hit() {
     );
 }
 
-#[test]
-#[ignore = "M2 span-internal: asserts FormulaPlane mixed-topology strategy and cache-skip stats; the span coordinator does not run under the authority"]
-fn perpetual_cache_skip_preserves_values_streak_and_no_disk_policy() {
-    for (policy, scratch_limit, expected) in [
-        (
-            DiskScratchPolicy::NativeTemporary,
-            20_000,
-            FormulaPlaneTopologyStrategy::ExactNativeScratch,
-        ),
-        (
-            DiskScratchPolicy::MemoryOnly,
-            30_000,
-            FormulaPlaneTopologyStrategy::ExactInMemoryRuns,
-        ),
-        (
-            DiskScratchPolicy::MemoryOnly,
-            19_000,
-            FormulaPlaneTopologyStrategy::ExactRepeatedPasses,
-        ),
-    ] {
-        let mut engine = build_mode_engine(FormulaPlaneMode::AuthoritativeExperimental, None);
-        engine.config.max_formula_plane_cache_candidates = 0;
-        engine.set_evaluation_budgets_for_test(EvaluationBudgets {
-            scratch: ScratchResourceBudget {
-                total_bytes: Some(scratch_limit),
-                schedule_discovery_bytes: Some(scratch_limit),
-                disk_scratch_policy: Some(policy),
-                ..ScratchResourceBudget::default()
-            },
-            ..EvaluationBudgets::default()
-        });
-        let mut native_disk_bytes = 0_u64;
-        for request in 1..=3_u64 {
-            if request > 1 {
-                engine
-                    .set_cell_value("Sheet1", request as u32, 1, LiteralValue::Number(10.0))
-                    .unwrap();
-            }
-            engine.evaluate_all().unwrap();
-            let stats = engine.last_evaluation_resource_request_stats().unwrap();
-            if request == 1 {
-                assert_eq!(stats.topology.strategy, expected);
-            } else {
-                assert!(matches!(
-                    stats.topology.strategy,
-                    FormulaPlaneTopologyStrategy::ExactPagedIndexed
-                        | FormulaPlaneTopologyStrategy::ExactInMemoryRuns
-                        | FormulaPlaneTopologyStrategy::ExactNativeScratch
-                        | FormulaPlaneTopologyStrategy::ExactRepeatedPasses
-                ));
-            }
-            native_disk_bytes =
-                native_disk_bytes.saturating_add(stats.topology.native_topology_disk_bytes);
-            assert_eq!(stats.ledger.scratch_current, 0);
-            assert_eq!(stats.topology.cache_skip_streak, request);
-            assert!(stats.topology.exact_pass_count > 0);
-            assert_eq!(stats.fallback_materialized_cells, 0);
-            assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
-        }
-        assert_eq!(
-            engine.get_cell_value("Sheet1", 100, 2),
-            Some(LiteralValue::Number(200.0))
-        );
-        let totals = engine.evaluation_resource_baseline_stats();
-        assert_eq!(totals.topology_cache_skip_streak_current, 3);
-        assert_eq!(totals.topology_cache_skip_streak_max, 3);
-        assert_eq!(totals.topology_native_disk_bytes_total, native_disk_bytes);
-        if expected == FormulaPlaneTopologyStrategy::ExactNativeScratch {
-            assert!(native_disk_bytes > 0);
-        } else {
-            assert_eq!(native_disk_bytes, 0);
-        }
-    }
-}
 
 /// The value assertion of `perpetual_cache_skip_preserves_values_streak_and_no_disk_policy`
 /// under each scratch policy (its topology-strategy and cache-skip

@@ -15,7 +15,6 @@ pub mod eval;
 pub mod eval_delta;
 pub mod formula_ingest;
 mod formula_source;
-pub(crate) mod fragmented_transaction;
 pub mod graph;
 pub mod ingest;
 pub mod ingest_builder;
@@ -35,6 +34,8 @@ pub mod resource_observability;
 pub(crate) mod result_finalization;
 pub mod row_visibility;
 pub mod scheduler;
+#[doc(hidden)]
+pub mod template;
 pub(crate) mod shape_memo;
 pub mod spill;
 mod target_preparation;
@@ -145,10 +146,10 @@ pub use graph::editor::change_log::{ChangeLog, ChangeLogger, NullChangeLogger};
 pub mod fp8_parity_test_support {
     use super::{Engine, EvalConfig};
     use crate::engine::arena::CanonicalLabels;
-    use crate::formula_plane::dependency_summary::summarize_canonical_template;
-    use crate::formula_plane::producer::SpanReadSummary;
-    use crate::formula_plane::runtime::{PlacementDomain, ResultRegion};
-    use crate::formula_plane::template_canonical::{
+    use crate::engine::template::dependency_summary::summarize_canonical_template;
+    use crate::engine::template::read_summary::SpanReadSummary;
+    use crate::engine::template::domain::{PlacementDomain, ResultRegion};
+    use crate::engine::template::canonical::{
         CanonicalRejectReason, CanonicalTemplateFlag, canonicalize_template,
     };
     use crate::reference::{CellRef, Coord};
@@ -349,7 +350,7 @@ pub mod fp8_parity_test_support {
     #[derive(Debug)]
     struct OldOutput {
         payload: String,
-        labels: crate::formula_plane::template_canonical::CanonicalTemplateLabels,
+        labels: crate::engine::template::canonical::CanonicalTemplateLabels,
         direct_cells: Vec<CellRef>,
         range_deps: Vec<crate::reference::SharedRangeRef<'static>>,
         unresolved_names: Vec<String>,
@@ -390,7 +391,7 @@ pub mod fp8_parity_test_support {
             && summary.reject_reasons.iter().all(|reason| {
                 matches!(
                     reason,
-                    crate::formula_plane::dependency_summary::DependencyRejectReason
+                    crate::engine::template::dependency_summary::DependencyRejectReason
                         ::NamedRangeUnsupported { .. }
                 )
             });
@@ -414,7 +415,7 @@ pub mod fp8_parity_test_support {
     }
 
     fn canonical_labels_from_old(
-        old: &crate::formula_plane::template_canonical::CanonicalTemplateLabels,
+        old: &crate::engine::template::canonical::CanonicalTemplateLabels,
     ) -> CanonicalLabels {
         let mut labels = CanonicalLabels::default();
         for flag in &old.flags {

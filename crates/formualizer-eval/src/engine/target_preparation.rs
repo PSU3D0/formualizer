@@ -4,8 +4,6 @@ use std::time::{Duration, Instant};
 use formualizer_common::RangeAddress;
 
 use super::{EvaluationBudgets, VertexId};
-use crate::formula_plane::region_index::Region;
-use crate::formula_plane::runtime::FormulaSpanRef;
 use crate::reference::CellRef;
 
 pub type RequestId = u64;
@@ -44,10 +42,6 @@ pub enum EvaluationTarget {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum TargetProducer {
     Legacy(VertexId),
-    Span {
-        span_ref: FormulaSpanRef,
-        demanded: Region,
-    },
     Symbol(VertexId),
     ValueOnly(CellRef),
 }
@@ -126,10 +120,12 @@ impl Default for TargetEvalOptions<'_> {
 #[non_exhaustive]
 pub struct PreparationRevision {
     pub graph: u64,
-    /// Raw FormulaPlane epoch. Kept separate from each authority-index counter so
-    /// unrelated component revisions cannot collide through arithmetic folding.
+    /// Always `0`: the FormulaPlane span authority these counters tracked was
+    /// removed (the dependency authority is the only runtime path).
     pub authority: u64,
+    /// Always `0`; see [`Self::authority`].
     pub authority_indexes: u64,
+    /// Always `0`; see [`Self::authority`].
     pub authority_indexed_plane: u64,
     pub staged: u64,
     pub symbols: u64,

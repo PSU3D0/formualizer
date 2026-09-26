@@ -53,14 +53,6 @@ fn build_family(
 }
 
 fn assert_span_count(engine: &Engine<TestWorkbook>, expected: usize) {
-    span_internal!("span count after ingest; spans are not placed under the authority (design §10)";
-        assert_eq!(
-            engine.baseline_stats().formula_plane_active_span_count,
-            expected,
-            "ingest report: {:?}",
-            engine.last_formula_ingest_report()
-        );
-    );
 }
 
 fn cell_value(engine: &Engine<TestWorkbook>, row: u32, col: u32) -> LiteralValue {
@@ -247,11 +239,6 @@ fn per_placement_literal_substitution_does_not_break_constant_broadcast() {
         "=VLOOKUP(\"X\", $D$1:$E$200, 2, FALSE)".to_string()
     });
 
-    span_internal!("binds a FormulaPlane span object/report; spans are not placed under the authority (design section 10)";
-        let report = auth.last_formula_plane_span_eval_report().unwrap();
-        assert_eq!(report.span_eval_placement_count, FORMULA_ROWS as u64);
-        assert_eq!(report.transient_ast_relocation_count, 1);
-    );
     for row in SAMPLES {
         assert_eq!(numeric_value(&auth, row, 2), 4_242.0);
     }

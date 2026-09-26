@@ -15,7 +15,7 @@ use crate::engine::sheet_registry::SheetRegistry;
 use crate::engine::used_extent::{
     ExtentPolicy, OpenRangeBounds, resolve_used_extent_with_fallback,
 };
-use crate::formula_plane::template_canonical::LiteralSlotId;
+use crate::engine::template::canonical::LiteralSlotId;
 
 /// Postfix calls (`LAMBDA(x,x+1)(B1)`) are parsed and stored but not evaluated;
 /// the parsed tree and its arena copy fail the same way.

@@ -5,7 +5,6 @@ pub mod broadcast;
 pub mod coercion;
 pub mod error_policy;
 pub mod format;
-pub mod formula_plane;
 pub mod function;
 pub mod function_contract;
 pub mod function_registry;
