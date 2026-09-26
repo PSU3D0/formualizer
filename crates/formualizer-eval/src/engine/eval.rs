@@ -30,7 +30,7 @@ use crate::engine::used_extent::{
     ExtentPolicy, OpenRangeBounds, resolve_used_extent_with_fallback,
 };
 use crate::engine::virtual_deps::VirtualDepBuilder;
-use family::layer_units;
+use family::{LayerUnit, layer_units};
 
 #[path = "freshness.rs"]
 mod freshness;
@@ -14663,10 +14663,30 @@ where
             .map_err(Self::authority_excel_error)?;
         // Names are symbol-plane nodes (design §4.1): a name vertex plans as
         // the unit at its node, between its precedents and its readers.
+        // Candidates become cells, sorted by (sheet, column, row) and
+        // coalesced into row intervals: one cover insert per interval.
         let mut cover = Cover::new();
-        for &id in candidates {
-            if let Some((sheet, row, col)) = self.graph.authority_cell_of_vertex(id) {
-                cover.insert_rect(sheet, &Rect::cell(row, col));
+        {
+            let mut cells: Vec<(u16, u32, u32)> = candidates
+                .iter()
+                .filter_map(|&id| self.graph.authority_cell_of_vertex(id))
+                .map(|(sheet, row, col)| (sheet, col, row))
+                .collect();
+            cells.sort_unstable();
+            let mut i = 0;
+            while i < cells.len() {
+                let (sheet, col, r0) = cells[i];
+                let mut r1 = r0;
+                let mut j = i + 1;
+                while j < cells.len() && cells[j].0 == sheet && cells[j].1 == col {
+                    if cells[j].2 > r1 + 1 {
+                        break;
+                    }
+                    r1 = r1.max(cells[j].2);
+                    j += 1;
+                }
+                cover.insert_rect(sheet, &Rect::new(r0, col, r1, col));
+                i = j;
             }
         }
         let mut hints = Vec::new();
@@ -14695,7 +14715,7 @@ where
         }
         // rdi_dyn: order each dynamic reader after its observed reads.
         let host = self.graph.authority_host();
-        for &id in candidates {
+        for &id in candidates.iter().filter(|_| host.has_observed()) {
             let Some(reads) = host.observed(id) else {
                 continue;
             };
@@ -19018,6 +19038,25 @@ where
             }
             let values = self.evaluate_unit_immutable(layer, unit);
             done += values.len();
+            if let LayerUnit::Run(run) = unit {
+                let members = &layer.vertices[run.start as usize..(run.start + run.len) as usize];
+                let delta_active = delta.as_deref().is_some_and(|d| d.mode != DeltaMode::Off);
+                let committed = self.commit_run_scalars(
+                    run,
+                    members,
+                    &values,
+                    delta_active,
+                    buffered.then_some(&mut computed_writes),
+                );
+                match committed {
+                    Ok(true) => continue,
+                    Ok(false) => {}
+                    Err(e) => {
+                        self.flush_computed_write_buffer(&mut computed_writes)?;
+                        return Err(e);
+                    }
+                }
+            }
             for (vertex_id, value) in values {
                 let effects = if buffered {
                     self.plan_vertex_effects_with_computed_flush(
@@ -19125,6 +19164,14 @@ where
             self.freshness_gate_group(group);
             match results {
                 Ok(vertex_results) => {
+                    let (vertex_results, committed) = self.commit_parallel_runs(
+                        layer,
+                        units,
+                        vertex_results,
+                        false,
+                        &mut computed_writes,
+                    )?;
+                    applied = applied.saturating_add(committed);
                     // Arrays first, then scalars — establishes spill regions before
                     // scalar results that might land inside a spilled region.
                     let mut arrays: Vec<(VertexId, LiteralValue)> = Vec::new();
@@ -19230,6 +19277,14 @@ where
             self.freshness_gate_group(group);
             match results {
                 Ok(vertex_results) => {
+                    let (vertex_results, committed) = self.commit_parallel_runs(
+                        layer,
+                        units,
+                        vertex_results,
+                        delta.mode != DeltaMode::Off,
+                        &mut computed_writes,
+                    )?;
+                    applied = applied.saturating_add(committed);
                     let mut arrays: Vec<(VertexId, LiteralValue)> = Vec::new();
                     let mut others: Vec<(VertexId, LiteralValue)> = Vec::new();
                     for (vertex_id, result) in vertex_results {
@@ -19337,6 +19392,14 @@ where
             self.freshness_gate_group(group);
             match results {
                 Ok(vertex_results) => {
+                    let (vertex_results, committed) = self.commit_parallel_runs(
+                        layer,
+                        units,
+                        vertex_results,
+                        false,
+                        &mut computed_writes,
+                    )?;
+                    applied = applied.saturating_add(committed);
                     let mut arrays: Vec<(VertexId, LiteralValue)> = Vec::new();
                     let mut others: Vec<(VertexId, LiteralValue)> = Vec::new();
                     for (vertex_id, result) in vertex_results {

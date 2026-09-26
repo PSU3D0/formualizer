@@ -232,6 +232,24 @@ impl<R: EvaluationContext> Engine<R> {
     /// Commit hook, after a vertex's effects were planned: it leaves the
     /// dirty set now (FR2), so a later re-dirty (a spill committing over
     /// its reads, FR5) survives the end of the pass.
+    /// A group of non-dynamic vertices can commit without per-vertex stale
+    /// checks: no reader is stale or dropped this pass.
+    pub(super) fn freshness_group_commit_ok(&mut self) -> bool {
+        !self.freshness.armed
+            || (self.freshness.group_dropped.is_empty()
+                && self.freshness.stale.get_mut().unwrap().is_empty())
+    }
+
+    /// `freshness_mark_committed` for a group of non-dynamic vertices
+    /// (which never have fresh reads to publish).
+    pub(super) fn freshness_mark_committed_group(&mut self, vertices: &[VertexId]) {
+        if !self.freshness.armed {
+            return;
+        }
+        self.freshness.committed.extend(vertices.iter().copied());
+        self.graph.clear_dirty_flags(vertices);
+    }
+
     pub(super) fn freshness_mark_committed(&mut self, vertex: VertexId) {
         self.freshness.committed.insert(vertex);
         self.graph.clear_dirty_flags(&[vertex]);

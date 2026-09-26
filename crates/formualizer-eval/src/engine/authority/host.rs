@@ -242,6 +242,11 @@ impl AuthorityHost {
     }
 
     /// The observed reads of dynamic reader `reader`, if recorded.
+    /// Whether any dynamic reader has recorded observed reads.
+    pub fn has_observed(&self) -> bool {
+        !self.observed.is_empty()
+    }
+
     pub fn observed(&self, reader: VertexId) -> Option<&[ObservedRect]> {
         self.observed.get(&reader).map(Vec::as_slice)
     }

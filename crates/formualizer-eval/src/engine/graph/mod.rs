@@ -3391,6 +3391,16 @@ impl DependencyGraph {
     // access to columnar data through the VertexStore
 
     /// Updates the cached value of a formula vertex.
+    /// Whether any spill anchor is registered.
+    pub(crate) fn has_spill_anchors(&self) -> bool {
+        !self.spill_anchor_to_cells.is_empty()
+    }
+
+    /// Whether `vertex` anchors a spill.
+    pub(crate) fn is_spill_anchor(&self, vertex: VertexId) -> bool {
+        self.spill_anchor_to_cells.contains_key(&vertex)
+    }
+
     pub(crate) fn update_vertex_value(&mut self, vertex_id: VertexId, value: LiteralValue) {
         if !self.value_cache_enabled && self.is_grid_backed(vertex_id) {
             // Canonical mode: grid-backed vertices must not store values in the graph.

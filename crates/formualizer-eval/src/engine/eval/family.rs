@@ -9,6 +9,7 @@
 //! members never reach here (cycle units are not layers). Results that are
 //! arrays go through the same effect planning (spills) as per-cell results.
 
+use super::ComputedWriteBuffer;
 use super::*;
 use crate::engine::authority::store::Store;
 use crate::engine::scheduler::{Layer, LayerRun};
@@ -392,5 +393,135 @@ pub(crate) fn same_value(a: &LiteralValue, b: &LiteralValue) -> bool {
         }
         (LiteralValue::Error(x), LiteralValue::Error(y)) => x.kind == y.kind,
         _ => a == b,
+    }
+}
+
+impl<R> Engine<R>
+where
+    R: EvaluationContext,
+{
+    /// Parallel apply: commit the runs of `units` (results in unit order)
+    /// as units when no result is an array (arrays must apply first), and
+    /// return the results left for the per-vertex path (in order) and the
+    /// number committed. Cells are distinct, so the relative order of run
+    /// and single-cell overlay writes is not observable.
+    pub(super) fn commit_parallel_runs(
+        &mut self,
+        layer: &Layer,
+        units: &[LayerUnit],
+        results: Vec<(VertexId, LiteralValue)>,
+        delta_active: bool,
+        computed_writes: &mut ComputedWriteBuffer,
+    ) -> Result<(Vec<(VertexId, LiteralValue)>, usize), ExcelError> {
+        if delta_active
+            || !units.iter().any(|u| matches!(u, LayerUnit::Run(_)))
+            || results
+                .iter()
+                .any(|(_, v)| matches!(v, LiteralValue::Array(_)))
+        {
+            return Ok((results, 0));
+        }
+        let mut rest = Vec::with_capacity(results.len());
+        let mut committed = 0usize;
+        let mut at = 0usize;
+        for &unit in units {
+            match unit {
+                LayerUnit::Cell(_) => {
+                    rest.push(results[at].clone());
+                    at += 1;
+                }
+                LayerUnit::Run(run) => {
+                    let n = run.len as usize;
+                    let members =
+                        &layer.vertices[run.start as usize..(run.start + run.len) as usize];
+                    let values = &results[at..at + n];
+                    debug_assert!(values.iter().zip(members).all(|(r, &m)| r.0 == m));
+                    if self.commit_run_scalars(
+                        run,
+                        members,
+                        values,
+                        false,
+                        Some(computed_writes),
+                    )? {
+                        committed += n;
+                    } else {
+                        rest.extend_from_slice(values);
+                    }
+                    at += n;
+                }
+            }
+        }
+        debug_assert_eq!(at, results.len());
+        Ok((rest, committed))
+    }
+
+    /// Commit a run's results as one unit, when nothing needs the per-vertex
+    /// effect path: every value is a scalar, no delta is collected, no
+    /// reader is stale, no spill is pending and no member anchors a spill.
+    /// Returns `false` (having done nothing) otherwise. Effects are those of
+    /// `plan_scalar_effects` + `apply_write_cell` per member, in order.
+    pub(super) fn commit_run_scalars(
+        &mut self,
+        run: LayerRun,
+        members: &[VertexId],
+        values: &[(VertexId, LiteralValue)],
+        delta_active: bool,
+        computed_writes: Option<&mut ComputedWriteBuffer>,
+    ) -> Result<bool, ExcelError> {
+        if delta_active
+            || !self.blocked_pending_spills.is_empty()
+            || values
+                .iter()
+                .any(|(_, v)| matches!(v, LiteralValue::Array(_)))
+            || !self.freshness_group_commit_ok()
+            || (self.graph.has_spill_anchors()
+                && members.iter().any(|&v| self.graph.is_spill_anchor(v)))
+        {
+            return Ok(false);
+        }
+        self.freshness_mark_committed_group(members);
+        for (v, value) in values {
+            self.graph.update_vertex_value(*v, value.clone());
+        }
+        if !(self.config.arrow_storage_enabled
+            && self.config.delta_overlay_enabled
+            && self.config.write_formula_overlay_enabled)
+            || self.computed_overlay_mirroring_disabled
+        {
+            return Ok(true);
+        }
+        let sheet_name = self.graph.sheet_name(run.sheet).to_string();
+        let date_system = self.arrow_sheet_date_system(&sheet_name);
+        let any_formats = !self.derived_formats.read().unwrap().is_empty();
+        match computed_writes {
+            Some(buffer) => {
+                for (i, (_, value)) in values.iter().enumerate() {
+                    let row = run.row0 + i as u32;
+                    let ov = Self::literal_to_overlay_value(value, date_system);
+                    let format_id = if any_formats {
+                        let cell = CellRef::new(run.sheet, Coord::new(row, run.col, true, true));
+                        self.derived_formats.read().unwrap().get(&cell).copied()
+                    } else {
+                        None
+                    };
+                    buffer.push_cell_with_format(run.sheet, row, run.col, ov, format_id);
+                    if self.should_flush_computed_write_buffer(buffer) {
+                        self.flush_computed_write_buffer(buffer)?;
+                    }
+                }
+            }
+            None => {
+                for (i, (_, value)) in values.iter().enumerate() {
+                    let ov = Self::literal_to_overlay_value(value, date_system);
+                    self.write_computed_overlay_value_0based(
+                        &sheet_name,
+                        run.row0 + i as u32,
+                        run.col,
+                        ov,
+                    );
+                }
+            }
+        }
+        Ok(true)
     }
 }
