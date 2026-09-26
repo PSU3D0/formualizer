@@ -123,6 +123,72 @@ impl FormatRuns {
     }
 }
 
+/// One cached merged lane: valid while the base lane (held, so its
+/// address cannot be reused) and both overlay epochs are unchanged.
+struct MergedLane<T> {
+    base: Arc<T>,
+    key: (u64, u64),
+    merged: Option<Arc<T>>,
+    /// Rows requested (and merged per call) since this key was seen.
+    pending: usize,
+}
+
+#[derive(Default)]
+struct MergedInner {
+    numbers: Option<MergedLane<Float64Array>>,
+    errors: Option<MergedLane<UInt8Array>>,
+}
+
+/// Per-chunk merged-lane cache (interior mutability: range reads are `&self`
+/// and may run on the evaluation pool). Cloning a chunk starts empty.
+#[derive(Default)]
+struct MergedLaneCache {
+    inner: std::sync::Mutex<MergedInner>,
+}
+
+impl Clone for MergedLaneCache {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl std::fmt::Debug for MergedLaneCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("MergedLaneCache")
+    }
+}
+
+impl MergedLaneCache {
+    fn lookup<T>(
+        slot: &mut Option<MergedLane<T>>,
+        base: &Arc<T>,
+        key: (u64, u64),
+        request: usize,
+        chunk_len: usize,
+        build: impl FnOnce() -> Arc<T>,
+    ) -> Option<Arc<T>> {
+        let lane = match slot {
+            Some(lane) if Arc::ptr_eq(&lane.base, base) && lane.key == key => lane,
+            _ => slot.insert(MergedLane {
+                base: base.clone(),
+                key,
+                merged: None,
+                pending: 0,
+            }),
+        };
+        if let Some(merged) = &lane.merged {
+            return Some(merged.clone());
+        }
+        lane.pending = lane.pending.saturating_add(request);
+        if lane.pending < chunk_len {
+            return None;
+        }
+        let merged = build();
+        lane.merged = Some(merged.clone());
+        Some(merged)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ColumnChunk {
     pub numbers: Option<Arc<Float64Array>>,
@@ -141,6 +207,9 @@ pub struct ColumnChunk {
     lazy_null_errors: OnceCell<Arc<UInt8Array>>,
     // Cache: lowered text lane, nulls preserved
     lowered_text: OnceCell<ArrayRef>,
+    // Whole-chunk merged (base + overlays) lanes, reused across range reads
+    // until either overlay or the base changes (decision 20.3).
+    merged: MergedLaneCache,
     // Phase C: per-chunk overlay (delta edits since last compaction)
     pub overlay: Overlay,
     // Phase 0/1: separate computed overlay (formula/spill outputs)
@@ -151,6 +220,38 @@ impl ColumnChunk {
     #[inline]
     pub fn len(&self) -> usize {
         self.type_tag.len()
+    }
+
+    /// `range` of the numeric lane with both overlays applied, served from
+    /// the chunk's merged-lane cache. `None` when the cache declines (the
+    /// caller then merges per call): a whole-chunk merge is built only once
+    /// requests since the last change have covered a chunk's worth of rows,
+    /// so the cache never costs more than twice the per-call merges it
+    /// replaces.
+    pub(crate) fn merged_numbers(
+        &self,
+        range: core::ops::Range<usize>,
+    ) -> Option<Arc<Float64Array>> {
+        let base = self.numbers_or_null();
+        let key = (self.overlay.epoch, self.computed_overlay.epoch);
+        let len = self.len();
+        let mut inner = self.merged.inner.lock().ok()?;
+        let entry = MergedLaneCache::lookup(&mut inner.numbers, &base, key, range.len(), len, || {
+            OverlayCascade::new(&self.overlay, &self.computed_overlay).select_numbers(0..len, &base)
+        })?;
+        Some(Arc::new(entry.slice(range.start, range.len())))
+    }
+
+    /// [`Self::merged_numbers`] for the error-code lane.
+    pub(crate) fn merged_errors(&self, range: core::ops::Range<usize>) -> Option<Arc<UInt8Array>> {
+        let base = self.errors_or_null();
+        let key = (self.overlay.epoch, self.computed_overlay.epoch);
+        let len = self.len();
+        let mut inner = self.merged.inner.lock().ok()?;
+        let entry = MergedLaneCache::lookup(&mut inner.errors, &base, key, range.len(), len, || {
+            OverlayCascade::new(&self.overlay, &self.computed_overlay).select_errors(0..len, &base)
+        })?;
+        Some(Arc::new(entry.slice(range.start, range.len())))
     }
     #[inline]
     pub fn is_empty(&self) -> bool {
@@ -875,6 +976,7 @@ impl IngestBuilder {
                 lazy_null_text: OnceCell::new(),
                 lazy_null_errors: OnceCell::new(),
                 lowered_text: OnceCell::new(),
+            merged: MergedLaneCache::default(),
                 overlay: Overlay::new(),
                 computed_overlay: Overlay::new(),
             };
@@ -2017,8 +2119,24 @@ impl OverlayFragment {
         }
     }
 }
-#[derive(Debug, Default, Clone)]
+static OVERLAY_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+#[inline]
+fn next_overlay_epoch() -> u64 {
+    OVERLAY_EPOCH.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+impl Default for Overlay {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Overlay {
+    /// Content epoch: globally unique, renewed on every value mutation
+    /// (formats excluded). Merged-lane caches key on it.
+    epoch: u64,
     points: HashMap<usize, OverlayValue>,
     format_points: HashMap<usize, FormatId>,
     fragments: Vec<OverlayFragment>,
@@ -2035,6 +2153,7 @@ impl Overlay {
 
     pub fn new() -> Self {
         Self {
+            epoch: next_overlay_epoch(),
             points: HashMap::new(),
             format_points: HashMap::new(),
             fragments: Vec::new(),
@@ -2113,6 +2232,7 @@ impl Overlay {
 
     #[inline]
     pub(crate) fn set_scalar(&mut self, off: usize, v: OverlayValue) -> isize {
+        self.epoch = next_overlay_epoch();
         let removed = self.remove_scalar(off);
         let new_est = Self::point_estimate(&v);
         self.points.insert(off, v);
@@ -2126,6 +2246,7 @@ impl Overlay {
     }
 
     pub(crate) fn apply_fragment(&mut self, fragment: OverlayFragment) -> isize {
+        self.epoch = next_overlay_epoch();
         let mut delta = self.remove_points_covered_by_fragment(&fragment);
         delta = delta.saturating_add(self.remove_fragments_covered_by_fragment(&fragment));
 
@@ -2194,6 +2315,7 @@ impl Overlay {
 
     #[inline]
     pub(crate) fn remove_scalar(&mut self, off: usize) -> isize {
+        self.epoch = next_overlay_epoch();
         let mut delta = 0isize;
         if let Some(old) = self.points.remove(&off) {
             let old_est = Self::point_estimate(&old);
@@ -2231,6 +2353,7 @@ impl Overlay {
     }
 
     pub(crate) fn remove_range(&mut self, range: core::ops::Range<usize>) -> isize {
+        self.epoch = next_overlay_epoch();
         if range.is_empty() {
             return 0;
         }
@@ -2273,6 +2396,7 @@ impl Overlay {
 
     #[inline]
     pub(crate) fn clear_all(&mut self) -> usize {
+        self.epoch = next_overlay_epoch();
         let freed = self.estimated_bytes;
         self.points.clear();
         self.fragments.clear();
@@ -3991,6 +4115,7 @@ impl ArrowSheet {
             lazy_null_text: OnceCell::new(),
             lazy_null_errors: OnceCell::new(),
             lowered_text: OnceCell::new(),
+            merged: MergedLaneCache::default(),
             overlay: Overlay::new(),
             computed_overlay: Overlay::new(),
         }
@@ -4062,6 +4187,7 @@ impl ArrowSheet {
             lazy_null_text: OnceCell::new(),
             lazy_null_errors: OnceCell::new(),
             lowered_text: OnceCell::new(),
+            merged: MergedLaneCache::default(),
             overlay,
             computed_overlay,
         }
