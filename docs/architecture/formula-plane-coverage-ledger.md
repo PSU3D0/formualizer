@@ -1,5 +1,7 @@
 # FormulaPlane Coverage Ledger
 
+> **Historical.** The FormulaPlane span runtime was removed (Program 2, P2-M0): the dependency authority is the only runtime path and `FormulaPlaneMode` is accepted and ignored. The parity gate described under "Continuous enforcement" was retired; `.github/workflows/bench-core.yml` keeps the bench-core clippy and parity-harness smoke steps. This ledger is kept as a record.
+
 **Status:** Standing architecture ledger
 **Last audited commit:** `a238d067`
 **Last audited:** 2026-09-01

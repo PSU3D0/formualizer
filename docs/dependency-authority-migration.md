@@ -41,6 +41,15 @@ Legacy behavior is the specification. It changed only where legacy published a s
 - **A reference to a missing table evaluates to `#NAME?`** under the default `BestEffort` preparation policy. It was `#N/IMPL!`. See [preparation errors](preparation-error-policy.md).
 - **Inspection work budgets count reported readers.** `DependentsOptions::max_work` / `TraceOptions::max_work` now charge one unit per reported reader, where legacy charged one per internal edge or stripe visited. A binding budget can therefore return a different number of results before it reports truncation. Unbounded results are unchanged.
 
+## FormulaPlane removal
+
+The FormulaPlane span runtime (an earlier experiment that evaluated a formula family as one span) was removed after the authority became the only runtime path; with the mode ignored no span was ever placed, so no value changes.
+
+- `FormulaPlaneMode`, `EvalConfig::formula_plane_mode`, `EvalConfig::with_formula_plane_mode`, `WorkbookConfig::with_span_evaluation` / `with_formula_plane_mode` and the Python and WASM toggles are accepted and ignored. `EvalConfig::formula_plane_mode` still reads back `Off` from an engine.
+- The public module `formualizer_eval::formula_plane` is gone. Its descriptor types (template/run/partition/virtual-reference ids, grid shapes, the passive `FormulaRunStore` and span counters) had no engine use and no replacement. If you used the run store for scanning, copy `formualizer-bench-core`'s `formula_runs` module.
+- `relocate_ast_for_template_placement` (hidden) moved to `formualizer_eval::engine::template::relocate`; the hidden `formula_plane_diagnostics` module moved to `engine::template::diagnostics` and keeps only `canonical_template_diagnostic`.
+- `EngineBaselineStats::formula_plane_*` and `PreparationRevision::{authority, authority_indexes, authority_indexed_plane}` are always `0`. The `max_formula_plane_*` limits are ignored.
+
 ## Performance and memory
 
 Measured on the Enron sample (27 workbooks) and the two real-model corpus workbooks, against the last legacy build (medians of two interleaved rounds):
