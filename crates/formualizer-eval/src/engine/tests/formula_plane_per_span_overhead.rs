@@ -6,10 +6,6 @@ use formualizer_parse::parser::parse;
 use crate::engine::{
     Engine, EvalConfig, FormulaIngestBatch, FormulaIngestRecord, FormulaPlaneMode,
 };
-use crate::formula_plane::span_eval::{
-    dirty_placement_vec_materialization_count, relocatable_validation_walk_count,
-    reset_span_eval_test_counters,
-};
 use crate::test_workbook::TestWorkbook;
 
 fn authoritative_engine() -> Engine<TestWorkbook> {
@@ -52,12 +48,6 @@ fn formula_plane_evaluate_all_handles_many_same_sheet_spans() {
         ingest(&mut engine, formulas);
     }
 
-    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
-        assert_eq!(
-            engine.baseline_stats().formula_plane_active_span_count,
-            span_count as usize
-        );
-    );
     engine.evaluate_all().unwrap();
 
     assert_eq!(
@@ -67,36 +57,6 @@ fn formula_plane_evaluate_all_handles_many_same_sheet_spans() {
     assert_eq!(
         engine.get_cell_value("Sheet1", 10, 101),
         Some(LiteralValue::Number(102.0))
-    );
-}
-
-#[test]
-#[ignore = "M2 span-internal: counts span-template relocation validation walks; no span templates under the authority"]
-fn formula_plane_relocatable_validation_is_cached_per_template() {
-    let mut engine = authoritative_engine();
-    let rows = 128u32;
-    let mut formulas = Vec::new();
-    for row in 1..=rows {
-        engine
-            .set_cell_value("Sheet1", row, 1, LiteralValue::Number(row as f64))
-            .unwrap();
-        formulas.push(record(&mut engine, row, 2, &format!("=A{row}+1")));
-    }
-    ingest(&mut engine, formulas);
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
-
-    reset_span_eval_test_counters();
-    engine.evaluate_all().unwrap();
-    assert_eq!(relocatable_validation_walk_count(), 1);
-
-    engine
-        .set_cell_value("Sheet1", 5, 1, LiteralValue::Number(50.0))
-        .unwrap();
-    engine.evaluate_all().unwrap();
-    assert_eq!(relocatable_validation_walk_count(), 1);
-    assert_eq!(
-        engine.get_cell_value("Sheet1", 5, 2),
-        Some(LiteralValue::Number(51.0))
     );
 }
 
@@ -139,14 +99,7 @@ fn formula_plane_whole_span_dirty_does_not_materialize_dirty_placement_vec() {
         formulas.push(record(&mut engine, row, 2, &format!("=A{row}*2")));
     }
     ingest(&mut engine, formulas);
-    span_internal!("span placement/stats counter; formulas ingest per cell and spans are not placed under the authority (design section 10)";
-        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
-    );
-
-    reset_span_eval_test_counters();
     engine.evaluate_all().unwrap();
-
-    assert_eq!(dirty_placement_vec_materialization_count(), 0);
     assert_eq!(
         engine.get_cell_value("Sheet1", 256, 2),
         Some(LiteralValue::Number(512.0))

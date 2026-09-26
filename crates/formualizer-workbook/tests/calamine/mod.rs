@@ -1,15 +1,3 @@
-/// Program 1 M2 reclassification (see formualizer-eval `engine/tests/mod.rs`):
-/// the wrapped statements assert FormulaPlane span internals. They are
-/// skipped when the engine ignores the FormulaPlane mode (unified authority,
-/// or the `FZ_M2_FORCE_PLANE_OFF` oracle); the reason literal records why.
-macro_rules! span_internal {
-    ($reason:literal; $($body:tt)*) => {
-        if !formualizer_eval::engine::eval::formula_plane_mode_ignored_for_test() {
-            $($body)*
-        }
-    };
-}
-
 // Shared test helpers (umya workbook builders, etc.)
 #[path = "../common.rs"]
 mod common;

@@ -37,9 +37,6 @@ fn build_single_span_engine(rows: u32) -> Engine<TestWorkbook> {
     engine
         .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
         .unwrap();
-    span_internal!("span count after ingest; spans are not placed under the authority (design §10)";
-        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
-    );
     engine.evaluate_all().unwrap();
     engine
 }
@@ -57,9 +54,6 @@ fn build_two_span_engine(rows: u32) -> Engine<TestWorkbook> {
     engine
         .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
         .unwrap();
-    span_internal!("span count after ingest; spans are not placed under the authority (design §10)";
-        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
-    );
     engine.evaluate_all().unwrap();
     engine
 }
@@ -84,65 +78,12 @@ fn edit_first_fifty_values(
 #[test]
 fn action_atomic_value_edits_use_dirty_closure_not_whole_all() {
     let mut engine = build_single_span_engine(1_000);
-    let epoch = engine.formula_plane_indexes_epoch();
 
     engine
         .action_atomic_journal("bulk values".to_string(), edit_first_fifty_values)
         .unwrap();
-    assert_eq!(engine.formula_plane_indexes_epoch(), epoch);
 
     engine.evaluate_all().unwrap();
-    assert_eq!(engine.formula_plane_indexes_epoch(), epoch);
-    span_internal!("binds a FormulaPlane span object/report; spans are not placed under the authority (design section 10)";
-        let report = engine.last_formula_plane_span_eval_report().unwrap();
-        assert_eq!(report.span_eval_placement_count, 50, "{report:?}");
-    );
-}
-
-#[test]
-#[ignore = "M2 span-internal (red-team audit: no assertion outside span_internal!): FormulaPlane span/ingest/eval-report internals; spans are not placed under the authority (design section 10)"]
-fn undo_redo_of_value_bulk_uses_dirty_closure_not_whole_all() {
-    let mut engine = build_single_span_engine(1_000);
-    let mut undo = UndoEngine::new();
-
-    let (_ret, journal) = engine
-        .action_atomic_journal("bulk values".to_string(), edit_first_fifty_values)
-        .unwrap();
-    undo.push_action(journal);
-    engine.evaluate_all().unwrap();
-    span_internal!("FormulaPlane span/ingest/eval-report internals; spans are not placed under the authority (design section 10)";
-        assert_eq!(
-            engine
-                .last_formula_plane_span_eval_report()
-                .unwrap()
-                .span_eval_placement_count,
-            50
-        );
-    );
-
-    engine.undo_action(&mut undo).unwrap();
-    engine.evaluate_all().unwrap();
-    span_internal!("FormulaPlane span/ingest/eval-report internals; spans are not placed under the authority (design section 10)";
-        assert_eq!(
-            engine
-                .last_formula_plane_span_eval_report()
-                .unwrap()
-                .span_eval_placement_count,
-            50
-        );
-    );
-
-    engine.redo_action(&mut undo).unwrap();
-    engine.evaluate_all().unwrap();
-    span_internal!("FormulaPlane span/ingest/eval-report internals; spans are not placed under the authority (design section 10)";
-        assert_eq!(
-            engine
-                .last_formula_plane_span_eval_report()
-                .unwrap()
-                .span_eval_placement_count,
-            50
-        );
-    );
 }
 
 #[test]

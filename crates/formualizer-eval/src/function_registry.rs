@@ -2178,13 +2178,13 @@ pub(crate) mod tests {
         .unwrap();
         let ast =
             formualizer_parse::parser::parse("=__PLAN_OUTER__(_xlfn.__PLAN_INNER__(A1))").unwrap();
-        let frozen = crate::formula_plane::template_canonical::canonicalize_template_with_provider(
+        let frozen = crate::engine::template::canonical::canonicalize_template_with_provider(
             &ast,
             2,
             2,
             Some(&snapshot),
         );
-        let global = crate::formula_plane::template_canonical::canonicalize_template_with_provider(
+        let global = crate::engine::template::canonical::canonicalize_template_with_provider(
             &ast,
             2,
             2,

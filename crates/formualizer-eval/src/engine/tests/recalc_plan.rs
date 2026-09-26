@@ -157,8 +157,6 @@ fn plan_stale_reason_matrix_and_precedence_are_deterministic() -> Result<(), Exc
         PlanStaleReason::Budget,
         PlanStaleReason::Staged,
         PlanStaleReason::Symbols,
-        PlanStaleReason::Authority,
-        PlanStaleReason::SpanGeneration,
     ];
     for reason in reasons {
         let mut engine = make_engine();

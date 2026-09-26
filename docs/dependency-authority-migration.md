@@ -25,7 +25,7 @@ Kept for compatibility, with changed meaning:
 - `ChangeEvent::RemoveVertex { old_dependencies, old_dependents }` and `VertexSnapshot::out_edges`: always empty. Undo restores the removed cell's value or formula, and the authority derives its edges from that.
 - `VertexEditor::add_edge` / `remove_edge`: no-ops, as before. Journal replay of old `EdgeAdded`/`EdgeRemoved` events still works.
 - `GraphBaselineStats::graph_edge_count` and the admission limit `graph_edge_hard_limit` (`ResourceExhaustionReason::GraphEdges`): still the number of direct dependency edges legacy would have held (cell references and ranges within `range_expansion_limit`, per formula). The count is kept per cell without edge lists.
-- `FormulaPlaneMode`: accepted and ignored. FormulaPlane spans are never placed, and the authority's families play that role. `formula_plane_mode` reads back as `Off`.
+- `FormulaPlaneMode`: accepted and ignored. FormulaPlane spans are never placed, and the authority's families play that role. an engine built with `Engine::new` stores `Off` in its config.
 - The `unified_authority` feature of `formualizer-eval` is a no-op, kept so existing `--features` lines still build.
 
 New: `InspectionUnavailableReason::DependencyAuthorityUnavailable` (the enum is `#[non_exhaustive]`). Inspection returns it when the authority cannot answer, for example after a typed authority failure.
@@ -40,6 +40,15 @@ Legacy behavior is the specification. It changed only where legacy published a s
 - **Undoing a structural edit (row/column insert or delete) keeps restored formulas current** (FORM-000117). A later edit to a restored formula's precedent recalculates it.
 - **A reference to a missing table evaluates to `#NAME?`** under the default `BestEffort` preparation policy. It was `#N/IMPL!`. See [preparation errors](preparation-error-policy.md).
 - **Inspection work budgets count reported readers.** `DependentsOptions::max_work` / `TraceOptions::max_work` now charge one unit per reported reader, where legacy charged one per internal edge or stripe visited. A binding budget can therefore return a different number of results before it reports truncation. Unbounded results are unchanged.
+
+## FormulaPlane removal
+
+The FormulaPlane span runtime (an earlier experiment that evaluated a formula family as one span) was removed after the authority became the only runtime path; with the mode ignored no span was ever placed, so no value changes.
+
+- `FormulaPlaneMode`, `EvalConfig::formula_plane_mode`, `EvalConfig::with_formula_plane_mode`, `WorkbookConfig::with_span_evaluation` / `with_formula_plane_mode` and the Python and WASM toggles are accepted and ignored. An engine built with `Engine::new` stores `Off` in its config. Whatever the stored value, evaluation never places spans.
+- The public module `formualizer_eval::formula_plane` is gone. Its descriptor types (template/run/partition/virtual-reference ids, grid shapes, the passive `FormulaRunStore` and span counters) had no engine use and no replacement. If you used the run store for scanning, copy `formualizer-bench-core`'s `formula_runs` module.
+- `relocate_ast_for_template_placement` (hidden) moved to `formualizer_eval::engine::template::relocate`; the hidden `formula_plane_diagnostics` module moved to `engine::template::diagnostics` and keeps only `canonical_template_diagnostic`.
+- `EngineBaselineStats::formula_plane_*` and `PreparationRevision::{authority, authority_indexes, authority_indexed_plane}` are always `0`. The `max_formula_plane_*` limits are ignored.
 
 ## Performance and memory
 

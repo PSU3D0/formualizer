@@ -35,9 +35,6 @@ fn dirty(engine: &mut Engine<TestWorkbook>) {
     for id in ids {
         engine.graph.mark_vertex_dirty(id);
     }
-    engine.graph.mark_all_formula_spans_dirty(
-        crate::engine::graph::WholeSpanDirtyReason::GlobalInvalidation,
-    );
 }
 
 fn read(view: &RangeView<'_>, mode: Read) -> f64 {

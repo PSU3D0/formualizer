@@ -15,7 +15,6 @@ pub mod eval;
 pub mod eval_delta;
 pub mod formula_ingest;
 mod formula_source;
-pub(crate) mod fragmented_transaction;
 pub mod graph;
 pub mod ingest;
 pub mod ingest_builder;
@@ -38,6 +37,8 @@ pub mod scheduler;
 pub(crate) mod shape_memo;
 pub mod spill;
 mod target_preparation;
+#[doc(hidden)]
+pub mod template;
 pub(crate) mod used_extent;
 pub mod vertex;
 pub mod virtual_deps;
@@ -145,12 +146,12 @@ pub use graph::editor::change_log::{ChangeLog, ChangeLogger, NullChangeLogger};
 pub mod fp8_parity_test_support {
     use super::{Engine, EvalConfig};
     use crate::engine::arena::CanonicalLabels;
-    use crate::formula_plane::dependency_summary::summarize_canonical_template;
-    use crate::formula_plane::producer::SpanReadSummary;
-    use crate::formula_plane::runtime::{PlacementDomain, ResultRegion};
-    use crate::formula_plane::template_canonical::{
+    use crate::engine::template::canonical::{
         CanonicalRejectReason, CanonicalTemplateFlag, canonicalize_template,
     };
+    use crate::engine::template::dependency_summary::summarize_canonical_template;
+    use crate::engine::template::domain::{PlacementDomain, ResultRegion};
+    use crate::engine::template::read_summary::SpanReadSummary;
     use crate::reference::{CellRef, Coord};
     use crate::traits::EvaluationContext;
     use formualizer_common::{ExcelError, LiteralValue};
@@ -349,7 +350,7 @@ pub mod fp8_parity_test_support {
     #[derive(Debug)]
     struct OldOutput {
         payload: String,
-        labels: crate::formula_plane::template_canonical::CanonicalTemplateLabels,
+        labels: crate::engine::template::canonical::CanonicalTemplateLabels,
         direct_cells: Vec<CellRef>,
         range_deps: Vec<crate::reference::SharedRangeRef<'static>>,
         unresolved_names: Vec<String>,
@@ -390,7 +391,7 @@ pub mod fp8_parity_test_support {
             && summary.reject_reasons.iter().all(|reason| {
                 matches!(
                     reason,
-                    crate::formula_plane::dependency_summary::DependencyRejectReason
+                    crate::engine::template::dependency_summary::DependencyRejectReason
                         ::NamedRangeUnsupported { .. }
                 )
             });
@@ -414,7 +415,7 @@ pub mod fp8_parity_test_support {
     }
 
     fn canonical_labels_from_old(
-        old: &crate::formula_plane::template_canonical::CanonicalTemplateLabels,
+        old: &crate::engine::template::canonical::CanonicalTemplateLabels,
     ) -> CanonicalLabels {
         let mut labels = CanonicalLabels::default();
         for flag in &old.flags {
@@ -664,13 +665,12 @@ pub struct FormulaParseDiagnostic {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum FormulaPlaneMode {
-    /// Disable FormulaPlane promotion/evaluation. This is the stable default;
-    /// span evaluation is explicitly opt-in through configuration.
+    /// The default, and the only mode the engine acts on.
     #[default]
     Off,
+    /// Accepted and treated as `Off`.
     Shadow,
-    /// Experimental mode: accepted FormulaPlane spans are installed into
-    /// graph-owned authority and are not materialized as per-cell graph formulas.
+    /// Accepted and treated as `Off`: FormulaPlane spans were removed.
     AuthoritativeExperimental,
 }
 
@@ -692,7 +692,8 @@ pub struct WorkbookLoadLimits {
     pub max_sheet_cols: u32,
     /// Hard cap for the rectangular logical area a backend may materialize.
     pub max_sheet_logical_cells: u64,
-    /// Hard cap for formulas materialized by one FormulaPlane fallback.
+    /// Accepted and ignored: FormulaPlane spans, and their fallback
+    /// materialization, were removed.
     pub max_formula_plane_fallback_cells: u64,
     /// Sparse-sheet checks only trigger once a sheet reaches this many logical cells.
     pub sparse_sheet_cell_threshold: u64,
@@ -887,16 +888,15 @@ pub struct EvalConfig {
     /// When disabled, the engine avoids per-pass timing/edge-count bookkeeping.
     pub enable_virtual_dep_telemetry: bool,
 
-    /// FormulaPlane ingest/planning mode. Defaults to `Off`; span evaluation is
-    /// explicitly opt-in while `AuthoritativeExperimental` remains experimental.
-    /// `Shadow` may report candidate span opportunities but must still materialize
-    /// every formula via the legacy graph path.
+    /// FormulaPlane mode. Accepted and ignored: the dependency authority is the
+    /// only runtime path, so every formula is evaluated per cell whatever the
+    /// mode. `Engine::new` normalizes the stored value to `Off`.
     pub formula_plane_mode: FormulaPlaneMode,
-    /// Hard candidate bound for compiling mixed FormulaPlane topology.
+    /// Accepted and ignored (FormulaPlane mixed topology was removed).
     pub max_formula_plane_cache_candidates: usize,
-    /// Hard relationship bound for compiled mixed FormulaPlane topology.
+    /// Accepted and ignored (FormulaPlane mixed topology was removed).
     pub max_formula_plane_cache_edges: usize,
-    /// Hard byte estimate bound for compiled mixed FormulaPlane topology.
+    /// Accepted and ignored (FormulaPlane mixed topology was removed).
     pub max_formula_plane_cache_bytes: usize,
 
     /// Maximum bytes for the engine-side lookup-index cache.

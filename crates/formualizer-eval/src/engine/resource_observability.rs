@@ -464,11 +464,7 @@ impl EvaluationResourceRequestStats {
             runtime_widening_rounds: 0,
             workbook_exact_attempts: 0,
             topology: FormulaPlaneTopologyRequestStats {
-                strategy: if formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental {
-                    FormulaPlaneTopologyStrategy::NotUsed
-                } else {
-                    FormulaPlaneTopologyStrategy::Legacy
-                },
+                strategy: FormulaPlaneTopologyStrategy::Legacy,
                 ..FormulaPlaneTopologyRequestStats::default()
             },
             fallback_materialized_cells: 0,

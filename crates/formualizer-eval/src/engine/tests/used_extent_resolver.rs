@@ -1,11 +1,11 @@
 use super::common::arrow_eval_config;
 use crate::arrow_store::OverlayValue;
+use crate::engine::template::region::Region;
 use crate::engine::used_extent::{
     ExtentPolicy, OpenRangeBounds, ResolvedExtent, resolve_used_extent,
 };
 use crate::engine::virtual_deps::{DynamicRefCollector, RangeVirtualDepProvider};
 use crate::engine::{Engine, FormulaPlaneMode};
-use crate::formula_plane::region_index::Region;
 use crate::interpreter::probe_range_dimensions;
 use crate::test_workbook::TestWorkbook;
 use crate::traits::EvaluationContext;
