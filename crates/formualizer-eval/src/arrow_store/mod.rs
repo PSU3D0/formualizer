@@ -180,7 +180,9 @@ impl MergedLaneCache {
             return Some(merged.clone());
         }
         lane.pending = lane.pending.saturating_add(request);
-        if lane.pending < chunk_len {
+        // Build only once the rows requested exceed one chunk: that proves
+        // reuse (a single whole-chunk read is not worth retaining).
+        if lane.pending <= chunk_len {
             return None;
         }
         let merged = build();
@@ -225,9 +227,9 @@ impl ColumnChunk {
     /// `range` of the numeric lane with both overlays applied, served from
     /// the chunk's merged-lane cache. `None` when the cache declines (the
     /// caller then merges per call): a whole-chunk merge is built only once
-    /// requests since the last change have covered a chunk's worth of rows,
-    /// so the cache never costs more than twice the per-call merges it
-    /// replaces.
+    /// requests since the last change have covered more than a chunk's worth
+    /// of rows, so the cache never costs more than twice the per-call merges
+    /// it replaces and a read that is not repeated retains nothing.
     pub(crate) fn merged_numbers(
         &self,
         range: core::ops::Range<usize>,
