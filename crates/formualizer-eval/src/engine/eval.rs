@@ -1,4 +1,6 @@
 use crate::SheetId;
+
+mod family;
 use crate::arrow_store::{OverlayFragment, OverlayValue, SheetStore};
 #[cfg(test)]
 use crate::engine::Scheduler;
@@ -26,6 +28,7 @@ use crate::engine::used_extent::{
     ExtentPolicy, OpenRangeBounds, resolve_used_extent_with_fallback,
 };
 use crate::engine::virtual_deps::VirtualDepBuilder;
+use family::layer_units;
 
 #[path = "freshness.rs"]
 mod freshness;
@@ -927,6 +930,8 @@ pub struct Engine<R> {
     derived_formats: std::sync::RwLock<FxHashMap<CellRef, crate::format::FormatId>>,
     #[cfg(test)]
     derived_format_operations_for_test: std::sync::atomic::AtomicU64,
+    #[cfg(test)]
+    family_members_for_test: std::sync::atomic::AtomicU64,
     #[cfg(test)]
     computed_overlay_set_explicit_entry_operations_for_test: u64,
     #[cfg(test)]
@@ -2456,6 +2461,8 @@ where
             #[cfg(test)]
             derived_format_operations_for_test: std::sync::atomic::AtomicU64::new(0),
             #[cfg(test)]
+            family_members_for_test: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(test)]
             computed_overlay_set_explicit_entry_operations_for_test: 0,
             #[cfg(test)]
             computed_overlay_stale_clear_range_effects_for_test: 0,
@@ -2601,6 +2608,8 @@ where
             derived_formats: std::sync::RwLock::new(FxHashMap::default()),
             #[cfg(test)]
             derived_format_operations_for_test: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(test)]
+            family_members_for_test: std::sync::atomic::AtomicU64::new(0),
             #[cfg(test)]
             computed_overlay_set_explicit_entry_operations_for_test: 0,
             #[cfg(test)]
@@ -13811,7 +13820,7 @@ where
                             if work.is_empty() {
                                 continue;
                             }
-                            let temp_layer = crate::engine::scheduler::Layer { vertices: work };
+                            let temp_layer = crate::engine::scheduler::Layer::new(work);
                             if self.thread_pool.is_some() && temp_layer.vertices.len() > 1 {
                                 computed_vertices += self.evaluate_layer_parallel(&temp_layer)?;
                             } else {
@@ -19288,34 +19297,84 @@ where
     fn evaluate_small_layer_direct_effects(
         &mut self,
         layer: &super::scheduler::Layer,
-        mut delta: Option<&mut DeltaCollector>,
-        mut log: Option<&mut ChangeLog>,
+        delta: Option<&mut DeltaCollector>,
+        log: Option<&mut ChangeLog>,
         cancel_flag: Option<&AtomicBool>,
         cancel_check_every: usize,
         cancel_message: &'static str,
     ) -> Result<usize, ExcelError> {
-        for (i, &vertex_id) in layer.vertices.iter().enumerate() {
-            if cancel_check_every > 0
-                && i % cancel_check_every == 0
-                && cancel_flag.is_some_and(|flag| flag.load(Ordering::Relaxed))
+        let cancel = cancel_flag.map(|flag| (flag, cancel_check_every, cancel_message));
+        self.evaluate_layer_units(layer, delta, log, cancel, false)
+    }
+
+    /// Sequential layer walk over its units (single cells and family runs):
+    /// each unit evaluates, then its vertices' effects apply in order. With
+    /// `buffered`, computed writes coalesce in a layer buffer (flushed before
+    /// a unit that reads a compressed range, before array results, and at
+    /// the end); otherwise they apply directly. `cancel` = (flag, check every
+    /// N vertices, message).
+    fn evaluate_layer_units(
+        &mut self,
+        layer: &super::scheduler::Layer,
+        mut delta: Option<&mut DeltaCollector>,
+        mut log: Option<&mut ChangeLog>,
+        cancel: Option<(&AtomicBool, usize, &'static str)>,
+        buffered: bool,
+    ) -> Result<usize, ExcelError> {
+        let mut computed_writes = ComputedWriteBuffer::default();
+        let mut next_check = 0usize;
+        let mut done = 0usize;
+        for unit in layer_units(layer) {
+            if let Some((flag, every, message)) = cancel
+                && every > 0
+                && done >= next_check
             {
-                return Err(ExcelError::new(ExcelErrorKind::Cancelled)
-                    .with_message(cancel_message.to_string()));
+                next_check = (done / every + 1) * every;
+                if flag.load(Ordering::Relaxed) {
+                    if buffered {
+                        self.flush_computed_write_buffer(&mut computed_writes)?;
+                    }
+                    return Err(ExcelError::new(ExcelErrorKind::Cancelled)
+                        .with_message(message.to_string()));
+                }
             }
-            let value = match self.evaluate_vertex_immutable(vertex_id) {
-                Ok(v) => v,
-                Err(e) => LiteralValue::Error(e),
-            };
-            let effects = self.plan_vertex_effects(vertex_id, value, None)?;
-            for effect in &effects {
-                self.apply_effect_with_computed_writes(
-                    effect,
-                    delta.as_deref_mut(),
-                    log.as_deref_mut(),
-                    None,
-                )?;
+            if buffered && self.unit_reads_compressed_range(layer, unit) {
+                self.flush_computed_write_buffer(&mut computed_writes)?;
+            }
+            let values = self.evaluate_unit_immutable(layer, unit);
+            done += values.len();
+            for (vertex_id, value) in values {
+                let effects = if buffered {
+                    self.plan_vertex_effects_with_computed_flush(
+                        vertex_id,
+                        value,
+                        None,
+                        &mut computed_writes,
+                    )
+                } else {
+                    self.plan_vertex_effects(vertex_id, value, None)
+                };
+                let effects = match effects {
+                    Ok(effects) => effects,
+                    Err(e) => {
+                        self.flush_computed_write_buffer(&mut computed_writes)?;
+                        return Err(e);
+                    }
+                };
+                for effect in &effects {
+                    if let Err(e) = self.apply_effect_with_computed_writes(
+                        effect,
+                        delta.as_deref_mut(),
+                        log.as_deref_mut(),
+                        buffered.then_some(&mut computed_writes),
+                    ) {
+                        self.flush_computed_write_buffer(&mut computed_writes)?;
+                        return Err(e);
+                    }
+                }
             }
         }
+        self.flush_computed_write_buffer(&mut computed_writes)?;
         Ok(layer.vertices.len())
     }
 
@@ -19324,50 +19383,8 @@ where
         &mut self,
         layer: &super::scheduler::Layer,
     ) -> Result<usize, ExcelError> {
-        if layer.vertices.len() < COMPUTED_WRITE_COALESCING_MIN_LAYER_WIDTH {
-            return self.evaluate_small_layer_direct_effects(
-                layer,
-                None,
-                None,
-                None,
-                0,
-                "Evaluation cancelled within layer",
-            );
-        }
-
-        let mut computed_writes = ComputedWriteBuffer::default();
-        for &vertex_id in &layer.vertices {
-            self.flush_before_range_dependent_vertex(vertex_id, &mut computed_writes)?;
-            let value = match self.evaluate_vertex_immutable(vertex_id) {
-                Ok(v) => v,
-                Err(e) => LiteralValue::Error(e),
-            };
-            let effects = match self.plan_vertex_effects_with_computed_flush(
-                vertex_id,
-                value,
-                None,
-                &mut computed_writes,
-            ) {
-                Ok(effects) => effects,
-                Err(e) => {
-                    self.flush_computed_write_buffer(&mut computed_writes)?;
-                    return Err(e);
-                }
-            };
-            for effect in &effects {
-                if let Err(e) = self.apply_effect_with_computed_writes(
-                    effect,
-                    None,
-                    None,
-                    Some(&mut computed_writes),
-                ) {
-                    self.flush_computed_write_buffer(&mut computed_writes)?;
-                    return Err(e);
-                }
-            }
-        }
-        self.flush_computed_write_buffer(&mut computed_writes)?;
-        Ok(layer.vertices.len())
+        let buffered = layer.vertices.len() >= COMPUTED_WRITE_COALESCING_MIN_LAYER_WIDTH;
+        self.evaluate_layer_units(layer, None, None, None, buffered)
     }
 
     /// Evaluate a layer sequentially with delta collection via effects pipeline.
@@ -19376,50 +19393,8 @@ where
         layer: &super::scheduler::Layer,
         delta: &mut DeltaCollector,
     ) -> Result<usize, ExcelError> {
-        if layer.vertices.len() < COMPUTED_WRITE_COALESCING_MIN_LAYER_WIDTH {
-            return self.evaluate_small_layer_direct_effects(
-                layer,
-                Some(delta),
-                None,
-                None,
-                0,
-                "Evaluation cancelled within layer",
-            );
-        }
-
-        let mut computed_writes = ComputedWriteBuffer::default();
-        for &vertex_id in &layer.vertices {
-            self.flush_before_range_dependent_vertex(vertex_id, &mut computed_writes)?;
-            let value = match self.evaluate_vertex_immutable(vertex_id) {
-                Ok(v) => v,
-                Err(e) => LiteralValue::Error(e),
-            };
-            let effects = match self.plan_vertex_effects_with_computed_flush(
-                vertex_id,
-                value,
-                None,
-                &mut computed_writes,
-            ) {
-                Ok(effects) => effects,
-                Err(e) => {
-                    self.flush_computed_write_buffer(&mut computed_writes)?;
-                    return Err(e);
-                }
-            };
-            for effect in &effects {
-                if let Err(e) = self.apply_effect_with_computed_writes(
-                    effect,
-                    Some(delta),
-                    None,
-                    Some(&mut computed_writes),
-                ) {
-                    self.flush_computed_write_buffer(&mut computed_writes)?;
-                    return Err(e);
-                }
-            }
-        }
-        self.flush_computed_write_buffer(&mut computed_writes)?;
-        Ok(layer.vertices.len())
+        let buffered = layer.vertices.len() >= COMPUTED_WRITE_COALESCING_MIN_LAYER_WIDTH;
+        self.evaluate_layer_units(layer, Some(delta), None, None, buffered)
     }
 
     /// Evaluate a layer sequentially with cancellation support via effects pipeline.
@@ -19428,55 +19403,9 @@ where
         layer: &super::scheduler::Layer,
         cancel_flag: &AtomicBool,
     ) -> Result<usize, ExcelError> {
-        if layer.vertices.len() < COMPUTED_WRITE_COALESCING_MIN_LAYER_WIDTH {
-            return self.evaluate_small_layer_direct_effects(
-                layer,
-                None,
-                None,
-                Some(cancel_flag),
-                256,
-                "Evaluation cancelled within layer",
-            );
-        }
-
-        let mut computed_writes = ComputedWriteBuffer::default();
-        for (i, &vertex_id) in layer.vertices.iter().enumerate() {
-            if i % 256 == 0 && cancel_flag.load(Ordering::Relaxed) {
-                self.flush_computed_write_buffer(&mut computed_writes)?;
-                return Err(ExcelError::new(ExcelErrorKind::Cancelled)
-                    .with_message("Evaluation cancelled within layer".to_string()));
-            }
-            self.flush_before_range_dependent_vertex(vertex_id, &mut computed_writes)?;
-            let value = match self.evaluate_vertex_immutable(vertex_id) {
-                Ok(v) => v,
-                Err(e) => LiteralValue::Error(e),
-            };
-            let effects = match self.plan_vertex_effects_with_computed_flush(
-                vertex_id,
-                value,
-                None,
-                &mut computed_writes,
-            ) {
-                Ok(effects) => effects,
-                Err(e) => {
-                    self.flush_computed_write_buffer(&mut computed_writes)?;
-                    return Err(e);
-                }
-            };
-            for effect in &effects {
-                if let Err(e) = self.apply_effect_with_computed_writes(
-                    effect,
-                    None,
-                    None,
-                    Some(&mut computed_writes),
-                ) {
-                    self.flush_computed_write_buffer(&mut computed_writes)?;
-                    return Err(e);
-                }
-            }
-        }
-        self.flush_computed_write_buffer(&mut computed_writes)?;
-        Ok(layer.vertices.len())
+        let buffered = layer.vertices.len() >= COMPUTED_WRITE_COALESCING_MIN_LAYER_WIDTH;
+        let cancel = (cancel_flag, 256, "Evaluation cancelled within layer");
+        self.evaluate_layer_units(layer, None, None, Some(cancel), buffered)
     }
 
     /// Evaluate a layer sequentially with more frequent cancellation for demand-driven eval.
@@ -19485,55 +19414,13 @@ where
         layer: &super::scheduler::Layer,
         cancel_flag: &AtomicBool,
     ) -> Result<usize, ExcelError> {
-        if layer.vertices.len() < COMPUTED_WRITE_COALESCING_MIN_LAYER_WIDTH {
-            return self.evaluate_small_layer_direct_effects(
-                layer,
-                None,
-                None,
-                Some(cancel_flag),
-                128,
-                "Demand-driven evaluation cancelled within layer",
-            );
-        }
-
-        let mut computed_writes = ComputedWriteBuffer::default();
-        for (i, &vertex_id) in layer.vertices.iter().enumerate() {
-            if i % 128 == 0 && cancel_flag.load(Ordering::Relaxed) {
-                self.flush_computed_write_buffer(&mut computed_writes)?;
-                return Err(ExcelError::new(ExcelErrorKind::Cancelled)
-                    .with_message("Demand-driven evaluation cancelled within layer".to_string()));
-            }
-            self.flush_before_range_dependent_vertex(vertex_id, &mut computed_writes)?;
-            let value = match self.evaluate_vertex_immutable(vertex_id) {
-                Ok(v) => v,
-                Err(e) => LiteralValue::Error(e),
-            };
-            let effects = match self.plan_vertex_effects_with_computed_flush(
-                vertex_id,
-                value,
-                None,
-                &mut computed_writes,
-            ) {
-                Ok(effects) => effects,
-                Err(e) => {
-                    self.flush_computed_write_buffer(&mut computed_writes)?;
-                    return Err(e);
-                }
-            };
-            for effect in &effects {
-                if let Err(e) = self.apply_effect_with_computed_writes(
-                    effect,
-                    None,
-                    None,
-                    Some(&mut computed_writes),
-                ) {
-                    self.flush_computed_write_buffer(&mut computed_writes)?;
-                    return Err(e);
-                }
-            }
-        }
-        self.flush_computed_write_buffer(&mut computed_writes)?;
-        Ok(layer.vertices.len())
+        let buffered = layer.vertices.len() >= COMPUTED_WRITE_COALESCING_MIN_LAYER_WIDTH;
+        let cancel = (
+            cancel_flag,
+            128,
+            "Demand-driven evaluation cancelled within layer",
+        );
+        self.evaluate_layer_units(layer, None, None, Some(cancel), buffered)
     }
 
     /// Evaluate a layer in parallel, applying via effects pipeline.
@@ -19541,41 +19428,22 @@ where
         &mut self,
         layer: &super::scheduler::Layer,
     ) -> Result<usize, ExcelError> {
-        use rayon::prelude::*;
-
         let thread_pool = self.thread_pool.as_ref().unwrap().clone();
 
-        let mut phase1: Vec<VertexId> = Vec::new();
-        let mut phase2: Vec<VertexId> = Vec::new();
-        for &vid in &layer.vertices {
-            if self.graph.reads_compressed_range(vid) {
-                phase2.push(vid);
-            } else {
-                phase1.push(vid);
-            }
-        }
+        let phases = self.parallel_phases(layer);
 
         let inflight: rustc_hash::FxHashSet<VertexId> = layer.vertices.iter().copied().collect();
         let mut applied = 0usize;
 
-        for group in [&phase1[..], &phase2[..]] {
+        for (units, group) in &phases {
+            let group = &group[..];
             if group.is_empty() {
                 continue;
             }
             let mut computed_writes = ComputedWriteBuffer::default();
 
             let results: Result<Vec<(VertexId, LiteralValue)>, ExcelError> =
-                thread_pool.install(|| {
-                    group
-                        .par_iter()
-                        .map(
-                            |&vertex_id| match self.evaluate_vertex_immutable(vertex_id) {
-                                Ok(v) => Ok((vertex_id, v)),
-                                Err(e) => Ok((vertex_id, LiteralValue::Error(e))),
-                            },
-                        )
-                        .collect()
-                });
+                thread_pool.install(|| self.evaluate_units_parallel(layer, units, None));
 
             // FR3: a parallel group is one commit unit; one stale reader
             // drops the whole group (it stays dirty and replans).
@@ -19666,40 +19534,21 @@ where
         layer: &super::scheduler::Layer,
         delta: &mut DeltaCollector,
     ) -> Result<usize, ExcelError> {
-        use rayon::prelude::*;
-
         let thread_pool = self.thread_pool.as_ref().unwrap().clone();
 
-        let mut phase1: Vec<VertexId> = Vec::new();
-        let mut phase2: Vec<VertexId> = Vec::new();
-        for &vid in &layer.vertices {
-            if self.graph.reads_compressed_range(vid) {
-                phase2.push(vid);
-            } else {
-                phase1.push(vid);
-            }
-        }
+        let phases = self.parallel_phases(layer);
 
         let inflight: rustc_hash::FxHashSet<VertexId> = layer.vertices.iter().copied().collect();
         let mut applied = 0usize;
 
-        for group in [&phase1[..], &phase2[..]] {
+        for (units, group) in &phases {
+            let group = &group[..];
             if group.is_empty() {
                 continue;
             }
             let mut computed_writes = ComputedWriteBuffer::default();
             let results: Result<Vec<(VertexId, LiteralValue)>, ExcelError> =
-                thread_pool.install(|| {
-                    group
-                        .par_iter()
-                        .map(
-                            |&vertex_id| match self.evaluate_vertex_immutable(vertex_id) {
-                                Ok(v) => Ok((vertex_id, v)),
-                                Err(e) => Ok((vertex_id, LiteralValue::Error(e))),
-                            },
-                        )
-                        .collect()
-                });
+                thread_pool.install(|| self.evaluate_units_parallel(layer, units, None));
 
             // FR3: a parallel group is one commit unit; one stale reader
             // drops the whole group (it stays dirty and replans).
@@ -19786,8 +19635,6 @@ where
         layer: &super::scheduler::Layer,
         cancel_flag: &AtomicBool,
     ) -> Result<usize, ExcelError> {
-        use rayon::prelude::*;
-
         let thread_pool = self.thread_pool.as_ref().unwrap().clone();
 
         if cancel_flag.load(Ordering::Relaxed) {
@@ -19795,44 +19642,20 @@ where
                 .with_message("Parallel evaluation cancelled before starting".to_string()));
         }
 
-        let mut phase1: Vec<VertexId> = Vec::new();
-        let mut phase2: Vec<VertexId> = Vec::new();
-        for &vid in &layer.vertices {
-            if self.graph.reads_compressed_range(vid) {
-                phase2.push(vid);
-            } else {
-                phase1.push(vid);
-            }
-        }
+        let phases = self.parallel_phases(layer);
 
         let inflight: rustc_hash::FxHashSet<VertexId> = layer.vertices.iter().copied().collect();
         let mut applied = 0usize;
 
-        for group in [&phase1[..], &phase2[..]] {
+        for (units, group) in &phases {
+            let group = &group[..];
             if group.is_empty() {
                 continue;
             }
             let mut computed_writes = ComputedWriteBuffer::default();
 
-            let results: Result<Vec<(VertexId, LiteralValue)>, ExcelError> =
-                thread_pool.install(|| {
-                    group
-                        .par_iter()
-                        .map(|&vertex_id| {
-                            if cancel_flag.load(Ordering::Relaxed) {
-                                return Err(ExcelError::new(ExcelErrorKind::Cancelled)
-                                    .with_message(
-                                        "Parallel evaluation cancelled during execution"
-                                            .to_string(),
-                                    ));
-                            }
-                            match self.evaluate_vertex_immutable(vertex_id) {
-                                Ok(v) => Ok((vertex_id, v)),
-                                Err(e) => Ok((vertex_id, LiteralValue::Error(e))),
-                            }
-                        })
-                        .collect()
-                });
+            let results: Result<Vec<(VertexId, LiteralValue)>, ExcelError> = thread_pool
+                .install(|| self.evaluate_units_parallel(layer, units, Some(cancel_flag)));
 
             // FR3: a parallel group is one commit unit; one stale reader
             // drops the whole group (it stays dirty and replans).
@@ -20048,38 +19871,6 @@ where
         log: &mut ChangeLog,
     ) -> Result<usize, ExcelError> {
         self.resource_checkpoint(layer.vertices.len() as u64)?;
-        let mut computed_writes = ComputedWriteBuffer::default();
-        for &vertex_id in &layer.vertices {
-            self.flush_before_range_dependent_vertex(vertex_id, &mut computed_writes)?;
-            let value = match self.evaluate_vertex_immutable(vertex_id) {
-                Ok(v) => v,
-                Err(e) => LiteralValue::Error(e),
-            };
-            let effects = match self.plan_vertex_effects_with_computed_flush(
-                vertex_id,
-                value,
-                None,
-                &mut computed_writes,
-            ) {
-                Ok(effects) => effects,
-                Err(e) => {
-                    self.flush_computed_write_buffer(&mut computed_writes)?;
-                    return Err(e);
-                }
-            };
-            for effect in &effects {
-                if let Err(e) = self.apply_effect_with_computed_writes(
-                    effect,
-                    None,
-                    Some(log),
-                    Some(&mut computed_writes),
-                ) {
-                    self.flush_computed_write_buffer(&mut computed_writes)?;
-                    return Err(e);
-                }
-            }
-        }
-        self.flush_computed_write_buffer(&mut computed_writes)?;
-        Ok(layer.vertices.len())
+        self.evaluate_layer_units(layer, None, Some(log), None, true)
     }
 }

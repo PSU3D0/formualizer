@@ -5,7 +5,7 @@
 use super::plan_control::PlanControl;
 use super::planner::OrderedCell;
 use super::store::AuthorityError;
-use crate::engine::scheduler::{Layer, Schedule, ScheduleUnit};
+use crate::engine::scheduler::{Layer, LayerRun, Schedule, ScheduleUnit};
 use crate::engine::vertex::VertexId;
 use formualizer_common::ExcelError;
 
@@ -34,14 +34,27 @@ impl Entry {
     fn group(self) -> (u64, Option<u64>) {
         (self.cell.layer, self.cell.cycle)
     }
-    // LSD order: runtime ID, cycle ID, acyclic/cyclic, numeric layer.
-    // Acyclic cells at a layer precede all cycle units at that layer.
+    // LSD order: member key, cycle ID, acyclic/cyclic, numeric layer.
+    // Acyclic cells at a layer precede all cycle units at that layer. The
+    // member key of an acyclic cell is its position (sheet, column, row), so
+    // a family's cells at one layer are adjacent and form execution runs;
+    // cycle members keep runtime-ID order (the iteration order of a cycle
+    // unit is observable).
     fn digit(self, pass: usize) -> usize {
+        let key = if self.cell.cycle.is_some() {
+            u64::from(self.vertex.0)
+        } else {
+            // Rows below 2^24 and columns below 2^20 order exactly; beyond
+            // that only run formation (checked explicitly) is affected.
+            (u64::from(self.cell.sheet) << 44)
+                | (u64::from(self.cell.col) << 24)
+                | u64::from(self.cell.row)
+        };
         let value = match pass {
-            0..=3 => (self.vertex.0 as u64) >> (pass * 8),
-            4..=11 => self.cell.cycle.unwrap_or(0) >> ((pass - 4) * 8),
-            12 => u64::from(self.cell.cycle.is_some()),
-            _ => self.cell.layer >> ((pass - 13) * 8),
+            0..=7 => key >> (pass * 8),
+            8..=15 => self.cell.cycle.unwrap_or(0) >> ((pass - 8) * 8),
+            16 => u64::from(self.cell.cycle.is_some()),
+            _ => self.cell.layer >> ((pass - 17) * 8),
         };
         (value & 255) as usize
     }
@@ -67,7 +80,10 @@ impl ExecutablePlan {
                 .schedule
                 .layers
                 .iter()
-                .map(|l| l.vertices.capacity() * size_of::<VertexId>())
+                .map(|l| {
+                    l.vertices.capacity() * size_of::<VertexId>()
+                        + l.runs.capacity() * size_of::<LayerRun>()
+                })
                 .sum::<usize>()
             + self
                 .schedule
@@ -105,6 +121,50 @@ fn reserve<T>(n: usize) -> Result<Vec<T>, AuthorityError> {
     Ok(out)
 }
 
+/// Maximal runs (length >= 2) of consecutive rows of one column sharing an
+/// owner: a family node's cells at one layer (a singleton owns one cell).
+/// Visits each run as `(start, len)`.
+fn for_each_family_run(entries: &[Entry], mut visit: impl FnMut(usize, usize)) {
+    let mut i = 0;
+    while i < entries.len() {
+        let first = entries[i].cell;
+        let mut j = i + 1;
+        while j < entries.len() {
+            let c = entries[j].cell;
+            if c.owner != first.owner
+                || c.sheet != first.sheet
+                || c.col != first.col
+                || c.row != first.row + (j - i) as u32
+            {
+                break;
+            }
+            j += 1;
+        }
+        if j - i >= 2 && first.sheet != crate::engine::authority::geom::SYMBOL_SHEET {
+            visit(i, j - i);
+        }
+        i = j;
+    }
+}
+
+fn family_runs(entries: &[Entry]) -> Result<Vec<LayerRun>, AuthorityError> {
+    let mut n = 0;
+    for_each_family_run(entries, |_, _| n += 1);
+    let mut runs = reserve(n)?;
+    for_each_family_run(entries, |start, len| {
+        let c = entries[start].cell;
+        runs.push(LayerRun {
+            start: start as u32,
+            len: len as u32,
+            sheet: c.sheet,
+            col: c.col,
+            row0: c.row,
+            owner: c.owner,
+        });
+    });
+    Ok(runs)
+}
+
 /// `checkpoint` receives actual work deltas (at most 4096) for resource charging
 /// and cancellation, including a zero-work entry checkpoint and a final flush.
 /// The borrowed `cells` and other still-live planner capacities must be included
@@ -133,7 +193,7 @@ pub(crate) fn schedule(
         temp.push(entry);
     }
     if n > 1 {
-        for pass in 0..21 {
+        for pass in 0..25 {
             let mut hist = [0usize; 256];
             for _ in &hist {
                 work.tick()?;
@@ -173,6 +233,21 @@ pub(crate) fn schedule(
             previous = Some(entry.group());
         }
     }
+    // Family runs of the acyclic groups (bounded by n / 2).
+    let mut runs = 0usize;
+    let mut start = 0;
+    while start < n {
+        let group = entries[start].group();
+        let mut end = start + 1;
+        while end < n && entries[end].group() == group {
+            end += 1;
+        }
+        if group.1.is_none() {
+            for_each_family_run(&entries[start..end], |_, _| runs += 1);
+        }
+        work.tick()?;
+        start = end;
+    }
     // Public ScheduleUnit indices are u32. Reject before allocation/casts.
     u32::try_from(layers).map_err(|_| AuthorityError::Alloc)?;
     u32::try_from(cycles).map_err(|_| AuthorityError::Alloc)?;
@@ -181,7 +256,10 @@ pub(crate) fn schedule(
         sum(bytes::<Entry>(n)?, bytes::<VertexId>(n)?)?,
         sum(
             bytes::<ScheduleUnit>(groups)?,
-            sum(bytes::<Layer>(layers)?, bytes::<Vec<VertexId>>(cycles)?)?,
+            sum(
+                sum(bytes::<Layer>(layers)?, bytes::<Vec<VertexId>>(cycles)?)?,
+                bytes::<LayerRun>(runs)?,
+            )?,
         )?,
     )?;
     let simultaneous = sum(held_bytes, output)?;
@@ -214,10 +292,11 @@ pub(crate) fn schedule(
                 .push(ScheduleUnit::Cycle(schedule.cycles.len() as u32));
             schedule.cycles.push(vertices);
         } else {
+            let runs = family_runs(&entries[start..end])?;
             schedule
                 .units
                 .push(ScheduleUnit::Layer(schedule.layers.len() as u32));
-            schedule.layers.push(Layer { vertices });
+            schedule.layers.push(Layer { vertices, runs });
         }
         start = end;
     }

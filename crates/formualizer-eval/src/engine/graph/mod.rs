@@ -1307,7 +1307,7 @@ impl DependencyGraph {
         Some(
             layers
                 .into_iter()
-                .map(|vs| crate::engine::Layer { vertices: vs })
+                .map(|vs| crate::engine::Layer::new(vs))
                 .collect(),
         )
     }

@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use formualizer_common::{ExcelError, ExcelErrorKind};
 
 use crate::SheetId;
-use rustc_hash::FxHashMap;
 use crate::reference::SharedSheetLocator;
+use rustc_hash::FxHashMap;
 
 #[derive(Default, Debug)]
 pub struct SheetRegistry {

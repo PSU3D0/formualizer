@@ -901,6 +901,12 @@ pub struct EvalConfig {
 
     /// Maximum bytes for the engine-side lookup-index cache.
     pub lookup_index_cache_max_bytes: usize,
+
+    /// Program 2 region-native execution: a family node's cells at one
+    /// schedule layer evaluate as one unit through the node's template.
+    /// `false` evaluates every formula cell on its own (the per-cell
+    /// oracle). Values are identical either way.
+    pub family_execution: bool,
 }
 
 impl Default for EvalConfig {
@@ -962,6 +968,7 @@ impl Default for EvalConfig {
             max_formula_plane_cache_edges: 100_000,
             max_formula_plane_cache_bytes: 64 * 1024 * 1024,
             lookup_index_cache_max_bytes: 64 * 1024 * 1024,
+            family_execution: true,
         }
     }
 }

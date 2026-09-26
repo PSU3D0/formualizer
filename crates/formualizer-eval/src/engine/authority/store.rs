@@ -998,6 +998,12 @@ impl Store {
         Some((o.template, o.anchor, off, self.slots.get(id)))
     }
 
+    /// An owner's template and the anchor it is valid at.
+    pub fn owner_template(&self, o: u32) -> (AstNodeId, (u32, u32)) {
+        let w = &self.owners[o as usize];
+        (w.template, w.anchor)
+    }
+
     /// Owner domain and whether it is a family node.
     pub fn owner_dom(&self, o: u32) -> (u16, Rect, bool) {
         let w = &self.owners[o as usize];

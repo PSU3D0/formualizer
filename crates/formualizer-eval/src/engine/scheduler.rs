@@ -14,6 +14,32 @@ pub struct Scheduler<'a> {
 #[derive(Debug, Clone)]
 pub struct Layer {
     pub vertices: Vec<VertexId>,
+    /// Family runs of this layer (Program 2 execution units): index ranges
+    /// of `vertices` holding consecutive rows of one column of one family
+    /// node. Vertices outside every run execute one cell at a time.
+    pub(crate) runs: Vec<LayerRun>,
+}
+
+/// A family run: `vertices[start..start + len]` are the cells
+/// `(sheet, row0 + i, col)` of the family owner `owner`, all at one layer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct LayerRun {
+    pub start: u32,
+    pub len: u32,
+    pub sheet: u16,
+    pub col: u32,
+    pub row0: u32,
+    pub owner: u32,
+}
+
+impl Layer {
+    /// A layer without family runs (every vertex executes per cell).
+    pub fn new(vertices: Vec<VertexId>) -> Self {
+        Self {
+            vertices,
+            runs: Vec::new(),
+        }
+    }
 }
 
 /// One step of the canonical schedule walk: either an acyclic Kahn wave
@@ -753,9 +779,7 @@ impl<'a> Scheduler<'a> {
             }
             // Sort for deterministic output in tests
             current_layer_vertices.sort();
-            layers.push(Layer {
-                vertices: current_layer_vertices,
-            });
+            layers.push(Layer::new(current_layer_vertices));
         }
 
         if processed_count != vertices.len() {
@@ -865,9 +889,7 @@ impl<'a> Scheduler<'a> {
                 // Sort for deterministic output, as in build_layers.
                 wave_vertices.sort();
                 units.push(ScheduleUnit::Layer(layers.len() as u32));
-                layers.push(Layer {
-                    vertices: wave_vertices,
-                });
+                layers.push(Layer::new(wave_vertices));
             }
 
             processed_count += current.len();
@@ -968,7 +990,7 @@ impl<'a> Scheduler<'a> {
                 }
             }
             cur.sort_unstable();
-            layers.push(Layer { vertices: cur });
+            layers.push(Layer::new(cur));
         }
         if processed_count != vertices.len() {
             return Err(

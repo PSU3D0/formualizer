@@ -236,9 +236,11 @@ impl ColumnChunk {
         let key = (self.overlay.epoch, self.computed_overlay.epoch);
         let len = self.len();
         let mut inner = self.merged.inner.lock().ok()?;
-        let entry = MergedLaneCache::lookup(&mut inner.numbers, &base, key, range.len(), len, || {
-            OverlayCascade::new(&self.overlay, &self.computed_overlay).select_numbers(0..len, &base)
-        })?;
+        let entry =
+            MergedLaneCache::lookup(&mut inner.numbers, &base, key, range.len(), len, || {
+                OverlayCascade::new(&self.overlay, &self.computed_overlay)
+                    .select_numbers(0..len, &base)
+            })?;
         Some(Arc::new(entry.slice(range.start, range.len())))
     }
 
@@ -248,9 +250,11 @@ impl ColumnChunk {
         let key = (self.overlay.epoch, self.computed_overlay.epoch);
         let len = self.len();
         let mut inner = self.merged.inner.lock().ok()?;
-        let entry = MergedLaneCache::lookup(&mut inner.errors, &base, key, range.len(), len, || {
-            OverlayCascade::new(&self.overlay, &self.computed_overlay).select_errors(0..len, &base)
-        })?;
+        let entry =
+            MergedLaneCache::lookup(&mut inner.errors, &base, key, range.len(), len, || {
+                OverlayCascade::new(&self.overlay, &self.computed_overlay)
+                    .select_errors(0..len, &base)
+            })?;
         Some(Arc::new(entry.slice(range.start, range.len())))
     }
     #[inline]
@@ -976,7 +980,7 @@ impl IngestBuilder {
                 lazy_null_text: OnceCell::new(),
                 lazy_null_errors: OnceCell::new(),
                 lowered_text: OnceCell::new(),
-            merged: MergedLaneCache::default(),
+                merged: MergedLaneCache::default(),
                 overlay: Overlay::new(),
                 computed_overlay: Overlay::new(),
             };

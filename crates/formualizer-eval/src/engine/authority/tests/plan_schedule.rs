@@ -63,15 +63,18 @@ fn schedule_adapter_sparse_layers_cycles_ids_and_side_table() {
     );
     assert_eq!(
         out.schedule.layers[0].vertices,
-        [VertexId::new(99995), VertexId::new(99997)]
+        [VertexId::new(99997), VertexId::new(99995)]
     );
+    // Acyclic cells order by authority id; rows 3 and 5 are not adjacent,
+    // so the layer has no family run.
+    assert!(out.schedule.layers[0].runs.is_empty());
     assert_eq!(out.schedule.cycles[0], [VertexId::new(99996)]);
     assert_eq!(
         out.schedule.cycles[1],
         [VertexId::new(99994), VertexId::new(99998)]
     );
     let order: Vec<_> = out.entries.iter().map(|e| e.cell.row).collect();
-    assert_eq!(order, [5, 3, 4, 6, 2, 1]);
+    assert_eq!(order, [3, 5, 4, 6, 2, 1]);
     for e in &out.entries {
         assert_eq!(e.cell.id, e.cell.row + 900);
         assert_eq!(e.cell.owner, 42);
@@ -297,7 +300,8 @@ fn schedule_adapter_counted_linear_scaling() {
         if prev != 0 {
             assert!(out.work <= 4 * prev);
         }
-        assert!(out.work <= 48 * n as u64 + 21 * 512);
+        // 25 radix passes (position key for family runs) plus the run scan.
+        assert!(out.work <= 56 * n as u64 + 25 * 512);
         println!(
             "SCHEDULE_SCALE cells={n} work={} peak={} retained={}",
             out.work,

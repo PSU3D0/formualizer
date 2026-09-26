@@ -133,6 +133,7 @@ mod dynamic_array_computed_arguments;
 mod dynamic_lookup_arrow;
 mod eval_delta;
 mod eval_flush_recalc_probe;
+mod family_execution;
 mod formula_edit_propagation;
 mod formula_error_propagation;
 mod formula_overlay_writeback;
