@@ -130,7 +130,9 @@ fn schedule_adapter_fail_every_allocation_and_simultaneous_admission() {
 
 #[test]
 fn schedule_adapter_cancellation_at_every_checkpoint_and_translation_failure() {
-    let input = fixture(1024);
+    // Constant key bytes skip their radix passes, so the work per cell is
+    // smaller than with all 32 passes: 4096 cells give enough checkpoints.
+    let input = fixture(4096);
     let mut calls = 0;
     schedule(&input, 0, None, translate, |_| {
         calls += 1;

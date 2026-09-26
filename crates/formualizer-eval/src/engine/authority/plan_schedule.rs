@@ -40,8 +40,8 @@ impl Entry {
     // a family's cells at one layer are adjacent and form execution runs;
     // cycle members keep runtime-ID order (the iteration order of a cycle
     // unit is observable).
-    fn digit(self, pass: usize) -> usize {
-        let key = if self.cell.cycle.is_some() {
+    fn keys(self) -> [u64; 4] {
+        let member = if self.cell.cycle.is_some() {
             u64::from(self.vertex.0)
         } else {
             // Rows below 2^24 and columns below 2^20 order exactly; beyond
@@ -50,13 +50,17 @@ impl Entry {
                 | (u64::from(self.cell.col) << 24)
                 | u64::from(self.cell.row)
         };
-        let value = match pass {
-            0..=7 => key >> (pass * 8),
-            8..=15 => self.cell.cycle.unwrap_or(0) >> ((pass - 8) * 8),
-            16 => u64::from(self.cell.cycle.is_some()),
-            _ => self.cell.layer >> ((pass - 17) * 8),
-        };
-        (value & 255) as usize
+        [
+            member,
+            self.cell.cycle.unwrap_or(0),
+            u64::from(self.cell.cycle.is_some()),
+            self.cell.layer,
+        ]
+    }
+    /// Byte `pass` of the LSD key (pass 8k + b is byte b of key k).
+    #[inline]
+    fn digit(self, pass: usize) -> usize {
+        ((self.keys()[pass / 8] >> ((pass % 8) * 8)) & 255) as usize
     }
 }
 
@@ -193,7 +197,21 @@ pub(crate) fn schedule(
         temp.push(entry);
     }
     if n > 1 {
-        for pass in 0..25 {
+        // Passes whose byte is equal in every entry are no-ops of a stable
+        // sort: skip them (typically all but a few of the 32).
+        let first = entries[0].keys();
+        let mut differs = [0u64; 4];
+        for entry in &entries {
+            work.tick()?;
+            let keys = entry.keys();
+            for k in 0..4 {
+                differs[k] |= keys[k] ^ first[k];
+            }
+        }
+        for pass in 0..32 {
+            if (differs[pass / 8] >> ((pass % 8) * 8)) & 255 == 0 {
+                continue;
+            }
             let mut hist = [0usize; 256];
             for _ in &hist {
                 work.tick()?;
