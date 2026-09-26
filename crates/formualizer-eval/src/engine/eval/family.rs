@@ -255,10 +255,6 @@ where
                 .evaluate_arena_ast_with_offset(template, row_delta, col_delta, ds, reg)
                 .map(|cv| {
                     let format = cv.format_id();
-                    self.derived_format_results
-                        .write()
-                        .unwrap()
-                        .insert(v, format);
                     self.record_derived_format_at(cell_ref, format);
                     crate::engine::result_finalization::finalize_formula_result(cv.into_literal())
                 })

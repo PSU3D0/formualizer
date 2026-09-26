@@ -10,7 +10,7 @@ use once_cell::sync::OnceCell;
 use crate::format::FormatId;
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use rustc_hash::FxHashMap;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 /// Compact type tag per row (UInt8 backing)
 #[repr(u8)]
@@ -2141,8 +2141,8 @@ pub struct Overlay {
     /// Content epoch: globally unique, renewed on every value mutation
     /// (formats excluded). Merged-lane caches key on it.
     epoch: u64,
-    points: HashMap<usize, OverlayValue>,
-    format_points: HashMap<usize, FormatId>,
+    points: FxHashMap<usize, OverlayValue>,
+    format_points: FxHashMap<usize, FormatId>,
     fragments: Vec<OverlayFragment>,
     // Deterministic (and intentionally approximate) accounting of overlay memory.
     // This is used for budget enforcement/observability; it does not attempt to reflect
@@ -2158,8 +2158,8 @@ impl Overlay {
     pub fn new() -> Self {
         Self {
             epoch: next_overlay_epoch(),
-            points: HashMap::new(),
-            format_points: HashMap::new(),
+            points: FxHashMap::default(),
+            format_points: FxHashMap::default(),
             fragments: Vec::new(),
             estimated_bytes: 0,
         }

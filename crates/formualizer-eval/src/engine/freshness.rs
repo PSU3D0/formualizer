@@ -359,10 +359,6 @@ impl<R: EvaluationContext> Engine<R> {
                 .evaluate_arena_ast(ast_id, self.graph.data_store(), self.graph.sheet_reg())
                 .map(|cv| {
                     let format = cv.format_id();
-                    self.derived_format_results
-                        .write()
-                        .unwrap()
-                        .insert(vertex, format);
                     self.record_derived_format(vertex, format);
                     crate::engine::result_finalization::finalize_formula_result(cv.into_literal())
                 })
