@@ -50,6 +50,23 @@ The FormulaPlane span runtime (an earlier experiment that evaluated a formula fa
 - `relocate_ast_for_template_placement` (hidden) moved to `formualizer_eval::engine::template::relocate`; the hidden `formula_plane_diagnostics` module moved to `engine::template::diagnostics` and keeps only `canonical_template_diagnostic`.
 - `EngineBaselineStats::formula_plane_*` and `PreparationRevision::{authority, authority_indexes, authority_indexed_plane}` are always `0`. The `max_formula_plane_*` limits are ignored.
 
+## Region-native execution and compression
+
+Program 2 makes the authority's family node the unit of execution and of storage.
+
+- **Execution.** Each schedule layer carries the runs of its family nodes (consecutive rows of one column of one node). A run evaluates through the node's template, relocated to each cell, and commits its scalar results as one unit. `SUM` and `AVERAGE` over bounded cell and range references use range kernels that merge overlays once per run and reduce each cell's slice in the scalar function's order (bit-identical results). Dynamic formulas (`OFFSET`, `INDIRECT`), cycle members and array results keep the per-cell path.
+- **Storage.** After the authority is built, a family member whose formula is exactly its template relocated (literals, reference texts and all) stores a reference to the template, and the formula arena keeps only the trees that formula cells and the authority reference. A structural edit (row/column insert or delete, moves, sheet operations) gives every member its own tree back first; members are compressed again after the next build.
+- **Switches.** `EvalConfig::family_execution`, `family_kernels` and `formula_compression` (default `true`) turn the pieces off; values are the same either way. The per-cell path is the test oracle.
+
+What you need to change:
+
+| Before | Now |
+|---|---|
+| `DependencyGraph::get_formula_id(v)` for every formula vertex | `formula_view(v)`: `FormulaView { template, row_delta, col_delta }`. Evaluating or rendering `template` with the reference offset `(row_delta, col_delta)` gives exactly this cell's formula; `template` alone is the formula of the family's anchor cell, shared by every member. For a formula stored on its own cell the deltas are zero and `template` is today's id. `get_formula_id` still answers for those and returns `None` for compressed members, as do `get_formula_id_and_volatile` and `get_formula_node(_and_volatile)`. |
+| Reading a member's tree from the arena | `DependencyGraph::get_formula(v)` (owned, instantiated; unchanged result). |
+| `Layer { vertices }` | `Layer::new(vertices)`. Layer member order is by position for acyclic cells. |
+| `EvalConfig { .. }` literals without a rest pattern | add `..Default::default()` (three new fields). |
+
 ## Performance and memory
 
 Measured on the Enron sample (27 workbooks) and the two real-model corpus workbooks, against the last legacy build (medians of two interleaved rounds):
