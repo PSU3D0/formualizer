@@ -89,7 +89,7 @@ Removing vertices for value cells (planned) reopens the second rule: a value cel
 
 ### Family members without per-cell entries
 
-A family member whose formula is its template relocated, in a column of consecutive vertex ids, has no entry in the graph's cell map, formula map or sheet index. It is stored in one run per column (sheet, column, rows, first id, template, anchor) and found by cell or by id through the run. Its vertex id and vertex-store row (position, kind, flags) are unchanged, so dirty state, schedules and values are keyed as before. Any edit of a member moves it back into the maps first, and structural and sheet operations move all members back until the next authority build. With `formula_compression = false`, nothing is stored this way.
+A family member whose formula is its template relocated, in a column of consecutive vertex ids, has no entry in the graph's cell map, formula map or sheet index. It is stored in one run per column (sheet, column, rows, first id, template, anchor) and found by cell or by id through the run. Its vertex id and flags are unchanged, so dirty state, schedules and values are keyed as before. Its position, kind and edge count read the same through `VertexStore`; when a whole page of 1024 vertices consists of such members, the store keeps no rows for that page and derives them from the run. Any edit of a member moves it back into the maps first, and structural and sheet operations move all members back until the next authority build. With `formula_compression = false`, nothing is stored this way.
 
 ## Performance and memory
 
