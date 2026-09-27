@@ -595,7 +595,7 @@ fn family_lift_typed_lanes_match_per_cell() {
             1 => LiteralValue::Number(f64::MAX / 3.0),
             2 => LiteralValue::Date(NaiveDate::from_ymd_opt(2023, 3, 1 + r % 27).unwrap()),
             3 => LiteralValue::Text(format!("{}", r as f64 / 8.0)),
-            4 => LiteralValue::Boolean(r % 2 == 0),
+            4 => LiteralValue::Boolean(r.is_multiple_of(2)),
             5 => LiteralValue::Empty,
             6 => LiteralValue::Number(0.0),
             7 => LiteralValue::Int(r as i64 - 50),
