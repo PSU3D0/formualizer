@@ -17209,6 +17209,51 @@ where
             .unwrap_or(LiteralValue::Empty))
     }
 
+    fn resolve_cell_reference_value_formatted(
+        &self,
+        sheet: Option<&str>,
+        row: u32,
+        col: u32,
+        current_sheet: &str,
+    ) -> Result<(LiteralValue, Option<crate::format::FormatId>), ExcelError> {
+        // `resolve_cell_reference_value` + `resolve_cell_format` with one
+        // sheet lookup of each kind.
+        let sheet_name = sheet.unwrap_or(current_sheet);
+        let Some(sheet_id) = self.graph.sheet_id(sheet_name) else {
+            return Err(ExcelError::new(ExcelErrorKind::Ref));
+        };
+        let asheet = self.arrow_sheets.sheet(sheet_name);
+        let (r0, c0) = (
+            row.saturating_sub(1) as usize,
+            col.saturating_sub(1) as usize,
+        );
+        let format = asheet.and_then(|a| a.format_id(r0, c0)).or_else(|| {
+            let formats = self.derived_formats.read().unwrap();
+            if formats.is_empty() {
+                return None;
+            }
+            let cell = CellRef::new(sheet_id, Coord::from_excel(row, col, true, true));
+            formats.get(&cell).copied()
+        });
+        let raw = asheet
+            .map(|a| a.get_cell_value(r0, c0))
+            .filter(|v| !matches!(v, LiteralValue::Empty));
+        let value = match raw {
+            None => LiteralValue::Empty,
+            Some(raw) => {
+                let class = format.and_then(|id| self.format_registry.class(id));
+                Self::normalize_public_cell_read(Self::materialize_temporal_egress(
+                    raw,
+                    class,
+                    self.config.temporal_egress,
+                    self.config.date_system,
+                ))
+                .unwrap_or(LiteralValue::Empty)
+            }
+        };
+        Ok((value, format))
+    }
+
     fn build_criteria_mask(
         &self,
         view: &RangeView<'_>,

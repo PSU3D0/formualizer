@@ -525,6 +525,17 @@ impl<'a> Interpreter<'a> {
         offset.evaluate_arena_ast(node_id, data_store, sheet_registry)
     }
 
+    #[inline]
+    fn annotated(
+        value: LiteralValue,
+        format: Option<crate::format::FormatId>,
+    ) -> crate::traits::CalcValue<'a> {
+        match format {
+            Some(format) => crate::traits::CalcValue::AnnotatedScalar(value, format),
+            None => crate::traits::CalcValue::Scalar(value),
+        }
+    }
+
     fn annotate_cell_value(
         &self,
         sheet: Option<&str>,
@@ -656,13 +667,13 @@ impl<'a> Interpreter<'a> {
                     };
                     let row = shift_axis_for_offset(*row, self.reference_row_delta, *row_abs)?;
                     let col = shift_axis_for_offset(*col, self.reference_col_delta, *col_abs)?;
-                    let value = self.context.resolve_cell_reference_value(
+                    let (value, format) = self.context.resolve_cell_reference_value_formatted(
                         sheet_name,
                         row,
                         col,
                         self.current_sheet,
                     )?;
-                    Ok(self.annotate_cell_value(sheet_name, row, col, value))
+                    Ok(Self::annotated(value, format))
                 } else {
                     let reference =
                         data_store.reconstruct_reference_type_for_eval(ref_type, sheet_registry);
@@ -974,13 +985,13 @@ impl<'a> Interpreter<'a> {
         {
             let row = shift_axis_for_offset(*row, self.reference_row_delta, *row_abs)?;
             let col = shift_axis_for_offset(*col, self.reference_col_delta, *col_abs)?;
-            let value = self.context.resolve_cell_reference_value(
+            let (value, format) = self.context.resolve_cell_reference_value_formatted(
                 sheet.as_deref(),
                 row,
                 col,
                 self.current_sheet,
             )?;
-            return Ok(self.annotate_cell_value(sheet.as_deref(), row, col, value));
+            return Ok(Self::annotated(value, format));
         }
 
         let reference = self.effective_reference(reference)?;
