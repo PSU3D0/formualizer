@@ -346,7 +346,8 @@ mod imp {
         let mut live_prebuild = 0i64;
         if args.iter().any(|a| a == "--prebuild") {
             let t = Instant::now();
-            wb.prepare_graph_all().map_err(|e| anyhow!("prebuild: {e}"))?;
+            wb.prepare_graph_all()
+                .map_err(|e| anyhow!("prebuild: {e}"))?;
             prebuild_ms = ms(t);
             live_prebuild = live() - base;
         }
