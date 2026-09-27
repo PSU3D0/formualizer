@@ -291,6 +291,12 @@ impl FormulaMap {
         Some(m)
     }
 
+    /// Drop the map entry of a just-materialized load member that is about
+    /// to be assigned (not touched).
+    pub(crate) fn forget_materialized(&mut self, vertex: &VertexId) {
+        self.map.remove(vertex);
+    }
+
     /// Re-insert a drained virtual member's formula (not touched).
     #[inline]
     pub(crate) fn restore(&mut self, vertex: VertexId, formula: FormulaRef) {
@@ -451,6 +457,10 @@ pub struct DependencyGraph {
     // row-major bulk ingest; CoordBuildHasher keeps these strictly O(N).
     cell_to_vertex: std::collections::HashMap<CellRef, VertexId, CoordBuildHasher>,
     load_packed_to_vertex: std::collections::HashMap<PackedSheetCell, VertexId, CoordBuildHasher>,
+
+    /// Vertices removed per cell, revived when replay re-creates the cell
+    /// (decision 9 as amended in Program 2: undo restores the id).
+    vertex_journal: crate::engine::authority::history::IdJournal,
 
     // Graph-owned formula dirtiness. Legacy vertices retain their sparse bits
     // and set representation behind this single authority.
@@ -1252,6 +1262,143 @@ impl DependencyGraph {
         self.vertex_formulas.touch(vid);
     }
 
+    /// First load: give every formula target of `sheet` (1-based row,
+    /// col; the load-time family formula when known) its vertex now, in
+    /// (col, row) order, so a column's new formula vertices are one id run.
+    /// Family members (compression on) become virtual runs with their
+    /// formula already set; other targets are mapped as empty vertices and
+    /// get their formula when their chunk is planned.
+    /// Returns the number of vertices created.
+    pub(crate) fn preallocate_load_targets(
+        &mut self,
+        sheet: SheetId,
+        mut targets: Vec<(u32, u32, Option<FormulaRef>)>,
+    ) -> usize {
+        if targets.is_empty() {
+            return 0;
+        }
+        // (col, row); the last staging of a cell wins.
+        targets.sort_by_key(|&(r, c, _)| (c, r));
+        let mut dedup: Vec<(u32, u32, Option<FormulaRef>)> = Vec::with_capacity(targets.len());
+        for t in targets {
+            match dedup.last_mut() {
+                Some(last) if (last.0, last.1) == (t.0, t.1) => *last = t,
+                _ => dedup.push(t),
+            }
+        }
+        let compress = self.config.formula_compression;
+        let mut packed = Vec::with_capacity(dedup.len());
+        let mut unmapped = Vec::with_capacity(dedup.len());
+        for &(r, c, f) in &dedup {
+            let Some(p) = PackedSheetCell::try_from_excel_1based(sheet, r, c) else {
+                // Out of range: leave the cell to the chunk (it errors there).
+                continue;
+            };
+            packed.push(p);
+            unmapped.push(compress && matches!(f, Some(FormulaRef::Member { .. })));
+        }
+        let formulas: Vec<Option<FormulaRef>> = dedup
+            .iter()
+            .filter(|&&(r, c, _)| PackedSheetCell::try_from_excel_1based(sheet, r, c).is_some())
+            .map(|&(_, _, f)| f)
+            .collect();
+        let (vids, created) =
+            self.ensure_vertices_batch_packed_ordered_unmapped(&packed, &mut unmapped);
+        let mut members = Vec::new();
+        for (i, &v) in vids.iter().enumerate() {
+            if unmapped[i]
+                && let Some(f) = formulas[i]
+            {
+                members.push((v, sheet, packed[i].row0(), packed[i].col0(), f));
+            }
+        }
+        self.install_preallocated_members(members);
+        created.len()
+    }
+
+    /// [`Self::install_load_members`] for pre-allocated targets: runs get
+    /// their formula and become virtual; the others are mapped without a
+    /// formula (their chunk assigns it).
+    fn install_preallocated_members(
+        &mut self,
+        members: Vec<(VertexId, SheetId, u32, u32, FormulaRef)>,
+    ) {
+        let mut i = 0;
+        while i < members.len() {
+            let (v, sheet, row, col, f) = members[i];
+            let mut len = 1usize;
+            while let Some(&(v2, s2, r2, c2, f2)) = members.get(i + len)
+                && v2.0 == v.0 + len as u32
+                && s2 == sheet
+                && c2 == col
+                && r2 == row + len as u32
+                && f2 == f
+            {
+                len += 1;
+            }
+            match f {
+                FormulaRef::Member { template, anchor } if len >= 2 => {
+                    let run = virtual_members::MemberRun {
+                        sheet,
+                        col,
+                        row0: row,
+                        len: len as u32,
+                        first: v.0,
+                        template,
+                        anchor,
+                    };
+                    for (m, _) in run.members() {
+                        self.store
+                            .set_kind(m, crate::engine::vertex::VertexKind::FormulaScalar);
+                        self.store.set_virtual(m, true);
+                        self.vertex_formulas.touch(m);
+                    }
+                    self.vertex_formulas.virtual_members_mut().insert(run);
+                }
+                _ => {
+                    for &(m, s, r, c, _) in &members[i..i + len] {
+                        self.map_load_vertex(m, s, r, c);
+                    }
+                }
+            }
+            i += len;
+        }
+    }
+
+    /// Map a load vertex at its cell as the load's ensure step would.
+    fn map_load_vertex(&mut self, v: VertexId, sheet: SheetId, row: u32, col: u32) {
+        if self.first_load_assume_new {
+            let packed = Self::packed_cell_key(sheet, AbsCoord::new(row, col));
+            self.load_packed_to_vertex.insert(packed, v);
+        } else {
+            self.cell_to_vertex
+                .insert(CellRef::new(sheet, Coord::new(row, col, true, true)), v);
+        }
+        if self.config.sheet_index_mode != crate::engine::SheetIndexMode::Lazy {
+            self.sheet_index_mut(sheet)
+                .add_vertex(GridAddr::new(row, col), v);
+        }
+    }
+
+    /// A chunk reaches pre-allocated virtual member `vid` with `formula`: it
+    /// stays virtual when that is its run's formula and it needs no
+    /// per-vertex state; otherwise it is materialized and assigned as any
+    /// loaded formula.
+    pub(crate) fn assign_preallocated_member(
+        &mut self,
+        vid: VertexId,
+        formula: FormulaRef,
+        volatile: bool,
+        dynamic: bool,
+    ) {
+        if !volatile && !dynamic && self.vertex_formulas.get(&vid) == Some(formula) {
+            return;
+        }
+        self.materialize_vertex(vid);
+        self.vertex_formulas.forget_materialized(&vid);
+        self.assign_formula_ref_load_fast(vid, formula, volatile, dynamic);
+    }
+
     /// Install the unmapped members of one load chunk: `(vertex, sheet,
     /// row, col, formula)`, 0-based. Runs of consecutive ids down a column
     /// with one template become virtual; any other member is mapped like
@@ -1603,6 +1750,7 @@ impl DependencyGraph {
             #[cfg(debug_assertions)]
             graph_value_read_attempts: AtomicU64::new(0),
             cell_to_vertex: std::collections::HashMap::with_hasher(CoordBuildHasher),
+            vertex_journal: Default::default(),
             load_packed_to_vertex: std::collections::HashMap::with_hasher(CoordBuildHasher),
             formula_dirty: FormulaDirtyState::default(),
             dirty_propagation_visits: 0,
@@ -1927,6 +2075,12 @@ impl DependencyGraph {
 
     pub(crate) fn vertex_len(&self) -> usize {
         self.store.len()
+    }
+
+    /// The id the next new vertex gets (tests: fresh ids).
+    #[cfg(test)]
+    pub(crate) fn next_vertex_id_for_test(&self) -> u32 {
+        crate::engine::vertex_store::FIRST_NORMAL_VERTEX + self.store.len() as u32
     }
 
     pub(crate) fn topology_revision(&self) -> u64 {
@@ -2305,6 +2459,8 @@ impl DependencyGraph {
             );
 
             if is_formula {
+                self.journal_formula_left(existing_id);
+                self.journal_formula_left(existing_id);
                 self.remove_dependent_edges(existing_id);
                 self.detach_vertex_from_names(existing_id);
                 self.clear_pending_name_references(existing_id);
@@ -2389,6 +2545,7 @@ impl DependencyGraph {
                 self.store.kind(existing_id),
                 VertexKind::FormulaScalar | VertexKind::FormulaArray
             ) {
+                self.journal_formula_left(existing_id);
                 self.remove_dependent_edges(existing_id);
                 self.detach_vertex_from_names(existing_id);
                 self.clear_pending_name_references(existing_id);
@@ -2469,6 +2626,7 @@ impl DependencyGraph {
                     self.store.kind(existing_id),
                     VertexKind::FormulaScalar | VertexKind::FormulaArray
                 ) {
+                    self.journal_formula_left(existing_id);
                     self.remove_dependent_edges(existing_id);
                     self.detach_vertex_from_names(existing_id);
                     self.clear_pending_name_references(existing_id);
@@ -2680,6 +2838,7 @@ impl DependencyGraph {
         }
 
         // Check for self-reference (immediate cycle detection)
+        self.replay_formula_vertex(&addr);
         let addr_vertex_id = self.get_or_create_vertex(&addr, &mut created_placeholders);
         self.materialize_vertex(addr_vertex_id);
 
@@ -4157,6 +4316,7 @@ impl DependencyGraph {
                 continue;
             };
             // Ensure this vertex is a plain value cell.
+            self.journal_formula_left(vid);
             if self.vertex_formulas.remove(&vid).is_some() {
                 // Be conservative: remove outgoing edges if this was a formula vertex.
                 // This should be rare for spill children under normal policies.
@@ -5262,6 +5422,114 @@ impl DependencyGraph {
     pub fn remove_cell_mapping(&mut self, addr: &CellRef) {
         self.cell_vertex_mut(addr);
         self.cell_to_vertex.remove(addr);
+    }
+
+    /// Bring back removed vertex `id` at `coord` of `sheet` as an empty
+    /// cell (undo of a removal: decision 9, the cell keeps its id). Only a
+    /// tombstoned vertex, and only onto a cell without a vertex; returns
+    /// whether it did.
+    pub(crate) fn revive_vertex(&mut self, id: VertexId, sheet: SheetId, coord: GridAddr) -> bool {
+        if !self.store.vertex_exists(id)
+            || !self.store.is_deleted(id)
+            || self.store.grid_addr(id).is_none()
+            || self.store.sheet_id(id) != sheet
+        {
+            return false;
+        }
+        let cell = CellRef::new(sheet, Coord::new(coord.row(), coord.col(), true, true));
+        // Occupied only by a live vertex that sits at the cell (legacy's
+        // move replay can leave stale cell-map entries behind). An empty
+        // placeholder (created for a reference while replay restored a
+        // reader first) gives way.
+        let mut placeholder = None;
+        if let Some(x) = self.cell_vertex(&cell)
+            && !self.store.is_deleted(x)
+            && self.store.grid_addr(x) == Some(coord)
+        {
+            if !self.is_pure_placeholder(x) {
+                return false;
+            }
+            placeholder = Some(x);
+        }
+        #[cfg(any(test, feature = "legacy_oracle"))]
+        let readers = placeholder
+            .map(|x| self.get_dependents(x))
+            .unwrap_or_default();
+        if let Some(x) = placeholder {
+            self.cell_to_vertex.remove(&cell);
+            if let Some(index) = self.sheet_indexes.get_mut(&sheet) {
+                index.remove_vertex(coord, x);
+            }
+            self.remove_all_edges(x);
+            self.store.mark_deleted(x, true);
+        }
+        self.store.mark_deleted(id, false);
+        self.store.set_addr(id, VertexAddr::grid(coord));
+        #[cfg(any(test, feature = "legacy_oracle"))]
+        self.edges.update_addr(id, VertexAddr::grid(coord));
+        self.store.set_kind(id, VertexKind::Empty);
+        self.store.set_dynamic(id, false);
+        self.store.set_volatile(id, false);
+        self.cell_to_vertex.insert(cell, id);
+        self.sheet_index_mut(sheet).add_vertex(coord, id);
+        self.ref_error_vertices.remove(&id);
+        // Legacy's edges from the placeholder's readers now name the
+        // revived vertex (oracle builds keep them).
+        #[cfg(any(test, feature = "legacy_oracle"))]
+        for r in readers {
+            if let Some(ast) = self.get_formula(r) {
+                self.rebuild_formula_dependencies(r, &ast);
+            }
+        }
+        // As legacy's re-creation (a `set_cell_value` of Empty): the cell
+        // changed, its readers are dirty.
+        let _ = self.mark_dirty(id);
+        true
+    }
+
+    /// An empty cell vertex with no state of its own (a reference's
+    /// placeholder).
+    fn is_pure_placeholder(&self, x: VertexId) -> bool {
+        self.store.kind(x) == VertexKind::Empty
+            && !self.vertex_formulas.contains_key(&x)
+            && !self.vertex_values.contains_key(&x)
+            && !self.ref_error_vertices.contains(&x)
+            && !self.spill_anchor_to_cells.contains_key(&x)
+            && !self.vertex_to_pending_names.contains_key(&x)
+            && !self.name_vertex_lookup.contains_key(&x)
+    }
+
+    /// The formula of vertex `v` is leaving its cell (formula -> value,
+    /// removal): journaled so replay that brings the formula back revives
+    /// `v` if the cell lost its vertex meanwhile (see `IdJournal`).
+    pub(crate) fn journal_formula_left(&mut self, v: VertexId) {
+        if !self.vertex_formulas.contains_key(&v) {
+            return;
+        }
+        if let Some(cell) = self.get_cell_ref(v) {
+            self.vertex_journal
+                .retired((cell.sheet_id, cell.coord.row(), cell.coord.col()), v.0);
+        }
+    }
+
+    /// A formula is about to be set at `addr`. During undo/redo, the vertex
+    /// whose formula left this cell comes back if the cell has no vertex
+    /// now (legacy replay removed it: e.g. undoing a formula typed over a
+    /// value, whose value Arrow restores). Outside replay this starts a new
+    /// timeline for the cell.
+    fn replay_formula_vertex(&mut self, addr: &CellRef) {
+        let cell = (addr.sheet_id, addr.coord.row(), addr.coord.col());
+        let Some(id) = self.vertex_journal.created(cell) else {
+            return;
+        };
+        if self.cell_vertex(addr).is_none() {
+            let coord = GridAddr::new(addr.coord.row(), addr.coord.col());
+            self.revive_vertex(VertexId(id), addr.sheet_id, coord);
+        }
+    }
+
+    pub(crate) fn set_replay_mode(&mut self, mode: crate::engine::authority::history::Replay) {
+        self.vertex_journal.set_mode(mode);
     }
 
     /// Get the cell reference for a vertex

@@ -33,7 +33,9 @@ use super::groups::{
     GroupKey, GroupPlan, GroupTable, Members, l_hash, members_cap_after, members_heap,
     members_heap_for,
 };
-use super::identity::{CellCut, FAMILY, IdError, IdRun, IdShadow, IdentityTable, Vid};
+use super::identity::{
+    CellCut, FAMILY, HOST_SYMBOL_ID_BASE, IdError, IdRun, IdShadow, IdentityTable, Vid,
+};
 use super::level_index::{IndexShadow, IndexStage, LevelIndex, NONE};
 use super::proj::RefProj;
 use super::slots::SlotStore;
@@ -1492,5 +1494,5 @@ mod mutate;
 mod repartition;
 mod verify;
 
-pub use build::{BuildInput, SharedBuildInput};
+pub use build::{BuildInput, GivenId, IdentifiedFacts, SharedBuildInput};
 pub use verify::Digest;

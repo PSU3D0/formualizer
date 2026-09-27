@@ -196,6 +196,11 @@ pub const FIRST_NORMAL_VERTEX: u32 = 1024;
 
 /// Flag bit of a virtual family member (see [`VertexStore::is_virtual`]).
 pub(crate) const VIRTUAL_FLAG: u8 = 0x20;
+
+/// Largest vertex id (Program 2): a formula cell's `VertexId` is its
+/// authority id, and the authority allocates symbol binding identities
+/// from `HOST_SYMBOL_ID_BASE` (2^31) up.
+pub const MAX_VERTEX_ID: u32 = crate::engine::authority::identity::HOST_SYMBOL_ID_BASE - 1;
 pub const RANGE_VERTEX_START: u32 = 0;
 pub const EXTERNAL_VERTEX_START: u32 = 256;
 
@@ -290,6 +295,10 @@ impl VertexStore {
     pub fn allocate(&mut self, addr: VertexAddr, sheet: SheetId, flags: u8) -> VertexId {
         let id = VertexId(self.len as u32 + FIRST_NORMAL_VERTEX);
         debug_assert!(id.0 >= FIRST_NORMAL_VERTEX);
+        assert!(
+            id.0 <= MAX_VERTEX_ID,
+            "vertex ids exhausted (formula ids share the authority's id space below its symbol range)"
+        );
 
         self.coords.push(addr);
         self.sheet_kind.push((sheet as u32) << 16);
@@ -316,9 +325,12 @@ impl VertexStore {
         let count =
             u32::try_from(vertices.len()).map_err(|_| VertexBatchAllocationError::IdExhausted)?;
         if count != 0 {
-            start
+            let last = start
                 .checked_add(count - 1)
                 .ok_or(VertexBatchAllocationError::IdExhausted)?;
+            if last > MAX_VERTEX_ID {
+                return Err(VertexBatchAllocationError::IdExhausted);
+            }
         }
         let ids: Vec<_> = (0..count).map(|offset| VertexId(start + offset)).collect();
         if ids != expected_ids {

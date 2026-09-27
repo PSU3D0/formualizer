@@ -465,7 +465,7 @@ impl<'g> VertexEditor<'g> {
                 let _ = self.remove_vertex(id); // ignore errors for now
             }
             ChangeEvent::RemoveVertex {
-                id: _,
+                id,
                 old_value,
                 old_formula,
                 old_dependencies,
@@ -478,7 +478,26 @@ impl<'g> VertexEditor<'g> {
                 if let (Some(c), Some(sid)) = (coord, sheet_id) {
                     let meta =
                         VertexMeta::new(c.row(), c.col(), sid, kind.unwrap_or(VertexKind::Cell));
-                    let new_id = self.try_add_vertex(meta)?;
+                    // Decision 9 (as amended in Program 2): the removed
+                    // vertex itself comes back, so the cell's formula keeps
+                    // its id. Legacy re-created the cell on a new vertex;
+                    // that stays the fallback when the cell is occupied.
+                    let new_id = if self.graph.revive_vertex(id, sid, c) {
+                        if self.has_logger() {
+                            self.log_change(ChangeEvent::AddVertex {
+                                id,
+                                coord: meta.coord,
+                                sheet_id: meta.sheet_id,
+                                value: Some(LiteralValue::Empty),
+                                formula: None,
+                                kind: Some(meta.kind),
+                                flags: Some(meta.flags),
+                            });
+                        }
+                        id
+                    } else {
+                        self.try_add_vertex(meta)?
+                    };
                     if let Some(v) = old_value {
                         let cell_ref = self.graph.make_cell_ref_internal(sid, c.row(), c.col());
                         self.set_cell_value(cell_ref, v);
@@ -715,6 +734,9 @@ impl<'g> VertexEditor<'g> {
             (None, None, vec![], vec![], None, None, None, None)
         };
 
+        // A formula leaving its cell is journaled (replay that brings it
+        // back revives this vertex).
+        self.graph.journal_formula_left(id);
         // Remove from cell mapping if it exists
         if let Some(cell_ref) = self.graph.get_cell_ref_for_vertex(id) {
             self.graph.remove_cell_mapping(&cell_ref);

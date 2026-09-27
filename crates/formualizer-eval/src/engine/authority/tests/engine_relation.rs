@@ -167,9 +167,16 @@ fn review_symbol_rebuild_preserves_ids() {
 
 /// Executable names receive real non-grid IDs in the maintained host, sharing
 /// the formula counter and surviving definition-only rebuilds.
+/// Program 2 (one id space): a formula cell's id is its executor vertex,
+/// and symbol binding identities come from the store's counter, from
+/// `HOST_SYMBOL_ID_BASE` up, so the two never alias. A symbol keeps its id
+/// across redefinition; a deleted and re-created name gets a new one;
+/// cell edits never move the symbol counter. (Program 1: cells and symbols
+/// shared one counter.)
 #[test]
-fn host_symbol_ids_share_formula_counter_and_survive_redefinition() {
+fn host_symbol_ids_never_alias_cell_ids_and_survive_redefinition() {
     use crate::engine::EvalConfig;
+    use crate::engine::authority::identity::HOST_SYMBOL_ID_BASE;
     use crate::engine::named_range::{NameScope, NamedDefinition};
     let mut e = Engine::new(TestWorkbook::new(), EvalConfig::default());
     e.set_cell_formula("Sheet1", 1, 1, parse("=1").unwrap())
@@ -187,10 +194,15 @@ fn host_symbol_ids_share_formula_counter_and_survive_redefinition() {
         .find_map(|v| e.graph.vertex_addr(v).as_symbol())
         .unwrap();
     let sid = e.graph.sheet_id("Sheet1").unwrap();
+    let a1 = e
+        .graph
+        .get_vertex_for_cell(&e.graph.make_cell_ref_internal(sid, 0, 0))
+        .unwrap();
     let store = e.graph.authority_host().store();
     let cell_id = store.ids().id_of((sid, 0, 0)).unwrap();
+    assert_eq!(cell_id, a1.0, "a formula cell's id is its vertex");
     let symbol_id = store.symbol_id(symbol).unwrap();
-    assert_ne!(cell_id, symbol_id);
+    assert!(symbol_id >= HOST_SYMBOL_ID_BASE && cell_id < HOST_SYMBOL_ID_BASE);
     assert_eq!(store.ids().locate(symbol_id), None);
     let next = store.ids().next_id();
     e.update_name(
@@ -208,8 +220,13 @@ fn host_symbol_ids_share_formula_counter_and_survive_redefinition() {
     e.set_cell_formula("Sheet1", 2, 1, parse("=2").unwrap())
         .unwrap();
     e.graph.authority().unwrap();
+    let a2 = e
+        .graph
+        .get_vertex_for_cell(&e.graph.make_cell_ref_internal(sid, 1, 0))
+        .unwrap();
     let store = e.graph.authority_host().store();
-    assert_eq!(store.ids().id_of((sid, 1, 0)), Some(next));
+    assert_eq!(store.ids().id_of((sid, 1, 0)), Some(a2.0));
+    assert_eq!(store.ids().next_id(), next, "cells do not draw the counter");
     assert_eq!(store.symbol_id(symbol), Some(symbol_id));
     assert_eq!(store.heap_bytes(), store.census_heap_bytes());
     let high_water = store.ids().next_id();
@@ -230,12 +247,19 @@ fn host_symbol_ids_share_formula_counter_and_survive_redefinition() {
         .vertex;
     let recreated_symbol = e.graph.vertex_addr(recreated).as_symbol().unwrap();
     assert_ne!(recreated_symbol, symbol);
-    // Reclassified (symbol nodes, design §4.1): the rebuild first gives the
-    // recreated name's symbol-plane node a fresh cell id (the high-water
-    // mark), then its binding identity the next one.
+    // The recreated name's binding identity is the next counter id (its
+    // symbol-plane node takes the name vertex's id).
     assert_eq!(
         e.graph.authority_host().store().symbol_id(recreated_symbol),
-        Some(high_water + 1)
+        Some(high_water)
+    );
+    assert_eq!(
+        e.graph.authority_host().store().ids().id_of((
+            super::super::geom::SYMBOL_SHEET,
+            e.graph.authority_host().symbols().slot(recreated).unwrap(),
+            0
+        )),
+        Some(recreated.0)
     );
 }
 
@@ -340,10 +364,11 @@ fn fixed_names_across_many_contexts_keep_the_lk_directory_bounded() {
 /// Decision 9 under host rebuilds: random engine edits interleaved with
 /// forced rebuilds (symbol revision, and real `define_name` calls). At
 /// every sync, a cell that had a formula at the previous sync and still has
-/// one keeps its id, unless a value edit deleted that formula in between
-/// (then the new formula is a creation); a new formula cell never gets an
-/// id seen before (retired ids are not reused); the counter never goes
-/// back.
+/// one keeps its id; an id is never seen at two different cells (never
+/// reused for another cell, never renumbered); the counter never goes
+/// back. Program 2 amendment: a formula cell's id is its vertex's, and a
+/// value edit keeps the cell's vertex, so a formula set again at that cell
+/// gets the same id (Program 1 gave it a fresh one).
 #[test]
 fn ids_are_stable_across_edits_and_forced_rebuilds() {
     use super::super::geom::Cell;
@@ -358,7 +383,8 @@ fn ids_are_stable_across_edits_and_forced_rebuilds() {
         populate(&mut e, &mut g);
         e.graph.authority().expect("authority ready");
         let mut live: FxHashMap<Cell, u32> = FxHashMap::default();
-        let mut ever: FxHashSet<u32> = FxHashSet::default();
+        // Every id seen, with the cell it was seen at.
+        let mut ever: FxHashMap<u32, Cell> = FxHashMap::default();
         let mut next = 0u32;
         let snapshot = |e: &Engine<TestWorkbook>| -> (FxHashMap<Cell, u32>, u32) {
             let s = e.graph.authority_host().store();
@@ -408,21 +434,22 @@ fn ids_are_stable_across_edits_and_forced_rebuilds() {
             );
             for (cell, id) in &now {
                 match live.get(cell) {
-                    Some(old) if !deleted.contains(cell) || old == id => {
+                    Some(old) => {
                         assert_eq!(old, id, "seed {seed} step {step}: {cell:?} renumbered");
                         kept += 1;
                     }
-                    _ => {
+                    None => {
                         assert!(
-                            !ever.contains(id),
-                            "seed {seed} step {step}: {cell:?} reused id {id}"
+                            ever.get(id).is_none_or(|c| c == cell),
+                            "seed {seed} step {step}: {cell:?} reused id {id} of {:?}",
+                            ever.get(id)
                         );
                         fresh += 1;
                     }
                 }
             }
             e.graph.authority_host().store().check().unwrap();
-            ever.extend(now.values().copied());
+            ever.extend(now.iter().map(|(&c, &v)| (v, c)));
             live = now;
             next = counter;
         }

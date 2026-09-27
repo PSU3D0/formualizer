@@ -13,7 +13,7 @@ use crate::engine::authority::extract::{extract_formula, extract_symbol_binding}
 use crate::engine::authority::geom::{Cell, Cover, Rect, SYMBOL_SHEET};
 use crate::engine::authority::host::{AuthorityHost, HostState};
 use crate::engine::authority::store::{
-    AuthorityError, BuildInput, FormulaFacts, SharedBuildInput, Store, TagFilter,
+    AuthorityError, BuildInput, FormulaFacts, IdentifiedFacts, SharedBuildInput, Store, TagFilter,
 };
 
 /// Key of facts shared by family members: template, anchor cell, volatile, dynamic.
@@ -298,21 +298,28 @@ impl DependencyGraph {
     fn authority_rebuild(&mut self) {
         self.authority_sync_symbol_slots();
         let mut input = self.authority_formula_inputs();
-        input.extend(
-            self.authority_symbol_inputs()
-                .into_iter()
-                .map(|(cell, facts)| (cell, std::sync::Arc::new(facts))),
-        );
-        self.authority_rebuild_from(input, None);
+        let symbols = self.authority_symbol_inputs();
+        input.reserve(symbols.len());
+        for (cell, facts) in symbols {
+            // A name's node carries the name vertex's id.
+            let Some(v) = self.authority.symbols.vertex(cell.1) else {
+                continue;
+            };
+            input.push((
+                cell,
+                IdentifiedFacts {
+                    id: v.0,
+                    facts: std::sync::Arc::new(facts),
+                },
+            ));
+        }
+        self.authority_rebuild_from(input);
     }
 
-    /// The rebuild itself; `carried` (post-edit cell → id) replaces the
-    /// prior store's positional identities after a structural edit.
-    fn authority_rebuild_from(
-        &mut self,
-        input: Vec<SharedBuildInput>,
-        carried: Option<&FxHashMap<Cell, crate::engine::authority::identity::Vid>>,
-    ) {
+    /// The rebuild itself. Every cell's id is its executor vertex's
+    /// (Program 2: one id space), so identities follow the graph, which
+    /// keeps a moved cell's vertex.
+    fn authority_rebuild_from(&mut self, input: Vec<(Cell, IdentifiedFacts)>) {
         let budget = self.authority.store.budget;
         let prior = (self.authority.state != HostState::Unbuilt).then_some(&self.authority.store);
         // Enumerate live binding maps, not the vertex slab: deleted vertices
@@ -323,19 +330,12 @@ impl DependencyGraph {
             + self.table_vertex_lookup.len()
             + self.source_vertex_lookup.len();
         let inventory_bytes = count * size_of::<SymbolAddr>();
-        let input_bytes = input.capacity() * size_of::<SharedBuildInput>()
+        let input_bytes = input.capacity() * size_of::<(Cell, IdentifiedFacts)>()
             + input
                 .iter()
                 .map(|(_, f)| f.owned_heap_bytes())
                 .sum::<usize>();
-        let carried_bytes = carried.map_or(0, |m| {
-            crate::engine::authority::dir::hash_table_bytes::<(
-                Cell,
-                crate::engine::authority::identity::Vid,
-            )>(m.capacity())
-        });
-        let needed = (inventory_bytes + input_bytes + carried_bytes) as u64
-            + prior.map_or(0, Store::heap_bytes);
+        let needed = (inventory_bytes + input_bytes) as u64 + prior.map_or(0, Store::heap_bytes);
         if let Some(limit) = budget.scratch.filter(|&limit| needed > limit) {
             self.authority.state = HostState::Failed(AuthorityError::Admission {
                 resource: "scratch",
@@ -367,7 +367,7 @@ impl DependencyGraph {
             inventory_work += 1;
             a.cmp(b)
         });
-        match Store::rebuild_carrying(input, symbols, prior, carried, budget) {
+        match Store::rebuild_carrying(input, symbols, prior, None, true, budget) {
             Ok(mut store) => {
                 store.stats.symbol_work += inventory_work;
                 self.authority.store = store;
@@ -377,7 +377,6 @@ impl DependencyGraph {
                 self.authority.revision += 1;
                 self.authority.clear_observed();
                 self.authority.state = HostState::Ready;
-                self.authority_fill_vertex_of_id();
             }
             Err(e) => self.authority.state = HostState::Failed(e),
         }
@@ -406,8 +405,8 @@ impl DependencyGraph {
         if matches!(self.authority.state, HostState::Failed(_)) {
             return;
         }
-        if let Some(carried) = self.authority.carried.take() {
-            self.authority_structural_rebuild(carried);
+        if std::mem::take(&mut self.authority.structural_pending) {
+            self.authority_structural_rebuild();
             return;
         }
         let mut touched = touched;
@@ -436,9 +435,7 @@ impl DependencyGraph {
         rebuild =
             rebuild || (touched.len() > 4096 && touched.len() * 4 > self.vertex_formulas.len());
         if rebuild {
-            // Identities stay positional here: no cell moved since the
-            // last sync. Transitions are not journaled (a large batch or a
-            // symbol revision is not replayed id by id).
+            // Every id is its vertex's: a rebuild keeps them all.
             self.authority_rebuild();
             return;
         }
@@ -467,31 +464,13 @@ impl DependencyGraph {
             let current = self
                 .get_vertex_for_cell(&cell_ref(cell))
                 .filter(|v| self.vertex_formulas.contains_key(v));
-            let before = self.authority.store.ids().id_of(cell);
-            let result = match current.and_then(|v| self.authority_formula_input(v)) {
-                Some((c, mut facts)) => {
+            // The formula's id is its vertex's (one id space).
+            let result = match current.and_then(|v| Some((v, self.authority_formula_input(v)?))) {
+                Some((v, (c, mut facts))) => {
                     self.authority_verify_l(c.0, &mut facts);
-                    let revive = match before {
-                        None => self.authority_revivable(c),
-                        Some(_) => None,
-                    };
-                    let result = match revive {
-                        Some(id) => self.authority.store.set_formula_reviving(c, &facts, id),
-                        None => self.authority.store.set_formula(c, &facts),
-                    };
-                    if result.is_ok()
-                        && let (Some(v), Some(id)) = (current, self.authority.store.ids().id_of(c))
-                    {
-                        self.authority.set_vertex_of_id(id, v);
-                    }
-                    result
+                    self.authority.store.set_formula_given(c, &facts, v.0)
                 }
-                None => {
-                    if let Some(id) = before {
-                        self.authority.journal.retired(cell, id);
-                    }
-                    self.authority.store.clear_cell(cell)
-                }
+                None => self.authority.store.clear_cell(cell),
             };
             self.authority.incremental_mutations += 1;
             self.authority.revision += 1;
@@ -511,42 +490,28 @@ impl DependencyGraph {
         }
     }
 
-    /// A formula appeared at vertex `v`: the retired id history replay
-    /// restores there, if it can be placed (allocated and not live).
-    fn authority_revivable(
-        &mut self,
-        cell: Cell,
-    ) -> Option<crate::engine::authority::identity::Vid> {
-        let id = self.authority.journal.created(cell)?;
-        let ids = self.authority.store.ids();
-        (id < ids.next_id() && ids.locate(id).is_none()).then_some(id)
-    }
-
     /// A structural edit, move or sheet operation is about to mutate the
-    /// graph (M3). Capture every formula identity by legacy vertex (legacy
-    /// keeps a moved cell's `VertexId`) from the synced store; the next
-    /// sync rebuilds from the transformed formulas keeping them
-    /// (decision 9). O(F) scratch, like legacy's own per-edit formula walk.
+    /// graph (M3): the next sync rebuilds from the transformed formulas.
+    /// Identities need no capture: a formula cell's id is its vertex's,
+    /// which the graph keeps when it moves the cell (Program 2).
     ///
     /// `op` marks an operation boundary (row/column insert or delete, range
-    /// move, sheet operation): a capture still open from an earlier
-    /// operation is synced first, so ids an operation retires are recorded
-    /// in the frame just before it, the one its undo restores. Per-vertex
-    /// moves (`move_vertex`, which replay issues once per moved cell) share
-    /// the open capture.
+    /// move, sheet operation): a structural edit still pending from an
+    /// earlier operation is synced first. Per-vertex moves (`move_vertex`,
+    /// which replay issues once per moved cell) share the pending edit.
     pub(crate) fn authority_note_structural(&mut self, op: bool) {
         // Structural edits move cells and rewrite formulas one vertex at a
-        // time: members get their own ASTs back first (Program 2
-        // compression resumes after the next authority build).
+        // time: members get their per-cell maps and own ASTs back first
+        // (Program 2 compression resumes after the next authority build).
         self.decompress_family_formulas();
-        if self.authority.carried.is_some() {
+        if self.authority.structural_pending {
             if !op {
                 return;
             }
             self.authority_sync();
         }
         match self.authority.state {
-            // Nothing has an id yet, or nothing is kept: the next sync
+            // Nothing is built yet, or the host failed: the next sync
             // builds from scratch or stays failed.
             HostState::Unbuilt | HostState::Failed(_) => return,
             HostState::Ready => {}
@@ -555,107 +520,16 @@ impl DependencyGraph {
         if self.authority.state != HostState::Ready {
             return;
         }
-        // From the formula side, like the build input: `cell_to_vertex` may
-        // name another vertex at a formula's cell.
-        let mut carried = crate::engine::authority::history::Carried::default();
-        carried.reserve(self.authority.store.formula_count() as usize);
-        let ids = self.authority.store.ids();
-        for v in self.vertex_formulas.keys() {
-            if self.store.is_deleted(v) {
-                continue;
-            }
-            if let Some(cell) = self.get_cell_ref(v).map(|c| cell_of(&c))
-                && let Some(id) = ids.id_of(cell)
-            {
-                carried.insert(v, (id, cell));
-            }
-        }
-        self.authority.carried = Some(carried);
+        self.authority.structural_pending = true;
     }
 
-    /// The rebuild after structural mutations: carried vertices keep their
-    /// ids at their new cells, carried vertices without a formula retire
-    /// theirs, and new formulas take a replayed id when history restores
-    /// one, else a fresh id.
-    fn authority_structural_rebuild(
-        &mut self,
-        mut carried: crate::engine::authority::history::Carried,
-    ) {
-        use crate::engine::authority::identity::Vid;
-        // Symbol nodes (names) are not grid cells: structural edits do not
-        // move them, so a surviving name keeps its symbol-plane row and its
-        // id. Their facts are re-extracted from the already-transformed
-        // definitions (legacy rewrites name targets in the same edit).
-        let symbol_ids: Vec<(VertexId, Vid)> = {
-            let ids = self.authority.store.ids();
-            self.authority
-                .symbols
-                .iter()
-                .filter_map(|(slot, v)| ids.id_of((SYMBOL_SHEET, slot, 0)).map(|id| (v, id)))
-                .collect()
-        };
-        // Rows first: readers' name edges resolve through the slots, so a
-        // name the operation created (a duplicated sheet's names) must have
-        // its row before any formula is extracted.
-        self.authority_sync_symbol_slots();
-        let mut vids: Vec<VertexId> = self.vertex_formulas.keys().collect();
-        vids.sort_unstable();
-        let mut input = Vec::with_capacity(vids.len());
-        let mut kept: FxHashMap<Cell, Vid> = FxHashMap::default();
-        kept.reserve(vids.len());
-        let mut used: FxHashSet<Vid> = FxHashSet::default();
-        let mut created: Vec<Cell> = Vec::new();
-        let mut shared = FxHashMap::default();
-        for v in vids {
-            let Some((cell, facts)) = self.authority_formula_input_shared(v, Some(&mut shared))
-            else {
-                continue;
-            };
-            match carried.remove(&v) {
-                Some((id, _)) if used.insert(id) => {
-                    kept.insert(cell, id);
-                }
-                _ => created.push(cell),
-            }
-            input.push((cell, facts));
-        }
-        // Whatever remains lost its formula (deleted, cleared, or its
-        // sheet removed): retire the id.
-        let mut retired: Vec<(Cell, Vid)> = carried
-            .into_values()
-            .filter(|(id, _)| !used.contains(id))
-            .map(|(id, cell)| (cell, id))
-            .collect();
-        retired.sort_unstable();
-        retired.dedup();
-        for (cell, id) in retired {
-            self.authority.journal.retired(cell, id);
-        }
-        for (v, id) in symbol_ids {
-            if let Some(slot) = self.authority.symbols.slot(v)
-                && used.insert(id)
-            {
-                kept.insert((SYMBOL_SHEET, slot, 0), id);
-            }
-        }
-        input.extend(
-            self.authority_symbol_inputs()
-                .into_iter()
-                .map(|(cell, facts)| (cell, std::sync::Arc::new(facts))),
-        );
-        let next_id = self.authority.store.ids().next_id();
-        for cell in created {
-            if let Some(id) = self.authority.journal.created(cell)
-                && id < next_id
-                && used.insert(id)
-            {
-                kept.insert(cell, id);
-            }
-        }
+    /// The rebuild after structural mutations, from the transformed
+    /// formulas (every moved cell keeps its vertex, and so its id).
+    fn authority_structural_rebuild(&mut self) {
         // The dirty cover is in pre-edit coordinates; it is observational
         // (legacy's dirty flags drive scheduling) and restarts here.
         self.authority.dirty.clear();
-        self.authority_rebuild_from(input, Some(&kept));
+        self.authority_rebuild();
         self.authority.structural_rebuilds += 1;
     }
 
@@ -665,12 +539,10 @@ impl DependencyGraph {
     /// closure before anyone reads a flag. Per-cell moves of an undo/redo
     /// replay stay batched until the replay ends.
     pub(crate) fn authority_end_structural(&mut self) {
-        if self.authority.carried.is_some()
-            && self.authority.journal.mode() != crate::engine::authority::history::Replay::Forward
-        {
+        if self.authority.structural_pending && self.authority.replaying {
             return;
         }
-        if self.authority.carried.is_some()
+        if self.authority.structural_pending
             || !self.authority.pending_dirty.is_empty()
             || !self.authority.pending_direct_dirty.is_empty()
         {
@@ -679,13 +551,14 @@ impl DependencyGraph {
     }
 
     /// Undo/redo replay begins (`mode`) or ends (`Forward`). Pending edits
-    /// are synced in the direction they were made, so the journal sees
-    /// each transition in its own direction.
+    /// are synced first; while a replay runs, its per-cell moves stay
+    /// batched until it ends.
     pub(crate) fn authority_set_replay(&mut self, mode: crate::engine::authority::history::Replay) {
-        if self.authority.state == HostState::Ready || self.authority.carried.is_some() {
+        if self.authority.state == HostState::Ready || self.authority.structural_pending {
             self.authority_sync();
         }
-        self.authority.journal.set_mode(mode);
+        self.authority.replaying = mode != crate::engine::authority::history::Replay::Forward;
+        self.set_replay_mode(mode);
     }
 
     /// Live formula id at `cell` (tests: identity stability).
@@ -728,7 +601,7 @@ impl DependencyGraph {
         self.authority_sync_eager();
         let slot = self.authority.symbols.slot(symbol);
         if self.authority.state != HostState::Ready
-            || self.authority.carried.is_some()
+            || self.authority.structural_pending
             || self.first_load_assume_new
         {
             let mut all: Vec<VertexId> = self
@@ -772,7 +645,7 @@ impl DependencyGraph {
     /// `remove_vertex` marks `#REF!`. Read from the current store (the
     /// pre-edit store inside a structural operation, before anything moved).
     pub(crate) fn authority_in_edge_readers(&mut self, vertex: VertexId) -> Vec<VertexId> {
-        if self.authority.carried.is_none() {
+        if !self.authority.structural_pending {
             self.authority_sync_eager();
         }
         if self.authority.state != HostState::Ready {
@@ -821,7 +694,7 @@ impl DependencyGraph {
         edit: StructuralEdit,
         occupancy: &StructuralOccupancy,
     ) -> Vec<VertexId> {
-        if self.authority.carried.is_none() {
+        if !self.authority.structural_pending {
             self.authority_sync_eager();
         }
         if self.authority.state != HostState::Ready {
@@ -909,7 +782,7 @@ impl DependencyGraph {
     /// Whether dirty marks must wait for a resync (structural capture open
     /// or load scope).
     pub(crate) fn authority_defers_marks(&self) -> bool {
-        self.authority.carried.is_some() || self.first_load_assume_new
+        self.authority.structural_pending || self.first_load_assume_new
     }
 
     /// Queue `vertex` as a dirty-propagation seed for after the resync.
@@ -926,14 +799,14 @@ impl DependencyGraph {
 
     /// Sync unless a load scope or a structural capture is open.
     pub(crate) fn authority_sync_eager(&mut self) {
-        if !self.first_load_assume_new && self.authority.carried.is_none() {
+        if !self.first_load_assume_new && !self.authority.structural_pending {
             self.authority_sync();
         }
     }
 
     /// Sync when the host is built and no structural capture is open.
     pub(crate) fn authority_sync_if_ready(&mut self) {
-        if self.authority.state == HostState::Ready && self.authority.carried.is_none() {
+        if self.authority.state == HostState::Ready && !self.authority.structural_pending {
             self.authority_sync();
         }
     }
@@ -1094,7 +967,7 @@ impl DependencyGraph {
             }
         }
         if !self.authority_load_skips_closures() {
-            if self.authority.carried.is_some() || self.first_load_assume_new {
+            if self.authority.structural_pending || self.first_load_assume_new {
                 self.authority.pending_dirty.extend_from_slice(seeds);
             } else {
                 self.authority_sync();
@@ -1145,7 +1018,7 @@ impl DependencyGraph {
     /// Mark the closure of seeds queued while the store lagged (after a
     /// structural resync).
     fn authority_flush_pending_dirty(&mut self) {
-        if self.authority.carried.is_some() {
+        if self.authority.structural_pending {
             return;
         }
         let direct = std::mem::take(&mut self.authority.pending_direct_dirty);
@@ -1493,7 +1366,7 @@ impl DependencyGraph {
         let mut input: Vec<BuildInput> = self
             .authority_formula_inputs()
             .into_iter()
-            .map(|(cell, facts)| (cell, std::sync::Arc::unwrap_or_clone(facts)))
+            .map(|(cell, facts)| (cell, std::sync::Arc::unwrap_or_clone(facts.facts)))
             .collect();
         input.extend(
             self.authority
@@ -1504,13 +1377,17 @@ impl DependencyGraph {
         input
     }
 
-    fn authority_formula_inputs(&self) -> Vec<SharedBuildInput> {
+    /// Every formula cell's build input, with its vertex as its id.
+    fn authority_formula_inputs(&self) -> Vec<(Cell, IdentifiedFacts)> {
         let vids: Vec<VertexId> = self.vertex_formulas.keys().collect();
         // Family members share their template's facts (one allocation per
         // family instead of one per cell).
         let mut shared = FxHashMap::default();
         vids.into_iter()
-            .filter_map(|v| self.authority_formula_input_shared(v, Some(&mut shared)))
+            .filter_map(|v| {
+                let (cell, facts) = self.authority_formula_input_shared(v, Some(&mut shared))?;
+                Some((cell, IdentifiedFacts { id: v.0, facts }))
+            })
             .collect()
     }
 
@@ -1762,7 +1639,8 @@ impl DependencyGraph {
                 continue;
             };
             self.authority.note_unbound(v, missing);
-            self.authority.store.set_formula(cell, &facts)?;
+            // A name's node carries the name vertex's id.
+            self.authority.store.set_formula_given(cell, &facts, v.0)?;
             self.authority.incremental_mutations += 1;
             self.authority.revision += 1;
         }
@@ -1807,36 +1685,15 @@ impl DependencyGraph {
         }
     }
 
-    /// Record the executor vertex of every formula id after a build.
-    fn authority_fill_vertex_of_id(&mut self) {
-        let next = self.authority.store.ids().next_id() as usize;
-        let mut table = std::mem::take(&mut self.authority.vertex_of_id);
-        table.clear();
-        table.resize(next, u32::MAX);
-        for v in self.vertex_formulas.keys() {
-            if self.store.is_deleted(v) {
-                continue;
-            }
-            let Some(addr) = self.store.grid_addr(v) else {
-                continue;
-            };
-            let cell = (self.store.sheet_id(v), addr.row(), addr.col());
-            if let Some(id) = self.authority.store.ids().id_of(cell)
-                && let Some(slot) = table.get_mut(id as usize)
-            {
-                *slot = v.0;
-            }
-        }
-        self.authority.vertex_of_id = table;
-    }
-
     /// The executor vertex of an ordered formula cell with authority id
-    /// `id`: the side array when its vertex still sits at `cell`, else the
-    /// cell map.
+    /// `id`: the vertex `id` itself (one id space) when it sits at `cell`,
+    /// else the cell map (a store not yet synced with a graph edit).
     #[inline]
     pub(crate) fn authority_vertex_of_formula(&self, id: u32, cell: Cell) -> Option<VertexId> {
+        let v = VertexId(id);
         if cell.0 != SYMBOL_SHEET
-            && let Some(v) = self.authority.vertex_of_id(id)
+            && id < crate::engine::authority::identity::HOST_SYMBOL_ID_BASE
+            && self.store.vertex_exists(v)
             && !self.store.is_deleted(v)
             && self.store.sheet_id(v) == cell.0
             && self
@@ -2852,9 +2709,9 @@ impl DependencyGraph {
         )
         .literals;
         for col in dom.c0..=dom.c1 {
-            // Members of a column are one identity run (consecutive ids);
-            // the vertex of an id is an array read. Checked by cell, with
-            // the cell map as the fallback.
+            // Members of a column are mostly one identity run (consecutive
+            // ids, which are their vertices). Checked by cell, with the cell
+            // map as the fallback.
             let id0 = self.authority.store.ids().id_of((sheet, dom.r0, col));
             for row in dom.r0..=dom.r1 {
                 let cell = (sheet, row, col);
@@ -2873,13 +2730,9 @@ impl DependencyGraph {
                 if own == template || self.store.is_dynamic(v) {
                     continue;
                 }
-                let id = match guess.filter(|&id| self.authority.vertex_of_id(id) == Some(v)) {
-                    Some(id) => id,
-                    None => match self.authority.store.ids().id_of(cell) {
-                        Some(id) => id,
-                        None => continue,
-                    },
-                };
+                // One id space: the member's id is its vertex's.
+                let id = v.0;
+                debug_assert_eq!(self.authority.store.ids().id_of(cell), Some(id));
                 let row_lits = self.authority.store.slots().get(id).unwrap_or(&[]);
                 if !literal_rows_equal(&self.data_store, row_lits, &tmpl_literals)
                     || !rendered(v, own)

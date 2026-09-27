@@ -459,6 +459,20 @@ impl<'g> BulkIngestBuilder<'g> {
                 let mut next_record = 0usize;
                 let mut memo_state = None;
                 let records = std::mem::take(&mut stage.records);
+                // First load: every formula target of the sheet gets its
+                // vertex up front, column by column, so each column's
+                // formulas are one id run (identity runs are the planner's
+                // slices: chunk-sized runs fragment its plans). Load-time
+                // family members become virtual runs right away.
+                if self.g.first_load_assume_new() {
+                    let targets: Vec<(u32, u32, Option<crate::engine::graph::FormulaRef>)> = stage
+                        .formulas
+                        .iter()
+                        .map(|f| (f.row, f.col, None))
+                        .chain(records.iter().map(|&(r, c, f)| (r, c, Some(f))))
+                        .collect();
+                    total_vertices += self.g.preallocate_load_targets(stage.id, targets);
+                }
 
                 loop {
                     let tp0 = Instant::now();
@@ -667,7 +681,16 @@ impl<'g> BulkIngestBuilder<'g> {
                         let vid = all_vids[pos as usize];
                         target_vids.push(vid);
                         let row_plan = &row_plans[i].2;
-                        if unmapped[pos as usize] {
+                        if self.g.is_virtual_member(vid) {
+                            // Pre-allocated as a virtual member: keep it
+                            // unless it needs per-vertex state.
+                            self.g.assign_preallocated_member(
+                                vid,
+                                ast_ids[i],
+                                row_plan.volatile,
+                                row_plan.dynamic,
+                            );
+                        } else if unmapped[pos as usize] {
                             self.g.assign_unmapped_member_load_fast(vid);
                             let (sheet, pc) = plan.formula_targets[i];
                             members.push((vid, sheet, pc.row(), pc.col(), ast_ids[i]));

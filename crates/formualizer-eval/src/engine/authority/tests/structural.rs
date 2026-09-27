@@ -57,8 +57,11 @@ fn texts(e: &Engine<TestWorkbook>) -> BTreeMap<(String, u32, u32), String> {
     m
 }
 
+/// The next id a new formula cell can get: formula ids are executor
+/// vertex ids (Program 2), allocated by the graph.
 fn next_id(e: &mut Engine<TestWorkbook>) -> Vid {
-    e.graph.authority().unwrap().store().ids().next_id()
+    e.graph.authority().unwrap();
+    e.graph.next_vertex_id_for_test()
 }
 
 fn engine(seed: u64) -> Engine<TestWorkbook> {
@@ -431,8 +434,12 @@ fn undo_structural_insert_then_edit_precedent_recalcs() {
     );
 }
 
+/// Program 2 amendment of decision 9: a formula cell's id is its vertex's,
+/// and value cells still have vertices, so formula -> value -> formula
+/// keeps the cell's id (Program 1 gave the new formula a fresh id). Undo and
+/// redo of those edits show the same ids, incrementally.
 #[test]
-fn undo_of_formula_to_value_edit_revives_the_id_incrementally() {
+fn formula_to_value_to_formula_keeps_the_cells_id_incrementally() {
     let mut e = Engine::new(TestWorkbook::new(), EvalConfig::default());
     e.set_cell_value("Sheet1", 1, 1, LiteralValue::Number(2.0))
         .unwrap();
@@ -457,8 +464,8 @@ fn undo_of_formula_to_value_edit_revives_the_id_incrementally() {
         ed.set_cell_formula(b1, parse("=A1*3").unwrap())
     })
     .unwrap();
-    let fresh = ids(&mut e)[&(s1, 0, 1)];
-    assert!(fresh > before[&(s1, 0, 1)], "a fresh edit takes a fresh id");
+    let again = ids(&mut e)[&(s1, 0, 1)];
+    assert_eq!(again, before[&(s1, 0, 1)], "the cell keeps its vertex id");
     e.undo_logged(&mut undo, &mut log).unwrap();
     assert_eq!(ids(&mut e), mid);
     e.undo_logged(&mut undo, &mut log).unwrap();
@@ -466,7 +473,7 @@ fn undo_of_formula_to_value_edit_revives_the_id_incrementally() {
     e.redo_logged(&mut undo, &mut log).unwrap();
     assert_eq!(ids(&mut e), mid);
     e.redo_logged(&mut undo, &mut log).unwrap();
-    assert_eq!(ids(&mut e)[&(s1, 0, 1)], fresh);
+    assert_eq!(ids(&mut e)[&(s1, 0, 1)], again);
     // No structural edit: all of this was incremental.
     assert_eq!(e.graph.authority_host().builds(), builds);
     e.evaluate_all().unwrap();
@@ -476,13 +483,15 @@ fn undo_of_formula_to_value_edit_revives_the_id_incrementally() {
     );
 }
 
-/// Two structural operations with no sync between them: each records
-/// the ids it retires in its own pre-operation frame (the frame its undo
-/// restores). Checked on the journal: legacy's logged undo cannot replay
-/// this pair (the first delete's `VertexMoved` events name vertices the
-/// second destroyed, which its undo re-creates on new vertices).
+/// Two structural operations with no sync between them, undone through
+/// the change log: every deleted cell comes back with its original id
+/// (the removed vertex itself is revived), and redo retires them again.
+/// Program 1 checked the host's per-cell journal frames here; legacy's
+/// logged undo could not replay this pair (the first delete's
+/// `VertexMoved` events named vertices the second destroyed, which its
+/// undo re-created on new vertices). With revival it replays exactly.
 #[test]
-fn back_to_back_deletes_retire_in_their_own_frames() {
+fn back_to_back_deletes_undo_to_their_original_ids() {
     let mut e = Engine::new(TestWorkbook::new(), EvalConfig::default());
     for r in 1..=20 {
         e.set_cell_value("Sheet1", r, 1, LiteralValue::Number(f64::from(r)))
@@ -491,23 +500,99 @@ fn back_to_back_deletes_retire_in_their_own_frames() {
             .unwrap();
     }
     let s1 = e.graph.sheet_id("Sheet1").unwrap();
-    let i0 = ids(&mut e);
+    let (t0, i0) = (texts(&e), ids(&mut e));
     let mut log = ChangeLog::new();
+    let mut undo = UndoEngine::new();
     e.edit_with_logger(&mut log, |ed| ed.delete_rows(s1, 3, 2).map(|_| ()))
         .unwrap()
         .unwrap();
+    let (t1, i1) = (texts(&e), ids(&mut e));
     e.edit_with_logger(&mut log, |ed| ed.delete_rows(s1, 9, 3).map(|_| ()))
         .unwrap()
         .unwrap();
-    let i2 = ids(&mut e);
-    let journal = e.graph.authority_host().journal();
-    // First delete: 0-based rows 3..=4 in the original frame.
-    for r in 3..=4 {
-        assert_eq!(journal.undo_target((s1, r, 2)), Some(i0[&(s1, r, 2)]));
-    }
-    // Second delete: rows 9..=11 after the first, i.e. original 11..=13.
-    for r in 9..=11 {
-        assert_eq!(journal.undo_target((s1, r, 2)), Some(i0[&(s1, r + 2, 2)]));
-    }
+    let (t2, i2) = (texts(&e), ids(&mut e));
     assert_eq!(i2.len(), i0.len() - 5);
+    for round in 0..2 {
+        e.undo_logged(&mut undo, &mut log).unwrap();
+        assert_legacy(&texts(&e), &t1, &format!("undo 2nd, round {round}"));
+        assert_ids(&ids(&mut e), &i1, &format!("undo 2nd, round {round}"));
+        e.undo_logged(&mut undo, &mut log).unwrap();
+        assert_legacy(&texts(&e), &t0, &format!("undo 1st, round {round}"));
+        assert_ids(&ids(&mut e), &i0, &format!("undo 1st, round {round}"));
+        e.redo_logged(&mut undo, &mut log).unwrap();
+        assert_ids(&ids(&mut e), &i1, &format!("redo 1st, round {round}"));
+        e.redo_logged(&mut undo, &mut log).unwrap();
+        assert_legacy(&texts(&e), &t2, &format!("redo 2nd, round {round}"));
+        assert_ids(&ids(&mut e), &i2, &format!("redo 2nd, round {round}"));
+    }
+}
+
+/// No id is ever reused for a different cell or renumbered: formulas
+/// deleted by structural edits and cell clears retire their ids; new
+/// formulas created elsewhere afterwards (also after undo/redo sequences
+/// that revive and retire the deleted ones) never get a retired id, and a
+/// live id always names the same logical cell.
+#[test]
+fn retired_ids_are_never_given_to_new_cells() {
+    let mut e = engine(0x5eed_0401);
+    let s1 = e.graph.sheet_id("Sheet1").unwrap();
+    let mut log = ChangeLog::new();
+    let mut undo = UndoEngine::new();
+    let mut ever: std::collections::BTreeSet<Vid> = ids(&mut e).values().copied().collect();
+    let i0 = ids(&mut e);
+    e.edit_with_logger(&mut log, |ed| ed.delete_rows(s1, 5, 4).map(|_| ()))
+        .unwrap()
+        .unwrap();
+    let i1 = ids(&mut e);
+    let retired: std::collections::BTreeSet<Vid> = i0
+        .values()
+        .copied()
+        .filter(|id| !i1.values().any(|v| v == id))
+        .collect();
+    assert!(!retired.is_empty(), "the delete retired formulas");
+    let check_new = |e: &mut Engine<TestWorkbook>,
+                     ever: &mut std::collections::BTreeSet<Vid>,
+                     cell: Cell,
+                     ctx: &str| {
+        let id = ids(e)[&cell];
+        assert!(
+            !retired.contains(&id),
+            "{ctx}: new formula took retired id {id}"
+        );
+        assert!(ever.insert(id), "{ctx}: new formula took a used id {id}");
+    };
+    e.set_cell_formula("Sheet1", ROWS + 5, 3, parse("=A1+1").unwrap())
+        .unwrap();
+    check_new(&mut e, &mut ever, (s1, ROWS + 4, 2), "after delete");
+    // Undo revives the deleted cells with their ids; redo retires them.
+    e.undo_logged(&mut undo, &mut log).unwrap();
+    let back = ids(&mut e);
+    for (cell, id) in &i0 {
+        assert_eq!(back.get(cell), Some(id), "undo revives {cell:?}");
+    }
+    e.redo_logged(&mut undo, &mut log).unwrap();
+    e.set_cell_formula("Sheet1", ROWS + 6, 4, parse("=B2*2").unwrap())
+        .unwrap();
+    check_new(&mut e, &mut ever, (s1, ROWS + 5, 3), "after undo/redo");
+    // Clearing a formula cell (a value over it) keeps that cell's vertex;
+    // formulas created elsewhere still get new ids.
+    let (cleared, cleared_id) = ids(&mut e)
+        .into_iter()
+        .find(|(c, _)| c.0 == s1)
+        .expect("a formula on Sheet1");
+    e.set_cell_value(
+        "Sheet1",
+        cleared.1 + 1,
+        cleared.2 + 1,
+        LiteralValue::Number(1.0),
+    )
+    .unwrap();
+    e.set_cell_formula("Sheet1", ROWS + 7, 5, parse("=C2").unwrap())
+        .unwrap();
+    check_new(&mut e, &mut ever, (s1, ROWS + 6, 4), "after a clear");
+    assert!(!ids(&mut e).values().any(|&v| v == cleared_id));
+    // Every live id belongs to exactly one cell.
+    let live = ids(&mut e);
+    let distinct: std::collections::BTreeSet<Vid> = live.values().copied().collect();
+    assert_eq!(distinct.len(), live.len());
 }

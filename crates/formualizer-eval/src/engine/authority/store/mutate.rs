@@ -171,6 +171,27 @@ impl Store {
         )
     }
 
+    /// [`Self::set_formula`] for a host store (Program 2): the formula's id
+    /// is `id`, the host's (the executor vertex at the cell). A cell whose
+    /// live id is another one (the host replaced the cell's vertex) is
+    /// cleared first, retiring that id.
+    pub fn set_formula_given(
+        &mut self,
+        cell: Cell,
+        facts: &FormulaFacts,
+        id: Vid,
+    ) -> Result<MutationReport, AuthorityError> {
+        debug_assert!(id < HOST_SYMBOL_ID_BASE, "host id in the symbol range");
+        match self.ids.id_of(cell) {
+            Some(live) if live == id => self.set_formula(cell, facts),
+            Some(_) => {
+                self.clear_cell(cell)?;
+                self.set_formula_reviving(cell, facts, id)
+            }
+            None => self.set_formula_reviving(cell, facts, id),
+        }
+    }
+
     /// Clear the formula at `cell` (formula → value/empty). A cell without a
     /// formula is a no-op scope.
     pub fn clear_cell(&mut self, cell: Cell) -> Result<MutationReport, AuthorityError> {

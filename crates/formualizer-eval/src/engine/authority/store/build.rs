@@ -12,6 +12,44 @@ pub type SharedBuildInput = (Cell, std::sync::Arc<FormulaFacts>);
 
 use std::borrow::Borrow;
 
+/// The id a host assigns a build input's cell (Program 2: a formula
+/// cell's id is its executor `VertexId`). `None` keeps decision 9's
+/// assignment (kept from `prior` or `carried`, else fresh).
+pub trait GivenId {
+    fn given_id(&self) -> Option<Vid> {
+        None
+    }
+}
+
+impl GivenId for FormulaFacts {}
+impl GivenId for std::sync::Arc<FormulaFacts> {}
+impl GivenId for &FormulaFacts {}
+
+/// Facts with the host's id for their cell.
+#[derive(Clone, Debug)]
+pub struct IdentifiedFacts {
+    pub id: Vid,
+    pub facts: std::sync::Arc<FormulaFacts>,
+}
+
+impl Borrow<FormulaFacts> for IdentifiedFacts {
+    fn borrow(&self) -> &FormulaFacts {
+        &self.facts
+    }
+}
+
+impl GivenId for IdentifiedFacts {
+    fn given_id(&self) -> Option<Vid> {
+        Some(self.id)
+    }
+}
+
+impl IdentifiedFacts {
+    pub fn owned_heap_bytes(&self) -> usize {
+        self.facts.owned_heap_bytes()
+    }
+}
+
 impl Store {
     /// Build from scratch. Groups are canon of their cells, owners get
     /// column-major contiguous ids (one run per column), and every
@@ -47,18 +85,19 @@ impl Store {
         prior: Option<&Store>,
         budget: Budget,
     ) -> Result<Store, AuthorityError> {
-        Self::rebuild_carrying(input, live_symbols, prior, None, budget)
+        Self::rebuild_carrying(input, live_symbols, prior, None, false, budget)
     }
 
     /// [`Self::rebuild_with_symbols`] after a structural edit (M3): cell
     /// ids come from `carried` (post-edit cell → id, every id below
     /// `prior`'s counter, not live twice) instead of `prior`'s positions;
     /// cells absent from it get fresh ids from `prior`'s counter.
-    pub(crate) fn rebuild_carrying<F: Borrow<FormulaFacts>>(
+    pub(crate) fn rebuild_carrying<F: Borrow<FormulaFacts> + GivenId>(
         input: Vec<(Cell, F)>,
         live_symbols: Vec<SymbolId>,
         prior: Option<&Store>,
         carried: Option<&FxHashMap<Cell, Vid>>,
+        host_ids: bool,
         budget: Budget,
     ) -> Result<Store, AuthorityError> {
         let symbol_input_bytes = (live_symbols.capacity() * size_of::<SymbolId>()) as u64;
@@ -81,7 +120,8 @@ impl Store {
             input_bytes as u64 + symbol_input_bytes + prior.map_or(0, Store::heap_bytes),
         )?;
         drop(gate);
-        let (mut s, scratch) = Self::build_keeping_with(input, prior.map(Store::ids), carried)?;
+        let (mut s, scratch) =
+            Self::build_keeping_with(input, prior.map(Store::ids), carried, host_ids)?;
         s.budget = budget;
         let transient = scratch + symbol_input_bytes + prior.map_or(0, Store::heap_bytes);
         s.admit(s.heap_bytes(), transient)?;
@@ -140,15 +180,16 @@ impl Store {
         input: Vec<BuildInput>,
         prior: Option<&IdentityTable>,
     ) -> Result<(Store, u64), AuthorityError> {
-        Self::build_keeping_with(input, prior, None)
+        Self::build_keeping_with(input, prior, None, false)
     }
 
     /// [`Self::build_keeping`] with an explicit kept-id map (see
     /// [`Self::rebuild_carrying`]); `prior` then supplies only the counter.
-    pub(crate) fn build_keeping_with<F: Borrow<FormulaFacts>>(
+    pub(crate) fn build_keeping_with<F: Borrow<FormulaFacts> + GivenId>(
         mut input: Vec<(Cell, F)>,
         prior: Option<&IdentityTable>,
         carried: Option<&FxHashMap<Cell, Vid>>,
+        host_ids: bool,
     ) -> Result<(Store, u64), AuthorityError> {
         // The input and everything it owns coexist with the whole build
         // (re-review R5).
@@ -406,16 +447,38 @@ impl Store {
         // order. A run is a maximal row segment of one owner column whose
         // ids are consecutive: all kept and id-contiguous in `prior`, or
         // all new. Without `prior` this is one run per owner column.
+        // Given ids (a host store): every cell's id is the host's; the
+        // counter only allocates symbol binding identities, from
+        // `HOST_SYMBOL_ID_BASE` up.
+        let given = host_ids;
+        debug_assert!(
+            !given || input.iter().all(|(_, f)| f.given_id().is_some()),
+            "a host build gives every cell's id"
+        );
         if let Some(p) = prior {
-            s.ids = IdentityTable::continuing(p.next_id(), p.limit());
+            let next = if given || p.next_id() >= HOST_SYMBOL_ID_BASE {
+                p.next_id().max(HOST_SYMBOL_ID_BASE)
+            } else {
+                p.next_id()
+            };
+            s.ids = IdentityTable::continuing(next, p.limit());
+        } else if given {
+            s.ids = IdentityTable::continuing(HOST_SYMBOL_ID_BASE, s.ids.limit());
         }
         placed.sort_unstable_by_key(|&o| {
             let w = &s.owners[o as usize];
             (w.sheet, w.dom.c0, w.dom.r0)
         });
-        let kept_id = |sheet: u16, row: u32, col: u32| match carried {
-            Some(m) => m.get(&(sheet, row, col)).copied(),
-            None => prior.and_then(|p| p.id_of((sheet, row, col))),
+        let kept_id = |sheet: u16, row: u32, col: u32| {
+            if given {
+                return by_cell
+                    .get(&(sheet, row, col))
+                    .and_then(|&i| input[i].1.given_id());
+            }
+            match carried {
+                Some(m) => m.get(&(sheet, row, col)).copied(),
+                None => prior.and_then(|p| p.id_of((sheet, row, col))),
+            }
         };
         // (owner, column, first row, length, kept first id).
         let mut segs: Vec<(u32, u32, u32, u32, Option<Vid>)> = Vec::new();

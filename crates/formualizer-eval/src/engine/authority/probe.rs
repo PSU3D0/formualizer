@@ -65,7 +65,6 @@ pub fn sync<R>(e: &mut Engine<R>) -> Result<Summary, AuthorityError> {
 pub fn breakdown<R>(e: &Engine<R>) -> Vec<(&'static str, usize)> {
     let host = e.graph.authority_host();
     let mut v = host.store().bytes_breakdown();
-    v.push(("host_vertex_of_id", host.vertex_of_id_bytes()));
     v.push(("host_symbol_slots", host.symbols().heap_bytes()));
     v
 }

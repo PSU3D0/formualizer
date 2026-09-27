@@ -8,14 +8,13 @@
 //! revisions are applied incrementally, in work proportional to the changed
 //! symbols and their readers (their rows, binding identities, symbol nodes,
 //! and the direct readers of the changed nodes). Structural edits, moves and sheet operations (M3)
-//! capture the formula identities, and the next sync rebuilds from the
-//! already-transformed formulas keeping them (`history`). FormulaPlane spans
+//! make the next sync a rebuild from the already-transformed formulas; ids
+//! are the executor's vertex ids, which the graph keeps (`history`). FormulaPlane spans
 //! are M2: while spans exist the host is in a typed "unsupported under
 //! unified_authority" state, and every query answers that error instead of
 //! a stale relation.
 
 use super::dirty::DirtyStore;
-use super::history::{Carried, IdJournal};
 use super::store::{AuthorityError, Store};
 use crate::engine::VertexId;
 use rustc_hash::FxHashMap;
@@ -69,18 +68,15 @@ pub struct AuthorityHost {
     /// planned with the cells, so a name's vertex is scheduled as a unit
     /// between its precedents and its readers.
     pub(crate) symbols: SymbolSlots,
-    /// Identities captured before pending structural mutations; `Some`
-    /// makes the next sync a rebuild that keeps them (M3).
-    pub(crate) carried: Option<Carried>,
-    /// Retired ids that undo/redo may restore (M3, §6).
-    pub(crate) journal: IdJournal,
+    /// A structural edit, move or sheet operation mutated the graph since
+    /// the last sync: the next sync rebuilds (M3). Identities need no
+    /// capture: a cell's id is its executor vertex's, which the graph
+    /// keeps when it moves the cell (Program 2).
+    pub(crate) structural_pending: bool,
+    /// An undo/redo replay is in progress (its per-cell moves stay batched
+    /// until it ends).
+    pub(crate) replaying: bool,
     pub(crate) structural_rebuilds: u64,
-    /// Authority formula id → executor vertex (`u32::MAX` = unknown), so
-    /// the Schedule adapter and demand walk translate ordered cells without
-    /// a per-cell hash lookup. Filled at every build and incremental
-    /// `set_formula`; ids are never reused (decision 9), and readers verify
-    /// the vertex still sits at the cell, falling back to the hash map.
-    pub(crate) vertex_of_id: Vec<u32>,
     /// Program 2 compression, sequential engines only: formula vertices with
     /// a reference text that is not its reference's rendering, recorded when
     /// the authority reads the formula. (With a thread pool the check runs
@@ -279,27 +275,6 @@ impl AuthorityHost {
         }
     }
 
-    /// The executor vertex recorded for authority formula id `id`.
-    #[inline]
-    pub fn vertex_of_id(&self, id: u32) -> Option<VertexId> {
-        match self.vertex_of_id.get(id as usize) {
-            Some(&v) if v != u32::MAX => Some(VertexId(v)),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn set_vertex_of_id(&mut self, id: u32, vertex: VertexId) {
-        let i = id as usize;
-        if i >= self.vertex_of_id.len() {
-            self.vertex_of_id.resize(i + 1, u32::MAX);
-        }
-        self.vertex_of_id[i] = vertex.0;
-    }
-
-    pub fn vertex_of_id_bytes(&self) -> usize {
-        self.vertex_of_id.capacity() * size_of::<u32>()
-    }
-
     pub fn incremental_mutations(&self) -> u64 {
         self.incremental_mutations
     }
@@ -329,9 +304,5 @@ impl AuthorityHost {
 
     pub fn structural_rebuilds(&self) -> u64 {
         self.structural_rebuilds
-    }
-
-    pub fn journal(&self) -> &IdJournal {
-        &self.journal
     }
 }
