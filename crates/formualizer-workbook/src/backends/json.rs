@@ -10,7 +10,6 @@ use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use formualizer_eval::engine::{FormulaIngestBatch, FormulaIngestRecord};
 
@@ -852,46 +851,17 @@ where
                 }
             } else {
                 let mut formulas: Vec<FormulaIngestRecord> = Vec::new();
+                let mut staging = super::formula_grouping::GroupedFormulaStaging::new();
                 for c in &sheet.cells {
                     if let Some(f) = &c.formula {
                         if f.is_empty() {
                             continue;
                         }
-                        let with_eq = if f.starts_with('=') {
-                            f.clone()
-                        } else {
-                            format!("={f}")
-                        };
-                        match formualizer_parse::parser::parse(&with_eq) {
-                            Ok(parsed) => {
-                                let ast_id = engine.intern_formula_ast(&parsed);
-                                formulas.push(FormulaIngestRecord::new(
-                                    c.row,
-                                    c.col,
-                                    ast_id,
-                                    Some(Arc::<str>::from(with_eq.clone())),
-                                ));
-                            }
-                            Err(e) => {
-                                if let Some(recovered) = engine
-                                    .handle_formula_parse_error(
-                                        name,
-                                        c.row,
-                                        c.col,
-                                        &with_eq,
-                                        e.to_string(),
-                                    )
-                                    .map_err(IoError::Engine)?
-                                {
-                                    let ast_id = engine.intern_formula_ast(&recovered);
-                                    formulas.push(FormulaIngestRecord::new(
-                                        c.row,
-                                        c.col,
-                                        ast_id,
-                                        Some(Arc::<str>::from(with_eq.clone())),
-                                    ));
-                                }
-                            }
+                        if let Some(record) = staging
+                            .stage(engine, name, c.row, c.col, f)
+                            .map_err(IoError::Engine)?
+                        {
+                            formulas.push(record);
                         }
                     }
                 }

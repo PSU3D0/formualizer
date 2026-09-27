@@ -537,3 +537,78 @@ fn json_metadata_roundtrip() {
     assert!(sheet.tables[0].header_row);
     assert_eq!(sheet.named_ranges.len(), 1);
 }
+
+/// Load-time family grouping in the JSON loader (decision 26): the same
+/// values as loading every formula on its own, eager and deferred, with
+/// member ASTs never interned.
+#[cfg(feature = "json")]
+#[test]
+fn json_load_time_grouping_matches_per_cell_load() {
+    use formualizer_workbook::{LoadStrategy, Workbook, WorkbookConfig};
+    const ROWS: u32 = 50;
+    let mut adapter = JsonAdapter::new();
+    adapter.create_sheet("Sheet1").unwrap();
+    adapter
+        .write_cell("Sheet1", 1, 6, CellData::from_value(2.5))
+        .unwrap();
+    for r in 1..=ROWS {
+        adapter
+            .write_cell("Sheet1", r, 1, CellData::from_value(f64::from(r % 7) - 3.0))
+            .unwrap();
+        for (c, f) in [
+            (2, format!("=A{r}*$F$1")),
+            (
+                3,
+                if r == 1 {
+                    "=B1".to_string()
+                } else {
+                    format!("=C{}+B{r}", r - 1)
+                },
+            ),
+            (4, format!("=IF(A{r}>0,SUM($A$1:A{r}),C{r})")),
+        ] {
+            adapter
+                .write_cell("Sheet1", r, c, CellData::from_formula(f))
+                .unwrap();
+        }
+    }
+    let bytes = adapter.save_to_bytes().unwrap();
+    for deferred in [false, true] {
+        let load = |grouping: bool| {
+            let mut config = if deferred {
+                WorkbookConfig::interactive()
+            } else {
+                WorkbookConfig::ephemeral()
+            };
+            config.eval.formula_compression = grouping;
+            let adapter = JsonAdapter::open_bytes(bytes.clone()).unwrap();
+            let mut wb = Workbook::from_reader(adapter, LoadStrategy::EagerAll, config).unwrap();
+            wb.prepare_graph_all().unwrap();
+            wb
+        };
+        let (mut grouped, mut plain) = (load(true), load(false));
+        let (g, p) = (
+            grouped.engine().baseline_stats().formula_ast_node_count,
+            plain.engine().baseline_stats().formula_ast_node_count,
+        );
+        assert!(g * 2 < p, "deferred={deferred}: {g} vs {p} arena nodes");
+        for step in 0..2 {
+            for wb in [&mut grouped, &mut plain] {
+                if step == 1 {
+                    wb.set_value("Sheet1", 4, 1, LiteralValue::Number(9.0))
+                        .unwrap();
+                }
+                wb.evaluate_all().unwrap();
+            }
+            for r in 1..=ROWS {
+                for c in 1..=4 {
+                    assert_eq!(
+                        grouped.get_value("Sheet1", r, c),
+                        plain.get_value("Sheet1", r, c),
+                        "deferred={deferred} step {step} R{r}C{c}"
+                    );
+                }
+            }
+        }
+    }
+}

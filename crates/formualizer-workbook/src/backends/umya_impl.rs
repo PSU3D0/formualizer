@@ -13,7 +13,6 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::io::{Cursor, Read, Seek};
 use std::path::Path;
-use std::sync::Arc;
 use umya_spreadsheet::{
     CellRawValue, CellValue,
     structs::{DefinedName as UmyaDefinedName, Worksheet},
@@ -1342,46 +1341,17 @@ where
                 }
             } else {
                 let mut formulas: Vec<FormulaIngestRecord> = Vec::new();
+                let mut staging = super::formula_grouping::GroupedFormulaStaging::new();
                 for ((row, col), cd) in &sheet_data.cells {
                     if let Some(f) = &cd.formula {
                         if f.is_empty() {
                             continue;
                         }
-                        let with_eq = if f.starts_with('=') {
-                            f.clone()
-                        } else {
-                            format!("={f}")
-                        };
-                        match formualizer_parse::parser::parse(&with_eq) {
-                            Ok(parsed) => {
-                                let ast_id = engine.intern_formula_ast(&parsed);
-                                formulas.push(FormulaIngestRecord::new(
-                                    *row,
-                                    *col,
-                                    ast_id,
-                                    Some(Arc::<str>::from(with_eq.clone())),
-                                ));
-                            }
-                            Err(e) => {
-                                if let Some(recovered) = engine
-                                    .handle_formula_parse_error(
-                                        n,
-                                        *row,
-                                        *col,
-                                        &with_eq,
-                                        e.to_string(),
-                                    )
-                                    .map_err(IoError::Engine)?
-                                {
-                                    let ast_id = engine.intern_formula_ast(&recovered);
-                                    formulas.push(FormulaIngestRecord::new(
-                                        *row,
-                                        *col,
-                                        ast_id,
-                                        Some(Arc::<str>::from(with_eq.clone())),
-                                    ));
-                                }
-                            }
+                        if let Some(record) = staging
+                            .stage(engine, n, *row, *col, f)
+                            .map_err(IoError::Engine)?
+                        {
+                            formulas.push(record);
                         }
                         formula_cells += 1;
                     }

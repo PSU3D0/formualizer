@@ -24,6 +24,9 @@ pub mod umya3;
 #[cfg(feature = "umya3")]
 pub use umya3::UmyaAdapter as Umya3Adapter;
 
+#[cfg(any(feature = "umya", feature = "umya3", feature = "json"))]
+mod formula_grouping;
+
 #[cfg(any(feature = "umya", feature = "umya3"))]
 mod formula_cache;
 #[cfg(any(feature = "umya", feature = "umya3"))]
