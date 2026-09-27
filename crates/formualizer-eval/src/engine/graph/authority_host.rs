@@ -117,7 +117,15 @@ impl DependencyGraph {
             self.is_dynamic(vid),
         );
         self.authority_apply_range_self_use(vid, (sheet, row, col), &mut facts);
-        if !formula_texts_rendered(&self.data_store, &self.sheet_reg, ast) {
+        if !self.config.enable_parallel
+            && self.config.formula_compression
+            && !formula_texts_rendered(
+                &self.data_store,
+                &self.sheet_reg,
+                ast,
+                &mut SheetPrefixes::new(),
+            )
+        {
             self.authority.texts_unrendered.lock().unwrap().insert(vid);
         }
         Some(((sheet, row, col), facts))
@@ -1931,12 +1939,17 @@ fn literal_rows_equal(
 
 /// Whether every reference text of `ast` is its reference's rendering
 /// (the instantiation rule reproduces such texts at any offset).
+/// Rendered `sheet!` prefixes by sheet key (few per template: a linear
+/// scan beats hashing).
+type SheetPrefixes = smallvec::SmallVec<[(crate::engine::arena::SheetKey, String); 4]>;
+
 fn formula_texts_rendered(
     ds: &crate::engine::arena::DataStore,
     reg: &crate::engine::sheet_registry::SheetRegistry,
     ast: AstNodeId,
+    prefixes: &mut SheetPrefixes,
 ) -> bool {
-    use crate::engine::arena::{AstNodeData as N, CompactRefType as R};
+    use crate::engine::arena::{AstNodeData as N, CompactRefType as R, SheetKey};
     let mut stack: smallvec::SmallVec<[AstNodeId; 16]> = smallvec::smallvec![ast];
     while let Some(id) = stack.pop() {
         let Some(node) = ds.get_node(id) else {
@@ -1948,9 +1961,39 @@ fn formula_texts_rendered(
                 ref_type,
             } => {
                 let text = ds.resolve_ast_string(*original_id);
-                let ok = match ref_type {
-                    R::Cell { sheet: None, .. } | R::Range { sheet: None, .. } => {
-                        coords_rendering(ref_type).is_some_and(|c| text.as_bytes() == &c[..])
+                let ok = match (ref_type, coords_rendering(ref_type)) {
+                    (R::Cell { sheet: None, .. } | R::Range { sheet: None, .. }, Some(c)) => {
+                        text.as_bytes() == &c[..]
+                    }
+                    // `Display` renders a sheet-qualified cell or range as
+                    // the quoted sheet name, `!`, then the coordinates.
+                    (
+                        R::Cell {
+                            sheet: Some(key), ..
+                        }
+                        | R::Range {
+                            sheet: Some(key), ..
+                        },
+                        Some(c),
+                    ) => {
+                        let prefix = match prefixes.iter().position(|(k, _)| k == key) {
+                            Some(i) => &prefixes[i].1,
+                            None => {
+                                let name = match *key {
+                                    SheetKey::Id(id) => reg.name(id),
+                                    SheetKey::Name(name) => ds.resolve_ast_string(name),
+                                };
+                                let mut p =
+                                    formualizer_common::format_a1_sheet_name(name).into_owned();
+                                p.push('!');
+                                prefixes.push((*key, p));
+                                &prefixes[prefixes.len() - 1].1
+                            }
+                        };
+                        let bytes = text.as_bytes();
+                        bytes.len() == prefix.len() + c.len()
+                            && bytes.starts_with(prefix.as_bytes())
+                            && bytes[prefix.len()..] == c[..]
                     }
                     _ => is_rendering(text, &ds.reconstruct_reference_type_for_eval(ref_type, reg)),
                 };
@@ -2275,11 +2318,16 @@ impl DependencyGraph {
             .family_owners()
             .filter(|&(_, _, flags, _, _)| flags & crate::engine::authority::store::F_DYNAMIC == 0)
             .collect();
-        let unrendered = std::mem::take(&mut *self.authority.texts_unrendered.lock().unwrap());
         // Decide per owner (read-only, independent: in parallel when a pool
         // is given), then apply in owner order.
+        // Reference texts are part of AST equality: a member is rebuilt from
+        // the template only when both render their references. Sequential
+        // engines checked that at load (`texts_unrendered`); with a pool it is
+        // checked here, in the parallel decision.
+        let unrendered = (!self.config.enable_parallel)
+            .then(|| std::mem::take(&mut *self.authority.texts_unrendered.lock().unwrap()));
         let decide = |owner: &(u16, _, _, AstNodeId, (u32, u32))| {
-            self.compressible_members(*owner, &unrendered)
+            self.compressible_members(*owner, unrendered.as_ref())
         };
         let decided: Vec<Vec<CompressibleMember>> = match pool {
             Some(pool) if owners.len() > 1 => {
@@ -2346,7 +2394,7 @@ impl DependencyGraph {
     fn compressible_members(
         &self,
         (sheet, dom, _, template, anchor): (u16, Rect, u16, AstNodeId, (u32, u32)),
-        unrendered: &rustc_hash::FxHashSet<VertexId>,
+        unrendered: Option<&rustc_hash::FxHashSet<VertexId>>,
     ) -> Vec<CompressibleMember> {
         let mut out = Vec::new();
         let anchor_vertex = self
@@ -2355,10 +2403,15 @@ impl DependencyGraph {
             .ids()
             .id_of((sheet, anchor.0, anchor.1))
             .and_then(|id| self.authority_vertex_of_formula(id, (sheet, anchor.0, anchor.1)));
+        let mut prefixes = SheetPrefixes::new();
+        let mut rendered = |v: VertexId, ast: AstNodeId| match unrendered {
+            Some(set) => !set.contains(&v),
+            None => formula_texts_rendered(&self.data_store, &self.sheet_reg, ast, &mut prefixes),
+        };
         let Some(anchor_vertex) = anchor_vertex else {
             return out;
         };
-        if unrendered.contains(&anchor_vertex) {
+        if !rendered(anchor_vertex, template) {
             return out;
         }
         let tmpl_literals = crate::engine::authority::template::template_facts(
@@ -2387,7 +2440,7 @@ impl DependencyGraph {
                 let Some(&super::FormulaRef::Own(own)) = self.vertex_formulas.get(&v) else {
                     continue;
                 };
-                if own == template || self.store.is_dynamic(v) || unrendered.contains(&v) {
+                if own == template || self.store.is_dynamic(v) {
                     continue;
                 }
                 let id = match guess.filter(|&id| self.authority.vertex_of_id(id) == Some(v)) {
@@ -2398,7 +2451,9 @@ impl DependencyGraph {
                     },
                 };
                 let row_lits = self.authority.store.slots().get(id).unwrap_or(&[]);
-                if !literal_rows_equal(&self.data_store, row_lits, &tmpl_literals) {
+                if !literal_rows_equal(&self.data_store, row_lits, &tmpl_literals)
+                    || !rendered(v, own)
+                {
                     continue;
                 }
                 out.push((v, cell));
