@@ -273,6 +273,10 @@ mod imp {
         }
         let tg = targets(&path, edits)?;
         let base = live();
+        // Peaks cover load + eval only: the heap peak restarts at the live
+        // heap and VmHWM is reset (clear_refs 5) after the untimed pre-read.
+        PEAK.store(LIVE.load(Ordering::Relaxed), Ordering::Relaxed);
+        let _ = std::fs::write("/proc/self/clear_refs", "5");
 
         #[allow(unused_mut)]
         let mut config = match mode.as_str() {
@@ -301,6 +305,8 @@ mod imp {
             .map_err(|e| anyhow!("load: {e}"))?;
         let load_ms = ms(t);
         let live_load = live() - base;
+        let peak_load = PEAK.load(Ordering::Relaxed) as i64 - base;
+        let vm_hwm_load = vm_hwm_kb();
 
         // --presync (feature build): build the authority before the first
         // evaluation so its cost is timed apart from planning/execution.
@@ -328,6 +334,7 @@ mod imp {
             }
         }
         let peak_eval = PEAK.load(Ordering::Relaxed) as i64 - base;
+        let vm_hwm_eval = vm_hwm_kb();
 
         // Authority summary (feature build only); sync after the first eval
         // is a no-op when the host is already built (timed to prove it).
@@ -469,7 +476,10 @@ mod imp {
             "first_err": first_err,
             "live_after_load": live_load,
             "live_after_eval": live_eval,
+            "peak_through_load": peak_load,
             "peak_through_eval": peak_eval,
+            "vm_hwm_load_kb": vm_hwm_load,
+            "vm_hwm_eval_kb": vm_hwm_eval,
             "live_after_edits": live_end,
             "vm_hwm_kb": vm_hwm_kb(),
             "value_edits": v_total.len(),
@@ -496,6 +506,7 @@ mod imp {
             for key in [
                 "live_after_load",
                 "live_after_eval",
+                "peak_through_load",
                 "peak_through_eval",
                 "live_after_edits",
             ] {
