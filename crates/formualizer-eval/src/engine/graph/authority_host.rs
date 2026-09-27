@@ -2293,10 +2293,11 @@ impl DependencyGraph {
                 let id0 = self.authority.store.ids().id_of((sheet, dom.r0, col));
                 for row in dom.r0..=dom.r1 {
                     let cell = (sheet, row, col);
-                    let v = id0
-                        .and_then(|id0| {
-                            self.authority_vertex_of_formula(id0 + (row - dom.r0), cell)
-                        })
+                    // `authority_vertex_of_formula` verifies the cell, so a
+                    // wrong id guess only falls back to the cell map.
+                    let guess = id0.map(|id0| id0 + (row - dom.r0));
+                    let v = guess
+                        .and_then(|id| self.authority_vertex_of_formula(id, cell))
                         .or_else(|| self.get_vertex_for_cell(&cell_ref(cell)));
                     let Some(v) = v else {
                         continue;
@@ -2307,8 +2308,12 @@ impl DependencyGraph {
                     if own == template || self.store.is_dynamic(v) || unrendered.contains(&v) {
                         continue;
                     }
-                    let Some(id) = self.authority.store.ids().id_of(cell) else {
-                        continue;
+                    let id = match guess.filter(|&id| self.authority.vertex_of_id(id) == Some(v)) {
+                        Some(id) => id,
+                        None => match self.authority.store.ids().id_of(cell) {
+                            Some(id) => id,
+                            None => continue,
+                        },
                     };
                     let row_lits = self.authority.store.slots().get(id).unwrap_or(&[]);
                     if !literal_rows_equal(&self.data_store, row_lits, &tmpl_literals) {
