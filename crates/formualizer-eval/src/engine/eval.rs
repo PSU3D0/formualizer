@@ -1925,8 +1925,74 @@ struct CachedScheduleEntry {
     /// Authority `(store revision, rev.dyn)` the schedule was planned from
     /// (design §8.4; always 0 without `unified_authority`).
     authority_revision: (u64, u64),
-    candidate_vertices: Vec<VertexId>,
+    /// The request's vertex list as runs of consecutive ids (formula ids
+    /// come in column runs, so a whole-workbook request is a few runs).
+    candidate_vertices: VertexIdRuns,
     schedule: Arc<crate::engine::scheduler::Schedule>,
+}
+
+/// A vertex list stored as `(first id, run length)` runs of consecutive
+/// ids, in list order.
+#[derive(Debug, Clone, Default)]
+struct VertexIdRuns(Vec<(u32, u32)>);
+
+impl VertexIdRuns {
+    fn from_slice(ids: &[VertexId]) -> Self {
+        let mut runs: Vec<(u32, u32)> = Vec::new();
+        for v in ids {
+            match runs.last_mut() {
+                Some((first, len)) if first.checked_add(*len) == Some(v.0) => *len += 1,
+                _ => runs.push((v.0, 1)),
+            }
+        }
+        runs.shrink_to_fit();
+        Self(runs)
+    }
+
+    fn equals(&self, ids: &[VertexId]) -> bool {
+        let mut rest = ids;
+        for &(first, len) in &self.0 {
+            let len = len as usize;
+            if rest.len() < len {
+                return false;
+            }
+            let (head, tail) = rest.split_at(len);
+            if head
+                .iter()
+                .enumerate()
+                .any(|(i, v)| v.0 != first.wrapping_add(i as u32))
+            {
+                return false;
+            }
+            rest = tail;
+        }
+        rest.is_empty()
+    }
+
+    fn heap_bytes(&self) -> usize {
+        self.0.capacity() * std::mem::size_of::<(u32, u32)>()
+    }
+}
+
+#[cfg(test)]
+mod vertex_id_runs_tests {
+    use super::{VertexId, VertexIdRuns};
+
+    #[test]
+    fn runs_compare_like_the_list() {
+        let ids = |v: &[u32]| v.iter().map(|&i| VertexId(i)).collect::<Vec<_>>();
+        let list = ids(&[5, 6, 7, 2, 3, 9, 10, 10]);
+        let runs = VertexIdRuns::from_slice(&list);
+        assert_eq!(runs.0, vec![(5, 3), (2, 2), (9, 2), (10, 1)]);
+        assert!(runs.equals(&list));
+        assert!(!runs.equals(&list[..7]));
+        assert!(!runs.equals(&ids(&[5, 6, 7, 2, 3, 9, 10, 11])));
+        assert!(!runs.equals(&ids(&[5, 6, 7, 2, 3, 9, 10, 10, 11])));
+        assert!(VertexIdRuns::from_slice(&[]).equals(&[]));
+        assert!(!VertexIdRuns::from_slice(&[]).equals(&list));
+        let edge = ids(&[u32::MAX - 1, u32::MAX, 0]);
+        assert!(VertexIdRuns::from_slice(&edge).equals(&edge));
+    }
 }
 
 /// Uncacheable requests keep their schedule inline without a shared allocation.
@@ -5219,7 +5285,7 @@ where
         let mut probe = self.recalc_reuse_probe.lock().unwrap().clone();
         if let Some(cached) = self.cached_static_schedule.as_ref() {
             probe.schedule_retained_bytes = std::mem::size_of::<CachedScheduleEntry>()
-                + cached.candidate_vertices.capacity() * std::mem::size_of::<VertexId>()
+                + cached.candidate_vertices.heap_bytes()
                 + std::mem::size_of::<crate::engine::Schedule>()
                 + 2 * std::mem::size_of::<usize>()
                 + schedule_probe_retained_bytes(&cached.schedule);
@@ -14697,7 +14763,7 @@ where
             if let Some(cached) = self.cached_static_schedule.as_ref()
                 && cached.topology_epoch == self.topology_epoch
                 && cached.authority_revision == self.schedule_cache_authority_revision()
-                && cached.candidate_vertices.as_slice() == to_evaluate
+                && cached.candidate_vertices.equals(to_evaluate)
             {
                 let meta = ScheduleBuildMeta {
                     candidate_vertices: to_evaluate.len(),
@@ -14756,7 +14822,7 @@ where
                 self.cached_static_schedule = Some(CachedScheduleEntry {
                     topology_epoch: self.topology_epoch,
                     authority_revision: self.schedule_cache_authority_revision(),
-                    candidate_vertices: to_evaluate.to_vec(),
+                    candidate_vertices: VertexIdRuns::from_slice(to_evaluate),
                     schedule: Arc::clone(&schedule),
                 });
                 EvaluationSchedule::Shared(schedule)
