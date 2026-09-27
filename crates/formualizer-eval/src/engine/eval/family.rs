@@ -132,6 +132,7 @@ where
         layer: &Layer,
         units: &[LayerUnit],
         cancel_flag: Option<&AtomicBool>,
+        min_chunk: u32,
     ) -> Result<Vec<(VertexId, LiteralValue)>, ExcelError> {
         use rayon::prelude::*;
         // Enough tasks to balance the pool (a run of expensive members, e.g.
@@ -144,9 +145,10 @@ where
             })
             .sum();
         let threads = rayon::current_num_threads().max(1);
-        // At least 8 members per task: a one-member run chunk loses the run
-        // (literal plan, lift) for nothing.
-        let run_chunk = (total / (threads * 8)).clamp(8, 256) as u32;
+        // At least `min_chunk` members per task: for cheap members a
+        // one-member chunk loses the run (literal plan, lift, memo) for
+        // nothing; expensive members pass 1.
+        let run_chunk = ((total / (threads * 8)) as u32).clamp(min_chunk.max(1), 256);
         // A split run's chunks share one memo (see `memo.rs`).
         let mut memos: Vec<super::memo::SharedMemo> = Vec::new();
         let mut split: Vec<(LayerUnit, Option<usize>)> = Vec::with_capacity(units.len());

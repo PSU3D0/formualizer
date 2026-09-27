@@ -548,6 +548,8 @@ const COMPUTED_WRITE_COALESCING_MIN_LAYER_WIDTH: usize = 8;
 const PARALLEL_SCHEDULE_MIN_CANDIDATES: usize = 16 * 1024;
 const PARALLEL_LAYER_PROBE: std::time::Duration = std::time::Duration::from_micros(300);
 const PARALLEL_LAYER_WORTH: std::time::Duration = std::time::Duration::from_micros(150);
+/// A member this expensive (ns, measured by the probe) is its own task.
+const EXPENSIVE_VERTEX_NS: u128 = 10_000;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum ComputedWrite {
@@ -15654,7 +15656,14 @@ where
                 let rest_estimate = per_vertex * (len - pos) as u128;
                 if len - pos >= 2 && (elapsed >= probe || rest_estimate >= worth.as_nanos()) {
                     let rest = layer.sub_layer(pos, len);
-                    return Ok(pos + self.evaluate_layer_parallel_effects(&rest)?);
+                    // Expensive members (a SUMIF over a table) parallelize
+                    // one per task; cheap ones keep runs of 8 together.
+                    let min_chunk = if per_vertex >= EXPENSIVE_VERTEX_NS {
+                        1
+                    } else {
+                        8
+                    };
+                    return Ok(pos + self.evaluate_layer_parallel_effects(&rest, min_chunk)?);
                 }
                 // Next slice: double, but no more than the rest of the probe
                 // at the rate so far (a slice must not overshoot it).
@@ -19364,6 +19373,7 @@ where
     fn evaluate_layer_parallel_effects(
         &mut self,
         layer: &super::scheduler::Layer,
+        min_chunk: u32,
     ) -> Result<usize, ExcelError> {
         let thread_pool = self.thread_pool.as_ref().unwrap().clone();
 
@@ -19380,7 +19390,7 @@ where
             let mut computed_writes = ComputedWriteBuffer::default();
 
             let results: Result<Vec<(VertexId, LiteralValue)>, ExcelError> =
-                thread_pool.install(|| self.evaluate_units_parallel(layer, units, None));
+                thread_pool.install(|| self.evaluate_units_parallel(layer, units, None, min_chunk));
 
             // FR3: a parallel group is one commit unit; one stale reader
             // drops the whole group (it stays dirty and replans).
@@ -19493,7 +19503,7 @@ where
             }
             let mut computed_writes = ComputedWriteBuffer::default();
             let results: Result<Vec<(VertexId, LiteralValue)>, ExcelError> =
-                thread_pool.install(|| self.evaluate_units_parallel(layer, units, None));
+                thread_pool.install(|| self.evaluate_units_parallel(layer, units, None, 8));
 
             // FR3: a parallel group is one commit unit; one stale reader
             // drops the whole group (it stays dirty and replans).
@@ -19608,7 +19618,7 @@ where
             let mut computed_writes = ComputedWriteBuffer::default();
 
             let results: Result<Vec<(VertexId, LiteralValue)>, ExcelError> = thread_pool
-                .install(|| self.evaluate_units_parallel(layer, units, Some(cancel_flag)));
+                .install(|| self.evaluate_units_parallel(layer, units, Some(cancel_flag), 8));
 
             // FR3: a parallel group is one commit unit; one stale reader
             // drops the whole group (it stays dirty and replans).
