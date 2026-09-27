@@ -169,6 +169,118 @@ fn family_runs(entries: &[Entry]) -> Result<Vec<LayerRun>, AuthorityError> {
     Ok(runs)
 }
 
+/// Stable LSD radix sort of `entries` by [`Entry::keys`].
+fn radix_sort<C: FnMut(u64) -> Result<(), ExcelError>>(
+    entries: &mut Vec<Entry>,
+    work: &mut PlanControl<C>,
+) -> Result<(), ScheduleError> {
+    let n = entries.len();
+    let mut temp = reserve(n)?;
+    temp.extend_from_slice(entries);
+    if n > 1 {
+        // Passes whose byte is equal in every entry are no-ops of a stable
+        // sort: skip them (typically all but a few of the 32).
+        let first = entries[0].keys();
+        let mut differs = [0u64; 4];
+        work.charge(n as u64)?;
+        for entry in entries.iter() {
+            let keys = entry.keys();
+            for k in 0..4 {
+                differs[k] |= keys[k] ^ first[k];
+            }
+        }
+        for pass in 0..32 {
+            if (differs[pass / 8] >> ((pass % 8) * 8)) & 255 == 0 {
+                continue;
+            }
+            // Two bucket passes and two element passes, charged in batches.
+            work.charge(512 + 2 * n as u64)?;
+            let mut hist = [0usize; 256];
+            for entry in entries.iter() {
+                hist[entry.digit(pass)] += 1;
+            }
+            let mut start = 0;
+            for count in &mut hist {
+                let n = *count;
+                *count = start;
+                start += n;
+            }
+            for entry in entries.iter() {
+                let digit = entry.digit(pass);
+                temp[hist[digit]] = *entry;
+                hist[digit] += 1;
+            }
+            std::mem::swap(entries, &mut temp);
+        }
+    }
+    Ok(())
+}
+
+/// Plans at least this large try the run-level sort.
+const RUN_SORT_MIN: usize = 4096;
+
+/// The LSD key order as one comparable tuple (most significant first).
+#[inline]
+fn order_key(e: &Entry) -> [u64; 4] {
+    let k = e.keys();
+    [k[3], k[2], k[1], k[0]]
+}
+
+/// [`radix_sort`]'s order from runs of the input: maximal runs of
+/// acyclic cells of one layer at consecutive rows of one column (exact
+/// position keys) are sorted as units (a cycle cell is a unit of its
+/// own), then expanded. `None` when the input has too few runs to pay, or
+/// the result is not strictly increasing (duplicate keys: the cell sort's
+/// stable order decides).
+fn run_sorted<C: FnMut(u64) -> Result<(), ExcelError>>(
+    entries: &[Entry],
+    work: &mut PlanControl<C>,
+) -> Result<Option<Vec<Entry>>, ScheduleError> {
+    let n = entries.len();
+    if n < RUN_SORT_MIN {
+        return Ok(None);
+    }
+    let exact = |c: &OrderedCell| c.row < (1 << 24) && c.col < (1 << 20) && c.cycle.is_none();
+    let mut runs: Vec<(usize, usize)> = reserve(n / 8 + 1)?;
+    let mut i = 0;
+    while i < n {
+        let c = entries[i].cell;
+        let mut j = i + 1;
+        if exact(&c) {
+            while j < n {
+                let d = entries[j].cell;
+                if !exact(&d)
+                    || d.layer != c.layer
+                    || d.sheet != c.sheet
+                    || d.col != c.col
+                    || d.row != c.row + (j - i) as u32
+                {
+                    break;
+                }
+                j += 1;
+            }
+        }
+        if runs.len() == runs.capacity() {
+            work.charge(j as u64)?;
+            return Ok(None);
+        }
+        runs.push((i, j - i));
+        i = j;
+    }
+    work.charge(n as u64)?;
+    runs.sort_by_key(|&(start, _)| order_key(&entries[start]));
+    work.charge(runs.len() as u64 * 20)?;
+    let mut out = reserve(n)?;
+    for &(start, len) in &runs {
+        out.extend_from_slice(&entries[start..start + len]);
+    }
+    work.charge(n as u64)?;
+    if out.windows(2).any(|w| order_key(&w[0]) >= order_key(&w[1])) {
+        return Ok(None);
+    }
+    Ok(Some(out))
+}
+
 /// `checkpoint` receives actual work deltas (at most 4096) for resource charging
 /// and cancellation, including a zero-work entry checkpoint and a final flush.
 /// The borrowed `cells` and other still-live planner capacities must be included
@@ -183,56 +295,47 @@ pub(crate) fn schedule(
 ) -> Result<ExecutablePlan, ScheduleError> {
     let mut work = PlanControl::new(checkpoint)?;
     let n = cells.len();
-    let sorting = sum(held_bytes, sum(bytes::<Entry>(n)?, bytes::<Entry>(n)?)?)?;
+    let sorting = sum(
+        held_bytes,
+        sum(
+            sum(bytes::<Entry>(n)?, bytes::<Entry>(n)?)?,
+            // The run table (`run_sorted`, large plans only).
+            if n >= RUN_SORT_MIN {
+                bytes::<(usize, usize)>(n / 8 + 1)?
+            } else {
+                0
+            },
+        )?,
+    )?;
     admit(limit, sorting)?;
-    let mut entries = reserve(n)?;
-    let mut temp = reserve(n)?;
+    let mut entries: Vec<Entry> = reserve(n)?;
     for cell in cells {
         work.tick()?;
-        let entry = Entry {
+        entries.push(Entry {
             cell: *cell,
             vertex: translate(cell)?,
-        };
-        entries.push(entry);
-        temp.push(entry);
+        });
     }
-    if n > 1 {
-        // Passes whose byte is equal in every entry are no-ops of a stable
-        // sort: skip them (typically all but a few of the 32).
-        let first = entries[0].keys();
-        let mut differs = [0u64; 4];
-        work.charge(n as u64)?;
-        for entry in &entries {
-            let keys = entry.keys();
-            for k in 0..4 {
-                differs[k] |= keys[k] ^ first[k];
+    // A planner emits a family slice's cells at one layer as one run of
+    // consecutive rows: sort those runs, not the cells, when that pays.
+    match run_sorted(&entries, &mut work)? {
+        Some(sorted) => {
+            #[cfg(debug_assertions)]
+            {
+                let mut check = entries.clone();
+                radix_sort(&mut check, &mut work)?;
+                assert!(
+                    check.len() == sorted.len()
+                        && check.iter().zip(&sorted).all(|(a, b)| {
+                            a.vertex == b.vertex && a.keys() == b.keys() && a.cell.id == b.cell.id
+                        }),
+                    "run-level schedule order differs from the cell sort"
+                );
             }
+            entries = sorted;
         }
-        for pass in 0..32 {
-            if (differs[pass / 8] >> ((pass % 8) * 8)) & 255 == 0 {
-                continue;
-            }
-            // Two bucket passes and two element passes, charged in batches.
-            work.charge(512 + 2 * n as u64)?;
-            let mut hist = [0usize; 256];
-            for entry in &entries {
-                hist[entry.digit(pass)] += 1;
-            }
-            let mut start = 0;
-            for count in &mut hist {
-                let n = *count;
-                *count = start;
-                start += n;
-            }
-            for entry in &entries {
-                let digit = entry.digit(pass);
-                temp[hist[digit]] = *entry;
-                hist[digit] += 1;
-            }
-            std::mem::swap(&mut entries, &mut temp);
-        }
+        None => radix_sort(&mut entries, &mut work)?,
     }
-    drop(temp);
     let mut layers = 0usize;
     let mut cycles = 0usize;
     let mut previous = None;
