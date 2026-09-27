@@ -227,7 +227,10 @@ impl<T: Clone + Eq + std::hash::Hash> IntervalTree<T> {
                 if n.values.is_empty() {
                     false
                 } else {
-                    n.values.shrink_to_fit();
+                    // Give capacity back only when most of it is unused.
+                    if n.values.len() * 4 < n.values.capacity() {
+                        n.values.shrink_to_fit();
+                    }
                     true
                 }
             });

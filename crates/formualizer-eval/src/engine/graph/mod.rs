@@ -373,11 +373,16 @@ impl FormulaMap {
         self.map.reserve(additional);
     }
 
-    /// Drop the map entries of vertices that are now virtual members (one
-    /// pass, checked against the runs) and give back the capacity.
-    pub(crate) fn drop_virtual_from_map(&mut self) {
-        let virt = &self.virt;
-        self.map.retain(|v, _| !virt.contains_vertex(*v));
+    /// Drop the map entries of vertices that are now virtual members
+    /// (`is_virtual`: the store's flag; one pass) and give back the
+    /// capacity.
+    pub(crate) fn drop_virtual_from_map(&mut self, is_virtual: impl Fn(VertexId) -> bool) {
+        debug_assert!(
+            self.map
+                .keys()
+                .all(|&v| is_virtual(v) == self.virt.contains_vertex(v))
+        );
+        self.map.retain(|&v, _| !is_virtual(v));
         self.map.shrink_to_fit();
     }
 
@@ -5215,19 +5220,23 @@ impl DependencyGraph {
         // Drop the members' map entries: one pass over each map, checked
         // against the runs (small and cache-resident) rather than the
         // vertex columns.
-        let virt = self.vertex_formulas.virtual_members();
+        // An entry is a member's own mapping when its vertex is virtual now
+        // (flag, one byte per vertex) and sits at that cell (its row).
+        let store = &self.store;
         let mut removed: Vec<u32> = Vec::with_capacity(made);
         self.cell_to_vertex.retain(|c, v| {
-            let mine = virt
-                .by_cell(c.sheet_id, c.coord.row(), c.coord.col())
-                .is_some_and(|m| m.vertex == *v);
+            let mine = store.is_virtual(*v)
+                && store.sheet_id(*v) == c.sheet_id
+                && store.grid_addr(*v) == Some(GridAddr::new(c.coord.row(), c.coord.col()));
             if mine {
                 removed.push(v.0);
             }
             !mine
         });
         self.cell_to_vertex.shrink_to_fit();
-        self.vertex_formulas.drop_virtual_from_map();
+        let store = &self.store;
+        self.vertex_formulas
+            .drop_virtual_from_map(|v| store.is_virtual(v));
         if removed.len() != made {
             // Some member was not the vertex mapped at its cell (legacy
             // leaves such formula vertices after some undo/redo replays):
@@ -5296,12 +5305,13 @@ impl DependencyGraph {
     }
 
     /// Drop the virtual members from the (existing) sheet indexes of
-    /// `sheets`; every other entry keeps its indexed position.
+    /// `sheets` (the store's virtual flag); every other entry keeps its
+    /// indexed position.
     fn rebuild_sheet_indexes(&mut self, sheets: &[SheetId]) {
-        let virt = self.vertex_formulas.virtual_members();
+        let store = &self.store;
         for sheet in sheets {
             if let Some(index) = self.sheet_indexes.get_mut(sheet) {
-                index.retain_vertices(|v| !virt.contains_vertex(v));
+                index.retain_vertices(|v| !store.is_virtual(v));
             }
         }
     }
