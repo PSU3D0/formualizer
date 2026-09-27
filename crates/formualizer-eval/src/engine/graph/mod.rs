@@ -185,6 +185,18 @@ impl FormulaRef {
         }
     }
 
+    /// An ingest pipeline result: own AST, or a load-time family member.
+    #[inline]
+    pub(crate) fn of_ingested(ast_id: AstNodeId, member_anchor: Option<(u32, u32)>) -> Self {
+        match member_anchor {
+            None => FormulaRef::Own(ast_id),
+            Some(anchor) => FormulaRef::Member {
+                template: ast_id,
+                anchor,
+            },
+        }
+    }
+
     /// The vertex's own AST, if it has one.
     #[inline]
     pub(crate) fn own(self) -> Option<AstNodeId> {
@@ -218,8 +230,18 @@ impl std::ops::Deref for FormulaMap {
 impl FormulaMap {
     #[inline]
     pub(crate) fn insert(&mut self, vertex: VertexId, ast: AstNodeId) -> Option<FormulaRef> {
+        self.insert_ref(vertex, FormulaRef::Own(ast))
+    }
+
+    /// Set a vertex's formula (own AST or family member).
+    #[inline]
+    pub(crate) fn insert_ref(
+        &mut self,
+        vertex: VertexId,
+        formula: FormulaRef,
+    ) -> Option<FormulaRef> {
         self.touched.push(vertex);
-        self.map.insert(vertex, FormulaRef::Own(ast))
+        self.map.insert(vertex, formula)
     }
 
     /// Replace a vertex's own AST with a family reference (same formula).
@@ -1029,13 +1051,24 @@ impl DependencyGraph {
         volatile: bool,
         dynamic: bool,
     ) {
+        self.assign_formula_ref(vid, FormulaRef::Own(ast_id), volatile, dynamic);
+    }
+
+    /// [`Self::assign_formula_vertex`] for an own AST or a family member.
+    pub(crate) fn assign_formula_ref(
+        &mut self,
+        vid: VertexId,
+        formula: FormulaRef,
+        volatile: bool,
+        dynamic: bool,
+    ) {
         if self.vertex_formulas.contains_key(&vid) {
             self.remove_dependent_edges(vid);
         }
         self.store
             .set_kind(vid, crate::engine::vertex::VertexKind::FormulaScalar);
         self.vertex_values.remove(&vid);
-        self.vertex_formulas.insert(vid, ast_id);
+        self.vertex_formulas.insert_ref(vid, formula);
         self.mark_volatile(vid, volatile);
         self.store.set_dynamic(vid, dynamic);
 
@@ -1052,6 +1085,18 @@ impl DependencyGraph {
         volatile: bool,
         dynamic: bool,
     ) {
+        self.assign_formula_ref_load_fast(vid, FormulaRef::Own(ast_id), volatile, dynamic);
+    }
+
+    /// [`Self::assign_formula_vertex_load_fast`] for an own AST or a family
+    /// member.
+    pub(crate) fn assign_formula_ref_load_fast(
+        &mut self,
+        vid: VertexId,
+        formula: FormulaRef,
+        volatile: bool,
+        dynamic: bool,
+    ) {
         debug_assert!(
             !self.vertex_formulas.contains_key(&vid),
             "load-fast formula assignment expects fresh/non-formula vertices"
@@ -1059,7 +1104,7 @@ impl DependencyGraph {
         self.store
             .set_kind(vid, crate::engine::vertex::VertexKind::FormulaScalar);
         self.vertex_values.remove(&vid);
-        self.vertex_formulas.insert(vid, ast_id);
+        self.vertex_formulas.insert_ref(vid, formula);
         self.mark_volatile(vid, volatile);
         self.store.set_dynamic(vid, dynamic);
     }

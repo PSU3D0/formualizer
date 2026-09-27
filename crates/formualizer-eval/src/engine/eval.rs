@@ -6844,7 +6844,44 @@ where
             }
         }
 
-        if !materialize_batches.iter().all(FormulaIngestBatch::is_empty) {
+        // A first load without graph admission plans in the builder, one
+        // chunk at a time (a load error fails the load, so the builder's
+        // partial application on a planning error is unobservable).
+        if self.graph.first_load_assume_new()
+            && !self.graph_admission_enabled()
+            && !materialize_batches.iter().all(FormulaIngestBatch::is_empty)
+        {
+            let mut builder =
+                crate::engine::ingest_builder::BulkIngestBuilder::new(&mut self.graph);
+            for batch in materialize_batches {
+                if batch.is_empty() {
+                    continue;
+                }
+                let sheet_id = builder
+                    .add_sheet_checked(&batch.sheet_name)
+                    .ok_or_else(|| {
+                        ExcelError::new(ExcelErrorKind::Ref)
+                            .with_message(format!("unknown ingest sheet: {}", batch.sheet_name))
+                    })?;
+                builder.add_formula_refs(
+                    sheet_id,
+                    batch.formulas.into_iter().map(|record| {
+                        (
+                            record.row,
+                            record.col,
+                            crate::engine::graph::FormulaRef::of_ingested(
+                                record.ast_id,
+                                record.member_anchor,
+                            ),
+                        )
+                    }),
+                );
+            }
+            let summary = builder.finish_with_provider(&self.resolver)?;
+            report.graph_formula_cells_materialized = summary.formulas as u64;
+            report.graph_vertices_created = summary.vertices as u64;
+            report.graph_edges_created = summary.edges as u64;
+        } else if !materialize_batches.iter().all(FormulaIngestBatch::is_empty) {
             let mut prepared_by_sheet: BTreeMap<String, Vec<_>> = BTreeMap::new();
             for batch in materialize_batches {
                 if batch.is_empty() {
@@ -6855,28 +6892,33 @@ where
                         .with_message(format!("unknown ingest sheet: {}", batch.sheet_name))
                 })?;
                 let mut pipeline = self.ingest_pipeline();
-                let ingested = pipeline.ingest_batch(batch.formulas.into_iter().map(|record| {
+                // Plan each record and keep only what the graph needs (the
+                // pipeline's per-formula facts are dropped at once).
+                let prepared = prepared_by_sheet.entry(batch.sheet_name).or_default();
+                prepared.reserve(batch.formulas.len());
+                for record in batch.formulas {
                     let placement = CellRef::new(
                         sheet_id,
                         Coord::from_excel(record.row, record.col, true, true),
                     );
-                    (
-                        FormulaAstInput::RawArena(record.ast_id),
-                        placement,
-                        record.formula_text,
-                    )
-                }))?;
-                prepared_by_sheet
-                    .entry(batch.sheet_name)
-                    .or_default()
-                    .extend(ingested.into_iter().map(|formula| {
-                        (
-                            formula.placement.coord.row() + 1,
-                            formula.placement.coord.col() + 1,
+                    let input = match record.member_anchor {
+                        Some(anchor) => FormulaAstInput::Member {
+                            template: record.ast_id,
+                            anchor,
+                        },
+                        None => FormulaAstInput::RawArena(record.ast_id),
+                    };
+                    let formula = pipeline.ingest_formula(input, placement, None)?;
+                    prepared.push((
+                        record.row,
+                        record.col,
+                        crate::engine::graph::FormulaRef::of_ingested(
                             formula.ast_id,
-                            formula.dep_plan,
-                        )
-                    }));
+                            formula.member_anchor,
+                        ),
+                        formula.dep_plan,
+                    ));
+                }
             }
             let admission_preflighted = self.graph_admission_enabled();
             if admission_preflighted {

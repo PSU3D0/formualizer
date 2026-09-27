@@ -100,6 +100,9 @@ pub struct FormulaFacts {
     /// The L token stream; `None` for non-relocatable templates.
     pub ltokens: Option<Box<[u64]>>,
     pub template: AstNodeId,
+    /// The cell `template` is valid at, when it is not the formula's own
+    /// cell (a family member's facts are its template's at the anchor).
+    pub template_anchor: Option<(u32, u32)>,
     pub literals: SmallVec<[ValueRef; 4]>,
     pub flags: u16,
 }
@@ -411,6 +414,8 @@ struct NewFormula<'a> {
     /// Existing node group, or the key of a new one.
     ngroup: Option<Result<u32, (u16, u64)>>,
     template: AstNodeId,
+    /// The cell `template` is valid at.
+    anchor: (u32, u32),
     literals: &'a [ValueRef],
     flags: u16,
     /// The id kept from the cell's previous formula.
@@ -1477,5 +1482,5 @@ mod mutate;
 mod repartition;
 mod verify;
 
-pub use build::BuildInput;
+pub use build::{BuildInput, SharedBuildInput};
 pub use verify::Digest;

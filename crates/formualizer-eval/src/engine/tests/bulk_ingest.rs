@@ -205,7 +205,15 @@ fn bulk_ingest_planned_sources_and_table_symbols_survive_rebuilds() {
         .unwrap();
     let mut builder = engine.begin_bulk_ingest();
     let sheet = builder.add_sheet("Sheet1");
-    builder.add_formula_plans(sheet, [(1, 2, planned.ast_id, planned.dep_plan)]);
+    builder.add_formula_plans(
+        sheet,
+        [(
+            1,
+            2,
+            crate::engine::graph::FormulaRef::Own(planned.ast_id),
+            planned.dep_plan,
+        )],
+    );
     builder.finish().unwrap();
     let b1 = engine.graph.get_vertex_for_cell(&cell(1, 2)).unwrap();
     let source = engine

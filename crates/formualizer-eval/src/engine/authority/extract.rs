@@ -416,6 +416,7 @@ pub fn extract_formula(
         edges: ctx.edges,
         ltokens: t.relocatable.then(|| t.tokens.into_boxed_slice()),
         template: ast,
+        template_anchor: None,
         literals: t.literals,
         flags,
     }
@@ -506,6 +507,7 @@ pub fn extract_symbol_binding(
             edges: ctx.edges,
             ltokens: None,
             template: AstNodeId::from_u32(u32::MAX),
+            template_anchor: None,
             literals: Default::default(),
             flags,
         },

@@ -12,7 +12,12 @@ type CompressibleMember = (VertexId, (u16, u32, u32));
 use crate::engine::authority::extract::{extract_formula, extract_symbol_binding};
 use crate::engine::authority::geom::{Cell, Cover, Rect, SYMBOL_SHEET};
 use crate::engine::authority::host::{AuthorityHost, HostState};
-use crate::engine::authority::store::{AuthorityError, BuildInput, Store, TagFilter};
+use crate::engine::authority::store::{
+    AuthorityError, BuildInput, FormulaFacts, SharedBuildInput, Store, TagFilter,
+};
+
+/// Key of facts shared by family members: template, anchor cell, volatile, dynamic.
+type SharedFactsKey = (AstNodeId, Cell, bool, bool);
 use std::sync::OnceLock;
 
 /// Differential self-check mode, from `FZ_AUTHORITY_DIFF`:
@@ -96,6 +101,18 @@ impl DependencyGraph {
     }
 
     fn authority_formula_input(&self, vid: VertexId) -> Option<BuildInput> {
+        let (cell, facts) = self.authority_formula_input_shared(vid, None)?;
+        Some((cell, std::sync::Arc::unwrap_or_clone(facts)))
+    }
+
+    /// [`Self::authority_formula_input`] with facts shared between the
+    /// members of one family: a member's facts are its template's at the
+    /// anchor, computed once per (template, anchor, flags) in `shared`.
+    fn authority_formula_input_shared(
+        &self,
+        vid: VertexId,
+        shared: Option<&mut FxHashMap<SharedFactsKey, (std::sync::Arc<FormulaFacts>, bool)>>,
+    ) -> Option<SharedBuildInput> {
         let cell = self.get_cell_ref(vid)?;
         if self.store.is_deleted(vid) {
             return None;
@@ -107,25 +124,36 @@ impl DependencyGraph {
             super::FormulaRef::Own(ast) => (ast, (row, col)),
             super::FormulaRef::Member { template, anchor } => (template, anchor),
         };
-        let mut facts = extract_formula(
-            self,
-            sheet,
-            arow,
-            acol,
-            ast,
-            self.is_volatile(vid),
-            self.is_dynamic(vid),
-        );
-        self.authority_apply_range_self_use(vid, (sheet, row, col), &mut facts);
-        if !self.config.enable_parallel
-            && self.config.formula_compression
-            && !formula_texts_rendered(
-                &self.data_store,
-                &self.sheet_reg,
-                ast,
-                &mut SheetPrefixes::new(),
-            )
-        {
+        let (volatile, dynamic) = (self.is_volatile(vid), self.is_dynamic(vid));
+        let check_texts = !self.config.enable_parallel && self.config.formula_compression;
+        let compute = || {
+            let mut facts = extract_formula(self, sheet, arow, acol, ast, volatile, dynamic);
+            // The template is valid at the anchor, not at the member: an
+            // owner whose piece starts at this cell keeps that anchor.
+            if (arow, acol) != (row, col) {
+                facts.template_anchor = Some((arow, acol));
+            }
+            let rendered = !check_texts
+                || formula_texts_rendered(
+                    &self.data_store,
+                    &self.sheet_reg,
+                    ast,
+                    &mut SheetPrefixes::new(),
+                );
+            (std::sync::Arc::new(facts), rendered)
+        };
+        let (mut facts, rendered) = match (shared, (arow, acol) != (row, col)) {
+            (Some(shared), true) => shared
+                .entry((ast, (sheet, arow, acol), volatile, dynamic))
+                .or_insert_with(compute)
+                .clone(),
+            _ => compute(),
+        };
+        if self.authority_range_self_use_applies(vid, (sheet, row, col), &facts) {
+            let facts = std::sync::Arc::make_mut(&mut facts);
+            self.authority_apply_range_self_use(vid, (sheet, row, col), facts);
+        }
+        if !rendered {
             self.authority.texts_unrendered.lock().unwrap().insert(vid);
         }
         Some(((sheet, row, col), facts))
@@ -138,6 +166,50 @@ impl DependencyGraph {
     /// the range minus the cell: up to four absolute pieces, and the formula
     /// stays an ungrouped singleton because its edges are no longer the
     /// template's.
+    /// Whether [`Self::authority_apply_range_self_use`] would change
+    /// `facts` at `cell` (read-only; shared facts are copied only then).
+    fn authority_range_self_use_applies(
+        &self,
+        vid: VertexId,
+        cell: Cell,
+        facts: &crate::engine::authority::store::FormulaFacts,
+    ) -> bool {
+        use super::range_deps::RangeSelfUse;
+        use crate::engine::authority::proj::Bound;
+        use crate::engine::authority::store::OriginSpec;
+        let (sheet, row, col) = cell;
+        let limit = self.config.range_expansion_limit as u64;
+        facts.edges.iter().any(|e| {
+            if !matches!(e.origin, OriginSpec::Text) || e.proj.sheet != sheet {
+                return false;
+            }
+            let Some(img) = e.proj.instantiate(row, col) else {
+                return false;
+            };
+            if !(img.r0 <= row && row <= img.r1 && img.c0 <= col && col <= img.c1) {
+                return false;
+            }
+            let (rows, cols) = (e.proj.rows, e.proj.cols);
+            let open = [rows.lo, rows.hi, cols.lo, cols.hi].contains(&Bound::Open);
+            let area = u64::from(img.r1 - img.r0 + 1) * u64::from(img.c1 - img.c0 + 1);
+            if !open && area <= limit {
+                return false;
+            }
+            let raw = |b: Bound, at: u32| match b {
+                Bound::Open => None,
+                Bound::Abs(v) => Some(v),
+                Bound::Rel(d) => u32::try_from(i64::from(at) + i64::from(d)).ok(),
+            };
+            let range = (
+                raw(rows.lo, row),
+                raw(rows.hi, row),
+                raw(cols.lo, col),
+                raw(cols.hi, col),
+            );
+            self.compressed_range_self_use(vid, sheet, range) == RangeSelfUse::Excluded
+        })
+    }
+
     fn authority_apply_range_self_use(
         &self,
         vid: VertexId,
@@ -226,7 +298,11 @@ impl DependencyGraph {
     fn authority_rebuild(&mut self) {
         self.authority_sync_symbol_slots();
         let mut input = self.authority_formula_inputs();
-        input.extend(self.authority_symbol_inputs());
+        input.extend(
+            self.authority_symbol_inputs()
+                .into_iter()
+                .map(|(cell, facts)| (cell, std::sync::Arc::new(facts))),
+        );
         self.authority_rebuild_from(input, None);
     }
 
@@ -234,7 +310,7 @@ impl DependencyGraph {
     /// prior store's positional identities after a structural edit.
     fn authority_rebuild_from(
         &mut self,
-        input: Vec<BuildInput>,
+        input: Vec<SharedBuildInput>,
         carried: Option<&FxHashMap<Cell, crate::engine::authority::identity::Vid>>,
     ) {
         let budget = self.authority.store.budget;
@@ -247,7 +323,7 @@ impl DependencyGraph {
             + self.table_vertex_lookup.len()
             + self.source_vertex_lookup.len();
         let inventory_bytes = count * size_of::<SymbolAddr>();
-        let input_bytes = input.capacity() * size_of::<BuildInput>()
+        let input_bytes = input.capacity() * size_of::<SharedBuildInput>()
             + input
                 .iter()
                 .map(|(_, f)| f.owned_heap_bytes())
@@ -529,8 +605,10 @@ impl DependencyGraph {
         kept.reserve(vids.len());
         let mut used: FxHashSet<Vid> = FxHashSet::default();
         let mut created: Vec<Cell> = Vec::new();
+        let mut shared = FxHashMap::default();
         for v in vids {
-            let Some((cell, facts)) = self.authority_formula_input(v) else {
+            let Some((cell, facts)) = self.authority_formula_input_shared(v, Some(&mut shared))
+            else {
                 continue;
             };
             match carried.remove(&v) {
@@ -560,7 +638,11 @@ impl DependencyGraph {
                 kept.insert((SYMBOL_SHEET, slot, 0), id);
             }
         }
-        input.extend(self.authority_symbol_inputs());
+        input.extend(
+            self.authority_symbol_inputs()
+                .into_iter()
+                .map(|(cell, facts)| (cell, std::sync::Arc::new(facts))),
+        );
         let next_id = self.authority.store.ids().next_id();
         for cell in created {
             if let Some(id) = self.authority.journal.created(cell)
@@ -1410,7 +1492,11 @@ impl DependencyGraph {
     /// The build input the host would use for a full rebuild: every formula
     /// cell, then every name's symbol node.
     pub(crate) fn authority_build_input(&self) -> Vec<BuildInput> {
-        let mut input = self.authority_formula_inputs();
+        let mut input: Vec<BuildInput> = self
+            .authority_formula_inputs()
+            .into_iter()
+            .map(|(cell, facts)| (cell, std::sync::Arc::unwrap_or_clone(facts)))
+            .collect();
         input.extend(
             self.authority
                 .symbols
@@ -1420,10 +1506,13 @@ impl DependencyGraph {
         input
     }
 
-    fn authority_formula_inputs(&self) -> Vec<BuildInput> {
+    fn authority_formula_inputs(&self) -> Vec<SharedBuildInput> {
         let vids: Vec<VertexId> = self.vertex_formulas.keys().copied().collect();
+        // Family members share their template's facts (one allocation per
+        // family instead of one per cell).
+        let mut shared = FxHashMap::default();
         vids.into_iter()
-            .filter_map(|v| self.authority_formula_input(v))
+            .filter_map(|v| self.authority_formula_input_shared(v, Some(&mut shared)))
             .collect()
     }
 
@@ -2029,7 +2118,7 @@ fn formula_texts_rendered(
 /// Per template: for each reference node in the walk order of
 /// [`ast_equal_relocated`], whether its text is its reference's rendering
 /// (the instantiation rule re-renders those texts).
-fn template_rendered_refs(
+pub(crate) fn template_rendered_refs(
     ds: &crate::engine::arena::DataStore,
     reg: &crate::engine::sheet_registry::SheetRegistry,
     tmpl: AstNodeId,
@@ -2095,22 +2184,6 @@ fn ast_equal_relocated(
     stack: &mut Vec<(AstNodeId, AstNodeId)>,
 ) -> bool {
     use crate::engine::arena::{AstNodeData as N, CompactRefType as R};
-    let shift = |v: u32, abs: bool, d: i64| -> Option<u32> {
-        if abs {
-            return Some(v);
-        }
-        let x = i64::from(v) + d;
-        (1..=i64::from(u32::MAX)).contains(&x).then_some(x as u32)
-    };
-    // Open bounds (start 0, end u32::MAX) stay open under relocation.
-    let shift_start = |v: u32, abs: bool, d: i64| if v == 0 { Some(0) } else { shift(v, abs, d) };
-    let shift_end = |v: u32, abs: bool, d: i64| {
-        if v == u32::MAX {
-            Some(u32::MAX)
-        } else {
-            shift(v, abs, d)
-        }
-    };
     let mut ref_index = 0usize;
     stack.clear();
     stack.push((own, tmpl));
@@ -2154,55 +2227,8 @@ fn ast_equal_relocated(
                     }
                     continue;
                 }
-                let relocated = match *rb {
-                    R::Cell {
-                        sheet,
-                        row,
-                        col,
-                        row_abs,
-                        col_abs,
-                    } => match (shift(row, row_abs, dr), shift(col, col_abs, dc)) {
-                        (Some(row), Some(col)) => R::Cell {
-                            sheet,
-                            row,
-                            col,
-                            row_abs,
-                            col_abs,
-                        },
-                        _ => return false,
-                    },
-                    R::Range {
-                        sheet,
-                        start_row,
-                        start_col,
-                        end_row,
-                        end_col,
-                        start_row_abs,
-                        start_col_abs,
-                        end_row_abs,
-                        end_col_abs,
-                    } => match (
-                        shift_start(start_row, start_row_abs, dr),
-                        shift_start(start_col, start_col_abs, dc),
-                        shift_end(end_row, end_row_abs, dr),
-                        shift_end(end_col, end_col_abs, dc),
-                    ) {
-                        (Some(start_row), Some(start_col), Some(end_row), Some(end_col)) => {
-                            R::Range {
-                                sheet,
-                                start_row,
-                                start_col,
-                                end_row,
-                                end_col,
-                                start_row_abs,
-                                start_col_abs,
-                                end_row_abs,
-                                end_col_abs,
-                            }
-                        }
-                        _ => return false,
-                    },
-                    _ => return false,
+                let Some(relocated) = relocate_compact_ref(rb, dr, dc) else {
+                    return false;
                 };
                 if *ra != relocated {
                     return false;
@@ -2300,7 +2326,371 @@ fn ast_equal_relocated(
     ref_index == rendered.len()
 }
 
+/// A cell or range reference relocated by `(dr, dc)` as
+/// [`crate::engine::template::relocate::instantiate_member_ast`] moves it:
+/// relative axes shift (and must stay in 1..=u32::MAX), absolute axes and
+/// open range bounds (start 0, end u32::MAX) stay. `None` for other kinds
+/// or a shift out of bounds.
+pub(crate) fn relocate_compact_ref(
+    r: &crate::engine::arena::CompactRefType,
+    dr: i64,
+    dc: i64,
+) -> Option<crate::engine::arena::CompactRefType> {
+    use crate::engine::arena::CompactRefType as R;
+    let shift = |v: u32, abs: bool, d: i64| -> Option<u32> {
+        if abs {
+            return Some(v);
+        }
+        let x = i64::from(v) + d;
+        (1..=i64::from(u32::MAX)).contains(&x).then_some(x as u32)
+    };
+    let shift_start = |v: u32, abs: bool, d: i64| if v == 0 { Some(0) } else { shift(v, abs, d) };
+    let shift_end = |v: u32, abs: bool, d: i64| {
+        if v == u32::MAX {
+            Some(u32::MAX)
+        } else {
+            shift(v, abs, d)
+        }
+    };
+    match *r {
+        R::Cell {
+            sheet,
+            row,
+            col,
+            row_abs,
+            col_abs,
+        } => Some(R::Cell {
+            sheet,
+            row: shift(row, row_abs, dr)?,
+            col: shift(col, col_abs, dc)?,
+            row_abs,
+            col_abs,
+        }),
+        R::Range {
+            sheet,
+            start_row,
+            start_col,
+            end_row,
+            end_col,
+            start_row_abs,
+            start_col_abs,
+            end_row_abs,
+            end_col_abs,
+        } => Some(R::Range {
+            sheet,
+            start_row: shift_start(start_row, start_row_abs, dr)?,
+            start_col: shift_start(start_col, start_col_abs, dc)?,
+            end_row: shift_end(end_row, end_row_abs, dr)?,
+            end_col: shift_end(end_col, end_col_abs, dc)?,
+            start_row_abs,
+            start_col_abs,
+            end_row_abs,
+            end_col_abs,
+        }),
+        _ => None,
+    }
+}
+
+/// [`ast_equal_relocated`] with the member given as a parsed tree that
+/// was never interned (load-time family grouping, P2-M2): whether
+/// interning `own` would give exactly `tmpl` relocated by `(dr, dc)`.
+/// Each parsed node is compared as `DataStore::store_ast` would store it:
+/// literals that round-trip unchanged through the arena (empty, number
+/// by bits, integer, text, boolean), sheet names the registry resolves,
+/// operator and function names as written. Anything whose stored form
+/// is not reproduced here (other literals, arrays, calls, unregistered
+/// sheets, other reference kinds) declines, so a `true` is the same
+/// verdict `ast_equal_relocated` gives on the interned member.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn parsed_equal_relocated<'a>(
+    ds: &crate::engine::arena::DataStore,
+    reg: &crate::engine::sheet_registry::SheetRegistry,
+    own: &'a formualizer_parse::parser::ASTNode,
+    tmpl: AstNodeId,
+    dr: i64,
+    dc: i64,
+    rendered: &[bool],
+    stack: &mut Vec<(&'a formualizer_parse::parser::ASTNode, AstNodeId)>,
+) -> bool {
+    use crate::engine::arena::{AstNodeData as N, CompactRefType as R, SheetKey};
+    use formualizer_parse::parser::{ASTNodeType as P, ReferenceType as PR};
+    let sheet_key = |s: &Option<String>| -> Option<Option<SheetKey>> {
+        match s {
+            None => Some(None),
+            Some(name) => reg.get_id(name).map(|id| Some(SheetKey::Id(id))),
+        }
+    };
+    let mut ref_index = 0usize;
+    stack.clear();
+    stack.push((own, tmpl));
+    while let Some((a, b)) = stack.pop() {
+        let Some(nb) = ds.get_node(b) else {
+            return false;
+        };
+        match (&a.node_type, nb) {
+            (P::Literal(x), N::Literal(y)) => {
+                let y = ds.retrieve_value(*y);
+                let same = match (x, &y) {
+                    (LiteralValue::Number(p), LiteralValue::Number(q)) => {
+                        p.to_bits() == q.to_bits()
+                    }
+                    (
+                        LiteralValue::Empty
+                        | LiteralValue::Int(_)
+                        | LiteralValue::Text(_)
+                        | LiteralValue::Boolean(_),
+                        _,
+                    ) => *x == y,
+                    _ => false,
+                };
+                if !same {
+                    return false;
+                }
+            }
+            (P::Omitted, N::Omitted) => {}
+            (
+                P::Reference {
+                    original,
+                    reference,
+                },
+                N::Reference {
+                    original_id: ob,
+                    ref_type: rb,
+                },
+            ) => {
+                let Some(&rerender) = rendered.get(ref_index) else {
+                    return false;
+                };
+                ref_index += 1;
+                let tmpl_text = ds.resolve_ast_string(*ob);
+                if let R::NamedRange(name) = rb {
+                    match reference {
+                        PR::NamedRange(n)
+                            if n.as_str() == ds.resolve_ast_string(*name)
+                                && original.as_str() == tmpl_text => {}
+                        _ => return false,
+                    }
+                    continue;
+                }
+                let ra = match reference {
+                    PR::Cell {
+                        sheet,
+                        row,
+                        col,
+                        row_abs,
+                        col_abs,
+                    } => {
+                        let Some(sheet) = sheet_key(sheet) else {
+                            return false;
+                        };
+                        R::Cell {
+                            sheet,
+                            row: *row,
+                            col: *col,
+                            row_abs: *row_abs,
+                            col_abs: *col_abs,
+                        }
+                    }
+                    PR::Range {
+                        sheet,
+                        start_row,
+                        start_col,
+                        end_row,
+                        end_col,
+                        start_row_abs,
+                        start_col_abs,
+                        end_row_abs,
+                        end_col_abs,
+                    } => {
+                        let Some(sheet) = sheet_key(sheet) else {
+                            return false;
+                        };
+                        R::Range {
+                            sheet,
+                            start_row: start_row.unwrap_or(0),
+                            start_col: start_col.unwrap_or(0),
+                            end_row: end_row.unwrap_or(u32::MAX),
+                            end_col: end_col.unwrap_or(u32::MAX),
+                            start_row_abs: *start_row_abs,
+                            start_col_abs: *start_col_abs,
+                            end_row_abs: *end_row_abs,
+                            end_col_abs: *end_col_abs,
+                        }
+                    }
+                    _ => return false,
+                };
+                if relocate_compact_ref(rb, dr, dc) != Some(ra) {
+                    return false;
+                }
+                let own_text = original.as_str();
+                let text_ok = if rerender {
+                    match (coords_rendering(rb), coords_rendering(&ra)) {
+                        (Some(tc), Some(mc)) if tc.len() <= tmpl_text.len() => {
+                            let prefix = &tmpl_text[..tmpl_text.len() - tc.len()];
+                            own_text.len() == prefix.len() + mc.len()
+                                && own_text.as_bytes()[..prefix.len()] == *prefix.as_bytes()
+                                && own_text.as_bytes()[prefix.len()..] == mc[..]
+                        }
+                        _ => is_rendering(
+                            own_text,
+                            &ds.reconstruct_reference_type_for_eval(&ra, reg),
+                        ),
+                    }
+                } else {
+                    own_text == tmpl_text
+                };
+                if !text_ok {
+                    return false;
+                }
+            }
+            (P::UnaryOp { op, expr }, N::UnaryOp { op_id, expr_id }) => {
+                if op.as_str() != ds.resolve_ast_string(*op_id) {
+                    return false;
+                }
+                stack.push((expr, *expr_id));
+            }
+            (
+                P::BinaryOp { op, left, right },
+                N::BinaryOp {
+                    op_id,
+                    left_id,
+                    right_id,
+                },
+            ) => {
+                if op.as_str() != ds.resolve_ast_string(*op_id) {
+                    return false;
+                }
+                stack.push((left, *left_id));
+                stack.push((right, *right_id));
+            }
+            (
+                P::Function { name, args },
+                N::Function {
+                    name_id,
+                    args_count,
+                    ..
+                },
+            ) => {
+                if name.as_str() != ds.resolve_ast_string(*name_id)
+                    || args.len() != usize::from(*args_count)
+                {
+                    return false;
+                }
+                let Some(xb) = ds.get_args(b) else {
+                    return false;
+                };
+                stack.extend(args.iter().zip(xb.iter().copied()));
+            }
+            _ => return false,
+        }
+    }
+    ref_index == rendered.len()
+}
+
 impl DependencyGraph {
+    /// Load-time family grouping (P2-M2): the family of the formula above
+    /// `(row0, col0)` (else the one to its left) in `grouper`, if `ast` is
+    /// exactly its template relocated to this cell.
+    pub(crate) fn group_formula_member(
+        &self,
+        grouper: &mut crate::engine::formula_ingest::FormulaFamilyGrouper,
+        row0: u32,
+        col0: u32,
+        ast: &formualizer_parse::parser::ASTNode,
+    ) -> Option<crate::engine::formula_ingest::GroupedFamily> {
+        let mut stack = Vec::new();
+        let above = row0
+            .checked_sub(1)
+            .and_then(|r| grouper.by_col.get_mut(&col0).filter(|(row, _)| *row == r))
+            .map(|(_, family)| family);
+        if let Some(family) = above
+            && self.formula_member_of(family, row0, col0, ast, &mut stack)
+        {
+            return Some(family.clone());
+        }
+        let left = col0.checked_sub(1).and_then(|c| {
+            grouper
+                .last
+                .as_mut()
+                .filter(|(row, col, _)| *row == row0 && *col == c)
+        });
+        if let Some((_, _, family)) = left
+            && self.formula_member_of(family, row0, col0, ast, &mut stack)
+        {
+            return Some(family.clone());
+        }
+        None
+    }
+
+    fn formula_member_of<'a>(
+        &self,
+        family: &mut crate::engine::formula_ingest::GroupedFamily,
+        row0: u32,
+        col0: u32,
+        ast: &'a formualizer_parse::parser::ASTNode,
+        stack: &mut Vec<(&'a formualizer_parse::parser::ASTNode, AstNodeId)>,
+    ) -> bool {
+        let template = family.template;
+        let rendered = family.rendered.get_or_insert_with(|| {
+            (!self.data_store.ast_needs_structural_rewrite(template))
+                .then(|| template_rendered_refs(&self.data_store, &self.sheet_reg, template).into())
+        });
+        let Some(rendered) = rendered.as_deref() else {
+            return false;
+        };
+        let dr = i64::from(row0) - i64::from(family.anchor.0);
+        let dc = i64::from(col0) - i64::from(family.anchor.1);
+        let equal = parsed_equal_relocated(
+            &self.data_store,
+            &self.sheet_reg,
+            ast,
+            template,
+            dr,
+            dc,
+            rendered,
+            stack,
+        );
+        #[cfg(debug_assertions)]
+        {
+            // The verdict is the one `ast_equal_relocated` gives on the
+            // interned member (checked in a scratch arena holding only the
+            // template), and the member instantiates to its own formula.
+            let tree = self
+                .data_store
+                .retrieve_ast(template, &self.sheet_reg)
+                .expect("template");
+            let mut ds = crate::engine::arena::DataStore::new();
+            let tmpl = ds.store_ast(&tree, &self.sheet_reg);
+            let own = ds.store_ast(ast, &self.sheet_reg);
+            let mut scratch = Vec::new();
+            let interned = ast_equal_relocated(
+                &ds,
+                &self.sheet_reg,
+                own,
+                tmpl,
+                dr,
+                dc,
+                rendered,
+                &mut scratch,
+            );
+            assert!(
+                !equal || interned,
+                "load-time family member at {row0},{col0} is not its template relocated"
+            );
+            if equal {
+                let member =
+                    crate::engine::template::relocate::instantiate_member_ast(&tree, dr, dc)
+                        .expect("member relocation");
+                assert_eq!(
+                    Some(member),
+                    ds.retrieve_ast(own, &self.sheet_reg),
+                    "load-time family member at {row0},{col0} does not instantiate to its formula"
+                );
+            }
+        }
+        equal
+    }
+
     /// Program 2 compression (P2-M2): every non-dynamic member of a family
     /// node whose own formula is exactly the node's template relocated to
     /// it references the template instead; then the arena keeps only live

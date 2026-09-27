@@ -6,6 +6,12 @@ use super::*;
 /// One formula cell and its facts.
 pub type BuildInput = (Cell, FormulaFacts);
 
+/// A build input whose facts may be shared between cells (the members of
+/// a load-time family share their template's facts, P2-M2).
+pub type SharedBuildInput = (Cell, std::sync::Arc<FormulaFacts>);
+
+use std::borrow::Borrow;
+
 impl Store {
     /// Build from scratch. Groups are canon of their cells, owners get
     /// column-major contiguous ids (one run per column), and every
@@ -48,8 +54,8 @@ impl Store {
     /// ids come from `carried` (post-edit cell → id, every id below
     /// `prior`'s counter, not live twice) instead of `prior`'s positions;
     /// cells absent from it get fresh ids from `prior`'s counter.
-    pub(crate) fn rebuild_carrying(
-        input: Vec<BuildInput>,
+    pub(crate) fn rebuild_carrying<F: Borrow<FormulaFacts>>(
+        input: Vec<(Cell, F)>,
         live_symbols: Vec<SymbolId>,
         prior: Option<&Store>,
         carried: Option<&FxHashMap<Cell, Vid>>,
@@ -61,10 +67,10 @@ impl Store {
         // them rejects without building. The full preview (legacy's
         // `preview_formula_mutations` → `preflight_graph_admission` at bulk
         // ingest) lands with the resource-ledger link (B-10, addendum B-22).
-        let input_bytes = input.capacity() * size_of::<BuildInput>()
+        let input_bytes = input.capacity() * size_of::<(Cell, F)>()
             + input
                 .iter()
-                .map(|(_, f)| f.owned_heap_bytes())
+                .map(|(_, f)| f.borrow().owned_heap_bytes())
                 .sum::<usize>();
         let gate = Store {
             budget,
@@ -139,17 +145,17 @@ impl Store {
 
     /// [`Self::build_keeping`] with an explicit kept-id map (see
     /// [`Self::rebuild_carrying`]); `prior` then supplies only the counter.
-    pub(crate) fn build_keeping_with(
-        mut input: Vec<BuildInput>,
+    pub(crate) fn build_keeping_with<F: Borrow<FormulaFacts>>(
+        mut input: Vec<(Cell, F)>,
         prior: Option<&IdentityTable>,
         carried: Option<&FxHashMap<Cell, Vid>>,
     ) -> Result<(Store, u64), AuthorityError> {
         // The input and everything it owns coexist with the whole build
         // (re-review R5).
-        let mut scratch = input.capacity() * size_of::<BuildInput>()
+        let mut scratch = input.capacity() * size_of::<(Cell, F)>()
             + input
                 .iter()
-                .map(|(_, f)| f.owned_heap_bytes())
+                .map(|(_, f)| f.borrow().owned_heap_bytes())
                 .sum::<usize>();
         let mut s = Store::new();
         input.sort_unstable_by_key(|(c, _)| *c);
@@ -162,6 +168,7 @@ impl Store {
         let mut by_cell: FxHashMap<Cell, usize> = FxHashMap::default();
         let mut rep_tokens: FxHashMap<u32, usize> = FxHashMap::default();
         for (i, (cell, f)) in input.iter().enumerate() {
+            let f: &FormulaFacts = f.borrow();
             by_cell.insert(*cell, i);
             for e in &f.edges {
                 let lk = match &e.origin {
@@ -210,7 +217,10 @@ impl Store {
                     // Verify against the group's first member: a 64-bit
                     // collision leaves the formula ungrouped.
                     match g {
-                        Some(g) if input[rep_tokens[&g]].1.ltokens.as_deref() == Some(&t[..]) => {
+                        Some(g)
+                            if input[rep_tokens[&g]].1.borrow().ltokens.as_deref()
+                                == Some(&t[..]) =>
+                        {
                             ncells
                                 .entry(g)
                                 .or_default()
@@ -351,7 +361,7 @@ impl Store {
             grp.members = Members::with_capacity(pieces.len());
             for p in pieces {
                 let id = s.owners.len() as u32;
-                let f = &input[by_cell[&(sheet, p.r0, p.c0)]].1;
+                let f: &FormulaFacts = input[by_cell[&(sheet, p.r0, p.c0)]].1.borrow();
                 grp.members.push(id);
                 s.owners.push(Owner {
                     dom: p,
@@ -360,7 +370,7 @@ impl Store {
                     group: g,
                     pos: (grp.members.len() - 1) as u32,
                     template: f.template,
-                    anchor: (p.r0, p.c0),
+                    anchor: f.template_anchor.unwrap_or((p.r0, p.c0)),
                 });
                 if !p.is_cell() {
                     s.nnodes += 1;
@@ -371,6 +381,7 @@ impl Store {
         }
         for i in ungrouped {
             let (cell, f) = &input[i];
+            let f: &FormulaFacts = f.borrow();
             let id = s.owners.len() as u32;
             s.owners.push(Owner {
                 dom: Rect::cell(cell.1, cell.2),
@@ -379,7 +390,7 @@ impl Store {
                 group: UNGROUPED,
                 pos: 0,
                 template: f.template,
-                anchor: (cell.1, cell.2),
+                anchor: f.template_anchor.unwrap_or((cell.1, cell.2)),
             });
             placed.push(id);
         }
@@ -453,7 +464,7 @@ impl Store {
             };
             let first_id = s.ids.run(h).first_id;
             for i in 0..len {
-                let f = &input[by_cell[&(w.sheet, r + i, c)]].1;
+                let f: &FormulaFacts = input[by_cell[&(w.sheet, r + i, c)]].1.borrow();
                 if !f.literals.is_empty() {
                     rows.push((first_id + i, f.literals.len()));
                 }
@@ -468,7 +479,7 @@ impl Store {
         let mut payload: Vec<(Vid, &[ValueRef])> = Vec::with_capacity(rows.len());
         for &(id, _) in &rows {
             let cell = s.ids.locate(id).expect("placed id");
-            payload.push((id, &input[by_cell[&cell]].1.literals[..]));
+            payload.push((id, &input[by_cell[&cell]].1.borrow().literals[..]));
         }
         s.slots.apply(&plan, &[], &payload);
         scratch += payload.capacity() * size_of::<(Vid, &[ValueRef])>()

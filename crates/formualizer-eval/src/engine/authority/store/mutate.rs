@@ -281,6 +281,7 @@ impl Store {
             edges,
             ngroup,
             template: f.template,
+            anchor: f.template_anchor.unwrap_or((cell.1, cell.2)),
             literals: &f.literals[..],
             flags: f.flags,
             kept_id: cut.keep.map(|i| cut.id_cuts[i].id()),
@@ -1118,7 +1119,7 @@ impl Store {
                 g,
                 Rect::cell(n.cell.1, n.cell.2),
                 n.template,
-                (n.cell.1, n.cell.2),
+                n.anchor,
                 n.flags,
             );
             match kept_run {

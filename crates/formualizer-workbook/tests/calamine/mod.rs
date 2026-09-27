@@ -17,6 +17,8 @@ mod deltas;
 #[cfg(feature = "calamine")]
 mod engine;
 #[cfg(feature = "calamine")]
+mod family_grouping;
+#[cfg(feature = "calamine")]
 mod format_channel;
 #[cfg(feature = "calamine")]
 mod formulas;
