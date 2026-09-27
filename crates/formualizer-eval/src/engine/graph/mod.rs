@@ -630,6 +630,11 @@ impl DependencyGraph {
         &self.config
     }
 
+    /// Formula vertices, virtual members included.
+    pub(crate) fn formula_vertex_count(&self) -> usize {
+        self.vertex_formulas.len()
+    }
+
     pub(crate) fn clear_formula_vertex_dirty(&mut self, vertex_id: VertexId) {
         self.store.set_dirty(vertex_id, false);
         self.formula_dirty.legacy_remove(&vertex_id);

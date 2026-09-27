@@ -9599,6 +9599,38 @@ where
         };
         let (ordinary, compressed, direct) = prepared;
 
+        // A first build (no formula in the graph yet) goes through the eager
+        // first load's machinery: the builder pre-allocates each column's
+        // targets as one id run, installs family members as virtual runs and
+        // builds the authority once at the end (decision 26).
+        // The first load's builder plans and applies one chunk at a time, so
+        // a planning error would leave earlier chunks in the graph; the
+        // incremental path plans everything first. Check every distinct
+        // formula first, in the incremental path's order (it reports the
+        // same first error and leaves the graph untouched).
+        let first_build = if self.deferred_build_can_be_first_load() {
+            if let Err(error) = self.check_staged_formula_plans(
+                ordinary
+                    .iter()
+                    .chain(compressed.iter().map(|(batch, _)| batch)),
+            ) {
+                self.formula_parse_diagnostics.truncate(diagnostics_len);
+                for (sheet, staged) in collected {
+                    self.restore_staged_sheet(sheet, staged);
+                }
+                self.staged_formula_index = staged_index_snapshot;
+                return Err(error);
+            }
+            self.deferred_build_as_first_load()
+        } else {
+            None
+        };
+        let built_sheets: Vec<String> = if first_build.is_some() {
+            collected.iter().map(|(sheet, _)| sheet.clone()).collect()
+        } else {
+            Vec::new()
+        };
+
         // Keep the original source/spool alive through every fallible ingestion route.
         // Graph admission may have committed a prefix; replay replaces those placements
         // rather than treating their cached values as authoritative source.
@@ -9614,6 +9646,9 @@ where
             }
             Ok(())
         })();
+        if let Some(saved) = first_build {
+            self.leave_deferred_first_load(saved, &built_sheets);
+        }
         if let Err(error) = result {
             self.formula_parse_diagnostics.truncate(diagnostics_len);
             for (sheet, staged) in collected {
@@ -9624,6 +9659,81 @@ where
         }
         self.dedup_formula_parse_diagnostics_since(diagnostics_len);
         Ok(())
+    }
+
+    /// Enter the first-load ingest mode for a deferred build when the graph
+    /// holds no formula yet and no load is in progress: the settings the
+    /// calamine loader uses for its eager first load (lazy sheet index, no
+    /// small-range expansion, first-load fast path). Returns the settings
+    /// to restore, or `None` when the build takes the incremental path.
+    fn deferred_build_can_be_first_load(&self) -> bool {
+        !self.graph.first_load_assume_new()
+            && !self.graph_admission_enabled()
+            && self.graph.formula_vertex_count() == 0
+    }
+
+    /// Plan each distinct formula of `batches` once (a member is planned
+    /// through its template, staged before it) and drop the plans: the
+    /// first planning error, in the order the incremental ingest meets it.
+    fn check_staged_formula_plans<'b>(
+        &mut self,
+        batches: impl Iterator<Item = &'b FormulaIngestBatch>,
+    ) -> Result<(), ExcelError> {
+        let mut seen: FxHashSet<(SheetId, crate::engine::arena::AstNodeId)> = FxHashSet::default();
+        for batch in batches {
+            let sheet_id = self.graph.sheet_id(&batch.sheet_name).ok_or_else(|| {
+                ExcelError::new(ExcelErrorKind::Ref)
+                    .with_message(format!("unknown ingest sheet: {}", batch.sheet_name))
+            })?;
+            let mut pipeline = self.ingest_pipeline();
+            for record in &batch.formulas {
+                if record.member_anchor.is_some() || !seen.insert((sheet_id, record.ast_id)) {
+                    continue;
+                }
+                let placement = CellRef::new(
+                    sheet_id,
+                    Coord::from_excel(record.row, record.col, true, true),
+                );
+                pipeline.ingest_formula(
+                    FormulaAstInput::RawArena(record.ast_id),
+                    placement,
+                    None,
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    fn deferred_build_as_first_load(&mut self) -> Option<(crate::engine::SheetIndexMode, usize)> {
+        if !self.deferred_build_can_be_first_load() {
+            return None;
+        }
+        let saved = (
+            self.graph.get_config().sheet_index_mode,
+            self.config.range_expansion_limit,
+        );
+        self.graph
+            .set_sheet_index_mode(crate::engine::SheetIndexMode::Lazy);
+        self.config.range_expansion_limit = 0;
+        self.graph.set_first_load_assume_new(true);
+        self.graph.reset_ensure_touched();
+        Some(saved)
+    }
+
+    /// Leave the first-load mode of [`Self::deferred_build_as_first_load`]:
+    /// the authority is built once here, as at the end of an eager load.
+    fn leave_deferred_first_load(
+        &mut self,
+        (index_mode, range_limit): (crate::engine::SheetIndexMode, usize),
+        sheets: &[String],
+    ) {
+        self.graph.set_first_load_assume_new(false);
+        self.graph.reset_ensure_touched();
+        self.graph.set_sheet_index_mode(index_mode);
+        self.config.range_expansion_limit = range_limit;
+        for sheet in sheets {
+            self.graph.finalize_sheet_index(sheet);
+        }
     }
 
     fn prepare_staged_formula_batches(
@@ -9642,6 +9752,10 @@ where
             if !share_parse_cache_across_sheets {
                 cache.clear();
             }
+            // Load-time family grouping, as the eager first load does:
+            // relative copies of the formula above (or to the left) become
+            // members of its family and are never interned.
+            let mut grouper = crate::engine::FormulaFamilyGrouper::new();
             let mut entries: Vec<_> = staged
                 .entries
                 .iter()
@@ -9710,8 +9824,11 @@ where
                 } else {
                     format!("={txt}")
                 };
-                let ast_id = if let Some(cached) = cache.get(&key) {
-                    *cached
+                let staged_record = if let Some(cached) = cache.get(&key) {
+                    cached.map(|ast_id| {
+                        self.note_staged_formula(&mut grouper, row, col, ast_id);
+                        FormulaIngestRecord::new(row, col, ast_id, Some(Arc::<str>::from(key)))
+                    })
                 } else {
                     let parsed = match formualizer_parse::parser::parse(&key) {
                         Ok(parsed) => Some(parsed),
@@ -9723,18 +9840,32 @@ where
                             error.to_string(),
                         )?,
                     };
-                    let ast_id = parsed.as_ref().map(|ast| self.intern_formula_ast(ast));
-                    cache.insert(key.clone(), ast_id);
-                    ast_id
+                    match parsed {
+                        Some(ast) => {
+                            let record = self.stage_formula_ast(&mut grouper, row, col, &ast, None);
+                            // A member's text is not worth caching: relative
+                            // copies do not repeat their text.
+                            if record.is_family_member() {
+                                Some(record)
+                            } else {
+                                let ast_id = record.ast_id;
+                                cache.insert(key.clone(), Some(ast_id));
+                                Some(FormulaIngestRecord::new(
+                                    row,
+                                    col,
+                                    ast_id,
+                                    Some(Arc::<str>::from(key)),
+                                ))
+                            }
+                        }
+                        None => {
+                            cache.insert(key, None);
+                            None
+                        }
+                    }
                 };
 
-                if let Some(ast_id) = ast_id {
-                    let mut formula = FormulaIngestRecord::new(
-                        row,
-                        col,
-                        ast_id,
-                        Some(Arc::<str>::from(key.clone())),
-                    );
+                if let Some(mut formula) = staged_record {
                     if let Some((order, family, owner)) = source_proof {
                         formula = formula.with_source_proof(order, family, owner);
                     } else if deferred_source.is_some() {

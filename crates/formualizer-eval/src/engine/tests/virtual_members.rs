@@ -395,3 +395,106 @@ fn member_vertex_pages_drop_rows_and_come_back() {
     b.evaluate_all().unwrap();
     assert_eq!(values(&a), values(&b), "after undo");
 }
+
+/// Decision 26: a deferred first build (`defer_graph_building`, staged
+/// formula texts) goes through the eager first load's machinery: family
+/// members are grouped (never interned) and installed as virtual runs by
+/// the build itself, and each column's formulas are one id run even past
+/// the builder's 10k-record chunks. Values equal an engine that keeps every
+/// formula on its own.
+#[test]
+fn deferred_first_build_groups_preallocates_and_virtualizes() {
+    const N: u32 = 11_000;
+    for parallel in [false, true] {
+        let deferred_config = EvalConfig {
+            defer_graph_building: true,
+            enable_parallel: parallel,
+            ..arrow_eval_config()
+        };
+        let mut deferred = Engine::new(TestWorkbook::new(), deferred_config);
+        let mut plain = Engine::new(
+            TestWorkbook::new(),
+            EvalConfig {
+                formula_compression: false,
+                enable_parallel: parallel,
+                ..arrow_eval_config()
+            },
+        );
+        for e in [&mut deferred, &mut plain] {
+            for r in 1..=N {
+                e.set_cell_value("Sheet1", r, 1, LiteralValue::Number(f64::from(r % 13)))
+                    .unwrap();
+            }
+        }
+        // Staged row by row (source order), two families.
+        for r in 1..=N {
+            let (b, c) = (
+                format!("=A{r}*2+1"),
+                if r == 1 {
+                    "=B1".to_string()
+                } else {
+                    format!("=C{}+B{r}", r - 1)
+                },
+            );
+            deferred.stage_formula_text("Sheet1", r, 2, b.clone());
+            deferred.stage_formula_text("Sheet1", r, 3, c.clone());
+            plain
+                .set_cell_formula("Sheet1", r, 2, parse(&b).unwrap())
+                .unwrap();
+            plain
+                .set_cell_formula("Sheet1", r, 3, parse(&c).unwrap())
+                .unwrap();
+        }
+        let arena_before = deferred.graph.data_store().memory_usage().total_ast_nodes;
+        deferred.build_graph_all().unwrap();
+        // Members were never interned: a handful of templates.
+        let arena_added = deferred.graph.data_store().memory_usage().total_ast_nodes - arena_before;
+        assert!(arena_added < 64, "arena grew by {arena_added} nodes");
+        // Virtual at build (not only after the first evaluation's
+        // compression): every member but each column's anchors.
+        assert!(
+            virtual_count(&deferred) >= 2 * (N as usize) - 4,
+            "virtual members after the build: {}",
+            virtual_count(&deferred)
+        );
+        let sid = deferred.graph.sheet_id("Sheet1").unwrap();
+        for col in [2, 3] {
+            let ids: Vec<u32> = (1..=N)
+                .map(|r| {
+                    let cell = CellRef::new(sid, Coord::from_excel(r, col, true, true));
+                    deferred.graph.get_vertex_id_for_address(&cell).unwrap().0
+                })
+                .collect();
+            assert!(
+                ids.windows(2).all(|w| w[1] == w[0] + 1),
+                "column {col}: one id run"
+            );
+        }
+        deferred.evaluate_all().unwrap();
+        plain.evaluate_all().unwrap();
+        for r in (1..=N).step_by(97).chain([N]) {
+            for c in 1..=3 {
+                assert_eq!(
+                    key(deferred.get_cell_value("Sheet1", r, c)),
+                    key(plain.get_cell_value("Sheet1", r, c)),
+                    "R{r}C{c}"
+                );
+            }
+        }
+        deferred
+            .set_cell_value("Sheet1", 7, 1, LiteralValue::Number(-2.5))
+            .unwrap();
+        plain
+            .set_cell_value("Sheet1", 7, 1, LiteralValue::Number(-2.5))
+            .unwrap();
+        deferred.evaluate_all().unwrap();
+        plain.evaluate_all().unwrap();
+        for r in (1..=N).step_by(89).chain([N]) {
+            assert_eq!(
+                key(deferred.get_cell_value("Sheet1", r, 3)),
+                key(plain.get_cell_value("Sheet1", r, 3)),
+                "after edit R{r}"
+            );
+        }
+    }
+}
