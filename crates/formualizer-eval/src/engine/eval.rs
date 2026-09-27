@@ -15672,8 +15672,16 @@ where
             }
             let end = (pos + step).min(len);
             let slice = layer.sub_layer(pos, end);
-            self.evaluate_layer_units(&slice, None, None, None, buffered)?;
-            pos = end;
+            // A slice stops at the probe's end even if its members turn out
+            // far more expensive than the rate so far predicted.
+            pos += self.evaluate_layer_units_until(
+                &slice,
+                None,
+                None,
+                None,
+                buffered,
+                Some(start + probe),
+            )?;
         }
         Ok(len)
     }
@@ -19243,15 +19251,37 @@ where
     fn evaluate_layer_units(
         &mut self,
         layer: &super::scheduler::Layer,
+        delta: Option<&mut DeltaCollector>,
+        log: Option<&mut ChangeLog>,
+        cancel: Option<(&AtomicBool, usize, &'static str)>,
+        buffered: bool,
+    ) -> Result<usize, ExcelError> {
+        self.evaluate_layer_units_until(layer, delta, log, cancel, buffered, None)
+    }
+
+    /// [`Self::evaluate_layer_units`] that stops before the next unit once
+    /// `stop_at` has passed; returns the vertices evaluated (a prefix of
+    /// the layer, all committed).
+    fn evaluate_layer_units_until(
+        &mut self,
+        layer: &super::scheduler::Layer,
         mut delta: Option<&mut DeltaCollector>,
         mut log: Option<&mut ChangeLog>,
         cancel: Option<(&AtomicBool, usize, &'static str)>,
         buffered: bool,
+        stop_at: Option<crate::instant::FzInstant>,
     ) -> Result<usize, ExcelError> {
         let mut computed_writes = ComputedWriteBuffer::default();
         let mut next_check = 0usize;
         let mut done = 0usize;
         for unit in layer_units(layer) {
+            if done > 0
+                && let Some(stop_at) = stop_at
+                && crate::instant::FzInstant::now() >= stop_at
+            {
+                self.flush_computed_write_buffer(&mut computed_writes)?;
+                return Ok(done);
+            }
             if let Some((flag, every, message)) = cancel
                 && every > 0
                 && done >= next_check
