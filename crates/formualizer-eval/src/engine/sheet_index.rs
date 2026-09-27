@@ -144,6 +144,15 @@ impl SheetIndex {
         }
     }
 
+    /// Drop every vertex failing `keep`; the others keep their indexed
+    /// positions. One pass over both trees.
+    pub(crate) fn retain_vertices(&mut self, keep: impl Fn(VertexId) -> bool) {
+        self.memberships.retain(|&v| keep(v));
+        self.memberships.shrink_to_fit();
+        self.row_tree.retain_values(|&v| keep(v));
+        self.col_tree.retain_values(|&v| keep(v));
+    }
+
     /// Remove a vertex from the index.
     ///
     /// ## Complexity

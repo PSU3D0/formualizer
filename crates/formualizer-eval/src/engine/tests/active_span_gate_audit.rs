@@ -613,7 +613,7 @@ fn off_direct_name_vertex_matches_authoritative_and_legacy_controls() {
 #[test]
 fn evaluate_vertex_flushes_active_spans() {
     let mut engine = build_engine_with_active_spans();
-    let input_vertex = *engine
+    let input_vertex = engine
         .graph
         .get_vertex_id_for_address(&engine.graph.make_cell_ref("Sheet1", TARGET_ROW, 1))
         .expect("input vertex");

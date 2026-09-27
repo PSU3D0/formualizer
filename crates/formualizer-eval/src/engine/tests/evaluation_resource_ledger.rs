@@ -159,7 +159,7 @@ fn evaluate_vertex_all_unset_preserves_non_formula_compatibility() {
         .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(42.0))
         .unwrap();
     let cell = engine.graph.make_cell_ref("Sheet1", 1, 1);
-    let cell_vertex = *engine
+    let cell_vertex = engine
         .graph
         .get_vertex_id_for_address(&cell)
         .expect("literal cell vertex");
@@ -639,7 +639,7 @@ fn evaluate_vertex_max_work_zero_matches_all_modes_without_publication() {
         };
         let mut engine = formula_engine(mode, budgets);
         let address = engine.graph.make_cell_ref("Sheet1", 1, 1);
-        let vertex = *engine
+        let vertex = engine
             .graph
             .get_vertex_id_for_address(&address)
             .expect("formula vertex");

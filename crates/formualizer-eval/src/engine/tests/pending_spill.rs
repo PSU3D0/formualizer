@@ -17,7 +17,7 @@ fn engine_with(config: EvalConfig) -> Engine<TestWorkbook> {
 }
 
 fn anchor(engine: &Engine<TestWorkbook>) -> VertexId {
-    *engine
+    engine
         .graph
         .get_vertex_id_for_address(&engine.graph.make_cell_ref("S", 1, 1))
         .unwrap()

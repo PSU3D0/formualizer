@@ -147,6 +147,20 @@ fn dependency_plan_from_rows(
         }
     }
 
+    // Targets enter the vertex pool first, column by column, so new
+    // formula vertices of a chunk get consecutive ids down each column
+    // (a filled-down family is one id run per column: Program 2 keeps such
+    // runs out of the per-cell maps). Referenced cells follow.
+    let mut targets: Vec<(u32, u32)> = rows.iter().map(|&(row, col, _)| (col, row)).collect();
+    targets.sort_unstable();
+    for (col, row) in targets {
+        ensure_vertex_pool_index(
+            &mut plan,
+            &mut vertex_pool_index,
+            (sheet_id, AbsCoord::from_excel(row, col)),
+        );
+    }
+
     for (row, col, row_plan) in rows {
         let target = (sheet_id, AbsCoord::from_excel(*row, *col));
         plan.formula_targets.push(target);
@@ -599,9 +613,26 @@ impl<'g> BulkIngestBuilder<'g> {
                         "builder.phase",
                         phase = "ensure"
                     );
-                    let (all_vids, add_batch) = self
-                        .g
-                        .ensure_vertices_batch_packed_ordered(&plan.vertex_pool_packed);
+                    // First load with compression: family members' new
+                    // vertices skip the per-cell maps; the chunk's members
+                    // are installed as virtual runs after assignment.
+                    let mut unmapped = vec![false; plan.vertex_pool_packed.len()];
+                    if self.g.first_load_assume_new() && self.g.formula_compression_enabled() {
+                        for (i, &pos) in plan.formula_target_pool_indices.iter().enumerate() {
+                            let rp = &row_plans[i].2;
+                            if matches!(ast_ids[i], crate::engine::graph::FormulaRef::Member { .. })
+                                && !rp.volatile
+                                && !rp.dynamic
+                            {
+                                unmapped[pos as usize] = true;
+                            }
+                        }
+                    }
+                    let (all_vids, add_batch) =
+                        self.g.ensure_vertices_batch_packed_ordered_unmapped(
+                            &plan.vertex_pool_packed,
+                            &mut unmapped,
+                        );
                     total_vertices += add_batch.len();
                     #[cfg(any(test, feature = "legacy_oracle"))]
                     if !add_batch.is_empty() {
@@ -631,11 +662,16 @@ impl<'g> BulkIngestBuilder<'g> {
                     let mut target_vids: Vec<VertexId> =
                         Vec::with_capacity(plan.formula_targets.len());
                     let load_fast = self.g.first_load_assume_new();
+                    let mut members = Vec::new();
                     for (i, &pos) in plan.formula_target_pool_indices.iter().enumerate() {
                         let vid = all_vids[pos as usize];
                         target_vids.push(vid);
                         let row_plan = &row_plans[i].2;
-                        if load_fast {
+                        if unmapped[pos as usize] {
+                            self.g.assign_unmapped_member_load_fast(vid);
+                            let (sheet, pc) = plan.formula_targets[i];
+                            members.push((vid, sheet, pc.row(), pc.col(), ast_ids[i]));
+                        } else if load_fast {
                             self.g.assign_formula_ref_load_fast(
                                 vid,
                                 ast_ids[i],
@@ -651,6 +687,7 @@ impl<'g> BulkIngestBuilder<'g> {
                             );
                         }
                     }
+                    self.g.install_load_members(members);
                     self.g.mark_vertices_dirty_batch(&target_vids);
                     if had_vertices {
                         dirty_roots.extend_from_slice(&target_vids);

@@ -674,6 +674,7 @@ impl DependencyGraph {
         name: &str,
         formula_vertex: VertexId,
     ) {
+        self.materialize_vertex(formula_vertex);
         let key = self.name_lookup_key(name);
         self.pending_name_links
             .entry(key.clone())

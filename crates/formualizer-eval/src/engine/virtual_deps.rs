@@ -52,12 +52,12 @@ impl<'a, R: EvaluationContext> DynamicRefCollector<'a, R> {
             .lock()
             .unwrap()
             .insert(Region::rect(sheet_id, sr0, er0, sc0, ec0).normalized());
-        let Some(index) = self.engine.graph.sheet_index(sheet_id) else {
+        if self.engine.graph.sheet_index(sheet_id).is_none() {
             return;
-        };
+        }
 
         let mut out = self.collected.lock().unwrap();
-        for u in index.vertices_in_col_range(sc0, ec0) {
+        for u in self.engine.graph.vertices_in_cols(sheet_id, sc0, ec0) {
             let Some(row0) = self.engine.graph.vertex_grid_addr(u).map(|addr| addr.row()) else {
                 continue;
             };
@@ -135,7 +135,7 @@ impl<'a, R: EvaluationContext> ReferenceResolver for DynamicRefCollector<'a, R> 
                 col.saturating_sub(1),
             ));
         }
-        if let Some(&vid) = self
+        if let Some(vid) = self
             .engine
             .graph
             .get_vertex_id_for_address(&self.engine.graph.make_cell_ref(sheet_name, row, col))
@@ -351,12 +351,12 @@ impl RangeVirtualDepProvider {
                 let er = extent.end_row;
                 let ec = extent.end_column;
 
-                if let Some(index) = engine.graph.sheet_index(sheet_id) {
+                if engine.graph.sheet_index(sheet_id).is_some() {
                     let sr0 = sr.saturating_sub(1);
                     let er0 = er.saturating_sub(1);
                     let sc0 = sc.saturating_sub(1);
                     let ec0 = ec.saturating_sub(1);
-                    for u in index.vertices_in_col_range(sc0, ec0) {
+                    for u in engine.graph.vertices_in_cols(sheet_id, sc0, ec0) {
                         let Some(pc) = engine.graph.vertex_grid_addr(u) else {
                             continue;
                         };

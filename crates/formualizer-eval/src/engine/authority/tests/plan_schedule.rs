@@ -210,7 +210,7 @@ fn schedule_adapter_actual_legacy_scc_and_legality() {
         let sid = engine.graph.sheet_id("Sheet1").unwrap();
         let addr = |r| CellRef::new(sid, Coord::new(r, 0, true, true));
         let vertices: Vec<_> = (0..formulas.len() as u32)
-            .map(|r| *engine.graph.get_vertex_id_for_address(&addr(r)).unwrap())
+            .map(|r| engine.graph.get_vertex_id_for_address(&addr(r)).unwrap())
             .collect();
         let (vdeps, augmented) =
             VirtualDepBuilder::new(&engine).build_with_range_members(&vertices);
@@ -234,7 +234,7 @@ fn schedule_adapter_actual_legacy_scc_and_legality() {
             None,
             |cell| {
                 assert_eq!(cell.sheet, sid);
-                Ok(*engine
+                Ok(engine
                     .graph
                     .get_vertex_id_for_address(&addr(cell.row))
                     .unwrap())

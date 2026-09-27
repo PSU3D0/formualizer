@@ -120,7 +120,7 @@ impl DependencyGraph {
         let (sheet, row, col) = cell_of(&cell);
         // A compressed member's facts are its template's at the anchor
         // (relative, so equal to the member's own).
-        let (ast, (arow, acol)) = match *self.vertex_formulas.get(&vid)? {
+        let (ast, (arow, acol)) = match self.vertex_formulas.get(&vid)? {
             super::FormulaRef::Own(ast) => (ast, (row, col)),
             super::FormulaRef::Member { template, anchor } => (template, anchor),
         };
@@ -560,7 +560,7 @@ impl DependencyGraph {
         let mut carried = crate::engine::authority::history::Carried::default();
         carried.reserve(self.authority.store.formula_count() as usize);
         let ids = self.authority.store.ids();
-        for &v in self.vertex_formulas.keys() {
+        for v in self.vertex_formulas.keys() {
             if self.store.is_deleted(v) {
                 continue;
             }
@@ -598,7 +598,7 @@ impl DependencyGraph {
         // name the operation created (a duplicated sheet's names) must have
         // its row before any formula is extracted.
         self.authority_sync_symbol_slots();
-        let mut vids: Vec<VertexId> = self.vertex_formulas.keys().copied().collect();
+        let mut vids: Vec<VertexId> = self.vertex_formulas.keys().collect();
         vids.sort_unstable();
         let mut input = Vec::with_capacity(vids.len());
         let mut kept: FxHashMap<Cell, Vid> = FxHashMap::default();
@@ -734,7 +734,6 @@ impl DependencyGraph {
             let mut all: Vec<VertexId> = self
                 .vertex_formulas
                 .keys()
-                .copied()
                 .chain(self.name_vertex_lookup.keys().copied())
                 .filter(|&v| v != symbol && !self.store.is_deleted(v))
                 .collect();
@@ -826,7 +825,7 @@ impl DependencyGraph {
             self.authority_sync_eager();
         }
         if self.authority.state != HostState::Ready {
-            let mut all: Vec<VertexId> = self.vertex_formulas.keys().copied().collect();
+            let mut all: Vec<VertexId> = self.vertex_formulas.keys().collect();
             all.sort_unstable();
             return all;
         }
@@ -1121,7 +1120,6 @@ impl DependencyGraph {
             let all: Vec<VertexId> = self
                 .vertex_formulas
                 .keys()
-                .copied()
                 .chain(self.name_vertex_lookup.keys().copied())
                 .filter(|&v| !self.store.is_deleted(v))
                 .collect();
@@ -1507,7 +1505,7 @@ impl DependencyGraph {
     }
 
     fn authority_formula_inputs(&self) -> Vec<SharedBuildInput> {
-        let vids: Vec<VertexId> = self.vertex_formulas.keys().copied().collect();
+        let vids: Vec<VertexId> = self.vertex_formulas.keys().collect();
         // Family members share their template's facts (one allocation per
         // family instead of one per cell).
         let mut shared = FxHashMap::default();
@@ -1565,7 +1563,7 @@ impl DependencyGraph {
             return false;
         }
         #[cfg(test)]
-        for &v in self.vertex_formulas.keys() {
+        for v in self.vertex_formulas.keys() {
             debug_assert!(
                 self.store.is_deleted(v) || self.store.is_dirty(v),
                 "load closure skip requires every formula dirty; {v:?} is clean"
@@ -1815,7 +1813,7 @@ impl DependencyGraph {
         let mut table = std::mem::take(&mut self.authority.vertex_of_id);
         table.clear();
         table.resize(next, u32::MAX);
-        for &v in self.vertex_formulas.keys() {
+        for v in self.vertex_formulas.keys() {
             if self.store.is_deleted(v) {
                 continue;
             }
@@ -2727,8 +2725,8 @@ impl DependencyGraph {
         // formulas instead of visiting every member of every owner.
         let store = &self.authority.store;
         let mut candidates: Vec<u32> = Vec::new();
-        for (&v, f) in self.vertex_formulas.iter() {
-            let super::FormulaRef::Own(own) = *f else {
+        for (v, f) in self.vertex_formulas.map_iter() {
+            let super::FormulaRef::Own(own) = f else {
                 continue;
             };
             let Some(cell) = self.get_cell_ref(v) else {
@@ -2774,7 +2772,7 @@ impl DependencyGraph {
                 #[cfg(debug_assertions)]
                 let before = {
                     let (_, row, col) = cell;
-                    let Some(&super::FormulaRef::Own(own)) = self.vertex_formulas.get(&v) else {
+                    let Some(super::FormulaRef::Own(own)) = self.vertex_formulas.get(&v) else {
                         unreachable!("decided member has its own formula");
                     };
                     let dr = i64::from(row) - i64::from(anchor.0);
@@ -2869,7 +2867,7 @@ impl DependencyGraph {
                 let Some(v) = v else {
                     continue;
                 };
-                let Some(&super::FormulaRef::Own(own)) = self.vertex_formulas.get(&v) else {
+                let Some(super::FormulaRef::Own(own)) = self.vertex_formulas.get(&v) else {
                     continue;
                 };
                 if own == template || self.store.is_dynamic(v) {
@@ -2896,11 +2894,12 @@ impl DependencyGraph {
 
     /// Give every compressed member its own AST again (same formulas).
     pub(crate) fn decompress_family_formulas(&mut self) {
+        self.materialize_all();
         let members: Vec<VertexId> = self
             .vertex_formulas
-            .iter()
+            .map_iter()
             .filter(|(_, f)| matches!(f, super::FormulaRef::Member { .. }))
-            .map(|(&v, _)| v)
+            .map(|(v, _)| v)
             .collect();
         for v in members {
             let _ = self.own_formula_id(v);
@@ -2912,8 +2911,7 @@ impl DependencyGraph {
     pub(crate) fn compact_formula_arena(&mut self) -> StringGarbage {
         let roots: Vec<AstNodeId> = self
             .vertex_formulas
-            .values()
-            .map(|f| f.root())
+            .roots()
             .chain(self.authority.store.owner_templates())
             .collect();
         let (remap, garbage) = self.data_store.compact_asts(roots);

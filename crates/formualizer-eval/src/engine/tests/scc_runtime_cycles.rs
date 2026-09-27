@@ -598,7 +598,7 @@ fn named_formula_member_live_cycle_is_circ_in_scc_task() {
         .unwrap();
 
     let sheet_id = engine.sheet_id("Sheet1").unwrap();
-    let a1 = *engine
+    let a1 = engine
         .graph
         .get_vertex_id_for_address(&CellRef::new(sheet_id, Coord::from_excel(1, 1, true, true)))
         .unwrap();
@@ -648,7 +648,7 @@ fn named_formula_member_phantom_produces_values_in_scc_task() {
         .unwrap();
 
     let sheet_id = engine.sheet_id("Sheet1").unwrap();
-    let a1 = *engine
+    let a1 = engine
         .graph
         .get_vertex_id_for_address(&CellRef::new(sheet_id, Coord::from_excel(1, 1, true, true)))
         .unwrap();

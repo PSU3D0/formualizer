@@ -3487,7 +3487,7 @@ where
                     .graph
                     .make_cell_ref_internal(sheet_id, row_u32, col_u32);
                 if let Some(vertex_id) = self.graph.get_vertex_id_for_address(&cell_ref)
-                    && self.graph.is_volatile(*vertex_id)
+                    && self.graph.is_volatile(vertex_id)
                 {
                     return true;
                 }
@@ -10634,8 +10634,8 @@ where
         let mut min_r0: Option<u32> = None;
         let mut max_r0: Option<u32> = None;
 
-        if let Some(index) = self.graph.sheet_index(sheet_id) {
-            for vid in index.vertices_in_col_range(sc0, ec0) {
+        if self.graph.sheet_index(sheet_id).is_some() {
+            for vid in self.graph.vertices_in_cols(sheet_id, sc0, ec0) {
                 if !matches!(
                     self.graph.get_vertex_kind(vid),
                     VertexKind::FormulaScalar | VertexKind::FormulaArray
@@ -10684,8 +10684,8 @@ where
         let mut min_c0: Option<u32> = None;
         let mut max_c0: Option<u32> = None;
 
-        if let Some(index) = self.graph.sheet_index(sheet_id) {
-            for vid in index.vertices_in_row_range(sr0, er0) {
+        if self.graph.sheet_index(sheet_id).is_some() {
+            for vid in self.graph.vertices_in_rows(sheet_id, sr0, er0) {
                 if !matches!(
                     self.graph.get_vertex_kind(vid),
                     VertexKind::FormulaScalar | VertexKind::FormulaArray
@@ -12289,7 +12289,7 @@ where
                 .get_vertex_id_for_address(&cell_ref)
                 .is_some_and(|vertex| {
                     matches!(
-                        self.graph.get_vertex_kind(*vertex),
+                        self.graph.get_vertex_kind(vertex),
                         VertexKind::FormulaScalar | VertexKind::FormulaArray
                     )
                 });
@@ -14559,7 +14559,7 @@ where
         let mut target_vertex_ids = Vec::new();
         for addr in &target_addrs {
             if let Some(vertex_id) = self.graph.get_vertex_id_for_address(addr) {
-                target_vertex_ids.push(*vertex_id);
+                target_vertex_ids.push(vertex_id);
             }
         }
 
@@ -14761,7 +14761,7 @@ where
     /// `EvalConfig::formula_compression`), when no staged or deferred
     /// formula package can hold arena ids.
     fn maybe_compress_formulas(&mut self) {
-        if !self.config.formula_compression || self.has_staged_formulas() {
+        if !self.config.formula_compression {
             return;
         }
         let builds = self.graph.authority_host().builds;
@@ -14769,8 +14769,15 @@ where
             return;
         }
         self.compressed_at_build = Some(builds);
+        if self.has_staged_formulas() {
+            // Staged packages hold arena ids: no compaction. Members that
+            // are already compressed can still leave the per-cell maps.
+            self.graph.virtualize_family_members();
+            return;
+        }
         let pool = self.thread_pool.clone();
         let (_, garbage) = self.graph.compress_family_formulas(pool.as_deref());
+        self.graph.virtualize_family_members();
         // Freeing the dropped members' reference texts (one allocation each)
         // is most of compaction; with a pool it happens off the critical
         // path.
@@ -16258,7 +16265,7 @@ impl ShimSpillManager {
                     continue;
                 }
                 // Skip formula vertices in the target region; plan() handled them (or allowed).
-                if let Some(&vid) = graph.get_vertex_id_for_address(cell)
+                if let Some(vid) = graph.get_vertex_id_for_address(cell)
                     && vid != anchor_vertex
                 {
                     match graph.get_vertex_kind(vid) {
@@ -18962,7 +18969,7 @@ where
                                 continue;
                             }
                             // Skip formula blockers; plan() handled them (or allowed).
-                            if let Some(&vid) = self.graph.get_vertex_id_for_address(cell)
+                            if let Some(vid) = self.graph.get_vertex_id_for_address(cell)
                                 && vid != vertex_id
                             {
                                 match self.graph.get_vertex_kind(vid) {

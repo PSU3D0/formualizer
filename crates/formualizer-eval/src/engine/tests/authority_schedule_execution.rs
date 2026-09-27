@@ -76,7 +76,7 @@ fn compare_with_policy(formulas: &[String], cycle: CycleConfig) {
             None,
             |cell| {
                 let address = CellRef::new(cell.sheet, Coord::new(cell.row, cell.col, true, true));
-                Ok(*actual.graph.get_vertex_id_for_address(&address).unwrap())
+                Ok(actual.graph.get_vertex_id_for_address(&address).unwrap())
             },
             |_| Ok(()),
         )

@@ -474,7 +474,7 @@ fn virtual_dependency_production_provider_keeps_used_minimum_policy() {
         .set_cell_formula("Sheet1", 1, 1, parse("=SUM(B:B)").unwrap())
         .unwrap();
     let address = engine.graph.make_cell_ref("Sheet1", 1, 1);
-    let vertex = *engine.graph.get_vertex_id_for_address(&address).unwrap();
+    let vertex = engine.graph.get_vertex_id_for_address(&address).unwrap();
     let range = engine.graph.get_range_dependencies(vertex).unwrap()[0].clone();
 
     assert!(RangeVirtualDepProvider::get_virtual_deps(&engine, vertex).is_empty());

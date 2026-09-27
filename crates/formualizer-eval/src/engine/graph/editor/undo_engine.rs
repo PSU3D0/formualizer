@@ -437,7 +437,7 @@ mod tests {
         log.clear();
         {
             // Obtain id prior to editor mutable borrow
-            let a1_vid = graph.get_vertex_id_for_address(&a1_cell).copied().unwrap();
+            let a1_vid = graph.get_vertex_id_for_address(&a1_cell).unwrap();
             let mut editor = VertexEditor::with_logger(&mut graph, &mut log);
             editor.remove_vertex(a1_vid).unwrap();
         }

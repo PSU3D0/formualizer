@@ -438,7 +438,7 @@ impl<'g> VertexEditor<'g> {
                     self.set_cell_formula(addr, old_formula);
                 } else if let Some(old_value) = old_value {
                     self.set_cell_value(addr, old_value);
-                } else if let Some(&id) = self.graph.get_vertex_id_for_address(&addr) {
+                } else if let Some(id) = self.graph.get_vertex_id_for_address(&addr) {
                     self.remove_vertex(id)?;
                 }
             }
@@ -453,7 +453,7 @@ impl<'g> VertexEditor<'g> {
                     self.set_cell_formula(addr, old_formula);
                 } else if let Some(old_value) = old_value {
                     self.set_cell_value(addr, old_value);
-                } else if let Some(&id) = self.graph.get_vertex_id_for_address(&addr) {
+                } else if let Some(id) = self.graph.get_vertex_id_for_address(&addr) {
                     self.remove_vertex(id)?;
                 }
             }
@@ -658,6 +658,7 @@ impl<'g> VertexEditor<'g> {
                 ExcelError::new(ExcelErrorKind::Ref).with_message("Vertex does not exist"),
             ));
         }
+        self.graph.materialize_vertex(id);
 
         // If this vertex anchors a spill, clear ownership + spilled children first.
         // This keeps the spill registry consistent even if the anchor is removed.
@@ -1547,7 +1548,7 @@ impl<'g> VertexEditor<'g> {
 
         // Capture old state before modification (value + formula); fall back
         // to caller-supplied state for anything the graph cannot see.
-        let old_id = self.graph.get_vertex_id_for_address(&cell_ref).copied();
+        let old_id = self.graph.get_vertex_id_for_address(&cell_ref);
         let old_value = old_id
             .and_then(|id| self.graph.get_value(id))
             .or(fallback_old_value);
@@ -1698,7 +1699,7 @@ impl<'g> VertexEditor<'g> {
 
         // Capture old state before modification (value + formula); fall back
         // to caller-supplied state for anything the graph cannot see.
-        let old_id = self.graph.get_vertex_id_for_address(&cell_ref).copied();
+        let old_id = self.graph.get_vertex_id_for_address(&cell_ref);
         let old_value = old_id
             .and_then(|id| self.graph.get_value(id))
             .or(fallback_old_value);
@@ -1794,7 +1795,7 @@ impl<'g> VertexEditor<'g> {
                 let row = start_row + row_offset as u32;
                 let col = start_col + col_offset as u32;
                 let cell_ref = self.graph.make_cell_ref_internal(sheet_id, row, col);
-                let existing_id = self.graph.get_vertex_id_for_address(&cell_ref).copied();
+                let existing_id = self.graph.get_vertex_id_for_address(&cell_ref);
 
                 let id = self.set_cell_value(cell_ref, value.clone());
                 match existing_id {
@@ -1912,7 +1913,7 @@ impl<'g> VertexEditor<'g> {
                         self.graph
                             .make_cell_ref_internal(to_sheet_id, dest_row, dest_col);
 
-                    if let Some(&existing_id) = self.graph.get_vertex_id_for_address(&cell_ref) {
+                    if let Some(existing_id) = self.graph.get_vertex_id_for_address(&cell_ref) {
                         self.graph.update_vertex_value(existing_id, value);
                         self.graph.mark_vertex_dirty(existing_id);
                         summary.vertices_updated.push(existing_id);
@@ -1933,7 +1934,7 @@ impl<'g> VertexEditor<'g> {
                         self.graph
                             .make_cell_ref_internal(to_sheet_id, dest_row, dest_col);
 
-                    if let Some(&existing_id) = self.graph.get_vertex_id_for_address(&cell_ref) {
+                    if let Some(existing_id) = self.graph.get_vertex_id_for_address(&cell_ref) {
                         self.graph.update_vertex_formula(existing_id, adjusted)?;
                         summary.vertices_updated.push(existing_id);
                     } else {

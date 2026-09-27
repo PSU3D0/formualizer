@@ -295,6 +295,10 @@ impl<R: EvaluationContext> Engine<R> {
             .filter(|v| !keep.contains(v) && !self.freshness.committed.contains(v))
             .collect();
         self.graph.clear_dirty_flags(&clear);
+        // The pass's committed set is not read after its end (the next pass
+        // starts empty); release it rather than keep a first evaluation's
+        // capacity (one entry per formula) for the life of the engine.
+        self.freshness.committed = FxHashSet::default();
         // `changed` is only non-empty from the test hook that forces replans.
         for &v in changed {
             self.graph.set_dirty(v, true);

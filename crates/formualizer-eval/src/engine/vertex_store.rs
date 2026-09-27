@@ -193,6 +193,9 @@ mod tests {
 
 /// Reserved vertex ID range constants
 pub const FIRST_NORMAL_VERTEX: u32 = 1024;
+
+/// Flag bit of a virtual family member (see [`VertexStore::is_virtual`]).
+pub(crate) const VIRTUAL_FLAG: u8 = 0x20;
 pub const RANGE_VERTEX_START: u32 = 0;
 pub const EXTERNAL_VERTEX_START: u32 = 256;
 
@@ -361,6 +364,15 @@ impl VertexStore {
         ids
     }
 
+    /// Give back the growth slack of every column (end of a bulk load).
+    pub(crate) fn shrink_to_fit(&mut self) {
+        self.coords.shrink_to_fit();
+        self.sheet_kind.shrink_to_fit();
+        self.flags.shrink_to_fit();
+        self.value_ref.shrink_to_fit();
+        self.edge_offset.shrink_to_fit();
+    }
+
     #[inline]
     pub fn len(&self) -> usize {
         self.len
@@ -425,6 +437,10 @@ impl VertexStore {
 
     #[inline]
     pub fn set_kind(&mut self, id: VertexId, kind: VertexKind) {
+        debug_assert!(
+            !self.is_virtual(id),
+            "virtual family member {id:?} mutated without materializing"
+        );
         if let Some(idx) = self.vertex_id_to_index(id) {
             let sheet_bits = self.sheet_kind[idx] & 0xFFFF0000;
             self.sheet_kind[idx] = sheet_bits | ((kind.to_tag() as u32) << 8);
@@ -520,6 +536,26 @@ impl VertexStore {
         }
     }
 
+    /// The vertex is a virtual family member (Program 2): its formula and
+    /// cell mapping live in a member run, not in the graph's per-cell maps.
+    /// Debug builds check that no position, kind or deletion change reaches
+    /// such a vertex (the graph materializes it first).
+    #[inline]
+    pub(crate) fn is_virtual(&self, id: VertexId) -> bool {
+        self.flags(id) & VIRTUAL_FLAG != 0
+    }
+
+    #[inline]
+    pub(crate) fn set_virtual(&self, id: VertexId, on: bool) {
+        if let Some(idx) = self.vertex_id_to_index(id) {
+            if on {
+                self.flags[idx].fetch_or(VIRTUAL_FLAG, Ordering::Release);
+            } else {
+                self.flags[idx].fetch_and(!VIRTUAL_FLAG, Ordering::Release);
+            }
+        }
+    }
+
     #[inline]
     pub fn set_dynamic(&self, id: VertexId, dynamic: bool) {
         if id.0 < FIRST_NORMAL_VERTEX {
@@ -571,6 +607,10 @@ impl VertexStore {
     /// Caller must ensure CSR edge cache is updated via CsrMutableEdges::update_addr
     #[doc(hidden)]
     pub fn set_addr(&mut self, id: VertexId, addr: VertexAddr) {
+        debug_assert!(
+            !self.is_virtual(id),
+            "virtual family member {id:?} mutated without materializing"
+        );
         if let Some(idx) = self.vertex_id_to_index(id) {
             self.coords[idx] = addr;
         }
@@ -578,6 +618,10 @@ impl VertexStore {
 
     /// Mark vertex as deleted (tombstone strategy)
     pub fn mark_deleted(&self, id: VertexId, deleted: bool) {
+        debug_assert!(
+            !self.is_virtual(id),
+            "virtual family member {id:?} mutated without materializing"
+        );
         if let Some(idx) = self.vertex_id_to_index(id) {
             if deleted {
                 self.flags[idx].fetch_or(0x04, Ordering::Release);

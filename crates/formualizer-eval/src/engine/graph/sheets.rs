@@ -62,7 +62,7 @@ impl DependencyGraph {
             Ok(())
         }
         let mut out = Vec::new();
-        for (&v, f) in self.vertex_formulas.iter() {
+        for (v, f) in self.vertex_formulas.iter() {
             // Sheet references do not change under relocation: a member's
             // template names the member's sheets.
             let ast = f.root();
@@ -257,6 +257,7 @@ impl DependencyGraph {
 
         if updated_ast != ast {
             let updated_ast_id = self.data_store.store_ast(&updated_ast, &self.sheet_reg);
+            self.materialize_vertex(vertex_id);
             self.vertex_formulas.insert(vertex_id, updated_ast_id);
         }
     }
@@ -286,6 +287,7 @@ impl DependencyGraph {
             }
 
             let updated_ast_id = self.data_store.store_ast(&updated_ast, &self.sheet_reg);
+            self.materialize_vertex(vertex_id);
             self.vertex_formulas.insert(vertex_id, updated_ast_id);
             self.rebuild_formula_dependencies(vertex_id, &updated_ast);
         }
@@ -333,7 +335,7 @@ impl DependencyGraph {
         self.heal_orphaned_formulas(new_name);
 
         // Update still-valid references that explicitly mentioned the renamed sheet.
-        let formulas_to_update: Vec<VertexId> = self.vertex_formulas.keys().copied().collect();
+        let formulas_to_update: Vec<VertexId> = self.vertex_formulas.keys().collect();
         for formula_id in formulas_to_update {
             if let Some(ast) = self.get_formula(formula_id) {
                 let mut updated_ast = ast.clone();
