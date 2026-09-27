@@ -143,7 +143,8 @@ struct MergedInner {
 /// and may run on the evaluation pool). Cloning a chunk starts empty.
 #[derive(Default)]
 struct MergedLaneCache {
-    inner: std::sync::Mutex<MergedInner>,
+    /// Boxed on first use: most chunks are never range-read repeatedly.
+    inner: std::sync::Mutex<Option<Box<MergedInner>>>,
 }
 
 impl Clone for MergedLaneCache {
@@ -240,7 +241,8 @@ impl ColumnChunk {
         let base = self.numbers_or_null();
         let key = (self.overlay.epoch, self.computed_overlay.epoch);
         let len = self.len();
-        let mut inner = self.merged.inner.lock().ok()?;
+        let mut guard = self.merged.inner.lock().ok()?;
+        let inner = guard.get_or_insert_with(Default::default);
         let entry =
             MergedLaneCache::lookup(&mut inner.numbers, &base, key, range.len(), len, || {
                 OverlayCascade::new(&self.overlay, &self.computed_overlay)
@@ -254,7 +256,8 @@ impl ColumnChunk {
         let base = self.errors_or_null();
         let key = (self.overlay.epoch, self.computed_overlay.epoch);
         let len = self.len();
-        let mut inner = self.merged.inner.lock().ok()?;
+        let mut guard = self.merged.inner.lock().ok()?;
+        let inner = guard.get_or_insert_with(Default::default);
         let entry =
             MergedLaneCache::lookup(&mut inner.errors, &base, key, range.len(), len, || {
                 OverlayCascade::new(&self.overlay, &self.computed_overlay)
@@ -938,15 +941,24 @@ impl IngestBuilder {
         if self.row_in_chunk == 0 {
             return;
         }
+        // A short chunk (a small sheet, or a sheet's last chunk) copies its
+        // lanes into exact-size buffers: `finish` keeps the builder's
+        // chunk-row capacity, which made every small sheet cost the same as
+        // a full chunk per column (8 bytes x 32k rows per numeric lane).
+        let exact = self.row_in_chunk.saturating_mul(2) <= self.chunk_rows;
         for c in 0..self.ncols {
             let len = self.row_in_chunk;
             let numbers_arc: Option<Arc<Float64Array>> = if self.lane_counts[c].n_num == 0 {
                 None
+            } else if exact {
+                Some(Arc::new(self.num_builders[c].finish_cloned()))
             } else {
                 Some(Arc::new(self.num_builders[c].finish()))
             };
             let booleans_arc: Option<Arc<BooleanArray>> = if self.lane_counts[c].n_bool == 0 {
                 None
+            } else if exact {
+                Some(Arc::new(self.bool_builders[c].finish_cloned()))
             } else {
                 Some(Arc::new(self.bool_builders[c].finish()))
             };
@@ -954,16 +966,26 @@ impl IngestBuilder {
             let text_ref: Option<ArrayRef> = if self.lane_counts[c].n_text == 0 {
                 None
             } else {
-                let text = self.text_builders[c].finish();
+                let text = if exact {
+                    self.text_builders[c].finish_cloned()
+                } else {
+                    self.text_builders[c].finish()
+                };
                 text_bytes = text.values().len();
                 Some(Arc::new(text))
             };
             let errors_arc: Option<Arc<UInt8Array>> = if self.lane_counts[c].n_err == 0 {
                 None
+            } else if exact {
+                Some(Arc::new(self.err_builders[c].finish_cloned()))
             } else {
                 Some(Arc::new(self.err_builders[c].finish()))
             };
-            let tags: UInt8Array = self.tag_builders[c].finish();
+            let tags: UInt8Array = if exact {
+                self.tag_builders[c].finish_cloned()
+            } else {
+                self.tag_builders[c].finish()
+            };
 
             let chunk = ColumnChunk {
                 numbers: numbers_arc,
@@ -2337,14 +2359,15 @@ pub struct Overlay {
     /// (formats excluded). Merged-lane caches key on it.
     epoch: u64,
     points: FxHashMap<usize, OverlayValue>,
-    format_points: FxHashMap<usize, FormatId>,
+    /// Allocated on the first format (most overlays never carry one).
+    format_points: Option<Box<FxHashMap<usize, FormatId>>>,
     fragments: Vec<OverlayFragment>,
     /// Points whose offset a fragment also covers (the point wins). Kept
     /// exact so `len` stays the logical coverage; folded into the fragments
     /// once they are a fixed fraction of the fragment coverage.
-    shadowed: usize,
-    /// Sum of fragment coverage lengths.
-    fragment_coverage: usize,
+    shadowed: u32,
+    /// Sum of fragment coverage lengths (offsets are u32 within a chunk).
+    fragment_coverage: u32,
     // Deterministic (and intentionally approximate) accounting of overlay memory.
     // This is used for budget enforcement/observability; it does not attempt to reflect
     // the allocator's exact overhead.
@@ -2360,7 +2383,7 @@ impl Overlay {
         Self {
             epoch: next_overlay_epoch(),
             points: FxHashMap::default(),
-            format_points: FxHashMap::default(),
+            format_points: None,
             fragments: Vec::new(),
             shadowed: 0,
             fragment_coverage: 0,
@@ -2397,22 +2420,26 @@ impl Overlay {
 
     #[inline]
     pub fn get_format(&self, off: usize) -> Option<FormatId> {
-        self.format_points.get(&off).copied()
+        self.format_points.as_ref()?.get(&off).copied()
     }
 
     #[inline]
     pub(crate) fn has_formats(&self) -> bool {
-        !self.format_points.is_empty()
+        self.format_points.as_ref().is_some_and(|m| !m.is_empty())
     }
 
     #[inline]
     pub fn set_format(&mut self, off: usize, format: Option<FormatId>) {
         match format.filter(|id| *id != FormatId::GENERAL) {
             Some(id) => {
-                self.format_points.insert(off, id);
+                self.format_points
+                    .get_or_insert_with(Default::default)
+                    .insert(off, id);
             }
             None => {
-                self.format_points.remove(&off);
+                if let Some(map) = self.format_points.as_mut() {
+                    map.remove(&off);
+                }
             }
         }
     }
@@ -2420,20 +2447,22 @@ impl Overlay {
     /// Clear computed formats in `[start, end)`. Empty lanes return in O(1);
     /// populated lanes pay for existing formatted entries, not range length.
     pub(crate) fn clear_format_range(&mut self, start: usize, end: usize) {
-        if self.format_points.is_empty() || start >= end {
+        let Some(map) = self.format_points.as_mut() else {
+            return;
+        };
+        if map.is_empty() || start >= end {
             return;
         }
-        self.format_points
-            .retain(|off, _| *off < start || *off >= end);
+        map.retain(|off, _| *off < start || *off >= end);
     }
 
     /// Clear exact computed-format offsets for a sparse computed write.
     pub(crate) fn clear_format_offsets(&mut self, offsets: &[usize]) {
-        if self.format_points.is_empty() {
+        let Some(map) = self.format_points.as_mut() else {
             return;
-        }
+        };
         for off in offsets {
-            self.format_points.remove(off);
+            map.remove(off);
         }
     }
 
@@ -2457,8 +2486,8 @@ impl Overlay {
         };
         let delta = new_est as isize - old_est as isize;
         self.adjust_estimated_bytes(delta);
-        if self.shadowed
-            >= Self::SHADOW_FOLD_MIN.max(self.fragment_coverage / Self::SHADOW_FOLD_DEN)
+        if self.shadowed as usize
+            >= Self::SHADOW_FOLD_MIN.max(self.fragment_coverage as usize / Self::SHADOW_FOLD_DEN)
         {
             delta.saturating_add(self.fold_shadowed_points())
         } else {
@@ -2527,7 +2556,7 @@ impl Overlay {
         if fragment
             .coverage_len()
             .saturating_mul(Self::SHADOW_FOLD_DEN)
-            < self.fragment_coverage
+            < self.fragment_coverage as usize
         {
             let mut delta = 0isize;
             for (off, value) in fragment.cells() {
@@ -2541,7 +2570,7 @@ impl Overlay {
         let fragment_est = fragment.estimated_bytes();
         self.fragment_coverage = self
             .fragment_coverage
-            .saturating_add(fragment.coverage_len());
+            .saturating_add(fragment.coverage_len() as u32);
         self.fragments.push(fragment);
         self.adjust_estimated_bytes(fragment_est as isize);
         delta.saturating_add(fragment_est as isize)
@@ -2573,7 +2602,7 @@ impl Overlay {
             }
         }
         debug_assert!(shadowed <= dropped);
-        self.shadowed = self.shadowed.saturating_sub(shadowed);
+        self.shadowed = self.shadowed.saturating_sub(shadowed as u32);
         self.estimated_bytes = self.estimated_bytes.saturating_sub(removed);
         removed
     }
@@ -2630,7 +2659,7 @@ impl Overlay {
             .fragments
             .iter()
             .map(OverlayFragment::coverage_len)
-            .fold(0usize, usize::saturating_add);
+            .fold(0usize, usize::saturating_add) as u32;
     }
 
     #[inline]
@@ -2731,7 +2760,7 @@ impl Overlay {
     /// Number of covered offsets (a shadowed point counts once).
     #[inline]
     pub fn len(&self) -> usize {
-        (self.points.len() - self.shadowed).saturating_add(self.fragment_coverage)
+        (self.points.len() - self.shadowed as usize).saturating_add(self.fragment_coverage as usize)
     }
 
     #[inline]
@@ -2776,7 +2805,7 @@ impl Overlay {
                 let _ = out.set_scalar(*k - off, v.clone());
             }
         }
-        for (k, format) in &self.format_points {
+        for (k, format) in self.format_points.iter().flat_map(|m| m.iter()) {
             if *k >= off && *k < end {
                 out.set_format(*k - off, Some(*format));
             }
@@ -2878,8 +2907,8 @@ impl Overlay {
                 shadowed += 1;
             }
         }
-        shadowed == self.shadowed
-            && fragment_coverage == self.fragment_coverage
+        shadowed == self.shadowed as usize
+            && fragment_coverage == self.fragment_coverage as usize
             && covered.len() == self.len()
     }
 
