@@ -43,6 +43,13 @@ enum LiftNode {
         then: usize,
         otherwise: Option<usize>,
     },
+    /// A built-in scalar function on typed lanes: a member whose operands
+    /// are all clean takes the typed core (the builtin's own arithmetic);
+    /// any other member is evaluated by the per-member walk.
+    Builtin {
+        kernel: crate::function::FamilyKernel,
+        args: smallvec::SmallVec<[usize; 4]>,
+    },
 }
 
 pub(super) struct LiftProgram {
@@ -153,12 +160,32 @@ impl LiftProgram {
                 // Only the built-in IF (an override keeps `family_kernel`
                 // `None`), with the arities its `eval` accepts.
                 let fun = functions.get_function("", ds.resolve_ast_string(*name_id))?;
-                if fun.family_kernel() != Some(crate::function::FamilyKernel::If) {
+                use crate::function::FamilyKernel as K;
+                let kernel = fun.family_kernel()?;
+                let args = ds.get_args(id)?;
+                let arity_ok = match kernel {
+                    K::If => (2..=3).contains(&args.len()),
+                    K::Round | K::IfError => args.len() == 2,
+                    K::Abs => args.len() == 1,
+                    K::Min | K::Max | K::And | K::Or => !args.is_empty() && args.len() <= 30,
+                    // `SUM` of scalar operands (ranges do not compile).
+                    K::Sum => !args.is_empty() && args.len() <= 30,
+                    _ => false,
+                };
+                if !arity_ok {
                     return None;
                 }
-                let args = ds.get_args(id)?;
-                if !(2..=3).contains(&args.len()) {
-                    return None;
+                if kernel != K::If {
+                    let args: smallvec::SmallVec<[AstNodeId; 4]> = args.iter().copied().collect();
+                    let mut compiled = smallvec::SmallVec::new();
+                    for arg in args {
+                        compiled.push(self.compile_node(functions, ds, arg)?);
+                    }
+                    self.nodes.push(LiftNode::Builtin {
+                        kernel,
+                        args: compiled,
+                    });
+                    return Some(self.nodes.len() - 1);
                 }
                 let args: smallvec::SmallVec<[AstNodeId; 3]> = args.iter().copied().collect();
                 let cond = self.compile_node(functions, ds, args[0])?;
@@ -231,7 +258,7 @@ where
         run: LayerRun,
         anchor: (u32, u32),
         n: usize,
-    ) -> Option<Vec<Lifted>> {
+    ) -> Option<Vec<Option<Lifted>>> {
         let ds = self.graph.data_store();
         let reg = self.graph.sheet_reg();
         let current_sheet = self.graph.sheet_name(run.sheet);
@@ -322,6 +349,11 @@ where
                         None => Column::Const(Ok((LiteralValue::Boolean(false), None))),
                     };
                     Column::Lane(Lane::choose(cond, then, otherwise, n))
+                }
+                LiftNode::Builtin { kernel, args } => {
+                    let args: smallvec::SmallVec<[Column; 4]> =
+                        args.iter().map(|&k| take(&mut columns, k)).collect();
+                    Column::Lane(Lane::builtin(*kernel, &args, n))
                 }
             };
             columns.push(column);
@@ -467,6 +499,9 @@ struct Lane {
     kind: LaneKind,
     vals: Vec<f64>,
     boxed: Vec<(u32, Lifted)>,
+    /// Ascending members whose whole formula the per-member walk
+    /// evaluates (a builtin operand was not clean).
+    walk: Vec<u32>,
 }
 
 /// One element of a column: clean (a number, or a boolean as 0/1) or the
@@ -475,6 +510,8 @@ enum Elem<'c> {
     Num(f64),
     Bool(bool),
     Boxed(&'c Lifted),
+    /// The member is evaluated by the walk.
+    Walk,
 }
 
 impl Elem<'_> {
@@ -483,6 +520,7 @@ impl Elem<'_> {
             Elem::Num(x) => Ok((LiteralValue::Number(*x), None)),
             Elem::Bool(b) => Ok((LiteralValue::Boolean(*b), None)),
             Elem::Boxed(v) => (*v).clone(),
+            Elem::Walk => unreachable!("walk elements are not materialized"),
         }
     }
 }
@@ -491,6 +529,7 @@ impl Elem<'_> {
 struct Cursor<'c> {
     column: &'c Column,
     next_boxed: usize,
+    next_walk: usize,
 }
 
 impl<'c> Cursor<'c> {
@@ -498,6 +537,7 @@ impl<'c> Cursor<'c> {
         Self {
             column,
             next_boxed: 0,
+            next_walk: 0,
         }
     }
 
@@ -506,8 +546,21 @@ impl<'c> Cursor<'c> {
     fn get(&mut self, i: usize) -> Elem<'c> {
         match self.column {
             Column::Const(Ok((LiteralValue::Number(x), None))) => Elem::Num(*x),
+            Column::Const(Ok((LiteralValue::Boolean(b), None))) => Elem::Bool(*b),
             Column::Const(v) => Elem::Boxed(v),
             Column::Lane(lane) => {
+                if let Some(&j) = lane.walk.get(self.next_walk)
+                    && j as usize == i
+                {
+                    self.next_walk += 1;
+                    // A walk member may also have a boxed placeholder.
+                    if let Some((b, _)) = lane.boxed.get(self.next_boxed)
+                        && *b as usize == i
+                    {
+                        self.next_boxed += 1;
+                    }
+                    return Elem::Walk;
+                }
                 if let Some((j, v)) = lane.boxed.get(self.next_boxed)
                     && *j as usize == i
                 {
@@ -529,6 +582,7 @@ impl Lane {
             kind,
             vals: vec![0.0; n],
             boxed: Vec::new(),
+            walk: Vec::new(),
         }
     }
 
@@ -562,6 +616,7 @@ impl Lane {
                     Ok(v) => out.vals[i] = v,
                     Err(e) => out.put(i, Ok((LiteralValue::Error(e), None))),
                 },
+                (Elem::Walk, _) => out.walk.push(i as u32),
                 (e, _) => out.put(i, apply(e.lifted())),
             }
         }
@@ -611,6 +666,7 @@ impl Lane {
                         0.0
                     };
                 }
+                (Elem::Walk, _) | (_, Elem::Walk) => out.walk.push(i as u32),
                 (a, b) => out.put(i, apply(a.lifted(), b.lifted())),
             }
         }
@@ -635,6 +691,10 @@ impl Lane {
         for i in 0..n {
             let (c, t, o) = (cc.get(i), tc.get(i), oc.get(i));
             let taken = match c {
+                Elem::Walk => {
+                    out.walk.push(i as u32);
+                    continue;
+                }
                 Elem::Num(x) => x != 0.0,
                 Elem::Bool(b) => b,
                 Elem::Boxed(v) => match v {
@@ -668,6 +728,7 @@ impl Lane {
                 },
             };
             match if taken { t } else { o } {
+                Elem::Walk => out.walk.push(i as u32),
                 Elem::Num(x) if kind == LaneKind::Num => out.vals[i] = x,
                 Elem::Bool(b) if kind == LaneKind::Bool => out.vals[i] = if b { 1.0 } else { 0.0 },
                 e => {
@@ -679,6 +740,144 @@ impl Lane {
                     });
                     out.put(i, result);
                 }
+            }
+        }
+        out
+    }
+}
+
+impl Lane {
+    /// A builtin over typed lanes. A member takes the typed core only when
+    /// every operand element is clean (a number, or a boolean where the
+    /// builtin reads booleans); the core is the builtin's own arithmetic
+    /// on those values (see each arm). Any other member is left to the
+    /// per-member walk, so its value, error and format are the walk's.
+    fn builtin(kernel: crate::function::FamilyKernel, args: &[Column], n: usize) -> Lane {
+        use crate::function::FamilyKernel as K;
+        let kind = match kernel {
+            K::And | K::Or => LaneKind::Bool,
+            _ => LaneKind::Num,
+        };
+        let mut out = Lane::with_len(kind, n);
+        let mut cursors: smallvec::SmallVec<[Cursor<'_>; 4]> =
+            args.iter().map(Cursor::new).collect();
+        let mut elems: smallvec::SmallVec<[Elem<'_>; 4]> = smallvec::SmallVec::new();
+        for i in 0..n {
+            elems.clear();
+            elems.extend(cursors.iter_mut().map(|c| c.get(i)));
+            let num = |e: &Elem<'_>| match e {
+                Elem::Num(x) => Some(*x),
+                _ => None,
+            };
+            let value: Option<f64> = match kernel {
+                // `ROUND(n, digits)`: both coerce as numbers (a number is
+                // itself; `digits` truncates to i32 as `as i32`), then
+                // `round_digits`; no sanitizing, no format.
+                K::Round => match (num(&elems[0]), num(&elems[1])) {
+                    (Some(x), Some(d)) => {
+                        Some(crate::builtins::math::numeric::round_digits(x, d as i32))
+                    }
+                    _ => None,
+                },
+                // `ABS(n)`: the coerced number's absolute value.
+                K::Abs => num(&elems[0]).map(f64::abs),
+                // `MIN`/`MAX`: a cell operand is a 1x1 range (its number,
+                // since a clean cell has no error), any other operand a
+                // coerced scalar; the running extremum replaces on strict
+                // `<` / `>` from the first operand; `aggregate_result`
+                // (non-finite is #NUM!) with the chosen operand's format
+                // (none here). NaN operands are left to the walk (Arrow's
+                // min/max of a range orders NaN differently).
+                K::Min | K::Max => {
+                    let mut acc: Option<f64> = None;
+                    let mut ok = true;
+                    for e in &elems {
+                        match num(e) {
+                            Some(x) if !x.is_nan() => {
+                                let better = match acc {
+                                    None => true,
+                                    Some(c) if kernel == K::Min => x < c,
+                                    Some(c) => x > c,
+                                };
+                                if better {
+                                    acc = Some(x);
+                                }
+                            }
+                            _ => {
+                                ok = false;
+                                break;
+                            }
+                        }
+                    }
+                    if ok {
+                        let v = acc.unwrap_or(0.0);
+                        if !v.is_finite() {
+                            out.put(i, Ok((LiteralValue::Error(ExcelError::new_num()), None)));
+                            continue;
+                        }
+                        Some(v)
+                    } else {
+                        None
+                    }
+                }
+                // `SUM` of scalar operands: `total += x` in operand order
+                // from 0.0 (a 1x1 range's Arrow sum adds 0.0 lanes, which
+                // cannot change a total that is never -0.0), then
+                // `aggregate_result`.
+                K::Sum => {
+                    let mut total = 0.0f64;
+                    let mut ok = true;
+                    for e in &elems {
+                        match num(e) {
+                            Some(x) => total += x,
+                            None => {
+                                ok = false;
+                                break;
+                            }
+                        }
+                    }
+                    if !ok {
+                        None
+                    } else if total.is_finite() {
+                        Some(total)
+                    } else {
+                        out.put(i, Ok((LiteralValue::Error(ExcelError::new_num()), None)));
+                        continue;
+                    }
+                }
+                // `AND`/`OR` over clean numbers and booleans: the first
+                // decisive operand decides, otherwise the neutral value.
+                K::And | K::Or => {
+                    let mut decided = None;
+                    let mut ok = true;
+                    for e in &elems {
+                        let truth = match e {
+                            Elem::Num(x) => *x != 0.0,
+                            Elem::Bool(b) => *b,
+                            _ => {
+                                ok = false;
+                                break;
+                            }
+                        };
+                        if decided.is_none() && truth == (kernel == K::Or) {
+                            decided = Some(truth);
+                        }
+                    }
+                    if ok {
+                        let v = decided.unwrap_or(kernel == K::And);
+                        out.vals[i] = if v { 1.0 } else { 0.0 };
+                        continue;
+                    }
+                    None
+                }
+                // `IFERROR(value, fallback)`: a clean value is the result
+                // (the fallback is not evaluated); errors take the walk.
+                K::IfError => num(&elems[0]),
+                _ => None,
+            };
+            match value {
+                Some(v) => out.vals[i] = v,
+                None => out.walk.push(i as u32),
             }
         }
         out
@@ -702,11 +901,15 @@ impl Column {
         }
     }
 
-    fn into_lifted(self, n: usize) -> Vec<Lifted> {
+    /// Every member's result; `None` for members the walk evaluates.
+    fn into_lifted(self, n: usize) -> Vec<Option<Lifted>> {
         let mut out = Vec::with_capacity(n);
         let mut cur = Cursor::new(&self);
         for i in 0..n {
-            out.push(cur.get(i).lifted());
+            out.push(match cur.get(i) {
+                Elem::Walk => None,
+                e => Some(e.lifted()),
+            });
         }
         out
     }

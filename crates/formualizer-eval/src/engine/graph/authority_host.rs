@@ -2721,10 +2721,33 @@ impl DependencyGraph {
         if self.authority.state != HostState::Ready || self.vertex_formulas.has_touched() {
             return (0, StringGarbage::default());
         }
-        let owners: Vec<_> = self
-            .authority
-            .store
-            .family_owners()
+        // Only owners holding an own-AST member other than their template
+        // can compress anything: after load-time grouping most members are
+        // already references, so find those owners from the (few) own
+        // formulas instead of visiting every member of every owner.
+        let store = &self.authority.store;
+        let mut candidates: Vec<u32> = Vec::new();
+        for (&v, f) in self.vertex_formulas.iter() {
+            let super::FormulaRef::Own(own) = *f else {
+                continue;
+            };
+            let Some(cell) = self.get_cell_ref(v) else {
+                continue;
+            };
+            let Some(o) = store.owner_at(cell_of(&cell)) else {
+                continue;
+            };
+            if let Some((_, _, _, template, _)) = store.family_owner(o)
+                && template != own
+            {
+                candidates.push(o);
+            }
+        }
+        candidates.sort_unstable();
+        candidates.dedup();
+        let owners: Vec<_> = candidates
+            .into_iter()
+            .filter_map(|o| store.family_owner(o))
             .filter(|&(_, _, flags, _, _)| flags & crate::engine::authority::store::F_DYNAMIC == 0)
             .collect();
         // Decide per owner (read-only, independent: in parallel when a pool

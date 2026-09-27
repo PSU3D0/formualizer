@@ -54,6 +54,9 @@ pub struct AbsFn;
 /// [formualizer-docgen:schema:end]
 impl Function for AbsFn {
     func_caps!(PURE);
+    fn family_kernel(&self) -> Option<crate::function::FamilyKernel> {
+        Some(crate::function::FamilyKernel::Abs)
+    }
     fn name(&self) -> &'static str {
         "ABS"
     }
@@ -361,6 +364,9 @@ pub struct RoundFn; // ROUND(number, digits)
 /// [formualizer-docgen:schema:end]
 impl Function for RoundFn {
     func_caps!(PURE);
+    fn family_kernel(&self) -> Option<crate::function::FamilyKernel> {
+        Some(crate::function::FamilyKernel::Round)
+    }
     fn name(&self) -> &'static str {
         "ROUND"
     }
@@ -387,13 +393,20 @@ impl Function for RoundFn {
             }
             other => coerce_num(&other)? as i32,
         };
-        let f = 10f64.powi(digits.abs());
-        let out = if digits >= 0 {
-            (n * f).round() / f
-        } else {
-            (n / f).round() * f
-        };
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(out)))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            round_digits(n, digits),
+        )))
+    }
+}
+
+/// `ROUND`'s arithmetic on coerced operands (shared with the typed lift).
+#[inline]
+pub(crate) fn round_digits(n: f64, digits: i32) -> f64 {
+    let f = 10f64.powi(digits.abs());
+    if digits >= 0 {
+        (n * f).round() / f
+    } else {
+        (n / f).round() * f
     }
 }
 

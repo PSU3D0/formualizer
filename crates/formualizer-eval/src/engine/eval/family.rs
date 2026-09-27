@@ -389,15 +389,32 @@ where
             self.lifted_members_for_test
                 .fetch_add(members.len() as u64, std::sync::atomic::Ordering::Relaxed);
         }
+        let reg = self.graph.sheet_reg();
+        let sheet_name = self.graph.sheet_name(run.sheet);
+        let col_delta = i64::from(run.col) - i64::from(anchor.1);
         let values: Vec<LiteralValue> = lifted
             .into_iter()
             .zip(&cells)
-            .map(|(result, &cell)| match result {
-                Ok((value, format)) => {
-                    self.record_derived_format_at(cell, format);
-                    crate::engine::result_finalization::finalize_formula_result(value)
+            .enumerate()
+            .map(|(i, (result, &cell))| {
+                // Members a builtin could not take on lanes: the walk (the
+                // member has the template's literals, so no bindings).
+                let result = result.unwrap_or_else(|| {
+                    let row_delta = i64::from(run.row0 + i as u32) - i64::from(anchor.0);
+                    Interpreter::new_with_cell(self, sheet_name, cell)
+                        .evaluate_arena_ast_with_offset(template, row_delta, col_delta, ds, reg)
+                        .map(|cv| {
+                            let format = cv.format_id();
+                            (cv.into_literal(), format)
+                        })
+                });
+                match result {
+                    Ok((value, format)) => {
+                        self.record_derived_format_at(cell, format);
+                        crate::engine::result_finalization::finalize_formula_result(value)
+                    }
+                    Err(e) => LiteralValue::Error(e),
                 }
-                Err(e) => LiteralValue::Error(e),
             })
             .collect();
         // Debug builds: every lifted member equals the per-cell path, value

@@ -400,7 +400,7 @@ fn family_lift_random_templates_match_per_cell() {
                 _ => "\"3\"".to_string(),
             };
         }
-        match next(10) {
+        match next(15) {
             0 => format!("-({})", expr(next, depth - 1)),
             1 => format!("({})%", expr(next, depth - 1)),
             9 => format!(
@@ -409,6 +409,25 @@ fn family_lift_random_templates_match_per_cell() {
                 expr(next, depth - 1),
                 expr(next, depth - 1)
             ),
+            10 => format!("ROUND({},{})", expr(next, depth - 1), next(5) as i64 - 2),
+            11 => format!(
+                "{}({},{})",
+                ["MAX", "MIN", "SUM"][next(3) as usize],
+                expr(next, depth - 1),
+                expr(next, depth - 1)
+            ),
+            12 => format!(
+                "IFERROR({},{})",
+                expr(next, depth - 1),
+                expr(next, depth - 1)
+            ),
+            13 => format!(
+                "{}({},{})",
+                ["AND", "OR"][next(2) as usize],
+                expr(next, depth - 1),
+                expr(next, depth - 1)
+            ),
+            14 => format!("ABS({})", expr(next, depth - 1)),
             k => {
                 let op = ["+", "-", "*", "/", "^", "&", "<", "="][(k as usize) % 8];
                 format!("({}){op}({})", expr(next, depth - 1), expr(next, depth - 1))
@@ -587,21 +606,6 @@ fn family_memo_criteria_and_lookups_match_per_cell() {
 /// values and derived formats, sequential and parallel.
 #[test]
 fn family_lift_typed_lanes_match_per_cell() {
-    use chrono::NaiveDate;
-    const ROWS: u32 = 100;
-    let base_value = |r: u32, c: u32| -> LiteralValue {
-        match (r * 7 + c * 3) % 17 {
-            0 => LiteralValue::Number(-0.0),
-            1 => LiteralValue::Number(f64::MAX / 3.0),
-            2 => LiteralValue::Date(NaiveDate::from_ymd_opt(2023, 3, 1 + r % 27).unwrap()),
-            3 => LiteralValue::Text(format!("{}", r as f64 / 8.0)),
-            4 => LiteralValue::Boolean(r.is_multiple_of(2)),
-            5 => LiteralValue::Empty,
-            6 => LiteralValue::Number(0.0),
-            7 => LiteralValue::Int(r as i64 - 50),
-            _ => LiteralValue::Number((r as f64 - 40.0) * 0.37 + c as f64),
-        }
-    };
     let formulas: Vec<(u32, String)> = vec![
         (4, "=A{r}*B{r}".into()),
         (5, "=A{r}/B{r}".into()),
@@ -620,6 +624,45 @@ fn family_lift_typed_lanes_match_per_cell() {
         // Past the last ingested row for the bottom members.
         (16, "=A{r20}*2+1".into()),
     ];
+    check_typed(formulas);
+}
+
+/// Builtins on typed lanes (ROUND, ABS, MIN, MAX, SUM of scalars, AND, OR,
+/// IFERROR): clean members take the builtin's own core, others the walk.
+#[test]
+fn family_lift_builtins_match_per_cell() {
+    let formulas: Vec<(u32, String)> = vec![
+        (4, "=ROUND(A{r}*B{r},2)".into()),
+        (5, "=ROUND(A{r}/7,-1)+ABS(B{r}-A{r})".into()),
+        (6, "=MAX(A{r},B{r})-MIN(A{r},B{r},0)".into()),
+        (7, "=MAX(A{r}*2,C{r})".into()),
+        (8, "=SUM(A{r},B{r},1)*2".into()),
+        (9, "=IF(AND(A{r}>0,B{r}),1,0)+IF(OR(A{r},FALSE),2,3)".into()),
+        (10, "=IFERROR(A{r}/B{r},-1)".into()),
+        (11, "=IFERROR(J{r}*2,0)+ROUND(J{r},C{r})".into()),
+        (12, "=AND(A{r},B{r},C{r})".into()),
+        (13, "=MIN(D{r},E{r})+MAX(F{r},0)".into()),
+        (14, "=ABS(C{r})+SUM(C{r},D{r})".into()),
+    ];
+    check_typed(formulas);
+}
+
+fn check_typed(formulas: Vec<(u32, String)>) {
+    use chrono::NaiveDate;
+    const ROWS: u32 = 100;
+    let base_value = |r: u32, c: u32| -> LiteralValue {
+        match (r * 7 + c * 3) % 17 {
+            0 => LiteralValue::Number(-0.0),
+            1 => LiteralValue::Number(f64::MAX / 3.0),
+            2 => LiteralValue::Date(NaiveDate::from_ymd_opt(2023, 3, 1 + r % 27).unwrap()),
+            3 => LiteralValue::Text(format!("{}", r as f64 / 8.0)),
+            4 => LiteralValue::Boolean(r.is_multiple_of(2)),
+            5 => LiteralValue::Empty,
+            6 => LiteralValue::Number(0.0),
+            7 => LiteralValue::Int(r as i64 - 50),
+            _ => LiteralValue::Number((r as f64 - 40.0) * 0.37 + c as f64),
+        }
+    };
     let run_typed = |config: EvalConfig| -> (Vec<Vec<String>>, u64) {
         let mut e = Engine::new(TestWorkbook::new(), config);
         {

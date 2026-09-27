@@ -385,6 +385,9 @@ pub struct MutationReport {
     pub predicted_peak_above_before: u64,
 }
 
+/// A family owner: `(sheet, domain, flags, template, anchor)`.
+pub type FamilyOwner = (u16, Rect, u16, AstNodeId, (u32, u32));
+
 /// A family piece left by a cut: `(group, dom, template, anchor, flags)`.
 type OwnerPiece = (u32, Rect, AstNodeId, (u32, u32), u16);
 
@@ -1011,6 +1014,13 @@ impl Store {
             .iter()
             .filter(|o| o.group != DEAD && o.is_family())
             .map(|o| (o.sheet, o.dom, o.flags, o.template, o.anchor))
+    }
+
+    /// A live family owner's `(sheet, domain, flags, template, anchor)`.
+    pub fn family_owner(&self, o: u32) -> Option<FamilyOwner> {
+        let w = self.owners.get(o as usize)?;
+        (w.group != DEAD && w.is_family())
+            .then_some((w.sheet, w.dom, w.flags, w.template, w.anchor))
     }
 
     /// Every live owner's template root (arena compaction roots).

@@ -120,6 +120,14 @@ pub enum FamilyKernel {
     CriteriaAggregate,
     /// `VLOOKUP`, `HLOOKUP`, `MATCH`: memoized like `CriteriaAggregate`.
     Lookup,
+    /// Scalar builtins the elementwise lift runs on typed lanes (P2-M3).
+    Round,
+    Abs,
+    Min,
+    Max,
+    And,
+    Or,
+    IfError,
 }
 
 pub trait Function: Send + Sync + 'static {
