@@ -402,7 +402,10 @@ impl Function for RoundFn {
 /// `ROUND`'s arithmetic on coerced operands (shared with the typed lift).
 #[inline]
 pub(crate) fn round_digits(n: f64, digits: i32) -> f64 {
-    let f = 10f64.powi(digits.abs());
+    // `saturating_abs`: `i32::MIN.abs()` overflows (a debug panic). The
+    // release build wrapped it to `i32::MIN`, a factor of 0.0 where this
+    // gives +inf; both make every result NaN (0*inf, x/0*0).
+    let f = 10f64.powi(digits.saturating_abs());
     if digits >= 0 {
         (n * f).round() / f
     } else {
@@ -479,7 +482,7 @@ impl Function for RoundDownFn {
             }
             other => coerce_num(&other)? as i32,
         };
-        let f = 10f64.powi(digits.abs());
+        let f = 10f64.powi(digits.saturating_abs());
         let out = if digits >= 0 {
             (n * f).trunc() / f
         } else {
@@ -558,7 +561,7 @@ impl Function for RoundUpFn {
             }
             other => coerce_num(&other)? as i32,
         };
-        let f = 10f64.powi(digits.abs());
+        let f = 10f64.powi(digits.saturating_abs());
         let mut scaled = if digits >= 0 { n * f } else { n / f };
         if scaled > 0.0 {
             scaled = scaled.ceil();
@@ -3587,6 +3590,59 @@ mod tests_numeric {
             .into_literal(),
             LiteralValue::Number(1.235)
         );
+    }
+
+    #[test]
+    fn round_digits_extreme_digits_do_not_overflow() {
+        // The release semantics before the fix: `abs` wrapped to i32::MIN.
+        let wrapped = |n: f64, digits: i32| {
+            let f = 10f64.powi(digits.wrapping_abs());
+            if digits >= 0 {
+                (n * f).round() / f
+            } else {
+                (n / f).round() * f
+            }
+        };
+        for n in [
+            0.0,
+            -0.0,
+            1.5,
+            -2.25,
+            1e308,
+            f64::MIN_POSITIVE,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+        ] {
+            for digits in [i32::MIN, i32::MIN + 1, i32::MAX, -400, 400] {
+                let got = round_digits(n, digits);
+                let want = wrapped(n, digits);
+                assert!(
+                    got.to_bits() == want.to_bits() || (got.is_nan() && want.is_nan()),
+                    "ROUND({n}, {digits}): {got} vs {want}"
+                );
+            }
+            assert!(round_digits(n, i32::MIN).is_nan());
+        }
+        assert!(round_digits(f64::NAN, i32::MIN).is_nan());
+        // Through the functions (ROUNDDOWN/ROUNDUP share the arithmetic):
+        // i32::MIN digits evaluate without panicking.
+        let wb = TestWorkbook::new()
+            .with_function(std::sync::Arc::new(RoundFn))
+            .with_function(std::sync::Arc::new(RoundDownFn))
+            .with_function(std::sync::Arc::new(RoundUpFn));
+        let ctx = interp(&wb);
+        let n = lit(LiteralValue::Number(1.5));
+        let d = lit(LiteralValue::Number(f64::from(i32::MIN)));
+        for name in ["ROUND", "ROUNDDOWN", "ROUNDUP"] {
+            let f = ctx.context.get_function("", name).unwrap();
+            let _ = f
+                .dispatch(
+                    &[ArgumentHandle::new(&n, &ctx), ArgumentHandle::new(&d, &ctx)],
+                    &ctx.function_context(None),
+                )
+                .unwrap()
+                .into_literal();
+        }
     }
 
     // ROUNDDOWN

@@ -420,3 +420,77 @@ fn capped_and_truncated_logs_count_run_events() {
     t.clear();
     assert!(t.is_empty());
 }
+
+/// Reading the log after every structural edit expands each run record
+/// once, in place: the history already expanded by an earlier read is
+/// neither cloned nor expanded again (red team B1: the lazy log used to
+/// rebuild, and so clone, the whole retained history on every read after
+/// an append; alternating insert/delete with a read after each edit cloned
+/// 12,848 / 50,784 / 201,920 / 805,248 events at 16 / 32 / 64 / 128 edits).
+///
+/// Expansion work (events written by expansion: expanded members plus
+/// plain events moved behind them) must grow linearly with the edits (at
+/// most 2.2x per doubling), the per-cell path does none, and both logs
+/// read back identically.
+#[test]
+fn changelog_reads_after_each_structural_edit_do_linear_work() {
+    let build = |on: bool| {
+        let mut e = Engine::new(
+            TestWorkbook::new(),
+            EvalConfig {
+                family_execution: on,
+                family_kernels: on,
+                family_lift: on,
+                formula_compression: on,
+                enable_parallel: false,
+                ..arrow_eval_config()
+            },
+        );
+        for r in 1..=32 {
+            e.set_cell_value("S", r, 1, LiteralValue::Number(f64::from(r)))
+                .unwrap();
+        }
+        for r in 1..=32 {
+            e.set_cell_formula("S", r, 2, parse(format!("=A{r}*2")).unwrap())
+                .unwrap();
+        }
+        e.evaluate_all().unwrap();
+        e
+    };
+    let mut work = Vec::new();
+    for n in [16u32, 32, 64, 128] {
+        let (mut a, mut b) = (build(true), build(false));
+        let (mut la, mut lb) = (ChangeLog::new(), ChangeLog::new());
+        for step in 0..n {
+            for (e, log) in [(&mut a, &mut la), (&mut b, &mut lb)] {
+                let sid = e.graph.sheet_id("S").unwrap();
+                e.edit_with_logger(log, |ed| {
+                    if step % 2 == 0 {
+                        ed.insert_rows(sid, 0, 1).map(|_| ())
+                    } else {
+                        ed.delete_rows(sid, 0, 1).map(|_| ())
+                    }
+                })
+                .unwrap()
+                .unwrap();
+                std::hint::black_box(log.events());
+            }
+            assert_eq!(la.unexpanded_run_records(), 0, "read expands");
+        }
+        assert_same_log(&la, &lb, &format!("{n} edits"));
+        assert_eq!(lb.expansion_work(), 0, "per-cell path");
+        println!(
+            "edits={n} retained={} expansion_work={}",
+            la.len(),
+            la.expansion_work()
+        );
+        work.push(la.expansion_work());
+    }
+    assert!(work[0] > 0, "run records were logged lazily: {work:?}");
+    for w in work.windows(2) {
+        assert!(
+            w[1] * 5 <= w[0] * 11,
+            "super-linear changelog work for doubling edits: {work:?}"
+        );
+    }
+}
