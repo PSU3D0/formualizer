@@ -134,11 +134,14 @@ fn sort(
     let n = keys.len() as u64;
     let first = keys[0].key;
     let differs = keys.iter().fold(0u64, |d, k| d | (k.key ^ first));
+    // A few keys (a small edit's plan): one stable comparison sort orders
+    // exactly as the stable byte passes; the passes' work is still charged.
+    let small = keys.len() <= SMALL_SORT;
     for shift in (0..64).step_by(8) {
         let pass = 512 + 3 * n;
         work.sort += pass;
         control.charge(pass)?;
-        if (differs >> shift) & 255 == 0 {
+        if small || (differs >> shift) & 255 == 0 {
             continue;
         }
         let mut counts = [0usize; 256];
@@ -158,8 +161,14 @@ fn sort(
         }
         keys.copy_from_slice(&temp[..keys.len()]);
     }
+    if small {
+        keys.sort_by_key(|k| k.key);
+    }
     Ok(())
 }
+
+/// Key counts sorted by one comparison sort instead of byte passes.
+const SMALL_SORT: usize = 32;
 
 /// The caller has already computed exact images from refined piece/edge
 /// projections. No store scan, cell expansion, or per-probe binary search.
