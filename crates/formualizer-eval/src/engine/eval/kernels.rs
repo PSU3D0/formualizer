@@ -217,6 +217,80 @@ impl ArgLanes<'_> {
     }
 }
 
+impl ArgLanes<'_> {
+    /// `MIN`/`MAX` of one argument of one member, as the builtin: the
+    /// first error (every segment and column, before any number), then per
+    /// segment and column Arrow's `min`/`max` of the number lane slice
+    /// (the builtin's own kernel on the same values), replacing the running
+    /// value on a strict `<` / `>`.
+    fn extremum(&self, rect: (u32, u32, u32, u32), max: bool, acc: &mut Option<f64>) -> Step {
+        let (r0, c0, r1, c1) = (
+            rect.0 as usize,
+            rect.1 as usize,
+            rect.2 as usize,
+            rect.3 as usize,
+        );
+        let mut segs: smallvec::SmallVec<[(usize, usize, usize); 4]> = smallvec::SmallVec::new();
+        segments(self.sheet, r0, r1, |ci, _, lo, hi| segs.push((ci, lo, hi)));
+        for &(ci, lo, hi) in &segs {
+            for col in c0..=c1 {
+                let Some(seg) = self.lane(col, ci) else {
+                    continue;
+                };
+                if let Some(errors) = &seg.errors {
+                    let slice = lane_slice(errors.as_ref(), lo - seg.row, hi - lo + 1);
+                    if let Some(i) = slice.first_valid() {
+                        return Step::Error(crate::arrow_store::unmap_error_code(slice.values[i]));
+                    }
+                }
+            }
+        }
+        for &(ci, lo, hi) in &segs {
+            for col in c0..=c1 {
+                let Some(seg) = self.lane(col, ci) else {
+                    continue;
+                };
+                let Some(numbers) = &seg.numbers else {
+                    continue;
+                };
+                let slice = numbers.slice(lo - seg.row, hi - lo + 1);
+                let n = if max {
+                    arrow::compute::kernels::aggregate::max(&slice)
+                } else {
+                    arrow::compute::kernels::aggregate::min(&slice)
+                };
+                if let Some(n) = n
+                    && acc.is_none_or(|current| if max { n > current } else { n < current })
+                {
+                    *acc = Some(n);
+                }
+            }
+        }
+        Step::Continue
+    }
+
+    /// `COUNT` of one argument of one member: the non-null numbers of every
+    /// segment and column (the builtin does not look at errors).
+    fn count(&self, rect: (u32, u32, u32, u32), count: &mut i64) {
+        let (r0, c0, r1, c1) = (
+            rect.0 as usize,
+            rect.1 as usize,
+            rect.2 as usize,
+            rect.3 as usize,
+        );
+        segments(self.sheet, r0, r1, |ci, _, lo, hi| {
+            for col in c0..=c1 {
+                if let Some(seg) = self.lane(col, ci)
+                    && let Some(numbers) = &seg.numbers
+                {
+                    let slice = lane_slice(numbers.as_ref(), lo - seg.row, hi - lo + 1);
+                    *count += (slice.len() - slice.null_count()) as i64;
+                }
+            }
+        });
+    }
+}
+
 /// A planned aggregate kernel for one template.
 pub(super) struct AggregateKernel {
     kind: FamilyKernel,
@@ -239,9 +313,16 @@ impl AggregateKernel {
         };
         let name = ds.resolve_ast_string(*name_id);
         let fun = crate::traits::FunctionProvider::get_function(engine, "", name)?;
-        let kind = fun
-            .family_kernel()
-            .filter(|k| matches!(k, FamilyKernel::Sum | FamilyKernel::Average))?;
+        let kind = fun.family_kernel().filter(|k| {
+            matches!(
+                k,
+                FamilyKernel::Sum
+                    | FamilyKernel::Average
+                    | FamilyKernel::Min
+                    | FamilyKernel::Max
+                    | FamilyKernel::Count
+            )
+        })?;
         let args = ds.get_args(template)?;
         if args.is_empty() {
             return None;
@@ -303,6 +384,14 @@ impl AggregateKernel {
             if rect.rows[0].0 == 0 || rect.cols[0].0 == 0 {
                 return None;
             }
+            // MIN/MAX/COUNT: a single cell may resolve as a scalar (numeric
+            // text counts, its format propagates); only windows here.
+            if !matches!(kind, FamilyKernel::Sum | FamilyKernel::Average)
+                && rect.rows[0] == rect.rows[1]
+                && rect.cols[0] == rect.cols[1]
+            {
+                return None;
+            }
             out.push(rect);
         }
         Some(Self { kind, args: out })
@@ -344,14 +433,29 @@ impl AggregateKernel {
             let mut total = 0.0f64;
             let mut count = 0i64;
             let mut error = None;
+            let mut extremum: Option<f64> = None;
             for (arg, lanes) in self.args.iter().zip(&lanes) {
                 let rect = arg.at(row_delta, col_delta)?;
-                if let Step::Error(kind) = lanes.reduce(rect, &mut total, &mut count) {
+                let step = match self.kind {
+                    FamilyKernel::Min | FamilyKernel::Max => {
+                        lanes.extremum(rect, self.kind == FamilyKernel::Max, &mut extremum)
+                    }
+                    FamilyKernel::Count => {
+                        lanes.count(rect, &mut count);
+                        Step::Continue
+                    }
+                    _ => lanes.reduce(rect, &mut total, &mut count),
+                };
+                if let Step::Error(kind) = step {
                     error = Some(kind);
                     break;
                 }
             }
             let value = match (error, self.kind) {
+                (None, FamilyKernel::Min | FamilyKernel::Max) => {
+                    crate::builtins::utils::aggregate_result(extremum.unwrap_or(0.0))
+                }
+                (None, FamilyKernel::Count) => LiteralValue::Number(count as f64),
                 (Some(kind), _) => LiteralValue::Error(ExcelError::new(kind)),
                 (None, FamilyKernel::Sum) => crate::builtins::utils::aggregate_result(total),
                 (None, FamilyKernel::Average) => {
@@ -361,7 +465,7 @@ impl AggregateKernel {
                         crate::builtins::utils::aggregate_result(total / (count as f64))
                     }
                 }
-                (None, _) => unreachable!("planned kernels are Sum or Average"),
+                (None, _) => unreachable!("planned kernels are windowed aggregates"),
             };
             out.push(crate::engine::result_finalization::finalize_formula_result(
                 value,

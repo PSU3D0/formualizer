@@ -128,6 +128,8 @@ pub enum FamilyKernel {
     And,
     Or,
     IfError,
+    /// `COUNT`: a windowed range kernel.
+    Count,
 }
 
 pub trait Function: Send + Sync + 'static {

@@ -197,6 +197,10 @@ pub struct CountFn;
 impl Function for CountFn {
     func_caps!(PURE, REDUCTION, NUMERIC_ONLY, STREAM_OK);
 
+    fn family_kernel(&self) -> Option<crate::function::FamilyKernel> {
+        Some(crate::function::FamilyKernel::Count)
+    }
+
     fn name(&self) -> &'static str {
         "COUNT"
     }

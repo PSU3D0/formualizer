@@ -139,6 +139,14 @@ fn family_windows_rows_cross_sheet_and_chained_layers() {
         formulas.push((("Sheet1", r, 4), format!("=B{r}+C{r}")));
         formulas.push((("Sheet1", r, 5), format!("=AVERAGE($A$1:A{r})")));
         formulas.push((("Sheet1", r, 6), format!("=MAX(D{r},D$1)")));
+        // Windowed MIN/MAX/COUNT kernels (P2-M4).
+        formulas.push((("Sheet1", r, 7), format!("=MIN(A{r}:A{})", r + 3)));
+        formulas.push((("Sheet1", r, 8), format!("=MAX(A{r}:B{})", r + 1)));
+        formulas.push((("Sheet1", r, 9), format!("=COUNT($A$1:A{r})")));
+        formulas.push((
+            ("Sheet1", r, 10),
+            format!("=MIN(A{r}:A{},Data!A{r}:A{})", r + 2, r + 1),
+        ));
     }
     check(&Case {
         values,
@@ -623,6 +631,20 @@ fn family_lift_typed_lanes_match_per_cell() {
         (15, "=N{r}-C{r}".into()),
         // Past the last ingested row for the bottom members.
         (16, "=A{r20}*2+1".into()),
+    ];
+    check_typed(formulas);
+}
+
+/// Windowed MIN/MAX/COUNT kernels over ingested base lanes in 16-row
+/// chunks (windows cross chunk boundaries and run past the sheet end).
+#[test]
+fn family_window_kernels_on_base_lanes_match_per_cell() {
+    let formulas: Vec<(u32, String)> = vec![
+        (4, "=MIN(A{r}:B{r20})".into()),
+        (5, "=MAX(A{r}:C{r20})".into()),
+        (6, "=COUNT(A{r}:C{r20})".into()),
+        (7, "=MAX($A$1:A{r})-MIN($B$1:B{r})".into()),
+        (8, "=A{r}+1".into()),
     ];
     check_typed(formulas);
 }
