@@ -3,6 +3,7 @@ use crate::SheetId;
 mod exact;
 mod family;
 mod kernels;
+mod lift;
 use crate::arrow_store::{OverlayFragment, OverlayValue, SheetStore};
 #[cfg(test)]
 use crate::engine::Scheduler;
@@ -978,6 +979,8 @@ pub struct Engine<R> {
     derived_format_operations_for_test: std::sync::atomic::AtomicU64,
     #[cfg(test)]
     family_members_for_test: std::sync::atomic::AtomicU64,
+    #[cfg(test)]
+    lifted_members_for_test: std::sync::atomic::AtomicU64,
     /// Authority build last compressed (`maybe_compress_formulas`).
     compressed_at_build: Option<u64>,
     #[cfg(test)]
@@ -2509,6 +2512,8 @@ where
             derived_format_operations_for_test: std::sync::atomic::AtomicU64::new(0),
             #[cfg(test)]
             family_members_for_test: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(test)]
+            lifted_members_for_test: std::sync::atomic::AtomicU64::new(0),
             compressed_at_build: None,
             #[cfg(test)]
             computed_overlay_set_explicit_entry_operations_for_test: 0,
@@ -2657,6 +2662,8 @@ where
             derived_format_operations_for_test: std::sync::atomic::AtomicU64::new(0),
             #[cfg(test)]
             family_members_for_test: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(test)]
+            lifted_members_for_test: std::sync::atomic::AtomicU64::new(0),
             compressed_at_build: None,
             #[cfg(test)]
             computed_overlay_set_explicit_entry_operations_for_test: 0,
@@ -17423,35 +17430,7 @@ where
             return Err(ExcelError::new(ExcelErrorKind::Ref));
         };
         let asheet = self.arrow_sheets.sheet(sheet_name);
-        let (r0, c0) = (
-            row.saturating_sub(1) as usize,
-            col.saturating_sub(1) as usize,
-        );
-        let format = asheet.and_then(|a| a.format_id(r0, c0)).or_else(|| {
-            let formats = self.derived_formats.read().unwrap();
-            if formats.is_empty() {
-                return None;
-            }
-            let cell = CellRef::new(sheet_id, Coord::from_excel(row, col, true, true));
-            formats.get(&cell).copied()
-        });
-        let raw = asheet
-            .map(|a| a.get_cell_value(r0, c0))
-            .filter(|v| !matches!(v, LiteralValue::Empty));
-        let value = match raw {
-            None => LiteralValue::Empty,
-            Some(raw) => {
-                let class = format.and_then(|id| self.format_registry.class(id));
-                Self::normalize_public_cell_read(Self::materialize_temporal_egress(
-                    raw,
-                    class,
-                    self.config.temporal_egress,
-                    self.config.date_system,
-                ))
-                .unwrap_or(LiteralValue::Empty)
-            }
-        };
-        Ok((value, format))
+        Ok(self.read_cell_formatted_in(sheet_id, asheet, row, col))
     }
 
     fn build_criteria_mask(

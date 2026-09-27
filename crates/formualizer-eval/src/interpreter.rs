@@ -623,6 +623,77 @@ impl<'a> Interpreter<'a> {
         }
     }
 
+    /// A unary operator other than `@` on an evaluated operand (shared by
+    /// the AST walk and the elementwise lift).
+    pub(crate) fn apply_unary_op(
+        &self,
+        op: &str,
+        expr: crate::traits::CalcValue<'a>,
+    ) -> Result<crate::traits::CalcValue<'a>, ExcelError> {
+        // For now, materialize for operators. Future: virtual range ops.
+        let v = expr.into_literal();
+        match v {
+            LiteralValue::Array(arr) => self
+                .map_array(arr, |cell| self.eval_unary_scalar(op, cell))
+                .map(crate::traits::CalcValue::Scalar),
+            other => self
+                .eval_unary_scalar(op, other)
+                .map(crate::traits::CalcValue::Scalar),
+        }
+    }
+
+    /// A binary operator other than `:` on evaluated operands and their
+    /// format annotations (shared by the AST walk and the elementwise lift).
+    pub(crate) fn apply_binary_op(
+        &self,
+        op: &str,
+        left: LiteralValue,
+        left_format: Option<crate::format::FormatId>,
+        right: LiteralValue,
+        right_format: Option<crate::format::FormatId>,
+    ) -> Result<crate::traits::CalcValue<'a>, ExcelError> {
+        if matches!(op, "=" | "<>" | ">" | "<" | ">=" | "<=") {
+            return self
+                .compare(op, left, right)
+                .map(crate::traits::CalcValue::Scalar);
+        }
+
+        match op {
+            "+" => self.numeric_binary(left, right, |a, b| a + b).map(|value| {
+                self.annotate_numeric_result(
+                    value,
+                    self.binary_format('+', left_format, right_format),
+                )
+            }),
+            "-" => self.numeric_binary(left, right, |a, b| a - b).map(|value| {
+                self.annotate_numeric_result(
+                    value,
+                    self.binary_format('-', left_format, right_format),
+                )
+            }),
+            "*" => self
+                .numeric_binary(left, right, |a, b| a * b)
+                .map(crate::traits::CalcValue::Scalar),
+            "/" => self
+                .divide(left, right)
+                .map(crate::traits::CalcValue::Scalar),
+            "^" => self
+                .power(left, right)
+                .map(crate::traits::CalcValue::Scalar),
+            "&" => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(
+                format!(
+                    "{}{}",
+                    crate::coercion::to_text_invariant(&left),
+                    crate::coercion::to_text_invariant(&right)
+                ),
+            ))),
+            _ => {
+                Err(ExcelError::new(ExcelErrorKind::NImpl)
+                    .with_message(format!("Binary op '{op}'")))
+            }
+        }
+    }
+
     pub(crate) fn evaluate_arena_ast(
         &self,
         node_id: AstNodeId,
@@ -703,16 +774,7 @@ impl<'a> Interpreter<'a> {
                     let v = self.eval_implicit_intersection_calc(expr);
                     return Ok(crate::traits::CalcValue::Scalar(v));
                 }
-                // For now, materialize for operators. Future: virtual range ops.
-                let v = expr.into_literal();
-                match v {
-                    LiteralValue::Array(arr) => self
-                        .map_array(arr, |cell| self.eval_unary_scalar(op, cell))
-                        .map(crate::traits::CalcValue::Scalar),
-                    other => self
-                        .eval_unary_scalar(op, other)
-                        .map(crate::traits::CalcValue::Scalar),
-                }
+                self.apply_unary_op(op, expr)
             }
             AstNodeData::BinaryOp {
                 op_id,
@@ -744,45 +806,7 @@ impl<'a> Interpreter<'a> {
                 let right_calc = self.evaluate_arena_ast(*right_id, data_store, sheet_registry)?;
                 let right_format = right_calc.format_id();
                 let right = right_calc.into_literal();
-
-                if matches!(op, "=" | "<>" | ">" | "<" | ">=" | "<=") {
-                    return self
-                        .compare(op, left, right)
-                        .map(crate::traits::CalcValue::Scalar);
-                }
-
-                match op {
-                    "+" => self.numeric_binary(left, right, |a, b| a + b).map(|value| {
-                        self.annotate_numeric_result(
-                            value,
-                            self.binary_format('+', left_format, right_format),
-                        )
-                    }),
-                    "-" => self.numeric_binary(left, right, |a, b| a - b).map(|value| {
-                        self.annotate_numeric_result(
-                            value,
-                            self.binary_format('-', left_format, right_format),
-                        )
-                    }),
-                    "*" => self
-                        .numeric_binary(left, right, |a, b| a * b)
-                        .map(crate::traits::CalcValue::Scalar),
-                    "/" => self
-                        .divide(left, right)
-                        .map(crate::traits::CalcValue::Scalar),
-                    "^" => self
-                        .power(left, right)
-                        .map(crate::traits::CalcValue::Scalar),
-                    "&" => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(
-                        format!(
-                            "{}{}",
-                            crate::coercion::to_text_invariant(&left),
-                            crate::coercion::to_text_invariant(&right)
-                        ),
-                    ))),
-                    _ => Err(ExcelError::new(ExcelErrorKind::NImpl)
-                        .with_message(format!("Binary op '{op}'"))),
-                }
+                self.apply_binary_op(op, left, left_format, right, right_format)
             }
             AstNodeData::Array { .. } => {
                 let (rows, cols, elements) =
@@ -1745,7 +1769,11 @@ fn shift_optional_axis_for_offset(
         .transpose()
 }
 
-fn shift_axis_for_offset(value: u32, delta: i64, is_absolute: bool) -> Result<u32, ExcelError> {
+pub(crate) fn shift_axis_for_offset(
+    value: u32,
+    delta: i64,
+    is_absolute: bool,
+) -> Result<u32, ExcelError> {
     if is_absolute {
         return Ok(value);
     }

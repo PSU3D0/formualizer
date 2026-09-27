@@ -914,6 +914,12 @@ pub struct EvalConfig {
     /// resolution. `false` keeps tier 1 for every run. Values are identical.
     pub family_kernels: bool,
 
+    /// Program 2 elementwise lift (P2-M3) inside family execution: a run
+    /// whose template is operators over cell references and literals
+    /// evaluates column-wise instead of walking the template per member.
+    /// `false` keeps the per-member walk. Values are identical.
+    pub family_lift: bool,
+
     /// Program 2 compression: after the dependency authority is built,
     /// family members whose formula is their node's template relocated
     /// store a reference to the template instead of their own AST, and
@@ -983,6 +989,7 @@ impl Default for EvalConfig {
             lookup_index_cache_max_bytes: 64 * 1024 * 1024,
             family_execution: true,
             family_kernels: true,
+            family_lift: true,
             formula_compression: true,
         }
     }

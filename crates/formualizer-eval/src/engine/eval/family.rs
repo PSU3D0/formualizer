@@ -210,6 +210,11 @@ where
             return values;
         }
         let literals = LiteralPlan::new(ds, template, anchor);
+        if let Some(values) =
+            self.try_run_lift(run, members, store, ds, template, anchor, &literals)
+        {
+            return values;
+        }
         let sheet_name = self.graph.sheet_name(run.sheet);
         let col_delta = i64::from(run.col) - i64::from(anchor.1);
         let mut out = Vec::with_capacity(members.len());
@@ -266,6 +271,77 @@ where
             out.push(value);
         }
         out
+    }
+
+    /// P2-M3: the elementwise lift for the whole run, when the template is
+    /// operators over cell references and literals and every member has
+    /// the template's literals.
+    #[allow(clippy::too_many_arguments)]
+    fn try_run_lift(
+        &self,
+        run: LayerRun,
+        members: &[VertexId],
+        store: &Store,
+        ds: &crate::engine::arena::DataStore,
+        template: AstNodeId,
+        anchor: (u32, u32),
+        literals: &LiteralPlan,
+    ) -> Option<Vec<LiteralValue>> {
+        if !self.config.family_lift || members.len() < 2 {
+            return None;
+        }
+        let program = super::lift::LiftProgram::compile(ds, template)?;
+        let mut bound = Vec::new();
+        let mut cells = Vec::with_capacity(members.len());
+        for (i, &v) in members.iter().enumerate() {
+            let row = run.row0 + i as u32;
+            #[cfg(debug_assertions)]
+            self.debug_check_member(store, v, template, anchor, (run.sheet, row, run.col));
+            let cell_ref = self.graph.get_cell_ref(v)?;
+            if Self::member_bindings(store, ds, literals, (run.sheet, row, run.col), &mut bound)? {
+                return None;
+            }
+            cells.push(cell_ref);
+        }
+        let lifted = self.evaluate_run_lifted(&program, run, anchor, members.len())?;
+        #[cfg(test)]
+        {
+            self.family_members_for_test
+                .fetch_add(members.len() as u64, std::sync::atomic::Ordering::Relaxed);
+            self.lifted_members_for_test
+                .fetch_add(members.len() as u64, std::sync::atomic::Ordering::Relaxed);
+        }
+        let values: Vec<LiteralValue> = lifted
+            .into_iter()
+            .zip(&cells)
+            .map(|(result, &cell)| match result {
+                Ok((value, format)) => {
+                    self.record_derived_format_at(cell, format);
+                    crate::engine::result_finalization::finalize_formula_result(value)
+                }
+                Err(e) => LiteralValue::Error(e),
+            })
+            .collect();
+        // Debug builds: every lifted member equals the per-cell path, value
+        // and recorded format (the oracle records its own format; it must
+        // be the one the lift recorded).
+        #[cfg(debug_assertions)]
+        for ((&v, value), &cell) in members.iter().zip(&values).zip(&cells) {
+            let lifted_format = self.derived_formats.read().unwrap().get(&cell).copied();
+            let oracle = self
+                .evaluate_vertex_immutable(v)
+                .unwrap_or_else(LiteralValue::Error);
+            assert!(
+                same_value(&oracle, value),
+                "lifted value differs from the per-cell path at {cell:?}: {value:?} vs {oracle:?}"
+            );
+            let oracle_format = self.derived_formats.read().unwrap().get(&cell).copied();
+            assert_eq!(
+                lifted_format, oracle_format,
+                "lifted format differs from the per-cell path at {cell:?}"
+            );
+        }
+        Some(values)
     }
 
     /// Tier 3: a range kernel for the whole run, when the template has one.
@@ -381,6 +457,12 @@ where
     /// Members evaluated through a family template so far.
     pub(crate) fn family_members_for_test(&self) -> u64 {
         self.family_members_for_test
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Members evaluated through the elementwise lift so far.
+    pub(crate) fn lifted_members_for_test(&self) -> u64 {
+        self.lifted_members_for_test
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 }
