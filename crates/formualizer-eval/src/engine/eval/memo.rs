@@ -120,10 +120,15 @@ pub(super) struct SharedMemo {
 }
 
 /// Per-run (or per-chunk, over a shared map) memo with its give-up rule:
-/// after 64 members, more than half of them bringing a new key stops keying
-/// (the key costs one extra evaluation of the varying arguments per
-/// member). Distinct keys, not hits, decide: concurrent chunks miss a key
-/// together before one of them stores it.
+/// after `MEMO_WARMUP` members, more than half of them bringing a new key
+/// stops keying (the key costs one extra evaluation of the varying arguments
+/// per member). Distinct keys, not hits, decide: concurrent chunks miss a key
+/// together before one of them stores it. The warm-up is long enough for a
+/// report cycling through a few dozen dimension keys: with 64 members, 60
+/// keys cycling down a column turned the memo off in sequential mode (one
+/// chunk sees the run's first members), while parallel chunks kept it.
+const MEMO_WARMUP: usize = 256;
+
 pub(super) struct RunMemo<'s> {
     local: MemoMap,
     shared: Option<&'s SharedMemo>,
@@ -157,7 +162,7 @@ impl<'s> RunMemo<'s> {
         // Checked every 16 members (the shared count takes the lock).
         if !self.off && self.seen.is_multiple_of(16) {
             let (seen, distinct) = self.counts();
-            if seen >= 64 && distinct.saturating_mul(2) > seen {
+            if seen >= MEMO_WARMUP && distinct.saturating_mul(2) > seen {
                 self.off = true;
                 self.local = MemoMap::default();
             }
@@ -190,6 +195,59 @@ impl<'s> RunMemo<'s> {
             None => {
                 self.local.insert(key, value);
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn key(i: usize) -> MemoKey {
+        smallvec::smallvec![(KeyValue::Number((i as f64).to_bits()), None)]
+    }
+
+    /// Drives a memo the way a run does; returns (members evaluated, hits,
+    /// whether the memo was still on at the end).
+    fn drive(memo: &mut RunMemo<'_>, keys: impl Iterator<Item = usize>) -> (usize, usize, bool) {
+        let (mut evaluated, mut hits) = (0, 0);
+        for k in keys {
+            if !memo.active() {
+                evaluated += 1;
+                continue;
+            }
+            match memo.get(&key(k)) {
+                Some(_) => hits += 1,
+                None => {
+                    evaluated += 1;
+                    memo.insert(key(k), (LiteralValue::Number(k as f64), None));
+                }
+            }
+        }
+        (evaluated, hits, memo.active())
+    }
+
+    #[test]
+    fn cycling_keys_keep_the_memo_on() {
+        // 60 keys cycling down 10k members (sumifs_fact_table's report):
+        // the first 64 members bring 60 keys, which turned the memo off.
+        for shared in [None, Some(SharedMemo::default())] {
+            let mut memo = RunMemo::new(shared.as_ref());
+            let (evaluated, hits, on) = drive(&mut memo, (0..10_000).map(|i| i % 60));
+            assert!(on);
+            assert_eq!(evaluated, 60);
+            assert_eq!(hits, 10_000 - 60);
+        }
+    }
+
+    #[test]
+    fn distinct_keys_turn_the_memo_off_after_the_warm_up() {
+        for shared in [None, Some(SharedMemo::default())] {
+            let mut memo = RunMemo::new(shared.as_ref());
+            let (evaluated, hits, on) = drive(&mut memo, 0..10_000);
+            assert!(!on);
+            assert_eq!((evaluated, hits), (10_000, 0));
+            assert!(memo.seen <= MEMO_WARMUP + 16);
         }
     }
 }
