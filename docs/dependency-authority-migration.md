@@ -54,9 +54,9 @@ The FormulaPlane span runtime (an earlier experiment that evaluated a formula fa
 
 Program 2 makes the authority's family node the unit of execution and of storage.
 
-- **Execution.** Each schedule layer carries the runs of its family nodes (consecutive rows of one column of one node). A run evaluates through the node's template, relocated to each cell, and commits its scalar results as one unit. `SUM` and `AVERAGE` over bounded cell and range references use range kernels that merge overlays once per run and reduce each cell's slice in the scalar function's order (bit-identical results). Dynamic formulas (`OFFSET`, `INDIRECT`), cycle members and array results keep the per-cell path.
+- **Execution.** Each schedule layer carries the runs of its family nodes (consecutive rows of one column of one node). A run evaluates through the node's template, relocated to each cell, and commits its scalar results as one unit. `SUM` and `AVERAGE` over bounded cell and range references use range kernels that merge overlays once per run and reduce each cell's slice in the scalar function's order (bit-identical results). Dynamic formulas (`OFFSET`, `INDIRECT`), cycle members and array results keep the per-cell path. A run whose template is operators and the built-in `IF` over cell references and literals (every member with the template's literal values) is evaluated column-wise: each referenced column segment is read once per run and each operator applies to all members through the interpreter's own operator code, so values, error precedence and number formats are the per-cell ones.
 - **Storage.** After the authority is built, a family member whose formula is exactly its template relocated (literals, reference texts and all) stores a reference to the template, and the formula arena keeps only the trees that formula cells and the authority reference. A structural edit (row/column insert or delete, moves, sheet operations) gives every member its own tree back first; members are compressed again after the next build.
-- **Switches.** `EvalConfig::family_execution`, `family_kernels` and `formula_compression` (default `true`) turn the pieces off; values are the same either way. The per-cell path is the test oracle.
+- **Switches.** `EvalConfig::family_execution`, `family_kernels`, `family_lift` and `formula_compression` (default `true`) turn the pieces off; values are the same either way. The per-cell path is the test oracle.
 
 What you need to change:
 
@@ -65,7 +65,8 @@ What you need to change:
 | `DependencyGraph::get_formula_id(v)` for every formula vertex | `formula_view(v)`: `FormulaView { template, row_delta, col_delta }`. Evaluating or rendering `template` with the reference offset `(row_delta, col_delta)` gives exactly this cell's formula; `template` alone is the formula of the family's anchor cell, shared by every member. For a formula stored on its own cell the deltas are zero and `template` is today's id. `get_formula_id` still answers for those and returns `None` for compressed members, as do `get_formula_id_and_volatile` and `get_formula_node(_and_volatile)`. |
 | Reading a member's tree from the arena | `DependencyGraph::get_formula(v)` (owned, instantiated; unchanged result). |
 | `Layer { vertices }` | `Layer::new(vertices)`. Layer member order is by position for acyclic cells. |
-| `EvalConfig { .. }` literals without a rest pattern | add `..Default::default()` (three new fields). |
+| `EvalConfig { .. }` literals without a rest pattern | add `..Default::default()` (four new fields). |
+| `EngineBaselineStats::dirty_vertex_count` counted value cells marked by edits (never cleared) | it counts formula and name vertices awaiting evaluation only. |
 
 ## Performance and memory
 
