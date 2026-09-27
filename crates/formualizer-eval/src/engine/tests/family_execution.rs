@@ -73,7 +73,7 @@ fn mixed_value(r: u32) -> LiteralValue {
     match r % 9 {
         0 => LiteralValue::Number(-0.0),
         1 => LiteralValue::Text(format!("t{r}")),
-        2 => LiteralValue::Boolean(r % 2 == 0),
+        2 => LiteralValue::Boolean(r.is_multiple_of(2)),
         3 => LiteralValue::Error(formualizer_common::ExcelError::new(
             formualizer_common::ExcelErrorKind::Na,
         )),

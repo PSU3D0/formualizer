@@ -1384,12 +1384,7 @@ impl DependencyGraph {
         let pk = self.pk_order.as_ref()?;
         let adapter = crate::engine::topo::GraphAdapter { g: self };
         let layers = pk.layers_for(&adapter, subset, self.config.max_layer_width);
-        Some(
-            layers
-                .into_iter()
-                .map(|vs| crate::engine::Layer::new(vs))
-                .collect(),
-        )
+        Some(layers.into_iter().map(crate::engine::Layer::new).collect())
     }
 
     #[cfg(any(test, feature = "legacy_oracle"))]

@@ -159,60 +159,6 @@ fn unsupported_reference_relocation_error() -> ExcelError {
         .with_message("Unsupported reference relocation for FormulaPlane structural demotion")
 }
 
-#[cfg(test)]
-mod tests {
-    use formualizer_common::LiteralValue;
-    use formualizer_parse::parser::{ASTNodeType, ReferenceType, parse};
-
-    use super::*;
-
-    #[test]
-    fn relocates_relative_refs_without_moving_absolute_axes() {
-        let ast = parse("=A1+$B1+A$1+$B$1").unwrap();
-        let relocated = relocate_ast_for_template_placement(&ast, 2, 3).unwrap();
-        let ASTNodeType::BinaryOp { .. } = relocated.node_type else {
-            panic!("expected expression AST");
-        };
-    }
-
-    #[test]
-    fn relocates_reference_node_cell_axes() {
-        let ast = ASTNode::new(
-            ASTNodeType::Reference {
-                original: "A1".to_string(),
-                reference: ReferenceType::Cell {
-                    sheet: None,
-                    row: 1,
-                    col: 1,
-                    row_abs: false,
-                    col_abs: false,
-                },
-            },
-            None,
-        );
-        let relocated = relocate_ast_for_template_placement(&ast, 4, 2).unwrap();
-        match relocated.node_type {
-            ASTNodeType::Reference {
-                reference: ReferenceType::Cell { row, col, .. },
-                ..
-            } => {
-                assert_eq!(row, 5);
-                assert_eq!(col, 3);
-            }
-            other => panic!("unexpected AST: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn preserves_literals() {
-        let ast = ASTNode::new(ASTNodeType::Literal(LiteralValue::Number(1.0)), None);
-        assert_eq!(
-            relocate_ast_for_template_placement(&ast, 1, 1).unwrap(),
-            ast
-        );
-    }
-}
-
 /// Instantiate a family member from its template (Program 2 compression):
 /// relocate every relative axis by the offset, and write each reference
 /// text as the rendering of the relocated reference when the template's
@@ -290,5 +236,59 @@ fn rerender_originals(template: &ASTNode, member: &mut ASTNode) {
             }
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use formualizer_common::LiteralValue;
+    use formualizer_parse::parser::{ASTNodeType, ReferenceType, parse};
+
+    use super::*;
+
+    #[test]
+    fn relocates_relative_refs_without_moving_absolute_axes() {
+        let ast = parse("=A1+$B1+A$1+$B$1").unwrap();
+        let relocated = relocate_ast_for_template_placement(&ast, 2, 3).unwrap();
+        let ASTNodeType::BinaryOp { .. } = relocated.node_type else {
+            panic!("expected expression AST");
+        };
+    }
+
+    #[test]
+    fn relocates_reference_node_cell_axes() {
+        let ast = ASTNode::new(
+            ASTNodeType::Reference {
+                original: "A1".to_string(),
+                reference: ReferenceType::Cell {
+                    sheet: None,
+                    row: 1,
+                    col: 1,
+                    row_abs: false,
+                    col_abs: false,
+                },
+            },
+            None,
+        );
+        let relocated = relocate_ast_for_template_placement(&ast, 4, 2).unwrap();
+        match relocated.node_type {
+            ASTNodeType::Reference {
+                reference: ReferenceType::Cell { row, col, .. },
+                ..
+            } => {
+                assert_eq!(row, 5);
+                assert_eq!(col, 3);
+            }
+            other => panic!("unexpected AST: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn preserves_literals() {
+        let ast = ASTNode::new(ASTNodeType::Literal(LiteralValue::Number(1.0)), None);
+        assert_eq!(
+            relocate_ast_for_template_placement(&ast, 1, 1).unwrap(),
+            ast
+        );
     }
 }
