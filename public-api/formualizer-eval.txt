@@ -2611,7 +2611,7 @@ pub fn formualizer_eval::engine::graph::DependencyGraph::get_grid_addr(&self, fo
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_sheet_id(&self, formualizer_eval::engine::vertex::VertexId) -> formualizer_eval::reference::SheetId
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_value(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<formualizer_common::value::LiteralValue>
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_vertex_for_cell(&self, &formualizer_eval::reference::CellRef) -> core::option::Option<formualizer_eval::engine::vertex::VertexId>
-pub fn formualizer_eval::engine::graph::DependencyGraph::get_vertex_id_for_address(&self, &formualizer_eval::reference::CellRef) -> core::option::Option<&formualizer_eval::engine::vertex::VertexId>
+pub fn formualizer_eval::engine::graph::DependencyGraph::get_vertex_id_for_address(&self, &formualizer_eval::reference::CellRef) -> core::option::Option<formualizer_eval::engine::vertex::VertexId>
 pub fn formualizer_eval::engine::graph::DependencyGraph::grid_vertices_in_sheet(&self, formualizer_eval::reference::SheetId) -> impl core::iter::traits::iterator::Iterator<Item = (formualizer_eval::engine::vertex::VertexId, formualizer_eval::engine::addr::GridAddr)> + '_
 pub fn formualizer_eval::engine::graph::DependencyGraph::is_ref_error(&self, formualizer_eval::engine::vertex::VertexId) -> bool
 pub fn formualizer_eval::engine::graph::DependencyGraph::iter_vertex_ids(&self) -> impl core::iter::traits::iterator::Iterator<Item = formualizer_eval::engine::vertex::VertexId> + '_
@@ -4665,6 +4665,7 @@ impl core::fmt::Debug for formualizer_eval::engine::vertex_store::VertexStore
 pub fn formualizer_eval::engine::vertex_store::VertexStore::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub const formualizer_eval::engine::vertex_store::EXTERNAL_VERTEX_START: u32
 pub const formualizer_eval::engine::vertex_store::FIRST_NORMAL_VERTEX: u32
+pub const formualizer_eval::engine::vertex_store::MAX_VERTEX_ID: u32
 pub const formualizer_eval::engine::vertex_store::RANGE_VERTEX_START: u32
 pub mod formualizer_eval::engine::virtual_deps
 pub struct formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R: formualizer_eval::traits::EvaluationContext>
@@ -5884,7 +5885,7 @@ pub fn formualizer_eval::engine::graph::DependencyGraph::get_grid_addr(&self, fo
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_sheet_id(&self, formualizer_eval::engine::vertex::VertexId) -> formualizer_eval::reference::SheetId
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_value(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<formualizer_common::value::LiteralValue>
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_vertex_for_cell(&self, &formualizer_eval::reference::CellRef) -> core::option::Option<formualizer_eval::engine::vertex::VertexId>
-pub fn formualizer_eval::engine::graph::DependencyGraph::get_vertex_id_for_address(&self, &formualizer_eval::reference::CellRef) -> core::option::Option<&formualizer_eval::engine::vertex::VertexId>
+pub fn formualizer_eval::engine::graph::DependencyGraph::get_vertex_id_for_address(&self, &formualizer_eval::reference::CellRef) -> core::option::Option<formualizer_eval::engine::vertex::VertexId>
 pub fn formualizer_eval::engine::graph::DependencyGraph::grid_vertices_in_sheet(&self, formualizer_eval::reference::SheetId) -> impl core::iter::traits::iterator::Iterator<Item = (formualizer_eval::engine::vertex::VertexId, formualizer_eval::engine::addr::GridAddr)> + '_
 pub fn formualizer_eval::engine::graph::DependencyGraph::is_ref_error(&self, formualizer_eval::engine::vertex::VertexId) -> bool
 pub fn formualizer_eval::engine::graph::DependencyGraph::iter_vertex_ids(&self) -> impl core::iter::traits::iterator::Iterator<Item = formualizer_eval::engine::vertex::VertexId> + '_
