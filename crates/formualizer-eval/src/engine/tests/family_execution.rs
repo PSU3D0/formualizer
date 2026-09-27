@@ -848,7 +848,7 @@ fn family_criteria_kernel_matches_per_cell() {
                     "Report",
                     r,
                     c,
-                    parse(&f.replace("{r}", &r.to_string())).unwrap(),
+                    parse(f.replace("{r}", &r.to_string())).unwrap(),
                 )
                 .unwrap();
                 cells.push((r, c));

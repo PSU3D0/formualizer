@@ -493,7 +493,7 @@ where
                         }
                         it.next();
                         let k = buf.len();
-                        if k % 8 == 0 {
+                        if k.is_multiple_of(8) {
                             bits.push(0);
                         }
                         if valid[r as usize] {
