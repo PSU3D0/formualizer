@@ -2974,6 +2974,8 @@ pub(crate) struct OverlaySelectStats {
     pub(crate) fragment_intersections: usize,
     /// Short point-only ranges merged per offset (no builders or zip).
     pub(crate) small_point_selects: usize,
+    /// Longer point-only ranges: the base lane copied and patched per point.
+    pub(crate) point_patch_selects: usize,
 }
 
 #[cfg(test)]
@@ -3100,6 +3102,81 @@ impl<'a> OverlayCascade<'a> {
         }))
     }
 
+    /// For a range that no fragment of either layer touches: the base lane
+    /// (aligned to `range`) copied and patched at each point (computed, then
+    /// user), the per-slot layering below without slot vectors, builders or
+    /// zip. A point whose lane value is absent becomes null with a default
+    /// value slot (as a null appended to the zip's value builder). `None` when
+    /// a fragment intersects the range; `Some(base)` when no point does.
+    fn points_only_patch<T: arrow_array::ArrowPrimitiveType>(
+        &self,
+        range: core::ops::Range<usize>,
+        base: &arrow_array::PrimitiveArray<T>,
+        lane: impl Fn(&OverlayValue) -> Option<T::Native>,
+    ) -> Option<Arc<arrow_array::PrimitiveArray<T>>> {
+        if self
+            .user
+            .fragments
+            .iter()
+            .chain(self.computed.fragments.iter())
+            .any(|f| f.has_any_in_range(range.clone()))
+        {
+            return None;
+        }
+        let len = range.len();
+        debug_assert_eq!(base.len(), len);
+        let mut values: Option<Vec<T::Native>> = None;
+        let mut validity: Option<arrow_buffer::BooleanBufferBuilder> = None;
+        for layer in [self.computed, self.user] {
+            layer.for_each_point_in_range(range.clone(), |off, value| {
+                record_overlay_select_stats(|stats| stats.point_entries_applied += 1);
+                let i = off - range.start;
+                let values = values.get_or_insert_with(|| {
+                    // A null base keeps its validity from the first point on
+                    // (a later point may make a null slot valid); an all-valid
+                    // one needs a bitmap only once a point is null.
+                    if let Some(nulls) = base.nulls() {
+                        let mut bits = arrow_buffer::BooleanBufferBuilder::new(len);
+                        bits.append_buffer(nulls.inner());
+                        validity = Some(bits);
+                    }
+                    base.values().to_vec()
+                });
+                match lane(value) {
+                    Some(v) => {
+                        values[i] = v;
+                        if let Some(bits) = validity.as_mut() {
+                            bits.set_bit(i, true);
+                        }
+                    }
+                    None => {
+                        values[i] = T::Native::default();
+                        validity
+                            .get_or_insert_with(|| {
+                                let mut bits = arrow_buffer::BooleanBufferBuilder::new(len);
+                                bits.append_n(len, true);
+                                bits
+                            })
+                            .set_bit(i, false);
+                    }
+                }
+            });
+        }
+        let Some(values) = values else {
+            return Some(Arc::new(base.clone()));
+        };
+        record_overlay_select_stats(|stats| stats.point_patch_selects += 1);
+        let nulls = match validity {
+            Some(mut bits) => Some(arrow_buffer::NullBuffer::new(bits.finish())),
+            None => base.nulls().cloned(),
+        }
+        .filter(|nulls| nulls.null_count() > 0);
+        Some(Arc::new(arrow_array::PrimitiveArray::<T>::new(
+            values.into(),
+            nulls,
+        )))
+    }
+
     pub(crate) fn select_numbers(
         &self,
         range: core::ops::Range<usize>,
@@ -3141,6 +3218,11 @@ impl<'a> OverlayCascade<'a> {
                 })
                 .collect();
             return Arc::new(Float64Array::from(values));
+        }
+        if let Some(patched) =
+            self.points_only_patch(range.clone(), base, OverlayValue::numeric_lane_value)
+        {
+            return patched;
         }
 
         record_overlay_select_stats(|stats| stats.partial_overlay_builds += 1);
@@ -3326,6 +3408,11 @@ impl<'a> OverlayCascade<'a> {
                 })
                 .collect();
             return Arc::new(UInt8Array::from(values));
+        }
+        if let Some(patched) =
+            self.points_only_patch(range.clone(), base, OverlayValue::error_lane_value)
+        {
+            return patched;
         }
 
         record_overlay_select_stats(|stats| stats.partial_overlay_builds += 1);
@@ -7399,6 +7486,79 @@ mod tests {
         assert_eq!(stats.zip_select_calls, 0);
         assert_eq!(stats.point_entries_applied, 1);
         assert_eq!(stats.row_scalar_fallbacks, 0);
+    }
+
+    #[test]
+    fn points_only_patch_matches_per_offset_layering() {
+        use rand::{Rng, SeedableRng, rngs::SmallRng};
+        let mut rng = SmallRng::seed_from_u64(0x5eed);
+        let pick = |rng: &mut SmallRng| match rng.gen_range(0..7) {
+            0 => OverlayValue::Number(rng.gen_range(-5.0..5.0)),
+            1 => OverlayValue::DateTime(rng.gen_range(0.0..5.0)),
+            2 => OverlayValue::Text(Arc::from("t")),
+            3 => OverlayValue::Empty,
+            4 => OverlayValue::Error(rng.gen_range(1..8)),
+            5 => OverlayValue::Boolean(rng.gen_bool(0.5)),
+            _ => OverlayValue::Number(-0.0),
+        };
+        reset_overlay_select_stats();
+        for case in 0..400 {
+            let n = rng.gen_range(17..300);
+            let total = n + 10;
+            let base_nulls = case % 2 == 0;
+            let nums: Vec<Option<f64>> = (0..total)
+                .map(|i| (!base_nulls || !rng.gen_bool(0.3)).then_some(i as f64 + 0.5))
+                .collect();
+            let errs: Vec<Option<u8>> = (0..total)
+                .map(|i| (!base_nulls || rng.gen_bool(0.3)).then_some((i % 7) as u8 + 1))
+                .collect();
+            let (nums, errs) = (Float64Array::from(nums), UInt8Array::from(errs));
+            let start = rng.gen_range(0..10);
+            let range = start..start + n;
+            let (mut user, mut computed) = (Overlay::new(), Overlay::new());
+            for _ in 0..rng.gen_range(1..40) {
+                let off = rng.gen_range(0..total);
+                let v = pick(&mut rng);
+                if rng.gen_bool(0.5) {
+                    user.set_scalar(off, v);
+                } else {
+                    computed.set_scalar(off, v);
+                }
+            }
+            let cascade = OverlayCascade::new(&user, &computed);
+            let point = |off: usize| user.points.get(&off).or(computed.points.get(&off));
+            let base = nums.slice(start, n);
+            let got = cascade.select_numbers(range.clone(), &base);
+            assert_eq!(got.len(), n);
+            for i in 0..n {
+                let want = match point(start + i) {
+                    Some(v) => v.numeric_lane_value(),
+                    None => base.is_valid(i).then(|| base.value(i)),
+                };
+                let have = got.is_valid(i).then(|| got.value(i));
+                assert_eq!(
+                    have.map(f64::to_bits),
+                    want.map(f64::to_bits),
+                    "case {case} row {i}"
+                );
+            }
+            let base = errs.slice(start, n);
+            let got = cascade.select_errors(range.clone(), &base);
+            for i in 0..n {
+                let want = match point(start + i) {
+                    Some(v) => v.error_lane_value(),
+                    None => base.is_valid(i).then(|| base.value(i)),
+                };
+                assert_eq!(
+                    got.is_valid(i).then(|| got.value(i)),
+                    want,
+                    "case {case} row {i}"
+                );
+            }
+        }
+        let stats = snapshot_overlay_select_stats();
+        assert!(stats.point_patch_selects > 400, "{stats:?}");
+        assert_eq!(stats.zip_select_calls, 0);
     }
 
     #[test]
