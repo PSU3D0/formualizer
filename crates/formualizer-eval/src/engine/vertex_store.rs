@@ -645,6 +645,51 @@ impl VertexStore {
         dropped
     }
 
+    /// Virtual family members `first..first + len` moved by `(dr, dc)`
+    /// with their run (Program 2 row/column shifts): whole virtual pages
+    /// shift their spans, other rows their coordinates. No
+    /// materialization: the members stay virtual.
+    pub(crate) fn shift_member_addrs(&mut self, first: VertexId, len: u32, dr: i64, dc: i64) {
+        let Some(a) = self.vertex_id_to_index(first) else {
+            return;
+        };
+        let end = (a + len as usize).min(self.len);
+        let shift = |g: GridAddr| {
+            GridAddr::new(
+                (i64::from(g.row()) + dr) as u32,
+                (i64::from(g.col()) + dc) as u32,
+            )
+        };
+        let mut idx = a;
+        while idx < end {
+            let page = idx >> COLD_PAGE_BITS;
+            let page_start = page << COLD_PAGE_BITS;
+            let hi = end.min(page_start + COLD_PAGE);
+            let whole = idx == page_start && hi == page_start + COLD_PAGE;
+            match &mut self.pages[page] {
+                ColdPage::Virtual(spans) if whole => {
+                    for sp in spans.iter_mut() {
+                        let g = shift(GridAddr::new(sp.row0, sp.col));
+                        sp.row0 = g.row();
+                        sp.col = g.col();
+                    }
+                }
+                _ => {
+                    self.densify_page(page);
+                    let ColdPage::Dense(c) = &mut self.pages[page] else {
+                        unreachable!("densified");
+                    };
+                    for off in (idx - page_start)..(hi - page_start) {
+                        if let Some(g) = c.coords[off].as_grid() {
+                            c.coords[off] = VertexAddr::grid(shift(g));
+                        }
+                    }
+                }
+            }
+            idx = hi;
+        }
+    }
+
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.len == 0

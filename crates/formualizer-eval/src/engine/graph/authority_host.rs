@@ -395,6 +395,7 @@ impl DependencyGraph {
         self.authority_sync_store();
         if !self.authority.pending_dirty.is_empty()
             || !self.authority.pending_direct_dirty.is_empty()
+            || !self.authority.pending_direct_dirty_runs.is_empty()
         {
             self.authority_flush_pending_dirty();
         }
@@ -500,10 +501,25 @@ impl DependencyGraph {
     /// earlier operation is synced first. Per-vertex moves (`move_vertex`,
     /// which replay issues once per moved cell) share the pending edit.
     pub(crate) fn authority_note_structural(&mut self, op: bool) {
-        // Structural edits move cells and rewrite formulas one vertex at a
+        // Operation boundaries other than row/column shifts (range moves,
+        // sheet operations) move cells and rewrite formulas one vertex at a
         // time: members get their per-cell maps and own ASTs back first
         // (Program 2 compression resumes after the next authority build).
-        self.decompress_family_formulas();
+        // A per-vertex move (`op` false) decompresses its own vertex only.
+        if op {
+            self.decompress_family_formulas();
+        }
+        self.authority_note_structural_inner(op);
+    }
+
+    /// A row/column insert or delete is about to mutate the graph: as
+    /// [`Self::authority_note_structural`], but virtual member runs stay
+    /// (the editor shifts them as blocks; `shift_virtual_runs`).
+    pub(crate) fn authority_note_structural_shift(&mut self) {
+        self.authority_note_structural_inner(true);
+    }
+
+    fn authority_note_structural_inner(&mut self, op: bool) {
         if self.authority.structural_pending {
             if !op {
                 return;
@@ -545,6 +561,7 @@ impl DependencyGraph {
         if self.authority.structural_pending
             || !self.authority.pending_dirty.is_empty()
             || !self.authority.pending_direct_dirty.is_empty()
+            || !self.authority.pending_direct_dirty_runs.is_empty()
         {
             self.authority_sync();
         }
@@ -797,6 +814,70 @@ impl DependencyGraph {
         self.authority.pending_direct_dirty.push(vertex);
     }
 
+    /// `mark_dependents_dirty` for every member of a moved run at once:
+    /// rows `r0..=r1` of `col` on `sheet` (after the move).
+    pub(crate) fn authority_queue_direct_dirty_run(
+        &mut self,
+        sheet: SheetId,
+        col: u32,
+        r0: u32,
+        r1: u32,
+    ) {
+        if self.authority_defers_marks() {
+            self.authority
+                .pending_direct_dirty_runs
+                .push((sheet, col, r0, r1));
+        } else {
+            self.authority_mark_direct_readers_of_run(sheet, col, r0, r1);
+        }
+    }
+
+    /// Flag the direct in-edge readers of every cell of a run, exactly as
+    /// `authority_in_edge_readers` per member would (a member reading only
+    /// itself is not its own reader).
+    fn authority_mark_direct_readers_of_run(&mut self, sheet: SheetId, col: u32, r0: u32, r1: u32) {
+        if !self.authority.structural_pending {
+            self.authority_sync_eager();
+        }
+        if self.authority.state != HostState::Ready {
+            return;
+        }
+        let limit = u64::try_from(self.config.range_expansion_limit)
+            .unwrap_or(u64::MAX)
+            .max(1);
+        let q = Rect::new(r0, col, r1, col);
+        let mut readers: Vec<Cell> = Vec::new();
+        self.authority.store.visit_direct_small_dependents(
+            sheet,
+            &q,
+            limit,
+            &mut |ds, row, c, img| {
+                if img.r0 > q.r1 || img.r1 < q.r0 || img.c0 > col || img.c1 < col {
+                    return;
+                }
+                if ds == sheet && q.contains(row, c) {
+                    // Only a self read of (row, c) when the image meets q
+                    // in that one cell.
+                    let lo = img.r0.max(q.r0);
+                    let hi = img.r1.min(q.r1);
+                    let only_self = lo == hi && lo == row && img.c0 <= c && c <= img.c1;
+                    if only_self {
+                        return;
+                    }
+                }
+                readers.push((ds, row, c));
+            },
+        );
+        readers.sort_unstable();
+        readers.dedup();
+        for cell in readers {
+            if let Some(v) = self.authority_vertex_of_cell(cell) {
+                self.store.set_dirty(v, true);
+                self.formula_dirty.legacy_insert(v);
+            }
+        }
+    }
+
     /// Sync unless a load scope or a structural capture is open.
     pub(crate) fn authority_sync_eager(&mut self) {
         if !self.first_load_assume_new && !self.authority.structural_pending {
@@ -1021,11 +1102,51 @@ impl DependencyGraph {
         if self.authority.structural_pending {
             return;
         }
+        let runs = std::mem::take(&mut self.authority.pending_direct_dirty_runs);
+        for (sheet, col, r0, r1) in runs {
+            self.authority_mark_direct_readers_of_run(sheet, col, r0, r1);
+        }
         let direct = std::mem::take(&mut self.authority.pending_direct_dirty);
+        // Moved grid cells in vertical runs are queried a run at a time
+        // (the union of the per-cell queries; a cell queued for one vertex
+        // only); anything else per vertex.
+        let mut cells: Vec<(Cell, VertexId)> = Vec::with_capacity(direct.len());
+        let mut single: Vec<VertexId> = Vec::new();
         for v in direct {
             if !self.store.vertex_exists(v) || self.store.is_deleted(v) {
                 continue;
             }
+            match self.get_cell_ref(v) {
+                Some(c) => cells.push((cell_of(&c), v)),
+                None => single.push(v),
+            }
+        }
+        cells.sort_unstable();
+        cells.dedup();
+        let mut i = 0;
+        while i < cells.len() {
+            let ((sheet, row, col), _) = cells[i];
+            if cells.get(i + 1).is_some_and(|n| n.0 == cells[i].0) {
+                // One cell for several vertices (a stale one): per vertex.
+                let mut j = i;
+                while j < cells.len() && cells[j].0 == cells[i].0 {
+                    single.push(cells[j].1);
+                    j += 1;
+                }
+                i = j;
+                continue;
+            }
+            let mut j = i + 1;
+            while j < cells.len()
+                && cells[j].0 == (sheet, row + (j - i) as u32, col)
+                && cells.get(j + 1).is_none_or(|n| n.0 != cells[j].0)
+            {
+                j += 1;
+            }
+            self.authority_mark_direct_readers_of_run(sheet, col, row, row + (j - i - 1) as u32);
+            i = j;
+        }
+        for v in single {
             for reader in self.authority_in_edge_readers(v) {
                 self.store.set_dirty(reader, true);
                 self.formula_dirty.legacy_insert(reader);

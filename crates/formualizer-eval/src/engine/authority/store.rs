@@ -1184,6 +1184,44 @@ impl Store {
         })
     }
 
+    /// [`Self::direct_small_dependents`] per dependent cell:
+    /// `f(dependent sheet, row, col, image)` for every dependent cell whose
+    /// (small, per the limit) reference image meets `q`.
+    pub fn visit_direct_small_dependents(
+        &self,
+        sheet: u16,
+        q: &Rect,
+        limit: u64,
+        f: &mut dyn FnMut(u16, u32, u32, Rect),
+    ) {
+        let Some(idx) = self.idx.prec.get(sheet_slot(sheet)) else {
+            return;
+        };
+        let mut hits: Vec<u32> = Vec::new();
+        idx.query(&q.as_box(), &mut |id| hits.push(id));
+        for id in hits {
+            let r = &self.recs[id as usize];
+            let key = self.egroups.key(r.group);
+            if !(key.lk == NO_LK || key.dep_sheet == SYMBOL_SHEET)
+                || !key.proj.instantiate(r.dep.r0, r.dep.c0).is_some_and(|img| {
+                    u64::from(img.r1 - img.r0 + 1) * u64::from(img.c1 - img.c0 + 1) <= limit
+                })
+            {
+                continue;
+            }
+            let Some(d) = key.proj.invert(&r.dep, q) else {
+                continue;
+            };
+            for row in d.r0..=d.r1 {
+                for col in d.c0..=d.c1 {
+                    if let Some(img) = key.proj.instantiate(row, col) {
+                        f(key.dep_sheet, row, col, img);
+                    }
+                }
+            }
+        }
+    }
+
     /// Every dependent member whose reference image meets `q` on `sheet`:
     /// `f(dependent sheet, row, col, image)`, per member cell (relative
     /// references give each member its own image).

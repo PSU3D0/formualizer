@@ -199,6 +199,17 @@ impl VirtualMembers {
         r
     }
 
+    /// Remove the run starting at vertex `first` (its members leave the
+    /// virtual set; the caller re-inserts or restores them).
+    pub(crate) fn remove_run(&mut self, first: u32) -> Option<MemberRun> {
+        let &slot = self.by_vertex.get(&first)?;
+        let r = self.remove_slot(slot);
+        if self.members == 0 {
+            self.clear();
+        }
+        Some(r)
+    }
+
     /// Remove member `v`, splitting its run.
     pub(crate) fn take(&mut self, v: VertexId) -> Option<VirtualMember> {
         let slot = self.slot_of_vertex(v)?;

@@ -4359,13 +4359,14 @@ where
         let name_str = name.into();
         let mut capture = MutationCapture::new(Default::default());
         let start_len = capture.len();
-        self.action_atomic_impl(&mut capture, start_len, name_str, f)
+        self.action_atomic_impl(&mut capture, start_len, true, name_str, f)
     }
 
     fn action_atomic_impl<T>(
         &mut self,
         capture: &mut MutationCapture,
         start_len: usize,
+        expand_runs: bool,
         name: String,
         f: impl FnOnce(&mut EngineAction<'_, R>) -> Result<T, crate::engine::EditorError>,
     ) -> Result<(T, crate::engine::ActionJournal), crate::engine::EditorError> {
@@ -4384,9 +4385,19 @@ where
 
         let res = f(&mut tx);
 
-        // Capture graph structural delta for this action.
-        let graph_events: Vec<crate::engine::ChangeEvent> =
-            unsafe { (&*capture_ptr).events() }[start_len..].to_vec();
+        // Capture graph structural delta for this action. The journal is a
+        // public value: run records (Program 2) are expanded into it, except
+        // for a caller that only publishes the capture to its change log
+        // (`expand_runs` false), where the journal (plain events) drives
+        // invalidation and records count as topology changes; a rollback
+        // still replays the expanded events.
+        let capture_ref = unsafe { &*capture_ptr };
+        let has_runs = capture_ref.lazy_len() > 0;
+        let graph_events: Vec<crate::engine::ChangeEvent> = if expand_runs || res.is_err() {
+            capture_ref.expanded_events_from(start_len, 0)
+        } else {
+            capture_ref.events()[start_len..].to_vec()
+        };
         let graph_batch = crate::engine::GraphUndoBatch {
             events: graph_events,
         };
@@ -4400,15 +4411,19 @@ where
 
         match res {
             Ok(v) => {
-                if !journal.graph.is_empty() || !journal.arrow.is_empty() {
+                if !journal.graph.is_empty() || !journal.arrow.is_empty() || has_runs {
                     for event in &journal.graph.events {
                         self.record_change_for_event(event);
                     }
-                    self.invalidate_for_action_journal(
-                        &journal,
+                    let mut impact = Self::classify_change_events(
+                        &journal.graph.events,
                         LoggedEditDirection::Original,
-                        invalidation_baseline,
-                    );
+                    )
+                    .max(Self::classify_arrow_undo(&journal.arrow));
+                    if has_runs {
+                        impact = impact.max(LoggedEditImpact::Topology);
+                    }
+                    self.apply_logged_edit_impact(impact, invalidation_baseline);
                 }
                 Ok((v, journal))
             }
@@ -4464,7 +4479,7 @@ where
 
         // Mutation correctness uses the complete private capture. The provided ChangeLog remains
         // an observability sink and is not touched until the action outcome is known.
-        let res = self.action_atomic_impl(&mut capture, start_len, name_str, f);
+        let res = self.action_atomic_impl(&mut capture, start_len, false, name_str, f);
         capture.close_compounds();
 
         match res {
@@ -4655,6 +4670,7 @@ where
     ) -> Result<T, crate::engine::EditorError> {
         let invalidation_baseline = self.invalidation_baseline();
         let start_len = capture.len();
+        let lazy_start = capture.lazy_len();
 
         // Provide a spill snapshot reader so VertexEditor can snapshot Arrow-truth spill values
         // (graph value cache is intentionally empty in canonical mode).
@@ -4685,7 +4701,7 @@ where
             let spill_reader = ArrowSpillReader {
                 sheets: &self.arrow_sheets,
             };
-            let mut editor = crate::engine::VertexEditor::with_logger_and_spill_reader(
+            let mut editor = crate::engine::VertexEditor::with_capture_and_spill_reader(
                 &mut self.graph,
                 capture,
                 &spill_reader,
@@ -4693,7 +4709,11 @@ where
             f(&mut editor)
         };
 
+        // Plain events only: run records (Program 2) stand for
+        // `FormulaAdjusted` events, which have no forward effect here but
+        // topology invalidation.
         let new_events = capture.events()[start_len..].to_vec();
+        let new_runs = capture.lazy_len() > lazy_start;
         if new_events.iter().any(|event| {
             matches!(
                 event,
@@ -4702,7 +4722,8 @@ where
                     | ChangeEvent::DeleteName { .. }
             )
         }) {
-            self.rollback_from_change_events(&new_events, invalidation_baseline)?;
+            let all = capture.expanded_events_from(start_len, lazy_start);
+            self.rollback_from_change_events(&all, invalidation_baseline)?;
             return Err(crate::engine::EditorError::TransactionUnsupported {
                 reason: "name mutations must use Engine's prepared logged-name APIs".to_string(),
             });
@@ -4721,11 +4742,12 @@ where
         // Atomic EngineAction calls publish one invalidation for their complete
         // journal at commit/rollback. Direct logged edits publish here.
         if self.action_depth == 0 {
-            self.invalidate_for_change_events(
-                &new_events,
-                LoggedEditDirection::Original,
-                invalidation_baseline,
-            );
+            let mut impact =
+                Self::classify_change_events(&new_events, LoggedEditDirection::Original);
+            if new_runs {
+                impact = impact.max(LoggedEditImpact::Topology);
+            }
+            self.apply_logged_edit_impact(impact, invalidation_baseline);
         }
 
         Ok(ret)

@@ -117,6 +117,10 @@ pub struct AuthorityHost {
     /// `mark_dependents_dirty` vertices waiting for the resync (their direct
     /// in-edge readers are flagged, not propagated).
     pub(crate) pending_direct_dirty: Vec<VertexId>,
+    /// The same for virtual member runs a row/column edit moved as one
+    /// (Program 2): `(sheet, col, r0, r1)` after the edit, every cell of
+    /// which is a moved member.
+    pub(crate) pending_direct_dirty_runs: Vec<(crate::SheetId, u32, u32, u32)>,
 }
 
 /// See [`AuthorityHost::symbol_changes`].

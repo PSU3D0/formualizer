@@ -36,8 +36,11 @@ pub(crate) use range_deps::{StructuralEdit, StructuralOccupancy};
 mod sheets;
 pub mod snapshot;
 mod sources;
+mod structural_runs;
 mod tables;
 pub(crate) mod virtual_members;
+
+pub(crate) use structural_runs::ShiftedRun;
 pub(crate) use tables::TableEntry;
 
 use super::addr::{GridAddr, SymbolAddr, VertexAddr};
@@ -3497,54 +3500,58 @@ impl DependencyGraph {
     fn add_dependent_edges(&mut self, dependent: VertexId, dependencies: &[VertexId]) {
         self.note_dep_edges(dependent, dependencies.len());
         #[cfg(any(test, feature = "legacy_oracle"))]
-        {
-            // Batch to avoid repeated CSR rebuilds and keep reverse edges current
-            #[cfg(any(test, feature = "legacy_oracle"))]
-            self.edges.begin_batch();
+        self.oracle_add_dependent_edges(dependent, dependencies);
+    }
 
-            // If PK enabled, update order using a short-lived adapter without holding &mut self
-            // Track dependencies that should be skipped if rejecting cycle-creating edges
-            let mut skip_deps: rustc_hash::FxHashSet<VertexId> = rustc_hash::FxHashSet::default();
-            if self.pk_order.is_some()
-                && let Some(mut pk) = self.pk_order.take()
+    /// The oracle-only half (test/oracle builds) of the function above.
+    #[cfg(any(test, feature = "legacy_oracle"))]
+    fn oracle_add_dependent_edges(&mut self, dependent: VertexId, dependencies: &[VertexId]) {
+        // Batch to avoid repeated CSR rebuilds and keep reverse edges current
+        #[cfg(any(test, feature = "legacy_oracle"))]
+        self.edges.begin_batch();
+
+        // If PK enabled, update order using a short-lived adapter without holding &mut self
+        // Track dependencies that should be skipped if rejecting cycle-creating edges
+        let mut skip_deps: rustc_hash::FxHashSet<VertexId> = rustc_hash::FxHashSet::default();
+        if self.pk_order.is_some()
+            && let Some(mut pk) = self.pk_order.take()
+        {
+            pk.ensure_nodes(std::iter::once(dependent));
+            pk.ensure_nodes(dependencies.iter().copied());
             {
-                pk.ensure_nodes(std::iter::once(dependent));
-                pk.ensure_nodes(dependencies.iter().copied());
-                {
-                    let adapter = GraphAdapter { g: self };
-                    for &dep_id in dependencies {
-                        match pk.try_add_edge(&adapter, dep_id, dependent) {
-                            Ok(_) => {}
-                            Err(_cycle) => {
-                                if self.config.pk_reject_cycle_edges {
-                                    skip_deps.insert(dep_id);
-                                } else {
-                                    pk.rebuild_full(&adapter);
-                                }
+                let adapter = GraphAdapter { g: self };
+                for &dep_id in dependencies {
+                    match pk.try_add_edge(&adapter, dep_id, dependent) {
+                        Ok(_) => {}
+                        Err(_cycle) => {
+                            if self.config.pk_reject_cycle_edges {
+                                skip_deps.insert(dep_id);
+                            } else {
+                                pk.rebuild_full(&adapter);
                             }
                         }
                     }
-                } // drop adapter
-                self.pk_order = Some(pk);
-            }
-
-            // Now mutate engine edges; if rejecting cycles, re-check and skip those that would create cycles
-            for &dep_id in dependencies {
-                if self.config.pk_reject_cycle_edges && skip_deps.contains(&dep_id) {
-                    continue;
                 }
-                self.edges.add_edge(dependent, dep_id);
-                #[cfg(test)]
-                {
-                    if let Ok(mut g) = self.instr.lock() {
-                        g.edges_added += 1;
-                    }
-                }
-            }
-
-            #[cfg(any(test, feature = "legacy_oracle"))]
-            self.edges.end_batch();
+            } // drop adapter
+            self.pk_order = Some(pk);
         }
+
+        // Now mutate engine edges; if rejecting cycles, re-check and skip those that would create cycles
+        for &dep_id in dependencies {
+            if self.config.pk_reject_cycle_edges && skip_deps.contains(&dep_id) {
+                continue;
+            }
+            self.edges.add_edge(dependent, dep_id);
+            #[cfg(test)]
+            {
+                if let Ok(mut g) = self.instr.lock() {
+                    g.edges_added += 1;
+                }
+            }
+        }
+
+        #[cfg(any(test, feature = "legacy_oracle"))]
+        self.edges.end_batch();
     }
 
     /// Like add_dependent_edges, but assumes caller is managing edges.begin_batch/end_batch
@@ -3819,128 +3826,125 @@ impl DependencyGraph {
             self.range_reader_count = self.range_reader_count.saturating_sub(1);
         }
         #[cfg(any(test, feature = "legacy_oracle"))]
+        self.oracle_remove_dependent_edges(vertex);
+    }
+
+    /// The oracle-only half (test/oracle builds) of the function above.
+    #[cfg(any(test, feature = "legacy_oracle"))]
+    fn oracle_remove_dependent_edges(&mut self, vertex: VertexId) {
+        // Remove all outgoing edges from this vertex (its dependencies)
+        let dependencies = self.edges.out_edges(vertex);
+
+        #[cfg(any(test, feature = "legacy_oracle"))]
+        self.edges.begin_batch();
+        if self.pk_order.is_some()
+            && let Some(mut pk) = self.pk_order.take()
         {
-            // Remove all outgoing edges from this vertex (its dependencies)
-            let dependencies = self.edges.out_edges(vertex);
-
-            #[cfg(any(test, feature = "legacy_oracle"))]
-            self.edges.begin_batch();
-            if self.pk_order.is_some()
-                && let Some(mut pk) = self.pk_order.take()
-            {
-                for dep in &dependencies {
-                    pk.remove_edge(*dep, vertex);
-                }
-                self.pk_order = Some(pk);
+            for dep in &dependencies {
+                pk.remove_edge(*dep, vertex);
             }
-            for dep in dependencies {
-                self.edges.remove_edge(vertex, dep);
-            }
-            #[cfg(any(test, feature = "legacy_oracle"))]
-            self.edges.end_batch();
+            self.pk_order = Some(pk);
+        }
+        for dep in dependencies {
+            self.edges.remove_edge(vertex, dep);
+        }
+        #[cfg(any(test, feature = "legacy_oracle"))]
+        self.edges.end_batch();
 
-            // Remove range dependencies and clean up stripes
-            if let Some(old_ranges) = self.formula_to_range_deps.remove(&vertex) {
-                let old_sheet_id = self.store.sheet_id(vertex);
+        // Remove range dependencies and clean up stripes
+        if let Some(old_ranges) = self.formula_to_range_deps.remove(&vertex) {
+            let old_sheet_id = self.store.sheet_id(vertex);
 
-                for range in &old_ranges {
-                    // `Current` is the sheet the moved formula used to live on.
-                    let sheet_id = self
-                        .sheet_reg
-                        .resolve_locator(&range.sheet, old_sheet_id)
-                        .unwrap_or(old_sheet_id);
-                    let s_row = range.start_row.map(|b| b.index);
-                    let e_row = range.end_row.map(|b| b.index);
-                    let s_col = range.start_col.map(|b| b.index);
-                    let e_col = range.end_col.map(|b| b.index);
+            for range in &old_ranges {
+                // `Current` is the sheet the moved formula used to live on.
+                let sheet_id = self
+                    .sheet_reg
+                    .resolve_locator(&range.sheet, old_sheet_id)
+                    .unwrap_or(old_sheet_id);
+                let s_row = range.start_row.map(|b| b.index);
+                let e_row = range.end_row.map(|b| b.index);
+                let s_col = range.start_col.map(|b| b.index);
+                let e_col = range.end_col.map(|b| b.index);
 
-                    let mut keys_to_clean = FxHashSet::default();
+                let mut keys_to_clean = FxHashSet::default();
 
-                    let col_stripes = (s_row.is_none() && e_row.is_none())
-                        || (s_col.is_some()
-                            && e_col.is_some()
-                            && (s_row.is_none() || e_row.is_none()));
-                    let row_stripes = (s_col.is_none() && e_col.is_none())
-                        || (s_row.is_some()
-                            && e_row.is_some()
-                            && (s_col.is_none() || e_col.is_none()));
+                let col_stripes = (s_row.is_none() && e_row.is_none())
+                    || (s_col.is_some() && e_col.is_some() && (s_row.is_none() || e_row.is_none()));
+                let row_stripes = (s_col.is_none() && e_col.is_none())
+                    || (s_row.is_some() && e_row.is_some() && (s_col.is_none() || e_col.is_none()));
 
-                    if col_stripes && !row_stripes {
-                        let sc = s_col.unwrap_or(0);
-                        let ec = e_col.unwrap_or(sc);
-                        for col in sc..=ec {
+                if col_stripes && !row_stripes {
+                    let sc = s_col.unwrap_or(0);
+                    let ec = e_col.unwrap_or(sc);
+                    for col in sc..=ec {
+                        keys_to_clean.insert(StripeKey {
+                            sheet_id,
+                            stripe_type: StripeType::Column,
+                            index: col,
+                        });
+                    }
+                } else if row_stripes && !col_stripes {
+                    let sr = s_row.unwrap_or(0);
+                    let er = e_row.unwrap_or(sr);
+                    for row in sr..=er {
+                        keys_to_clean.insert(StripeKey {
+                            sheet_id,
+                            stripe_type: StripeType::Row,
+                            index: row,
+                        });
+                    }
+                } else {
+                    let start_row = s_row.unwrap_or(0);
+                    let start_col = s_col.unwrap_or(0);
+                    let end_row = e_row.unwrap_or(start_row);
+                    let end_col = e_col.unwrap_or(start_col);
+
+                    let height = end_row.saturating_sub(start_row) + 1;
+                    let width = end_col.saturating_sub(start_col) + 1;
+
+                    if self.config.enable_block_stripes && height > 1 && width > 1 {
+                        let start_block_row = start_row / BLOCK_H;
+                        let end_block_row = end_row / BLOCK_H;
+                        let start_block_col = start_col / BLOCK_W;
+                        let end_block_col = end_col / BLOCK_W;
+
+                        for block_row in start_block_row..=end_block_row {
+                            for block_col in start_block_col..=end_block_col {
+                                keys_to_clean.insert(StripeKey {
+                                    sheet_id,
+                                    stripe_type: StripeType::Block,
+                                    index: block_index(block_row * BLOCK_H, block_col * BLOCK_W),
+                                });
+                            }
+                        }
+                    } else if height > width {
+                        for col in start_col..=end_col {
                             keys_to_clean.insert(StripeKey {
                                 sheet_id,
                                 stripe_type: StripeType::Column,
                                 index: col,
                             });
                         }
-                    } else if row_stripes && !col_stripes {
-                        let sr = s_row.unwrap_or(0);
-                        let er = e_row.unwrap_or(sr);
-                        for row in sr..=er {
+                    } else {
+                        for row in start_row..=end_row {
                             keys_to_clean.insert(StripeKey {
                                 sheet_id,
                                 stripe_type: StripeType::Row,
                                 index: row,
                             });
                         }
-                    } else {
-                        let start_row = s_row.unwrap_or(0);
-                        let start_col = s_col.unwrap_or(0);
-                        let end_row = e_row.unwrap_or(start_row);
-                        let end_col = e_col.unwrap_or(start_col);
-
-                        let height = end_row.saturating_sub(start_row) + 1;
-                        let width = end_col.saturating_sub(start_col) + 1;
-
-                        if self.config.enable_block_stripes && height > 1 && width > 1 {
-                            let start_block_row = start_row / BLOCK_H;
-                            let end_block_row = end_row / BLOCK_H;
-                            let start_block_col = start_col / BLOCK_W;
-                            let end_block_col = end_col / BLOCK_W;
-
-                            for block_row in start_block_row..=end_block_row {
-                                for block_col in start_block_col..=end_block_col {
-                                    keys_to_clean.insert(StripeKey {
-                                        sheet_id,
-                                        stripe_type: StripeType::Block,
-                                        index: block_index(
-                                            block_row * BLOCK_H,
-                                            block_col * BLOCK_W,
-                                        ),
-                                    });
-                                }
-                            }
-                        } else if height > width {
-                            for col in start_col..=end_col {
-                                keys_to_clean.insert(StripeKey {
-                                    sheet_id,
-                                    stripe_type: StripeType::Column,
-                                    index: col,
-                                });
-                            }
-                        } else {
-                            for row in start_row..=end_row {
-                                keys_to_clean.insert(StripeKey {
-                                    sheet_id,
-                                    stripe_type: StripeType::Row,
-                                    index: row,
-                                });
-                            }
-                        }
                     }
+                }
 
-                    for key in keys_to_clean {
-                        if let Some(dependents) = self.stripe_to_dependents.get_mut(&key) {
-                            dependents.remove(&vertex);
-                            if dependents.is_empty() {
-                                self.stripe_to_dependents.remove(&key);
-                                #[cfg(test)]
-                                {
-                                    if let Ok(mut g) = self.instr.lock() {
-                                        g.stripe_removes += 1;
-                                    }
+                for key in keys_to_clean {
+                    if let Some(dependents) = self.stripe_to_dependents.get_mut(&key) {
+                        dependents.remove(&vertex);
+                        if dependents.is_empty() {
+                            self.stripe_to_dependents.remove(&key);
+                            #[cfg(test)]
+                            {
+                                if let Ok(mut g) = self.instr.lock() {
+                                    g.stripe_removes += 1;
                                 }
                             }
                         }
@@ -4544,6 +4548,14 @@ impl DependencyGraph {
         }
     }
 
+    /// Formula vertices held by the per-vertex formula map (not virtual
+    /// family members), by id.
+    pub(crate) fn materialized_formula_vertices_sorted(&self) -> Vec<VertexId> {
+        let mut vertices: Vec<VertexId> = self.vertex_formulas.map_iter().map(|(v, _)| v).collect();
+        vertices.sort_unstable();
+        vertices
+    }
+
     pub(crate) fn formula_vertices(&self) -> Vec<VertexId> {
         let mut vertices = self.vertex_formulas.keys().collect::<Vec<_>>();
         vertices.sort_unstable();
@@ -4914,6 +4926,15 @@ impl DependencyGraph {
     #[cfg(test)]
     pub(crate) fn get_flags(&self, id: VertexId) -> u8 {
         self.store.flags(id) & !crate::engine::vertex_store::VIRTUAL_FLAG
+    }
+
+    /// The virtual family member at `addr`, if any.
+    #[inline]
+    pub(crate) fn virtual_member_at(&self, addr: &CellRef) -> Option<VertexId> {
+        self.vertex_formulas
+            .virtual_members()
+            .by_cell(addr.sheet_id, addr.coord.row(), addr.coord.col())
+            .map(|m| m.vertex)
     }
 
     /// Check if vertex is deleted (for testing)
