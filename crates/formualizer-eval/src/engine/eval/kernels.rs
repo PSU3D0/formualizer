@@ -239,7 +239,9 @@ impl AggregateKernel {
         };
         let name = ds.resolve_ast_string(*name_id);
         let fun = crate::traits::FunctionProvider::get_function(engine, "", name)?;
-        let kind = fun.family_kernel()?;
+        let kind = fun
+            .family_kernel()
+            .filter(|k| matches!(k, FamilyKernel::Sum | FamilyKernel::Average))?;
         let args = ds.get_args(template)?;
         if args.is_empty() {
             return None;
@@ -359,6 +361,7 @@ impl AggregateKernel {
                         crate::builtins::utils::aggregate_result(total / (count as f64))
                     }
                 }
+                (None, _) => unreachable!("planned kernels are Sum or Average"),
             };
             out.push(crate::engine::result_finalization::finalize_formula_result(
                 value,

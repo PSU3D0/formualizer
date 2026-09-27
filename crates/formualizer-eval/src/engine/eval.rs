@@ -974,7 +974,7 @@ pub struct Engine<R> {
     /// Workbook-local number-format registry.
     format_registry: crate::format::FormatRegistry,
     /// Derived formula formats keyed by grid position, never graph vertex identity.
-    derived_formats: std::sync::RwLock<FxHashMap<CellRef, crate::format::FormatId>>,
+    derived_formats: crate::engine::derived_formats::DerivedFormats,
     #[cfg(test)]
     derived_format_operations_for_test: std::sync::atomic::AtomicU64,
     #[cfg(test)]
@@ -2507,7 +2507,7 @@ where
             spill_mgr: ShimSpillManager::default(),
             arrow_sheets: SheetStore::default(),
             format_registry: crate::format::FormatRegistry::default(),
-            derived_formats: std::sync::RwLock::new(FxHashMap::default()),
+            derived_formats: Default::default(),
             #[cfg(test)]
             derived_format_operations_for_test: std::sync::atomic::AtomicU64::new(0),
             #[cfg(test)]
@@ -2657,7 +2657,7 @@ where
             spill_mgr: ShimSpillManager::default(),
             arrow_sheets: SheetStore::default(),
             format_registry: crate::format::FormatRegistry::default(),
-            derived_formats: std::sync::RwLock::new(FxHashMap::default()),
+            derived_formats: Default::default(),
             #[cfg(test)]
             derived_format_operations_for_test: std::sync::atomic::AtomicU64::new(0),
             #[cfg(test)]
@@ -11210,24 +11210,11 @@ where
         self.derived_format_operations_for_test
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let format = format.filter(|id| *id != crate::format::FormatId::GENERAL);
-        // Most results carry no format: skip the write lock when there is
-        // nothing to remove.
-        if format.is_none() && self.derived_formats.read().unwrap().is_empty() {
-            return;
-        }
-        let mut formats = self.derived_formats.write().unwrap();
-        match format {
-            Some(format) => {
-                formats.insert(cell, format);
-            }
-            None => {
-                formats.remove(&cell);
-            }
-        }
+        self.derived_formats.set(cell, format);
     }
 
     fn clear_cell_format_state(&mut self, sheet: &str, cell: CellRef) {
-        self.derived_formats.write().unwrap().remove(&cell);
+        self.derived_formats.set(cell, None);
         if let Some(arrow) = self.arrow_sheets.sheet_mut(sheet) {
             arrow.clear_format(cell.coord.row() as usize, cell.coord.col() as usize);
         }
@@ -11251,23 +11238,17 @@ where
 
     fn purge_derived_formats_after_row(&mut self, sheet_id: SheetId, start0: u32) {
         self.derived_formats
-            .write()
-            .unwrap()
-            .retain(|cell, _| cell.sheet_id != sheet_id || cell.coord.row() < start0);
+            .retain(|cell| cell.sheet_id != sheet_id || cell.coord.row() < start0);
     }
 
     fn purge_derived_formats_after_col(&mut self, sheet_id: SheetId, start0: u32) {
         self.derived_formats
-            .write()
-            .unwrap()
-            .retain(|cell, _| cell.sheet_id != sheet_id || cell.coord.col() < start0);
+            .retain(|cell| cell.sheet_id != sheet_id || cell.coord.col() < start0);
     }
 
     fn purge_derived_formats_for_sheet(&mut self, sheet_id: SheetId) {
         self.derived_formats
-            .write()
-            .unwrap()
-            .retain(|cell, _| cell.sheet_id != sheet_id);
+            .retain(|cell| cell.sheet_id != sheet_id);
     }
 
     #[cfg(test)]
@@ -11311,9 +11292,7 @@ where
     pub(crate) fn debug_clear_derived_format_0based(&mut self, sheet: &str, row0: u32, col0: u32) {
         if let Some(sheet_id) = self.graph.sheet_id(sheet) {
             self.derived_formats
-                .write()
-                .unwrap()
-                .remove(&CellRef::new_absolute(sheet_id, row0, col0));
+                .set(CellRef::new_absolute(sheet_id, row0, col0), None);
         }
     }
 
@@ -11339,10 +11318,7 @@ where
     ) -> Option<crate::format::FormatId> {
         let sheet_id = self.graph.sheet_id(sheet)?;
         self.derived_formats
-            .read()
-            .unwrap()
             .get(&CellRef::new_absolute(sheet_id, row0, col0))
-            .copied()
     }
 
     #[cfg(test)]
@@ -12132,7 +12108,7 @@ where
         let date_system = self.arrow_sheet_date_system(&sheet_name);
         let ov = Self::literal_to_overlay_value(value, date_system);
         if let Some(buffer) = computed_writes {
-            let format_id = self.derived_formats.read().unwrap().get(&cell).copied();
+            let format_id = self.derived_formats.get(&cell);
             buffer.push_cell_with_format(
                 cell.sheet_id,
                 cell.coord.row(),
@@ -12152,7 +12128,7 @@ where
             );
             // The computed format lane follows the value, as on the buffered
             // path (a General result clears a stale date format).
-            let format_id = self.derived_formats.read().unwrap().get(&cell).copied();
+            let format_id = self.derived_formats.get(&cell);
             self.write_computed_overlay_format_0based(
                 &sheet_name,
                 cell.coord.row(),
@@ -12576,7 +12552,7 @@ where
         arrow.or_else(|| {
             let sheet_id = self.graph.sheet_id(sheet)?;
             let cell = CellRef::new(sheet_id, Coord::from_excel(row, col, true, true));
-            self.derived_formats.read().unwrap().get(&cell).copied()
+            self.derived_formats.get(&cell)
         })
     }
 
@@ -12614,9 +12590,9 @@ where
             ec.saturating_sub(1) as usize,
         );
         let sheet_id = self.graph.sheet_id(sheet);
-        let derived_formats = self.derived_formats.read().unwrap();
-        let has_derived_formats = sheet_id
-            .is_some_and(|sheet_id| derived_formats.keys().any(|cell| cell.sheet_id == sheet_id));
+        let derived_formats = &self.derived_formats;
+        let has_derived_formats =
+            sheet_id.is_some_and(|sheet_id| derived_formats.any(|cell| cell.sheet_id == sheet_id));
         let mut out = Vec::with_capacity(height);
         if !asheet.has_formats() && !has_derived_formats {
             for rr in 0..height {
@@ -12637,7 +12613,7 @@ where
                 let col0 = sc.saturating_sub(1).saturating_add(cc as u32);
                 let format = asheet.format_id(row0 as usize, col0 as usize).or_else(|| {
                     let cell = CellRef::new(sheet_id?, Coord::new(row0, col0, true, true));
-                    derived_formats.get(&cell).copied()
+                    derived_formats.get(&cell)
                 });
                 let class = format.and_then(|id| format_registry.class(id));
                 row.push(Self::materialize_temporal_egress(

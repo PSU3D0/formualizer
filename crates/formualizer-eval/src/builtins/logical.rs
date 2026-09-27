@@ -444,6 +444,10 @@ impl Function for IfFn {
 
     func_caps!(PURE, SHORT_CIRCUIT, RETURNS_REFERENCE, MAY_SPILL);
 
+    fn family_kernel(&self) -> Option<crate::function::FamilyKernel> {
+        Some(crate::function::FamilyKernel::If)
+    }
+
     fn name(&self) -> &'static str {
         "IF"
     }

@@ -112,6 +112,8 @@ bitflags::bitflags! {
 pub enum FamilyKernel {
     Sum,
     Average,
+    /// `IF`: lifted element-wise (P2-M3), not a range kernel.
+    If,
 }
 
 pub trait Function: Send + Sync + 'static {

@@ -1918,7 +1918,9 @@ fn coords_rendering(
 }
 
 /// Literal rows equal by value (numbers by bits).
-fn literal_rows_equal(
+/// Literal rows equal by value (numbers by bits): the same literal may be
+/// stored under different refs by different formulas.
+pub(crate) fn literal_rows_equal(
     ds: &crate::engine::arena::DataStore,
     a: &[crate::engine::arena::ValueRef],
     b: &[crate::engine::arena::ValueRef],
@@ -1937,12 +1939,12 @@ fn literal_rows_equal(
         })
 }
 
-/// Whether every reference text of `ast` is its reference's rendering
-/// (the instantiation rule reproduces such texts at any offset).
 /// Rendered `sheet!` prefixes by sheet key (few per template: a linear
 /// scan beats hashing).
 type SheetPrefixes = smallvec::SmallVec<[(crate::engine::arena::SheetKey, String); 4]>;
 
+/// Whether every reference text of `ast` is its reference's rendering
+/// (the instantiation rule reproduces such texts at any offset).
 fn formula_texts_rendered(
     ds: &crate::engine::arena::DataStore,
     reg: &crate::engine::sheet_registry::SheetRegistry,

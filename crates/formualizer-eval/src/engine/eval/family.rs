@@ -133,7 +133,9 @@ where
             })
             .sum();
         let threads = rayon::current_num_threads().max(1);
-        let run_chunk = (total / (threads * 8)).clamp(1, 256) as u32;
+        // At least 8 members per task: a one-member run chunk loses the run
+        // (literal plan, lift) for nothing.
+        let run_chunk = (total / (threads * 8)).clamp(8, 256) as u32;
         let mut split: Vec<LayerUnit> = Vec::with_capacity(units.len());
         for &unit in units {
             match unit {
@@ -290,7 +292,7 @@ where
         if !self.config.family_lift || members.len() < 2 {
             return None;
         }
-        let program = super::lift::LiftProgram::compile(ds, template)?;
+        let program = super::lift::LiftProgram::compile(self, ds, template)?;
         let mut bound = Vec::new();
         let mut cells = Vec::with_capacity(members.len());
         for (i, &v) in members.iter().enumerate() {
@@ -327,7 +329,7 @@ where
         // be the one the lift recorded).
         #[cfg(debug_assertions)]
         for ((&v, value), &cell) in members.iter().zip(&values).zip(&cells) {
-            let lifted_format = self.derived_formats.read().unwrap().get(&cell).copied();
+            let lifted_format = self.derived_formats.get(&cell);
             let oracle = self
                 .evaluate_vertex_immutable(v)
                 .unwrap_or_else(LiteralValue::Error);
@@ -335,7 +337,7 @@ where
                 same_value(&oracle, value),
                 "lifted value differs from the per-cell path at {cell:?}: {value:?} vs {oracle:?}"
             );
-            let oracle_format = self.derived_formats.read().unwrap().get(&cell).copied();
+            let oracle_format = self.derived_formats.get(&cell);
             assert_eq!(
                 lifted_format, oracle_format,
                 "lifted format differs from the per-cell path at {cell:?}"
@@ -399,7 +401,13 @@ where
         }
         let id = store.ids().id_of(cell)?;
         let row = store.slots().get(id)?;
-        if row == literals.template_literals.as_slice() {
+        if row == literals.template_literals.as_slice()
+            || crate::engine::graph::authority_host::literal_rows_equal(
+                ds,
+                row,
+                &literals.template_literals,
+            )
+        {
             return Some(false);
         }
         if literals.slots_by_node.is_none() || row.len() != literals.template_literals.len() {
@@ -580,30 +588,21 @@ where
             Some(buffer) => {
                 // One block write (the plan groups it per chunk segment, not
                 // per cell); the formats read under one lock.
-                let entries: Vec<(OverlayValue, Option<crate::format::FormatId>)> = {
-                    let formats = self.derived_formats.read().unwrap();
-                    values
-                        .iter()
-                        .enumerate()
-                        .map(|(i, (_, value))| {
-                            let format_id = if formats.is_empty() {
-                                None
-                            } else {
-                                let row = run.row0 + i as u32;
-                                formats
-                                    .get(&CellRef::new(
-                                        run.sheet,
-                                        Coord::new(row, run.col, true, true),
-                                    ))
-                                    .copied()
-                            };
-                            (
-                                Self::literal_to_overlay_value(value, date_system),
-                                format_id,
-                            )
-                        })
-                        .collect()
-                };
+                let formats = &self.derived_formats;
+                let entries: Vec<(OverlayValue, Option<crate::format::FormatId>)> = values
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (_, value))| {
+                        let format_id = formats.get(&CellRef::new(
+                            run.sheet,
+                            Coord::new(run.row0 + i as u32, run.col, true, true),
+                        ));
+                        (
+                            Self::literal_to_overlay_value(value, date_system),
+                            format_id,
+                        )
+                    })
+                    .collect();
                 buffer.push_column_run(run.sheet, run.row0, run.col, entries);
                 if self.should_flush_computed_write_buffer(buffer) {
                     self.flush_computed_write_buffer(buffer)?;
@@ -611,18 +610,14 @@ where
             }
             None => {
                 // The format lane follows the values (as on the buffered path).
-                let formats: Vec<Option<crate::format::FormatId>> = {
-                    let map = self.derived_formats.read().unwrap();
-                    (0..values.len() as u32)
-                        .map(|i| {
-                            let cell = CellRef::new(
-                                run.sheet,
-                                Coord::new(run.row0 + i, run.col, true, true),
-                            );
-                            map.get(&cell).copied()
-                        })
-                        .collect()
-                };
+                let formats: Vec<Option<crate::format::FormatId>> = (0..values.len() as u32)
+                    .map(|i| {
+                        self.derived_formats.get(&CellRef::new(
+                            run.sheet,
+                            Coord::new(run.row0 + i, run.col, true, true),
+                        ))
+                    })
+                    .collect();
                 for (i, (_, value)) in values.iter().enumerate() {
                     let row = run.row0 + i as u32;
                     let ov = Self::literal_to_overlay_value(value, date_system);

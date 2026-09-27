@@ -355,6 +355,12 @@ fn family_lift_operators_match_per_cell() {
             format!("=B{r}/A{r}+A{r}/B{r}"),
             format!("=A{r}*B{r}-Data!A{r}/2"),
             format!("=A{r}+B{r}-A{r}"),
+            format!("=IF(A{r},B{r},A{r}+1)"),
+            format!("=IF(A{r}>B{r},A{r})"),
+            format!("=IF(A{r}=\"\",\"\",A{r}*B{r})"),
+            format!("=IF(B{r}<0,IF(A{r}<1,\"lo\",A{r}),B{r}+1)*2"),
+            format!("=IF(Data!A{r},A{r}+1,B{r}-1)"),
+            format!("=IF(A{r}+0,,5)"),
         ];
         for (k, f) in fs.into_iter().enumerate() {
             formulas.push((("Sheet1", r, 4 + k as u32), f));
@@ -394,9 +400,15 @@ fn family_lift_random_templates_match_per_cell() {
                 _ => "\"3\"".to_string(),
             };
         }
-        match next(9) {
+        match next(10) {
             0 => format!("-({})", expr(next, depth - 1)),
             1 => format!("({})%", expr(next, depth - 1)),
+            9 => format!(
+                "IF({},{},{})",
+                expr(next, depth - 1),
+                expr(next, depth - 1),
+                expr(next, depth - 1)
+            ),
             k => {
                 let op = ["+", "-", "*", "/", "^", "&", "<", "="][(k as usize) % 8];
                 format!("({}){op}({})", expr(next, depth - 1), expr(next, depth - 1))
@@ -424,4 +436,43 @@ fn family_lift_random_templates_match_per_cell() {
         formulas,
         edits: vec![(("Sheet1", 9, 1), LiteralValue::Number(-0.0))],
     });
+}
+
+/// Bulk-ingested formulas store each literal under its own ref: a member
+/// whose literal values equal the template's (by value, numbers by bits)
+/// needs no binding, so its run is lifted (and the walk binds nothing).
+#[test]
+fn family_lift_bulk_ingested_literals_compare_by_value() {
+    let mut engine = Engine::new(
+        TestWorkbook::new(),
+        EvalConfig {
+            enable_parallel: false,
+            ..arrow_eval_config()
+        },
+    );
+    engine.add_sheet("S").unwrap();
+    {
+        let mut ab = engine.begin_bulk_ingest_arrow();
+        ab.add_sheet("S", 2, 1024);
+        for r in 0..300u32 {
+            ab.append_row("S", &[LiteralValue::Number(r as f64), LiteralValue::Empty])
+                .unwrap();
+        }
+        ab.finish().unwrap();
+    }
+    let mut builder = engine.begin_bulk_ingest();
+    let sheet = builder.add_sheet("S");
+    let batch: Vec<_> = (1..=300u32)
+        .map(|r| (r, 2, parse(format!("=A{r}*2-0.5")).unwrap()))
+        .collect();
+    builder.add_formulas(sheet, batch);
+    builder.finish().unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(engine.lifted_members_for_test(), 300);
+    for r in 1..=300u32 {
+        assert_eq!(
+            engine.get_cell_value("S", r, 2),
+            Some(LiteralValue::Number((r - 1) as f64 * 2.0 - 0.5))
+        );
+    }
 }

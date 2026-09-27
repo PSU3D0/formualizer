@@ -10,6 +10,7 @@ pub mod arrow_ingest;
 pub mod authority;
 pub mod cancel;
 pub(crate) mod convergence;
+pub(crate) mod derived_formats;
 pub mod effects;
 pub mod eval;
 pub mod eval_delta;

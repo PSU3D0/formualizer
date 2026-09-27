@@ -38,6 +38,12 @@ enum LiftNode {
         left: usize,
         right: usize,
     },
+    /// The built-in `IF` with 2 or 3 arguments.
+    If {
+        cond: usize,
+        then: usize,
+        otherwise: Option<usize>,
+    },
 }
 
 pub(super) struct LiftProgram {
@@ -76,9 +82,13 @@ fn static_unary(op: &str) -> Option<&'static str> {
 
 impl LiftProgram {
     /// Compile `template`, or `None` when it is not liftable.
-    pub(super) fn compile(ds: &DataStore, template: AstNodeId) -> Option<Self> {
+    pub(super) fn compile(
+        functions: &dyn crate::traits::FunctionProvider,
+        ds: &DataStore,
+        template: AstNodeId,
+    ) -> Option<Self> {
         let mut program = Self { nodes: Vec::new() };
-        program.compile_node(ds, template)?;
+        program.compile_node(functions, ds, template)?;
         // A template without any reference is a constant family: the walk
         // is as cheap, keep it there.
         program
@@ -88,7 +98,12 @@ impl LiftProgram {
             .then_some(program)
     }
 
-    fn compile_node(&mut self, ds: &DataStore, id: AstNodeId) -> Option<usize> {
+    fn compile_node(
+        &mut self,
+        functions: &dyn crate::traits::FunctionProvider,
+        ds: &DataStore,
+        id: AstNodeId,
+    ) -> Option<usize> {
         if self.nodes.len() >= MAX_LIFT_NODES {
             return None;
         }
@@ -121,7 +136,7 @@ impl LiftProgram {
             AstNodeData::UnaryOp { op_id, expr_id } => {
                 let op = static_unary(ds.resolve_ast_string(*op_id))?;
                 let expr_id = *expr_id;
-                let child = self.compile_node(ds, expr_id)?;
+                let child = self.compile_node(functions, ds, expr_id)?;
                 LiftNode::Unary { op, child }
             }
             AstNodeData::BinaryOp {
@@ -131,9 +146,33 @@ impl LiftProgram {
             } => {
                 let op = static_binary(ds.resolve_ast_string(*op_id))?;
                 let (left_id, right_id) = (*left_id, *right_id);
-                let left = self.compile_node(ds, left_id)?;
-                let right = self.compile_node(ds, right_id)?;
+                let left = self.compile_node(functions, ds, left_id)?;
+                let right = self.compile_node(functions, ds, right_id)?;
                 LiftNode::Binary { op, left, right }
+            }
+            AstNodeData::Function { name_id, .. } => {
+                // Only the built-in IF (an override keeps `family_kernel`
+                // `None`), with the arities its `eval` accepts.
+                let fun = functions.get_function("", ds.resolve_ast_string(*name_id))?;
+                if fun.family_kernel() != Some(crate::function::FamilyKernel::If) {
+                    return None;
+                }
+                let args = ds.get_args(id)?;
+                if !(2..=3).contains(&args.len()) {
+                    return None;
+                }
+                let args: smallvec::SmallVec<[AstNodeId; 3]> = args.iter().copied().collect();
+                let cond = self.compile_node(functions, ds, args[0])?;
+                let then = self.compile_node(functions, ds, args[1])?;
+                let otherwise = match args.get(2) {
+                    Some(&arg) => Some(self.compile_node(functions, ds, arg)?),
+                    None => None,
+                };
+                LiftNode::If {
+                    cond,
+                    then,
+                    otherwise,
+                }
             }
             _ => return None,
         };
@@ -161,12 +200,10 @@ where
             col.saturating_sub(1) as usize,
         );
         let format = asheet.and_then(|a| a.format_id(r0, c0)).or_else(|| {
-            let formats = self.derived_formats.read().unwrap();
-            if formats.is_empty() {
-                return None;
-            }
-            let cell = CellRef::new(sheet_id, Coord::from_excel(row, col, true, true));
-            formats.get(&cell).copied()
+            self.derived_formats.get(&CellRef::new(
+                sheet_id,
+                Coord::from_excel(row, col, true, true),
+            ))
         });
         let raw = asheet
             .map(|a| a.get_cell_value(r0, c0))
@@ -205,10 +242,12 @@ where
             crate::reference::CellRef::new(run.sheet, Coord::new(run.row0, run.col, true, true));
         let interpreter =
             crate::interpreter::Interpreter::new_with_cell(self, current_sheet, first);
-        let mut columns: Vec<Vec<Lifted>> = Vec::with_capacity(program.nodes.len());
+        // Each node is used once (the program is a tree): children's columns
+        // are moved into their parent, and constants stay one value.
+        let mut columns: Vec<Column> = Vec::with_capacity(program.nodes.len());
         for node in &program.nodes {
-            let column: Vec<Lifted> = match node {
-                LiftNode::Value(value) => vec![Ok((value.clone(), None)); n],
+            let column = match node {
+                LiftNode::Value(value) => Column::Const(Ok((value.clone(), None))),
                 LiftNode::Cell {
                     sheet,
                     row,
@@ -237,42 +276,137 @@ where
                                 }
                                 None => Err(ExcelError::new(ExcelErrorKind::Ref)),
                             });
+                        // Operators on scalars give scalars: arrays can
+                        // only come from a read (then the walk decides).
                         if let Ok((LiteralValue::Array(_), _)) = cell {
                             return None;
                         }
                         out.push(cell);
                     }
-                    out
+                    Column::Many(out)
                 }
-                LiftNode::Unary { op, child } => columns[*child]
-                    .iter()
-                    .map(|operand| {
-                        let (value, format) = operand.clone()?;
+                LiftNode::Unary { op, child } => {
+                    let apply = |operand: Lifted| {
+                        let (value, format) = operand?;
                         interpreter
                             .apply_unary_op(op, calc(value, format))
                             .map(split)
-                    })
-                    .collect(),
-                LiftNode::Binary { op, left, right } => columns[*left]
-                    .iter()
-                    .zip(&columns[*right])
-                    .map(|(l, r)| {
-                        let (lv, lf) = l.clone()?;
-                        let (rv, rf) = r.clone()?;
+                    };
+                    match take(&mut columns, *child) {
+                        Column::Const(v) => Column::Const(apply(v)),
+                        Column::Many(vs) => Column::Many(vs.into_iter().map(apply).collect()),
+                    }
+                }
+                LiftNode::Binary { op, left, right } => {
+                    let apply = |l: Lifted, r: Lifted| {
+                        let (lv, lf) = l?;
+                        let (rv, rf) = r?;
                         interpreter.apply_binary_op(op, lv, lf, rv, rf).map(split)
-                    })
-                    .collect(),
+                    };
+                    let (l, r) = (take(&mut columns, *left), take(&mut columns, *right));
+                    match (l, r) {
+                        (Column::Const(l), Column::Const(r)) => Column::Const(apply(l, r)),
+                        (l, r) => Column::Many(
+                            l.iter(n).zip(r.iter(n)).map(|(l, r)| apply(l, r)).collect(),
+                        ),
+                    }
+                }
+                // `IfFn::eval` through `dispatch` (SHORT_CIRCUIT: arity was
+                // checked at compile; the result's own format propagates,
+                // GENERAL dropped). Both branches are computed column-wise;
+                // they are pure, so only the taken one is observable.
+                LiftNode::If {
+                    cond,
+                    then,
+                    otherwise,
+                } => {
+                    let cond = take(&mut columns, *cond);
+                    let then = take(&mut columns, *then);
+                    let otherwise = match otherwise {
+                        Some(k) => take(&mut columns, *k),
+                        None => Column::Const(Ok((LiteralValue::Boolean(false), None))),
+                    };
+                    Column::Many(
+                        cond.iter(n)
+                            .zip(then.iter(n))
+                            .zip(otherwise.iter(n))
+                            .map(|((condition, then), otherwise)| {
+                                let (condition, _) = condition?;
+                                let taken = match condition {
+                                    LiteralValue::Boolean(b) => b,
+                                    LiteralValue::Number(x) => x != 0.0,
+                                    LiteralValue::Int(x) => x != 0,
+                                    LiteralValue::Empty => false,
+                                    LiteralValue::Error(error) => {
+                                        return Ok((LiteralValue::Error(error), None));
+                                    }
+                                    _ => {
+                                        return Ok((
+                                            LiteralValue::Error(
+                                                ExcelError::new_value().with_message(
+                                                    "IF condition must be boolean or number",
+                                                ),
+                                            ),
+                                            None,
+                                        ));
+                                    }
+                                };
+                                let (value, format) = if taken { then? } else { otherwise? };
+                                Ok((
+                                    value,
+                                    format.filter(|id| *id != crate::format::FormatId::GENERAL),
+                                ))
+                            })
+                            .collect(),
+                    )
+                }
             };
-            if column
-                .iter()
-                .any(|v| matches!(v, Ok((LiteralValue::Array(_), _))))
-            {
-                return None;
-            }
             columns.push(column);
         }
-        columns.pop()
+        Some(columns.pop()?.iter(n).collect())
     }
+}
+
+/// A node's values over the run: one per member, or one for all.
+enum Column {
+    Const(Lifted),
+    Many(Vec<Lifted>),
+}
+
+impl Column {
+    fn iter(self, n: usize) -> ColumnIter {
+        match self {
+            Column::Const(v) => ColumnIter::Const(v, n),
+            Column::Many(vs) => ColumnIter::Many(vs.into_iter()),
+        }
+    }
+}
+
+enum ColumnIter {
+    Const(Lifted, usize),
+    Many(std::vec::IntoIter<Lifted>),
+}
+
+impl Iterator for ColumnIter {
+    type Item = Lifted;
+
+    #[inline]
+    fn next(&mut self) -> Option<Lifted> {
+        match self {
+            ColumnIter::Const(v, left) => {
+                if *left == 0 {
+                    return None;
+                }
+                *left -= 1;
+                Some(v.clone())
+            }
+            ColumnIter::Many(it) => it.next(),
+        }
+    }
+}
+
+fn take(columns: &mut [Column], idx: usize) -> Column {
+    std::mem::replace(&mut columns[idx], Column::Many(Vec::new()))
 }
 
 fn calc<'a>(value: LiteralValue, format: Option<FormatId>) -> CalcValue<'a> {
