@@ -2882,6 +2882,7 @@ impl DependencyGraph {
             self.store.set_dirty(vertex_id, false);
             self.formula_dirty.legacy_remove(&vertex_id);
         }
+        self.formula_dirty.legacy_shrink_if_sparse();
         self.authority_observe_clean(vertices);
     }
 

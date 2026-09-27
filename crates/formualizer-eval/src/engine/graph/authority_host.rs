@@ -1008,7 +1008,15 @@ impl DependencyGraph {
                 self.authority_mark_closure(seeds, &mut affected);
             }
         }
-        self.formula_dirty.legacy_extend(affected.iter().copied());
+        // Only evaluable kinds enter the dirty set: value seeds are never
+        // evaluated, so nothing would ever remove them, and the set (which
+        // every pass iterates) would grow with each distinct edited cell.
+        let dirtyable: Vec<VertexId> = affected
+            .iter()
+            .copied()
+            .filter(|&v| self.is_dirtyable_kind(v))
+            .collect();
+        self.formula_dirty.legacy_extend(dirtyable);
         affected.into_iter().collect()
     }
 

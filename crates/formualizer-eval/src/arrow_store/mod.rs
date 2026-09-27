@@ -1312,9 +1312,63 @@ pub(crate) struct OverlayFragmentPayload {
     text: Option<ArrayRef>,
     errors: Option<Arc<UInt8Array>>,
     estimated_bytes: usize,
+    /// Length of the lane buffers this payload views (its own length unless
+    /// it is a zero-copy slice of a larger payload).
+    root_len: usize,
 }
 
 impl OverlayFragmentPayload {
+    /// A slice keeps sharing its parent's buffers while it is at least a
+    /// quarter of them (or they are tiny); smaller slices are copied so a
+    /// split never pins more than max(4x its size, SHARE_ALWAYS_LEN). Each
+    /// element is therefore copied O(log) times over any sequence of splits,
+    /// and a split is O(1) otherwise.
+    const SHARE_MIN_FRACTION: usize = 4;
+    const SHARE_ALWAYS_LEN: usize = 64;
+
+    #[inline]
+    fn shares(root_len: usize, len: usize) -> bool {
+        root_len <= Self::SHARE_ALWAYS_LEN
+            || len.saturating_mul(Self::SHARE_MIN_FRACTION) >= root_len
+    }
+
+    #[inline]
+    fn len(&self) -> usize {
+        self.type_tags.len()
+    }
+
+    fn slice(&self, offset: usize, len: usize) -> Self {
+        debug_assert!(offset.saturating_add(len) <= self.len());
+        if len == self.len() {
+            return self.clone();
+        }
+        if !Self::shares(self.root_len, len) {
+            return Self::from_values(self.values_slice(offset, len));
+        }
+        fn cut<A: Array + Clone + 'static>(a: &Arc<A>, offset: usize, len: usize) -> Arc<A> {
+            let sliced = a.slice(offset, len);
+            Arc::new(
+                sliced
+                    .as_any()
+                    .downcast_ref::<A>()
+                    .expect("slice keeps the array type")
+                    .clone(),
+            )
+        }
+        let own = self.len().max(1);
+        Self {
+            type_tags: cut(&self.type_tags, offset, len),
+            numbers: self.numbers.as_ref().map(|a| cut(a, offset, len)),
+            booleans: self.booleans.as_ref().map(|a| cut(a, offset, len)),
+            text: self.text.as_ref().map(|a| a.slice(offset, len)),
+            errors: self.errors.as_ref().map(|a| cut(a, offset, len)),
+            // Proportional share of the parent's estimate: deterministic, and
+            // the pieces of a split sum to at most the parent.
+            estimated_bytes: self.estimated_bytes.saturating_mul(len) / own,
+            root_len: self.root_len,
+        }
+    }
+
     fn from_values(values: Vec<OverlayValue>) -> Self {
         let len = values.len();
         let mut tag_b = UInt8Builder::with_capacity(len);
@@ -1393,6 +1447,7 @@ impl OverlayFragmentPayload {
             text,
             errors,
             estimated_bytes,
+            root_len: len,
         }
     }
 
@@ -1468,9 +1523,71 @@ pub(crate) enum OverlayFragment {
     RunRange {
         start: u32,
         len: u32,
-        run_ends: Vec<u32>,
+        run_ends: RunEnds,
         payload: OverlayFragmentPayload,
     },
+}
+
+/// Exclusive run ends of a `RunRange`, relative to the fragment start. The
+/// buffer is shared between the pieces of a split: run `i` of a piece ends at
+/// `ends[i] - base`, capped at the piece length.
+#[derive(Debug, Clone)]
+pub(crate) struct RunEnds {
+    ends: arrow_buffer::ScalarBuffer<u32>,
+    base: u32,
+    len: u32,
+}
+
+impl RunEnds {
+    fn new(ends: Vec<u32>) -> Self {
+        let len = ends.last().copied().unwrap_or(0);
+        Self {
+            ends: ends.into(),
+            base: 0,
+            len,
+        }
+    }
+
+    #[inline]
+    fn count(&self) -> usize {
+        self.ends.len()
+    }
+
+    /// Exclusive end of run `idx`, relative to the piece start.
+    #[inline]
+    fn end(&self, idx: usize) -> usize {
+        (self.ends[idx] - self.base).min(self.len) as usize
+    }
+
+    /// Index of the run holding relative offset `rel`.
+    #[inline]
+    fn run_at(&self, rel: usize) -> usize {
+        let key = rel as u64 + self.base as u64;
+        self.ends.partition_point(|end| (*end as u64) <= key)
+    }
+
+    /// The runs of `[rel_start, rel_end)` as `(ends, first run index, run count)`.
+    fn slice(&self, rel_start: usize, rel_end: usize, share: bool) -> (Self, usize, usize) {
+        let lo = self.run_at(rel_start);
+        let hi = self.run_at(rel_end - 1) + 1;
+        let len = (rel_end - rel_start) as u32;
+        let ends = if share {
+            Self {
+                ends: self.ends.slice(lo, hi - lo),
+                base: self.base + rel_start as u32,
+                len,
+            }
+        } else {
+            let mut ends: Vec<u32> = (lo..hi)
+                .map(|idx| (self.end(idx) - rel_start) as u32)
+                .collect();
+            if let Some(last) = ends.last_mut() {
+                *last = (*last).min(len);
+            }
+            Self::new(ends)
+        };
+        (ends, lo, hi - lo)
+    }
 }
 
 impl OverlayFragment {
@@ -1578,7 +1695,7 @@ impl OverlayFragment {
         Some(Self::RunRange {
             start: u32::try_from(start).expect("overlay start fits in u32"),
             len: u32::try_from(len).expect("overlay length fits in u32"),
-            run_ends: merged_ends,
+            run_ends: RunEnds::new(merged_ends),
             payload: OverlayFragmentPayload::from_values(merged_values),
         })
     }
@@ -1595,7 +1712,7 @@ impl OverlayFragment {
             OverlayFragment::RunRange {
                 run_ends, payload, ..
             } => OVERLAY_FRAGMENT_BASE_BYTES
-                .saturating_add(run_ends.len().saturating_mul(core::mem::size_of::<u32>()))
+                .saturating_add(run_ends.count().saturating_mul(core::mem::size_of::<u32>()))
                 .saturating_add(payload.estimated_bytes()),
         }
     }
@@ -1723,6 +1840,82 @@ impl OverlayFragment {
         self.get_scalar(off).is_some()
     }
 
+    /// Coverage test without reading the value (payload entries are never
+    /// null, so coverage is the interval or the offset list).
+    #[inline]
+    fn covers_offset_fast(&self, off: usize) -> bool {
+        match self {
+            OverlayFragment::SparseOffsets { offsets, .. } => {
+                u32::try_from(off).is_ok_and(|off| offsets.binary_search(&off).is_ok())
+            }
+            OverlayFragment::DenseRange { start, len, .. }
+            | OverlayFragment::RunRange { start, len, .. } => {
+                let start = *start as usize;
+                off >= start && off - start < *len as usize
+            }
+        }
+    }
+
+    /// Take the points this fragment covers into a rebuilt fragment of the
+    /// same kind. `None` when it covers no point. Returns the bytes of the
+    /// removed points (estimated like `Overlay::point_estimate`).
+    fn fold_points(
+        &self,
+        points: &mut FxHashMap<usize, OverlayValue>,
+    ) -> Option<(usize, OverlayFragment)> {
+        let mut removed = 0usize;
+        let mut take = |off: usize, points: &mut FxHashMap<usize, OverlayValue>| {
+            points.remove(&off).inspect(|v| {
+                removed = removed.saturating_add(Overlay::point_estimate(v));
+            })
+        };
+        match self {
+            OverlayFragment::SparseOffsets { offsets, payload } => {
+                if !offsets
+                    .iter()
+                    .any(|off| points.contains_key(&(*off as usize)))
+                {
+                    return None;
+                }
+                let cells: Vec<_> = offsets
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(idx, off)| {
+                        let off = *off as usize;
+                        take(off, points)
+                            .or_else(|| payload.overlay_value(idx))
+                            .map(|v| (off, v))
+                    })
+                    .collect();
+                let rebuilt = OverlayFragment::sparse_offsets(cells)?;
+                Some((removed, rebuilt))
+            }
+            OverlayFragment::DenseRange { start, len, .. }
+            | OverlayFragment::RunRange { start, len, .. } => {
+                let start = *start as usize;
+                let len = *len as usize;
+                if !(start..start + len).any(|off| points.contains_key(&off)) {
+                    return None;
+                }
+                let values: Vec<OverlayValue> = (start..start + len)
+                    .map(|off| {
+                        take(off, points).unwrap_or_else(|| {
+                            self.get_scalar(off)
+                                .expect("fragment covers its interval")
+                                .to_overlay_value()
+                        })
+                    })
+                    .collect();
+                let rebuilt = if matches!(self, OverlayFragment::RunRange { .. }) {
+                    OverlayFragment::run_range(start, values)?
+                } else {
+                    OverlayFragment::dense_range(start, values)?
+                };
+                Some((removed, rebuilt))
+            }
+        }
+    }
+
     fn get_scalar(&self, off: usize) -> Option<OverlayScalar<'_>> {
         match self {
             OverlayFragment::SparseOffsets { offsets, payload } => {
@@ -1753,9 +1946,7 @@ impl OverlayFragment {
                 if rel >= *len as usize {
                     return None;
                 }
-                let rel_u32 = u32::try_from(rel).ok()?;
-                let run_idx = run_ends.partition_point(|end| *end <= rel_u32);
-                payload.get_scalar(run_idx)
+                payload.get_scalar(run_ends.run_at(rel))
             }
         }
     }
@@ -1989,8 +2180,17 @@ impl OverlayFragment {
                 }
                 let base = *start as usize;
                 let rel_start = abs_start.checked_sub(base)?;
-                let len = abs_end.saturating_sub(abs_start);
-                OverlayFragment::dense_range(new_start, payload.values_slice(rel_start, len))
+                let len = abs_end
+                    .saturating_sub(abs_start)
+                    .min(payload.len().saturating_sub(rel_start));
+                if len == 0 {
+                    return None;
+                }
+                Some(OverlayFragment::DenseRange {
+                    start: u32::try_from(new_start).expect("overlay start fits in u32"),
+                    len: len as u32,
+                    payload: payload.slice(rel_start, len),
+                })
             }
             _ => None,
         }
@@ -2022,33 +2222,23 @@ impl OverlayFragment {
 
         let rel_start = abs_start - base;
         let rel_end = abs_end - base;
-        let mut new_run_ends = Vec::new();
-        let mut new_values = Vec::new();
-        let mut prev_end = 0usize;
-
-        for (run_idx, end) in run_ends.iter().enumerate() {
-            let run_start = prev_end;
-            let run_end = *end as usize;
-            let inter_start = run_start.max(rel_start);
-            let inter_end = run_end.min(rel_end);
-            if inter_start < inter_end {
-                new_run_ends.push(inter_end - rel_start);
-                if let Some(value) = payload.overlay_value(run_idx) {
-                    new_values.push(value);
-                }
-            }
-            prev_end = run_end;
-            if prev_end >= rel_end {
-                break;
-            }
-        }
-
-        OverlayFragment::run_range_from_parts(
-            new_start,
-            abs_end.saturating_sub(abs_start),
-            new_run_ends,
-            new_values,
-        )
+        // Zero-copy piece (shared run ends and payload) unless it would pin
+        // buffers more than 4x its size; see `OverlayFragmentPayload::slice`.
+        let lo = run_ends.run_at(rel_start);
+        let hi = run_ends.run_at(rel_end - 1) + 1;
+        let share = OverlayFragmentPayload::shares(payload.root_len, hi - lo);
+        let (new_ends, lo, count) = run_ends.slice(rel_start, rel_end, share);
+        let payload = if share {
+            payload.slice(lo, count)
+        } else {
+            OverlayFragmentPayload::from_values(payload.values_slice(lo, count))
+        };
+        Some(OverlayFragment::RunRange {
+            start: u32::try_from(new_start).expect("overlay start fits in u32"),
+            len: (rel_end - rel_start) as u32,
+            run_ends: new_ends,
+            payload,
+        })
     }
 
     fn cells(&self) -> Vec<(usize, OverlayValue)> {
@@ -2149,6 +2339,12 @@ pub struct Overlay {
     points: FxHashMap<usize, OverlayValue>,
     format_points: FxHashMap<usize, FormatId>,
     fragments: Vec<OverlayFragment>,
+    /// Points whose offset a fragment also covers (the point wins). Kept
+    /// exact so `len` stays the logical coverage; folded into the fragments
+    /// once they are a fixed fraction of the fragment coverage.
+    shadowed: usize,
+    /// Sum of fragment coverage lengths.
+    fragment_coverage: usize,
     // Deterministic (and intentionally approximate) accounting of overlay memory.
     // This is used for budget enforcement/observability; it does not attempt to reflect
     // the allocator's exact overhead.
@@ -2166,6 +2362,8 @@ impl Overlay {
             points: FxHashMap::default(),
             format_points: FxHashMap::default(),
             fragments: Vec::new(),
+            shadowed: 0,
+            fragment_coverage: 0,
             estimated_bytes: 0,
         }
     }
@@ -2239,14 +2437,80 @@ impl Overlay {
         }
     }
 
+    /// Set one offset. Points are read before fragments and applied after
+    /// them, so the point shadows any fragment covering `off`: the fragment is
+    /// left as it is (a split would copy it, O(fragment) per point write, and
+    /// add a fragment per write). Its shadowed value stays counted in
+    /// `estimated_bytes` until a fragment write or removal covers it.
     #[inline]
     pub(crate) fn set_scalar(&mut self, off: usize, v: OverlayValue) -> isize {
         self.epoch = next_overlay_epoch();
-        let removed = self.remove_scalar(off);
         let new_est = Self::point_estimate(&v);
-        self.points.insert(off, v);
-        self.adjust_estimated_bytes(new_est as isize);
-        removed.saturating_add(new_est as isize)
+        let old_est = match self.points.insert(off, v) {
+            Some(old) => Self::point_estimate(&old),
+            None => {
+                if self.fragment_covers(off) {
+                    self.shadowed += 1;
+                }
+                0
+            }
+        };
+        let delta = new_est as isize - old_est as isize;
+        self.adjust_estimated_bytes(delta);
+        if self.shadowed
+            >= Self::SHADOW_FOLD_MIN.max(self.fragment_coverage / Self::SHADOW_FOLD_DEN)
+        {
+            delta.saturating_add(self.fold_shadowed_points())
+        } else {
+            delta
+        }
+    }
+
+    /// Fold shadowed points once they reach `max(MIN, coverage / DEN)`: the
+    /// fold is O(fragment coverage + points), so each point write pays O(DEN)
+    /// amortized for it.
+    const SHADOW_FOLD_MIN: usize = 32;
+    const SHADOW_FOLD_DEN: usize = 8;
+
+    #[inline]
+    fn fragment_covers(&self, off: usize) -> bool {
+        self.fragments.iter().any(|f| f.covers_offset_fast(off))
+    }
+
+    /// Rewrite every fragment holding a shadowed point with the point's value
+    /// and drop those points. Returns the estimated-bytes delta.
+    fn fold_shadowed_points(&mut self) -> isize {
+        if self.shadowed == 0 {
+            return 0;
+        }
+        let mut delta = 0isize;
+        let mut fragments = core::mem::take(&mut self.fragments);
+        for fragment in fragments.iter_mut() {
+            let Some(folded) = fragment.fold_points(&mut self.points) else {
+                continue;
+            };
+            let (points_removed, replacement) = folded;
+            delta = delta.saturating_sub(points_removed as isize);
+            delta = delta.saturating_add(
+                replacement.estimated_bytes() as isize - fragment.estimated_bytes() as isize,
+            );
+            *fragment = replacement;
+        }
+        self.fragments = fragments;
+        self.shadowed = 0;
+        self.adjust_estimated_bytes(delta);
+        delta
+    }
+
+    /// Before points are dropped: how many of them are shadowed.
+    fn shadowed_among(&self, offsets: &[usize]) -> usize {
+        if self.shadowed == 0 {
+            return 0;
+        }
+        offsets
+            .iter()
+            .filter(|off| self.fragment_covers(**off))
+            .count()
     }
 
     #[inline]
@@ -2256,43 +2520,80 @@ impl Overlay {
 
     pub(crate) fn apply_fragment(&mut self, fragment: OverlayFragment) -> isize {
         self.epoch = next_overlay_epoch();
+        // A write that is small next to the existing fragments goes in as
+        // points: carving it out of them would cost O(fragments) scans and
+        // O(fragment) sparse rewrites per write, and add fragments that every
+        // later read scans. The points fold back in at the shadow threshold.
+        if fragment
+            .coverage_len()
+            .saturating_mul(Self::SHADOW_FOLD_DEN)
+            < self.fragment_coverage
+        {
+            let mut delta = 0isize;
+            for (off, value) in fragment.cells() {
+                delta = delta.saturating_add(self.set_scalar(off, value));
+            }
+            return delta;
+        }
         let mut delta = self.remove_points_covered_by_fragment(&fragment);
         delta = delta.saturating_add(self.remove_fragments_covered_by_fragment(&fragment));
 
         let fragment_est = fragment.estimated_bytes();
+        self.fragment_coverage = self
+            .fragment_coverage
+            .saturating_add(fragment.coverage_len());
         self.fragments.push(fragment);
         self.adjust_estimated_bytes(fragment_est as isize);
         delta.saturating_add(fragment_est as isize)
     }
 
-    fn remove_points_covered_by_fragment(&mut self, fragment: &OverlayFragment) -> isize {
+    /// Point offsets in `range`: O(min(range, points)).
+    fn point_offsets_in_range(&self, range: core::ops::Range<usize>) -> Vec<usize> {
+        if range.len() < self.points.len() {
+            range.filter(|off| self.points.contains_key(off)).collect()
+        } else {
+            self.points
+                .keys()
+                .copied()
+                .filter(|off| range.contains(off))
+                .collect()
+        }
+    }
+
+    /// Drop the points at `offsets` (fragments untouched). Returns the bytes
+    /// removed; keeps `shadowed` exact.
+    fn drop_points(&mut self, offsets: &[usize]) -> usize {
+        let shadowed = self.shadowed_among(offsets);
         let mut removed = 0usize;
-        match fragment {
-            OverlayFragment::SparseOffsets { offsets, .. } => {
-                for off in offsets.iter().copied() {
-                    if let Some(old) = self.points.remove(&(off as usize)) {
-                        removed = removed.saturating_add(Self::point_estimate(&old));
-                    }
-                }
-            }
-            OverlayFragment::DenseRange { .. } | OverlayFragment::RunRange { .. } => {
-                if let Some(range) = fragment.interval_coverage() {
-                    let keys: Vec<_> = self
-                        .points
-                        .keys()
-                        .copied()
-                        .filter(|off| range.contains(off))
-                        .collect();
-                    for off in keys {
-                        if let Some(old) = self.points.remove(&off) {
-                            removed = removed.saturating_add(Self::point_estimate(&old));
-                        }
-                    }
-                }
+        let mut dropped = 0usize;
+        for off in offsets {
+            if let Some(old) = self.points.remove(off) {
+                removed = removed.saturating_add(Self::point_estimate(&old));
+                dropped += 1;
             }
         }
+        debug_assert!(shadowed <= dropped);
+        self.shadowed = self.shadowed.saturating_sub(shadowed);
         self.estimated_bytes = self.estimated_bytes.saturating_sub(removed);
-        -(removed as isize)
+        removed
+    }
+
+    fn remove_points_covered_by_fragment(&mut self, fragment: &OverlayFragment) -> isize {
+        let offsets: Vec<usize> = match fragment {
+            OverlayFragment::SparseOffsets { offsets, .. } => offsets
+                .iter()
+                .map(|off| *off as usize)
+                .filter(|off| self.points.contains_key(off))
+                .collect(),
+            OverlayFragment::DenseRange { .. } | OverlayFragment::RunRange { .. } => fragment
+                .interval_coverage()
+                .map(|range| self.point_offsets_in_range(range))
+                .unwrap_or_default(),
+        };
+        if offsets.is_empty() {
+            return 0;
+        }
+        -(self.drop_points(&offsets) as isize)
     }
 
     fn remove_fragments_covered_by_fragment(&mut self, replacement: &OverlayFragment) -> isize {
@@ -2318,24 +2619,33 @@ impl Overlay {
             delta = delta.saturating_add(new_est as isize - old_est as isize);
         }
         self.fragments = fragments;
+        self.refresh_fragment_coverage();
         self.adjust_estimated_bytes(delta);
         delta
+    }
+
+    #[inline]
+    fn refresh_fragment_coverage(&mut self) {
+        self.fragment_coverage = self
+            .fragments
+            .iter()
+            .map(OverlayFragment::coverage_len)
+            .fold(0usize, usize::saturating_add);
     }
 
     #[inline]
     pub(crate) fn remove_scalar(&mut self, off: usize) -> isize {
         self.epoch = next_overlay_epoch();
         let mut delta = 0isize;
-        if let Some(old) = self.points.remove(&off) {
-            let old_est = Self::point_estimate(&old);
-            self.estimated_bytes = self.estimated_bytes.saturating_sub(old_est);
-            delta = delta.saturating_sub(old_est as isize);
+        if self.points.contains_key(&off) {
+            delta = delta.saturating_sub(self.drop_points(&[off]) as isize);
         }
 
-        if !self.fragments.is_empty() {
-            let mut fragments = Vec::with_capacity(self.fragments.len());
+        if !self.fragments.is_empty() && self.fragment_covers(off) {
+            let mut fragment_delta = 0isize;
+            let mut fragments = Vec::with_capacity(self.fragments.len() + 1);
             for fragment in self.fragments.drain(..) {
-                if fragment.get_scalar(off).is_none() {
+                if !fragment.covers_offset_fast(off) {
                     fragments.push(fragment);
                     continue;
                 }
@@ -2347,10 +2657,12 @@ impl Overlay {
                     .map(OverlayFragment::estimated_bytes)
                     .fold(0usize, usize::saturating_add);
                 fragments.extend(replacements);
-                delta = delta.saturating_add(new_est as isize - old_est as isize);
+                fragment_delta = fragment_delta.saturating_add(new_est as isize - old_est as isize);
             }
             self.fragments = fragments;
-            self.adjust_estimated_bytes(delta);
+            self.refresh_fragment_coverage();
+            self.adjust_estimated_bytes(fragment_delta);
+            delta = delta.saturating_add(fragment_delta);
         }
 
         delta
@@ -2368,24 +2680,19 @@ impl Overlay {
         }
 
         let mut delta = 0isize;
-        let removed_points: Vec<_> = self
-            .points
-            .keys()
-            .copied()
-            .filter(|off| range.contains(off))
-            .collect();
-        for off in removed_points {
-            if let Some(old) = self.points.remove(&off) {
-                let old_est = Self::point_estimate(&old);
-                self.estimated_bytes = self.estimated_bytes.saturating_sub(old_est);
-                delta = delta.saturating_sub(old_est as isize);
-            }
+        let offsets = self.point_offsets_in_range(range.clone());
+        if !offsets.is_empty() {
+            delta = delta.saturating_sub(self.drop_points(&offsets) as isize);
         }
 
         if !self.fragments.is_empty() {
             let mut fragment_delta = 0isize;
             let mut fragments = Vec::with_capacity(self.fragments.len());
             for fragment in self.fragments.drain(..) {
+                if !fragment.has_any_in_range(range.clone()) {
+                    fragments.push(fragment);
+                    continue;
+                }
                 let old_est = fragment.estimated_bytes();
                 let replacements = fragment.subtract_interval(range.clone());
                 let new_est = replacements
@@ -2396,6 +2703,7 @@ impl Overlay {
                 fragment_delta = fragment_delta.saturating_add(new_est as isize - old_est as isize);
             }
             self.fragments = fragments;
+            self.refresh_fragment_coverage();
             self.adjust_estimated_bytes(fragment_delta);
             delta = delta.saturating_add(fragment_delta);
         }
@@ -2409,6 +2717,8 @@ impl Overlay {
         let freed = self.estimated_bytes;
         self.points.clear();
         self.fragments.clear();
+        self.shadowed = 0;
+        self.fragment_coverage = 0;
         self.estimated_bytes = 0;
         freed
     }
@@ -2418,14 +2728,10 @@ impl Overlay {
         self.clear_all()
     }
 
+    /// Number of covered offsets (a shadowed point counts once).
     #[inline]
     pub fn len(&self) -> usize {
-        self.points.len().saturating_add(
-            self.fragments
-                .iter()
-                .map(OverlayFragment::coverage_len)
-                .sum(),
-        )
+        (self.points.len() - self.shadowed).saturating_add(self.fragment_coverage)
     }
 
     #[inline]
@@ -2554,13 +2860,10 @@ impl Overlay {
         stats
     }
 
+    /// Fragments are pairwise disjoint; points may shadow fragment offsets
+    /// (counted exactly by `shadowed`); `len` is the logical coverage.
     pub(crate) fn debug_is_normalized(&self) -> bool {
         let mut covered = std::collections::HashSet::new();
-        for off in self.points.keys().copied() {
-            if !covered.insert(off) {
-                return false;
-            }
-        }
         for fragment in &self.fragments {
             for (off, _) in fragment.cells() {
                 if !covered.insert(off) {
@@ -2568,7 +2871,16 @@ impl Overlay {
                 }
             }
         }
-        covered.len() == self.len()
+        let fragment_coverage = covered.len();
+        let mut shadowed = 0usize;
+        for off in self.points.keys().copied() {
+            if !covered.insert(off) {
+                shadowed += 1;
+            }
+        }
+        shadowed == self.shadowed
+            && fragment_coverage == self.fragment_coverage
+            && covered.len() == self.len()
     }
 
     pub(crate) fn debug_recomputed_estimated_bytes(&self) -> usize {
@@ -3603,10 +3915,16 @@ impl<'a> OverlayCascade<'a> {
                 if inter_start >= inter_end {
                     return;
                 }
-                let mut prev_end = 0usize;
-                for (run_idx, run_end) in run_ends.iter().enumerate() {
+                let first = run_ends.run_at(inter_start - frag_start);
+                let mut prev_end = if first == 0 {
+                    0
+                } else {
+                    run_ends.end(first - 1)
+                };
+                for run_idx in first..run_ends.count() {
+                    let run_end = run_ends.end(run_idx);
                     let run_start_abs = frag_start.saturating_add(prev_end);
-                    let run_end_abs = frag_start.saturating_add(*run_end as usize);
+                    let run_end_abs = frag_start.saturating_add(run_end);
                     let start_abs = run_start_abs.max(inter_start);
                     let end_abs = run_end_abs.min(inter_end);
                     if start_abs < end_abs {
@@ -3614,7 +3932,7 @@ impl<'a> OverlayCascade<'a> {
                             f(abs - range.start, payload, run_idx);
                         }
                     }
-                    prev_end = *run_end as usize;
+                    prev_end = run_end;
                     if run_end_abs >= inter_end {
                         break;
                     }
@@ -3644,16 +3962,22 @@ impl<'a> OverlayCascade<'a> {
         if inter_start >= inter_end {
             return;
         }
-        let mut prev_end = 0usize;
-        for (run_idx, run_end) in run_ends.iter().enumerate() {
+        let first = run_ends.run_at(inter_start - frag_start);
+        let mut prev_end = if first == 0 {
+            0
+        } else {
+            run_ends.end(first - 1)
+        };
+        for run_idx in first..run_ends.count() {
+            let run_end = run_ends.end(run_idx);
             let run_start_abs = frag_start.saturating_add(prev_end);
-            let run_end_abs = frag_start.saturating_add(*run_end as usize);
+            let run_end_abs = frag_start.saturating_add(run_end);
             let start_abs = run_start_abs.max(inter_start);
             let end_abs = run_end_abs.min(inter_end);
             if start_abs < end_abs {
                 f(payload, run_idx, end_abs - start_abs);
             }
-            prev_end = *run_end as usize;
+            prev_end = run_end;
             if run_end_abs >= inter_end {
                 break;
             }
@@ -6181,7 +6505,7 @@ mod tests {
     }
 
     #[test]
-    fn overlay_dense_point_replacement_splits_dense_not_sparse() {
+    fn overlay_dense_point_replacement_shadows_without_splitting() {
         let mut overlay = Overlay::new();
         overlay.apply_fragment(
             OverlayFragment::dense_range(
@@ -6195,10 +6519,12 @@ mod tests {
 
         overlay.set_scalar(3, OverlayValue::Number(99.0));
 
+        // The point shadows the fragment (no O(fragment) split per write).
         let stats = overlay.debug_stats();
         assert_eq!(stats.points, 1);
-        assert_eq!(stats.dense_fragments, 2);
+        assert_eq!(stats.dense_fragments, 1);
         assert_eq!(stats.sparse_fragments, 0);
+        assert_eq!(stats.covered_len, 6);
         assert!(overlay.debug_is_normalized());
         assert_eq!(
             overlay.get_scalar(2).unwrap().to_literal(),
@@ -6259,7 +6585,7 @@ mod tests {
     }
 
     #[test]
-    fn overlay_run_point_replacement_splits_run_not_sparse() {
+    fn overlay_run_point_replacement_shadows_without_splitting() {
         let mut overlay = Overlay::new();
         overlay.apply_fragment(
             OverlayFragment::run_range(0, vec![OverlayValue::Number(1.0); 10]).unwrap(),
@@ -6269,8 +6595,9 @@ mod tests {
 
         let stats = overlay.debug_stats();
         assert_eq!(stats.points, 1);
-        assert_eq!(stats.run_fragments, 2);
+        assert_eq!(stats.run_fragments, 1);
         assert_eq!(stats.sparse_fragments, 0);
+        assert_eq!(stats.covered_len, 10);
         assert!(overlay.debug_is_normalized());
         assert_eq!(
             overlay.get_scalar(4).unwrap().to_literal(),
@@ -6284,6 +6611,133 @@ mod tests {
             overlay.get_scalar(6).unwrap().to_literal(),
             LiteralValue::Number(1.0)
         );
+    }
+
+    #[test]
+    fn overlay_point_removal_splits_dense_and_run_zero_copy() {
+        for run in [false, true] {
+            let values: Vec<_> = (0..1000)
+                .map(|i| OverlayValue::Number(if run { (i / 10) as f64 } else { i as f64 }))
+                .collect();
+            let fragment = if run {
+                OverlayFragment::run_range(0, values).unwrap()
+            } else {
+                OverlayFragment::dense_range(0, values).unwrap()
+            };
+            let mut overlay = Overlay::new();
+            overlay.apply_fragment(fragment);
+            overlay.remove_scalar(400);
+            overlay.remove_scalar(10);
+            let stats = overlay.debug_stats();
+            assert_eq!(stats.points, 0);
+            assert_eq!(stats.covered_len, 998);
+            assert!(overlay.debug_is_normalized());
+            assert_eq!(
+                overlay.estimated_bytes(),
+                overlay.debug_recomputed_estimated_bytes()
+            );
+            for i in 0..1000usize {
+                let got = overlay.get_scalar(i).map(|v| v.to_literal());
+                if i == 400 || i == 10 {
+                    assert!(got.is_none(), "{run} {i}");
+                } else {
+                    let want = if run { (i / 10) as f64 } else { i as f64 };
+                    assert_eq!(got, Some(LiteralValue::Number(want)), "{run} {i}");
+                }
+            }
+            // Pieces of a split share the parent's lanes; a small piece
+            // (under a quarter of them) is copied.
+            let mut pieces: Vec<_> = overlay
+                .fragments
+                .iter()
+                .map(|f| {
+                    let p = match f {
+                        OverlayFragment::DenseRange { payload, .. }
+                        | OverlayFragment::RunRange { payload, .. } => payload,
+                        OverlayFragment::SparseOffsets { .. } => unreachable!(),
+                    };
+                    (f.coverage_len(), p.root_len)
+                })
+                .collect();
+            pieces.sort();
+            let root = if run { 100 } else { 1000 };
+            let small = if run { 1 } else { 10 };
+            assert_eq!(pieces[0], (10, small), "{run}");
+            assert!(
+                pieces[1..].iter().all(|(_, r)| *r == root),
+                "{run} {pieces:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn overlay_shadowed_points_fold_into_fragments() {
+        for run in [false, true] {
+            let n = 400usize;
+            let base = |i: usize| if run { 7.0 } else { i as f64 };
+            let values: Vec<_> = (0..n).map(|i| OverlayValue::Number(base(i))).collect();
+            let fragment = if run {
+                OverlayFragment::run_range(0, values).unwrap()
+            } else {
+                OverlayFragment::dense_range(0, values).unwrap()
+            };
+            let mut overlay = Overlay::new();
+            overlay.apply_fragment(fragment);
+            overlay.set_scalar(n + 5, OverlayValue::Number(-1.0));
+            let mut delta_sum = 0isize;
+            let start_bytes = overlay.estimated_bytes() as isize;
+            // Threshold is max(32, 400 / 8) = 50 shadowed points.
+            for k in 0..49usize {
+                delta_sum += overlay.set_scalar(k * 7, OverlayValue::Number(1000.0 + k as f64));
+            }
+            assert_eq!(overlay.debug_stats().points, 50);
+            assert!(overlay.debug_is_normalized());
+            delta_sum += overlay.set_scalar(49 * 7, OverlayValue::Text(Arc::from("t")));
+            let stats = overlay.debug_stats();
+            assert_eq!(stats.points, 1, "only the unshadowed point stays");
+            assert_eq!(stats.covered_len, n + 1);
+            assert!(overlay.debug_is_normalized());
+            assert_eq!(
+                overlay.estimated_bytes(),
+                overlay.debug_recomputed_estimated_bytes()
+            );
+            assert_eq!(overlay.estimated_bytes() as isize, start_bytes + delta_sum);
+            for i in 0..n {
+                let want = if i % 7 == 0 && i / 7 < 49 {
+                    LiteralValue::Number(1000.0 + (i / 7) as f64)
+                } else if i == 49 * 7 {
+                    LiteralValue::Text("t".into())
+                } else {
+                    LiteralValue::Number(base(i))
+                };
+                assert_eq!(
+                    overlay.get_scalar(i).unwrap().to_literal(),
+                    want,
+                    "{run} {i}"
+                );
+            }
+            // Re-setting a shadowed offset, then applying a covering fragment,
+            // keeps the shadow count exact.
+            overlay.set_scalar(3, OverlayValue::Number(3.5));
+            overlay.set_scalar(3, OverlayValue::Number(4.5));
+            assert!(overlay.debug_is_normalized());
+            overlay.apply_fragment(
+                OverlayFragment::dense_range(0, vec![OverlayValue::Number(0.0); 8]).unwrap(),
+            );
+            assert!(overlay.debug_is_normalized());
+            overlay.set_scalar(20, OverlayValue::Number(1.0));
+            overlay.remove_range(15..25);
+            assert!(overlay.debug_is_normalized());
+            assert!(overlay.get_scalar(20).is_none());
+            overlay.set_scalar(30, OverlayValue::Number(1.0));
+            overlay.remove_scalar(30);
+            assert!(overlay.get_scalar(30).is_none());
+            assert!(overlay.debug_is_normalized());
+            assert_eq!(
+                overlay.estimated_bytes(),
+                overlay.debug_recomputed_estimated_bytes()
+            );
+        }
     }
 
     #[test]
