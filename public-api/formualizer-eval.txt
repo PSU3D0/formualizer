@@ -6209,6 +6209,7 @@ pub formualizer_eval::engine::EvalConfig::enable_virtual_dep_telemetry: bool
 pub formualizer_eval::engine::EvalConfig::evaluation_budgets: formualizer_eval::engine::resource_ledger::EvaluationBudgets
 pub formualizer_eval::engine::EvalConfig::family_execution: bool
 pub formualizer_eval::engine::EvalConfig::family_kernels: bool
+pub formualizer_eval::engine::EvalConfig::family_lift: bool
 pub formualizer_eval::engine::EvalConfig::formula_compression: bool
 pub formualizer_eval::engine::EvalConfig::formula_parse_policy: formualizer_eval::engine::FormulaParsePolicy
 pub formualizer_eval::engine::EvalConfig::formula_plane_mode: formualizer_eval::engine::FormulaPlaneMode
