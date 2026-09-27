@@ -570,6 +570,9 @@ struct LaneCounts {
     n_err: usize,
 }
 
+/// Initial lane capacity (rows) of a sheet's first ingest chunk.
+const FIRST_CHUNK_ROWS: usize = 1024;
+
 impl IngestBuilder {
     pub fn new(
         sheet_name: &str,
@@ -579,29 +582,34 @@ impl IngestBuilder {
     ) -> Self {
         let mut chunks = Vec::with_capacity(ncols);
         chunks.resize_with(ncols, Vec::new);
+        // The first chunk's lanes start small and grow: a sheet with fewer
+        // rows than a chunk (most sheets) never reserves chunk-row lanes
+        // for every column, which dominated the load peak of wide sheets.
+        // Later chunks follow a full one, so they reserve a whole chunk.
+        let cap = chunk_rows.clamp(1, FIRST_CHUNK_ROWS);
         Self {
             name: Arc::from(sheet_name.to_string()),
             ncols,
             chunk_rows: chunk_rows.max(1),
             date_system,
             num_builders: (0..ncols)
-                .map(|_| Float64Builder::with_capacity(chunk_rows))
+                .map(|_| Float64Builder::with_capacity(cap))
                 .collect(),
             bool_builders: (0..ncols)
-                .map(|_| BooleanBuilder::with_capacity(chunk_rows))
+                .map(|_| BooleanBuilder::with_capacity(cap))
                 .collect(),
             // Text payload bytes are reserved lazily: most lanes never see text,
             // and a text lane grows its value buffer on first use.
             text_builders: (0..ncols)
-                .map(|_| StringBuilder::with_capacity(chunk_rows, 0))
+                .map(|_| StringBuilder::with_capacity(cap, 0))
                 .collect(),
             err_builders: (0..ncols)
-                .map(|_| UInt8Builder::with_capacity(chunk_rows))
+                .map(|_| UInt8Builder::with_capacity(cap))
                 .collect(),
             tag_builders: (0..ncols)
-                .map(|_| UInt8Builder::with_capacity(chunk_rows))
+                .map(|_| UInt8Builder::with_capacity(cap))
                 .collect(),
-            format_builders: (0..ncols).map(|_| Vec::with_capacity(chunk_rows)).collect(),
+            format_builders: (0..ncols).map(|_| Vec::with_capacity(cap)).collect(),
             lane_counts: vec![LaneCounts::default(); ncols],
             next_text_bytes: vec![0; ncols],
             needs_provision: false,

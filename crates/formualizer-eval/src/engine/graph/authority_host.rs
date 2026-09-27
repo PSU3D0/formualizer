@@ -2032,6 +2032,54 @@ pub(crate) fn literal_rows_equal(
 /// scan beats hashing).
 type SheetPrefixes = smallvec::SmallVec<[(crate::engine::arena::SheetKey, String); 4]>;
 
+/// Whether `text` is the rendering (`ReferenceType` Display) of `ref_type`,
+/// without formatting it for cells and ranges: the quoted `sheet!` prefix
+/// (cached in `prefixes`) plus the coordinates.
+fn reference_text_rendered(
+    ds: &crate::engine::arena::DataStore,
+    reg: &crate::engine::sheet_registry::SheetRegistry,
+    text: &str,
+    ref_type: &crate::engine::arena::CompactRefType,
+    prefixes: &mut SheetPrefixes,
+) -> bool {
+    use crate::engine::arena::{CompactRefType as R, SheetKey};
+    match (ref_type, coords_rendering(ref_type)) {
+        (R::Cell { sheet: None, .. } | R::Range { sheet: None, .. }, Some(c)) => {
+            text.as_bytes() == &c[..]
+        }
+        // `Display` renders a sheet-qualified cell or range as
+        // the quoted sheet name, `!`, then the coordinates.
+        (
+            R::Cell {
+                sheet: Some(key), ..
+            }
+            | R::Range {
+                sheet: Some(key), ..
+            },
+            Some(c),
+        ) => {
+            let prefix = match prefixes.iter().position(|(k, _)| k == key) {
+                Some(i) => &prefixes[i].1,
+                None => {
+                    let name = match *key {
+                        SheetKey::Id(id) => reg.name(id),
+                        SheetKey::Name(name) => ds.resolve_ast_string(name),
+                    };
+                    let mut p = formualizer_common::format_a1_sheet_name(name).into_owned();
+                    p.push('!');
+                    prefixes.push((*key, p));
+                    &prefixes[prefixes.len() - 1].1
+                }
+            };
+            let bytes = text.as_bytes();
+            bytes.len() == prefix.len() + c.len()
+                && bytes.starts_with(prefix.as_bytes())
+                && bytes[prefix.len()..] == c[..]
+        }
+        _ => is_rendering(text, &ds.reconstruct_reference_type_for_eval(ref_type, reg)),
+    }
+}
+
 /// Whether every reference text of `ast` is its reference's rendering
 /// (the instantiation rule reproduces such texts at any offset).
 fn formula_texts_rendered(
@@ -2040,7 +2088,7 @@ fn formula_texts_rendered(
     ast: AstNodeId,
     prefixes: &mut SheetPrefixes,
 ) -> bool {
-    use crate::engine::arena::{AstNodeData as N, CompactRefType as R, SheetKey};
+    use crate::engine::arena::AstNodeData as N;
     let mut stack: smallvec::SmallVec<[AstNodeId; 16]> = smallvec::smallvec![ast];
     while let Some(id) = stack.pop() {
         let Some(node) = ds.get_node(id) else {
@@ -2052,42 +2100,7 @@ fn formula_texts_rendered(
                 ref_type,
             } => {
                 let text = ds.resolve_ast_string(*original_id);
-                let ok = match (ref_type, coords_rendering(ref_type)) {
-                    (R::Cell { sheet: None, .. } | R::Range { sheet: None, .. }, Some(c)) => {
-                        text.as_bytes() == &c[..]
-                    }
-                    // `Display` renders a sheet-qualified cell or range as
-                    // the quoted sheet name, `!`, then the coordinates.
-                    (
-                        R::Cell {
-                            sheet: Some(key), ..
-                        }
-                        | R::Range {
-                            sheet: Some(key), ..
-                        },
-                        Some(c),
-                    ) => {
-                        let prefix = match prefixes.iter().position(|(k, _)| k == key) {
-                            Some(i) => &prefixes[i].1,
-                            None => {
-                                let name = match *key {
-                                    SheetKey::Id(id) => reg.name(id),
-                                    SheetKey::Name(name) => ds.resolve_ast_string(name),
-                                };
-                                let mut p =
-                                    formualizer_common::format_a1_sheet_name(name).into_owned();
-                                p.push('!');
-                                prefixes.push((*key, p));
-                                &prefixes[prefixes.len() - 1].1
-                            }
-                        };
-                        let bytes = text.as_bytes();
-                        bytes.len() == prefix.len() + c.len()
-                            && bytes.starts_with(prefix.as_bytes())
-                            && bytes[prefix.len()..] == c[..]
-                    }
-                    _ => is_rendering(text, &ds.reconstruct_reference_type_for_eval(ref_type, reg)),
-                };
+                let ok = reference_text_rendered(ds, reg, text, ref_type, prefixes);
                 if !ok {
                     return false;
                 }
@@ -2125,6 +2138,7 @@ pub(crate) fn template_rendered_refs(
 ) -> Vec<bool> {
     use crate::engine::arena::AstNodeData as N;
     let mut out = Vec::new();
+    let mut prefixes = SheetPrefixes::new();
     let mut stack = vec![tmpl];
     while let Some(b) = stack.pop() {
         let Some(nb) = ds.get_node(b) else {
@@ -2136,10 +2150,13 @@ pub(crate) fn template_rendered_refs(
                 ref_type,
             } => {
                 let text = ds.resolve_ast_string(*original_id);
-                out.push(is_rendering(
-                    text,
-                    &ds.reconstruct_reference_type_for_eval(ref_type, reg),
-                ));
+                let rendered = reference_text_rendered(ds, reg, text, ref_type, &mut prefixes);
+                debug_assert_eq!(
+                    rendered,
+                    is_rendering(text, &ds.reconstruct_reference_type_for_eval(ref_type, reg)),
+                    "reference text rendering check disagrees with Display for {text:?}"
+                );
+                out.push(rendered);
             }
             N::UnaryOp { expr_id, .. } => stack.push(*expr_id),
             N::BinaryOp {
