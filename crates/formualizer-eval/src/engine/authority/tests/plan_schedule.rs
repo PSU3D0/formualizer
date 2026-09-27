@@ -347,7 +347,7 @@ fn schedule_adapter_sorts_input_runs_like_cells() {
             });
             id += 1;
         }
-        if id % 3 == 0 {
+        if id.is_multiple_of(3) {
             input.push(OrderedCell {
                 sheet,
                 row: 90_000 + id,
