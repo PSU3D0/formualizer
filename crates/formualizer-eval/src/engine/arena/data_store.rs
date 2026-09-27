@@ -329,6 +329,18 @@ impl DataStore {
         self.reconstruct_reference_type(ref_type, sheet_registry)
     }
 
+    /// See [`super::ast::AstArena::compact`].
+    pub(crate) fn compact_asts(
+        &mut self,
+        roots: impl IntoIterator<Item = AstNodeId>,
+    ) -> (Vec<u32>, super::string_interner::StringGarbage) {
+        self.asts.compact(roots)
+    }
+
+    pub(crate) fn ast_node_count(&self) -> usize {
+        self.asts.node_count()
+    }
+
     pub fn get_node(&self, id: AstNodeId) -> Option<&super::ast::AstNodeData> {
         self.asts.get(id)
     }

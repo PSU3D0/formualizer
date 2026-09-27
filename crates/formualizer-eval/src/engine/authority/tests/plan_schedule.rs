@@ -63,15 +63,18 @@ fn schedule_adapter_sparse_layers_cycles_ids_and_side_table() {
     );
     assert_eq!(
         out.schedule.layers[0].vertices,
-        [VertexId::new(99995), VertexId::new(99997)]
+        [VertexId::new(99997), VertexId::new(99995)]
     );
+    // Acyclic cells order by authority id; rows 3 and 5 are not adjacent,
+    // so the layer has no family run.
+    assert!(out.schedule.layers[0].runs.is_empty());
     assert_eq!(out.schedule.cycles[0], [VertexId::new(99996)]);
     assert_eq!(
         out.schedule.cycles[1],
         [VertexId::new(99994), VertexId::new(99998)]
     );
     let order: Vec<_> = out.entries.iter().map(|e| e.cell.row).collect();
-    assert_eq!(order, [5, 3, 4, 6, 2, 1]);
+    assert_eq!(order, [3, 5, 4, 6, 2, 1]);
     for e in &out.entries {
         assert_eq!(e.cell.id, e.cell.row + 900);
         assert_eq!(e.cell.owner, 42);
@@ -127,7 +130,9 @@ fn schedule_adapter_fail_every_allocation_and_simultaneous_admission() {
 
 #[test]
 fn schedule_adapter_cancellation_at_every_checkpoint_and_translation_failure() {
-    let input = fixture(1024);
+    // Constant key bytes skip their radix passes, so the work per cell is
+    // smaller than with all 32 passes: 4096 cells give enough checkpoints.
+    let input = fixture(4096);
     let mut calls = 0;
     schedule(&input, 0, None, translate, |_| {
         calls += 1;
@@ -205,7 +210,7 @@ fn schedule_adapter_actual_legacy_scc_and_legality() {
         let sid = engine.graph.sheet_id("Sheet1").unwrap();
         let addr = |r| CellRef::new(sid, Coord::new(r, 0, true, true));
         let vertices: Vec<_> = (0..formulas.len() as u32)
-            .map(|r| *engine.graph.get_vertex_id_for_address(&addr(r)).unwrap())
+            .map(|r| engine.graph.get_vertex_id_for_address(&addr(r)).unwrap())
             .collect();
         let (vdeps, augmented) =
             VirtualDepBuilder::new(&engine).build_with_range_members(&vertices);
@@ -229,7 +234,7 @@ fn schedule_adapter_actual_legacy_scc_and_legality() {
             None,
             |cell| {
                 assert_eq!(cell.sheet, sid);
-                Ok(*engine
+                Ok(engine
                     .graph
                     .get_vertex_id_for_address(&addr(cell.row))
                     .unwrap())
@@ -297,7 +302,8 @@ fn schedule_adapter_counted_linear_scaling() {
         if prev != 0 {
             assert!(out.work <= 4 * prev);
         }
-        assert!(out.work <= 48 * n as u64 + 21 * 512);
+        // 25 radix passes (position key for family runs) plus the run scan.
+        assert!(out.work <= 56 * n as u64 + 25 * 512);
         println!(
             "SCHEDULE_SCALE cells={n} work={} peak={} retained={}",
             out.work,
@@ -306,4 +312,81 @@ fn schedule_adapter_counted_linear_scaling() {
         );
         prev = out.work;
     }
+}
+
+/// Large plans whose cells come as runs (a family slice at one layer): the
+/// adapter sorts the runs, not the cells, with exactly the cell sort's
+/// order (debug builds also compare with the cell sort).
+#[test]
+fn schedule_adapter_sorts_input_runs_like_cells() {
+    let mut input = Vec::new();
+    let mut id = 0u32;
+    // Slices of 500 rows over 8 columns and 2 sheets, emitted in a
+    // scrambled slice order, layer by column, plus single cells and a cycle.
+    let mut slices: Vec<(u16, u32, u32)> = Vec::new();
+    for sheet in [1u16, 4] {
+        for col in 0..8u32 {
+            for block in 0..6u32 {
+                slices.push((sheet, col, block * 500));
+            }
+        }
+    }
+    let mut k = 7usize;
+    while !slices.is_empty() {
+        k = (k * 31 + 11) % slices.len();
+        let (sheet, col, row0) = slices.swap_remove(k);
+        for r in row0..row0 + 500 {
+            input.push(OrderedCell {
+                sheet,
+                row: r,
+                col,
+                id,
+                owner: col,
+                layer: u64::from(col % 3) * 10 + u64::from(sheet),
+                cycle: None,
+            });
+            id += 1;
+        }
+        if id.is_multiple_of(3) {
+            input.push(OrderedCell {
+                sheet,
+                row: 90_000 + id,
+                col: 40,
+                id,
+                owner: 999,
+                layer: 5,
+                cycle: Some(2),
+            });
+            id += 1;
+        }
+    }
+    let n = input.len();
+    let out = schedule(
+        &input,
+        0,
+        None,
+        |c| Ok(VertexId::new(c.id + 1_000)),
+        |_| Ok(()),
+    )
+    .unwrap();
+    // Reference: sort by (layer, cyclic, cycle, member), stable.
+    let mut want = input.clone();
+    want.sort_by_key(|c| {
+        let member = if c.cycle.is_some() {
+            u64::from(c.id + 1_000)
+        } else {
+            (u64::from(c.sheet) << 44) | (u64::from(c.col) << 24) | u64::from(c.row)
+        };
+        (c.layer, c.cycle.is_some(), c.cycle.unwrap_or(0), member)
+    });
+    assert_eq!(out.entries.len(), n);
+    for (e, w) in out.entries.iter().zip(&want) {
+        assert_eq!(
+            (e.cell.sheet, e.cell.row, e.cell.col, e.cell.id),
+            (w.sheet, w.row, w.col, w.id)
+        );
+    }
+    let layered: usize = out.schedule.layers.iter().map(|l| l.vertices.len()).sum();
+    let cycled: usize = out.schedule.cycles.iter().map(|c| c.len()).sum();
+    assert_eq!(layered + cycled, n);
 }

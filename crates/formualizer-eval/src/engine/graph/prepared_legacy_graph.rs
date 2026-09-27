@@ -235,7 +235,7 @@ impl DependencyGraph {
     fn existing_target_state(&self, id: VertexId) -> ExistingTargetState {
         ExistingTargetState {
             kind: self.store.kind(id),
-            ast_id: self.vertex_formulas.get(&id).copied(),
+            ast_id: self.vertex_formulas.get(&id).map(|f| f.root()),
             value_ref: self.vertex_values.get(&id).copied(),
             dirty: self.is_dirty(id),
             volatile: self.store.is_volatile(id),
@@ -423,9 +423,7 @@ impl DependencyGraph {
                 Coord::new(packed.row0(), packed.col0(), true, true),
             );
             if let Some(id) = self
-                .cell_to_vertex
-                .get(&addr)
-                .copied()
+                .cell_vertex(&addr)
                 .or_else(|| self.load_packed_to_vertex.get(&packed).copied())
             {
                 if !self.store.vertex_exists_active(id) {
@@ -593,9 +591,7 @@ impl DependencyGraph {
                 Coord::new(packed.row0(), packed.col0(), true, true),
             );
             let actual = self
-                .cell_to_vertex
-                .get(&addr)
-                .copied()
+                .cell_vertex(&addr)
                 .or_else(|| self.load_packed_to_vertex.get(packed).copied());
             if plan.new_vertex_set.contains(packed) {
                 if actual.is_some() {
@@ -697,6 +693,7 @@ impl DependencyGraph {
             self.cell_to_vertex.insert(addr, id);
         }
         for (target, _) in &plan.existing_targets {
+            self.materialize_vertex(*target);
             self.remove_dependent_edges(*target);
             self.detach_vertex_from_names(*target);
             self.clear_pending_name_references(*target);

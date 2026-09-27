@@ -1,34 +1,29 @@
-//! Identity carry across structural edits and history replay (M3, design
-//! §6, decision 9).
+//! History replay direction (M3, design §6, decision 9 as amended in
+//! Program 2).
 //!
-//! Structural edits, moves and sheet operations resync the store from the
-//! graph's already-transformed formulas (a rebuild, which stays in legacy's
-//! O(F·|AST|) class for the same edit). Identities follow the legacy
-//! vertex, which keeps its `VertexId` when legacy moves it: [`Carried`] is
-//! captured from the synced store before a structural operation and maps
-//! each formula vertex to its id and pre-edit cell, so a moved formula
-//! keeps its id and a destroyed one retires it (the counter continues, so
-//! a fresh formula never reuses it).
+//! A formula cell's id is its executor `VertexId` (P2-M2: one id space).
+//! Identities therefore follow the graph's vertices: a moved cell keeps its
+//! vertex, a formula -> value -> formula edit keeps the cell's vertex (value
+//! cells still have vertices), and undo/redo of a structural delete revives
+//! the deleted vertex itself (`VertexEditor::apply_inverse` of
+//! `RemoveVertex`). No id is renumbered or given to another cell. The
+//! Program 1 host kept its own id counter and a structural capture; both
+//! went away with the unification.
 //!
-//! History replay may bring a retired id back (ID4). Legacy undo/redo
-//! replays graph mutations without ids, and re-creates removed cells on new
-//! vertices (or none: a value cell may have no vertex), so the host keeps
-//! an [`IdJournal`] keyed by **cell**. History is LIFO, so every replayed
-//! step runs in exactly the coordinate frame its forward step left: an id
-//! retired at cell c (in the frame before the retiring step) is wanted
-//! back at c when that step is undone. Per cell, `past` holds ids retired
-//! on the current timeline (most recent last) and `future` the ids an undo
-//! retired, for redo. A creation during undo resurrects the top of `past`,
-//! during redo the top of `future`, and a fresh creation outside replay
+//! Legacy replay also removes a cell's vertex where it has no prior state
+//! to restore (undo of a formula typed over a value: Arrow holds the value,
+//! so the logged event carries none) and re-creates the cell later on a
+//! new vertex. The graph keeps an [`IdJournal`] keyed by **cell** for
+//! those: history is LIFO, so every replayed step runs in exactly the
+//! coordinate frame its forward step left, and a vertex removed at cell c
+//! is wanted back at c when that step is undone. Per cell, `past` holds
+//! ids removed on the current timeline (most recent last) and `future` the
+//! ids an undo removed, for redo. A creation during undo revives the top of
+//! `past`, during redo the top of `future`, and a creation outside replay
 //! starts a new timeline.
 
-use super::geom::Cell;
-use super::identity::Vid;
-use crate::engine::vertex::VertexId;
-use rustc_hash::FxHashMap;
-
-/// Direction of the mutations the host is about to sync.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// Direction of the mutations the host is about to sync.
 pub enum Replay {
     #[default]
     Forward,
@@ -36,8 +31,9 @@ pub enum Replay {
     Redo,
 }
 
-/// Formula vertex → (id, cell) before the pending structural mutations.
-pub type Carried = FxHashMap<VertexId, (Vid, Cell)>;
+use super::geom::Cell;
+use super::identity::Vid;
+use rustc_hash::FxHashMap;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct IdHistory {
@@ -45,6 +41,7 @@ struct IdHistory {
     future: Vec<Vid>,
 }
 
+/// Vertices removed per cell, for replay (see the module doc).
 #[derive(Clone, Debug, Default)]
 pub struct IdJournal {
     mode: Replay,
@@ -60,7 +57,7 @@ impl IdJournal {
         self.mode = mode;
     }
 
-    /// The formula at `cell` (pre-mutation frame) left, retiring `id`.
+    /// The vertex `id` at `cell` (pre-mutation frame) was removed.
     pub fn retired(&mut self, cell: Cell, id: Vid) {
         let h = self.hist.entry(cell).or_default();
         match self.mode {
@@ -69,9 +66,12 @@ impl IdJournal {
         }
     }
 
-    /// A formula appeared at `cell` (post-mutation frame): the id replay
-    /// restores, if any. `None` means a fresh id.
+    /// A vertex is needed at `cell` (post-mutation frame): the id replay
+    /// revives, if any. `None` means a new vertex.
     pub fn created(&mut self, cell: Cell) -> Option<Vid> {
+        if self.hist.is_empty() {
+            return None;
+        }
         let h = self.hist.get_mut(&cell)?;
         let id = match self.mode {
             Replay::Forward => {
@@ -87,10 +87,22 @@ impl IdJournal {
         id
     }
 
-    /// The id an undo would restore at `cell` (tests).
-    #[cfg(test)]
-    pub fn undo_target(&self, cell: Cell) -> Option<Vid> {
-        self.hist.get(&cell)?.past.last().copied()
+    /// Drop `id` from the top of `cell`'s stack for the current mode (the
+    /// vertex was revived by other means: a `RemoveVertex` undo names it).
+    pub fn forget(&mut self, cell: Cell, id: Vid) {
+        let Some(h) = self.hist.get_mut(&cell) else {
+            return;
+        };
+        let stack = match self.mode {
+            Replay::Undo => &mut h.past,
+            Replay::Forward | Replay::Redo => &mut h.future,
+        };
+        if stack.last() == Some(&id) {
+            stack.pop();
+        }
+        if h.past.is_empty() && h.future.is_empty() {
+            self.hist.remove(&cell);
+        }
     }
 
     /// Ids waiting for replay (tests, accounting).
@@ -99,16 +111,6 @@ impl IdJournal {
             .values()
             .map(|h| h.past.len() + h.future.len())
             .sum()
-    }
-
-    pub fn heap_bytes(&self) -> usize {
-        use super::dir::hash_table_bytes;
-        hash_table_bytes::<(Cell, IdHistory)>(self.hist.capacity())
-            + self
-                .hist
-                .values()
-                .map(|h| (h.past.capacity() + h.future.capacity()) * size_of::<Vid>())
-                .sum::<usize>()
     }
 }
 
@@ -120,14 +122,14 @@ mod tests {
     fn undo_redo_chain_restores_ids_per_timeline() {
         let c = (0, 4, 2);
         let mut j = IdJournal::default();
-        // F(1) -> value -> F'(2) forward.
+        // Vertex 1 removed forward, a new one created.
         j.retired(c, 1);
         assert_eq!(j.created(c), None);
-        // undo F'->value, undo value->F.
+        // undo: 2 removed, 1 revived.
         j.set_mode(Replay::Undo);
         j.retired(c, 2);
         assert_eq!(j.created(c), Some(1));
-        // redo value, redo F'.
+        // redo: 1 removed, 2 revived.
         j.set_mode(Replay::Redo);
         j.retired(c, 1);
         assert_eq!(j.created(c), Some(2));

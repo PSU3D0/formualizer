@@ -14,6 +14,10 @@ pub struct FormulaIngestRecord {
     pub(crate) source_order: Option<SourceFormulaOrder>,
     pub(crate) source_family: Option<SourceFamilyId>,
     pub(crate) partition_owner: Option<SourceFamilyId>,
+    /// Load-time family grouping (Program 2): `Some(anchor)` (0-based)
+    /// when this cell is a relative copy of the formula at `anchor`, whose
+    /// arena AST is `ast_id`; the member's own AST was never interned.
+    pub(crate) member_anchor: Option<(u32, u32)>,
 }
 
 impl FormulaIngestRecord {
@@ -26,7 +30,22 @@ impl FormulaIngestRecord {
             source_order: None,
             source_family: None,
             partition_owner: None,
+            member_anchor: None,
         }
+    }
+
+    /// A relative copy of `template` (the formula at 0-based `anchor`).
+    pub(crate) fn member(row: u32, col: u32, template: AstNodeId, anchor: (u32, u32)) -> Self {
+        Self {
+            member_anchor: Some(anchor),
+            ..Self::new(row, col, template, None)
+        }
+    }
+
+    /// Whether this record is a grouped family member (its `ast_id` is the
+    /// family template, valid at the anchor cell, not at this cell).
+    pub fn is_family_member(&self) -> bool {
+        self.member_anchor.is_some()
     }
 
     pub(crate) fn with_source_proof(
@@ -40,6 +59,48 @@ impl FormulaIngestRecord {
         self.partition_owner = partition_owner;
         self
     }
+}
+
+/// Load-time family grouping state for one sheet (Program 2, P2-M2):
+/// the last formula staged in each column and the one before the current
+/// cell in its row. A formula that is exactly the formula above it (or to
+/// its left) relocated becomes a member of that formula's family and is
+/// never interned; see `Engine::stage_formula_ast`.
+#[derive(Debug, Default)]
+pub struct FormulaFamilyGrouper {
+    /// col0 -> (row0 of the last formula staged in the column, its family)
+    pub(crate) by_col: rustc_hash::FxHashMap<u32, (u32, GroupedFamily)>,
+    /// (row0, col0, family) of the last formula staged.
+    pub(crate) last: Option<(u32, u32, GroupedFamily)>,
+    /// Members grouped so far.
+    pub(crate) members: u64,
+}
+
+impl FormulaFamilyGrouper {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Number of formulas staged as family members.
+    pub fn members(&self) -> u64 {
+        self.members
+    }
+
+    pub(crate) fn note(&mut self, row0: u32, col0: u32, family: GroupedFamily) {
+        self.by_col.insert(col0, (row0, family.clone()));
+        self.last = Some((row0, col0, family));
+    }
+}
+
+/// A family template candidate: the template's arena root, its 0-based
+/// anchor cell, and (computed on first use) per reference whether the
+/// template's text is its rendering; `Some(None)` when the template
+/// cannot have members (it needs a structural rewrite).
+#[derive(Clone, Debug)]
+pub(crate) struct GroupedFamily {
+    pub(crate) template: AstNodeId,
+    pub(crate) anchor: (u32, u32),
+    pub(crate) rendered: Option<Option<Arc<[bool]>>>,
 }
 
 #[derive(Clone, Debug)]

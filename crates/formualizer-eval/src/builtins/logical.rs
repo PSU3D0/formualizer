@@ -187,6 +187,9 @@ pub struct AndFn;
 /// Caps: PURE, REDUCTION, BOOL_ONLY, SHORT_CIRCUIT
 /// [formualizer-docgen:schema:end]
 impl Function for AndFn {
+    fn family_kernel(&self) -> Option<crate::function::FamilyKernel> {
+        Some(crate::function::FamilyKernel::And)
+    }
     func_caps!(PURE, REDUCTION, BOOL_ONLY, SHORT_CIRCUIT);
 
     fn name(&self) -> &'static str {
@@ -312,6 +315,9 @@ pub struct OrFn;
 /// Caps: PURE, REDUCTION, BOOL_ONLY, SHORT_CIRCUIT
 /// [formualizer-docgen:schema:end]
 impl Function for OrFn {
+    fn family_kernel(&self) -> Option<crate::function::FamilyKernel> {
+        Some(crate::function::FamilyKernel::Or)
+    }
     func_caps!(PURE, REDUCTION, BOOL_ONLY, SHORT_CIRCUIT);
 
     fn name(&self) -> &'static str {
@@ -443,6 +449,10 @@ impl Function for IfFn {
     }
 
     func_caps!(PURE, SHORT_CIRCUIT, RETURNS_REFERENCE, MAY_SPILL);
+
+    fn family_kernel(&self) -> Option<crate::function::FamilyKernel> {
+        Some(crate::function::FamilyKernel::If)
+    }
 
     fn name(&self) -> &'static str {
         "IF"

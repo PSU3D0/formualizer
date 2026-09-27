@@ -393,6 +393,9 @@ struct StreamWorksheetOptions {
 struct FormulaStaging {
     parse_cache: rustc_hash::FxHashMap<String, Option<formualizer_eval::engine::AstNodeId>>,
     formulas: Vec<FormulaIngestRecord>,
+    /// Load-time family grouping: relative copies of the formula above
+    /// (or to the left) are staged as members and never interned.
+    grouper: formualizer_eval::engine::FormulaFamilyGrouper,
     observed: usize,
     handed_to_engine: usize,
 }
@@ -404,6 +407,7 @@ impl FormulaStaging {
         Self {
             parse_cache,
             formulas: Vec::new(),
+            grouper: formualizer_eval::engine::FormulaFamilyGrouper::new(),
             observed: 0,
             handed_to_engine: 0,
         }
@@ -646,8 +650,16 @@ impl CalamineAdapter {
             engine.stage_formula_text(sheet, excel_row, excel_col, normalized);
             staging.handed_to_engine += 1;
         } else {
-            let ast_id = if let Some(cached) = staging.parse_cache.get(&normalized) {
-                *cached
+            let record = if let Some(cached) = staging.parse_cache.get(&normalized) {
+                cached.map(|ast_id| {
+                    engine.note_staged_formula(&mut staging.grouper, excel_row, excel_col, ast_id);
+                    FormulaIngestRecord::new(
+                        excel_row,
+                        excel_col,
+                        ast_id,
+                        Some(Arc::<str>::from(normalized.as_str())),
+                    )
+                })
             } else {
                 let parsed = match formualizer_parse::parser::parse(&normalized) {
                     Ok(parsed) => Some(parsed),
@@ -663,17 +675,38 @@ impl CalamineAdapter {
                             calamine::Error::Io(std::io::Error::other(error.to_string()))
                         })?,
                 };
-                let ast_id = parsed.as_ref().map(|ast| engine.intern_formula_ast(ast));
-                staging.parse_cache.insert(normalized.clone(), ast_id);
-                ast_id
+                match parsed {
+                    Some(ast) => {
+                        let record = engine.stage_formula_ast(
+                            &mut staging.grouper,
+                            excel_row,
+                            excel_col,
+                            &ast,
+                            None,
+                        );
+                        // A member's text is not worth caching: relative
+                        // copies do not repeat their text.
+                        if record.is_family_member() {
+                            Some(record)
+                        } else {
+                            let ast_id = record.ast_id;
+                            staging.parse_cache.insert(normalized.clone(), Some(ast_id));
+                            Some(FormulaIngestRecord::new(
+                                excel_row,
+                                excel_col,
+                                ast_id,
+                                Some(Arc::<str>::from(normalized)),
+                            ))
+                        }
+                    }
+                    None => {
+                        staging.parse_cache.insert(normalized, None);
+                        None
+                    }
+                }
             };
-            if let Some(ast_id) = ast_id {
-                staging.formulas.push(FormulaIngestRecord::new(
-                    excel_row,
-                    excel_col,
-                    ast_id,
-                    Some(Arc::<str>::from(normalized)),
-                ));
+            if let Some(record) = record {
+                staging.formulas.push(record);
                 staging.handed_to_engine += 1;
             }
         }

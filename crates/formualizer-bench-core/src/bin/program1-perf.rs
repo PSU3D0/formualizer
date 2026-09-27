@@ -273,10 +273,31 @@ mod imp {
         }
         let tg = targets(&path, edits)?;
         let base = live();
+        // Peaks cover load + eval only: the heap peak restarts at the live
+        // heap and VmHWM is reset (clear_refs 5) after the untimed pre-read.
+        PEAK.store(LIVE.load(Ordering::Relaxed), Ordering::Relaxed);
+        let _ = std::fs::write("/proc/self/clear_refs", "5");
 
-        let config = match mode.as_str() {
+        #[allow(unused_mut)]
+        let mut config = match mode.as_str() {
             "interactive" => WorkbookConfig::interactive(),
             _ => WorkbookConfig::ephemeral(),
+        };
+        // --seq: sequential evaluation (no rayon layer pool).
+        if args.iter().any(|a| a == "--seq") {
+            config.eval.enable_parallel = false;
+        }
+        // --digest-each: fold a value digest after every edit into
+        // `digest_edits` (the values gate "after every edit").
+        let digest_each = args.iter().any(|a| a == "--digest-each");
+        let mut digest_edits: u64 = 0xcbf2_9ce4_8422_2325;
+        let mut fold_edit = |wb: &Workbook| {
+            if digest_each {
+                for b in digest(wb, &tg.all).bytes() {
+                    digest_edits ^= b as u64;
+                    digest_edits = digest_edits.wrapping_mul(0x100_0000_01b3);
+                }
+            }
         };
         let t = Instant::now();
         let adapter = CalamineAdapter::open_path(&path).map_err(|e| anyhow!("open: {e}"))?;
@@ -284,6 +305,8 @@ mod imp {
             .map_err(|e| anyhow!("load: {e}"))?;
         let load_ms = ms(t);
         let live_load = live() - base;
+        let peak_load = PEAK.load(Ordering::Relaxed) as i64 - base;
+        let vm_hwm_load = vm_hwm_kb();
 
         // --presync (feature build): build the authority before the first
         // evaluation so its cost is timed apart from planning/execution.
@@ -311,6 +334,7 @@ mod imp {
             }
         }
         let peak_eval = PEAK.load(Ordering::Relaxed) as i64 - base;
+        let vm_hwm_eval = vm_hwm_kb();
 
         // Authority summary (feature build only); sync after the first eval
         // is a no-op when the host is already built (timed to prove it).
@@ -365,6 +389,7 @@ mod imp {
             v_edit.push(e);
             v_recalc.push(rc);
             v_total.push(e + rc);
+            fold_edit(&wb);
         }
         // Formula edits: re-set a formula to its own text, then evaluate_all.
         let (mut f_total, mut f_computed, mut f_errors) = (vec![], 0usize, 0usize);
@@ -379,6 +404,7 @@ mod imp {
                 Err(_) => f_errors += 1,
             }
             f_total.push(ms(t));
+            fold_edit(&wb);
         }
         let live_end = live() - base;
         let digest_end = digest(&wb, &tg.all);
@@ -450,7 +476,10 @@ mod imp {
             "first_err": first_err,
             "live_after_load": live_load,
             "live_after_eval": live_eval,
+            "peak_through_load": peak_load,
             "peak_through_eval": peak_eval,
+            "vm_hwm_load_kb": vm_hwm_load,
+            "vm_hwm_eval_kb": vm_hwm_eval,
             "live_after_edits": live_end,
             "vm_hwm_kb": vm_hwm_kb(),
             "value_edits": v_total.len(),
@@ -469,6 +498,7 @@ mod imp {
             "formula_total_sum_ms": f_total.iter().sum::<f64>(),
             "digest_first": digest_first,
             "digest_end": digest_end,
+            "digest_edits": if digest_each { format!("{digest_edits:016x}") } else { String::new() },
             "authority": auth,
             "decomp": decomp,
         });
@@ -476,6 +506,7 @@ mod imp {
             for key in [
                 "live_after_load",
                 "live_after_eval",
+                "peak_through_load",
                 "peak_through_eval",
                 "live_after_edits",
             ] {

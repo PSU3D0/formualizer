@@ -1,4 +1,11 @@
 use crate::SheetId;
+
+mod criteria;
+mod exact;
+mod family;
+mod kernels;
+mod lift;
+mod memo;
 use crate::arrow_store::{OverlayFragment, OverlayValue, SheetStore};
 #[cfg(test)]
 use crate::engine::Scheduler;
@@ -26,6 +33,7 @@ use crate::engine::used_extent::{
     ExtentPolicy, OpenRangeBounds, resolve_used_extent_with_fallback,
 };
 use crate::engine::virtual_deps::VirtualDepBuilder;
+use family::{LayerUnit, layer_units};
 
 #[path = "freshness.rs"]
 mod freshness;
@@ -531,6 +539,18 @@ where
 // layers there is not enough work to amortize it, and the direct point-write path
 // is faster while preserving the same visibility semantics.
 const COMPUTED_WRITE_COALESCING_MIN_LAYER_WIDTH: usize = 8;
+/// Adaptive layer parallelism (see `evaluate_layer_parallel`): a layer runs
+/// sequentially until either it has run `PARALLEL_LAYER_PROBE` or the rest,
+/// at the rate so far, is estimated at `PARALLEL_LAYER_WORTH` or more; then
+/// the rest goes to the thread pool. Tuned on Enron first eval (probe 30 /
+/// 100 / 300 µs, worth 50 / 150 / 400 µs; 300 / 150 best, no workbook
+/// slower).
+/// Candidate count from which schedule preparation sorts on the pool.
+const PARALLEL_SCHEDULE_MIN_CANDIDATES: usize = 16 * 1024;
+const PARALLEL_LAYER_PROBE: std::time::Duration = std::time::Duration::from_micros(300);
+const PARALLEL_LAYER_WORTH: std::time::Duration = std::time::Duration::from_micros(150);
+/// A member this expensive (ns, measured by the probe) is its own task.
+const EXPENSIVE_VERTEX_NS: u128 = 10_000;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum ComputedWrite {
@@ -549,13 +569,24 @@ pub(crate) enum ComputedWrite {
         sc0: u32,
         values: Vec<Vec<OverlayValue>>,
     },
+    /// Consecutive rows `row0..` of one column (a family run's commit),
+    /// each with its format.
+    Run {
+        seq: u64,
+        sheet_id: SheetId,
+        row0: u32,
+        col0: u32,
+        entries: Vec<(OverlayValue, Option<crate::format::FormatId>)>,
+    },
 }
 
 impl ComputedWrite {
     #[inline]
     pub(crate) fn seq(&self) -> u64 {
         match self {
-            ComputedWrite::Cell { seq, .. } | ComputedWrite::Rect { seq, .. } => *seq,
+            ComputedWrite::Cell { seq, .. }
+            | ComputedWrite::Rect { seq, .. }
+            | ComputedWrite::Run { seq, .. } => *seq,
         }
     }
 }
@@ -598,6 +629,7 @@ impl ComputedWriteBuffer {
             .map(|write| match write {
                 ComputedWrite::Cell { .. } => 1,
                 ComputedWrite::Rect { values, .. } => values.iter().map(Vec::len).sum(),
+                ComputedWrite::Run { entries, .. } => entries.len(),
             })
             .sum()
     }
@@ -633,6 +665,30 @@ impl ComputedWriteBuffer {
             col0,
             value,
             format_id,
+        });
+    }
+
+    pub(crate) fn push_column_run(
+        &mut self,
+        sheet_id: SheetId,
+        row0: u32,
+        col0: u32,
+        mut entries: Vec<(OverlayValue, Option<crate::format::FormatId>)>,
+    ) {
+        let seq = self.next_sequence();
+        let mut added = 0usize;
+        for (value, format_id) in entries.iter_mut() {
+            *format_id = format_id.filter(|id| *id != crate::format::FormatId::GENERAL);
+            self.formats_present |= format_id.is_some();
+            added = added.saturating_add(Self::estimate_value_bytes(value));
+        }
+        self.estimated_bytes = self.estimated_bytes.saturating_add(added);
+        self.writes.push(ComputedWrite::Run {
+            seq,
+            sheet_id,
+            row0,
+            col0,
+            entries,
         });
     }
 
@@ -921,12 +977,22 @@ pub struct Engine<R> {
     arrow_sheets: SheetStore,
     /// Workbook-local number-format registry.
     format_registry: crate::format::FormatRegistry,
-    /// Thread-safe handoff from immutable/parallel evaluation to overlay apply.
-    derived_format_results: std::sync::RwLock<FxHashMap<VertexId, Option<crate::format::FormatId>>>,
     /// Derived formula formats keyed by grid position, never graph vertex identity.
-    derived_formats: std::sync::RwLock<FxHashMap<CellRef, crate::format::FormatId>>,
+    derived_formats: crate::engine::derived_formats::DerivedFormats,
     #[cfg(test)]
     derived_format_operations_for_test: std::sync::atomic::AtomicU64,
+    #[cfg(test)]
+    family_members_for_test: std::sync::atomic::AtomicU64,
+    #[cfg(test)]
+    lifted_members_for_test: std::sync::atomic::AtomicU64,
+    #[cfg(test)]
+    lane_clean_reads_for_test: std::sync::atomic::AtomicU64,
+    #[cfg(test)]
+    criteria_kernel_members_for_test: std::sync::atomic::AtomicU64,
+    #[cfg(test)]
+    memo_hits_for_test: std::sync::atomic::AtomicU64,
+    /// Authority build last compressed (`maybe_compress_formulas`).
+    compressed_at_build: Option<u64>,
     #[cfg(test)]
     computed_overlay_set_explicit_entry_operations_for_test: u64,
     #[cfg(test)]
@@ -2451,10 +2517,20 @@ where
             spill_mgr: ShimSpillManager::default(),
             arrow_sheets: SheetStore::default(),
             format_registry: crate::format::FormatRegistry::default(),
-            derived_format_results: std::sync::RwLock::new(FxHashMap::default()),
-            derived_formats: std::sync::RwLock::new(FxHashMap::default()),
+            derived_formats: Default::default(),
             #[cfg(test)]
             derived_format_operations_for_test: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(test)]
+            family_members_for_test: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(test)]
+            lifted_members_for_test: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(test)]
+            lane_clean_reads_for_test: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(test)]
+            criteria_kernel_members_for_test: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(test)]
+            memo_hits_for_test: std::sync::atomic::AtomicU64::new(0),
+            compressed_at_build: None,
             #[cfg(test)]
             computed_overlay_set_explicit_entry_operations_for_test: 0,
             #[cfg(test)]
@@ -2597,10 +2673,20 @@ where
             spill_mgr: ShimSpillManager::default(),
             arrow_sheets: SheetStore::default(),
             format_registry: crate::format::FormatRegistry::default(),
-            derived_format_results: std::sync::RwLock::new(FxHashMap::default()),
-            derived_formats: std::sync::RwLock::new(FxHashMap::default()),
+            derived_formats: Default::default(),
             #[cfg(test)]
             derived_format_operations_for_test: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(test)]
+            family_members_for_test: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(test)]
+            lifted_members_for_test: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(test)]
+            lane_clean_reads_for_test: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(test)]
+            criteria_kernel_members_for_test: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(test)]
+            memo_hits_for_test: std::sync::atomic::AtomicU64::new(0),
+            compressed_at_build: None,
             #[cfg(test)]
             computed_overlay_set_explicit_entry_operations_for_test: 0,
             #[cfg(test)]
@@ -3401,7 +3487,7 @@ where
                     .graph
                     .make_cell_ref_internal(sheet_id, row_u32, col_u32);
                 if let Some(vertex_id) = self.graph.get_vertex_id_for_address(&cell_ref)
-                    && self.graph.is_volatile(*vertex_id)
+                    && self.graph.is_volatile(vertex_id)
                 {
                     return true;
                 }
@@ -4273,13 +4359,14 @@ where
         let name_str = name.into();
         let mut capture = MutationCapture::new(Default::default());
         let start_len = capture.len();
-        self.action_atomic_impl(&mut capture, start_len, name_str, f)
+        self.action_atomic_impl(&mut capture, start_len, true, name_str, f)
     }
 
     fn action_atomic_impl<T>(
         &mut self,
         capture: &mut MutationCapture,
         start_len: usize,
+        expand_runs: bool,
         name: String,
         f: impl FnOnce(&mut EngineAction<'_, R>) -> Result<T, crate::engine::EditorError>,
     ) -> Result<(T, crate::engine::ActionJournal), crate::engine::EditorError> {
@@ -4298,9 +4385,19 @@ where
 
         let res = f(&mut tx);
 
-        // Capture graph structural delta for this action.
-        let graph_events: Vec<crate::engine::ChangeEvent> =
-            unsafe { (&*capture_ptr).events() }[start_len..].to_vec();
+        // Capture graph structural delta for this action. The journal is a
+        // public value: run records (Program 2) are expanded into it, except
+        // for a caller that only publishes the capture to its change log
+        // (`expand_runs` false), where the journal (plain events) drives
+        // invalidation and records count as topology changes; a rollback
+        // still replays the expanded events.
+        let capture_ref = unsafe { &*capture_ptr };
+        let has_runs = capture_ref.lazy_len() > 0;
+        let graph_events: Vec<crate::engine::ChangeEvent> = if expand_runs || res.is_err() {
+            capture_ref.expanded_events_from(start_len, 0)
+        } else {
+            capture_ref.events()[start_len..].to_vec()
+        };
         let graph_batch = crate::engine::GraphUndoBatch {
             events: graph_events,
         };
@@ -4314,15 +4411,19 @@ where
 
         match res {
             Ok(v) => {
-                if !journal.graph.is_empty() || !journal.arrow.is_empty() {
+                if !journal.graph.is_empty() || !journal.arrow.is_empty() || has_runs {
                     for event in &journal.graph.events {
                         self.record_change_for_event(event);
                     }
-                    self.invalidate_for_action_journal(
-                        &journal,
+                    let mut impact = Self::classify_change_events(
+                        &journal.graph.events,
                         LoggedEditDirection::Original,
-                        invalidation_baseline,
-                    );
+                    )
+                    .max(Self::classify_arrow_undo(&journal.arrow));
+                    if has_runs {
+                        impact = impact.max(LoggedEditImpact::Topology);
+                    }
+                    self.apply_logged_edit_impact(impact, invalidation_baseline);
                 }
                 Ok((v, journal))
             }
@@ -4378,7 +4479,7 @@ where
 
         // Mutation correctness uses the complete private capture. The provided ChangeLog remains
         // an observability sink and is not touched until the action outcome is known.
-        let res = self.action_atomic_impl(&mut capture, start_len, name_str, f);
+        let res = self.action_atomic_impl(&mut capture, start_len, false, name_str, f);
         capture.close_compounds();
 
         match res {
@@ -4476,10 +4577,7 @@ where
         let coord = Coord::from_excel(row, col, true, true);
         let cell = CellRef::new(sheet_id, coord);
         let vid = self.graph.get_vertex_for_cell(&cell)?;
-        let ast_id = self.graph.get_formula_id(vid)?;
-        self.graph
-            .data_store()
-            .retrieve_ast(ast_id, self.graph.sheet_reg())
+        self.graph.get_formula(vid)
     }
 
     pub fn define_name_with_logger(
@@ -4572,6 +4670,7 @@ where
     ) -> Result<T, crate::engine::EditorError> {
         let invalidation_baseline = self.invalidation_baseline();
         let start_len = capture.len();
+        let lazy_start = capture.lazy_len();
 
         // Provide a spill snapshot reader so VertexEditor can snapshot Arrow-truth spill values
         // (graph value cache is intentionally empty in canonical mode).
@@ -4602,7 +4701,7 @@ where
             let spill_reader = ArrowSpillReader {
                 sheets: &self.arrow_sheets,
             };
-            let mut editor = crate::engine::VertexEditor::with_logger_and_spill_reader(
+            let mut editor = crate::engine::VertexEditor::with_capture_and_spill_reader(
                 &mut self.graph,
                 capture,
                 &spill_reader,
@@ -4610,7 +4709,11 @@ where
             f(&mut editor)
         };
 
+        // Plain events only: run records (Program 2) stand for
+        // `FormulaAdjusted` events, which have no forward effect here but
+        // topology invalidation.
         let new_events = capture.events()[start_len..].to_vec();
+        let new_runs = capture.lazy_len() > lazy_start;
         if new_events.iter().any(|event| {
             matches!(
                 event,
@@ -4619,7 +4722,8 @@ where
                     | ChangeEvent::DeleteName { .. }
             )
         }) {
-            self.rollback_from_change_events(&new_events, invalidation_baseline)?;
+            let all = capture.expanded_events_from(start_len, lazy_start);
+            self.rollback_from_change_events(&all, invalidation_baseline)?;
             return Err(crate::engine::EditorError::TransactionUnsupported {
                 reason: "name mutations must use Engine's prepared logged-name APIs".to_string(),
             });
@@ -4638,11 +4742,12 @@ where
         // Atomic EngineAction calls publish one invalidation for their complete
         // journal at commit/rollback. Direct logged edits publish here.
         if self.action_depth == 0 {
-            self.invalidate_for_change_events(
-                &new_events,
-                LoggedEditDirection::Original,
-                invalidation_baseline,
-            );
+            let mut impact =
+                Self::classify_change_events(&new_events, LoggedEditDirection::Original);
+            if new_runs {
+                impact = impact.max(LoggedEditImpact::Topology);
+            }
+            self.apply_logged_edit_impact(impact, invalidation_baseline);
         }
 
         Ok(ret)
@@ -5289,7 +5394,7 @@ where
         summary: &crate::engine::graph::editor::vertex_editor::ShiftSummary,
     ) {
         for vertex in &summary.vertices_moved {
-            if self.graph.get_formula_id(*vertex).is_some() {
+            if self.graph.has_formula(*vertex) {
                 self.graph.mark_vertex_dirty(*vertex);
             }
         }
@@ -6774,7 +6879,44 @@ where
             }
         }
 
-        if !materialize_batches.iter().all(FormulaIngestBatch::is_empty) {
+        // A first load without graph admission plans in the builder, one
+        // chunk at a time (a load error fails the load, so the builder's
+        // partial application on a planning error is unobservable).
+        if self.graph.first_load_assume_new()
+            && !self.graph_admission_enabled()
+            && !materialize_batches.iter().all(FormulaIngestBatch::is_empty)
+        {
+            let mut builder =
+                crate::engine::ingest_builder::BulkIngestBuilder::new(&mut self.graph);
+            for batch in materialize_batches {
+                if batch.is_empty() {
+                    continue;
+                }
+                let sheet_id = builder
+                    .add_sheet_checked(&batch.sheet_name)
+                    .ok_or_else(|| {
+                        ExcelError::new(ExcelErrorKind::Ref)
+                            .with_message(format!("unknown ingest sheet: {}", batch.sheet_name))
+                    })?;
+                builder.add_formula_refs(
+                    sheet_id,
+                    batch.formulas.into_iter().map(|record| {
+                        (
+                            record.row,
+                            record.col,
+                            crate::engine::graph::FormulaRef::of_ingested(
+                                record.ast_id,
+                                record.member_anchor,
+                            ),
+                        )
+                    }),
+                );
+            }
+            let summary = builder.finish_with_provider(&self.resolver)?;
+            report.graph_formula_cells_materialized = summary.formulas as u64;
+            report.graph_vertices_created = summary.vertices as u64;
+            report.graph_edges_created = summary.edges as u64;
+        } else if !materialize_batches.iter().all(FormulaIngestBatch::is_empty) {
             let mut prepared_by_sheet: BTreeMap<String, Vec<_>> = BTreeMap::new();
             for batch in materialize_batches {
                 if batch.is_empty() {
@@ -6785,28 +6927,33 @@ where
                         .with_message(format!("unknown ingest sheet: {}", batch.sheet_name))
                 })?;
                 let mut pipeline = self.ingest_pipeline();
-                let ingested = pipeline.ingest_batch(batch.formulas.into_iter().map(|record| {
+                // Plan each record and keep only what the graph needs (the
+                // pipeline's per-formula facts are dropped at once).
+                let prepared = prepared_by_sheet.entry(batch.sheet_name).or_default();
+                prepared.reserve(batch.formulas.len());
+                for record in batch.formulas {
                     let placement = CellRef::new(
                         sheet_id,
                         Coord::from_excel(record.row, record.col, true, true),
                     );
-                    (
-                        FormulaAstInput::RawArena(record.ast_id),
-                        placement,
-                        record.formula_text,
-                    )
-                }))?;
-                prepared_by_sheet
-                    .entry(batch.sheet_name)
-                    .or_default()
-                    .extend(ingested.into_iter().map(|formula| {
-                        (
-                            formula.placement.coord.row() + 1,
-                            formula.placement.coord.col() + 1,
+                    let input = match record.member_anchor {
+                        Some(anchor) => FormulaAstInput::Member {
+                            template: record.ast_id,
+                            anchor,
+                        },
+                        None => FormulaAstInput::RawArena(record.ast_id),
+                    };
+                    let formula = pipeline.ingest_formula(input, placement, None)?;
+                    prepared.push((
+                        record.row,
+                        record.col,
+                        crate::engine::graph::FormulaRef::of_ingested(
                             formula.ast_id,
-                            formula.dep_plan,
-                        )
-                    }));
+                            formula.member_anchor,
+                        ),
+                        formula.dep_plan,
+                    ));
+                }
             }
             let admission_preflighted = self.graph_admission_enabled();
             if admission_preflighted {
@@ -10509,8 +10656,8 @@ where
         let mut min_r0: Option<u32> = None;
         let mut max_r0: Option<u32> = None;
 
-        if let Some(index) = self.graph.sheet_index(sheet_id) {
-            for vid in index.vertices_in_col_range(sc0, ec0) {
+        if self.graph.sheet_index(sheet_id).is_some() {
+            for vid in self.graph.vertices_in_cols(sheet_id, sc0, ec0) {
                 if !matches!(
                     self.graph.get_vertex_kind(vid),
                     VertexKind::FormulaScalar | VertexKind::FormulaArray
@@ -10559,8 +10706,8 @@ where
         let mut min_c0: Option<u32> = None;
         let mut max_c0: Option<u32> = None;
 
-        if let Some(index) = self.graph.sheet_index(sheet_id) {
-            for vid in index.vertices_in_row_range(sr0, er0) {
+        if self.graph.sheet_index(sheet_id).is_some() {
+            for vid in self.graph.vertices_in_rows(sheet_id, sr0, er0) {
                 if !matches!(
                     self.graph.get_vertex_kind(vid),
                     VertexKind::FormulaScalar | VertexKind::FormulaArray
@@ -11148,23 +11295,12 @@ where
         #[cfg(test)]
         self.derived_format_operations_for_test
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let mut formats = self.derived_formats.write().unwrap();
-        match format.filter(|id| *id != crate::format::FormatId::GENERAL) {
-            Some(format) => {
-                formats.insert(cell, format);
-            }
-            None => {
-                formats.remove(&cell);
-            }
-        }
+        let format = format.filter(|id| *id != crate::format::FormatId::GENERAL);
+        self.derived_formats.set(cell, format);
     }
 
     fn clear_cell_format_state(&mut self, sheet: &str, cell: CellRef) {
-        self.derived_formats.write().unwrap().remove(&cell);
-        self.derived_format_results
-            .write()
-            .unwrap()
-            .retain(|vertex, _| self.graph.get_cell_ref(*vertex) != Some(cell));
+        self.derived_formats.set(cell, None);
         if let Some(arrow) = self.arrow_sheets.sheet_mut(sheet) {
             arrow.clear_format(cell.coord.row() as usize, cell.coord.col() as usize);
         }
@@ -11188,23 +11324,17 @@ where
 
     fn purge_derived_formats_after_row(&mut self, sheet_id: SheetId, start0: u32) {
         self.derived_formats
-            .write()
-            .unwrap()
-            .retain(|cell, _| cell.sheet_id != sheet_id || cell.coord.row() < start0);
+            .retain(|cell| cell.sheet_id != sheet_id || cell.coord.row() < start0);
     }
 
     fn purge_derived_formats_after_col(&mut self, sheet_id: SheetId, start0: u32) {
         self.derived_formats
-            .write()
-            .unwrap()
-            .retain(|cell, _| cell.sheet_id != sheet_id || cell.coord.col() < start0);
+            .retain(|cell| cell.sheet_id != sheet_id || cell.coord.col() < start0);
     }
 
     fn purge_derived_formats_for_sheet(&mut self, sheet_id: SheetId) {
         self.derived_formats
-            .write()
-            .unwrap()
-            .retain(|cell, _| cell.sheet_id != sheet_id);
+            .retain(|cell| cell.sheet_id != sheet_id);
     }
 
     #[cfg(test)]
@@ -11248,9 +11378,7 @@ where
     pub(crate) fn debug_clear_derived_format_0based(&mut self, sheet: &str, row0: u32, col0: u32) {
         if let Some(sheet_id) = self.graph.sheet_id(sheet) {
             self.derived_formats
-                .write()
-                .unwrap()
-                .remove(&CellRef::new_absolute(sheet_id, row0, col0));
+                .set(CellRef::new_absolute(sheet_id, row0, col0), None);
         }
     }
 
@@ -11276,10 +11404,7 @@ where
     ) -> Option<crate::format::FormatId> {
         let sheet_id = self.graph.sheet_id(sheet)?;
         self.derived_formats
-            .read()
-            .unwrap()
             .get(&CellRef::new_absolute(sheet_id, row0, col0))
-            .copied()
     }
 
     #[cfg(test)]
@@ -11413,6 +11538,8 @@ where
         let mut groups: BTreeMap<ComputedWriteChunkKey, Vec<ComputedWriteChunkEntryPlan>> =
             BTreeMap::new();
         let mut input_cells = 0usize;
+        // One sheet lookup per sheet run of writes, not per cell.
+        let mut located: Option<(SheetId, Option<&crate::arrow_store::ArrowSheet>)> = None;
 
         for write in writes {
             match write {
@@ -11425,15 +11552,91 @@ where
                     format_id,
                 } => {
                     input_cells = input_cells.saturating_add(1);
-                    self.push_computed_write_plan_entry(
-                        &mut groups,
-                        seq,
-                        sheet_id,
-                        row0,
-                        col0,
-                        value,
-                        format_id,
-                    );
+                    let sheet = match located {
+                        Some((id, sheet)) if id == sheet_id => sheet,
+                        _ => {
+                            let sheet = self.arrow_sheets.sheet(self.graph.sheet_name(sheet_id));
+                            located = Some((sheet_id, sheet));
+                            sheet
+                        }
+                    };
+                    let (chunk_idx, chunk_start_row0, row_in_chunk) = match sheet {
+                        Some(sheet) => {
+                            Self::locate_row_in_sheet_for_computed_write_plan(sheet, row0 as usize)
+                        }
+                        None => Self::locate_row_in_empty_sheet_for_computed_write_plan(
+                            row0 as usize,
+                            32 * 1024,
+                        ),
+                    };
+                    groups
+                        .entry(ComputedWriteChunkKey {
+                            sheet_id,
+                            col0,
+                            chunk_idx,
+                            chunk_start_row0,
+                        })
+                        .or_default()
+                        .push(ComputedWriteChunkEntryPlan {
+                            row_in_chunk,
+                            seq,
+                            value,
+                            format_id,
+                        });
+                }
+                ComputedWrite::Run {
+                    seq,
+                    sheet_id,
+                    row0,
+                    col0,
+                    entries,
+                } => {
+                    input_cells = input_cells.saturating_add(entries.len());
+                    let sheet = match located {
+                        Some((id, sheet)) if id == sheet_id => sheet,
+                        _ => {
+                            let sheet = self.arrow_sheets.sheet(self.graph.sheet_name(sheet_id));
+                            located = Some((sheet_id, sheet));
+                            sheet
+                        }
+                    };
+                    // Rows are located one by one (a binary search, no sheet
+                    // lookup); the group map is touched once per chunk
+                    // segment of the run.
+                    let mut segment: Vec<ComputedWriteChunkEntryPlan> = Vec::new();
+                    let mut segment_key: Option<ComputedWriteChunkKey> = None;
+                    for (k, (value, format_id)) in entries.into_iter().enumerate() {
+                        let row = row0.saturating_add(k as u32) as usize;
+                        let (chunk_idx, chunk_start_row0, row_in_chunk) = match sheet {
+                            Some(sheet) => {
+                                Self::locate_row_in_sheet_for_computed_write_plan(sheet, row)
+                            }
+                            None => Self::locate_row_in_empty_sheet_for_computed_write_plan(
+                                row,
+                                32 * 1024,
+                            ),
+                        };
+                        let key = ComputedWriteChunkKey {
+                            sheet_id,
+                            col0,
+                            chunk_idx,
+                            chunk_start_row0,
+                        };
+                        if segment_key != Some(key)
+                            && let Some(done) = segment_key.replace(key)
+                        {
+                            groups.entry(done).or_default().append(&mut segment);
+                        }
+                        segment.push(ComputedWriteChunkEntryPlan {
+                            row_in_chunk,
+                            seq,
+                            value,
+                            format_id,
+                        });
+                    }
+                    if let Some(done) = segment_key {
+                        groups.entry(done).or_default().append(&mut segment);
+                    }
                 }
                 ComputedWrite::Rect {
                     seq,
@@ -11991,7 +12194,7 @@ where
         let date_system = self.arrow_sheet_date_system(&sheet_name);
         let ov = Self::literal_to_overlay_value(value, date_system);
         if let Some(buffer) = computed_writes {
-            let format_id = self.derived_formats.read().unwrap().get(&cell).copied();
+            let format_id = self.derived_formats.get(&cell);
             buffer.push_cell_with_format(
                 cell.sheet_id,
                 cell.coord.row(),
@@ -12008,6 +12211,15 @@ where
                 cell.coord.row(),
                 cell.coord.col(),
                 ov,
+            );
+            // The computed format lane follows the value, as on the buffered
+            // path (a General result clears a stale date format).
+            let format_id = self.derived_formats.get(&cell);
+            self.write_computed_overlay_format_0based(
+                &sheet_name,
+                cell.coord.row(),
+                cell.coord.col(),
+                format_id,
             );
         }
         Ok(())
@@ -12099,7 +12311,7 @@ where
                 .get_vertex_id_for_address(&cell_ref)
                 .is_some_and(|vertex| {
                     matches!(
-                        self.graph.get_vertex_kind(*vertex),
+                        self.graph.get_vertex_kind(vertex),
                         VertexKind::FormulaScalar | VertexKind::FormulaArray
                     )
                 });
@@ -12426,7 +12638,7 @@ where
         arrow.or_else(|| {
             let sheet_id = self.graph.sheet_id(sheet)?;
             let cell = CellRef::new(sheet_id, Coord::from_excel(row, col, true, true));
-            self.derived_formats.read().unwrap().get(&cell).copied()
+            self.derived_formats.get(&cell)
         })
     }
 
@@ -12464,9 +12676,9 @@ where
             ec.saturating_sub(1) as usize,
         );
         let sheet_id = self.graph.sheet_id(sheet);
-        let derived_formats = self.derived_formats.read().unwrap();
-        let has_derived_formats = sheet_id
-            .is_some_and(|sheet_id| derived_formats.keys().any(|cell| cell.sheet_id == sheet_id));
+        let derived_formats = &self.derived_formats;
+        let has_derived_formats =
+            sheet_id.is_some_and(|sheet_id| derived_formats.any(|cell| cell.sheet_id == sheet_id));
         let mut out = Vec::with_capacity(height);
         if !asheet.has_formats() && !has_derived_formats {
             for rr in 0..height {
@@ -12487,7 +12699,7 @@ where
                 let col0 = sc.saturating_sub(1).saturating_add(cc as u32);
                 let format = asheet.format_id(row0 as usize, col0 as usize).or_else(|| {
                     let cell = CellRef::new(sheet_id?, Coord::new(row0, col0, true, true));
-                    derived_formats.get(&cell).copied()
+                    derived_formats.get(&cell)
                 });
                 let class = format.and_then(|id| format_registry.class(id));
                 row.push(Self::materialize_temporal_egress(
@@ -12549,11 +12761,7 @@ where
         let coord = Coord::from_excel(row, col, true, true);
         let cell = CellRef::new(sheet_id, coord);
         if let Some(vid) = self.graph.get_vertex_for_cell(&cell) {
-            let ast = self.graph.get_formula_id(vid).and_then(|ast_id| {
-                self.graph
-                    .data_store()
-                    .retrieve_ast(ast_id, self.graph.sheet_reg())
-            });
+            let ast = self.graph.get_formula(vid);
             Some((ast, v))
         } else if v.is_some() {
             Some((None, v))
@@ -12673,10 +12881,10 @@ where
         let kind = self.graph.get_vertex_kind(vertex_id);
         let sheet_id = self.graph.get_vertex_sheet_id(vertex_id);
 
-        let ast_id = match kind {
+        let view = match kind {
             VertexKind::FormulaScalar | VertexKind::FormulaArray => {
-                if let Some(ast_id) = self.graph.get_formula_id(vertex_id) {
-                    ast_id
+                if let Some(view) = self.graph.formula_view(vertex_id) {
+                    view
                 } else {
                     return Ok(LiteralValue::Number(0.0));
                 }
@@ -12717,8 +12925,11 @@ where
             .expect("cell ref for vertex");
         let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref);
 
-        let result =
-            interpreter.evaluate_arena_ast(ast_id, self.graph.data_store(), self.graph.sheet_reg());
+        let result = interpreter.evaluate_formula_view(
+            view,
+            self.graph.data_store(),
+            self.graph.sheet_reg(),
+        );
 
         // If array result, perform spill from the anchor cell
         match result {
@@ -13811,7 +14022,7 @@ where
                             if work.is_empty() {
                                 continue;
                             }
-                            let temp_layer = crate::engine::scheduler::Layer { vertices: work };
+                            let temp_layer = crate::engine::scheduler::Layer::new(work);
                             if self.thread_pool.is_some() && temp_layer.vertices.len() > 1 {
                                 computed_vertices += self.evaluate_layer_parallel(&temp_layer)?;
                             } else {
@@ -14370,7 +14581,7 @@ where
         let mut target_vertex_ids = Vec::new();
         for addr in &target_addrs {
             if let Some(vertex_id) = self.graph.get_vertex_id_for_address(addr) {
-                target_vertex_ids.push(*vertex_id);
+                target_vertex_ids.push(vertex_id);
             }
         }
 
@@ -14568,11 +14779,42 @@ where
         Ok((EvaluationSchedule::Owned(schedule), vdeps, meta))
     }
 
+    /// Compress family formulas once per authority build (see
+    /// `EvalConfig::formula_compression`), when no staged or deferred
+    /// formula package can hold arena ids.
+    fn maybe_compress_formulas(&mut self) {
+        if !self.config.formula_compression {
+            return;
+        }
+        let builds = self.graph.authority_host().builds;
+        if self.compressed_at_build == Some(builds) {
+            return;
+        }
+        self.compressed_at_build = Some(builds);
+        if self.has_staged_formulas() {
+            // Staged packages hold arena ids: no compaction. Members that
+            // are already compressed can still leave the per-cell maps.
+            self.graph.virtualize_family_members();
+            return;
+        }
+        let pool = self.thread_pool.clone();
+        let (_, garbage) = self.graph.compress_family_formulas(pool.as_deref());
+        self.graph.virtualize_family_members();
+        // Freeing the dropped members' reference texts (one allocation each)
+        // is most of compaction; with a pool it happens off the critical
+        // path.
+        match pool {
+            Some(pool) if garbage.len() >= 1024 => pool.spawn(move || drop(garbage)),
+            _ => drop(garbage),
+        }
+    }
+
     fn create_evaluation_schedule_active(
         &mut self,
         to_evaluate: &[VertexId],
     ) -> Result<ScheduleBuildOutput, ExcelError> {
         self.graph.authority_sync();
+        self.maybe_compress_formulas();
         let mut ledger = self.active_resource_ledger.take();
         let result = self.create_evaluation_schedule_uncached(to_evaluate, ledger.as_mut());
         self.active_resource_ledger = ledger;
@@ -14652,12 +14894,94 @@ where
             .graph
             .authority_plan_store()
             .map_err(Self::authority_excel_error)?;
+        // One formula cell without hints (a tiny edit): its plan is the cell
+        // alone unless it reads itself (`planner::plan_single`).
+        if let [only] = candidates
+            && vdeps.is_empty()
+            && self.graph.authority_host().observed(*only).is_none()
+            && let Some(cell) = self.graph.authority_cell_of_vertex(*only)
+            && cell.0 != crate::engine::authority::geom::SYMBOL_SHEET
+            && let Some(single) = planner::plan_single(store, cell)
+        {
+            #[cfg(debug_assertions)]
+            {
+                let mut cover = Cover::new();
+                cover.insert_rect(cell.0, &Rect::new(cell.1, cell.2, cell.1, cell.2));
+                let general = planner::plan_with_hints(store, &cover, &[], None, None, None)
+                    .expect("general plan of one cell");
+                assert_eq!(
+                    general.cells.as_slice(),
+                    &[single],
+                    "single-cell plan differs from the planner at {cell:?}"
+                );
+            }
+            let adapted = plan_schedule::schedule(
+                &[single],
+                0,
+                None,
+                |cell| {
+                    self.graph
+                        .authority_vertex_of_formula(cell.id, (cell.sheet, cell.row, cell.col))
+                        .ok_or_else(|| failure("missing executor identity".to_owned()))
+                },
+                |_work| Ok(()),
+            )
+            .map_err(|error| match error {
+                plan_schedule::ScheduleError::Runtime(error) => error,
+                other => failure(format!("{other:?}")),
+            })?;
+            if let Some(ledger) = ledger {
+                ledger
+                    .reserve_schedule_discovery(adapted.peak_heap_bytes)
+                    .map_err(crate::engine::ResourceLedgerError::into_excel_error)?;
+                ledger
+                    .release_scratch(adapted.peak_heap_bytes)
+                    .map_err(crate::engine::ResourceLedgerError::into_excel_error)?;
+            }
+            return Ok(adapted.schedule);
+        }
         // Names are symbol-plane nodes (design §4.1): a name vertex plans as
         // the unit at its node, between its precedents and its readers.
+        // Candidates become cells, sorted by (sheet, column, row) and
+        // coalesced into row intervals: one cover insert per interval.
         let mut cover = Cover::new();
-        for &id in candidates {
-            if let Some((sheet, row, col)) = self.graph.authority_cell_of_vertex(id) {
-                cover.insert_rect(sheet, &Rect::cell(row, col));
+        {
+            let cell_of = |&id: &VertexId| {
+                self.graph
+                    .authority_cell_of_vertex(id)
+                    .map(|(sheet, row, col)| (sheet, col, row))
+            };
+            // A full recalc maps and sorts every formula: on the pool when
+            // there is one (first eval's schedule is serial work otherwise).
+            let cells: Vec<(u16, u32, u32)> = match self.thread_pool.as_deref() {
+                Some(pool) if candidates.len() >= PARALLEL_SCHEDULE_MIN_CANDIDATES => {
+                    use rayon::prelude::*;
+                    pool.install(|| {
+                        let mut cells: Vec<_> = candidates.par_iter().filter_map(cell_of).collect();
+                        cells.par_sort_unstable();
+                        cells
+                    })
+                }
+                _ => {
+                    let mut cells: Vec<_> = candidates.iter().filter_map(cell_of).collect();
+                    cells.sort_unstable();
+                    cells
+                }
+            };
+            let mut i = 0;
+            while i < cells.len() {
+                let (sheet, col, r0) = cells[i];
+                let mut r1 = r0;
+                let mut j = i + 1;
+                while j < cells.len() && cells[j].0 == sheet && cells[j].1 == col {
+                    if cells[j].2 > r1 + 1 {
+                        break;
+                    }
+                    r1 = r1.max(cells[j].2);
+                    j += 1;
+                }
+                cover.insert_rect(sheet, &Rect::new(r0, col, r1, col));
+                i = j;
             }
         }
         let mut hints = Vec::new();
@@ -14686,7 +15010,7 @@ where
         }
         // rdi_dyn: order each dynamic reader after its observed reads.
         let host = self.graph.authority_host();
-        for &id in candidates {
+        for &id in candidates.iter().filter(|_| host.has_observed()) {
             let Some(reads) = host.observed(id) else {
                 continue;
             };
@@ -14753,6 +15077,13 @@ where
             ledger
                 .release_scratch(peak)
                 .map_err(crate::engine::ResourceLedgerError::into_excel_error)?;
+        }
+        // The planner's order is scratch now; a full recalc's is large.
+        match self.thread_pool.as_deref() {
+            Some(pool) if ordered.cells.len() >= PARALLEL_SCHEDULE_MIN_CANDIDATES => {
+                pool.spawn(move || drop(ordered))
+            }
+            _ => drop(ordered),
         }
         Ok(adapted.schedule)
     }
@@ -15425,13 +15756,64 @@ where
         self.evaluate_layer_sequential_cancellable_demand_driven_effects(layer, cancel_flag)
     }
 
-    /// Evaluate a layer in parallel using the thread pool
+    /// Evaluate a layer in parallel using the thread pool.
+    ///
+    /// Cost-adaptive: the layer starts sequentially in slices of doubling
+    /// size (1, 2, 4, ... vertices, capped so a slice does not overshoot the
+    /// probe) and hands the rest to the pool once the rest looks worth it
+    /// (`PARALLEL_LAYER_WORTH` at the rate so far) or the probe
+    /// (`PARALLEL_LAYER_PROBE`) is spent. A cheap layer never pays the pool's
+    /// wake-up and join (most Enron layers are tens of µs of work); an
+    /// expensive one goes parallel after a few vertices. Splitting a layer
+    /// into consecutive sub-layers is a valid order: its vertices are
+    /// independent.
     fn evaluate_layer_parallel(
         &mut self,
         layer: &super::scheduler::Layer,
     ) -> Result<usize, ExcelError> {
         self.resource_checkpoint(layer.vertices.len() as u64)?;
-        self.evaluate_layer_parallel_effects(layer)
+        let len = layer.vertices.len();
+        let buffered = len >= COMPUTED_WRITE_COALESCING_MIN_LAYER_WIDTH;
+        let (probe, worth) = (PARALLEL_LAYER_PROBE, PARALLEL_LAYER_WORTH);
+        let start = crate::instant::FzInstant::now();
+        let mut pos = 0usize;
+        let mut step = 1usize;
+        while pos < len {
+            if pos > 0 {
+                let elapsed = start.elapsed();
+                // Rate so far (ns per vertex) and the rest at that rate.
+                let per_vertex = elapsed.as_nanos() / pos as u128 + 1;
+                let rest_estimate = per_vertex * (len - pos) as u128;
+                if len - pos >= 2 && (elapsed >= probe || rest_estimate >= worth.as_nanos()) {
+                    let rest = layer.sub_layer(pos, len);
+                    // Expensive members (a SUMIF over a table) parallelize
+                    // one per task; cheap ones keep runs of 8 together.
+                    let min_chunk = if per_vertex >= EXPENSIVE_VERTEX_NS {
+                        1
+                    } else {
+                        8
+                    };
+                    return Ok(pos + self.evaluate_layer_parallel_effects(&rest, min_chunk)?);
+                }
+                // Next slice: double, but no more than the rest of the probe
+                // at the rate so far (a slice must not overshoot it).
+                let fit = (probe.saturating_sub(elapsed).as_nanos() / per_vertex) as usize + 1;
+                step = step.saturating_mul(2).min(fit);
+            }
+            let end = (pos + step).min(len);
+            let slice = layer.sub_layer(pos, end);
+            // A slice stops at the probe's end even if its members turn out
+            // far more expensive than the rate so far predicted.
+            pos += self.evaluate_layer_units_until(
+                &slice,
+                None,
+                None,
+                None,
+                buffered,
+                Some(start + probe),
+            )?;
+        }
+        Ok(len)
     }
 
     fn evaluate_layer_parallel_with_delta(
@@ -15453,323 +15835,6 @@ where
         self.evaluate_layer_parallel_cancellable_effects(layer, cancel_flag)
     }
 
-    /// Apply a computed result produced by `evaluate_vertex_immutable()`.
-    ///
-    /// This is the parallel equivalent of the "apply" portion of `evaluate_vertex_impl`.
-    /// We keep apply sequential for correctness (spill commit is inherently stateful).
-    fn apply_parallel_vertex_result(
-        &mut self,
-        vertex_id: VertexId,
-        result: LiteralValue,
-        mut delta: Option<&mut DeltaCollector>,
-        overwritable_formulas: Option<&rustc_hash::FxHashSet<VertexId>>,
-    ) -> Result<(), ExcelError> {
-        // If this vertex's cell is currently covered by a spill from a different anchor,
-        // ignore the computed result. The spill's committed values own the grid.
-        if let Some(cell) = self.graph.get_cell_ref(vertex_id)
-            && let Some(owner) = self.graph.spill_registry_anchor_for_cell(cell)
-            && owner != vertex_id
-        {
-            return Ok(());
-        }
-
-        let kind = self.graph.get_vertex_kind(vertex_id);
-
-        // Only formula vertices spill dynamic arrays into the grid.
-        let is_formula = matches!(kind, VertexKind::FormulaScalar | VertexKind::FormulaArray);
-        if is_formula {
-            let derived_format = self
-                .derived_format_results
-                .write()
-                .unwrap()
-                .remove(&vertex_id)
-                .flatten();
-            if let Some(cell) = self.graph.get_cell_ref(vertex_id) {
-                let sheet_name = self.graph.sheet_name(cell.sheet_id).to_string();
-                self.write_computed_overlay_format_0based(
-                    &sheet_name,
-                    cell.coord.row(),
-                    cell.coord.col(),
-                    derived_format,
-                );
-            }
-            match result {
-                LiteralValue::Array(rows) => {
-                    self.apply_array_result_from_parallel(
-                        vertex_id,
-                        rows,
-                        delta.as_deref_mut(),
-                        overwritable_formulas,
-                    )?;
-                }
-                other => {
-                    self.apply_non_array_result_from_parallel(
-                        vertex_id,
-                        other,
-                        delta.as_deref_mut(),
-                    );
-                }
-            }
-            return Ok(());
-        }
-
-        // Non-formula vertices: store value as-is (arrays remain arrays; no spill).
-        if let Some(d) = delta {
-            self.update_vertex_value_with_delta(vertex_id, result, d);
-        } else {
-            self.graph.update_vertex_value(vertex_id, result.clone());
-            self.mirror_vertex_value_to_overlay(vertex_id, &result);
-        }
-        Ok(())
-    }
-
-    fn apply_non_array_result_from_parallel(
-        &mut self,
-        vertex_id: VertexId,
-        value: LiteralValue,
-        delta: Option<&mut DeltaCollector>,
-    ) {
-        // Scalar/error result: store value and ensure any previous spill is cleared.
-        // This mirrors the sequential behavior in `evaluate_vertex_impl`.
-        let spill_cells = self
-            .graph
-            .spill_cells_for_anchor(vertex_id)
-            .map(|cells| cells.to_vec())
-            .unwrap_or_default();
-
-        if let Some(d) = delta
-            && d.mode != DeltaMode::Off
-            && let Some(anchor) = self.graph.get_cell_ref_for_vertex(vertex_id)
-        {
-            if spill_cells.is_empty() {
-                let old = self
-                    .read_cell_value(
-                        self.graph.sheet_name(anchor.sheet_id),
-                        anchor.coord.row() + 1,
-                        anchor.coord.col() + 1,
-                    )
-                    .unwrap_or(LiteralValue::Empty);
-                if old != value {
-                    d.record_cell(anchor.sheet_id, anchor.coord.row(), anchor.coord.col());
-                }
-            } else {
-                for cell in spill_cells.iter() {
-                    let sheet_name = self.graph.sheet_name(cell.sheet_id);
-                    let old = self
-                        .get_cell_value(sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
-                        .unwrap_or(LiteralValue::Empty);
-                    let new = if cell.sheet_id == anchor.sheet_id
-                        && cell.coord.row() == anchor.coord.row()
-                        && cell.coord.col() == anchor.coord.col()
-                    {
-                        value.clone()
-                    } else {
-                        LiteralValue::Empty
-                    };
-                    Self::record_cell_if_changed(d, cell, &old, &new);
-                }
-            }
-        }
-
-        self.graph.clear_spill_region(vertex_id);
-        if let Some(scope) = Self::structural_scope_from_cells(&spill_cells) {
-            self.record_structural_change(scope);
-        }
-
-        if self.config.arrow_storage_enabled
-            && self.config.delta_overlay_enabled
-            && self.config.write_formula_overlay_enabled
-        {
-            let empty = LiteralValue::Empty;
-            for cell in spill_cells.iter() {
-                let sheet_name = self.graph.sheet_name(cell.sheet_id).to_string();
-                self.mirror_value_to_computed_overlay(
-                    &sheet_name,
-                    cell.coord.row() + 1,
-                    cell.coord.col() + 1,
-                    &empty,
-                );
-            }
-        }
-
-        self.graph.update_vertex_value(vertex_id, value.clone());
-        self.mirror_vertex_value_to_overlay(vertex_id, &value);
-    }
-
-    fn apply_array_result_from_parallel(
-        &mut self,
-        vertex_id: VertexId,
-        rows: Vec<Vec<LiteralValue>>,
-        mut delta: Option<&mut DeltaCollector>,
-        overwritable_formulas: Option<&rustc_hash::FxHashSet<VertexId>>,
-    ) -> Result<(), ExcelError> {
-        // Keep behavior consistent with the sequential spill path in `evaluate_vertex_impl`.
-        self.graph
-            .set_kind(vertex_id, crate::engine::vertex::VertexKind::FormulaArray);
-
-        let anchor = self
-            .graph
-            .get_cell_ref(vertex_id)
-            .expect("cell ref for vertex");
-        let sheet_id = anchor.sheet_id;
-        let h = rows.len() as u32;
-        let w = rows.first().map(|r| r.len()).unwrap_or(0) as u32;
-
-        // Hard cap to avoid vertex explosion from huge dynamic arrays.
-        let spill_cells = (h as u64).saturating_mul(w as u64);
-        if spill_cells > self.config.spill.max_spill_cells as u64 {
-            self.clear_spill_projection_and_mirror(vertex_id, delta.as_deref_mut());
-            let spill_err = ExcelError::new(ExcelErrorKind::Spill)
-                .with_message("SpillTooLarge")
-                .with_extra(formualizer_common::ExcelErrorExtra::Spill {
-                    expected_rows: h,
-                    expected_cols: w,
-                });
-            let spill_val = LiteralValue::Error(spill_err.clone());
-            if let Some(d) = delta.as_deref_mut()
-                && d.mode != DeltaMode::Off
-            {
-                let old = self
-                    .read_cell_value(
-                        self.graph.sheet_name(anchor.sheet_id),
-                        anchor.coord.row() + 1,
-                        anchor.coord.col() + 1,
-                    )
-                    .unwrap_or(LiteralValue::Empty);
-                if old != spill_val {
-                    d.record_cell(anchor.sheet_id, anchor.coord.row(), anchor.coord.col());
-                }
-            }
-            self.graph.update_vertex_value(vertex_id, spill_val.clone());
-            self.mirror_vertex_value_to_overlay(vertex_id, &spill_val);
-            return Ok(());
-        }
-
-        // Bounds check to avoid out-of-range writes (align to AbsCoord capacity)
-        const PACKED_MAX_ROW: u32 = 1_048_575; // 20-bit max
-        const PACKED_MAX_COL: u32 = 16_383; // 14-bit max
-        let end_row = anchor.coord.row().saturating_add(h).saturating_sub(1);
-        let end_col = anchor.coord.col().saturating_add(w).saturating_sub(1);
-        if end_row > PACKED_MAX_ROW || end_col > PACKED_MAX_COL {
-            self.clear_spill_projection_and_mirror(vertex_id, delta.as_deref_mut());
-            let spill_err = ExcelError::new(ExcelErrorKind::Spill)
-                .with_message("Spill exceeds sheet bounds")
-                .with_extra(formualizer_common::ExcelErrorExtra::Spill {
-                    expected_rows: h,
-                    expected_cols: w,
-                });
-            let spill_val = LiteralValue::Error(spill_err.clone());
-            if let Some(d) = delta.as_deref_mut()
-                && d.mode != DeltaMode::Off
-            {
-                let old = self
-                    .read_cell_value(
-                        self.graph.sheet_name(anchor.sheet_id),
-                        anchor.coord.row() + 1,
-                        anchor.coord.col() + 1,
-                    )
-                    .unwrap_or(LiteralValue::Empty);
-                if old != spill_val {
-                    d.record_cell(anchor.sheet_id, anchor.coord.row(), anchor.coord.col());
-                }
-            }
-            self.graph.update_vertex_value(vertex_id, spill_val.clone());
-            self.mirror_vertex_value_to_overlay(vertex_id, &spill_val);
-            return Ok(());
-        }
-
-        let mut targets = Vec::new();
-        for r in 0..h {
-            for c in 0..w {
-                targets.push(self.graph.make_cell_ref_internal(
-                    sheet_id,
-                    anchor.coord.row() + r,
-                    anchor.coord.col() + c,
-                ));
-            }
-        }
-
-        match self.spill_mgr.reserve(
-            vertex_id,
-            anchor,
-            SpillShape { rows: h, cols: w },
-            SpillMeta {
-                epoch: self.recalc_epoch,
-                config: self.config.spill,
-            },
-        ) {
-            Ok(()) => {
-                if let Err(e) = self.commit_spill_and_mirror(
-                    vertex_id,
-                    &targets,
-                    rows.clone(),
-                    delta.as_deref_mut(),
-                    overwritable_formulas,
-                ) {
-                    if e.kind != ExcelErrorKind::Spill {
-                        return Err(e);
-                    }
-                    self.clear_spill_projection_and_mirror(vertex_id, delta.as_deref_mut());
-                    let err_val = LiteralValue::Error(e.clone());
-                    if let Some(d) = delta.as_deref_mut()
-                        && d.mode != DeltaMode::Off
-                    {
-                        let old = self
-                            .read_cell_value(
-                                self.graph.sheet_name(anchor.sheet_id),
-                                anchor.coord.row() + 1,
-                                anchor.coord.col() + 1,
-                            )
-                            .unwrap_or(LiteralValue::Empty);
-                        if old != err_val {
-                            d.record_cell(anchor.sheet_id, anchor.coord.row(), anchor.coord.col());
-                        }
-                    }
-                    self.graph.update_vertex_value(vertex_id, err_val.clone());
-                    self.mirror_vertex_value_to_overlay(vertex_id, &err_val);
-                    return Ok(());
-                }
-
-                // Anchor shows the top-left value, like Excel
-                let top_left = rows
-                    .first()
-                    .and_then(|r| r.first())
-                    .cloned()
-                    .unwrap_or(LiteralValue::Empty);
-                self.graph.update_vertex_value(vertex_id, top_left.clone());
-                self.mirror_vertex_value_to_overlay(vertex_id, &top_left);
-                Ok(())
-            }
-            Err(e) => {
-                self.clear_spill_projection_and_mirror(vertex_id, delta.as_deref_mut());
-                let spill_err = ExcelError::new(ExcelErrorKind::Spill)
-                    .with_message(e.message.unwrap_or_else(|| "Spill blocked".to_string()))
-                    .with_extra(formualizer_common::ExcelErrorExtra::Spill {
-                        expected_rows: h,
-                        expected_cols: w,
-                    });
-                let spill_val = LiteralValue::Error(spill_err.clone());
-                if let Some(d) = delta
-                    && d.mode != DeltaMode::Off
-                {
-                    let old = self
-                        .read_cell_value(
-                            self.graph.sheet_name(anchor.sheet_id),
-                            anchor.coord.row() + 1,
-                            anchor.coord.col() + 1,
-                        )
-                        .unwrap_or(LiteralValue::Empty);
-                    if old != spill_val {
-                        d.record_cell(anchor.sheet_id, anchor.coord.row(), anchor.coord.col());
-                    }
-                }
-                self.graph.update_vertex_value(vertex_id, spill_val.clone());
-                self.mirror_vertex_value_to_overlay(vertex_id, &spill_val);
-                Ok(())
-            }
-        }
-    }
-
     /// Evaluate a single vertex without mutating the graph (for parallel evaluation)
     fn evaluate_vertex_immutable(&self, vertex_id: VertexId) -> Result<LiteralValue, ExcelError> {
         // Check if vertex exists
@@ -15782,10 +15847,10 @@ where
         let kind = self.graph.get_vertex_kind(vertex_id);
         let sheet_id = self.graph.get_vertex_sheet_id(vertex_id);
 
-        let ast_id = match kind {
+        let view = match kind {
             VertexKind::FormulaScalar | VertexKind::FormulaArray => {
-                if let Some(ast_id) = self.graph.get_formula_id(vertex_id) {
-                    ast_id
+                if let Some(view) = self.graph.formula_view(vertex_id) {
+                    view
                 } else {
                     return Ok(LiteralValue::Number(0.0));
                 }
@@ -15930,20 +15995,16 @@ where
             .get_cell_ref(vertex_id)
             .expect("cell ref for vertex");
         if let Some(result) =
-            self.freshness_evaluate_recorded(vertex_id, sheet_name, cell_ref, ast_id)
+            self.freshness_evaluate_recorded(vertex_id, sheet_name, cell_ref, view)
         {
             return result;
         }
         let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref);
 
         interpreter
-            .evaluate_arena_ast(ast_id, self.graph.data_store(), self.graph.sheet_reg())
+            .evaluate_formula_view(view, self.graph.data_store(), self.graph.sheet_reg())
             .map(|cv| {
                 let format = cv.format_id();
-                self.derived_format_results
-                    .write()
-                    .unwrap()
-                    .insert(vertex_id, format);
                 self.record_derived_format(vertex_id, format);
                 crate::engine::result_finalization::finalize_formula_result(cv.into_literal())
             })
@@ -16226,7 +16287,7 @@ impl ShimSpillManager {
                     continue;
                 }
                 // Skip formula vertices in the target region; plan() handled them (or allowed).
-                if let Some(&vid) = graph.get_vertex_id_for_address(cell)
+                if let Some(vid) = graph.get_vertex_id_for_address(cell)
                     && vid != anchor_vertex
                 {
                     match graph.get_vertex_kind(vid) {
@@ -17485,6 +17546,23 @@ where
             .unwrap_or(LiteralValue::Empty))
     }
 
+    fn resolve_cell_reference_value_formatted(
+        &self,
+        sheet: Option<&str>,
+        row: u32,
+        col: u32,
+        current_sheet: &str,
+    ) -> Result<(LiteralValue, Option<crate::format::FormatId>), ExcelError> {
+        // `resolve_cell_reference_value` + `resolve_cell_format` with one
+        // sheet lookup of each kind.
+        let sheet_name = sheet.unwrap_or(current_sheet);
+        let Some(sheet_id) = self.graph.sheet_id(sheet_name) else {
+            return Err(ExcelError::new(ExcelErrorKind::Ref));
+        };
+        let asheet = self.arrow_sheets.sheet(sheet_name);
+        Ok(self.read_cell_formatted_in(sheet_id, asheet, row, col))
+    }
+
     fn build_criteria_mask(
         &self,
         view: &RangeView<'_>,
@@ -18330,7 +18408,7 @@ where
 
         match kind {
             VertexKind::FormulaScalar | VertexKind::FormulaArray => {
-                let Some(ast_id) = self.graph.get_formula_id(vertex_id) else {
+                let Some(view) = self.graph.formula_view(vertex_id) else {
                     return Ok(LiteralValue::Number(0.0)); // G14 quirk
                 };
                 let sheet_name = self.graph.sheet_name(sheet_id);
@@ -18340,13 +18418,9 @@ where
                     .expect("cell ref for vertex");
                 let interpreter = Interpreter::new_with_cell(ctx, sheet_name, cell_ref);
                 interpreter
-                    .evaluate_arena_ast(ast_id, self.graph.data_store(), self.graph.sheet_reg())
+                    .evaluate_formula_view(view, self.graph.data_store(), self.graph.sheet_reg())
                     .map(|cv| {
                         let format = cv.format_id();
-                        self.derived_format_results
-                            .write()
-                            .unwrap()
-                            .insert(vertex_id, format);
                         self.record_derived_format(vertex_id, format);
                         crate::engine::result_finalization::finalize_formula_result(
                             cv.into_literal(),
@@ -18917,7 +18991,7 @@ where
                                 continue;
                             }
                             // Skip formula blockers; plan() handled them (or allowed).
-                            if let Some(&vid) = self.graph.get_vertex_id_for_address(cell)
+                            if let Some(vid) = self.graph.get_vertex_id_for_address(cell)
                                 && vid != vertex_id
                             {
                                 match self.graph.get_vertex_kind(vid) {
@@ -19288,34 +19362,125 @@ where
     fn evaluate_small_layer_direct_effects(
         &mut self,
         layer: &super::scheduler::Layer,
-        mut delta: Option<&mut DeltaCollector>,
-        mut log: Option<&mut ChangeLog>,
+        delta: Option<&mut DeltaCollector>,
+        log: Option<&mut ChangeLog>,
         cancel_flag: Option<&AtomicBool>,
         cancel_check_every: usize,
         cancel_message: &'static str,
     ) -> Result<usize, ExcelError> {
-        for (i, &vertex_id) in layer.vertices.iter().enumerate() {
-            if cancel_check_every > 0
-                && i % cancel_check_every == 0
-                && cancel_flag.is_some_and(|flag| flag.load(Ordering::Relaxed))
+        let cancel = cancel_flag.map(|flag| (flag, cancel_check_every, cancel_message));
+        self.evaluate_layer_units(layer, delta, log, cancel, false)
+    }
+
+    /// Sequential layer walk over its units (single cells and family runs):
+    /// each unit evaluates, then its vertices' effects apply in order. With
+    /// `buffered`, computed writes coalesce in a layer buffer (flushed before
+    /// a unit that reads a compressed range, before array results, and at
+    /// the end); otherwise they apply directly. `cancel` = (flag, check every
+    /// N vertices, message).
+    fn evaluate_layer_units(
+        &mut self,
+        layer: &super::scheduler::Layer,
+        delta: Option<&mut DeltaCollector>,
+        log: Option<&mut ChangeLog>,
+        cancel: Option<(&AtomicBool, usize, &'static str)>,
+        buffered: bool,
+    ) -> Result<usize, ExcelError> {
+        self.evaluate_layer_units_until(layer, delta, log, cancel, buffered, None)
+    }
+
+    /// [`Self::evaluate_layer_units`] that stops before the next unit once
+    /// `stop_at` has passed; returns the vertices evaluated (a prefix of
+    /// the layer, all committed).
+    fn evaluate_layer_units_until(
+        &mut self,
+        layer: &super::scheduler::Layer,
+        mut delta: Option<&mut DeltaCollector>,
+        mut log: Option<&mut ChangeLog>,
+        cancel: Option<(&AtomicBool, usize, &'static str)>,
+        buffered: bool,
+        stop_at: Option<crate::instant::FzInstant>,
+    ) -> Result<usize, ExcelError> {
+        let mut computed_writes = ComputedWriteBuffer::default();
+        let mut next_check = 0usize;
+        let mut done = 0usize;
+        for unit in layer_units(layer) {
+            if done > 0
+                && let Some(stop_at) = stop_at
+                && crate::instant::FzInstant::now() >= stop_at
             {
-                return Err(ExcelError::new(ExcelErrorKind::Cancelled)
-                    .with_message(cancel_message.to_string()));
+                self.flush_computed_write_buffer(&mut computed_writes)?;
+                return Ok(done);
             }
-            let value = match self.evaluate_vertex_immutable(vertex_id) {
-                Ok(v) => v,
-                Err(e) => LiteralValue::Error(e),
-            };
-            let effects = self.plan_vertex_effects(vertex_id, value, None)?;
-            for effect in &effects {
-                self.apply_effect_with_computed_writes(
-                    effect,
-                    delta.as_deref_mut(),
-                    log.as_deref_mut(),
-                    None,
-                )?;
+            if let Some((flag, every, message)) = cancel
+                && every > 0
+                && done >= next_check
+            {
+                next_check = (done / every + 1) * every;
+                if flag.load(Ordering::Relaxed) {
+                    if buffered {
+                        self.flush_computed_write_buffer(&mut computed_writes)?;
+                    }
+                    return Err(ExcelError::new(ExcelErrorKind::Cancelled)
+                        .with_message(message.to_string()));
+                }
+            }
+            if buffered && self.unit_reads_compressed_range(layer, unit) {
+                self.flush_computed_write_buffer(&mut computed_writes)?;
+            }
+            let values = self.evaluate_unit_immutable(layer, unit);
+            done += values.len();
+            if let LayerUnit::Run(run) = unit {
+                let members = &layer.vertices[run.start as usize..(run.start + run.len) as usize];
+                let delta_active = delta.as_deref().is_some_and(|d| d.mode != DeltaMode::Off);
+                let committed = self.commit_run_scalars(
+                    run,
+                    members,
+                    &values,
+                    delta_active,
+                    buffered.then_some(&mut computed_writes),
+                );
+                match committed {
+                    Ok(true) => continue,
+                    Ok(false) => {}
+                    Err(e) => {
+                        self.flush_computed_write_buffer(&mut computed_writes)?;
+                        return Err(e);
+                    }
+                }
+            }
+            for (vertex_id, value) in values {
+                let effects = if buffered {
+                    self.plan_vertex_effects_with_computed_flush(
+                        vertex_id,
+                        value,
+                        None,
+                        &mut computed_writes,
+                    )
+                } else {
+                    self.plan_vertex_effects(vertex_id, value, None)
+                };
+                let effects = match effects {
+                    Ok(effects) => effects,
+                    Err(e) => {
+                        self.flush_computed_write_buffer(&mut computed_writes)?;
+                        return Err(e);
+                    }
+                };
+                for effect in &effects {
+                    if let Err(e) = self.apply_effect_with_computed_writes(
+                        effect,
+                        delta.as_deref_mut(),
+                        log.as_deref_mut(),
+                        buffered.then_some(&mut computed_writes),
+                    ) {
+                        self.flush_computed_write_buffer(&mut computed_writes)?;
+                        return Err(e);
+                    }
+                }
             }
         }
+        self.flush_computed_write_buffer(&mut computed_writes)?;
         Ok(layer.vertices.len())
     }
 
@@ -19324,50 +19489,8 @@ where
         &mut self,
         layer: &super::scheduler::Layer,
     ) -> Result<usize, ExcelError> {
-        if layer.vertices.len() < COMPUTED_WRITE_COALESCING_MIN_LAYER_WIDTH {
-            return self.evaluate_small_layer_direct_effects(
-                layer,
-                None,
-                None,
-                None,
-                0,
-                "Evaluation cancelled within layer",
-            );
-        }
-
-        let mut computed_writes = ComputedWriteBuffer::default();
-        for &vertex_id in &layer.vertices {
-            self.flush_before_range_dependent_vertex(vertex_id, &mut computed_writes)?;
-            let value = match self.evaluate_vertex_immutable(vertex_id) {
-                Ok(v) => v,
-                Err(e) => LiteralValue::Error(e),
-            };
-            let effects = match self.plan_vertex_effects_with_computed_flush(
-                vertex_id,
-                value,
-                None,
-                &mut computed_writes,
-            ) {
-                Ok(effects) => effects,
-                Err(e) => {
-                    self.flush_computed_write_buffer(&mut computed_writes)?;
-                    return Err(e);
-                }
-            };
-            for effect in &effects {
-                if let Err(e) = self.apply_effect_with_computed_writes(
-                    effect,
-                    None,
-                    None,
-                    Some(&mut computed_writes),
-                ) {
-                    self.flush_computed_write_buffer(&mut computed_writes)?;
-                    return Err(e);
-                }
-            }
-        }
-        self.flush_computed_write_buffer(&mut computed_writes)?;
-        Ok(layer.vertices.len())
+        let buffered = layer.vertices.len() >= COMPUTED_WRITE_COALESCING_MIN_LAYER_WIDTH;
+        self.evaluate_layer_units(layer, None, None, None, buffered)
     }
 
     /// Evaluate a layer sequentially with delta collection via effects pipeline.
@@ -19376,50 +19499,8 @@ where
         layer: &super::scheduler::Layer,
         delta: &mut DeltaCollector,
     ) -> Result<usize, ExcelError> {
-        if layer.vertices.len() < COMPUTED_WRITE_COALESCING_MIN_LAYER_WIDTH {
-            return self.evaluate_small_layer_direct_effects(
-                layer,
-                Some(delta),
-                None,
-                None,
-                0,
-                "Evaluation cancelled within layer",
-            );
-        }
-
-        let mut computed_writes = ComputedWriteBuffer::default();
-        for &vertex_id in &layer.vertices {
-            self.flush_before_range_dependent_vertex(vertex_id, &mut computed_writes)?;
-            let value = match self.evaluate_vertex_immutable(vertex_id) {
-                Ok(v) => v,
-                Err(e) => LiteralValue::Error(e),
-            };
-            let effects = match self.plan_vertex_effects_with_computed_flush(
-                vertex_id,
-                value,
-                None,
-                &mut computed_writes,
-            ) {
-                Ok(effects) => effects,
-                Err(e) => {
-                    self.flush_computed_write_buffer(&mut computed_writes)?;
-                    return Err(e);
-                }
-            };
-            for effect in &effects {
-                if let Err(e) = self.apply_effect_with_computed_writes(
-                    effect,
-                    Some(delta),
-                    None,
-                    Some(&mut computed_writes),
-                ) {
-                    self.flush_computed_write_buffer(&mut computed_writes)?;
-                    return Err(e);
-                }
-            }
-        }
-        self.flush_computed_write_buffer(&mut computed_writes)?;
-        Ok(layer.vertices.len())
+        let buffered = layer.vertices.len() >= COMPUTED_WRITE_COALESCING_MIN_LAYER_WIDTH;
+        self.evaluate_layer_units(layer, Some(delta), None, None, buffered)
     }
 
     /// Evaluate a layer sequentially with cancellation support via effects pipeline.
@@ -19428,55 +19509,9 @@ where
         layer: &super::scheduler::Layer,
         cancel_flag: &AtomicBool,
     ) -> Result<usize, ExcelError> {
-        if layer.vertices.len() < COMPUTED_WRITE_COALESCING_MIN_LAYER_WIDTH {
-            return self.evaluate_small_layer_direct_effects(
-                layer,
-                None,
-                None,
-                Some(cancel_flag),
-                256,
-                "Evaluation cancelled within layer",
-            );
-        }
-
-        let mut computed_writes = ComputedWriteBuffer::default();
-        for (i, &vertex_id) in layer.vertices.iter().enumerate() {
-            if i % 256 == 0 && cancel_flag.load(Ordering::Relaxed) {
-                self.flush_computed_write_buffer(&mut computed_writes)?;
-                return Err(ExcelError::new(ExcelErrorKind::Cancelled)
-                    .with_message("Evaluation cancelled within layer".to_string()));
-            }
-            self.flush_before_range_dependent_vertex(vertex_id, &mut computed_writes)?;
-            let value = match self.evaluate_vertex_immutable(vertex_id) {
-                Ok(v) => v,
-                Err(e) => LiteralValue::Error(e),
-            };
-            let effects = match self.plan_vertex_effects_with_computed_flush(
-                vertex_id,
-                value,
-                None,
-                &mut computed_writes,
-            ) {
-                Ok(effects) => effects,
-                Err(e) => {
-                    self.flush_computed_write_buffer(&mut computed_writes)?;
-                    return Err(e);
-                }
-            };
-            for effect in &effects {
-                if let Err(e) = self.apply_effect_with_computed_writes(
-                    effect,
-                    None,
-                    None,
-                    Some(&mut computed_writes),
-                ) {
-                    self.flush_computed_write_buffer(&mut computed_writes)?;
-                    return Err(e);
-                }
-            }
-        }
-        self.flush_computed_write_buffer(&mut computed_writes)?;
-        Ok(layer.vertices.len())
+        let buffered = layer.vertices.len() >= COMPUTED_WRITE_COALESCING_MIN_LAYER_WIDTH;
+        let cancel = (cancel_flag, 256, "Evaluation cancelled within layer");
+        self.evaluate_layer_units(layer, None, None, Some(cancel), buffered)
     }
 
     /// Evaluate a layer sequentially with more frequent cancellation for demand-driven eval.
@@ -19485,103 +19520,51 @@ where
         layer: &super::scheduler::Layer,
         cancel_flag: &AtomicBool,
     ) -> Result<usize, ExcelError> {
-        if layer.vertices.len() < COMPUTED_WRITE_COALESCING_MIN_LAYER_WIDTH {
-            return self.evaluate_small_layer_direct_effects(
-                layer,
-                None,
-                None,
-                Some(cancel_flag),
-                128,
-                "Demand-driven evaluation cancelled within layer",
-            );
-        }
-
-        let mut computed_writes = ComputedWriteBuffer::default();
-        for (i, &vertex_id) in layer.vertices.iter().enumerate() {
-            if i % 128 == 0 && cancel_flag.load(Ordering::Relaxed) {
-                self.flush_computed_write_buffer(&mut computed_writes)?;
-                return Err(ExcelError::new(ExcelErrorKind::Cancelled)
-                    .with_message("Demand-driven evaluation cancelled within layer".to_string()));
-            }
-            self.flush_before_range_dependent_vertex(vertex_id, &mut computed_writes)?;
-            let value = match self.evaluate_vertex_immutable(vertex_id) {
-                Ok(v) => v,
-                Err(e) => LiteralValue::Error(e),
-            };
-            let effects = match self.plan_vertex_effects_with_computed_flush(
-                vertex_id,
-                value,
-                None,
-                &mut computed_writes,
-            ) {
-                Ok(effects) => effects,
-                Err(e) => {
-                    self.flush_computed_write_buffer(&mut computed_writes)?;
-                    return Err(e);
-                }
-            };
-            for effect in &effects {
-                if let Err(e) = self.apply_effect_with_computed_writes(
-                    effect,
-                    None,
-                    None,
-                    Some(&mut computed_writes),
-                ) {
-                    self.flush_computed_write_buffer(&mut computed_writes)?;
-                    return Err(e);
-                }
-            }
-        }
-        self.flush_computed_write_buffer(&mut computed_writes)?;
-        Ok(layer.vertices.len())
+        let buffered = layer.vertices.len() >= COMPUTED_WRITE_COALESCING_MIN_LAYER_WIDTH;
+        let cancel = (
+            cancel_flag,
+            128,
+            "Demand-driven evaluation cancelled within layer",
+        );
+        self.evaluate_layer_units(layer, None, None, Some(cancel), buffered)
     }
 
     /// Evaluate a layer in parallel, applying via effects pipeline.
     fn evaluate_layer_parallel_effects(
         &mut self,
         layer: &super::scheduler::Layer,
+        min_chunk: u32,
     ) -> Result<usize, ExcelError> {
-        use rayon::prelude::*;
-
         let thread_pool = self.thread_pool.as_ref().unwrap().clone();
 
-        let mut phase1: Vec<VertexId> = Vec::new();
-        let mut phase2: Vec<VertexId> = Vec::new();
-        for &vid in &layer.vertices {
-            if self.graph.reads_compressed_range(vid) {
-                phase2.push(vid);
-            } else {
-                phase1.push(vid);
-            }
-        }
+        let phases = self.parallel_phases(layer);
 
         let inflight: rustc_hash::FxHashSet<VertexId> = layer.vertices.iter().copied().collect();
         let mut applied = 0usize;
 
-        for group in [&phase1[..], &phase2[..]] {
+        for (units, group) in &phases {
+            let group = &group[..];
             if group.is_empty() {
                 continue;
             }
             let mut computed_writes = ComputedWriteBuffer::default();
 
             let results: Result<Vec<(VertexId, LiteralValue)>, ExcelError> =
-                thread_pool.install(|| {
-                    group
-                        .par_iter()
-                        .map(
-                            |&vertex_id| match self.evaluate_vertex_immutable(vertex_id) {
-                                Ok(v) => Ok((vertex_id, v)),
-                                Err(e) => Ok((vertex_id, LiteralValue::Error(e))),
-                            },
-                        )
-                        .collect()
-                });
+                thread_pool.install(|| self.evaluate_units_parallel(layer, units, None, min_chunk));
 
             // FR3: a parallel group is one commit unit; one stale reader
             // drops the whole group (it stays dirty and replans).
             self.freshness_gate_group(group);
             match results {
                 Ok(vertex_results) => {
+                    let (vertex_results, committed) = self.commit_parallel_runs(
+                        layer,
+                        units,
+                        vertex_results,
+                        false,
+                        &mut computed_writes,
+                    )?;
+                    applied = applied.saturating_add(committed);
                     // Arrays first, then scalars — establishes spill regions before
                     // scalar results that might land inside a spilled region.
                     let mut arrays: Vec<(VertexId, LiteralValue)> = Vec::new();
@@ -19666,46 +19649,35 @@ where
         layer: &super::scheduler::Layer,
         delta: &mut DeltaCollector,
     ) -> Result<usize, ExcelError> {
-        use rayon::prelude::*;
-
         let thread_pool = self.thread_pool.as_ref().unwrap().clone();
 
-        let mut phase1: Vec<VertexId> = Vec::new();
-        let mut phase2: Vec<VertexId> = Vec::new();
-        for &vid in &layer.vertices {
-            if self.graph.reads_compressed_range(vid) {
-                phase2.push(vid);
-            } else {
-                phase1.push(vid);
-            }
-        }
+        let phases = self.parallel_phases(layer);
 
         let inflight: rustc_hash::FxHashSet<VertexId> = layer.vertices.iter().copied().collect();
         let mut applied = 0usize;
 
-        for group in [&phase1[..], &phase2[..]] {
+        for (units, group) in &phases {
+            let group = &group[..];
             if group.is_empty() {
                 continue;
             }
             let mut computed_writes = ComputedWriteBuffer::default();
             let results: Result<Vec<(VertexId, LiteralValue)>, ExcelError> =
-                thread_pool.install(|| {
-                    group
-                        .par_iter()
-                        .map(
-                            |&vertex_id| match self.evaluate_vertex_immutable(vertex_id) {
-                                Ok(v) => Ok((vertex_id, v)),
-                                Err(e) => Ok((vertex_id, LiteralValue::Error(e))),
-                            },
-                        )
-                        .collect()
-                });
+                thread_pool.install(|| self.evaluate_units_parallel(layer, units, None, 8));
 
             // FR3: a parallel group is one commit unit; one stale reader
             // drops the whole group (it stays dirty and replans).
             self.freshness_gate_group(group);
             match results {
                 Ok(vertex_results) => {
+                    let (vertex_results, committed) = self.commit_parallel_runs(
+                        layer,
+                        units,
+                        vertex_results,
+                        delta.mode != DeltaMode::Off,
+                        &mut computed_writes,
+                    )?;
+                    applied = applied.saturating_add(committed);
                     let mut arrays: Vec<(VertexId, LiteralValue)> = Vec::new();
                     let mut others: Vec<(VertexId, LiteralValue)> = Vec::new();
                     for (vertex_id, result) in vertex_results {
@@ -19786,8 +19758,6 @@ where
         layer: &super::scheduler::Layer,
         cancel_flag: &AtomicBool,
     ) -> Result<usize, ExcelError> {
-        use rayon::prelude::*;
-
         let thread_pool = self.thread_pool.as_ref().unwrap().clone();
 
         if cancel_flag.load(Ordering::Relaxed) {
@@ -19795,50 +19765,34 @@ where
                 .with_message("Parallel evaluation cancelled before starting".to_string()));
         }
 
-        let mut phase1: Vec<VertexId> = Vec::new();
-        let mut phase2: Vec<VertexId> = Vec::new();
-        for &vid in &layer.vertices {
-            if self.graph.reads_compressed_range(vid) {
-                phase2.push(vid);
-            } else {
-                phase1.push(vid);
-            }
-        }
+        let phases = self.parallel_phases(layer);
 
         let inflight: rustc_hash::FxHashSet<VertexId> = layer.vertices.iter().copied().collect();
         let mut applied = 0usize;
 
-        for group in [&phase1[..], &phase2[..]] {
+        for (units, group) in &phases {
+            let group = &group[..];
             if group.is_empty() {
                 continue;
             }
             let mut computed_writes = ComputedWriteBuffer::default();
 
-            let results: Result<Vec<(VertexId, LiteralValue)>, ExcelError> =
-                thread_pool.install(|| {
-                    group
-                        .par_iter()
-                        .map(|&vertex_id| {
-                            if cancel_flag.load(Ordering::Relaxed) {
-                                return Err(ExcelError::new(ExcelErrorKind::Cancelled)
-                                    .with_message(
-                                        "Parallel evaluation cancelled during execution"
-                                            .to_string(),
-                                    ));
-                            }
-                            match self.evaluate_vertex_immutable(vertex_id) {
-                                Ok(v) => Ok((vertex_id, v)),
-                                Err(e) => Ok((vertex_id, LiteralValue::Error(e))),
-                            }
-                        })
-                        .collect()
-                });
+            let results: Result<Vec<(VertexId, LiteralValue)>, ExcelError> = thread_pool
+                .install(|| self.evaluate_units_parallel(layer, units, Some(cancel_flag), 8));
 
             // FR3: a parallel group is one commit unit; one stale reader
             // drops the whole group (it stays dirty and replans).
             self.freshness_gate_group(group);
             match results {
                 Ok(vertex_results) => {
+                    let (vertex_results, committed) = self.commit_parallel_runs(
+                        layer,
+                        units,
+                        vertex_results,
+                        false,
+                        &mut computed_writes,
+                    )?;
+                    applied = applied.saturating_add(committed);
                     let mut arrays: Vec<(VertexId, LiteralValue)> = Vec::new();
                     let mut others: Vec<(VertexId, LiteralValue)> = Vec::new();
                     for (vertex_id, result) in vertex_results {
@@ -20048,38 +20002,6 @@ where
         log: &mut ChangeLog,
     ) -> Result<usize, ExcelError> {
         self.resource_checkpoint(layer.vertices.len() as u64)?;
-        let mut computed_writes = ComputedWriteBuffer::default();
-        for &vertex_id in &layer.vertices {
-            self.flush_before_range_dependent_vertex(vertex_id, &mut computed_writes)?;
-            let value = match self.evaluate_vertex_immutable(vertex_id) {
-                Ok(v) => v,
-                Err(e) => LiteralValue::Error(e),
-            };
-            let effects = match self.plan_vertex_effects_with_computed_flush(
-                vertex_id,
-                value,
-                None,
-                &mut computed_writes,
-            ) {
-                Ok(effects) => effects,
-                Err(e) => {
-                    self.flush_computed_write_buffer(&mut computed_writes)?;
-                    return Err(e);
-                }
-            };
-            for effect in &effects {
-                if let Err(e) = self.apply_effect_with_computed_writes(
-                    effect,
-                    None,
-                    Some(log),
-                    Some(&mut computed_writes),
-                ) {
-                    self.flush_computed_write_buffer(&mut computed_writes)?;
-                    return Err(e);
-                }
-            }
-        }
-        self.flush_computed_write_buffer(&mut computed_writes)?;
-        Ok(layer.vertices.len())
+        self.evaluate_layer_units(layer, None, Some(log), None, true)
     }
 }

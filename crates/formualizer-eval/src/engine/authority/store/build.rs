@@ -6,6 +6,50 @@ use super::*;
 /// One formula cell and its facts.
 pub type BuildInput = (Cell, FormulaFacts);
 
+/// A build input whose facts may be shared between cells (the members of
+/// a load-time family share their template's facts, P2-M2).
+pub type SharedBuildInput = (Cell, std::sync::Arc<FormulaFacts>);
+
+use std::borrow::Borrow;
+
+/// The id a host assigns a build input's cell (Program 2: a formula
+/// cell's id is its executor `VertexId`). `None` keeps decision 9's
+/// assignment (kept from `prior` or `carried`, else fresh).
+pub trait GivenId {
+    fn given_id(&self) -> Option<Vid> {
+        None
+    }
+}
+
+impl GivenId for FormulaFacts {}
+impl GivenId for std::sync::Arc<FormulaFacts> {}
+impl GivenId for &FormulaFacts {}
+
+/// Facts with the host's id for their cell.
+#[derive(Clone, Debug)]
+pub struct IdentifiedFacts {
+    pub id: Vid,
+    pub facts: std::sync::Arc<FormulaFacts>,
+}
+
+impl Borrow<FormulaFacts> for IdentifiedFacts {
+    fn borrow(&self) -> &FormulaFacts {
+        &self.facts
+    }
+}
+
+impl GivenId for IdentifiedFacts {
+    fn given_id(&self) -> Option<Vid> {
+        Some(self.id)
+    }
+}
+
+impl IdentifiedFacts {
+    pub fn owned_heap_bytes(&self) -> usize {
+        self.facts.owned_heap_bytes()
+    }
+}
+
 impl Store {
     /// Build from scratch. Groups are canon of their cells, owners get
     /// column-major contiguous ids (one run per column), and every
@@ -41,18 +85,19 @@ impl Store {
         prior: Option<&Store>,
         budget: Budget,
     ) -> Result<Store, AuthorityError> {
-        Self::rebuild_carrying(input, live_symbols, prior, None, budget)
+        Self::rebuild_carrying(input, live_symbols, prior, None, false, budget)
     }
 
     /// [`Self::rebuild_with_symbols`] after a structural edit (M3): cell
     /// ids come from `carried` (post-edit cell → id, every id below
     /// `prior`'s counter, not live twice) instead of `prior`'s positions;
     /// cells absent from it get fresh ids from `prior`'s counter.
-    pub(crate) fn rebuild_carrying(
-        input: Vec<BuildInput>,
+    pub(crate) fn rebuild_carrying<F: Borrow<FormulaFacts> + GivenId>(
+        input: Vec<(Cell, F)>,
         live_symbols: Vec<SymbolId>,
         prior: Option<&Store>,
         carried: Option<&FxHashMap<Cell, Vid>>,
+        host_ids: bool,
         budget: Budget,
     ) -> Result<Store, AuthorityError> {
         let symbol_input_bytes = (live_symbols.capacity() * size_of::<SymbolId>()) as u64;
@@ -61,10 +106,10 @@ impl Store {
         // them rejects without building. The full preview (legacy's
         // `preview_formula_mutations` → `preflight_graph_admission` at bulk
         // ingest) lands with the resource-ledger link (B-10, addendum B-22).
-        let input_bytes = input.capacity() * size_of::<BuildInput>()
+        let input_bytes = input.capacity() * size_of::<(Cell, F)>()
             + input
                 .iter()
-                .map(|(_, f)| f.owned_heap_bytes())
+                .map(|(_, f)| f.borrow().owned_heap_bytes())
                 .sum::<usize>();
         let gate = Store {
             budget,
@@ -75,7 +120,8 @@ impl Store {
             input_bytes as u64 + symbol_input_bytes + prior.map_or(0, Store::heap_bytes),
         )?;
         drop(gate);
-        let (mut s, scratch) = Self::build_keeping_with(input, prior.map(Store::ids), carried)?;
+        let (mut s, scratch) =
+            Self::build_keeping_with(input, prior.map(Store::ids), carried, host_ids)?;
         s.budget = budget;
         let transient = scratch + symbol_input_bytes + prior.map_or(0, Store::heap_bytes);
         s.admit(s.heap_bytes(), transient)?;
@@ -134,22 +180,23 @@ impl Store {
         input: Vec<BuildInput>,
         prior: Option<&IdentityTable>,
     ) -> Result<(Store, u64), AuthorityError> {
-        Self::build_keeping_with(input, prior, None)
+        Self::build_keeping_with(input, prior, None, false)
     }
 
     /// [`Self::build_keeping`] with an explicit kept-id map (see
     /// [`Self::rebuild_carrying`]); `prior` then supplies only the counter.
-    pub(crate) fn build_keeping_with(
-        mut input: Vec<BuildInput>,
+    pub(crate) fn build_keeping_with<F: Borrow<FormulaFacts> + GivenId>(
+        mut input: Vec<(Cell, F)>,
         prior: Option<&IdentityTable>,
         carried: Option<&FxHashMap<Cell, Vid>>,
+        host_ids: bool,
     ) -> Result<(Store, u64), AuthorityError> {
         // The input and everything it owns coexist with the whole build
         // (re-review R5).
-        let mut scratch = input.capacity() * size_of::<BuildInput>()
+        let mut scratch = input.capacity() * size_of::<(Cell, F)>()
             + input
                 .iter()
-                .map(|(_, f)| f.owned_heap_bytes())
+                .map(|(_, f)| f.borrow().owned_heap_bytes())
                 .sum::<usize>();
         let mut s = Store::new();
         input.sort_unstable_by_key(|(c, _)| *c);
@@ -162,6 +209,7 @@ impl Store {
         let mut by_cell: FxHashMap<Cell, usize> = FxHashMap::default();
         let mut rep_tokens: FxHashMap<u32, usize> = FxHashMap::default();
         for (i, (cell, f)) in input.iter().enumerate() {
+            let f: &FormulaFacts = f.borrow();
             by_cell.insert(*cell, i);
             for e in &f.edges {
                 let lk = match &e.origin {
@@ -210,7 +258,10 @@ impl Store {
                     // Verify against the group's first member: a 64-bit
                     // collision leaves the formula ungrouped.
                     match g {
-                        Some(g) if input[rep_tokens[&g]].1.ltokens.as_deref() == Some(&t[..]) => {
+                        Some(g)
+                            if input[rep_tokens[&g]].1.borrow().ltokens.as_deref()
+                                == Some(&t[..]) =>
+                        {
                             ncells
                                 .entry(g)
                                 .or_default()
@@ -351,7 +402,7 @@ impl Store {
             grp.members = Members::with_capacity(pieces.len());
             for p in pieces {
                 let id = s.owners.len() as u32;
-                let f = &input[by_cell[&(sheet, p.r0, p.c0)]].1;
+                let f: &FormulaFacts = input[by_cell[&(sheet, p.r0, p.c0)]].1.borrow();
                 grp.members.push(id);
                 s.owners.push(Owner {
                     dom: p,
@@ -360,7 +411,7 @@ impl Store {
                     group: g,
                     pos: (grp.members.len() - 1) as u32,
                     template: f.template,
-                    anchor: (p.r0, p.c0),
+                    anchor: f.template_anchor.unwrap_or((p.r0, p.c0)),
                 });
                 if !p.is_cell() {
                     s.nnodes += 1;
@@ -371,6 +422,7 @@ impl Store {
         }
         for i in ungrouped {
             let (cell, f) = &input[i];
+            let f: &FormulaFacts = f.borrow();
             let id = s.owners.len() as u32;
             s.owners.push(Owner {
                 dom: Rect::cell(cell.1, cell.2),
@@ -379,7 +431,7 @@ impl Store {
                 group: UNGROUPED,
                 pos: 0,
                 template: f.template,
-                anchor: (cell.1, cell.2),
+                anchor: f.template_anchor.unwrap_or((cell.1, cell.2)),
             });
             placed.push(id);
         }
@@ -395,16 +447,38 @@ impl Store {
         // order. A run is a maximal row segment of one owner column whose
         // ids are consecutive: all kept and id-contiguous in `prior`, or
         // all new. Without `prior` this is one run per owner column.
+        // Given ids (a host store): every cell's id is the host's; the
+        // counter only allocates symbol binding identities, from
+        // `HOST_SYMBOL_ID_BASE` up.
+        let given = host_ids;
+        debug_assert!(
+            !given || input.iter().all(|(_, f)| f.given_id().is_some()),
+            "a host build gives every cell's id"
+        );
         if let Some(p) = prior {
-            s.ids = IdentityTable::continuing(p.next_id(), p.limit());
+            let next = if given || p.next_id() >= HOST_SYMBOL_ID_BASE {
+                p.next_id().max(HOST_SYMBOL_ID_BASE)
+            } else {
+                p.next_id()
+            };
+            s.ids = IdentityTable::continuing(next, p.limit());
+        } else if given {
+            s.ids = IdentityTable::continuing(HOST_SYMBOL_ID_BASE, s.ids.limit());
         }
         placed.sort_unstable_by_key(|&o| {
             let w = &s.owners[o as usize];
             (w.sheet, w.dom.c0, w.dom.r0)
         });
-        let kept_id = |sheet: u16, row: u32, col: u32| match carried {
-            Some(m) => m.get(&(sheet, row, col)).copied(),
-            None => prior.and_then(|p| p.id_of((sheet, row, col))),
+        let kept_id = |sheet: u16, row: u32, col: u32| {
+            if given {
+                return by_cell
+                    .get(&(sheet, row, col))
+                    .and_then(|&i| input[i].1.given_id());
+            }
+            match carried {
+                Some(m) => m.get(&(sheet, row, col)).copied(),
+                None => prior.and_then(|p| p.id_of((sheet, row, col))),
+            }
         };
         // (owner, column, first row, length, kept first id).
         let mut segs: Vec<(u32, u32, u32, u32, Option<Vid>)> = Vec::new();
@@ -453,7 +527,7 @@ impl Store {
             };
             let first_id = s.ids.run(h).first_id;
             for i in 0..len {
-                let f = &input[by_cell[&(w.sheet, r + i, c)]].1;
+                let f: &FormulaFacts = input[by_cell[&(w.sheet, r + i, c)]].1.borrow();
                 if !f.literals.is_empty() {
                     rows.push((first_id + i, f.literals.len()));
                 }
@@ -468,7 +542,7 @@ impl Store {
         let mut payload: Vec<(Vid, &[ValueRef])> = Vec::with_capacity(rows.len());
         for &(id, _) in &rows {
             let cell = s.ids.locate(id).expect("placed id");
-            payload.push((id, &input[by_cell[&cell]].1.literals[..]));
+            payload.push((id, &input[by_cell[&cell]].1.borrow().literals[..]));
         }
         s.slots.apply(&plan, &[], &payload);
         scratch += payload.capacity() * size_of::<(Vid, &[ValueRef])>()

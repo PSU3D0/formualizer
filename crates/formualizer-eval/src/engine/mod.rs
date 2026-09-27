@@ -10,6 +10,7 @@ pub mod arrow_ingest;
 pub mod authority;
 pub mod cancel;
 pub(crate) mod convergence;
+pub(crate) mod derived_formats;
 pub mod effects;
 pub mod eval;
 pub mod eval_delta;
@@ -83,7 +84,9 @@ pub use eval_delta::{
     DeltaMode, EvalDelta, EvalDeltaCompatibilityPolicy, EvalDeltaRecord, TARGET_EVAL_DELTA_VERSION,
     TargetEvalDelta,
 };
-pub use formula_ingest::{FormulaIngestBatch, FormulaIngestRecord, FormulaIngestReport};
+pub use formula_ingest::{
+    FormulaFamilyGrouper, FormulaIngestBatch, FormulaIngestRecord, FormulaIngestReport,
+};
 #[doc(hidden)]
 pub use formula_source::{
     DeferredFormulaPackage, DeferredFormulaReplay, DeferredReplayFormula,
@@ -100,6 +103,7 @@ pub use journal::{ActionJournal, ArrowOp, ArrowUndoBatch, GraphUndoBatch};
 pub use target_preparation::PrepareTargetsOptions;
 // Use SoA implementation
 pub use formualizer_common::{ResourceExhaustionDetail, ResourceExhaustionReason};
+pub use graph::FormulaView;
 pub use graph::snapshot::VertexSnapshot;
 pub use graph::{
     ChangeEvent, DependencyGraph, DependencyRef, GraphBaselineStats, OperationSummary, StripeKey,
@@ -542,6 +546,57 @@ impl<R: EvaluationContext> Engine<R> {
     pub fn intern_formula_ast(&mut self, ast: &formualizer_parse::parser::ASTNode) -> AstNodeId {
         self.graph.store_ast(ast)
     }
+
+    /// Stage one parsed formula at 1-based `(row, col)` of a bulk ingest
+    /// batch, with load-time family grouping (Program 2): when the formula
+    /// is exactly the formula above it (or to its left) in `grouper`'s
+    /// sheet relocated to this cell, the record references that family's
+    /// template and the formula is never interned; otherwise it is
+    /// interned as usual. Formulas of one sheet must be staged through one
+    /// grouper, in any order (only adjacent cells are compared). With
+    /// `EvalConfig::formula_compression` off every formula is interned.
+    pub fn stage_formula_ast(
+        &mut self,
+        grouper: &mut FormulaFamilyGrouper,
+        row: u32,
+        col: u32,
+        ast: &formualizer_parse::parser::ASTNode,
+        formula_text: Option<std::sync::Arc<str>>,
+    ) -> FormulaIngestRecord {
+        let (row0, col0) = (row.saturating_sub(1), col.saturating_sub(1));
+        if self.config.formula_compression
+            && let Some(family) = self.graph.group_formula_member(grouper, row0, col0, ast)
+        {
+            let record = FormulaIngestRecord::member(row, col, family.template, family.anchor);
+            grouper.members += 1;
+            grouper.note(row0, col0, family);
+            return record;
+        }
+        let ast_id = self.intern_formula_ast(ast);
+        self.note_staged_formula(grouper, row, col, ast_id);
+        FormulaIngestRecord::new(row, col, ast_id, formula_text)
+    }
+
+    /// Record a formula interned without [`Self::stage_formula_ast`] (for
+    /// example a parse-cache hit) as a family template candidate.
+    pub fn note_staged_formula(
+        &mut self,
+        grouper: &mut FormulaFamilyGrouper,
+        row: u32,
+        col: u32,
+        ast_id: AstNodeId,
+    ) {
+        let (row0, col0) = (row.saturating_sub(1), col.saturating_sub(1));
+        grouper.note(
+            row0,
+            col0,
+            formula_ingest::GroupedFamily {
+                template: ast_id,
+                anchor: (row0, col0),
+                rendered: None,
+            },
+        );
+    }
 }
 
 /// 🔮 Scalability Hook: Performance monitoring trait for calculation observability
@@ -901,6 +956,30 @@ pub struct EvalConfig {
 
     /// Maximum bytes for the engine-side lookup-index cache.
     pub lookup_index_cache_max_bytes: usize,
+
+    /// Program 2 region-native execution: a family node's cells at one
+    /// schedule layer evaluate as one unit through the node's template.
+    /// `false` evaluates every formula cell on its own (the per-cell
+    /// oracle). Values are identical either way.
+    pub family_execution: bool,
+
+    /// Program 2 range kernels (tier 3) inside family execution: windowed
+    /// aggregates reduce each member's slice without per-call range
+    /// resolution. `false` keeps tier 1 for every run. Values are identical.
+    pub family_kernels: bool,
+
+    /// Program 2 elementwise lift (P2-M3) inside family execution: a run
+    /// whose template is operators over cell references and literals
+    /// evaluates column-wise instead of walking the template per member.
+    /// `false` keeps the per-member walk. Values are identical.
+    pub family_lift: bool,
+
+    /// Program 2 compression: after the dependency authority is built,
+    /// family members whose formula is their node's template relocated
+    /// store a reference to the template instead of their own AST, and
+    /// the formula arena drops the unreachable trees. Formulas read back
+    /// identically either way.
+    pub formula_compression: bool,
 }
 
 impl Default for EvalConfig {
@@ -962,6 +1041,10 @@ impl Default for EvalConfig {
             max_formula_plane_cache_edges: 100_000,
             max_formula_plane_cache_bytes: 64 * 1024 * 1024,
             lookup_index_cache_max_bytes: 64 * 1024 * 1024,
+            family_execution: true,
+            family_kernels: true,
+            family_lift: true,
+            formula_compression: true,
         }
     }
 }

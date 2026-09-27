@@ -244,7 +244,7 @@ pub fn formualizer_eval::arrow_store::Overlay::set_format(&mut self, usize, core
 impl core::clone::Clone for formualizer_eval::arrow_store::Overlay
 pub fn formualizer_eval::arrow_store::Overlay::clone(&self) -> formualizer_eval::arrow_store::Overlay
 impl core::default::Default for formualizer_eval::arrow_store::Overlay
-pub fn formualizer_eval::arrow_store::Overlay::default() -> formualizer_eval::arrow_store::Overlay
+pub fn formualizer_eval::arrow_store::Overlay::default() -> Self
 impl core::fmt::Debug for formualizer_eval::arrow_store::Overlay
 pub fn formualizer_eval::arrow_store::Overlay::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub struct formualizer_eval::arrow_store::SheetStore
@@ -1331,6 +1331,8 @@ pub formualizer_eval::engine::eval::Engine::recalc_epoch: u64
 impl<R: formualizer_eval::traits::EvaluationContext> formualizer_eval::engine::eval::Engine<R>
 pub fn formualizer_eval::engine::eval::Engine<R>::begin_bulk_ingest(&mut self) -> formualizer_eval::engine::ingest_builder::BulkIngestBuilder<'_>
 pub fn formualizer_eval::engine::eval::Engine<R>::intern_formula_ast(&mut self, &formualizer_parse::parser::ASTNode) -> formualizer_eval::engine::arena::ast::AstNodeId
+pub fn formualizer_eval::engine::eval::Engine<R>::note_staged_formula(&mut self, &mut formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper, u32, u32, formualizer_eval::engine::arena::ast::AstNodeId)
+pub fn formualizer_eval::engine::eval::Engine<R>::stage_formula_ast(&mut self, &mut formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper, u32, u32, &formualizer_parse::parser::ASTNode, core::option::Option<alloc::sync::Arc<str>>) -> formualizer_eval::engine::formula_ingest::FormulaIngestRecord
 impl<R: formualizer_eval::traits::EvaluationContext> formualizer_eval::engine::eval::Engine<R>
 pub fn formualizer_eval::engine::eval::Engine<R>::dependents(&self, &formualizer_common::grid_address::CellAddress, &formualizer_eval::engine::inspect::DependentsOptions) -> core::result::Result<formualizer_eval::engine::inspect::DependentsReport, formualizer_eval::engine::inspect::InspectError>
 pub fn formualizer_eval::engine::eval::Engine<R>::inspect_cell(&self, &formualizer_common::grid_address::CellAddress, &formualizer_eval::engine::inspect::SnapshotOptions) -> core::result::Result<formualizer_eval::engine::inspect::CellSnapshotReport, formualizer_eval::engine::inspect::InspectError>
@@ -1738,6 +1740,14 @@ pub fn formualizer_eval::engine::eval_delta::TargetEvalDelta::fmt(&self, &mut co
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::eval_delta::TargetEvalDelta
 pub const formualizer_eval::engine::eval_delta::TARGET_EVAL_DELTA_VERSION: u16
 pub mod formualizer_eval::engine::formula_ingest
+pub struct formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper
+impl formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper
+pub fn formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper::members(&self) -> u64
+pub fn formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper::new() -> Self
+impl core::default::Default for formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper
+pub fn formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper::default() -> formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper
+impl core::fmt::Debug for formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper
+pub fn formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub struct formualizer_eval::engine::formula_ingest::FormulaIngestBatch
 pub formualizer_eval::engine::formula_ingest::FormulaIngestBatch::formulas: alloc::vec::Vec<formualizer_eval::engine::formula_ingest::FormulaIngestRecord>
 pub formualizer_eval::engine::formula_ingest::FormulaIngestBatch::sheet_name: alloc::string::String
@@ -1755,6 +1765,7 @@ pub formualizer_eval::engine::formula_ingest::FormulaIngestRecord::col: u32
 pub formualizer_eval::engine::formula_ingest::FormulaIngestRecord::formula_text: core::option::Option<alloc::sync::Arc<str>>
 pub formualizer_eval::engine::formula_ingest::FormulaIngestRecord::row: u32
 impl formualizer_eval::engine::formula_ingest::FormulaIngestRecord
+pub fn formualizer_eval::engine::formula_ingest::FormulaIngestRecord::is_family_member(&self) -> bool
 pub fn formualizer_eval::engine::formula_ingest::FormulaIngestRecord::new(u32, u32, formualizer_eval::engine::arena::ast::AstNodeId, core::option::Option<alloc::sync::Arc<str>>) -> Self
 impl core::clone::Clone for formualizer_eval::engine::formula_ingest::FormulaIngestRecord
 pub fn formualizer_eval::engine::formula_ingest::FormulaIngestRecord::clone(&self) -> formualizer_eval::engine::formula_ingest::FormulaIngestRecord
@@ -2585,6 +2596,7 @@ pub fn formualizer_eval::engine::graph::DependencyGraph::ensure_vertices_batch(&
 pub fn formualizer_eval::engine::graph::DependencyGraph::ensure_vertices_batch_ordered(&mut self, &[(formualizer_eval::reference::SheetId, formualizer_common::coord::Coord)]) -> (alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>, alloc::vec::Vec<(formualizer_eval::engine::addr::VertexAddr, u32)>)
 pub fn formualizer_eval::engine::graph::DependencyGraph::ensure_vertices_batch_packed_ordered(&mut self, &[formualizer_common::address::PackedSheetCell]) -> (alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>, alloc::vec::Vec<(formualizer_eval::engine::addr::VertexAddr, u32)>)
 pub fn formualizer_eval::engine::graph::DependencyGraph::finalize_sheet_index(&mut self, &str)
+pub fn formualizer_eval::engine::graph::DependencyGraph::formula_view(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<formualizer_eval::engine::graph::FormulaView>
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_cell_ref_for_vertex(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<formualizer_eval::reference::CellRef>
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_cell_value(&self, &str, u32, u32) -> core::option::Option<formualizer_common::value::LiteralValue>
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_cell_value_ref(&self, formualizer_common::address::SheetCellRef<'_>) -> core::option::Option<formualizer_common::value::LiteralValue>
@@ -2599,7 +2611,7 @@ pub fn formualizer_eval::engine::graph::DependencyGraph::get_grid_addr(&self, fo
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_sheet_id(&self, formualizer_eval::engine::vertex::VertexId) -> formualizer_eval::reference::SheetId
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_value(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<formualizer_common::value::LiteralValue>
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_vertex_for_cell(&self, &formualizer_eval::reference::CellRef) -> core::option::Option<formualizer_eval::engine::vertex::VertexId>
-pub fn formualizer_eval::engine::graph::DependencyGraph::get_vertex_id_for_address(&self, &formualizer_eval::reference::CellRef) -> core::option::Option<&formualizer_eval::engine::vertex::VertexId>
+pub fn formualizer_eval::engine::graph::DependencyGraph::get_vertex_id_for_address(&self, &formualizer_eval::reference::CellRef) -> core::option::Option<formualizer_eval::engine::vertex::VertexId>
 pub fn formualizer_eval::engine::graph::DependencyGraph::grid_vertices_in_sheet(&self, formualizer_eval::reference::SheetId) -> impl core::iter::traits::iterator::Iterator<Item = (formualizer_eval::engine::vertex::VertexId, formualizer_eval::engine::addr::GridAddr)> + '_
 pub fn formualizer_eval::engine::graph::DependencyGraph::is_ref_error(&self, formualizer_eval::engine::vertex::VertexId) -> bool
 pub fn formualizer_eval::engine::graph::DependencyGraph::iter_vertex_ids(&self) -> impl core::iter::traits::iterator::Iterator<Item = formualizer_eval::engine::vertex::VertexId> + '_
@@ -2666,6 +2678,19 @@ impl core::default::Default for formualizer_eval::engine::graph::DependencyGraph
 pub fn formualizer_eval::engine::graph::DependencyGraph::default() -> Self
 impl core::fmt::Debug for formualizer_eval::engine::graph::DependencyGraph
 pub fn formualizer_eval::engine::graph::DependencyGraph::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+#[non_exhaustive] pub struct formualizer_eval::engine::graph::FormulaView
+pub formualizer_eval::engine::graph::FormulaView::col_delta: i64
+pub formualizer_eval::engine::graph::FormulaView::row_delta: i64
+pub formualizer_eval::engine::graph::FormulaView::template: formualizer_eval::engine::arena::ast::AstNodeId
+impl core::clone::Clone for formualizer_eval::engine::graph::FormulaView
+pub fn formualizer_eval::engine::graph::FormulaView::clone(&self) -> formualizer_eval::engine::graph::FormulaView
+impl core::cmp::Eq for formualizer_eval::engine::graph::FormulaView
+impl core::cmp::PartialEq for formualizer_eval::engine::graph::FormulaView
+pub fn formualizer_eval::engine::graph::FormulaView::eq(&self, &formualizer_eval::engine::graph::FormulaView) -> bool
+impl core::fmt::Debug for formualizer_eval::engine::graph::FormulaView
+pub fn formualizer_eval::engine::graph::FormulaView::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_eval::engine::graph::FormulaView
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::graph::FormulaView
 pub struct formualizer_eval::engine::graph::GraphBaselineStats
 pub formualizer_eval::engine::graph::GraphBaselineStats::dirty_vertex_count: usize
 pub formualizer_eval::engine::graph::GraphBaselineStats::evaluation_vertex_count: usize
@@ -4428,6 +4453,8 @@ impl core::marker::Copy for formualizer_eval::engine::scheduler::ScheduleUnit
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::scheduler::ScheduleUnit
 pub struct formualizer_eval::engine::scheduler::Layer
 pub formualizer_eval::engine::scheduler::Layer::vertices: alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>
+impl formualizer_eval::engine::scheduler::Layer
+pub fn formualizer_eval::engine::scheduler::Layer::new(alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>) -> Self
 impl core::clone::Clone for formualizer_eval::engine::scheduler::Layer
 pub fn formualizer_eval::engine::scheduler::Layer::clone(&self) -> formualizer_eval::engine::scheduler::Layer
 impl core::fmt::Debug for formualizer_eval::engine::scheduler::Layer
@@ -4638,6 +4665,7 @@ impl core::fmt::Debug for formualizer_eval::engine::vertex_store::VertexStore
 pub fn formualizer_eval::engine::vertex_store::VertexStore::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub const formualizer_eval::engine::vertex_store::EXTERNAL_VERTEX_START: u32
 pub const formualizer_eval::engine::vertex_store::FIRST_NORMAL_VERTEX: u32
+pub const formualizer_eval::engine::vertex_store::MAX_VERTEX_ID: u32
 pub const formualizer_eval::engine::vertex_store::RANGE_VERTEX_START: u32
 pub mod formualizer_eval::engine::virtual_deps
 pub struct formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R: formualizer_eval::traits::EvaluationContext>
@@ -5842,6 +5870,7 @@ pub fn formualizer_eval::engine::graph::DependencyGraph::ensure_vertices_batch(&
 pub fn formualizer_eval::engine::graph::DependencyGraph::ensure_vertices_batch_ordered(&mut self, &[(formualizer_eval::reference::SheetId, formualizer_common::coord::Coord)]) -> (alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>, alloc::vec::Vec<(formualizer_eval::engine::addr::VertexAddr, u32)>)
 pub fn formualizer_eval::engine::graph::DependencyGraph::ensure_vertices_batch_packed_ordered(&mut self, &[formualizer_common::address::PackedSheetCell]) -> (alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>, alloc::vec::Vec<(formualizer_eval::engine::addr::VertexAddr, u32)>)
 pub fn formualizer_eval::engine::graph::DependencyGraph::finalize_sheet_index(&mut self, &str)
+pub fn formualizer_eval::engine::graph::DependencyGraph::formula_view(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<formualizer_eval::engine::graph::FormulaView>
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_cell_ref_for_vertex(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<formualizer_eval::reference::CellRef>
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_cell_value(&self, &str, u32, u32) -> core::option::Option<formualizer_common::value::LiteralValue>
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_cell_value_ref(&self, formualizer_common::address::SheetCellRef<'_>) -> core::option::Option<formualizer_common::value::LiteralValue>
@@ -5856,7 +5885,7 @@ pub fn formualizer_eval::engine::graph::DependencyGraph::get_grid_addr(&self, fo
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_sheet_id(&self, formualizer_eval::engine::vertex::VertexId) -> formualizer_eval::reference::SheetId
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_value(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<formualizer_common::value::LiteralValue>
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_vertex_for_cell(&self, &formualizer_eval::reference::CellRef) -> core::option::Option<formualizer_eval::engine::vertex::VertexId>
-pub fn formualizer_eval::engine::graph::DependencyGraph::get_vertex_id_for_address(&self, &formualizer_eval::reference::CellRef) -> core::option::Option<&formualizer_eval::engine::vertex::VertexId>
+pub fn formualizer_eval::engine::graph::DependencyGraph::get_vertex_id_for_address(&self, &formualizer_eval::reference::CellRef) -> core::option::Option<formualizer_eval::engine::vertex::VertexId>
 pub fn formualizer_eval::engine::graph::DependencyGraph::grid_vertices_in_sheet(&self, formualizer_eval::reference::SheetId) -> impl core::iter::traits::iterator::Iterator<Item = (formualizer_eval::engine::vertex::VertexId, formualizer_eval::engine::addr::GridAddr)> + '_
 pub fn formualizer_eval::engine::graph::DependencyGraph::is_ref_error(&self, formualizer_eval::engine::vertex::VertexId) -> bool
 pub fn formualizer_eval::engine::graph::DependencyGraph::iter_vertex_ids(&self) -> impl core::iter::traits::iterator::Iterator<Item = formualizer_eval::engine::vertex::VertexId> + '_
@@ -5929,6 +5958,8 @@ pub formualizer_eval::engine::Engine::recalc_epoch: u64
 impl<R: formualizer_eval::traits::EvaluationContext> formualizer_eval::engine::eval::Engine<R>
 pub fn formualizer_eval::engine::eval::Engine<R>::begin_bulk_ingest(&mut self) -> formualizer_eval::engine::ingest_builder::BulkIngestBuilder<'_>
 pub fn formualizer_eval::engine::eval::Engine<R>::intern_formula_ast(&mut self, &formualizer_parse::parser::ASTNode) -> formualizer_eval::engine::arena::ast::AstNodeId
+pub fn formualizer_eval::engine::eval::Engine<R>::note_staged_formula(&mut self, &mut formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper, u32, u32, formualizer_eval::engine::arena::ast::AstNodeId)
+pub fn formualizer_eval::engine::eval::Engine<R>::stage_formula_ast(&mut self, &mut formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper, u32, u32, &formualizer_parse::parser::ASTNode, core::option::Option<alloc::sync::Arc<str>>) -> formualizer_eval::engine::formula_ingest::FormulaIngestRecord
 impl<R: formualizer_eval::traits::EvaluationContext> formualizer_eval::engine::eval::Engine<R>
 pub fn formualizer_eval::engine::eval::Engine<R>::dependents(&self, &formualizer_common::grid_address::CellAddress, &formualizer_eval::engine::inspect::DependentsOptions) -> core::result::Result<formualizer_eval::engine::inspect::DependentsReport, formualizer_eval::engine::inspect::InspectError>
 pub fn formualizer_eval::engine::eval::Engine<R>::inspect_cell(&self, &formualizer_common::grid_address::CellAddress, &formualizer_eval::engine::inspect::SnapshotOptions) -> core::result::Result<formualizer_eval::engine::inspect::CellSnapshotReport, formualizer_eval::engine::inspect::InspectError>
@@ -6190,6 +6221,10 @@ pub formualizer_eval::engine::EvalConfig::enable_block_stripes: bool
 pub formualizer_eval::engine::EvalConfig::enable_parallel: bool
 pub formualizer_eval::engine::EvalConfig::enable_virtual_dep_telemetry: bool
 pub formualizer_eval::engine::EvalConfig::evaluation_budgets: formualizer_eval::engine::resource_ledger::EvaluationBudgets
+pub formualizer_eval::engine::EvalConfig::family_execution: bool
+pub formualizer_eval::engine::EvalConfig::family_kernels: bool
+pub formualizer_eval::engine::EvalConfig::family_lift: bool
+pub formualizer_eval::engine::EvalConfig::formula_compression: bool
 pub formualizer_eval::engine::EvalConfig::formula_parse_policy: formualizer_eval::engine::FormulaParsePolicy
 pub formualizer_eval::engine::EvalConfig::formula_plane_mode: formualizer_eval::engine::FormulaPlaneMode
 pub formualizer_eval::engine::EvalConfig::lookup_index_cache_max_bytes: usize
@@ -6422,6 +6457,14 @@ impl core::fmt::Debug for formualizer_eval::engine::resource_observability::Eval
 pub fn formualizer_eval::engine::resource_observability::EvaluationResourceRequestStats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for formualizer_eval::engine::resource_observability::EvaluationResourceRequestStats
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::resource_observability::EvaluationResourceRequestStats
+pub struct formualizer_eval::engine::FormulaFamilyGrouper
+impl formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper
+pub fn formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper::members(&self) -> u64
+pub fn formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper::new() -> Self
+impl core::default::Default for formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper
+pub fn formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper::default() -> formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper
+impl core::fmt::Debug for formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper
+pub fn formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub struct formualizer_eval::engine::FormulaIngestBatch
 pub formualizer_eval::engine::FormulaIngestBatch::formulas: alloc::vec::Vec<formualizer_eval::engine::formula_ingest::FormulaIngestRecord>
 pub formualizer_eval::engine::FormulaIngestBatch::sheet_name: alloc::string::String
@@ -6439,6 +6482,7 @@ pub formualizer_eval::engine::FormulaIngestRecord::col: u32
 pub formualizer_eval::engine::FormulaIngestRecord::formula_text: core::option::Option<alloc::sync::Arc<str>>
 pub formualizer_eval::engine::FormulaIngestRecord::row: u32
 impl formualizer_eval::engine::formula_ingest::FormulaIngestRecord
+pub fn formualizer_eval::engine::formula_ingest::FormulaIngestRecord::is_family_member(&self) -> bool
 pub fn formualizer_eval::engine::formula_ingest::FormulaIngestRecord::new(u32, u32, formualizer_eval::engine::arena::ast::AstNodeId, core::option::Option<alloc::sync::Arc<str>>) -> Self
 impl core::clone::Clone for formualizer_eval::engine::formula_ingest::FormulaIngestRecord
 pub fn formualizer_eval::engine::formula_ingest::FormulaIngestRecord::clone(&self) -> formualizer_eval::engine::formula_ingest::FormulaIngestRecord
@@ -6591,6 +6635,19 @@ impl core::fmt::Debug for formualizer_eval::engine::resource_observability::Form
 pub fn formualizer_eval::engine::resource_observability::FormulaPlaneTopologyRequestStats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for formualizer_eval::engine::resource_observability::FormulaPlaneTopologyRequestStats
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::resource_observability::FormulaPlaneTopologyRequestStats
+#[non_exhaustive] pub struct formualizer_eval::engine::FormulaView
+pub formualizer_eval::engine::FormulaView::col_delta: i64
+pub formualizer_eval::engine::FormulaView::row_delta: i64
+pub formualizer_eval::engine::FormulaView::template: formualizer_eval::engine::arena::ast::AstNodeId
+impl core::clone::Clone for formualizer_eval::engine::graph::FormulaView
+pub fn formualizer_eval::engine::graph::FormulaView::clone(&self) -> formualizer_eval::engine::graph::FormulaView
+impl core::cmp::Eq for formualizer_eval::engine::graph::FormulaView
+impl core::cmp::PartialEq for formualizer_eval::engine::graph::FormulaView
+pub fn formualizer_eval::engine::graph::FormulaView::eq(&self, &formualizer_eval::engine::graph::FormulaView) -> bool
+impl core::fmt::Debug for formualizer_eval::engine::graph::FormulaView
+pub fn formualizer_eval::engine::graph::FormulaView::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_eval::engine::graph::FormulaView
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::graph::FormulaView
 pub struct formualizer_eval::engine::GraphBaselineStats
 pub formualizer_eval::engine::GraphBaselineStats::dirty_vertex_count: usize
 pub formualizer_eval::engine::GraphBaselineStats::evaluation_vertex_count: usize
@@ -6627,6 +6684,8 @@ pub fn formualizer_eval::engine::journal::GraphUndoBatch::fmt(&self, &mut core::
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::journal::GraphUndoBatch
 pub struct formualizer_eval::engine::Layer
 pub formualizer_eval::engine::Layer::vertices: alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>
+impl formualizer_eval::engine::scheduler::Layer
+pub fn formualizer_eval::engine::scheduler::Layer::new(alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>) -> Self
 impl core::clone::Clone for formualizer_eval::engine::scheduler::Layer
 pub fn formualizer_eval::engine::scheduler::Layer::clone(&self) -> formualizer_eval::engine::scheduler::Layer
 impl core::fmt::Debug for formualizer_eval::engine::scheduler::Layer

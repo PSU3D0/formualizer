@@ -4,11 +4,16 @@ use formualizer_common::{ExcelError, ExcelErrorKind};
 
 use crate::SheetId;
 use crate::reference::SharedSheetLocator;
+use rustc_hash::FxHashMap;
 
 #[derive(Default, Debug)]
 pub struct SheetRegistry {
     id_by_name: HashMap<String, SheetId>,
     name_by_id: Vec<String>,
+    /// Live display names (original casing) to id: the allocation-free
+    /// fast path of [`Self::get_id`] (evaluation resolves sheets by the
+    /// display name on every reference).
+    by_display: FxHashMap<Box<str>, SheetId>,
 }
 
 impl SheetRegistry {
@@ -27,6 +32,7 @@ impl SheetRegistry {
         let id = self.name_by_id.len() as SheetId;
         self.name_by_id.push(name.to_string());
         self.id_by_name.insert(key, id);
+        self.by_display.insert(name.into(), id);
         id
     }
 
@@ -39,6 +45,9 @@ impl SheetRegistry {
     }
 
     pub fn get_id(&self, name: &str) -> Option<SheetId> {
+        if let Some(&id) = self.by_display.get(name) {
+            return Some(id);
+        }
         // Case-insensitive (Excel): e.g. INDIRECT("Config!B8") must find the sheet named "CONFIG".
         self.id_by_name.get(&name.to_lowercase()).copied()
     }
@@ -139,6 +148,7 @@ impl SheetRegistry {
 
         // Remove from id_by_name mapping (case-insensitive key)
         self.id_by_name.remove(&name.to_lowercase());
+        self.by_display.remove(name.as_str());
 
         // Mark as removed in name_by_id (we can't actually remove it to preserve IDs)
         self.name_by_id[id as usize] = String::new();
@@ -174,10 +184,12 @@ impl SheetRegistry {
 
         // Remove old name mapping
         self.id_by_name.remove(&old_name.to_lowercase());
+        self.by_display.remove(old_name.as_str());
 
         // Update to new name
         self.name_by_id[id as usize] = new_name.to_string();
         self.id_by_name.insert(new_name.to_lowercase(), id);
+        self.by_display.insert(new_name.into(), id);
 
         Ok(())
     }

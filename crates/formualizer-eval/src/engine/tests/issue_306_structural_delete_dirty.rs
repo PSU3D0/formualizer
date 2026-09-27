@@ -365,7 +365,7 @@ fn undo_of_logged_delete_restores_whole_column_reader_value() {
 }
 
 fn out_formula_vertex(engine: &Engine<TestWorkbook>, row: u32) -> crate::engine::vertex::VertexId {
-    *engine
+    engine
         .graph
         .get_vertex_id_for_address(&engine.graph.make_cell_ref("Out", row, 1))
         .expect("formula vertex")

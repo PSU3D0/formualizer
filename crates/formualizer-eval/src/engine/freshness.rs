@@ -42,7 +42,6 @@
 //! (design §8.2 case 2 plans a Δ here; not adopted).
 
 use super::Engine;
-use crate::engine::arena::AstNodeId;
 use crate::engine::authority::geom::SYMBOL_SHEET;
 use crate::engine::live_edges::{ReadLog, ReadRect, RecordingContext};
 use crate::engine::scheduler::{Schedule, ScheduleUnit};
@@ -232,6 +231,24 @@ impl<R: EvaluationContext> Engine<R> {
     /// Commit hook, after a vertex's effects were planned: it leaves the
     /// dirty set now (FR2), so a later re-dirty (a spill committing over
     /// its reads, FR5) survives the end of the pass.
+    /// A group of non-dynamic vertices can commit without per-vertex stale
+    /// checks: no reader is stale or dropped this pass.
+    pub(super) fn freshness_group_commit_ok(&mut self) -> bool {
+        !self.freshness.armed
+            || (self.freshness.group_dropped.is_empty()
+                && self.freshness.stale.get_mut().unwrap().is_empty())
+    }
+
+    /// `freshness_mark_committed` for a group of non-dynamic vertices
+    /// (which never have fresh reads to publish).
+    pub(super) fn freshness_mark_committed_group(&mut self, vertices: &[VertexId]) {
+        if !self.freshness.armed {
+            return;
+        }
+        self.freshness.committed.extend(vertices.iter().copied());
+        self.graph.clear_dirty_flags(vertices);
+    }
+
     pub(super) fn freshness_mark_committed(&mut self, vertex: VertexId) {
         self.freshness.committed.insert(vertex);
         self.graph.clear_dirty_flags(&[vertex]);
@@ -278,6 +295,10 @@ impl<R: EvaluationContext> Engine<R> {
             .filter(|v| !keep.contains(v) && !self.freshness.committed.contains(v))
             .collect();
         self.graph.clear_dirty_flags(&clear);
+        // The pass's committed set is not read after its end (the next pass
+        // starts empty); release it rather than keep a first evaluation's
+        // capacity (one entry per formula) for the life of the engine.
+        self.freshness.committed = FxHashSet::default();
         // `changed` is only non-empty from the test hook that forces replans.
         for &v in changed {
             self.graph.set_dirty(v, true);
@@ -346,7 +367,7 @@ impl<R: EvaluationContext> Engine<R> {
         vertex: VertexId,
         sheet_name: &str,
         cell_ref: crate::reference::CellRef,
-        ast_id: AstNodeId,
+        view: crate::engine::graph::FormulaView,
     ) -> Option<Result<LiteralValue, ExcelError>> {
         if !self.freshness.armed || !self.graph.is_dynamic(vertex) {
             return None;
@@ -356,13 +377,9 @@ impl<R: EvaluationContext> Engine<R> {
             let ctx = RecordingContext::new(self, &log);
             let interpreter = Interpreter::new_with_cell(&ctx, sheet_name, cell_ref);
             interpreter
-                .evaluate_arena_ast(ast_id, self.graph.data_store(), self.graph.sheet_reg())
+                .evaluate_formula_view(view, self.graph.data_store(), self.graph.sheet_reg())
                 .map(|cv| {
                     let format = cv.format_id();
-                    self.derived_format_results
-                        .write()
-                        .unwrap()
-                        .insert(vertex, format);
                     self.record_derived_format(vertex, format);
                     crate::engine::result_finalization::finalize_formula_result(cv.into_literal())
                 })

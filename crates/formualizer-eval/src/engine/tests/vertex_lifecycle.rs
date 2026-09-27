@@ -102,7 +102,7 @@ fn test_vertex_move_updates_mappings() {
         sheet_id: 0,
         coord: Coord::new(5, 10, true, true),
     };
-    assert_eq!(graph.get_vertex_id_for_address(&moved_addr), Some(&id));
+    assert_eq!(graph.get_vertex_id_for_address(&moved_addr), Some(id));
 }
 
 #[test]

@@ -59,6 +59,7 @@ impl Formula {
             edges,
             ltokens: Some(vec![self.l, h].into_boxed_slice()),
             template: AstNodeId::from_u32(self.l as u32),
+            template_anchor: None,
             literals: smallvec![ValueRef::from_raw(self.literal)],
             flags: 0,
         }

@@ -249,6 +249,22 @@ impl<'a> IngestPipeline<'a> {
         self.shape_memo.as_deref()
     }
 
+    /// Continue with the shape memo of an earlier pipeline over the same
+    /// graph (bulk planning in chunks). The memo revalidates itself against
+    /// the function provider's revision and the registry epoch.
+    pub(crate) fn with_memo_state(mut self, state: Option<MemoState>) -> Self {
+        if let Some((memo, seen)) = state {
+            self.shape_memo = memo;
+            self.arena_formulas_seen = seen;
+        }
+        self
+    }
+
+    /// The memo, for [`Self::with_memo_state`] on the next pipeline.
+    pub(crate) fn take_memo_state(&mut self) -> MemoState {
+        (self.shape_memo.take(), self.arena_formulas_seen)
+    }
+
     pub(crate) fn enable_function_semantics(mut self) -> Self {
         self.function_semantics_enabled = true;
         self
@@ -260,6 +276,9 @@ impl<'a> IngestPipeline<'a> {
         placement: CellRef,
         formula_text: Option<Arc<str>>,
     ) -> Result<IngestedFormula, ExcelError> {
+        if let FormulaAstInput::Member { template, anchor } = ast {
+            return self.ingest_member(template, anchor, placement);
+        }
         if let FormulaAstInput::RawArena(id) = ast
             && self.memo_enabled
             && std::mem::replace(&mut self.arena_formulas_seen, true)
@@ -267,7 +286,8 @@ impl<'a> IngestPipeline<'a> {
             // A pipeline's first arena formula cannot hit; it skips the key
             // walk and the memo is only allocated from the second one on.
             let mut memo = self.shape_memo.take().unwrap_or_default();
-            let outcome = self.ingest_formula_memoized(&mut memo, id, placement, &formula_text);
+            let outcome =
+                self.ingest_formula_memoized(&mut memo, id, placement, None, &formula_text);
             if outcome.is_none() {
                 memo.counts.bypasses += 1;
             }
@@ -285,15 +305,90 @@ impl<'a> IngestPipeline<'a> {
             .map(|(formula, _)| formula)
     }
 
+    /// A load-time family member: the memo path keyed by the template at
+    /// its anchor (the same relative shape), with the member's references
+    /// relocated on a hit; otherwise the per-cell path over the member's
+    /// instantiated tree. A dynamic member gets its own interned AST
+    /// (dynamic formulas are evaluated per cell from their own AST).
+    fn ingest_member(
+        &mut self,
+        template: AstNodeId,
+        anchor: (u32, u32),
+        placement: CellRef,
+    ) -> Result<IngestedFormula, ExcelError> {
+        let offset = (
+            i64::from(placement.coord.row()) - i64::from(anchor.0),
+            i64::from(placement.coord.col()) - i64::from(anchor.1),
+        );
+        let mut outcome = None;
+        if self.memo_enabled && std::mem::replace(&mut self.arena_formulas_seen, true) {
+            let mut memo = self.shape_memo.take().unwrap_or_default();
+            outcome =
+                self.ingest_formula_memoized(&mut memo, template, placement, Some(offset), &None);
+            if outcome.is_none() {
+                memo.counts.bypasses += 1;
+            }
+            self.shape_memo = Some(memo);
+        }
+        let mut formula = match outcome {
+            Some(result) => result?,
+            None => {
+                let input = self.member_tree_input(template, offset)?;
+                self.ingest_formula_unmemoized(input, placement, None, None)?
+                    .0
+            }
+        };
+        formula.member_anchor = Some(anchor);
+        if formula.dep_plan.dynamic {
+            let FormulaAstInput::MemberTree { tree, .. } =
+                self.member_tree_input(template, offset)?
+            else {
+                unreachable!("member tree input");
+            };
+            formula.ast_id = self.data_store.store_ast(&tree, self.sheet_registry);
+            formula.member_anchor = None;
+        }
+        Ok(formula)
+    }
+
+    fn member_tree_input(
+        &self,
+        template: AstNodeId,
+        (dr, dc): (i64, i64),
+    ) -> Result<FormulaAstInput<'static>, ExcelError> {
+        let tree = self
+            .data_store
+            .retrieve_ast(template, self.sheet_registry)
+            .ok_or_else(missing_ast_error)?;
+        let tree = crate::engine::template::relocate::instantiate_member_ast(&tree, dr, dc)?;
+        Ok(FormulaAstInput::MemberTree { tree, template })
+    }
+
     /// Memo path for arena inputs. `None` means the formula takes the
-    /// unmemoized per-cell path.
+    /// unmemoized per-cell path. With `offset`, `id` is a family template
+    /// valid at `placement - offset` and the formula is it relocated.
     fn ingest_formula_memoized(
         &mut self,
         memo: &mut ShapeMemo,
         id: AstNodeId,
         placement: CellRef,
+        offset: Option<(i64, i64)>,
         formula_text: &Option<Arc<str>>,
     ) -> Option<Result<IngestedFormula, ExcelError>> {
+        // The key walk is relative to the formula's own cell: a member's
+        // key is its template's at the anchor.
+        let key_placement = match offset {
+            None => placement,
+            Some((dr, dc)) => CellRef::new(
+                placement.sheet_id,
+                Coord::new(
+                    (i64::from(placement.coord.row()) - dr) as u32,
+                    (i64::from(placement.coord.col()) - dc) as u32,
+                    true,
+                    true,
+                ),
+            ),
+        };
         // Never take the global registry lock here: callers may already hold
         // a semantic-epoch read guard, and a second read behind a waiting
         // writer deadlocks. The provider revision and the registry's epoch
@@ -313,7 +408,7 @@ impl<'a> IngestPipeline<'a> {
         let eligible = shape_memo::shape_tokens(
             self.data_store,
             id,
-            placement,
+            key_placement,
             &mut memo.tokens,
             &mut memo.refs,
         );
@@ -350,21 +445,36 @@ impl<'a> IngestPipeline<'a> {
                         &memo.refs,
                         id,
                         placement,
+                        offset,
                         formula_text.clone(),
                     )
                     .ok()?;
                 memo.record_hit();
                 // Test builds re-derive every hit on the per-cell path.
                 #[cfg(test)]
-                self.verify_memo_hit(&formula, id, placement, formula_text.clone(), validity);
+                self.verify_memo_hit(
+                    &formula,
+                    id,
+                    placement,
+                    offset,
+                    formula_text.clone(),
+                    validity,
+                );
                 Some(Ok(formula))
             }
             Some(None) => None,
             None if !memo.can_insert_specialization(shape) => None,
             None => {
                 memo.counts.specialization_misses += 1;
+                let input = match offset {
+                    None => FormulaAstInput::RawArena(id),
+                    Some(offset) => match self.member_tree_input(id, offset) {
+                        Ok(input) => input,
+                        Err(error) => return Some(Err(error)),
+                    },
+                };
                 let result = self.ingest_formula_unmemoized(
-                    FormulaAstInput::RawArena(id),
+                    input,
                     placement,
                     formula_text.clone(),
                     Some(memo.refs.len()),
@@ -406,13 +516,30 @@ impl<'a> IngestPipeline<'a> {
         refs: &[CompactRefType],
         ast_id: AstNodeId,
         placement: CellRef,
+        offset: Option<(i64, i64)>,
         formula_text: Option<Arc<str>>,
     ) -> Result<IngestedFormula, ExcelError> {
         let mut dep_plan = DependencyPlanRow::default();
         for &index in specialization.visit.iter() {
-            let reference = self
-                .data_store
-                .reconstruct_reference_type_for_eval(&refs[index as usize], self.sheet_registry);
+            let compact = &refs[index as usize];
+            // A member's references are its template's relocated (cell and
+            // range axes; names are unchanged by relocation).
+            let relocated = match (offset, compact) {
+                (Some((dr, dc)), CompactRefType::Cell { .. } | CompactRefType::Range { .. }) => {
+                    Some(
+                        crate::engine::graph::authority_host::relocate_compact_ref(compact, dr, dc)
+                            .ok_or_else(|| {
+                                ExcelError::new(ExcelErrorKind::Ref)
+                                    .with_message("family member reference out of bounds")
+                            })?,
+                    )
+                }
+                _ => None,
+            };
+            let reference = self.data_store.reconstruct_reference_type_for_eval(
+                relocated.as_ref().unwrap_or(compact),
+                self.sheet_registry,
+            );
             let semantic = crate::engine::refs::classify(&reference);
             self.collect_reference(semantic, placement.sheet_id, &mut dep_plan)?;
         }
@@ -429,6 +556,7 @@ impl<'a> IngestPipeline<'a> {
             build_template_slot_map(ast_id, self.data_store, &specialization.expr);
         Ok(IngestedFormula {
             ast_id,
+            member_anchor: None,
             placement,
             canonical_hash: specialization.canonical_hash,
             exact_canonical_hash: specialization.exact_canonical_hash,
@@ -454,11 +582,18 @@ impl<'a> IngestPipeline<'a> {
         memoized: &IngestedFormula,
         id: AstNodeId,
         placement: CellRef,
+        offset: Option<(i64, i64)>,
         formula_text: Option<Arc<str>>,
         validity: MemoValidity,
     ) {
+        let input = match offset {
+            None => FormulaAstInput::RawArena(id),
+            Some(offset) => self
+                .member_tree_input(id, offset)
+                .expect("member tree for memo verification"),
+        };
         let reference = self
-            .ingest_formula_unmemoized(FormulaAstInput::RawArena(id), placement, formula_text, None)
+            .ingest_formula_unmemoized(input, placement, formula_text, None)
             .map(|(formula, _)| formula);
         // A provider revision or registry epoch change makes both paths
         // observe moving semantics; only compare against unchanged validity.
@@ -511,6 +646,10 @@ impl<'a> IngestPipeline<'a> {
                         .ok_or_else(missing_ast_error)?;
                     (id, tree)
                 }
+            }
+            FormulaAstInput::MemberTree { tree, template } => (template, tree),
+            FormulaAstInput::Member { .. } => {
+                unreachable!("members are planned through ingest_member")
             }
             FormulaAstInput::_Lifetime(_) => unreachable!("marker variant is not constructible"),
         };
@@ -567,6 +706,7 @@ impl<'a> IngestPipeline<'a> {
 
         let formula = IngestedFormula {
             ast_id,
+            member_anchor: None,
             placement,
             canonical_hash: metadata.canonical_hash,
             exact_canonical_hash: canonical_template.key.stable_hash(),
@@ -1013,15 +1153,33 @@ impl<'a> IngestPipeline<'a> {
     }
 }
 
+/// A pipeline's shape memo and whether it has seen an arena formula.
+pub(crate) type MemoState = (Option<Box<ShapeMemo>>, bool);
+
 pub(crate) enum FormulaAstInput<'a> {
     Tree(ASTNode),
     RawArena(AstNodeId),
+    /// A load-time family member (P2-M2): `template` is the formula at the
+    /// 0-based `anchor` cell and this cell's formula is it relocated. The
+    /// member is planned without interning its own AST.
+    Member {
+        template: AstNodeId,
+        anchor: (u32, u32),
+    },
+    /// Internal: a member's instantiated tree, planned as `template`.
+    MemberTree {
+        tree: ASTNode,
+        template: AstNodeId,
+    },
     #[doc(hidden)]
     _Lifetime(PhantomData<&'a ()>),
 }
 
 pub(crate) struct IngestedFormula {
     pub(crate) ast_id: AstNodeId,
+    /// `Some(anchor)` when `ast_id` is a family template valid at the
+    /// 0-based anchor cell rather than this formula's own AST.
+    pub(crate) member_anchor: Option<(u32, u32)>,
     pub(crate) placement: CellRef,
     pub(crate) canonical_hash: u64,
     pub(crate) exact_canonical_hash: u64,

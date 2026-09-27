@@ -95,6 +95,11 @@ fn visit(
     }
 }
 
+/// Slice counts sorted by comparison instead of radix passes.
+const SMALL_DISCOVERY: usize = 32;
+/// The key bits the radix passes order by (seven bytes).
+const KEY_MASK: u64 = (1 << 56) - 1;
+
 /// Read-only two-pass discovery, exact reservation, stable radix ordering.
 /// Borrowed cover/store are not charged; caller subtracts other live scratch.
 /// Index traversal work is exposed, not hidden in a claimed O(C) bound.
@@ -136,7 +141,13 @@ pub(crate) fn discover(
         work.initialize += 1;
         OwnerSlice::default()
     }));
-    if count != 0 {
+    if count <= SMALL_DISCOVERY {
+        // A tiny request (an edit's handful of cells): a stable comparison
+        // sort on the same 56 key bits orders exactly as the radix passes
+        // below, without their seven 256-bucket counts.
+        work.sort += count as u64;
+        slices.sort_by_key(|s| s.key() & KEY_MASK);
+    } else {
         // 50-bit (sheet, column, row), seven byte passes. No comparison tail.
         for shift in (0..56).step_by(8) {
             let mut counts = [0usize; 256];

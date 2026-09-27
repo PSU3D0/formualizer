@@ -171,3 +171,38 @@ pub fn template_facts(ds: &DataStore, ast: AstNodeId, row: u32, col: u32) -> Tem
     }
     f
 }
+
+/// The literal nodes of `ast` in the pre-order of [`template_facts`] (the
+/// order of a cell's literal slot row). Arena nodes are hash-consed, so one
+/// node id can occur at several positions.
+pub fn template_literal_nodes(ds: &DataStore, ast: AstNodeId) -> SmallVec<[AstNodeId; 4]> {
+    let mut out = SmallVec::new();
+    let mut stack: Vec<AstNodeId> = vec![ast];
+    while let Some(id) = stack.pop() {
+        let Some(node) = ds.get_node(id) else {
+            continue;
+        };
+        match *node {
+            AstNodeData::Literal(_) => out.push(id),
+            AstNodeData::UnaryOp { expr_id, .. } => stack.push(expr_id),
+            AstNodeData::BinaryOp {
+                left_id, right_id, ..
+            } => {
+                stack.push(right_id);
+                stack.push(left_id);
+            }
+            AstNodeData::Function { .. } => {
+                if let Some(args) = ds.get_args(id) {
+                    stack.extend(args.iter().rev().copied());
+                }
+            }
+            AstNodeData::Array { .. } => {
+                if let Some((_, _, elems)) = ds.get_array_elems(id) {
+                    stack.extend(elems.iter().rev().copied());
+                }
+            }
+            AstNodeData::Omitted | AstNodeData::Reference { .. } => {}
+        }
+    }
+    out
+}

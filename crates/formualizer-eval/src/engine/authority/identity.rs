@@ -33,6 +33,12 @@ pub const FAMILY: u32 = u32::MAX;
 /// Sentinel id (never allocated).
 pub const NO_VID: Vid = u32::MAX;
 
+/// First binding-identity id of a host store (Program 2). A formula
+/// cell's id is its executor `VertexId`, allocated by the graph below this
+/// bound; symbol binding identities, allocated by the store's counter,
+/// start here, so the two never alias.
+pub const HOST_SYMBOL_ID_BASE: Vid = 1 << 31;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct IdRun {
     pub row_start: u32,

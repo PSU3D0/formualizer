@@ -288,7 +288,7 @@ mod tests {
         // Set initial formula outside transaction (formulas are graph-owned and should rollback).
         let original = parse("=1").unwrap();
         let _ = graph.set_cell_formula("Sheet1", 1, 1, original.clone());
-        let vid = *graph
+        let vid = graph
             .get_vertex_id_for_address(&cell_ref(0, 1, 1))
             .expect("vertex for A1");
 

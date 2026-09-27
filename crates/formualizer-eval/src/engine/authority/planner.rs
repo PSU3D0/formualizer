@@ -503,7 +503,7 @@ fn classify(
     Ok(out)
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct OrderedCell {
     pub sheet: u16,
     pub row: u32,
@@ -695,6 +695,42 @@ pub(crate) fn plan(
 ) -> Result<OrderedPlan, TopologyError> {
     let prepared = prepare(store, cover, scratch_limit, arc_limit, discovery_limit)?;
     plan_prepared(prepared, scratch_limit, arc_limit, discovery_limit)
+}
+
+/// The plan of a request that is one formula cell without hints, when the
+/// cell does not read itself: the cell alone at layer 0, no cycle (what
+/// [`plan`] orders for it; debug builds compare). Its only possible arc is
+/// a self-read (every other node is outside the request), so `None` when
+/// any of its edge images contains the cell, and the caller plans in
+/// general. Skips discovery's and topology's per-request allocations.
+pub(crate) fn plan_single(store: &Store, cell: (u16, u32, u32)) -> Option<OrderedCell> {
+    let (sheet, row, col) = cell;
+    let (id, _) = store.ids().lookup(cell)?;
+    let owner = store.owner_at(cell)?;
+    let refined = store.refine_owner_column(owner, col, row, row, None).ok()?;
+    let [piece] = refined.pieces.as_slice() else {
+        return None;
+    };
+    for edge in &refined.edges[piece.edge_start..piece.edge_end] {
+        if let Some(image) = edge.proj.forward(&piece.domain)
+            && edge.proj.sheet == sheet
+            && image.r0 <= row
+            && row <= image.r1
+            && image.c0 <= col
+            && col <= image.c1
+        {
+            return None;
+        }
+    }
+    Some(OrderedCell {
+        sheet,
+        row,
+        col,
+        id,
+        owner: piece.owner,
+        layer: 0,
+        cycle: None,
+    })
 }
 
 /// Request-local exact cell hint. Sorted by (sheet, column, row).

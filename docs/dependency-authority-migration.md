@@ -2,7 +2,7 @@
 
 Formualizer's evaluation engine now answers every dependency question from one structure: the region-node dependency authority (`formualizer_eval::engine::authority`). It replaces the legacy dependency graph: CSR/delta edge lists, range stripes, name link maps and the optional Pearce–Kelly order. The authority stores a formula family (a block of cells filled from one template) as one node with a few relative edges, instead of one vertex and one edge list per cell. It builds dirty closures, the evaluation schedule and cycles, demand for targeted evaluation, inspection results and structural-edit invalidation.
 
-Evaluation is still per cell, and values are unchanged except for the corrections listed under [Behavior](#behavior). Vertex identities (`VertexId`, `Engine::vertex_for_cell`, `evaluate_vertex`) are unchanged.
+Values are unchanged except for the corrections listed under [Behavior](#behavior). Evaluation was per cell in Program 1; since Program 2 a family's runs of cells evaluate through the family's template as one unit (see [Region-native execution and compression](#region-native-execution-and-compression)), with the per-cell path as the fallback and the test oracle. Vertex identities (`VertexId`, `Engine::vertex_for_cell`, `evaluate_vertex`) keep their meaning; since Program 2 a formula cell's `VertexId` is also its authority id (see [one id space](#one-id-space)).
 
 ## What you need to change
 
@@ -49,6 +49,53 @@ The FormulaPlane span runtime (an earlier experiment that evaluated a formula fa
 - The public module `formualizer_eval::formula_plane` is gone. Its descriptor types (template/run/partition/virtual-reference ids, grid shapes, the passive `FormulaRunStore` and span counters) had no engine use and no replacement. If you used the run store for scanning, copy `formualizer-bench-core`'s `formula_runs` module.
 - `relocate_ast_for_template_placement` (hidden) moved to `formualizer_eval::engine::template::relocate`; the hidden `formula_plane_diagnostics` module moved to `engine::template::diagnostics` and keeps only `canonical_template_diagnostic`.
 - `EngineBaselineStats::formula_plane_*` and `PreparationRevision::{authority, authority_indexes, authority_indexed_plane}` are always `0`. The `max_formula_plane_*` limits are ignored.
+
+## Region-native execution and compression
+
+Program 2 makes the authority's family node the unit of execution and of storage.
+
+- **Execution.** Each schedule layer carries the runs of its family nodes (consecutive rows of one column of one node). A run evaluates through the node's template, relocated to each cell, and commits its scalar results as one unit. `SUM` and `AVERAGE` over bounded cell and range references use range kernels that merge overlays once per run and reduce each cell's slice in the scalar function's order (bit-identical results). Dynamic formulas (`OFFSET`, `INDIRECT`), cycle members and array results keep the per-cell path. A run whose template is operators and the built-in `IF` over cell references and literals (every member with the template's literal values) is evaluated column-wise: each referenced column segment is read once per run and each operator applies to all members through the interpreter's own operator code, so values, error precedence and number formats are the per-cell ones. A run of criteria aggregates (`SUMIF(S)`, `COUNTIF(S)`, `AVERAGEIF(S)`) or lookups (`VLOOKUP`, `HLOOKUP`, `MATCH`) with absolute range arguments evaluates each distinct tuple of its other argument values (and their formats) once and reuses that result for the members that repeat it.
+- **Storage.** A loader that stages formulas through `Engine::stage_formula_ast` (the Calamine loader does) groups relative copies while it loads: a formula that is exactly the formula above it (or to its left) relocated to its cell is staged as a member of that family (`FormulaIngestRecord::is_family_member`) and its tree is never built. After the authority is built, any other family member whose formula is exactly its template relocated (literals, reference texts and all) stores a reference to the template, and the formula arena keeps only the trees that formula cells and the authority reference. A row or column insert or delete keeps members compressed and shifts their runs as blocks (see [Structural edits on family runs](#structural-edits-on-family-runs)); other structural operations (range moves, sheet operations) give every member its own tree back first. Members are compressed again after the next build.
+- **Typed lanes and kernels.** The column-wise evaluation also takes `ROUND`, `ABS`, `MIN`, `MAX`, `SUM`, `AND`, `OR` and `IFERROR` over scalar operands, reading plain unformatted numbers from the merged number lanes; `MIN`, `MAX` and `COUNT` over moving windows use range kernels; `SUMIF(S)`, `COUNTIF(S)` and `AVERAGEIF(S)` over fixed ranges index them once per run. Each path reproduces the per-cell functions' own arithmetic and Arrow kernels, and hands anything else to the per-cell path.
+- **Switches.** `EvalConfig::family_execution`, `family_kernels`, `family_lift` and `formula_compression` (default `true`) turn the pieces off; values are the same either way. The per-cell path is the test oracle.
+
+What you need to change:
+
+| Before | Now |
+|---|---|
+| `DependencyGraph::get_formula_id(v)` for every formula vertex | `formula_view(v)`: `FormulaView { template, row_delta, col_delta }`. Evaluating or rendering `template` with the reference offset `(row_delta, col_delta)` gives exactly this cell's formula; `template` alone is the formula of the family's anchor cell, shared by every member. For a formula stored on its own cell the deltas are zero and `template` is today's id. `get_formula_id` still answers for those and returns `None` for compressed members, as do `get_formula_id_and_volatile` and `get_formula_node(_and_volatile)`. |
+| Reading a member's tree from the arena | `DependencyGraph::get_formula(v)` (owned, instantiated; unchanged result). |
+| `Layer { vertices }` | `Layer::new(vertices)`. Layer member order is by position for acyclic cells. |
+| `EvalConfig { .. }` literals without a rest pattern | add `..Default::default()` (four new fields). |
+| `EngineBaselineStats::dirty_vertex_count` counted value cells marked by edits (never cleared) | it counts formula and name vertices awaiting evaluation only. |
+| `DependencyGraph::get_vertex_id_for_address(&cell) -> Option<&VertexId>` | `-> Option<VertexId>` (by value; the cell map no longer holds compressed members). |
+| `DependencyGraph::sheet_index(sheet)` listing every vertex of the sheet | it lists vertices that are not compressed family members; find a member with `get_vertex_for_cell`. |
+| `AuthorityHost::vertex_of_id(id)` | the id is the vertex: `VertexId(id)` for a formula cell. `vertex_of_id_bytes` and `journal` are gone. |
+| Authority ids of formula cells from the store's own counter | formula cell ids are vertex ids; symbol binding ids start at `HOST_SYMBOL_ID_BASE`. |
+| Undo of a removed cell re-creating it on a new `VertexId` | undo restores the removed `VertexId`. |
+| A loader interning every formula (`intern_formula_ast` + `FormulaIngestRecord::new`) | optional: `stage_formula_ast(&mut grouper, row, col, &ast, text)` with one `FormulaFamilyGrouper` per sheet (and `note_staged_formula` for a parse-cache hit) groups copies at load. `get_formula_id` returns `None` for such members right after load (use `formula_view` / `get_formula`). |
+
+### One id space
+
+A formula cell's `VertexId` is its dependency-authority id: the authority adopts the executor's vertex ids for formula cells (and the name vertex's id for a name's node) instead of numbering them itself. The rules of decision 9 hold, as amended for Program 2:
+
+- An id is never renumbered and never given to another cell. A moved cell keeps its vertex, and so its id.
+- While value cells have vertices, a formula cell's id belongs to the cell's vertex. A formula -> value -> formula edit keeps the id (as legacy did); Program 1's authority gave the new formula a fresh id.
+- Undo and redo restore ids. Undoing a structural delete brings back the removed vertex itself, and so does undoing a formula typed over a value, which legacy replay handled by removing the vertex and later re-creating it. Legacy re-created such cells on new vertices.
+- Symbol binding identities (names, tables, sources) keep the store's own counter, starting at `authority::identity::HOST_SYMBOL_ID_BASE` (2^31). Vertex ids stay below it (`vertex_store::MAX_VERTEX_ID`).
+- Bulk loads number a sheet's formula cells column by column, so each column of a family is one id run (the authority's identity runs are also the planner's slices). Cycle iteration order is by cell position (spec §7.13) and does not depend on ids.
+
+Removing vertices for value cells (planned) reopens the second rule: a value cell will then have no id to keep.
+
+### Family members without per-cell entries
+
+A family member whose formula is its template relocated, in a column of consecutive vertex ids, has no entry in the graph's cell map, formula map or sheet index. It is stored in one run per column (sheet, column, rows, first id, template, anchor) and found by cell or by id through the run. Its vertex id and flags are unchanged, so dirty state, schedules and values are keyed as before. Its position, kind and edge count read the same through `VertexStore`; when a whole page of 1024 vertices consists of such members, the store keeps no rows for that page and derives them from the run. Any edit of a member moves it back into the maps first. Row and column inserts and deletes shift member runs as blocks (next section); range moves and sheet operations move all members back until the next authority build. With `formula_compression = false`, nothing is stored this way.
+
+### Structural edits on family runs
+
+Row and column inserts and deletes shift a run of family members as a block (contract decision 20.5). The run is split at an inserted row; each part moves as a whole, and its formula changes, if any, are the adjusted template. The block applies only when the reference adjuster gives the part's first and last members the same template (references are affine in the member's row, so every member between them agrees), no reference becomes `#REF!`, every small range (expanded into cell dependencies) keeps its area, and every single-cell target has a vertex. Other parts go back to the per-cell maps and take the per-cell path.
+
+Observable behavior is unchanged: the change log holds the same events (a run's `FormulaAdjusted` events are one record, expanded in place the first time the log is read or indexed, so each record is expanded once and history already read is not copied again; `FormulaAdjusted` events are now in vertex-id order), and undo and redo replay them per cell. `ActionJournal::graph.events` is fully expanded.
 
 ## Performance and memory
 

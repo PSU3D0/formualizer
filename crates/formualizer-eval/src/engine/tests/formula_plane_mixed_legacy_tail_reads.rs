@@ -274,7 +274,7 @@ fn build_selective_capacity_engine() -> (Engine<TestWorkbook>, Vec<crate::engine
     let tail_vertices = (1..=ROWS)
         .map(|row| {
             let cell = CellRef::new(sheet_id, Coord::from_excel(row, 7, true, true));
-            *engine.graph.get_vertex_id_for_address(&cell).unwrap()
+            engine.graph.get_vertex_id_for_address(&cell).unwrap()
         })
         .collect::<Vec<_>>();
     engine.graph.clear_dirty_flags(&tail_vertices);

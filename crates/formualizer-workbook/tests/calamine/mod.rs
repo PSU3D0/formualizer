@@ -17,6 +17,8 @@ mod deltas;
 #[cfg(feature = "calamine")]
 mod engine;
 #[cfg(feature = "calamine")]
+mod family_grouping;
+#[cfg(feature = "calamine")]
 mod format_channel;
 #[cfg(feature = "calamine")]
 mod formulas;
@@ -26,6 +28,8 @@ mod issue162_unbounded_index;
 mod it;
 #[cfg(feature = "calamine")]
 mod iterate_corpus_calcpr_fuzz;
+#[cfg(feature = "calamine")]
+mod iterative_cycle_order;
 #[cfg(feature = "calamine")]
 mod large;
 #[cfg(feature = "calamine")]

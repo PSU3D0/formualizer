@@ -416,7 +416,7 @@ fn targeted_two_now_epoch_does_not_recalculate_out_of_demand_volatile() {
     let unrelated = engine.get_cell_value("Sheet1", 1, 2);
     engine.evaluate_cell("Sheet1", 1, 1).unwrap();
     assert_eq!(engine.get_cell_value("Sheet1", 1, 2), unrelated);
-    let unrelated_vertex = *engine
+    let unrelated_vertex = engine
         .graph
         .get_vertex_id_for_address(&engine.graph.make_cell_ref("Sheet1", 0, 1))
         .unwrap();
@@ -547,7 +547,7 @@ fn legacy_and_mixed_max_five_replans_share_typed_terminal_error_and_remain_dirty
     legacy.force_virtual_dep_changes_for_test(6);
     let legacy_error = legacy.evaluate_cell("Sheet1", 1, 2).unwrap_err();
     assert_replan_exhaustion(&legacy_error);
-    let legacy_target = *legacy
+    let legacy_target = legacy
         .graph
         .get_vertex_id_for_address(&legacy.graph.make_cell_ref("Sheet1", 0, 1))
         .unwrap();

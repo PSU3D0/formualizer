@@ -153,3 +153,8 @@ required-features = ["test-support"]
 name = "recalc_invalidation"
 path = "examples/recalc_invalidation.rs"
 required-features = ["test-support"]
+
+[[example]]
+name = "overlay_point_write_scaling"
+path = "examples/overlay_point_write_scaling.rs"
+required-features = ["test-support"]

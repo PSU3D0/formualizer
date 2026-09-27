@@ -33,7 +33,9 @@ use super::groups::{
     GroupKey, GroupPlan, GroupTable, Members, l_hash, members_cap_after, members_heap,
     members_heap_for,
 };
-use super::identity::{CellCut, FAMILY, IdError, IdRun, IdShadow, IdentityTable, Vid};
+use super::identity::{
+    CellCut, FAMILY, HOST_SYMBOL_ID_BASE, IdError, IdRun, IdShadow, IdentityTable, Vid,
+};
 use super::level_index::{IndexShadow, IndexStage, LevelIndex, NONE};
 use super::proj::RefProj;
 use super::slots::SlotStore;
@@ -100,6 +102,9 @@ pub struct FormulaFacts {
     /// The L token stream; `None` for non-relocatable templates.
     pub ltokens: Option<Box<[u64]>>,
     pub template: AstNodeId,
+    /// The cell `template` is valid at, when it is not the formula's own
+    /// cell (a family member's facts are its template's at the anchor).
+    pub template_anchor: Option<(u32, u32)>,
     pub literals: SmallVec<[ValueRef; 4]>,
     pub flags: u16,
 }
@@ -382,6 +387,9 @@ pub struct MutationReport {
     pub predicted_peak_above_before: u64,
 }
 
+/// A family owner: `(sheet, domain, flags, template, anchor)`.
+pub type FamilyOwner = (u16, Rect, u16, AstNodeId, (u32, u32));
+
 /// A family piece left by a cut: `(group, dom, template, anchor, flags)`.
 type OwnerPiece = (u32, Rect, AstNodeId, (u32, u32), u16);
 
@@ -411,6 +419,8 @@ struct NewFormula<'a> {
     /// Existing node group, or the key of a new one.
     ngroup: Option<Result<u32, (u16, u64)>>,
     template: AstNodeId,
+    /// The cell `template` is valid at.
+    anchor: (u32, u32),
     literals: &'a [ValueRef],
     flags: u16,
     /// The id kept from the cell's previous formula.
@@ -998,6 +1008,49 @@ impl Store {
         Some((o.template, o.anchor, off, self.slots.get(id)))
     }
 
+    /// Live family owners: `(sheet, domain, flags, template, anchor)`.
+    pub fn family_owners(
+        &self,
+    ) -> impl Iterator<Item = (u16, Rect, u16, AstNodeId, (u32, u32))> + '_ {
+        self.owners
+            .iter()
+            .filter(|o| o.group != DEAD && o.is_family())
+            .map(|o| (o.sheet, o.dom, o.flags, o.template, o.anchor))
+    }
+
+    /// A live family owner's `(sheet, domain, flags, template, anchor)`.
+    pub fn family_owner(&self, o: u32) -> Option<FamilyOwner> {
+        let w = self.owners.get(o as usize)?;
+        (w.group != DEAD && w.is_family())
+            .then_some((w.sheet, w.dom, w.flags, w.template, w.anchor))
+    }
+
+    /// Every live owner's template root (arena compaction roots).
+    pub fn owner_templates(&self) -> impl Iterator<Item = AstNodeId> + '_ {
+        self.owners
+            .iter()
+            .filter(|o| o.group != DEAD)
+            .map(|o| o.template)
+    }
+
+    /// Remap every live owner's template after an arena compaction.
+    /// `remap` is indexed by old id (`u32::MAX`: dropped); ids outside it
+    /// (sentinels) are kept.
+    pub fn remap_templates(&mut self, remap: &[u32]) {
+        for o in self.owners.iter_mut().filter(|o| o.group != DEAD) {
+            if let Some(&new) = remap.get(o.template.as_u32() as usize) {
+                debug_assert_ne!(new, u32::MAX, "live owner template dropped");
+                o.template = AstNodeId::from_u32(new);
+            }
+        }
+    }
+
+    /// An owner's template and the anchor it is valid at.
+    pub fn owner_template(&self, o: u32) -> (AstNodeId, (u32, u32)) {
+        let w = &self.owners[o as usize];
+        (w.template, w.anchor)
+    }
+
     /// Owner domain and whether it is a family node.
     pub fn owner_dom(&self, o: u32) -> (u16, Rect, bool) {
         let w = &self.owners[o as usize];
@@ -1129,6 +1182,44 @@ impl Store {
                 out.push((key.dep_sheet, d));
             }
         })
+    }
+
+    /// [`Self::direct_small_dependents`] per dependent cell:
+    /// `f(dependent sheet, row, col, image)` for every dependent cell whose
+    /// (small, per the limit) reference image meets `q`.
+    pub fn visit_direct_small_dependents(
+        &self,
+        sheet: u16,
+        q: &Rect,
+        limit: u64,
+        f: &mut dyn FnMut(u16, u32, u32, Rect),
+    ) {
+        let Some(idx) = self.idx.prec.get(sheet_slot(sheet)) else {
+            return;
+        };
+        let mut hits: Vec<u32> = Vec::new();
+        idx.query(&q.as_box(), &mut |id| hits.push(id));
+        for id in hits {
+            let r = &self.recs[id as usize];
+            let key = self.egroups.key(r.group);
+            if !(key.lk == NO_LK || key.dep_sheet == SYMBOL_SHEET)
+                || !key.proj.instantiate(r.dep.r0, r.dep.c0).is_some_and(|img| {
+                    u64::from(img.r1 - img.r0 + 1) * u64::from(img.c1 - img.c0 + 1) <= limit
+                })
+            {
+                continue;
+            }
+            let Some(d) = key.proj.invert(&r.dep, q) else {
+                continue;
+            };
+            for row in d.r0..=d.r1 {
+                for col in d.c0..=d.c1 {
+                    if let Some(img) = key.proj.instantiate(row, col) {
+                        f(key.dep_sheet, row, col, img);
+                    }
+                }
+            }
+        }
     }
 
     /// Every dependent member whose reference image meets `q` on `sheet`:
@@ -1441,5 +1532,5 @@ mod mutate;
 mod repartition;
 mod verify;
 
-pub use build::BuildInput;
+pub use build::{BuildInput, GivenId, IdentifiedFacts, SharedBuildInput};
 pub use verify::Digest;
