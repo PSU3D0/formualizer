@@ -91,6 +91,12 @@ Removing vertices for value cells (planned) reopens the second rule: a value cel
 
 A family member whose formula is its template relocated, in a column of consecutive vertex ids, has no entry in the graph's cell map, formula map or sheet index. It is stored in one run per column (sheet, column, rows, first id, template, anchor) and found by cell or by id through the run. Its vertex id and flags are unchanged, so dirty state, schedules and values are keyed as before. Its position, kind and edge count read the same through `VertexStore`; when a whole page of 1024 vertices consists of such members, the store keeps no rows for that page and derives them from the run. Any edit of a member moves it back into the maps first, and structural and sheet operations move all members back until the next authority build. With `formula_compression = false`, nothing is stored this way.
 
+### Structural edits on family runs
+
+Row and column inserts and deletes shift a run of family members as a block (contract decision 20.5). The run is split at an inserted row; each part moves as a whole, and its formula changes, if any, are the adjusted template. The block applies only when the reference adjuster gives the part's first and last members the same template (references are affine in the member's row, so every member between them agrees), no reference becomes `#REF!`, every small range (expanded into cell dependencies) keeps its area, and every single-cell target has a vertex. Other parts go back to the per-cell maps and take the per-cell path.
+
+Observable behavior is unchanged: the change log holds the same events (a run's `FormulaAdjusted` events are one record expanded when the log is read; `FormulaAdjusted` events are now in vertex-id order), and undo and redo replay them per cell. `ActionJournal::graph.events` is fully expanded.
+
 ## Performance and memory
 
 Measured on the Enron sample (27 workbooks) and the two real-model corpus workbooks, against the last legacy build (medians of two interleaved rounds):
