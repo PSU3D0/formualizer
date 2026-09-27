@@ -14858,6 +14858,52 @@ where
             .graph
             .authority_plan_store()
             .map_err(Self::authority_excel_error)?;
+        // One formula cell without hints (a tiny edit): its plan is the cell
+        // alone unless it reads itself (`planner::plan_single`).
+        if let [only] = candidates
+            && vdeps.is_empty()
+            && self.graph.authority_host().observed(*only).is_none()
+            && let Some(cell) = self.graph.authority_cell_of_vertex(*only)
+            && cell.0 != crate::engine::authority::geom::SYMBOL_SHEET
+            && let Some(single) = planner::plan_single(store, cell)
+        {
+            #[cfg(debug_assertions)]
+            {
+                let mut cover = Cover::new();
+                cover.insert_rect(cell.0, &Rect::new(cell.1, cell.2, cell.1, cell.2));
+                let general = planner::plan_with_hints(store, &cover, &[], None, None, None)
+                    .expect("general plan of one cell");
+                assert_eq!(
+                    general.cells.as_slice(),
+                    &[single],
+                    "single-cell plan differs from the planner at {cell:?}"
+                );
+            }
+            let adapted = plan_schedule::schedule(
+                &[single],
+                0,
+                None,
+                |cell| {
+                    self.graph
+                        .authority_vertex_of_formula(cell.id, (cell.sheet, cell.row, cell.col))
+                        .ok_or_else(|| failure("missing executor identity".to_owned()))
+                },
+                |_work| Ok(()),
+            )
+            .map_err(|error| match error {
+                plan_schedule::ScheduleError::Runtime(error) => error,
+                other => failure(format!("{other:?}")),
+            })?;
+            if let Some(ledger) = ledger {
+                ledger
+                    .reserve_schedule_discovery(adapted.peak_heap_bytes)
+                    .map_err(crate::engine::ResourceLedgerError::into_excel_error)?;
+                ledger
+                    .release_scratch(adapted.peak_heap_bytes)
+                    .map_err(crate::engine::ResourceLedgerError::into_excel_error)?;
+            }
+            return Ok(adapted.schedule);
+        }
         // Names are symbol-plane nodes (design §4.1): a name vertex plans as
         // the unit at its node, between its precedents and its readers.
         // Candidates become cells, sorted by (sheet, column, row) and
