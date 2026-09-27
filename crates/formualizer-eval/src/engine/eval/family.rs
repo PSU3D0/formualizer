@@ -249,6 +249,28 @@ where
             .flatten()
             .filter(|_| !members.iter().any(|&v| self.graph.is_volatile(v)));
         let mut memo = super::memo::RunMemo::new(shared_memo);
+        // P2-M4 criteria kernel: SUMIF(S)/COUNTIF(S)/AVERAGEIF(S) over
+        // invariant ranges index them once per run (shared by the run's
+        // parallel chunks); see `criteria.rs`.
+        let criteria_plan = (self.config.family_kernels
+            && (members.len() > 1 || shared_memo.is_some()))
+        .then(|| super::criteria::CriteriaPlan::plan(self, ds, template))
+        .flatten()
+        .filter(|_| !members.iter().any(|&v| self.graph.is_volatile(v)));
+        let local_index;
+        let criteria_index = match &criteria_plan {
+            Some(plan) => {
+                let build = || self.build_criteria_index(plan, ds, sheet_name);
+                match shared_memo {
+                    Some(shared) => shared.criteria.get_or_init(build).as_ref(),
+                    None => {
+                        local_index = build();
+                        local_index.as_ref()
+                    }
+                }
+            }
+            None => None,
+        };
         for (i, &v) in members.iter().enumerate() {
             let row = run.row0 + i as u32;
             #[cfg(debug_assertions)]
@@ -290,6 +312,42 @@ where
             self.family_members_for_test
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let row_delta = i64::from(row) - i64::from(anchor.0);
+            if let (Some(plan), Some(index)) = (&criteria_plan, criteria_index)
+                && let Some(value) = self.criteria_member(
+                    plan,
+                    index,
+                    &interpreter,
+                    ds,
+                    sheet_name,
+                    row_delta,
+                    col_delta,
+                )
+            {
+                // Debug builds: the kernel's result is the walk's.
+                #[cfg(debug_assertions)]
+                {
+                    let walked = interpreter
+                        .evaluate_arena_ast_with_offset(template, row_delta, col_delta, ds, reg)
+                        .map(|cv| (cv.format_id(), cv.into_literal()));
+                    match walked {
+                        Ok((format, walked)) => assert!(
+                            same_value(&walked, &value) && format.is_none(),
+                            "criteria kernel differs from the walk at {cell_ref:?}: {value:?} vs {walked:?} {format:?}"
+                        ),
+                        Err(e) => panic!(
+                            "criteria kernel result where the walk errs at {cell_ref:?}: {e:?}"
+                        ),
+                    }
+                }
+                #[cfg(test)]
+                self.criteria_kernel_members_for_test
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                self.record_derived_format_at(cell_ref, None);
+                out.push(crate::engine::result_finalization::finalize_formula_result(
+                    value,
+                ));
+                continue;
+            }
             let key = match &memo_plan {
                 Some(plan) if memo.active() => plan
                     .key_args
@@ -570,6 +628,12 @@ where
     /// Members evaluated through the elementwise lift so far.
     pub(crate) fn lifted_members_for_test(&self) -> u64 {
         self.lifted_members_for_test
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Members evaluated through the criteria kernel so far.
+    pub(crate) fn criteria_kernel_members_for_test(&self) -> u64 {
+        self.criteria_kernel_members_for_test
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 

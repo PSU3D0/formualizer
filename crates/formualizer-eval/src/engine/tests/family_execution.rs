@@ -751,3 +751,148 @@ fn check_typed(formulas: Vec<(u32, String)>) {
         assert_eq!(lift.0, oracle.0, "lift, parallel={parallel}");
     }
 }
+
+/// Criteria kernels (P2-M4): SUMIF(S)/COUNTIF(S)/AVERAGEIF(S) over
+/// invariant ranges index them once per run. Fact columns (ingested in
+/// 16-row chunks, so sums cross chunk boundaries) mix numbers, numeric
+/// text, dates, blanks, booleans, errors, mixed-case text and text with
+/// LIKE metacharacters; report criteria vary per member (numeric
+/// comparisons, text equality and inequality, empty text, wildcards,
+/// blanks). Kernel, walk and per-cell oracle agree on values after load
+/// and after edits to facts and criteria, sequential and parallel.
+#[test]
+fn family_criteria_kernel_matches_per_cell() {
+    const FACTS: u32 = 90;
+    const REPORT: u32 = 40;
+    let fact = |r: u32, c: u32| -> LiteralValue {
+        match c {
+            // Region: mixed case, one LIKE metacharacter, blanks, numbers.
+            1 => match r % 7 {
+                0 => LiteralValue::Text("North".into()),
+                1 => LiteralValue::Text("north".into()),
+                2 => LiteralValue::Text("So%th".into()),
+                3 => LiteralValue::Text("East_1".into()),
+                4 => LiteralValue::Empty,
+                5 => LiteralValue::Number(5.0),
+                _ => LiteralValue::Text("West".into()),
+            },
+            // Amount: numbers, numeric text, dates, booleans, errors.
+            2 => match r % 11 {
+                0 => LiteralValue::Text("12".into()),
+                1 => LiteralValue::Date(chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap()),
+                2 => LiteralValue::Boolean(true),
+                3 => LiteralValue::Error(formualizer_common::ExcelError::new(
+                    formualizer_common::ExcelErrorKind::Na,
+                )),
+                4 => LiteralValue::Number(-0.0),
+                5 => LiteralValue::Empty,
+                _ => LiteralValue::Number((r as f64) * 1.25 - 30.0),
+            },
+            // Qty.
+            _ => LiteralValue::Number(((r * 7) % 13) as f64 + 0.1),
+        }
+    };
+    let crit = |r: u32| -> (LiteralValue, LiteralValue) {
+        let region = match r % 9 {
+            0 => LiteralValue::Text("north".into()),
+            1 => LiteralValue::Text("NORTH".into()),
+            2 => LiteralValue::Text("so%th".into()),
+            3 => LiteralValue::Text("<>north".into()),
+            4 => LiteralValue::Text("East_1".into()),
+            5 => LiteralValue::Text("".into()),
+            6 => LiteralValue::Text("W*".into()),
+            7 => LiteralValue::Number(5.0),
+            _ => LiteralValue::Text("=West".into()),
+        };
+        let amount = match r % 6 {
+            0 => LiteralValue::Text(format!(">={}", r as f64 - 20.0)),
+            1 => LiteralValue::Text(format!("<{}", r)),
+            2 => LiteralValue::Number(0.0),
+            3 => LiteralValue::Text("<>0".into()),
+            4 => LiteralValue::Text(">-1E+300".into()),
+            _ => LiteralValue::Number(r as f64 * 1.25 - 30.0),
+        };
+        (region, amount)
+    };
+    let formulas: [&str; 9] = [
+        "=COUNTIFS(Facts!$A$1:$A$90,A{r},Facts!$B$1:$B$90,B{r})",
+        "=SUMIFS(Facts!$C$1:$C$90,Facts!$A$1:$A$90,A{r},Facts!$B$1:$B$90,B{r})",
+        "=AVERAGEIFS(Facts!$B$1:$B$90,Facts!$A$1:$A$90,A{r})",
+        "=SUMIF(Facts!$B$1:$B$90,B{r})",
+        "=SUMIF(Facts!$A$1:$A$90,A{r},Facts!$C$1:$C$90)",
+        "=COUNTIF(Facts!$B$1:$B$90,B{r})",
+        "=AVERAGEIF(Facts!$C$1:$C$90,\">\"&B{r})",
+        "=SUMIFS(Facts!$B$1:$B$90,Facts!$C$1:$C$90,\">\"&(ROW()/5),Facts!$A$1:$A$90,\"<>west\")",
+        "=COUNTIFS(Facts!$C$1:$C$90,\"<\"&ROW(),Facts!$C$1:$C$90,\">=\"&(ROW()/3))",
+    ];
+    let run = |config: EvalConfig| -> (Vec<Vec<String>>, u64) {
+        let mut e = Engine::new(TestWorkbook::new(), config);
+        e.add_sheet("Report").unwrap();
+        {
+            let mut ab = e.begin_bulk_ingest_arrow();
+            ab.add_sheet("Facts", 3, 16);
+            for r in 1..=FACTS {
+                ab.append_row("Facts", &[fact(r, 1), fact(r, 2), fact(r, 3)])
+                    .unwrap();
+            }
+            ab.finish().unwrap();
+        }
+        let mut cells = Vec::new();
+        for r in 1..=REPORT {
+            let (a, b) = crit(r);
+            e.set_cell_value("Report", r, 1, a).unwrap();
+            e.set_cell_value("Report", r, 2, b).unwrap();
+            for (k, f) in formulas.iter().enumerate() {
+                let c = 4 + k as u32;
+                e.set_cell_formula(
+                    "Report",
+                    r,
+                    c,
+                    parse(&f.replace("{r}", &r.to_string())).unwrap(),
+                )
+                .unwrap();
+                cells.push((r, c));
+            }
+        }
+        let snapshot = |e: &Engine<TestWorkbook>| {
+            cells
+                .iter()
+                .map(|&(r, c)| key(e.get_cell_value("Report", r, c)))
+                .collect::<Vec<_>>()
+        };
+        let mut out = Vec::new();
+        e.evaluate_all().unwrap();
+        out.push(snapshot(&e));
+        let edits = [
+            ("Facts", 20, 2, LiteralValue::Number(1e308)),
+            ("Facts", 21, 2, LiteralValue::Number(1e308)),
+            ("Facts", 33, 1, LiteralValue::Text("NORTH".into())),
+            ("Facts", 34, 3, LiteralValue::Text("x".into())),
+            ("Report", 3, 1, LiteralValue::Text("west".into())),
+            ("Report", 8, 2, LiteralValue::Text(">=0".into())),
+        ];
+        for (s, r, c, v) in edits {
+            e.set_cell_value(s, r, c, v).unwrap();
+            e.evaluate_all().unwrap();
+            out.push(snapshot(&e));
+        }
+        (out, e.criteria_kernel_members_for_test())
+    };
+    for parallel in [false, true] {
+        let base = EvalConfig {
+            enable_parallel: parallel,
+            ..arrow_eval_config()
+        };
+        let oracle = run(EvalConfig {
+            family_execution: false,
+            ..base.clone()
+        });
+        let kernel = run(base);
+        assert_eq!(oracle.1, 0);
+        assert!(
+            kernel.1 > 0,
+            "no member took the criteria kernel (parallel={parallel})"
+        );
+        assert_eq!(kernel.0, oracle.0, "parallel={parallel}");
+    }
+}

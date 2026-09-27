@@ -115,6 +115,8 @@ type MemoMap = rustc_hash::FxHashMap<MemoKey, (LiteralValue, Option<FormatId>)>;
 pub(super) struct SharedMemo {
     map: std::sync::Mutex<MemoMap>,
     seen: std::sync::atomic::AtomicUsize,
+    /// The run's criteria index (built by the first chunk that needs it).
+    pub(super) criteria: std::sync::OnceLock<Option<super::criteria::CriteriaIndex>>,
 }
 
 /// Per-run (or per-chunk, over a shared map) memo with its give-up rule:
