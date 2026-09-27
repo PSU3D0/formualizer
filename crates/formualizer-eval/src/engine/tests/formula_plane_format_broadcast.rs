@@ -452,3 +452,37 @@ fn formula_plane_general_100k_span_has_zero_per_cell_format_operations() {
     assert!(!engine.debug_computed_overlay_chunk_has_formats_0based(SHEET, 0, 1));
     assert!(!engine.debug_computed_overlay_chunk_has_formats_0based(SHEET, FAST_ROWS - 1, 1));
 }
+
+/// The direct (small-layer, unbuffered) write path clears a stale computed
+/// date format like the buffered path does.
+#[test]
+fn formula_plane_sparse_general_recomputation_clears_formats_sequentially() {
+    let date = NaiveDate::from_ymd_opt(2024, 12, 1).unwrap();
+    let mut cfg =
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
+    cfg.enable_parallel = false;
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+    let mut formulas = Vec::new();
+    for row in 1..=ROWS {
+        engine
+            .set_cell_value(SHEET, row, 1, LiteralValue::Date(date))
+            .unwrap();
+        formulas.push(record(&mut engine, row, 2, &format!("=A{row}+1")));
+    }
+    ingest(&mut engine, formulas);
+    engine
+        .set_cell_value(SHEET, 2, 1, LiteralValue::Number(100.0))
+        .unwrap();
+    engine
+        .set_cell_value(SHEET, 4, 1, LiteralValue::Number(200.0))
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.debug_computed_overlay_format_0based(SHEET, 1, 1),
+        None
+    );
+    assert_eq!(
+        engine.debug_computed_overlay_format_0based(SHEET, 3, 1),
+        None
+    );
+}

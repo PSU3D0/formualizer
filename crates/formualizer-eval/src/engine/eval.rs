@@ -536,6 +536,14 @@ where
 // layers there is not enough work to amortize it, and the direct point-write path
 // is faster while preserving the same visibility semantics.
 const COMPUTED_WRITE_COALESCING_MIN_LAYER_WIDTH: usize = 8;
+/// Adaptive layer parallelism (see `evaluate_layer_parallel`): a layer runs
+/// sequentially until either it has run `PARALLEL_LAYER_PROBE` or the rest,
+/// at the rate so far, is estimated at `PARALLEL_LAYER_WORTH` or more; then
+/// the rest goes to the thread pool. Tuned on Enron first eval (probe 30 /
+/// 100 / 300 µs, worth 50 / 150 / 400 µs; 300 / 150 best, no workbook
+/// slower).
+const PARALLEL_LAYER_PROBE: std::time::Duration = std::time::Duration::from_micros(300);
+const PARALLEL_LAYER_WORTH: std::time::Duration = std::time::Duration::from_micros(150);
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum ComputedWrite {
@@ -12019,6 +12027,15 @@ where
                 cell.coord.col(),
                 ov,
             );
+            // The computed format lane follows the value, as on the buffered
+            // path (a General result clears a stale date format).
+            let format_id = self.derived_formats.read().unwrap().get(&cell).copied();
+            self.write_computed_overlay_format_0based(
+                &sheet_name,
+                cell.coord.row(),
+                cell.coord.col(),
+                format_id,
+            );
         }
         Ok(())
     }
@@ -14589,7 +14606,15 @@ where
             return;
         }
         self.compressed_at_build = Some(builds);
-        self.graph.compress_family_formulas();
+        let pool = self.thread_pool.clone();
+        let (_, garbage) = self.graph.compress_family_formulas(pool.as_deref());
+        // Freeing the dropped members' reference texts (one allocation each)
+        // is most of compaction; with a pool it happens off the critical
+        // path.
+        match pool {
+            Some(pool) if garbage.len() >= 1024 => pool.spawn(move || drop(garbage)),
+            _ => drop(garbage),
+        }
     }
 
     fn create_evaluation_schedule_active(
@@ -15470,13 +15495,49 @@ where
         self.evaluate_layer_sequential_cancellable_demand_driven_effects(layer, cancel_flag)
     }
 
-    /// Evaluate a layer in parallel using the thread pool
+    /// Evaluate a layer in parallel using the thread pool.
+    ///
+    /// Cost-adaptive: the layer starts sequentially in slices of doubling
+    /// size (1, 2, 4, ... vertices, capped so a slice does not overshoot the
+    /// probe) and hands the rest to the pool once the rest looks worth it
+    /// (`PARALLEL_LAYER_WORTH` at the rate so far) or the probe
+    /// (`PARALLEL_LAYER_PROBE`) is spent. A cheap layer never pays the pool's
+    /// wake-up and join (most Enron layers are tens of µs of work); an
+    /// expensive one goes parallel after a few vertices. Splitting a layer
+    /// into consecutive sub-layers is a valid order: its vertices are
+    /// independent.
     fn evaluate_layer_parallel(
         &mut self,
         layer: &super::scheduler::Layer,
     ) -> Result<usize, ExcelError> {
         self.resource_checkpoint(layer.vertices.len() as u64)?;
-        self.evaluate_layer_parallel_effects(layer)
+        let len = layer.vertices.len();
+        let buffered = len >= COMPUTED_WRITE_COALESCING_MIN_LAYER_WIDTH;
+        let (probe, worth) = (PARALLEL_LAYER_PROBE, PARALLEL_LAYER_WORTH);
+        let start = crate::instant::FzInstant::now();
+        let mut pos = 0usize;
+        let mut step = 1usize;
+        while pos < len {
+            if pos > 0 {
+                let elapsed = start.elapsed();
+                // Rate so far (ns per vertex) and the rest at that rate.
+                let per_vertex = elapsed.as_nanos() / pos as u128 + 1;
+                let rest_estimate = per_vertex * (len - pos) as u128;
+                if len - pos >= 2 && (elapsed >= probe || rest_estimate >= worth.as_nanos()) {
+                    let rest = layer.sub_layer(pos, len);
+                    return Ok(pos + self.evaluate_layer_parallel_effects(&rest)?);
+                }
+                // Next slice: double, but no more than the rest of the probe
+                // at the rate so far (a slice must not overshoot it).
+                let fit = (probe.saturating_sub(elapsed).as_nanos() / per_vertex) as usize + 1;
+                step = step.saturating_mul(2).min(fit);
+            }
+            let end = (pos + step).min(len);
+            let slice = layer.sub_layer(pos, end);
+            self.evaluate_layer_units(&slice, None, None, None, buffered)?;
+            pos = end;
+        }
+        Ok(len)
     }
 
     fn evaluate_layer_parallel_with_delta(

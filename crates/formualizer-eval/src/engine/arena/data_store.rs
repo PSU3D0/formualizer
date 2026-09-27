@@ -330,7 +330,10 @@ impl DataStore {
     }
 
     /// See [`super::ast::AstArena::compact`].
-    pub(crate) fn compact_asts(&mut self, roots: impl IntoIterator<Item = AstNodeId>) -> Vec<u32> {
+    pub(crate) fn compact_asts(
+        &mut self,
+        roots: impl IntoIterator<Item = AstNodeId>,
+    ) -> (Vec<u32>, super::string_interner::StringGarbage) {
         self.asts.compact(roots)
     }
 

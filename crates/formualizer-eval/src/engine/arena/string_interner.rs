@@ -33,6 +33,21 @@ impl fmt::Display for StringId {
     }
 }
 
+/// Texts freed by [`StringInterner::free_dead`], to drop wherever is
+/// cheapest (dropping it frees them).
+#[derive(Debug, Default)]
+pub(crate) struct StringGarbage {
+    strings: Vec<Arc<str>>,
+    lookup: FxHashMap<Arc<str>, StringId>,
+}
+
+impl StringGarbage {
+    /// Number of freed texts.
+    pub(crate) fn len(&self) -> usize {
+        self.strings.len()
+    }
+}
+
 /// String interner for deduplicating strings
 #[derive(Debug)]
 pub struct StringInterner {
@@ -105,8 +120,11 @@ impl StringInterner {
     /// `live` are kept). Ids stay stable: a freed slot resolves to `""` and
     /// its text is no longer found by `get_id`/`intern` (re-interning makes
     /// a new id). Callers guarantee freed ids are never resolved again.
-    pub(crate) fn free_dead(&mut self, live: &[bool]) {
-        let empty: Arc<str> = Arc::from("");
+    ///
+    /// Returns the freed texts instead of dropping them: freeing many small
+    /// allocations is the expensive part, and the caller may do it off the
+    /// critical path (`StringGarbage`).
+    pub(crate) fn free_dead(&mut self, live: &[bool]) -> StringGarbage {
         let kept = self
             .strings
             .iter()
@@ -114,17 +132,23 @@ impl StringInterner {
             .filter(|(i, _)| live.get(*i).copied().unwrap_or(true))
             .count();
         if kept == self.strings.len() {
-            return;
+            return StringGarbage::default();
         }
+        let empty: Arc<str> = Arc::from("");
         let mut lookup = FxHashMap::with_capacity_and_hasher(kept, Default::default());
+        let mut dead = Vec::with_capacity(self.strings.len() - kept);
         for (i, slot) in self.strings.iter_mut().enumerate() {
             if live.get(i).copied().unwrap_or(true) {
                 lookup.entry(slot.clone()).or_insert(StringId(i as u32));
             } else {
-                *slot = empty.clone();
+                dead.push(std::mem::replace(slot, empty.clone()));
             }
         }
-        self.lookup = lookup;
+        let old_lookup = std::mem::replace(&mut self.lookup, lookup);
+        StringGarbage {
+            strings: dead,
+            lookup: old_lookup,
+        }
     }
 
     pub fn contains(&self, s: &str) -> bool {

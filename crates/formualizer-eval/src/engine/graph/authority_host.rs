@@ -5,6 +5,10 @@
 //! differential gates Δ(a) (dirty closure) and Δ(e) (direct dependents).
 
 use super::*;
+use crate::engine::arena::string_interner::StringGarbage;
+
+/// A family member that can reference its template: vertex and cell.
+type CompressibleMember = (VertexId, (u16, u32, u32));
 use crate::engine::authority::extract::{extract_formula, extract_symbol_binding};
 use crate::engine::authority::geom::{Cell, Cover, Rect, SYMBOL_SHEET};
 use crate::engine::authority::host::{AuthorityHost, HostState};
@@ -2258,9 +2262,12 @@ impl DependencyGraph {
     /// roots (formula vertices and authority owners). Returns the number of
     /// members compressed. The caller guarantees no other arena id holders
     /// are live (staged or deferred formula packages).
-    pub(crate) fn compress_family_formulas(&mut self) -> usize {
+    pub(crate) fn compress_family_formulas(
+        &mut self,
+        pool: Option<&rayon::ThreadPool>,
+    ) -> (usize, StringGarbage) {
         if self.authority.state != HostState::Ready || self.vertex_formulas.has_touched() {
-            return 0;
+            return (0, StringGarbage::default());
         }
         let owners: Vec<_> = self
             .authority
@@ -2268,103 +2275,136 @@ impl DependencyGraph {
             .family_owners()
             .filter(|&(_, _, flags, _, _)| flags & crate::engine::authority::store::F_DYNAMIC == 0)
             .collect();
-        let mut compressed = 0usize;
         let unrendered = std::mem::take(&mut *self.authority.texts_unrendered.lock().unwrap());
-        for (sheet, dom, _, template, anchor) in owners {
-            // Members share the template's literal-erased relative tokens
-            // (the authority groups by them); what they may not share is
-            // literals (checked against the slot row) and reference texts
-            // (checked when the authority read each formula).
-            let anchor_vertex = self
-                .authority
-                .store
-                .ids()
-                .id_of((sheet, anchor.0, anchor.1))
-                .and_then(|id| self.authority_vertex_of_formula(id, (sheet, anchor.0, anchor.1)));
-            let Some(anchor_vertex) = anchor_vertex else {
-                continue;
-            };
-            if unrendered.contains(&anchor_vertex) {
-                continue;
+        // Decide per owner (read-only, independent: in parallel when a pool
+        // is given), then apply in owner order.
+        let decide = |owner: &(u16, _, _, AstNodeId, (u32, u32))| {
+            self.compressible_members(*owner, &unrendered)
+        };
+        let decided: Vec<Vec<CompressibleMember>> = match pool {
+            Some(pool) if owners.len() > 1 => {
+                use rayon::prelude::*;
+                pool.install(|| owners.par_iter().map(decide).collect())
             }
-            let tmpl_literals = crate::engine::authority::template::template_facts(
-                &self.data_store,
-                template,
-                anchor.0,
-                anchor.1,
-            )
-            .literals;
-            for col in dom.c0..=dom.c1 {
-                // Members of a column are one identity run (consecutive
-                // ids); the vertex of an id is an array read. Checked by
-                // cell, with the cell map as the fallback.
-                let id0 = self.authority.store.ids().id_of((sheet, dom.r0, col));
-                for row in dom.r0..=dom.r1 {
-                    let cell = (sheet, row, col);
-                    // `authority_vertex_of_formula` verifies the cell, so a
-                    // wrong id guess only falls back to the cell map.
-                    let guess = id0.map(|id0| id0 + (row - dom.r0));
-                    let v = guess
-                        .and_then(|id| self.authority_vertex_of_formula(id, cell))
-                        .or_else(|| self.get_vertex_for_cell(&cell_ref(cell)));
-                    let Some(v) = v else {
-                        continue;
-                    };
+            _ => owners.iter().map(decide).collect(),
+        };
+        let mut compressed = 0usize;
+        for ((_, _, _, template, anchor), members) in owners.iter().zip(decided) {
+            for (v, cell) in members {
+                #[cfg(debug_assertions)]
+                let before = {
+                    let (_, row, col) = cell;
                     let Some(&super::FormulaRef::Own(own)) = self.vertex_formulas.get(&v) else {
-                        continue;
+                        unreachable!("decided member has its own formula");
                     };
-                    if own == template || self.store.is_dynamic(v) || unrendered.contains(&v) {
-                        continue;
-                    }
-                    let id = match guess.filter(|&id| self.authority.vertex_of_id(id) == Some(v)) {
-                        Some(id) => id,
-                        None => match self.authority.store.ids().id_of(cell) {
-                            Some(id) => id,
-                            None => continue,
-                        },
-                    };
-                    let row_lits = self.authority.store.slots().get(id).unwrap_or(&[]);
-                    if !literal_rows_equal(&self.data_store, row_lits, &tmpl_literals) {
-                        continue;
-                    }
-                    #[cfg(debug_assertions)]
-                    {
-                        let dr = i64::from(row) - i64::from(anchor.0);
-                        let dc = i64::from(col) - i64::from(anchor.1);
-                        let rendered =
-                            template_rendered_refs(&self.data_store, &self.sheet_reg, template);
-                        let mut stack = Vec::new();
-                        assert!(
-                            ast_equal_relocated(
-                                &self.data_store,
-                                &self.sheet_reg,
-                                own,
-                                template,
-                                dr,
-                                dc,
-                                &rendered,
-                                &mut stack,
-                            ),
-                            "family member {cell:?} is not its template relocated"
-                        );
-                    }
-                    #[cfg(debug_assertions)]
-                    let before = self.get_formula(v);
-                    self.vertex_formulas.compress(v, template, anchor);
-                    #[cfg(debug_assertions)]
-                    assert_eq!(
-                        self.get_formula(v),
-                        before,
-                        "compressed member {cell:?} does not instantiate to its own formula"
+                    let dr = i64::from(row) - i64::from(anchor.0);
+                    let dc = i64::from(col) - i64::from(anchor.1);
+                    let rendered =
+                        template_rendered_refs(&self.data_store, &self.sheet_reg, *template);
+                    let mut stack = Vec::new();
+                    assert!(
+                        ast_equal_relocated(
+                            &self.data_store,
+                            &self.sheet_reg,
+                            own,
+                            *template,
+                            dr,
+                            dc,
+                            &rendered,
+                            &mut stack,
+                        ),
+                        "family member {cell:?} is not its template relocated"
                     );
-                    compressed += 1;
-                }
+                    self.get_formula(v)
+                };
+                #[cfg(not(debug_assertions))]
+                let _ = cell;
+                self.vertex_formulas.compress(v, *template, *anchor);
+                #[cfg(debug_assertions)]
+                assert_eq!(
+                    self.get_formula(v),
+                    before,
+                    "compressed member {cell:?} does not instantiate to its own formula"
+                );
+                compressed += 1;
             }
         }
-        if compressed > 0 {
-            self.compact_formula_arena();
+        let garbage = if compressed > 0 {
+            self.compact_formula_arena()
+        } else {
+            StringGarbage::default()
+        };
+        (compressed, garbage)
+    }
+
+    /// The members of one family owner that can reference its template:
+    /// non-dynamic, reference texts rendered, own formula not the template,
+    /// literal row equal to the template's. Members share the template's
+    /// literal-erased relative tokens (the authority groups by them); what
+    /// they may not share is literals (checked against the slot row) and
+    /// reference texts (checked when the authority read each formula).
+    fn compressible_members(
+        &self,
+        (sheet, dom, _, template, anchor): (u16, Rect, u16, AstNodeId, (u32, u32)),
+        unrendered: &rustc_hash::FxHashSet<VertexId>,
+    ) -> Vec<CompressibleMember> {
+        let mut out = Vec::new();
+        let anchor_vertex = self
+            .authority
+            .store
+            .ids()
+            .id_of((sheet, anchor.0, anchor.1))
+            .and_then(|id| self.authority_vertex_of_formula(id, (sheet, anchor.0, anchor.1)));
+        let Some(anchor_vertex) = anchor_vertex else {
+            return out;
+        };
+        if unrendered.contains(&anchor_vertex) {
+            return out;
         }
-        compressed
+        let tmpl_literals = crate::engine::authority::template::template_facts(
+            &self.data_store,
+            template,
+            anchor.0,
+            anchor.1,
+        )
+        .literals;
+        for col in dom.c0..=dom.c1 {
+            // Members of a column are one identity run (consecutive ids);
+            // the vertex of an id is an array read. Checked by cell, with
+            // the cell map as the fallback.
+            let id0 = self.authority.store.ids().id_of((sheet, dom.r0, col));
+            for row in dom.r0..=dom.r1 {
+                let cell = (sheet, row, col);
+                // `authority_vertex_of_formula` verifies the cell, so a wrong
+                // id guess only falls back to the cell map.
+                let guess = id0.map(|id0| id0 + (row - dom.r0));
+                let v = guess
+                    .and_then(|id| self.authority_vertex_of_formula(id, cell))
+                    .or_else(|| self.get_vertex_for_cell(&cell_ref(cell)));
+                let Some(v) = v else {
+                    continue;
+                };
+                let Some(&super::FormulaRef::Own(own)) = self.vertex_formulas.get(&v) else {
+                    continue;
+                };
+                if own == template || self.store.is_dynamic(v) || unrendered.contains(&v) {
+                    continue;
+                }
+                let id = match guess.filter(|&id| self.authority.vertex_of_id(id) == Some(v)) {
+                    Some(id) => id,
+                    None => match self.authority.store.ids().id_of(cell) {
+                        Some(id) => id,
+                        None => continue,
+                    },
+                };
+                let row_lits = self.authority.store.slots().get(id).unwrap_or(&[]);
+                if !literal_rows_equal(&self.data_store, row_lits, &tmpl_literals) {
+                    continue;
+                }
+                out.push((v, cell));
+            }
+        }
+        out
     }
 
     /// Give every compressed member its own AST again (same formulas).
@@ -2382,14 +2422,14 @@ impl DependencyGraph {
 
     /// Drop arena nodes unreachable from live formulas and authority
     /// owners, remapping both.
-    pub(crate) fn compact_formula_arena(&mut self) {
+    pub(crate) fn compact_formula_arena(&mut self) -> StringGarbage {
         let roots: Vec<AstNodeId> = self
             .vertex_formulas
             .values()
             .map(|f| f.root())
             .chain(self.authority.store.owner_templates())
             .collect();
-        let remap = self.data_store.compact_asts(roots);
+        let (remap, garbage) = self.data_store.compact_asts(roots);
         let map = |id: AstNodeId| {
             let new = remap
                 .get(id.as_u32() as usize)
@@ -2400,5 +2440,6 @@ impl DependencyGraph {
         };
         self.vertex_formulas.remap(&map);
         self.authority.store.remap_templates(&remap);
+        garbage
     }
 }

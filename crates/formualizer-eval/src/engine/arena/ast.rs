@@ -523,7 +523,10 @@ impl AstArena {
     /// dropped node. Strings and table specifiers are kept as they are;
     /// node metadata travels with its node. Every holder of an id must be
     /// remapped by the caller.
-    pub(crate) fn compact(&mut self, roots: impl IntoIterator<Item = AstNodeId>) -> Vec<u32> {
+    pub(crate) fn compact(
+        &mut self,
+        roots: impl IntoIterator<Item = AstNodeId>,
+    ) -> (Vec<u32>, super::string_interner::StringGarbage) {
         let old_len = self.nodes.len();
         let mut remap = vec![u32::MAX; old_len];
         let mut nodes: Vec<AstNodeEntry> = Vec::new();
@@ -693,7 +696,7 @@ impl AstArena {
                 AstNodeData::Literal(_) | AstNodeData::Omitted | AstNodeData::Array { .. } => {}
             }
         }
-        self.strings.free_dead(&live);
+        let garbage = self.strings.free_dead(&live);
         nodes.shrink_to_fit();
         function_args.shrink_to_fit();
         array_elements.shrink_to_fit();
@@ -702,7 +705,7 @@ impl AstArena {
         self.dedup_map = dedup_map;
         self.function_args = function_args;
         self.array_elements = array_elements;
-        remap
+        (remap, garbage)
     }
 
     /// Number of stored nodes.

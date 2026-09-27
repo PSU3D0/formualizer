@@ -40,6 +40,31 @@ impl Layer {
             runs: Vec::new(),
         }
     }
+
+    /// The vertices `lo..hi` as a layer, with the runs clipped to them.
+    pub(crate) fn sub_layer(&self, lo: usize, hi: usize) -> Layer {
+        let first = self
+            .runs
+            .partition_point(|r| (r.start + r.len) as usize <= lo);
+        let runs = self.runs[first..]
+            .iter()
+            .take_while(|r| (r.start as usize) < hi)
+            .map(|r| {
+                let s = (r.start as usize).max(lo);
+                let e = ((r.start + r.len) as usize).min(hi);
+                LayerRun {
+                    start: (s - lo) as u32,
+                    len: (e - s) as u32,
+                    row0: r.row0 + (s - r.start as usize) as u32,
+                    ..*r
+                }
+            })
+            .collect();
+        Layer {
+            vertices: self.vertices[lo..hi].to_vec(),
+            runs,
+        }
+    }
 }
 
 /// One step of the canonical schedule walk: either an acyclic Kahn wave
