@@ -310,3 +310,88 @@ fn virtual_member_lookups_and_single_cell_materialization() {
     b.evaluate_all().unwrap();
     assert_same(&a, &b, "after one member edit");
 }
+
+/// Families long enough to fill whole vertex pages (1024 vertices): the
+/// pages keep no rows while every vertex in them is a virtual member, and
+/// come back when a member is edited or a structural edit materializes the
+/// members. The engine stays identical to the uncompressed one.
+#[test]
+fn member_vertex_pages_drop_rows_and_come_back() {
+    const N: u32 = 3000;
+    let build = |compress: bool| {
+        let config = EvalConfig {
+            formula_compression: compress,
+            ..arrow_eval_config()
+        };
+        let mut e = Engine::new(TestWorkbook::new(), config);
+        for r in 1..=N {
+            e.set_cell_value("Sheet1", r, 1, LiteralValue::Number(f64::from(r % 13)))
+                .unwrap();
+        }
+        for r in 1..=N {
+            e.set_cell_formula("Sheet1", r, 2, parse(format!("=A{r}*3-1")).unwrap())
+                .unwrap();
+        }
+        for r in 1..=N {
+            e.set_cell_formula("Sheet1", r, 3, parse(format!("=B{r}+A{r}")).unwrap())
+                .unwrap();
+        }
+        e.evaluate_all().unwrap();
+        e
+    };
+    let values = |e: &Engine<TestWorkbook>| -> Vec<String> {
+        (1..=N + 4)
+            .flat_map(|r| (1..=4).map(move |c| (r, c)))
+            .map(|(r, c)| {
+                let s1 = e.graph.sheet_id("Sheet1").unwrap();
+                let cell = CellRef::new(s1, Coord::from_excel(r, c, true, true));
+                let vid = e.graph.get_vertex_id_for_address(&cell);
+                format!(
+                    "{r},{c}: {} {:?} {vid:?}",
+                    key(e.get_cell_value("Sheet1", r, c)),
+                    vid.and_then(|v| e.graph.get_formula(v))
+                        .map(|a| a.to_string())
+                )
+            })
+            .collect()
+    };
+    let mut a = build(true);
+    let mut b = build(false);
+    assert!(
+        a.graph.virtual_vertex_pages() >= 4,
+        "full member pages keep no rows"
+    );
+    assert_eq!(b.graph.virtual_vertex_pages(), 0);
+    assert_eq!(values(&a), values(&b));
+    // A member edit in the middle of a dropped page.
+    for e in [&mut a, &mut b] {
+        e.set_cell_formula("Sheet1", 1500, 2, parse("=A1500*100").unwrap())
+            .unwrap();
+        e.set_cell_value("Sheet1", 2200, 3, LiteralValue::Number(-7.0))
+            .unwrap();
+        e.set_cell_value("Sheet1", 17, 1, LiteralValue::Number(99.0))
+            .unwrap();
+        e.evaluate_all().unwrap();
+    }
+    assert_eq!(values(&a), values(&b), "after member edits");
+    // Structural edits (everything materializes, then goes virtual again)
+    // and their undo.
+    let mut la = ChangeLog::new();
+    let mut lb = ChangeLog::new();
+    for (e, log) in [(&mut a, &mut la), (&mut b, &mut lb)] {
+        let s1 = e.graph.sheet_id("Sheet1").unwrap();
+        e.edit_with_logger(log, |ed| ed.insert_rows(s1, 1000, 2).map(|_| ()))
+            .unwrap()
+            .unwrap();
+        e.evaluate_all().unwrap();
+    }
+    assert_eq!(values(&a), values(&b), "after insert rows");
+    assert_eq!(la.events(), lb.events(), "insert rows change log");
+    assert!(a.graph.virtual_vertex_pages() > 0, "pages dropped again");
+    let (mut ua, mut ub) = (UndoEngine::new(), UndoEngine::new());
+    a.undo_logged(&mut ua, &mut la).unwrap();
+    b.undo_logged(&mut ub, &mut lb).unwrap();
+    a.evaluate_all().unwrap();
+    b.evaluate_all().unwrap();
+    assert_eq!(values(&a), values(&b), "after undo");
+}

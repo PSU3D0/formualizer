@@ -5001,7 +5001,7 @@ impl DependencyGraph {
         let Some(m) = self.vertex_formulas.materialize(v) else {
             return false;
         };
-
+        self.store.ensure_dense(v, 1);
         self.store.set_virtual(v, false);
         let addr = CellRef::new(m.sheet, Coord::new(m.row, m.col, true, true));
         self.cell_to_vertex.insert(addr, v);
@@ -5038,6 +5038,7 @@ impl DependencyGraph {
         self.vertex_formulas.reserve(n);
         let mut by_sheet: FxHashMap<SheetId, Vec<(GridAddr, VertexId)>> = FxHashMap::default();
         for r in &runs {
+            self.store.ensure_dense(VertexId(r.first), r.len);
             let f = r.formula();
             let batch = by_sheet.entry(r.sheet).or_default();
             for (v, row) in r.members() {
@@ -5247,7 +5248,26 @@ impl DependencyGraph {
         sheets.sort_unstable();
         sheets.dedup();
         self.rebuild_sheet_indexes(&sheets);
+        self.virtualize_member_pages();
         made
+    }
+
+    /// Drop the vertex rows of every page filled by virtual members (see
+    /// `VertexStore::virtualize_member_span`). Returns the pages dropped.
+    pub(crate) fn virtualize_member_pages(&mut self) -> usize {
+        let runs: Vec<virtual_members::MemberRun> = self
+            .vertex_formulas
+            .virtual_members()
+            .runs()
+            .filter(|r| r.len as usize >= 1024)
+            .copied()
+            .collect();
+        runs.iter()
+            .map(|r| {
+                self.store
+                    .virtualize_member_span(VertexId(r.first), r.len, r.sheet, r.col, r.row0)
+            })
+            .sum()
     }
 
     /// Whether member vertex `v` may leave the per-cell maps.
@@ -5287,6 +5307,11 @@ impl DependencyGraph {
     }
 
     /// Virtual family members and runs (tests, memory probes).
+    /// Vertex pages without rows (tests, memory probes).
+    pub(crate) fn virtual_vertex_pages(&self) -> usize {
+        self.store.virtual_pages()
+    }
+
     pub(crate) fn virtual_member_counts(&self) -> (usize, usize) {
         let m = self.vertex_formulas.virtual_members();
         (m.len(), m.run_count())

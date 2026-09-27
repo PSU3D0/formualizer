@@ -935,6 +935,9 @@ impl<'g> BulkIngestBuilder<'g> {
 
         // Restore config
         self.g.set_sheet_index_mode(self.cfg_saved.sheet_index_mode);
+        // Load-time members are complete (formulas, flags, edge counts):
+        // their full vertex pages keep no rows.
+        self.g.virtualize_member_pages();
         crate::engine::trace::fz_event!(
             tracing::Level::INFO,
             "builder",
