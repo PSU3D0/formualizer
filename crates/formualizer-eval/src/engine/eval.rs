@@ -461,6 +461,8 @@ type PreparedStagedFormulaBatches = (
     PreparedFormulaBatches,
     Vec<CompressedReplayBatch>,
     Vec<PreparedSourceBatch>,
+    // Formulas whose planning can fail (see `formula_may_fail_planning`).
+    FxHashSet<crate::engine::arena::AstNodeId>,
 );
 
 /// Backend-neutral source-family ingress. Adapters may prepare candidates and
@@ -9597,7 +9599,7 @@ where
                 return Err(error);
             }
         };
-        let (ordinary, compressed, direct) = prepared;
+        let (ordinary, compressed, direct, may_fail) = prepared;
 
         // A first build (no formula in the graph yet) goes through the eager
         // first load's machinery: the builder pre-allocates each column's
@@ -9613,6 +9615,7 @@ where
                 ordinary
                     .iter()
                     .chain(compressed.iter().map(|(batch, _)| batch)),
+                &may_fail,
             ) {
                 self.formula_parse_diagnostics.truncate(diagnostics_len);
                 for (sheet, staged) in collected {
@@ -9672,13 +9675,18 @@ where
             && self.graph.formula_vertex_count() == 0
     }
 
-    /// Plan each distinct formula of `batches` once (a member is planned
-    /// through its template, staged before it) and drop the plans: the
-    /// first planning error, in the order the incremental ingest meets it.
+    /// Plan each distinct formula of `batches` that may fail planning once
+    /// (a member is planned through its template, staged before it) and
+    /// drop the plans: the first planning error, in the order the
+    /// incremental ingest meets it.
     fn check_staged_formula_plans<'b>(
         &mut self,
         batches: impl Iterator<Item = &'b FormulaIngestBatch>,
+        may_fail: &FxHashSet<crate::engine::arena::AstNodeId>,
     ) -> Result<(), ExcelError> {
+        if may_fail.is_empty() {
+            return Ok(());
+        }
         let mut seen: FxHashSet<(SheetId, crate::engine::arena::AstNodeId)> = FxHashSet::default();
         for batch in batches {
             let sheet_id = self.graph.sheet_id(&batch.sheet_name).ok_or_else(|| {
@@ -9687,7 +9695,10 @@ where
             })?;
             let mut pipeline = self.ingest_pipeline();
             for record in &batch.formulas {
-                if record.member_anchor.is_some() || !seen.insert((sheet_id, record.ast_id)) {
+                if record.member_anchor.is_some()
+                    || !may_fail.contains(&record.ast_id)
+                    || !seen.insert((sheet_id, record.ast_id))
+                {
                     continue;
                 }
                 let placement = CellRef::new(
@@ -9744,6 +9755,7 @@ where
         let mut ordinary = Vec::new();
         let mut compressed = Vec::new();
         let mut direct = Vec::new();
+        let mut may_fail = FxHashSet::default();
         let mut cache: rustc_hash::FxHashMap<String, Option<crate::engine::arena::AstNodeId>> =
             rustc_hash::FxHashMap::default();
         cache.reserve(4096);
@@ -9843,6 +9855,9 @@ where
                     match parsed {
                         Some(ast) => {
                             let record = self.stage_formula_ast(&mut grouper, row, col, &ast, None);
+                            if !record.is_family_member() && self.formula_may_fail_planning(&ast) {
+                                may_fail.insert(record.ast_id);
+                            }
                             // A member's text is not worth caching: relative
                             // copies do not repeat their text.
                             if record.is_family_member() {
@@ -9896,7 +9911,55 @@ where
                 ordinary.push(batch);
             }
         }
-        Ok((ordinary, compressed, direct))
+        Ok((ordinary, compressed, direct, may_fail))
+    }
+
+    /// Whether planning `ast` can fail: a reference to a sheet that does not
+    /// exist, an external, 3-D or table reference, or a reversed range.
+    /// Unqualified cell and range references, names, literals and calls
+    /// always plan.
+    fn formula_may_fail_planning(&self, ast: &formualizer_parse::parser::ASTNode) -> bool {
+        use formualizer_parse::parser::{ASTNodeType, ReferenceType};
+        let sheet_missing = |sheet: &Option<String>| {
+            sheet
+                .as_deref()
+                .is_some_and(|s| self.graph.sheet_id(s).is_none())
+        };
+        match &ast.node_type {
+            ASTNodeType::Literal(_) | ASTNodeType::Omitted => false,
+            ASTNodeType::Reference { reference, .. } => match reference {
+                ReferenceType::Cell { sheet, .. } => sheet_missing(sheet),
+                ReferenceType::Range {
+                    sheet,
+                    start_row,
+                    start_col,
+                    end_row,
+                    end_col,
+                    ..
+                } => {
+                    sheet_missing(sheet)
+                        || matches!((start_row, end_row), (Some(a), Some(b)) if a > b)
+                        || matches!((start_col, end_col), (Some(a), Some(b)) if a > b)
+                }
+                ReferenceType::NamedRange(_) => false,
+                _ => true,
+            },
+            ASTNodeType::UnaryOp { expr, .. } => self.formula_may_fail_planning(expr),
+            ASTNodeType::BinaryOp { left, right, .. } => {
+                self.formula_may_fail_planning(left) || self.formula_may_fail_planning(right)
+            }
+            ASTNodeType::Function { args, .. } => {
+                args.iter().any(|a| self.formula_may_fail_planning(a))
+            }
+            ASTNodeType::Call { callee, args } => {
+                self.formula_may_fail_planning(callee)
+                    || args.iter().any(|a| self.formula_may_fail_planning(a))
+            }
+            ASTNodeType::Array(rows) => rows
+                .iter()
+                .flatten()
+                .any(|a| self.formula_may_fail_planning(a)),
+        }
     }
 
     /// Begin bulk Arrow ingest for base values (Phase A)

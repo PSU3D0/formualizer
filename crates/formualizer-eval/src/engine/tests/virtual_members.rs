@@ -498,3 +498,33 @@ fn deferred_first_build_groups_preallocates_and_virtualizes() {
         }
     }
 }
+
+/// A deferred first build whose planning fails part-way (a formula after
+/// the builder's first 10k-record chunk) leaves the graph without formulas
+/// and the staged formulas in place, as the incremental path does.
+#[test]
+fn failed_deferred_first_build_leaves_the_graph_untouched() {
+    const N: u32 = 11_000;
+    let mut e = Engine::new(
+        TestWorkbook::new(),
+        EvalConfig {
+            defer_graph_building: true,
+            ..arrow_eval_config()
+        },
+    );
+    for r in 1..=N {
+        e.set_cell_value("Sheet1", r, 1, LiteralValue::Number(f64::from(r)))
+            .unwrap();
+        e.stage_formula_text("Sheet1", r, 2, format!("=A{r}*2"));
+    }
+    e.stage_formula_text("Sheet1", N, 3, "=SUM([1]Book!A1:B2)".to_string());
+    let vertices = e.graph.vertex_len();
+    let staged = e.staged_formula_count();
+    let err = e.build_graph_all().unwrap_err();
+    assert!(err.to_string().contains("Undefined table"), "{err}");
+    assert_eq!(e.graph.formula_vertex_count(), 0);
+    assert_eq!(e.graph.vertex_len(), vertices);
+    assert_eq!(e.staged_formula_count(), staged);
+    assert!(e.evaluate_all().is_err());
+    assert_eq!(e.graph.formula_vertex_count(), 0);
+}
