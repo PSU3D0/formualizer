@@ -115,6 +115,30 @@ impl FormatRuns {
         (0..len).map(|offset| self.get(offset).0).collect()
     }
 
+    /// Whether every offset in `[offset, offset + len)` is GENERAL.
+    pub(crate) fn all_general_in(&self, offset: usize, len: usize) -> bool {
+        if len == 0 {
+            return true;
+        }
+        let first = self
+            .run_ends
+            .partition_point(|end| (*end as usize) <= offset);
+        let last_off = offset + len - 1;
+        let mut run = first;
+        loop {
+            match self.format_ids.get(run) {
+                // Past the last run: the default (GENERAL).
+                None => return true,
+                Some(&id) if id != FormatId::GENERAL.0 => return false,
+                Some(_) => {}
+            }
+            match self.run_ends.get(run) {
+                Some(&end) if (end as usize) <= last_off => run += 1,
+                _ => return true,
+            }
+        }
+    }
+
     pub fn slice(&self, offset: usize, len: usize) -> Option<Self> {
         let ids: Vec<_> = (offset..offset.saturating_add(len))
             .map(|i| self.get(i).0)

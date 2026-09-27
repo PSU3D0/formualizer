@@ -16,8 +16,7 @@ use crate::engine::scheduler::LayerRun;
 use crate::format::FormatId;
 use crate::interpreter::shift_axis_for_offset as shift_axis;
 use crate::traits::CalcValue;
-
-type Lifted = Result<(LiteralValue, Option<FormatId>), ExcelError>;
+use arrow_array::Array as _;
 
 /// Nodes of a compiled template (children precede parents).
 enum LiftNode {
@@ -265,10 +264,9 @@ where
                         .sheet_id(sheet_name)
                         .map(|id| (id, self.arrow_sheets.sheet(sheet_name)));
                     let col = shift_axis(*col, col_delta, *col_abs);
-                    let mut out = Vec::with_capacity(n);
-                    for i in 0..n {
-                        // The walk's order: row shift, column shift, sheet.
-                        let cell = shift_axis(*row, row_delta0 + i as i64, *row_abs)
+                    // One cell for every member: read it once.
+                    if *row_abs {
+                        let cell = shift_axis(*row, row_delta0, true)
                             .and_then(|row| col.clone().map(|col| (row, col)))
                             .and_then(|(row, col)| match resolved {
                                 Some((sheet_id, asheet)) => {
@@ -276,14 +274,13 @@ where
                                 }
                                 None => Err(ExcelError::new(ExcelErrorKind::Ref)),
                             });
-                        // Operators on scalars give scalars: arrays can
-                        // only come from a read (then the walk decides).
                         if let Ok((LiteralValue::Array(_), _)) = cell {
                             return None;
                         }
-                        out.push(cell);
+                        Column::Const(cell)
+                    } else {
+                        Column::Lane(self.read_lane(resolved, *row, row_delta0, col, n)?)
                     }
-                    Column::Many(out)
                 }
                 LiftNode::Unary { op, child } => {
                     let apply = |operand: Lifted| {
@@ -294,7 +291,7 @@ where
                     };
                     match take(&mut columns, *child) {
                         Column::Const(v) => Column::Const(apply(v)),
-                        Column::Many(vs) => Column::Many(vs.into_iter().map(apply).collect()),
+                        Column::Lane(lane) => Column::Lane(lane.unary(op, n, apply)),
                     }
                 }
                 LiftNode::Binary { op, left, right } => {
@@ -306,9 +303,7 @@ where
                     let (l, r) = (take(&mut columns, *left), take(&mut columns, *right));
                     match (l, r) {
                         (Column::Const(l), Column::Const(r)) => Column::Const(apply(l, r)),
-                        (l, r) => Column::Many(
-                            l.iter(n).zip(r.iter(n)).map(|(l, r)| apply(l, r)).collect(),
-                        ),
+                        (l, r) => Column::Lane(Lane::binary(op, l, r, n, apply)),
                     }
                 }
                 // `IfFn::eval` through `dispatch` (SHORT_CIRCUIT: arity was
@@ -326,87 +321,402 @@ where
                         Some(k) => take(&mut columns, *k),
                         None => Column::Const(Ok((LiteralValue::Boolean(false), None))),
                     };
-                    Column::Many(
-                        cond.iter(n)
-                            .zip(then.iter(n))
-                            .zip(otherwise.iter(n))
-                            .map(|((condition, then), otherwise)| {
-                                let (condition, _) = condition?;
-                                let taken = match condition {
-                                    LiteralValue::Boolean(b) => b,
-                                    LiteralValue::Number(x) => x != 0.0,
-                                    LiteralValue::Int(x) => x != 0,
-                                    LiteralValue::Empty => false,
-                                    LiteralValue::Error(error) => {
-                                        return Ok((LiteralValue::Error(error), None));
-                                    }
-                                    _ => {
-                                        return Ok((
-                                            LiteralValue::Error(
-                                                ExcelError::new_value().with_message(
-                                                    "IF condition must be boolean or number",
-                                                ),
-                                            ),
-                                            None,
-                                        ));
-                                    }
-                                };
-                                let (value, format) = if taken { then? } else { otherwise? };
-                                Ok((
-                                    value,
-                                    format.filter(|id| *id != crate::format::FormatId::GENERAL),
-                                ))
-                            })
-                            .collect(),
-                    )
+                    Column::Lane(Lane::choose(cond, then, otherwise, n))
                 }
             };
             columns.push(column);
         }
-        Some(columns.pop()?.iter(n).collect())
+        Some(columns.pop()?.into_lifted(n))
+    }
+
+    /// The typed lane of one relative cell reference over the run: rows
+    /// `shift(row, row_delta0 + i)` of column `col`. A member's element is
+    /// clean when the cell holds a number (tag `Number`, numeric lane set,
+    /// after both overlays) and has no format (cell format lanes and
+    /// derived formats): that is exactly the scalar read's
+    /// `(Number(x), None)`. Every other element is the scalar read itself.
+    /// `None` when a read returns an array (the walk decides).
+    fn read_lane(
+        &self,
+        resolved: Option<(SheetId, Option<&crate::arrow_store::ArrowSheet>)>,
+        row: u32,
+        row_delta0: i64,
+        col: Result<u32, ExcelError>,
+        n: usize,
+    ) -> Option<Lane> {
+        let mut lane = Lane::with_len(LaneKind::Num, n);
+        let boxed = |lane: &mut Lane, i: usize, value: Lifted| -> Option<()> {
+            if let Ok((LiteralValue::Array(_), _)) = value {
+                return None;
+            }
+            lane.boxed.push((i as u32, value));
+            Some(())
+        };
+        let (col, (sheet_id, asheet)) = match (col, resolved) {
+            (Ok(col), Some(r)) => (col, r),
+            (Err(e), _) => {
+                for i in 0..n {
+                    // The walk shifts the row first: its error wins.
+                    let v = shift_axis(row, row_delta0 + i as i64, false).and(Err(e.clone()));
+                    boxed(&mut lane, i, v)?;
+                }
+                return Some(lane);
+            }
+            (Ok(_), None) => {
+                for i in 0..n {
+                    let v = shift_axis(row, row_delta0 + i as i64, false)
+                        .and(Err(ExcelError::new(ExcelErrorKind::Ref)));
+                    boxed(&mut lane, i, v)?;
+                }
+                return Some(lane);
+            }
+        };
+        let check_derived = !self.derived_formats.is_empty();
+        let mut i = 0usize;
+        while i < n {
+            // Rows that do not shift onto the grid are #REF! (walk order).
+            let r1 = match shift_axis(row, row_delta0 + i as i64, false) {
+                Ok(r1) => r1,
+                Err(e) => {
+                    boxed(&mut lane, i, Err(e))?;
+                    i += 1;
+                    continue;
+                }
+            };
+            let r0 = (r1 - 1) as usize;
+            let c0 = (col - 1) as usize;
+            // The chunk segment starting at this row (or a single row where
+            // the sheet has no data there).
+            let seg = asheet.and_then(|a| {
+                let (ci, off) = a.chunk_of_row(r0)?;
+                let ch = a.columns.get(c0)?.chunk(ci)?;
+                let len = (ch.len() - off).min(n - i);
+                Some((ch, off, len))
+            });
+            let Some((ch, off, len)) = seg else {
+                let v = Ok(self.read_cell_formatted_in(sheet_id, asheet, r1, col));
+                boxed(&mut lane, i, v)?;
+                i += 1;
+                continue;
+            };
+            let range = off..off + len;
+            let cascade =
+                crate::arrow_store::OverlayCascade::new(&ch.overlay, &ch.computed_overlay);
+            let base_tags = ch.type_tag.slice(off, len);
+            let base_nums = ch.numbers_or_null().slice(off, len);
+            let (tags, nums) = if cascade.has_any_in_range(range.clone()) {
+                let nums = ch
+                    .merged_numbers(range.clone())
+                    .unwrap_or_else(|| cascade.select_numbers(range.clone(), &base_nums));
+                (cascade.select_type_tags(range.clone(), &base_tags), nums)
+            } else {
+                (Arc::new(base_tags), Arc::new(base_nums))
+            };
+            // Formats: none anywhere in the segment, or checked per cell.
+            let formats_clear = !ch.overlay.has_formats()
+                && !ch.computed_overlay.has_formats()
+                && ch
+                    .format
+                    .as_ref()
+                    .is_none_or(|runs| runs.all_general_in(off, len));
+            for k in 0..len {
+                let idx = i + k;
+                let r1 = r1 + k as u32;
+                let clean = tags.value(k) == crate::arrow_store::TypeTag::Number as u8
+                    && nums.is_valid(k)
+                    && (formats_clear || asheet.and_then(|a| a.format_id(r0 + k, c0)).is_none())
+                    && (!check_derived
+                        || self
+                            .derived_formats
+                            .get(&CellRef::new(
+                                sheet_id,
+                                Coord::from_excel(r1, col, true, true),
+                            ))
+                            .is_none());
+                if clean {
+                    lane.vals[idx] = nums.value(k);
+                    #[cfg(test)]
+                    self.lane_clean_reads_for_test
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                } else {
+                    let v = Ok(self.read_cell_formatted_in(sheet_id, asheet, r1, col));
+                    boxed(&mut lane, idx, v)?;
+                }
+            }
+            i += len;
+        }
+        Some(lane)
     }
 }
 
-/// A node's values over the run: one per member, or one for all.
+type Lifted = Result<(LiteralValue, Option<FormatId>), ExcelError>;
+
+/// What the clean elements of a lane are.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum LaneKind {
+    /// `(Number(x), None)`.
+    Num,
+    /// `(Boolean(x != 0), None)`.
+    Bool,
+}
+
+/// A node's values over the run as typed lanes: `vals[i]` is member i's
+/// value when it is clean; `boxed` holds (ascending member index, value)
+/// for every other member, computed on the scalar path.
+struct Lane {
+    kind: LaneKind,
+    vals: Vec<f64>,
+    boxed: Vec<(u32, Lifted)>,
+}
+
+/// One element of a column: clean (a number, or a boolean as 0/1) or the
+/// scalar path's value.
+enum Elem<'c> {
+    Num(f64),
+    Bool(bool),
+    Boxed(&'c Lifted),
+}
+
+impl Elem<'_> {
+    fn lifted(&self) -> Lifted {
+        match self {
+            Elem::Num(x) => Ok((LiteralValue::Number(*x), None)),
+            Elem::Bool(b) => Ok((LiteralValue::Boolean(*b), None)),
+            Elem::Boxed(v) => (*v).clone(),
+        }
+    }
+}
+
+/// Sequential reader of a column's elements (members in order).
+struct Cursor<'c> {
+    column: &'c Column,
+    next_boxed: usize,
+}
+
+impl<'c> Cursor<'c> {
+    fn new(column: &'c Column) -> Self {
+        Self {
+            column,
+            next_boxed: 0,
+        }
+    }
+
+    /// Member `i`'s element; members must be read in ascending order.
+    #[inline]
+    fn get(&mut self, i: usize) -> Elem<'c> {
+        match self.column {
+            Column::Const(Ok((LiteralValue::Number(x), None))) => Elem::Num(*x),
+            Column::Const(v) => Elem::Boxed(v),
+            Column::Lane(lane) => {
+                if let Some((j, v)) = lane.boxed.get(self.next_boxed)
+                    && *j as usize == i
+                {
+                    self.next_boxed += 1;
+                    return Elem::Boxed(v);
+                }
+                match lane.kind {
+                    LaneKind::Num => Elem::Num(lane.vals[i]),
+                    LaneKind::Bool => Elem::Bool(lane.vals[i] != 0.0),
+                }
+            }
+        }
+    }
+}
+
+impl Lane {
+    fn with_len(kind: LaneKind, n: usize) -> Self {
+        Self {
+            kind,
+            vals: vec![0.0; n],
+            boxed: Vec::new(),
+        }
+    }
+
+    /// Store a scalar-path result: clean when it is a plain number (or a
+    /// plain boolean in a boolean lane).
+    #[inline]
+    fn put(&mut self, i: usize, value: Lifted) {
+        match (&value, self.kind) {
+            (Ok((LiteralValue::Number(x), None)), LaneKind::Num) => self.vals[i] = *x,
+            (Ok((LiteralValue::Boolean(b), None)), LaneKind::Bool) => {
+                self.vals[i] = if *b { 1.0 } else { 0.0 }
+            }
+            _ => self.boxed.push((i as u32, value)),
+        }
+    }
+
+    fn unary(self, op: &'static str, n: usize, apply: impl Fn(Lifted) -> Lifted) -> Lane {
+        let column = Column::Lane(self);
+        let mut out = Lane::with_len(LaneKind::Num, n);
+        let mut cur = Cursor::new(&column);
+        for i in 0..n {
+            match (cur.get(i), op) {
+                // `+` is a pass-through; `-` and `%` coerce (a number is
+                // itself) and sanitize, as `eval_unary_scalar`.
+                (Elem::Num(x), "+") => out.vals[i] = x,
+                (Elem::Num(x), "-") => match crate::interpreter::unary_f64(b'-', x) {
+                    Ok(v) => out.vals[i] = v,
+                    Err(e) => out.put(i, Ok((LiteralValue::Error(e), None))),
+                },
+                (Elem::Num(x), "%") => match crate::interpreter::unary_f64(b'%', x) {
+                    Ok(v) => out.vals[i] = v,
+                    Err(e) => out.put(i, Ok((LiteralValue::Error(e), None))),
+                },
+                (e, _) => out.put(i, apply(e.lifted())),
+            }
+        }
+        out
+    }
+
+    /// A binary operator: numbers on both sides take the f64 path
+    /// (`arith_f64`, `cmp_f64`, the scalar path's own functions); anything
+    /// else goes through `apply` (the scalar operator).
+    fn binary(
+        op: &'static str,
+        l: Column,
+        r: Column,
+        n: usize,
+        apply: impl Fn(Lifted, Lifted) -> Lifted,
+    ) -> Lane {
+        let arith = match op {
+            "+" => Some(b'+'),
+            "-" => Some(b'-'),
+            "*" => Some(b'*'),
+            "/" => Some(b'/'),
+            "^" => Some(b'^'),
+            _ => None,
+        };
+        let compare = matches!(op, "=" | "<>" | ">" | "<" | ">=" | "<=");
+        let kind = if compare {
+            LaneKind::Bool
+        } else {
+            LaneKind::Num
+        };
+        let mut out = Lane::with_len(kind, n);
+        let (mut lc, mut rc) = (Cursor::new(&l), Cursor::new(&r));
+        for i in 0..n {
+            let (a, b) = (lc.get(i), rc.get(i));
+            match (a, b) {
+                (Elem::Num(a), Elem::Num(b)) if arith.is_some() => {
+                    // `+`/`-` annotate from the operand formats: none here.
+                    match crate::interpreter::arith_f64(arith.unwrap(), a, b) {
+                        Ok(v) => out.vals[i] = v,
+                        Err(e) => out.put(i, Ok((LiteralValue::Error(e), None))),
+                    }
+                }
+                (Elem::Num(a), Elem::Num(b)) if compare => {
+                    out.vals[i] = if crate::interpreter::cmp_f64(a, b, op) {
+                        1.0
+                    } else {
+                        0.0
+                    };
+                }
+                (a, b) => out.put(i, apply(a.lifted(), b.lifted())),
+            }
+        }
+        out
+    }
+
+    /// `IF(cond, then, otherwise)` per member, as `IfFn::eval`: an operand
+    /// error propagates, the condition is a boolean or a number (non-zero),
+    /// empty is false, an error value is the result, anything else is
+    /// `#VALUE!`; the taken branch's format propagates without GENERAL.
+    fn choose(cond: Column, then: Column, otherwise: Column, n: usize) -> Lane {
+        let kind = match (then.kind(), otherwise.kind()) {
+            (Some(LaneKind::Bool), Some(LaneKind::Bool)) => LaneKind::Bool,
+            _ => LaneKind::Num,
+        };
+        let mut out = Lane::with_len(kind, n);
+        let (mut cc, mut tc, mut oc) = (
+            Cursor::new(&cond),
+            Cursor::new(&then),
+            Cursor::new(&otherwise),
+        );
+        for i in 0..n {
+            let (c, t, o) = (cc.get(i), tc.get(i), oc.get(i));
+            let taken = match c {
+                Elem::Num(x) => x != 0.0,
+                Elem::Bool(b) => b,
+                Elem::Boxed(v) => match v {
+                    Err(e) => {
+                        out.put(i, Err(e.clone()));
+                        continue;
+                    }
+                    Ok((condition, _)) => match condition {
+                        LiteralValue::Boolean(b) => *b,
+                        LiteralValue::Number(x) => *x != 0.0,
+                        LiteralValue::Int(x) => *x != 0,
+                        LiteralValue::Empty => false,
+                        LiteralValue::Error(error) => {
+                            out.put(i, Ok((LiteralValue::Error(error.clone()), None)));
+                            continue;
+                        }
+                        _ => {
+                            out.put(
+                                i,
+                                Ok((
+                                    LiteralValue::Error(
+                                        ExcelError::new_value()
+                                            .with_message("IF condition must be boolean or number"),
+                                    ),
+                                    None,
+                                )),
+                            );
+                            continue;
+                        }
+                    },
+                },
+            };
+            match if taken { t } else { o } {
+                Elem::Num(x) if kind == LaneKind::Num => out.vals[i] = x,
+                Elem::Bool(b) if kind == LaneKind::Bool => out.vals[i] = if b { 1.0 } else { 0.0 },
+                e => {
+                    let result = e.lifted().map(|(value, format)| {
+                        (
+                            value,
+                            format.filter(|id| *id != crate::format::FormatId::GENERAL),
+                        )
+                    });
+                    out.put(i, result);
+                }
+            }
+        }
+        out
+    }
+}
+
+/// A node's values over the run: typed lanes, or one value for all.
 enum Column {
     Const(Lifted),
-    Many(Vec<Lifted>),
+    Lane(Lane),
 }
 
 impl Column {
-    fn iter(self, n: usize) -> ColumnIter {
+    /// The kind of every clean element (a numeric constant is `Num`).
+    fn kind(&self) -> Option<LaneKind> {
         match self {
-            Column::Const(v) => ColumnIter::Const(v, n),
-            Column::Many(vs) => ColumnIter::Many(vs.into_iter()),
+            Column::Const(Ok((LiteralValue::Number(_), None))) => Some(LaneKind::Num),
+            Column::Const(Ok((LiteralValue::Boolean(_), None))) => Some(LaneKind::Bool),
+            Column::Const(_) => None,
+            Column::Lane(lane) => Some(lane.kind),
         }
     }
-}
 
-enum ColumnIter {
-    Const(Lifted, usize),
-    Many(std::vec::IntoIter<Lifted>),
-}
-
-impl Iterator for ColumnIter {
-    type Item = Lifted;
-
-    #[inline]
-    fn next(&mut self) -> Option<Lifted> {
-        match self {
-            ColumnIter::Const(v, left) => {
-                if *left == 0 {
-                    return None;
-                }
-                *left -= 1;
-                Some(v.clone())
-            }
-            ColumnIter::Many(it) => it.next(),
+    fn into_lifted(self, n: usize) -> Vec<Lifted> {
+        let mut out = Vec::with_capacity(n);
+        let mut cur = Cursor::new(&self);
+        for i in 0..n {
+            out.push(cur.get(i).lifted());
         }
+        out
     }
 }
 
 fn take(columns: &mut [Column], idx: usize) -> Column {
-    std::mem::replace(&mut columns[idx], Column::Many(Vec::new()))
+    std::mem::replace(
+        &mut columns[idx],
+        Column::Const(Ok((LiteralValue::Empty, None))),
+    )
 }
 
 fn calc<'a>(value: LiteralValue, format: Option<FormatId>) -> CalcValue<'a> {

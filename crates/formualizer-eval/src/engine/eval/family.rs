@@ -555,6 +555,12 @@ where
         self.lifted_members_for_test
             .load(std::sync::atomic::Ordering::Relaxed)
     }
+
+    /// Operand elements the lift read as clean typed-lane numbers so far.
+    pub(crate) fn lane_clean_reads_for_test(&self) -> u64 {
+        self.lane_clean_reads_for_test
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
 }
 
 /// Value identity for differential checks: numbers by bits (NaN as a

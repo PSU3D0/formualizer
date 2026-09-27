@@ -985,6 +985,8 @@ pub struct Engine<R> {
     #[cfg(test)]
     lifted_members_for_test: std::sync::atomic::AtomicU64,
     #[cfg(test)]
+    lane_clean_reads_for_test: std::sync::atomic::AtomicU64,
+    #[cfg(test)]
     memo_hits_for_test: std::sync::atomic::AtomicU64,
     /// Authority build last compressed (`maybe_compress_formulas`).
     compressed_at_build: Option<u64>,
@@ -2520,6 +2522,8 @@ where
             #[cfg(test)]
             lifted_members_for_test: std::sync::atomic::AtomicU64::new(0),
             #[cfg(test)]
+            lane_clean_reads_for_test: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(test)]
             memo_hits_for_test: std::sync::atomic::AtomicU64::new(0),
             compressed_at_build: None,
             #[cfg(test)]
@@ -2671,6 +2675,8 @@ where
             family_members_for_test: std::sync::atomic::AtomicU64::new(0),
             #[cfg(test)]
             lifted_members_for_test: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(test)]
+            lane_clean_reads_for_test: std::sync::atomic::AtomicU64::new(0),
             #[cfg(test)]
             memo_hits_for_test: std::sync::atomic::AtomicU64::new(0),
             compressed_at_build: None,

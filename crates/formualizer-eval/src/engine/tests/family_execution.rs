@@ -576,3 +576,135 @@ fn family_memo_criteria_and_lookups_match_per_cell() {
     e.evaluate_all().unwrap();
     assert!(e.memo_hits_for_test() > 0, "no memo hit");
 }
+
+/// Typed lanes (P2-M3 on f64 lanes): a lifted family reads its operands as
+/// the merged number lanes with type-tag and format masks, and falls back
+/// per element to the scalar read and operator. Base lanes are ingested in
+/// 16-row chunks (runs cross chunk boundaries) with dates (a format lane),
+/// -0.0, huge values, text and booleans; families chain through computed
+/// overlays and derived formats (date arithmetic); edits put user overlay
+/// points of every type mid-run. Lift, walk and per-cell oracle agree on
+/// values and derived formats, sequential and parallel.
+#[test]
+fn family_lift_typed_lanes_match_per_cell() {
+    use chrono::NaiveDate;
+    const ROWS: u32 = 100;
+    let base_value = |r: u32, c: u32| -> LiteralValue {
+        match (r * 7 + c * 3) % 17 {
+            0 => LiteralValue::Number(-0.0),
+            1 => LiteralValue::Number(f64::MAX / 3.0),
+            2 => LiteralValue::Date(NaiveDate::from_ymd_opt(2023, 3, 1 + r % 27).unwrap()),
+            3 => LiteralValue::Text(format!("{}", r as f64 / 8.0)),
+            4 => LiteralValue::Boolean(r % 2 == 0),
+            5 => LiteralValue::Empty,
+            6 => LiteralValue::Number(0.0),
+            7 => LiteralValue::Int(r as i64 - 50),
+            _ => LiteralValue::Number((r as f64 - 40.0) * 0.37 + c as f64),
+        }
+    };
+    let formulas: Vec<(u32, String)> = vec![
+        (4, "=A{r}*B{r}".into()),
+        (5, "=A{r}/B{r}".into()),
+        (6, "=A{r}^0.5+B{r}^2".into()),
+        (7, "=-A{r}%".into()),
+        (8, "=A{r}*1E+300*B{r}".into()),
+        (9, "=A{r}=B{r}".into()),
+        (10, "=IF(A{r}>B{r},A{r}-B{r},B{r}-A{r})".into()),
+        (11, "=IF(A{r},1,2)+IF(I{r},C{r},-C{r})".into()),
+        // Computed-overlay operands (another family's results).
+        (12, "=D{r}+E{r}*2".into()),
+        (13, "=J{r}/(D{r}-L{r})".into()),
+        // Date arithmetic: derived DATE formats, read by the next family.
+        (14, "=C{r}+1".into()),
+        (15, "=N{r}-C{r}".into()),
+        // Past the last ingested row for the bottom members.
+        (16, "=A{r20}*2+1".into()),
+    ];
+    let run_typed = |config: EvalConfig| -> (Vec<Vec<String>>, u64) {
+        let mut e = Engine::new(TestWorkbook::new(), config);
+        {
+            let mut ab = e.begin_bulk_ingest_arrow();
+            ab.add_sheet("Sheet1", 3, 16);
+            for r in 1..=ROWS {
+                ab.append_row(
+                    "Sheet1",
+                    &[base_value(r, 1), base_value(r, 2), base_value(r, 3)],
+                )
+                .unwrap();
+            }
+            ab.finish().unwrap();
+        }
+        let mut cells = Vec::new();
+        for r in 1..=ROWS {
+            for (c, f) in &formulas {
+                let f = f
+                    .replace("{r20}", &(r + 20).to_string())
+                    .replace("{r}", &r.to_string());
+                e.set_cell_formula("Sheet1", r, *c, parse(&f).unwrap())
+                    .unwrap();
+                cells.push((r, *c));
+            }
+        }
+        let snapshot = |e: &Engine<TestWorkbook>| {
+            cells
+                .iter()
+                .map(|&(r, c)| {
+                    format!(
+                        "{} {:?}",
+                        key(e.get_cell_value("Sheet1", r, c)),
+                        e.debug_derived_format_0based("Sheet1", r - 1, c - 1)
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let mut out = Vec::new();
+        e.evaluate_all().unwrap();
+        out.push(snapshot(&e));
+        let edits = [
+            ((10, 1), LiteralValue::Text("x".into())),
+            ((17, 1), LiteralValue::Number(-0.0)),
+            ((33, 2), LiteralValue::Boolean(true)),
+            (
+                (47, 1),
+                LiteralValue::Date(NaiveDate::from_ymd_opt(2024, 2, 29).unwrap()),
+            ),
+            ((48, 2), LiteralValue::Empty),
+            (
+                (64, 1),
+                LiteralValue::Error(formualizer_common::ExcelError::new(
+                    formualizer_common::ExcelErrorKind::Na,
+                )),
+            ),
+            ((65, 1), LiteralValue::Number(f64::MIN_POSITIVE)),
+        ];
+        for ((r, c), v) in edits {
+            e.set_cell_value("Sheet1", r, c, v).unwrap();
+            e.evaluate_all().unwrap();
+            out.push(snapshot(&e));
+        }
+        assert!(
+            e.lifted_members_for_test() == 0 || e.lane_clean_reads_for_test() > 0,
+            "no clean typed-lane element was read"
+        );
+        (out, e.lifted_members_for_test())
+    };
+    for parallel in [false, true] {
+        let base = EvalConfig {
+            enable_parallel: parallel,
+            ..arrow_eval_config()
+        };
+        let oracle = run_typed(EvalConfig {
+            family_execution: false,
+            ..base.clone()
+        });
+        let walk = run_typed(EvalConfig {
+            family_lift: false,
+            ..base.clone()
+        });
+        let lift = run_typed(base);
+        assert_eq!(oracle.1, 0);
+        assert!(lift.1 > 0, "no run was lifted (parallel={parallel})");
+        assert_eq!(walk.0, oracle.0, "walk, parallel={parallel}");
+        assert_eq!(lift.0, oracle.0, "lift, parallel={parallel}");
+    }
+}
