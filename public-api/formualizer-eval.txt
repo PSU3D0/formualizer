@@ -1331,6 +1331,8 @@ pub formualizer_eval::engine::eval::Engine::recalc_epoch: u64
 impl<R: formualizer_eval::traits::EvaluationContext> formualizer_eval::engine::eval::Engine<R>
 pub fn formualizer_eval::engine::eval::Engine<R>::begin_bulk_ingest(&mut self) -> formualizer_eval::engine::ingest_builder::BulkIngestBuilder<'_>
 pub fn formualizer_eval::engine::eval::Engine<R>::intern_formula_ast(&mut self, &formualizer_parse::parser::ASTNode) -> formualizer_eval::engine::arena::ast::AstNodeId
+pub fn formualizer_eval::engine::eval::Engine<R>::note_staged_formula(&mut self, &mut formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper, u32, u32, formualizer_eval::engine::arena::ast::AstNodeId)
+pub fn formualizer_eval::engine::eval::Engine<R>::stage_formula_ast(&mut self, &mut formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper, u32, u32, &formualizer_parse::parser::ASTNode, core::option::Option<alloc::sync::Arc<str>>) -> formualizer_eval::engine::formula_ingest::FormulaIngestRecord
 impl<R: formualizer_eval::traits::EvaluationContext> formualizer_eval::engine::eval::Engine<R>
 pub fn formualizer_eval::engine::eval::Engine<R>::dependents(&self, &formualizer_common::grid_address::CellAddress, &formualizer_eval::engine::inspect::DependentsOptions) -> core::result::Result<formualizer_eval::engine::inspect::DependentsReport, formualizer_eval::engine::inspect::InspectError>
 pub fn formualizer_eval::engine::eval::Engine<R>::inspect_cell(&self, &formualizer_common::grid_address::CellAddress, &formualizer_eval::engine::inspect::SnapshotOptions) -> core::result::Result<formualizer_eval::engine::inspect::CellSnapshotReport, formualizer_eval::engine::inspect::InspectError>
@@ -1738,6 +1740,14 @@ pub fn formualizer_eval::engine::eval_delta::TargetEvalDelta::fmt(&self, &mut co
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::eval_delta::TargetEvalDelta
 pub const formualizer_eval::engine::eval_delta::TARGET_EVAL_DELTA_VERSION: u16
 pub mod formualizer_eval::engine::formula_ingest
+pub struct formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper
+impl formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper
+pub fn formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper::members(&self) -> u64
+pub fn formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper::new() -> Self
+impl core::default::Default for formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper
+pub fn formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper::default() -> formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper
+impl core::fmt::Debug for formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper
+pub fn formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub struct formualizer_eval::engine::formula_ingest::FormulaIngestBatch
 pub formualizer_eval::engine::formula_ingest::FormulaIngestBatch::formulas: alloc::vec::Vec<formualizer_eval::engine::formula_ingest::FormulaIngestRecord>
 pub formualizer_eval::engine::formula_ingest::FormulaIngestBatch::sheet_name: alloc::string::String
@@ -1755,6 +1765,7 @@ pub formualizer_eval::engine::formula_ingest::FormulaIngestRecord::col: u32
 pub formualizer_eval::engine::formula_ingest::FormulaIngestRecord::formula_text: core::option::Option<alloc::sync::Arc<str>>
 pub formualizer_eval::engine::formula_ingest::FormulaIngestRecord::row: u32
 impl formualizer_eval::engine::formula_ingest::FormulaIngestRecord
+pub fn formualizer_eval::engine::formula_ingest::FormulaIngestRecord::is_family_member(&self) -> bool
 pub fn formualizer_eval::engine::formula_ingest::FormulaIngestRecord::new(u32, u32, formualizer_eval::engine::arena::ast::AstNodeId, core::option::Option<alloc::sync::Arc<str>>) -> Self
 impl core::clone::Clone for formualizer_eval::engine::formula_ingest::FormulaIngestRecord
 pub fn formualizer_eval::engine::formula_ingest::FormulaIngestRecord::clone(&self) -> formualizer_eval::engine::formula_ingest::FormulaIngestRecord
@@ -5946,6 +5957,8 @@ pub formualizer_eval::engine::Engine::recalc_epoch: u64
 impl<R: formualizer_eval::traits::EvaluationContext> formualizer_eval::engine::eval::Engine<R>
 pub fn formualizer_eval::engine::eval::Engine<R>::begin_bulk_ingest(&mut self) -> formualizer_eval::engine::ingest_builder::BulkIngestBuilder<'_>
 pub fn formualizer_eval::engine::eval::Engine<R>::intern_formula_ast(&mut self, &formualizer_parse::parser::ASTNode) -> formualizer_eval::engine::arena::ast::AstNodeId
+pub fn formualizer_eval::engine::eval::Engine<R>::note_staged_formula(&mut self, &mut formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper, u32, u32, formualizer_eval::engine::arena::ast::AstNodeId)
+pub fn formualizer_eval::engine::eval::Engine<R>::stage_formula_ast(&mut self, &mut formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper, u32, u32, &formualizer_parse::parser::ASTNode, core::option::Option<alloc::sync::Arc<str>>) -> formualizer_eval::engine::formula_ingest::FormulaIngestRecord
 impl<R: formualizer_eval::traits::EvaluationContext> formualizer_eval::engine::eval::Engine<R>
 pub fn formualizer_eval::engine::eval::Engine<R>::dependents(&self, &formualizer_common::grid_address::CellAddress, &formualizer_eval::engine::inspect::DependentsOptions) -> core::result::Result<formualizer_eval::engine::inspect::DependentsReport, formualizer_eval::engine::inspect::InspectError>
 pub fn formualizer_eval::engine::eval::Engine<R>::inspect_cell(&self, &formualizer_common::grid_address::CellAddress, &formualizer_eval::engine::inspect::SnapshotOptions) -> core::result::Result<formualizer_eval::engine::inspect::CellSnapshotReport, formualizer_eval::engine::inspect::InspectError>
@@ -6443,6 +6456,14 @@ impl core::fmt::Debug for formualizer_eval::engine::resource_observability::Eval
 pub fn formualizer_eval::engine::resource_observability::EvaluationResourceRequestStats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for formualizer_eval::engine::resource_observability::EvaluationResourceRequestStats
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::resource_observability::EvaluationResourceRequestStats
+pub struct formualizer_eval::engine::FormulaFamilyGrouper
+impl formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper
+pub fn formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper::members(&self) -> u64
+pub fn formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper::new() -> Self
+impl core::default::Default for formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper
+pub fn formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper::default() -> formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper
+impl core::fmt::Debug for formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper
+pub fn formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub struct formualizer_eval::engine::FormulaIngestBatch
 pub formualizer_eval::engine::FormulaIngestBatch::formulas: alloc::vec::Vec<formualizer_eval::engine::formula_ingest::FormulaIngestRecord>
 pub formualizer_eval::engine::FormulaIngestBatch::sheet_name: alloc::string::String
@@ -6460,6 +6481,7 @@ pub formualizer_eval::engine::FormulaIngestRecord::col: u32
 pub formualizer_eval::engine::FormulaIngestRecord::formula_text: core::option::Option<alloc::sync::Arc<str>>
 pub formualizer_eval::engine::FormulaIngestRecord::row: u32
 impl formualizer_eval::engine::formula_ingest::FormulaIngestRecord
+pub fn formualizer_eval::engine::formula_ingest::FormulaIngestRecord::is_family_member(&self) -> bool
 pub fn formualizer_eval::engine::formula_ingest::FormulaIngestRecord::new(u32, u32, formualizer_eval::engine::arena::ast::AstNodeId, core::option::Option<alloc::sync::Arc<str>>) -> Self
 impl core::clone::Clone for formualizer_eval::engine::formula_ingest::FormulaIngestRecord
 pub fn formualizer_eval::engine::formula_ingest::FormulaIngestRecord::clone(&self) -> formualizer_eval::engine::formula_ingest::FormulaIngestRecord
