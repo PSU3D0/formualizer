@@ -467,6 +467,53 @@ fn data_ref_to_literal(value: &DataRef<'_>, date_system: DateSystem) -> Option<L
     }
 }
 
+/// Values of a sheet in sparse ingest mode, applied in batches. The sheet then
+/// grows once per batch rather than once per row: row-by-row growth re-copies
+/// the last chunk of every column, which is quadratic in the chunk size on
+/// files without `<dimension>` (every row past the declared one grows the
+/// sheet). Cells are applied in arrival order, so the result is the same.
+#[derive(Default)]
+struct SparseValueBatch {
+    cells: Vec<(
+        usize,
+        usize,
+        OverlayValue,
+        Option<formualizer_eval::format::FormatId>,
+    )>,
+    max_row: usize,
+}
+
+impl SparseValueBatch {
+    const LIMIT: usize = 1 << 16;
+
+    fn push(
+        &mut self,
+        sheet: &mut formualizer_eval::arrow_store::ArrowSheet,
+        row: usize,
+        col: usize,
+        value: OverlayValue,
+        format: Option<formualizer_eval::format::FormatId>,
+    ) {
+        self.max_row = self.max_row.max(row);
+        self.cells.push((row, col, value, format));
+        if self.cells.len() >= Self::LIMIT {
+            self.flush(sheet);
+        }
+    }
+
+    fn flush(&mut self, sheet: &mut formualizer_eval::arrow_store::ArrowSheet) {
+        if self.cells.is_empty() {
+            return;
+        }
+        sheet.ensure_row_capacity(self.max_row + 1);
+        for (row, col, value, format) in self.cells.drain(..) {
+            sheet.set_sparse_overlay_value(row, col, value);
+            sheet.set_sparse_overlay_format(row, col, format);
+        }
+        self.max_row = 0;
+    }
+}
+
 #[inline]
 fn data_ref_to_overlay(value: &DataRef<'_>) -> Option<OverlayValue> {
     match value {
@@ -769,6 +816,7 @@ impl CalamineAdapter {
             )
         });
         let mut used_sparse_fallback = force_sparse_from_start;
+        let mut sparse_values = SparseValueBatch::default();
         let mut max_row_seen = 0usize;
         let mut max_col_seen = 0usize;
         let mut value_cells_observed = 0usize;
@@ -976,8 +1024,13 @@ impl CalamineAdapter {
 
             if let Some(arrow_sheet) = sparse.as_mut() {
                 if let Some(value) = data_ref_to_overlay(&record.value) {
-                    arrow_sheet.set_sparse_overlay_value(row, col, value);
-                    arrow_sheet.set_sparse_overlay_format(row, col, data_ref_format(&record.value));
+                    sparse_values.push(
+                        arrow_sheet,
+                        row,
+                        col,
+                        value,
+                        data_ref_format(&record.value),
+                    );
                     values_handed_to_engine += 1;
                 }
                 continue;
@@ -1013,8 +1066,13 @@ impl CalamineAdapter {
                     );
                 }
                 if let Some(value) = data_ref_to_overlay(&record.value) {
-                    arrow_sheet.set_sparse_overlay_value(row, col, value);
-                    arrow_sheet.set_sparse_overlay_format(row, col, data_ref_format(&record.value));
+                    sparse_values.push(
+                        &mut arrow_sheet,
+                        row,
+                        col,
+                        value,
+                        data_ref_format(&record.value),
+                    );
                     values_handed_to_engine += 1;
                 }
                 sparse = Some(arrow_sheet);
@@ -1218,6 +1276,7 @@ impl CalamineAdapter {
         .map_err(|error| calamine::Error::Io(std::io::Error::other(error.to_string())))?;
 
         let mut arrow_sheet = if let Some(mut arrow_sheet) = sparse {
+            sparse_values.flush(&mut arrow_sheet);
             arrow_sheet.ensure_row_capacity(dims_rows.max(max_row_seen + 1));
             arrow_sheet
         } else {

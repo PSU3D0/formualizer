@@ -301,6 +301,10 @@ impl FormulaReplaySpool for MemoryFormulaReplaySpool {
     }
 }
 
+/// Write size of a spilled spool's buffered frames.
+#[cfg(not(target_arch = "wasm32"))]
+const SPILL_WRITE_BLOCK: usize = 64 * 1024;
+
 pub(super) struct FormulaSpoolLimits {
     pub sheet_bytes: u64,
     pub workbook_bytes_remaining: u64,
@@ -323,6 +327,11 @@ pub(super) struct HybridFormulaReplaySpool {
     limits: FormulaSpoolLimits,
     #[cfg(not(target_arch = "wasm32"))]
     file: Option<tempfile::NamedTempFile>,
+    /// Frames appended since the last file write. A spilled spool writes
+    /// whole blocks of `SPILL_WRITE_BLOCK` bytes instead of two small writes
+    /// per frame; reads flush it first.
+    #[cfg(not(target_arch = "wasm32"))]
+    pending: Vec<u8>,
     #[cfg(test)]
     fail_write: bool,
     #[cfg(test)]
@@ -340,6 +349,8 @@ impl HybridFormulaReplaySpool {
             limits,
             #[cfg(not(target_arch = "wasm32"))]
             file: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            pending: Vec::new(),
             #[cfg(test)]
             fail_write: false,
             #[cfg(test)]
@@ -351,6 +362,8 @@ impl HybridFormulaReplaySpool {
         if offset < HEADER_LEN as u64 || offset >= self.encoded_bytes {
             return Err(SpoolError::Truncated);
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        self.flush_pending()?;
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(file) = self.file.as_mut() {
             let mut reader = BufReader::new(
@@ -365,6 +378,19 @@ impl HybridFormulaReplaySpool {
         }
         let mut cursor = usize::try_from(offset).map_err(|_| SpoolError::OffsetOverflow)?;
         decode_frame(&self.memory, &mut cursor)
+    }
+
+    /// Writes the buffered frames of a spilled spool to its file.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn flush_pending(&mut self) -> Result<(), SpoolError> {
+        if let Some(file) = self.file.as_mut()
+            && !self.pending.is_empty()
+        {
+            let written = file.write_all(&self.pending);
+            self.pending.clear();
+            written.map_err(|e| SpoolError::Io(e.kind()))?;
+        }
+        Ok(())
     }
 
     pub(super) fn peak_memory_bytes(&self) -> u64 {
@@ -771,8 +797,11 @@ impl FormulaReplaySpool for HybridFormulaReplaySpool {
             return Err(SpoolError::Io(std::io::ErrorKind::WriteZero));
         }
         #[cfg(not(target_arch = "wasm32"))]
-        if let Some(file) = self.file.as_mut() {
-            write_frame(file, record)?;
+        if self.file.is_some() {
+            append_frame_to_vec(&mut self.pending, record)?;
+            if self.pending.len() >= SPILL_WRITE_BLOCK {
+                self.flush_pending()?;
+            }
         } else {
             append_frame_to_vec(&mut self.memory, record)?;
         }
@@ -790,6 +819,8 @@ impl FormulaReplaySpool for HybridFormulaReplaySpool {
         if self.fail_replay_io {
             return Err(SpoolError::Io(std::io::ErrorKind::Other));
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        self.flush_pending()?;
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(file) = self.file.as_mut() {
             file.flush().map_err(|e| SpoolError::Io(e.kind()))?;
@@ -950,18 +981,6 @@ fn varint_len(mut value: u64) -> usize {
         value >>= 7;
     }
     len
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn write_frame(
-    file: &mut tempfile::NamedTempFile,
-    record: SpoolFormulaRecord<'_>,
-) -> Result<(), SpoolError> {
-    let mut prefix = StackEncoder::new();
-    let text = encode_frame_prefix(record, &mut prefix)?;
-    file.write_all(prefix.as_slice())
-        .and_then(|_| file.write_all(text))
-        .map_err(|e| SpoolError::Io(e.kind()))
 }
 
 struct StackEncoder {
@@ -2411,6 +2430,51 @@ mod tests {
         );
         drop(spool);
         assert!(!path.exists());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn native_spill_buffers_frames_and_reads_see_every_append() {
+        let mut spool =
+            HybridFormulaReplaySpool::new(hybrid_limits(1 << 30, 1 << 30, 64, 1 << 30, true));
+        let texts: Vec<String> = (0..20_000).map(|i| format!("A{i}+B{i}*2")).collect();
+        let mut offsets = Vec::new();
+        for (i, text) in texts.iter().enumerate() {
+            offsets.push(
+                spool
+                    .append(SpoolFormulaRecord::Ordinary {
+                        sequence: i as u64,
+                        coord0: coord(i as u32, 1),
+                        text,
+                    })
+                    .unwrap(),
+            );
+            // Reads between appends (the exact-selection path) see the
+            // frames still buffered.
+            if i % 7_001 == 3 {
+                let back = spool.read_at(offsets[i].0).unwrap();
+                assert!(
+                    matches!(&back, OwnedSpoolFormulaRecord::Ordinary { text: t, .. } if t == text)
+                );
+            }
+        }
+        assert_eq!(spool.storage_kind(), SpoolStorageKind::NativeFile);
+        assert!(spool.pending.len() < SPILL_WRITE_BLOCK);
+        let records = spool
+            .replay()
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(records.len(), texts.len());
+        for (record, text) in records.iter().zip(&texts) {
+            assert!(
+                matches!(record, OwnedSpoolFormulaRecord::Ordinary { text: t, .. } if t == text)
+            );
+        }
+        let last = spool.read_at(offsets.last().unwrap().0).unwrap();
+        assert!(
+            matches!(&last, OwnedSpoolFormulaRecord::Ordinary { text: t, .. } if t == texts.last().unwrap())
+        );
     }
 
     #[cfg(not(target_arch = "wasm32"))]
