@@ -542,6 +542,8 @@ const COMPUTED_WRITE_COALESCING_MIN_LAYER_WIDTH: usize = 8;
 /// the rest goes to the thread pool. Tuned on Enron first eval (probe 30 /
 /// 100 / 300 µs, worth 50 / 150 / 400 µs; 300 / 150 best, no workbook
 /// slower).
+/// Candidate count from which schedule preparation sorts on the pool.
+const PARALLEL_SCHEDULE_MIN_CANDIDATES: usize = 16 * 1024;
 const PARALLEL_LAYER_PROBE: std::time::Duration = std::time::Duration::from_micros(300);
 const PARALLEL_LAYER_WORTH: std::time::Duration = std::time::Duration::from_micros(150);
 
@@ -562,13 +564,24 @@ pub(crate) enum ComputedWrite {
         sc0: u32,
         values: Vec<Vec<OverlayValue>>,
     },
+    /// Consecutive rows `row0..` of one column (a family run's commit),
+    /// each with its format.
+    Run {
+        seq: u64,
+        sheet_id: SheetId,
+        row0: u32,
+        col0: u32,
+        entries: Vec<(OverlayValue, Option<crate::format::FormatId>)>,
+    },
 }
 
 impl ComputedWrite {
     #[inline]
     pub(crate) fn seq(&self) -> u64 {
         match self {
-            ComputedWrite::Cell { seq, .. } | ComputedWrite::Rect { seq, .. } => *seq,
+            ComputedWrite::Cell { seq, .. }
+            | ComputedWrite::Rect { seq, .. }
+            | ComputedWrite::Run { seq, .. } => *seq,
         }
     }
 }
@@ -611,6 +624,7 @@ impl ComputedWriteBuffer {
             .map(|write| match write {
                 ComputedWrite::Cell { .. } => 1,
                 ComputedWrite::Rect { values, .. } => values.iter().map(Vec::len).sum(),
+                ComputedWrite::Run { entries, .. } => entries.len(),
             })
             .sum()
     }
@@ -646,6 +660,30 @@ impl ComputedWriteBuffer {
             col0,
             value,
             format_id,
+        });
+    }
+
+    pub(crate) fn push_column_run(
+        &mut self,
+        sheet_id: SheetId,
+        row0: u32,
+        col0: u32,
+        mut entries: Vec<(OverlayValue, Option<crate::format::FormatId>)>,
+    ) {
+        let seq = self.next_sequence();
+        let mut added = 0usize;
+        for (value, format_id) in entries.iter_mut() {
+            *format_id = format_id.filter(|id| *id != crate::format::FormatId::GENERAL);
+            self.formats_present |= format_id.is_some();
+            added = added.saturating_add(Self::estimate_value_bytes(value));
+        }
+        self.estimated_bytes = self.estimated_bytes.saturating_add(added);
+        self.writes.push(ComputedWrite::Run {
+            seq,
+            sheet_id,
+            row0,
+            col0,
+            entries,
         });
     }
 
@@ -11431,6 +11469,8 @@ where
         let mut groups: BTreeMap<ComputedWriteChunkKey, Vec<ComputedWriteChunkEntryPlan>> =
             BTreeMap::new();
         let mut input_cells = 0usize;
+        // One sheet lookup per sheet run of writes, not per cell.
+        let mut located: Option<(SheetId, Option<&crate::arrow_store::ArrowSheet>)> = None;
 
         for write in writes {
             match write {
@@ -11443,15 +11483,91 @@ where
                     format_id,
                 } => {
                     input_cells = input_cells.saturating_add(1);
-                    self.push_computed_write_plan_entry(
-                        &mut groups,
-                        seq,
-                        sheet_id,
-                        row0,
-                        col0,
-                        value,
-                        format_id,
-                    );
+                    let sheet = match located {
+                        Some((id, sheet)) if id == sheet_id => sheet,
+                        _ => {
+                            let sheet = self.arrow_sheets.sheet(self.graph.sheet_name(sheet_id));
+                            located = Some((sheet_id, sheet));
+                            sheet
+                        }
+                    };
+                    let (chunk_idx, chunk_start_row0, row_in_chunk) = match sheet {
+                        Some(sheet) => {
+                            Self::locate_row_in_sheet_for_computed_write_plan(sheet, row0 as usize)
+                        }
+                        None => Self::locate_row_in_empty_sheet_for_computed_write_plan(
+                            row0 as usize,
+                            32 * 1024,
+                        ),
+                    };
+                    groups
+                        .entry(ComputedWriteChunkKey {
+                            sheet_id,
+                            col0,
+                            chunk_idx,
+                            chunk_start_row0,
+                        })
+                        .or_default()
+                        .push(ComputedWriteChunkEntryPlan {
+                            row_in_chunk,
+                            seq,
+                            value,
+                            format_id,
+                        });
+                }
+                ComputedWrite::Run {
+                    seq,
+                    sheet_id,
+                    row0,
+                    col0,
+                    entries,
+                } => {
+                    input_cells = input_cells.saturating_add(entries.len());
+                    let sheet = match located {
+                        Some((id, sheet)) if id == sheet_id => sheet,
+                        _ => {
+                            let sheet = self.arrow_sheets.sheet(self.graph.sheet_name(sheet_id));
+                            located = Some((sheet_id, sheet));
+                            sheet
+                        }
+                    };
+                    // Rows are located one by one (a binary search, no sheet
+                    // lookup); the group map is touched once per chunk
+                    // segment of the run.
+                    let mut segment: Vec<ComputedWriteChunkEntryPlan> = Vec::new();
+                    let mut segment_key: Option<ComputedWriteChunkKey> = None;
+                    for (k, (value, format_id)) in entries.into_iter().enumerate() {
+                        let row = row0.saturating_add(k as u32) as usize;
+                        let (chunk_idx, chunk_start_row0, row_in_chunk) = match sheet {
+                            Some(sheet) => {
+                                Self::locate_row_in_sheet_for_computed_write_plan(sheet, row)
+                            }
+                            None => Self::locate_row_in_empty_sheet_for_computed_write_plan(
+                                row,
+                                32 * 1024,
+                            ),
+                        };
+                        let key = ComputedWriteChunkKey {
+                            sheet_id,
+                            col0,
+                            chunk_idx,
+                            chunk_start_row0,
+                        };
+                        if segment_key != Some(key)
+                            && let Some(done) = segment_key.replace(key)
+                        {
+                            groups.entry(done).or_default().append(&mut segment);
+                        }
+                        segment.push(ComputedWriteChunkEntryPlan {
+                            row_in_chunk,
+                            seq,
+                            value,
+                            format_id,
+                        });
+                    }
+                    if let Some(done) = segment_key {
+                        groups.entry(done).or_default().append(&mut segment);
+                    }
                 }
                 ComputedWrite::Rect {
                     seq,
@@ -14708,12 +14824,28 @@ where
         // coalesced into row intervals: one cover insert per interval.
         let mut cover = Cover::new();
         {
-            let mut cells: Vec<(u16, u32, u32)> = candidates
-                .iter()
-                .filter_map(|&id| self.graph.authority_cell_of_vertex(id))
-                .map(|(sheet, row, col)| (sheet, col, row))
-                .collect();
-            cells.sort_unstable();
+            let cell_of = |&id: &VertexId| {
+                self.graph
+                    .authority_cell_of_vertex(id)
+                    .map(|(sheet, row, col)| (sheet, col, row))
+            };
+            // A full recalc maps and sorts every formula: on the pool when
+            // there is one (first eval's schedule is serial work otherwise).
+            let cells: Vec<(u16, u32, u32)> = match self.thread_pool.as_deref() {
+                Some(pool) if candidates.len() >= PARALLEL_SCHEDULE_MIN_CANDIDATES => {
+                    use rayon::prelude::*;
+                    pool.install(|| {
+                        let mut cells: Vec<_> = candidates.par_iter().filter_map(cell_of).collect();
+                        cells.par_sort_unstable();
+                        cells
+                    })
+                }
+                _ => {
+                    let mut cells: Vec<_> = candidates.iter().filter_map(cell_of).collect();
+                    cells.sort_unstable();
+                    cells
+                }
+            };
             let mut i = 0;
             while i < cells.len() {
                 let (sheet, col, r0) = cells[i];
@@ -14823,6 +14955,13 @@ where
             ledger
                 .release_scratch(peak)
                 .map_err(crate::engine::ResourceLedgerError::into_excel_error)?;
+        }
+        // The planner's order is scratch now; a full recalc's is large.
+        match self.thread_pool.as_deref() {
+            Some(pool) if ordered.cells.len() >= PARALLEL_SCHEDULE_MIN_CANDIDATES => {
+                pool.spawn(move || drop(ordered))
+            }
+            _ => drop(ordered),
         }
         Ok(adapted.schedule)
     }

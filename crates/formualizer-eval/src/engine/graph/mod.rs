@@ -2838,12 +2838,13 @@ impl DependencyGraph {
 
     /// Get all vertices that need evaluation
     pub fn get_evaluation_vertices(&self) -> Vec<VertexId> {
-        let mut combined = FxHashSet::default();
-        combined.extend(self.formula_dirty.legacy_iter().copied());
-        combined.extend(&self.volatile_vertices);
-
-        let mut result: Vec<VertexId> = combined
-            .into_iter()
+        // Both sources are sets; sort + dedup instead of a merged hash set
+        // (a full recalc lists every formula here).
+        let mut result: Vec<VertexId> = self
+            .formula_dirty
+            .legacy_iter()
+            .copied()
+            .chain(self.volatile_vertices.iter().copied())
             .filter(|&id| {
                 // Only include active formula/name vertices; tombstoned vertices can retain stable
                 // IDs in the store, but must never be scheduled for evaluation.
@@ -2858,6 +2859,7 @@ impl DependencyGraph {
             })
             .collect();
         result.sort_unstable();
+        result.dedup();
         result
     }
 

@@ -494,32 +494,62 @@ where
         }
         let sheet_name = self.graph.sheet_name(run.sheet).to_string();
         let date_system = self.arrow_sheet_date_system(&sheet_name);
-        let any_formats = !self.derived_formats.read().unwrap().is_empty();
         match computed_writes {
             Some(buffer) => {
-                for (i, (_, value)) in values.iter().enumerate() {
-                    let row = run.row0 + i as u32;
-                    let ov = Self::literal_to_overlay_value(value, date_system);
-                    let format_id = if any_formats {
-                        let cell = CellRef::new(run.sheet, Coord::new(row, run.col, true, true));
-                        self.derived_formats.read().unwrap().get(&cell).copied()
-                    } else {
-                        None
-                    };
-                    buffer.push_cell_with_format(run.sheet, row, run.col, ov, format_id);
-                    if self.should_flush_computed_write_buffer(buffer) {
-                        self.flush_computed_write_buffer(buffer)?;
-                    }
+                // One block write (the plan groups it per chunk segment, not
+                // per cell); the formats read under one lock.
+                let entries: Vec<(OverlayValue, Option<crate::format::FormatId>)> = {
+                    let formats = self.derived_formats.read().unwrap();
+                    values
+                        .iter()
+                        .enumerate()
+                        .map(|(i, (_, value))| {
+                            let format_id = if formats.is_empty() {
+                                None
+                            } else {
+                                let row = run.row0 + i as u32;
+                                formats
+                                    .get(&CellRef::new(
+                                        run.sheet,
+                                        Coord::new(row, run.col, true, true),
+                                    ))
+                                    .copied()
+                            };
+                            (
+                                Self::literal_to_overlay_value(value, date_system),
+                                format_id,
+                            )
+                        })
+                        .collect()
+                };
+                buffer.push_column_run(run.sheet, run.row0, run.col, entries);
+                if self.should_flush_computed_write_buffer(buffer) {
+                    self.flush_computed_write_buffer(buffer)?;
                 }
             }
             None => {
+                // The format lane follows the values (as on the buffered path).
+                let formats: Vec<Option<crate::format::FormatId>> = {
+                    let map = self.derived_formats.read().unwrap();
+                    (0..values.len() as u32)
+                        .map(|i| {
+                            let cell = CellRef::new(
+                                run.sheet,
+                                Coord::new(run.row0 + i, run.col, true, true),
+                            );
+                            map.get(&cell).copied()
+                        })
+                        .collect()
+                };
                 for (i, (_, value)) in values.iter().enumerate() {
+                    let row = run.row0 + i as u32;
                     let ov = Self::literal_to_overlay_value(value, date_system);
-                    self.write_computed_overlay_value_0based(
+                    self.write_computed_overlay_value_0based(&sheet_name, row, run.col, ov);
+                    self.write_computed_overlay_format_0based(
                         &sheet_name,
-                        run.row0 + i as u32,
+                        row,
                         run.col,
-                        ov,
+                        formats[i],
                     );
                 }
             }
