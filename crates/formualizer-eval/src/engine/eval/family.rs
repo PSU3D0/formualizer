@@ -81,6 +81,17 @@ where
         layer: &Layer,
         unit: LayerUnit,
     ) -> smallvec::SmallVec<[(VertexId, LiteralValue); 1]> {
+        self.evaluate_unit_immutable_memo(layer, unit, None)
+    }
+
+    /// [`Self::evaluate_unit_immutable`] for a chunk of a run whose memo is
+    /// shared with the run's other chunks.
+    pub(super) fn evaluate_unit_immutable_memo(
+        &self,
+        layer: &Layer,
+        unit: LayerUnit,
+        memo: Option<&super::memo::SharedMemo>,
+    ) -> smallvec::SmallVec<[(VertexId, LiteralValue); 1]> {
         match unit {
             LayerUnit::Cell(i) => {
                 let v = layer.vertices[i];
@@ -91,7 +102,7 @@ where
             }
             LayerUnit::Run(run) => {
                 let members = &layer.vertices[run.start as usize..(run.start + run.len) as usize];
-                let values = self.evaluate_run_immutable(run, members);
+                let values = self.evaluate_run_immutable(run, members, memo);
                 members.iter().copied().zip(values).collect()
             }
         }
@@ -136,34 +147,41 @@ where
         // At least 8 members per task: a one-member run chunk loses the run
         // (literal plan, lift) for nothing.
         let run_chunk = (total / (threads * 8)).clamp(8, 256) as u32;
-        let mut split: Vec<LayerUnit> = Vec::with_capacity(units.len());
+        // A split run's chunks share one memo (see `memo.rs`).
+        let mut memos: Vec<super::memo::SharedMemo> = Vec::new();
+        let mut split: Vec<(LayerUnit, Option<usize>)> = Vec::with_capacity(units.len());
         for &unit in units {
             match unit {
                 LayerUnit::Run(run) if run.len > run_chunk => {
+                    memos.push(Default::default());
+                    let memo = Some(memos.len() - 1);
                     let mut k = 0;
                     while k < run.len {
                         let len = run_chunk.min(run.len - k);
-                        split.push(LayerUnit::Run(LayerRun {
-                            start: run.start + k,
-                            len,
-                            row0: run.row0 + k,
-                            ..run
-                        }));
+                        split.push((
+                            LayerUnit::Run(LayerRun {
+                                start: run.start + k,
+                                len,
+                                row0: run.row0 + k,
+                                ..run
+                            }),
+                            memo,
+                        ));
                         k += len;
                     }
                 }
-                other => split.push(other),
+                other => split.push((other, None)),
             }
         }
         let chunks: Result<Vec<_>, ExcelError> = split
             .par_iter()
-            .map(|&unit| {
+            .map(|&(unit, memo)| {
                 if cancel_flag.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
                     return Err(ExcelError::new(ExcelErrorKind::Cancelled).with_message(
                         "Parallel evaluation cancelled during execution".to_string(),
                     ));
                 }
-                Ok(self.evaluate_unit_immutable(layer, unit))
+                Ok(self.evaluate_unit_immutable_memo(layer, unit, memo.map(|k| &memos[k])))
             })
             .collect();
         Ok(chunks?.into_iter().flatten().collect())
@@ -195,6 +213,7 @@ where
         &self,
         run: LayerRun,
         members: &[VertexId],
+        shared_memo: Option<&super::memo::SharedMemo>,
     ) -> Vec<LiteralValue> {
         if !self.config.family_execution {
             return self.evaluate_members_per_cell(members);
@@ -221,6 +240,13 @@ where
         let col_delta = i64::from(run.col) - i64::from(anchor.1);
         let mut out = Vec::with_capacity(members.len());
         let mut bound: Vec<LiteralValue> = Vec::new();
+        // P2-M4 memo: members repeating another's varying arguments reuse
+        // its result (see `memo.rs`).
+        let memo_plan = (self.config.family_kernels && members.len() > 1)
+            .then(|| super::memo::MemoPlan::plan(self, ds, template))
+            .flatten()
+            .filter(|_| !members.iter().any(|&v| self.graph.is_volatile(v)));
+        let mut memo = super::memo::RunMemo::new(shared_memo);
         for (i, &v) in members.iter().enumerate() {
             let row = run.row0 + i as u32;
             #[cfg(debug_assertions)]
@@ -262,12 +288,60 @@ where
             self.family_members_for_test
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let row_delta = i64::from(row) - i64::from(anchor.0);
-            let value = interpreter
-                .evaluate_arena_ast_with_offset(template, row_delta, col_delta, ds, reg)
-                .map(|cv| {
-                    let format = cv.format_id();
+            let key = match &memo_plan {
+                Some(plan) if memo.active() => plan
+                    .key_args
+                    .iter()
+                    .map(|&arg| {
+                        let cv = interpreter
+                            .evaluate_arena_ast_with_offset(arg, row_delta, col_delta, ds, reg)
+                            .ok()?;
+                        let format = cv.format_id();
+                        Some((super::memo::KeyValue::of(cv.into_literal())?, format))
+                    })
+                    .collect::<Option<super::memo::MemoKey>>(),
+                _ => None,
+            };
+            let result = match key.as_ref().and_then(|key| memo.get(key)) {
+                Some(hit) => {
+                    // Debug builds: a reused result is the walk's result.
+                    #[cfg(debug_assertions)]
+                    {
+                        let walked = interpreter
+                            .evaluate_arena_ast_with_offset(template, row_delta, col_delta, ds, reg)
+                            .map(|cv| (cv.format_id(), cv.into_literal()));
+                        match walked {
+                            Ok((format, value)) => {
+                                assert!(
+                                    same_value(&value, &hit.0) && format == hit.1,
+                                    "memoized result differs from the walk at {cell_ref:?}: {hit:?} vs {value:?} {format:?}"
+                                );
+                            }
+                            Err(e) => {
+                                panic!("memoized result where the walk errs at {cell_ref:?}: {e:?}")
+                            }
+                        }
+                    }
+                    #[cfg(test)]
+                    self.memo_hits_for_test
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    Ok(hit)
+                }
+                None => interpreter
+                    .evaluate_arena_ast_with_offset(template, row_delta, col_delta, ds, reg)
+                    .map(|cv| {
+                        let format = cv.format_id();
+                        let value = cv.into_literal();
+                        if let Some(key) = key {
+                            memo.insert(key, (value.clone(), format));
+                        }
+                        (value, format)
+                    }),
+            };
+            let value = result
+                .map(|(value, format)| {
                     self.record_derived_format_at(cell_ref, format);
-                    crate::engine::result_finalization::finalize_formula_result(cv.into_literal())
+                    crate::engine::result_finalization::finalize_formula_result(value)
                 })
                 .unwrap_or_else(LiteralValue::Error);
             out.push(value);
@@ -465,6 +539,12 @@ where
     /// Members evaluated through a family template so far.
     pub(crate) fn family_members_for_test(&self) -> u64 {
         self.family_members_for_test
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Family members that reused a memoized result so far.
+    pub(crate) fn memo_hits_for_test(&self) -> u64 {
+        self.memo_hits_for_test
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 

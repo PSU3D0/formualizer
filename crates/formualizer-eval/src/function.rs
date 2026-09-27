@@ -114,6 +114,12 @@ pub enum FamilyKernel {
     Average,
     /// `IF`: lifted element-wise (P2-M3), not a range kernel.
     If,
+    /// `SUMIF(S)`, `COUNTIF(S)`, `AVERAGEIF(S)`: a family run memoizes by
+    /// its varying arguments (the result is a function of them and of the
+    /// absolute ranges).
+    CriteriaAggregate,
+    /// `VLOOKUP`, `HLOOKUP`, `MATCH`: memoized like `CriteriaAggregate`.
+    Lookup,
 }
 
 pub trait Function: Send + Sync + 'static {

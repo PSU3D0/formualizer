@@ -476,3 +476,103 @@ fn family_lift_bulk_ingested_literals_compare_by_value() {
         );
     }
 }
+
+/// Memoized runs (P2-M4): SUMIFS/COUNTIFS/AVERAGEIF/SUMIF/COUNTIF and
+/// VLOOKUP/HLOOKUP/MATCH families over absolute (and whole-column) ranges
+/// with repeating keys, including keys that differ only by type (1 vs "1",
+/// TRUE), empties, errors, dates and a relative-range template (not
+/// memoized): memo, no memo (kernels off) and the per-cell oracle agree on
+/// values and formats, and repeated keys hit.
+#[test]
+fn family_memo_criteria_and_lookups_match_per_cell() {
+    use chrono::NaiveDate;
+    let key = |r: u32| match r % 7 {
+        0 => LiteralValue::Text("North".into()),
+        1 => LiteralValue::Text("south".into()),
+        2 => LiteralValue::Number(1.0),
+        3 => LiteralValue::Text("1".into()),
+        4 => LiteralValue::Boolean(true),
+        5 => LiteralValue::Empty,
+        _ => LiteralValue::Date(NaiveDate::from_ymd_opt(2024, 3, 1 + r % 3).unwrap()),
+    };
+    let mut values = Vec::new();
+    let mut formulas = Vec::new();
+    for r in 1..=60u32 {
+        values.push((("Facts", r, 1), key(r * 3 + 1)));
+        values.push((("Facts", r, 2), mixed_value(r)));
+        values.push((("Facts", r, 3), LiteralValue::Number(r as f64 * 0.5 - 7.0)));
+    }
+    values.push((
+        ("Facts", 61, 1),
+        LiteralValue::Error(formualizer_common::ExcelError::new(
+            formualizer_common::ExcelErrorKind::Na,
+        )),
+    ));
+    for r in 1..=N {
+        values.push((("Report", r, 1), key(r)));
+        values.push((("Report", r, 2), LiteralValue::Number((r % 4) as f64)));
+        let fs = [
+            format!("=SUMIFS(Facts!$C:$C,Facts!$A:$A,A{r})"),
+            format!("=SUMIFS(Facts!$C$1:$C$61,Facts!$A$1:$A$61,A{r},Facts!$C$1:$C$61,\">\"&B{r})"),
+            format!("=COUNTIFS(Facts!$A:$A,A{r},Facts!$B:$B,\"<>\")"),
+            format!("=AVERAGEIF(Facts!$A:$A,A{r},Facts!$C:$C)"),
+            format!("=SUMIF(Facts!$A$1:$A$61,A{r},Facts!$B$1:$B$61)"),
+            format!("=COUNTIF(Facts!$A:$A,A{r})"),
+            format!("=VLOOKUP(A{r},Facts!$A$1:$C$61,3,FALSE)"),
+            format!("=MATCH(A{r},Facts!$A$1:$A$61,0)"),
+            format!("=HLOOKUP(B{r},$A$1:$B$2,1,FALSE)"),
+            format!("=SUMIF(A{r}:A{},A{r})", r + 2),
+        ];
+        for (k, f) in fs.into_iter().enumerate() {
+            formulas.push((("Report", r, 4 + k as u32), f));
+        }
+    }
+    let case = Case {
+        values,
+        formulas,
+        edits: vec![
+            (("Facts", 10, 3), LiteralValue::Number(-0.0)),
+            (("Report", 5, 1), LiteralValue::Text("North".into())),
+            (("Facts", 4, 1), LiteralValue::Text("NORTH".into())),
+        ],
+    };
+    for parallel in [false, true] {
+        let base = EvalConfig {
+            enable_parallel: parallel,
+            ..arrow_eval_config()
+        };
+        let oracle = run_formats(
+            &case,
+            EvalConfig {
+                family_execution: false,
+                ..base.clone()
+            },
+        );
+        let plain = run_formats(
+            &case,
+            EvalConfig {
+                family_kernels: false,
+                ..base.clone()
+            },
+        );
+        let memo = run_formats(&case, base);
+        assert_eq!(plain.0, oracle.0, "no memo, parallel={parallel}");
+        assert_eq!(memo.0, oracle.0, "memo, parallel={parallel}");
+    }
+    // Hits happen (sequential run, one engine).
+    let mut e = Engine::new(
+        TestWorkbook::new(),
+        EvalConfig {
+            enable_parallel: false,
+            ..arrow_eval_config()
+        },
+    );
+    for &((s, r, c), ref v) in &case.values {
+        e.set_cell_value(s, r, c, v.clone()).unwrap();
+    }
+    for &((s, r, c), ref f) in &case.formulas {
+        e.set_cell_formula(s, r, c, parse(f).unwrap()).unwrap();
+    }
+    e.evaluate_all().unwrap();
+    assert!(e.memo_hits_for_test() > 0, "no memo hit");
+}

@@ -920,6 +920,9 @@ pub struct AverageIfFn;
 /// Caps: PURE, REDUCTION, WINDOWED, STREAM_OK, PARALLEL_ARGS, PARALLEL_CHUNKS
 /// [formualizer-docgen:schema:end]
 impl Function for AverageIfFn {
+    fn family_kernel(&self) -> Option<crate::function::FamilyKernel> {
+        Some(crate::function::FamilyKernel::CriteriaAggregate)
+    }
     func_caps!(
         PURE,
         REDUCTION,
@@ -1027,6 +1030,9 @@ pub struct SumIfFn;
 /// Caps: PURE, REDUCTION, WINDOWED, STREAM_OK, PARALLEL_ARGS, PARALLEL_CHUNKS
 /// [formualizer-docgen:schema:end]
 impl Function for SumIfFn {
+    fn family_kernel(&self) -> Option<crate::function::FamilyKernel> {
+        Some(crate::function::FamilyKernel::CriteriaAggregate)
+    }
     func_caps!(
         PURE,
         REDUCTION,
@@ -1127,6 +1133,9 @@ pub struct CountIfFn;
 /// Caps: PURE, REDUCTION, WINDOWED, STREAM_OK, PARALLEL_ARGS, PARALLEL_CHUNKS
 /// [formualizer-docgen:schema:end]
 impl Function for CountIfFn {
+    fn family_kernel(&self) -> Option<crate::function::FamilyKernel> {
+        Some(crate::function::FamilyKernel::CriteriaAggregate)
+    }
     func_caps!(
         PURE,
         REDUCTION,
@@ -1230,6 +1239,9 @@ pub struct SumIfsFn; // SUMIFS(sum_range, criteria_range1, criteria1, ...)
 /// Caps: PURE, REDUCTION, WINDOWED, STREAM_OK, PARALLEL_ARGS, PARALLEL_CHUNKS
 /// [formualizer-docgen:schema:end]
 impl Function for SumIfsFn {
+    fn family_kernel(&self) -> Option<crate::function::FamilyKernel> {
+        Some(crate::function::FamilyKernel::CriteriaAggregate)
+    }
     func_caps!(
         PURE,
         REDUCTION,
@@ -1330,6 +1342,9 @@ pub struct CountIfsFn; // COUNTIFS(criteria_range1, criteria1, ...)
 /// Caps: PURE, REDUCTION, WINDOWED, STREAM_OK, PARALLEL_ARGS, PARALLEL_CHUNKS
 /// [formualizer-docgen:schema:end]
 impl Function for CountIfsFn {
+    fn family_kernel(&self) -> Option<crate::function::FamilyKernel> {
+        Some(crate::function::FamilyKernel::CriteriaAggregate)
+    }
     func_caps!(
         PURE,
         REDUCTION,
@@ -1433,6 +1448,9 @@ pub struct AverageIfsFn;
 /// Caps: PURE, REDUCTION, WINDOWED, STREAM_OK, PARALLEL_ARGS, PARALLEL_CHUNKS
 /// [formualizer-docgen:schema:end]
 impl Function for AverageIfsFn {
+    fn family_kernel(&self) -> Option<crate::function::FamilyKernel> {
+        Some(crate::function::FamilyKernel::CriteriaAggregate)
+    }
     func_caps!(
         PURE,
         REDUCTION,
