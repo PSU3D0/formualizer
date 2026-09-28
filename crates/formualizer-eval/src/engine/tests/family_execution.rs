@@ -847,74 +847,95 @@ fn family_criteria_kernel_matches_per_cell() {
         "=SUMIFS(Facts!$B$1:$B$90,Facts!$C$1:$C$90,\">\"&(ROW()/5),Facts!$A$1:$A$90,\"<>west\")",
         "=COUNTIFS(Facts!$C$1:$C$90,\"<\"&ROW(),Facts!$C$1:$C$90,\">=\"&(ROW()/3))",
     ];
-    let run = |config: EvalConfig| -> (Vec<Vec<String>>, u64) {
-        let mut e = Engine::new(TestWorkbook::new(), config);
-        e.add_sheet("Report").unwrap();
-        {
-            let mut ab = e.begin_bulk_ingest_arrow();
-            ab.add_sheet("Facts", 3, 16);
-            for r in 1..=FACTS {
-                ab.append_row("Facts", &[fact(r, 1), fact(r, 2), fact(r, 3)])
+    // The same formulas over whole and open-ended columns (views of the
+    // used extent).
+    let whole: Vec<String> = formulas
+        .iter()
+        .enumerate()
+        .map(|(k, f)| {
+            let f = f.replace("$1:$", ":$").replace("$90", "");
+            if k % 2 == 0 {
+                f
+            } else {
+                // `$A$1:$A` style for the odd ones.
+                f.replace("Facts!$A:$A", "Facts!$A$1:$A")
+                    .replace("Facts!$C:$C", "Facts!$C$1:$C")
+            }
+        })
+        .collect();
+    for formulas in [
+        formulas.iter().map(|f| f.to_string()).collect::<Vec<_>>(),
+        whole,
+    ] {
+        let run = |config: EvalConfig| -> (Vec<Vec<String>>, u64) {
+            let mut e = Engine::new(TestWorkbook::new(), config);
+            e.add_sheet("Report").unwrap();
+            {
+                let mut ab = e.begin_bulk_ingest_arrow();
+                ab.add_sheet("Facts", 3, 16);
+                for r in 1..=FACTS {
+                    ab.append_row("Facts", &[fact(r, 1), fact(r, 2), fact(r, 3)])
+                        .unwrap();
+                }
+                ab.finish().unwrap();
+            }
+            let mut cells = Vec::new();
+            for r in 1..=REPORT {
+                let (a, b) = crit(r);
+                e.set_cell_value("Report", r, 1, a).unwrap();
+                e.set_cell_value("Report", r, 2, b).unwrap();
+                for (k, f) in formulas.iter().enumerate() {
+                    let c = 4 + k as u32;
+                    e.set_cell_formula(
+                        "Report",
+                        r,
+                        c,
+                        parse(f.replace("{r}", &r.to_string())).unwrap(),
+                    )
                     .unwrap();
+                    cells.push((r, c));
+                }
             }
-            ab.finish().unwrap();
-        }
-        let mut cells = Vec::new();
-        for r in 1..=REPORT {
-            let (a, b) = crit(r);
-            e.set_cell_value("Report", r, 1, a).unwrap();
-            e.set_cell_value("Report", r, 2, b).unwrap();
-            for (k, f) in formulas.iter().enumerate() {
-                let c = 4 + k as u32;
-                e.set_cell_formula(
-                    "Report",
-                    r,
-                    c,
-                    parse(f.replace("{r}", &r.to_string())).unwrap(),
-                )
-                .unwrap();
-                cells.push((r, c));
-            }
-        }
-        let snapshot = |e: &Engine<TestWorkbook>| {
-            cells
-                .iter()
-                .map(|&(r, c)| key(e.get_cell_value("Report", r, c)))
-                .collect::<Vec<_>>()
-        };
-        let mut out = Vec::new();
-        e.evaluate_all().unwrap();
-        out.push(snapshot(&e));
-        let edits = [
-            ("Facts", 20, 2, LiteralValue::Number(1e308)),
-            ("Facts", 21, 2, LiteralValue::Number(1e308)),
-            ("Facts", 33, 1, LiteralValue::Text("NORTH".into())),
-            ("Facts", 34, 3, LiteralValue::Text("x".into())),
-            ("Report", 3, 1, LiteralValue::Text("west".into())),
-            ("Report", 8, 2, LiteralValue::Text(">=0".into())),
-        ];
-        for (s, r, c, v) in edits {
-            e.set_cell_value(s, r, c, v).unwrap();
+            let snapshot = |e: &Engine<TestWorkbook>| {
+                cells
+                    .iter()
+                    .map(|&(r, c)| key(e.get_cell_value("Report", r, c)))
+                    .collect::<Vec<_>>()
+            };
+            let mut out = Vec::new();
             e.evaluate_all().unwrap();
             out.push(snapshot(&e));
-        }
-        (out, e.criteria_kernel_members_for_test())
-    };
-    for parallel in [false, true] {
-        let base = EvalConfig {
-            enable_parallel: parallel,
-            ..arrow_eval_config()
+            let edits = [
+                ("Facts", 20, 2, LiteralValue::Number(1e308)),
+                ("Facts", 21, 2, LiteralValue::Number(1e308)),
+                ("Facts", 33, 1, LiteralValue::Text("NORTH".into())),
+                ("Facts", 34, 3, LiteralValue::Text("x".into())),
+                ("Report", 3, 1, LiteralValue::Text("west".into())),
+                ("Report", 8, 2, LiteralValue::Text(">=0".into())),
+            ];
+            for (s, r, c, v) in edits {
+                e.set_cell_value(s, r, c, v).unwrap();
+                e.evaluate_all().unwrap();
+                out.push(snapshot(&e));
+            }
+            (out, e.criteria_kernel_members_for_test())
         };
-        let oracle = run(EvalConfig {
-            family_execution: false,
-            ..base.clone()
-        });
-        let kernel = run(base);
-        assert_eq!(oracle.1, 0);
-        assert!(
-            kernel.1 > 0,
-            "no member took the criteria kernel (parallel={parallel})"
-        );
-        assert_eq!(kernel.0, oracle.0, "parallel={parallel}");
+        for parallel in [false, true] {
+            let base = EvalConfig {
+                enable_parallel: parallel,
+                ..arrow_eval_config()
+            };
+            let oracle = run(EvalConfig {
+                family_execution: false,
+                ..base.clone()
+            });
+            let kernel = run(base);
+            assert_eq!(oracle.1, 0);
+            assert!(
+                kernel.1 > 0,
+                "no member took the criteria kernel (parallel={parallel}) {formulas:?}"
+            );
+            assert_eq!(kernel.0, oracle.0, "parallel={parallel} {formulas:?}");
+        }
     }
 }
