@@ -118,7 +118,7 @@ fn restricted_base_schedule_matches_fresh_evaluation() {
                 .unwrap();
         }),
         ("input near the end", |e| {
-            e.set_cell_value("Sheet1", 200, 1, LiteralValue::Number(-4.0))
+            e.set_cell_value("Sheet1", 180, 1, LiteralValue::Number(-4.0))
                 .unwrap();
         }),
         ("name input", |e| {

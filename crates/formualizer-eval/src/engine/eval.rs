@@ -569,6 +569,11 @@ const PARALLEL_SCHEDULE_MIN_CANDIDATES: usize = 16 * 1024;
 /// most `BASE_SCHEDULE_RATIO` times the request.
 const BASE_SCHEDULE_MIN_VERTICES: usize = 64;
 const BASE_SCHEDULE_RATIO: usize = 256;
+/// A restricted schedule keeps the base's layers, which can split a family
+/// run the planner would keep whole (each piece then builds its own
+/// criteria index): below this many candidates planning costs less than
+/// that (real_ops_model: 75 candidates, 31 us to plan, +0.3 ms restricted).
+const BASE_SCHEDULE_MIN_REQUEST: usize = 128;
 const PARALLEL_LAYER_PROBE: std::time::Duration = std::time::Duration::from_micros(300);
 const PARALLEL_LAYER_WORTH: std::time::Duration = std::time::Duration::from_micros(150);
 /// A member this expensive (ns, measured by the probe) is its own task.
@@ -15256,7 +15261,8 @@ where
     }
 
     /// Plan reuse: the base schedule restricted to `to_evaluate` when it
-    /// is current, covers the request, and is at most
+    /// is current, covers the request, has at least
+    /// `BASE_SCHEDULE_MIN_REQUEST` candidates, and is at most
     /// `BASE_SCHEDULE_RATIO` times its size (restricting walks the whole
     /// base; planning costs far more per candidate).
     fn schedule_from_base(
@@ -15281,7 +15287,7 @@ where
         };
         let base_len = base.candidate_vertices.len();
         if base_len <= BASE_SCHEDULE_MIN_VERTICES
-            || to_evaluate.len() <= crate::engine::authority::planner::SMALL_PLAN_MAX
+            || to_evaluate.len() < BASE_SCHEDULE_MIN_REQUEST
             || to_evaluate.len() > base_len
             || base_len > to_evaluate.len().saturating_mul(BASE_SCHEDULE_RATIO)
         {

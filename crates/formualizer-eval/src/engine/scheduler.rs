@@ -116,7 +116,8 @@ impl Schedule {
     /// reuse). A schedule orders every dependency among its vertices, so
     /// its units restricted to a subset order every dependency among the
     /// subset: each kept vertex stays in its layer, a family run keeps its
-    /// kept members as runs of consecutive rows, and a sequential (chain)
+    /// kept members as runs of consecutive rows (two or more members, as
+    /// the planner's adapter forms them), and a sequential (chain)
     /// layer keeps its order. `None` when a cycle is only partly kept.
     pub(crate) fn restrict(&self, keep: &super::idset::DenseIdSet) -> Option<(Schedule, usize)> {
         let mut layers: Vec<Layer> = Vec::new();
@@ -145,7 +146,7 @@ impl Schedule {
                                     match open.as_mut() {
                                         Some(r) if r.row0 + r.len == row => r.len += 1,
                                         _ => {
-                                            if let Some(r) = open.take() {
+                                            if let Some(r) = open.take().filter(|r| r.len >= 2) {
                                                 runs.push(r);
                                             }
                                             open = Some(LayerRun {
@@ -157,11 +158,11 @@ impl Schedule {
                                         }
                                     }
                                     vertices.push(v);
-                                } else if let Some(r) = open.take() {
+                                } else if let Some(r) = open.take().filter(|r| r.len >= 2) {
                                     runs.push(r);
                                 }
                             }
-                            if let Some(r) = open.take() {
+                            if let Some(r) = open.take().filter(|r| r.len >= 2) {
                                 runs.push(r);
                             }
                             idx = end;
