@@ -372,7 +372,11 @@ impl ExtentRecord {
     /// Cells noted but not folded yet (tests).
     #[cfg(test)]
     pub(crate) fn pending_len(&self) -> usize {
-        self.inner.lock().unwrap_or_else(|e| e.into_inner()).pending.len()
+        self.inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .pending
+            .len()
     }
 
     /// Runs held (after folding pending cells): tests, accounting.

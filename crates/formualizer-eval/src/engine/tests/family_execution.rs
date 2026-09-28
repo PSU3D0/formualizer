@@ -1108,11 +1108,6 @@ fn family_walk_binds_run_invariant_calls() {
             e.evaluate_all().unwrap();
             out.push(snapshot(&e));
         }
-        eprintln!(
-            "DBGT fam={} inv={}",
-            e.family_members_for_test(),
-            e.invariant_bound_members_for_test()
-        );
         (out, e.invariant_bound_members_for_test())
     };
     for parallel in [false, true] {
