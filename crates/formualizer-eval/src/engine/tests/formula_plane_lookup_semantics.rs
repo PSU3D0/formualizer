@@ -1000,10 +1000,12 @@ type LookupMatrixExpectation = (u32, u32, LookupExpected, &'static str);
 
 fn blank_zero_lookup_matrix_engine(
     cache_max_bytes: usize,
+    max_threads: Option<usize>,
 ) -> (Engine<TestWorkbook>, Vec<LookupMatrixExpectation>) {
     let mut engine = engine_with_config(EvalConfig {
         formula_plane_mode: FormulaPlaneMode::Off,
         lookup_index_cache_max_bytes: cache_max_bytes,
+        max_threads,
         ..EvalConfig::default()
     });
 
@@ -1399,22 +1401,39 @@ fn assert_blank_zero_lookup_matrix(
 
 #[test]
 fn blank_zero_exact_lookup_matrix_is_identical_cold_and_warm() {
+    assert_blank_zero_lookup_matrix_cold_and_warm(None);
+}
+
+/// The matrix's lookup work does not depend on the pool's thread count.
+/// Its families are 5-member runs of one fully absolute lookup; how a
+/// parallel layer chunks a run depends on the thread count, and a lifted
+/// chunk used to evaluate such a template once for the chunk (plus the
+/// debug build's per-member oracle): 184 misses instead of 160 on 2 and 4
+/// threads, 160 on 24 (one-member chunks are not lifted).
+#[test]
+fn blank_zero_exact_lookup_matrix_counts_do_not_depend_on_thread_count() {
+    for max_threads in [2, 4] {
+        assert_blank_zero_lookup_matrix_cold_and_warm(Some(max_threads));
+    }
+}
+
+fn assert_blank_zero_lookup_matrix_cold_and_warm(max_threads: Option<usize>) {
     for cache_max_bytes in [0, EvalConfig::default().lookup_index_cache_max_bytes] {
-        let (mut engine, expected) = blank_zero_lookup_matrix_engine(cache_max_bytes);
+        let (mut engine, expected) = blank_zero_lookup_matrix_engine(cache_max_bytes, max_threads);
         let snapshot = engine.inspection_mutation_revision();
 
         engine.evaluate_all().unwrap();
         assert_blank_zero_lookup_matrix(&engine, &expected);
         let first = engine.last_lookup_index_cache_report();
         if cache_max_bytes == 0 {
-            assert_eq!(first.builds, 0, "{first:?}");
-            assert_eq!(first.hits, 0, "{first:?}");
-            assert_eq!(first.misses, 160, "{first:?}");
-            assert_eq!(first.skipped_cap, 160, "{first:?}");
+            assert_eq!(first.builds, 0, "threads {max_threads:?}: {first:?}");
+            assert_eq!(first.hits, 0, "threads {max_threads:?}: {first:?}");
+            assert_eq!(first.misses, 160, "threads {max_threads:?}: {first:?}");
+            assert_eq!(first.skipped_cap, 160, "threads {max_threads:?}: {first:?}");
         } else {
-            assert_eq!(first.builds, 8, "{first:?}");
-            assert_eq!(first.hits, 128, "{first:?}");
-            assert_eq!(first.entries_count, 8, "{first:?}");
+            assert_eq!(first.builds, 8, "threads {max_threads:?}: {first:?}");
+            assert_eq!(first.hits, 128, "threads {max_threads:?}: {first:?}");
+            assert_eq!(first.entries_count, 8, "threads {max_threads:?}: {first:?}");
         }
 
         mark_all_formulas_dirty_without_edit(&mut engine);
@@ -1423,19 +1442,25 @@ fn blank_zero_exact_lookup_matrix_is_identical_cold_and_warm() {
         assert_eq!(engine.inspection_mutation_revision(), snapshot);
         assert_blank_zero_lookup_matrix(&engine, &expected);
         let warm = engine.last_lookup_index_cache_report();
-        assert_eq!(warm.builds, 0, "{warm:?}");
+        assert_eq!(warm.builds, 0, "threads {max_threads:?}: {warm:?}");
         assert_eq!(
             warm.misses,
             if cache_max_bytes == 0 { 160 } else { 0 },
-            "{warm:?}"
+            "threads {max_threads:?}: {warm:?}"
         );
         if cache_max_bytes == 0 {
-            assert_eq!(warm.hits, 0, "{warm:?}");
-            assert_eq!(warm.skipped_cap, 160, "{warm:?}");
+            assert_eq!(warm.hits, 0, "threads {max_threads:?}: {warm:?}");
+            assert_eq!(warm.skipped_cap, 160, "threads {max_threads:?}: {warm:?}");
         } else {
-            assert_eq!(warm.hits, 160, "{warm:?}");
-            assert_eq!(warm.entries_count, first.entries_count, "{warm:?}");
-            assert_eq!(warm.bytes_in_cache, first.bytes_in_cache, "{warm:?}");
+            assert_eq!(warm.hits, 160, "threads {max_threads:?}: {warm:?}");
+            assert_eq!(
+                warm.entries_count, first.entries_count,
+                "threads {max_threads:?}: {warm:?}"
+            );
+            assert_eq!(
+                warm.bytes_in_cache, first.bytes_in_cache,
+                "threads {max_threads:?}: {warm:?}"
+            );
         }
     }
 }
@@ -1690,21 +1715,36 @@ fn lookup_cache_cross_sheet_entries_are_isolated() {
 
 #[test]
 fn approximate_and_wildcard_modes_do_not_hit_exact_cache() {
-    let mut approximate = engine_with_config(EvalConfig::default());
-    populate_numeric_table(&mut approximate, "Sheet1", TABLE_ROWS);
-    for row in 1..=FORMULA_ROWS {
-        formula(
-            &mut approximate,
-            "Sheet1",
-            row,
-            2,
-            &format!("=VLOOKUP({row}.5, $D$1:$E$100, 2, TRUE)"),
-        );
-    }
-    approximate.evaluate_all().unwrap();
-    let approximate_report = approximate.last_lookup_index_cache_report();
-    assert_eq!(approximate_report.hits, 0, "{approximate_report:?}");
-    assert_eq!(approximate_report.builds, 0, "{approximate_report:?}");
+    // Program 3: approximate lookups read the lookup index's stored column
+    // (the same cells in the same order) instead of materializing it per
+    // call; the binary search is unchanged, so their results equal the
+    // materializing path's (no cache at all).
+    let approximate_results = |max_bytes: usize| {
+        let mut approximate = engine_with_config(EvalConfig {
+            lookup_index_cache_max_bytes: max_bytes,
+            ..EvalConfig::default()
+        });
+        populate_numeric_table(&mut approximate, "Sheet1", TABLE_ROWS);
+        for row in 1..=FORMULA_ROWS {
+            formula(
+                &mut approximate,
+                "Sheet1",
+                row,
+                2,
+                &format!("=VLOOKUP({row}.5, $D$1:$E$100, 2, TRUE)"),
+            );
+        }
+        approximate.evaluate_all().unwrap();
+        let values: Vec<_> = (1..=FORMULA_ROWS)
+            .map(|row| approximate.get_cell_value("Sheet1", row, 2))
+            .collect();
+        (values, approximate.last_lookup_index_cache_report())
+    };
+    let (cached, report) = approximate_results(EvalConfig::default().lookup_index_cache_max_bytes);
+    let (materialized, uncached) = approximate_results(0);
+    assert_eq!(uncached.hits, 0, "{uncached:?}");
+    assert!(report.hits > 0, "{report:?}");
+    assert_eq!(cached, materialized);
 
     let mut wildcard = engine_with_config(EvalConfig::default());
     for row in 1..=TABLE_ROWS {
@@ -1724,4 +1764,53 @@ fn approximate_and_wildcard_modes_do_not_hit_exact_cache() {
     let wildcard_report = wildcard.last_lookup_index_cache_report();
     assert_eq!(wildcard_report.hits, 0, "{wildcard_report:?}");
     assert_eq!(wildcard_report.builds, 0, "{wildcard_report:?}");
+}
+
+/// Program 3: parallel members of a lookup family that miss the index
+/// together build it once (the others wait for it), and read the same
+/// values as a sequential engine.
+#[test]
+fn parallel_lookup_family_builds_its_index_once() {
+    let build = |parallel: bool| {
+        let mut engine = engine_with_config(EvalConfig {
+            enable_parallel: parallel,
+            ..EvalConfig::default()
+        });
+        populate_numeric_table(&mut engine, "Sheet1", TABLE_ROWS);
+        for row in 1..=4000u32 {
+            number(
+                &mut engine,
+                "Sheet1",
+                row,
+                1,
+                f64::from(row % TABLE_ROWS + 1),
+            );
+            formula(
+                &mut engine,
+                "Sheet1",
+                row,
+                2,
+                &format!("=VLOOKUP(A{row}, $D$1:$E${TABLE_ROWS}, 2, FALSE)"),
+            );
+        }
+        engine
+    };
+    let mut par = build(true);
+    let mut seq = build(false);
+    par.evaluate_all().unwrap();
+    seq.evaluate_all().unwrap();
+    assert_eq!(par.lookup_index_flights_built_for_test(), 1);
+    // An edit to the table: one rebuild for the whole recalculation.
+    for e in [&mut par, &mut seq] {
+        number(e, "Sheet1", 7, 5, -1.5);
+        e.evaluate_all().unwrap();
+    }
+    assert_eq!(par.lookup_index_flights_built_for_test(), 2);
+    for row in 1..=4000u32 {
+        assert_eq!(
+            par.get_cell_value("Sheet1", row, 2),
+            seq.get_cell_value("Sheet1", row, 2),
+            "B{row}"
+        );
+    }
 }

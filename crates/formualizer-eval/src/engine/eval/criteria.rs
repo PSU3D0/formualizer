@@ -20,9 +20,12 @@
 //! row chunk the Arrow sum (`exact::sum_f64`) of the filtered target lane,
 //! with the non-null count for averages.
 //!
+//! Whole columns (`$F:$F`) and open-ended columns (`$F$2:$F`) are views of
+//! the used extent, as the builtin resolves them.
+//!
 //! Anything else declines (the memo or the walk evaluates it): other
-//! predicates (empty text, wildcards, booleans, errors, blanks), a 1x1 or
-//! open range, ranges of different heights or past the sheet's last row,
+//! predicates (empty text, wildcards, booleans, errors, blanks), a 1x1
+//! range, ranges of different heights or past the sheet's last row,
 //! a lane layout the mask path would read differently, a criterion whose
 //! evaluation fails, and `COUNTIF` whose criterion matches an empty cell
 //! (it counts logical cells past the data).
@@ -51,30 +54,32 @@ pub(super) struct CriteriaPlan {
     criteria: smallvec::SmallVec<[(AstNodeId, AstNodeId); 4]>,
 }
 
-/// Whether `arg` is an absolute, bounded, single-column range of at least
-/// two rows (its view is the same for every member).
+/// Whether `arg` is an absolute single-column range, bounded (of at least
+/// two rows) or open (`$F:$F`, `$F$2:$F`: its view is the used extent, the
+/// same for every member).
 fn invariant_column(ds: &DataStore, arg: AstNodeId) -> bool {
-    matches!(
-        ds.get_node(arg),
+    match ds.get_node(arg) {
         Some(AstNodeData::Reference {
-            ref_type: CompactRefType::Range {
-                start_row,
-                start_col,
-                end_row,
-                end_col,
-                start_row_abs: true,
-                start_col_abs: true,
-                end_row_abs: true,
-                end_col_abs: true,
-                ..
-            },
+            ref_type:
+                CompactRefType::Range {
+                    start_row,
+                    start_col,
+                    end_row,
+                    end_col,
+                    start_row_abs,
+                    start_col_abs: true,
+                    end_row_abs,
+                    end_col_abs: true,
+                    ..
+                },
             ..
-        }) if *start_row > 0
-            && *start_col > 0
-            && *end_row != u32::MAX
-            && start_col == end_col
-            && end_row > start_row
-    )
+        }) if *start_col > 0 && start_col == end_col => {
+            let start_fixed = *start_row == 0 || (*start_row_abs && *start_row > 0);
+            let end_fixed = *end_row == u32::MAX || (*end_row_abs && *end_row > *start_row);
+            start_fixed && end_fixed && (*end_row == u32::MAX || *start_row > 0)
+        }
+        _ => false,
+    }
 }
 
 impl CriteriaPlan {
@@ -213,7 +218,31 @@ pub(super) struct CriteriaIndex {
     target: Option<AstNodeId>,
     /// Target number lane per row (value, valid), on first use.
     target_lane: std::sync::OnceLock<Option<(Vec<f64>, Vec<bool>)>>,
+    /// Rows grouped by their tuple of classes, per class-kind signature
+    /// (text or number per criterion), on first use; `None` when there are
+    /// too many tuples to scan per member.
+    combos: std::sync::Mutex<Vec<ComboEntry>>,
+    /// Whether members group rows by class tuple: the grouping's pass over
+    /// the rows pays only across a long run (`COMBO_MIN_RUN`).
+    group: bool,
 }
+
+/// A class-kind signature and its grouped rows (`None`: too many tuples).
+type ComboEntry = (Vec<bool>, Option<std::sync::Arc<Combos>>);
+
+/// Rows grouped by their class in every criterion (`u32::MAX`: null).
+struct Combos {
+    classes: Vec<smallvec::SmallVec<[u32; 4]>>,
+    rows: Vec<Vec<u32>>,
+}
+
+/// More distinct class tuples than this: members walk their driver's rows.
+const MAX_COMBOS: usize = 4096;
+/// Runs shorter than this take the driver criterion's rows with per-row
+/// checks instead of grouping rows by class tuple: a recalculation of a
+/// few members over a large table (real_ops_model: ~20 `SUMIFS` per edit)
+/// pays more for the grouping pass than it saves.
+const COMBO_MIN_RUN: u32 = 32;
 
 impl<R> Engine<R>
 where
@@ -238,6 +267,7 @@ where
         plan: &CriteriaPlan,
         ds: &DataStore,
         current_sheet: &str,
+        run_len: u32,
     ) -> Option<CriteriaIndex> {
         let views: Vec<RangeView<'_>> = plan
             .criteria
@@ -294,7 +324,66 @@ where
             columns,
             target: plan.target,
             target_lane: std::sync::OnceLock::new(),
+            combos: std::sync::Mutex::new(Vec::new()),
+            group: run_len >= COMBO_MIN_RUN,
         })
+    }
+
+    /// The run's class tuples for a kind signature (the columns' classes
+    /// of those kinds are built already).
+    fn combos(index: &CriteriaIndex, kinds: &[bool]) -> Option<std::sync::Arc<Combos>> {
+        let mut cache = index.combos.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((_, c)) = cache.iter().find(|(k, _)| k.as_slice() == kinds) {
+            return c.clone();
+        }
+        let of_row: Vec<&[u32]> = kinds
+            .iter()
+            .enumerate()
+            .map(|(j, &text)| {
+                let column = &index.columns[j];
+                if text {
+                    column
+                        .texts
+                        .get()
+                        .and_then(Option::as_ref)
+                        .map(|c| &c.of_row[..])
+                } else {
+                    column
+                        .numbers
+                        .get()
+                        .and_then(Option::as_ref)
+                        .map(|c| &c.of_row[..])
+                }
+            })
+            .collect::<Option<_>>()?;
+        let mut by_tuple: rustc_hash::FxHashMap<smallvec::SmallVec<[u32; 4]>, u32> =
+            rustc_hash::FxHashMap::default();
+        let mut combos = Combos {
+            classes: Vec::new(),
+            rows: Vec::new(),
+        };
+        let mut fits = true;
+        for row in 0..index.rows {
+            let tuple: smallvec::SmallVec<[u32; 4]> = of_row.iter().map(|c| c[row]).collect();
+            let id = match by_tuple.get(&tuple) {
+                Some(&id) => id,
+                None => {
+                    if combos.classes.len() == MAX_COMBOS {
+                        fits = false;
+                        break;
+                    }
+                    combos.classes.push(tuple.clone());
+                    combos.rows.push(Vec::new());
+                    let id = (combos.classes.len() - 1) as u32;
+                    by_tuple.insert(tuple, id);
+                    id
+                }
+            };
+            combos.rows[id as usize].push(row as u32);
+        }
+        let entry = fits.then(|| std::sync::Arc::new(combos));
+        cache.push((kinds.to_vec(), entry.clone()));
+        entry
     }
 
     /// The target range's number lane over the driver's chunks.
@@ -384,6 +473,42 @@ where
             };
             verdicts.push(verdict);
         }
+        // Rows grouped by class tuple: a member's matching rows are the
+        // tuples every verdict admits (no per-row checks).
+        let kinds: smallvec::SmallVec<[bool; 4]> = verdicts.iter().map(|v| v.2).collect();
+        let grouped = if index.group {
+            Self::combos(index, &kinds)
+        } else {
+            None
+        };
+        let exact_rows = grouped.map(|combos| {
+            let admitted = |classes: &[u32]| {
+                classes
+                    .iter()
+                    .zip(&verdicts)
+                    .all(|(&class, (per_class, null_match, _))| {
+                        if class == u32::MAX {
+                            *null_match
+                        } else {
+                            per_class[class as usize]
+                        }
+                    })
+            };
+            let hits: smallvec::SmallVec<[usize; 4]> = (0..combos.classes.len())
+                .filter(|&k| admitted(&combos.classes[k]))
+                .collect();
+            match hits.as_slice() {
+                [only] => combos.rows[*only].clone(),
+                _ => {
+                    let mut rows: Vec<u32> = hits
+                        .iter()
+                        .flat_map(|&k| combos.rows[k].iter().copied())
+                        .collect();
+                    rows.sort_unstable();
+                    rows
+                }
+            }
+        });
         // The most selective criterion drives (fewest matching rows).
         let matching = |j: usize| -> usize {
             let (per_class, null_match, is_text) = &verdicts[j];
@@ -411,8 +536,11 @@ where
                 .sum::<usize>()
                 + if *null_match { null_rows.len() } else { 0 }
         };
+        let exact = exact_rows.is_some();
         let driver = (0..verdicts.len()).min_by_key(|&j| matching(j))?;
-        let mut rows: Vec<u32> = {
+        let mut rows: Vec<u32> = if let Some(rows) = exact_rows {
+            rows
+        } else {
             let (per_class, null_match, is_text) = &verdicts[driver];
             let column = &index.columns[driver];
             let (class_rows, null_rows): (&[Vec<u32>], &[u32]) = if *is_text {
@@ -441,34 +569,37 @@ where
             }
             rows
         };
-        rows.sort_unstable();
+        if !exact {
+            rows.sort_unstable();
+        }
         let passes = |row: u32| {
-            verdicts
-                .iter()
-                .enumerate()
-                .all(|(j, (per_class, null_match, is_text))| {
-                    let column = &index.columns[j];
-                    let class = if *is_text {
-                        column
-                            .texts
-                            .get()
-                            .and_then(Option::as_ref)
-                            .expect("text classes")
-                            .of_row[row as usize]
-                    } else {
-                        column
-                            .numbers
-                            .get()
-                            .and_then(Option::as_ref)
-                            .expect("number classes")
-                            .of_row[row as usize]
-                    };
-                    if class == u32::MAX {
-                        *null_match
-                    } else {
-                        per_class[class as usize]
-                    }
-                })
+            exact
+                || verdicts
+                    .iter()
+                    .enumerate()
+                    .all(|(j, (per_class, null_match, is_text))| {
+                        let column = &index.columns[j];
+                        let class = if *is_text {
+                            column
+                                .texts
+                                .get()
+                                .and_then(Option::as_ref)
+                                .expect("text classes")
+                                .of_row[row as usize]
+                        } else {
+                            column
+                                .numbers
+                                .get()
+                                .and_then(Option::as_ref)
+                                .expect("number classes")
+                                .of_row[row as usize]
+                        };
+                        if class == u32::MAX {
+                            *null_match
+                        } else {
+                            per_class[class as usize]
+                        }
+                    })
         };
         match plan.agg {
             Agg::Count => {

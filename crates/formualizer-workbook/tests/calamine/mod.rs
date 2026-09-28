@@ -58,3 +58,5 @@ pub(crate) fn strict_interactive() -> formualizer_workbook::WorkbookConfig {
     config.eval.preparation_policy = formualizer_eval::engine::PreparationPolicy::Strict;
     config
 }
+#[cfg(feature = "calamine")]
+mod referenced_extent;

@@ -85,7 +85,7 @@ A formula cell's `VertexId` is its dependency-authority id: the authority adopts
 - Symbol binding identities (names, tables, sources) keep the store's own counter, starting at `authority::identity::HOST_SYMBOL_ID_BASE` (2^31). Vertex ids stay below it (`vertex_store::MAX_VERTEX_ID`).
 - Bulk loads number a sheet's formula cells column by column, so each column of a family is one id run (the authority's identity runs are also the planner's slices). Cycle iteration order is by cell position (spec §7.13) and does not depend on ids.
 
-Removing vertices for value cells (planned) reopens the second rule: a value cell will then have no id to keep.
+Program 3 removed value-cell vertices and amended the second rule (decision 27): see [Value cells without vertices](#value-cells-without-vertices).
 
 ### Family members without per-cell entries
 
@@ -93,9 +93,30 @@ A family member whose formula is its template relocated, in a column of consecut
 
 ### Structural edits on family runs
 
-Row and column inserts and deletes shift a run of family members as a block (contract decision 20.5). The run is split at an inserted row; each part moves as a whole, and its formula changes, if any, are the adjusted template. The block applies only when the reference adjuster gives the part's first and last members the same template (references are affine in the member's row, so every member between them agrees), no reference becomes `#REF!`, every small range (expanded into cell dependencies) keeps its area, and every single-cell target has a vertex. Other parts go back to the per-cell maps and take the per-cell path.
+Row and column inserts and deletes shift a run of family members as a block (contract decision 20.5). The run is split at an inserted row; each part moves as a whole, and its formula changes, if any, are the adjusted template. The block applies only when the reference adjuster gives the part's first and last members the same template (references are affine in the member's row, so every member between them agrees), no reference becomes `#REF!`, and every small range (expanded into cell dependencies) keeps its area. Other parts go back to the per-cell maps and take the per-cell path.
 
 Observable behavior is unchanged: the change log holds the same events (a run's `FormulaAdjusted` events are one record, expanded in place the first time the log is read or indexed, so each record is expanded once and history already read is not copied again; `FormulaAdjusted` events are now in vertex-id order), and undo and redo replay them per cell. `ActionJournal::graph.events` is fully expanded.
+
+## Value cells without vertices
+
+Program 3 (contract decisions 27 and 28): only formula cells and names have vertices.
+
+- **References.** A formula's reference to a value or empty cell creates no vertex, cell-map entry or sheet-index entry. The authority tracks references by position; direct dependency counts are one per referenced cell, as before.
+- **Value edits.** Setting a value creates no vertex. A formula it replaces leaves the graph: its id retires into a positional side table. The cell's readers are dirtied by position (`Engine::set_cell_value`, batched value writes, spill children).
+- **Ids** (decision 24 as amended by 27, option B). Ids belong to formula cells. A formula -> value -> formula edit at a cell takes the retired id back; undo and redo restore original ids; an id is never given to another cell or renumbered. Row and column inserts and deletes shift the side table; a delete keeps its band's retired ids for undo. A retired id is not visible through `get_vertex_id_for_address`.
+- **Change logs.** Value cells have no `VertexMoved`, `RemoveVertex` or `AddVertex` events. A structural delete dirties the readers of its band (their cells change) rather than through removed value vertices.
+
+What you need to change:
+
+| Before | Now |
+|---|---|
+| `get_vertex_id_for_address(&cell)` / `get_vertex_for_cell` / `Engine::vertex_for_cell` returning a vertex for a value or empty cell | `None`. A formula cell still has its vertex. |
+| `VertexEditor::set_cell_value(cell, v) -> VertexId` of the cell | `VertexId(0)` (value cells have no vertex). |
+| `OperationSummary { affected_vertices, created_placeholders }` of a value edit starting with the edited cell's vertex | the dirtied formulas only; `created_placeholders` is empty. |
+| Value-cell `VertexMoved` / `RemoveVertex` / `AddVertex` in change logs | none. |
+| `graph_vertex_count` and the sheet index counting referenced or edited value cells | formula cells and names only. The used extent still counts them (an extent record, not vertices). |
+| A value edit rejected under an `EvaluationBudgets` limit of zero new vertices | admitted: it allocates no vertex. Formula edits are still charged. |
+| Evaluating a value cell's vertex (`evaluate_vertex`) | create an explicit vertex with `VertexEditor::add_vertex` first, or read the cell. |
 
 ## Performance and memory
 

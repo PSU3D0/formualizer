@@ -283,6 +283,29 @@ mod imp {
             "interactive" => WorkbookConfig::interactive(),
             _ => WorkbookConfig::ephemeral(),
         };
+
+        // Config knobs (program3 recon): --mode picks the base, then
+        // FZ_DEFER / FZ_LOG / FZ_COERCE (0|1) override each interactive
+        // difference separately.
+        {
+            let env = |k: &str| std::env::var(k).ok().map(|v| v == "1");
+            if let Some(d) = env("FZ_DEFER") {
+                config.eval.defer_graph_building = d;
+            }
+            if let Some(l) = env("FZ_LOG") {
+                config.enable_changelog = l;
+            }
+            if let Some(c) = env("FZ_COERCE") {
+                config.eval.formula_parse_policy = if c {
+                    formualizer_eval::engine::FormulaParsePolicy::CoerceToError
+                } else {
+                    formualizer_eval::engine::FormulaParsePolicy::Strict
+                };
+            }
+            if let Some(c) = env("FZ_COMPRESS") {
+                config.eval.formula_compression = c;
+            }
+        }
         // --seq: sequential evaluation (no rayon layer pool).
         if args.iter().any(|a| a == "--seq") {
             config.eval.enable_parallel = false;
@@ -316,6 +339,17 @@ mod imp {
             let t = Instant::now();
             let _ = formualizer_eval::engine::authority::probe::sync(wb.engine_mut());
             presync_ms = ms(t);
+        }
+        // --prebuild: build the deferred graph (staged formulas) as its own
+        // timed step before the first evaluation (no-op when not deferred).
+        let mut prebuild_ms = f64::NAN;
+        let mut live_prebuild = 0i64;
+        if args.iter().any(|a| a == "--prebuild") {
+            let t = Instant::now();
+            wb.prepare_graph_all()
+                .map_err(|e| anyhow!("prebuild: {e}"))?;
+            prebuild_ms = ms(t);
+            live_prebuild = live() - base;
         }
         let t = Instant::now();
         let first = wb.evaluate_all();
@@ -471,6 +505,8 @@ mod imp {
             "values": tg.value_count,
             "load_ms": load_ms,
             "first_eval_ms": first_ms,
+            "prebuild_ms": prebuild_ms,
+            "live_after_prebuild": live_prebuild,
             "first_ok": first_ok,
             "first_computed": first_computed,
             "first_err": first_err,

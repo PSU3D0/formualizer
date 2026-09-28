@@ -669,7 +669,59 @@ fn family_lift_builtins_match_per_cell() {
     check_typed(formulas);
 }
 
+/// Type tests and date parts on typed lanes (Program 3): a clean operand's
+/// result without the walk; anything else (text, dates with a format,
+/// serials off the calendar, errors) is walked.
+#[test]
+fn family_lift_type_tests_and_date_parts_match_per_cell() {
+    let formulas: Vec<(u32, String)> = vec![
+        (4, "=ISNUMBER(A{r})".into()),
+        (5, "=IF(ISNA(B{r}),0,1)+ISERROR(A{r}/B{r})".into()),
+        (6, "=AND(ISERR(C{r}),ISTEXT(A{r}))".into()),
+        (7, "=OR(ISLOGICAL(B{r}),ISBLANK(C{r}))".into()),
+        (8, "=MONTH(A{r}*100+40000)".into()),
+        (9, "=YEAR(B{r}*300)+DAY(C{r}*7)".into()),
+        (10, "=MONTH(A{r})".into()),
+        (11, "=WEEKDAY(A{r}*11+30000)".into()),
+        (12, "=WEEKDAY(B{r}*13,2)+WEEKDAY(C{r},C{r})".into()),
+        (13, "=YEAR(A{r})*12+MONTH(A{r})".into()),
+    ];
+    check_typed_with_names(formulas, &[], true);
+}
+
 fn check_typed(formulas: Vec<(u32, String)>) {
+    check_typed_with_names(formulas, &[], false);
+}
+
+/// Defined names (Program 3): a name with one value for the run (a cell,
+/// a literal, a formula; a range as a call's argument) is a lift constant.
+#[test]
+fn family_lift_defined_names_match_per_cell() {
+    let formulas: Vec<(u32, String)> = vec![
+        (4, "=A{r}/Rate".into()),
+        (5, "=A{r}*Lit+Rate".into()),
+        (6, "=B{r}-Twice".into()),
+        (7, "=A{r}+SUM(Block)".into()),
+        (8, "=IF(A{r}>Rate,1,2)*Lit".into()),
+        (9, "=A{r}+COUNT(Column)*Lit".into()),
+        (10, "=Lit*2".into()),
+    ];
+    check_typed_with_names(
+        formulas,
+        &[
+            ("Rate", "=Sheet1!$B$5"),
+            ("Lit", "2.5"),
+            ("Twice", "=Sheet1!$A$3*2"),
+            ("Block", "=Sheet1!$A$1:$C$10"),
+            ("Column", "=Sheet1!$C$1:$C$100"),
+        ],
+        true,
+    );
+}
+
+fn check_typed_with_names(formulas: Vec<(u32, String)>, names: &[(&str, &str)], all_lifted: bool) {
+    use crate::engine::named_range::{NameScope, NamedDefinition};
+    use crate::reference::{CellRef, Coord, RangeRef};
     use chrono::NaiveDate;
     const ROWS: u32 = 100;
     let base_value = |r: u32, c: u32| -> LiteralValue {
@@ -699,6 +751,25 @@ fn check_typed(formulas: Vec<(u32, String)>) {
             }
             ab.finish().unwrap();
         }
+        let sheet = e.sheet_id("Sheet1").unwrap();
+        for (name, def) in names {
+            let at = |r: u32, c: u32| CellRef::new(sheet, Coord::from_excel(r, c, true, true));
+            let definition = match *def {
+                "=Sheet1!$B$5" => NamedDefinition::Cell(at(5, 2)),
+                "=Sheet1!$A$1:$C$10" => NamedDefinition::Range(RangeRef::new(at(1, 1), at(10, 3))),
+                "=Sheet1!$C$1:$C$100" => {
+                    NamedDefinition::Range(RangeRef::new(at(1, 3), at(100, 3)))
+                }
+                "2.5" => NamedDefinition::Literal(LiteralValue::Number(2.5)),
+                formula => NamedDefinition::Formula {
+                    ast: parse(formula).unwrap(),
+                    dependencies: Vec::new(),
+                    range_deps: Vec::new(),
+                },
+            };
+            e.define_name(name, definition, NameScope::Workbook)
+                .unwrap();
+        }
         let mut cells = Vec::new();
         for r in 1..=ROWS {
             for (c, f) in &formulas {
@@ -726,6 +797,8 @@ fn check_typed(formulas: Vec<(u32, String)>) {
         e.evaluate_all().unwrap();
         out.push(snapshot(&e));
         let edits = [
+            ((5, 2), LiteralValue::Number(4.0)),
+            ((3, 1), LiteralValue::Number(-7.5)),
             ((10, 1), LiteralValue::Text("x".into())),
             ((17, 1), LiteralValue::Number(-0.0)),
             ((33, 2), LiteralValue::Boolean(true)),
@@ -769,6 +842,15 @@ fn check_typed(formulas: Vec<(u32, String)>) {
         let lift = run_typed(base);
         assert_eq!(oracle.1, 0);
         assert!(lift.1 > 0, "no run was lifted (parallel={parallel})");
+        if all_lifted {
+            // Every formula's run was lifted at the first evaluation (but
+            // for single-member pieces the plan may split off).
+            assert!(
+                lift.1 * 100 >= formulas.len() as u64 * u64::from(ROWS) * 95,
+                "a formula's runs were not lifted: {}",
+                lift.1
+            );
+        }
         assert_eq!(walk.0, oracle.0, "walk, parallel={parallel}");
         assert_eq!(lift.0, oracle.0, "lift, parallel={parallel}");
     }
@@ -847,58 +929,186 @@ fn family_criteria_kernel_matches_per_cell() {
         "=SUMIFS(Facts!$B$1:$B$90,Facts!$C$1:$C$90,\">\"&(ROW()/5),Facts!$A$1:$A$90,\"<>west\")",
         "=COUNTIFS(Facts!$C$1:$C$90,\"<\"&ROW(),Facts!$C$1:$C$90,\">=\"&(ROW()/3))",
     ];
-    let run = |config: EvalConfig| -> (Vec<Vec<String>>, u64) {
+    // The same formulas over whole and open-ended columns (views of the
+    // used extent).
+    let whole: Vec<String> = formulas
+        .iter()
+        .enumerate()
+        .map(|(k, f)| {
+            let f = f.replace("$1:$", ":$").replace("$90", "");
+            if k % 2 == 0 {
+                f
+            } else {
+                // `$A$1:$A` style for the odd ones.
+                f.replace("Facts!$A:$A", "Facts!$A$1:$A")
+                    .replace("Facts!$C:$C", "Facts!$C$1:$C")
+            }
+        })
+        .collect();
+    for formulas in [
+        formulas.iter().map(|f| f.to_string()).collect::<Vec<_>>(),
+        whole,
+    ] {
+        let run = |config: EvalConfig| -> (Vec<Vec<String>>, u64) {
+            let mut e = Engine::new(TestWorkbook::new(), config);
+            e.add_sheet("Report").unwrap();
+            {
+                let mut ab = e.begin_bulk_ingest_arrow();
+                ab.add_sheet("Facts", 3, 16);
+                for r in 1..=FACTS {
+                    ab.append_row("Facts", &[fact(r, 1), fact(r, 2), fact(r, 3)])
+                        .unwrap();
+                }
+                ab.finish().unwrap();
+            }
+            let mut cells = Vec::new();
+            for r in 1..=REPORT {
+                let (a, b) = crit(r);
+                e.set_cell_value("Report", r, 1, a).unwrap();
+                e.set_cell_value("Report", r, 2, b).unwrap();
+                for (k, f) in formulas.iter().enumerate() {
+                    let c = 4 + k as u32;
+                    e.set_cell_formula(
+                        "Report",
+                        r,
+                        c,
+                        parse(f.replace("{r}", &r.to_string())).unwrap(),
+                    )
+                    .unwrap();
+                    cells.push((r, c));
+                }
+            }
+            let snapshot = |e: &Engine<TestWorkbook>| {
+                cells
+                    .iter()
+                    .map(|&(r, c)| key(e.get_cell_value("Report", r, c)))
+                    .collect::<Vec<_>>()
+            };
+            let mut out = Vec::new();
+            e.evaluate_all().unwrap();
+            out.push(snapshot(&e));
+            let edits = [
+                ("Facts", 20, 2, LiteralValue::Number(1e308)),
+                ("Facts", 21, 2, LiteralValue::Number(1e308)),
+                ("Facts", 33, 1, LiteralValue::Text("NORTH".into())),
+                ("Facts", 34, 3, LiteralValue::Text("x".into())),
+                ("Report", 3, 1, LiteralValue::Text("west".into())),
+                ("Report", 8, 2, LiteralValue::Text(">=0".into())),
+            ];
+            for (s, r, c, v) in edits {
+                e.set_cell_value(s, r, c, v).unwrap();
+                e.evaluate_all().unwrap();
+                out.push(snapshot(&e));
+            }
+            (out, e.criteria_kernel_members_for_test())
+        };
+        for parallel in [false, true] {
+            let base = EvalConfig {
+                enable_parallel: parallel,
+                ..arrow_eval_config()
+            };
+            let oracle = run(EvalConfig {
+                family_execution: false,
+                ..base.clone()
+            });
+            let kernel = run(base);
+            assert_eq!(oracle.1, 0);
+            assert!(
+                kernel.1 > 0,
+                "no member took the criteria kernel (parallel={parallel}) {formulas:?}"
+            );
+            assert_eq!(kernel.0, oracle.0, "parallel={parallel} {formulas:?}");
+        }
+    }
+}
+
+/// Program 3: a family template's run-invariant calls (a lookup's column
+/// index from a MATCH over a named header row, an INDEX's column) are
+/// computed once per run and bound for the walk of every member; values
+/// equal the per-cell oracle's, at first evaluation and after edits
+/// (including edits to the invariant call's inputs).
+#[test]
+fn family_walk_binds_run_invariant_calls() {
+    use crate::engine::named_range::{NameScope, NamedDefinition};
+    use crate::reference::{CellRef, Coord, RangeRef};
+    const ROWS: u32 = 60;
+    let run = |config: EvalConfig| -> (Vec<String>, u64) {
         let mut e = Engine::new(TestWorkbook::new(), config);
-        e.add_sheet("Report").unwrap();
-        {
-            let mut ab = e.begin_bulk_ingest_arrow();
-            ab.add_sheet("Facts", 3, 16);
-            for r in 1..=FACTS {
-                ab.append_row("Facts", &[fact(r, 1), fact(r, 2), fact(r, 3)])
+        e.add_sheet("Data").unwrap();
+        // Data: a key column A (sorted numbers), header row 1 (texts).
+        for c in 1..=5u32 {
+            e.set_cell_value("Data", 1, c, LiteralValue::Text(format!("h{c}")))
+                .unwrap();
+        }
+        for r in 2..=40u32 {
+            e.set_cell_value("Data", r, 1, LiteralValue::Number(f64::from(r * 3)))
+                .unwrap();
+            for c in 2..=5u32 {
+                e.set_cell_value("Data", r, c, LiteralValue::Number(f64::from(r * c)))
                     .unwrap();
             }
-            ab.finish().unwrap();
+        }
+        let data = e.sheet_id("Data").unwrap();
+        let at = |r: u32, c: u32| CellRef::new(data, Coord::from_excel(r, c, true, true));
+        e.define_name(
+            "Table",
+            NamedDefinition::Range(RangeRef::new(at(2, 1), at(40, 5))),
+            NameScope::Workbook,
+        )
+        .unwrap();
+        e.define_name(
+            "Heads",
+            NamedDefinition::Range(RangeRef::new(at(1, 1), at(1, 5))),
+            NameScope::Workbook,
+        )
+        .unwrap();
+        // Sheet1 row 1 holds the header each column looks up.
+        for c in 2..=4u32 {
+            e.set_cell_value("Sheet1", 1, c, LiteralValue::Text(format!("h{}", c + 1)))
+                .unwrap();
         }
         let mut cells = Vec::new();
-        for r in 1..=REPORT {
-            let (a, b) = crit(r);
-            e.set_cell_value("Report", r, 1, a).unwrap();
-            e.set_cell_value("Report", r, 2, b).unwrap();
-            for (k, f) in formulas.iter().enumerate() {
-                let c = 4 + k as u32;
-                e.set_cell_formula(
-                    "Report",
-                    r,
-                    c,
-                    parse(f.replace("{r}", &r.to_string())).unwrap(),
-                )
+        for r in 2..=ROWS {
+            e.set_cell_value("Sheet1", r, 1, LiteralValue::Number(f64::from(r * 2)))
                 .unwrap();
+            let fs = [
+                (2, format!("=VLOOKUP($A{r},Table,MATCH(B$1,Heads,0))")),
+                (3, format!("=VLOOKUP($A{r},Table,MATCH(C$1,Heads,0),FALSE)")),
+                (
+                    4,
+                    format!(
+                        "=INDEX(Data!$A$2:$E$40,MATCH($A{r},Data!$A$2:$A$40,1),MATCH(D$1,Data!$A$1:$E$1,0))+SUM(Data!$B$2:$B$5)"
+                    ),
+                ),
+            ];
+            for (c, f) in fs {
+                e.set_cell_formula("Sheet1", r, c, parse(&f).unwrap())
+                    .unwrap();
                 cells.push((r, c));
             }
         }
         let snapshot = |e: &Engine<TestWorkbook>| {
             cells
                 .iter()
-                .map(|&(r, c)| key(e.get_cell_value("Report", r, c)))
+                .map(|&(r, c)| key(e.get_cell_value("Sheet1", r, c)))
                 .collect::<Vec<_>>()
+                .join(",")
         };
         let mut out = Vec::new();
         e.evaluate_all().unwrap();
         out.push(snapshot(&e));
         let edits = [
-            ("Facts", 20, 2, LiteralValue::Number(1e308)),
-            ("Facts", 21, 2, LiteralValue::Number(1e308)),
-            ("Facts", 33, 1, LiteralValue::Text("NORTH".into())),
-            ("Facts", 34, 3, LiteralValue::Text("x".into())),
-            ("Report", 3, 1, LiteralValue::Text("west".into())),
-            ("Report", 8, 2, LiteralValue::Text(">=0".into())),
+            ("Sheet1", 1, 3, LiteralValue::Text("h2".into())),
+            ("Data", 1, 4, LiteralValue::Text("zz".into())),
+            ("Data", 3, 2, LiteralValue::Number(-1.0)),
+            ("Sheet1", 7, 1, LiteralValue::Number(50.0)),
         ];
         for (s, r, c, v) in edits {
             e.set_cell_value(s, r, c, v).unwrap();
             e.evaluate_all().unwrap();
             out.push(snapshot(&e));
         }
-        (out, e.criteria_kernel_members_for_test())
+        (out, e.invariant_bound_members_for_test())
     };
     for parallel in [false, true] {
         let base = EvalConfig {
@@ -909,12 +1119,12 @@ fn family_criteria_kernel_matches_per_cell() {
             family_execution: false,
             ..base.clone()
         });
-        let kernel = run(base);
+        let bound = run(base);
         assert_eq!(oracle.1, 0);
         assert!(
-            kernel.1 > 0,
-            "no member took the criteria kernel (parallel={parallel})"
+            bound.1 > 0,
+            "no member was walked with bound invariant calls"
         );
-        assert_eq!(kernel.0, oracle.0, "parallel={parallel}");
+        assert_eq!(bound.0, oracle.0, "parallel={parallel}");
     }
 }

@@ -130,6 +130,19 @@ pub enum FamilyKernel {
     IfError,
     /// `COUNT`: a windowed range kernel.
     Count,
+    /// Program 3: type tests and date parts on typed lanes (a clean
+    /// operand's result without the walk).
+    IsNumber,
+    IsText,
+    IsLogical,
+    IsBlank,
+    IsError,
+    IsErr,
+    IsNa,
+    Year,
+    Month,
+    Day,
+    Weekday,
 }
 
 pub trait Function: Send + Sync + 'static {

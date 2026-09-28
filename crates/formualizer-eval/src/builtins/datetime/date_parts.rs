@@ -532,6 +532,10 @@ pub struct YearFn;
 impl Function for YearFn {
     func_caps!(PURE);
 
+    fn family_kernel(&self) -> Option<crate::function::FamilyKernel> {
+        Some(crate::function::FamilyKernel::Year)
+    }
+
     fn name(&self) -> &'static str {
         "YEAR"
     }
@@ -606,6 +610,10 @@ pub struct MonthFn;
 impl Function for MonthFn {
     func_caps!(PURE);
 
+    fn family_kernel(&self) -> Option<crate::function::FamilyKernel> {
+        Some(crate::function::FamilyKernel::Month)
+    }
+
     fn name(&self) -> &'static str {
         "MONTH"
     }
@@ -679,6 +687,10 @@ pub struct DayFn;
 /// [formualizer-docgen:schema:end]
 impl Function for DayFn {
     func_caps!(PURE);
+
+    fn family_kernel(&self) -> Option<crate::function::FamilyKernel> {
+        Some(crate::function::FamilyKernel::Day)
+    }
 
     fn name(&self) -> &'static str {
         "DAY"

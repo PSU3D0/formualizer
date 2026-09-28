@@ -15,6 +15,7 @@ fn cell(id: u32, layer: u64, cycle: Option<u64>) -> OrderedCell {
         owner: 42,
         layer,
         cycle,
+        chain: false,
     }
 }
 fn translate(cell: &OrderedCell) -> Result<VertexId, ExcelError> {
@@ -344,6 +345,7 @@ fn schedule_adapter_sorts_input_runs_like_cells() {
                 owner: col,
                 layer: u64::from(col % 3) * 10 + u64::from(sheet),
                 cycle: None,
+                chain: false,
             });
             id += 1;
         }
@@ -356,6 +358,7 @@ fn schedule_adapter_sorts_input_runs_like_cells() {
                 owner: 999,
                 layer: 5,
                 cycle: Some(2),
+                chain: false,
             });
             id += 1;
         }

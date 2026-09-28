@@ -188,7 +188,9 @@ fn changelog_replay_roundtrip_matches_end_state() {
         let b2 = CellRef::new(sheet_id, Coord::new(1, 1, true, true));
         let c4 = CellRef::new(sheet_id, Coord::new(3, 2, true, true));
 
-        let anchor_vid = editor.set_cell_value(a1, LiteralValue::Number(10.0));
+        // A formula anchors the spill below (value cells have no vertex,
+        // decision 27; this used a value cell's vertex).
+        let anchor_vid = editor.set_cell_formula(a1, parse("=10").unwrap());
         editor.set_cell_formula(b2, parse("=A1*2").unwrap());
         editor.set_cell_value(c4, LiteralValue::Number(99.0));
 

@@ -417,7 +417,12 @@ mod differential {
         (legacy, consolidated, legacy_sheet)
     }
 
+    /// Dependencies as cells (a vertex's cell, or a cell without a vertex:
+    /// the frozen walk created placeholders, the current one creates no
+    /// vertex, decision 27), ranges and names.
+    #[allow(clippy::type_complexity)]
     fn normalize(
+        graph: &DependencyGraph,
         result: Result<
             (
                 Vec<VertexId>,
@@ -429,33 +434,57 @@ mod differential {
         >,
     ) -> Result<
         (
+            Vec<(u16, u32, u32)>,
             Vec<VertexId>,
             Vec<SharedRangeRef<'static>>,
-            Vec<CellRef>,
             Vec<VertexId>,
         ),
         ExcelError,
     > {
-        result.map(|(mut dependencies, ranges, placeholders, mut names)| {
-            dependencies.sort_unstable_by_key(|vertex| vertex.0);
+        result.map(|(dependencies, ranges, placeholders, mut names)| {
+            let mut cells: Vec<(u16, u32, u32)> = Vec::new();
+            let mut symbols: Vec<VertexId> = Vec::new();
+            for v in dependencies {
+                match graph.get_cell_ref(v) {
+                    Some(c) => cells.push((c.sheet_id, c.coord.row(), c.coord.col())),
+                    None => symbols.push(v),
+                }
+            }
+            cells.extend(
+                placeholders
+                    .iter()
+                    .map(|c| (c.sheet_id, c.coord.row(), c.coord.col())),
+            );
+            cells.sort_unstable();
+            cells.dedup();
+            symbols.sort_unstable_by_key(|vertex| vertex.0);
             names.sort_unstable_by_key(|vertex| vertex.0);
-            (dependencies, ranges, placeholders, names)
+            (cells, symbols, ranges, names)
         })
     }
 
     fn assert_formula_parity(formula: &str, limit: usize) -> bool {
         let ast = parse(formula).unwrap_or_else(|error| panic!("{formula}: {error}"));
         let (mut legacy, mut consolidated, sheet) = graphs(limit);
-        let old = normalize(legacy.legacy_extract_dependencies(&ast, sheet));
+        let old = {
+            let r = legacy.legacy_extract_dependencies(&ast, sheet);
+            normalize(&legacy, r)
+        };
         let succeeded = old.is_ok();
-        let new = normalize(consolidated.extract_dependencies(&ast, sheet));
+        let new = {
+            let r = consolidated.extract_dependencies(&ast, sheet);
+            normalize(&consolidated, r)
+        };
         assert_eq!(old, new, "tree formula={formula}, limit={limit}");
 
         let config = EvalConfig::default().with_range_expansion_limit(limit);
         let mut arena = DependencyGraph::new_with_config(config);
         let arena_sheet = configure_graph(&mut arena);
         let ast_id = arena.data_store.store_ast(&ast, &arena.sheet_reg);
-        let arena_result = normalize(arena.extract_dependencies_arena(ast_id, arena_sheet));
+        let arena_result = {
+            let r = arena.extract_dependencies_arena(ast_id, arena_sheet);
+            normalize(&arena, r)
+        };
         assert_eq!(old, arena_result, "arena formula={formula}, limit={limit}");
         succeeded
     }

@@ -552,6 +552,33 @@ impl MutationCapture {
     }
 }
 
+/// Backward replay helper: the description of the compound whose end
+/// marker is event `end` (`event(i)` reads the events in forward order):
+/// the start marker that closes it, counting nesting (depth fields are not
+/// unique: a redo re-logs a group's markers inside its own compound).
+pub(crate) fn compound_start_description<'a>(
+    end: usize,
+    event: impl Fn(usize) -> &'a ChangeEvent,
+) -> Option<&'a str> {
+    if !matches!(event(end), ChangeEvent::CompoundEnd { .. }) {
+        return None;
+    }
+    let mut open = 1usize;
+    for i in (0..end).rev() {
+        match event(i) {
+            ChangeEvent::CompoundEnd { .. } => open += 1,
+            ChangeEvent::CompoundStart { description, .. } => {
+                open -= 1;
+                if open == 0 {
+                    return Some(description.as_str());
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 impl ChangeLogger for MutationCapture {
     fn record(&mut self, event: ChangeEvent) {
         self.push(event);

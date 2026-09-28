@@ -17,6 +17,7 @@ pub mod eval_delta;
 pub mod formula_ingest;
 mod formula_source;
 pub mod graph;
+pub(crate) mod idset;
 pub mod ingest;
 pub mod ingest_builder;
 pub(crate) mod ingest_pipeline;

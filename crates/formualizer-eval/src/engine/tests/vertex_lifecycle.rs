@@ -29,7 +29,9 @@ fn test_vertex_removal_cleanup() {
 
     // Use the graph API directly to ensure proper dependency setup
     // Create A1 = 10 (Excel uses 1-based indexing: A1 = row 1, col 1)
-    graph.set_cell_value("Sheet1", 1, 1, lit_num(10.0)).unwrap();
+    graph
+        .set_cell_formula("Sheet1", 1, 1, super::common::literal_ast(lit_num(10.0)))
+        .unwrap();
 
     // Create B1 = A1 * 2 (B1 = row 1, col 2)
     let b1_formula = parse("=A1*2").unwrap();
@@ -86,7 +88,7 @@ fn test_vertex_move_updates_mappings() {
     let mut editor = VertexEditor::new(&mut graph);
 
     // Create a cell at A1
-    let id = editor.set_cell_value(cell_ref(0, 0, 0), lit_num(42.0));
+    let id = editor.set_cell_formula(cell_ref(0, 0, 0), super::common::literal_ast(lit_num(42.0)));
 
     // Move to new location (5, 10)
     assert!(editor.move_vertex(id, GridAddr::new(5, 10)).is_ok());
@@ -110,7 +112,9 @@ fn test_patch_vertex_data() {
     let mut graph = create_test_graph();
 
     // Use graph API to ensure proper dependencies (Excel uses 1-based indexing)
-    let a1_result = graph.set_cell_value("Sheet1", 1, 1, lit_num(10.0)).unwrap();
+    let a1_result = graph
+        .set_cell_formula("Sheet1", 1, 1, super::common::literal_ast(lit_num(10.0)))
+        .unwrap();
     let a1 = a1_result.affected_vertices[0];
 
     // Create B1 that depends on A1 (B1 = row 1, col 2)
@@ -148,7 +152,10 @@ fn test_move_vertex_with_dependencies() {
     let mut editor = VertexEditor::new(&mut graph);
 
     // Create A1 with value
-    let a1 = editor.set_cell_value(cell_ref(0, 0, 0), lit_num(100.0));
+    let a1 = editor.set_cell_formula(
+        cell_ref(0, 0, 0),
+        super::common::literal_ast(lit_num(100.0)),
+    );
 
     // Create B1 that depends on A1
     let formula = parse("=A1+10").unwrap();
@@ -170,7 +177,7 @@ fn test_patch_vertex_coord() {
     let mut editor = VertexEditor::new(&mut graph);
 
     // Create vertex
-    let id = editor.set_cell_value(cell_ref(0, 1, 1), lit_num(50.0));
+    let id = editor.set_cell_formula(cell_ref(0, 1, 1), super::common::literal_ast(lit_num(50.0)));
 
     // Patch coordinate
     let patch = VertexMetaPatch {
@@ -288,7 +295,9 @@ fn test_complex_removal_scenario() {
 
     // Use graph API for proper dependency setup (Excel uses 1-based indexing)
     // Create A1 (row 1, col 1)
-    let a1_result = graph.set_cell_value("Sheet1", 1, 1, lit_num(5.0)).unwrap();
+    let a1_result = graph
+        .set_cell_formula("Sheet1", 1, 1, super::common::literal_ast(lit_num(5.0)))
+        .unwrap();
     let a1 = a1_result.affected_vertices[0];
 
     // Create B1 = A1*2 (row 1, col 2)
@@ -335,9 +344,9 @@ fn test_batch_operations_with_lifecycle() {
     editor.begin_batch();
 
     // Create multiple vertices
-    let v1 = editor.set_cell_value(cell_ref(0, 0, 0), lit_num(1.0));
-    let v2 = editor.set_cell_value(cell_ref(0, 1, 0), lit_num(2.0));
-    let v3 = editor.set_cell_value(cell_ref(0, 2, 0), lit_num(3.0));
+    let v1 = editor.set_cell_formula(cell_ref(0, 0, 0), super::common::literal_ast(lit_num(1.0)));
+    let v2 = editor.set_cell_formula(cell_ref(0, 1, 0), super::common::literal_ast(lit_num(2.0)));
+    let v3 = editor.set_cell_formula(cell_ref(0, 2, 0), super::common::literal_ast(lit_num(3.0)));
 
     // Move one
     editor.move_vertex(v1, GridAddr::new(10, 10)).unwrap();

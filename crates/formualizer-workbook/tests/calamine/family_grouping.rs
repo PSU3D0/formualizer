@@ -184,3 +184,127 @@ fn load_time_family_grouping_matches_per_cell_load() {
         assert_same("row insert", &grouped, &plain, ROWS + 2);
     }
 }
+
+fn load_config(path: &std::path::Path, config: WorkbookConfig) -> Workbook {
+    let adapter = CalamineAdapter::open_path(path).unwrap();
+    Workbook::from_reader(adapter, LoadStrategy::EagerAll, config).unwrap()
+}
+
+/// Vertex id of every formula cell, column by column, and the graph's
+/// size counters.
+fn identity(
+    wb: &Workbook,
+    rows: u32,
+) -> (
+    Vec<Option<formualizer_eval::engine::vertex::VertexId>>,
+    [usize; 3],
+) {
+    use formualizer_eval::reference::{CellRef, Coord};
+    let engine = wb.engine();
+    let mut ids = Vec::new();
+    for sheet in SHEETS {
+        let sid = engine.sheet_id(sheet).unwrap();
+        for c in 1..=COLS {
+            for r in 1..=rows {
+                if wb.get_formula(sheet, r, c).is_some() {
+                    let cell = CellRef::new(sid, Coord::from_excel(r, c, true, true));
+                    ids.push(engine.vertex_for_cell(&cell));
+                }
+            }
+        }
+    }
+    let stats = engine.baseline_stats();
+    (
+        ids,
+        [
+            stats.graph_vertex_count,
+            stats.graph_formula_vertex_count,
+            stats.formula_ast_node_count,
+        ],
+    )
+}
+
+/// Decision 26: a deferred (interactive) load builds its graph at the first
+/// evaluation through the eager first load's grouping, id pre-allocation
+/// and load-time virtual members: the same ids, vertex and arena counts as
+/// the eager load, and the same values and formulas through edits.
+#[test]
+fn deferred_first_build_matches_the_eager_first_load() {
+    let path = family_xlsx();
+    for parallel in [false, true] {
+        let mut eager_config = WorkbookConfig::ephemeral();
+        eager_config.eval.enable_parallel = parallel;
+        let mut deferred_config = WorkbookConfig::interactive();
+        deferred_config.eval.enable_parallel = parallel;
+        assert!(deferred_config.eval.defer_graph_building);
+        let mut eager = load_config(&path, eager_config);
+        let mut deferred = load_config(&path, deferred_config.clone());
+        assert_eq!(
+            deferred
+                .engine()
+                .baseline_stats()
+                .graph_formula_vertex_count,
+            0
+        );
+        for sheet in SHEETS {
+            for r in 1..=ROWS {
+                for c in 1..=COLS {
+                    let (va, vb) = (
+                        deferred.get_value(sheet, r, c),
+                        eager.get_value(sheet, r, c),
+                    );
+                    assert!(same_value(&va, &vb), "load: value at {sheet}!R{r}C{c}");
+                }
+            }
+        }
+
+        for wb in [&mut eager, &mut deferred] {
+            wb.evaluate_all().unwrap();
+        }
+        assert_same("first eval", &deferred, &eager, ROWS);
+        // The same id runs: each column's formulas are pre-allocated as one
+        // run in both (the old deferred build made chunk-sized runs).
+        let runs = |ids: &[Option<formualizer_eval::engine::vertex::VertexId>]| {
+            // `VertexId` is opaque outside the engine: read it off `Debug`.
+            let num = |v: &formualizer_eval::engine::vertex::VertexId| -> i64 {
+                format!("{v:?}")
+                    .trim_start_matches("VertexId(")
+                    .trim_end_matches(')')
+                    .parse()
+                    .unwrap()
+            };
+            let ids: Vec<i64> = ids.iter().map(|v| num(v.as_ref().unwrap())).collect();
+            1 + ids.windows(2).filter(|w| w[1] != w[0] + 1).count()
+        };
+        let ((di, dc), (ei, ec)) = (identity(&deferred, ROWS), identity(&eager, ROWS));
+        assert_eq!(dc, ec, "vertex, formula vertex and arena node counts");
+        assert_eq!(runs(&di), runs(&ei), "identity runs");
+
+        for wb in [&mut eager, &mut deferred] {
+            wb.set_value("Data", 7, 1, LiteralValue::Number(-4.5))
+                .unwrap();
+            wb.set_formula("Data", 10, 2, "=A10*3").unwrap();
+            wb.evaluate_all().unwrap();
+            wb.engine_mut().insert_rows("Data", 6, 2).unwrap();
+            wb.evaluate_all().unwrap();
+        }
+        assert_same("edits", &deferred, &eager, ROWS + 2);
+
+        // Formula edits staged before the first evaluation (deferral keeps
+        // them cheap) are part of the first build.
+        let mut eager = load_config(&path, {
+            let mut c = WorkbookConfig::ephemeral();
+            c.eval.enable_parallel = parallel;
+            c
+        });
+        let mut deferred = load_config(&path, deferred_config);
+        for wb in [&mut eager, &mut deferred] {
+            wb.set_formula("Data", 12, 2, "=A12*7").unwrap();
+            wb.set_formula("Data", 30, 3, "=B30+1").unwrap();
+            wb.set_value("Data", 3, 1, LiteralValue::Number(11.0))
+                .unwrap();
+            wb.evaluate_all().unwrap();
+        }
+        assert_same("staged edits", &deferred, &eager, ROWS);
+    }
+}

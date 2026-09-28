@@ -164,6 +164,10 @@ fn deferred_scope_equals_sequential_edits() {
 
     let mut g_seq = build();
     let mut seq_affected = apply_edits(&mut g_seq);
+    // B3's formula vertex, affected by the A1 edit, is gone after the value
+    // lands on B3 (value cells have no vertex, decision 27); the flush runs
+    // after that and cannot report it.
+    seq_affected.retain(|&v| !g_seq.is_deleted(v));
     seq_affected.sort_unstable();
     seq_affected.dedup();
     let mut seq_eval = g_seq.get_evaluation_vertices();

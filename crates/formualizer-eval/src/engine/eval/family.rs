@@ -23,6 +23,14 @@ pub(super) enum LayerUnit {
     Run(LayerRun),
 }
 
+/// The members of `unit`.
+pub(super) fn unit_members(layer: &Layer, unit: LayerUnit) -> &[VertexId] {
+    match unit {
+        LayerUnit::Cell(i) => &layer.vertices[i..=i],
+        LayerUnit::Run(run) => &layer.vertices[run.start as usize..(run.start + run.len) as usize],
+    }
+}
+
 /// The units of `layer` in vertex order.
 pub(super) fn layer_units(layer: &Layer) -> impl Iterator<Item = LayerUnit> + '_ {
     let mut i = 0usize;
@@ -155,7 +163,9 @@ where
         for &unit in units {
             match unit {
                 LayerUnit::Run(run) if run.len > run_chunk => {
-                    memos.push(Default::default());
+                    let mut memo = super::memo::SharedMemo::default();
+                    memo.run_len = run.len;
+                    memos.push(memo);
                     let memo = Some(memos.len() - 1);
                     let mut k = 0;
                     while k < run.len {
@@ -260,7 +270,8 @@ where
         let local_index;
         let criteria_index = match &criteria_plan {
             Some(plan) => {
-                let build = || self.build_criteria_index(plan, ds, sheet_name);
+                let run_len = shared_memo.map_or(run.len, |shared| shared.run_len);
+                let build = || self.build_criteria_index(plan, ds, sheet_name, run_len);
                 match shared_memo {
                     Some(shared) => shared.criteria.get_or_init(build).as_ref(),
                     None => {
@@ -271,6 +282,20 @@ where
             }
             None => None,
         };
+        // Program 3: the template's run-invariant calls (a lookup's
+        // invariant column index, a name's MATCH) are computed once, at the
+        // first member with the template's literals, and bound for every
+        // such member.
+        let invariant_nodes = if self.config.family_kernels
+            && (members.len() > 1 || shared_memo.is_some())
+        {
+            let names =
+                |name: &str, as_arg: bool| self.lift_name_is_run_constant(run.sheet, name, as_arg);
+            super::lift::LiftProgram::invariant_subtrees(self, ds, template, &names)
+        } else {
+            Vec::new()
+        };
+        let mut local_invariant: Option<crate::interpreter::InvariantValues> = None;
         for (i, &v) in members.iter().enumerate() {
             let row = run.row0 + i as u32;
             #[cfg(debug_assertions)]
@@ -298,12 +323,39 @@ where
                     continue;
                 }
             };
+            let row_delta = i64::from(row) - i64::from(anchor.0);
             let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref);
+            let compute =
+                || self.run_invariant_values(&interpreter, &invariant_nodes, row_delta, col_delta);
+            let invariant_values: Option<&crate::interpreter::InvariantValues> =
+                if bindings || invariant_nodes.is_empty() {
+                    None
+                } else if let Some(shared) = shared_memo {
+                    Some(shared.invariant.get_or_init(compute))
+                } else {
+                    if local_invariant.is_none() {
+                        local_invariant = Some(compute());
+                    }
+                    local_invariant.as_ref()
+                };
             let interpreter = match (bindings, &literals.slots_by_node) {
                 (true, Some(map)) => {
                     interpreter.with_parameter_bindings(InterpreterParameterBindings {
                         literal_slots_by_node: map,
                         literal_values: &bound,
+                        invariant_values: None,
+                    })
+                }
+                (false, _) if invariant_values.is_some_and(|m| !m.is_empty()) => {
+                    #[cfg(test)]
+                    self.invariant_bound_members_for_test
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    static NO_SLOTS: std::sync::LazyLock<FxHashMap<AstNodeId, LiteralSlotId>> =
+                        std::sync::LazyLock::new(FxHashMap::default);
+                    interpreter.with_parameter_bindings(InterpreterParameterBindings {
+                        literal_slots_by_node: &NO_SLOTS,
+                        literal_values: &[],
+                        invariant_values,
                     })
                 }
                 _ => interpreter,
@@ -311,7 +363,6 @@ where
             #[cfg(test)]
             self.family_members_for_test
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let row_delta = i64::from(row) - i64::from(anchor.0);
             if let (Some(plan), Some(index)) = (&criteria_plan, criteria_index)
                 && let Some(value) = self.criteria_member(
                     plan,
@@ -426,7 +477,9 @@ where
         if !self.config.family_lift || members.len() < 2 {
             return None;
         }
-        let program = super::lift::LiftProgram::compile(self, ds, template)?;
+        let names =
+            |name: &str, as_arg: bool| self.lift_name_is_run_constant(run.sheet, name, as_arg);
+        let program = super::lift::LiftProgram::compile(self, ds, template, &names)?;
         let mut bound = Vec::new();
         let mut cells = Vec::with_capacity(members.len());
         for (i, &v) in members.iter().enumerate() {
@@ -495,6 +548,108 @@ where
             );
         }
         Some(values)
+    }
+
+    /// Program 3 chain unit: the members of `run` in row order, each
+    /// reading the one above (see `Engine::evaluate_chain_lifted`). `None`
+    /// leaves the run to the per-cell path, member by member.
+    pub(super) fn try_chain_lift(&self, run: LayerRun, members: &[VertexId]) -> Option<Vec<f64>> {
+        if !self.config.family_execution || !self.config.family_lift || members.len() < 2 {
+            return None;
+        }
+        let store = self.graph.authority_plan_store().ok()?;
+        if members
+            .iter()
+            .any(|&v| self.graph.is_dynamic(v) || self.graph.is_volatile(v))
+        {
+            return None;
+        }
+        let (template, anchor) = store.owner_template(run.owner);
+        let ds = self.graph.data_store();
+        let literals = LiteralPlan::new(ds, template, anchor);
+        let names =
+            |name: &str, as_arg: bool| self.lift_name_is_run_constant(run.sheet, name, as_arg);
+        let program = super::lift::LiftProgram::compile(self, ds, template, &names)?;
+        // Every member has the template's literal row (a formula cell's
+        // authority id is its vertex id).
+        #[cfg(debug_assertions)]
+        for (i, &v) in members.iter().enumerate() {
+            let row = run.row0 + i as u32;
+            self.debug_check_member(store, v, template, anchor, (run.sheet, row, run.col));
+            debug_assert_eq!(store.ids().id_of((run.sheet, row, run.col)), Some(v.0));
+        }
+        if !literals.template_literals.is_empty() {
+            let mut page = None;
+            for &v in members {
+                let row = store.slots().get_cached(v.0, &mut page)?;
+                if row != literals.template_literals.as_slice()
+                    && !crate::engine::graph::authority_host::literal_rows_equal(
+                        ds,
+                        row,
+                        &literals.template_literals,
+                    )
+                {
+                    return None;
+                }
+            }
+        }
+        let lifted = self.evaluate_chain_lifted(&program, run, anchor, members.len())?;
+        #[cfg(test)]
+        self.chained_members_for_test
+            .fetch_add(members.len() as u64, std::sync::atomic::Ordering::Relaxed);
+        // Every member is a clean finite number (no format).
+        for i in 0..lifted.len() as u32 {
+            let cell = CellRef::new(run.sheet, Coord::new(run.row0 + i, run.col, true, true));
+            self.record_derived_format_at(cell, None);
+        }
+        Some(lifted)
+    }
+
+    /// The values of run-invariant calls `nodes`, evaluated for one member
+    /// (the walk's own evaluation); calls whose value is not a scalar are
+    /// left out (the walk evaluates them per member).
+    fn run_invariant_values(
+        &self,
+        interpreter: &Interpreter<'_>,
+        nodes: &[AstNodeId],
+        row_delta: i64,
+        col_delta: i64,
+    ) -> crate::interpreter::InvariantValues {
+        let ds = self.graph.data_store();
+        let reg = self.graph.sheet_reg();
+        let mut out = crate::interpreter::InvariantValues::default();
+        for &node in nodes {
+            let value =
+                interpreter.evaluate_arena_ast_with_offset(node, row_delta, col_delta, ds, reg);
+            let entry = match value {
+                Ok(crate::traits::CalcValue::Scalar(v)) => (v, None),
+                Ok(crate::traits::CalcValue::AnnotatedScalar(v, f)) => (v, Some(f)),
+                _ => continue,
+            };
+            if matches!(entry.0, LiteralValue::Array(_)) {
+                continue;
+            }
+            out.insert(node, entry);
+        }
+        out
+    }
+
+    /// Whether defined name `name`, read from a run on `sheet`, is one value
+    /// for every member (the lift evaluates it once): a cell, a literal or
+    /// a non-volatile, non-dynamic formula; a range only as a call's direct
+    /// argument (`as_arg`: elsewhere it is intersected with the member).
+    fn lift_name_is_run_constant(&self, sheet: SheetId, name: &str, as_arg: bool) -> bool {
+        use crate::engine::named_range::NamedDefinition as D;
+        let Some(named) = self.graph.resolve_name_entry(name, sheet) else {
+            return false;
+        };
+        match &named.definition {
+            D::Cell(_) | D::Literal(_) => true,
+            D::Range(_) => as_arg,
+            D::Formula { .. } => {
+                !self.graph.is_volatile(named.vertex) && !self.graph.is_dynamic(named.vertex)
+            }
+        }
     }
 
     /// Tier 3: a range kernel for the whole run, when the template has one.
@@ -613,6 +768,12 @@ impl<R> Engine<R>
 where
     R: EvaluationContext,
 {
+    /// Family members walked with run-invariant calls bound so far.
+    pub(crate) fn invariant_bound_members_for_test(&self) -> u64 {
+        self.invariant_bound_members_for_test
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     /// Members evaluated through a family template so far.
     pub(crate) fn family_members_for_test(&self) -> u64 {
         self.family_members_for_test
@@ -628,6 +789,12 @@ where
     /// Members evaluated through the elementwise lift so far.
     pub(crate) fn lifted_members_for_test(&self) -> u64 {
         self.lifted_members_for_test
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn chained_members_for_test(&self) -> u64 {
+        self.chained_members_for_test
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 
@@ -721,6 +888,61 @@ where
     /// reader is stale, no spill is pending and no member anchors a spill.
     /// Returns `false` (having done nothing) otherwise. Effects are those of
     /// `plan_scalar_effects` + `apply_write_cell` per member, in order.
+    /// [`Self::commit_run_scalars`] for a run whose every result is the
+    /// number `values[i]` (the chain lift): no per-member value vector.
+    pub(super) fn commit_run_numbers(
+        &mut self,
+        run: LayerRun,
+        members: &[VertexId],
+        values: &[f64],
+        delta_active: bool,
+        computed_writes: Option<&mut ComputedWriteBuffer>,
+    ) -> Result<bool, ExcelError> {
+        if delta_active
+            || !self.blocked_pending_spills.is_empty()
+            || !self.freshness_group_commit_ok()
+            || (self.graph.has_spill_anchors()
+                && members.iter().any(|&v| self.graph.is_spill_anchor(v)))
+        {
+            return Ok(false);
+        }
+        self.freshness_mark_committed_group(members);
+        for (&v, &x) in members.iter().zip(values) {
+            self.graph
+                .update_vertex_value_ref(v, &LiteralValue::Number(x));
+        }
+        if !(self.config.arrow_storage_enabled
+            && self.config.delta_overlay_enabled
+            && self.config.write_formula_overlay_enabled)
+            || self.computed_overlay_mirroring_disabled
+        {
+            return Ok(true);
+        }
+        let sheet_name = self.graph.sheet_name(run.sheet).to_string();
+        let date_system = self.arrow_sheet_date_system(&sheet_name);
+        let overlay =
+            |x: f64| Self::literal_to_overlay_value(&LiteralValue::Number(x), date_system);
+        match computed_writes {
+            Some(buffer) => {
+                // The members' formats are clear (`try_chain_lift`).
+                let entries: Vec<(OverlayValue, Option<crate::format::FormatId>)> =
+                    values.iter().map(|&x| (overlay(x), None)).collect();
+                buffer.push_column_run(run.sheet, run.row0, run.col, entries);
+                if self.should_flush_computed_write_buffer(buffer) {
+                    self.flush_computed_write_buffer(buffer)?;
+                }
+            }
+            None => {
+                for (i, &x) in values.iter().enumerate() {
+                    let row = run.row0 + i as u32;
+                    self.write_computed_overlay_value_0based(&sheet_name, row, run.col, overlay(x));
+                    self.write_computed_overlay_format_0based(&sheet_name, row, run.col, None);
+                }
+            }
+        }
+        Ok(true)
+    }
+
     pub(super) fn commit_run_scalars(
         &mut self,
         run: LayerRun,
@@ -742,7 +964,7 @@ where
         }
         self.freshness_mark_committed_group(members);
         for (v, value) in values {
-            self.graph.update_vertex_value(*v, value.clone());
+            self.graph.update_vertex_value_ref(*v, value);
         }
         if !(self.config.arrow_storage_enabled
             && self.config.delta_overlay_enabled

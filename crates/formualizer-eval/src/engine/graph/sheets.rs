@@ -26,6 +26,9 @@ impl DependencyGraph {
     /// Remove a sheet from the workbook.
     pub fn remove_sheet(&mut self, sheet_id: SheetId) -> Result<(), ExcelError> {
         let result = self.remove_sheet_impl(sheet_id);
+        if result.is_ok() {
+            self.drop_retired_ids_of_sheet(sheet_id);
+        }
         self.authority_end_structural();
         result
     }
@@ -171,7 +174,7 @@ impl DependencyGraph {
 
         // Update cached values for name vertices after the map borrows end.
         for vid in name_vertices_to_update {
-            self.update_vertex_value(vid, ref_err.clone());
+            self.update_vertex_value_ref(vid, &ref_err);
         }
         for &vid in &dirty_vertices {
             self.mark_vertex_dirty(vid);
@@ -404,7 +407,10 @@ impl DependencyGraph {
                 .store
                 .allocate(VertexAddr::grid(*coord), new_sheet_id, 0x01);
             #[cfg(any(test, feature = "legacy_oracle"))]
-            self.edges.add_vertex(VertexAddr::grid(*coord), new_id.0);
+            {
+                self.edges.add_vertex(VertexAddr::grid(*coord), new_id.0);
+                self.oracle_cell_vertex_created((new_sheet_id, coord.row(), coord.col()), new_id);
+            }
             self.sheet_index_mut(new_sheet_id)
                 .add_vertex(*coord, new_id);
 
@@ -485,7 +491,7 @@ impl DependencyGraph {
                 let new_ast_id = self.data_store.store_ast(&updated_ast, &self.sheet_reg);
                 self.vertex_formulas.insert(new_id, new_ast_id);
 
-                if let Ok((deps, range_deps, _, name_vertices)) =
+                if let Ok((deps, range_deps, vertexless, name_vertices)) =
                     self.extract_dependencies(&updated_ast, new_sheet_id)
                 {
                     let mapped_deps: Vec<VertexId> = deps
@@ -494,6 +500,12 @@ impl DependencyGraph {
                         .collect();
 
                     self.add_dependent_edges(new_id, &mapped_deps);
+                    self.note_vertexless_deps(
+                        new_id,
+                        vertexless
+                            .iter()
+                            .map(|c| (c.sheet_id, c.coord.row(), c.coord.col())),
+                    );
                     self.add_range_dependent_edges(new_id, &range_deps, new_sheet_id);
 
                     if !name_vertices.is_empty() {

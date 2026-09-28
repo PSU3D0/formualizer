@@ -133,7 +133,14 @@ impl LocalEnv {
 pub(crate) struct InterpreterParameterBindings<'a> {
     pub(crate) literal_slots_by_node: &'a FxHashMap<AstNodeId, LiteralSlotId>,
     pub(crate) literal_values: &'a [LiteralValue],
+    /// Program 3: values of a family template's run-invariant calls,
+    /// computed once per run (the same cells for every member).
+    pub(crate) invariant_values: Option<&'a InvariantValues>,
 }
+
+/// Values of run-invariant calls by node (see `InterpreterParameterBindings`).
+pub(crate) type InvariantValues =
+    FxHashMap<AstNodeId, (LiteralValue, Option<crate::format::FormatId>)>;
 
 pub struct Interpreter<'a> {
     pub context: &'a dyn EvaluationContext,
@@ -863,6 +870,12 @@ impl<'a> Interpreter<'a> {
                 ))
             }
             AstNodeData::Function { name_id, .. } => {
+                if let Some(bindings) = self.parameter_bindings
+                    && let Some(values) = bindings.invariant_values
+                    && let Some((value, format)) = values.get(&node_id)
+                {
+                    return Ok(Self::annotated(value.clone(), *format));
+                }
                 let name = data_store.resolve_ast_string(*name_id);
                 if name == CALL_NODE_NAME {
                     return Err(call_expression_error());

@@ -22,7 +22,7 @@ pub struct SourceRect {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SourceFamilyId {
     pub sheet_instance: u32,
-    pub source_index: usize,
+    pub source_index: u32,
 }
 
 /// Opaque workbook-backend source ordering proof. The evaluator compares

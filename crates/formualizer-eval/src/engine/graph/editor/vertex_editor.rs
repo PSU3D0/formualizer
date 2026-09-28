@@ -493,6 +493,14 @@ impl<'g> VertexEditor<'g> {
     // Transaction support has been moved to TransactionContext
     // which coordinates ChangeLog, TransactionManager, and VertexEditor
 
+    /// Backward replay reached a compound's end marker; `description` is
+    /// its start marker's. A structural edit's extent record goes back to
+    /// the pre-edit frame here, before the replay of its events
+    /// (`DependencyGraph::undo_structural_extent`).
+    pub(crate) fn inverse_compound_end(&mut self, description: &str) {
+        self.graph.undo_structural_extent(description);
+    }
+
     /// Apply the inverse of a change event (used by TransactionContext for rollback)
     pub fn apply_inverse(&mut self, change: ChangeEvent) -> Result<(), EditorError> {
         match change {
@@ -507,8 +515,12 @@ impl<'g> VertexEditor<'g> {
                     self.set_cell_formula(addr, old_formula);
                 } else if let Some(old_value) = old_value {
                     self.set_cell_value(addr, old_value);
-                } else if let Some(id) = self.graph.get_vertex_id_for_address(&addr) {
-                    self.remove_vertex(id)?;
+                } else {
+                    // No prior state the graph holds: the cell is a value or
+                    // empty cell again (Arrow restores its value). Its formula
+                    // id retires at the cell (decision 27), so replaying the
+                    // formula back revives it.
+                    self.graph.retire_cell_for_replay(addr);
                 }
             }
             ChangeEvent::SetFormula {
@@ -522,8 +534,12 @@ impl<'g> VertexEditor<'g> {
                     self.set_cell_formula(addr, old_formula);
                 } else if let Some(old_value) = old_value {
                     self.set_cell_value(addr, old_value);
-                } else if let Some(id) = self.graph.get_vertex_id_for_address(&addr) {
-                    self.remove_vertex(id)?;
+                } else {
+                    // No prior state the graph holds: the cell is a value or
+                    // empty cell again (Arrow restores its value). Its formula
+                    // id retires at the cell (decision 27), so replaying the
+                    // formula back revives it.
+                    self.graph.retire_cell_for_replay(addr);
                 }
             }
             ChangeEvent::SetRowVisibility { .. } => {
@@ -646,8 +662,14 @@ impl<'g> VertexEditor<'g> {
                 // Workbook-level deferred state is replayed by Engine undo/redo wrappers.
             }
             // Granular events for compound operations
-            ChangeEvent::CompoundStart { .. } | ChangeEvent::CompoundEnd { .. } => {
-                // These are markers, no inverse needed
+            ChangeEvent::CompoundStart { description, .. } => {
+                // A marker; a structural edit's marker also shifts the
+                // retired-id side table back (decision 27).
+                self.graph.replay_structural_marker(&description, false);
+            }
+            ChangeEvent::CompoundEnd { .. } => {
+                // A marker: backward replay loops call
+                // `inverse_compound_end` with its compound's description.
             }
             ChangeEvent::VertexMoved {
                 id,
@@ -702,27 +724,13 @@ impl<'g> VertexEditor<'g> {
     }
 
     pub fn try_add_vertex(&mut self, meta: VertexMeta) -> Result<VertexId, EditorError> {
-        // For now, use the existing set_cell_value method to create vertices
-        // This is a simplified implementation that works with the current API
-        let sheet_name = self.graph.sheet_name(meta.sheet_id).to_string();
-
-        // VertexEditor/VertexMeta use internal 0-based coordinates, while the
-        // graph mutation API is 1-based and owns common admission.
+        // An explicitly requested vertex: an empty one at the cell (value
+        // cells otherwise have none, decision 27; a value set later removes
+        // it again). VertexMeta uses internal 0-based coordinates.
         let id = self
             .graph
-            .set_cell_value(
-                &sheet_name,
-                meta.coord.row() + 1,
-                meta.coord.col() + 1,
-                LiteralValue::Empty,
-            )
-            .map_err(EditorError::Excel)?
-            .affected_vertices
-            .into_iter()
-            .next()
-            .ok_or_else(|| EditorError::TransactionFailed {
-                reason: "vertex addition produced no affected vertex".to_string(),
-            })?;
+            .add_empty_vertex(meta.sheet_id, meta.coord.row(), meta.coord.col())
+            .map_err(EditorError::Excel)?;
 
         if self.has_logger() && id.0 != 0 {
             self.log_change(ChangeEvent::AddVertex {
@@ -809,6 +817,10 @@ impl<'g> VertexEditor<'g> {
         // Remove from cell mapping if it exists
         if let Some(cell_ref) = self.graph.get_cell_ref_for_vertex(id) {
             self.graph.remove_cell_mapping(&cell_ref);
+            // Legacy's cell leaves the used extent with its vertex.
+            let (r, c) = (cell_ref.coord.row(), cell_ref.coord.col());
+            self.graph
+                .forget_extent_cells(cell_ref.sheet_id, (r, r), (c, c));
         }
 
         // Remove all formula/value payloads owned by this vertex.  Tombstoned vertices remain in
@@ -857,6 +869,11 @@ impl<'g> VertexEditor<'g> {
         if let Some(id) = self.graph.get_vertex_for_cell(&cell) {
             self.remove_vertex(id)
         } else {
+            // A value or referenced cell (legacy's vertex) leaves the used
+            // extent.
+            let (r, c) = (cell.coord.row(), cell.coord.col());
+            self.graph
+                .forget_extent_cells(cell.sheet_id, (r, r), (c, c));
             Ok(())
         }
     }
@@ -1146,10 +1163,28 @@ impl<'g> VertexEditor<'g> {
         start: u32,
         count: u32,
     ) -> Result<ShiftSummary, EditorError> {
-        self.graph.authority_note_structural_shift();
         if count == 0 {
+            self.graph.authority_note_structural_shift();
             return Ok(ShiftSummary::default());
         }
+        // The deleted band's readers (and theirs) are dirty, in the pre-edit
+        // frame: value cells have no vertex whose removal would dirty them
+        // (decision 27). Only occupied columns when the caller knows them
+        // (an empty column's readers see no change).
+        let end = start.saturating_add(count - 1);
+        let rects: Vec<(SheetId, u32, u32, u32, u32)> = match self
+            .structural_occupancy
+            .as_ref()
+            .and_then(|o| o.occupied_column_runs())
+        {
+            Some(runs) => runs
+                .into_iter()
+                .map(|(c0, c1)| (sheet_id, start, end, c0, c1))
+                .collect(),
+            None => vec![(sheet_id, start, end, 0, 16_383)],
+        };
+        let _ = self.graph.mark_dirty_rects(&rects);
+        self.graph.authority_note_structural_shift();
 
         let mut summary = ShiftSummary::default();
 
@@ -1361,6 +1396,8 @@ impl<'g> VertexEditor<'g> {
         shift: impl Fn(GridAddr) -> GridAddr,
         summary: &mut ShiftSummary,
     ) -> Result<(), EditorError> {
+        let journal = self.has_logger();
+        self.graph.shift_retired_ids(op, journal);
         let runs = self.graph.shift_virtual_runs(op);
 
         for (id, old_coord) in vertices_to_shift {
@@ -1476,10 +1513,21 @@ impl<'g> VertexEditor<'g> {
         start: u32,
         count: u32,
     ) -> Result<ShiftSummary, EditorError> {
-        self.graph.authority_note_structural_shift();
         if count == 0 {
+            self.graph.authority_note_structural_shift();
             return Ok(ShiftSummary::default());
         }
+        // The deleted band's readers (and theirs) are dirty, in the pre-edit
+        // frame: value cells have no vertex whose removal would dirty them
+        // (decision 27).
+        let _ = self.graph.mark_dirty_rects(&[(
+            sheet_id,
+            0,
+            1_048_575,
+            start,
+            start.saturating_add(count - 1),
+        )]);
+        self.graph.authority_note_structural_shift();
 
         let mut summary = ShiftSummary::default();
 
@@ -1615,7 +1663,8 @@ impl<'g> VertexEditor<'g> {
         // This would require coordination with the vertex store and dependency tracking
     }
 
-    /// Set a cell value, creating the vertex if it doesn't exist
+    /// Set a cell value. A value cell has no vertex (decision 27): returns
+    /// `VertexId(0)`; a formula it replaces retires its id.
     pub fn set_cell_value(&mut self, cell_ref: CellRef, value: LiteralValue) -> VertexId {
         self.set_cell_value_with_old_state(cell_ref, value, None, None)
     }
@@ -1677,7 +1726,7 @@ impl<'g> VertexEditor<'g> {
             cell_ref.coord.col() + 1,
             value.clone(),
         ) {
-            Ok(summary) => {
+            Ok(_) => {
                 // Log change event
                 let change_event = ChangeEvent::SetValue {
                     addr: cell_ref,
@@ -1691,11 +1740,8 @@ impl<'g> VertexEditor<'g> {
                     logger.end_compound();
                 }
 
-                summary
-                    .affected_vertices
-                    .into_iter()
-                    .next()
-                    .unwrap_or(VertexId::new(0))
+                // A value cell has no vertex (decision 27).
+                VertexId::new(0)
             }
             Err(_) => VertexId::new(0),
         }
@@ -1927,12 +1973,23 @@ impl<'g> VertexEditor<'g> {
                 let col = coord.col();
                 row >= start_row && row <= end_row && col >= start_col && col <= end_col
             })
-            .map(|(id, _)| id)
             .collect();
 
-        for id in vertices_in_range {
+        let mut vertex_cells = rustc_hash::FxHashSet::default();
+        for (id, coord) in vertices_in_range {
             self.remove_vertex(id)?;
+            vertex_cells.insert((coord.row(), coord.col()));
             summary.cells_affected += 1;
+        }
+        // Value and referenced cells (legacy's vertices) leave the used
+        // extent too, and count as cleared cells, as their vertices did.
+        for (col, r0, r1) in
+            self.graph
+                .forget_extent_cells(sheet_id, (start_row, end_row), (start_col, end_col))
+        {
+            summary.cells_affected += (r0..=r1)
+                .filter(|&row| !vertex_cells.contains(&(row, col)))
+                .count();
         }
 
         self.commit_batch();
@@ -2371,7 +2428,9 @@ mod tests {
         let anchor_cell = CellRef::new(sheet_id, Coord::new(0, 0, true, true));
         let anchor_vid = {
             let mut editor = VertexEditor::new(&mut graph);
-            editor.set_cell_value(anchor_cell, LiteralValue::Number(0.0))
+            // A formula anchors a spill (value cells have no vertex,
+            // decision 27; this used a value cell's vertex).
+            editor.set_cell_formula(anchor_cell, formualizer_parse::parser::parse("=0").unwrap())
         };
 
         let target_cells = vec![
@@ -2446,8 +2505,8 @@ mod tests {
             editor.set_cell_value(cell_ref, value.clone())
         };
 
-        // Verify vertex was created (simplified check)
-        assert!(vertex_id.0 > 0);
+        // A value cell has no vertex (decision 27): the sentinel id.
+        assert_eq!(vertex_id.0, 0);
 
         // Verify change log
         assert_eq!(log.len(), 1);

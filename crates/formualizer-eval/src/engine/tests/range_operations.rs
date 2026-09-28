@@ -30,27 +30,29 @@ fn test_set_range_values() {
     let summary = editor.set_range_values(0, 0, 0, &values).unwrap();
 
     drop(editor);
+    // Value cells have no vertex (decisions 27/28): vertex existence, not
+    // the cell count, changed.
 
     assert_eq!(summary.cells_affected, 9);
     assert!(
         graph
             .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 1))
-            .is_some()
+            .is_none()
     );
     assert!(
         graph
             .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 2))
-            .is_some()
+            .is_none()
     );
     assert!(
         graph
             .get_vertex_id_for_address(&sheet1_cell(&graph, 2, 1))
-            .is_some()
+            .is_none()
     );
     assert!(
         graph
             .get_vertex_id_for_address(&sheet1_cell(&graph, 3, 3))
-            .is_some()
+            .is_none()
     );
 }
 
@@ -153,17 +155,19 @@ fn test_set_range_values_partial_overlap() {
     let summary = editor.set_range_values(0, 0, 0, &values).unwrap();
 
     drop(editor);
+    // Value cells have no vertex (decisions 27/28): vertex existence, not
+    // the cell count, changed.
 
     assert_eq!(summary.cells_affected, 4);
     assert!(
         graph
             .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 1))
-            .is_some()
+            .is_none()
     );
     assert!(
         graph
             .get_vertex_id_for_address(&sheet1_cell(&graph, 2, 2))
-            .is_some()
+            .is_none()
     );
 }
 
@@ -300,6 +304,8 @@ fn test_set_range_values_large() {
     let summary = editor.set_range_values(0, 0, 0, &values).unwrap();
 
     drop(editor);
+    // Value cells have no vertex (decisions 27/28): vertex existence, not
+    // the cell count, changed.
 
     assert_eq!(summary.cells_affected, 10000);
 
@@ -307,16 +313,16 @@ fn test_set_range_values_large() {
     assert!(
         graph
             .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 1))
-            .is_some()
+            .is_none()
     );
     assert!(
         graph
             .get_vertex_id_for_address(&sheet1_cell(&graph, 50, 50))
-            .is_some()
+            .is_none()
     );
     assert!(
         graph
             .get_vertex_id_for_address(&sheet1_cell(&graph, 100, 100))
-            .is_some()
+            .is_none()
     );
 }

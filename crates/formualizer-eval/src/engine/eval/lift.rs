@@ -50,7 +50,94 @@ enum LiftNode {
         kernel: crate::function::FamilyKernel,
         args: smallvec::SmallVec<[usize; 4]>,
     },
+    /// Program 3: a call whose every reference is the same cell or range
+    /// for every member of a column run (rows absolute or open, the run's
+    /// column shared by all members) through pure, context-free functions:
+    /// the walk evaluates it once per run, at the first member.
+    Invariant {
+        node: AstNodeId,
+    },
 }
+
+/// Functions a run-invariant call may use: pure, and independent of the
+/// cell evaluating them (no `ROW()`/`COLUMN()`-style context).
+/// A function of `INVARIANT_FUNCTIONS` whose registered implementation is
+/// not volatile, dynamic, environment-binding or spilling.
+pub(super) fn pure_listed_function(
+    functions: &dyn crate::traits::FunctionProvider,
+    name: &str,
+) -> bool {
+    use crate::function::FnCaps;
+    INVARIANT_FUNCTIONS
+        .iter()
+        .any(|f| f.eq_ignore_ascii_case(name))
+        && functions.get_function("", name).is_some_and(|fun| {
+            !fun.caps().intersects(
+                FnCaps::VOLATILE
+                    | FnCaps::DYNAMIC_DEPENDENCY
+                    | FnCaps::LOCAL_ENVIRONMENT
+                    | FnCaps::MAY_SPILL,
+            )
+        })
+}
+
+const INVARIANT_FUNCTIONS: &[&str] = &[
+    "INDEX",
+    "MATCH",
+    "VLOOKUP",
+    "HLOOKUP",
+    "XLOOKUP",
+    "XMATCH",
+    "SUM",
+    "SUMIF",
+    "SUMIFS",
+    "COUNT",
+    "COUNTA",
+    "COUNTIF",
+    "COUNTIFS",
+    "AVERAGE",
+    "AVERAGEIF",
+    "AVERAGEIFS",
+    "MIN",
+    "MAX",
+    "SUMPRODUCT",
+    "ROUND",
+    "ABS",
+    "IF",
+    "IFERROR",
+    "IFNA",
+    "ISNA",
+    "ISERROR",
+    "ISNUMBER",
+    "ISBLANK",
+    "ISTEXT",
+    "AND",
+    "OR",
+    "NOT",
+    "CHOOSE",
+    "MONTH",
+    "YEAR",
+    "DAY",
+    "DATE",
+    "LEFT",
+    "RIGHT",
+    "MID",
+    "LEN",
+    "FIND",
+    "SEARCH",
+    "TRIM",
+    "UPPER",
+    "LOWER",
+    "CONCATENATE",
+    "VALUE",
+    "ISERR",
+    "ISLOGICAL",
+    "N",
+    "INT",
+    "MOD",
+    "ROUNDUP",
+    "ROUNDDOWN",
+];
 
 pub(super) struct LiftProgram {
     nodes: Vec<LiftNode>,
@@ -87,21 +174,136 @@ fn static_unary(op: &str) -> Option<&'static str> {
 }
 
 impl LiftProgram {
-    /// Compile `template`, or `None` when it is not liftable.
+    /// Compile `template`, or `None` when it is not liftable. `names`
+    /// tells whether a defined name is the same value for every member of
+    /// the run (its second argument: the name is a call's direct argument,
+    /// where a range is not intersected with the member).
     pub(super) fn compile(
         functions: &dyn crate::traits::FunctionProvider,
         ds: &DataStore,
         template: AstNodeId,
+        names: &dyn Fn(&str, bool) -> bool,
     ) -> Option<Self> {
         let mut program = Self { nodes: Vec::new() };
-        program.compile_node(functions, ds, template)?;
+        program.compile_node(functions, ds, template, names)?;
+        // A template that is itself one run-invariant call (or name) stays
+        // on the walk, member by member, like the walk's own invariant
+        // binding (`invariant_subtrees` leaves the root out): lifting it
+        // would evaluate it once per lifted chunk, and how a run is chunked
+        // depends on the pool's thread count.
+        if matches!(program.nodes.last(), Some(LiftNode::Invariant { .. })) {
+            return None;
+        }
         // A template without any reference is a constant family: the walk
-        // is as cheap, keep it there.
+        // is as cheap, keep it there (a run-invariant call is not).
         program
             .nodes
             .iter()
-            .any(|n| matches!(n, LiftNode::Cell { .. }))
+            .any(|n| matches!(n, LiftNode::Cell { .. } | LiftNode::Invariant { .. }))
             .then_some(program)
+    }
+
+    /// The maximal run-invariant calls strictly inside `root` (their value
+    /// is one for the whole run; the walk can compute them once).
+    pub(super) fn invariant_subtrees(
+        functions: &dyn crate::traits::FunctionProvider,
+        ds: &DataStore,
+        root: AstNodeId,
+        names: &dyn Fn(&str, bool) -> bool,
+    ) -> Vec<AstNodeId> {
+        fn visit(
+            functions: &dyn crate::traits::FunctionProvider,
+            ds: &DataStore,
+            id: AstNodeId,
+            is_root: bool,
+            names: &dyn Fn(&str, bool) -> bool,
+            out: &mut Vec<AstNodeId>,
+        ) {
+            match ds.get_node(id) {
+                Some(AstNodeData::Function { .. }) => {
+                    if !is_root && LiftProgram::invariant(functions, ds, id, names) {
+                        out.push(id);
+                    } else if let Some(args) = ds.get_args(id) {
+                        for &arg in args {
+                            visit(functions, ds, arg, false, names, out);
+                        }
+                    }
+                }
+                Some(AstNodeData::UnaryOp { expr_id, .. }) => {
+                    visit(functions, ds, *expr_id, false, names, out)
+                }
+                Some(AstNodeData::BinaryOp {
+                    left_id, right_id, ..
+                }) => {
+                    visit(functions, ds, *left_id, false, names, out);
+                    visit(functions, ds, *right_id, false, names, out);
+                }
+                _ => {}
+            }
+        }
+        let mut out = Vec::new();
+        visit(functions, ds, root, true, names, &mut out);
+        out
+    }
+
+    /// Whether `id` is a run-invariant expression (see `LiftNode::Invariant`).
+    pub(super) fn invariant(
+        functions: &dyn crate::traits::FunctionProvider,
+        ds: &DataStore,
+        id: AstNodeId,
+        names: &dyn Fn(&str, bool) -> bool,
+    ) -> bool {
+        Self::invariant_in(functions, ds, id, false, names)
+    }
+
+    /// `as_arg`: `id` is a direct argument of a call. A range only there: as
+    /// an operator's operand it is implicitly intersected with the member's
+    /// row or column.
+    fn invariant_in(
+        functions: &dyn crate::traits::FunctionProvider,
+        ds: &DataStore,
+        id: AstNodeId,
+        as_arg: bool,
+        names: &dyn Fn(&str, bool) -> bool,
+    ) -> bool {
+        match ds.get_node(id) {
+            Some(AstNodeData::Literal(vref)) => {
+                !matches!(ds.retrieve_value(*vref), LiteralValue::Array(_))
+            }
+            Some(AstNodeData::Reference { ref_type, .. }) => match ref_type {
+                CompactRefType::Cell { row_abs, row, .. } => *row_abs && *row > 0,
+                CompactRefType::Range {
+                    start_row,
+                    end_row,
+                    start_row_abs,
+                    end_row_abs,
+                    ..
+                } => {
+                    as_arg
+                        && (*start_row_abs || *start_row == 0)
+                        && (*end_row_abs || *end_row == u32::MAX)
+                }
+                CompactRefType::NamedRange(name) => names(ds.resolve_ast_string(*name), as_arg),
+                _ => false,
+            },
+            Some(AstNodeData::UnaryOp { expr_id, .. }) => {
+                Self::invariant_in(functions, ds, *expr_id, false, names)
+            }
+            Some(AstNodeData::BinaryOp {
+                left_id, right_id, ..
+            }) => {
+                Self::invariant_in(functions, ds, *left_id, false, names)
+                    && Self::invariant_in(functions, ds, *right_id, false, names)
+            }
+            Some(AstNodeData::Function { name_id, .. }) => {
+                pure_listed_function(functions, ds.resolve_ast_string(*name_id))
+                    && ds.get_args(id).is_some_and(|args| {
+                        args.iter()
+                            .all(|&a| Self::invariant_in(functions, ds, a, true, names))
+                    })
+            }
+            _ => false,
+        }
     }
 
     fn compile_node(
@@ -109,6 +311,7 @@ impl LiftProgram {
         functions: &dyn crate::traits::FunctionProvider,
         ds: &DataStore,
         id: AstNodeId,
+        names: &dyn Fn(&str, bool) -> bool,
     ) -> Option<usize> {
         if self.nodes.len() >= MAX_LIFT_NODES {
             return None;
@@ -142,7 +345,7 @@ impl LiftProgram {
             AstNodeData::UnaryOp { op_id, expr_id } => {
                 let op = static_unary(ds.resolve_ast_string(*op_id))?;
                 let expr_id = *expr_id;
-                let child = self.compile_node(functions, ds, expr_id)?;
+                let child = self.compile_node(functions, ds, expr_id, names)?;
                 LiftNode::Unary { op, child }
             }
             AstNodeData::BinaryOp {
@@ -152,10 +355,18 @@ impl LiftProgram {
             } => {
                 let op = static_binary(ds.resolve_ast_string(*op_id))?;
                 let (left_id, right_id) = (*left_id, *right_id);
-                let left = self.compile_node(functions, ds, left_id)?;
-                let right = self.compile_node(functions, ds, right_id)?;
+                let left = self.compile_node(functions, ds, left_id, names)?;
+                let right = self.compile_node(functions, ds, right_id, names)?;
                 LiftNode::Binary { op, left, right }
             }
+            AstNodeData::Function { .. } if Self::invariant(functions, ds, id, names) => {
+                LiftNode::Invariant { node: id }
+            }
+            // A defined name with one value for the run (`=I2/UOM`).
+            AstNodeData::Reference {
+                ref_type: CompactRefType::NamedRange(_),
+                ..
+            } if Self::invariant(functions, ds, id, names) => LiftNode::Invariant { node: id },
             AstNodeData::Function { name_id, .. } => {
                 // Only the built-in IF (an override keeps `family_kernel`
                 // `None`), with the arities its `eval` accepts.
@@ -170,6 +381,17 @@ impl LiftProgram {
                     K::Min | K::Max | K::And | K::Or => !args.is_empty() && args.len() <= 30,
                     // `SUM` of scalar operands (ranges do not compile).
                     K::Sum => !args.is_empty() && args.len() <= 30,
+                    K::IsNumber
+                    | K::IsText
+                    | K::IsLogical
+                    | K::IsBlank
+                    | K::IsError
+                    | K::IsErr
+                    | K::IsNa
+                    | K::Year
+                    | K::Month
+                    | K::Day => args.len() == 1,
+                    K::Weekday => (1..=2).contains(&args.len()),
                     _ => false,
                 };
                 if !arity_ok {
@@ -179,7 +401,7 @@ impl LiftProgram {
                     let args: smallvec::SmallVec<[AstNodeId; 4]> = args.iter().copied().collect();
                     let mut compiled = smallvec::SmallVec::new();
                     for arg in args {
-                        compiled.push(self.compile_node(functions, ds, arg)?);
+                        compiled.push(self.compile_node(functions, ds, arg, names)?);
                     }
                     self.nodes.push(LiftNode::Builtin {
                         kernel,
@@ -188,10 +410,10 @@ impl LiftProgram {
                     return Some(self.nodes.len() - 1);
                 }
                 let args: smallvec::SmallVec<[AstNodeId; 3]> = args.iter().copied().collect();
-                let cond = self.compile_node(functions, ds, args[0])?;
-                let then = self.compile_node(functions, ds, args[1])?;
+                let cond = self.compile_node(functions, ds, args[0], names)?;
+                let then = self.compile_node(functions, ds, args[1], names)?;
                 let otherwise = match args.get(2) {
-                    Some(&arg) => Some(self.compile_node(functions, ds, arg)?),
+                    Some(&arg) => Some(self.compile_node(functions, ds, arg, names)?),
                     None => None,
                 };
                 LiftNode::If {
@@ -353,7 +575,18 @@ where
                 LiftNode::Builtin { kernel, args } => {
                     let args: smallvec::SmallVec<[Column; 4]> =
                         args.iter().map(|&k| take(&mut columns, k)).collect();
-                    Column::Lane(Lane::builtin(*kernel, &args, n))
+                    Column::Lane(Lane::builtin(*kernel, &args, n, self.config.date_system))
+                }
+                // Once per run, exactly as the walk evaluates it for the
+                // first member (every member sees the same cells).
+                LiftNode::Invariant { node } => {
+                    let value = interpreter
+                        .evaluate_arena_ast_with_offset(*node, row_delta0, col_delta, ds, reg)
+                        .map(split);
+                    if let Ok((LiteralValue::Array(_), _)) = value {
+                        return None;
+                    }
+                    Column::Const(value)
                 }
             };
             columns.push(column);
@@ -482,6 +715,276 @@ where
 }
 
 type Lifted = Result<(LiteralValue, Option<FormatId>), ExcelError>;
+
+/// Program 3 chain units: a family run whose members read the member
+/// above (`=A1+1` or `=C2+D1` filled down) evaluated member by member in
+/// row order through the compiled template, the member above coming from
+/// the previous result instead of a written cell. Only operators, literals
+/// and cell references; the one reference into the run's own column must
+/// be the cell directly above; a member result that is not a clean number
+/// (no format) stops the chain (the caller takes the per-cell path), so the
+/// carried value is exactly what reading the written cell would give.
+impl<R> Engine<R>
+where
+    R: EvaluationContext,
+{
+    /// Reading a chain member's cell right after it is written gives its
+    /// result exactly: computed writes land, no user value shadows them
+    /// (a formula cell's delta overlay entry), and no format (cell format
+    /// lanes, overlay formats) annotates them.
+    fn chain_cells_plain(&self, run: LayerRun, n: usize) -> bool {
+        if !(self.config.arrow_storage_enabled
+            && self.config.delta_overlay_enabled
+            && self.config.write_formula_overlay_enabled)
+            || self.computed_overlay_mirroring_disabled
+        {
+            return false;
+        }
+        let sheet = self.graph.sheet_name(run.sheet);
+        let Some(asheet) = self.arrow_sheets.sheet(sheet) else {
+            return true;
+        };
+        let Some(column) = asheet.columns.get(run.col as usize) else {
+            return true;
+        };
+        let (mut r, end) = (run.row0 as usize, run.row0 as usize + n);
+        while r < end {
+            let Some((ci, off)) = asheet.chunk_of_row(r) else {
+                // Past the sheet's rows: nothing stored there.
+                return true;
+            };
+            let Some(ch) = column.chunk(ci) else {
+                let next = asheet
+                    .chunk_starts
+                    .get(ci + 1)
+                    .copied()
+                    .unwrap_or(asheet.nrows as usize);
+                r = next.max(r + 1);
+                continue;
+            };
+            let len = (ch.len() - off).min(end - r);
+            if ch.overlay.has_any_in_range(off..off + len)
+                || ch.overlay.has_formats()
+                || ch.computed_overlay.has_formats()
+                || ch
+                    .format
+                    .as_ref()
+                    .is_some_and(|runs| !runs.all_general_in(off, len))
+            {
+                return false;
+            }
+            r += len.max(1);
+        }
+        true
+    }
+
+    pub(super) fn evaluate_chain_lifted(
+        &self,
+        program: &LiftProgram,
+        run: LayerRun,
+        anchor: (u32, u32),
+        n: usize,
+    ) -> Option<Vec<f64>> {
+        enum Source {
+            Const(LiteralValue),
+            Above,
+            Cell {
+                sheet_id: SheetId,
+                asheet: Option<usize>,
+                row: u32,
+                row_abs: bool,
+                col: u32,
+            },
+        }
+        let ds = self.graph.data_store();
+        let reg = self.graph.sheet_reg();
+        let current_sheet = self.graph.sheet_name(run.sheet);
+        let col_delta = i64::from(run.col) - i64::from(anchor.1);
+        let row_delta0 = i64::from(run.row0) - i64::from(anchor.0);
+        // Excel (1-based) rows of the run.
+        let (first_row, last_row) = (run.row0 + 1, run.row0 + n as u32);
+        let mut sources: Vec<Option<Source>> = Vec::with_capacity(program.nodes.len());
+        let mut above = false;
+        for node in &program.nodes {
+            let source = match node {
+                LiftNode::Value(value) => Some(Source::Const(value.clone())),
+                LiftNode::Cell {
+                    sheet,
+                    row,
+                    col,
+                    row_abs,
+                    col_abs,
+                } => {
+                    let sheet_name = match sheet {
+                        Some(SheetKey::Id(id)) => reg.name(*id),
+                        Some(SheetKey::Name(name)) => ds.resolve_ast_string(*name),
+                        None => current_sheet,
+                    };
+                    let sheet_id = self.graph.sheet_id(sheet_name)?;
+                    let col = shift_axis(*col, col_delta, *col_abs).ok()?;
+                    let first = shift_axis(*row, row_delta0, *row_abs).ok()?;
+                    // Every member's row stays on the grid.
+                    if !*row_abs {
+                        shift_axis(*row, row_delta0 + n as i64 - 1, false).ok()?;
+                    }
+                    if sheet_id == run.sheet && col == run.col + 1 {
+                        if !*row_abs && first + 1 == first_row {
+                            above = true;
+                            Some(Source::Above)
+                        } else if *row_abs && !(first_row..=last_row).contains(&first) {
+                            Some(Source::Cell {
+                                sheet_id,
+                                asheet: None,
+                                row: first,
+                                row_abs: true,
+                                col,
+                            })
+                        } else {
+                            // Another member's cell: not a chain.
+                            return None;
+                        }
+                    } else {
+                        let asheet = self
+                            .arrow_sheets
+                            .sheets
+                            .iter()
+                            .position(|s| s.name.as_ref() == sheet_name);
+                        Some(Source::Cell {
+                            sheet_id,
+                            asheet,
+                            row: first,
+                            row_abs: *row_abs,
+                            col,
+                        })
+                    }
+                }
+                LiftNode::Unary { .. } | LiftNode::Binary { .. } => None,
+                LiftNode::If { .. } | LiftNode::Builtin { .. } | LiftNode::Invariant { .. } => {
+                    return None;
+                }
+            };
+            sources.push(source);
+        }
+        if !above || !self.chain_cells_plain(run, n) {
+            return None;
+        }
+        let first =
+            crate::reference::CellRef::new(run.sheet, Coord::new(run.row0, run.col, true, true));
+        let interpreter =
+            crate::interpreter::Interpreter::new_with_cell(self, current_sheet, first);
+        let read = |sheet_id: SheetId, asheet: Option<usize>, row: u32, col: u32| -> Lifted {
+            let asheet = asheet.and_then(|i| self.arrow_sheets.sheets.get(i));
+            Ok(self.read_cell_formatted_in(sheet_id, asheet, row, col))
+        };
+        // The cell above the first member: read (outside the run).
+        let carry: Lifted = {
+            let asheet = self
+                .arrow_sheets
+                .sheets
+                .iter()
+                .position(|s| s.name.as_ref() == current_sheet);
+            if run.row0 == 0 {
+                Err(ExcelError::new(ExcelErrorKind::Ref))
+            } else {
+                read(run.sheet, asheet, run.row0, run.col + 1)
+            }
+        };
+        // Numbers stay unboxed: a clean number (no format) through `+ - *
+        // / ^` and unary `-`/`%` takes the shared `arith_f64`/`unary_f64`,
+        // exactly as the walk does; anything else is the boxed value.
+        enum V {
+            Num(f64),
+            Boxed(Lifted),
+        }
+        fn typed(value: Lifted) -> V {
+            match value {
+                Ok((LiteralValue::Number(x), None)) => V::Num(x),
+                other => V::Boxed(other),
+            }
+        }
+        fn boxed(value: V) -> Lifted {
+            match value {
+                V::Num(x) => Ok((LiteralValue::Number(x), None)),
+                V::Boxed(b) => b,
+            }
+        }
+        let mut carry = typed(carry);
+        let mut out = Vec::with_capacity(n);
+        let mut values: Vec<V> = Vec::with_capacity(program.nodes.len());
+        for i in 0..n {
+            values.clear();
+            for (node, source) in program.nodes.iter().zip(&sources) {
+                let value: V = match (node, source) {
+                    (_, Some(Source::Const(v))) => typed(Ok((v.clone(), None))),
+                    (_, Some(Source::Above)) => match &carry {
+                        V::Num(x) => V::Num(*x),
+                        V::Boxed(b) => V::Boxed(b.clone()),
+                    },
+                    (
+                        _,
+                        Some(Source::Cell {
+                            sheet_id,
+                            asheet,
+                            row,
+                            row_abs,
+                            col,
+                        }),
+                    ) => {
+                        let r = if *row_abs { *row } else { *row + i as u32 };
+                        typed(read(*sheet_id, *asheet, r, *col))
+                    }
+                    (LiftNode::Unary { op, child }, None) => {
+                        let operand = std::mem::replace(&mut values[*child], V::Num(0.0));
+                        match (operand, op.as_bytes()) {
+                            (V::Num(x), [b @ (b'-' | b'%')]) => {
+                                match crate::interpreter::unary_f64(*b, x) {
+                                    Ok(v) => V::Num(v),
+                                    Err(e) => V::Boxed(Err(e)),
+                                }
+                            }
+                            (operand, _) => typed(boxed(operand).and_then(|(v, f)| {
+                                interpreter.apply_unary_op(op, calc(v, f)).map(split)
+                            })),
+                        }
+                    }
+                    (LiftNode::Binary { op, left, right }, None) => {
+                        let l = std::mem::replace(&mut values[*left], V::Num(0.0));
+                        let r = std::mem::replace(&mut values[*right], V::Num(0.0));
+                        match (l, r, op.as_bytes()) {
+                            (V::Num(a), V::Num(b), [o @ (b'+' | b'-' | b'*' | b'/' | b'^')]) => {
+                                match crate::interpreter::arith_f64(*o, a, b) {
+                                    Ok(v) => V::Num(v),
+                                    Err(e) => V::Boxed(Err(e)),
+                                }
+                            }
+                            (l, r, _) => typed(match (boxed(l), boxed(r)) {
+                                (Ok((lv, lf)), Ok((rv, rf))) => {
+                                    interpreter.apply_binary_op(op, lv, lf, rv, rf).map(split)
+                                }
+                                (Err(e), _) | (_, Err(e)) => Err(e),
+                            }),
+                        }
+                    }
+                    _ => return None,
+                };
+                if let V::Boxed(Ok((LiteralValue::Array(_), _))) = value {
+                    return None;
+                }
+                values.push(value);
+            }
+            // The next member reads this one's written cell: exact only for
+            // a clean number (see the impl doc).
+            match values.pop()? {
+                V::Num(x) if x.is_finite() => {
+                    carry = V::Num(x);
+                    out.push(x);
+                }
+                _ => return None,
+            }
+        }
+        Some(out)
+    }
+}
 
 /// What the clean elements of a lane are.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -752,10 +1255,23 @@ impl Lane {
     /// builtin reads booleans); the core is the builtin's own arithmetic
     /// on those values (see each arm). Any other member is left to the
     /// per-member walk, so its value, error and format are the walk's.
-    fn builtin(kernel: crate::function::FamilyKernel, args: &[Column], n: usize) -> Lane {
+    fn builtin(
+        kernel: crate::function::FamilyKernel,
+        args: &[Column],
+        n: usize,
+        date_system: crate::engine::DateSystem,
+    ) -> Lane {
         use crate::function::FamilyKernel as K;
         let kind = match kernel {
-            K::And | K::Or => LaneKind::Bool,
+            K::And
+            | K::Or
+            | K::IsNumber
+            | K::IsText
+            | K::IsLogical
+            | K::IsBlank
+            | K::IsError
+            | K::IsErr
+            | K::IsNa => LaneKind::Bool,
             _ => LaneKind::Num,
         };
         let mut out = Lane::with_len(kind, n);
@@ -873,6 +1389,71 @@ impl Lane {
                 // `IFERROR(value, fallback)`: a clean value is the result
                 // (the fallback is not evaluated); errors take the walk.
                 K::IfError => num(&elems[0]),
+                // Type tests of a clean operand (a plain number or a plain
+                // boolean): the builtin's verdict on that value.
+                K::IsNumber
+                | K::IsText
+                | K::IsLogical
+                | K::IsBlank
+                | K::IsError
+                | K::IsErr
+                | K::IsNa => {
+                    let verdict = match (&elems[0], kernel) {
+                        (Elem::Num(_), K::IsNumber) | (Elem::Bool(_), K::IsLogical) => Some(true),
+                        (Elem::Num(_) | Elem::Bool(_), _) => Some(false),
+                        _ => None,
+                    };
+                    match verdict {
+                        Some(v) => {
+                            out.vals[i] = if v { 1.0 } else { 0.0 };
+                            continue;
+                        }
+                        None => None,
+                    }
+                }
+                // `YEAR`/`MONTH`/`DAY` of a clean number: the serial's
+                // date in the workbook's system, an integer result (boxed:
+                // the builtin returns `Int`); a serial off the calendar is
+                // left to the walk.
+                K::Year | K::Month | K::Day => {
+                    if let Some(x) = num(&elems[0])
+                        && let Ok(date) = formualizer_common::try_serial_to_date_for(date_system, x)
+                    {
+                        use chrono::Datelike;
+                        let part = match kernel {
+                            K::Year => i64::from(date.year()),
+                            K::Month => i64::from(date.month()),
+                            _ => i64::from(date.day()),
+                        };
+                        out.boxed
+                            .push((i as u32, Ok((LiteralValue::Int(part), None))));
+                        continue;
+                    }
+                    None
+                }
+                // `WEEKDAY(serial[, type])` of clean numbers: the type
+                // truncates, a negative whole serial is #NUM!.
+                K::Weekday => {
+                    let return_type = match elems.get(1) {
+                        None => Some(1),
+                        Some(e) => num(e).map(|t| t.trunc() as i64),
+                    };
+                    if let (Some(x), Some(t)) = (num(&elems[0]), return_type) {
+                        let whole = x.trunc() as i64;
+                        let value = if whole < 0 {
+                            LiteralValue::Error(ExcelError::new_num())
+                        } else {
+                            crate::builtins::datetime::weekday_workday::weekday_of_serial(
+                                date_system,
+                                whole,
+                                t,
+                            )
+                        };
+                        out.boxed.push((i as u32, Ok((value, None))));
+                        continue;
+                    }
+                    None
+                }
                 _ => None,
             };
             match value {

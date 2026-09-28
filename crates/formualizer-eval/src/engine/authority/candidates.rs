@@ -111,7 +111,13 @@ pub(crate) fn discover(
     let mut work = CandidateWork::default();
     let mut count = 0usize;
     let mut cells = 0u64;
+    // The counting visit keeps a small request's slices on the stack (no
+    // heap: admission is unchanged), so it is not visited twice.
+    let mut inline: smallvec::SmallVec<[OwnerSlice; SMALL_DISCOVERY]> = smallvec::SmallVec::new();
     visit(store, cover, &mut work, &mut |s| {
+        if count < SMALL_DISCOVERY {
+            inline.push(s);
+        }
         count += 1;
         cells += u64::from(s.r1 - s.r0 + 1);
     });
@@ -136,7 +142,11 @@ pub(crate) fn discover(
         .map_err(|_| AuthorityError::Alloc)?;
     temp.try_reserve_exact(count)
         .map_err(|_| AuthorityError::Alloc)?;
-    visit(store, cover, &mut work, &mut |s| slices.push(s));
+    if count <= SMALL_DISCOVERY {
+        slices.extend(inline);
+    } else {
+        visit(store, cover, &mut work, &mut |s| slices.push(s));
+    }
     temp.extend((0..count).map(|_| {
         work.initialize += 1;
         OwnerSlice::default()

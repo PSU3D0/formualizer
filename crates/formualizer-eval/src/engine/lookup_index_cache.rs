@@ -156,7 +156,8 @@ impl LookupIndex {
             return Ok(BuildOutcome::Degenerate);
         }
 
-        let mut entries: FxHashMap<LookupHashKey, DuplicateIndices> = FxHashMap::default();
+        let mut entries: FxHashMap<LookupHashKey, DuplicateIndices> =
+            FxHashMap::with_capacity_and_hasher(len, Default::default());
         let mut cell_values = Vec::with_capacity(len);
         let mut error_count = 0usize;
 
@@ -187,6 +188,11 @@ impl LookupIndex {
             return Ok(BuildOutcome::ErrorInLookupAxis);
         }
 
+        // Sized for distinct keys up front; a column of repeated keys
+        // gives the unused buckets back.
+        if entries.len().saturating_mul(2) < entries.capacity() {
+            entries.shrink_to_fit();
+        }
         let bytes = retained_bytes(&cell_values, &entries);
         Ok(BuildOutcome::Built(Self {
             len,
@@ -324,7 +330,17 @@ pub struct LookupIndexCache {
     skipped_tiny: AtomicUsize,
     skipped_cap: AtomicUsize,
     skipped_below_threshold: AtomicUsize,
+    /// Program 3: builds in progress. Parallel members of a lookup family
+    /// miss the cache together; one builds the index and the others wait
+    /// for it instead of each building (and allocating) a copy.
+    in_flight: std::sync::Mutex<FxHashMap<LookupIndexKey, Arc<BuildFlight>>>,
+    /// Index builds started from `single_flight` (tests).
+    #[cfg(test)]
+    pub(crate) flights_built: AtomicUsize,
 }
+
+/// The outcome of one in-progress build, shared by the callers waiting on it.
+pub(crate) type BuildFlight = std::sync::OnceLock<Option<Arc<LookupIndex>>>;
 
 fn volatile_key(mut key: LookupIndexKey) -> LookupIndexKey {
     key.snapshot_id = 0;
@@ -348,7 +364,44 @@ impl LookupIndexCache {
             skipped_tiny: AtomicUsize::new(0),
             skipped_cap: AtomicUsize::new(0),
             skipped_below_threshold: AtomicUsize::new(0),
+            in_flight: std::sync::Mutex::new(FxHashMap::default()),
+            #[cfg(test)]
+            flights_built: AtomicUsize::new(0),
         }
+    }
+
+    /// Run `build` once for `key` among concurrent callers: the first
+    /// caller builds, the others block until it has finished and share its
+    /// outcome.
+    pub(crate) fn single_flight(
+        &self,
+        key: LookupIndexKey,
+        build: impl FnOnce() -> Option<Arc<LookupIndex>>,
+    ) -> Option<Arc<LookupIndex>> {
+        let flight = {
+            let Ok(mut guard) = self.in_flight.lock() else {
+                return build();
+            };
+            Arc::clone(guard.entry(key).or_default())
+        };
+        let mut built = false;
+        let outcome = flight
+            .get_or_init(|| {
+                built = true;
+                build()
+            })
+            .clone();
+        // A waiter's shared outcome is a cache hit (as a duplicate build
+        // finding the entry in `insert_if_room` was).
+        if !built && outcome.is_some() {
+            self.hits.fetch_add(1, Ordering::Relaxed);
+        }
+        if let Ok(mut guard) = self.in_flight.lock()
+            && guard.get(&key).is_some_and(|f| Arc::ptr_eq(f, &flight))
+        {
+            guard.remove(&key);
+        }
+        outcome
     }
 
     // Called only at an exclusive Engine mutation boundary, after all evaluation
@@ -367,6 +420,10 @@ impl LookupIndexCache {
             .unwrap_or_else(|p| p.into_inner())
             .clear();
         self.bytes_in_use.store(0, Ordering::Relaxed);
+        self.in_flight
+            .get_mut()
+            .unwrap_or_else(|p| p.into_inner())
+            .clear();
     }
 
     pub(crate) fn get(&self, key: &LookupIndexKey) -> Option<Arc<LookupIndex>> {
@@ -379,6 +436,20 @@ impl LookupIndexCache {
             self.hits.fetch_add(1, Ordering::Relaxed);
         } else {
             self.misses.fetch_add(1, Ordering::Relaxed);
+        }
+        found
+    }
+
+    /// A builder's re-check after its `get` missed: an entry published in
+    /// between is a hit (no second miss is counted).
+    pub(crate) fn recheck(&self, key: &LookupIndexKey) -> Option<Arc<LookupIndex>> {
+        let found = self
+            .inner
+            .read()
+            .ok()
+            .and_then(|guard| guard.get(key).cloned());
+        if found.is_some() {
+            self.hits.fetch_add(1, Ordering::Relaxed);
         }
         found
     }

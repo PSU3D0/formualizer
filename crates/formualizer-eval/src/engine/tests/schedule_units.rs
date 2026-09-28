@@ -77,7 +77,12 @@ fn units_position_cycle_between_upstream_and_dependent() {
 
     // U: A1 = 42 (value, upstream of the cycle)
     graph
-        .set_cell_value("Sheet1", 1, 1, LiteralValue::Int(42))
+        .set_cell_formula(
+            "Sheet1",
+            1,
+            1,
+            super::common::literal_ast(LiteralValue::Int(42)),
+        )
         .unwrap();
     // SCC: B1 = A1 + C1, C1 = B1
     graph
@@ -235,10 +240,20 @@ fn fast_path_units_match_legacy_layers() {
 
     // Diamond: A1, A2 values; B1 = A1 + A2; C1 = B1.
     graph
-        .set_cell_value("Sheet1", 1, 1, LiteralValue::Int(1))
+        .set_cell_formula(
+            "Sheet1",
+            1,
+            1,
+            super::common::literal_ast(LiteralValue::Int(1)),
+        )
         .unwrap();
     graph
-        .set_cell_value("Sheet1", 2, 1, LiteralValue::Int(2))
+        .set_cell_formula(
+            "Sheet1",
+            2,
+            1,
+            super::common::literal_ast(LiteralValue::Int(2)),
+        )
         .unwrap();
     graph
         .set_cell_formula("Sheet1", 1, 2, sum_refs_ast(&[(1, 1), (2, 1)]))
@@ -311,7 +326,12 @@ fn cycle_units_respect_condensation_invariant_random() {
             let d = &deps[r as usize];
             if d.is_empty() {
                 graph
-                    .set_cell_value("Sheet1", r, 1, LiteralValue::Int(r as i64))
+                    .set_cell_formula(
+                        "Sheet1",
+                        r,
+                        1,
+                        super::common::literal_ast(LiteralValue::Int(r as i64)),
+                    )
                     .unwrap();
             } else {
                 let refs: Vec<(u32, u32)> = d.iter().map(|&dr| (dr, 1)).collect();

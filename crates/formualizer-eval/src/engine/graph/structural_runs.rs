@@ -32,7 +32,6 @@ use super::virtual_members::MemberRun;
 use crate::SheetId;
 use crate::engine::arena::AstNodeId;
 use crate::engine::vertex::VertexId;
-use crate::reference::{CellRef, Coord};
 
 /// A run the block transform moved or adjusted (positions after the edit).
 #[derive(Debug, Clone)]
@@ -337,9 +336,7 @@ impl DependencyGraph {
         };
         if a_first.is_some() {
             // A rewrite keeps every reference (none became `#REF!`: the
-            // direct edge count and range flag stay), and every
-            // single-cell target already has a vertex (the per-cell
-            // rewrite would create a placeholder otherwise).
+            // direct edge count and range flag stay).
             let before = reference_count(&f_first);
             if before.is_none() || before != reference_count(&new_first_ast) {
                 return PartPlan::Materialize(part);
@@ -396,11 +393,10 @@ impl DependencyGraph {
     /// A per-cell rewrite of every member from `old` (the first member's
     /// formula before the edit) to `new` (after) would leave its graph
     /// state as the block shift does: the same direct dependency count and
-    /// range flag, and no new placeholder vertex. That holds when every
-    /// small range (expanded into cell dependencies, up to the range
-    /// expansion limit) keeps its area for every member, and every cell
-    /// target before the edit has a vertex (the edit moves it to the new
-    /// target: references follow the cells).
+    /// range flag. That holds when every small range (expanded into cell
+    /// dependencies, up to the range expansion limit) keeps its area for
+    /// every member: direct dependencies are counted per distinct cell,
+    /// with or without a vertex (references create none, decision 27).
     fn member_deps_preserved(&self, old: &ASTNode, new: &ASTNode, part: &MemberRun) -> bool {
         let mut pairs = Vec::new();
         if !paired_references(old, new, &mut pairs) {
@@ -410,10 +406,6 @@ impl DependencyGraph {
         let sheet_of = |sheet: &Option<String>| match sheet {
             None => Some(part.sheet),
             Some(name) => self.sheet_reg.get_id(name),
-        };
-        let exists = |sid: SheetId, row: u32, col: u32| {
-            self.cell_vertex(&CellRef::new(sid, Coord::from_excel(row, col, true, true)))
-                .is_some()
         };
         // Row of an endpoint for member `i`.
         let at = |row: u32, abs: bool, i: u32| if abs { row } else { row + i };
@@ -429,16 +421,9 @@ impl DependencyGraph {
                     },
                     ReferenceType::Cell { .. },
                 ) => {
-                    let Some(sid) = sheet_of(sheet) else {
+                    let _ = (row, col, row_abs);
+                    if sheet_of(sheet).is_none() {
                         return false;
-                    };
-                    for i in 0..part.len {
-                        if !exists(sid, at(*row, *row_abs, i), *col) {
-                            return false;
-                        }
-                        if *row_abs {
-                            break;
-                        }
                     }
                 }
                 (
@@ -486,9 +471,9 @@ impl DependencyGraph {
                         }
                         continue;
                     };
-                    let Some(sid) = sheet_of(sheet) else {
+                    if sheet_of(sheet).is_none() {
                         return false;
-                    };
+                    }
                     let width = u64::from(ec.max(sc) - ec.min(sc) + 1);
                     let nwidth = u64::from(nec.max(nsc) - nec.min(nsc) + 1);
                     for i in 0..part.len {
@@ -501,13 +486,6 @@ impl DependencyGraph {
                         }
                         if area != narea {
                             return false;
-                        }
-                        for row in a.min(b)..=a.max(b) {
-                            for col in sc.min(ec)..=sc.max(ec) {
-                                if !exists(sid, row, col) {
-                                    return false;
-                                }
-                            }
                         }
                     }
                 }
@@ -569,18 +547,14 @@ impl DependencyGraph {
     fn refresh_oracle_edges(&mut self, v: VertexId, ast: &ASTNode) {
         let sheet_id = self.store.sheet_id(v);
         self.oracle_remove_dependent_edges(v);
-        let Ok((deps, ranges, created, _, _)) =
+        let Ok((deps, ranges, vertexless, _, _)) =
             self.extract_dependencies_with_pending_names(ast, sheet_id)
         else {
             panic!("a block-shifted member's formula resolves: {v:?} {ast}");
         };
-        assert!(
-            created.is_empty(),
-            "a block-shifted member's targets all have vertices: {v:?} {ast} created {created:?}"
-        );
         assert_eq!(
             self.store.edge_offset(v) as usize,
-            deps.len(),
+            deps.len() + vertexless.len(),
             "block shift keeps {v:?}'s direct dependency count ({ast})"
         );
         assert_eq!(

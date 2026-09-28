@@ -84,6 +84,26 @@ fn defer_unbound(
     }
 }
 
+/// A direct cell dependency: its vertex when it has one, else the cell
+/// (`created_placeholders` now lists the cells without a vertex; a
+/// reference no longer creates one, decision 27).
+fn push_cell_dependency(context: &mut GraphReferenceContext<'_>, address: CellRef) {
+    match context.graph.dep_vertex(&address) {
+        Some(vertex) => {
+            context.dependencies.insert(vertex);
+        }
+        None => {
+            if !context
+                .created_placeholders
+                .iter()
+                .any(|c| super::same_cell(c, &address))
+            {
+                context.created_placeholders.push(address);
+            }
+        }
+    }
+}
+
 fn collect_graph_reference(
     context: &mut GraphReferenceContext<'_>,
     reference: crate::engine::refs::SemanticReference<'_>,
@@ -127,10 +147,7 @@ fn collect_graph_reference(
                 None => context.current_sheet_id,
             };
             let address = CellRef::new(sheet_id, Coord::from_excel(cell.row, cell.col, true, true));
-            let vertex = context
-                .graph
-                .get_or_create_vertex(&address, context.created_placeholders);
-            context.dependencies.insert(vertex);
+            push_cell_dependency(context, address);
             Ok(())
         }
         SemanticReference::OpenRange(range) => {
@@ -179,10 +196,7 @@ fn collect_graph_reference(
                     for col in sc..=ec {
                         let address =
                             CellRef::new(sheet_id, Coord::from_excel(row, col, true, true));
-                        let vertex = context
-                            .graph
-                            .get_or_create_vertex(&address, context.created_placeholders);
-                        context.dependencies.insert(vertex);
+                        push_cell_dependency(context, address);
                     }
                 }
             } else if let Some(SharedRef::Range(shared)) = range.original.to_sheet_ref_lossy() {

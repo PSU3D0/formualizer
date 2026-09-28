@@ -98,6 +98,10 @@ fn lookup_mutation_boundaries_reclaim_and_readmit() {
         for mutation in 0..4 {
             let mut cfg = config(mode, 1);
             cfg.lookup_index_cache_max_bytes = 512_000;
+            // Every member runs its own lookup: these tests count lookup
+            // index builds and hits per member (the lift evaluates a
+            // run-invariant MATCH once per run since Program 3).
+            cfg.family_lift = false;
             let mut e = Engine::new(TestWorkbook::new(), cfg);
             for row in 1..=128 {
                 e.set_cell_value("Sheet1", row, 1, LiteralValue::Number(row as f64))
@@ -214,6 +218,10 @@ fn oversized_text_index_is_built_once_per_snapshot() {
     use crate::engine::lookup_index_cache::take_build_attempts;
     let mut cfg = config(FormulaPlaneMode::Off, 1);
     cfg.lookup_index_cache_max_bytes = 512_000;
+    // Every member runs its own lookup: these tests count lookup
+    // index builds and hits per member (the lift evaluates a
+    // run-invariant MATCH once per run since Program 3).
+    cfg.family_lift = false;
     let mut e = Engine::new(TestWorkbook::new(), cfg);
     for row in 1..=128 {
         e.set_cell_value(

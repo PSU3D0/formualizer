@@ -1267,7 +1267,7 @@ fn complete_family_package(
         let col0 = family_index + 1;
         let source_id = SourceFamilyId {
             sheet_instance,
-            source_index: family_index as usize,
+            source_index: family_index,
         };
         families.push(SourceFormulaFamily {
             source_id,
@@ -1322,7 +1322,7 @@ fn overlapping_families_package(sheet: &str, sheet_instance: u32) -> DeferredFor
     for family_index in 0..2u32 {
         let source_id = SourceFamilyId {
             sheet_instance,
-            source_index: family_index as usize,
+            source_index: family_index,
         };
         families.push(SourceFormulaFamily {
             source_id,
@@ -2249,9 +2249,19 @@ fn common_admission_direct_bulk_replacement_and_staged_seams_are_atomic() {
         EvalConfig::default().with_evaluation_budgets(zero_vertices.clone()),
     );
     direct.add_sheet("Sheet1").unwrap();
+    // A value edit needs no vertex (decision 27): admitted under a zero
+    // vertex budget; a formula (which used to be this test's value) is not.
+    direct
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(1.0))
+        .unwrap();
     let before = direct.baseline_stats();
     let error = direct
-        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(1.0))
+        .set_cell_formula(
+            "Sheet1",
+            2,
+            1,
+            formualizer_parse::parser::parse("=1").unwrap(),
+        )
         .unwrap_err();
     assert!(matches!(error.extra, ExcelErrorExtra::Resource { .. }));
     assert_eq!(

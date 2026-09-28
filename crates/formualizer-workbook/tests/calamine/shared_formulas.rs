@@ -2504,3 +2504,85 @@ fn shared_target_residual_fragment_limit_refuses_without_source_consumption() {
     assert_eq!(wb.engine().baseline_stats().graph_formula_vertex_count, 0);
     wb.evaluate_all().unwrap();
 }
+
+/// A sheet without `<dimension>` falls back to sparse ingest on its first
+/// value past column A. Its values are applied in batches (the sheet grows
+/// once per batch); every value, format and the final row count must be the
+/// same as cell by cell, across several batches.
+#[test]
+fn dimensionless_sheet_sparse_ingest_keeps_every_value() {
+    const ROWS: u32 = 70_000;
+    let mut book = umya_spreadsheet::new_file();
+    let sheet = book.get_sheet_by_name_mut("Sheet1").unwrap();
+    for row in 1..=ROWS {
+        sheet.get_cell_mut((1, row)).set_value_number(row);
+        match row % 4 {
+            0 => {
+                sheet.get_cell_mut((2, row)).set_value(format!("t{row}"));
+            }
+            1 => {
+                sheet.get_cell_mut((2, row)).set_value_bool(row % 8 == 1);
+            }
+            2 => {}
+            _ => {
+                sheet
+                    .get_cell_mut((2, row))
+                    .set_value_number(f64::from(row) / 2.0);
+            }
+        }
+        if row % 1000 == 0 {
+            sheet
+                .get_cell_mut((3, row))
+                .set_formula(format!("A{row}*2"));
+        }
+    }
+    let mut original = Vec::new();
+    umya_spreadsheet::writer::xlsx::write_writer(&book, &mut original).unwrap();
+    let bytes = rewrite_sheet_xml(original, |xml| {
+        let start = xml.find("<dimension ").expect("umya writes a dimension");
+        let end = start + xml[start..].find("/>").unwrap() + 2;
+        format!("{}{}", &xml[..start], &xml[end..])
+    });
+    let (mut workbook, stats) = Workbook::from_reader_with_adapter_stats(
+        CalamineAdapter::open_bytes(bytes).unwrap(),
+        LoadStrategy::EagerAll,
+        WorkbookConfig::ephemeral(),
+    )
+    .unwrap();
+    let arrow_sheet = workbook.engine().sheet_store().sheet("Sheet1").unwrap();
+    assert_eq!(arrow_sheet.nrows, ROWS);
+    workbook.evaluate_all().unwrap();
+    for row in 1..=ROWS {
+        assert_eq!(
+            workbook.get_value("Sheet1", row, 1),
+            Some(LiteralValue::Number(f64::from(row))),
+            "A{row}"
+        );
+        let expected = match row % 4 {
+            0 => Some(LiteralValue::Text(format!("t{row}"))),
+            1 => Some(LiteralValue::Boolean(row % 8 == 1)),
+            2 => None,
+            _ => Some(LiteralValue::Number(f64::from(row) / 2.0)),
+        };
+        let got = workbook.get_value("Sheet1", row, 2);
+        match expected {
+            None => assert!(
+                matches!(got, None | Some(LiteralValue::Empty)),
+                "B{row}: {got:?}"
+            ),
+            Some(v) => assert_eq!(got, Some(v), "B{row}"),
+        }
+        if row % 1000 == 0 {
+            assert_eq!(
+                workbook.get_value("Sheet1", row, 3),
+                Some(LiteralValue::Number(f64::from(row) * 2.0)),
+                "C{row}"
+            );
+        }
+    }
+    let stats = stats.unwrap();
+    assert_eq!(
+        stats.value_slots_handed_to_engine,
+        Some(u64::from(ROWS + ROWS * 3 / 4))
+    );
+}

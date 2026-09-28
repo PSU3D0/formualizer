@@ -426,7 +426,14 @@ fn compressed_delete_queries_select_exact_shape_and_boundary_matrix() {
     }
 
     let data = engine.sheet_id("Data").unwrap();
-    let occupancy = engine.graph.structural_occupancy(data);
+    // The value cells' occupancy (exactly what their vertices used to give
+    // the graph's scan; value cells have no vertex since decision 27, and
+    // the engine combines the graph's scan with Arrow's).
+    let occupancy = crate::engine::graph::StructuralOccupancy::of_cells_for_test(
+        (0..350)
+            .map(|row| (row, 0))
+            .chain((0..52).map(|col| (0, col))),
+    );
     // Row windows touch each finite range's exact upper and lower boundaries,
     // and include whole-column, multi-column-open, half-open, and bounded shapes.
     for (start, end, expected_rows) in [

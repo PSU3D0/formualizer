@@ -512,6 +512,10 @@ pub(crate) struct OrderedCell {
     pub owner: u32,
     pub layer: u64,
     pub cycle: Option<u64>,
+    /// Part of a chain unit: one piece whose cells read earlier rows of the
+    /// piece (an affine order along rows); they share one layer and are
+    /// evaluated in row order.
+    pub chain: bool,
 }
 #[derive(Debug)]
 pub(crate) struct OrderedPlan {
@@ -646,6 +650,7 @@ fn expand_component(
     Ok(out)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_cells(
     input: &PlanningInput,
     piece: usize,
@@ -653,6 +658,7 @@ fn emit_cells(
     class: Class,
     sigma: i64,
     cycle: Option<u64>,
+    chain: bool,
     cells: &mut Vec<OrderedCell>,
     work: &mut u64,
 ) -> Result<(), AuthorityError> {
@@ -660,7 +666,9 @@ fn emit_cells(
     let id = input.identities[piece];
     for row in s.r0..=s.r1 {
         *work += 1;
-        let offset = if let Class::Affine {
+        let offset = if chain {
+            0
+        } else if let Class::Affine {
             direction, k, min, ..
         } = class
         {
@@ -677,9 +685,39 @@ fn emit_cells(
             owner: id.owner,
             layer: add(base, offset)?,
             cycle,
+            chain,
         });
     }
     Ok(())
+}
+
+/// A chain unit (Program 3): an affine component of one piece whose order
+/// runs down its rows (theta grows with the row). Every arc inside the
+/// component goes from a row to a later one, so row order is a topological
+/// order of its cells: they can share one layer and be evaluated in row
+/// order, and the component's dependents start one layer later instead of
+/// one per row.
+fn is_chain_component(prepared: &PreparedPlan, cid: usize, c: ComponentClass) -> bool {
+    let Class::Affine {
+        direction,
+        k,
+        min,
+        max,
+    } = c.class
+    else {
+        return false;
+    };
+    if c.real != 1 || c.aux || max <= min || direction.1 != 0 || direction.0 * k <= 0 {
+        return false;
+    }
+    let slices = prepared.input.slices.len();
+    let mut real = prepared
+        .topology
+        .components
+        .members(cid)
+        .iter()
+        .filter(|&&v| v < slices);
+    matches!((real.next(), real.next()), (Some(_), None))
 }
 
 /// End-to-end exact per-cell order, prior to adaptation to scheduler::Schedule.
@@ -730,7 +768,102 @@ pub(crate) fn plan_single(store: &Store, cell: (u16, u32, u32)) -> Option<Ordere
         owner: piece.owner,
         layer: 0,
         cycle: None,
+        chain: false,
     })
+}
+
+/// The largest request [`plan_small`] orders.
+pub(crate) const SMALL_PLAN_MAX: usize = 32;
+
+/// The plan of a small request of formula cells and names without hints
+/// (Program 3): each cell's direct precedents among the request, from its
+/// own owner column refined to its row, ordered by longest path (a cell's
+/// layer is one more than its precedents' deepest). `None` when a cell
+/// reads itself or the request has a cycle (the caller plans in general).
+/// Its layers are a valid order; debug builds check it against the arcs
+/// and the planner's cells. Skips discovery's and topology's work.
+pub(crate) fn plan_small(store: &Store, cells: &[(u16, u32, u32)]) -> Option<Vec<OrderedCell>> {
+    let n = cells.len();
+    if !(2..=SMALL_PLAN_MAX).contains(&n) {
+        return None;
+    }
+    let mut out = Vec::with_capacity(n);
+    // preds[i]: bitmask of the request cells cell i reads.
+    let mut preds = [0u64; SMALL_PLAN_MAX];
+    for (i, &(sheet, row, col)) in cells.iter().enumerate() {
+        // Symbol nodes (names) are cells of the symbol plane with owners of
+        // their own, as the planner treats them.
+        let (id, _) = store.ids().lookup((sheet, row, col))?;
+        let owner = store.owner_at((sheet, row, col))?;
+        let refined = store.refine_owner_column(owner, col, row, row, None).ok()?;
+        let [piece] = refined.pieces.as_slice() else {
+            return None;
+        };
+        for edge in &refined.edges[piece.edge_start..piece.edge_end] {
+            let Some(image) = edge.proj.forward(&piece.domain) else {
+                continue;
+            };
+            for (j, &(s2, r2, c2)) in cells.iter().enumerate() {
+                if edge.proj.sheet == s2
+                    && image.r0 <= r2
+                    && r2 <= image.r1
+                    && image.c0 <= c2
+                    && c2 <= image.c1
+                {
+                    if i == j {
+                        return None;
+                    }
+                    preds[i] |= 1 << j;
+                }
+            }
+        }
+        out.push(OrderedCell {
+            sheet,
+            row,
+            col,
+            id,
+            owner: piece.owner,
+            layer: 0,
+            cycle: None,
+            chain: false,
+        });
+    }
+    // Longest-path levels by relaxation (n <= 32); a cycle never settles.
+    let mut done = 0u64;
+    for _ in 0..n {
+        let mut progressed = false;
+        for i in 0..n {
+            if done >> i & 1 == 1 || preds[i] & !done != 0 {
+                continue;
+            }
+            let mut layer = 0;
+            let mut p = preds[i];
+            while p != 0 {
+                let j = p.trailing_zeros() as usize;
+                p &= p - 1;
+                layer = layer.max(out[j].layer + 1);
+            }
+            out[i].layer = layer;
+            done |= 1 << i;
+            progressed = true;
+        }
+        if !progressed {
+            break;
+        }
+    }
+    if done.count_ones() as usize != n {
+        return None;
+    }
+    #[cfg(debug_assertions)]
+    for i in 0..n {
+        let mut p = preds[i];
+        while p != 0 {
+            let j = p.trailing_zeros() as usize;
+            p &= p - 1;
+            debug_assert!(out[j].layer < out[i].layer, "small plan order");
+        }
+    }
+    Some(out)
 }
 
 /// Request-local exact cell hint. Sorted by (sheet, column, row).
@@ -941,6 +1074,7 @@ fn plan_prepared(
                             },
                             0,
                             cycle,
+                            false,
                             &mut out.cells,
                             &mut out.work,
                         )?;
@@ -957,8 +1091,10 @@ fn plan_prepared(
             out.fallback_work += out.work - before;
             span
         } else {
+            let chain = is_chain_component(&out.prepared, cid, c);
             let span = match c.class {
                 Class::Auxiliary => 0,
+                Class::Affine { .. } if chain => 1,
                 Class::Affine { min, max, .. } => (max - min + 1) as u64,
                 _ => 1,
             };
@@ -984,6 +1120,7 @@ fn plan_prepared(
                         c.class,
                         out.prepared.classification.sigma[v],
                         cycle,
+                        chain,
                         &mut out.cells,
                         &mut out.work,
                     )?;

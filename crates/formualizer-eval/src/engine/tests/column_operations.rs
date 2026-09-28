@@ -20,9 +20,15 @@ fn test_insert_columns() {
 
     // Setup: A1=10, B1=20, C1=30, D1=SUM(A1:C1)
     // Excel uses 1-based indexing
-    graph.set_cell_value("Sheet1", 1, 1, lit_num(10.0)).unwrap();
-    graph.set_cell_value("Sheet1", 1, 2, lit_num(20.0)).unwrap();
-    graph.set_cell_value("Sheet1", 1, 3, lit_num(30.0)).unwrap();
+    graph
+        .set_cell_formula("Sheet1", 1, 1, super::common::literal_ast(lit_num(10.0)))
+        .unwrap();
+    graph
+        .set_cell_formula("Sheet1", 1, 2, super::common::literal_ast(lit_num(20.0)))
+        .unwrap();
+    graph
+        .set_cell_formula("Sheet1", 1, 3, super::common::literal_ast(lit_num(30.0)))
+        .unwrap();
     let sum_result = graph
         .set_cell_formula("Sheet1", 1, 4, parse("=SUM(A1:C1)").unwrap())
         .unwrap();
@@ -82,7 +88,12 @@ fn test_delete_columns() {
     // Setup: A1 through E1 with values
     for i in 1..=5 {
         graph
-            .set_cell_value("Sheet1", 1, i, lit_num(i as f64 * 10.0))
+            .set_cell_formula(
+                "Sheet1",
+                1,
+                i,
+                super::common::literal_ast(lit_num(i as f64 * 10.0)),
+            )
             .unwrap();
     }
     let a1_id = graph
@@ -133,8 +144,12 @@ fn test_insert_columns_adjusts_formulas() {
     let mut graph = super::common::graph_truth_graph();
 
     // Create cells with formulas
-    graph.set_cell_value("Sheet1", 1, 1, lit_num(10.0)).unwrap();
-    graph.set_cell_value("Sheet1", 1, 3, lit_num(30.0)).unwrap();
+    graph
+        .set_cell_formula("Sheet1", 1, 1, super::common::literal_ast(lit_num(10.0)))
+        .unwrap();
+    graph
+        .set_cell_formula("Sheet1", 1, 3, super::common::literal_ast(lit_num(30.0)))
+        .unwrap();
 
     // A2 = A1 * 2
     graph
@@ -164,9 +179,13 @@ fn test_delete_column_creates_ref_error() {
     let mut graph = super::common::graph_truth_graph();
 
     // A1 = 10
-    graph.set_cell_value("Sheet1", 1, 1, lit_num(10.0)).unwrap();
+    graph
+        .set_cell_formula("Sheet1", 1, 1, super::common::literal_ast(lit_num(10.0)))
+        .unwrap();
     // B1 = 20
-    graph.set_cell_value("Sheet1", 1, 2, lit_num(20.0)).unwrap();
+    graph
+        .set_cell_formula("Sheet1", 1, 2, super::common::literal_ast(lit_num(20.0)))
+        .unwrap();
     // B2 = B1 * 2
     let b2_result = graph
         .set_cell_formula("Sheet1", 2, 2, parse("=B1*2").unwrap())
@@ -197,10 +216,10 @@ fn test_insert_columns_with_absolute_references() {
 
     // Setup cells
     graph
-        .set_cell_value("Sheet1", 1, 1, lit_num(100.0))
+        .set_cell_formula("Sheet1", 1, 1, super::common::literal_ast(lit_num(100.0)))
         .unwrap();
     graph
-        .set_cell_value("Sheet1", 1, 5, lit_num(500.0))
+        .set_cell_formula("Sheet1", 1, 5, super::common::literal_ast(lit_num(500.0)))
         .unwrap();
 
     // Formula with absolute reference: =$A$1+E1
@@ -229,7 +248,12 @@ fn test_multiple_column_operations() {
     // Setup initial data
     for i in 1..=10 {
         graph
-            .set_cell_value("Sheet1", 1, i, lit_num(i as f64))
+            .set_cell_formula(
+                "Sheet1",
+                1,
+                i,
+                super::common::literal_ast(lit_num(i as f64)),
+            )
             .unwrap();
     }
     let a1_id = graph
@@ -269,7 +293,12 @@ fn test_mixed_row_column_operations() {
     for row in 1..=3 {
         for col in 1..=3 {
             graph
-                .set_cell_value("Sheet1", row, col, lit_num((row * 10 + col) as f64))
+                .set_cell_formula(
+                    "Sheet1",
+                    row,
+                    col,
+                    super::common::literal_ast(lit_num((row * 10 + col) as f64)),
+                )
                 .unwrap();
         }
     }
@@ -337,7 +366,9 @@ fn test_delete_columns_with_dependencies() {
 
     // Setup: A1=10, B1=A1*2, C1=B1+5, D1=C1
     // Excel uses 1-based indexing
-    graph.set_cell_value("Sheet1", 1, 1, lit_num(10.0)).unwrap();
+    graph
+        .set_cell_formula("Sheet1", 1, 1, super::common::literal_ast(lit_num(10.0)))
+        .unwrap();
     graph
         .set_cell_formula("Sheet1", 1, 2, parse("=A1*2").unwrap())
         .unwrap();
@@ -371,7 +402,9 @@ fn structural_ref_literal_survives_undo_and_redo() {
     use crate::engine::graph::editor::undo_engine::UndoEngine;
 
     let mut graph = super::common::graph_truth_graph();
-    graph.set_cell_value("Sheet1", 1, 2, lit_num(10.0)).unwrap();
+    graph
+        .set_cell_formula("Sheet1", 1, 2, super::common::literal_ast(lit_num(10.0)))
+        .unwrap();
     let formula_id = graph
         .set_cell_formula("Sheet1", 1, 3, parse("=B1+5").unwrap())
         .unwrap()

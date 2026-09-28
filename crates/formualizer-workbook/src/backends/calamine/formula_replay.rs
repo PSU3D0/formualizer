@@ -301,6 +301,10 @@ impl FormulaReplaySpool for MemoryFormulaReplaySpool {
     }
 }
 
+/// Write size of a spilled spool's buffered frames.
+#[cfg(not(target_arch = "wasm32"))]
+const SPILL_WRITE_BLOCK: usize = 64 * 1024;
+
 pub(super) struct FormulaSpoolLimits {
     pub sheet_bytes: u64,
     pub workbook_bytes_remaining: u64,
@@ -318,11 +322,18 @@ pub(super) struct HybridFormulaReplaySpool {
     memory: Vec<u8>,
     encoded_bytes: u64,
     peak_memory_bytes: u64,
+    /// Frames appended (a capacity hint for replay).
+    frames: usize,
     #[cfg(test)]
     append_scratch_heap_allocations: u64,
     limits: FormulaSpoolLimits,
     #[cfg(not(target_arch = "wasm32"))]
     file: Option<tempfile::NamedTempFile>,
+    /// Frames appended since the last file write. A spilled spool writes
+    /// whole blocks of `SPILL_WRITE_BLOCK` bytes instead of two small writes
+    /// per frame; reads flush it first.
+    #[cfg(not(target_arch = "wasm32"))]
+    pending: Vec<u8>,
     #[cfg(test)]
     fail_write: bool,
     #[cfg(test)]
@@ -335,11 +346,14 @@ impl HybridFormulaReplaySpool {
             memory: [MAGIC.as_slice(), &[VERSION]].concat(),
             encoded_bytes: HEADER_LEN as u64,
             peak_memory_bytes: HEADER_LEN as u64,
+            frames: 0,
             #[cfg(test)]
             append_scratch_heap_allocations: 0,
             limits,
             #[cfg(not(target_arch = "wasm32"))]
             file: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            pending: Vec::new(),
             #[cfg(test)]
             fail_write: false,
             #[cfg(test)]
@@ -351,6 +365,8 @@ impl HybridFormulaReplaySpool {
         if offset < HEADER_LEN as u64 || offset >= self.encoded_bytes {
             return Err(SpoolError::Truncated);
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        self.flush_pending()?;
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(file) = self.file.as_mut() {
             let mut reader = BufReader::new(
@@ -365,6 +381,19 @@ impl HybridFormulaReplaySpool {
         }
         let mut cursor = usize::try_from(offset).map_err(|_| SpoolError::OffsetOverflow)?;
         decode_frame(&self.memory, &mut cursor)
+    }
+
+    /// Writes the buffered frames of a spilled spool to its file.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn flush_pending(&mut self) -> Result<(), SpoolError> {
+        if let Some(file) = self.file.as_mut()
+            && !self.pending.is_empty()
+        {
+            let written = file.write_all(&self.pending);
+            self.pending.clear();
+            written.map_err(|e| SpoolError::Io(e.kind()))?;
+        }
+        Ok(())
     }
 
     pub(super) fn peak_memory_bytes(&self) -> u64 {
@@ -406,6 +435,33 @@ pub(super) struct CalamineDeferredFormulaReplay {
     sheet_instance: u32,
 }
 
+/// Stable sort by source order without a scratch copy of the records (a
+/// stable sort's buffer is as large as the input): usually already sorted;
+/// else sort indices, then permute in place.
+fn sort_by_source_order(formulas: &mut [DeferredReplayFormula]) {
+    if formulas.is_sorted_by_key(|f| f.source_order) {
+        return;
+    }
+    let mut order: Vec<u32> = (0..formulas.len() as u32).collect();
+    order.sort_unstable_by_key(|&i| (formulas[i as usize].source_order, i));
+    // `order[k]` is the record that goes to slot k: follow each cycle.
+    for start in 0..order.len() {
+        if order[start] == u32::MAX {
+            continue;
+        }
+        let mut slot = start;
+        loop {
+            let from = order[slot] as usize;
+            order[slot] = u32::MAX;
+            if from == start {
+                break;
+            }
+            formulas.swap(slot, from);
+            slot = from;
+        }
+    }
+}
+
 impl CalamineDeferredFormulaReplay {
     pub(super) fn new(
         spool: HybridFormulaReplaySpool,
@@ -426,7 +482,7 @@ impl CalamineDeferredFormulaReplay {
         disposition: &FormulaReplayDisposition,
         partitions: &[PartitionedSourceFormulaFamily],
     ) -> Result<Vec<DeferredReplayFormula>, String> {
-        let mut formulas = Vec::new();
+        let mut formulas = Vec::with_capacity(self.spool.frames);
         let sheet_instance = self.sheet_instance;
         let partition_router =
             FormulaReplayPartitionRouter::new(partitions).map_err(str::to_string)?;
@@ -436,7 +492,7 @@ impl CalamineDeferredFormulaReplay {
             |shared_index, coord0| {
                 let family = SourceFamilyId {
                     sheet_instance,
-                    source_index: shared_index,
+                    source_index: super::shared_source_index(shared_index),
                 };
                 let coordinate_disposition =
                     partition_router.shared_disposition(disposition, family, coord0);
@@ -445,7 +501,7 @@ impl CalamineDeferredFormulaReplay {
             |sequence, coord0, text, family| {
                 let family = family.map(|shared_index| SourceFamilyId {
                     sheet_instance,
-                    source_index: shared_index,
+                    source_index: super::shared_source_index(shared_index),
                 });
                 let (coordinate_disposition, partition_owner) = match family {
                     Some(family) => (
@@ -473,7 +529,7 @@ impl CalamineDeferredFormulaReplay {
             },
         )
         .map_err(|error| error.to_string())?;
-        formulas.sort_by_key(|formula| formula.source_order);
+        sort_by_source_order(&mut formulas);
         Ok(formulas)
     }
 
@@ -497,7 +553,7 @@ impl CalamineDeferredFormulaReplay {
                 {
                     let family = family.map(|shared_index| SourceFamilyId {
                         sheet_instance,
-                        source_index: shared_index,
+                        source_index: super::shared_source_index(shared_index),
                     });
                     found = Some(DeferredReplayFormula {
                         source_order: SourceFormulaOrder::new(sequence),
@@ -693,7 +749,7 @@ impl DeferredFormulaReplay for CalamineDeferredFormulaReplay {
                 };
                 let family = family.map(|source_index| SourceFamilyId {
                     sheet_instance: self.sheet_instance,
-                    source_index,
+                    source_index: super::shared_source_index(source_index),
                 });
                 formulas.push(DeferredReplayFormula {
                     source_order: SourceFormulaOrder::new(sequence),
@@ -771,14 +827,18 @@ impl FormulaReplaySpool for HybridFormulaReplaySpool {
             return Err(SpoolError::Io(std::io::ErrorKind::WriteZero));
         }
         #[cfg(not(target_arch = "wasm32"))]
-        if let Some(file) = self.file.as_mut() {
-            write_frame(file, record)?;
+        if self.file.is_some() {
+            append_frame_to_vec(&mut self.pending, record)?;
+            if self.pending.len() >= SPILL_WRITE_BLOCK {
+                self.flush_pending()?;
+            }
         } else {
             append_frame_to_vec(&mut self.memory, record)?;
         }
         #[cfg(target_arch = "wasm32")]
         append_frame_to_vec(&mut self.memory, record)?;
         self.encoded_bytes = attempted;
+        self.frames += 1;
         self.peak_memory_bytes = self
             .peak_memory_bytes
             .max(u64::try_from(self.memory.len()).unwrap_or(u64::MAX));
@@ -790,6 +850,8 @@ impl FormulaReplaySpool for HybridFormulaReplaySpool {
         if self.fail_replay_io {
             return Err(SpoolError::Io(std::io::ErrorKind::Other));
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        self.flush_pending()?;
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(file) = self.file.as_mut() {
             file.flush().map_err(|e| SpoolError::Io(e.kind()))?;
@@ -950,18 +1012,6 @@ fn varint_len(mut value: u64) -> usize {
         value >>= 7;
     }
     len
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn write_frame(
-    file: &mut tempfile::NamedTempFile,
-    record: SpoolFormulaRecord<'_>,
-) -> Result<(), SpoolError> {
-    let mut prefix = StackEncoder::new();
-    let text = encode_frame_prefix(record, &mut prefix)?;
-    file.write_all(prefix.as_slice())
-        .and_then(|_| file.write_all(text))
-        .map_err(|e| SpoolError::Io(e.kind()))
 }
 
 struct StackEncoder {
@@ -1162,7 +1212,7 @@ impl OwnedSpoolFormulaRecord {
                 FormulaSourceKind::SharedAnchor {
                     family: SourceFamilyId {
                         sheet_instance,
-                        source_index: shared_index,
+                        source_index: super::shared_source_index(shared_index),
                     },
                     declared_range,
                     formula: Arc::from(text),
@@ -1182,7 +1232,7 @@ impl OwnedSpoolFormulaRecord {
                 FormulaSourceKind::SharedDescendant {
                     family: SourceFamilyId {
                         sheet_instance,
-                        source_index: shared_index,
+                        source_index: super::shared_source_index(shared_index),
                     },
                     metadata: FormulaMetadataEnvelope::Shared {
                         shared_index,
@@ -1490,9 +1540,9 @@ pub(super) fn replay_spool_per_cell_with_coordinate_disposition<S: FormulaReplay
 pub(super) fn expand_source_events_per_cell(
     events: &[FormulaSourceEvent],
 ) -> Result<Vec<ExpandedFormulaCell>, SourceFormulaError> {
-    let mut shared: rustc_hash::FxHashMap<usize, (SourceCoord, Arc<str>)> =
+    let mut shared: rustc_hash::FxHashMap<u32, (SourceCoord, Arc<str>)> =
         rustc_hash::FxHashMap::default();
-    let mut pending: rustc_hash::FxHashMap<usize, Vec<SourceCoord>> =
+    let mut pending: rustc_hash::FxHashMap<u32, Vec<SourceCoord>> =
         rustc_hash::FxHashMap::default();
     let mut expanded = Vec::with_capacity(events.len());
     let mut expansion = String::with_capacity(128);
@@ -1566,6 +1616,34 @@ pub(super) fn expand_source_events_per_cell(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_order_sort_is_stable_and_in_place() {
+        let rec = |seq: u64, row: u32| DeferredReplayFormula {
+            source_order: SourceFormulaOrder::new(seq),
+            row,
+            col: 1,
+            text: format!("={row}"),
+            family: None,
+            partition_owner: None,
+        };
+        let seqs = [5u64, 3, 9, 3, 1, 7, 5, 0, 2, 9];
+        let mut v: Vec<_> = seqs
+            .iter()
+            .enumerate()
+            .map(|(i, &q)| rec(q, i as u32))
+            .collect();
+        let mut expected: Vec<(u64, u32)> = seqs
+            .iter()
+            .enumerate()
+            .map(|(i, &q)| (q, i as u32))
+            .collect();
+        expected.sort_by_key(|&(q, _)| q);
+        sort_by_source_order(&mut v);
+        let got: Vec<(u64, u32)> = v.iter().map(|f| (seqs[f.row as usize], f.row)).collect();
+        assert_eq!(got, expected);
+        assert!(v.iter().all(|f| f.text == format!("={}", f.row)));
+    }
 
     fn coord(row: u32, col: u32) -> SourceCoord {
         SourceCoord { row, col }
@@ -2411,6 +2489,51 @@ mod tests {
         );
         drop(spool);
         assert!(!path.exists());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn native_spill_buffers_frames_and_reads_see_every_append() {
+        let mut spool =
+            HybridFormulaReplaySpool::new(hybrid_limits(1 << 30, 1 << 30, 64, 1 << 30, true));
+        let texts: Vec<String> = (0..20_000).map(|i| format!("A{i}+B{i}*2")).collect();
+        let mut offsets = Vec::new();
+        for (i, text) in texts.iter().enumerate() {
+            offsets.push(
+                spool
+                    .append(SpoolFormulaRecord::Ordinary {
+                        sequence: i as u64,
+                        coord0: coord(i as u32, 1),
+                        text,
+                    })
+                    .unwrap(),
+            );
+            // Reads between appends (the exact-selection path) see the
+            // frames still buffered.
+            if i % 7_001 == 3 {
+                let back = spool.read_at(offsets[i].0).unwrap();
+                assert!(
+                    matches!(&back, OwnedSpoolFormulaRecord::Ordinary { text: t, .. } if t == text)
+                );
+            }
+        }
+        assert_eq!(spool.storage_kind(), SpoolStorageKind::NativeFile);
+        assert!(spool.pending.len() < SPILL_WRITE_BLOCK);
+        let records = spool
+            .replay()
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(records.len(), texts.len());
+        for (record, text) in records.iter().zip(&texts) {
+            assert!(
+                matches!(record, OwnedSpoolFormulaRecord::Ordinary { text: t, .. } if t == text)
+            );
+        }
+        let last = spool.read_at(offsets.last().unwrap().0).unwrap();
+        assert!(
+            matches!(&last, OwnedSpoolFormulaRecord::Ordinary { text: t, .. } if t == texts.last().unwrap())
+        );
     }
 
     #[cfg(not(target_arch = "wasm32"))]

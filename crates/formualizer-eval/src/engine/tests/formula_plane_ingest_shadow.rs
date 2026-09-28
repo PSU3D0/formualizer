@@ -1207,7 +1207,7 @@ fn provider_revision_family(source_index: usize) -> SourceFormulaFamily {
         source_order: crate::engine::SourceFormulaOrder::new(source_index as u64),
         source_id: SourceFamilyId {
             sheet_instance: 971,
-            source_index,
+            source_index: source_index as u32,
         },
         anchor_coord0: SourceCoord { row: 0, col: 1 },
         anchor_text: Arc::from("ABS(A1)"),

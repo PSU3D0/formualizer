@@ -19,9 +19,15 @@ fn test_insert_rows() {
 
     // Setup: A1=10, A2=20, A3=30, A4=SUM(A1:A3)
     // Excel uses 1-based indexing
-    graph.set_cell_value("Sheet1", 1, 1, lit_num(10.0)).unwrap();
-    graph.set_cell_value("Sheet1", 2, 1, lit_num(20.0)).unwrap();
-    graph.set_cell_value("Sheet1", 3, 1, lit_num(30.0)).unwrap();
+    graph
+        .set_cell_formula("Sheet1", 1, 1, super::common::literal_ast(lit_num(10.0)))
+        .unwrap();
+    graph
+        .set_cell_formula("Sheet1", 2, 1, super::common::literal_ast(lit_num(20.0)))
+        .unwrap();
+    graph
+        .set_cell_formula("Sheet1", 3, 1, super::common::literal_ast(lit_num(30.0)))
+        .unwrap();
     let sum_result = graph
         .set_cell_formula("Sheet1", 4, 1, parse("=SUM(A1:A3)").unwrap())
         .unwrap();
@@ -80,7 +86,12 @@ fn test_delete_rows() {
     // Setup: A1 through A5 with values
     for i in 1..=5 {
         graph
-            .set_cell_value("Sheet1", i, 1, lit_num(i as f64 * 10.0))
+            .set_cell_formula(
+                "Sheet1",
+                i,
+                1,
+                super::common::literal_ast(lit_num(i as f64 * 10.0)),
+            )
             .unwrap();
     }
     let a1_id = graph
@@ -131,8 +142,12 @@ fn test_insert_rows_adjusts_formulas() {
     let mut graph = super::common::graph_truth_graph();
 
     // Create cells with formulas
-    graph.set_cell_value("Sheet1", 1, 1, lit_num(10.0)).unwrap();
-    graph.set_cell_value("Sheet1", 3, 1, lit_num(30.0)).unwrap();
+    graph
+        .set_cell_formula("Sheet1", 1, 1, super::common::literal_ast(lit_num(10.0)))
+        .unwrap();
+    graph
+        .set_cell_formula("Sheet1", 3, 1, super::common::literal_ast(lit_num(30.0)))
+        .unwrap();
 
     // B1 = A1 * 2
     graph
@@ -162,9 +177,13 @@ fn test_delete_row_creates_ref_error() {
     let mut graph = super::common::graph_truth_graph();
 
     // A1 = 10
-    graph.set_cell_value("Sheet1", 1, 1, lit_num(10.0)).unwrap();
+    graph
+        .set_cell_formula("Sheet1", 1, 1, super::common::literal_ast(lit_num(10.0)))
+        .unwrap();
     // A2 = 20
-    graph.set_cell_value("Sheet1", 2, 1, lit_num(20.0)).unwrap();
+    graph
+        .set_cell_formula("Sheet1", 2, 1, super::common::literal_ast(lit_num(20.0)))
+        .unwrap();
     // B2 = A2 * 2
     let b2_result = graph
         .set_cell_formula("Sheet1", 2, 2, parse("=A2*2").unwrap())
@@ -195,10 +214,10 @@ fn test_insert_rows_with_absolute_references() {
 
     // Setup cells
     graph
-        .set_cell_value("Sheet1", 1, 1, lit_num(100.0))
+        .set_cell_formula("Sheet1", 1, 1, super::common::literal_ast(lit_num(100.0)))
         .unwrap();
     graph
-        .set_cell_value("Sheet1", 5, 1, lit_num(500.0))
+        .set_cell_formula("Sheet1", 5, 1, super::common::literal_ast(lit_num(500.0)))
         .unwrap();
 
     // Formula with absolute reference: =$A$1+A5
@@ -227,7 +246,12 @@ fn test_multiple_row_operations() {
     // Setup initial data
     for i in 1..=10 {
         graph
-            .set_cell_value("Sheet1", i, 1, lit_num(i as f64))
+            .set_cell_formula(
+                "Sheet1",
+                i,
+                1,
+                super::common::literal_ast(lit_num(i as f64)),
+            )
             .unwrap();
     }
     let a1_id = graph

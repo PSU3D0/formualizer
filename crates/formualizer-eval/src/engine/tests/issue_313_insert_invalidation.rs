@@ -527,9 +527,12 @@ fn graph_index_occupancy_alone_dirties_a_compressed_reader() {
     let calls = Arc::new(AtomicUsize::new(0));
     let workbook = TestWorkbook::new().with_function(Arc::new(CountFn(Arc::clone(&calls))));
     let mut engine = Engine::new(workbook, EvalConfig::default().with_parallel(false));
+    // Graph-index occupancy: a formula vertex in the deleted row (a value
+    // written to the graph alone has no vertex since decision 27, so it no
+    // longer occupies anything; this test used one).
     engine
         .graph
-        .set_cell_value("Data", 10, 2, LiteralValue::Number(10.0))
+        .set_cell_formula("Data", 10, 2, parse("=10").unwrap())
         .unwrap();
     engine
         .set_cell_formula(

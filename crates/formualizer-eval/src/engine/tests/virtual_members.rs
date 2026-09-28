@@ -357,8 +357,10 @@ fn member_vertex_pages_drop_rows_and_come_back() {
     };
     let mut a = build(true);
     let mut b = build(false);
+    // Three full 1024-id pages lie inside the member runs (value cells take
+    // no ids since decision 27, so the runs start at the first id).
     assert!(
-        a.graph.virtual_vertex_pages() >= 4,
+        a.graph.virtual_vertex_pages() >= 3,
         "full member pages keep no rows"
     );
     assert_eq!(b.graph.virtual_vertex_pages(), 0);
@@ -394,4 +396,171 @@ fn member_vertex_pages_drop_rows_and_come_back() {
     a.evaluate_all().unwrap();
     b.evaluate_all().unwrap();
     assert_eq!(values(&a), values(&b), "after undo");
+}
+
+/// Decision 26: a deferred first build (`defer_graph_building`, staged
+/// formula texts) goes through the eager first load's machinery: family
+/// members are grouped (never interned) and installed as virtual runs by
+/// the build itself, and each column's formulas are one id run even past
+/// the builder's 10k-record chunks. Values equal an engine that keeps every
+/// formula on its own.
+#[test]
+fn deferred_first_build_groups_preallocates_and_virtualizes() {
+    const N: u32 = 11_000;
+    for parallel in [false, true] {
+        let deferred_config = EvalConfig {
+            defer_graph_building: true,
+            enable_parallel: parallel,
+            ..arrow_eval_config()
+        };
+        let mut deferred = Engine::new(TestWorkbook::new(), deferred_config);
+        let mut plain = Engine::new(
+            TestWorkbook::new(),
+            EvalConfig {
+                formula_compression: false,
+                enable_parallel: parallel,
+                ..arrow_eval_config()
+            },
+        );
+        for e in [&mut deferred, &mut plain] {
+            for r in 1..=N {
+                e.set_cell_value("Sheet1", r, 1, LiteralValue::Number(f64::from(r % 13)))
+                    .unwrap();
+            }
+        }
+        // Staged row by row (source order), two families.
+        for r in 1..=N {
+            let (b, c) = (
+                format!("=A{r}*2+1"),
+                if r == 1 {
+                    "=B1".to_string()
+                } else {
+                    format!("=C{}+B{r}", r - 1)
+                },
+            );
+            deferred.stage_formula_text("Sheet1", r, 2, b.clone());
+            deferred.stage_formula_text("Sheet1", r, 3, c.clone());
+            plain
+                .set_cell_formula("Sheet1", r, 2, parse(&b).unwrap())
+                .unwrap();
+            plain
+                .set_cell_formula("Sheet1", r, 3, parse(&c).unwrap())
+                .unwrap();
+        }
+        let arena_before = deferred.graph.data_store().memory_usage().total_ast_nodes;
+        deferred.build_graph_all().unwrap();
+        // Members were never interned: a handful of templates.
+        let arena_added = deferred.graph.data_store().memory_usage().total_ast_nodes - arena_before;
+        assert!(arena_added < 64, "arena grew by {arena_added} nodes");
+        // Virtual at build (not only after the first evaluation's
+        // compression): every member but each column's anchors.
+        assert!(
+            virtual_count(&deferred) >= 2 * (N as usize) - 4,
+            "virtual members after the build: {}",
+            virtual_count(&deferred)
+        );
+        let sid = deferred.graph.sheet_id("Sheet1").unwrap();
+        for col in [2, 3] {
+            let ids: Vec<u32> = (1..=N)
+                .map(|r| {
+                    let cell = CellRef::new(sid, Coord::from_excel(r, col, true, true));
+                    deferred.graph.get_vertex_id_for_address(&cell).unwrap().0
+                })
+                .collect();
+            assert!(
+                ids.windows(2).all(|w| w[1] == w[0] + 1),
+                "column {col}: one id run"
+            );
+        }
+        deferred.evaluate_all().unwrap();
+        plain.evaluate_all().unwrap();
+        for r in (1..=N).step_by(97).chain([N]) {
+            for c in 1..=3 {
+                assert_eq!(
+                    key(deferred.get_cell_value("Sheet1", r, c)),
+                    key(plain.get_cell_value("Sheet1", r, c)),
+                    "R{r}C{c}"
+                );
+            }
+        }
+        deferred
+            .set_cell_value("Sheet1", 7, 1, LiteralValue::Number(-2.5))
+            .unwrap();
+        plain
+            .set_cell_value("Sheet1", 7, 1, LiteralValue::Number(-2.5))
+            .unwrap();
+        deferred.evaluate_all().unwrap();
+        plain.evaluate_all().unwrap();
+        for r in (1..=N).step_by(89).chain([N]) {
+            assert_eq!(
+                key(deferred.get_cell_value("Sheet1", r, 3)),
+                key(plain.get_cell_value("Sheet1", r, 3)),
+                "after edit R{r}"
+            );
+        }
+    }
+}
+
+/// A deferred first build whose planning fails part-way (a formula after
+/// the builder's first 10k-record chunk) leaves the graph without formulas
+/// and the staged formulas in place, as the incremental path does.
+#[test]
+fn failed_deferred_first_build_leaves_the_graph_untouched() {
+    const N: u32 = 11_000;
+    let mut e = Engine::new(
+        TestWorkbook::new(),
+        EvalConfig {
+            defer_graph_building: true,
+            ..arrow_eval_config()
+        },
+    );
+    for r in 1..=N {
+        e.set_cell_value("Sheet1", r, 1, LiteralValue::Number(f64::from(r)))
+            .unwrap();
+        e.stage_formula_text("Sheet1", r, 2, format!("=A{r}*2"));
+    }
+    e.stage_formula_text("Sheet1", N, 3, "=SUM([1]Book!A1:B2)".to_string());
+    let vertices = e.graph.vertex_len();
+    let staged = e.staged_formula_count();
+    let err = e.build_graph_all().unwrap_err();
+    assert!(err.to_string().contains("Undefined table"), "{err}");
+    assert_eq!(e.graph.formula_vertex_count(), 0);
+    assert_eq!(e.graph.vertex_len(), vertices);
+    assert_eq!(e.staged_formula_count(), staged);
+    assert!(e.evaluate_all().is_err());
+    assert_eq!(e.graph.formula_vertex_count(), 0);
+}
+
+/// Undoing a value typed into an empty cell dirties the cell's readers
+/// (the cell has no vertex to remove: decision 27). Mirrors the Python
+/// binding's `test_rewrite_previously_empty_precedent_after_undo`.
+#[test]
+fn undo_of_a_value_in_an_empty_cell_dirties_its_readers() {
+    let mut e = Engine::new(TestWorkbook::new(), arrow_eval_config());
+    e.set_cell_formula("S1", 4, 4, parse("=C6+1").unwrap())
+        .unwrap();
+    e.evaluate_all().unwrap();
+    assert_eq!(
+        e.get_cell_value("S1", 4, 4),
+        Some(LiteralValue::Number(1.0))
+    );
+    let sid = e.graph.sheet_id("S1").unwrap();
+    let c6 = CellRef::new(sid, Coord::from_excel(6, 3, true, true));
+    let mut log = ChangeLog::new();
+    let mut undo = UndoEngine::new();
+    e.edit_with_logger(&mut log, |ed| {
+        ed.set_cell_value(c6, LiteralValue::Number(10.0));
+    })
+    .unwrap();
+    e.evaluate_all().unwrap();
+    assert_eq!(
+        e.get_cell_value("S1", 4, 4),
+        Some(LiteralValue::Number(11.0))
+    );
+    e.undo_logged(&mut undo, &mut log).unwrap();
+    e.evaluate_all().unwrap();
+    assert_eq!(
+        e.get_cell_value("S1", 4, 4),
+        Some(LiteralValue::Number(1.0))
+    );
 }

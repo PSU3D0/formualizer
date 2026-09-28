@@ -330,3 +330,182 @@ fn observed_reads_plan_dynamic_readers_and_key_the_schedule_cache() {
     e.evaluate_all().unwrap();
     assert_eq!(num(&e, 1, 2), Some(402.0));
 }
+
+/// Program 3 (plan reuse): recalculations alternating between a few inputs
+/// reuse their schedules (a small bounded set of recent ones), and a formula
+/// edit invalidates them all.
+#[test]
+fn alternating_value_edits_reuse_recent_schedules() {
+    let mut e = engine();
+    for r in 1..=3u32 {
+        set(&mut e, r, 1, f64::from(r));
+    }
+    // Three independent chains.
+    for r in 1..=3u32 {
+        formula(&mut e, r, 2, &format!("=A{r}*2"));
+        formula(&mut e, r, 3, &format!("=B{r}+1"));
+    }
+    e.evaluate_all().unwrap();
+    // Warm one schedule per input.
+    for r in 1..=3u32 {
+        set(&mut e, r, 1, 10.0 + f64::from(r));
+        e.evaluate_all().unwrap();
+    }
+    e.reset_recalc_reuse_probe();
+    for round in 0..2u32 {
+        for r in 1..=3u32 {
+            let v = 100.0 * f64::from(round + 1) + f64::from(r);
+            set(&mut e, r, 1, v);
+            e.evaluate_all().unwrap();
+            assert_eq!(num(&e, r, 3), Some(v * 2.0 + 1.0));
+        }
+    }
+    let probe = e.recalc_reuse_probe();
+    assert_eq!(probe.schedule_cache_hits, 6, "{probe:?}");
+    // A formula edit: every retained schedule is stale.
+    formula(&mut e, 2, 3, "=B2+5");
+    e.evaluate_all().unwrap();
+    e.reset_recalc_reuse_probe();
+    set(&mut e, 1, 1, 7.0);
+    e.evaluate_all().unwrap();
+    assert_eq!(num(&e, 1, 3), Some(15.0));
+    assert_eq!(e.recalc_reuse_probe().schedule_cache_hits, 0);
+}
+
+/// Program 3 audit B1: `Out!A10 = SUM(OFFSET(Data!A1,0,0,20,2))` after
+/// twelve mutations (column/row inserts and deletes, formulas over values,
+/// a value edit and its undo). The last column insert dirties three Data
+/// formulas and the readers in one pass. The reader's structural edit
+/// cleared its observed reads, and its pre-probe (the sheet index, which
+/// structural moves do not update) finds no formula in its target, so it
+/// shares a layer with two of them. That layer buffers its writes: a
+/// member's dirty flag is cleared at commit and its value written at the
+/// flush, so the reader's freshness check saw clean targets holding their
+/// pre-formula values (210 instead of 185). Members committed but not yet
+/// written now count as dirty for that check: the reader re-plans after
+/// them. `extra_reader` adds a static reader that makes main's
+/// layer as wide (main fails that variant the same way).
+fn offset_after_history(
+    parallel: bool,
+    deferred: bool,
+    fast: bool,
+    extra_reader: bool,
+) -> (f64, f64) {
+    use crate::engine::ChangeLog;
+    use crate::engine::graph::editor::undo_engine::UndoEngine;
+    let mut e = Engine::new(
+        TestWorkbook::new(),
+        EvalConfig {
+            family_execution: fast,
+            family_kernels: fast,
+            family_lift: fast,
+            formula_compression: fast,
+            enable_parallel: parallel,
+            defer_graph_building: deferred,
+            ..super::common::arrow_eval_config()
+        },
+    );
+    for r in 1..=30u32 {
+        e.set_cell_value("Data", r, 1, LiteralValue::Number(f64::from(r)))
+            .unwrap();
+        e.set_cell_formula("Data", r, 2, parse(format!("=A{r}*2")).unwrap())
+            .unwrap();
+    }
+    let mut readers = vec![
+        "=SUM(Data!A1:B4)",
+        "=SUM(Data!A:A)",
+        "=COUNTBLANK(Data!A:A)",
+        "=COUNTIF(Data!C:C,\"\")",
+        "=Data!A7+Data!B8",
+        "=SUM(Data!A20:B30)",
+        "=SUM(Data!A1:A64)",
+        "=SUM(Data!A1:A65)",
+        "=INDIRECT(\"Data!A7\")",
+        "=SUM(OFFSET(Data!A1,0,0,20,2))",
+        "=ROWS(Data!C:C*1)",
+        "=Data!C30",
+    ];
+    if extra_reader {
+        readers.push("=Data!A2");
+    }
+    for (i, f) in readers.iter().enumerate() {
+        e.set_cell_formula("Out", i as u32 + 1, 1, parse(f).unwrap())
+            .unwrap();
+    }
+    let mut log = ChangeLog::new();
+    let mut undo = UndoEngine::new();
+    e.evaluate_all().unwrap();
+    let formula_at = |e: &mut Engine<TestWorkbook>, log: &mut ChangeLog, row: u32, f: &str| {
+        e.action_with_logger(log, "f", |a| {
+            a.set_cell_formula("Data", row, 2, parse(f).unwrap())
+        })
+        .unwrap();
+    };
+    let insert_col = |e: &mut Engine<TestWorkbook>, log: &mut ChangeLog| {
+        e.action_with_logger(log, "ic", |a| a.insert_columns("Data", 1, 1))
+            .unwrap();
+    };
+    // Each mutation is followed by a recalculation.
+    insert_col(&mut e, &mut log);
+    e.evaluate_all().unwrap();
+    for _ in 0..2 {
+        e.delete_columns("Data", 3, 1).unwrap();
+        (log, undo) = (ChangeLog::new(), UndoEngine::new());
+        e.evaluate_all().unwrap();
+    }
+    formula_at(&mut e, &mut log, 8, "=A9+1");
+    e.evaluate_all().unwrap();
+    e.action_with_logger(&mut log, "ir", |a| a.insert_rows("Data", 7, 1))
+        .unwrap();
+    e.evaluate_all().unwrap();
+    e.action_with_logger(&mut log, "v", |a| {
+        a.set_cell_value("Data", 15, 1, LiteralValue::Number(49.0))
+    })
+    .unwrap();
+    e.evaluate_all().unwrap();
+    e.undo_logged(&mut undo, &mut log).unwrap();
+    e.evaluate_all().unwrap();
+    e.delete_rows("Data", 7, 1).unwrap();
+    (log, undo) = (ChangeLog::new(), UndoEngine::new());
+    e.evaluate_all().unwrap();
+    formula_at(&mut e, &mut log, 19, "=A20+1");
+    e.evaluate_all().unwrap();
+    insert_col(&mut e, &mut log);
+    e.evaluate_all().unwrap();
+    formula_at(&mut e, &mut log, 14, "=A15+1");
+    e.evaluate_all().unwrap();
+    insert_col(&mut e, &mut log);
+    e.evaluate_all().unwrap();
+    let _ = undo;
+    let value = |e: &Engine<TestWorkbook>, col: u32| match e.get_cell_value("Out", 10, col) {
+        Some(LiteralValue::Number(n)) => n,
+        other => panic!("Out!R10C{col}: {other:?}"),
+    };
+    let reader = value(&e, 1);
+    // A fresh copy of the reader's current (structurally adjusted) formula.
+    let Some((Some(ast), _)) = e.get_cell("Out", 10, 1) else {
+        panic!("reader lost its formula");
+    };
+    e.set_cell_formula("Out", 10, 2, ast).unwrap();
+    e.evaluate_all().unwrap();
+    (reader, value(&e, 2))
+}
+
+#[test]
+fn offset_reader_after_structural_edits_and_undo_is_fresh() {
+    for extra_reader in [false, true] {
+        for parallel in [false, true] {
+            for deferred in [false, true] {
+                for fast in [false, true] {
+                    let got = offset_after_history(parallel, deferred, fast, extra_reader);
+                    assert_eq!(
+                        got,
+                        (185.0, 185.0),
+                        "(reader, fresh copy): parallel={parallel} deferred={deferred} \
+                         fast={fast} extra_reader={extra_reader}"
+                    );
+                }
+            }
+        }
+    }
+}

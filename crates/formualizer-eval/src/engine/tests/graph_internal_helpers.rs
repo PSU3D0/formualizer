@@ -22,7 +22,12 @@ fn test_snapshot_vertex() {
 
     // Create a cell with value
     let result = graph
-        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(42.0))
+        .set_cell_formula(
+            "Sheet1",
+            1,
+            1,
+            super::common::literal_ast(LiteralValue::Number(42.0)),
+        )
         .unwrap();
     let vertex_id = result.affected_vertices[0];
 
@@ -31,7 +36,8 @@ fn test_snapshot_vertex() {
 
     // Verify snapshot contents
     assert_eq!(snapshot.coord, GridAddr::new(0, 0));
-    assert_eq!(snapshot.kind, VertexKind::Cell);
+    // A literal formula: value cells have no vertex (decision 27).
+    assert_eq!(snapshot.kind, VertexKind::FormulaScalar);
     assert_eq!(snapshot.sheet_id, graph.sheet_id("Sheet1").unwrap());
 
     // Check value was captured (note: value is stored but not directly accessible via snapshot)
@@ -44,7 +50,12 @@ fn test_snapshot_vertex_with_formula() {
 
     // Create dependencies
     graph
-        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(10.0))
+        .set_cell_formula(
+            "Sheet1",
+            1,
+            1,
+            super::common::literal_ast(LiteralValue::Number(10.0)),
+        )
         .unwrap();
 
     // Create formula cell
@@ -94,7 +105,12 @@ fn test_remove_all_edges() {
     // B1 = A1 * 2
     // C1 = B1 + A1
     graph
-        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(10.0))
+        .set_cell_formula(
+            "Sheet1",
+            1,
+            1,
+            super::common::literal_ast(LiteralValue::Number(10.0)),
+        )
         .unwrap();
 
     let b1_formula = ASTNode {
@@ -149,7 +165,12 @@ fn test_mark_dependents_dirty() {
 
     // Create dependency chain: A1 -> B1 -> C1 -> D1
     let a1_result = graph
-        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(5.0))
+        .set_cell_formula(
+            "Sheet1",
+            1,
+            1,
+            super::common::literal_ast(LiteralValue::Number(5.0)),
+        )
         .unwrap();
     let a1_vertex = a1_result.affected_vertices[0];
 
@@ -235,10 +256,20 @@ fn test_snapshot_preserves_all_state() {
 
     // First create the dependencies
     graph
-        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(10.0))
+        .set_cell_formula(
+            "Sheet1",
+            1,
+            1,
+            super::common::literal_ast(LiteralValue::Number(10.0)),
+        )
         .unwrap();
     graph
-        .set_cell_value("Sheet1", 2, 1, LiteralValue::Number(20.0))
+        .set_cell_formula(
+            "Sheet1",
+            2,
+            1,
+            super::common::literal_ast(LiteralValue::Number(20.0)),
+        )
         .unwrap();
 
     let result = graph.set_cell_formula("Sheet1", 3, 1, formula).unwrap();

@@ -58,9 +58,11 @@ fn test_tiny_range_expands_to_cell_dependencies() {
 
     let dependencies = graph.get_dependencies(c1_id);
 
-    // Should have 4 direct dependencies
+    // Should have 4 direct dependencies (cells without a vertex: a
+    // reference creates none, decision 27)
+    assert!(dependencies.is_empty());
     assert_eq!(
-        dependencies.len(),
+        graph.oracle_vertexless_cells(c1_id).len(),
         4,
         "Should expand to 4 cell dependencies"
     );
@@ -73,8 +75,7 @@ fn test_tiny_range_expands_to_cell_dependencies() {
 
     // Verify the dependencies are correct
     let mut dep_addrs = Vec::new();
-    for &dep_id in &dependencies {
-        let cell_ref = graph.get_cell_ref(dep_id).unwrap();
+    for cell_ref in graph.oracle_vertexless_cells(c1_id) {
         dep_addrs.push((cell_ref.coord.row(), cell_ref.coord.col()));
     }
     dep_addrs.sort();
@@ -752,7 +753,9 @@ fn test_rename_layer_storage() {
 #[test]
 fn test_rename_layer_identity() {
     let mut engine = create_simple_engine();
-    let _ = engine.set_cell_value("Sheet1", 1, 1, LiteralValue::Number(100.0));
+    // A formula cell: the vertex identity under test needs a vertex (value
+    // cells have none since decision 27; this used a value cell).
+    let _ = engine.set_cell_formula("Sheet1", 1, 1, parse("=100").unwrap());
 
     let (row, col, _, _) = parse_a1_1based("A1").unwrap();
     let addr = engine.graph.make_cell_ref("Sheet1", row, col);
@@ -783,7 +786,9 @@ fn test_rename_layer_identity() {
 #[test]
 fn test_rename_layer_vertex_read() {
     let mut engine = create_simple_engine();
-    let _ = engine.set_cell_value("Sheet1", 1, 1, LiteralValue::Number(100.0));
+    // A formula cell: the vertex identity under test needs a vertex (value
+    // cells have none since decision 27; this used a value cell).
+    let _ = engine.set_cell_formula("Sheet1", 1, 1, parse("=100").unwrap());
 
     let (row, col, _, _) = parse_a1_1based("A1").unwrap();
     let addr = engine.graph.make_cell_ref("Sheet1", row, col);

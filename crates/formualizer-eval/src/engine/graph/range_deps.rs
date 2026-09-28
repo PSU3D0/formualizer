@@ -43,6 +43,19 @@ impl StructuralOccupancy {
         }
     }
 
+    /// Tests: the occupancy of cells `(row0, col0)` (as a scan of their
+    /// vertices would give it).
+    #[cfg(test)]
+    pub(crate) fn of_cells_for_test(cells: impl IntoIterator<Item = (u32, u32)>) -> Self {
+        let mut occupancy = Self::default();
+        for (row, col) in cells {
+            occupancy.occupied_rows.push(row);
+            occupancy.occupied_columns.push(col);
+        }
+        occupancy.finish();
+        occupancy
+    }
+
     fn finish(&mut self) {
         self.occupied_rows.sort_unstable();
         self.occupied_rows.dedup();
@@ -75,6 +88,22 @@ impl StructuralOccupancy {
             }
         }
         self.finish();
+    }
+
+    /// Occupied columns as inclusive runs, when known (`None`: conservative
+    /// or nothing recorded).
+    pub(crate) fn occupied_column_runs(&self) -> Option<Vec<(u32, u32)>> {
+        if self.conservative || self.occupied_columns.is_empty() {
+            return None;
+        }
+        let mut runs: Vec<(u32, u32)> = Vec::new();
+        for &c in &self.occupied_columns {
+            match runs.last_mut() {
+                Some((_, end)) if *end + 1 == c => *end = c,
+                _ => runs.push((c, c)),
+            }
+        }
+        Some(runs)
     }
 
     fn intersects(sorted: &[u32], start: u32, end: u32) -> bool {
@@ -116,6 +145,13 @@ impl DependencyGraph {
                 occupancy.occupied_columns.push(coord.col());
             }
         }
+        // Cells the legacy graph held as vertices without a formula (the
+        // extent record) move with a row edit and so change the used extent
+        // of open ranges over their columns: those columns are occupied.
+        // (Column edits pass a conservative occupancy; rows are not needed.)
+        occupancy
+            .occupied_columns
+            .extend(self.extent_record_columns(sheet_id));
         occupancy.finish();
         occupancy
     }

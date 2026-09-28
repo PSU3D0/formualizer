@@ -547,9 +547,11 @@ fn legacy_and_mixed_max_five_replans_share_typed_terminal_error_and_remain_dirty
     legacy.force_virtual_dep_changes_for_test(6);
     let legacy_error = legacy.evaluate_cell("Sheet1", 1, 2).unwrap_err();
     assert_replan_exhaustion(&legacy_error);
+    // The target formula B1 (row 0 here resolved to the value cell A1,
+    // whose vertex no longer exists: decision 27).
     let legacy_target = legacy
         .graph
-        .get_vertex_id_for_address(&legacy.graph.make_cell_ref("Sheet1", 0, 1))
+        .get_vertex_id_for_address(&legacy.graph.make_cell_ref("Sheet1", 1, 2))
         .unwrap();
     assert!(legacy.graph.is_dirty(legacy_target));
     legacy.force_virtual_dep_changes_for_test(0);

@@ -11,7 +11,7 @@ mod date_value;
 mod edate_eomonth;
 mod serial;
 mod today_now;
-mod weekday_workday;
+pub(crate) mod weekday_workday;
 
 pub use serial::{
     create_date_normalized, date_to_serial, date_to_serial_for, datetime_to_serial,

@@ -153,11 +153,16 @@ fn planner_generated_store_topology_matches_raw_cell_piece_oracle() {
                 if let Some(&j) = positions.get(&reader) {
                     reach[i][j] = true;
                     selfdep[i] |= i == j;
-                    if c.cycle.is_none() || c.cycle != ordered.cells[j].cycle {
-                        assert!(
-                            c.layer < ordered.cells[j].layer,
-                            "seed={seed} {cell:?}->{reader:?}"
-                        );
+                    let r = ordered.cells[j];
+                    // A chain unit's cells share a layer and run in row
+                    // order: an arc inside it goes to a later row.
+                    let chained = c.chain
+                        && r.chain
+                        && c.layer == r.layer
+                        && (c.sheet, c.col, c.owner) == (r.sheet, r.col, r.owner)
+                        && c.row < r.row;
+                    if (c.cycle.is_none() || c.cycle != r.cycle) && !chained {
+                        assert!(c.layer < r.layer, "seed={seed} {cell:?}->{reader:?}");
                     }
                 }
             }
