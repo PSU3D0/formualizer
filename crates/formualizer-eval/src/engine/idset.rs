@@ -133,7 +133,7 @@ mod tests {
             x ^= x << 17;
             let id = VertexId((x % 5_000) as u32 + if step % 3 == 0 { 70_000 } else { 0 });
             match x % 5 {
-                0 | 1 | 2 => assert_eq!(set.insert(id), oracle.insert(id)),
+                0..=2 => assert_eq!(set.insert(id), oracle.insert(id)),
                 3 => assert_eq!(set.remove(&id), oracle.remove(&id)),
                 _ => assert_eq!(set.contains(&id), oracle.contains(&id)),
             }
