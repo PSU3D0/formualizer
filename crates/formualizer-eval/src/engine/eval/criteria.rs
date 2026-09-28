@@ -222,6 +222,9 @@ pub(super) struct CriteriaIndex {
     /// (text or number per criterion), on first use; `None` when there are
     /// too many tuples to scan per member.
     combos: std::sync::Mutex<Vec<ComboEntry>>,
+    /// Whether members group rows by class tuple: the grouping's pass over
+    /// the rows pays only across a long run (`COMBO_MIN_RUN`).
+    group: bool,
 }
 
 /// A class-kind signature and its grouped rows (`None`: too many tuples).
@@ -235,6 +238,11 @@ struct Combos {
 
 /// More distinct class tuples than this: members walk their driver's rows.
 const MAX_COMBOS: usize = 4096;
+/// Runs shorter than this take the driver criterion's rows with per-row
+/// checks instead of grouping rows by class tuple: a recalculation of a
+/// few members over a large table (real_ops_model: ~20 `SUMIFS` per edit)
+/// pays more for the grouping pass than it saves.
+const COMBO_MIN_RUN: u32 = 32;
 
 impl<R> Engine<R>
 where
@@ -259,6 +267,7 @@ where
         plan: &CriteriaPlan,
         ds: &DataStore,
         current_sheet: &str,
+        run_len: u32,
     ) -> Option<CriteriaIndex> {
         let views: Vec<RangeView<'_>> = plan
             .criteria
@@ -316,6 +325,7 @@ where
             target: plan.target,
             target_lane: std::sync::OnceLock::new(),
             combos: std::sync::Mutex::new(Vec::new()),
+            group: run_len >= COMBO_MIN_RUN,
         })
     }
 
@@ -466,7 +476,12 @@ where
         // Rows grouped by class tuple: a member's matching rows are the
         // tuples every verdict admits (no per-row checks).
         let kinds: smallvec::SmallVec<[bool; 4]> = verdicts.iter().map(|v| v.2).collect();
-        let exact_rows = Self::combos(index, &kinds).map(|combos| {
+        let grouped = if index.group {
+            Self::combos(index, &kinds)
+        } else {
+            None
+        };
+        let exact_rows = grouped.map(|combos| {
             let admitted = |classes: &[u32]| {
                 classes
                     .iter()

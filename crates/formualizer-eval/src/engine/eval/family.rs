@@ -155,7 +155,9 @@ where
         for &unit in units {
             match unit {
                 LayerUnit::Run(run) if run.len > run_chunk => {
-                    memos.push(Default::default());
+                    let mut memo = super::memo::SharedMemo::default();
+                    memo.run_len = run.len;
+                    memos.push(memo);
                     let memo = Some(memos.len() - 1);
                     let mut k = 0;
                     while k < run.len {
@@ -260,7 +262,8 @@ where
         let local_index;
         let criteria_index = match &criteria_plan {
             Some(plan) => {
-                let build = || self.build_criteria_index(plan, ds, sheet_name);
+                let run_len = shared_memo.map_or(run.len, |shared| shared.run_len);
+                let build = || self.build_criteria_index(plan, ds, sheet_name, run_len);
                 match shared_memo {
                     Some(shared) => shared.criteria.get_or_init(build).as_ref(),
                     None => {

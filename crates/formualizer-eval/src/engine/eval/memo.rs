@@ -212,6 +212,8 @@ pub(super) struct SharedMemo {
     /// The run's invariant call values (computed by the first chunk that
     /// reaches a member with the template's literals).
     pub(super) invariant: std::sync::OnceLock<crate::interpreter::InvariantValues>,
+    /// Members of the whole run the chunks were split from.
+    pub(super) run_len: u32,
 }
 
 /// Per-run (or per-chunk, over a shared map) memo with its give-up rule:
