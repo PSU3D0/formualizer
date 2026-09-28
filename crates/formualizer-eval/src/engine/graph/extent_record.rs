@@ -136,6 +136,12 @@ impl ExtentRecord {
         }
     }
 
+    /// Fold the pending cells into the runs now (end of a load: the notes a
+    /// load leaves pending would otherwise be sorted in by a later edit).
+    pub(crate) fn fold_pending(&mut self) {
+        self.inner().fold();
+    }
+
     /// Forget the cells of `rows x cols` (0-based, inclusive). Returns the
     /// forgotten cells as `(col, r0, r1)` runs.
     pub(crate) fn forget_rect(
@@ -361,6 +367,12 @@ impl ExtentRecord {
             .collect();
         out.dedup();
         out
+    }
+
+    /// Cells noted but not folded yet (tests).
+    #[cfg(test)]
+    pub(crate) fn pending_len(&self) -> usize {
+        self.inner.lock().unwrap_or_else(|e| e.into_inner()).pending.len()
     }
 
     /// Runs held (after folding pending cells): tests, accounting.

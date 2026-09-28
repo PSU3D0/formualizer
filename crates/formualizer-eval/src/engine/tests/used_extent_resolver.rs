@@ -727,3 +727,26 @@ fn structural_undo_extent_history_is_delta_sized() {
         last = Some(runs);
     }
 }
+
+/// Decision 31 (matthew_lenhart__26135): the extent notes a load leaves
+/// pending (value and referenced cells) are folded when the load ends, not
+/// by the edit that next crosses the fold threshold (that edit's set took
+/// ~60 µs instead of ~3).
+#[test]
+fn load_folds_its_pending_extent_notes() {
+    let mut engine = Engine::new(TestWorkbook::new(), arrow_eval_config());
+    engine.set_first_load_assume_new(true);
+    for row in 1..=3000u32 {
+        engine
+            .set_cell_value("Sheet1", row * 2, 2, LiteralValue::Number(1.0))
+            .unwrap();
+    }
+    assert!(engine.graph.extent_record_pending() > 0);
+    engine.set_first_load_assume_new(false);
+    assert_eq!(engine.graph.extent_record_pending(), 0);
+    let sheet = engine.graph.sheet_id("Sheet1").unwrap();
+    assert_eq!(
+        engine.graph.used_row_bounds_for_columns(sheet, 1, 1),
+        Some((1, 5999))
+    );
+}

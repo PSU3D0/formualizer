@@ -1192,6 +1192,10 @@ impl DependencyGraph {
             // Loads grow the vertex columns by doubling: drop the slack
             // (up to half of every column) once the load is complete.
             self.store.shrink_to_fit();
+            // The load's extent notes (value cells, referenced cells) are
+            // folded here, not by whichever edit next crosses the fold
+            // threshold (up to one pending cell per run: tens of µs).
+            self.extent_record.fold_pending();
         } else if enabled {
             self.load_packed_to_vertex.clear();
         }
@@ -3859,6 +3863,12 @@ impl DependencyGraph {
         {
             self.extent_record.restore(dropped);
         }
+    }
+
+    /// Extent cells noted but not folded into runs yet (tests).
+    #[cfg(test)]
+    pub(crate) fn extent_record_pending(&self) -> usize {
+        self.extent_record.pending_len()
     }
 
     /// Extent cells retained for undo of structural deletes: `(entries,
