@@ -1001,6 +1001,8 @@ pub struct Engine<R> {
     #[cfg(test)]
     family_members_for_test: std::sync::atomic::AtomicU64,
     #[cfg(test)]
+    invariant_bound_members_for_test: std::sync::atomic::AtomicU64,
+    #[cfg(test)]
     lifted_members_for_test: std::sync::atomic::AtomicU64,
     #[cfg(test)]
     chained_members_for_test: std::sync::atomic::AtomicU64,
@@ -2608,6 +2610,8 @@ where
             #[cfg(test)]
             family_members_for_test: std::sync::atomic::AtomicU64::new(0),
             #[cfg(test)]
+            invariant_bound_members_for_test: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(test)]
             lifted_members_for_test: std::sync::atomic::AtomicU64::new(0),
             #[cfg(test)]
             chained_members_for_test: std::sync::atomic::AtomicU64::new(0),
@@ -2765,6 +2769,8 @@ where
             derived_format_operations_for_test: std::sync::atomic::AtomicU64::new(0),
             #[cfg(test)]
             family_members_for_test: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(test)]
+            invariant_bound_members_for_test: std::sync::atomic::AtomicU64::new(0),
             #[cfg(test)]
             lifted_members_for_test: std::sync::atomic::AtomicU64::new(0),
             #[cfg(test)]

@@ -271,6 +271,20 @@ where
             }
             None => None,
         };
+        // Program 3: the template's run-invariant calls (a lookup's
+        // invariant column index, a name's MATCH) are computed once, at the
+        // first member with the template's literals, and bound for every
+        // such member.
+        let invariant_nodes = if self.config.family_kernels
+            && (members.len() > 1 || shared_memo.is_some())
+        {
+            let names =
+                |name: &str, as_arg: bool| self.lift_name_is_run_constant(run.sheet, name, as_arg);
+            super::lift::LiftProgram::invariant_subtrees(self, ds, template, &names)
+        } else {
+            Vec::new()
+        };
+        let mut local_invariant: Option<crate::interpreter::InvariantValues> = None;
         for (i, &v) in members.iter().enumerate() {
             let row = run.row0 + i as u32;
             #[cfg(debug_assertions)]
@@ -298,12 +312,39 @@ where
                     continue;
                 }
             };
+            let row_delta = i64::from(row) - i64::from(anchor.0);
             let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref);
+            let compute =
+                || self.run_invariant_values(&interpreter, &invariant_nodes, row_delta, col_delta);
+            let invariant_values: Option<&crate::interpreter::InvariantValues> =
+                if bindings || invariant_nodes.is_empty() {
+                    None
+                } else if let Some(shared) = shared_memo {
+                    Some(shared.invariant.get_or_init(compute))
+                } else {
+                    if local_invariant.is_none() {
+                        local_invariant = Some(compute());
+                    }
+                    local_invariant.as_ref()
+                };
             let interpreter = match (bindings, &literals.slots_by_node) {
                 (true, Some(map)) => {
                     interpreter.with_parameter_bindings(InterpreterParameterBindings {
                         literal_slots_by_node: map,
                         literal_values: &bound,
+                        invariant_values: None,
+                    })
+                }
+                (false, _) if invariant_values.is_some_and(|m| !m.is_empty()) => {
+                    #[cfg(test)]
+                    self.invariant_bound_members_for_test
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    static NO_SLOTS: std::sync::LazyLock<FxHashMap<AstNodeId, LiteralSlotId>> =
+                        std::sync::LazyLock::new(FxHashMap::default);
+                    interpreter.with_parameter_bindings(InterpreterParameterBindings {
+                        literal_slots_by_node: &NO_SLOTS,
+                        literal_values: &[],
+                        invariant_values,
                     })
                 }
                 _ => interpreter,
@@ -311,7 +352,6 @@ where
             #[cfg(test)]
             self.family_members_for_test
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let row_delta = i64::from(row) - i64::from(anchor.0);
             if let (Some(plan), Some(index)) = (&criteria_plan, criteria_index)
                 && let Some(value) = self.criteria_member(
                     plan,
@@ -554,6 +594,35 @@ where
         Some(lifted)
     }
 
+    /// The values of run-invariant calls `nodes`, evaluated for one member
+    /// (the walk's own evaluation); calls whose value is not a scalar are
+    /// left out (the walk evaluates them per member).
+    fn run_invariant_values(
+        &self,
+        interpreter: &Interpreter<'_>,
+        nodes: &[AstNodeId],
+        row_delta: i64,
+        col_delta: i64,
+    ) -> crate::interpreter::InvariantValues {
+        let ds = self.graph.data_store();
+        let reg = self.graph.sheet_reg();
+        let mut out = crate::interpreter::InvariantValues::default();
+        for &node in nodes {
+            let value =
+                interpreter.evaluate_arena_ast_with_offset(node, row_delta, col_delta, ds, reg);
+            let entry = match value {
+                Ok(crate::traits::CalcValue::Scalar(v)) => (v, None),
+                Ok(crate::traits::CalcValue::AnnotatedScalar(v, f)) => (v, Some(f)),
+                _ => continue,
+            };
+            if matches!(entry.0, LiteralValue::Array(_)) {
+                continue;
+            }
+            out.insert(node, entry);
+        }
+        out
+    }
+
     /// Whether defined name `name`, read from a run on `sheet`, is one value
     /// for every member (the lift evaluates it once): a cell, a literal or
     /// a non-volatile, non-dynamic formula; a range only as a call's direct
@@ -688,6 +757,12 @@ impl<R> Engine<R>
 where
     R: EvaluationContext,
 {
+    /// Family members walked with run-invariant calls bound so far.
+    pub(crate) fn invariant_bound_members_for_test(&self) -> u64 {
+        self.invariant_bound_members_for_test
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     /// Members evaluated through a family template so far.
     pub(crate) fn family_members_for_test(&self) -> u64 {
         self.family_members_for_test

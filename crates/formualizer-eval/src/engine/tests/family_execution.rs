@@ -1021,3 +1021,115 @@ fn family_criteria_kernel_matches_per_cell() {
         }
     }
 }
+
+/// Program 3: a family template's run-invariant calls (a lookup's column
+/// index from a MATCH over a named header row, an INDEX's column) are
+/// computed once per run and bound for the walk of every member; values
+/// equal the per-cell oracle's, at first evaluation and after edits
+/// (including edits to the invariant call's inputs).
+#[test]
+fn family_walk_binds_run_invariant_calls() {
+    use crate::engine::named_range::{NameScope, NamedDefinition};
+    use crate::reference::{CellRef, Coord, RangeRef};
+    const ROWS: u32 = 60;
+    let run = |config: EvalConfig| -> (Vec<String>, u64) {
+        let mut e = Engine::new(TestWorkbook::new(), config);
+        e.add_sheet("Data").unwrap();
+        // Data: a key column A (sorted numbers), header row 1 (texts).
+        for c in 1..=5u32 {
+            e.set_cell_value("Data", 1, c, LiteralValue::Text(format!("h{c}")))
+                .unwrap();
+        }
+        for r in 2..=40u32 {
+            e.set_cell_value("Data", r, 1, LiteralValue::Number(f64::from(r * 3)))
+                .unwrap();
+            for c in 2..=5u32 {
+                e.set_cell_value("Data", r, c, LiteralValue::Number(f64::from(r * c)))
+                    .unwrap();
+            }
+        }
+        let data = e.sheet_id("Data").unwrap();
+        let at = |r: u32, c: u32| CellRef::new(data, Coord::from_excel(r, c, true, true));
+        e.define_name(
+            "Table",
+            NamedDefinition::Range(RangeRef::new(at(2, 1), at(40, 5))),
+            NameScope::Workbook,
+        )
+        .unwrap();
+        e.define_name(
+            "Heads",
+            NamedDefinition::Range(RangeRef::new(at(1, 1), at(1, 5))),
+            NameScope::Workbook,
+        )
+        .unwrap();
+        // Sheet1 row 1 holds the header each column looks up.
+        for c in 2..=4u32 {
+            e.set_cell_value("Sheet1", 1, c, LiteralValue::Text(format!("h{}", c + 1)))
+                .unwrap();
+        }
+        let mut cells = Vec::new();
+        for r in 2..=ROWS {
+            e.set_cell_value("Sheet1", r, 1, LiteralValue::Number(f64::from(r * 2)))
+                .unwrap();
+            let fs = [
+                (2, format!("=VLOOKUP($A{r},Table,MATCH(B$1,Heads,0))")),
+                (3, format!("=VLOOKUP($A{r},Table,MATCH(C$1,Heads,0),FALSE)")),
+                (
+                    4,
+                    format!(
+                        "=INDEX(Data!$A$2:$E$40,MATCH($A{r},Data!$A$2:$A$40,1),MATCH(D$1,Data!$A$1:$E$1,0))+SUM(Data!$B$2:$B$5)"
+                    ),
+                ),
+            ];
+            for (c, f) in fs {
+                e.set_cell_formula("Sheet1", r, c, parse(&f).unwrap())
+                    .unwrap();
+                cells.push((r, c));
+            }
+        }
+        let snapshot = |e: &Engine<TestWorkbook>| {
+            cells
+                .iter()
+                .map(|&(r, c)| key(e.get_cell_value("Sheet1", r, c)))
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+        let mut out = Vec::new();
+        e.evaluate_all().unwrap();
+        out.push(snapshot(&e));
+        let edits = [
+            ("Sheet1", 1, 3, LiteralValue::Text("h2".into())),
+            ("Data", 1, 4, LiteralValue::Text("zz".into())),
+            ("Data", 3, 2, LiteralValue::Number(-1.0)),
+            ("Sheet1", 7, 1, LiteralValue::Number(50.0)),
+        ];
+        for (s, r, c, v) in edits {
+            e.set_cell_value(s, r, c, v).unwrap();
+            e.evaluate_all().unwrap();
+            out.push(snapshot(&e));
+        }
+        eprintln!(
+            "DBGT fam={} inv={}",
+            e.family_members_for_test(),
+            e.invariant_bound_members_for_test()
+        );
+        (out, e.invariant_bound_members_for_test())
+    };
+    for parallel in [false, true] {
+        let base = EvalConfig {
+            enable_parallel: parallel,
+            ..arrow_eval_config()
+        };
+        let oracle = run(EvalConfig {
+            family_execution: false,
+            ..base.clone()
+        });
+        let bound = run(base);
+        assert_eq!(oracle.1, 0);
+        assert!(
+            bound.1 > 0,
+            "no member was walked with bound invariant calls"
+        );
+        assert_eq!(bound.0, oracle.0, "parallel={parallel}");
+    }
+}

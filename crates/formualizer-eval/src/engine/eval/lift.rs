@@ -195,6 +195,49 @@ impl LiftProgram {
             .then_some(program)
     }
 
+    /// The maximal run-invariant calls strictly inside `root` (their value
+    /// is one for the whole run; the walk can compute them once).
+    pub(super) fn invariant_subtrees(
+        functions: &dyn crate::traits::FunctionProvider,
+        ds: &DataStore,
+        root: AstNodeId,
+        names: &dyn Fn(&str, bool) -> bool,
+    ) -> Vec<AstNodeId> {
+        fn visit(
+            functions: &dyn crate::traits::FunctionProvider,
+            ds: &DataStore,
+            id: AstNodeId,
+            is_root: bool,
+            names: &dyn Fn(&str, bool) -> bool,
+            out: &mut Vec<AstNodeId>,
+        ) {
+            match ds.get_node(id) {
+                Some(AstNodeData::Function { .. }) => {
+                    if !is_root && LiftProgram::invariant(functions, ds, id, names) {
+                        out.push(id);
+                    } else if let Some(args) = ds.get_args(id) {
+                        for &arg in args {
+                            visit(functions, ds, arg, false, names, out);
+                        }
+                    }
+                }
+                Some(AstNodeData::UnaryOp { expr_id, .. }) => {
+                    visit(functions, ds, *expr_id, false, names, out)
+                }
+                Some(AstNodeData::BinaryOp {
+                    left_id, right_id, ..
+                }) => {
+                    visit(functions, ds, *left_id, false, names, out);
+                    visit(functions, ds, *right_id, false, names, out);
+                }
+                _ => {}
+            }
+        }
+        let mut out = Vec::new();
+        visit(functions, ds, root, true, names, &mut out);
+        out
+    }
+
     /// Whether `id` is a run-invariant expression (see `LiftNode::Invariant`).
     pub(super) fn invariant(
         functions: &dyn crate::traits::FunctionProvider,

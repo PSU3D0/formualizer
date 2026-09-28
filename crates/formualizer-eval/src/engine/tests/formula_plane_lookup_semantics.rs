@@ -1690,21 +1690,36 @@ fn lookup_cache_cross_sheet_entries_are_isolated() {
 
 #[test]
 fn approximate_and_wildcard_modes_do_not_hit_exact_cache() {
-    let mut approximate = engine_with_config(EvalConfig::default());
-    populate_numeric_table(&mut approximate, "Sheet1", TABLE_ROWS);
-    for row in 1..=FORMULA_ROWS {
-        formula(
-            &mut approximate,
-            "Sheet1",
-            row,
-            2,
-            &format!("=VLOOKUP({row}.5, $D$1:$E$100, 2, TRUE)"),
-        );
-    }
-    approximate.evaluate_all().unwrap();
-    let approximate_report = approximate.last_lookup_index_cache_report();
-    assert_eq!(approximate_report.hits, 0, "{approximate_report:?}");
-    assert_eq!(approximate_report.builds, 0, "{approximate_report:?}");
+    // Program 3: approximate lookups read the lookup index's stored column
+    // (the same cells in the same order) instead of materializing it per
+    // call; the binary search is unchanged, so their results equal the
+    // materializing path's (no cache at all).
+    let approximate_results = |max_bytes: usize| {
+        let mut approximate = engine_with_config(EvalConfig {
+            lookup_index_cache_max_bytes: max_bytes,
+            ..EvalConfig::default()
+        });
+        populate_numeric_table(&mut approximate, "Sheet1", TABLE_ROWS);
+        for row in 1..=FORMULA_ROWS {
+            formula(
+                &mut approximate,
+                "Sheet1",
+                row,
+                2,
+                &format!("=VLOOKUP({row}.5, $D$1:$E$100, 2, TRUE)"),
+            );
+        }
+        approximate.evaluate_all().unwrap();
+        let values: Vec<_> = (1..=FORMULA_ROWS)
+            .map(|row| approximate.get_cell_value("Sheet1", row, 2))
+            .collect();
+        (values, approximate.last_lookup_index_cache_report())
+    };
+    let (cached, report) = approximate_results(EvalConfig::default().lookup_index_cache_max_bytes);
+    let (materialized, uncached) = approximate_results(0);
+    assert_eq!(uncached.hits, 0, "{uncached:?}");
+    assert!(report.hits > 0, "{report:?}");
+    assert_eq!(cached, materialized);
 
     let mut wildcard = engine_with_config(EvalConfig::default());
     for row in 1..=TABLE_ROWS {

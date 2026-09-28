@@ -209,6 +209,9 @@ pub(super) struct SharedMemo {
     seen: std::sync::atomic::AtomicUsize,
     /// The run's criteria index (built by the first chunk that needs it).
     pub(super) criteria: std::sync::OnceLock<Option<super::criteria::CriteriaIndex>>,
+    /// The run's invariant call values (computed by the first chunk that
+    /// reaches a member with the template's literals).
+    pub(super) invariant: std::sync::OnceLock<crate::interpreter::InvariantValues>,
 }
 
 /// Per-run (or per-chunk, over a shared map) memo with its give-up rule:

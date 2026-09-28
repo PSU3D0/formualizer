@@ -307,20 +307,40 @@ impl Function for MatchFn {
                         )));
                     }
 
-                    // Fallback for approximate match modes (handled via materialization for now)
-                    let mut values: Vec<LiteralValue> = Vec::new();
-                    if let Err(e) = rv.for_each_cell(&mut |v| {
-                        values.push(v.clone());
-                        Ok(())
-                    }) {
-                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
-                    }
+                    // Approximate modes: a one-column or one-row view's
+                    // values from the engine's lookup index when it has one
+                    // (the same cells in the same order; blanks past the
+                    // sheet's rows are projected out below either way), else
+                    // materialized.
+                    let axis = if rv.dims().1 == 1 {
+                        Some(LookupAxis::ColumnInView(0))
+                    } else if rv.dims().0 == 1 {
+                        Some(LookupAxis::RowInView(0))
+                    } else {
+                        None
+                    };
+                    let index = axis.and_then(|axis| ctx.get_lookup_index(&rv, axis));
+                    let mut owned: Vec<LiteralValue> = Vec::new();
+                    let values: &[LiteralValue] = match &index {
+                        Some(index) => &index.cell_values,
+                        None => {
+                            if let Err(e) = rv.for_each_cell(&mut |v| {
+                                owned.push(v.clone());
+                                Ok(())
+                            }) {
+                                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                                    e,
+                                )));
+                            }
+                            &owned
+                        }
+                    };
 
                     // Project out the entries an approximate search ignores
                     // (blanks and entries outside the needle's value class)
                     // before both the sortedness guard and the search itself.
                     let searched =
-                        match SearchedVector::new(&values, &lookup_value, ctx.date_system()) {
+                        match SearchedVector::new(values, &lookup_value, ctx.date_system()) {
                             Ok(searched) => searched,
                             Err(error) => {
                                 return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
@@ -621,6 +641,11 @@ impl Function for VLookupFn {
                         ctx.date_system(),
                     )?
                 }
+            } else if let Some(index) = ctx.get_lookup_index(&rv, LookupAxis::ColumnInView(0)) {
+                // The engine's lookup index holds the first column's values
+                // (`get_cell`, as `for_each_row` reads them) for repeated
+                // lookups on the same view: no per-call materialization.
+                binary_search_match(&index.cell_values, &lookup_value, 1, ctx.date_system())?
             } else {
                 // Fallback for approximate mode (requires materializing first column for now)
                 let mut first_col: Vec<LiteralValue> = Vec::new();
@@ -870,14 +895,19 @@ impl Function for HLookupFn {
             }
             let first_row_view = rv.sub_view(0, 0, 1, cols);
             let col_idx_opt = if approximate {
-                let mut first_row: Vec<LiteralValue> = Vec::with_capacity(cols);
-                first_row_view.for_each_row(&mut |row| {
-                    if first_row.is_empty() {
-                        first_row.extend_from_slice(row);
-                    }
-                    Ok(())
-                })?;
-                binary_search_match(&first_row, &lookup_value, 1, ctx.date_system())?
+                if let Some(index) = ctx.get_lookup_index(&rv, LookupAxis::RowInView(0)) {
+                    // The lookup index holds the first row's values.
+                    binary_search_match(&index.cell_values, &lookup_value, 1, ctx.date_system())?
+                } else {
+                    let mut first_row: Vec<LiteralValue> = Vec::with_capacity(cols);
+                    first_row_view.for_each_row(&mut |row| {
+                        if first_row.is_empty() {
+                            first_row.extend_from_slice(row);
+                        }
+                        Ok(())
+                    })?;
+                    binary_search_match(&first_row, &lookup_value, 1, ctx.date_system())?
+                }
             } else {
                 let wildcard_mode = matches!(lookup_value, LiteralValue::Text(ref s) if s.contains('*') || s.contains('?') || s.contains('~'));
                 if !wildcard_mode
