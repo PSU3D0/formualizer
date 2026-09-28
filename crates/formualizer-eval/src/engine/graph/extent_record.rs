@@ -136,13 +136,20 @@ impl ExtentRecord {
         }
     }
 
-    /// Forget the cells of `rows x cols` (0-based, inclusive).
-    pub(crate) fn forget_rect(&mut self, sheet: SheetId, rows: (u32, u32), cols: (u32, u32)) {
+    /// Forget the cells of `rows x cols` (0-based, inclusive). Returns the
+    /// forgotten cells as `(col, r0, r1)` runs.
+    pub(crate) fn forget_rect(
+        &mut self,
+        sheet: SheetId,
+        rows: (u32, u32),
+        cols: (u32, u32),
+    ) -> Vec<(u32, u32, u32)> {
         let inner = self.inner();
         inner.fold();
         let span = inner.sheet_span(sheet);
+        let mut forgotten = Vec::new();
         if span.is_empty() {
-            return;
+            return forgotten;
         }
         let mut changed = false;
         let mut out = Vec::with_capacity(inner.runs.len() + 1);
@@ -154,6 +161,7 @@ impl ExtentRecord {
                 continue;
             }
             changed = true;
+            forgotten.push((col, r.r0.max(rows.0), r.r1.min(rows.1)));
             if r.r0 < rows.0 {
                 out.push(ExtentRun {
                     r1: rows.0 - 1,
@@ -171,6 +179,7 @@ impl ExtentRecord {
             out.extend_from_slice(&inner.runs[span.end..]);
             inner.runs = out;
         }
+        forgotten
     }
 
     /// Shift for a structural edit (pre-edit frame). Returns the runs a
@@ -480,7 +489,7 @@ mod tests {
             rec.note(1, row, 1);
             rec.note(2, row, 1);
         }
-        rec.forget_rect(1, (3, 4), (0, 5));
+        assert_eq!(rec.forget_rect(1, (3, 4), (0, 5)), vec![(1, 3, 4)]);
         assert_eq!(rec.row_bounds_for_cols(1, 1, 1), Some((0, 9)));
         assert_eq!(rec.col_bounds_for_rows(1, 3, 4), None);
         rec.forget_rect(1, (0, 9), (1, 1));

@@ -30,7 +30,8 @@ fn test_set_range_values() {
     let summary = editor.set_range_values(0, 0, 0, &values).unwrap();
 
     drop(editor);
-    // Value cells have no vertex (decision 27).
+    // Value cells have no vertex (decisions 27/28): vertex existence, not
+    // the cell count, changed.
 
     assert_eq!(summary.cells_affected, 9);
     assert!(
@@ -63,12 +64,7 @@ fn test_clear_range() {
     for row in 1..=3 {
         for col in 1..=3 {
             graph
-                .set_cell_formula(
-                    "Sheet1",
-                    row,
-                    col,
-                    super::common::literal_ast(lit_num((row * 10 + col) as f64)),
-                )
+                .set_cell_value("Sheet1", row, col, lit_num((row * 10 + col) as f64))
                 .unwrap();
         }
     }
@@ -142,10 +138,10 @@ fn test_set_range_values_partial_overlap() {
 
     // Set initial values
     graph
-        .set_cell_formula("Sheet1", 1, 1, super::common::literal_ast(lit_num(100.0)))
+        .set_cell_value("Sheet1", 1, 1, lit_num(100.0))
         .unwrap();
     graph
-        .set_cell_formula("Sheet1", 2, 2, super::common::literal_ast(lit_num(200.0)))
+        .set_cell_value("Sheet1", 2, 2, lit_num(200.0))
         .unwrap();
 
     let mut editor = VertexEditor::new(&mut graph);
@@ -159,7 +155,8 @@ fn test_set_range_values_partial_overlap() {
     let summary = editor.set_range_values(0, 0, 0, &values).unwrap();
 
     drop(editor);
-    // Value cells have no vertex (decision 27).
+    // Value cells have no vertex (decisions 27/28): vertex existence, not
+    // the cell count, changed.
 
     assert_eq!(summary.cells_affected, 4);
     assert!(
@@ -180,10 +177,10 @@ fn test_copy_range_with_absolute_references() {
 
     // Setup source with absolute and relative references
     graph
-        .set_cell_formula("Sheet1", 1, 1, super::common::literal_ast(lit_num(100.0)))
+        .set_cell_value("Sheet1", 1, 1, lit_num(100.0))
         .unwrap();
     graph
-        .set_cell_formula("Sheet1", 5, 5, super::common::literal_ast(lit_num(500.0)))
+        .set_cell_value("Sheet1", 5, 5, lit_num(500.0))
         .unwrap();
 
     // Formula with mixed references: =$A$1+E5
@@ -211,9 +208,7 @@ fn test_clear_range_with_formulas() {
     let mut graph = super::common::graph_truth_graph();
 
     // Setup cells with formulas that reference each other
-    graph
-        .set_cell_formula("Sheet1", 1, 1, super::common::literal_ast(lit_num(10.0)))
-        .unwrap();
+    graph.set_cell_value("Sheet1", 1, 1, lit_num(10.0)).unwrap();
     graph
         .set_cell_formula("Sheet1", 1, 2, parse("=A1*2").unwrap())
         .unwrap();
@@ -286,9 +281,8 @@ fn test_move_range() {
     // The formula should now reference D4
 
     assert_eq!(summary.cells_affected, 2);
-    // move_range clears the source addresses that have vertices: the two
-    // formulas (the value cells have none since decision 27).
-    assert_eq!(summary.cells_moved, 2);
+    // move_range still clears the source addresses, so this counts all moved/cleared cells.
+    assert_eq!(summary.cells_moved, 4);
 }
 
 #[test]
@@ -310,7 +304,8 @@ fn test_set_range_values_large() {
     let summary = editor.set_range_values(0, 0, 0, &values).unwrap();
 
     drop(editor);
-    // Value cells have no vertex (decision 27).
+    // Value cells have no vertex (decisions 27/28): vertex existence, not
+    // the cell count, changed.
 
     assert_eq!(summary.cells_affected, 10000);
 

@@ -3524,14 +3524,15 @@ impl DependencyGraph {
     }
 
     /// Cells of `rows x cols` (0-based, inclusive) leave the extent record:
-    /// the legacy graph removed their vertices.
+    /// the legacy graph removed their vertices. Returns the forgotten cells
+    /// as `(col, r0, r1)` runs.
     pub(crate) fn forget_extent_cells(
         &mut self,
         sheet: SheetId,
         rows: (u32, u32),
         cols: (u32, u32),
-    ) {
-        self.extent_record.forget_rect(sheet, rows, cols);
+    ) -> Vec<(u32, u32, u32)> {
+        self.extent_record.forget_rect(sheet, rows, cols)
     }
 
     /// Whether the legacy graph held a vertex without a formula at `cell`

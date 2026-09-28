@@ -1964,17 +1964,24 @@ impl<'g> VertexEditor<'g> {
                 let col = coord.col();
                 row >= start_row && row <= end_row && col >= start_col && col <= end_col
             })
-            .map(|(id, _)| id)
             .collect();
 
-        for id in vertices_in_range {
+        let mut vertex_cells = rustc_hash::FxHashSet::default();
+        for (id, coord) in vertices_in_range {
             self.remove_vertex(id)?;
+            vertex_cells.insert((coord.row(), coord.col()));
             summary.cells_affected += 1;
         }
         // Value and referenced cells (legacy's vertices) leave the used
-        // extent too.
-        self.graph
-            .forget_extent_cells(sheet_id, (start_row, end_row), (start_col, end_col));
+        // extent too, and count as cleared cells, as their vertices did.
+        for (col, r0, r1) in
+            self.graph
+                .forget_extent_cells(sheet_id, (start_row, end_row), (start_col, end_col))
+        {
+            summary.cells_affected += (r0..=r1)
+                .filter(|&row| !vertex_cells.contains(&(row, col)))
+                .count();
+        }
 
         self.commit_batch();
 
