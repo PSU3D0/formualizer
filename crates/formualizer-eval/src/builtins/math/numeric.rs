@@ -294,7 +294,7 @@ impl Function for TruncFn {
                 ExcelError::new_value(),
             )));
         }
-        let mut n = match args[0].value()?.into_literal() {
+        let n = match args[0].value()?.into_literal() {
             LiteralValue::Error(e) => {
                 return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
             }
@@ -310,25 +310,288 @@ impl Function for TruncFn {
         } else {
             0
         };
-        if digits >= 0 {
-            let f = 10f64.powi(digits);
-            n = (n * f).trunc() / f;
-        } else {
-            let f = 10f64.powi(-digits);
-            n = (n / f).trunc() * f;
-        }
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(n)))
+        let out = excel_round_with_mode(n, digits, DecimalRoundingMode::Down);
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(out)))
     }
 }
 
 #[derive(Debug)]
 pub struct RoundFn; // ROUND(number, digits)
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DecimalRoundingMode {
+    /// ROUND: half away from zero on the decimal view.
+    Nearest,
+    /// ROUNDDOWN / TRUNC: toward zero on the decimal view.
+    Down,
+    /// ROUNDUP: away from zero on the decimal view.
+    Up,
+}
+
+/// Powers of ten that binary64 represents exactly.
+const EXACT_POW10: [f64; 23] = [
+    1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15, 1e16,
+    1e17, 1e18, 1e19, 1e20, 1e21, 1e22,
+];
+
+/// The smallest and one-past-largest 15-digit decimal coefficients.
+const VIEW_MIN: u64 = 100_000_000_000_000;
+const VIEW_END: u64 = 1_000_000_000_000_000;
+
+/// A small stack buffer for `core::fmt` output, so the rare formatting
+/// fallbacks below never touch the heap.
+struct StackText {
+    bytes: [u8; 64],
+    len: usize,
+}
+
+impl StackText {
+    fn new() -> Self {
+        Self {
+            bytes: [0; 64],
+            len: 0,
+        }
+    }
+
+    fn as_str(&self) -> &str {
+        // Only `write_str` fills the buffer, and it copies whole `&str`s.
+        std::str::from_utf8(&self.bytes[..self.len]).unwrap_or("")
+    }
+}
+
+impl std::fmt::Write for StackText {
+    fn write_str(&mut self, s: &str) -> std::fmt::Result {
+        let end = self.len + s.len();
+        if end > self.bytes.len() {
+            return Err(std::fmt::Error);
+        }
+        self.bytes[self.len..end].copy_from_slice(s.as_bytes());
+        self.len = end;
+        Ok(())
+    }
+}
+
+/// Excel ROUND first treats a binary64 value as its 15-significant-digit
+/// decimal rendering, then rounds that decimal half away from zero.
+fn excel_round(number: f64, requested_digits: i32) -> f64 {
+    excel_round_with_mode(number, requested_digits, DecimalRoundingMode::Nearest)
+}
+
+/// Shared decimal-view rounding for the ROUND family (measured in Excel for
+/// Mac 16.105.3 and Excel for the web).
+///
+/// 1. Reduce the exact binary value to 15 significant decimal digits, to
+///    nearest. An exact tie at the 16th digit goes toward zero for `ROUND`
+///    and away from zero for `ROUNDUP`, `ROUNDDOWN` and `TRUNC`.
+/// 2. Round that decimal at the requested position with the function's
+///    carry rule.
+///
+/// Most inputs never reach the decimal arithmetic: when the scaled value is
+/// provably far from the carry boundary, the binary result is the same, see
+/// [`round_far_from_boundary`].
+fn excel_round_with_mode(number: f64, requested_digits: i32, mode: DecimalRoundingMode) -> f64 {
+    if !number.is_finite() || number == 0.0 {
+        return number;
+    }
+    if let Some(rounded) = round_far_from_boundary(number, requested_digits, mode) {
+        return rounded;
+    }
+
+    let (coefficient, exponent) =
+        fifteen_digit_view(number.abs(), mode == DecimalRoundingMode::Nearest);
+    let unit_exponent = -i64::from(requested_digits);
+    let magnitude = if exponent >= unit_exponent {
+        // The requested position is at or below the view's last digit.
+        decimal_to_f64(coefficient, exponent)
+    } else {
+        let discarded = unit_exponent - exponent;
+        let (kept, carry) = if discarded > 15 {
+            // Everything is discarded and the view is below half a unit.
+            (0, mode == DecimalRoundingMode::Up)
+        } else {
+            let unit = 10_u64.pow(discarded as u32);
+            let remainder = coefficient % unit;
+            let carry = match mode {
+                DecimalRoundingMode::Nearest => remainder * 2 >= unit,
+                DecimalRoundingMode::Down => false,
+                DecimalRoundingMode::Up => remainder > 0,
+            };
+            (coefficient / unit, carry)
+        };
+        let kept = kept + u64::from(carry);
+        if kept == 0 {
+            0.0
+        } else {
+            decimal_to_f64(kept, unit_exponent)
+        }
+    };
+    magnitude.copysign(number)
+}
+
+/// The binary shortcut. With `digits` in `-22..=22` the power of ten is
+/// exact, so `scaled` is `|number| * 10^digits` with one rounding error of at
+/// most half an ULP. The 15-digit view moves the value by at most
+/// `5e-15 * |number|`. When the scaled value is further than `1e-14 * scaled`
+/// from the carry boundary (the half for `Nearest`, the integers otherwise),
+/// neither error can cross it, so rounding `scaled` in binary makes the same
+/// decision as the decimal path. `scaled < 1e14` keeps the rounding position
+/// within the view's 15 digits and the integer result exact; dividing or
+/// multiplying it by the exact power of ten is then correctly rounded, the
+/// same value the decimal path parses. Integers are handled when the scaling
+/// was exact.
+#[inline]
+fn round_far_from_boundary(number: f64, digits: i32, mode: DecimalRoundingMode) -> Option<f64> {
+    if !(-22..=22).contains(&digits) {
+        return None;
+    }
+    let power = EXACT_POW10[digits.unsigned_abs() as usize];
+    let magnitude = number.abs();
+    let scaled = if digits >= 0 {
+        magnitude * power
+    } else {
+        magnitude / power
+    };
+    if scaled >= 1e14 {
+        return None;
+    }
+    let whole = scaled.floor();
+    let fraction = scaled - whole;
+    let margin = scaled * 1e-14;
+    let rounded = match mode {
+        DecimalRoundingMode::Nearest => {
+            if (fraction - 0.5).abs() <= margin {
+                return None;
+            }
+            if fraction > 0.5 { whole + 1.0 } else { whole }
+        }
+        DecimalRoundingMode::Down | DecimalRoundingMode::Up if fraction == 0.0 => {
+            // An integral `scaled` is only safe when it is the exact product:
+            // then `number` has at most 14 significant digits, so its view is
+            // itself and there is nothing to carry.
+            let exact = digits == 0
+                || if digits > 0 {
+                    magnitude.mul_add(power, -scaled) == 0.0
+                } else {
+                    scaled.mul_add(power, -magnitude) == 0.0
+                };
+            if !exact {
+                return None;
+            }
+            whole
+        }
+        DecimalRoundingMode::Down => {
+            if fraction <= margin || 1.0 - fraction <= margin {
+                return None;
+            }
+            whole
+        }
+        DecimalRoundingMode::Up => {
+            if fraction <= margin || 1.0 - fraction <= margin {
+                return None;
+            }
+            whole + 1.0
+        }
+    };
+    let rounded = if digits >= 0 {
+        rounded / power
+    } else {
+        rounded * power
+    };
+    Some(rounded.copysign(number))
+}
+
+/// The 15-significant-digit view of a positive finite `magnitude`, as
+/// `(coefficient, exponent)` with `coefficient` in `[10^14, 10^15)` and the
+/// view equal to `coefficient * 10^exponent`.
+fn fifteen_digit_view(magnitude: f64, tie_toward_zero: bool) -> (u64, i64) {
+    // An exact tie at the 16th digit needs an exact decimal expansion of 16
+    // significant digits, which binary64 only has between about 2.4e-7 and
+    // 1.8e16. This range covers that with exact integer arithmetic.
+    if (1e-7..18_446_744_073_709_551_616.0).contains(&magnitude) {
+        let bits = magnitude.to_bits();
+        // Normal in this range: magnitude = mantissa * 2^binary_exponent.
+        let mantissa = u128::from((bits & ((1 << 52) - 1)) | (1 << 52));
+        let binary_exponent = ((bits >> 52) & 0x7ff) as i64 - 1075;
+        let mut decimal_exponent = magnitude.log10().floor() as i64;
+        loop {
+            // scaled = magnitude * 10^(14 - decimal_exponent) = numerator / denominator.
+            // The bounds keep both below 2^128: 10^22 * 2^53 and 10^6 * 2^80.
+            let shift = 14 - decimal_exponent;
+            let mut numerator = mantissa;
+            let mut denominator = 1_u128;
+            if shift >= 0 {
+                numerator *= 10_u128.pow(shift as u32);
+            } else {
+                denominator = 10_u128.pow((-shift) as u32);
+            }
+            let (quotient, remainder) = if binary_exponent >= 0 {
+                numerator <<= binary_exponent;
+                (numerator / denominator, numerator % denominator)
+            } else if denominator == 1 {
+                let bits = (-binary_exponent) as u32;
+                denominator <<= bits;
+                (numerator >> bits, numerator & (denominator - 1))
+            } else {
+                denominator <<= -binary_exponent;
+                (numerator / denominator, numerator % denominator)
+            };
+            // log10 can land one decade off next to a power of ten.
+            if quotient >= u128::from(VIEW_END) {
+                decimal_exponent += 1;
+                continue;
+            }
+            if quotient < u128::from(VIEW_MIN) {
+                decimal_exponent -= 1;
+                continue;
+            }
+            let twice = remainder * 2;
+            let round_up = twice > denominator || (twice == denominator && !tie_toward_zero);
+            let coefficient = quotient as u64 + u64::from(round_up);
+            return if coefficient == VIEW_END {
+                (VIEW_MIN, decimal_exponent - 13)
+            } else {
+                (coefficient, decimal_exponent - 14)
+            };
+        }
+    }
+
+    // Outside that range the correctly rounded `{:.14e}` rendering is the
+    // view (no ties to break). Rendered as `d.dddddddddddddde<exp>`.
+    use std::fmt::Write as _;
+    let mut text = StackText::new();
+    let _ = write!(text, "{magnitude:.14e}");
+    let (mantissa, exponent) = text.as_str().split_once('e').unwrap_or(("0", "0"));
+    let coefficient = mantissa
+        .bytes()
+        .filter(u8::is_ascii_digit)
+        .fold(0_u64, |value, digit| value * 10 + u64::from(digit - b'0'));
+    let exponent: i64 = exponent.parse().unwrap_or(0);
+    (coefficient, exponent - 14)
+}
+
+/// `coefficient * 10^exponent`, correctly rounded, for `coefficient <= 10^15`
+/// (exact in binary64).
+fn decimal_to_f64(coefficient: u64, exponent: i64) -> f64 {
+    let value = coefficient as f64;
+    if (0..=22).contains(&exponent) {
+        return value * EXACT_POW10[exponent as usize];
+    }
+    if (-22..0).contains(&exponent) {
+        return value / EXACT_POW10[(-exponent) as usize];
+    }
+    use std::fmt::Write as _;
+    let mut text = StackText::new();
+    let _ = write!(text, "{coefficient}e{exponent}");
+    text.as_str().parse().unwrap_or(f64::NAN)
+}
 /// Rounds a number to a specified number of digits.
 ///
 /// # Remarks
 /// - Positive `digits` rounds to the right of the decimal point.
 /// - Negative `digits` rounds to the left of the decimal point.
-/// - Uses standard half-up style rounding from Rust's `round` behavior.
+/// - The input is first reduced to 15 significant decimal digits, matching Excel's
+///   numeric precision, then rounded at the requested position.
+/// - Halfway cases round away from zero.
 ///
 /// # Examples
 /// ```yaml,sandbox
@@ -400,17 +663,14 @@ impl Function for RoundFn {
 }
 
 /// `ROUND`'s arithmetic on coerced operands (shared with the typed lift).
+///
+/// Rounds Excel's 15-significant-digit decimal view of `n` half away from
+/// zero; see [`excel_round`]. Works on decimal digits rather than scaling by
+/// a power of ten, so extreme `digits` (including `i32::MIN`/`i32::MAX`)
+/// neither overflow nor produce NaN.
 #[inline]
 pub(crate) fn round_digits(n: f64, digits: i32) -> f64 {
-    // `saturating_abs`: `i32::MIN.abs()` overflows (a debug panic). The
-    // release build wrapped it to `i32::MIN`, a factor of 0.0 where this
-    // gives +inf; both make every result NaN (0*inf, x/0*0).
-    let f = 10f64.powi(digits.saturating_abs());
-    if digits >= 0 {
-        (n * f).round() / f
-    } else {
-        (n / f).round() * f
-    }
+    excel_round(n, digits)
 }
 
 #[derive(Debug)]
@@ -482,12 +742,7 @@ impl Function for RoundDownFn {
             }
             other => coerce_num(&other)? as i32,
         };
-        let f = 10f64.powi(digits.saturating_abs());
-        let out = if digits >= 0 {
-            (n * f).trunc() / f
-        } else {
-            (n / f).trunc() * f
-        };
+        let out = excel_round_with_mode(n, digits, DecimalRoundingMode::Down);
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(out)))
     }
 }
@@ -561,14 +816,15 @@ impl Function for RoundUpFn {
             }
             other => coerce_num(&other)? as i32,
         };
-        let f = 10f64.powi(digits.saturating_abs());
-        let mut scaled = if digits >= 0 { n * f } else { n / f };
-        if scaled > 0.0 {
-            scaled = scaled.ceil();
-        } else {
-            scaled = scaled.floor();
+        let out = excel_round_with_mode(n, digits, DecimalRoundingMode::Up);
+        if n.is_finite() && !out.is_finite() {
+            // The away-from-zero carry can leave the representable range
+            // (e.g. ROUNDUP(1.23, -400)); fail closed like Excel's overflow
+            // errors rather than returning a non-finite number.
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
         }
-        let out = if digits >= 0 { scaled / f } else { scaled * f };
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(out)))
     }
 }
@@ -2200,6 +2456,10 @@ impl Function for SumsqFn {
     }
 }
 
+/// The smallest binary64 at or above 0.499999999999995: MROUND's quotient
+/// fraction rounds up from here (14-decimal-place rounding, then half up).
+const MROUND_HALF: f64 = 0.499_999_999_999_995;
+
 #[derive(Debug)]
 pub struct MroundFn;
 /// Rounds a number to the nearest multiple.
@@ -2281,7 +2541,19 @@ impl Function for MroundFn {
 
         let m = multiple.abs();
         let scaled = number.abs() / m;
-        let rounded = (scaled + 0.5 + 1e-12).floor();
+        // Excel rounds the quotient to 14 decimal places, then half away
+        // from zero: a quotient less than 5e-15 below the half rounds up
+        // (MROUND(2.5-8*2^-51, 1) = 3, MROUND(2.5-12*2^-51, 1) = 2) and
+        // MROUND(12.4999999999995, 5) = 10. Unlike ROUND there is no
+        // 15-significant-digit view: MROUND(1234567.5-2^-32, 1) = 1234567.
+        // The product with the multiple stays binary, as in Excel:
+        // MROUND(1.3, 0.2) = 7*0.2 = 1.4000000000000001.
+        let whole = scaled.floor();
+        let rounded = if scaled - whole >= MROUND_HALF {
+            whole + 1.0
+        } else {
+            whole
+        };
         let out = rounded * m * number.signum();
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(out)))
     }
@@ -3351,12 +3623,161 @@ mod tests_numeric {
     use crate::traits::ArgumentHandle;
     use formualizer_common::LiteralValue;
     use formualizer_parse::parser::{ASTNode, ASTNodeType};
+    use proptest::prelude::*;
 
     fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
         wb.interpreter()
     }
     fn lit(v: LiteralValue) -> ASTNode {
         ASTNode::new(ASTNodeType::Literal(v), None)
+    }
+
+    fn evaluate_round(number: f64, digits: i32) -> f64 {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(RoundFn));
+        let ctx = interp(&wb);
+        let function = ctx.context.get_function("", "ROUND").unwrap();
+        let number = lit(LiteralValue::Number(number));
+        let digits = lit(LiteralValue::Int(digits as i64));
+        match function
+            .dispatch(
+                &[
+                    ArgumentHandle::new(&number, &ctx),
+                    ArgumentHandle::new(&digits, &ctx),
+                ],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Number(value) => value,
+            other => panic!("expected numeric ROUND result, got {other:?}"),
+        }
+    }
+
+    /// Exact decimal digits of a positive finite binary64, with the decimal
+    /// exponent of the last digit: `value = digits * 10^exponent`. Built from
+    /// the bit pattern with schoolbook arithmetic on base-10 digit vectors,
+    /// so it shares nothing with the implementation's conversions.
+    fn exact_decimal(value: f64) -> (Vec<u8>, i64) {
+        fn multiply_small(digits: &mut Vec<u8>, factor: u64) {
+            // Little-endian decimal digits.
+            let mut carry = 0_u64;
+            for digit in digits.iter_mut() {
+                let product = u64::from(*digit) * factor + carry;
+                *digit = (product % 10) as u8;
+                carry = product / 10;
+            }
+            while carry > 0 {
+                digits.push((carry % 10) as u8);
+                carry /= 10;
+            }
+        }
+        let bits = value.to_bits();
+        let biased = ((bits >> 52) & 0x7ff) as i64;
+        let fraction = bits & ((1_u64 << 52) - 1);
+        let (mantissa, binary_exponent) = if biased == 0 {
+            (fraction, -1074)
+        } else {
+            (fraction | (1 << 52), biased - 1075)
+        };
+        let mut digits: Vec<u8> = mantissa
+            .to_string()
+            .bytes()
+            .rev()
+            .map(|byte| byte - b'0')
+            .collect();
+        let mut exponent = 0_i64;
+        let (base, mut count) = if binary_exponent >= 0 {
+            (2_u64, binary_exponent)
+        } else {
+            // m / 2^k = m * 5^k / 10^k.
+            exponent = binary_exponent;
+            (5_u64, -binary_exponent)
+        };
+        while count > 0 {
+            let step = count.min(13);
+            multiply_small(&mut digits, base.pow(step as u32));
+            count -= step;
+        }
+        while digits.len() > 1 && digits.last() == Some(&0) {
+            digits.pop();
+        }
+        digits.reverse();
+        (digits, exponent)
+    }
+
+    /// Rounds big-endian `digits` (value `digits * 10^exponent`) to keep
+    /// `keep` leading digits (may be zero or negative). Returns the kept
+    /// digits and their exponent.
+    fn round_digit_vector(
+        mut digits: Vec<u8>,
+        exponent: i64,
+        keep: i64,
+        carry_rule: impl Fn(&[u8], &[u8]) -> bool,
+    ) -> (Vec<u8>, i64) {
+        let len = digits.len() as i64;
+        if keep >= len {
+            return (digits, exponent);
+        }
+        let new_exponent = exponent + (len - keep);
+        let split = keep.max(0) as usize;
+        let tail = digits.split_off(split);
+        let mut kept = if keep < 0 { Vec::new() } else { digits };
+        let tail = if keep < 0 {
+            // Positions above the leading digit are zeros.
+            let mut padded = vec![0; (-keep) as usize];
+            padded.extend(tail);
+            padded
+        } else {
+            tail
+        };
+        if carry_rule(&kept, &tail) {
+            let mut index = kept.len();
+            loop {
+                if index == 0 {
+                    kept.insert(0, 1);
+                    break;
+                }
+                index -= 1;
+                if kept[index] < 9 {
+                    kept[index] += 1;
+                    break;
+                }
+                kept[index] = 0;
+            }
+        }
+        (kept, new_exponent)
+    }
+
+    fn reference_round(number: f64, requested_digits: i32, mode: DecimalRoundingMode) -> f64 {
+        if !number.is_finite() || number == 0.0 {
+            return number;
+        }
+        let (digits, exponent) = exact_decimal(number.abs());
+        let first = |tail: &[u8]| tail.first().copied().unwrap_or(0);
+        let beyond_first = |tail: &[u8]| tail.iter().skip(1).any(|digit| *digit != 0);
+        // 15 significant digits, nearest; exact ties toward zero for ROUND,
+        // away from zero for the others.
+        let (view, view_exponent) = round_digit_vector(digits, exponent, 15, |_, tail| {
+            first(tail) > 5
+                || (first(tail) == 5
+                    && (beyond_first(tail) || mode != DecimalRoundingMode::Nearest))
+        });
+        let unit_exponent = -i64::from(requested_digits);
+        let keep = view.len() as i64 - (unit_exponent - view_exponent);
+        let (kept, kept_exponent) =
+            round_digit_vector(view, view_exponent, keep, |_, tail| match mode {
+                DecimalRoundingMode::Nearest => first(tail) >= 5,
+                DecimalRoundingMode::Down => false,
+                DecimalRoundingMode::Up => tail.iter().any(|digit| *digit != 0),
+            });
+        let text: String = kept.iter().map(|digit| char::from(b'0' + digit)).collect();
+        let magnitude = if text.is_empty() || text.bytes().all(|byte| byte == b'0') {
+            0.0
+        } else {
+            format!("{text}e{kept_exponent}").parse::<f64>().unwrap()
+        };
+        if number < 0.0 { -magnitude } else { magnitude }
     }
 
     // ABS
@@ -3594,34 +4015,34 @@ mod tests_numeric {
 
     #[test]
     fn round_digits_extreme_digits_do_not_overflow() {
-        // The release semantics before the fix: `abs` wrapped to i32::MIN.
-        let wrapped = |n: f64, digits: i32| {
-            let f = 10f64.powi(digits.wrapping_abs());
-            if digits >= 0 {
-                (n * f).round() / f
-            } else {
-                (n / f).round() * f
-            }
-        };
-        for n in [
-            0.0,
-            -0.0,
-            1.5,
-            -2.25,
-            1e308,
-            f64::MIN_POSITIVE,
-            f64::INFINITY,
-            f64::NEG_INFINITY,
-        ] {
-            for digits in [i32::MIN, i32::MIN + 1, i32::MAX, -400, 400] {
+        // The decimal-view rounding never scales by 10^digits, so extreme
+        // digits neither overflow nor turn a finite input into NaN.
+        for n in [0.0, -0.0, 1.5, -2.25, 1e308, f64::MIN_POSITIVE] {
+            for digits in [i32::MIN, i32::MIN + 1, -400] {
                 let got = round_digits(n, digits);
-                let want = wrapped(n, digits);
-                assert!(
-                    got.to_bits() == want.to_bits() || (got.is_nan() && want.is_nan()),
-                    "ROUND({n}, {digits}): {got} vs {want}"
+                assert_eq!(got, 0.0, "ROUND({n}, {digits})");
+                assert_eq!(
+                    got.is_sign_negative(),
+                    n.is_sign_negative(),
+                    "ROUND({n}, {digits}) keeps the sign of zero"
                 );
             }
-            assert!(round_digits(n, i32::MIN).is_nan());
+            // Huge positive digits leave the 15-digit decimal view unchanged:
+            // the identity for these inputs, and 15 significant digits of
+            // f64::MIN_POSITIVE.
+            let view = if n == f64::MIN_POSITIVE {
+                2.2250738585072e-308
+            } else {
+                n
+            };
+            for digits in [i32::MAX, 400] {
+                assert_eq!(round_digits(n, digits), view, "ROUND({n}, {digits})");
+            }
+        }
+        for n in [f64::INFINITY, f64::NEG_INFINITY] {
+            for digits in [i32::MIN, i32::MAX, -400, 400] {
+                assert_eq!(round_digits(n, digits), n, "ROUND({n}, {digits})");
+            }
         }
         assert!(round_digits(f64::NAN, i32::MIN).is_nan());
         // Through the functions (ROUNDDOWN/ROUNDUP share the arithmetic):
@@ -3642,6 +4063,232 @@ mod tests_numeric {
                 )
                 .unwrap()
                 .into_literal();
+        }
+    }
+
+    fn assert_round_symmetry(bits: u64, digits: i32, expected: f64) {
+        let input = f64::from_bits(bits);
+        assert_eq!(
+            evaluate_round(input, digits),
+            expected,
+            "ROUND({input:.17}, {digits})"
+        );
+        assert_eq!(
+            evaluate_round(-input, digits),
+            -expected,
+            "ROUND({:.17}, {digits})",
+            -input
+        );
+    }
+
+    #[test]
+    fn round_excel_half_rule_one_ulp_below() {
+        assert_round_symmetry(0x40B6_2E1F_FFFF_FFFF, 2, 5_678.13);
+    }
+
+    #[test]
+    fn round_excel_half_rule_two_ulps_below() {
+        assert_round_symmetry(0x40B6_2E1F_FFFF_FFFE, 2, 5_678.13);
+    }
+
+    #[test]
+    fn round_excel_half_rule_three_ulps_below() {
+        assert_round_symmetry(0x40B6_2E1F_FFFF_FFFD, 2, 5_678.13);
+    }
+
+    #[test]
+    fn round_excel_half_rule_controls() {
+        let vectors = [
+            // 32 ULPs below 5678.125: below the half in the 15-digit view.
+            (0x40B6_2E1F_FFFF_FFE0, 2, 5_678.12),
+            // 5678.125 exactly: a representable tie, away from zero.
+            (0x40B6_2E20_0000_0000, 2, 5_678.13),
+            // 2.675 and 1.005 sit just below the half in binary.
+            (0x4005_6666_6666_6666, 2, 2.68),
+            (0x3FF0_147A_E147_AE14, 2, 1.01),
+        ];
+
+        for (bits, digits, expected) in vectors {
+            assert_round_symmetry(bits, digits, expected);
+        }
+    }
+
+    #[test]
+    fn round_excel_half_rule_zero_digits() {
+        assert_round_symmetry(0x40B0_E17F_FFFF_FFFE, 0, 4_322.0);
+    }
+
+    #[test]
+    fn round_excel_half_rule_negative_digits() {
+        assert_round_symmetry(0x40BA_5DFF_FFFF_FFFE, -2, 6_800.0);
+    }
+
+    #[test]
+    fn round_excel_half_rule_extreme_contracts() {
+        assert_eq!(excel_round(0.0, i32::MIN).to_bits(), 0.0_f64.to_bits());
+        assert_eq!(excel_round(-0.0, i32::MAX).to_bits(), (-0.0_f64).to_bits());
+        assert!(excel_round(f64::NAN, 2).is_nan());
+        assert_eq!(excel_round(f64::INFINITY, 2), f64::INFINITY);
+        assert_eq!(excel_round(f64::NEG_INFINITY, 2), f64::NEG_INFINITY);
+        assert_eq!(
+            excel_round(1.234_567_890_123_456_7, i32::MAX),
+            1.234_567_890_123_46
+        );
+        assert_eq!(
+            excel_round(1.234_567_890_123_456_7e300, 2),
+            1.234_567_890_123_46e300
+        );
+        assert_eq!(
+            excel_round(f64::from_bits(1), i32::MIN).to_bits(),
+            0.0_f64.to_bits()
+        );
+    }
+
+    #[test]
+    fn round_family_view_is_the_exact_value_not_the_shortest_rendering() {
+        // 2.675 - 22 ULPs renders as 2.674999999999995 (shortest round trip)
+        // but its exact 15-digit view is 2.67499999999999, and Excel rounds
+        // the exact view. Likewise 0.285 - 9 ULPs and 7.3645 + 6 ULPs.
+        let tie_case = 2.675 - 22.0 * 2f64.powi(-52);
+        let below = 0.285 - 9.0 * 2f64.powi(-54);
+        let above = 7.3645 + 6.0 * 2f64.powi(-50);
+        let nearest = DecimalRoundingMode::Nearest;
+        let down = DecimalRoundingMode::Down;
+        assert_eq!(excel_round(tie_case, 2), 2.67);
+        assert_eq!(excel_round(tie_case, 14), 2.674_999_999_999_99);
+        assert_eq!(excel_round(below, 2), 0.28);
+        assert_eq!(excel_round_with_mode(below, 3, down), 0.284);
+        assert_eq!(
+            excel_round_with_mode(below, 15, down),
+            0.284_999_999_999_999
+        );
+        assert_eq!(excel_round_with_mode(above, 14, nearest), 7.3645);
+    }
+
+    #[test]
+    fn round_family_ties_at_the_sixteenth_digit() {
+        // Exact ties in the 15-digit view: ROUND takes them toward zero,
+        // ROUNDUP, ROUNDDOWN and TRUNC away from zero (measured).
+        for (number, digits, toward_zero, away) in [
+            (
+                1_234_567_890_123_445.0,
+                0,
+                1_234_567_890_123_440.0,
+                1_234_567_890_123_450.0,
+            ),
+            (
+                1_234_567_890_123_445.0,
+                3,
+                1_234_567_890_123_440.0,
+                1_234_567_890_123_450.0,
+            ),
+            (
+                123_456_789_012_344.5,
+                1,
+                123_456_789_012_344.0,
+                123_456_789_012_345.0,
+            ),
+            (
+                12_345_678_901_234.25,
+                2,
+                12_345_678_901_234.2,
+                12_345_678_901_234.3,
+            ),
+        ] {
+            for sign in [1.0, -1.0] {
+                let n = sign * number;
+                assert_eq!(
+                    excel_round(n, digits),
+                    sign * toward_zero,
+                    "ROUND({n}, {digits})"
+                );
+                for mode in [DecimalRoundingMode::Down, DecimalRoundingMode::Up] {
+                    assert_eq!(
+                        excel_round_with_mode(n, digits, mode),
+                        sign * away,
+                        "{digits} {n}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn round_family_large_digits_keep_the_fifteen_digit_view() {
+        let two_ulps_above_one = 1.0 + 2.0 * f64::EPSILON;
+        for digits in [15, 16, 17, 20, 400] {
+            assert_eq!(excel_round(0.1 + 0.2, digits), 0.3, "digits {digits}");
+            assert_eq!(
+                excel_round(two_ulps_above_one, digits),
+                1.0,
+                "digits {digits}"
+            );
+            for mode in [DecimalRoundingMode::Down, DecimalRoundingMode::Up] {
+                assert_eq!(excel_round_with_mode(two_ulps_above_one, digits, mode), 1.0);
+            }
+        }
+        // 2^60 has 19 digits; every member returns its 15-digit view.
+        let big = 2f64.powi(60);
+        for mode in [
+            DecimalRoundingMode::Nearest,
+            DecimalRoundingMode::Down,
+            DecimalRoundingMode::Up,
+        ] {
+            assert_eq!(excel_round_with_mode(big, 0, mode), 1.152_921_504_606_85e18);
+            assert_eq!(
+                excel_round_with_mode(big, -2, mode),
+                1.152_921_504_606_85e18
+            );
+        }
+        assert_eq!(excel_round(1.23, -400), 0.0);
+        assert_eq!(excel_round(1.23, -308), 0.0);
+        assert_eq!(excel_round(1.23, 308), 1.23);
+        assert_eq!(excel_round(1.23, 400), 1.23);
+    }
+
+    /// Money-like values a few ULPs either side of a decimal boundary, where
+    /// the binary shortcut must hand over to the decimal path.
+    fn near_boundary_value() -> impl Strategy<Value = f64> {
+        (0_u64..10_000_000_000, 0_i32..=6, -40_i64..=40).prop_map(|(units, places, ulps)| {
+            let value = units as f64 / 10f64.powi(places) + 0.5 / 10f64.powi(places);
+            f64::from_bits((value.to_bits() as i64 + ulps) as u64)
+        })
+    }
+
+    fn all_modes() -> [DecimalRoundingMode; 3] {
+        [
+            DecimalRoundingMode::Nearest,
+            DecimalRoundingMode::Down,
+            DecimalRoundingMode::Up,
+        ]
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: 2_000,
+            rng_seed: proptest::test_runner::RngSeed::Fixed(0x5EED_0F15),
+            .. ProptestConfig::default()
+        })]
+
+        #[test]
+        fn round_family_matches_exact_decimal_reference(bits in any::<u64>(), digits in -340_i32..=340_i32) {
+            let number = f64::from_bits(bits);
+            prop_assume!(number.is_finite());
+            for mode in all_modes() {
+                let actual = excel_round_with_mode(number, digits, mode);
+                let expected = reference_round(number, digits, mode);
+                prop_assert_eq!(actual.to_bits(), expected.to_bits(), "{:?} {} {:?}", number, digits, mode);
+            }
+        }
+
+        #[test]
+        fn round_family_matches_reference_near_boundaries(number in near_boundary_value(), digits in -3_i32..=8, negative in any::<bool>()) {
+            let number = if negative { -number } else { number };
+            for mode in all_modes() {
+                let actual = excel_round_with_mode(number, digits, mode);
+                let expected = reference_round(number, digits, mode);
+                prop_assert_eq!(actual.to_bits(), expected.to_bits(), "{:?} {} {:?}", number, digits, mode);
+            }
         }
     }
 
@@ -3715,6 +4362,152 @@ mod tests_numeric {
             .into_literal(),
             LiteralValue::Number(-1.01)
         );
+    }
+
+    // The ROUND siblings on half-adjacent and just-below-boundary inputs.
+    // Excel applies ROUND's 15-significant-digit decimal view to ROUNDUP,
+    // ROUNDDOWN and TRUNC, differing only in the carry rule. MROUND rounds its
+    // binary quotient at 14 decimal places, then half away from zero.
+    // Products such as `1.15 * 100` are written out because their binary64
+    // results (`114.99999999999999`) are the point of the case.
+    fn eval_two_arg(
+        fun: std::sync::Arc<dyn Function>,
+        name: &str,
+        n: LiteralValue,
+        d: LiteralValue,
+    ) -> LiteralValue {
+        let wb = TestWorkbook::new().with_function(fun);
+        let ctx = interp(&wb);
+        let f = ctx.context.get_function("", name).unwrap();
+        let a = lit(n);
+        let b = lit(d);
+        f.dispatch(
+            &[ArgumentHandle::new(&a, &ctx), ArgumentHandle::new(&b, &ctx)],
+            &ctx.function_context(None),
+        )
+        .unwrap()
+        .into_literal()
+    }
+
+    #[test]
+    fn rounddown_excel_oracle_vectors() {
+        let vectors: &[(f64, i64, f64)] = &[
+            (1.15 * 100.0, 0, 115.0),
+            (2.3 * 100.0, 0, 230.0),
+            (0.36 * 100.0, 0, 36.0),
+            (4.1 * 2.3, 2, 9.43),
+            (3.3 * 3.3, 2, 10.89),
+            (-(4.1 * 2.3), 2, -9.43),
+            (-(1.15 * 100.0), 0, -115.0),
+            (1.23, -400, 0.0), // no 10^400 overflow
+        ];
+        for (n, d, expected) in vectors {
+            assert_eq!(
+                eval_two_arg(
+                    std::sync::Arc::new(RoundDownFn),
+                    "ROUNDDOWN",
+                    LiteralValue::Number(*n),
+                    LiteralValue::Int(*d),
+                ),
+                LiteralValue::Number(*expected),
+                "ROUNDDOWN({n:?}, {d})"
+            );
+        }
+    }
+
+    #[test]
+    fn roundup_excel_oracle_vectors() {
+        let vectors: &[(f64, i64, f64)] = &[
+            (1.1 * 100.0, 0, 110.0),
+            (26.000000000000004, 0, 26.0),
+            (1.1 * 1.1, 2, 1.21),
+            (1.1, 2, 1.1),
+            (-1.1, 2, -1.1),
+            (1.23, 400, 1.23), // identity, no overflow
+        ];
+        for (n, d, expected) in vectors {
+            assert_eq!(
+                eval_two_arg(
+                    std::sync::Arc::new(RoundUpFn),
+                    "ROUNDUP",
+                    LiteralValue::Number(*n),
+                    LiteralValue::Int(*d),
+                ),
+                LiteralValue::Number(*expected),
+                "ROUNDUP({n:?}, {d})"
+            );
+        }
+        // Unmeasured in Excel (would overflow the decimal carry to 1e400):
+        // a finite input whose rounded-up magnitude is not representable
+        // fails closed as #NUM! rather than returning a non-finite number.
+        match eval_two_arg(
+            std::sync::Arc::new(RoundUpFn),
+            "ROUNDUP",
+            LiteralValue::Number(1.23),
+            LiteralValue::Int(-400),
+        ) {
+            LiteralValue::Error(e) => assert_eq!(e, "#NUM!"),
+            other => panic!("expected #NUM! for ROUNDUP(1.23,-400), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn trunc_excel_oracle_vectors() {
+        let vectors: &[(f64, i64, f64)] = &[(0.29 * 100.0, 0, 29.0), (0.36 * 100.0, 0, 36.0)];
+        for (n, d, expected) in vectors {
+            assert_eq!(
+                eval_two_arg(
+                    std::sync::Arc::new(TruncFn),
+                    "TRUNC",
+                    LiteralValue::Number(*n),
+                    LiteralValue::Int(*d),
+                ),
+                LiteralValue::Number(*expected),
+                "TRUNC({n:?}, {d})"
+            );
+        }
+    }
+
+    #[test]
+    fn mround_excel_oracle_vectors() {
+        let vectors: &[(f64, f64, f64)] = &[
+            (12.4999999999995, 5.0, 10.0), // near-half stays down
+            (0.4999999999995, 1.0, 0.0),
+            (1.24999999999994, 0.5, 1.0),
+            (2.5, 1.0, 3.0), // exact tie away from zero
+            (-2.5, -1.0, -3.0),
+            // The quotient's fraction rounds up from 0.499999999999995.
+            (2.5 - 8.0 * 2f64.powi(-51), 1.0, 3.0),
+            (2.5 - 12.0 * 2f64.powi(-51), 1.0, 2.0),
+            (1.5 - 22.0 * 2f64.powi(-52), 1.0, 2.0),
+            (1.5 - 23.0 * 2f64.powi(-52), 1.0, 1.0),
+            (10.5 - 2.0 * 2f64.powi(-49), 1.0, 11.0),
+            (10.5 - 3.0 * 2f64.powi(-49), 1.0, 10.0),
+            (25.0 - 8.0 * 2f64.powi(-48), 10.0, 30.0),
+            (25.0 - 16.0 * 2f64.powi(-48), 10.0, 20.0),
+            (-2.5 + 8.0 * 2f64.powi(-51), -1.0, -3.0),
+            // No 15-digit view of the quotient.
+            (100.5 - 2f64.powi(-46), 1.0, 100.0),
+            (1_234_567.5 - 2f64.powi(-32), 1.0, 1_234_567.0),
+            (2f64.powi(51) + 0.5, 1.0, 2f64.powi(51) + 1.0),
+            (2f64.powi(60), 3.0, 2f64.powi(60)),
+            // The product with the multiple is binary, as in Excel.
+            (0.7, 0.1, 7.0 * 0.1),
+            (1.3, 0.2, 7.0 * 0.2),
+            (3.3, 1.1, 3.0 * 1.1),
+        ];
+        for (n, m, expected) in vectors {
+            assert_eq!(
+                eval_two_arg(
+                    std::sync::Arc::new(MroundFn),
+                    "MROUND",
+                    LiteralValue::Number(*n),
+                    LiteralValue::Number(*m),
+                ),
+                LiteralValue::Number(*expected),
+                "MROUND({n:?}, {m:?})"
+            );
+        }
     }
 
     // MOD
