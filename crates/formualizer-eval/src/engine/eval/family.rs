@@ -201,6 +201,16 @@ where
         self.graph.reads_compressed_range(first)
     }
 
+    /// Whether a unit holds a dynamic reader (OFFSET, INDIRECT, ...): a
+    /// run's members share their template, so its first member answers.
+    pub(super) fn unit_is_dynamic(&self, layer: &Layer, unit: LayerUnit) -> bool {
+        let first = match unit {
+            LayerUnit::Cell(i) => layer.vertices[i],
+            LayerUnit::Run(run) => layer.vertices[run.start as usize],
+        };
+        self.graph.is_dynamic(first)
+    }
+
     fn evaluate_members_per_cell(&self, members: &[VertexId]) -> Vec<LiteralValue> {
         members
             .iter()

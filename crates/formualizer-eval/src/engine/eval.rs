@@ -20161,7 +20161,17 @@ where
                         .with_message(message.to_string()));
                 }
             }
-            if buffered && self.unit_reads_compressed_range(layer, unit) {
+            // A dynamic reader's freshness check (`freshness_dirty_reads`)
+            // treats a clean formula as written, but a buffered layer
+            // clears a member's dirty flag at commit and writes its value
+            // at the flush. The reader's targets are not always ordered
+            // before it (its pre-probe or observed reads can miss them, e.g.
+            // after a structural edit), so the earlier members' values are
+            // written before it reads.
+            if buffered
+                && (self.unit_reads_compressed_range(layer, unit)
+                    || (!computed_writes.is_empty() && self.unit_is_dynamic(layer, unit)))
+            {
                 self.flush_computed_write_buffer(&mut computed_writes)?;
             }
             let values = match (chain_values.take(), unit) {
