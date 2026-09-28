@@ -1623,7 +1623,11 @@ impl CalamineAdapter {
         // defined-name metadata we need here with a targeted streaming pass over
         // workbook.xml, avoiding a full file String allocation or any sheet XML reparse.
         let mut xml = XmlReader::from_reader(BufReader::new(entry));
-        xml.config_mut().trim_text(true);
+        // Keep text untrimmed: quick-xml splits `'A &amp; B'!$A$1` into text,
+        // entity and text events, and trimming each piece would drop the
+        // spaces around `&` and name a different sheet. `convert_defined_name`
+        // trims the assembled formula once.
+        xml.config_mut().trim_text(false);
 
         let mut out = Vec::new();
         let mut seen: HashSet<(DefinedNameScope, Option<String>, String)> = HashSet::new();
