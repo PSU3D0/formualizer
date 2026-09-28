@@ -228,9 +228,18 @@ impl Store {
         let Some(domain) = owner_domain.intersect(&Rect::new(r0, col, r1, col)) else {
             return Ok(out);
         };
+        // The counting query keeps the first few edges on the stack (no
+        // heap, so admission is unchanged): a short column is not queried
+        // twice.
+        const INLINE_EDGES: usize = 32;
+        let mut inline: smallvec::SmallVec<[(EdgeKey, Rect); INLINE_EDGES]> =
+            smallvec::SmallVec::new();
         let mut count = 0usize;
-        out.work.index += self.visit_plan_edges(sheet, &domain, &mut |_, _| {
+        out.work.index += self.visit_plan_edges(sheet, &domain, &mut |key, dep| {
             out.work.discovery += 1;
+            if count < INLINE_EDGES {
+                inline.push((key, dep));
+            }
             count += 1;
         });
         let event_count = count.checked_mul(2).ok_or(AuthorityError::Alloc)?;
@@ -256,8 +265,7 @@ impl Store {
             prev.push(NONE);
             next.push(NONE);
         }
-        out.work.index += self.visit_plan_edges(sheet, &domain, &mut |key, dep| {
-            out.work.discovery += 1;
+        let mut add_edge = |key: EdgeKey, dep: Rect| {
             let dep = dep
                 .intersect(&domain)
                 .expect("index returned a disjoint edge");
@@ -274,7 +282,17 @@ impl Store {
                 start: false,
             });
             out.cell_references += dep.area();
-        });
+        };
+        if count <= INLINE_EDGES {
+            for (key, dep) in inline {
+                add_edge(key, dep);
+            }
+        } else {
+            out.work.index += self.visit_plan_edges(sheet, &domain, &mut |key, dep| {
+                out.work.discovery += 1;
+                add_edge(key, dep);
+            });
+        }
         debug_assert_eq!(keys.len(), count);
         sort_events(&mut events, &mut temp, &mut out.work);
         let (mut pieces, mut references) = (0usize, 0usize);
