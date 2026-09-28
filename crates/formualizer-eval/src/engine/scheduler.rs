@@ -18,6 +18,11 @@ pub struct Layer {
     /// of `vertices` holding consecutive rows of one column of one family
     /// node. Vertices outside every run execute one cell at a time.
     pub(crate) runs: Vec<LayerRun>,
+    /// Program 3 chain unit: the vertices are one family's cells in row
+    /// order and each may read the ones before it (a recurrence such as
+    /// `=A1+1` filled down). They are evaluated in order, each written
+    /// before the next is read: never in parallel, never buffered.
+    pub(crate) sequential: bool,
 }
 
 /// A family run: `vertices[start..start + len]` are the cells
@@ -38,6 +43,7 @@ impl Layer {
         Self {
             vertices,
             runs: Vec::new(),
+            sequential: false,
         }
     }
 
@@ -63,6 +69,7 @@ impl Layer {
         Layer {
             vertices: self.vertices[lo..hi].to_vec(),
             runs,
+            sequential: self.sequential,
         }
     }
 }

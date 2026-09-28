@@ -512,6 +512,10 @@ pub(crate) struct OrderedCell {
     pub owner: u32,
     pub layer: u64,
     pub cycle: Option<u64>,
+    /// Part of a chain unit: one piece whose cells read earlier rows of the
+    /// piece (an affine order along rows); they share one layer and are
+    /// evaluated in row order.
+    pub chain: bool,
 }
 #[derive(Debug)]
 pub(crate) struct OrderedPlan {
@@ -646,6 +650,7 @@ fn expand_component(
     Ok(out)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_cells(
     input: &PlanningInput,
     piece: usize,
@@ -653,6 +658,7 @@ fn emit_cells(
     class: Class,
     sigma: i64,
     cycle: Option<u64>,
+    chain: bool,
     cells: &mut Vec<OrderedCell>,
     work: &mut u64,
 ) -> Result<(), AuthorityError> {
@@ -660,7 +666,9 @@ fn emit_cells(
     let id = input.identities[piece];
     for row in s.r0..=s.r1 {
         *work += 1;
-        let offset = if let Class::Affine {
+        let offset = if chain {
+            0
+        } else if let Class::Affine {
             direction, k, min, ..
         } = class
         {
@@ -677,9 +685,39 @@ fn emit_cells(
             owner: id.owner,
             layer: add(base, offset)?,
             cycle,
+            chain,
         });
     }
     Ok(())
+}
+
+/// A chain unit (Program 3): an affine component of one piece whose order
+/// runs down its rows (theta grows with the row). Every arc inside the
+/// component goes from a row to a later one, so row order is a topological
+/// order of its cells: they can share one layer and be evaluated in row
+/// order, and the component's dependents start one layer later instead of
+/// one per row.
+fn is_chain_component(prepared: &PreparedPlan, cid: usize, c: ComponentClass) -> bool {
+    let Class::Affine {
+        direction,
+        k,
+        min,
+        max,
+    } = c.class
+    else {
+        return false;
+    };
+    if c.real != 1 || c.aux || max <= min || direction.1 != 0 || direction.0 * k <= 0 {
+        return false;
+    }
+    let slices = prepared.input.slices.len();
+    let mut real = prepared
+        .topology
+        .components
+        .members(cid)
+        .iter()
+        .filter(|&&v| v < slices);
+    matches!((real.next(), real.next()), (Some(_), None))
 }
 
 /// End-to-end exact per-cell order, prior to adaptation to scheduler::Schedule.
@@ -730,6 +768,7 @@ pub(crate) fn plan_single(store: &Store, cell: (u16, u32, u32)) -> Option<Ordere
         owner: piece.owner,
         layer: 0,
         cycle: None,
+        chain: false,
     })
 }
 
@@ -941,6 +980,7 @@ fn plan_prepared(
                             },
                             0,
                             cycle,
+                            false,
                             &mut out.cells,
                             &mut out.work,
                         )?;
@@ -957,8 +997,10 @@ fn plan_prepared(
             out.fallback_work += out.work - before;
             span
         } else {
+            let chain = is_chain_component(&out.prepared, cid, c);
             let span = match c.class {
                 Class::Auxiliary => 0,
+                Class::Affine { .. } if chain => 1,
                 Class::Affine { min, max, .. } => (max - min + 1) as u64,
                 _ => 1,
             };
@@ -984,6 +1026,7 @@ fn plan_prepared(
                         c.class,
                         out.prepared.classification.sigma[v],
                         cycle,
+                        chain,
                         &mut out.cells,
                         &mut out.work,
                     )?;

@@ -497,6 +497,74 @@ where
         Some(values)
     }
 
+    /// Program 3 chain unit: the members of `run` in row order, each
+    /// reading the one above (see `Engine::evaluate_chain_lifted`). `None`
+    /// leaves the run to the per-cell path, member by member.
+    pub(super) fn try_chain_lift(
+        &self,
+        run: LayerRun,
+        members: &[VertexId],
+    ) -> Option<Vec<LiteralValue>> {
+        if !self.config.family_execution || !self.config.family_lift || members.len() < 2 {
+            return None;
+        }
+        let store = self.graph.authority_plan_store().ok()?;
+        if members
+            .iter()
+            .any(|&v| self.graph.is_dynamic(v) || self.graph.is_volatile(v))
+        {
+            return None;
+        }
+        let (template, anchor) = store.owner_template(run.owner);
+        let ds = self.graph.data_store();
+        let literals = LiteralPlan::new(ds, template, anchor);
+        let program = super::lift::LiftProgram::compile(self, ds, template)?;
+        // Every member has the template's literal row (a formula cell's
+        // authority id is its vertex id).
+        #[cfg(debug_assertions)]
+        for (i, &v) in members.iter().enumerate() {
+            let row = run.row0 + i as u32;
+            self.debug_check_member(store, v, template, anchor, (run.sheet, row, run.col));
+            debug_assert_eq!(store.ids().id_of((run.sheet, row, run.col)), Some(v.0));
+        }
+        if !literals.template_literals.is_empty() {
+            let mut page = None;
+            for &v in members {
+                let row = store.slots().get_cached(v.0, &mut page)?;
+                if row != literals.template_literals.as_slice()
+                    && !crate::engine::graph::authority_host::literal_rows_equal(
+                        ds,
+                        row,
+                        &literals.template_literals,
+                    )
+                {
+                    return None;
+                }
+            }
+        }
+        let lifted = self.evaluate_chain_lifted(&program, run, anchor, members.len())?;
+        #[cfg(test)]
+        self.chained_members_for_test
+            .fetch_add(members.len() as u64, std::sync::atomic::Ordering::Relaxed);
+        Some(
+            lifted
+                .into_iter()
+                .enumerate()
+                .map(|(i, result)| match result {
+                    Ok((value, format)) => {
+                        let cell = CellRef::new(
+                            run.sheet,
+                            Coord::new(run.row0 + i as u32, run.col, true, true),
+                        );
+                        self.record_derived_format_at(cell, format);
+                        crate::engine::result_finalization::finalize_formula_result(value)
+                    }
+                    Err(e) => LiteralValue::Error(e),
+                })
+                .collect(),
+        )
+    }
+
     /// Tier 3: a range kernel for the whole run, when the template has one.
     fn try_run_kernel(
         &self,
@@ -628,6 +696,12 @@ where
     /// Members evaluated through the elementwise lift so far.
     pub(crate) fn lifted_members_for_test(&self) -> u64 {
         self.lifted_members_for_test
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn chained_members_for_test(&self) -> u64 {
+        self.chained_members_for_test
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 

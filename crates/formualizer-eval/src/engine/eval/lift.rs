@@ -483,6 +483,274 @@ where
 
 type Lifted = Result<(LiteralValue, Option<FormatId>), ExcelError>;
 
+/// Program 3 chain units: a family run whose members read the member
+/// above (`=A1+1` or `=C2+D1` filled down) evaluated member by member in
+/// row order through the compiled template, the member above coming from
+/// the previous result instead of a written cell. Only operators, literals
+/// and cell references; the one reference into the run's own column must
+/// be the cell directly above; a member result that is not a clean number
+/// (no format) stops the chain (the caller takes the per-cell path), so the
+/// carried value is exactly what reading the written cell would give.
+impl<R> Engine<R>
+where
+    R: EvaluationContext,
+{
+    /// Reading a chain member's cell right after it is written gives its
+    /// result exactly: computed writes land, no user value shadows them
+    /// (a formula cell's delta overlay entry), and no format (cell format
+    /// lanes, overlay formats) annotates them.
+    fn chain_cells_plain(&self, run: LayerRun, n: usize) -> bool {
+        if !(self.config.arrow_storage_enabled
+            && self.config.delta_overlay_enabled
+            && self.config.write_formula_overlay_enabled)
+            || self.computed_overlay_mirroring_disabled
+        {
+            return false;
+        }
+        let sheet = self.graph.sheet_name(run.sheet);
+        let Some(asheet) = self.arrow_sheets.sheet(sheet) else {
+            return true;
+        };
+        let Some(column) = asheet.columns.get(run.col as usize) else {
+            return true;
+        };
+        let (mut r, end) = (run.row0 as usize, run.row0 as usize + n);
+        while r < end {
+            let Some((ci, off)) = asheet.chunk_of_row(r) else {
+                // Past the sheet's rows: nothing stored there.
+                return true;
+            };
+            let Some(ch) = column.chunk(ci) else {
+                let next = asheet
+                    .chunk_starts
+                    .get(ci + 1)
+                    .copied()
+                    .unwrap_or(asheet.nrows as usize);
+                r = next.max(r + 1);
+                continue;
+            };
+            let len = (ch.len() - off).min(end - r);
+            if ch.overlay.has_any_in_range(off..off + len)
+                || ch.overlay.has_formats()
+                || ch.computed_overlay.has_formats()
+                || ch
+                    .format
+                    .as_ref()
+                    .is_some_and(|runs| !runs.all_general_in(off, len))
+            {
+                return false;
+            }
+            r += len.max(1);
+        }
+        true
+    }
+
+    pub(super) fn evaluate_chain_lifted(
+        &self,
+        program: &LiftProgram,
+        run: LayerRun,
+        anchor: (u32, u32),
+        n: usize,
+    ) -> Option<Vec<Lifted>> {
+        enum Source {
+            Const(LiteralValue),
+            Above,
+            Cell {
+                sheet_id: SheetId,
+                asheet: Option<usize>,
+                row: u32,
+                row_abs: bool,
+                col: u32,
+            },
+        }
+        let ds = self.graph.data_store();
+        let reg = self.graph.sheet_reg();
+        let current_sheet = self.graph.sheet_name(run.sheet);
+        let col_delta = i64::from(run.col) - i64::from(anchor.1);
+        let row_delta0 = i64::from(run.row0) - i64::from(anchor.0);
+        // Excel (1-based) rows of the run.
+        let (first_row, last_row) = (run.row0 + 1, run.row0 + n as u32);
+        let mut sources: Vec<Option<Source>> = Vec::with_capacity(program.nodes.len());
+        let mut above = false;
+        for node in &program.nodes {
+            let source = match node {
+                LiftNode::Value(value) => Some(Source::Const(value.clone())),
+                LiftNode::Cell {
+                    sheet,
+                    row,
+                    col,
+                    row_abs,
+                    col_abs,
+                } => {
+                    let sheet_name = match sheet {
+                        Some(SheetKey::Id(id)) => reg.name(*id),
+                        Some(SheetKey::Name(name)) => ds.resolve_ast_string(*name),
+                        None => current_sheet,
+                    };
+                    let sheet_id = self.graph.sheet_id(sheet_name)?;
+                    let col = shift_axis(*col, col_delta, *col_abs).ok()?;
+                    let first = shift_axis(*row, row_delta0, *row_abs).ok()?;
+                    // Every member's row stays on the grid.
+                    if !*row_abs {
+                        shift_axis(*row, row_delta0 + n as i64 - 1, false).ok()?;
+                    }
+                    if sheet_id == run.sheet && col == run.col + 1 {
+                        if !*row_abs && first + 1 == first_row {
+                            above = true;
+                            Some(Source::Above)
+                        } else if *row_abs && !(first_row..=last_row).contains(&first) {
+                            Some(Source::Cell {
+                                sheet_id,
+                                asheet: None,
+                                row: first,
+                                row_abs: true,
+                                col,
+                            })
+                        } else {
+                            // Another member's cell: not a chain.
+                            return None;
+                        }
+                    } else {
+                        let asheet = self
+                            .arrow_sheets
+                            .sheets
+                            .iter()
+                            .position(|s| s.name.as_ref() == sheet_name);
+                        Some(Source::Cell {
+                            sheet_id,
+                            asheet,
+                            row: first,
+                            row_abs: *row_abs,
+                            col,
+                        })
+                    }
+                }
+                LiftNode::Unary { .. } | LiftNode::Binary { .. } => None,
+                LiftNode::If { .. } | LiftNode::Builtin { .. } => return None,
+            };
+            sources.push(source);
+        }
+        if !above || !self.chain_cells_plain(run, n) {
+            return None;
+        }
+        let first =
+            crate::reference::CellRef::new(run.sheet, Coord::new(run.row0, run.col, true, true));
+        let interpreter =
+            crate::interpreter::Interpreter::new_with_cell(self, current_sheet, first);
+        let read = |sheet_id: SheetId, asheet: Option<usize>, row: u32, col: u32| -> Lifted {
+            let asheet = asheet.and_then(|i| self.arrow_sheets.sheets.get(i));
+            Ok(self.read_cell_formatted_in(sheet_id, asheet, row, col))
+        };
+        // The cell above the first member: read (outside the run).
+        let carry: Lifted = {
+            let asheet = self
+                .arrow_sheets
+                .sheets
+                .iter()
+                .position(|s| s.name.as_ref() == current_sheet);
+            if run.row0 == 0 {
+                Err(ExcelError::new(ExcelErrorKind::Ref))
+            } else {
+                read(run.sheet, asheet, run.row0, run.col + 1)
+            }
+        };
+        // Numbers stay unboxed: a clean number (no format) through `+ - *
+        // / ^` and unary `-`/`%` takes the shared `arith_f64`/`unary_f64`,
+        // exactly as the walk does; anything else is the boxed value.
+        enum V {
+            Num(f64),
+            Boxed(Lifted),
+        }
+        fn typed(value: Lifted) -> V {
+            match value {
+                Ok((LiteralValue::Number(x), None)) => V::Num(x),
+                other => V::Boxed(other),
+            }
+        }
+        fn boxed(value: V) -> Lifted {
+            match value {
+                V::Num(x) => Ok((LiteralValue::Number(x), None)),
+                V::Boxed(b) => b,
+            }
+        }
+        let mut carry = typed(carry);
+        let mut out = Vec::with_capacity(n);
+        let mut values: Vec<V> = Vec::with_capacity(program.nodes.len());
+        for i in 0..n {
+            values.clear();
+            for (node, source) in program.nodes.iter().zip(&sources) {
+                let value: V = match (node, source) {
+                    (_, Some(Source::Const(v))) => typed(Ok((v.clone(), None))),
+                    (_, Some(Source::Above)) => match &carry {
+                        V::Num(x) => V::Num(*x),
+                        V::Boxed(b) => V::Boxed(b.clone()),
+                    },
+                    (
+                        _,
+                        Some(Source::Cell {
+                            sheet_id,
+                            asheet,
+                            row,
+                            row_abs,
+                            col,
+                        }),
+                    ) => {
+                        let r = if *row_abs { *row } else { *row + i as u32 };
+                        typed(read(*sheet_id, *asheet, r, *col))
+                    }
+                    (LiftNode::Unary { op, child }, None) => {
+                        let operand = std::mem::replace(&mut values[*child], V::Num(0.0));
+                        match (operand, op.as_bytes()) {
+                            (V::Num(x), [b @ (b'-' | b'%')]) => {
+                                match crate::interpreter::unary_f64(*b, x) {
+                                    Ok(v) => V::Num(v),
+                                    Err(e) => V::Boxed(Err(e)),
+                                }
+                            }
+                            (operand, _) => typed(boxed(operand).and_then(|(v, f)| {
+                                interpreter.apply_unary_op(op, calc(v, f)).map(split)
+                            })),
+                        }
+                    }
+                    (LiftNode::Binary { op, left, right }, None) => {
+                        let l = std::mem::replace(&mut values[*left], V::Num(0.0));
+                        let r = std::mem::replace(&mut values[*right], V::Num(0.0));
+                        match (l, r, op.as_bytes()) {
+                            (V::Num(a), V::Num(b), [o @ (b'+' | b'-' | b'*' | b'/' | b'^')]) => {
+                                match crate::interpreter::arith_f64(*o, a, b) {
+                                    Ok(v) => V::Num(v),
+                                    Err(e) => V::Boxed(Err(e)),
+                                }
+                            }
+                            (l, r, _) => typed(match (boxed(l), boxed(r)) {
+                                (Ok((lv, lf)), Ok((rv, rf))) => {
+                                    interpreter.apply_binary_op(op, lv, lf, rv, rf).map(split)
+                                }
+                                (Err(e), _) | (_, Err(e)) => Err(e),
+                            }),
+                        }
+                    }
+                    _ => return None,
+                };
+                if let V::Boxed(Ok((LiteralValue::Array(_), _))) = value {
+                    return None;
+                }
+                values.push(value);
+            }
+            // The next member reads this one's written cell: exact only for
+            // a clean number (see the impl doc).
+            match values.pop()? {
+                V::Num(x) if x.is_finite() => {
+                    carry = V::Num(x);
+                    out.push(Ok((LiteralValue::Number(x), None)));
+                }
+                _ => return None,
+            }
+        }
+        Some(out)
+    }
+}
+
 /// What the clean elements of a lane are.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum LaneKind {

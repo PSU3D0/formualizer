@@ -31,8 +31,8 @@ pub(crate) struct Entry {
     pub vertex: VertexId,
 }
 impl Entry {
-    fn group(self) -> (u64, Option<u64>) {
-        (self.cell.layer, self.cell.cycle)
+    fn group(self) -> (u64, Option<u64>, bool) {
+        (self.cell.layer, self.cell.cycle, self.cell.chain)
     }
     // LSD order: member key, cycle ID, acyclic/cyclic, numeric layer.
     // Acyclic cells at a layer precede all cycle units at that layer. The
@@ -50,10 +50,12 @@ impl Entry {
                 | (u64::from(self.cell.col) << 24)
                 | u64::from(self.cell.row)
         };
+        // A chain unit's cells form their own group after the layer's
+        // other acyclic cells (independent of them: same layer).
         [
             member,
             self.cell.cycle.unwrap_or(0),
-            u64::from(self.cell.cycle.is_some()),
+            u64::from(self.cell.cycle.is_some()) | (u64::from(self.cell.chain) << 1),
             self.cell.layer,
         ]
     }
@@ -251,6 +253,7 @@ fn run_sorted<C: FnMut(u64) -> Result<(), ExcelError>>(
                 let d = entries[j].cell;
                 if !exact(&d)
                     || d.layer != c.layer
+                    || d.chain != c.chain
                     || d.sheet != c.sheet
                     || d.col != c.col
                     || d.row != c.row + (j - i) as u32
@@ -409,11 +412,16 @@ pub(crate) fn schedule(
                 .push(ScheduleUnit::Cycle(schedule.cycles.len() as u32));
             schedule.cycles.push(vertices);
         } else {
+            // A chain unit's cells are one run, executed in row order.
             let runs = family_runs(&entries[start..end])?;
             schedule
                 .units
                 .push(ScheduleUnit::Layer(schedule.layers.len() as u32));
-            schedule.layers.push(Layer { vertices, runs });
+            schedule.layers.push(Layer {
+                vertices,
+                runs,
+                sequential: group.2,
+            });
         }
         start = end;
     }

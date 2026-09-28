@@ -196,6 +196,27 @@ impl SlotStore {
         self.dir.get(u64::from(page))
     }
 
+    /// [`Self::get`] with the last page's slot cached in `cache` (runs of
+    /// consecutive ids resolve their page once per 64 ids).
+    pub fn get_cached(&self, id: Vid, cache: &mut Option<(u32, u32)>) -> Option<&[ValueRef]> {
+        let number = id >> 6;
+        let slot = match *cache {
+            Some((p, slot)) if p == number => slot,
+            _ => {
+                let slot = self.slot_of_page(number)?;
+                *cache = Some((number, slot));
+                slot
+            }
+        };
+        let page = &self.pages[slot as usize];
+        let bit = (id & 63) as u8;
+        if page.mask >> bit & 1 == 0 {
+            return None;
+        }
+        let m = page.meta[page.find(bit).ok()?];
+        Some(&page.vals[m.start as usize..m.start as usize + m.len as usize])
+    }
+
     pub fn get(&self, id: Vid) -> Option<&[ValueRef]> {
         let page = &self.pages[self.slot_of_page(id >> 6)? as usize];
         let bit = (id & 63) as u8;

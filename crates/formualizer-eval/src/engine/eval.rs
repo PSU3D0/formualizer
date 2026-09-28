@@ -541,6 +541,21 @@ where
 // layers there is not enough work to amortize it, and the direct point-write path
 // is faster while preserving the same visibility semantics.
 const COMPUTED_WRITE_COALESCING_MIN_LAYER_WIDTH: usize = 8;
+
+/// Equal values, numbers by bits (debug oracles).
+#[cfg(debug_assertions)]
+fn same_value_bits(a: &LiteralValue, b: &LiteralValue) -> bool {
+    match (a, b) {
+        (LiteralValue::Number(x), LiteralValue::Number(y)) => x.to_bits() == y.to_bits(),
+        _ => a == b,
+    }
+}
+
+/// Whether a layer's computed writes are buffered: not for a chain unit,
+/// whose members read the ones written before them.
+fn buffer_layer_writes(layer: &crate::engine::scheduler::Layer) -> bool {
+    !layer.sequential && layer.vertices.len() >= COMPUTED_WRITE_COALESCING_MIN_LAYER_WIDTH
+}
 /// Adaptive layer parallelism (see `evaluate_layer_parallel`): a layer runs
 /// sequentially until either it has run `PARALLEL_LAYER_PROBE` or the rest,
 /// at the rate so far, is estimated at `PARALLEL_LAYER_WORTH` or more; then
@@ -987,6 +1002,8 @@ pub struct Engine<R> {
     family_members_for_test: std::sync::atomic::AtomicU64,
     #[cfg(test)]
     lifted_members_for_test: std::sync::atomic::AtomicU64,
+    #[cfg(test)]
+    chained_members_for_test: std::sync::atomic::AtomicU64,
     #[cfg(test)]
     lane_clean_reads_for_test: std::sync::atomic::AtomicU64,
     #[cfg(test)]
@@ -2593,6 +2610,8 @@ where
             #[cfg(test)]
             lifted_members_for_test: std::sync::atomic::AtomicU64::new(0),
             #[cfg(test)]
+            chained_members_for_test: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(test)]
             lane_clean_reads_for_test: std::sync::atomic::AtomicU64::new(0),
             #[cfg(test)]
             criteria_kernel_members_for_test: std::sync::atomic::AtomicU64::new(0),
@@ -2748,6 +2767,8 @@ where
             family_members_for_test: std::sync::atomic::AtomicU64::new(0),
             #[cfg(test)]
             lifted_members_for_test: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(test)]
+            chained_members_for_test: std::sync::atomic::AtomicU64::new(0),
             #[cfg(test)]
             lane_clean_reads_for_test: std::sync::atomic::AtomicU64::new(0),
             #[cfg(test)]
@@ -11718,6 +11739,63 @@ where
         }
     }
 
+    /// One unbuffered computed write of `value` and its derived `format` at
+    /// `cell` (a single sheet lookup; the same writes as
+    /// `write_computed_overlay_value_0based` then
+    /// `write_computed_overlay_format_0based`).
+    fn write_computed_cell_0based(
+        &mut self,
+        cell: CellRef,
+        value: &LiteralValue,
+        format: Option<crate::format::FormatId>,
+    ) {
+        if !(self.config.arrow_storage_enabled
+            && self.config.delta_overlay_enabled
+            && self.config.write_formula_overlay_enabled)
+            || self.computed_overlay_mirroring_disabled
+        {
+            return;
+        }
+        let sheet = self.graph.sheet_name(cell.sheet_id);
+        let index = match self
+            .arrow_sheets
+            .sheets
+            .iter()
+            .position(|s| s.name.as_ref() == sheet)
+        {
+            Some(index) => index,
+            None => {
+                let sheet = sheet.to_string();
+                self.ensure_arrow_sheet(&sheet);
+                self.arrow_sheets.sheets.len() - 1
+            }
+        };
+        let (row0, col0) = (cell.coord.row() as usize, cell.coord.col() as usize);
+        let asheet = &mut self.arrow_sheets.sheets[index];
+        let ov = Self::literal_to_overlay_value(value, asheet.date_system);
+        let cur_cols = asheet.columns.len();
+        if col0 >= cur_cols {
+            asheet.insert_columns(cur_cols, (col0 + 1) - cur_cols);
+        }
+        if row0 >= asheet.nrows as usize {
+            asheet.ensure_row_capacity(row0 + 1);
+        }
+        let Some((ch_idx, in_off)) = asheet.chunk_of_row(row0) else {
+            return;
+        };
+        let Some(ch) = asheet.ensure_column_chunk_mut(col0, ch_idx) else {
+            return;
+        };
+        let delta = ch.computed_overlay.set_scalar(in_off, ov);
+        ch.computed_overlay.set_format(in_off, format);
+        self.adjust_computed_overlay_bytes(delta);
+        if let Some(cap) = self.config.max_overlay_memory_bytes
+            && self.computed_overlay_bytes_estimate > cap
+        {
+            self.disable_computed_overlay_mirroring_due_to_budget(cap);
+        }
+    }
+
     fn write_computed_overlay_value_0based(
         &mut self,
         sheet: &str,
@@ -12451,10 +12529,16 @@ where
         let Some(cell) = self.graph.get_cell_ref(vertex_id) else {
             return Ok(());
         };
+        let Some(buffer) = computed_writes else {
+            // Unbuffered: one sheet lookup for the value and its format.
+            let format_id = self.derived_formats.get(&cell);
+            self.write_computed_cell_0based(cell, value, format_id);
+            return Ok(());
+        };
         let sheet_name = self.graph.sheet_name(cell.sheet_id).to_string();
         let date_system = self.arrow_sheet_date_system(&sheet_name);
         let ov = Self::literal_to_overlay_value(value, date_system);
-        if let Some(buffer) = computed_writes {
+        {
             let format_id = self.derived_formats.get(&cell);
             buffer.push_cell_with_format(
                 cell.sheet_id,
@@ -12466,22 +12550,6 @@ where
             if self.should_flush_computed_write_buffer(buffer) {
                 self.flush_computed_write_buffer(buffer)?;
             }
-        } else {
-            self.write_computed_overlay_value_0based(
-                &sheet_name,
-                cell.coord.row(),
-                cell.coord.col(),
-                ov,
-            );
-            // The computed format lane follows the value, as on the buffered
-            // path (a General result clears a stale date format).
-            let format_id = self.derived_formats.get(&cell);
-            self.write_computed_overlay_format_0based(
-                &sheet_name,
-                cell.coord.row(),
-                cell.coord.col(),
-                format_id,
-            );
         }
         Ok(())
     }
@@ -16032,9 +16100,12 @@ where
         &mut self,
         layer: &super::scheduler::Layer,
     ) -> Result<usize, ExcelError> {
+        if layer.sequential {
+            return self.evaluate_layer_sequential(layer);
+        }
         self.resource_checkpoint(layer.vertices.len() as u64)?;
         let len = layer.vertices.len();
-        let buffered = len >= COMPUTED_WRITE_COALESCING_MIN_LAYER_WIDTH;
+        let buffered = buffer_layer_writes(layer);
         let (probe, worth) = (PARALLEL_LAYER_PROBE, PARALLEL_LAYER_WORTH);
         let start = crate::instant::FzInstant::now();
         let mut pos = 0usize;
@@ -16082,6 +16153,9 @@ where
         layer: &super::scheduler::Layer,
         delta: &mut DeltaCollector,
     ) -> Result<usize, ExcelError> {
+        if layer.sequential {
+            return self.evaluate_layer_sequential_with_delta(layer, delta);
+        }
         self.resource_checkpoint(layer.vertices.len() as u64)?;
         self.evaluate_layer_parallel_with_delta_effects(layer, delta)
     }
@@ -16092,6 +16166,9 @@ where
         layer: &super::scheduler::Layer,
         cancel_flag: &AtomicBool,
     ) -> Result<usize, ExcelError> {
+        if layer.sequential {
+            return self.evaluate_layer_sequential_cancellable(layer, cancel_flag);
+        }
         self.resource_checkpoint(layer.vertices.len() as u64)?;
         self.evaluate_layer_parallel_cancellable_effects(layer, cancel_flag)
     }
@@ -19662,6 +19739,28 @@ where
         buffered: bool,
         stop_at: Option<crate::instant::FzInstant>,
     ) -> Result<usize, ExcelError> {
+        // A chain unit: its run through the chain lift, or else cell by
+        // cell in row order, each written before the next reads it.
+        let mut chain_values = None;
+        if layer.sequential && !layer.runs.is_empty() {
+            chain_values = match layer.runs.as_slice() {
+                [run] if run.start == 0 && run.len as usize == layer.vertices.len() => {
+                    self.try_chain_lift(*run, &layer.vertices)
+                }
+                _ => None,
+            };
+            if chain_values.is_none() {
+                let cells = super::scheduler::Layer {
+                    vertices: layer.vertices.clone(),
+                    runs: Vec::new(),
+                    sequential: true,
+                };
+                return self.evaluate_layer_units_until(&cells, delta, log, cancel, false, stop_at);
+            }
+        }
+        let chained = chain_values.is_some();
+        // The chain lift computed every member: one block write, as a run.
+        let buffered = buffered || chained;
         let mut computed_writes = ComputedWriteBuffer::default();
         let mut next_check = 0usize;
         let mut done = 0usize;
@@ -19689,7 +19788,15 @@ where
             if buffered && self.unit_reads_compressed_range(layer, unit) {
                 self.flush_computed_write_buffer(&mut computed_writes)?;
             }
-            let values = self.evaluate_unit_immutable(layer, unit);
+            let values = match (chain_values.take(), unit) {
+                (Some(chain), LayerUnit::Run(run)) => layer.vertices
+                    [run.start as usize..(run.start + run.len) as usize]
+                    .iter()
+                    .copied()
+                    .zip(chain)
+                    .collect(),
+                (_, unit) => self.evaluate_unit_immutable(layer, unit),
+            };
             done += values.len();
             if let LayerUnit::Run(run) = unit {
                 let members = &layer.vertices[run.start as usize..(run.start + run.len) as usize];
@@ -19742,6 +19849,35 @@ where
             }
         }
         self.flush_computed_write_buffer(&mut computed_writes)?;
+        // Debug builds: every chain member equals the per-cell path, now
+        // that the members above it are written.
+        #[cfg(debug_assertions)]
+        if chained {
+            for &v in &layer.vertices {
+                let cell = self.graph.get_cell_ref(v);
+                let (sheet, row, col) = cell
+                    .map(|c| {
+                        (
+                            self.graph.sheet_name(c.sheet_id).to_string(),
+                            c.coord.row() + 1,
+                            c.coord.col() + 1,
+                        )
+                    })
+                    .expect("chain member cell");
+                let written = self.get_cell_value(&sheet, row, col);
+                let oracle = self
+                    .evaluate_vertex_immutable(v)
+                    .unwrap_or_else(LiteralValue::Error);
+                assert!(
+                    written
+                        .as_ref()
+                        .is_some_and(|w| same_value_bits(w, &oracle)),
+                    "chain member {sheet}!R{row}C{col}: {written:?} vs per-cell {oracle:?}"
+                );
+            }
+        }
+        #[cfg(not(debug_assertions))]
+        let _ = chained;
         Ok(layer.vertices.len())
     }
 
@@ -19750,7 +19886,7 @@ where
         &mut self,
         layer: &super::scheduler::Layer,
     ) -> Result<usize, ExcelError> {
-        let buffered = layer.vertices.len() >= COMPUTED_WRITE_COALESCING_MIN_LAYER_WIDTH;
+        let buffered = buffer_layer_writes(layer);
         self.evaluate_layer_units(layer, None, None, None, buffered)
     }
 
@@ -19760,7 +19896,7 @@ where
         layer: &super::scheduler::Layer,
         delta: &mut DeltaCollector,
     ) -> Result<usize, ExcelError> {
-        let buffered = layer.vertices.len() >= COMPUTED_WRITE_COALESCING_MIN_LAYER_WIDTH;
+        let buffered = buffer_layer_writes(layer);
         self.evaluate_layer_units(layer, Some(delta), None, None, buffered)
     }
 
@@ -19770,7 +19906,7 @@ where
         layer: &super::scheduler::Layer,
         cancel_flag: &AtomicBool,
     ) -> Result<usize, ExcelError> {
-        let buffered = layer.vertices.len() >= COMPUTED_WRITE_COALESCING_MIN_LAYER_WIDTH;
+        let buffered = buffer_layer_writes(layer);
         let cancel = (cancel_flag, 256, "Evaluation cancelled within layer");
         self.evaluate_layer_units(layer, None, None, Some(cancel), buffered)
     }
@@ -19781,7 +19917,7 @@ where
         layer: &super::scheduler::Layer,
         cancel_flag: &AtomicBool,
     ) -> Result<usize, ExcelError> {
-        let buffered = layer.vertices.len() >= COMPUTED_WRITE_COALESCING_MIN_LAYER_WIDTH;
+        let buffered = buffer_layer_writes(layer);
         let cancel = (
             cancel_flag,
             128,
