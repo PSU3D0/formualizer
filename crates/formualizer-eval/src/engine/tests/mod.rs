@@ -170,6 +170,7 @@ mod invariant_calls;
 mod let_lambda;
 mod npv_variadic;
 mod offset_dynamic;
+mod offset_index_numeric_arguments;
 mod omitted_arguments;
 mod open_ended_bounds_caps;
 mod open_rect_bounds;
