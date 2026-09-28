@@ -3451,9 +3451,10 @@ impl DependencyGraph {
     /// formula typed into a value or empty cell): the cell loses its vertex
     /// as a value edit does, dependents dirtied by position.
     pub(crate) fn retire_cell_for_replay(&mut self, addr: CellRef) {
-        if self.vacate_cell(&addr).is_some() {
-            let _ = self.mark_dirty_cells(&[(addr.sheet_id, addr.coord.row(), addr.coord.col())]);
-        }
+        // The cell's value changes either way (Arrow restores it): its
+        // readers are dirty even when it had no vertex.
+        self.vacate_cell(&addr);
+        let _ = self.mark_dirty_cells(&[(addr.sheet_id, addr.coord.row(), addr.coord.col())]);
     }
 
     /// The retired id at `addr` comes back (value -> formula, decision 27)

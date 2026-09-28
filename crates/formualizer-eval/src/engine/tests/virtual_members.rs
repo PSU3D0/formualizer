@@ -530,3 +530,37 @@ fn failed_deferred_first_build_leaves_the_graph_untouched() {
     assert!(e.evaluate_all().is_err());
     assert_eq!(e.graph.formula_vertex_count(), 0);
 }
+
+/// Undoing a value typed into an empty cell dirties the cell's readers
+/// (the cell has no vertex to remove: decision 27). Mirrors the Python
+/// binding's `test_rewrite_previously_empty_precedent_after_undo`.
+#[test]
+fn undo_of_a_value_in_an_empty_cell_dirties_its_readers() {
+    let mut e = Engine::new(TestWorkbook::new(), arrow_eval_config());
+    e.set_cell_formula("S1", 4, 4, parse("=C6+1").unwrap())
+        .unwrap();
+    e.evaluate_all().unwrap();
+    assert_eq!(
+        e.get_cell_value("S1", 4, 4),
+        Some(LiteralValue::Number(1.0))
+    );
+    let sid = e.graph.sheet_id("S1").unwrap();
+    let c6 = CellRef::new(sid, Coord::from_excel(6, 3, true, true));
+    let mut log = ChangeLog::new();
+    let mut undo = UndoEngine::new();
+    e.edit_with_logger(&mut log, |ed| {
+        ed.set_cell_value(c6, LiteralValue::Number(10.0));
+    })
+    .unwrap();
+    e.evaluate_all().unwrap();
+    assert_eq!(
+        e.get_cell_value("S1", 4, 4),
+        Some(LiteralValue::Number(11.0))
+    );
+    e.undo_logged(&mut undo, &mut log).unwrap();
+    e.evaluate_all().unwrap();
+    assert_eq!(
+        e.get_cell_value("S1", 4, 4),
+        Some(LiteralValue::Number(1.0))
+    );
+}
