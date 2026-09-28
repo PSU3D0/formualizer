@@ -1074,10 +1074,11 @@ impl WorkbookConfig {
         self
     }
 
-    /// Opt in/out of experimental FormulaPlane span evaluation.
+    /// Record the FormulaPlane span-evaluation preference.
     ///
-    /// The default is disabled to preserve stable workbook semantics and load
-    /// costs. Enabling this selects `FormulaPlaneMode::AuthoritativeExperimental`.
+    /// Accepted and ignored by the engine: FormulaPlane spans were removed and
+    /// the dependency authority is the only runtime path. Enabling this still
+    /// stores `FormulaPlaneMode::AuthoritativeExperimental` in this config.
     pub fn with_span_evaluation(mut self, enabled: bool) -> Self {
         self.eval.formula_plane_mode = if enabled {
             formualizer_eval::engine::FormulaPlaneMode::AuthoritativeExperimental

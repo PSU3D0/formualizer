@@ -1,8 +1,12 @@
+#[cfg(any(test, feature = "legacy_oracle"))]
 use super::DependencyGraph;
 use super::vertex::VertexId;
+#[cfg(any(test, feature = "legacy_oracle"))]
 use formualizer_common::ExcelError;
+#[cfg(any(test, feature = "legacy_oracle"))]
 use rustc_hash::{FxHashMap, FxHashSet};
 
+#[cfg(any(test, feature = "legacy_oracle"))]
 pub struct Scheduler<'a> {
     graph: &'a DependencyGraph,
 }
@@ -10,6 +14,57 @@ pub struct Scheduler<'a> {
 #[derive(Debug, Clone)]
 pub struct Layer {
     pub vertices: Vec<VertexId>,
+    /// Family runs of this layer (Program 2 execution units): index ranges
+    /// of `vertices` holding consecutive rows of one column of one family
+    /// node. Vertices outside every run execute one cell at a time.
+    pub(crate) runs: Vec<LayerRun>,
+}
+
+/// A family run: `vertices[start..start + len]` are the cells
+/// `(sheet, row0 + i, col)` of the family owner `owner`, all at one layer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct LayerRun {
+    pub start: u32,
+    pub len: u32,
+    pub sheet: u16,
+    pub col: u32,
+    pub row0: u32,
+    pub owner: u32,
+}
+
+impl Layer {
+    /// A layer without family runs (every vertex executes per cell).
+    pub fn new(vertices: Vec<VertexId>) -> Self {
+        Self {
+            vertices,
+            runs: Vec::new(),
+        }
+    }
+
+    /// The vertices `lo..hi` as a layer, with the runs clipped to them.
+    pub(crate) fn sub_layer(&self, lo: usize, hi: usize) -> Layer {
+        let first = self
+            .runs
+            .partition_point(|r| (r.start + r.len) as usize <= lo);
+        let runs = self.runs[first..]
+            .iter()
+            .take_while(|r| (r.start as usize) < hi)
+            .map(|r| {
+                let s = (r.start as usize).max(lo);
+                let e = ((r.start + r.len) as usize).min(hi);
+                LayerRun {
+                    start: (s - lo) as u32,
+                    len: (e - s) as u32,
+                    row0: r.row0 + (s - r.start as usize) as u32,
+                    ..*r
+                }
+            })
+            .collect();
+        Layer {
+            vertices: self.vertices[lo..hi].to_vec(),
+            runs,
+        }
+    }
 }
 
 /// One step of the canonical schedule walk: either an acyclic Kahn wave
@@ -61,19 +116,23 @@ impl Schedule {
     }
 }
 
+#[cfg(any(test, feature = "legacy_oracle"))]
 impl<'a> Scheduler<'a> {
     pub fn new(graph: &'a DependencyGraph) -> Self {
         Self { graph }
     }
 
     pub fn create_schedule(&self, vertices: &[VertexId]) -> Result<Schedule, ExcelError> {
-        #[cfg(feature = "tracing")]
-        let _span = tracing::info_span!("scheduler", vertices = vertices.len()).entered();
+        let _span = crate::engine::trace::fz_span!(
+            tracing::Level::INFO,
+            "schedule",
+            "schedule.legacy",
+            vertices = vertices.len()
+        );
         // 1. Find strongly connected components using Tarjan's algorithm
-        #[cfg(feature = "tracing")]
-        let _scc_span = tracing::info_span!("tarjan_scc").entered();
+        let _scc_span =
+            crate::engine::trace::fz_span!(tracing::Level::INFO, "schedule", "schedule.tarjan");
         let sccs = self.tarjan_scc(vertices)?;
-        #[cfg(feature = "tracing")]
         drop(_scc_span);
 
         // 2. Separate cyclic from acyclic components
@@ -130,24 +189,29 @@ impl<'a> Scheduler<'a> {
         vertices: &[VertexId],
         vdeps: &FxHashMap<VertexId, Vec<VertexId>>,
     ) -> Result<Schedule, ExcelError> {
-        #[cfg(feature = "tracing")]
-        let _span = tracing::info_span!(
-            "scheduler_with_virtual",
+        let _span = crate::engine::trace::fz_span!(
+            tracing::Level::INFO,
+            "schedule",
+            "schedule.virtual",
             vertices = vertices.len(),
             vdeps = vdeps.len()
-        )
-        .entered();
+        );
         // 1. SCC detection with virtual deps
-        #[cfg(feature = "tracing")]
-        let _scc_span = tracing::info_span!("tarjan_scc_with_virtual").entered();
+        let _scc_span = crate::engine::trace::fz_span!(
+            tracing::Level::INFO,
+            "schedule",
+            "schedule.tarjan_virtual"
+        );
         let sccs = self.tarjan_scc_with_virtual(vertices, vdeps)?;
-        #[cfg(feature = "tracing")]
         drop(_scc_span);
         // 2. Separate cycles and acyclic components
         let (cycles, acyclic_sccs) = self.separate_cycles(sccs);
         // 3. Build layers over combined adjacency (graph + vdeps)
-        #[cfg(feature = "tracing")]
-        let _layers_span = tracing::info_span!("build_layers_with_virtual").entered();
+        let _layers_span = crate::engine::trace::fz_span!(
+            tracing::Level::INFO,
+            "schedule",
+            "schedule.layers_virtual"
+        );
         if cycles.is_empty() {
             // Fast path: byte-for-byte today's layer construction.
             let layers = self.build_layers_with_virtual(acyclic_sccs, vdeps)?;
@@ -740,9 +804,7 @@ impl<'a> Scheduler<'a> {
             }
             // Sort for deterministic output in tests
             current_layer_vertices.sort();
-            layers.push(Layer {
-                vertices: current_layer_vertices,
-            });
+            layers.push(Layer::new(current_layer_vertices));
         }
 
         if processed_count != vertices.len() {
@@ -852,9 +914,7 @@ impl<'a> Scheduler<'a> {
                 // Sort for deterministic output, as in build_layers.
                 wave_vertices.sort();
                 units.push(ScheduleUnit::Layer(layers.len() as u32));
-                layers.push(Layer {
-                    vertices: wave_vertices,
-                });
+                layers.push(Layer::new(wave_vertices));
             }
 
             processed_count += current.len();
@@ -955,7 +1015,7 @@ impl<'a> Scheduler<'a> {
                 }
             }
             cur.sort_unstable();
-            layers.push(Layer { vertices: cur });
+            layers.push(Layer::new(cur));
         }
         if processed_count != vertices.len() {
             return Err(

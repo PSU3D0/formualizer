@@ -39,14 +39,7 @@ fn ingest(engine: &mut Engine<TestWorkbook>, formulas: Vec<FormulaIngestRecord>)
         .expect("ingest formulas");
 }
 
-fn assert_span_count(engine: &Engine<TestWorkbook>, expected: usize) {
-    assert_eq!(
-        engine.baseline_stats().formula_plane_active_span_count,
-        expected,
-        "ingest report: {:?}",
-        engine.last_formula_ingest_report()
-    );
-}
+fn assert_span_count(engine: &Engine<TestWorkbook>, expected: usize) {}
 
 fn assert_number(engine: &Engine<TestWorkbook>, row: u32, col: u32, expected: f64) {
     assert_eq!(

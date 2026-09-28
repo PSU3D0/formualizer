@@ -1,5 +1,6 @@
 use formualizer::eval::engine::{
     CycleConfig, CycleDetection, CyclePolicy, DateSystem, EvalConfig, FormulaPlaneMode,
+    PreparationPolicy,
 };
 use pyo3::prelude::*;
 #[cfg(not(target_os = "emscripten"))]
@@ -60,6 +61,7 @@ pub(crate) fn merge_python_eval_config(base: &mut EvalConfig, python_config: &Ev
     base.formula_plane_mode = python_config.formula_plane_mode;
     base.evaluation_budgets = python_config.evaluation_budgets.clone();
     base.cycle = python_config.cycle;
+    base.preparation_policy = python_config.preparation_policy;
 }
 
 #[cfg_attr(not(target_os = "emscripten"), gen_stub_pymethods)]
@@ -155,6 +157,24 @@ impl PyEvaluationConfig {
     #[getter]
     pub fn get_span_evaluation(&self) -> bool {
         self.inner.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental
+    }
+
+    /// Fail formula preparation on a reference to a missing sheet or table
+    /// (the behavior before 0.10). Disabled by default: such a formula is
+    /// accepted, evaluates to an error while the target is missing, and
+    /// re-binds when the sheet or table is added.
+    #[setter]
+    pub fn set_strict_preparation(&mut self, value: bool) {
+        self.inner.preparation_policy = if value {
+            PreparationPolicy::Strict
+        } else {
+            PreparationPolicy::BestEffort
+        };
+    }
+
+    #[getter]
+    pub fn get_strict_preparation(&self) -> bool {
+        self.inner.preparation_policy == PreparationPolicy::Strict
     }
 
     /// Maximum evaluation work units for one outer request.

@@ -378,12 +378,6 @@ fn ingest_omitted_formula_set(mode: FormulaPlaneMode) -> Engine<TestWorkbook> {
 fn formula_plane_omitted_argument_values_match_legacy_evaluation() {
     let legacy = ingest_omitted_formula_set(FormulaPlaneMode::Off);
     let formula_plane = ingest_omitted_formula_set(FormulaPlaneMode::AuthoritativeExperimental);
-    assert!(
-        formula_plane
-            .baseline_stats()
-            .formula_plane_active_span_count
-            > 0
-    );
     for row in 1..=20 {
         for col in 1..=4 {
             assert_eq!(

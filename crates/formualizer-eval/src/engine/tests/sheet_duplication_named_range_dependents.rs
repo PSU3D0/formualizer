@@ -28,7 +28,7 @@ fn range_ref(
 }
 
 fn vertex_for(graph: &DependencyGraph, sheet: &str, row: u32, col: u32) -> VertexId {
-    *graph
+    graph
         .get_vertex_id_for_address(&graph.make_cell_ref(sheet, row, col))
         .unwrap_or_else(|| panic!("missing vertex for {sheet}!R{row}C{col}"))
 }

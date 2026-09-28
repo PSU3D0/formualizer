@@ -943,3 +943,26 @@ impl Default for CsrMutableEdges {
         Self::new()
     }
 }
+
+/// Heap bytes of the mutable edge store (Program 1 memory gate;
+/// feature-gated): `(csr base, delta slab, side tables)`.
+impl CsrMutableEdges {
+    pub(crate) fn authority_gate_heap_bytes(&self) -> (usize, usize, usize) {
+        use crate::engine::authority::dir::hash_table_bytes;
+        let set_bytes = |m: &FxHashMap<VertexId, FxHashSet<VertexId>>| {
+            hash_table_bytes::<(VertexId, FxHashSet<VertexId>)>(m.capacity())
+                + m.values()
+                    .map(|s| hash_table_bytes::<VertexId>(s.capacity()))
+                    .sum::<usize>()
+        };
+        let d = &self.delta;
+        let delta = set_bytes(&d.additions)
+            + set_bytes(&d.removals)
+            + set_bytes(&d.additions_in)
+            + set_bytes(&d.removals_in);
+        let side = self.coords.capacity() * size_of::<VertexAddr>()
+            + self.vertex_ids.capacity() * 4
+            + hash_table_bytes::<(u32, usize)>(self.vertex_pos.capacity());
+        (self.base.authority_gate_heap_bytes(), delta, side)
+    }
+}

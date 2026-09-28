@@ -77,10 +77,16 @@ impl UndoEngine {
                 reason: "Non-tail undo not supported".into(),
             });
         }
-        let mut editor = VertexEditor::new(graph);
-        for item in batch.iter().rev() {
-            editor.apply_inverse(item.event.clone())?;
-        }
+        graph.authority_set_replay(crate::engine::authority::history::Replay::Undo);
+        let replayed = (|| {
+            let mut editor = VertexEditor::new(graph);
+            for item in batch.iter().rev() {
+                editor.apply_inverse(item.event.clone())?;
+            }
+            Ok::<_, EditorError>(())
+        })();
+        graph.authority_set_replay(crate::engine::authority::history::Replay::Forward);
+        replayed?;
 
         // Keep a copy for redo, but also return the batch so callers can mirror side effects.
         self.undone.push(batch.clone());
@@ -106,102 +112,108 @@ impl UndoEngine {
             // we apply events by value below.
             let ret = batch.clone();
 
-            for item in batch {
-                // Re-log original event for audit consistency
-                log.record_with_meta(item.event.clone(), item.meta.clone());
-                match item.event {
-                    ChangeEvent::SetValue { addr, new, .. } => {
-                        let mut editor = VertexEditor::new(graph);
-                        editor.set_cell_value(addr, new);
-                    }
-                    ChangeEvent::SetFormula { addr, new, .. } => {
-                        let mut editor = VertexEditor::new(graph);
-                        editor.set_cell_formula(addr, new);
-                    }
-                    ChangeEvent::AddVertex {
-                        coord,
-                        sheet_id,
-                        kind,
-                        ..
-                    } => {
-                        let mut editor = VertexEditor::new(graph);
-                        let meta = crate::engine::graph::editor::vertex_editor::VertexMeta::new(
-                            coord.row(),
-                            coord.col(),
-                            sheet_id,
-                            kind.unwrap_or(crate::engine::vertex::VertexKind::Cell),
-                        );
-                        editor.try_add_vertex(meta)?;
-                    }
-                    ChangeEvent::RemoveVertex {
-                        coord, sheet_id, ..
-                    } => {
-                        if let (Some(c), Some(sid)) = (coord, sheet_id) {
+            graph.authority_set_replay(crate::engine::authority::history::Replay::Redo);
+            let replayed = (|| {
+                for item in batch {
+                    // Re-log original event for audit consistency
+                    log.record_with_meta(item.event.clone(), item.meta.clone());
+                    match item.event {
+                        ChangeEvent::SetValue { addr, new, .. } => {
                             let mut editor = VertexEditor::new(graph);
-                            let cell_ref = crate::reference::CellRef::new(
-                                sid,
-                                crate::reference::Coord::new(c.row(), c.col(), true, true),
-                            );
-                            let _ = editor.remove_vertex_at(cell_ref);
+                            editor.set_cell_value(addr, new);
                         }
+                        ChangeEvent::SetFormula { addr, new, .. } => {
+                            let mut editor = VertexEditor::new(graph);
+                            editor.set_cell_formula(addr, new);
+                        }
+                        ChangeEvent::AddVertex {
+                            coord,
+                            sheet_id,
+                            kind,
+                            ..
+                        } => {
+                            let mut editor = VertexEditor::new(graph);
+                            let meta = crate::engine::graph::editor::vertex_editor::VertexMeta::new(
+                                coord.row(),
+                                coord.col(),
+                                sheet_id,
+                                kind.unwrap_or(crate::engine::vertex::VertexKind::Cell),
+                            );
+                            editor.try_add_vertex(meta)?;
+                        }
+                        ChangeEvent::RemoveVertex {
+                            coord, sheet_id, ..
+                        } => {
+                            if let (Some(c), Some(sid)) = (coord, sheet_id) {
+                                let mut editor = VertexEditor::new(graph);
+                                let cell_ref = crate::reference::CellRef::new(
+                                    sid,
+                                    crate::reference::Coord::new(c.row(), c.col(), true, true),
+                                );
+                                let _ = editor.remove_vertex_at(cell_ref);
+                            }
+                        }
+                        ChangeEvent::VertexMoved { id, new_coord, .. } => {
+                            let mut editor = VertexEditor::new(graph);
+                            let _ = editor.move_vertex(id, new_coord);
+                        }
+                        ChangeEvent::FormulaAdjusted { id, new_ast, .. } => {
+                            // Keep it simple: apply directly by vertex id.
+                            // (This is used for structural ops formula rewrites.)
+                            let _ = graph.update_vertex_formula(id, new_ast);
+                            graph.mark_vertex_dirty(id);
+                        }
+                        ChangeEvent::DefineName {
+                            name,
+                            scope,
+                            definition,
+                        } => {
+                            let mut editor = VertexEditor::new(graph);
+                            let _ = editor.define_name(&name, definition, scope);
+                        }
+                        ChangeEvent::UpdateName {
+                            name,
+                            scope,
+                            new_definition,
+                            ..
+                        } => {
+                            let mut editor = VertexEditor::new(graph);
+                            let _ = editor.update_name(&name, new_definition, scope);
+                        }
+                        ChangeEvent::DeleteName { name, scope, .. } => {
+                            let mut editor = VertexEditor::new(graph);
+                            let _ = editor.delete_name(&name, scope);
+                        }
+                        ChangeEvent::NamedRangeAdjusted {
+                            name,
+                            scope,
+                            new_definition,
+                            ..
+                        } => {
+                            let mut editor = VertexEditor::new(graph);
+                            let _ = editor.update_name(&name, new_definition, scope);
+                        }
+                        ChangeEvent::SpillCommitted { anchor, new, .. } => {
+                            let _ = graph.commit_spill_region_atomic_with_fault(
+                                anchor,
+                                new.target_cells,
+                                new.values,
+                                None,
+                            );
+                        }
+                        ChangeEvent::SpillCleared { anchor, .. } => {
+                            graph.clear_spill_region(anchor);
+                        }
+                        ChangeEvent::SetRowVisibility { .. } => {
+                            // Engine-level sidecar metadata; applied by Engine undo/redo wrappers.
+                        }
+                        _ => {}
                     }
-                    ChangeEvent::VertexMoved { id, new_coord, .. } => {
-                        let mut editor = VertexEditor::new(graph);
-                        let _ = editor.move_vertex(id, new_coord);
-                    }
-                    ChangeEvent::FormulaAdjusted { id, new_ast, .. } => {
-                        // Keep it simple: apply directly by vertex id.
-                        // (This is used for structural ops formula rewrites.)
-                        let _ = graph.update_vertex_formula(id, new_ast);
-                        graph.mark_vertex_dirty(id);
-                    }
-                    ChangeEvent::DefineName {
-                        name,
-                        scope,
-                        definition,
-                    } => {
-                        let mut editor = VertexEditor::new(graph);
-                        let _ = editor.define_name(&name, definition, scope);
-                    }
-                    ChangeEvent::UpdateName {
-                        name,
-                        scope,
-                        new_definition,
-                        ..
-                    } => {
-                        let mut editor = VertexEditor::new(graph);
-                        let _ = editor.update_name(&name, new_definition, scope);
-                    }
-                    ChangeEvent::DeleteName { name, scope, .. } => {
-                        let mut editor = VertexEditor::new(graph);
-                        let _ = editor.delete_name(&name, scope);
-                    }
-                    ChangeEvent::NamedRangeAdjusted {
-                        name,
-                        scope,
-                        new_definition,
-                        ..
-                    } => {
-                        let mut editor = VertexEditor::new(graph);
-                        let _ = editor.update_name(&name, new_definition, scope);
-                    }
-                    ChangeEvent::SpillCommitted { anchor, new, .. } => {
-                        let _ = graph.commit_spill_region_atomic_with_fault(
-                            anchor,
-                            new.target_cells,
-                            new.values,
-                            None,
-                        );
-                    }
-                    ChangeEvent::SpillCleared { anchor, .. } => {
-                        graph.clear_spill_region(anchor);
-                    }
-                    ChangeEvent::SetRowVisibility { .. } => {
-                        // Engine-level sidecar metadata; applied by Engine undo/redo wrappers.
-                    }
-                    _ => {}
                 }
-            }
+                Ok::<_, EditorError>(())
+            })();
+            graph.authority_set_replay(crate::engine::authority::history::Replay::Forward);
+            replayed?;
             log.end_compound();
             Ok(ret)
         } else {
@@ -393,6 +405,10 @@ mod tests {
         assert_eq!(log.events().len(), 0);
     }
 
+    // Reclassified (M5, internal representation): asserts legacy's edge lists
+    // through a RemoveVertex undo (`ChangeEvent::RemoveVertex` edge fields are a
+    // decision-8 removal); values after undo are covered by the undo tests.
+    #[ignore = "M5 legacy-internal: legacy edge lists across RemoveVertex undo"]
     #[test]
     fn test_remove_vertex_dependency_roundtrip() {
         use formualizer_parse::parser::parse;
@@ -421,7 +437,7 @@ mod tests {
         log.clear();
         {
             // Obtain id prior to editor mutable borrow
-            let a1_vid = graph.get_vertex_id_for_address(&a1_cell).copied().unwrap();
+            let a1_vid = graph.get_vertex_id_for_address(&a1_cell).unwrap();
             let mut editor = VertexEditor::with_logger(&mut graph, &mut log);
             editor.remove_vertex(a1_vid).unwrap();
         }

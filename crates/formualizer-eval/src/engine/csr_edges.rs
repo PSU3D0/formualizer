@@ -603,3 +603,11 @@ impl CsrBuilder {
         CsrEdges::from_adjacency(adj, &self.coords)
     }
 }
+
+/// Heap bytes of the CSR arrays (Program 1 memory gate; feature-gated).
+impl CsrEdges {
+    pub(crate) fn authority_gate_heap_bytes(&self) -> usize {
+        (self.offsets.capacity() + self.reverse_offsets.capacity()) * size_of::<u32>()
+            + (self.edges.capacity() + self.reverse_edges.capacity()) * size_of::<VertexId>()
+    }
+}

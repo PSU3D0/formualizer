@@ -89,7 +89,7 @@ fn test_property_small_range_dependency_tracking() {
         .unwrap();
 
     let formula_addr = abs_cell_ref(0, formula_row, formula_col);
-    let formula_id = *graph.get_vertex_id_for_address(&formula_addr).unwrap();
+    let formula_id = graph.get_vertex_id_for_address(&formula_addr).unwrap();
 
     // Clear initial dirty state
     let all_ids: Vec<VertexId> = graph.cell_to_vertex().values().copied().collect();
@@ -169,7 +169,7 @@ fn test_property_large_range_stripe_tracking() {
         .unwrap();
 
     let formula_addr = abs_cell_ref(0, formula_row, formula_col);
-    let formula_id = *graph.get_vertex_id_for_address(&formula_addr).unwrap();
+    let formula_id = graph.get_vertex_id_for_address(&formula_addr).unwrap();
 
     // Clear initial dirty state
     let all_ids: Vec<VertexId> = graph.cell_to_vertex().values().copied().collect();
@@ -246,7 +246,7 @@ fn test_property_wide_range_stripe_tracking() {
         .unwrap();
 
     let formula_addr = abs_cell_ref(0, formula_row, formula_col);
-    let formula_id = *graph.get_vertex_id_for_address(&formula_addr).unwrap();
+    let formula_id = graph.get_vertex_id_for_address(&formula_addr).unwrap();
 
     // Clear initial dirty state
     let all_ids: Vec<VertexId> = graph.cell_to_vertex().values().copied().collect();
@@ -325,7 +325,7 @@ fn test_property_dense_range_block_stripe_tracking() {
         .unwrap();
 
     let formula_addr = abs_cell_ref(0, formula_row, formula_col);
-    let formula_id = *graph.get_vertex_id_for_address(&formula_addr).unwrap();
+    let formula_id = graph.get_vertex_id_for_address(&formula_addr).unwrap();
 
     // Clear initial dirty state
     let all_ids: Vec<VertexId> = graph.cell_to_vertex().values().copied().collect();
@@ -398,10 +398,10 @@ fn test_property_multiple_overlapping_ranges() {
         .set_cell_formula("Sheet1", 2, 4, sum_range_ast(None, 50, 1, 150, 3))
         .unwrap();
 
-    let formula1_id = *graph
+    let formula1_id = graph
         .get_vertex_id_for_address(&abs_cell_ref(0, 1, 4))
         .unwrap();
-    let formula2_id = *graph
+    let formula2_id = graph
         .get_vertex_id_for_address(&abs_cell_ref(0, 2, 4))
         .unwrap();
 
@@ -488,7 +488,7 @@ fn test_property_cross_sheet_ranges() {
         .set_cell_formula("Sheet1", 1, 1, sum_range_ast(Some("Sheet2"), 1, 1, 100, 1))
         .unwrap();
 
-    let formula_id = *graph
+    let formula_id = graph
         .get_vertex_id_for_address(&abs_cell_ref(0, 1, 1))
         .unwrap();
 
@@ -547,7 +547,7 @@ fn test_property_edge_cases() {
         )
         .unwrap();
 
-    let formula_id = *graph
+    let formula_id = graph
         .get_vertex_id_for_address(&abs_cell_ref(0, 1, 1))
         .unwrap();
 
@@ -602,7 +602,7 @@ fn test_property_formula_replacement_cleanup() {
         )
         .unwrap();
 
-    let formula_id = *graph.get_vertex_id_for_address(&formula_addr).unwrap();
+    let formula_id = graph.get_vertex_id_for_address(&formula_addr).unwrap();
 
     // Clear initial dirty state
     let all_ids: Vec<VertexId> = graph.cell_to_vertex().values().copied().collect();

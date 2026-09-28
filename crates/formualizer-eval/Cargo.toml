@@ -121,6 +121,13 @@ formula_plane_diagnostics = []
 benchmark_internal = []
 # Private test and integration support; never enabled by default.
 test-support = []
+# Deprecated no-op: the region-node dependency authority (Program 1,
+# FORM-000169) is the only runtime dependency path.
+unified_authority = []
+# Build legacy's dependency structures (CSR/delta edges, range stripes, name
+# links) beside the authority as a differential test oracle. Test builds of
+# this crate always have them; never a runtime path.
+legacy_oracle = []
 
 [[example]]
 name = "perf_tranche_probe"
@@ -145,4 +152,9 @@ required-features = ["test-support"]
 [[example]]
 name = "recalc_invalidation"
 path = "examples/recalc_invalidation.rs"
+required-features = ["test-support"]
+
+[[example]]
+name = "overlay_point_write_scaling"
+path = "examples/overlay_point_write_scaling.rs"
 required-features = ["test-support"]

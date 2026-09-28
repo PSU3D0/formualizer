@@ -105,10 +105,46 @@ bitflags::bitflags! {
 /// This trait uses a capability-based model (`FnCaps`) to declare function
 /// properties, enabling the evaluation engine to select the most optimal
 /// execution path (e.g., scalar, vectorized, parallel).
+/// Engine-internal identity of a built-in function with a family kernel.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FamilyKernel {
+    Sum,
+    Average,
+    /// `IF`: lifted element-wise (P2-M3), not a range kernel.
+    If,
+    /// `SUMIF(S)`, `COUNTIF(S)`, `AVERAGEIF(S)`: a family run memoizes by
+    /// its varying arguments (the result is a function of them and of the
+    /// absolute ranges).
+    CriteriaAggregate,
+    /// `VLOOKUP`, `HLOOKUP`, `MATCH`: memoized like `CriteriaAggregate`.
+    Lookup,
+    /// Scalar builtins the elementwise lift runs on typed lanes (P2-M3).
+    Round,
+    Abs,
+    Min,
+    Max,
+    And,
+    Or,
+    IfError,
+    /// `COUNT`: a windowed range kernel.
+    Count,
+}
+
 pub trait Function: Send + Sync + 'static {
     /// Capability flags for this function
     fn caps(&self) -> FnCaps {
         FnCaps::PURE
+    }
+
+    /// Engine-internal: the family kernel that reproduces this function
+    /// exactly over a family run. Only the built-in implementations return
+    /// `Some`; an override registered under the same name keeps `None`, so
+    /// the engine evaluates it through `eval`.
+    #[doc(hidden)]
+    fn family_kernel(&self) -> Option<FamilyKernel> {
+        None
     }
 
     fn name(&self) -> &'static str;

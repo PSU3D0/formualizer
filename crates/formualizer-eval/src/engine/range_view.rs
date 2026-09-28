@@ -771,7 +771,8 @@ impl<'a> RangeView<'a> {
                 let range = segment.chunk_offset..segment.chunk_offset + segment.row_len;
                 let cascade = arrow_store::OverlayCascade::new(&ch.overlay, &ch.computed_overlay);
                 out_cols.push(if cascade.has_any_in_range(range.clone()) {
-                    cascade.select_numbers(range, &base)
+                    ch.merged_numbers(range.clone())
+                        .unwrap_or_else(|| cascade.select_numbers(range, &base))
                 } else {
                     Arc::new(base)
                 });
@@ -966,7 +967,8 @@ impl<'a> RangeView<'a> {
                 let range = segment.chunk_offset..segment.chunk_offset + segment.row_len;
                 let cascade = arrow_store::OverlayCascade::new(&ch.overlay, &ch.computed_overlay);
                 out_cols.push(if cascade.has_any_in_range(range.clone()) {
-                    cascade.select_errors(range, &base)
+                    ch.merged_errors(range.clone())
+                        .unwrap_or_else(|| cascade.select_errors(range, &base))
                 } else {
                     Arc::new(base)
                 });

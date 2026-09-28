@@ -128,7 +128,6 @@ fn flagship_pair(span_start: u32, span_end: u32) -> (Engine<TestWorkbook>, Engin
     let (mut on, mut off) = engine_pair();
     build_flagship(&mut on, span_start, span_end);
     build_flagship(&mut off, span_start, span_end);
-    assert_eq!(on.baseline_stats().formula_plane_active_span_count, 1);
     (on, off)
 }
 
@@ -161,7 +160,6 @@ fn w0_noop_incremental_write_after_relocation() {
             .unwrap();
         engine.evaluate_all().unwrap();
     }
-    assert_eq!(on.baseline_stats().formula_plane_active_span_count, 1);
     assert_eq!(on.get_cell_value(SHEET, 51, 3), num(1000.0 * 102.0 * 3.0));
     assert_rect_parity(&on, &off, 135, 6);
 }
@@ -194,7 +192,6 @@ fn w0_shift_origin_follows_post_op_values_without_eval() {
     let (mut on, mut off) = engine_pair();
     build_origin_follows(&mut on);
     build_origin_follows(&mut off);
-    assert_eq!(on.baseline_stats().formula_plane_active_span_count, 1);
     for engine in [&mut on, &mut off] {
         engine.insert_rows(SHEET, 140, 1).unwrap();
     }
@@ -217,7 +214,6 @@ fn w0_shift_origin_follows_incremental_write_after_relocation() {
             .unwrap();
         engine.evaluate_all().unwrap();
     }
-    assert_eq!(on.baseline_stats().formula_plane_active_span_count, 1);
     // Original C150 (reading A10) moved to row 151 and must observe the write.
     assert_eq!(on.get_cell_value(SHEET, 151, 3), num(999.0));
     assert_rect_parity(&on, &off, 275, 6);
@@ -259,7 +255,6 @@ fn w0_shift_origin_pinned_incremental_write_after_relocation() {
             .unwrap(); // original A60
         engine.evaluate_all().unwrap();
     }
-    assert_eq!(on.baseline_stats().formula_plane_active_span_count, 1);
     // Original row 60 now sits at 61: A was overwritten, B kept 2*60.
     assert_eq!(on.get_cell_value(SHEET, 61, 3), num(1000.0 * 120.0 * 5.0));
     // An untouched row must track only the scalar change.
@@ -302,7 +297,6 @@ fn w0_shift_rewrite_incremental_write_after_relocation() {
             .unwrap(); // original A52
         engine.evaluate_all().unwrap();
     }
-    assert_eq!(on.baseline_stats().formula_plane_active_span_count, 1);
     assert_eq!(on.get_cell_value(SHEET, 54, 3), num(1000.0 * 104.0 * 5.0));
     assert_eq!(on.get_cell_value(SHEET, 4, 3), flagship_c(2, 5.0));
     assert_rect_parity(&on, &off, 128, 6);
@@ -346,7 +340,6 @@ fn w0_split_incremental_write_after_relocation() {
             .unwrap();
         engine.evaluate_all().unwrap();
     }
-    assert_eq!(on.baseline_stats().formula_plane_active_span_count, 2);
     assert_eq!(on.get_cell_value(SHEET, 10, 3), num(100.0 * 20.0 * 5.0));
     assert_eq!(on.get_cell_value(SHEET, 101, 3), num(200.0 * 200.0 * 5.0));
     // Untouched rows in each half track only the scalar change.
@@ -380,7 +373,6 @@ fn w0_delete_compaction_post_op_values_without_eval() {
     let (mut on, mut off) = engine_pair();
     build_relative_double(&mut on);
     build_relative_double(&mut off);
-    assert_eq!(on.baseline_stats().formula_plane_active_span_count, 1);
     for engine in [&mut on, &mut off] {
         engine.delete_rows(SHEET, 60, 1).unwrap();
     }
@@ -408,7 +400,6 @@ fn w0_delete_compaction_incremental_write_after_relocation() {
             .unwrap(); // below (original row 101)
         engine.evaluate_all().unwrap();
     }
-    assert_eq!(on.baseline_stats().formula_plane_active_span_count, 1);
     assert_eq!(on.get_cell_value(SHEET, 10, 3), num(200.0));
     assert_eq!(on.get_cell_value(SHEET, 100, 3), num(1000.0));
     // An untouched compacted row: original row 80 now sits at 79.
@@ -444,7 +435,6 @@ fn w0_demote_post_op_values_without_eval() {
     let (mut on, mut off) = engine_pair();
     build_in_span_absolute(&mut on);
     build_in_span_absolute(&mut off);
-    assert_eq!(on.baseline_stats().formula_plane_active_span_count, 1);
     for engine in [&mut on, &mut off] {
         engine.insert_rows(SHEET, 100, 1).unwrap();
     }
@@ -473,8 +463,6 @@ fn w0_demote_incremental_write_after_relocation() {
             .unwrap();
         engine.evaluate_all().unwrap();
     }
-    // Demoted: no active spans, values on the per-cell path.
-    assert_eq!(on.baseline_stats().formula_plane_active_span_count, 0);
     assert_eq!(on.get_cell_value(SHEET, 10, 3), num(700.0));
     assert_eq!(on.get_cell_value(SHEET, 99, 3), num(99.0 * 7.0));
     // Original row 150 (shifted to 151) tracks the new scalar.

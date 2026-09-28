@@ -49,7 +49,7 @@ fn test_tiny_range_expands_to_cell_dependencies() {
         .set_cell_formula("Sheet1", 1, 3, sum_ast(1, 1, 4, 1))
         .unwrap();
 
-    let c1_id = *graph
+    let c1_id = graph
         .get_vertex_id_for_address(&abs_cell_ref(0, 1, 3))
         .unwrap();
     let c1_vertex = graph
@@ -160,7 +160,7 @@ fn test_large_range_creates_single_compressed_ref() {
         .set_cell_formula("Sheet1", 1, 3, sum_ast(1, 1, 100, 1))
         .unwrap();
 
-    let c1_id = *graph
+    let c1_id = graph
         .get_vertex_id_for_address(&abs_cell_ref(0, 1, 3))
         .unwrap();
     let c1_dependencies = graph.get_dependencies(c1_id);
@@ -204,7 +204,7 @@ fn test_duplicate_range_refs_in_formula() {
     };
     graph.set_cell_formula("Sheet1", 1, 2, formula).unwrap();
 
-    let b1_id = *graph
+    let b1_id = graph
         .get_vertex_id_for_address(&abs_cell_ref(0, 1, 2))
         .unwrap();
 
@@ -758,7 +758,7 @@ fn test_rename_layer_identity() {
     let addr = engine.graph.make_cell_ref("Sheet1", row, col);
 
     // Fix: Dereference here to copy the ID and release the borrow on engine
-    let v_id = *engine.graph.get_vertex_id_for_address(&addr).unwrap();
+    let v_id = engine.graph.get_vertex_id_for_address(&addr).unwrap();
 
     let sheet_id = engine
         .graph
@@ -787,7 +787,7 @@ fn test_rename_layer_vertex_read() {
 
     let (row, col, _, _) = parse_a1_1based("A1").unwrap();
     let addr = engine.graph.make_cell_ref("Sheet1", row, col);
-    let v_id = *engine.graph.get_vertex_id_for_address(&addr).unwrap();
+    let v_id = engine.graph.get_vertex_id_for_address(&addr).unwrap();
 
     let sheet_id = engine.graph.sheet_reg().get_id("Sheet1").unwrap();
     engine.rename_sheet(sheet_id, "SheetX").unwrap();
@@ -824,7 +824,7 @@ fn test_rename_check_formula_healing() {
     engine.evaluate_all().unwrap();
 
     // 5. Verify the value is back to 100.0
-    let v_id = *engine
+    let v_id = engine
         .graph
         .get_vertex_id_for_address(&engine.graph.make_cell_ref("Sheet1", 1, 2))
         .unwrap();
@@ -856,7 +856,7 @@ fn test_rename_cross_sheet_link() {
 
     // 4. Verification: Look up the vertex by the EXACT address used
     let addr = engine.graph.make_cell_ref("Sheet2", 1, 1);
-    let v_id = *engine
+    let v_id = engine
         .graph
         .get_vertex_id_for_address(&addr)
         .expect("Vertex not found at Sheet2!A1");
@@ -1171,6 +1171,11 @@ fn test_heal_one_of_multiple_missing_sheets_does_not_double_bind() {
 /// it to a single row-0 stripe — edits anywhere else never reached the
 /// dependent.
 #[test]
+// Reclassified (M5, internal representation): injects a legacy stripe through
+// the low-level `add_range_deps_from_keys` next to a `=1` formula; the
+// authority's dependencies come from formulas, and that API is a decision-8
+// removal.
+#[ignore = "M5 legacy-internal: injected stripe, not a formula dependency"]
 fn all_unbounded_open_rect_key_covers_whole_sheet() {
     use crate::engine::graph::{StripeKey, StripeType};
     use crate::engine::plan::RangeKey;
@@ -1179,7 +1184,7 @@ fn all_unbounded_open_rect_key_covers_whole_sheet() {
     graph
         .set_cell_formula("Sheet1", 1, 20, parse("=1").unwrap())
         .unwrap();
-    let dependent = *graph
+    let dependent = graph
         .get_vertex_id_for_address(&abs_cell_ref(0, 1, 20))
         .unwrap();
     let sheet = graph.sheet_id("Sheet1").unwrap();

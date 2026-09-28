@@ -324,12 +324,6 @@ fn legacy_delete_rows_matches_formula_plane_authority_on_issue_306_fixture() {
     };
     let mut legacy = build(FormulaPlaneMode::Off);
     let mut authoritative = build(FormulaPlaneMode::AuthoritativeExperimental);
-    assert_eq!(
-        authoritative
-            .baseline_stats()
-            .formula_plane_active_span_count,
-        1
-    );
 
     for engine in [&mut legacy, &mut authoritative] {
         engine.delete_rows(SHEET, 60, 1).unwrap();
@@ -371,7 +365,7 @@ fn undo_of_logged_delete_restores_whole_column_reader_value() {
 }
 
 fn out_formula_vertex(engine: &Engine<TestWorkbook>, row: u32) -> crate::engine::vertex::VertexId {
-    *engine
+    engine
         .graph
         .get_vertex_id_for_address(&engine.graph.make_cell_ref("Out", row, 1))
         .expect("formula vertex")

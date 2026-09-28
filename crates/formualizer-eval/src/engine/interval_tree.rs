@@ -217,6 +217,29 @@ impl<T: Clone + Eq + std::hash::Hash> IntervalTree<T> {
         false
     }
 
+    /// Keep only the values satisfying `keep` (empty intervals are
+    /// dropped), in one pass.
+    pub(crate) fn retain_values(&mut self, mut keep: impl FnMut(&T) -> bool) {
+        let mut size = 0;
+        self.map.retain(|_, nodes| {
+            nodes.retain_mut(|n| {
+                n.values.retain(&mut keep);
+                if n.values.is_empty() {
+                    false
+                } else {
+                    // Give capacity back only when most of it is unused.
+                    if n.values.len() * 4 < n.values.capacity() {
+                        n.values.shrink_to_fit();
+                    }
+                    true
+                }
+            });
+            size += nodes.len();
+            !nodes.is_empty()
+        });
+        self.size = size;
+    }
+
     pub fn entry(&mut self, low: u32, high: u32) -> BTreeEntry<'_, T> {
         BTreeEntry {
             tree: self,

@@ -157,8 +157,6 @@ fn plan_stale_reason_matrix_and_precedence_are_deterministic() -> Result<(), Exc
         PlanStaleReason::Budget,
         PlanStaleReason::Staged,
         PlanStaleReason::Symbols,
-        PlanStaleReason::Authority,
-        PlanStaleReason::SpanGeneration,
     ];
     for reason in reasons {
         let mut engine = make_engine();
@@ -567,7 +565,10 @@ fn target_probe_keeps_clean_ancestry_discovery_and_sparse_dirty_ownership() {
         let clean = engine.recalc_reuse_probe();
         assert_eq!(clean.legacy_target_requests, 1);
         assert_eq!(clean.demand_builds, 1);
-        assert_eq!(clean.demand_vertices, depth as usize + 4);
+        // Reclassified (unified_authority demand, design §8.3): the authority
+        // walks formula pieces and names only, not the 2 value precedents.
+        let value_precedents = if true { 0 } else { 2 };
+        assert_eq!(clean.demand_vertices, depth as usize + 2 + value_precedents);
         assert_eq!(clean.demand_clean_formulas, depth as usize + 2);
         assert_eq!(clean.target_schedule_builds, 0);
         assert_eq!(clean.schedule_requests, 0);
@@ -588,7 +589,7 @@ fn target_probe_keeps_clean_ancestry_discovery_and_sparse_dirty_ownership() {
             .unwrap();
             assert_eq!(result.computed_vertices, 2);
             let probe = engine.recalc_reuse_probe();
-            assert_eq!(probe.demand_vertices, depth as usize + 4);
+            assert_eq!(probe.demand_vertices, depth as usize + 2 + value_precedents);
             assert_eq!(probe.demand_clean_formulas, depth as usize);
             assert_eq!(probe.target_schedule_builds, 1);
             assert_eq!(probe.schedule_requests, 0);

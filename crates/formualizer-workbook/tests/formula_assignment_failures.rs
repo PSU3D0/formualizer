@@ -4,6 +4,9 @@ use formualizer_workbook::{Workbook, WorkbookConfig};
 fn workbook(logged: bool, deferred: bool) -> Workbook {
     let mut cfg = WorkbookConfig::interactive();
     cfg.eval.defer_graph_building = deferred;
+    // These tests use a missing sheet to provoke a binding failure: that
+    // needs the explicit Strict policy since BestEffort became the default.
+    cfg.eval.preparation_policy = formualizer_eval::engine::PreparationPolicy::Strict;
     let mut wb = Workbook::new_with_config(cfg);
     wb.set_changelog_enabled(logged);
     wb.add_sheet("S").unwrap();
