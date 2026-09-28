@@ -112,6 +112,102 @@ impl Schedule {
         }
     }
 
+    /// This schedule restricted to the vertices in `keep` (Program 3 plan
+    /// reuse). A schedule orders every dependency among its vertices, so
+    /// its units restricted to a subset order every dependency among the
+    /// subset: each kept vertex stays in its layer, a family run keeps its
+    /// kept members as runs of consecutive rows, and a sequential (chain)
+    /// layer keeps its order. `None` when a cycle is only partly kept.
+    pub(crate) fn restrict(&self, keep: &super::idset::DenseIdSet) -> Option<(Schedule, usize)> {
+        let mut layers: Vec<Layer> = Vec::new();
+        let mut cycles: Vec<Vec<VertexId>> = Vec::new();
+        let mut units: Vec<ScheduleUnit> = Vec::new();
+        let mut kept = 0usize;
+        for unit in &self.units {
+            match *unit {
+                ScheduleUnit::Layer(i) => {
+                    let layer = &self.layers[i as usize];
+                    let mut vertices: Vec<VertexId> = Vec::new();
+                    let mut runs: Vec<LayerRun> = Vec::new();
+                    let mut next_run = 0usize;
+                    let mut idx = 0usize;
+                    while idx < layer.vertices.len() {
+                        // Inside a run: keep its members as sub-runs.
+                        if let Some(run) = layer.runs.get(next_run)
+                            && run.start as usize == idx
+                        {
+                            next_run += 1;
+                            let end = idx + run.len as usize;
+                            let mut open: Option<LayerRun> = None;
+                            for (k, &v) in layer.vertices[idx..end].iter().enumerate() {
+                                if keep.contains(&v) {
+                                    let row = run.row0 + k as u32;
+                                    match open.as_mut() {
+                                        Some(r) if r.row0 + r.len == row => r.len += 1,
+                                        _ => {
+                                            if let Some(r) = open.take() {
+                                                runs.push(r);
+                                            }
+                                            open = Some(LayerRun {
+                                                start: vertices.len() as u32,
+                                                len: 1,
+                                                row0: row,
+                                                ..*run
+                                            });
+                                        }
+                                    }
+                                    vertices.push(v);
+                                } else if let Some(r) = open.take() {
+                                    runs.push(r);
+                                }
+                            }
+                            if let Some(r) = open.take() {
+                                runs.push(r);
+                            }
+                            idx = end;
+                            continue;
+                        }
+                        let v = layer.vertices[idx];
+                        if keep.contains(&v) {
+                            vertices.push(v);
+                        }
+                        idx += 1;
+                    }
+                    if !vertices.is_empty() {
+                        kept += vertices.len();
+                        units.push(ScheduleUnit::Layer(layers.len() as u32));
+                        layers.push(Layer {
+                            vertices,
+                            runs,
+                            sequential: layer.sequential,
+                        });
+                    }
+                }
+                ScheduleUnit::Cycle(i) => {
+                    let cycle = &self.cycles[i as usize];
+                    let n = cycle.iter().filter(|v| keep.contains(v)).count();
+                    if n == 0 {
+                        continue;
+                    }
+                    if n != cycle.len() {
+                        return None;
+                    }
+                    kept += n;
+                    units.push(ScheduleUnit::Cycle(cycles.len() as u32));
+                    cycles.push(cycle.clone());
+                }
+            }
+        }
+        Some((
+            Schedule {
+                units,
+                cycles,
+                layers,
+            },
+            kept,
+        ))
+    }
+
     /// Resolve a `ScheduleUnit::Layer` index.
     pub fn unit_layer(&self, i: u32) -> &Layer {
         &self.layers[i as usize]

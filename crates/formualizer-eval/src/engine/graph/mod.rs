@@ -4481,6 +4481,18 @@ impl DependencyGraph {
         self.spill_anchor_to_cells.contains_key(&vertex)
     }
 
+    /// [`Self::update_vertex_value`] that clones the value only when the
+    /// graph keeps it (canonical mode keeps none for grid cells).
+    pub(crate) fn update_vertex_value_ref(&mut self, vertex_id: VertexId, value: &LiteralValue) {
+        if !self.value_cache_enabled && self.is_grid_backed(vertex_id) {
+            if !self.vertex_values.is_empty() {
+                self.vertex_values.remove(&vertex_id);
+            }
+            return;
+        }
+        self.update_vertex_value(vertex_id, value.clone());
+    }
+
     pub(crate) fn update_vertex_value(&mut self, vertex_id: VertexId, value: LiteralValue) {
         if !self.value_cache_enabled && self.is_grid_backed(vertex_id) {
             // Canonical mode: grid-backed vertices must not store values in the graph.
@@ -4719,7 +4731,7 @@ impl DependencyGraph {
                 for idx in (0..applied).rev() {
                     let ((ref sheet, row, col), ref old) = old_values[idx];
                     if sheet == &anchor_sheet_name && row == anchor_row && col == anchor_col {
-                        self.update_vertex_value(anchor, old.value.clone());
+                        self.update_vertex_value_ref(anchor, &old.value);
                     } else {
                         let _ = self.set_cell_value(sheet, row + 1, col + 1, old.value.clone());
                     }
@@ -4728,7 +4740,7 @@ impl DependencyGraph {
                     .with_message("Injected persistence fault during spill commit"));
             }
             if op.sheet == anchor_sheet_name && op.row == anchor_row && op.col == anchor_col {
-                self.update_vertex_value(anchor, op.new_value.clone());
+                self.update_vertex_value_ref(anchor, &op.new_value);
             } else {
                 let _ =
                     self.set_cell_value(&op.sheet, op.row + 1, op.col + 1, op.new_value.clone());

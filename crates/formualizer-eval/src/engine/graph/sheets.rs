@@ -174,7 +174,7 @@ impl DependencyGraph {
 
         // Update cached values for name vertices after the map borrows end.
         for vid in name_vertices_to_update {
-            self.update_vertex_value(vid, ref_err.clone());
+            self.update_vertex_value_ref(vid, &ref_err);
         }
         for &vid in &dirty_vertices {
             self.mark_vertex_dirty(vid);

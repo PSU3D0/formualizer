@@ -897,7 +897,8 @@ where
         }
         self.freshness_mark_committed_group(members);
         for (&v, &x) in members.iter().zip(values) {
-            self.graph.update_vertex_value(v, LiteralValue::Number(x));
+            self.graph
+                .update_vertex_value_ref(v, &LiteralValue::Number(x));
         }
         if !(self.config.arrow_storage_enabled
             && self.config.delta_overlay_enabled
@@ -952,7 +953,7 @@ where
         }
         self.freshness_mark_committed_group(members);
         for (v, value) in values {
-            self.graph.update_vertex_value(*v, value.clone());
+            self.graph.update_vertex_value_ref(*v, value);
         }
         if !(self.config.arrow_storage_enabled
             && self.config.delta_overlay_enabled

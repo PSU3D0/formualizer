@@ -174,6 +174,7 @@ mod omitted_arguments;
 mod open_ended_bounds_caps;
 mod open_rect_bounds;
 mod overlay_compaction;
+mod plan_reuse;
 mod region_lock;
 mod spill_overlay_writeback;
 mod structural_runs;

@@ -564,6 +564,11 @@ fn buffer_layer_writes(layer: &crate::engine::scheduler::Layer) -> bool {
 /// slower).
 /// Candidate count from which schedule preparation sorts on the pool.
 const PARALLEL_SCHEDULE_MIN_CANDIDATES: usize = 16 * 1024;
+/// Plan reuse: a schedule of more candidates than this can become the
+/// base, and a request takes the base restricted to it when the base is at
+/// most `BASE_SCHEDULE_RATIO` times the request.
+const BASE_SCHEDULE_MIN_VERTICES: usize = 64;
+const BASE_SCHEDULE_RATIO: usize = 256;
 const PARALLEL_LAYER_PROBE: std::time::Duration = std::time::Duration::from_micros(300);
 const PARALLEL_LAYER_WORTH: std::time::Duration = std::time::Duration::from_micros(150);
 /// A member this expensive (ns, measured by the probe) is its own task.
@@ -992,6 +997,11 @@ pub struct Engine<R> {
     /// the same few closures). Bounded by `RECENT_SCHEDULES` entries and
     /// `RECENT_SCHEDULE_VERTICES` candidate vertices in total.
     recent_schedules: Vec<CachedScheduleEntry>,
+    /// Program 3 (plan reuse): the largest current schedule seen (usually
+    /// the first evaluation's). A request it covers, and that is not much
+    /// smaller, takes its schedule restricted to the request instead of
+    /// planning (`Schedule::restrict`).
+    base_schedule: Option<CachedScheduleEntry>,
     #[cfg(any(test, feature = "benchmark_internal"))]
     recalc_reuse_probe: std::sync::Mutex<RecalcReuseProbe>,
     spill_mgr: ShimSpillManager,
@@ -1912,6 +1922,8 @@ pub struct RecalcReuseProbe {
     pub schedule_cache_misses: usize,
     pub schedule_cache_ineligible: usize,
     pub schedule_builds: usize,
+    /// Program 3 plan reuse: misses served by restricting the base schedule.
+    pub schedule_base_restrictions: usize,
     pub schedule_shared_handles: usize,
     pub schedule_retained_bytes: usize,
     pub legacy_target_requests: usize,
@@ -2610,6 +2622,7 @@ where
             topology_epoch: 0,
             cached_static_schedule: None,
             recent_schedules: Vec::new(),
+            base_schedule: None,
             #[cfg(any(test, feature = "benchmark_internal"))]
             recalc_reuse_probe: std::sync::Mutex::new(RecalcReuseProbe::default()),
             spill_mgr: ShimSpillManager::default(),
@@ -2771,6 +2784,7 @@ where
             topology_epoch: 0,
             cached_static_schedule: None,
             recent_schedules: Vec::new(),
+            base_schedule: None,
             #[cfg(any(test, feature = "benchmark_internal"))]
             recalc_reuse_probe: std::sync::Mutex::new(RecalcReuseProbe::default()),
             spill_mgr: ShimSpillManager::default(),
@@ -5335,6 +5349,7 @@ where
             };
             probe.schedule_retained_bytes = entry_bytes(cached)
                 + self.recent_schedules.iter().map(entry_bytes).sum::<usize>()
+                + self.base_schedule.as_ref().map_or(0, entry_bytes)
                 + self.recent_schedules.capacity() * std::mem::size_of::<CachedScheduleEntry>();
         }
         probe
@@ -5350,6 +5365,7 @@ where
     fn clear_cached_static_schedule(&mut self) {
         self.cached_static_schedule = None;
         self.recent_schedules.clear();
+        self.base_schedule = None;
     }
 
     /// Keep a replaced schedule among the recent ones when it is still
@@ -5361,6 +5377,26 @@ where
         let epoch = self.topology_epoch;
         self.recent_schedules
             .retain(|e| e.topology_epoch == epoch && e.authority_revision == revision);
+        let current =
+            |e: &CachedScheduleEntry| e.topology_epoch == epoch && e.authority_revision == revision;
+        if self.base_schedule.as_ref().is_some_and(|b| !current(b)) {
+            self.base_schedule = None;
+        }
+        // The largest current schedule becomes the base; a replaced base
+        // may still join the recent ones.
+        let mut entry = entry;
+        if current(&entry)
+            && entry.candidate_vertices.len() > BASE_SCHEDULE_MIN_VERTICES
+            && self
+                .base_schedule
+                .as_ref()
+                .is_none_or(|b| entry.candidate_vertices.len() > b.candidate_vertices.len())
+        {
+            match self.base_schedule.replace(entry) {
+                Some(previous) => entry = previous,
+                None => return,
+            }
+        }
         if entry.topology_epoch != epoch
             || entry.authority_revision != revision
             || entry.candidate_vertices.len() > RECENT_SCHEDULE_VERTICES / 4
@@ -10419,6 +10455,7 @@ where
         if global_changed && changed || provider_changed {
             self.cached_static_schedule = None;
             self.recent_schedules.clear();
+            self.base_schedule = None;
         }
         self.function_semantic_epoch_seen = changes.epoch;
         self.function_provider_revision_seen = provider_revision;
@@ -13375,7 +13412,7 @@ where
                                     );
                                 }
                             }
-                            self.graph.update_vertex_value(vertex_id, spill_val.clone());
+                            self.graph.update_vertex_value_ref(vertex_id, &spill_val);
                             if self.config.arrow_storage_enabled
                                 && self.config.delta_overlay_enabled
                                 && self.config.write_formula_overlay_enabled
@@ -13420,7 +13457,7 @@ where
                                     );
                                 }
                             }
-                            self.graph.update_vertex_value(vertex_id, spill_val.clone());
+                            self.graph.update_vertex_value_ref(vertex_id, &spill_val);
                             if self.config.arrow_storage_enabled
                                 && self.config.delta_overlay_enabled
                                 && self.config.write_formula_overlay_enabled
@@ -13493,7 +13530,7 @@ where
                                         }
                                     }
                                     let err_val = LiteralValue::Error(e.clone());
-                                    self.graph.update_vertex_value(vertex_id, err_val.clone());
+                                    self.graph.update_vertex_value_ref(vertex_id, &err_val);
                                     if self.config.arrow_storage_enabled
                                         && self.config.delta_overlay_enabled
                                         && self.config.write_formula_overlay_enabled
@@ -13515,7 +13552,7 @@ where
                                     .and_then(|r| r.first())
                                     .cloned()
                                     .unwrap_or(LiteralValue::Empty);
-                                self.graph.update_vertex_value(vertex_id, top_left.clone());
+                                self.graph.update_vertex_value_ref(vertex_id, &top_left);
                                 Ok(top_left)
                             }
                             Err(e) => {
@@ -13548,7 +13585,7 @@ where
                                         );
                                     }
                                 }
-                                self.graph.update_vertex_value(vertex_id, spill_val.clone());
+                                self.graph.update_vertex_value_ref(vertex_id, &spill_val);
                                 if self.config.arrow_storage_enabled
                                     && self.config.delta_overlay_enabled
                                     && self.config.write_formula_overlay_enabled
@@ -13632,7 +13669,7 @@ where
                                 );
                             }
                         }
-                        self.graph.update_vertex_value(vertex_id, other.clone());
+                        self.graph.update_vertex_value_ref(vertex_id, &other);
                         // Optionally mirror into Arrow overlay for Arrow-backed reads
                         if self.config.arrow_storage_enabled
                             && self.config.delta_overlay_enabled
@@ -13718,7 +13755,7 @@ where
                         );
                     }
                 }
-                self.graph.update_vertex_value(vertex_id, err_val.clone());
+                self.graph.update_vertex_value_ref(vertex_id, &err_val);
                 if self.config.arrow_storage_enabled
                     && self.config.delta_overlay_enabled
                     && self.config.write_formula_overlay_enabled
@@ -13764,19 +13801,19 @@ where
                 {
                     // Graph does not cache cell/formula values; ensure the precedent is evaluated.
                     let value = self.evaluate_vertex(dep_vertex)?;
-                    self.graph.update_vertex_value(vertex_id, value.clone());
+                    self.graph.update_vertex_value_ref(vertex_id, &value);
                     Ok(value)
                 } else {
                     let value = self
                         .get_cell_value(sheet_name, row, col)
                         .unwrap_or(LiteralValue::Empty);
-                    self.graph.update_vertex_value(vertex_id, value.clone());
+                    self.graph.update_vertex_value_ref(vertex_id, &value);
                     Ok(value)
                 }
             }
             NamedDefinition::Literal(v) => {
                 let out = v.clone();
-                self.graph.update_vertex_value(vertex_id, out.clone());
+                self.graph.update_vertex_value_ref(vertex_id, &out);
                 Ok(out)
             }
             NamedDefinition::Formula { ast, .. } => {
@@ -13798,18 +13835,18 @@ where
                                 let err = ExcelError::new(ExcelErrorKind::NImpl)
                                     .with_message("Array result in scalar named range".to_string());
                                 let err_val = LiteralValue::Error(err.clone());
-                                self.graph.update_vertex_value(vertex_id, err_val.clone());
+                                self.graph.update_vertex_value_ref(vertex_id, &err_val);
                                 Ok(err_val)
                             }
                             other => {
-                                self.graph.update_vertex_value(vertex_id, other.clone());
+                                self.graph.update_vertex_value_ref(vertex_id, &other);
                                 Ok(other)
                             }
                         }
                     }
                     Err(err) => {
                         let err_val = LiteralValue::Error(err.clone());
-                        self.graph.update_vertex_value(vertex_id, err_val.clone());
+                        self.graph.update_vertex_value_ref(vertex_id, &err_val);
                         Ok(err_val)
                     }
                 }
@@ -13902,7 +13939,7 @@ where
             }
         };
 
-        self.graph.update_vertex_value(vertex_id, out.clone());
+        self.graph.update_vertex_value_ref(vertex_id, &out);
         Ok(out)
     }
 
@@ -15130,8 +15167,22 @@ where
                 ));
             }
 
-            let (schedule, vdeps, mut meta) =
-                self.create_evaluation_schedule_active(to_evaluate)?;
+            let (schedule, vdeps, mut meta) = match self.schedule_from_base(to_evaluate)? {
+                Some(schedule) => (
+                    schedule,
+                    FxHashMap::default(),
+                    ScheduleBuildMeta {
+                        candidate_vertices: to_evaluate.len(),
+                        vdeps_vertices: 0,
+                        vdeps_edges: 0,
+                        builder_elapsed_ms: 0,
+                        used_virtual_schedule: false,
+                        schedule_cache_hit: false,
+                        schedule_cache_eligible: true,
+                    },
+                ),
+                None => self.create_evaluation_schedule_active(to_evaluate)?,
+            };
             meta.schedule_cache_hit = false;
             meta.schedule_cache_eligible = true;
             #[cfg(any(test, feature = "benchmark_internal"))]
@@ -15189,6 +15240,164 @@ where
                 .schedule_cache_ineligible += 1;
         }
         Ok((EvaluationSchedule::Owned(schedule), vdeps, meta))
+    }
+
+    /// Plan reuse: the base schedule restricted to `to_evaluate` when it
+    /// is current, covers the request, and is at most
+    /// `BASE_SCHEDULE_RATIO` times its size (restricting walks the whole
+    /// base; planning costs far more per candidate).
+    fn schedule_from_base(
+        &mut self,
+        to_evaluate: &[VertexId],
+    ) -> Result<Option<crate::engine::scheduler::Schedule>, ExcelError> {
+        let revision = self.schedule_cache_authority_revision();
+        let current = |e: &&CachedScheduleEntry| {
+            e.topology_epoch == self.topology_epoch && e.authority_revision == revision
+        };
+        // The base, or the current schedule when larger (the first
+        // evaluation's, before a later request replaces it).
+        let Some(base) = [
+            self.base_schedule.as_ref(),
+            self.cached_static_schedule.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        .filter(current)
+        .max_by_key(|e| e.candidate_vertices.len()) else {
+            return Ok(None);
+        };
+        let base_len = base.candidate_vertices.len();
+        if base_len <= BASE_SCHEDULE_MIN_VERTICES
+            || to_evaluate.len() <= crate::engine::authority::planner::SMALL_PLAN_MAX
+            || to_evaluate.len() > base_len
+            || base_len > to_evaluate.len().saturating_mul(BASE_SCHEDULE_RATIO)
+        {
+            return Ok(None);
+        }
+        let mut keep = crate::engine::idset::DenseIdSet::default();
+        keep.extend(to_evaluate.iter().copied());
+        let Some((schedule, kept)) = base.schedule.restrict(&keep) else {
+            return Ok(None);
+        };
+        // Every requested vertex must be in the base.
+        if kept != keep.len() {
+            return Ok(None);
+        }
+        if let Some(ledger) = self.active_resource_ledger.as_mut() {
+            let layers: usize = schedule
+                .layers
+                .iter()
+                .map(|l| {
+                    l.vertices.capacity() * std::mem::size_of::<VertexId>()
+                        + l.runs.capacity()
+                            * std::mem::size_of::<crate::engine::scheduler::LayerRun>()
+                })
+                .sum();
+            let bytes = (keep.heap_bytes()
+                + layers
+                + schedule.layers.capacity()
+                    * std::mem::size_of::<crate::engine::scheduler::Layer>()
+                + schedule.units.capacity()
+                    * std::mem::size_of::<crate::engine::scheduler::ScheduleUnit>()
+                + schedule
+                    .cycles
+                    .iter()
+                    .map(|c| c.capacity() * 4)
+                    .sum::<usize>()) as u64;
+            ledger
+                .reserve_schedule_discovery(bytes)
+                .map_err(crate::engine::ResourceLedgerError::into_excel_error)?;
+            ledger
+                .release_scratch(bytes)
+                .map_err(crate::engine::ResourceLedgerError::into_excel_error)?;
+        }
+        #[cfg(debug_assertions)]
+        self.debug_check_restricted_schedule(to_evaluate, &schedule);
+        #[cfg(any(test, feature = "benchmark_internal"))]
+        {
+            self.recalc_reuse_probe
+                .get_mut()
+                .unwrap()
+                .schedule_base_restrictions += 1;
+        }
+        Ok(Some(schedule))
+    }
+
+    /// Debug builds: a restricted schedule holds each requested vertex
+    /// once and orders the request like a freshly planned schedule (every
+    /// dependency among the request in an earlier unit).
+    #[cfg(debug_assertions)]
+    fn debug_check_restricted_schedule(
+        &self,
+        to_evaluate: &[VertexId],
+        schedule: &crate::engine::scheduler::Schedule,
+    ) {
+        let mut position: FxHashMap<VertexId, usize> = FxHashMap::default();
+        for (u, unit) in schedule.units.iter().enumerate() {
+            let vertices: &[VertexId] = match *unit {
+                crate::engine::scheduler::ScheduleUnit::Layer(i) => {
+                    &schedule.unit_layer(i).vertices
+                }
+                crate::engine::scheduler::ScheduleUnit::Cycle(i) => schedule.unit_cycle(i),
+            };
+            for &v in vertices {
+                assert!(
+                    position.insert(v, u).is_none(),
+                    "vertex twice in a restricted schedule"
+                );
+            }
+        }
+        assert_eq!(position.len(), to_evaluate.len());
+        if to_evaluate.len() > 512 {
+            return;
+        }
+        // Every arc among the request (the store's edge images) goes to an
+        // earlier unit, or within one sequential layer (a chain) or cycle.
+        let Ok(store) = self.graph.authority_plan_store() else {
+            return;
+        };
+        let cells: Vec<(VertexId, (u16, u32, u32))> = to_evaluate
+            .iter()
+            .filter_map(|&v| self.graph.authority_cell_of_vertex(v).map(|c| (v, c)))
+            .collect();
+        for &(v, (sheet, row, col)) in &cells {
+            let Some(owner) = store.owner_at((sheet, row, col)) else {
+                continue;
+            };
+            let Ok(refined) = store.refine_owner_column(owner, col, row, row, None) else {
+                continue;
+            };
+            for piece in &refined.pieces {
+                for edge in &refined.edges[piece.edge_start..piece.edge_end] {
+                    let Some(image) = edge.proj.forward(&piece.domain) else {
+                        continue;
+                    };
+                    for &(d, (s2, r2, c2)) in &cells {
+                        if d == v
+                            || edge.proj.sheet != s2
+                            || !(image.r0 <= r2
+                                && r2 <= image.r1
+                                && image.c0 <= c2
+                                && c2 <= image.c1)
+                        {
+                            continue;
+                        }
+                        let (pd, pv) = (position[&d], position[&v]);
+                        let same_ok = pd == pv
+                            && match schedule.units[pv] {
+                                crate::engine::scheduler::ScheduleUnit::Layer(i) => {
+                                    schedule.unit_layer(i).sequential
+                                }
+                                crate::engine::scheduler::ScheduleUnit::Cycle(_) => true,
+                            };
+                        assert!(
+                            pd < pv || same_ok,
+                            "restricted schedule orders {v:?} before its precedent {d:?}"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     /// Compress family formulas once per authority build (see
@@ -16193,7 +16402,7 @@ where
                 delta.record_cell(cell.sheet_id, cell.coord.row(), cell.coord.col());
             }
         }
-        self.graph.update_vertex_value(vertex_id, new_value.clone());
+        self.graph.update_vertex_value_ref(vertex_id, &new_value);
         self.mirror_vertex_value_to_overlay(vertex_id, &new_value);
     }
 
@@ -18208,8 +18417,7 @@ where
             }
         }
 
-        self.graph
-            .update_vertex_value(vertex_id, circ_error.clone());
+        self.graph.update_vertex_value_ref(vertex_id, circ_error);
         self.mirror_vertex_value_to_overlay(vertex_id, circ_error);
     }
 
@@ -18451,7 +18659,7 @@ where
                     changed[i] = last_value[i] != circ_error;
                     last_value[i] = circ_error.clone();
                 } else {
-                    self.graph.update_vertex_value(m.vertex, value.clone());
+                    self.graph.update_vertex_value_ref(m.vertex, &value);
                     self.mirror_vertex_value_to_overlay(m.vertex, &value);
                     // §7.14 invariant (G2): a formula member must never be
                     // shadowed by a user/delta overlay entry, or iteration
@@ -19633,7 +19841,7 @@ where
                 }
             }
         }
-        self.graph.update_vertex_value(vertex_id, value.clone());
+        self.graph.update_vertex_value_ref(vertex_id, value);
         self.record_vertex_value_to_overlay(vertex_id, value, computed_writes)?;
         Ok(())
     }
