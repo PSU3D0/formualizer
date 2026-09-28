@@ -1145,10 +1145,28 @@ impl<'g> VertexEditor<'g> {
         start: u32,
         count: u32,
     ) -> Result<ShiftSummary, EditorError> {
-        self.graph.authority_note_structural_shift();
         if count == 0 {
+            self.graph.authority_note_structural_shift();
             return Ok(ShiftSummary::default());
         }
+        // The deleted band's readers (and theirs) are dirty, in the pre-edit
+        // frame: value cells have no vertex whose removal would dirty them
+        // (decision 27). Only occupied columns when the caller knows them
+        // (an empty column's readers see no change).
+        let end = start.saturating_add(count - 1);
+        let rects: Vec<(SheetId, u32, u32, u32, u32)> = match self
+            .structural_occupancy
+            .as_ref()
+            .and_then(|o| o.occupied_column_runs())
+        {
+            Some(runs) => runs
+                .into_iter()
+                .map(|(c0, c1)| (sheet_id, start, end, c0, c1))
+                .collect(),
+            None => vec![(sheet_id, start, end, 0, 16_383)],
+        };
+        let _ = self.graph.mark_dirty_rects(&rects);
+        self.graph.authority_note_structural_shift();
 
         let mut summary = ShiftSummary::default();
 
@@ -1476,10 +1494,21 @@ impl<'g> VertexEditor<'g> {
         start: u32,
         count: u32,
     ) -> Result<ShiftSummary, EditorError> {
-        self.graph.authority_note_structural_shift();
         if count == 0 {
+            self.graph.authority_note_structural_shift();
             return Ok(ShiftSummary::default());
         }
+        // The deleted band's readers (and theirs) are dirty, in the pre-edit
+        // frame: value cells have no vertex whose removal would dirty them
+        // (decision 27).
+        let _ = self.graph.mark_dirty_rects(&[(
+            sheet_id,
+            0,
+            1_048_575,
+            start,
+            start.saturating_add(count - 1),
+        )]);
+        self.graph.authority_note_structural_shift();
 
         let mut summary = ShiftSummary::default();
 

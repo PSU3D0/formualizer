@@ -90,6 +90,22 @@ impl StructuralOccupancy {
         self.finish();
     }
 
+    /// Occupied columns as inclusive runs, when known (`None`: conservative
+    /// or nothing recorded).
+    pub(crate) fn occupied_column_runs(&self) -> Option<Vec<(u32, u32)>> {
+        if self.conservative || self.occupied_columns.is_empty() {
+            return None;
+        }
+        let mut runs: Vec<(u32, u32)> = Vec::new();
+        for &c in &self.occupied_columns {
+            match runs.last_mut() {
+                Some((_, end)) if *end + 1 == c => *end = c,
+                _ => runs.push((c, c)),
+            }
+        }
+        Some(runs)
+    }
+
     fn intersects(sorted: &[u32], start: u32, end: u32) -> bool {
         let index = sorted.partition_point(|value| *value < start);
         sorted.get(index).is_some_and(|value| *value <= end)
