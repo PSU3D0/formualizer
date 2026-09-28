@@ -604,8 +604,9 @@ fn referenced_cells_extent_follows_structural_edits_and_their_undo() {
         })
         .unwrap();
     assert_eq!(bounds(&engine), shifted);
-    // The undo replays the formula's old text (noting its cells) before the
-    // edit's marker shifts back: the record returns to its state before.
+    // The undo shifts the record back at the edit's end marker, then
+    // replays the formula's old text (noting its cells in that frame): the
+    // record returns to its state before.
     engine.undo_logged(&mut undo, &mut log).unwrap();
     assert_eq!(bounds(&engine), start);
     engine.redo_logged(&mut undo, &mut log).unwrap();
@@ -628,4 +629,101 @@ fn referenced_cells_extent_follows_structural_edits_and_their_undo() {
         engine.graph.used_row_bounds_for_columns(sheet, 27, 27),
         None
     );
+}
+
+/// Program 3 audit B2: undo of a structural edit restores the extent record
+/// from what the edit dropped (a delete's band), not from a copy of the
+/// sheet's record per edit. Undo/redo of a logged delete of a band holding
+/// value and referenced cells, and of an insert with an adjusted reader,
+/// give the record back; history retained for undo grows with the cells
+/// the edits dropped (linear in edits, none for inserts), also when the
+/// caller discards its logs.
+#[test]
+fn structural_undo_extent_history_is_delta_sized() {
+    use crate::engine::ChangeLog;
+    use crate::engine::graph::editor::undo_engine::UndoEngine;
+    let mut engine = Engine::new(TestWorkbook::new(), arrow_eval_config());
+    engine.add_sheet("Refs").unwrap();
+    for row in 1..=5u32 {
+        engine
+            .set_cell_value("Sheet1", row * 10, 2, LiteralValue::Number(1.0))
+            .unwrap();
+    }
+    engine
+        .set_cell_formula("Refs", 1, 1, parse("=SUM(Sheet1!AB25:AB26)").unwrap())
+        .unwrap();
+    let sheet = engine.graph.sheet_id("Sheet1").unwrap();
+    let bounds = |e: &Engine<TestWorkbook>| {
+        (
+            e.graph.used_row_bounds_for_columns(sheet, 1, 1),
+            e.graph.used_row_bounds_for_columns(sheet, 27, 27),
+            e.graph.used_col_bounds_for_rows(sheet, 19, 29),
+        )
+    };
+    let start = bounds(&engine);
+    assert_eq!(start, (Some((9, 49)), Some((24, 25)), Some((1, 27))));
+    let mut log = ChangeLog::new();
+    let mut undo = UndoEngine::new();
+    // Delete rows 20..=30 (1-based): B20, B30 and AB25:AB26 go.
+    engine
+        .edit_with_logger(&mut log, |ed| ed.delete_rows(sheet, 19, 11).map(|_| ()))
+        .unwrap()
+        .unwrap();
+    let deleted = (Some((9, 38)), None, Some((1, 1)));
+    assert_eq!(bounds(&engine), deleted);
+    assert_eq!(engine.graph.extent_history_counts().0, 1);
+    engine.undo_logged(&mut undo, &mut log).unwrap();
+    assert_eq!(bounds(&engine), start);
+    assert_eq!(engine.graph.extent_history_counts(), (0, 0));
+    engine.redo_logged(&mut undo, &mut log).unwrap();
+    assert_eq!(bounds(&engine), deleted);
+    engine.undo_logged(&mut undo, &mut log).unwrap();
+    assert_eq!(bounds(&engine), start);
+    // An insert above everything, then its undo (the reader's old text is
+    // replayed in the pre-insert frame).
+    engine
+        .action_with_logger(&mut log, "insert", |a| {
+            a.insert_rows("Sheet1", 1, 3).map(|_| ())
+        })
+        .unwrap();
+    assert_eq!(
+        bounds(&engine).0.zip(bounds(&engine).1),
+        Some(((12, 52), (27, 28)))
+    );
+    assert_eq!(engine.graph.extent_history_counts(), (0, 0));
+    engine.undo_logged(&mut undo, &mut log).unwrap();
+    assert_eq!(bounds(&engine), start);
+
+    // Growth: n rounds of (value, logged insert below it, logged delete of
+    // the value's row), each round's log discarded.
+    let retained = |n: u32| {
+        let mut e = Engine::new(TestWorkbook::new(), arrow_eval_config());
+        for i in 1..=n {
+            e.set_cell_value("S", 2 * i, 1, LiteralValue::Number(1.0))
+                .unwrap();
+            let mut log = ChangeLog::new();
+            e.action_with_logger(&mut log, "insert", |a| {
+                a.insert_rows("S", 10_000, 1).map(|_| ())
+            })
+            .unwrap();
+            e.set_cell_value("S", 2 * i + 1, 1, LiteralValue::Number(1.0))
+                .unwrap();
+            let s = e.graph.sheet_id("S").unwrap();
+            e.edit_with_logger(&mut log, |ed| ed.delete_rows(s, 2 * i, 1).map(|_| ()))
+                .unwrap()
+                .unwrap();
+        }
+        e.graph.extent_history_counts()
+    };
+    let mut last = None;
+    for n in [64u32, 128, 256, 512] {
+        let (entries, runs) = retained(n);
+        // One entry per logged delete, holding the one cell it dropped.
+        assert_eq!((entries, runs), (n as usize, n as usize), "n={n}");
+        if let Some(prev) = last {
+            let ratio = runs as f64 / prev as f64;
+            assert!(ratio <= 2.2, "retained runs doubled by {ratio:.2} at n={n}");
+        }
+        last = Some(runs);
+    }
 }

@@ -577,6 +577,11 @@ impl DependencyGraph {
             self.authority_sync();
         }
         self.authority.replaying = mode != crate::engine::authority::history::Replay::Forward;
+        if mode == crate::engine::authority::history::Replay::Forward {
+            // A backward replay that stopped between a structural edit's
+            // end and start markers leaves no pending extent undo behind.
+            self.clear_extent_undone();
+        }
         self.set_replay_mode(mode);
     }
 

@@ -177,16 +177,28 @@ impl<'g> TransactionContext<'g> {
         let mut compound_stack = Vec::new();
 
         // Apply changes in reverse order
-        for change in changes.into_iter().rev() {
+        for i in (0..changes.len()).rev() {
+            let change = changes[i].clone();
             match change {
                 ChangeEvent::CompoundEnd { depth } => {
                     // Starting to rollback a compound operation (remember, we're going backwards)
                     compound_stack.push(depth);
+                    if let Some(description) =
+                        super::change_log::compound_start_description(i, |j| &changes[j])
+                    {
+                        VertexEditor::new(self.graph).inverse_compound_end(description);
+                    }
                 }
                 ChangeEvent::CompoundStart { depth, .. } => {
                     // Finished rolling back a compound operation
                     if compound_stack.last() == Some(&depth) {
                         compound_stack.pop();
+                    }
+                    // A structural edit's marker shifts the retired-id side
+                    // table back, as the other backward replays do.
+                    if let Err(e) = self.apply_inverse(change) {
+                        self.change_log.set_enabled(true);
+                        return Err(TransactionError::RollbackFailed(e.to_string()));
                     }
                 }
                 _ => {

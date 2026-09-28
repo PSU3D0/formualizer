@@ -509,10 +509,15 @@ pub struct DependencyGraph {
     /// Cells the legacy graph gave a vertex without a formula (placeholders,
     /// value cells, spill children): the graph's used extent counts them.
     extent_record: extent_record::ExtentRecord,
-    /// The edited sheet's extent record before each journaled structural
-    /// edit, most recent last: undo restores it (the replay of the edit's
-    /// events notes cells before its marker shifts the record back).
-    extent_snapshots: Vec<(SheetId, Vec<extent_record::ExtentRun>)>,
+    /// The extent cells each journaled structural delete dropped, most
+    /// recent last: undo of the delete shifts the record back and restores
+    /// them (delta-sized: an insert or a delete of an unrecorded band keeps
+    /// no cells). Like `retired_dropped`, only journaled deletes push.
+    extent_dropped: Vec<Vec<extent_record::ExtentRun>>,
+    /// Structural edits whose extent the backward replay already put back
+    /// at the edit's end marker (`undo_structural_extent`), innermost last:
+    /// their start marker must not shift it again.
+    extent_undone: Vec<(u8, SheetId, u32, u32)>,
     /// The same for cell/rectangle seeds (value edits: no vertex, decision 27).
     deferred_dirty_pending_rects: Vec<(u16, crate::engine::authority::geom::Rect)>,
 
@@ -1859,7 +1864,8 @@ impl DependencyGraph {
             retired_dropped: Vec::new(),
             retired_dropped_by_undo: Vec::new(),
             extent_record: Default::default(),
-            extent_snapshots: Vec::new(),
+            extent_dropped: Vec::new(),
+            extent_undone: Vec::new(),
             volatile_vertices: FxHashSet::default(),
             ref_error_vertices: FxHashSet::default(),
             #[cfg(any(test, feature = "legacy_oracle"))]
@@ -3589,12 +3595,11 @@ impl DependencyGraph {
         op: &crate::engine::graph::editor::reference_adjuster::ShiftOperation,
         journal: bool,
     ) {
-        if journal {
-            let sheet = shift_sheet(op);
-            self.extent_snapshots
-                .push((sheet, self.extent_record.snapshot(sheet)));
+        use crate::engine::graph::editor::reference_adjuster::ShiftOperation as Op;
+        let dropped = self.extent_record.shift(op);
+        if journal && matches!(*op, Op::DeleteRows { .. } | Op::DeleteColumns { .. }) {
+            self.extent_dropped.push(dropped);
         }
-        let _ = self.extent_record.shift(op);
         self.shift_retired_id_table(op, journal);
     }
 
@@ -3746,11 +3751,12 @@ impl DependencyGraph {
                 Some((sheet_id, false, start, count)),
             ),
         };
-        // The extent record goes back to its state before the edit (the
-        // replay of the edit's events, before this marker, noted cells in
-        // the edited frame).
-        if let Some((sheet, runs)) = self.extent_snapshots.pop() {
-            self.extent_record.restore_sheet(sheet, runs);
+        // The extent record goes back to the frame before the edit, unless
+        // the replay did that at the edit's end marker.
+        if self.extent_undone.last() == Some(&shift_key(&op)) {
+            self.extent_undone.pop();
+        } else {
+            self.shift_extent_back(&op, &inverse);
         }
         // Undo of an insert drops the band's entries (retired there after the
         // insert); redo of the insert takes them back.
@@ -3779,6 +3785,90 @@ impl DependencyGraph {
             };
             let _ = self.mark_dirty_rects(&[rect]);
         }
+    }
+
+    /// Backward replay reached the end marker of a compound whose start
+    /// marker is `description`: for a structural edit, the extent record
+    /// goes back to the frame before the edit now, so the replay of the
+    /// edit's events (formulas and vertices restored in that frame) notes
+    /// cells in the frame they belong to. The start marker then leaves the
+    /// record alone.
+    pub(crate) fn undo_structural_extent(&mut self, description: &str) {
+        use crate::engine::graph::editor::reference_adjuster::ShiftOperation as Op;
+        let Some(op) = parse_structural_description(description) else {
+            return;
+        };
+        let inverse = match op {
+            Op::InsertRows {
+                sheet_id,
+                before,
+                count,
+            } => Op::DeleteRows {
+                sheet_id,
+                start: before,
+                count,
+            },
+            Op::InsertColumns {
+                sheet_id,
+                before,
+                count,
+            } => Op::DeleteColumns {
+                sheet_id,
+                start: before,
+                count,
+            },
+            Op::DeleteRows {
+                sheet_id,
+                start,
+                count,
+            } => Op::InsertRows {
+                sheet_id,
+                before: start,
+                count,
+            },
+            Op::DeleteColumns {
+                sheet_id,
+                start,
+                count,
+            } => Op::InsertColumns {
+                sheet_id,
+                before: start,
+                count,
+            },
+        };
+        self.shift_extent_back(&op, &inverse);
+        self.extent_undone.push(shift_key(&op));
+    }
+
+    /// End of a replay: see `authority_set_replay`.
+    pub(crate) fn clear_extent_undone(&mut self) {
+        self.extent_undone.clear();
+    }
+
+    /// Undo of structural edit `op` for the extent record: the inverse
+    /// shift, and for a delete the cells it dropped.
+    fn shift_extent_back(
+        &mut self,
+        op: &crate::engine::graph::editor::reference_adjuster::ShiftOperation,
+        inverse: &crate::engine::graph::editor::reference_adjuster::ShiftOperation,
+    ) {
+        use crate::engine::graph::editor::reference_adjuster::ShiftOperation as Op;
+        let _ = self.extent_record.shift(inverse);
+        if matches!(*op, Op::DeleteRows { .. } | Op::DeleteColumns { .. })
+            && let Some(dropped) = self.extent_dropped.pop()
+        {
+            self.extent_record.restore(dropped);
+        }
+    }
+
+    /// Extent cells retained for undo of structural deletes: `(entries,
+    /// runs)` (tests: history stays delta-sized).
+    #[cfg(test)]
+    pub(crate) fn extent_history_counts(&self) -> (usize, usize) {
+        (
+            self.extent_dropped.len(),
+            self.extent_dropped.iter().map(Vec::len).sum(),
+        )
     }
 
     /// A sheet is removed: its retired ids go to the journal.
@@ -6185,13 +6275,32 @@ pub(crate) fn same_cell(a: &CellRef, b: &CellRef) -> bool {
 /// The shift operation of a structural edit's compound description, as
 /// `VertexEditor` logs it (`InsertRows sheet=S before=B count=N`, ...).
 /// The sheet a structural edit applies to.
-fn shift_sheet(op: &crate::engine::graph::editor::reference_adjuster::ShiftOperation) -> SheetId {
+/// A structural edit as a comparable key (kind, sheet, position, count).
+fn shift_key(
+    op: &crate::engine::graph::editor::reference_adjuster::ShiftOperation,
+) -> (u8, SheetId, u32, u32) {
     use crate::engine::graph::editor::reference_adjuster::ShiftOperation as Op;
     match *op {
-        Op::InsertRows { sheet_id, .. }
-        | Op::DeleteRows { sheet_id, .. }
-        | Op::InsertColumns { sheet_id, .. }
-        | Op::DeleteColumns { sheet_id, .. } => sheet_id,
+        Op::InsertRows {
+            sheet_id,
+            before,
+            count,
+        } => (0, sheet_id, before, count),
+        Op::DeleteRows {
+            sheet_id,
+            start,
+            count,
+        } => (1, sheet_id, start, count),
+        Op::InsertColumns {
+            sheet_id,
+            before,
+            count,
+        } => (2, sheet_id, before, count),
+        Op::DeleteColumns {
+            sheet_id,
+            start,
+            count,
+        } => (3, sheet_id, start, count),
     }
 }
 

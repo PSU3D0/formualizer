@@ -493,6 +493,14 @@ impl<'g> VertexEditor<'g> {
     // Transaction support has been moved to TransactionContext
     // which coordinates ChangeLog, TransactionManager, and VertexEditor
 
+    /// Backward replay reached a compound's end marker; `description` is
+    /// its start marker's. A structural edit's extent record goes back to
+    /// the pre-edit frame here, before the replay of its events
+    /// (`DependencyGraph::undo_structural_extent`).
+    pub(crate) fn inverse_compound_end(&mut self, description: &str) {
+        self.graph.undo_structural_extent(description);
+    }
+
     /// Apply the inverse of a change event (used by TransactionContext for rollback)
     pub fn apply_inverse(&mut self, change: ChangeEvent) -> Result<(), EditorError> {
         match change {
@@ -660,7 +668,8 @@ impl<'g> VertexEditor<'g> {
                 self.graph.replay_structural_marker(&description, false);
             }
             ChangeEvent::CompoundEnd { .. } => {
-                // A marker, no inverse needed
+                // A marker: backward replay loops call
+                // `inverse_compound_end` with its compound's description.
             }
             ChangeEvent::VertexMoved {
                 id,

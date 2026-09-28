@@ -80,7 +80,12 @@ impl UndoEngine {
         graph.authority_set_replay(crate::engine::authority::history::Replay::Undo);
         let replayed = (|| {
             let mut editor = VertexEditor::new(graph);
-            for item in batch.iter().rev() {
+            for (i, item) in batch.iter().enumerate().rev() {
+                if let Some(description) =
+                    super::change_log::compound_start_description(i, |j| &batch[j].event)
+                {
+                    editor.inverse_compound_end(description);
+                }
                 editor.apply_inverse(item.event.clone())?;
             }
             Ok::<_, EditorError>(())

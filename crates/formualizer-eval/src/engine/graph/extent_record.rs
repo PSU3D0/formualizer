@@ -280,7 +280,6 @@ impl ExtentRecord {
     }
 
     /// Runs a delete dropped come back (after the band is inserted again).
-    #[cfg(test)]
     pub(crate) fn restore(&mut self, runs: Vec<ExtentRun>) {
         if runs.is_empty() {
             return;
@@ -289,21 +288,6 @@ impl ExtentRecord {
         inner.fold();
         inner.runs.extend(runs);
         inner.normalize();
-    }
-
-    /// The runs of `sheet` (for [`Self::restore_sheet`]).
-    pub(crate) fn snapshot(&mut self, sheet: SheetId) -> Vec<ExtentRun> {
-        let inner = self.inner();
-        inner.fold();
-        inner.runs[inner.sheet_span(sheet)].to_vec()
-    }
-
-    /// Replace the runs of `sheet` with a snapshot.
-    pub(crate) fn restore_sheet(&mut self, sheet: SheetId, runs: Vec<ExtentRun>) {
-        let inner = self.inner();
-        inner.fold();
-        let span = inner.sheet_span(sheet);
-        inner.runs.splice(span, runs);
     }
 
     /// A sheet is removed.

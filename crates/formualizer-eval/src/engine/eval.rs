@@ -4680,9 +4680,19 @@ where
         let rolled_back = (|| {
             let mut editor = crate::engine::VertexEditor::new(&mut self.graph);
             let mut compound_stack: Vec<usize> = Vec::new();
-            for ev in events.iter().rev() {
+            for (i, ev) in events.iter().enumerate().rev() {
                 match ev {
-                    ChangeEvent::CompoundEnd { depth } => compound_stack.push(*depth),
+                    ChangeEvent::CompoundEnd { depth } => {
+                        compound_stack.push(*depth);
+                        if let Some(description) =
+                            crate::engine::graph::editor::change_log::compound_start_description(
+                                i,
+                                |j| &events[j],
+                            )
+                        {
+                            editor.inverse_compound_end(description);
+                        }
+                    }
                     ChangeEvent::CompoundStart { depth, .. } => {
                         if compound_stack.last() == Some(depth) {
                             compound_stack.pop();
