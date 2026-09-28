@@ -221,8 +221,11 @@ pub(super) struct CriteriaIndex {
     /// Rows grouped by their tuple of classes, per class-kind signature
     /// (text or number per criterion), on first use; `None` when there are
     /// too many tuples to scan per member.
-    combos: std::sync::Mutex<Vec<(Vec<bool>, Option<std::sync::Arc<Combos>>)>>,
+    combos: std::sync::Mutex<Vec<ComboEntry>>,
 }
+
+/// A class-kind signature and its grouped rows (`None`: too many tuples).
+type ComboEntry = (Vec<bool>, Option<std::sync::Arc<Combos>>);
 
 /// Rows grouped by their class in every criterion (`u32::MAX`: null).
 struct Combos {
