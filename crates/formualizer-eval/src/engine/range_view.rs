@@ -440,6 +440,13 @@ impl<'a> RangeView<'a> {
     pub fn end_col(&self) -> usize {
         self.ec
     }
+    /// Whether this view reads a workbook sheet, as opposed to rows owned by
+    /// the view itself (array results, and names bound to a constant or a
+    /// formula), whose backing is a temporary sheet with no cell addresses.
+    pub(crate) fn is_sheet_backed(&self) -> bool {
+        matches!(self.backing, RangeBacking::Borrowed(_))
+    }
+
     /// Owning sheet name.
     pub fn sheet_name(&self) -> &str {
         &self.sheet().name

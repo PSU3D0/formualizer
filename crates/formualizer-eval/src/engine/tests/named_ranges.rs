@@ -18,6 +18,358 @@ fn canonical_cfg() -> EvalConfig {
     EvalConfig::default()
 }
 
+fn define_workbook_range(
+    engine: &mut Engine<TestWorkbook>,
+    name: &str,
+    (sr, sc, er, ec): (u32, u32, u32, u32),
+) {
+    let sid = engine.sheet_id("Sheet1").unwrap();
+    let range = RangeRef::new(
+        CellRef::new(sid, Coord::from_excel(sr, sc, true, true)),
+        CellRef::new(sid, Coord::from_excel(er, ec, true, true)),
+    );
+    engine
+        .define_name(name, NamedDefinition::Range(range), NameScope::Workbook)
+        .unwrap();
+}
+
+#[test]
+fn index_and_offset_resolve_a_named_range_reference() {
+    // Vals = Sheet1!$A$1:$A$5 holding 10..50.
+    let mut engine = Engine::new(TestWorkbook::new(), canonical_cfg());
+    for row in 1..=5u32 {
+        engine
+            .set_cell_value("Sheet1", row, 1, lit_num(10.0 * row as f64))
+            .unwrap();
+    }
+    define_workbook_range(&mut engine, "Vals", (1, 1, 5, 1));
+    for (row, formula) in [
+        (1, "=INDEX(Vals,3)"),
+        (2, "=SUM(INDEX(Vals,0,1))"),
+        (3, "=SUM(OFFSET(IF(TRUE,Vals,B1:B5),0,0))"),
+        (4, "=OFFSET(Vals,4,0,1,1)"),
+        (5, "=SUM(OFFSET(Vals,1,0,2,1))"),
+        (6, "=INDEX(A1:A5,3)"),
+    ] {
+        engine
+            .set_cell_formula("Sheet1", row, 4, parse(formula).unwrap())
+            .unwrap();
+    }
+
+    engine.evaluate_all().unwrap();
+    for (row, expected) in [
+        (1, 30.0),
+        (2, 150.0),
+        (3, 150.0),
+        (4, 50.0),
+        (5, 50.0),
+        (6, 30.0),
+    ] {
+        assert_eq!(
+            engine.get_cell_value("Sheet1", row, 4),
+            Some(lit_num(expected)),
+            "named-range formula in row {row}"
+        );
+    }
+}
+
+#[test]
+fn named_ranges_compose_in_reference_taking_arguments() {
+    // Grid = A1:B3, Keys = D1:D3, Headers = F1:G1.
+    let mut engine = Engine::new(TestWorkbook::new(), canonical_cfg());
+    for (row, col, value) in [
+        (1, 1, 1.0),
+        (1, 2, 2.0),
+        (2, 1, 3.0),
+        (2, 2, 4.0),
+        (3, 1, 5.0),
+        (3, 2, 6.0),
+        (1, 4, 100.0),
+        (2, 4, 200.0),
+        (3, 4, 300.0),
+        (1, 6, 7.0),
+        (1, 7, 8.0),
+    ] {
+        engine
+            .set_cell_value("Sheet1", row, col, lit_num(value))
+            .unwrap();
+    }
+    define_workbook_range(&mut engine, "Grid", (1, 1, 3, 2));
+    define_workbook_range(&mut engine, "Keys", (1, 4, 3, 4));
+    define_workbook_range(&mut engine, "Headers", (1, 6, 1, 7));
+    for (row, formula) in [
+        (1, "=INDEX(Grid,2,2)"),
+        (2, "=OFFSET(Grid,1,1,1,1)"),
+        (3, "=VLOOKUP(3,Grid,2,FALSE)"),
+        (4, "=SUM(Grid)"),
+        (5, "=MATCH(250,Keys,1)"),
+        (6, "=MATCH(250,D1:D3,1)"),
+        (7, "=INDEX(Grid,MATCH(250,Keys,1),MATCH(8,Headers,0))"),
+    ] {
+        engine
+            .set_cell_formula("Sheet1", row, 10, parse(formula).unwrap())
+            .unwrap();
+    }
+
+    engine.evaluate_all().unwrap();
+    for (row, expected) in [
+        (1, 4.0),
+        (2, 4.0),
+        (3, 4.0),
+        (4, 21.0),
+        (5, 2.0),
+        (6, 2.0),
+        (7, 4.0),
+    ] {
+        assert_eq!(
+            engine.get_cell_value("Sheet1", row, 10),
+            Some(lit_num(expected)),
+            "named-range formula in row {row}"
+        );
+    }
+}
+
+fn range_on(
+    engine: &mut Engine<TestWorkbook>,
+    sheet: &str,
+    (sr, sc, er, ec): (u32, u32, u32, u32),
+) -> RangeRef {
+    let sid = engine.sheet_id(sheet).unwrap();
+    RangeRef::new(
+        CellRef::new(sid, Coord::from_excel(sr, sc, true, true)),
+        CellRef::new(sid, Coord::from_excel(er, ec, true, true)),
+    )
+}
+
+fn set_formulas(engine: &mut Engine<TestWorkbook>, sheet: &str, col: u32, formulas: &[&str]) {
+    for (i, formula) in formulas.iter().enumerate() {
+        engine
+            .set_cell_formula(sheet, i as u32 + 1, col, parse(formula).unwrap())
+            .unwrap();
+    }
+}
+
+fn assert_column(engine: &Engine<TestWorkbook>, sheet: &str, col: u32, expected: &[LiteralValue]) {
+    for (i, expected) in expected.iter().enumerate() {
+        let row = i as u32 + 1;
+        let actual = engine.get_cell_value(sheet, row, col);
+        match expected {
+            LiteralValue::Error(error) => assert!(
+                matches!(&actual, Some(LiteralValue::Error(e)) if e.kind == error.kind),
+                "{sheet} row {row}: expected {:?}, got {actual:?}",
+                error.kind
+            ),
+            _ => assert_eq!(actual.as_ref(), Some(expected), "{sheet} row {row}"),
+        }
+    }
+}
+
+fn err(kind: ExcelErrorKind) -> LiteralValue {
+    LiteralValue::Error(formualizer_common::ExcelError::new(kind))
+}
+
+#[test]
+fn index_and_offset_resolve_cross_sheet_and_single_cell_names() {
+    // XS = Sheet2!$A$1:$A$3 holding 1..3; One = Sheet1!$C$1 holding 7, C2 = 8.
+    let mut engine = Engine::new(TestWorkbook::new(), canonical_cfg());
+    engine.add_sheet("Sheet2").unwrap();
+    for row in 1..=3u32 {
+        engine
+            .set_cell_value("Sheet2", row, 1, lit_num(row as f64))
+            .unwrap();
+    }
+    engine.set_cell_value("Sheet1", 1, 3, lit_num(7.0)).unwrap();
+    engine.set_cell_value("Sheet1", 2, 3, lit_num(8.0)).unwrap();
+    let xs = range_on(&mut engine, "Sheet2", (1, 1, 3, 1));
+    engine
+        .define_name("XS", NamedDefinition::Range(xs), NameScope::Workbook)
+        .unwrap();
+    let sid = engine.sheet_id("Sheet1").unwrap();
+    engine
+        .define_name(
+            "One",
+            NamedDefinition::Cell(CellRef::new(sid, Coord::from_excel(1, 3, true, true))),
+            NameScope::Workbook,
+        )
+        .unwrap();
+    set_formulas(
+        &mut engine,
+        "Sheet1",
+        10,
+        &[
+            "=INDEX(XS,2)",
+            "=SUM(OFFSET(XS,1,0,2,1))",
+            "=OFFSET(XS,2,0,1,1)",
+            "=INDEX(One,1)",
+            "=INDEX(One,1,1)",
+            "=OFFSET(One,1,0)",
+        ],
+    );
+
+    engine.evaluate_all().unwrap();
+    // Excel for the web: 2, 5, 3, 7, 7, 8.
+    assert_column(
+        &engine,
+        "Sheet1",
+        10,
+        &[
+            lit_num(2.0),
+            lit_num(5.0),
+            lit_num(3.0),
+            lit_num(7.0),
+            lit_num(7.0),
+            lit_num(8.0),
+        ],
+    );
+
+    // An edit inside the named region recalculates the INDEX/OFFSET readers.
+    engine
+        .set_cell_value("Sheet2", 2, 1, lit_num(20.0))
+        .unwrap();
+    engine
+        .set_cell_value("Sheet2", 3, 1, lit_num(30.0))
+        .unwrap();
+    engine
+        .set_cell_value("Sheet1", 2, 3, lit_num(80.0))
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_column(
+        &engine,
+        "Sheet1",
+        10,
+        &[
+            lit_num(20.0),
+            lit_num(50.0),
+            lit_num(30.0),
+            lit_num(7.0),
+            lit_num(7.0),
+            lit_num(80.0),
+        ],
+    );
+}
+
+#[test]
+fn index_and_offset_on_names_that_do_not_name_a_sheet_region() {
+    // K = 5, F = Sheet1!$A$1*10 with A1 = 1, and Nope undefined.
+    // INDEX indexes the name's value; OFFSET has no cells to offset from.
+    let mut engine = Engine::new(TestWorkbook::new(), canonical_cfg());
+    engine.set_cell_value("Sheet1", 1, 1, lit_num(1.0)).unwrap();
+    engine
+        .define_name(
+            "K",
+            NamedDefinition::Literal(lit_num(5.0)),
+            NameScope::Workbook,
+        )
+        .unwrap();
+    engine
+        .define_name(
+            "F",
+            NamedDefinition::Formula {
+                ast: parse("=Sheet1!$A$1*10").unwrap(),
+                dependencies: Vec::new(),
+                range_deps: Vec::new(),
+            },
+            NameScope::Workbook,
+        )
+        .unwrap();
+    set_formulas(
+        &mut engine,
+        "Sheet1",
+        10,
+        &[
+            "=INDEX(K,1)",
+            "=OFFSET(K,0,0)",
+            "=INDEX(F,1)",
+            "=OFFSET(F,0,0)",
+            "=INDEX(Nope,1)",
+            "=OFFSET(Nope,0,0)",
+        ],
+    );
+
+    engine.evaluate_all().unwrap();
+    // Excel for the web: 5, #VALUE!, 10, #VALUE!, #NAME?, #NAME?.
+    assert_column(
+        &engine,
+        "Sheet1",
+        10,
+        &[
+            lit_num(5.0),
+            err(ExcelErrorKind::Value),
+            lit_num(10.0),
+            err(ExcelErrorKind::Value),
+            err(ExcelErrorKind::Name),
+            err(ExcelErrorKind::Name),
+        ],
+    );
+}
+
+#[test]
+fn index_of_a_named_range_spills_and_sheet_scope_shadows_workbook_scope() {
+    // Grid = Sheet1!$G$1:$H$3 holding 1..6 row by row. S is Sheet2!$A$1:$A$3
+    // (1..3) at workbook scope and Sheet1!$E$1:$E$3 (100..300) on Sheet1.
+    let mut engine = Engine::new(TestWorkbook::new(), canonical_cfg());
+    engine.add_sheet("Sheet2").unwrap();
+    for (row, col, value) in [
+        (1, 7, 1.0),
+        (1, 8, 2.0),
+        (2, 7, 3.0),
+        (2, 8, 4.0),
+        (3, 7, 5.0),
+        (3, 8, 6.0),
+        (1, 5, 100.0),
+        (2, 5, 200.0),
+        (3, 5, 300.0),
+    ] {
+        engine
+            .set_cell_value("Sheet1", row, col, lit_num(value))
+            .unwrap();
+    }
+    for row in 1..=3u32 {
+        engine
+            .set_cell_value("Sheet2", row, 1, lit_num(row as f64))
+            .unwrap();
+    }
+    let grid = range_on(&mut engine, "Sheet1", (1, 7, 3, 8));
+    engine
+        .define_name("Grid", NamedDefinition::Range(grid), NameScope::Workbook)
+        .unwrap();
+    let workbook_s = range_on(&mut engine, "Sheet2", (1, 1, 3, 1));
+    engine
+        .define_name("S", NamedDefinition::Range(workbook_s), NameScope::Workbook)
+        .unwrap();
+    let sheet1 = engine.sheet_id("Sheet1").unwrap();
+    let sheet_s = range_on(&mut engine, "Sheet1", (1, 5, 3, 5));
+    engine
+        .define_name(
+            "S",
+            NamedDefinition::Range(sheet_s),
+            NameScope::Sheet(sheet1),
+        )
+        .unwrap();
+    engine
+        .set_cell_formula("Sheet1", 1, 12, parse("=INDEX(Grid,0,2)").unwrap())
+        .unwrap();
+    set_formulas(
+        &mut engine,
+        "Sheet1",
+        10,
+        &["=INDEX(S,2)", "=ROWS(INDEX(Grid,0,2))"],
+    );
+    set_formulas(&mut engine, "Sheet2", 10, &["=INDEX(S,2)"]);
+
+    engine.evaluate_all().unwrap();
+    // Excel for the web: the spill is 2, 4, 6; INDEX(S,2) is 200 on the sheet
+    // that scopes S and 2 elsewhere; ROWS(INDEX(Grid,0,2)) is 3.
+    assert_column(
+        &engine,
+        "Sheet1",
+        12,
+        &[lit_num(2.0), lit_num(4.0), lit_num(6.0)],
+    );
+    assert_column(&engine, "Sheet1", 10, &[lit_num(200.0), lit_num(3.0)]);
+    assert_column(&engine, "Sheet2", 10, &[lit_num(2.0)]);
+}
+
 #[test]
 fn workbook_named_literal_invalidation_updates_dependents() {
     let mut engine = Engine::new(TestWorkbook::new(), canonical_cfg());
