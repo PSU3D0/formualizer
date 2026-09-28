@@ -31,7 +31,9 @@ fn error_value_in_a_range_argument_is_the_result() {
         "=SUMIFS(B1:B3,A1:A3,1,#REF!,1)",
         "=COUNTIFS(A1:A3,1,#REF!,1)",
         "=AVERAGEIFS(B1:B3,#REF!,1)",
-        "=SUMIFS(B1:B3,#N/A,1)",
+        "=SUMIFS(B1:B3,IF(TRUE,#N/A),1)",
+        "=SUMIF(A1:A3,1,IF(TRUE,#N/A))",
+        "=COUNTIF(IF(TRUE,1/0),1)",
     ];
     for (index, formula) in formulas.iter().enumerate() {
         wb.set_formula("Sheet1", index as u32 + 1, 4, formula)
@@ -39,8 +41,12 @@ fn error_value_in_a_range_argument_is_the_result() {
     }
     wb.evaluate_all().unwrap();
     for (index, formula) in formulas.iter().enumerate() {
+        // Every expectation was checked in Excel 365: an error computed at
+        // run time keeps its own kind.
         let expected = if formula.contains("#N/A") {
             ExcelErrorKind::Na
+        } else if formula.contains("1/0") {
+            ExcelErrorKind::Div
         } else {
             ExcelErrorKind::Ref
         };
