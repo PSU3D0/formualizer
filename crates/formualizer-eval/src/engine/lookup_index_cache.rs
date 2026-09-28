@@ -334,7 +334,7 @@ pub struct LookupIndexCache {
     /// miss the cache together; one builds the index and the others wait
     /// for it instead of each building (and allocating) a copy.
     in_flight: std::sync::Mutex<FxHashMap<LookupIndexKey, Arc<BuildFlight>>>,
-    /// Build closures run by `single_flight` (tests).
+    /// Index builds started from `single_flight` (tests).
     #[cfg(test)]
     pub(crate) flights_built: AtomicUsize,
 }
@@ -388,8 +388,6 @@ impl LookupIndexCache {
         let outcome = flight
             .get_or_init(|| {
                 built = true;
-                #[cfg(test)]
-                self.flights_built.fetch_add(1, Ordering::Relaxed);
                 build()
             })
             .clone();

@@ -3697,6 +3697,10 @@ where
                 self.lookup_index_cache.note_skipped_volatile();
                 return None;
             }
+            #[cfg(test)]
+            self.lookup_index_cache
+                .flights_built
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             match LookupIndex::build(view, axis, self.config.date_system).ok()? {
                 BuildOutcome::Built(index) => self.lookup_index_cache.insert_if_room(key, index),
                 BuildOutcome::ErrorInLookupAxis => {
