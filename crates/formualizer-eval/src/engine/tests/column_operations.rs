@@ -28,13 +28,13 @@ fn test_insert_columns() {
         .unwrap();
     let sum_id = sum_result.affected_vertices[0];
 
-    let a1_id = *graph
+    let a1_id = graph
         .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 1))
         .unwrap();
-    let b1_id = *graph
+    let b1_id = graph
         .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 2))
         .unwrap();
-    let c1_id = *graph
+    let c1_id = graph
         .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 3))
         .unwrap();
 
@@ -51,19 +51,19 @@ fn test_insert_columns() {
     // Verify shifts via vertex id mapping (graph does not cache cell values).
     assert_eq!(
         graph.get_vertex_id_for_address(&sheet1_cell(&graph, 1, 1)),
-        Some(&a1_id)
+        Some(a1_id)
     );
     assert_eq!(
         graph.get_vertex_id_for_address(&sheet1_cell(&graph, 1, 4)),
-        Some(&b1_id)
+        Some(b1_id)
     );
     assert_eq!(
         graph.get_vertex_id_for_address(&sheet1_cell(&graph, 1, 5)),
-        Some(&c1_id)
+        Some(c1_id)
     );
     assert_eq!(
         graph.get_vertex_id_for_address(&sheet1_cell(&graph, 1, 6)),
-        Some(&sum_id)
+        Some(sum_id)
     );
 
     // Formula should be updated: SUM(A1:C1) -> SUM(A1:E1)
@@ -85,13 +85,13 @@ fn test_delete_columns() {
             .set_cell_value("Sheet1", 1, i, lit_num(i as f64 * 10.0))
             .unwrap();
     }
-    let a1_id = *graph
+    let a1_id = graph
         .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 1))
         .unwrap();
-    let d1_id = *graph
+    let d1_id = graph
         .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 4))
         .unwrap();
-    let e1_id = *graph
+    let e1_id = graph
         .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 5))
         .unwrap();
     let formula_result = graph
@@ -108,15 +108,15 @@ fn test_delete_columns() {
     // Verify remaining vertices
     assert_eq!(
         graph.get_vertex_id_for_address(&sheet1_cell(&graph, 1, 1)),
-        Some(&a1_id)
+        Some(a1_id)
     );
     assert_eq!(
         graph.get_vertex_id_for_address(&sheet1_cell(&graph, 1, 2)),
-        Some(&d1_id)
+        Some(d1_id)
     );
     assert_eq!(
         graph.get_vertex_id_for_address(&sheet1_cell(&graph, 1, 3)),
-        Some(&e1_id)
+        Some(e1_id)
     );
     assert!(
         graph
@@ -232,7 +232,7 @@ fn test_multiple_column_operations() {
             .set_cell_value("Sheet1", 1, i, lit_num(i as f64))
             .unwrap();
     }
-    let a1_id = *graph
+    let a1_id = graph
         .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 1))
         .unwrap();
 
@@ -257,7 +257,7 @@ fn test_multiple_column_operations() {
     // Verify final state: original A1 should now be at B1
     assert_eq!(
         graph.get_vertex_id_for_address(&sheet1_cell(&graph, 1, 2)),
-        Some(&a1_id)
+        Some(a1_id)
     );
 }
 
@@ -274,16 +274,16 @@ fn test_mixed_row_column_operations() {
         }
     }
 
-    let a1_id = *graph
+    let a1_id = graph
         .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 1))
         .unwrap();
-    let b1_id = *graph
+    let b1_id = graph
         .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 2))
         .unwrap();
-    let a2_id = *graph
+    let a2_id = graph
         .get_vertex_id_for_address(&sheet1_cell(&graph, 2, 1))
         .unwrap();
-    let b2_id = *graph
+    let b2_id = graph
         .get_vertex_id_for_address(&sheet1_cell(&graph, 2, 2))
         .unwrap();
 
@@ -310,19 +310,19 @@ fn test_mixed_row_column_operations() {
     // Verify grid shifted correctly via vertex mapping
     assert_eq!(
         graph.get_vertex_id_for_address(&sheet1_cell(&graph, 1, 1)),
-        Some(&a1_id)
+        Some(a1_id)
     );
     assert_eq!(
         graph.get_vertex_id_for_address(&sheet1_cell(&graph, 1, 3)),
-        Some(&b1_id)
+        Some(b1_id)
     );
     assert_eq!(
         graph.get_vertex_id_for_address(&sheet1_cell(&graph, 3, 1)),
-        Some(&a2_id)
+        Some(a2_id)
     );
     assert_eq!(
         graph.get_vertex_id_for_address(&sheet1_cell(&graph, 3, 3)),
-        Some(&b2_id)
+        Some(b2_id)
     );
 
     // Formula should be updated for both shifts

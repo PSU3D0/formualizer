@@ -90,42 +90,6 @@ fn parallel_per_placement_produces_identical_results_to_sequential() {
 }
 
 #[test]
-fn parallel_below_threshold_uses_sequential_path() {
-    // 50 < PARALLEL_PLACEMENT_THRESHOLD (=64). Use constant-result span
-    // because non-constant spans below 100 cells demote to legacy.
-    let mut engine = build_constant_result_family(50, true);
-    engine.evaluate_all().unwrap();
-
-    let report = engine.last_formula_plane_span_eval_report().unwrap();
-    assert_eq!(report.parallel_per_placement_invocations, 0, "{report:?}");
-    // Constant-result spans evaluate via a single broadcast, not per-placement.
-    // Verify no parallel-path was taken; placement count reflects broadcast.
-    assert_eq!(report.span_eval_placement_count, 50, "{report:?}");
-}
-
-#[test]
-fn parallel_above_threshold_uses_parallel_path() {
-    let mut engine = build_a_plus_one_family(1_000, true);
-    engine.evaluate_all().unwrap();
-
-    let report = engine.last_formula_plane_span_eval_report().unwrap();
-    assert_eq!(report.parallel_per_placement_invocations, 1, "{report:?}");
-    assert_eq!(report.sequential_per_placement_invocations, 0, "{report:?}");
-    assert_eq!(report.span_eval_placement_count, 1_000, "{report:?}");
-}
-
-#[test]
-fn parallel_disabled_via_config_uses_sequential() {
-    let mut engine = build_a_plus_one_family(1_000, false);
-    engine.evaluate_all().unwrap();
-
-    let report = engine.last_formula_plane_span_eval_report().unwrap();
-    assert_eq!(report.parallel_per_placement_invocations, 0, "{report:?}");
-    assert_eq!(report.sequential_per_placement_invocations, 1, "{report:?}");
-    assert_eq!(report.span_eval_placement_count, 1_000, "{report:?}");
-}
-
-#[test]
 fn parallel_with_lookup_cache_no_corruption() {
     let rows = 10_000;
     let mut engine = auth_engine(true);
@@ -153,11 +117,6 @@ fn parallel_with_lookup_cache_no_corruption() {
     for row in 1..=rows {
         assert_eq!(numeric_value(&engine, row, 3), row as f64 * 10.0 + 5.0);
     }
-    let span_report = engine.last_formula_plane_span_eval_report().unwrap();
-    assert_eq!(
-        span_report.parallel_per_placement_invocations, 1,
-        "{span_report:?}"
-    );
     let cache_report = engine.last_lookup_index_cache_report();
     assert!(cache_report.builds > 0, "{cache_report:?}");
     assert!(cache_report.hits > 0, "{cache_report:?}");
@@ -177,8 +136,6 @@ fn parallel_per_placement_with_per_placement_bindings() {
     ingest(&mut engine, formulas);
     engine.evaluate_all().unwrap();
 
-    let report = engine.last_formula_plane_span_eval_report().unwrap();
-    assert_eq!(report.parallel_per_placement_invocations, 1, "{report:?}");
     for row in 1..=rows {
         assert_eq!(numeric_value(&engine, row, 2), row as f64 * 101.0);
     }
@@ -200,15 +157,6 @@ fn parallel_memoized_groups_correctly_broadcast() {
     ingest(&mut engine, formulas);
     engine.evaluate_all().unwrap();
 
-    let report = engine.last_formula_plane_span_eval_report().unwrap();
-    assert_eq!(report.parallel_memoized_invocations, 1, "{report:?}");
-    assert_eq!(report.sequential_memoized_invocations, 0, "{report:?}");
-    assert_eq!(report.memo_eval_count, groups as u64, "{report:?}");
-    assert_eq!(
-        report.memo_broadcast_count,
-        rows as u64 - groups as u64,
-        "{report:?}"
-    );
     for row in 1..=rows {
         let key = if row <= 64 { row % 32 } else { row % groups };
         assert_eq!(numeric_value(&engine, row, 2), key as f64 + 1.0);
@@ -234,14 +182,6 @@ fn parallel_short_circuit_correctness_under_parallelism() {
     ingest(&mut engine, formulas);
     engine.evaluate_all().unwrap();
 
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
-    assert_eq!(
-        engine
-            .last_formula_plane_span_eval_report()
-            .unwrap()
-            .parallel_per_placement_invocations,
-        1
-    );
     for row in 1..=rows {
         assert_eq!(numeric_value(&engine, row, 2), 1.0);
     }

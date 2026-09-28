@@ -161,7 +161,7 @@ fn transaction_context_is_structure_only() {
         None => {}
         Some(id) => {
             assert!(
-                graph.get_formula(*id).is_none(),
+                graph.get_formula(id).is_none(),
                 "expected A1 formula to be cleared"
             );
         }

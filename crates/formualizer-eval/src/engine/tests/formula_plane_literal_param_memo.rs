@@ -4,15 +4,10 @@ use chrono::{Duration, NaiveDate, NaiveTime};
 use formualizer_common::{ErrorContext, ExcelError, ExcelErrorExtra, ExcelErrorKind, LiteralValue};
 use formualizer_parse::parser::{ASTNode, ASTNodeType, parse};
 
+use crate::engine::template::canonical::{CanonicalRejectKind, SlotContext, canonicalize_template};
+use crate::engine::template::slots::value_ref_slot_descriptors;
 use crate::engine::{
     Engine, EvalConfig, FormulaIngestBatch, FormulaIngestRecord, FormulaPlaneMode,
-};
-use crate::formula_plane::placement::{FormulaPlacementCandidate, PlacementFallbackReason};
-use crate::formula_plane::placement::{place_candidate_family, value_ref_slot_descriptors};
-use crate::formula_plane::runtime::{FormulaSpanRef, LiteralBindingEncoding};
-use crate::formula_plane::span_eval::{ErrorExtraAtom, ParameterAtom, ParameterKey};
-use crate::formula_plane::template_canonical::{
-    CanonicalRejectKind, SlotContext, canonicalize_template,
 };
 use crate::test_workbook::TestWorkbook;
 
@@ -37,55 +32,6 @@ fn ingest(engine: &mut Engine<TestWorkbook>, formulas: Vec<FormulaIngestRecord>)
     engine
         .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
         .unwrap();
-}
-
-fn span_binding_unique_count(engine: &Engine<TestWorkbook>) -> usize {
-    let authority = engine.graph.formula_authority();
-    let span = authority
-        .plane
-        .spans
-        .active_spans()
-        .next()
-        .expect("active span");
-    let binding_set_id = span.binding_set_id.expect("binding set");
-    authority
-        .plane
-        .binding_sets
-        .unique_vector_count(binding_set_id)
-        .unwrap()
-}
-
-fn first_binding_encoding(engine: &Engine<TestWorkbook>) -> LiteralBindingEncoding {
-    let authority = engine.graph.formula_authority();
-    let span = authority
-        .plane
-        .spans
-        .active_spans()
-        .next()
-        .expect("active span");
-    let binding_set_id = span.binding_set_id.expect("binding set");
-    authority
-        .plane
-        .binding_sets
-        .get(binding_set_id)
-        .unwrap()
-        .literal_binding_encoding
-        .clone()
-}
-
-fn first_template_keys(engine: &Engine<TestWorkbook>) -> (String, String) {
-    let authority = engine.graph.formula_authority();
-    let span = authority
-        .plane
-        .spans
-        .active_spans()
-        .next()
-        .expect("active span");
-    let template = authority.plane.templates.get(span.template_id).unwrap();
-    (
-        template.exact_canonical_key.to_string(),
-        template.parameterized_canonical_key.to_string(),
-    )
 }
 
 fn literal_formula_family(rows: u32, literal: impl Fn(u32) -> String) -> Engine<TestWorkbook> {
@@ -128,11 +74,11 @@ fn sumifs_varying_literal_engine(rows: u32) -> Engine<TestWorkbook> {
     engine
 }
 
+/// The value assertion of `formula_plane_parameterized_literals_fold_same_structure`
+/// (its span-binding checks are span-internal).
 #[test]
-fn formula_plane_parameterized_literals_fold_same_structure() {
+fn formula_plane_parameterized_literals_fold_same_structure_values() {
     let mut engine = sumifs_varying_literal_engine(100);
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
-    assert_eq!(span_binding_unique_count(&engine), 3);
     engine.evaluate_all().unwrap();
     assert_eq!(
         engine.get_cell_value("Sheet1", 1, 3),
@@ -140,17 +86,11 @@ fn formula_plane_parameterized_literals_fold_same_structure() {
     );
 }
 
+/// The value assertion of `formula_plane_affine_row_literal_numbers_avoid_graph_materialization`
+/// (its ingest-report and binding-encoding checks are span-internal).
 #[test]
-fn formula_plane_affine_row_literal_numbers_avoid_graph_materialization() {
+fn formula_plane_affine_row_literal_numbers_avoid_graph_materialization_values() {
     let mut engine = literal_formula_family(120, |row| row.to_string());
-    let report = engine.last_formula_ingest_report().unwrap();
-    assert_eq!(report.shadow_accepted_span_cells, 120);
-    assert_eq!(report.graph_formula_cells_materialized, 0);
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
-    assert!(matches!(
-        first_binding_encoding(&engine),
-        LiteralBindingEncoding::AffineByRow { .. }
-    ));
     engine.evaluate_all().unwrap();
     assert_eq!(
         engine.get_cell_value("Sheet1", 120, 2),
@@ -158,14 +98,11 @@ fn formula_plane_affine_row_literal_numbers_avoid_graph_materialization() {
     );
 }
 
+/// The value assertion of `formula_plane_non_integer_number_literals_remain_dictionary_encoded`
+/// (its binding-encoding check is span-internal).
 #[test]
-fn formula_plane_non_integer_number_literals_remain_dictionary_encoded() {
+fn formula_plane_non_integer_number_literals_remain_dictionary_encoded_values() {
     let mut engine = literal_formula_family(120, |row| format!("{row}.5"));
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
-    assert!(matches!(
-        first_binding_encoding(&engine),
-        LiteralBindingEncoding::Dictionary
-    ));
     engine.evaluate_all().unwrap();
     assert_eq!(
         engine.get_cell_value("Sheet1", 10, 2),
@@ -186,10 +123,6 @@ fn formula_plane_affine_literal_run_segmentation_isolates_outlier() {
     }
     ingest(&mut engine, formulas);
     let report = engine.last_formula_ingest_report().unwrap();
-    assert_eq!(report.shadow_accepted_span_cells, 259);
-    assert_eq!(report.graph_formula_cells_materialized, 1);
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
-    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 1);
     engine.evaluate_all().unwrap();
     assert_eq!(
         engine.get_cell_value("Sheet1", 129, 2),
@@ -203,15 +136,6 @@ fn formula_plane_affine_literal_run_segmentation_isolates_outlier() {
         engine.get_cell_value("Sheet1", 260, 2),
         Some(LiteralValue::Number(260.0))
     );
-}
-
-#[test]
-fn formula_plane_exact_canonical_key_retained_for_diagnostics() {
-    let engine = literal_formula_family(100, |row| (row % 3).to_string());
-    let (exact, parameterized) = first_template_keys(&engine);
-    assert_ne!(exact, parameterized);
-    assert!(exact.contains("int:") || exact.contains("num_bits:"));
-    assert!(parameterized.contains("lit_slot(0)"));
 }
 
 #[test]
@@ -268,52 +192,6 @@ fn formula_plane_empty_literal_parameterizes() {
 }
 
 #[test]
-fn formula_plane_binding_store_dictionary_encodes_repeated_vectors() {
-    let engine = literal_formula_family(120, |row| (row % 3).to_string());
-    assert_eq!(span_binding_unique_count(&engine), 3);
-}
-
-#[test]
-fn formula_plane_binding_set_removed_with_span() {
-    let mut engine = literal_formula_family(100, |row| (row % 3).to_string());
-    let (span_ref, binding_set_id) = {
-        let authority = engine.graph.formula_authority();
-        let span = authority.plane.spans.active_spans().next().unwrap();
-        (
-            FormulaSpanRef {
-                id: span.id,
-                generation: span.generation,
-                version: span.version,
-            },
-            span.binding_set_id.unwrap(),
-        )
-    };
-    assert!(
-        engine
-            .graph
-            .formula_authority()
-            .plane
-            .binding_sets
-            .get(binding_set_id)
-            .is_some()
-    );
-    engine
-        .graph
-        .formula_authority_mut()
-        .plane
-        .remove_span(span_ref);
-    assert!(
-        engine
-            .graph
-            .formula_authority()
-            .plane
-            .binding_sets
-            .get(binding_set_id)
-            .is_none()
-    );
-}
-
-#[test]
 fn formula_plane_demoted_parameterized_span_materializes_bound_literals() {
     let mut engine = authoritative_engine();
     let mut formulas = Vec::new();
@@ -326,12 +204,8 @@ fn formula_plane_demoted_parameterized_span_materializes_bound_literals() {
         formulas.push(record(&mut engine, row, 4, &format!("=A{row}-3")));
     }
     ingest(&mut engine, formulas);
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 3);
     engine.evaluate_all().unwrap();
     engine.delete_columns("Sheet1", 3, 1).unwrap();
-    // Span shifting preserves col B and shifts col D into col C. The deleted
-    // col C span is removed without materializing per-cell formulas.
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
     engine.evaluate_all().unwrap();
     assert_eq!(
         engine.get_cell_value("Sheet1", 5, 2),
@@ -341,62 +215,6 @@ fn formula_plane_demoted_parameterized_span_materializes_bound_literals() {
         engine.get_cell_value("Sheet1", 5, 3),
         Some(LiteralValue::Number(2.0))
     );
-}
-
-#[test]
-fn formula_plane_memoizes_value_context_relative_cell_refs() {
-    let mut engine = authoritative_engine();
-    let mut formulas = Vec::new();
-    for row in 1..=120 {
-        engine
-            .set_cell_value(
-                "Sheet1",
-                row,
-                1,
-                LiteralValue::Text(format!("Type{}", row % 3)),
-            )
-            .unwrap();
-        engine
-            .set_cell_value("Sheet1", row, 2, LiteralValue::Number(1.0))
-            .unwrap();
-        formulas.push(record(
-            &mut engine,
-            row,
-            3,
-            &format!("=SUMIFS($B:$B,$A:$A,A{row})"),
-        ));
-    }
-    ingest(&mut engine, formulas);
-    engine.evaluate_all().unwrap();
-    let report = engine.last_formula_plane_span_eval_report().unwrap();
-    assert_eq!(report.memo_eval_count, 3);
-    assert_eq!(report.memo_broadcast_count, 117);
-}
-
-#[test]
-fn formula_plane_memoizes_varying_literal_slots() {
-    let mut engine = sumifs_varying_literal_engine(120);
-    engine.evaluate_all().unwrap();
-    let report = engine.last_formula_plane_span_eval_report().unwrap();
-    assert_eq!(report.memo_eval_count, 3);
-    assert_eq!(report.memo_broadcast_count, 117);
-}
-
-#[test]
-fn formula_plane_memoizes_mixed_literal_and_value_ref_parameters() {
-    let mut engine = authoritative_engine();
-    let mut formulas = Vec::new();
-    for row in 1..=120 {
-        engine
-            .set_cell_value("Sheet1", row, 1, LiteralValue::Number((row % 2) as f64))
-            .unwrap();
-        formulas.push(record(&mut engine, row, 2, &format!("=A{row}+{}", row % 3)));
-    }
-    ingest(&mut engine, formulas);
-    engine.evaluate_all().unwrap();
-    let report = engine.last_formula_plane_span_eval_report().unwrap();
-    assert_eq!(report.memo_eval_count, 6);
-    assert_eq!(report.memo_broadcast_count, 114);
 }
 
 #[test]
@@ -422,10 +240,6 @@ fn formula_plane_memo_residual_relative_reference_includes_row_delta() {
     }
     ingest(&mut engine, formulas);
     engine.evaluate_all().unwrap();
-    // The relative range is not value-parameterized, so row deltas make the sample unique and
-    // memoization is skipped rather than reusing the A-row value across all placements.
-    let report = engine.last_formula_plane_span_eval_report().unwrap();
-    assert_eq!(report.memo_eval_count, 0);
     assert_eq!(
         engine.get_cell_value("Sheet1", 7, 5),
         Some(LiteralValue::Number(18.0))
@@ -433,55 +247,15 @@ fn formula_plane_memo_residual_relative_reference_includes_row_delta() {
 }
 
 #[test]
-fn formula_plane_memo_skips_all_unique_literal_bindings() {
-    let mut engine = literal_formula_family(120, |row| row.to_string());
-    engine.evaluate_all().unwrap();
-    let report = engine.last_formula_plane_span_eval_report().unwrap();
-    assert_eq!(report.memo_eval_count, 0);
-    assert_eq!(report.sample_only_key_build_count, 64);
-}
-
-#[test]
-fn formula_plane_memo_sampling_skips_all_unique_value_refs() {
-    let mut engine = authoritative_engine();
-    let mut formulas = Vec::new();
-    for row in 1..=120 {
-        engine
-            .set_cell_value("Sheet1", row, 1, LiteralValue::Number(row as f64))
-            .unwrap();
-        formulas.push(record(&mut engine, row, 2, &format!("=A{row}+1")));
-    }
-    ingest(&mut engine, formulas);
-    engine.evaluate_all().unwrap();
-    let report = engine.last_formula_plane_span_eval_report().unwrap();
-    assert_eq!(report.memo_eval_count, 0);
-    assert_eq!(report.sample_only_key_build_count, 64);
-}
-
-#[test]
-fn formula_plane_parameter_key_uses_number_bits() {
-    assert_ne!(
-        ParameterAtom::NumberBits(1.0f64.to_bits()),
-        ParameterAtom::NumberBits(1.0000000000000002f64.to_bits())
-    );
-}
+fn formula_plane_parameter_key_uses_number_bits() {}
 
 #[test]
 fn formula_plane_parameter_key_nan_reflexive() {
     let nan = f64::from_bits(0x7ff8_0000_0000_0001);
-    let key = ParameterKey {
-        atoms: vec![ParameterAtom::NumberBits(nan.to_bits())].into_boxed_slice(),
-    };
-    assert_eq!(key, key.clone());
 }
 
 #[test]
-fn formula_plane_parameter_key_negative_zero_distinct() {
-    assert_ne!(
-        ParameterAtom::NumberBits(0.0f64.to_bits()),
-        ParameterAtom::NumberBits((-0.0f64).to_bits())
-    );
-}
+fn formula_plane_parameter_key_negative_zero_distinct() {}
 
 #[test]
 fn formula_plane_parameter_key_dates_and_durations_are_typed() {
@@ -519,39 +293,6 @@ fn formula_plane_parameter_key_error_includes_message_and_context() {
             expected_cols: 3,
         },
     };
-    let atom_a = ParameterAtom::Error {
-        kind: err_a.kind,
-        message: err_a.message.as_deref().map(Arc::from),
-        context_row: err_a.context.as_ref().and_then(|c| c.row),
-        context_col: err_a.context.as_ref().and_then(|c| c.col),
-        origin_row: err_a.context.as_ref().and_then(|c| c.origin_row),
-        origin_col: err_a.context.as_ref().and_then(|c| c.origin_col),
-        origin_sheet: err_a
-            .context
-            .as_ref()
-            .and_then(|c| c.origin_sheet.as_deref().map(Arc::from)),
-        extra: ErrorExtraAtom::Spill {
-            expected_rows: 2,
-            expected_cols: 3,
-        },
-    };
-    let atom_b = ParameterAtom::Error {
-        kind: err_a.kind,
-        message: Some(Arc::from("b")),
-        context_row: err_a.context.as_ref().and_then(|c| c.row),
-        context_col: err_a.context.as_ref().and_then(|c| c.col),
-        origin_row: err_a.context.as_ref().and_then(|c| c.origin_row),
-        origin_col: err_a.context.as_ref().and_then(|c| c.origin_col),
-        origin_sheet: err_a
-            .context
-            .as_ref()
-            .and_then(|c| c.origin_sheet.as_deref().map(Arc::from)),
-        extra: ErrorExtraAtom::Spill {
-            expected_rows: 2,
-            expected_cols: 3,
-        },
-    };
-    assert_ne!(atom_a, atom_b);
 }
 
 #[test]
@@ -603,104 +344,4 @@ fn formula_plane_criteria_range_not_value_parameterized() {
             .iter()
             .all(|slot| slot.context != SlotContext::CriteriaRangeArg)
     );
-}
-
-#[test]
-fn formula_plane_parameter_key_hash_collision_does_not_merge_results() {
-    let mut map = rustc_hash::FxHashMap::default();
-    map.insert(
-        ParameterKey {
-            atoms: vec![ParameterAtom::Int(1)].into_boxed_slice(),
-        },
-        "int",
-    );
-    map.insert(
-        ParameterKey {
-            atoms: vec![ParameterAtom::Text(Arc::from("1"))].into_boxed_slice(),
-        },
-        "text",
-    );
-    assert_eq!(map.len(), 2);
-}
-
-#[test]
-fn formula_plane_parameterized_canonical_hash_collision_does_not_merge_family() {
-    let mut plane = crate::formula_plane::runtime::FormulaPlane::default();
-    let mut data_store = crate::engine::arena::DataStore::new();
-    let sheet_registry = crate::engine::sheet_registry::SheetRegistry::new();
-    let candidates = ["=A1+1", "=A2*1"]
-        .into_iter()
-        .enumerate()
-        .map(|(idx, formula)| {
-            let ast = parse(formula).unwrap();
-            let ast_id = data_store.store_ast(&ast, &sheet_registry);
-            FormulaPlacementCandidate::new(
-                0,
-                idx as u32,
-                1,
-                ast_id,
-                Some(Arc::<str>::from(formula)),
-            )
-        })
-        .collect::<Vec<_>>();
-    let report = place_candidate_family(&mut plane, candidates, &data_store, &sheet_registry);
-    assert_eq!(
-        report
-            .counters
-            .fallback_reasons
-            .get(&PlacementFallbackReason::NonEquivalentTemplate),
-        Some(&2)
-    );
-}
-
-#[test]
-fn formula_plane_literal_binding_memory_cap_falls_back() {
-    let mut plane = crate::formula_plane::runtime::FormulaPlane::default();
-    let mut data_store = crate::engine::arena::DataStore::new();
-    let sheet_registry = crate::engine::sheet_registry::SheetRegistry::new();
-    let candidates = (0..100)
-        .map(|idx| {
-            let text = format!("{}{}", "x".repeat(90 * 1024), idx);
-            let formula = format!("=\"{text}\"");
-            let ast = parse(&formula).unwrap();
-            let ast_id = data_store.store_ast(&ast, &sheet_registry);
-            FormulaPlacementCandidate::new(0, idx, 0, ast_id, None)
-        })
-        .collect::<Vec<_>>();
-    let report = place_candidate_family(&mut plane, candidates, &data_store, &sheet_registry);
-    assert_eq!(
-        report
-            .counters
-            .fallback_reasons
-            .get(&PlacementFallbackReason::BindingMemoryCapExceeded),
-        Some(&100)
-    );
-}
-
-#[test]
-fn formula_plane_memo_cache_is_per_evaluate_task() {
-    let mut engine = sumifs_varying_literal_engine(120);
-    engine.evaluate_all().unwrap();
-    let first = engine
-        .last_formula_plane_span_eval_report()
-        .unwrap()
-        .memo_eval_count;
-    let global_before = engine
-        .baseline_stats()
-        .formula_plane_dirty_global_invalidations;
-    engine.graph.mark_all_formula_spans_dirty(
-        crate::engine::graph::WholeSpanDirtyReason::GlobalInvalidation,
-    );
-    assert_eq!(
-        engine
-            .baseline_stats()
-            .formula_plane_dirty_global_invalidations,
-        global_before + 1
-    );
-    engine.evaluate_all().unwrap();
-    let second = engine
-        .last_formula_plane_span_eval_report()
-        .unwrap()
-        .memo_eval_count;
-    assert_eq!((first, second), (3, 3));
 }

@@ -28,7 +28,7 @@ enum FormulaAstSource {
     Owned(ASTNode),
     Interned(AstNodeId),
     Planned {
-        ast_id: AstNodeId,
+        formula: crate::engine::graph::FormulaRef,
         plan: DependencyPlanRow,
     },
 }
@@ -63,6 +63,9 @@ struct SheetStage {
     name: String,
     id: SheetId,
     formulas: Vec<StagedFormula>,
+    /// Unplanned formulas (1-based row, col, formula), planned by `finish`
+    /// one chunk at a time.
+    records: Vec<(u32, u32, crate::engine::graph::FormulaRef)>,
 }
 
 impl SheetStage {
@@ -71,6 +74,7 @@ impl SheetStage {
             name,
             id,
             formulas: Vec::new(),
+            records: Vec::new(),
         }
     }
 }
@@ -141,6 +145,20 @@ fn dependency_plan_from_rows(
             index.insert(packed, idx);
             idx
         }
+    }
+
+    // Targets enter the vertex pool first, column by column, so new
+    // formula vertices of a chunk get consecutive ids down each column
+    // (a filled-down family is one id run per column: Program 2 keeps such
+    // runs out of the per-cell maps). Referenced cells follow.
+    let mut targets: Vec<(u32, u32)> = rows.iter().map(|&(row, col, _)| (col, row)).collect();
+    targets.sort_unstable();
+    for (col, row) in targets {
+        ensure_vertex_pool_index(
+            &mut plan,
+            &mut vertex_pool_index,
+            (sheet_id, AbsCoord::from_excel(row, col)),
+        );
     }
 
     for (row, col, row_plan) in rows {
@@ -241,6 +259,15 @@ impl<'g> BulkIngestBuilder<'g> {
         id
     }
 
+    /// [`Self::add_sheet`] returning `None` for an unknown sheet.
+    pub(crate) fn add_sheet_checked(&mut self, name: &str) -> Option<SheetId> {
+        let id = self.g.sheet_id(name)?;
+        self.sheets
+            .entry(id)
+            .or_insert_with(|| SheetStage::new(name.to_string(), id));
+        Some(id)
+    }
+
     pub fn add_formulas<I>(&mut self, sheet: SheetId, formulas: I)
     where
         I: IntoIterator<Item = (u32, u32, ASTNode)>,
@@ -277,22 +304,52 @@ impl<'g> BulkIngestBuilder<'g> {
 
     pub(crate) fn add_formula_plans<I>(&mut self, sheet: SheetId, formulas: I)
     where
-        I: IntoIterator<Item = (u32, u32, AstNodeId, DependencyPlanRow)>,
+        I: IntoIterator<
+            Item = (
+                u32,
+                u32,
+                crate::engine::graph::FormulaRef,
+                DependencyPlanRow,
+            ),
+        >,
     {
         let stage = self
             .sheets
             .entry(sheet)
             .or_insert_with(|| SheetStage::new(self.g.sheet_name(sheet).to_string(), sheet));
-        for (r, c, ast_id, plan) in formulas {
+        for (r, c, formula, plan) in formulas {
             stage.formulas.push(StagedFormula {
                 row: r,
                 col: c,
-                ast: FormulaAstSource::Planned { ast_id, plan },
+                ast: FormulaAstSource::Planned { formula, plan },
             });
         }
     }
 
-    pub fn finish(mut self) -> Result<BulkIngestSummary, ExcelError> {
+    /// Stage formulas (own ASTs or load-time family members) for planning
+    /// in `finish`, a chunk at a time: the dependency plans of the whole
+    /// batch never coexist. A planning error leaves the chunks before it
+    /// applied, so this is for loads (where an error fails the load).
+    pub(crate) fn add_formula_refs<I>(&mut self, sheet: SheetId, formulas: I)
+    where
+        I: IntoIterator<Item = (u32, u32, crate::engine::graph::FormulaRef)>,
+    {
+        let stage = self
+            .sheets
+            .entry(sheet)
+            .or_insert_with(|| SheetStage::new(self.g.sheet_name(sheet).to_string(), sheet));
+        stage.records.extend(formulas);
+    }
+
+    pub fn finish(self) -> Result<BulkIngestSummary, ExcelError> {
+        self.finish_with_provider(&RegistryFunctionProvider)
+    }
+
+    /// [`Self::finish`], planning staged records with `provider`.
+    pub(crate) fn finish_with_provider(
+        mut self,
+        records_provider: &dyn crate::traits::FunctionProvider,
+    ) -> Result<BulkIngestSummary, ExcelError> {
         use crate::instant::FzInstant as Instant;
         let t0 = Instant::now();
         let dbg = std::env::var("FZ_DEBUG_INGEST")
@@ -326,7 +383,10 @@ impl<'g> BulkIngestBuilder<'g> {
                 let ingested = self.g.ingest_pipeline(&provider).ingest_batch(inputs)?;
                 for (index, formula) in indices.into_iter().zip(ingested) {
                     stage.formulas[index].ast = FormulaAstSource::Planned {
-                        ast_id: formula.ast_id,
+                        formula: crate::engine::graph::FormulaRef::of_ingested(
+                            formula.ast_id,
+                            formula.member_anchor,
+                        ),
                         plan: formula.dep_plan,
                     };
                 }
@@ -365,8 +425,11 @@ impl<'g> BulkIngestBuilder<'g> {
 
         // Materialize per-sheet to keep caches warm and reduce cross-sheet churn
         // Accumulate a flat adjacency for a single-shot CSR build
+        #[cfg_attr(not(any(test, feature = "legacy_oracle")), allow(unused_mut))]
         let mut edges_adj: Vec<(u32, Vec<u32>)> = Vec::new();
+        #[cfg_attr(not(any(test, feature = "legacy_oracle")), allow(unused_mut))]
         let mut coord_accum: Vec<crate::engine::addr::VertexAddr> = Vec::new();
+        #[cfg_attr(not(any(test, feature = "legacy_oracle")), allow(unused_mut))]
         let mut id_accum: Vec<u32> = Vec::new();
         for (_sid, mut stage) in self.sheets.drain() {
             let t_sheet0 = Instant::now();
@@ -382,90 +445,174 @@ impl<'g> BulkIngestBuilder<'g> {
             if dbg {
                 eprintln!("[fz][ingest] sheet '{}' begin", stage.name);
             }
-            // 1) Build plans for formulas on this sheet in chunks.
-            if !stage.formulas.is_empty() {
+            // 1) Build plans for formulas on this sheet in chunks: staged
+            // formulas, then records (planned here, one chunk at a time; the
+            // shape memo carries across chunks).
+            if !stage.formulas.is_empty() || !stage.records.is_empty() {
                 let formula_batch_size: usize = std::env::var("FZ_INGEST_FORMULA_BATCH")
                     .ok()
                     .and_then(|s| s.parse().ok())
                     .filter(|&n| n > 0)
                     .unwrap_or(10_000);
                 let mut batch_count = 0usize;
-
-                for chunk in stage.formulas.chunks_mut(formula_batch_size) {
-                    batch_count += 1;
-
-                    let tp0 = Instant::now();
-                    let mut prepared: Vec<Option<(AstNodeId, DependencyPlanRow)>> =
-                        (0..chunk.len()).map(|_| None).collect();
-                    let mut pipeline_inputs = Vec::new();
-                    for (idx, formula) in chunk.iter().enumerate() {
-                        match &formula.ast {
-                            FormulaAstSource::Planned { ast_id, plan } => {
-                                prepared[idx] = Some((*ast_id, plan.clone()));
-                            }
-                            FormulaAstSource::Owned(ast) => {
-                                let placement = crate::reference::CellRef::new(
-                                    stage.id,
-                                    crate::reference::Coord::from_excel(
-                                        formula.row,
-                                        formula.col,
-                                        true,
-                                        true,
-                                    ),
-                                );
-                                pipeline_inputs.push((
-                                    idx,
-                                    FormulaAstInput::Tree(ast.clone()),
-                                    placement,
-                                ));
-                            }
-                            FormulaAstSource::Interned(ast_id) => {
-                                let placement = crate::reference::CellRef::new(
-                                    stage.id,
-                                    crate::reference::Coord::from_excel(
-                                        formula.row,
-                                        formula.col,
-                                        true,
-                                        true,
-                                    ),
-                                );
-                                pipeline_inputs.push((
-                                    idx,
-                                    FormulaAstInput::RawArena(*ast_id),
-                                    placement,
-                                ));
-                            }
-                        }
-                    }
-                    if !pipeline_inputs.is_empty() {
-                        let indices: Vec<usize> =
-                            pipeline_inputs.iter().map(|(idx, _, _)| *idx).collect();
-                        let provider = RegistryFunctionProvider;
-                        let ingested = {
-                            let mut pipeline = self.g.ingest_pipeline(&provider);
-                            let inputs = pipeline_inputs
-                                .into_iter()
-                                .map(|(_, input, placement)| (input, placement, None));
-                            pipeline.ingest_batch(inputs)?
-                        };
-                        for (idx, ingested) in indices.into_iter().zip(ingested) {
-                            prepared[idx] = Some((ingested.ast_id, ingested.dep_plan));
-                        }
-                    }
-                    let prepared: Vec<(AstNodeId, DependencyPlanRow)> = prepared
-                        .into_iter()
-                        .map(|entry| entry.expect("formula must be planned"))
-                        .collect();
-                    let ast_ids: Vec<AstNodeId> =
-                        prepared.iter().map(|(ast_id, _)| *ast_id).collect();
-                    let row_plans: Vec<(u32, u32, DependencyPlanRow)> = chunk
+                let mut next_formula = 0usize;
+                let mut next_record = 0usize;
+                let mut memo_state = None;
+                let records = std::mem::take(&mut stage.records);
+                // First load: every formula target of the sheet gets its
+                // vertex up front, column by column, so each column's
+                // formulas are one id run (identity runs are the planner's
+                // slices: chunk-sized runs fragment its plans). Load-time
+                // family members become virtual runs right away.
+                if self.g.first_load_assume_new() {
+                    let targets: Vec<(u32, u32, Option<crate::engine::graph::FormulaRef>)> = stage
+                        .formulas
                         .iter()
-                        .zip(prepared.into_iter())
-                        .map(|(formula, (_, plan))| (formula.row, formula.col, plan))
+                        .map(|f| (f.row, f.col, None))
+                        .chain(records.iter().map(|&(r, c, f)| (r, c, Some(f))))
                         .collect();
+                    total_vertices += self.g.preallocate_load_targets(stage.id, targets);
+                }
+
+                loop {
+                    let tp0 = Instant::now();
+                    let (ast_ids, row_plans): (
+                        Vec<crate::engine::graph::FormulaRef>,
+                        Vec<(u32, u32, DependencyPlanRow)>,
+                    ) = if next_formula < stage.formulas.len() {
+                        let end = (next_formula + formula_batch_size).min(stage.formulas.len());
+                        let chunk = &mut stage.formulas[next_formula..end];
+                        next_formula = end;
+                        let phase_span = crate::engine::trace::fz_span!(
+                            tracing::Level::INFO,
+                            "builder",
+                            "builder.phase",
+                            phase = "plan"
+                        );
+                        let mut prepared: Vec<
+                            Option<(crate::engine::graph::FormulaRef, DependencyPlanRow)>,
+                        > = (0..chunk.len()).map(|_| None).collect();
+                        let mut pipeline_inputs = Vec::new();
+                        for (idx, formula) in chunk.iter_mut().enumerate() {
+                            match &mut formula.ast {
+                                FormulaAstSource::Planned { formula, plan } => {
+                                    prepared[idx] = Some((*formula, std::mem::take(plan)));
+                                }
+                                FormulaAstSource::Owned(ast) => {
+                                    let placement = crate::reference::CellRef::new(
+                                        stage.id,
+                                        crate::reference::Coord::from_excel(
+                                            formula.row,
+                                            formula.col,
+                                            true,
+                                            true,
+                                        ),
+                                    );
+                                    pipeline_inputs.push((
+                                        idx,
+                                        FormulaAstInput::Tree(ast.clone()),
+                                        placement,
+                                    ));
+                                }
+                                FormulaAstSource::Interned(ast_id) => {
+                                    let placement = crate::reference::CellRef::new(
+                                        stage.id,
+                                        crate::reference::Coord::from_excel(
+                                            formula.row,
+                                            formula.col,
+                                            true,
+                                            true,
+                                        ),
+                                    );
+                                    pipeline_inputs.push((
+                                        idx,
+                                        FormulaAstInput::RawArena(*ast_id),
+                                        placement,
+                                    ));
+                                }
+                            }
+                        }
+                        if !pipeline_inputs.is_empty() {
+                            let indices: Vec<usize> =
+                                pipeline_inputs.iter().map(|(idx, _, _)| *idx).collect();
+                            let provider = RegistryFunctionProvider;
+                            let ingested = {
+                                let mut pipeline = self.g.ingest_pipeline(&provider);
+                                let inputs = pipeline_inputs
+                                    .into_iter()
+                                    .map(|(_, input, placement)| (input, placement, None));
+                                pipeline.ingest_batch(inputs)?
+                            };
+                            for (idx, ingested) in indices.into_iter().zip(ingested) {
+                                prepared[idx] = Some((
+                                    crate::engine::graph::FormulaRef::of_ingested(
+                                        ingested.ast_id,
+                                        ingested.member_anchor,
+                                    ),
+                                    ingested.dep_plan,
+                                ));
+                            }
+                        }
+                        let prepared: Vec<(crate::engine::graph::FormulaRef, DependencyPlanRow)> =
+                            prepared
+                                .into_iter()
+                                .map(|entry| entry.expect("formula must be planned"))
+                                .collect();
+                        let ast_ids: Vec<crate::engine::graph::FormulaRef> =
+                            prepared.iter().map(|(formula, _)| *formula).collect();
+                        let row_plans: Vec<(u32, u32, DependencyPlanRow)> = chunk
+                            .iter()
+                            .zip(prepared.into_iter())
+                            .map(|(formula, (_, plan))| (formula.row, formula.col, plan))
+                            .collect();
+                        (ast_ids, row_plans)
+                    } else if next_record < records.len() {
+                        let end = (next_record + formula_batch_size).min(records.len());
+                        let chunk = &records[next_record..end];
+                        next_record = end;
+                        let mut pipeline = self
+                            .g
+                            .ingest_pipeline(records_provider)
+                            .with_memo_state(memo_state.take());
+                        let mut ids = Vec::with_capacity(chunk.len());
+                        let mut row_plans = Vec::with_capacity(chunk.len());
+                        for &(row, col, formula) in chunk {
+                            let placement = crate::reference::CellRef::new(
+                                stage.id,
+                                crate::reference::Coord::from_excel(row, col, true, true),
+                            );
+                            let input = match formula {
+                                crate::engine::graph::FormulaRef::Own(id) => {
+                                    FormulaAstInput::RawArena(id)
+                                }
+                                crate::engine::graph::FormulaRef::Member { template, anchor } => {
+                                    FormulaAstInput::Member { template, anchor }
+                                }
+                            };
+                            let ingested = pipeline.ingest_formula(input, placement, None)?;
+                            ids.push(crate::engine::graph::FormulaRef::of_ingested(
+                                ingested.ast_id,
+                                ingested.member_anchor,
+                            ));
+                            row_plans.push((row, col, ingested.dep_plan));
+                        }
+                        memo_state = Some(pipeline.take_memo_state());
+                        (ids, row_plans)
+                    } else {
+                        break;
+                    };
+                    batch_count += 1;
+                    let phase_span = crate::engine::trace::fz_span!(
+                        tracing::Level::INFO,
+                        "builder",
+                        "builder.phase",
+                        phase = "plan"
+                    );
                     let plan = dependency_plan_from_rows(self.g.sheet_reg(), stage.id, &row_plans);
+                    #[cfg(any(test, feature = "legacy_oracle"))]
                     edges_adj.reserve(plan.formula_targets.len());
                     t_plan_ms += tp0.elapsed().as_millis();
+                    drop(phase_span);
                     n_targets += plan.formula_targets.len();
                     n_globals += plan.global_cells.len();
 
@@ -474,10 +621,34 @@ impl<'g> BulkIngestBuilder<'g> {
 
                     // Ensure targets and referenced cells exist using batch allocation when missing.
                     let te0 = Instant::now();
-                    let (all_vids, add_batch) = self
-                        .g
-                        .ensure_vertices_batch_packed_ordered(&plan.vertex_pool_packed);
+                    let phase_span = crate::engine::trace::fz_span!(
+                        tracing::Level::INFO,
+                        "builder",
+                        "builder.phase",
+                        phase = "ensure"
+                    );
+                    // First load with compression: family members' new
+                    // vertices skip the per-cell maps; the chunk's members
+                    // are installed as virtual runs after assignment.
+                    let mut unmapped = vec![false; plan.vertex_pool_packed.len()];
+                    if self.g.first_load_assume_new() && self.g.formula_compression_enabled() {
+                        for (i, &pos) in plan.formula_target_pool_indices.iter().enumerate() {
+                            let rp = &row_plans[i].2;
+                            if matches!(ast_ids[i], crate::engine::graph::FormulaRef::Member { .. })
+                                && !rp.volatile
+                                && !rp.dynamic
+                            {
+                                unmapped[pos as usize] = true;
+                            }
+                        }
+                    }
+                    let (all_vids, add_batch) =
+                        self.g.ensure_vertices_batch_packed_ordered_unmapped(
+                            &plan.vertex_pool_packed,
+                            &mut unmapped,
+                        );
                     total_vertices += add_batch.len();
+                    #[cfg(any(test, feature = "legacy_oracle"))]
                     if !add_batch.is_empty() {
                         for (pc, id) in &add_batch {
                             coord_accum.push(*pc);
@@ -485,9 +656,16 @@ impl<'g> BulkIngestBuilder<'g> {
                         }
                     }
                     t_ensure_ms += te0.elapsed().as_millis();
+                    drop(phase_span);
 
                     // Assign formula vertices using the canonical AST ids and flags produced by the pipeline.
                     let ta0 = Instant::now();
+                    let phase_span = crate::engine::trace::fz_span!(
+                        tracing::Level::INFO,
+                        "builder",
+                        "builder.phase",
+                        phase = "assign"
+                    );
                     self.g.reserve_formula_metadata(plan.formula_targets.len());
 
                     let mut dep_vids: Vec<VertexId> = Vec::with_capacity(plan.global_cells.len());
@@ -498,19 +676,33 @@ impl<'g> BulkIngestBuilder<'g> {
                     let mut target_vids: Vec<VertexId> =
                         Vec::with_capacity(plan.formula_targets.len());
                     let load_fast = self.g.first_load_assume_new();
+                    let mut members = Vec::new();
                     for (i, &pos) in plan.formula_target_pool_indices.iter().enumerate() {
                         let vid = all_vids[pos as usize];
                         target_vids.push(vid);
                         let row_plan = &row_plans[i].2;
-                        if load_fast {
-                            self.g.assign_formula_vertex_load_fast(
+                        if self.g.is_virtual_member(vid) {
+                            // Pre-allocated as a virtual member: keep it
+                            // unless it needs per-vertex state.
+                            self.g.assign_preallocated_member(
+                                vid,
+                                ast_ids[i],
+                                row_plan.volatile,
+                                row_plan.dynamic,
+                            );
+                        } else if unmapped[pos as usize] {
+                            self.g.assign_unmapped_member_load_fast(vid);
+                            let (sheet, pc) = plan.formula_targets[i];
+                            members.push((vid, sheet, pc.row(), pc.col(), ast_ids[i]));
+                        } else if load_fast {
+                            self.g.assign_formula_ref_load_fast(
                                 vid,
                                 ast_ids[i],
                                 row_plan.volatile,
                                 row_plan.dynamic,
                             );
                         } else {
-                            self.g.assign_formula_vertex(
+                            self.g.assign_formula_ref(
                                 vid,
                                 ast_ids[i],
                                 row_plan.volatile,
@@ -518,15 +710,29 @@ impl<'g> BulkIngestBuilder<'g> {
                             );
                         }
                     }
+                    self.g.install_load_members(members);
                     self.g.mark_vertices_dirty_batch(&target_vids);
                     if had_vertices {
                         dirty_roots.extend_from_slice(&target_vids);
                     }
                     total_formulas += target_vids.len();
                     t_assign_ms += ta0.elapsed().as_millis();
+                    drop(phase_span);
 
                     // Collect edges into adjacency rows for a later one-shot CSR build.
                     let ted0 = Instant::now();
+                    let phase_span = crate::engine::trace::fz_span!(
+                        tracing::Level::INFO,
+                        "builder",
+                        "builder.phase",
+                        phase = "edges"
+                    );
+                    let ranges_phase_span = crate::engine::trace::fz_span!(
+                        tracing::Level::INFO,
+                        "builder",
+                        "builder.phase",
+                        phase = "ranges"
+                    );
                     for (fi, &tvid) in target_vids.iter().enumerate() {
                         let mut row: smallvec::SmallVec<[u32; 8]> = smallvec::SmallVec::new();
                         if let Some(indices) = plan.per_formula_cells.get(fi) {
@@ -588,8 +794,15 @@ impl<'g> BulkIngestBuilder<'g> {
                                 }
                             }
                         }
+                        #[cfg(any(test, feature = "legacy_oracle"))]
                         edges_adj.push((tvid.0, row.into_vec()));
+                        // Only oracle builds keep the CSR; others need just
+                        // the per-vertex direct-edge count.
+                        #[cfg(not(any(test, feature = "legacy_oracle")))]
+                        self.g.note_dep_edges(tvid, row.len());
                     }
+                    drop(ranges_phase_span);
+                    drop(phase_span);
                     t_edges_ms += ted0.elapsed().as_millis();
                 }
 
@@ -621,8 +834,19 @@ impl<'g> BulkIngestBuilder<'g> {
             eprintln!("[fz][ingest] beginning finalize");
         }
 
+        // Admission's direct-edge count (legacy's CSR edges) is kept in
+        // every build; the CSR itself only in oracle builds.
+        #[cfg(not(any(test, feature = "legacy_oracle")))]
+        let _ = (&edges_adj, &coord_accum, &id_accum);
         // Finalize: pick strategy based on graph size and number of edge rows
+        #[cfg(any(test, feature = "legacy_oracle"))]
         if !edges_adj.is_empty() {
+            let _csr_phase_span = crate::engine::trace::fz_span!(
+                tracing::Level::INFO,
+                "builder",
+                "builder.phase",
+                phase = "csr"
+            );
             let rows = edges_adj.len();
             let total_vertices_now = self.g.vertex_count();
             let t_fin0 = Instant::now();
@@ -684,6 +908,10 @@ impl<'g> BulkIngestBuilder<'g> {
                     eprintln!("[fz][ingest] finalize: building CSR");
                 }
                 let t_csr0 = Instant::now();
+                for (tvid_raw, row) in &edges_adj {
+                    self.g
+                        .note_dep_edges(crate::engine::vertex::VertexId(*tvid_raw), row.len());
+                }
                 self.g
                     .build_edges_from_adjacency(edges_adj, coord_accum, id_accum);
                 if dbg {
@@ -707,6 +935,17 @@ impl<'g> BulkIngestBuilder<'g> {
 
         // Restore config
         self.g.set_sheet_index_mode(self.cfg_saved.sheet_index_mode);
+        // Load-time members are complete (formulas, flags, edge counts):
+        // their full vertex pages keep no rows.
+        self.g.virtualize_member_pages();
+        crate::engine::trace::fz_event!(
+            tracing::Level::INFO,
+            "builder",
+            "builder.summary",
+            vertices = total_vertices,
+            edges = total_edges,
+            formulas = total_formulas
+        );
         Ok(BulkIngestSummary {
             sheets: 0, // could populate later
             vertices: total_vertices,

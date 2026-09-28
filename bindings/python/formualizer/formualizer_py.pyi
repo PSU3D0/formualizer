@@ -423,6 +423,16 @@ class EvaluationConfig:
         per-cell graph formulas.
         """
     @property
+    def strict_preparation(self) -> builtins.bool: ...
+    @strict_preparation.setter
+    def strict_preparation(self, value: builtins.bool) -> None:
+        r"""
+        Fail formula preparation on a reference to a missing sheet or table
+        (the behavior before 0.10). Disabled by default: such a formula is
+        accepted, evaluates to an error while the target is missing, and
+        re-binds when the sheet or table is added.
+        """
+    @property
     def max_work_units(self) -> typing.Optional[builtins.int]: ...
     @max_work_units.setter
     def max_work_units(self, value: typing.Optional[builtins.int]) -> None:

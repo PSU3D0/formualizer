@@ -138,8 +138,13 @@ struct ExistingTargetState {
     dirty: bool,
     volatile: bool,
     dynamic: bool,
+    /// Direct dependency edges (the admission count).
+    dependency_count: usize,
+    #[cfg(any(test, feature = "legacy_oracle"))]
     dependencies: Vec<VertexId>,
+    #[cfg(any(test, feature = "legacy_oracle"))]
     range_dependencies: Option<Vec<SharedRangeRef<'static>>>,
+    #[cfg(any(test, feature = "legacy_oracle"))]
     names: Option<Vec<VertexId>>,
     pending_names: Option<FxHashSet<String>>,
     ref_error: bool,
@@ -186,7 +191,7 @@ impl PreparedLegacyGraphPlan {
         self.existing_targets
             .iter()
             .try_fold(0usize, |total, (_, state)| {
-                total.checked_add(state.dependencies.len())
+                total.checked_add(state.dependency_count)
             })
     }
 
@@ -230,13 +235,17 @@ impl DependencyGraph {
     fn existing_target_state(&self, id: VertexId) -> ExistingTargetState {
         ExistingTargetState {
             kind: self.store.kind(id),
-            ast_id: self.vertex_formulas.get(&id).copied(),
+            ast_id: self.vertex_formulas.get(&id).map(|f| f.root()),
             value_ref: self.vertex_values.get(&id).copied(),
             dirty: self.is_dirty(id),
             volatile: self.store.is_volatile(id),
             dynamic: self.store.is_dynamic(id),
+            dependency_count: self.store.edge_offset(id) as usize,
+            #[cfg(any(test, feature = "legacy_oracle"))]
             dependencies: self.get_dependencies(id),
+            #[cfg(any(test, feature = "legacy_oracle"))]
             range_dependencies: self.formula_to_range_deps.get(&id).cloned(),
+            #[cfg(any(test, feature = "legacy_oracle"))]
             names: self.vertex_to_names.get(&id).cloned(),
             pending_names: self.vertex_to_pending_names.get(&id).cloned(),
             ref_error: self.ref_error_vertices.contains(&id),
@@ -326,7 +335,7 @@ impl DependencyGraph {
         &self,
         planned: Vec<(SheetId, u32, u32, AstNodeId, DependencyPlanRow)>,
     ) -> Result<PreparedLegacyGraphPlan, PreparedLegacyGraphError> {
-        if self.pk_order.is_some() {
+        if self.pk_active() {
             return Err(PreparedLegacyGraphError::DynamicTopologyUnsupported);
         }
         let mut sheet_names = BTreeMap::new();
@@ -414,9 +423,7 @@ impl DependencyGraph {
                 Coord::new(packed.row0(), packed.col0(), true, true),
             );
             if let Some(id) = self
-                .cell_to_vertex
-                .get(&addr)
-                .copied()
+                .cell_vertex(&addr)
                 .or_else(|| self.load_packed_to_vertex.get(&packed).copied())
             {
                 if !self.store.vertex_exists_active(id) {
@@ -570,7 +577,7 @@ impl DependencyGraph {
         if self.prepared_legacy_graph_failure_for_test {
             return Err(PreparedLegacyGraphError::InjectedFailure);
         }
-        if self.pk_order.is_some() || self.store.len() != plan.expected_vertex_len {
+        if self.pk_active() || self.store.len() != plan.expected_vertex_len {
             return Err(PreparedLegacyGraphError::Stale);
         }
         for (id, name) in &plan.sheet_names {
@@ -584,9 +591,7 @@ impl DependencyGraph {
                 Coord::new(packed.row0(), packed.col0(), true, true),
             );
             let actual = self
-                .cell_to_vertex
-                .get(&addr)
-                .copied()
+                .cell_vertex(&addr)
                 .or_else(|| self.load_packed_to_vertex.get(packed).copied());
             if plan.new_vertex_set.contains(packed) {
                 if actual.is_some() {
@@ -634,12 +639,15 @@ impl DependencyGraph {
         self.store.reserve(vertices);
         self.cell_to_vertex.reserve(vertices);
         self.vertex_formulas.reserve(formulas);
-        self.formula_to_range_deps.reserve(formulas);
-        self.vertex_to_names.reserve(formulas);
         self.vertex_to_pending_names.reserve(formulas);
         self.formula_dirty.legacy_reserve(formulas);
-        self.edges
-            .reserve_prepared_additions(vertices, plan.planned_edge_count().unwrap_or(0));
+        #[cfg(any(test, feature = "legacy_oracle"))]
+        {
+            self.formula_to_range_deps.reserve(formulas);
+            self.vertex_to_names.reserve(formulas);
+            self.edges
+                .reserve_prepared_additions(vertices, plan.planned_edge_count().unwrap_or(0));
+        }
     }
 
     pub(crate) fn apply_prepared_legacy_graph_plan(
@@ -671,7 +679,10 @@ impl DependencyGraph {
         for ((packed, id), (addr, _, _)) in plan.new_vertices.iter().zip(allocations) {
             let id = *id;
             let coord = GridAddr::new(packed.row0(), packed.col0());
+            #[cfg(any(test, feature = "legacy_oracle"))]
             self.edges.add_vertex(addr, id.0);
+            #[cfg(not(any(test, feature = "legacy_oracle")))]
+            let _ = addr;
             self.sheet_index_mut(packed.sheet_id())
                 .add_vertex(coord, id);
             self.store.set_kind(id, VertexKind::Empty);
@@ -682,6 +693,7 @@ impl DependencyGraph {
             self.cell_to_vertex.insert(addr, id);
         }
         for (target, _) in &plan.existing_targets {
+            self.materialize_vertex(*target);
             self.remove_dependent_edges(*target);
             self.detach_vertex_from_names(*target);
             self.clear_pending_name_references(*target);
@@ -697,6 +709,7 @@ impl DependencyGraph {
             self.mark_volatile(formula.target, formula.plan.volatile);
             self.store.set_dynamic(formula.target, formula.plan.dynamic);
         }
+        #[cfg(any(test, feature = "legacy_oracle"))]
         self.edges.begin_batch();
         for formula in &plan.formulas {
             if !formula.named_dependencies.is_empty() {
@@ -718,6 +731,7 @@ impl DependencyGraph {
                 formula.current_sheet_id,
             );
         }
+        #[cfg(any(test, feature = "legacy_oracle"))]
         self.edges.end_batch_deferred();
         let _ = self.mark_dirty_many(&targets);
         plan.formulas.len()

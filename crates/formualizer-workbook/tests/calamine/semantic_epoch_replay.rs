@@ -58,11 +58,6 @@ fn assert_unrelated_epoch_preserves_arithmetic_preparation(mixed: bool, alias: &
     let mut adapter = CalamineAdapter::open_bytes(epoch_replay_xlsx(100, mixed)).unwrap();
     adapter.stream_into_engine(&mut engine).unwrap();
 
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
-    assert_eq!(
-        engine.baseline_stats().graph_formula_vertex_count,
-        if mixed { 1 } else { 0 }
-    );
     engine.evaluate_all().unwrap();
     for row in 1..=100 {
         assert_eq!(

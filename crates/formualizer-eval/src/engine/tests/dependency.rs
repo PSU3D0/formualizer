@@ -33,25 +33,25 @@ fn test_dependency_extraction_from_ast() {
     assert_eq!(graph.vertex_len(), 3); // A1, B2, C3
 
     // Find C3 vertex (should be the last one created)
-    let c3_vertex_id = *graph
+    let c3_vertex_id = graph
         .get_vertex_id_for_address(&abs_cell_ref(0, 3, 3))
         .unwrap();
     assert_eq!(graph.get_dependencies(c3_vertex_id).len(), 1);
 
     // The dependency should point to A1's vertex
-    let a1_addr = *graph
+    let a1_addr = graph
         .get_vertex_id_for_address(&abs_cell_ref(0, 1, 1))
         .unwrap();
 
     assert_eq!(graph.get_dependencies(c3_vertex_id)[0], a1_addr);
 
     // A1 should have C3 as a dependent
-    let a1_vertex_id = *graph
+    let a1_vertex_id = graph
         .get_vertex_id_for_address(&abs_cell_ref(0, 1, 1))
         .unwrap();
     assert_eq!(graph.get_dependents(a1_vertex_id).len(), 1);
 
-    let c3_addr = *graph
+    let c3_addr = graph
         .get_vertex_id_for_address(&abs_cell_ref(0, 3, 3))
         .unwrap();
 
@@ -98,7 +98,7 @@ fn test_dependency_extraction_multiple_references() {
     graph.set_cell_formula("Sheet1", 2, 1, ast_binary).unwrap();
 
     // Verify dependencies were extracted
-    let a2_vertex_id = *graph
+    let a2_vertex_id = graph
         .get_vertex_id_for_address(&abs_cell_ref(0, 2, 1))
         .unwrap();
     let dependencies = graph.get_dependencies(a2_vertex_id);
@@ -106,10 +106,10 @@ fn test_dependency_extraction_multiple_references() {
     assert_eq!(dependencies.len(), 2);
 
     // Both A1 and B1 should be dependencies
-    let a1_addr = *graph
+    let a1_addr = graph
         .get_vertex_id_for_address(&abs_cell_ref(0, 1, 1))
         .unwrap();
-    let b1_addr = *graph
+    let b1_addr = graph
         .get_vertex_id_for_address(&abs_cell_ref(0, 1, 2))
         .unwrap();
 
@@ -141,10 +141,10 @@ fn test_dependency_edge_management() {
     graph.set_cell_formula("Sheet1", 2, 1, ast_ref_a1).unwrap();
 
     // Verify initial edges
-    let a1_vertex_id = *graph
+    let a1_vertex_id = graph
         .get_vertex_id_for_address(&abs_cell_ref(0, 1, 1))
         .unwrap();
-    let a2_vertex_id = *graph
+    let a2_vertex_id = graph
         .get_vertex_id_for_address(&abs_cell_ref(0, 2, 1))
         .unwrap();
 
@@ -168,13 +168,13 @@ fn test_dependency_edge_management() {
     graph.set_cell_formula("Sheet1", 2, 1, ast_ref_b1).unwrap();
 
     // Verify edges were updated
-    let a1_vertex_id = *graph
+    let a1_vertex_id = graph
         .get_vertex_id_for_address(&abs_cell_ref(0, 1, 1))
         .unwrap();
-    let a2_vertex_id = *graph
+    let a2_vertex_id = graph
         .get_vertex_id_for_address(&abs_cell_ref(0, 2, 1))
         .unwrap();
-    let b1_vertex_id = *graph
+    let b1_vertex_id = graph
         .get_vertex_id_for_address(&abs_cell_ref(0, 1, 2))
         .unwrap();
 
@@ -182,7 +182,7 @@ fn test_dependency_edge_management() {
     assert_eq!(graph.get_dependents(a1_vertex_id).len(), 0);
 
     // A2 should now depend on B1
-    let b1_addr = *graph
+    let b1_addr = graph
         .get_vertex_id_for_address(&abs_cell_ref(0, 1, 2))
         .unwrap();
 
@@ -218,7 +218,7 @@ fn test_circular_dependency_detection() {
 
     // A1 should be an empty placeholder, not a formula
     assert_eq!(graph.vertex_len(), 1);
-    let a1_vertex_id = *graph
+    let a1_vertex_id = graph
         .get_vertex_id_for_address(&abs_cell_ref(0, 1, 1))
         .unwrap();
     match &graph.get_vertex_kind(a1_vertex_id) {
@@ -267,10 +267,10 @@ fn test_complex_circular_dependency() {
     // Verify the dependency chain was created
     assert_eq!(graph.vertex_len(), 2);
 
-    let a1_vertex_id = *graph
+    let a1_vertex_id = graph
         .get_vertex_id_for_address(&abs_cell_ref(0, 1, 1))
         .unwrap();
-    let b1_vertex_id = *graph
+    let b1_vertex_id = graph
         .get_vertex_id_for_address(&abs_cell_ref(0, 1, 2))
         .unwrap();
 
@@ -317,18 +317,18 @@ fn test_cross_sheet_dependencies() {
     // Verify cross-sheet dependency
     assert_eq!(graph.vertex_len(), 2);
 
-    let sheet1_addr = *graph
+    let sheet1_addr = graph
         .get_vertex_id_for_address(&abs_cell_ref(0, 1, 1))
         .unwrap();
 
-    let sheet2_addr = *graph
+    let sheet2_addr = graph
         .get_vertex_id_for_address(&abs_cell_ref(1, 1, 1))
         .unwrap();
 
-    let sheet2_vertex_id = *graph
+    let sheet2_vertex_id = graph
         .get_vertex_id_for_address(&abs_cell_ref(1, 1, 1))
         .unwrap();
-    let sheet1_vertex_id = *graph
+    let sheet1_vertex_id = graph
         .get_vertex_id_for_address(&abs_cell_ref(0, 1, 1))
         .unwrap();
 
@@ -367,15 +367,15 @@ fn test_relative_sheet_dependency() {
     // Verify the dependency is within Sheet2
     assert_eq!(graph.vertex_len(), 2);
 
-    let sheet2_a1_id = *graph
+    let sheet2_a1_id = graph
         .get_vertex_id_for_address(&abs_cell_ref(1, 1, 1))
         .unwrap();
 
-    let sheet2_b1_id = *graph
+    let sheet2_b1_id = graph
         .get_vertex_id_for_address(&abs_cell_ref(1, 1, 2))
         .unwrap();
 
-    let sheet2_b1_vertex_id = *graph
+    let sheet2_b1_vertex_id = graph
         .get_vertex_id_for_address(&abs_cell_ref(1, 1, 2))
         .unwrap();
     assert_eq!(graph.get_dependencies(sheet2_b1_vertex_id).len(), 1);

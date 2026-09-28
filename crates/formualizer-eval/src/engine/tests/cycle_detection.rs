@@ -38,10 +38,10 @@ fn test_two_node_cycle_detection() {
     assert!(schedule.layers.is_empty());
 
     // Get the actual vertex IDs for A1 and B1
-    let a1_id = *graph
+    let a1_id = graph
         .get_vertex_id_for_address(&abs_cell_ref(0, 1, 1))
         .unwrap();
-    let b1_id = *graph
+    let b1_id = graph
         .get_vertex_id_for_address(&abs_cell_ref(0, 1, 2))
         .unwrap();
 

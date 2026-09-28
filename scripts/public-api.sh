@@ -88,7 +88,7 @@ excluded_features() {
       printf '%s\n' 'js-runtime,wasm-js'
       ;;
     formualizer-eval)
-      printf '%s\n' 'benchmark_internal,js-runtime,test-support'
+      printf '%s\n' 'benchmark_internal,js-runtime,legacy_oracle,test-support,unified_authority'
       ;;
     formualizer-workbook|formualizer-sheetport)
       printf '%s\n' 'benchmark_internal,js-runtime'

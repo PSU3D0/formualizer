@@ -36,7 +36,6 @@ fn build_single_span_column() -> Engine<TestWorkbook> {
     engine
         .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
         .unwrap();
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
     engine.evaluate_all().unwrap();
     engine
 }
@@ -160,7 +159,6 @@ fn sheet_remove_then_add_with_cross_sheet_formulas_recomputes_correctly() {
 #[test]
 fn sheet_add_with_no_orphans_does_not_demote_unrelated_spans() {
     let mut engine = build_single_span_column();
-    assert!(engine.baseline_stats().formula_plane_active_span_count >= 1);
 
     engine.add_sheet("Newcomer").unwrap();
     engine.evaluate_all().unwrap();

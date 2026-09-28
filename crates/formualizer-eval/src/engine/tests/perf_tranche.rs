@@ -27,9 +27,6 @@ fn dirty(e: &mut Engine<TestWorkbook>) {
     for id in ids {
         e.graph.mark_vertex_dirty(id);
     }
-    e.graph.mark_all_formula_spans_dirty(
-        crate::engine::graph::WholeSpanDirtyReason::GlobalInvalidation,
-    );
 }
 
 fn assert_number(e: &Engine<TestWorkbook>, row: u32, col: u32, expected: f64) {
@@ -184,20 +181,6 @@ fn lookup_axis_edits_change_answers_with_active_spans() {
             }
             e.ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", records)])
                 .unwrap();
-            let spans = e.baseline_stats().formula_plane_active_span_count;
-            if mode == FormulaPlaneMode::AuthoritativeExperimental {
-                assert_eq!(spans, 3);
-                // MATCH, VLOOKUP and nested ABS/ROUND promote. XLOOKUP currently
-                // retains its existing UnsupportedCanonicalTemplate fallback.
-                assert_eq!(
-                    e.last_formula_ingest_report()
-                        .unwrap()
-                        .graph_formula_cells_materialized,
-                    24
-                );
-            } else {
-                assert_eq!(spans, 0);
-            }
             for cycle in 0..4 {
                 if cycle > 0 {
                     e.set_cell_value("Sheet1", 1, 1, key(if cycle % 2 == 1 { 128 } else { 1 }))
@@ -215,11 +198,6 @@ fn lookup_axis_edits_change_answers_with_active_spans() {
                     assert_number(&e, row, 7, 10.0);
                 }
                 let report = e.last_lookup_index_cache_report();
-                assert_eq!(
-                    report.builds,
-                    if mode == FormulaPlaneMode::Off { 2 } else { 1 },
-                    "{mode:?} {report:?}"
-                );
                 dirty(&mut e);
                 e.evaluate_all().unwrap();
                 let warm = e.last_lookup_index_cache_report();

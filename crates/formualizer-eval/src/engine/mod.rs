@@ -4,14 +4,18 @@
 
 pub mod addr;
 pub mod arrow_ingest;
+/// The dependency authority's internals. Public only for the benchmark and
+/// probe binaries (`formualizer-bench-core`); not a stable API.
+#[doc(hidden)]
+pub mod authority;
 pub mod cancel;
 pub(crate) mod convergence;
+pub(crate) mod derived_formats;
 pub mod effects;
 pub mod eval;
 pub mod eval_delta;
 pub mod formula_ingest;
 mod formula_source;
-pub(crate) mod fragmented_transaction;
 pub mod graph;
 pub mod ingest;
 pub mod ingest_builder;
@@ -31,21 +35,34 @@ pub mod resource_observability;
 pub(crate) mod result_finalization;
 pub mod row_visibility;
 pub mod scheduler;
+pub(crate) mod shape_memo;
 pub mod spill;
 mod target_preparation;
+#[doc(hidden)]
+pub mod template;
 pub(crate) mod used_extent;
 pub mod vertex;
 pub mod virtual_deps;
 
 // New SoA modules
+/// Legacy dependency structures: a differential test oracle only (Program 1
+/// M5); the region-node authority (`authority`) is the runtime path.
+#[cfg(any(test, feature = "legacy_oracle"))]
 pub mod csr_edges;
 pub mod debug_views;
+/// Legacy dependency structures: a differential test oracle only (Program 1
+/// M5); the region-node authority (`authority`) is the runtime path.
+#[cfg(any(test, feature = "legacy_oracle"))]
 pub mod delta_edges;
 pub mod interval_tree;
 pub mod named_range;
 pub mod sheet_index;
 pub mod sheet_registry;
+/// Legacy dependency structures: a differential test oracle only (Program 1
+/// M5); the region-node authority (`authority`) is the runtime path.
+#[cfg(any(test, feature = "legacy_oracle"))]
 pub mod topo;
+pub(crate) mod trace;
 pub mod vertex_store;
 
 // Phase 1: Arena modules
@@ -67,7 +84,9 @@ pub use eval_delta::{
     DeltaMode, EvalDelta, EvalDeltaCompatibilityPolicy, EvalDeltaRecord, TARGET_EVAL_DELTA_VERSION,
     TargetEvalDelta,
 };
-pub use formula_ingest::{FormulaIngestBatch, FormulaIngestRecord, FormulaIngestReport};
+pub use formula_ingest::{
+    FormulaFamilyGrouper, FormulaIngestBatch, FormulaIngestRecord, FormulaIngestReport,
+};
 #[doc(hidden)]
 pub use formula_source::{
     DeferredFormulaPackage, DeferredFormulaReplay, DeferredReplayFormula,
@@ -84,6 +103,7 @@ pub use journal::{ActionJournal, ArrowOp, ArrowUndoBatch, GraphUndoBatch};
 pub use target_preparation::PrepareTargetsOptions;
 // Use SoA implementation
 pub use formualizer_common::{ResourceExhaustionDetail, ResourceExhaustionReason};
+pub use graph::FormulaView;
 pub use graph::snapshot::VertexSnapshot;
 pub use graph::{
     ChangeEvent, DependencyGraph, DependencyRef, GraphBaselineStats, OperationSummary, StripeKey,
@@ -108,7 +128,11 @@ pub use resource_observability::{
     FormulaPlaneTopologyRequestStats, FormulaPlaneTopologyStrategy,
 };
 pub use row_visibility::{RowVisibilitySource, VisibilityMaskMode};
-pub use scheduler::{Layer, Schedule, ScheduleUnit, Scheduler};
+/// Legacy's Tarjan/layer scheduler: a test oracle only (M5; the authority's
+/// planner builds every `Schedule`).
+#[cfg(any(test, feature = "legacy_oracle"))]
+pub use scheduler::Scheduler;
+pub use scheduler::{Layer, Schedule, ScheduleUnit};
 pub use target_preparation::{
     EvaluationTarget, OpaquePreparePolicy, OpaqueReason, PreparationOutcome, PreparationRevision,
     PrepareScope, PreparedTargetGraphReport, RequestId, TableSelection, TargetEvalOptions,
@@ -126,12 +150,12 @@ pub use graph::editor::change_log::{ChangeLog, ChangeLogger, NullChangeLogger};
 pub mod fp8_parity_test_support {
     use super::{Engine, EvalConfig};
     use crate::engine::arena::CanonicalLabels;
-    use crate::formula_plane::dependency_summary::summarize_canonical_template;
-    use crate::formula_plane::producer::SpanReadSummary;
-    use crate::formula_plane::runtime::{PlacementDomain, ResultRegion};
-    use crate::formula_plane::template_canonical::{
+    use crate::engine::template::canonical::{
         CanonicalRejectReason, CanonicalTemplateFlag, canonicalize_template,
     };
+    use crate::engine::template::dependency_summary::summarize_canonical_template;
+    use crate::engine::template::domain::{PlacementDomain, ResultRegion};
+    use crate::engine::template::read_summary::SpanReadSummary;
     use crate::reference::{CellRef, Coord};
     use crate::traits::EvaluationContext;
     use formualizer_common::{ExcelError, LiteralValue};
@@ -330,7 +354,7 @@ pub mod fp8_parity_test_support {
     #[derive(Debug)]
     struct OldOutput {
         payload: String,
-        labels: crate::formula_plane::template_canonical::CanonicalTemplateLabels,
+        labels: crate::engine::template::canonical::CanonicalTemplateLabels,
         direct_cells: Vec<CellRef>,
         range_deps: Vec<crate::reference::SharedRangeRef<'static>>,
         unresolved_names: Vec<String>,
@@ -371,7 +395,7 @@ pub mod fp8_parity_test_support {
             && summary.reject_reasons.iter().all(|reason| {
                 matches!(
                     reason,
-                    crate::formula_plane::dependency_summary::DependencyRejectReason
+                    crate::engine::template::dependency_summary::DependencyRejectReason
                         ::NamedRangeUnsupported { .. }
                 )
             });
@@ -395,7 +419,7 @@ pub mod fp8_parity_test_support {
     }
 
     fn canonical_labels_from_old(
-        old: &crate::formula_plane::template_canonical::CanonicalTemplateLabels,
+        old: &crate::engine::template::canonical::CanonicalTemplateLabels,
     ) -> CanonicalLabels {
         let mut labels = CanonicalLabels::default();
         for flag in &old.flags {
@@ -522,6 +546,57 @@ impl<R: EvaluationContext> Engine<R> {
     pub fn intern_formula_ast(&mut self, ast: &formualizer_parse::parser::ASTNode) -> AstNodeId {
         self.graph.store_ast(ast)
     }
+
+    /// Stage one parsed formula at 1-based `(row, col)` of a bulk ingest
+    /// batch, with load-time family grouping (Program 2): when the formula
+    /// is exactly the formula above it (or to its left) in `grouper`'s
+    /// sheet relocated to this cell, the record references that family's
+    /// template and the formula is never interned; otherwise it is
+    /// interned as usual. Formulas of one sheet must be staged through one
+    /// grouper, in any order (only adjacent cells are compared). With
+    /// `EvalConfig::formula_compression` off every formula is interned.
+    pub fn stage_formula_ast(
+        &mut self,
+        grouper: &mut FormulaFamilyGrouper,
+        row: u32,
+        col: u32,
+        ast: &formualizer_parse::parser::ASTNode,
+        formula_text: Option<std::sync::Arc<str>>,
+    ) -> FormulaIngestRecord {
+        let (row0, col0) = (row.saturating_sub(1), col.saturating_sub(1));
+        if self.config.formula_compression
+            && let Some(family) = self.graph.group_formula_member(grouper, row0, col0, ast)
+        {
+            let record = FormulaIngestRecord::member(row, col, family.template, family.anchor);
+            grouper.members += 1;
+            grouper.note(row0, col0, family);
+            return record;
+        }
+        let ast_id = self.intern_formula_ast(ast);
+        self.note_staged_formula(grouper, row, col, ast_id);
+        FormulaIngestRecord::new(row, col, ast_id, formula_text)
+    }
+
+    /// Record a formula interned without [`Self::stage_formula_ast`] (for
+    /// example a parse-cache hit) as a family template candidate.
+    pub fn note_staged_formula(
+        &mut self,
+        grouper: &mut FormulaFamilyGrouper,
+        row: u32,
+        col: u32,
+        ast_id: AstNodeId,
+    ) {
+        let (row0, col0) = (row.saturating_sub(1), col.saturating_sub(1));
+        grouper.note(
+            row0,
+            col0,
+            formula_ingest::GroupedFamily {
+                template: ast_id,
+                anchor: (row0, col0),
+                rendered: None,
+            },
+        );
+    }
 }
 
 /// 🔮 Scalability Hook: Performance monitoring trait for calculation observability
@@ -645,13 +720,12 @@ pub struct FormulaParseDiagnostic {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum FormulaPlaneMode {
-    /// Disable FormulaPlane promotion/evaluation. This is the stable default;
-    /// span evaluation is explicitly opt-in through configuration.
+    /// The default, and the only mode the engine acts on.
     #[default]
     Off,
+    /// Accepted and treated as `Off`.
     Shadow,
-    /// Experimental mode: accepted FormulaPlane spans are installed into
-    /// graph-owned authority and are not materialized as per-cell graph formulas.
+    /// Accepted and treated as `Off`: FormulaPlane spans were removed.
     AuthoritativeExperimental,
 }
 
@@ -673,7 +747,8 @@ pub struct WorkbookLoadLimits {
     pub max_sheet_cols: u32,
     /// Hard cap for the rectangular logical area a backend may materialize.
     pub max_sheet_logical_cells: u64,
-    /// Hard cap for formulas materialized by one FormulaPlane fallback.
+    /// Accepted and ignored: FormulaPlane spans, and their fallback
+    /// materialization, were removed.
     pub max_formula_plane_fallback_cells: u64,
     /// Sparse-sheet checks only trigger once a sheet reaches this many logical cells.
     pub sparse_sheet_cell_threshold: u64,
@@ -722,6 +797,20 @@ pub enum TemporalEgress {
     #[default]
     Native,
     Serial,
+}
+
+/// What preparing a formula does with a reference to a sheet or table that
+/// does not exist (#454, docs/preparation-error-policy.md).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PreparationPolicy {
+    /// Preparation fails ("Sheet not found", "Undefined table"), as before
+    /// 0.10. Explicit opt-in.
+    Strict,
+    /// The default. The formula is accepted with the reference unbound (it
+    /// evaluates to an error) and re-binds when the sheet or table is added,
+    /// like an undefined name does under either policy.
+    #[default]
+    BestEffort,
 }
 
 /// Configuration for the evaluation engine
@@ -784,7 +873,9 @@ pub struct EvalConfig {
     pub stripe_height: u32,
     /// Width of stripe blocks for dense range indexing  
     pub stripe_width: u32,
-    /// Enable block stripes for dense ranges (vs row/column stripes only)
+    /// Enable block stripes for dense ranges (vs row/column stripes only).
+    /// Deprecated, ignored at runtime: range stripes exist only in
+    /// `legacy_oracle` builds (Program 1 M5).
     pub enable_block_stripes: bool,
 
     /// Spill behavior configuration (conflicts, bounds, buffering)
@@ -795,7 +886,10 @@ pub struct EvalConfig {
     /// `CycleDetection::Runtime` is opt-in (RFC #112).
     pub cycle: CycleConfig,
 
-    /// Use dynamic topological ordering (Pearce-Kelly algorithm)
+    /// Use dynamic topological ordering (Pearce-Kelly algorithm).
+    /// Deprecated, ignored at runtime: the dependency authority's planner
+    /// orders evaluation; this and the `pk_*` / `max_layer_width` knobs
+    /// below affect only `legacy_oracle` builds (Program 1 M5).
     pub use_dynamic_topo: bool,
     /// Maximum nodes to visit before falling back to full rebuild
     pub pk_visit_budget: usize,
@@ -840,25 +934,52 @@ pub struct EvalConfig {
     /// for on-demand graph construction during evaluation.
     pub defer_graph_building: bool,
 
+    /// Missing sheets and tables at preparation: bind later (default) or
+    /// fail. See [`PreparationPolicy`].
+    pub preparation_policy: PreparationPolicy,
+
     /// Enable virtual dependency convergence telemetry collection.
     ///
     /// When disabled, the engine avoids per-pass timing/edge-count bookkeeping.
     pub enable_virtual_dep_telemetry: bool,
 
-    /// FormulaPlane ingest/planning mode. Defaults to `Off`; span evaluation is
-    /// explicitly opt-in while `AuthoritativeExperimental` remains experimental.
-    /// `Shadow` may report candidate span opportunities but must still materialize
-    /// every formula via the legacy graph path.
+    /// FormulaPlane mode. Accepted and ignored: the dependency authority is the
+    /// only runtime path, so every formula is evaluated per cell whatever the
+    /// mode. `Engine::new` normalizes the stored value to `Off`.
     pub formula_plane_mode: FormulaPlaneMode,
-    /// Hard candidate bound for compiling mixed FormulaPlane topology.
+    /// Accepted and ignored (FormulaPlane mixed topology was removed).
     pub max_formula_plane_cache_candidates: usize,
-    /// Hard relationship bound for compiled mixed FormulaPlane topology.
+    /// Accepted and ignored (FormulaPlane mixed topology was removed).
     pub max_formula_plane_cache_edges: usize,
-    /// Hard byte estimate bound for compiled mixed FormulaPlane topology.
+    /// Accepted and ignored (FormulaPlane mixed topology was removed).
     pub max_formula_plane_cache_bytes: usize,
 
     /// Maximum bytes for the engine-side lookup-index cache.
     pub lookup_index_cache_max_bytes: usize,
+
+    /// Program 2 region-native execution: a family node's cells at one
+    /// schedule layer evaluate as one unit through the node's template.
+    /// `false` evaluates every formula cell on its own (the per-cell
+    /// oracle). Values are identical either way.
+    pub family_execution: bool,
+
+    /// Program 2 range kernels (tier 3) inside family execution: windowed
+    /// aggregates reduce each member's slice without per-call range
+    /// resolution. `false` keeps tier 1 for every run. Values are identical.
+    pub family_kernels: bool,
+
+    /// Program 2 elementwise lift (P2-M3) inside family execution: a run
+    /// whose template is operators over cell references and literals
+    /// evaluates column-wise instead of walking the template per member.
+    /// `false` keeps the per-member walk. Values are identical.
+    pub family_lift: bool,
+
+    /// Program 2 compression: after the dependency authority is built,
+    /// family members whose formula is their node's template relocated
+    /// store a reference to the template instead of their own AST, and
+    /// the formula arena drops the unreachable trees. Formulas read back
+    /// identically either way.
+    pub formula_compression: bool,
 }
 
 impl Default for EvalConfig {
@@ -913,18 +1034,28 @@ impl Default for EvalConfig {
             temporal_egress: TemporalEgress::default(),
             formula_parse_policy: FormulaParsePolicy::Strict,
             defer_graph_building: false,
+            preparation_policy: PreparationPolicy::BestEffort,
             enable_virtual_dep_telemetry: false,
             formula_plane_mode: FormulaPlaneMode::Off,
             max_formula_plane_cache_candidates: 100_000,
             max_formula_plane_cache_edges: 100_000,
             max_formula_plane_cache_bytes: 64 * 1024 * 1024,
             lookup_index_cache_max_bytes: 64 * 1024 * 1024,
+            family_execution: true,
+            family_kernels: true,
+            family_lift: true,
+            formula_compression: true,
         }
     }
 }
 
 impl EvalConfig {
     #[inline]
+    pub fn with_preparation_policy(mut self, policy: PreparationPolicy) -> Self {
+        self.preparation_policy = policy;
+        self
+    }
+
     pub fn with_range_expansion_limit(mut self, limit: usize) -> Self {
         self.range_expansion_limit = limit;
         self

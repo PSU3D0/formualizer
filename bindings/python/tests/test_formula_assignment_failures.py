@@ -3,11 +3,19 @@ import pytest
 import formualizer as fz
 
 
+def strict_config() -> fz.WorkbookConfig:
+    """These tests use a missing sheet or table to provoke a preparation
+    failure: that needs strict preparation, the default before 0.10."""
+    eval_config = fz.EvaluationConfig()
+    eval_config.strict_preparation = True
+    return fz.WorkbookConfig(eval_config=eval_config)
+
+
 @pytest.mark.parametrize("logged", [False, True])
 @pytest.mark.parametrize("through_sheet", [False, True])
 @pytest.mark.parametrize("formula", ["=NOSHEET!A1", "=SUM(MissingTable[Amount])"])
 def test_rejected_assignment_keeps_previous_state(logged, through_sheet, formula):
-    wb = fz.Workbook()
+    wb = fz.Workbook(config=strict_config())
     wb.add_sheet("S")
     wb.set_changelog_enabled(logged)
     wb.set_value("S", 1, 1, "sentinel")
@@ -23,7 +31,7 @@ def test_rejected_assignment_keeps_previous_state(logged, through_sheet, formula
 
 
 def test_rejected_spill_formula_does_not_clear_members():
-    wb = fz.Workbook()
+    wb = fz.Workbook(config=strict_config())
     wb.add_sheet("S")
     wb.set_formula("S", 1, 1, "=SEQUENCE(2,1)")
     wb.evaluate_all()

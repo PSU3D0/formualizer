@@ -189,7 +189,7 @@ fn open_rect_stripe_set_preserves_start_col() {
     use crate::engine::graph::StripeType;
 
     let engine = build_d_to_f_bulk(true, 3, "=VLOOKUP(H3,$D:$F,3,FALSE)");
-    let consumer = *engine
+    let consumer = engine
         .graph
         .get_vertex_id_for_address(&engine.graph.make_cell_ref("Sheet1", 3, 14))
         .expect("consumer vertex");

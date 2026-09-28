@@ -6,16 +6,13 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use formualizer_bench_core::BenchmarkSuite;
-use formualizer_eval::formula_plane::diagnostics::{
-    FormulaPlaneDependencyCollectPolicyFingerprintDiagnostic,
-    FormulaPlaneDependencyComparisonDiagnostic, FormulaPlaneDependencyScanInput,
-    FormulaPlaneDependencySummariesDiagnostic, FormulaPlaneTemplateDiagnostic,
-    canonical_template_diagnostic, dependency_summaries_diagnostic,
+use formualizer_bench_core::formula_runs::{
+    CandidateRunOrientation, FormulaPlaneCandidateCell, FormulaRunStore,
+    FormulaRunStoreBuildReport, SpanPartitionCounterOptions, SpanPartitionCounters,
+    compute_span_partition_counters,
 };
-use formualizer_eval::formula_plane::{
-    CandidateRunOrientation, FormulaPlaneCandidateCell, FormulaRejectReason, FormulaRunShape,
-    FormulaRunStore, FormulaRunStoreBuildReport, SpanGapKind, SpanPartitionCounterOptions,
-    SpanPartitionCounters, TemplateSupportStatus, compute_span_partition_counters,
+use formualizer_eval::engine::template::diagnostics::{
+    FormulaPlaneTemplateDiagnostic, canonical_template_diagnostic,
 };
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType, parse};
 use serde::Serialize;
@@ -53,7 +50,6 @@ struct ScannedFormula {
     canonical: String,
     labels: BTreeSet<String>,
     parse_ok: bool,
-    ast: Option<ASTNode>,
     authority: Option<FormulaPlaneTemplateDiagnostic>,
 }
 
@@ -211,97 +207,6 @@ struct FormulaPlaneCandidateCounters {
     candidate_runs: Vec<FormulaPlaneCandidateRunSummary>,
 }
 
-#[derive(Debug, Serialize)]
-struct FormulaRunStoreTemplateSummary {
-    template_id: u32,
-    source_template_id: String,
-    formula_cell_count: u64,
-    status: &'static str,
-}
-
-#[derive(Debug, Serialize)]
-struct FormulaRunStoreRunSummary {
-    run_id: u32,
-    template_id: u32,
-    source_template_id: String,
-    sheet: String,
-    shape: &'static str,
-    row_start: u32,
-    col_start: u32,
-    row_end: u32,
-    col_end: u32,
-    len: u64,
-    row_block_start: u32,
-    row_block_end: u32,
-}
-
-#[derive(Debug, Serialize)]
-struct FormulaRunStoreGapSummary {
-    template_id: u32,
-    sheet: String,
-    row: u32,
-    col: u32,
-    kind: &'static str,
-    other_template_id: Option<u32>,
-}
-
-#[derive(Debug, Serialize)]
-struct FormulaRunStoreRejectedCellSummary {
-    sheet: String,
-    row: u32,
-    col: u32,
-    source_template_id: String,
-    reason: &'static str,
-}
-
-#[derive(Debug, Serialize)]
-struct FormulaRunStoreReconciliationDeltaSummary {
-    field: &'static str,
-    fp2a_value: i64,
-    span_store_value: i64,
-    reason: &'static str,
-}
-
-#[derive(Debug, Serialize)]
-struct FormulaRunStoreReconciliationSummary {
-    matched: bool,
-    deltas: Vec<FormulaRunStoreReconciliationDeltaSummary>,
-}
-
-#[derive(Debug, Serialize)]
-struct FormulaRunStoreReportSummary {
-    row_block_size: u32,
-    template_count: u64,
-    formula_cell_count: u64,
-    supported_formula_cell_count: u64,
-    rejected_formula_cell_count: u64,
-    parse_error_formula_count: u64,
-    unsupported_formula_count: u64,
-    dynamic_formula_count: u64,
-    volatile_formula_count: u64,
-    run_count: u64,
-    row_run_count: u64,
-    column_run_count: u64,
-    singleton_run_count: u64,
-    formula_cells_represented_by_runs: u64,
-    candidate_row_block_partition_count: u64,
-    candidate_formula_run_to_partition_edge_estimate: u64,
-    max_partitions_touched_by_run: u64,
-    hole_count: u64,
-    exception_count: u64,
-    overlap_dropped_count: u64,
-    rectangle_deferred_count: u64,
-    gap_scan_truncated_count: u64,
-    dense_run_coverage_percent: f64,
-    compact_representation_denominator: u64,
-    compact_representation_ratio: f64,
-    reconciliation: FormulaRunStoreReconciliationSummary,
-    templates: Vec<FormulaRunStoreTemplateSummary>,
-    runs_sample: Vec<FormulaRunStoreRunSummary>,
-    gaps_sample: Vec<FormulaRunStoreGapSummary>,
-    rejected_cells_sample: Vec<FormulaRunStoreRejectedCellSummary>,
-}
-
 #[derive(Debug, Clone)]
 struct GraphMaterializationStats {
     source: String,
@@ -338,46 +243,11 @@ struct MaterializationAccounting {
 }
 
 #[derive(Debug, Serialize)]
-struct DependencyCollectPolicyFingerprintSummary {
-    expand_small_ranges: bool,
-    range_expansion_limit: usize,
-    include_names: bool,
-}
-
-#[derive(Debug, Serialize)]
-struct DependencySummaryComparisonSummary {
-    oracle_policy_name: &'static str,
-    oracle_policy_fingerprint: DependencyCollectPolicyFingerprintSummary,
-    requested_policy_fingerprint: DependencyCollectPolicyFingerprintSummary,
-    exact_match_count: u64,
-    over_approximation_count: u64,
-    under_approximation_count: u64,
-    rejection_count: u64,
-    policy_drift_count: u64,
-    fallback_reason_histogram: BTreeMap<String, u64>,
-}
-
-#[derive(Debug, Serialize)]
-struct DependencySummariesReport {
-    authority_template_count: u64,
-    supported_template_count: u64,
-    rejected_template_count: u64,
-    run_summary_count: u64,
-    precedent_region_count: u64,
-    result_region_count: u64,
-    reverse_summary_count: u64,
-    comparison: DependencySummaryComparisonSummary,
-    fallback_reasons: BTreeMap<String, u64>,
-}
-
-#[derive(Debug, Serialize)]
 struct ScanOutput {
     workbook: String,
     totals: ScanTotals,
     formula_plane_candidates: FormulaPlaneCandidateCounters,
-    formula_run_store: FormulaRunStoreReportSummary,
     authority_templates: AuthorityTemplatesReport,
-    dependency_summaries: DependencySummariesReport,
     materialization_accounting: MaterializationAccounting,
     templates: Vec<TemplateSummary>,
 }
@@ -445,50 +315,6 @@ impl From<SpanPartitionCounters> for FormulaPlaneCandidateCounters {
                     partitions_touched: run.partitions_touched,
                 })
                 .collect(),
-        }
-    }
-}
-
-impl From<FormulaPlaneDependencySummariesDiagnostic> for DependencySummariesReport {
-    fn from(diagnostic: FormulaPlaneDependencySummariesDiagnostic) -> Self {
-        Self {
-            authority_template_count: diagnostic.authority_template_count,
-            supported_template_count: diagnostic.supported_template_count,
-            rejected_template_count: diagnostic.rejected_template_count,
-            run_summary_count: diagnostic.run_summary_count,
-            precedent_region_count: diagnostic.precedent_region_count,
-            result_region_count: diagnostic.result_region_count,
-            reverse_summary_count: diagnostic.reverse_summary_count,
-            comparison: diagnostic.comparison.into(),
-            fallback_reasons: diagnostic.fallback_reasons,
-        }
-    }
-}
-
-impl From<FormulaPlaneDependencyComparisonDiagnostic> for DependencySummaryComparisonSummary {
-    fn from(diagnostic: FormulaPlaneDependencyComparisonDiagnostic) -> Self {
-        Self {
-            oracle_policy_name: diagnostic.oracle_policy_name,
-            oracle_policy_fingerprint: diagnostic.oracle_policy_fingerprint.into(),
-            requested_policy_fingerprint: diagnostic.requested_policy_fingerprint.into(),
-            exact_match_count: diagnostic.exact_match_count,
-            over_approximation_count: diagnostic.over_approximation_count,
-            under_approximation_count: diagnostic.under_approximation_count,
-            rejection_count: diagnostic.rejection_count,
-            policy_drift_count: diagnostic.policy_drift_count,
-            fallback_reason_histogram: diagnostic.fallback_reason_histogram,
-        }
-    }
-}
-
-impl From<FormulaPlaneDependencyCollectPolicyFingerprintDiagnostic>
-    for DependencyCollectPolicyFingerprintSummary
-{
-    fn from(diagnostic: FormulaPlaneDependencyCollectPolicyFingerprintDiagnostic) -> Self {
-        Self {
-            expand_small_ranges: diagnostic.expand_small_ranges,
-            range_expansion_limit: diagnostic.range_expansion_limit,
-            include_names: diagnostic.include_names,
         }
     }
 }
@@ -767,7 +593,6 @@ fn classify_formulas(raw: Vec<RawFormula>) -> Vec<ScannedFormula> {
                         canonical,
                         labels,
                         parse_ok: true,
-                        ast: Some(ast),
                         authority: Some(authority),
                     }
                 }
@@ -781,7 +606,6 @@ fn classify_formulas(raw: Vec<RawFormula>) -> Vec<ScannedFormula> {
                         canonical,
                         labels,
                         parse_ok: false,
-                        ast: None,
                         authority: None,
                     }
                 }
@@ -1002,10 +826,7 @@ fn summarize(
         compute_span_partition_counters(&candidate_cells, SpanPartitionCounterOptions::default())
             .into();
     let formula_run_store_raw = FormulaRunStore::build(&candidate_cells);
-    let formula_run_store = summarize_formula_run_store(&formula_run_store_raw);
     let authority_templates = summarize_authority_templates(&by_template, &formula_run_store_raw);
-    let dependency_summaries =
-        summarize_dependency_summaries(&by_template, &formula_run_store_raw)?;
     let materialization_accounting =
         summarize_materialization_accounting(&formula_run_store_raw, graph_stats.as_ref());
 
@@ -1114,36 +935,10 @@ fn summarize(
         workbook: workbook.display().to_string(),
         totals,
         formula_plane_candidates,
-        formula_run_store,
         authority_templates,
-        dependency_summaries,
         materialization_accounting,
         templates,
     })
-}
-
-fn summarize_dependency_summaries(
-    by_template: &BTreeMap<String, Vec<ScannedFormula>>,
-    store: &FormulaRunStore,
-) -> Result<DependencySummariesReport> {
-    let mut inputs = Vec::new();
-    for (source_template_id, formulas) in by_template {
-        for formula in formulas {
-            let (Some(ast), Some(authority)) = (&formula.ast, &formula.authority) else {
-                continue;
-            };
-            inputs.push(FormulaPlaneDependencyScanInput {
-                source_template_id,
-                authority_template_key: &authority.key_payload,
-                sheet: &formula.raw.sheet,
-                row: formula.raw.row,
-                col: formula.raw.col,
-                ast,
-            });
-        }
-    }
-
-    Ok(dependency_summaries_diagnostic(store, inputs)?.into())
 }
 
 #[derive(Debug, Clone)]
@@ -1348,7 +1143,7 @@ fn compare_scanned_formula_cell(a: &ScannedFormula, b: &ScannedFormula) -> std::
 
 fn push_unmapped_authority_run_sample(
     samples: &mut Vec<AuthorityRunUnmappedSummary>,
-    run: &formualizer_eval::formula_plane::FormulaRunDescriptor,
+    run: &formualizer_bench_core::formula_runs::FormulaRunDescriptor,
     reason: &'static str,
     authority_template_keys: Vec<String>,
 ) {
@@ -1366,120 +1161,6 @@ fn push_unmapped_authority_run_sample(
 
 fn stable_hash_hex(hash: u64) -> String {
     format!("{hash:016x}")
-}
-
-fn summarize_formula_run_store(store: &FormulaRunStore) -> FormulaRunStoreReportSummary {
-    let report = &store.report;
-    FormulaRunStoreReportSummary {
-        row_block_size: store.row_block_size,
-        template_count: report.template_count,
-        formula_cell_count: report.formula_cell_count,
-        supported_formula_cell_count: report.supported_formula_cell_count,
-        rejected_formula_cell_count: report.rejected_formula_cell_count,
-        parse_error_formula_count: report.parse_error_formula_count,
-        unsupported_formula_count: report.unsupported_formula_count,
-        dynamic_formula_count: report.dynamic_formula_count,
-        volatile_formula_count: report.volatile_formula_count,
-        run_count: store.runs.len() as u64,
-        row_run_count: report.row_run_count,
-        column_run_count: report.column_run_count,
-        singleton_run_count: report.singleton_run_count,
-        formula_cells_represented_by_runs: report.formula_cells_represented_by_runs,
-        candidate_row_block_partition_count: report.candidate_row_block_partition_count,
-        candidate_formula_run_to_partition_edge_estimate: report
-            .candidate_formula_run_to_partition_edge_estimate,
-        max_partitions_touched_by_run: report.max_partitions_touched_by_run,
-        hole_count: report.hole_count,
-        exception_count: report.exception_count,
-        overlap_dropped_count: report.overlap_dropped_count,
-        rectangle_deferred_count: report.rectangle_deferred_count,
-        gap_scan_truncated_count: report.gap_scan_truncated_count,
-        dense_run_coverage_percent: dense_run_coverage_percent(report),
-        compact_representation_denominator: compact_representation_denominator(
-            report,
-            store.runs.len() as u64,
-        ),
-        compact_representation_ratio: compact_representation_ratio(report, store.runs.len() as u64),
-        reconciliation: FormulaRunStoreReconciliationSummary {
-            matched: report.reconciliation.matched,
-            deltas: report
-                .reconciliation
-                .deltas
-                .iter()
-                .map(|delta| FormulaRunStoreReconciliationDeltaSummary {
-                    field: delta.field,
-                    fp2a_value: delta.fp2a_value,
-                    span_store_value: delta.span_store_value,
-                    reason: delta.reason,
-                })
-                .collect(),
-        },
-        templates: store
-            .arena
-            .templates
-            .iter()
-            .map(|template| FormulaRunStoreTemplateSummary {
-                template_id: template.id.as_u32(),
-                source_template_id: template.source_template_id.clone(),
-                formula_cell_count: template.formula_cell_count,
-                status: template_status_label(template.status),
-            })
-            .collect(),
-        runs_sample: store
-            .runs
-            .iter()
-            .take(20)
-            .map(|run| FormulaRunStoreRunSummary {
-                run_id: run.id.as_u32(),
-                template_id: run.template_id.as_u32(),
-                source_template_id: run.source_template_id.clone(),
-                sheet: run.sheet.clone(),
-                shape: run_shape_label(run.shape),
-                row_start: run.row_start,
-                col_start: run.col_start,
-                row_end: run.row_end,
-                col_end: run.col_end,
-                len: run.len,
-                row_block_start: run.row_block_start,
-                row_block_end: run.row_block_end,
-            })
-            .collect(),
-        gaps_sample: store
-            .gaps
-            .iter()
-            .take(20)
-            .map(|gap| match gap.kind {
-                SpanGapKind::Hole => FormulaRunStoreGapSummary {
-                    template_id: gap.template_id.as_u32(),
-                    sheet: gap.sheet.clone(),
-                    row: gap.row,
-                    col: gap.col,
-                    kind: "hole",
-                    other_template_id: None,
-                },
-                SpanGapKind::Exception { other_template_id } => FormulaRunStoreGapSummary {
-                    template_id: gap.template_id.as_u32(),
-                    sheet: gap.sheet.clone(),
-                    row: gap.row,
-                    col: gap.col,
-                    kind: "exception",
-                    other_template_id: Some(other_template_id.as_u32()),
-                },
-            })
-            .collect(),
-        rejected_cells_sample: store
-            .rejected_cells
-            .iter()
-            .take(20)
-            .map(|cell| FormulaRunStoreRejectedCellSummary {
-                sheet: cell.sheet.clone(),
-                row: cell.row,
-                col: cell.col,
-                source_template_id: cell.source_template_id.clone(),
-                reason: reject_reason_label(cell.reason),
-            })
-            .collect(),
-    }
 }
 
 fn summarize_materialization_accounting(
@@ -1576,34 +1257,6 @@ fn compact_representation_denominator(report: &FormulaRunStoreBuildReport, run_c
 
 fn compact_representation_ratio(report: &FormulaRunStoreBuildReport, run_count: u64) -> f64 {
     report.formula_cell_count as f64 / compact_representation_denominator(report, run_count) as f64
-}
-
-fn template_status_label(status: TemplateSupportStatus) -> &'static str {
-    match status {
-        TemplateSupportStatus::Supported => "supported",
-        TemplateSupportStatus::ParseError => "parse_error",
-        TemplateSupportStatus::Unsupported => "unsupported",
-        TemplateSupportStatus::Dynamic => "dynamic",
-        TemplateSupportStatus::Volatile => "volatile",
-        TemplateSupportStatus::Mixed => "mixed",
-    }
-}
-
-fn run_shape_label(shape: FormulaRunShape) -> &'static str {
-    match shape {
-        FormulaRunShape::Row => "row",
-        FormulaRunShape::Column => "column",
-        FormulaRunShape::Singleton => "singleton",
-    }
-}
-
-fn reject_reason_label(reason: FormulaRejectReason) -> &'static str {
-    match reason {
-        FormulaRejectReason::ParseError => "parse_error",
-        FormulaRejectReason::Unsupported => "unsupported",
-        FormulaRejectReason::Dynamic => "dynamic",
-        FormulaRejectReason::Volatile => "volatile",
-    }
 }
 
 fn run_stats(
@@ -1733,15 +1386,6 @@ mod tests {
         assert_eq!(output.authority_templates.ambiguous_run_count, 1);
         assert_eq!(output.authority_templates.unmapped_run_count, 0);
         assert!(output.authority_templates.run_mappings.is_empty());
-        assert_eq!(output.dependency_summaries.authority_template_count, 2);
-        assert_eq!(output.dependency_summaries.supported_template_count, 2);
-        assert_eq!(output.dependency_summaries.run_summary_count, 0);
-        assert!(
-            output
-                .dependency_summaries
-                .fallback_reasons
-                .contains_key("diagnostic_source_template_collision")
-        );
     }
 
     #[test]
@@ -1768,40 +1412,13 @@ mod tests {
             run_mapping.authority_template_key,
             source_mapping.authority_template_keys[0]
         );
-        assert_eq!(output.dependency_summaries.authority_template_count, 1);
-        assert_eq!(output.dependency_summaries.supported_template_count, 1);
-        assert_eq!(output.dependency_summaries.rejected_template_count, 0);
-        assert_eq!(output.dependency_summaries.run_summary_count, 1);
-        assert_eq!(output.dependency_summaries.result_region_count, 1);
-        assert_eq!(output.dependency_summaries.precedent_region_count, 1);
-        assert_eq!(output.dependency_summaries.reverse_summary_count, 1);
-        assert_eq!(output.dependency_summaries.comparison.exact_match_count, 2);
-        assert_eq!(
-            output
-                .dependency_summaries
-                .comparison
-                .under_approximation_count,
-            0
-        );
     }
 
     #[test]
     fn dependency_summaries_reject_unsupported_templates_without_mapping() {
         let scanned = classify_formulas(vec![raw_formula("B1", 1, 2, "A1:A10")]);
-        let output = summarize(PathBuf::from("unsupported.xlsx"), scanned, None)
+        let _output = summarize(PathBuf::from("unsupported.xlsx"), scanned, None)
             .expect("summarize unsupported workbook");
-
-        assert_eq!(output.dependency_summaries.authority_template_count, 1);
-        assert_eq!(output.dependency_summaries.supported_template_count, 0);
-        assert_eq!(output.dependency_summaries.rejected_template_count, 1);
-        assert_eq!(output.dependency_summaries.run_summary_count, 0);
-        assert_eq!(output.dependency_summaries.comparison.rejection_count, 1);
-        assert!(
-            output
-                .dependency_summaries
-                .fallback_reasons
-                .contains_key("finite_range_unsupported")
-        );
     }
 
     #[test]
@@ -1814,11 +1431,9 @@ mod tests {
         for section in [
             "totals",
             "formula_plane_candidates",
-            "formula_run_store",
             "materialization_accounting",
             "templates",
             "authority_templates",
-            "dependency_summaries",
         ] {
             assert!(value.get(section).is_some(), "missing {section}");
         }

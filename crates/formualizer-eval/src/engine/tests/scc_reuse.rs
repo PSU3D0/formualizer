@@ -344,14 +344,9 @@ fn retained_scc_feeds_a_formula_plane_span_family_in_authoritative_mode() {
             records.into_iter().chain(independent).collect(),
         )])
         .unwrap();
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
 
     engine.evaluate_all().unwrap();
     let st = engine.baseline_stats();
-    // A span family that transitively reads a cycle member is demoted to
-    // legacy vertices (G8); the independent family keeps span treatment.
-    assert_eq!(st.formula_plane_cycle_member_span_demotions, 1);
-    assert_eq!(st.formula_plane_active_span_count, 1);
     assert_eq!(num(&engine, "Sheet1", 120, 10), 240.0);
     assert_eq!(num(&engine, "Sheet1", 1, 5), 3.0);
     assert_eq!(num(&engine, "Sheet1", 1, 3), 8.0); // 2*2 + 1 + 3

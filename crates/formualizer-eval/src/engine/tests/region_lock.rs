@@ -57,7 +57,6 @@ mod region_lock_tests {
         let anchor_vertex = engine
             .graph
             .get_vertex_id_for_address(&engine.graph.make_cell_ref("Sheet1", 1, 1))
-            .copied()
             .expect("anchor vertex");
         let anchor_cell = engine.graph.make_cell_ref("Sheet1", 1, 1);
         let mut shim = ShimSpillManager::default();

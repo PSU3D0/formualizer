@@ -91,9 +91,155 @@ pub struct ResolvedFunction {
 static REGISTRY: Lazy<RwLock<RegistryState>> = Lazy::new(|| RwLock::new(RegistryState::default()));
 static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
 
+/// Lock-free mirror of `RegistryState::semantic_epoch`.
+///
+/// Published only by `publish_semantic_change`, which takes the global
+/// `REGISTRY` write guard by type, so any holder of a registry read guard (for
+/// example a `SemanticEpochReadGuard`) observes exactly the guarded epoch here.
+/// Without a guard it is a monotonic, possibly stale lower bound. State-only log
+/// advancement on a local `RegistryState` (`advance_semantic_log`) never
+/// touches it.
+static SEMANTIC_EPOCH_MIRROR: AtomicU64 = AtomicU64::new(1);
+
+/// Displacement count at which the `load_builtins` shortcut is permanently
+/// disabled; the counter never wraps.
+const BUILTIN_DISPLACEMENTS_EXHAUSTED: u64 = u64::MAX;
+
+/// Bookkeeping for the `load_builtins` shortcut.
+struct BuiltinLoadState {
+    /// Registrations that replaced a trusted entry with a non-builtin function.
+    /// Monotonic, bumped under the `REGISTRY` write lock; sticky at
+    /// `BUILTIN_DISPLACEMENTS_EXHAUSTED`.
+    displacements: AtomicU64,
+    /// One plus the largest `displacements` value read at the start of a pass
+    /// that ran to completion; 0 until one has.
+    complete_since: AtomicU64,
+}
+
+impl BuiltinLoadState {
+    const fn new(displacements: u64) -> Self {
+        Self {
+            displacements: AtomicU64::new(displacements),
+            complete_since: AtomicU64::new(0),
+        }
+    }
+
+    fn record_displacement(&self) {
+        let _ = self
+            .displacements
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                Some(
+                    count
+                        .checked_add(1)
+                        .unwrap_or(BUILTIN_DISPLACEMENTS_EXHAUSTED),
+                )
+            });
+    }
+
+    fn loaded(&self) -> bool {
+        let complete_since = self.complete_since.load(Ordering::Acquire);
+        let displacements = self.displacements.load(Ordering::Acquire);
+        complete_since != 0
+            && displacements != BUILTIN_DISPLACEMENTS_EXHAUSTED
+            && displacements + 1 == complete_since
+    }
+
+    fn begin_pass(&self) -> u64 {
+        self.displacements.load(Ordering::Acquire)
+    }
+
+    fn finish_pass(&self, token: u64) {
+        // Every completed pass's token is sound: a displacement after its start
+        // leaves the counter above it, so `loaded` stays false until a later
+        // pass completes. Keeping the maximum stops a slow pass that started
+        // before a displacement from hiding a newer pass's completion. An
+        // exhausted token publishes nothing.
+        if token != BUILTIN_DISPLACEMENTS_EXHAUSTED {
+            self.complete_since.fetch_max(token + 1, Ordering::AcqRel);
+        }
+    }
+}
+
+static BUILTIN_LOAD: BuiltinLoadState = BuiltinLoadState::new(0);
+
+/// Per-thread registration call counts, used as untimed cost evidence by
+/// tests and probes. Not part of the product API.
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RegistrationCallCounts {
+    /// Calls to `builtins::load_builtins`.
+    pub load_builtins: u64,
+    /// Calls to the internal `register` (builtin or user).
+    pub register: u64,
+    /// Semantic metadata inspections (`inspect_semantics*`).
+    pub inspect_semantics: u64,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+thread_local! {
+    static CALL_COUNTS: std::cell::Cell<RegistrationCallCounts> =
+        const { std::cell::Cell::new(RegistrationCallCounts { load_builtins: 0, register: 0, inspect_semantics: 0 }) };
+}
+
+/// Registration call counts observed on the current thread.
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+pub fn registration_call_counts() -> RegistrationCallCounts {
+    CALL_COUNTS.with(std::cell::Cell::get)
+}
+
+/// Bump one per-thread call counter; compiles to nothing without test support.
+macro_rules! count_call {
+    ($field:ident) => {
+        #[cfg(any(test, feature = "test-support"))]
+        CALL_COUNTS.with(|counts| {
+            let mut current = counts.get();
+            current.$field += 1;
+            counts.set(current);
+        });
+    };
+}
+
+pub(crate) fn count_load_builtins_call() {
+    count_call!(load_builtins);
+}
+
 #[inline]
 fn norm<S: AsRef<str>>(s: S) -> String {
     s.as_ref().to_uppercase()
+}
+
+/// Current registry semantic epoch without taking the registry lock.
+///
+/// Equal to `SemanticEpochReadGuard::epoch` while such a guard is held; safe to
+/// call under one (unlike `semantic_epoch`, which may queue behind a writer).
+pub(crate) fn semantic_epoch_lock_free() -> u64 {
+    SEMANTIC_EPOCH_MIRROR.load(Ordering::Acquire)
+}
+
+/// Whether every builtin is currently registered as a trusted builtin, so a
+/// `load_builtins` pass would change nothing.
+///
+/// True once a pass has completed and no registration has displaced a trusted
+/// builtin since that pass started. Registration never removes entries and a
+/// trusted builtin entry can only be replaced by a displacing registration, so
+/// every key the completed pass made trusted is still trusted.
+///
+/// This is a linearizable shortcut, not a guarantee that outlives the call: a
+/// concurrent displacement may land right after it returns.
+pub(crate) fn builtins_loaded() -> bool {
+    BUILTIN_LOAD.loaded()
+}
+
+/// Start a full `load_builtins` pass; pass the token to `finish_builtin_load_pass`
+/// only after every builtin registration returned.
+pub(crate) fn begin_builtin_load_pass() -> u64 {
+    BUILTIN_LOAD.begin_pass()
+}
+
+pub(crate) fn finish_builtin_load_pass(token: u64) {
+    BUILTIN_LOAD.finish_pass(token);
 }
 
 pub fn semantic_epoch() -> u64 {
@@ -133,7 +279,25 @@ pub(crate) struct SemanticChanges {
     pub(crate) keys: Vec<(String, String)>,
 }
 
-fn publish_semantic_change(state: &mut RegistryState, keys: impl IntoIterator<Item = RegistryKey>) {
+/// Record a semantic change on the global registry and publish the epoch mirror.
+///
+/// Takes the global write guard by type so the mirror is only ever published
+/// while `REGISTRY` is write-locked.
+fn publish_semantic_change(
+    state: &mut std::sync::RwLockWriteGuard<'static, RegistryState>,
+    keys: impl IntoIterator<Item = RegistryKey>,
+) {
+    let epoch = advance_semantic_log(state, keys);
+    let previous = SEMANTIC_EPOCH_MIRROR.fetch_max(epoch, Ordering::AcqRel);
+    debug_assert!(previous <= epoch, "semantic epoch mirror moved backward");
+}
+
+/// Advance a registry state's epoch and change log without publishing the
+/// global mirror; returns the new epoch.
+fn advance_semantic_log(
+    state: &mut RegistryState,
+    keys: impl IntoIterator<Item = RegistryKey>,
+) -> u64 {
     state.semantic_epoch = state.semantic_epoch.saturating_add(1);
     let epoch = state.semantic_epoch;
     state
@@ -142,6 +306,7 @@ fn publish_semantic_change(state: &mut RegistryState, keys: impl IntoIterator<It
     if state.semantic_changes.len() > 1_024 {
         state.semantic_changes.pop_front();
     }
+    epoch
 }
 
 pub(crate) fn semantic_changes_since(epoch: u64) -> SemanticChanges {
@@ -188,11 +353,30 @@ pub(crate) fn register_builtin(function: Arc<dyn Function>) {
 }
 
 fn register(function: Arc<dyn Function>, trusted_builtin: bool) -> Result<(), RegistrationError> {
+    count_call!(register);
     let namespace = catch_unwind(AssertUnwindSafe(|| function.namespace()))
         .map_err(|_| RegistrationError::NamespaceMetadataPanicked)?;
     let name = catch_unwind(AssertUnwindSafe(|| function.name()))
         .map_err(|_| RegistrationError::NameMetadataPanicked)?;
     let key = (norm(namespace), norm(name));
+    #[cfg(test)]
+    if trusted_builtin {
+        tests::record_builtin_key(&key);
+    }
+    // Re-registering an already-registered trusted builtin is a no-op (see the
+    // same check under the write lock below). Decide that under a read lock
+    // before allocating a generation or inspecting metadata; the write-lock
+    // check stays authoritative for registrations that race this one.
+    if trusted_builtin
+        && REGISTRY
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .registrations
+            .get(&key)
+            .is_some_and(|entry| entry.trusted_builtin)
+    {
+        return Ok(());
+    }
     let generation = NEXT_GENERATION.fetch_add(1, Ordering::Relaxed);
     let aliases = catch_unwind(AssertUnwindSafe(|| function.aliases().to_vec()));
     let min_args = catch_unwind(AssertUnwindSafe(|| function.min_args()));
@@ -231,6 +415,9 @@ fn register(function: Arc<dyn Function>, trusted_builtin: bool) -> Result<(), Re
         .registrations
         .get(&key)
         .map(|entry| (entry.generation, entry.trusted_builtin));
+    if !trusted_builtin && previous.is_some_and(|(_, previous_trusted)| previous_trusted) {
+        BUILTIN_LOAD.record_displacement();
+    }
     let mut changed_spellings = Vec::new();
     if let Some((previous_generation, _)) = previous {
         changed_spellings.extend(
@@ -302,6 +489,7 @@ fn inspect_semantics_with_identity_metadata(
     generation: u64,
     arity: usize,
 ) -> (SemanticContractResolution, Option<(FnCaps, Vec<bool>)>) {
+    count_call!(inspect_semantics);
     let mut issues = Vec::new();
     let inspected_caps = inspected(
         &mut issues,
@@ -1113,7 +1301,7 @@ pub fn snapshot_semantics() -> Vec<ResolvedFunction> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::traits::FunctionProvider;
 
@@ -1267,6 +1455,416 @@ mod tests {
                 &snapshot.get_function(ns, "TARGET").unwrap(),
             ));
         }
+    }
+
+    // FORM-000138 test coordination.
+    //
+    // `BUILTIN_DISPLACEMENT_LOCK` is held by every test that displaces a
+    // builtin in the global (empty) namespace (only the FORM-000138 tests do)
+    // and by every test that asserts builtin completeness or no-op call counts.
+    // Tests that merely call `load_builtins`, and tests that displace their own
+    // trusted fixtures in private namespaces, are not coordinated. Assertions
+    // below therefore only rely on facts those tests cannot invalidate: the
+    // monotonic displacement counter, the change log, per-thread call counts,
+    // and "after `load_builtins` returns, every builtin key is trusted"
+    // (which only a global-namespace displacement could break).
+    pub(crate) static BUILTIN_DISPLACEMENT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    pub(crate) fn lock_builtin_displacement() -> std::sync::MutexGuard<'static, ()> {
+        BUILTIN_DISPLACEMENT_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Displacements of any trusted entry so far. Uncoordinated tests displace
+    /// their own trusted fixtures in private namespaces, which conservatively
+    /// forces one extra full builtin pass; call-count assertions allow for that.
+    pub(crate) fn builtin_displacements() -> u64 {
+        BUILTIN_LOAD.displacements.load(Ordering::Acquire)
+    }
+
+    thread_local! {
+        static RECORDED_BUILTIN_KEYS: std::cell::RefCell<Option<std::collections::BTreeSet<RegistryKey>>> =
+            const { std::cell::RefCell::new(None) };
+    }
+
+    pub(super) fn record_builtin_key(key: &RegistryKey) {
+        RECORDED_BUILTIN_KEYS.with(|keys| {
+            if let Some(keys) = keys.borrow_mut().as_mut() {
+                keys.insert(key.clone());
+            }
+        });
+    }
+
+    /// Every key a full builtin pass registers, observed by running one on this
+    /// thread (idempotent: already-trusted keys take the no-op fast path).
+    fn expected_builtin_keys() -> std::collections::BTreeSet<RegistryKey> {
+        RECORDED_BUILTIN_KEYS.with(|keys| *keys.borrow_mut() = Some(Default::default()));
+        crate::builtins::register_all_builtins();
+        let keys = RECORDED_BUILTIN_KEYS
+            .with(|keys| keys.borrow_mut().take())
+            .unwrap();
+        assert!(keys.len() > 400, "{}", keys.len());
+        assert!(keys.contains(&(String::new(), "SUM".to_string())));
+        keys
+    }
+
+    /// Load until the shortcut reports loaded, then check that every expected
+    /// builtin key is registered and trusted in one registry snapshot.
+    fn assert_builtins_complete(expected: &std::collections::BTreeSet<RegistryKey>) {
+        while !builtins_loaded() {
+            crate::builtins::load_builtins();
+        }
+        let state = REGISTRY
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        for key in expected {
+            let entry = state
+                .registrations
+                .get(key)
+                .unwrap_or_else(|| panic!("builtin {key:?} missing"));
+            assert!(entry.trusted_builtin, "builtin {key:?} not trusted");
+        }
+    }
+
+    fn builtin_entry(name: &str) -> (Arc<dyn Function>, u64, bool) {
+        let state = REGISTRY
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let entry = &state.registrations[&(String::new(), norm(name))];
+        (
+            Arc::clone(&entry.function),
+            entry.generation,
+            entry.trusted_builtin,
+        )
+    }
+
+    // FORM-000138: shortcut bookkeeping over a local instance, so every
+    // interleaving below is deterministic.
+    #[test]
+    fn builtin_load_state_interleavings() {
+        // First load.
+        let state = BuiltinLoadState::new(0);
+        assert!(!state.loaded());
+        let pass = state.begin_pass();
+        state.finish_pass(pass);
+        assert!(state.loaded());
+
+        // Displacement after a completed pass reopens until the next pass.
+        state.record_displacement();
+        assert!(!state.loaded());
+        let pass = state.begin_pass();
+        state.finish_pass(pass);
+        assert!(state.loaded());
+
+        // Displacement during a pass: that pass does not count.
+        let pass = state.begin_pass();
+        state.record_displacement();
+        state.finish_pass(pass);
+        assert!(!state.loaded());
+
+        // Overlapping passes: a stale pass finishing late does not hide a newer
+        // completion, and a newer completion is not hidden by it.
+        let stale = state.begin_pass();
+        state.record_displacement();
+        let fresh = state.begin_pass();
+        state.finish_pass(fresh);
+        assert!(state.loaded());
+        state.finish_pass(stale);
+        assert!(state.loaded());
+
+        // A pass that never finishes (panicked) publishes nothing.
+        state.record_displacement();
+        let _abandoned = state.begin_pass();
+        assert!(!state.loaded());
+    }
+
+    // FORM-000138: the displacement counter never wraps; exhaustion permanently
+    // disables the shortcut.
+    #[test]
+    fn builtin_load_state_exhaustion_is_sticky() {
+        let state = BuiltinLoadState::new(BUILTIN_DISPLACEMENTS_EXHAUSTED - 2);
+        let pass = state.begin_pass();
+        state.finish_pass(pass);
+        assert!(state.loaded());
+        state.record_displacement();
+        assert!(!state.loaded());
+        let pass = state.begin_pass();
+        assert_eq!(pass, BUILTIN_DISPLACEMENTS_EXHAUSTED - 1);
+        state.finish_pass(pass);
+        assert!(state.loaded());
+
+        state.record_displacement();
+        assert_eq!(
+            state.displacements.load(Ordering::Acquire),
+            BUILTIN_DISPLACEMENTS_EXHAUSTED
+        );
+        assert!(!state.loaded());
+        for _ in 0..3 {
+            let pass = state.begin_pass();
+            state.finish_pass(pass);
+            assert!(!state.loaded());
+            state.record_displacement();
+            assert_eq!(
+                state.displacements.load(Ordering::Acquire),
+                BUILTIN_DISPLACEMENTS_EXHAUSTED
+            );
+        }
+    }
+
+    // FORM-000138: once loaded, `load_builtins` neither registers nor inspects
+    // anything, and the registered builtins are complete and unchanged.
+    #[test]
+    fn repeated_builtin_loading_is_a_counted_no_op() {
+        let _serial = lock_builtin_displacement();
+        let expected = expected_builtin_keys();
+        assert_builtins_complete(&expected);
+        let (function, generation, _) = builtin_entry("SUM");
+        let before = registration_call_counts();
+        let displacements = builtin_displacements();
+        for _ in 0..100 {
+            crate::builtins::load_builtins();
+        }
+        let after = registration_call_counts();
+        assert_eq!(after.load_builtins - before.load_builtins, 100);
+        if builtin_displacements() == displacements {
+            assert_eq!(after.register, before.register);
+        }
+        assert_eq!(after.inspect_semantics, before.inspect_semantics);
+        let (current, current_generation, current_trusted) = builtin_entry("SUM");
+        assert!(Arc::ptr_eq(&function, &current));
+        assert_eq!(current_generation, generation);
+        assert!(current_trusted);
+
+        // A direct builtin re-registration takes the read-lock fast path: no
+        // metadata inspection and the entry is untouched.
+        let before = registration_call_counts();
+        register_builtin(Arc::clone(&function));
+        let after = registration_call_counts();
+        assert_eq!(after.register - before.register, 1);
+        assert_eq!(after.inspect_semantics, before.inspect_semantics);
+        assert_eq!(builtin_entry("SUM").1, generation);
+        assert_builtins_complete(&expected);
+    }
+
+    // FORM-000138: repeated planning snapshots (one per ordered-fallback
+    // proposal in production) register nothing after the first load. Metadata
+    // inspection is request-scoped: none for an empty request set, one per
+    // requested function otherwise, never a builtin-set-sized pass.
+    #[test]
+    fn repeated_planning_snapshots_do_not_reregister_builtins() {
+        let _serial = lock_builtin_displacement();
+        let expected = expected_builtin_keys();
+        assert_builtins_complete(&expected);
+        let displacements = builtin_displacements();
+
+        let before = registration_call_counts();
+        for _ in 0..100 {
+            RegistryPlanningSnapshot::capture_for_requests(
+                &GlobalRegistryFunctionProvider,
+                std::iter::empty(),
+            )
+            .unwrap();
+        }
+        let after = registration_call_counts();
+        assert_eq!(after.load_builtins - before.load_builtins, 100);
+        if builtin_displacements() == displacements {
+            assert_eq!(after.register, before.register);
+            assert_eq!(after.inspect_semantics, before.inspect_semantics);
+        }
+
+        let before = registration_call_counts();
+        for _ in 0..100 {
+            let snapshot = RegistryPlanningSnapshot::capture_for_requests(
+                &GlobalRegistryFunctionProvider,
+                [(String::new(), "SUM".to_string(), 2)],
+            )
+            .unwrap();
+            assert!(snapshot.function_semantic_identity("", "SUM", 2).is_some());
+        }
+        let after = registration_call_counts();
+        if builtin_displacements() == displacements {
+            assert_eq!(after.register, before.register);
+            assert_eq!(after.inspect_semantics - before.inspect_semantics, 100);
+        }
+    }
+
+    // FORM-000138: a user registration that displaces a trusted builtin still
+    // takes effect (counted displacement, published change), and once
+    // `load_builtins` returns the builtin is trusted again, as before the
+    // shortcut existed. Uncoordinated loaders may restore it earlier, so trust
+    // is only asserted after our own load. Uses the same function object so
+    // concurrent tests evaluating IMCOSH are unaffected.
+    #[test]
+    fn displaced_builtin_is_restored_by_next_load() {
+        let _serial = lock_builtin_displacement();
+        let expected = expected_builtin_keys();
+        assert_builtins_complete(&expected);
+        let (builtin, _, _) = builtin_entry("IMCOSH");
+
+        let epoch = semantic_epoch();
+        let displacements = builtin_displacements();
+        register_function(Arc::clone(&builtin));
+        assert!(builtin_displacements() > displacements);
+        assert!(semantic_changes_affect_requests_since(
+            epoch,
+            [(String::new(), "IMCOSH".to_string(), 1)]
+        ));
+
+        crate::builtins::load_builtins();
+        // The pass installs a fresh builtin object, so compare trust, not identity.
+        assert!(builtin_entry("IMCOSH").2);
+        assert_builtins_complete(&expected);
+
+        // A same-name registration in another namespace is not a displacement.
+        let displacements = builtin_displacements();
+        let before = registration_call_counts();
+        register_function(planning_fn(
+            "__DISPLACE_OTHER__",
+            "IMCOSH",
+            &[],
+            FnCaps::empty(),
+        ));
+        crate::builtins::load_builtins();
+        if builtin_displacements() == displacements {
+            assert_eq!(registration_call_counts().register, before.register + 1);
+        }
+    }
+
+    // FORM-000138: registrations and builtin overrides racing repeated
+    // `load_builtins` calls keep today's semantics: every user registration
+    // lands and publishes, and loading afterwards leaves every builtin
+    // registered and trusted.
+    #[test]
+    fn concurrent_loading_and_registration_preserve_semantics() {
+        let _serial = lock_builtin_displacement();
+        let expected = expected_builtin_keys();
+        assert_builtins_complete(&expected);
+        let (builtin, _, _) = builtin_entry("IMCOSH");
+        let epoch = semantic_epoch();
+        let barrier = Arc::new(std::sync::Barrier::new(4));
+        let mut workers = Vec::new();
+        for _ in 0..2 {
+            let barrier = Arc::clone(&barrier);
+            workers.push(std::thread::spawn(move || {
+                barrier.wait();
+                for _ in 0..200 {
+                    crate::builtins::load_builtins();
+                }
+            }));
+        }
+        {
+            let barrier = Arc::clone(&barrier);
+            workers.push(std::thread::spawn(move || {
+                barrier.wait();
+                for index in 0..50 {
+                    let name: &'static str = Box::leak(format!("F{index}").into_boxed_str());
+                    register_function(planning_fn(
+                        "__CONCURRENT_LOAD__",
+                        name,
+                        &[],
+                        FnCaps::empty(),
+                    ));
+                }
+            }));
+        }
+        {
+            let barrier = Arc::clone(&barrier);
+            let builtin = Arc::clone(&builtin);
+            workers.push(std::thread::spawn(move || {
+                barrier.wait();
+                for _ in 0..20 {
+                    register_function(Arc::clone(&builtin));
+                    std::thread::yield_now();
+                }
+            }));
+        }
+        for worker in workers {
+            worker.join().unwrap();
+        }
+        for index in 0..50 {
+            assert!(get("__CONCURRENT_LOAD__", &format!("F{index}")).is_some());
+        }
+        assert!(semantic_epoch() >= epoch + 70);
+        assert_builtins_complete(&expected);
+        assert!(builtin_entry("IMCOSH").2);
+    }
+
+    // FORM-000138: the mirror equals the guarded epoch while a guard is held,
+    // including while a writer is (possibly) waiting, and local-state log
+    // advancement never touches it. No `load_builtins` here.
+    #[test]
+    fn lock_free_epoch_matches_guard() {
+        let ns = "__LOCK_FREE_EPOCH__";
+        register_function(planning_fn(ns, "TARGET", &[], FnCaps::empty()));
+        let guard = semantic_epoch_read_guard();
+        assert_eq!(semantic_epoch_lock_free(), guard.epoch());
+
+        let mut local = RegistryState::default();
+        for index in 0..=1_024 {
+            advance_semantic_log(&mut local, [(String::new(), format!("LOCAL_{index}"))]);
+        }
+        assert_eq!(semantic_epoch_lock_free(), guard.epoch());
+
+        let (started_tx, started_rx) = std::sync::mpsc::sync_channel(0);
+        let writer = std::thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            register_function(planning_fn(ns, "TARGET", &[], FnCaps::empty()));
+        });
+        started_rx.recv().unwrap();
+        std::thread::yield_now();
+        assert_eq!(semantic_epoch_lock_free(), guard.epoch());
+        let guarded = guard.epoch();
+        drop(guard);
+        writer.join().unwrap();
+        let mirrored = semantic_epoch_lock_free();
+        assert!(mirrored > guarded);
+        assert!(mirrored <= semantic_epoch());
+    }
+
+    // FORM-000138: the mirror never decreases under concurrent registration
+    // and concurrent local-state log advancement.
+    #[test]
+    fn lock_free_epoch_never_decreases() {
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let observer = {
+            let stop = Arc::clone(&stop);
+            std::thread::spawn(move || {
+                let mut last = semantic_epoch_lock_free();
+                let mut samples = 0u64;
+                while !stop.load(Ordering::Acquire) || samples < 1_000 {
+                    let current = semantic_epoch_lock_free();
+                    assert!(
+                        current >= last,
+                        "mirror moved backward: {last} -> {current}"
+                    );
+                    last = current;
+                    samples += 1;
+                }
+                last
+            })
+        };
+        let local = std::thread::spawn(|| {
+            let mut state = RegistryState::default();
+            for index in 0..5_000 {
+                advance_semantic_log(&mut state, [(String::new(), format!("LOCAL_{index}"))]);
+            }
+        });
+        let before = semantic_epoch_lock_free();
+        for index in 0..200 {
+            let name: &'static str = Box::leak(format!("M{index}").into_boxed_str());
+            register_function(planning_fn(
+                "__MIRROR_MONOTONIC__",
+                name,
+                &[],
+                FnCaps::empty(),
+            ));
+        }
+        local.join().unwrap();
+        stop.store(true, Ordering::Release);
+        let last = observer.join().unwrap();
+        assert!(semantic_epoch_lock_free() >= before + 200);
+        assert!(semantic_epoch_lock_free() >= last);
     }
 
     #[test]
@@ -1580,13 +2178,13 @@ mod tests {
         .unwrap();
         let ast =
             formualizer_parse::parser::parse("=__PLAN_OUTER__(_xlfn.__PLAN_INNER__(A1))").unwrap();
-        let frozen = crate::formula_plane::template_canonical::canonicalize_template_with_provider(
+        let frozen = crate::engine::template::canonical::canonicalize_template_with_provider(
             &ast,
             2,
             2,
             Some(&snapshot),
         );
-        let global = crate::formula_plane::template_canonical::canonicalize_template_with_provider(
+        let global = crate::engine::template::canonical::canonicalize_template_with_provider(
             &ast,
             2,
             2,
@@ -1758,7 +2356,7 @@ mod tests {
         let mut state = RegistryState::default();
         let before = state.semantic_epoch;
         for index in 0..=1_024 {
-            publish_semantic_change(&mut state, [(String::new(), format!("UNRELATED_{index}"))]);
+            advance_semantic_log(&mut state, [(String::new(), format!("UNRELATED_{index}"))]);
         }
 
         assert!(semantic_changes_affect_requests_in_state(

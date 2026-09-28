@@ -279,3 +279,84 @@ fn repeated_edit_recalc_overlay_observability_probe() {
         println!("{}", serde_json::to_string(&row).unwrap());
     }
 }
+
+/// A long session of scattered single-cell recalcs into a column that first
+/// eval wrote as fragments: per-write work must not grow with the fragment
+/// or with the session. Point writes shadow the covering fragment instead of
+/// splitting (copying) it, small writes do not add fragments, shadowed points
+/// fold back in at 1/8 of the coverage, and edited value cells do not stay in
+/// the dirty set.
+#[test]
+fn scattered_point_recalcs_keep_overlay_and_dirty_set_bounded() {
+    let rows = 4096u32;
+    let mut cfg = arrow_eval_config();
+    cfg.enable_parallel = false;
+    let mut engine = Engine::new(TestWorkbook::new(), cfg);
+    {
+        let mut ab = engine.begin_bulk_ingest_arrow();
+        ab.add_sheet("Sheet1", 2, 1024);
+        for r in 0..rows {
+            ab.append_row(
+                "Sheet1",
+                &[LiteralValue::Number(r as f64), LiteralValue::Empty],
+            )
+            .unwrap();
+        }
+        ab.finish().unwrap();
+    }
+    for r in 1..=rows {
+        engine
+            .set_cell_formula("Sheet1", r, 2, parse(format!("=A{r}*2")).unwrap())
+            .unwrap();
+    }
+    engine.evaluate_all().unwrap();
+
+    let mut expected: Vec<f64> = (0..rows).map(|r| r as f64 * 2.0).collect();
+    let mut state: u64 = 0x9e37_79b9_7f4a_7c15;
+    for round in 0..600u32 {
+        for _ in 0..(1 + round % 3) {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            let row0 = (state % rows as u64) as u32;
+            let v = round as f64 + 0.25;
+            engine
+                .set_cell_value("Sheet1", row0 + 1, 1, LiteralValue::Number(v))
+                .unwrap();
+            expected[row0 as usize] = v * 2.0;
+        }
+        engine.evaluate_all().unwrap();
+        assert_eq!(
+            engine.baseline_stats().dirty_vertex_count,
+            0,
+            "round {round}: edited value cells must leave the dirty set"
+        );
+        let sheet = engine.sheet_store().sheet("Sheet1").unwrap();
+        for chunk in &sheet.columns[1].chunks {
+            let overlay = &chunk.computed_overlay;
+            let stats = overlay.debug_stats();
+            assert!(overlay.debug_is_normalized(), "round {round}");
+            assert_eq!(stats.covered_len, 1024, "round {round}");
+            assert!(
+                stats.dense_fragments + stats.run_fragments + stats.sparse_fragments <= 2,
+                "round {round}: small writes must not add fragments: {stats:?}"
+            );
+            assert!(
+                stats.points <= 1024 / 8,
+                "round {round}: shadowed points fold at 1/8 of coverage: {stats:?}"
+            );
+        }
+    }
+    assert_eq!(
+        engine.overlay_memory_usage(),
+        engine.debug_recompute_computed_overlay_bytes()
+    );
+    for r in 0..rows {
+        assert_eq!(
+            engine.get_cell_value("Sheet1", r + 1, 2),
+            Some(LiteralValue::Number(expected[r as usize])),
+            "row {}",
+            r + 1
+        );
+    }
+}
