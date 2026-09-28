@@ -711,13 +711,9 @@ impl<'a> Interpreter<'a> {
             "^" => self
                 .numeric_binary(left, right, b'^')
                 .map(crate::traits::CalcValue::Scalar),
-            "&" => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(
-                format!(
-                    "{}{}",
-                    crate::coercion::to_text_invariant(&left),
-                    crate::coercion::to_text_invariant(&right)
-                ),
-            ))),
+            "&" => self
+                .concat_values(left, right)
+                .map(crate::traits::CalcValue::Scalar),
             _ => {
                 Err(ExcelError::new(ExcelErrorKind::NImpl)
                     .with_message(format!("Binary op '{op}'")))
@@ -1351,13 +1347,9 @@ impl<'a> Interpreter<'a> {
             "^" => self
                 .numeric_binary(left, right, b'^')
                 .map(crate::traits::CalcValue::Scalar),
-            "&" => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(
-                format!(
-                    "{}{}",
-                    crate::coercion::to_text_invariant(&left),
-                    crate::coercion::to_text_invariant(&right)
-                ),
-            ))),
+            "&" => self
+                .concat_values(left, right)
+                .map(crate::traits::CalcValue::Scalar),
             ":" => {
                 let left_ref = self.evaluate_ast_as_reference(left_node)?;
                 let right_ref = self.evaluate_ast_as_reference(right_node)?;
@@ -1473,6 +1465,37 @@ impl<'a> Interpreter<'a> {
                 (Err(e), _) | (_, Err(e)) => Ok(LiteralValue::Error(e)),
             }
         })
+    }
+
+    /// The `&` operator. Like the arithmetic operators it works element by
+    /// element over arrays and ranges, and an error operand is the result (the
+    /// left one when both are errors) instead of being spelled into the text.
+    fn concat_values(
+        &self,
+        left: LiteralValue,
+        right: LiteralValue,
+    ) -> Result<LiteralValue, ExcelError> {
+        fn concat_scalar(
+            left: LiteralValue,
+            right: LiteralValue,
+        ) -> Result<LiteralValue, ExcelError> {
+            Ok(match (left, right) {
+                (LiteralValue::Error(error), _) | (_, LiteralValue::Error(error)) => {
+                    LiteralValue::Error(error)
+                }
+                (left, right) => LiteralValue::Text(format!(
+                    "{}{}",
+                    crate::coercion::to_text_invariant(&left),
+                    crate::coercion::to_text_invariant(&right)
+                )),
+            })
+        }
+        // Scalars (every member of a lifted family) skip the broadcast.
+        if matches!(left, LiteralValue::Array(_)) || matches!(right, LiteralValue::Array(_)) {
+            self.broadcast_apply(left, right, concat_scalar)
+        } else {
+            concat_scalar(left, right)
+        }
     }
 
     fn map_array<F>(&self, arr: Vec<Vec<LiteralValue>>, f: F) -> Result<LiteralValue, ExcelError>

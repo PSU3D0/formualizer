@@ -117,6 +117,7 @@ mod chain_units;
 mod compressed_range_scheduler;
 mod computed_array_aggregates;
 mod computed_flush;
+mod concat_operator_errors;
 mod concat_textjoin;
 mod config_defaults;
 mod context_default_noops;
