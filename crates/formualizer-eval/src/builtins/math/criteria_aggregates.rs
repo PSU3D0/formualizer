@@ -174,8 +174,12 @@ fn range_or_scalar<'a, 'b>(
 ) -> Result<RangeOrScalar<'b>, ExcelError> {
     Ok(match resolve_aggregate_argument(arg, ctx)? {
         AggregateArgument::Range(view) => RangeOrScalar::Range(view),
+        // An error value where a range belongs is the result, as in Excel: a
+        // `#REF!` left by a deleted column must not read as a range that
+        // matches nothing.
+        AggregateArgument::Scalar(LiteralValue::Error(error))
+        | AggregateArgument::ReferenceError(error) => RangeOrScalar::ReferenceError(error),
         AggregateArgument::Scalar(value) => RangeOrScalar::Scalar(value),
-        AggregateArgument::ReferenceError(error) => RangeOrScalar::ReferenceError(error),
     })
 }
 
@@ -255,10 +259,11 @@ fn eval_if_family<'a, 'b>(
             logical_count_cells = logical_cells;
             match argument {
                 AggregateArgument::Range(view) => (Some(view), None),
-                AggregateArgument::Scalar(value) => (None, Some(value)),
-                AggregateArgument::ReferenceError(error) => {
+                AggregateArgument::Scalar(LiteralValue::Error(error))
+                | AggregateArgument::ReferenceError(error) => {
                     return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(error)));
                 }
+                AggregateArgument::Scalar(value) => (None, Some(value)),
             }
         } else {
             resolve_range_or_scalar!(&args[0])
