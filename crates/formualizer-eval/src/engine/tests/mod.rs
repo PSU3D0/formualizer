@@ -224,4 +224,5 @@ mod int_symbol_structural_probe;
 mod m3_structural_cost_probe;
 mod shape_memo;
 mod temporal_lookup_semantics;
+mod xlookup_declared_length;
 mod xlookup_excel_parity;
