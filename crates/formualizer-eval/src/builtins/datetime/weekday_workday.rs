@@ -100,6 +100,9 @@ pub struct WeekdayFn;
 /// [formualizer-docgen:schema:end]
 impl Function for WeekdayFn {
     func_caps!(PURE);
+    fn family_kernel(&self) -> Option<crate::function::FamilyKernel> {
+        Some(crate::function::FamilyKernel::Weekday)
+    }
     fn name(&self) -> &'static str {
         "WEEKDAY"
     }
@@ -137,36 +140,47 @@ impl Function for WeekdayFn {
         } else {
             1
         };
-
-        // Compute weekday directly from serial number (not chrono) to correctly
-        // handle Excel's phantom Feb 29: 0=Sat, 1=Sun, 2=Mon, ..., 6=Fri
-        let d = weekday_index_from_serial(system, serial_int);
-
-        // Map return_type to the d-value of its starting day and whether 0-based
-        let (start_d, zero_based) = match return_type {
-            1 | 17 => (1i64, false), // Sun=1..Sat=7
-            2 | 11 => (2, false),    // Mon=1..Sun=7
-            3 => (2, true),          // Mon=0..Sun=6
-            12 => (3, false),        // Tue=1..Mon=7
-            13 => (4, false),        // Wed=1..Tue=7
-            14 => (5, false),        // Thu=1..Wed=7
-            15 => (6, false),        // Fri=1..Thu=7
-            16 => (0, false),        // Sat=1..Fri=7
-            _ => {
-                return Ok(CalcValue::Scalar(
-                    LiteralValue::Error(ExcelError::new_num()),
-                ));
-            }
-        };
-
-        let result = if zero_based {
-            (d - start_d + 7) % 7
-        } else {
-            (d - start_d + 7) % 7 + 1
-        };
-
-        Ok(CalcValue::Scalar(LiteralValue::Int(result)))
+        Ok(CalcValue::Scalar(weekday_of_serial(
+            system,
+            serial_int,
+            return_type,
+        )))
     }
+}
+
+/// `WEEKDAY` of a non-negative whole serial with `return_type` (the
+/// builtin's core; the family lift calls it on clean operands).
+pub(crate) fn weekday_of_serial(
+    system: DateSystem,
+    serial_int: i64,
+    return_type: i64,
+) -> LiteralValue {
+    // Compute weekday directly from serial number (not chrono) to correctly
+    // handle Excel's phantom Feb 29: 0=Sat, 1=Sun, 2=Mon, ..., 6=Fri
+    let d = weekday_index_from_serial(system, serial_int);
+
+    // Map return_type to the d-value of its starting day and whether 0-based
+    let (start_d, zero_based) = match return_type {
+        1 | 17 => (1i64, false), // Sun=1..Sat=7
+        2 | 11 => (2, false),    // Mon=1..Sun=7
+        3 => (2, true),          // Mon=0..Sun=6
+        12 => (3, false),        // Tue=1..Mon=7
+        13 => (4, false),        // Wed=1..Tue=7
+        14 => (5, false),        // Thu=1..Wed=7
+        15 => (6, false),        // Fri=1..Thu=7
+        16 => (0, false),        // Sat=1..Fri=7
+        _ => {
+            return LiteralValue::Error(ExcelError::new_num());
+        }
+    };
+
+    let result = if zero_based {
+        (d - start_d + 7) % 7
+    } else {
+        (d - start_d + 7) % 7 + 1
+    };
+
+    LiteralValue::Int(result)
 }
 
 /// Returns the week number of the year for a date serial.

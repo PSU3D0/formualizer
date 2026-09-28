@@ -330,6 +330,17 @@ impl LiftProgram {
                     K::Min | K::Max | K::And | K::Or => !args.is_empty() && args.len() <= 30,
                     // `SUM` of scalar operands (ranges do not compile).
                     K::Sum => !args.is_empty() && args.len() <= 30,
+                    K::IsNumber
+                    | K::IsText
+                    | K::IsLogical
+                    | K::IsBlank
+                    | K::IsError
+                    | K::IsErr
+                    | K::IsNa
+                    | K::Year
+                    | K::Month
+                    | K::Day => args.len() == 1,
+                    K::Weekday => (1..=2).contains(&args.len()),
                     _ => false,
                 };
                 if !arity_ok {
@@ -513,7 +524,7 @@ where
                 LiftNode::Builtin { kernel, args } => {
                     let args: smallvec::SmallVec<[Column; 4]> =
                         args.iter().map(|&k| take(&mut columns, k)).collect();
-                    Column::Lane(Lane::builtin(*kernel, &args, n))
+                    Column::Lane(Lane::builtin(*kernel, &args, n, self.config.date_system))
                 }
                 // Once per run, exactly as the walk evaluates it for the
                 // first member (every member sees the same cells).
@@ -1193,10 +1204,23 @@ impl Lane {
     /// builtin reads booleans); the core is the builtin's own arithmetic
     /// on those values (see each arm). Any other member is left to the
     /// per-member walk, so its value, error and format are the walk's.
-    fn builtin(kernel: crate::function::FamilyKernel, args: &[Column], n: usize) -> Lane {
+    fn builtin(
+        kernel: crate::function::FamilyKernel,
+        args: &[Column],
+        n: usize,
+        date_system: crate::engine::DateSystem,
+    ) -> Lane {
         use crate::function::FamilyKernel as K;
         let kind = match kernel {
-            K::And | K::Or => LaneKind::Bool,
+            K::And
+            | K::Or
+            | K::IsNumber
+            | K::IsText
+            | K::IsLogical
+            | K::IsBlank
+            | K::IsError
+            | K::IsErr
+            | K::IsNa => LaneKind::Bool,
             _ => LaneKind::Num,
         };
         let mut out = Lane::with_len(kind, n);
@@ -1314,6 +1338,71 @@ impl Lane {
                 // `IFERROR(value, fallback)`: a clean value is the result
                 // (the fallback is not evaluated); errors take the walk.
                 K::IfError => num(&elems[0]),
+                // Type tests of a clean operand (a plain number or a plain
+                // boolean): the builtin's verdict on that value.
+                K::IsNumber
+                | K::IsText
+                | K::IsLogical
+                | K::IsBlank
+                | K::IsError
+                | K::IsErr
+                | K::IsNa => {
+                    let verdict = match (&elems[0], kernel) {
+                        (Elem::Num(_), K::IsNumber) | (Elem::Bool(_), K::IsLogical) => Some(true),
+                        (Elem::Num(_) | Elem::Bool(_), _) => Some(false),
+                        _ => None,
+                    };
+                    match verdict {
+                        Some(v) => {
+                            out.vals[i] = if v { 1.0 } else { 0.0 };
+                            continue;
+                        }
+                        None => None,
+                    }
+                }
+                // `YEAR`/`MONTH`/`DAY` of a clean number: the serial's
+                // date in the workbook's system, an integer result (boxed:
+                // the builtin returns `Int`); a serial off the calendar is
+                // left to the walk.
+                K::Year | K::Month | K::Day => {
+                    if let Some(x) = num(&elems[0])
+                        && let Ok(date) = formualizer_common::try_serial_to_date_for(date_system, x)
+                    {
+                        use chrono::Datelike;
+                        let part = match kernel {
+                            K::Year => i64::from(date.year()),
+                            K::Month => i64::from(date.month()),
+                            _ => i64::from(date.day()),
+                        };
+                        out.boxed
+                            .push((i as u32, Ok((LiteralValue::Int(part), None))));
+                        continue;
+                    }
+                    None
+                }
+                // `WEEKDAY(serial[, type])` of clean numbers: the type
+                // truncates, a negative whole serial is #NUM!.
+                K::Weekday => {
+                    let return_type = match elems.get(1) {
+                        None => Some(1),
+                        Some(e) => num(e).map(|t| t.trunc() as i64),
+                    };
+                    if let (Some(x), Some(t)) = (num(&elems[0]), return_type) {
+                        let whole = x.trunc() as i64;
+                        let value = if whole < 0 {
+                            LiteralValue::Error(ExcelError::new_num())
+                        } else {
+                            crate::builtins::datetime::weekday_workday::weekday_of_serial(
+                                date_system,
+                                whole,
+                                t,
+                            )
+                        };
+                        out.boxed.push((i as u32, Ok((value, None))));
+                        continue;
+                    }
+                    None
+                }
                 _ => None,
             };
             match value {

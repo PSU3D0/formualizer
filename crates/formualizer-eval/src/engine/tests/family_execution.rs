@@ -669,8 +669,28 @@ fn family_lift_builtins_match_per_cell() {
     check_typed(formulas);
 }
 
+/// Type tests and date parts on typed lanes (Program 3): a clean operand's
+/// result without the walk; anything else (text, dates with a format,
+/// serials off the calendar, errors) is walked.
+#[test]
+fn family_lift_type_tests_and_date_parts_match_per_cell() {
+    let formulas: Vec<(u32, String)> = vec![
+        (4, "=ISNUMBER(A{r})".into()),
+        (5, "=IF(ISNA(B{r}),0,1)+ISERROR(A{r}/B{r})".into()),
+        (6, "=AND(ISERR(C{r}),ISTEXT(A{r}))".into()),
+        (7, "=OR(ISLOGICAL(B{r}),ISBLANK(C{r}))".into()),
+        (8, "=MONTH(A{r}*100+40000)".into()),
+        (9, "=YEAR(B{r}*300)+DAY(C{r}*7)".into()),
+        (10, "=MONTH(A{r})".into()),
+        (11, "=WEEKDAY(A{r}*11+30000)".into()),
+        (12, "=WEEKDAY(B{r}*13,2)+WEEKDAY(C{r},C{r})".into()),
+        (13, "=YEAR(A{r})*12+MONTH(A{r})".into()),
+    ];
+    check_typed_with_names(formulas, &[], true);
+}
+
 fn check_typed(formulas: Vec<(u32, String)>) {
-    check_typed_with_names(formulas, &[]);
+    check_typed_with_names(formulas, &[], false);
 }
 
 /// Defined names (Program 3): a name with one value for the run (a cell,
@@ -695,10 +715,11 @@ fn family_lift_defined_names_match_per_cell() {
             ("Block", "=Sheet1!$A$1:$C$10"),
             ("Column", "=Sheet1!$C$1:$C$100"),
         ],
+        true,
     );
 }
 
-fn check_typed_with_names(formulas: Vec<(u32, String)>, names: &[(&str, &str)]) {
+fn check_typed_with_names(formulas: Vec<(u32, String)>, names: &[(&str, &str)], all_lifted: bool) {
     use crate::engine::named_range::{NameScope, NamedDefinition};
     use crate::reference::{CellRef, Coord, RangeRef};
     use chrono::NaiveDate;
@@ -821,11 +842,12 @@ fn check_typed_with_names(formulas: Vec<(u32, String)>, names: &[(&str, &str)]) 
         let lift = run_typed(base);
         assert_eq!(oracle.1, 0);
         assert!(lift.1 > 0, "no run was lifted (parallel={parallel})");
-        if !names.is_empty() {
-            // Every formula's run was lifted at the first evaluation.
+        if all_lifted {
+            // Every formula's run was lifted at the first evaluation (but
+            // for single-member pieces the plan may split off).
             assert!(
-                lift.1 >= formulas.len() as u64 * u64::from(ROWS),
-                "a run with a defined name was not lifted: {}",
+                lift.1 * 100 >= formulas.len() as u64 * u64::from(ROWS) * 95,
+                "a formula's runs were not lifted: {}",
                 lift.1
             );
         }

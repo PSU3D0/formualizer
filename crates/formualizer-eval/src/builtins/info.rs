@@ -81,6 +81,9 @@ pub struct IsNumberFn;
 /// [formualizer-docgen:schema:end]
 impl Function for IsNumberFn {
     func_caps!(PURE);
+    fn family_kernel(&self) -> Option<crate::function::FamilyKernel> {
+        Some(crate::function::FamilyKernel::IsNumber)
+    }
     fn name(&self) -> &'static str {
         "ISNUMBER"
     }
@@ -163,6 +166,9 @@ pub struct IsTextFn;
 /// [formualizer-docgen:schema:end]
 impl Function for IsTextFn {
     func_caps!(PURE);
+    fn family_kernel(&self) -> Option<crate::function::FamilyKernel> {
+        Some(crate::function::FamilyKernel::IsText)
+    }
     fn name(&self) -> &'static str {
         "ISTEXT"
     }
@@ -236,6 +242,9 @@ pub struct IsLogicalFn;
 /// [formualizer-docgen:schema:end]
 impl Function for IsLogicalFn {
     func_caps!(PURE);
+    fn family_kernel(&self) -> Option<crate::function::FamilyKernel> {
+        Some(crate::function::FamilyKernel::IsLogical)
+    }
     fn name(&self) -> &'static str {
         "ISLOGICAL"
     }
@@ -309,6 +318,9 @@ pub struct IsBlankFn;
 /// [formualizer-docgen:schema:end]
 impl Function for IsBlankFn {
     func_caps!(PURE);
+    fn family_kernel(&self) -> Option<crate::function::FamilyKernel> {
+        Some(crate::function::FamilyKernel::IsBlank)
+    }
     fn name(&self) -> &'static str {
         "ISBLANK"
     }
@@ -382,6 +394,9 @@ pub struct IsErrorFn; // TRUE for any error (#N/A included)
 /// [formualizer-docgen:schema:end]
 impl Function for IsErrorFn {
     func_caps!(PURE);
+    fn family_kernel(&self) -> Option<crate::function::FamilyKernel> {
+        Some(crate::function::FamilyKernel::IsError)
+    }
     fn name(&self) -> &'static str {
         "ISERROR"
     }
@@ -455,6 +470,9 @@ pub struct IsErrFn; // TRUE for any error except #N/A
 /// [formualizer-docgen:schema:end]
 impl Function for IsErrFn {
     func_caps!(PURE);
+    fn family_kernel(&self) -> Option<crate::function::FamilyKernel> {
+        Some(crate::function::FamilyKernel::IsErr)
+    }
     fn name(&self) -> &'static str {
         "ISERR"
     }
@@ -532,6 +550,9 @@ pub struct IsNaFn; // TRUE only for #N/A
 /// [formualizer-docgen:schema:end]
 impl Function for IsNaFn {
     func_caps!(PURE);
+    fn family_kernel(&self) -> Option<crate::function::FamilyKernel> {
+        Some(crate::function::FamilyKernel::IsNa)
+    }
     fn name(&self) -> &'static str {
         "ISNA"
     }
