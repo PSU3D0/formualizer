@@ -15269,6 +15269,64 @@ where
             }
             return Ok(adapted.schedule);
         }
+        // A small request of grid formula cells without hints: per-cell
+        // arcs and longest-path levels (`planner::plan_small`).
+        if (2..=planner::SMALL_PLAN_MAX).contains(&candidates.len())
+            && vdeps.is_empty()
+            && candidates
+                .iter()
+                .all(|&v| self.graph.authority_host().observed(v).is_none())
+        {
+            let cells: Option<Vec<(u16, u32, u32)>> = candidates
+                .iter()
+                .map(|&v| self.graph.authority_cell_of_vertex(v))
+                .collect();
+            if let Some(small) = cells.as_deref().and_then(|c| planner::plan_small(store, c)) {
+                #[cfg(debug_assertions)]
+                {
+                    let mut cover = Cover::new();
+                    for c in cells.as_deref().unwrap_or_default() {
+                        cover.insert_rect(c.0, &Rect::new(c.1, c.2, c.1, c.2));
+                    }
+                    let general = planner::plan_with_hints(store, &cover, &[], None, None, None)
+                        .expect("general plan of a small request");
+                    let key = |c: &planner::OrderedCell| (c.sheet, c.row, c.col, c.id, c.owner);
+                    let mut a: Vec<_> = general.cells.iter().map(key).collect();
+                    let mut b: Vec<_> = small.iter().map(key).collect();
+                    a.sort_unstable();
+                    b.sort_unstable();
+                    assert_eq!(a, b, "small plan cells differ from the planner");
+                    assert!(
+                        general.cells.iter().all(|c| c.cycle.is_none()),
+                        "small plan of a cyclic request"
+                    );
+                }
+                let adapted = plan_schedule::schedule(
+                    &small,
+                    0,
+                    None,
+                    |cell| {
+                        self.graph
+                            .authority_vertex_of_formula(cell.id, (cell.sheet, cell.row, cell.col))
+                            .ok_or_else(|| failure("missing executor identity".to_owned()))
+                    },
+                    |_work| Ok(()),
+                )
+                .map_err(|error| match error {
+                    plan_schedule::ScheduleError::Runtime(error) => error,
+                    other => failure(format!("{other:?}")),
+                })?;
+                if let Some(ledger) = ledger {
+                    ledger
+                        .reserve_schedule_discovery(adapted.peak_heap_bytes)
+                        .map_err(crate::engine::ResourceLedgerError::into_excel_error)?;
+                    ledger
+                        .release_scratch(adapted.peak_heap_bytes)
+                        .map_err(crate::engine::ResourceLedgerError::into_excel_error)?;
+                }
+                return Ok(adapted.schedule);
+            }
+        }
         // Names are symbol-plane nodes (design §4.1): a name vertex plans as
         // the unit at its node, between its precedents and its readers.
         // Candidates become cells, sorted by (sheet, column, row) and
