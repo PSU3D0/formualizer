@@ -114,7 +114,7 @@ What you need to change:
 | `VertexEditor::set_cell_value(cell, v) -> VertexId` of the cell | `VertexId(0)` (value cells have no vertex). |
 | `OperationSummary { affected_vertices, created_placeholders }` of a value edit starting with the edited cell's vertex | the dirtied formulas only; `created_placeholders` is empty. |
 | Value-cell `VertexMoved` / `RemoveVertex` / `AddVertex` in change logs | none. |
-| `graph_vertex_count`, the sheet index and used extents counting referenced or edited value cells | formula cells and names only. |
+| `graph_vertex_count` and the sheet index counting referenced or edited value cells | formula cells and names only. The used extent still counts them (an extent record, not vertices). |
 | Evaluating a value cell's vertex (`evaluate_vertex`) | create an explicit vertex with `VertexEditor::add_vertex` first, or read the cell. |
 
 ## Performance and memory
