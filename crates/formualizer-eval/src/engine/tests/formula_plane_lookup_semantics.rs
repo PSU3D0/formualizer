@@ -1740,3 +1740,52 @@ fn approximate_and_wildcard_modes_do_not_hit_exact_cache() {
     assert_eq!(wildcard_report.hits, 0, "{wildcard_report:?}");
     assert_eq!(wildcard_report.builds, 0, "{wildcard_report:?}");
 }
+
+/// Program 3: parallel members of a lookup family that miss the index
+/// together build it once (the others wait for it), and read the same
+/// values as a sequential engine.
+#[test]
+fn parallel_lookup_family_builds_its_index_once() {
+    let build = |parallel: bool| {
+        let mut engine = engine_with_config(EvalConfig {
+            enable_parallel: parallel,
+            ..EvalConfig::default()
+        });
+        populate_numeric_table(&mut engine, "Sheet1", TABLE_ROWS);
+        for row in 1..=4000u32 {
+            number(
+                &mut engine,
+                "Sheet1",
+                row,
+                1,
+                f64::from(row % TABLE_ROWS + 1),
+            );
+            formula(
+                &mut engine,
+                "Sheet1",
+                row,
+                2,
+                &format!("=VLOOKUP(A{row}, $D$1:$E${TABLE_ROWS}, 2, FALSE)"),
+            );
+        }
+        engine
+    };
+    let mut par = build(true);
+    let mut seq = build(false);
+    par.evaluate_all().unwrap();
+    seq.evaluate_all().unwrap();
+    assert_eq!(par.lookup_index_flights_built_for_test(), 1);
+    // An edit to the table: one rebuild for the whole recalculation.
+    for e in [&mut par, &mut seq] {
+        number(e, "Sheet1", 7, 5, -1.5);
+        e.evaluate_all().unwrap();
+    }
+    assert_eq!(par.lookup_index_flights_built_for_test(), 2);
+    for row in 1..=4000u32 {
+        assert_eq!(
+            par.get_cell_value("Sheet1", row, 2),
+            seq.get_cell_value("Sheet1", row, 2),
+            "B{row}"
+        );
+    }
+}

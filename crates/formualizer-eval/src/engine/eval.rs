@@ -3587,6 +3587,13 @@ where
         self.virtual_dep_fallback_activations
     }
 
+    #[cfg(test)]
+    pub(crate) fn lookup_index_flights_built_for_test(&self) -> usize {
+        self.lookup_index_cache
+            .flights_built
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     pub(crate) fn last_lookup_index_cache_report(&self) -> LookupIndexCacheReport {
         self.lookup_index_cache.report()
     }
@@ -3671,26 +3678,32 @@ where
         if !self.lookup_index_cache.should_build(key) {
             return None;
         }
-        if self.lookup_index_cache.is_known_volatile(&key) {
-            self.lookup_index_cache.note_skipped_volatile();
-            return None;
-        }
-        if self.lookup_view_contains_volatile(view, sheet_id) {
-            self.lookup_index_cache.note_volatile_key(key);
-            self.lookup_index_cache.note_skipped_volatile();
-            return None;
-        }
-        match LookupIndex::build(view, axis, self.config.date_system).ok()? {
-            BuildOutcome::Built(index) => self.lookup_index_cache.insert_if_room(key, index),
-            BuildOutcome::ErrorInLookupAxis => {
-                self.lookup_index_cache.note_skipped_error();
-                None
+        // Parallel members of a lookup family miss together: one builds.
+        self.lookup_index_cache.single_flight(key, || {
+            if let Some(index) = self.lookup_index_cache.recheck(&key) {
+                return Some(index);
             }
-            BuildOutcome::Degenerate => {
-                self.lookup_index_cache.note_skipped_tiny();
-                None
+            if self.lookup_index_cache.is_known_volatile(&key) {
+                self.lookup_index_cache.note_skipped_volatile();
+                return None;
             }
-        }
+            if self.lookup_view_contains_volatile(view, sheet_id) {
+                self.lookup_index_cache.note_volatile_key(key);
+                self.lookup_index_cache.note_skipped_volatile();
+                return None;
+            }
+            match LookupIndex::build(view, axis, self.config.date_system).ok()? {
+                BuildOutcome::Built(index) => self.lookup_index_cache.insert_if_room(key, index),
+                BuildOutcome::ErrorInLookupAxis => {
+                    self.lookup_index_cache.note_skipped_error();
+                    None
+                }
+                BuildOutcome::Degenerate => {
+                    self.lookup_index_cache.note_skipped_tiny();
+                    None
+                }
+            }
+        })
     }
 
     fn reset_virtual_dep_telemetry_if_disabled(&mut self) {
