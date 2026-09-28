@@ -1686,15 +1686,21 @@
     },
     {
       "formula": "=Z.TEST({3,6,7,8,6,5,4,2,1,9}, 4)",
-      "result": 0.07933459630405937,
+      "result": 0.09057419685136377,
       "result_type": "float",
-      "description": "Z.TEST one-tailed p-value"
+      "description": "Z.TEST one-tailed p-value (sample standard deviation, as Excel)"
     },
     {
       "formula": "=Z.TEST({3,6,7,8,6,5,4,2,1,9}, 6)",
-      "result": 0.8756017728117506,
+      "result": 0.8630433891295299,
       "result_type": "float",
       "description": "Z.TEST with x close to mean"
+    },
+    {
+      "formula": "=Z.TEST({5}, 4)",
+      "result": "#DIV/0!",
+      "result_type": "error",
+      "description": "Z.TEST without sigma needs at least two values for the sample standard deviation"
     },
     {
       "formula": "=Z.TEST({3,6,7,8,6,5,4,2,1,9}, 4, 2.5)",
@@ -1704,7 +1710,7 @@
     },
     {
       "formula": "=ZTEST({3,6,7,8,6,5,4,2,1,9}, 4)",
-      "result": 0.07933459630405937,
+      "result": 0.09057419685136377,
       "result_type": "float",
       "description": "ZTEST alias for Z.TEST"
     },

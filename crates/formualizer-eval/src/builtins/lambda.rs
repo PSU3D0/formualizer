@@ -24,20 +24,29 @@ fn local_name_from_ast(node: &ASTNode) -> Result<String, ExcelError> {
     }
 }
 
-fn binding_from_calc_value(cv: CalcValue<'_>) -> LocalBinding {
+/// Build the local binding for `cv`, keeping `reference` alongside the value
+/// when the bound expression was a spreadsheet reference.
+///
+/// The value carried is byte-for-byte what it was before the reference was
+/// preserved, so only the by-ref argument path sees any difference.
+fn binding_from_calc_value(cv: CalcValue<'_>, reference: Option<ReferenceType>) -> LocalBinding {
+    let with_reference = |value: LiteralValue| match reference {
+        Some(reference) => LocalBinding::ValueWithReference { value, reference },
+        None => LocalBinding::Value(value),
+    };
     match cv {
-        CalcValue::Scalar(v) | CalcValue::AnnotatedScalar(v, _) => LocalBinding::Value(v),
+        CalcValue::Scalar(v) | CalcValue::AnnotatedScalar(v, _) => with_reference(v),
         CalcValue::Range(rv) => {
             let (rows, cols) = rv.dims();
             if rows == 1 && cols == 1 {
-                LocalBinding::Value(rv.get_cell(0, 0))
+                with_reference(rv.get_cell(0, 0))
             } else {
                 let mut data = Vec::with_capacity(rows);
                 let _ = rv.for_each_row(&mut |row| {
                     data.push(row.to_vec());
                     Ok(())
                 });
-                LocalBinding::Value(LiteralValue::Array(data))
+                with_reference(LiteralValue::Array(data))
             }
         }
         CalcValue::Callable(c) => LocalBinding::Callable(c),
@@ -164,8 +173,9 @@ impl Function for LetFn {
                 Err(e) => return Ok(CalcValue::Scalar(LiteralValue::Error(e))),
             };
 
+            let bound_reference = args[pair_idx + 1].bound_reference_in_env(&env);
             let bound = args[pair_idx + 1].value_with_env(env.clone())?;
-            env = env.with_binding(&name, binding_from_calc_value(bound));
+            env = env.with_binding(&name, binding_from_calc_value(bound, bound_reference));
         }
 
         args[args.len() - 1].value_with_env(env)
@@ -189,6 +199,15 @@ impl CustomCallable for LambdaClosure {
         interp: &crate::interpreter::Interpreter<'ctx>,
         args: &[LiteralValue],
     ) -> Result<CalcValue<'ctx>, ExcelError> {
+        self.invoke_with_references(interp, args, &[])
+    }
+
+    fn invoke_with_references<'ctx>(
+        &self,
+        interp: &crate::interpreter::Interpreter<'ctx>,
+        args: &[LiteralValue],
+        references: &[Option<ReferenceType>],
+    ) -> Result<CalcValue<'ctx>, ExcelError> {
         if args.len() != self.arity() {
             return Ok(CalcValue::Scalar(LiteralValue::Error(value_error(
                 format!(
@@ -200,8 +219,18 @@ impl CustomCallable for LambdaClosure {
         }
 
         let mut env = self.captured_env.clone();
-        for (name, value) in self.params.iter().zip(args.iter()) {
-            env = env.with_binding(name, LocalBinding::Value(value.clone()));
+        for (idx, (name, value)) in self.params.iter().zip(args.iter()).enumerate() {
+            // A parameter written as a range keeps that range beside the value
+            // the caller already materialized, so a by-ref slot in the body
+            // sees the range rather than the lifted array.
+            let binding = match references.get(idx).and_then(Option::as_ref) {
+                Some(reference) => LocalBinding::ValueWithReference {
+                    value: value.clone(),
+                    reference: reference.clone(),
+                },
+                None => LocalBinding::Value(value.clone()),
+            };
+            env = env.with_binding(name, binding);
         }
 
         let scoped = interp.with_local_env(env);

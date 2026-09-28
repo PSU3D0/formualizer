@@ -6,6 +6,7 @@ use serde::Serialize;
 use std::ptr;
 use std::slice;
 
+pub mod guard;
 pub mod parse;
 pub mod workbook;
 
@@ -83,26 +84,28 @@ impl fz_status {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn fz_buffer_free(buffer: fz_buffer) {
-    if !buffer.data.is_null() {
-        unsafe {
-            let _ = Vec::from_raw_parts(buffer.data, buffer.len, buffer.cap);
+    guard::catch_unwind_silent(|| {
+        if !buffer.data.is_null() {
+            unsafe {
+                let _ = Vec::from_raw_parts(buffer.data, buffer.len, buffer.cap);
+            }
         }
-    }
+    });
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn fz_common_abi_version() -> c_int {
-    1
+    std::panic::catch_unwind(|| 1).unwrap_or(0)
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn fz_parse_abi_version() -> c_int {
-    1
+    std::panic::catch_unwind(|| 1).unwrap_or(0)
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn fz_workbook_abi_version() -> c_int {
-    1
+    std::panic::catch_unwind(|| 1).unwrap_or(0)
 }
 
 #[allow(non_camel_case_types)]
@@ -205,58 +208,31 @@ pub unsafe extern "C" fn fz_parse_tokenize(
     use formualizer_parse::tokenizer::Tokenizer;
     use std::ffi::CStr;
 
-    if formula.is_null() {
-        if !status.is_null() {
-            unsafe {
-                *status = fz_status::error("formula is null".to_string());
-            }
+    guard::catch_ffi(status, fz_buffer::empty(), || {
+        if formula.is_null() {
+            return Err("formula is null".to_string());
         }
-        return fz_buffer::empty();
-    }
-
-    let input = unsafe { CStr::from_ptr(formula).to_string_lossy() };
-
-    let result: Result<Vec<u8>, String> = (|| {
+        let input = unsafe { CStr::from_ptr(formula).to_string_lossy() };
         let dialect = FormulaDialect::from(options.dialect);
         let tokens = Tokenizer::new_with_dialect(&input, dialect)
             .map_err(|e| e.to_string())?
             .items;
-
         let cffi_tokens: Vec<CffiToken> = tokens
             .iter()
             .map(|t| CffiToken::from_core(t, options.include_spans))
             .collect();
-
-        match format {
+        let bytes = match format {
             fz_encoding_format::FZ_ENCODING_JSON => {
-                serde_json::to_vec(&cffi_tokens).map_err(|e| e.to_string())
+                serde_json::to_vec(&cffi_tokens).map_err(|e| e.to_string())?
             }
             fz_encoding_format::FZ_ENCODING_CBOR => {
                 let mut buf = Vec::new();
                 ciborium::into_writer(&cffi_tokens, &mut buf).map_err(|e| e.to_string())?;
-                Ok(buf)
+                buf
             }
-        }
-    })();
-
-    match result {
-        Ok(v) => {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::ok();
-                }
-            }
-            fz_buffer::from_vec(v)
-        }
-        Err(e) => {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::error(e);
-                }
-            }
-            fz_buffer::empty()
-        }
-    }
+        };
+        Ok(fz_buffer::from_vec(bytes))
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -271,53 +247,26 @@ pub unsafe extern "C" fn fz_parse_ast(
     use formualizer_parse::parser::parse_with_dialect;
     use std::ffi::CStr;
 
-    if formula.is_null() {
-        if !status.is_null() {
-            unsafe {
-                *status = fz_status::error("formula is null".to_string());
-            }
+    guard::catch_ffi(status, fz_buffer::empty(), || {
+        if formula.is_null() {
+            return Err("formula is null".to_string());
         }
-        return fz_buffer::empty();
-    }
-
-    let input = unsafe { CStr::from_ptr(formula).to_string_lossy() };
-
-    let result: Result<Vec<u8>, String> = (|| {
+        let input = unsafe { CStr::from_ptr(formula).to_string_lossy() };
         let dialect = FormulaDialect::from(options.dialect);
         let ast = parse_with_dialect(&input, dialect).map_err(|e| e.to_string())?;
-
         let cffi_ast = CffiASTNode::from_core(&ast, options.include_spans);
-
-        match format {
+        let bytes = match format {
             fz_encoding_format::FZ_ENCODING_JSON => {
-                serde_json::to_vec(&cffi_ast).map_err(|e| e.to_string())
+                serde_json::to_vec(&cffi_ast).map_err(|e| e.to_string())?
             }
             fz_encoding_format::FZ_ENCODING_CBOR => {
                 let mut buf = Vec::new();
                 ciborium::into_writer(&cffi_ast, &mut buf).map_err(|e| e.to_string())?;
-                Ok(buf)
+                buf
             }
-        }
-    })();
-
-    match result {
-        Ok(v) => {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::ok();
-                }
-            }
-            fz_buffer::from_vec(v)
-        }
-        Err(e) => {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::error(e);
-                }
-            }
-            fz_buffer::empty()
-        }
-    }
+        };
+        Ok(fz_buffer::from_vec(bytes))
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -329,37 +278,14 @@ pub unsafe extern "C" fn fz_parse_canonical_formula(
     use formualizer_parse::FormulaDialect;
     use std::ffi::CStr;
 
-    if formula.is_null() {
-        if !status.is_null() {
-            unsafe {
-                *status = fz_status::error("formula is null".to_string());
-            }
+    guard::catch_ffi(status, fz_buffer::empty(), || {
+        if formula.is_null() {
+            return Err("formula is null".to_string());
         }
-        return fz_buffer::empty();
-    }
-
-    let input = unsafe { CStr::from_ptr(formula).to_string_lossy() };
-
-    let result = cffi_pretty_parse_render(&input, FormulaDialect::from(dialect));
-
-    match result {
-        Ok(v) => {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::ok();
-                }
-            }
-            fz_buffer::from_vec(v.into_bytes())
-        }
-        Err(e) => {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::error(e);
-                }
-            }
-            fz_buffer::empty()
-        }
-    }
+        let input = unsafe { CStr::from_ptr(formula).to_string_lossy() };
+        let rendered = cffi_pretty_parse_render(&input, FormulaDialect::from(dialect))?;
+        Ok(fz_buffer::from_vec(rendered.into_bytes()))
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -371,67 +297,38 @@ pub unsafe extern "C" fn fz_common_parse_range_a1(
     use formualizer_common::{RangeAddress, coord};
     use std::ffi::CStr;
 
-    if range_a1.is_null() {
-        if !status.is_null() {
-            unsafe {
-                *status = fz_status::error("range_a1 is null".to_string());
-            }
+    guard::catch_ffi(status, fz_buffer::empty(), || {
+        if range_a1.is_null() {
+            return Err("range_a1 is null".to_string());
         }
-        return fz_buffer::empty();
-    }
-
-    let input = unsafe { CStr::from_ptr(range_a1).to_string_lossy() };
-
-    let result: Result<Vec<u8>, String> = (|| {
+        let input = unsafe { CStr::from_ptr(range_a1).to_string_lossy() };
         // Simple A1 range parser: [Sheet!]A1[:B2]
         let (sheet, rest) = if let Some(pos) = input.find('!') {
             (&input[..pos], &input[pos + 1..])
         } else {
             ("", input.as_ref())
         };
-
         let (start_str, end_str) = if let Some(pos) = rest.find(':') {
             (&rest[..pos], &rest[pos + 1..])
         } else {
             (rest, rest)
         };
-
         let (sr, sc, _, _) = coord::parse_a1_1based(start_str).map_err(|e| e.to_string())?;
         let (er, ec, _, _) = coord::parse_a1_1based(end_str).map_err(|e| e.to_string())?;
-
         let addr = RangeAddress::new(sheet, sr, sc, er, ec).map_err(|e| e.to_string())?;
         crate::validate_cffi_range(&addr)?;
-
-        match format {
+        let bytes = match format {
             fz_encoding_format::FZ_ENCODING_JSON => {
-                serde_json::to_vec(&addr).map_err(|e| e.to_string())
+                serde_json::to_vec(&addr).map_err(|e| e.to_string())?
             }
             fz_encoding_format::FZ_ENCODING_CBOR => {
                 let mut buf = Vec::new();
                 ciborium::into_writer(&addr, &mut buf).map_err(|e| e.to_string())?;
-                Ok(buf)
+                buf
             }
-        }
-    })();
-
-    match result {
-        Ok(v) => {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::ok();
-                }
-            }
-            fz_buffer::from_vec(v)
-        }
-        Err(e) => {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::error(e);
-                }
-            }
-            fz_buffer::empty()
-        }
-    }
+        };
+        Ok(fz_buffer::from_vec(bytes))
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -443,16 +340,10 @@ pub unsafe extern "C" fn fz_common_format_range_a1(
 ) -> fz_buffer {
     use formualizer_common::{RangeAddress, coord};
 
-    if range_payload.is_null() {
-        if !status.is_null() {
-            unsafe {
-                *status = fz_status::error("range_payload is null".to_string());
-            }
+    guard::catch_ffi(status, fz_buffer::empty(), || {
+        if range_payload.is_null() {
+            return Err("range_payload is null".to_string());
         }
-        return fz_buffer::empty();
-    }
-
-    let result: Result<Vec<u8>, String> = (|| {
         let payload = unsafe { slice::from_raw_parts(range_payload, len) };
         let addr: RangeAddress = match format {
             fz_encoding_format::FZ_ENCODING_JSON => {
@@ -463,11 +354,9 @@ pub unsafe extern "C" fn fz_common_format_range_a1(
             }
         };
         crate::validate_cffi_range(&addr)?;
-
         let start_col =
             coord::col_letters_from_1based(addr.start_col).map_err(|e| e.to_string())?;
         let end_col = coord::col_letters_from_1based(addr.end_col).map_err(|e| e.to_string())?;
-
         let mut out = String::new();
         if !addr.sheet.is_empty() {
             out.push_str(&addr.sheet);
@@ -480,28 +369,8 @@ pub unsafe extern "C" fn fz_common_format_range_a1(
             out.push_str(&end_col);
             out.push_str(&addr.end_row.to_string());
         }
-
-        Ok(out.into_bytes())
-    })();
-
-    match result {
-        Ok(v) => {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::ok();
-                }
-            }
-            fz_buffer::from_vec(v)
-        }
-        Err(e) => {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::error(e);
-                }
-            }
-            fz_buffer::empty()
-        }
-    }
+        Ok(fz_buffer::from_vec(out.into_bytes()))
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -513,16 +382,10 @@ pub unsafe extern "C" fn fz_common_normalize_literal_value(
 ) -> fz_buffer {
     use formualizer_common::LiteralValue;
 
-    if value_payload.is_null() {
-        if !status.is_null() {
-            unsafe {
-                *status = fz_status::error("value_payload is null".to_string());
-            }
+    guard::catch_ffi(status, fz_buffer::empty(), || {
+        if value_payload.is_null() {
+            return Err("value_payload is null".to_string());
         }
-        return fz_buffer::empty();
-    }
-
-    let result: Result<Vec<u8>, String> = (|| {
         let payload = unsafe { slice::from_raw_parts(value_payload, len) };
         let value: LiteralValue = match format {
             fz_encoding_format::FZ_ENCODING_JSON => {
@@ -532,37 +395,17 @@ pub unsafe extern "C" fn fz_common_normalize_literal_value(
                 ciborium::from_reader(payload).map_err(|e| e.to_string())?
             }
         };
-
         // Normalization roundtrip validates schema.
-
-        match format {
+        let bytes = match format {
             fz_encoding_format::FZ_ENCODING_JSON => {
-                serde_json::to_vec(&value).map_err(|e| e.to_string())
+                serde_json::to_vec(&value).map_err(|e| e.to_string())?
             }
             fz_encoding_format::FZ_ENCODING_CBOR => {
                 let mut buf = Vec::new();
                 ciborium::into_writer(&value, &mut buf).map_err(|e| e.to_string())?;
-                Ok(buf)
+                buf
             }
-        }
-    })();
-
-    match result {
-        Ok(v) => {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::ok();
-                }
-            }
-            fz_buffer::from_vec(v)
-        }
-        Err(e) => {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::error(e);
-                }
-            }
-            fz_buffer::empty()
-        }
-    }
+        };
+        Ok(fz_buffer::from_vec(bytes))
+    })
 }

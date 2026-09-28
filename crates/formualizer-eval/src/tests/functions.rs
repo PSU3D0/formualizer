@@ -971,9 +971,9 @@ fn may_return_reference_syntax_arms() {
     assert!(!arm("=\"text\""), "literal");
 }
 
-/// The LET/LAMBDA exclusion: a local binding shadows any workbook name of the
-/// same spelling and locals resolve only on the value path, so a bound name
-/// must report itself as not reference-capable.
+/// The LET/LAMBDA rule: a local binding shadows any workbook name of the same
+/// spelling. A local bound to a value must report itself as not
+/// reference-capable; one bound to a range reports the range.
 #[test]
 fn may_return_reference_excludes_let_lambda_locals() {
     use crate::interpreter::{LocalBinding, LocalEnv};
@@ -995,5 +995,21 @@ fn may_return_reference_excludes_let_lambda_locals() {
     assert!(
         !bound.may_return_reference(),
         "a LET/LAMBDA local must not be sent down the named-range route"
+    );
+
+    let range =
+        formualizer_parse::parser::ReferenceType::range(None, Some(1), Some(1), Some(3), Some(1));
+    let env = LocalEnv::default().with_binding(
+        "X",
+        LocalBinding::ValueWithReference {
+            value: LiteralValue::Int(7),
+            reference: range,
+        },
+    );
+    let scoped = interpreter.with_local_env(env);
+    let range_bound = ArgumentHandle::new(&ast, &scoped);
+    assert!(
+        range_bound.may_return_reference(),
+        "a local bound to a range is that range"
     );
 }

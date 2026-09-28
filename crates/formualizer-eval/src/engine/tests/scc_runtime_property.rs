@@ -571,14 +571,11 @@ impl Oracle {
                 if r.is_err() {
                     return r;
                 }
-                let (a, b) = (as_num(&l), as_num(&r));
                 match op.as_str() {
-                    "+" => OVal::Num(a + b),
-                    "-" => OVal::Num(a - b),
-                    "*" => OVal::Num(a * b),
-                    ">" => OVal::Bool(a > b),
-                    "<" => OVal::Bool(a < b),
-                    "=" => OVal::Bool(a == b),
+                    "+" => OVal::Num(as_num(&l) + as_num(&r)),
+                    "-" => OVal::Num(as_num(&l) - as_num(&r)),
+                    "*" => OVal::Num(as_num(&l) * as_num(&r)),
+                    ">" | "<" | "=" => OVal::Bool(oracle_compare(op.as_str(), &l, &r)),
                     other => panic!("oracle: unsupported binary op {other}"),
                 }
             }
@@ -751,14 +748,11 @@ impl GuardEval<'_> {
                 if r.is_err() {
                     return r;
                 }
-                let (a, b) = (as_num(&l), as_num(&r));
                 match op.as_str() {
-                    "+" => OVal::Num(a + b),
-                    "-" => OVal::Num(a - b),
-                    "*" => OVal::Num(a * b),
-                    ">" => OVal::Bool(a > b),
-                    "<" => OVal::Bool(a < b),
-                    "=" => OVal::Bool(a == b),
+                    "+" => OVal::Num(as_num(&l) + as_num(&r)),
+                    "-" => OVal::Num(as_num(&l) - as_num(&r)),
+                    "*" => OVal::Num(as_num(&l) * as_num(&r)),
+                    ">" | "<" | "=" => OVal::Bool(oracle_compare(op.as_str(), &l, &r)),
                     other => panic!("guard: unsupported binary op {other}"),
                 }
             }
@@ -835,6 +829,42 @@ fn lit_to_oval(v: &LiteralValue) -> OVal {
         LiteralValue::Boolean(b) => OVal::Bool(*b),
         LiteralValue::Empty => OVal::Empty,
         other => panic!("oracle: unexpected literal {other:?}"),
+    }
+}
+
+/// The oracle's relational comparison.
+///
+/// Excel does not coerce a boolean to a number in `<`, `>` or `=`; it applies
+/// a type rank `number < text < boolean` identically on every operator, so
+/// `FALSE>0` is TRUE and `FALSE=0` is FALSE. This oracle has no text values,
+/// so only the number and boolean ranks can arise. `Empty` is polymorphic: it
+/// adopts the other operand's type as that type's zero value.
+fn oracle_compare(op: &str, l: &OVal, r: &OVal) -> bool {
+    // rank: numbers 0, booleans 2 (1 is text, which this oracle never builds)
+    fn rank(v: &OVal) -> u8 {
+        match v {
+            OVal::Bool(_) => 2,
+            _ => 0,
+        }
+    }
+    let (lr, rr) = match (l, r) {
+        (OVal::Empty, OVal::Empty) => (0, 0),
+        (OVal::Empty, other) => (rank(other), rank(other)),
+        (other, OVal::Empty) => (rank(other), rank(other)),
+        (a, b) => (rank(a), rank(b)),
+    };
+    let (a, b) = if lr == rr {
+        // same rank: compare within the type (booleans as FALSE < TRUE,
+        // numbers numerically; a polymorphic Empty is that type's zero)
+        (as_num(l), as_num(r))
+    } else {
+        (lr as f64, rr as f64)
+    };
+    match op {
+        ">" => a > b,
+        "<" => a < b,
+        "=" => a == b,
+        other => panic!("oracle: unsupported comparison op {other}"),
     }
 }
 
