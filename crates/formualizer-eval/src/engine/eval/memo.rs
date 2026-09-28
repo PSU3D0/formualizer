@@ -26,14 +26,14 @@ impl MemoPlan {
         template: AstNodeId,
     ) -> Option<Self> {
         let AstNodeData::Function { name_id, .. } = ds.get_node(template)? else {
-            return None;
+            return Self::plan_general(functions, ds, template);
         };
         let fun = functions.get_function("", ds.resolve_ast_string(*name_id))?;
         if !matches!(
             fun.family_kernel(),
             Some(FamilyKernel::CriteriaAggregate | FamilyKernel::Lookup)
         ) {
-            return None;
+            return Self::plan_general(functions, ds, template);
         }
         let mut key_args = smallvec::SmallVec::new();
         for &arg in ds.get_args(template)? {
@@ -70,7 +70,99 @@ impl MemoPlan {
         }
         Some(Self { key_args })
     }
+
+    /// Program 3: any template whose members differ only in the values of
+    /// relative single-cell references (every other reference the same
+    /// cells for all members: rows absolute, ranges only as call arguments)
+    /// through pure context-free functions, when it holds a lookup or a
+    /// criteria aggregate (`INDEX(.., MATCH(C5, ..))`): those references are
+    /// the key; equal keys give equal results.
+    fn plan_general(
+        functions: &dyn crate::traits::FunctionProvider,
+        ds: &DataStore,
+        template: AstNodeId,
+    ) -> Option<Self> {
+        fn visit(
+            functions: &dyn crate::traits::FunctionProvider,
+            ds: &DataStore,
+            id: AstNodeId,
+            as_arg: bool,
+            keys: &mut smallvec::SmallVec<[AstNodeId; 8]>,
+            worth: &mut bool,
+        ) -> Option<()> {
+            match ds.get_node(id)? {
+                AstNodeData::Literal(vref) => {
+                    if matches!(ds.retrieve_value(*vref), LiteralValue::Array(_)) {
+                        return None;
+                    }
+                }
+                AstNodeData::Reference { ref_type, .. } => match ref_type {
+                    CompactRefType::Cell {
+                        row_abs: true, row, ..
+                    } if *row > 0 => {}
+                    CompactRefType::Cell { row, col, .. } if *row > 0 && *col > 0 => {
+                        if keys.len() >= 8 {
+                            return None;
+                        }
+                        keys.push(id);
+                    }
+                    CompactRefType::Range {
+                        start_row,
+                        end_row,
+                        start_row_abs,
+                        end_row_abs,
+                        ..
+                    } if as_arg
+                        && (*start_row_abs || *start_row == 0)
+                        && (*end_row_abs || *end_row == u32::MAX) => {}
+                    _ => return None,
+                },
+                AstNodeData::UnaryOp { expr_id, .. } => {
+                    visit(functions, ds, *expr_id, false, keys, worth)?
+                }
+                AstNodeData::BinaryOp {
+                    left_id, right_id, ..
+                } => {
+                    visit(functions, ds, *left_id, false, keys, worth)?;
+                    visit(functions, ds, *right_id, false, keys, worth)?;
+                }
+                AstNodeData::Function { name_id, .. } => {
+                    let name = ds.resolve_ast_string(*name_id);
+                    if !super::lift::pure_listed_function(functions, name) {
+                        return None;
+                    }
+                    *worth |= MEMO_WORTH.iter().any(|f| f.eq_ignore_ascii_case(name));
+                    for &arg in ds.get_args(id)? {
+                        visit(functions, ds, arg, true, keys, worth)?;
+                    }
+                }
+                _ => return None,
+            }
+            Some(())
+        }
+        let mut key_args = smallvec::SmallVec::new();
+        let mut worth = false;
+        visit(functions, ds, template, false, &mut key_args, &mut worth)?;
+        (worth && !key_args.is_empty()).then_some(Self { key_args })
+    }
 }
+
+/// Functions whose calls make a general memo worth its keying.
+const MEMO_WORTH: &[&str] = &[
+    "INDEX",
+    "MATCH",
+    "VLOOKUP",
+    "HLOOKUP",
+    "XLOOKUP",
+    "XMATCH",
+    "SUMIF",
+    "SUMIFS",
+    "COUNTIF",
+    "COUNTIFS",
+    "AVERAGEIF",
+    "AVERAGEIFS",
+    "SUMPRODUCT",
+];
 
 /// A hashable argument value (numbers by bits); `None` for values not keyed
 /// (errors, arrays, pending), whose member is evaluated on its own.

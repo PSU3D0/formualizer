@@ -50,7 +50,72 @@ enum LiftNode {
         kernel: crate::function::FamilyKernel,
         args: smallvec::SmallVec<[usize; 4]>,
     },
+    /// Program 3: a call whose every reference is the same cell or range
+    /// for every member of a column run (rows absolute or open, the run's
+    /// column shared by all members) through pure, context-free functions:
+    /// the walk evaluates it once per run, at the first member.
+    Invariant {
+        node: AstNodeId,
+    },
 }
+
+/// Functions a run-invariant call may use: pure, and independent of the
+/// cell evaluating them (no `ROW()`/`COLUMN()`-style context).
+/// A function of `INVARIANT_FUNCTIONS` whose registered implementation is
+/// not volatile, dynamic, environment-binding or spilling.
+pub(super) fn pure_listed_function(
+    functions: &dyn crate::traits::FunctionProvider,
+    name: &str,
+) -> bool {
+    use crate::function::FnCaps;
+    INVARIANT_FUNCTIONS
+        .iter()
+        .any(|f| f.eq_ignore_ascii_case(name))
+        && functions.get_function("", name).is_some_and(|fun| {
+            !fun.caps().intersects(
+                FnCaps::VOLATILE
+                    | FnCaps::DYNAMIC_DEPENDENCY
+                    | FnCaps::LOCAL_ENVIRONMENT
+                    | FnCaps::MAY_SPILL,
+            )
+        })
+}
+
+const INVARIANT_FUNCTIONS: &[&str] = &[
+    "INDEX",
+    "MATCH",
+    "VLOOKUP",
+    "HLOOKUP",
+    "XLOOKUP",
+    "XMATCH",
+    "SUM",
+    "SUMIF",
+    "SUMIFS",
+    "COUNT",
+    "COUNTA",
+    "COUNTIF",
+    "COUNTIFS",
+    "AVERAGE",
+    "AVERAGEIF",
+    "AVERAGEIFS",
+    "MIN",
+    "MAX",
+    "SUMPRODUCT",
+    "ROUND",
+    "ABS",
+    "IF",
+    "IFERROR",
+    "IFNA",
+    "ISNA",
+    "ISERROR",
+    "ISNUMBER",
+    "ISBLANK",
+    "ISTEXT",
+    "AND",
+    "OR",
+    "NOT",
+    "CHOOSE",
+];
 
 pub(super) struct LiftProgram {
     nodes: Vec<LiftNode>,
@@ -96,12 +161,69 @@ impl LiftProgram {
         let mut program = Self { nodes: Vec::new() };
         program.compile_node(functions, ds, template)?;
         // A template without any reference is a constant family: the walk
-        // is as cheap, keep it there.
+        // is as cheap, keep it there (a run-invariant call is not).
         program
             .nodes
             .iter()
-            .any(|n| matches!(n, LiftNode::Cell { .. }))
+            .any(|n| matches!(n, LiftNode::Cell { .. } | LiftNode::Invariant { .. }))
             .then_some(program)
+    }
+
+    /// Whether `id` is a run-invariant expression (see `LiftNode::Invariant`).
+    pub(super) fn invariant(
+        functions: &dyn crate::traits::FunctionProvider,
+        ds: &DataStore,
+        id: AstNodeId,
+    ) -> bool {
+        Self::invariant_in(functions, ds, id, false)
+    }
+
+    /// `as_arg`: `id` is a direct argument of a call. A range only there: as
+    /// an operator's operand it is implicitly intersected with the member's
+    /// row or column.
+    fn invariant_in(
+        functions: &dyn crate::traits::FunctionProvider,
+        ds: &DataStore,
+        id: AstNodeId,
+        as_arg: bool,
+    ) -> bool {
+        match ds.get_node(id) {
+            Some(AstNodeData::Literal(vref)) => {
+                !matches!(ds.retrieve_value(*vref), LiteralValue::Array(_))
+            }
+            Some(AstNodeData::Reference { ref_type, .. }) => match ref_type {
+                CompactRefType::Cell { row_abs, row, .. } => *row_abs && *row > 0,
+                CompactRefType::Range {
+                    start_row,
+                    end_row,
+                    start_row_abs,
+                    end_row_abs,
+                    ..
+                } => {
+                    as_arg
+                        && (*start_row_abs || *start_row == 0)
+                        && (*end_row_abs || *end_row == u32::MAX)
+                }
+                _ => false,
+            },
+            Some(AstNodeData::UnaryOp { expr_id, .. }) => {
+                Self::invariant_in(functions, ds, *expr_id, false)
+            }
+            Some(AstNodeData::BinaryOp {
+                left_id, right_id, ..
+            }) => {
+                Self::invariant_in(functions, ds, *left_id, false)
+                    && Self::invariant_in(functions, ds, *right_id, false)
+            }
+            Some(AstNodeData::Function { name_id, .. }) => {
+                pure_listed_function(functions, ds.resolve_ast_string(*name_id))
+                    && ds.get_args(id).is_some_and(|args| {
+                        args.iter()
+                            .all(|&a| Self::invariant_in(functions, ds, a, true))
+                    })
+            }
+            _ => false,
+        }
     }
 
     fn compile_node(
@@ -155,6 +277,9 @@ impl LiftProgram {
                 let left = self.compile_node(functions, ds, left_id)?;
                 let right = self.compile_node(functions, ds, right_id)?;
                 LiftNode::Binary { op, left, right }
+            }
+            AstNodeData::Function { .. } if Self::invariant(functions, ds, id) => {
+                LiftNode::Invariant { node: id }
             }
             AstNodeData::Function { name_id, .. } => {
                 // Only the built-in IF (an override keeps `family_kernel`
@@ -354,6 +479,17 @@ where
                     let args: smallvec::SmallVec<[Column; 4]> =
                         args.iter().map(|&k| take(&mut columns, k)).collect();
                     Column::Lane(Lane::builtin(*kernel, &args, n))
+                }
+                // Once per run, exactly as the walk evaluates it for the
+                // first member (every member sees the same cells).
+                LiftNode::Invariant { node } => {
+                    let value = interpreter
+                        .evaluate_arena_ast_with_offset(*node, row_delta0, col_delta, ds, reg)
+                        .map(split);
+                    if let Ok((LiteralValue::Array(_), _)) = value {
+                        return None;
+                    }
+                    Column::Const(value)
                 }
             };
             columns.push(column);
@@ -626,7 +762,9 @@ where
                     }
                 }
                 LiftNode::Unary { .. } | LiftNode::Binary { .. } => None,
-                LiftNode::If { .. } | LiftNode::Builtin { .. } => return None,
+                LiftNode::If { .. } | LiftNode::Builtin { .. } | LiftNode::Invariant { .. } => {
+                    return None;
+                }
             };
             sources.push(source);
         }
