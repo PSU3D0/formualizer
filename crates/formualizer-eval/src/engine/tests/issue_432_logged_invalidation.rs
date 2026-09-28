@@ -540,7 +540,6 @@ fn formula_plane_demotion_and_later_logged_edit_bump_topology_once() {
     engine
         .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
         .unwrap();
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
     engine.evaluate_all().unwrap();
     let topology_before = engine.topology_epoch_for_test();
 

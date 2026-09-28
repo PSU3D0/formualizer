@@ -1692,6 +1692,25 @@ pub trait EvaluationContext: Resolver + FunctionProvider + SourceResolver {
         None
     }
 
+    /// A cell reference's value and format in one call: exactly
+    /// `resolve_cell_reference_value` then `resolve_cell_format` (the
+    /// default does that). Contexts that answer both from one lookup
+    /// override it; wrappers that record reads need not.
+    #[doc(hidden)]
+    fn resolve_cell_reference_value_formatted(
+        &self,
+        sheet: Option<&str>,
+        row: u32,
+        col: u32,
+        current_sheet: &str,
+    ) -> Result<(LiteralValue, Option<crate::format::FormatId>), ExcelError> {
+        let value = self.resolve_cell_reference_value(sheet, row, col, current_sheet)?;
+        Ok((
+            value,
+            self.resolve_cell_format(sheet, row, col, current_sheet),
+        ))
+    }
+
     /// Resolve an interned format id to its reported class.
     fn format_class(
         &self,

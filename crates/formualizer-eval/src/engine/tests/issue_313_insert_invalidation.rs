@@ -25,7 +25,7 @@ fn formula_is_compressed(engine: &Engine<TestWorkbook>, sheet: &str, row: u32, c
         .expect("formula vertex");
     engine
         .graph
-        .get_range_dependencies(*vertex)
+        .get_range_dependencies(vertex)
         .is_some_and(|ranges| !ranges.is_empty())
 }
 

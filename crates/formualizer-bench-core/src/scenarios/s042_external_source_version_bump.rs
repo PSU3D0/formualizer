@@ -3,9 +3,12 @@ use formualizer_workbook::Workbook;
 
 use super::common::ScaleState;
 use super::{
-    EditPlan, ExpectedFailure, ExpectedFailureMode, FixtureMetadata, Scenario, ScenarioBuildCtx,
-    ScenarioFixture, ScenarioInvariant, ScenarioPhase, ScenarioScale, ScenarioTag,
+    EditPlan, ExpectedFailure, ExpectedFailureMode, FixtureMetadata, RunnerFailure, Scenario,
+    ScenarioBuildCtx, ScenarioFixture, ScenarioInvariant, ScenarioPhase, ScenarioScale,
+    ScenarioTag,
 };
+
+const UNSUPPORTED: &str = "s042 cannot be implemented with the current public Workbook/XLSX path: Engine exposes define_source_scalar/table and set_source_*_version, and the JSON backend can declare sources, but probe-corpus always loads UmyaAdapter XLSX fixtures; Workbook/WBResolver expose no public API to declare/populate SourceA!A{r} values during fixture load";
 
 pub struct S042ExternalSourceVersionBump {
     scale: ScaleState,
@@ -51,19 +54,25 @@ impl Scenario for S042ExternalSourceVersionBump {
             ExpectedFailure {
                 mode: ExpectedFailureMode::OffOnly,
                 reason: "Workbook (XLSX path via UmyaAdapter) has no public API to declare/populate external sources. JSON-backed Workbook can; XLSX cannot. PM follow-up: add cross-backend external-source surface or skip this scenario.",
+                runner_failure: RunnerFailure::Action {
+                    step: 0,
+                    message: UNSUPPORTED,
+                },
             },
             ExpectedFailure {
                 mode: ExpectedFailureMode::AuthOnly,
                 reason: "Workbook (XLSX path via UmyaAdapter) has no public API to declare/populate external sources. JSON-backed Workbook can; XLSX cannot. PM follow-up: add cross-backend external-source surface or skip this scenario.",
+                runner_failure: RunnerFailure::Action {
+                    step: 0,
+                    message: UNSUPPORTED,
+                },
             },
         ]
     }
 
     fn build_fixture(&self, ctx: &ScenarioBuildCtx) -> Result<ScenarioFixture> {
         self.scale.set(ctx.scale);
-        bail!(
-            "s042 cannot be implemented with the current public Workbook/XLSX path: Engine exposes define_source_scalar/table and set_source_*_version, and the JSON backend can declare sources, but probe-corpus always loads UmyaAdapter XLSX fixtures; Workbook/WBResolver expose no public API to declare/populate SourceA!A{{r}} values during fixture load"
-        )
+        bail!(UNSUPPORTED)
     }
 
     fn edit_plan(&self) -> Option<EditPlan> {

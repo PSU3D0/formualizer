@@ -39,7 +39,7 @@ fn test_change_outside_range_in_same_stripe_does_not_dirty() {
         .set_cell_formula("Sheet1", 1, 2, sum_ast(1, 1, 10, 1))
         .unwrap();
 
-    let b1_id = *graph
+    let b1_id = graph
         .get_vertex_id_for_address(&abs_cell_ref(0, 1, 2))
         .unwrap();
 

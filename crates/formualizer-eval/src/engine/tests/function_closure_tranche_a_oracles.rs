@@ -88,7 +88,7 @@ fn recursive_function_ast_relocation_matches_copy_oracle() {
     let anchor = parse("=SUM(A1,$B1,C$1,$D$1)").unwrap();
     let expected = parse("=SUM(D3,$B3,F$1,$D$1)").unwrap();
     let relocated =
-        crate::formula_plane::structural::relocate_ast_for_template_placement(&anchor, 2, 3)
+        crate::engine::template::relocate::relocate_ast_for_template_placement(&anchor, 2, 3)
             .unwrap();
     fn references(
         ast: &formualizer_parse::ASTNode,

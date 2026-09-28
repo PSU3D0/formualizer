@@ -174,8 +174,12 @@ fn range_or_scalar<'a, 'b>(
 ) -> Result<RangeOrScalar<'b>, ExcelError> {
     Ok(match resolve_aggregate_argument(arg, ctx)? {
         AggregateArgument::Range(view) => RangeOrScalar::Range(view),
+        // An error value where a range belongs is the result, as in Excel: a
+        // `#REF!` left by a deleted column must not read as a range that
+        // matches nothing.
+        AggregateArgument::Scalar(LiteralValue::Error(error))
+        | AggregateArgument::ReferenceError(error) => RangeOrScalar::ReferenceError(error),
         AggregateArgument::Scalar(value) => RangeOrScalar::Scalar(value),
-        AggregateArgument::ReferenceError(error) => RangeOrScalar::ReferenceError(error),
     })
 }
 
@@ -255,10 +259,11 @@ fn eval_if_family<'a, 'b>(
             logical_count_cells = logical_cells;
             match argument {
                 AggregateArgument::Range(view) => (Some(view), None),
-                AggregateArgument::Scalar(value) => (None, Some(value)),
-                AggregateArgument::ReferenceError(error) => {
+                AggregateArgument::Scalar(LiteralValue::Error(error))
+                | AggregateArgument::ReferenceError(error) => {
                     return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(error)));
                 }
+                AggregateArgument::Scalar(value) => (None, Some(value)),
             }
         } else {
             resolve_range_or_scalar!(&args[0])
@@ -920,6 +925,9 @@ pub struct AverageIfFn;
 /// Caps: PURE, REDUCTION, WINDOWED, STREAM_OK, PARALLEL_ARGS, PARALLEL_CHUNKS
 /// [formualizer-docgen:schema:end]
 impl Function for AverageIfFn {
+    fn family_kernel(&self) -> Option<crate::function::FamilyKernel> {
+        Some(crate::function::FamilyKernel::CriteriaAggregate)
+    }
     func_caps!(
         PURE,
         REDUCTION,
@@ -1027,6 +1035,9 @@ pub struct SumIfFn;
 /// Caps: PURE, REDUCTION, WINDOWED, STREAM_OK, PARALLEL_ARGS, PARALLEL_CHUNKS
 /// [formualizer-docgen:schema:end]
 impl Function for SumIfFn {
+    fn family_kernel(&self) -> Option<crate::function::FamilyKernel> {
+        Some(crate::function::FamilyKernel::CriteriaAggregate)
+    }
     func_caps!(
         PURE,
         REDUCTION,
@@ -1127,6 +1138,9 @@ pub struct CountIfFn;
 /// Caps: PURE, REDUCTION, WINDOWED, STREAM_OK, PARALLEL_ARGS, PARALLEL_CHUNKS
 /// [formualizer-docgen:schema:end]
 impl Function for CountIfFn {
+    fn family_kernel(&self) -> Option<crate::function::FamilyKernel> {
+        Some(crate::function::FamilyKernel::CriteriaAggregate)
+    }
     func_caps!(
         PURE,
         REDUCTION,
@@ -1230,6 +1244,9 @@ pub struct SumIfsFn; // SUMIFS(sum_range, criteria_range1, criteria1, ...)
 /// Caps: PURE, REDUCTION, WINDOWED, STREAM_OK, PARALLEL_ARGS, PARALLEL_CHUNKS
 /// [formualizer-docgen:schema:end]
 impl Function for SumIfsFn {
+    fn family_kernel(&self) -> Option<crate::function::FamilyKernel> {
+        Some(crate::function::FamilyKernel::CriteriaAggregate)
+    }
     func_caps!(
         PURE,
         REDUCTION,
@@ -1330,6 +1347,9 @@ pub struct CountIfsFn; // COUNTIFS(criteria_range1, criteria1, ...)
 /// Caps: PURE, REDUCTION, WINDOWED, STREAM_OK, PARALLEL_ARGS, PARALLEL_CHUNKS
 /// [formualizer-docgen:schema:end]
 impl Function for CountIfsFn {
+    fn family_kernel(&self) -> Option<crate::function::FamilyKernel> {
+        Some(crate::function::FamilyKernel::CriteriaAggregate)
+    }
     func_caps!(
         PURE,
         REDUCTION,
@@ -1433,6 +1453,9 @@ pub struct AverageIfsFn;
 /// Caps: PURE, REDUCTION, WINDOWED, STREAM_OK, PARALLEL_ARGS, PARALLEL_CHUNKS
 /// [formualizer-docgen:schema:end]
 impl Function for AverageIfsFn {
+    fn family_kernel(&self) -> Option<crate::function::FamilyKernel> {
+        Some(crate::function::FamilyKernel::CriteriaAggregate)
+    }
     func_caps!(
         PURE,
         REDUCTION,
@@ -1756,9 +1779,16 @@ mod tests {
                 else {
                     panic!("expected original range");
                 };
+                // Legacy resolves Data!C:C to the anchor row only (10): its
+                // plan-time range probe caches the used extent before the
+                // spill commits. The authority probes nothing at plan time,
+                // so the committed spill child (row 11) is visible
+                // (reclassified; see dynamic_freshness.rs
+                // `open_column_reader_sees_spill_committed_earlier_in_pass`).
+                let rows = if true { 11 } else { 10 };
                 assert_eq!(
                     original.dims(),
-                    (10, 1),
+                    (rows, 1),
                     "probe must take the expansion branch"
                 );
                 let (AggregateArgument::Range(view), logical) =

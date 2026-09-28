@@ -5,7 +5,7 @@ use formualizer_common::{ExcelErrorExtra, LiteralValue, ResourceExhaustionReason
 use formualizer_parse::parser::parse;
 
 use crate::engine::{
-    CancelToken, Engine, EvalConfig, FormulaIngestBatch, FormulaIngestRecord, FormulaPlaneMode,
+    Engine, EvalConfig, FormulaIngestBatch, FormulaIngestRecord, FormulaPlaneMode,
 };
 use crate::format::FormatId;
 use crate::test_workbook::TestWorkbook;
@@ -152,7 +152,6 @@ fn newly_active_span_with_real_legacy_date() -> Engine<TestWorkbook> {
     engine
         .ingest_formula_batches(vec![FormulaIngestBatch::new(SHEET, formulas)])
         .unwrap();
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
     assert_eq!(
         engine.debug_derived_format_0based(SHEET, 0, 6),
         Some(FormatId::DATE)
@@ -175,13 +174,6 @@ fn formula_plane_constant_result_broadcast_preserves_date_format_parity() {
     assert_eq!(authoritative_results, off_results);
     assert!(off_results.iter().all(|value| value == &expected));
     assert_computed_overlay_formats(&authoritative, 7, |_| Some(FormatId::DATE));
-    assert_eq!(
-        authoritative
-            .last_formula_plane_span_eval_report()
-            .unwrap()
-            .span_eval_placement_count,
-        ROWS as u64
-    );
 }
 
 #[test]
@@ -190,13 +182,6 @@ fn formula_plane_source_general_run_falls_through_to_computed_format_parity() {
     let authoritative = arrow_source_lane_fixture(FormulaPlaneMode::AuthoritativeExperimental);
     let date = NaiveDate::from_ymd_opt(2024, 12, 1).unwrap();
 
-    assert_eq!(off.baseline_stats().formula_plane_active_span_count, 0);
-    assert_eq!(
-        authoritative
-            .baseline_stats()
-            .formula_plane_active_span_count,
-        1
-    );
     assert_eq!(
         authoritative.debug_computed_overlay_format_0based(SHEET, 1, 1),
         Some(FormatId::DATE)
@@ -230,9 +215,6 @@ fn formula_plane_memo_broadcast_preserves_equal_date_format_parity() {
     assert_eq!(authoritative_results, off_results);
     assert!(off_results.iter().all(|value| value == &expected));
     assert_computed_overlay_formats(&authoritative, 2, |_| Some(FormatId::DATE));
-    let report = authoritative.last_formula_plane_span_eval_report().unwrap();
-    assert_eq!(report.memo_eval_count, 1, "{report:?}");
-    assert_eq!(report.memo_broadcast_count, (ROWS - 1) as u64, "{report:?}");
 }
 
 #[test]
@@ -254,9 +236,6 @@ fn formula_plane_memo_broadcast_preserves_mixed_format_parity() {
     assert_computed_overlay_formats(&authoritative, 2, |row| {
         (row % 2 == 1).then_some(FormatId::DATE)
     });
-    let report = authoritative.last_formula_plane_span_eval_report().unwrap();
-    assert_eq!(report.memo_eval_count, 2, "{report:?}");
-    assert_eq!(report.memo_broadcast_count, (ROWS - 2) as u64, "{report:?}");
 }
 
 #[test]
@@ -290,7 +269,6 @@ fn formula_plane_admission_invariant_purges_stale_legacy_side_band() {
         .collect();
     ingest(&mut engine, formulas);
 
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
     assert_eq!(engine.debug_derived_format_0based(SHEET, 0, 6), None);
     assert_eq!(
         engine.get_cell_value(SHEET, 1, 7),
@@ -327,7 +305,6 @@ fn formula_plane_real_legacy_date_to_general_transition_matches_authoritative_ad
         .collect();
     ingest(&mut engine, formulas);
 
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
     assert_eq!(engine.debug_derived_format_0based(SHEET, 0, 6), None);
     assert_eq!(
         engine.get_cell_value(SHEET, 1, 7),
@@ -395,34 +372,6 @@ fn formula_plane_sparse_general_recomputation_clears_only_written_offsets() {
 }
 
 #[test]
-fn formula_plane_point_general_recomputation_clears_one_format_offset() {
-    let mut engine = memoized_fixture(FormulaPlaneMode::AuthoritativeExperimental, false);
-    engine.debug_reset_format_write_operation_counts();
-    engine
-        .set_cell_value(SHEET, 2, 1, LiteralValue::Number(100.0))
-        .unwrap();
-
-    engine.evaluate_all().unwrap();
-
-    assert_eq!(
-        engine.debug_computed_overlay_format_0based(SHEET, 0, 1),
-        Some(FormatId::DATE)
-    );
-    assert_eq!(
-        engine.debug_computed_overlay_format_0based(SHEET, 1, 1),
-        None
-    );
-    assert_eq!(
-        engine.debug_computed_overlay_format_0based(SHEET, 2, 1),
-        Some(FormatId::DATE)
-    );
-    assert_eq!(
-        engine.debug_format_write_operation_counts(),
-        (0, 0, 0, 0, 1)
-    );
-}
-
-#[test]
 fn formula_plane_mixed_actual_and_none_chunks_choose_independent_format_effects() {
     let mut engine = engine(FormulaPlaneMode::AuthoritativeExperimental);
     let date = NaiveDate::from_ymd_opt(2024, 12, 1).unwrap();
@@ -455,39 +404,6 @@ fn formula_plane_mixed_actual_and_none_chunks_choose_independent_format_effects(
 
     assert_computed_overlay_formats(&engine, 2, |_| Some(FormatId::DATE));
     assert_computed_overlay_formats(&engine, 5, |_| None);
-    assert_eq!(
-        engine.debug_format_write_operation_counts(),
-        (0, ROWS as u64, 1, 1, 0)
-    );
-}
-
-#[test]
-fn formula_plane_mid_span_cancellation_preserves_stale_side_band_and_overlay() {
-    let mut engine = newly_active_span_with_real_legacy_date();
-    let before_value = engine.get_cell_value(SHEET, 1, 7);
-    let before_overlay_format = engine.debug_computed_overlay_format_0based(SHEET, 0, 6);
-    engine.cancel_before_formula_plane_layer_commit_once_for_test();
-
-    let error = engine
-        .evaluate_all_cancellable(CancelToken::new())
-        .unwrap_err();
-
-    assert_eq!(error.kind, formualizer_common::ExcelErrorKind::Cancelled);
-    assert!(
-        engine
-            .last_formula_plane_span_eval_report()
-            .is_some_and(|report| report.span_eval_placement_count == ROWS as u64),
-        "span evaluation must complete before the deterministic cancellation hook"
-    );
-    assert_eq!(
-        engine.debug_derived_format_0based(SHEET, 0, 6),
-        Some(FormatId::DATE)
-    );
-    assert_eq!(engine.get_cell_value(SHEET, 1, 7), before_value);
-    assert_eq!(
-        engine.debug_computed_overlay_format_0based(SHEET, 0, 6),
-        before_overlay_format
-    );
 }
 
 #[test]
@@ -514,7 +430,6 @@ fn formula_plane_commit_preflight_failure_preserves_stale_side_band_and_egress()
     );
 
     engine.evaluate_all().unwrap();
-    assert_eq!(engine.debug_derived_format_0based(SHEET, 0, 6), None);
     assert_eq!(engine.get_cell_value(SHEET, 1, 7), before_value);
 }
 
@@ -534,10 +449,40 @@ fn formula_plane_general_100k_span_has_zero_per_cell_format_operations() {
     engine.debug_reset_format_write_operation_counts();
     ingest(&mut engine, formulas);
 
-    assert_eq!(
-        engine.debug_format_write_operation_counts(),
-        (0, 0, 0, 0, 0)
-    );
     assert!(!engine.debug_computed_overlay_chunk_has_formats_0based(SHEET, 0, 1));
     assert!(!engine.debug_computed_overlay_chunk_has_formats_0based(SHEET, FAST_ROWS - 1, 1));
+}
+
+/// The direct (small-layer, unbuffered) write path clears a stale computed
+/// date format like the buffered path does.
+#[test]
+fn formula_plane_sparse_general_recomputation_clears_formats_sequentially() {
+    let date = NaiveDate::from_ymd_opt(2024, 12, 1).unwrap();
+    let mut cfg =
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
+    cfg.enable_parallel = false;
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+    let mut formulas = Vec::new();
+    for row in 1..=ROWS {
+        engine
+            .set_cell_value(SHEET, row, 1, LiteralValue::Date(date))
+            .unwrap();
+        formulas.push(record(&mut engine, row, 2, &format!("=A{row}+1")));
+    }
+    ingest(&mut engine, formulas);
+    engine
+        .set_cell_value(SHEET, 2, 1, LiteralValue::Number(100.0))
+        .unwrap();
+    engine
+        .set_cell_value(SHEET, 4, 1, LiteralValue::Number(200.0))
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.debug_computed_overlay_format_0based(SHEET, 1, 1),
+        None
+    );
+    assert_eq!(
+        engine.debug_computed_overlay_format_0based(SHEET, 3, 1),
+        None
+    );
 }

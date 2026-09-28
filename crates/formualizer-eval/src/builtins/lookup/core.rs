@@ -169,6 +169,9 @@ pub struct MatchFn;
 /// Caps: PURE, LOOKUP
 /// [formualizer-docgen:schema:end]
 impl Function for MatchFn {
+    fn family_kernel(&self) -> Option<crate::function::FamilyKernel> {
+        Some(crate::function::FamilyKernel::Lookup)
+    }
     fn name(&self) -> &'static str {
         "MATCH"
     }
@@ -501,6 +504,9 @@ pub struct VLookupFn;
 /// Caps: PURE, LOOKUP
 /// [formualizer-docgen:schema:end]
 impl Function for VLookupFn {
+    fn family_kernel(&self) -> Option<crate::function::FamilyKernel> {
+        Some(crate::function::FamilyKernel::Lookup)
+    }
     fn name(&self) -> &'static str {
         "VLOOKUP"
     }
@@ -761,6 +767,9 @@ pub struct HLookupFn;
 /// Caps: PURE, LOOKUP
 /// [formualizer-docgen:schema:end]
 impl Function for HLookupFn {
+    fn family_kernel(&self) -> Option<crate::function::FamilyKernel> {
+        Some(crate::function::FamilyKernel::Lookup)
+    }
     fn name(&self) -> &'static str {
         "HLOOKUP"
     }

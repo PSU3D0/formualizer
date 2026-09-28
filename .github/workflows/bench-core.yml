@@ -1,0 +1,71 @@
+name: Bench core
+
+# The main CI Rust job runs `cargo test --workspace --exclude
+# formualizer-bench-core`, so the benchmark/probe crate is not linted or tested
+# there. This workflow keeps its binaries compiling (clippy with the runner
+# feature) and runs the parity-harness smoke test.
+#
+# It replaces the former FormulaPlane parity gate. That gate compared the Off
+# and AuthoritativeExperimental FormulaPlane modes; since the dependency
+# authority became the only runtime path the mode is accepted and ignored, so
+# both sides ran the same engine. Value parity is covered by the program1-perf
+# corpus digests and the eval/workbook suites.
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bench-core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: 1.93.0
+        components: clippy
+
+    - name: Cache Rust dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/
+        key: ${{ runner.os }}-cargo-bench-core-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-bench-core-
+          ${{ runner.os }}-cargo-
+
+    - name: Clippy (formualizer-bench-core, runner feature)
+      run: >-
+        cargo clippy -p formualizer-bench-core
+        --features formualizer_runner --all-targets -- -D warnings
+
+    - name: Bench-core unit tests (moved formula-run scanner code)
+      run: >-
+        cargo test -p formualizer-bench-core
+        --features formualizer_runner --lib
+
+    - name: Parity harness smoke test
+      run: >-
+        cargo test -p formualizer-bench-core
+        --features formualizer_runner
+        --test parity_harness_smoke

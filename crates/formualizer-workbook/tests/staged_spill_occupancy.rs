@@ -27,10 +27,14 @@ fn fixture(blocker: &str) -> Vec<u8> {
 }
 
 fn load(blocker: &str) -> Workbook {
+    // The `NOSHEET!A1` blocker must fail preparation: explicit Strict policy
+    // since BestEffort became the default.
+    let mut config = WorkbookConfig::interactive();
+    config.eval.preparation_policy = formualizer_eval::engine::PreparationPolicy::Strict;
     Workbook::from_reader(
         CalamineAdapter::open_bytes(fixture(blocker)).unwrap(),
         LoadStrategy::EagerAll,
-        WorkbookConfig::interactive(),
+        config,
     )
     .unwrap()
 }

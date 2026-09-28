@@ -1,10 +1,10 @@
 use crate::engine::VertexId;
 use crate::engine::VertexKind;
 use crate::engine::eval::Engine;
+use crate::engine::template::region::Region;
 use crate::engine::used_extent::{
     ExtentPolicy, OpenRangeBounds, ResolvedExtent, resolve_used_extent_with_fallback,
 };
-use crate::formula_plane::region_index::Region;
 use crate::traits::{
     EvaluationContext, FunctionProvider, NamedRangeResolver, Range, RangeResolver,
     ReferenceResolver, Resolver, SourceResolver, Table, TableResolver,
@@ -52,12 +52,12 @@ impl<'a, R: EvaluationContext> DynamicRefCollector<'a, R> {
             .lock()
             .unwrap()
             .insert(Region::rect(sheet_id, sr0, er0, sc0, ec0).normalized());
-        let Some(index) = self.engine.graph.sheet_index(sheet_id) else {
+        if self.engine.graph.sheet_index(sheet_id).is_none() {
             return;
-        };
+        }
 
         let mut out = self.collected.lock().unwrap();
-        for u in index.vertices_in_col_range(sc0, ec0) {
+        for u in self.engine.graph.vertices_in_cols(sheet_id, sc0, ec0) {
             let Some(row0) = self.engine.graph.vertex_grid_addr(u).map(|addr| addr.row()) else {
                 continue;
             };
@@ -135,7 +135,7 @@ impl<'a, R: EvaluationContext> ReferenceResolver for DynamicRefCollector<'a, R> 
                 col.saturating_sub(1),
             ));
         }
-        if let Some(&vid) = self
+        if let Some(vid) = self
             .engine
             .graph
             .get_vertex_id_for_address(&self.engine.graph.make_cell_ref(sheet_name, row, col))
@@ -328,6 +328,7 @@ impl RangeVirtualDepProvider {
         )
     }
 
+    #[cfg(any(test, feature = "legacy_oracle"))]
     pub fn get_virtual_deps<R: EvaluationContext>(
         engine: &Engine<R>,
         v: VertexId,
@@ -350,12 +351,12 @@ impl RangeVirtualDepProvider {
                 let er = extent.end_row;
                 let ec = extent.end_column;
 
-                if let Some(index) = engine.graph.sheet_index(sheet_id) {
+                if engine.graph.sheet_index(sheet_id).is_some() {
                     let sr0 = sr.saturating_sub(1);
                     let er0 = er.saturating_sub(1);
                     let sc0 = sc.saturating_sub(1);
                     let ec0 = ec.saturating_sub(1);
-                    for u in index.vertices_in_col_range(sc0, ec0) {
+                    for u in engine.graph.vertices_in_cols(sheet_id, sc0, ec0) {
                         let Some(pc) = engine.graph.vertex_grid_addr(u) else {
                             continue;
                         };
@@ -389,9 +390,39 @@ impl<'a, R: EvaluationContext> VirtualDepBuilder<'a, R> {
     pub fn new(engine: &'a Engine<R>) -> Self {
         Self { engine }
     }
+    /// Plan hints for `candidates`. Under `unified_authority` a compressed
+    /// range read is an ordinary static edge of the relation (R-1), so the
+    /// planner already orders every formula inside the range before its
+    /// reader; only dynamic readers get hints (design §8.2). Enumerating the
+    /// range members costs |readers| × |range formulas| hints (100M for
+    /// 1,000 SUMIFS over a 100k formula column), and resolving their used
+    /// extent at plan time caches it before same-pass spills commit.
     pub fn build(
         &self,
         candidates: &[VertexId],
+    ) -> (
+        rustc_hash::FxHashMap<VertexId, Vec<VertexId>>,
+        Vec<VertexId>,
+    ) {
+        self.build_inner(candidates, false)
+    }
+
+    /// Legacy's hints, range members included: what the legacy scheduler
+    /// (the test oracle) needs, since its range stripes carry no edges.
+    pub fn build_with_range_members(
+        &self,
+        candidates: &[VertexId],
+    ) -> (
+        rustc_hash::FxHashMap<VertexId, Vec<VertexId>>,
+        Vec<VertexId>,
+    ) {
+        self.build_inner(candidates, true)
+    }
+
+    fn build_inner(
+        &self,
+        candidates: &[VertexId],
+        range_members: bool,
     ) -> (
         rustc_hash::FxHashMap<VertexId, Vec<VertexId>>,
         Vec<VertexId>,
@@ -401,8 +432,26 @@ impl<'a, R: EvaluationContext> VirtualDepBuilder<'a, R> {
         let augmented_vertices: Vec<VertexId> = Vec::new(); // Will be populated in Phase 3
 
         for &v in candidates {
-            let mut deps = RangeVirtualDepProvider::get_virtual_deps(self.engine, v);
-            let dynamic_deps = DynamicRefVirtualDepProvider::get_virtual_deps(self.engine, v);
+            // Range members are legacy's hints (its stripes carry no
+            // scheduling edges): the oracle scheduler's input only.
+            #[cfg(any(test, feature = "legacy_oracle"))]
+            let mut deps = if range_members {
+                RangeVirtualDepProvider::get_virtual_deps(self.engine, v)
+            } else {
+                Vec::new()
+            };
+            #[cfg(not(any(test, feature = "legacy_oracle")))]
+            let mut deps = Vec::new();
+            // Under the authority a reader with an observed read set is
+            // planned from it (rdi_dyn, rectangle hints); the pre-probe is
+            // for first evaluations only (design §8.2).
+            let observed =
+                !range_members && self.engine.graph.authority_host().observed(v).is_some();
+            let dynamic_deps = if observed {
+                Vec::new()
+            } else {
+                DynamicRefVirtualDepProvider::get_virtual_deps(self.engine, v)
+            };
 
             deps.extend(dynamic_deps);
             deps.sort_unstable();
@@ -427,7 +476,7 @@ impl DynamicRefVirtualDepProvider {
         if !engine.graph.is_dynamic(v) {
             return (Vec::new(), Vec::new());
         }
-        let Some(ast_id) = engine.graph.get_formula_id(v) else {
+        let Some(view) = engine.graph.formula_view(v) else {
             return (Vec::new(), Vec::new());
         };
         let sheet_id = engine.graph.get_vertex_sheet_id(v);
@@ -438,8 +487,8 @@ impl DynamicRefVirtualDepProvider {
             .get_cell_ref(v)
             .unwrap_or_else(|| engine.graph.make_cell_ref(sheet_name, 0, 0));
         let interpreter = Interpreter::new_with_cell(&collector, sheet_name, cell_ref);
-        let _ = interpreter.evaluate_arena_ast(
-            ast_id,
+        let _ = interpreter.evaluate_formula_view(
+            view,
             engine.graph.data_store(),
             engine.graph.sheet_reg(),
         );

@@ -48,7 +48,7 @@ fn test_change_in_tiny_range_dirties_dependent() {
         .set_cell_formula("Sheet1", 1, 2, sum_ast(1, 1, 4, 1))
         .unwrap();
 
-    let b1_id = *graph
+    let b1_id = graph
         .get_vertex_id_for_address(&abs_cell_ref(0, 1, 2))
         .unwrap();
 
@@ -80,7 +80,7 @@ fn test_change_in_large_tall_range_dirties_dependent() {
         .set_cell_formula("Sheet1", 1, 2, sum_ast(1, 1, 100, 1))
         .unwrap();
 
-    let b1_id = *graph
+    let b1_id = graph
         .get_vertex_id_for_address(&abs_cell_ref(0, 1, 2))
         .unwrap();
 
@@ -109,7 +109,7 @@ fn test_change_in_large_wide_range_dirties_dependent() {
         .set_cell_formula("Sheet1", 1, 2, sum_ast(1, 1, 1, 26))
         .unwrap();
 
-    let b1_id = *graph
+    let b1_id = graph
         .get_vertex_id_for_address(&abs_cell_ref(0, 1, 2))
         .unwrap();
 
@@ -138,7 +138,7 @@ fn test_change_outside_range_does_not_dirty_dependent() {
         .set_cell_formula("Sheet1", 1, 2, sum_ast(1, 1, 10, 1))
         .unwrap();
 
-    let b1_id = *graph
+    let b1_id = graph
         .get_vertex_id_for_address(&abs_cell_ref(0, 1, 2))
         .unwrap();
 
@@ -182,7 +182,7 @@ fn test_multi_stripe_border_cell_edit() {
         .set_cell_formula("Sheet1", 1, 3, sum_ast(1, 1, 512, 2))
         .unwrap();
 
-    let c1_id = *graph
+    let c1_id = graph
         .get_vertex_id_for_address(&abs_cell_ref(0, 1, 3))
         .unwrap();
 
@@ -237,7 +237,7 @@ fn prop_any_cell_change_in_range_dirties_dependent() {
         .set_cell_formula("Sheet1", 1, 100, sum_ast(1, 1, 50, 52)) // AZ is column 52
         .unwrap();
 
-    let formula_id = *graph
+    let formula_id = graph
         .get_vertex_id_for_address(&abs_cell_ref(0, 1, 100))
         .unwrap();
 
@@ -283,10 +283,10 @@ fn test_multiple_ranges_same_stripe() {
         .set_cell_formula("Sheet1", 1, 3, sum_ast(20, 1, 50, 1))
         .unwrap();
 
-    let b1_id = *graph
+    let b1_id = graph
         .get_vertex_id_for_address(&abs_cell_ref(0, 1, 2))
         .unwrap();
-    let c1_id = *graph
+    let c1_id = graph
         .get_vertex_id_for_address(&abs_cell_ref(0, 1, 3))
         .unwrap();
 
@@ -321,7 +321,7 @@ fn test_cross_sheet_stripe_isolation() {
         .set_cell_formula("Sheet1", 1, 2, sum_ast(1, 1, 20, 1))
         .unwrap();
 
-    let b1_id = *graph
+    let b1_id = graph
         .get_vertex_id_for_address(&abs_cell_ref(0, 1, 2))
         .unwrap();
 

@@ -167,26 +167,305 @@ pub enum ChangeEvent {
     },
 }
 
+/// The `FormulaAdjusted` events of a run of consecutive family members
+/// that a structural edit rewrote as one (Program 2, contract decision
+/// 20.5): members `0..len` are vertices `first + i` at rows `row0 + i` of
+/// column `col` (after the edit); each member's old and new formula is the
+/// first member's relocated down by `i` rows. Logs keep the record and
+/// expand it into the per-member events only when those are read.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct FormulaRunAdjusted {
+    pub(crate) first: VertexId,
+    pub(crate) len: u32,
+    pub(crate) sheet_id: SheetId,
+    pub(crate) col: u32,
+    pub(crate) row0: u32,
+    pub(crate) old_first: ASTNode,
+    pub(crate) new_first: ASTNode,
+}
+
+impl FormulaRunAdjusted {
+    #[inline]
+    pub(crate) fn len(&self) -> usize {
+        self.len as usize
+    }
+
+    /// Member `i`'s event, exactly as the per-cell editor logs it.
+    pub(crate) fn event(&self, i: u32) -> ChangeEvent {
+        let relocate = |ast: &ASTNode| {
+            if i == 0 {
+                return ast.clone();
+            }
+            // Every member between the run's (checked) first and last
+            // relocates: references are affine in the member row.
+            crate::engine::template::relocate::instantiate_member_ast(ast, i64::from(i), 0)
+                .expect("a run member's formula relocates")
+        };
+        ChangeEvent::FormulaAdjusted {
+            id: VertexId(self.first.0 + i),
+            addr: Some(CellRef::new(
+                self.sheet_id,
+                crate::reference::Coord::new(self.row0 + i, self.col, true, true),
+            )),
+            old_ast: relocate(&self.old_first),
+            new_ast: relocate(&self.new_first),
+        }
+    }
+
+    /// Every member's event, in vertex order.
+    pub(crate) fn events(&self) -> impl Iterator<Item = ChangeEvent> + '_ {
+        (0..self.len).map(|i| self.event(i))
+    }
+}
+
+/// A run record held by a log: it stands for `run.len` events placed
+/// before retained event `pos`, with consecutive sequence numbers from
+/// `seq0`, one group and one meta.
+#[derive(Debug)]
+struct LazyEntry {
+    pos: usize,
+    seq0: u64,
+    group: Option<u64>,
+    meta: ChangeEventMeta,
+    run: std::sync::Arc<FormulaRunAdjusted>,
+}
+
+/// The retained events of a log. `events`/`metas`/`seqs`/`groups` are the
+/// canonical (parallel) vectors; `lazy` holds run records not yet expanded
+/// into them, in log order, each positioned before `events[pos]`. Every
+/// record's position is at or after the previous record's, and the events
+/// before the first record are expanded history.
+#[derive(Debug, Default)]
+struct Retained {
+    events: Vec<ChangeEvent>,
+    metas: Vec<ChangeEventMeta>,
+    seqs: Vec<u64>,
+    groups: Vec<Option<u64>>,
+    lazy: Vec<LazyEntry>,
+}
+
+impl Retained {
+    /// Expand every pending run record in place. Only the events from the
+    /// first record's position on are touched (moved, never cloned), so
+    /// history expanded by an earlier call costs nothing again. Returns the
+    /// number of events written (expanded plus moved), for the work gate.
+    fn expand(&mut self) -> usize {
+        let Some(first) = self.lazy.first() else {
+            return 0;
+        };
+        let start = first.pos;
+        let tail_events = self.events.split_off(start);
+        let tail_metas = self.metas.split_off(start);
+        let tail_seqs = self.seqs.split_off(start);
+        let tail_groups = self.groups.split_off(start);
+        let tail_len = tail_events.len();
+        let added: usize = self.lazy.iter().map(|e| e.run.len()).sum();
+        self.events.reserve(tail_len + added);
+        self.metas.reserve(tail_len + added);
+        self.seqs.reserve(tail_len + added);
+        self.groups.reserve(tail_len + added);
+        let mut tail = tail_events
+            .into_iter()
+            .zip(tail_metas)
+            .zip(tail_seqs.into_iter().zip(tail_groups));
+        let mut p = start;
+        for entry in std::mem::take(&mut self.lazy) {
+            while p < entry.pos {
+                let ((event, meta), (seq, group)) = tail.next().expect("record position in range");
+                self.events.push(event);
+                self.metas.push(meta);
+                self.seqs.push(seq);
+                self.groups.push(group);
+                p += 1;
+            }
+            for (i, event) in entry.run.events().enumerate() {
+                self.events.push(event);
+                self.metas.push(entry.meta.clone());
+                self.seqs.push(entry.seq0 + i as u64);
+                self.groups.push(entry.group);
+            }
+        }
+        for ((event, meta), (seq, group)) in tail {
+            self.events.push(event);
+            self.metas.push(meta);
+            self.seqs.push(seq);
+            self.groups.push(group);
+        }
+        tail_len + added
+    }
+}
+
+/// [`Retained`] behind a cell that lets a shared read expand pending run
+/// records in place, once, so readers borrow one contiguous expanded log
+/// and every run record is expanded exactly once over the log's life.
+///
+/// Invariant: `expanded` is initialized exactly when `inner.lazy` is
+/// empty. Shared access to `inner` goes only through [`Self::get`], which
+/// runs the expansion inside `expanded.get_or_init` and hands out
+/// references only after it completes; every other access takes `&mut
+/// self`, and a record is added (resetting `expanded`) only through
+/// `&mut self` as well.
+struct RetainedCell {
+    inner: std::cell::UnsafeCell<Retained>,
+    expanded: std::sync::OnceLock<()>,
+    /// Retained events, pending records included.
+    len: usize,
+    /// Pending run records (meaningful while `expanded` is uninitialized).
+    pending_records: usize,
+    /// Events written by expansion (expanded and moved) over the log's
+    /// life: the work gate of the changelog scaling test.
+    #[cfg(test)]
+    work: std::sync::atomic::AtomicUsize,
+}
+
+// SAFETY: `inner` is mutated through a shared reference only inside
+// `expanded.get_or_init`, which runs the closure at most once per
+// initialization, blocks concurrent callers until it finishes and
+// publishes its writes (happens-before) to them. No shared reference into
+// `inner` can exist while it runs: `get` returns only after initialization,
+// and `expanded` is reset only through `&mut self`. This is the same
+// contract as `Mutex<Retained>` / `OnceLock<Retained>`, hence the
+// `Send + Sync` requirement on the contents (asserted below).
+unsafe impl Sync for RetainedCell {}
+
+const _: () = {
+    const fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<Retained>();
+};
+
+impl Default for RetainedCell {
+    fn default() -> Self {
+        Self {
+            inner: std::cell::UnsafeCell::new(Retained::default()),
+            expanded: std::sync::OnceLock::from(()),
+            len: 0,
+            pending_records: 0,
+            #[cfg(test)]
+            work: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+}
+
+impl std::fmt::Debug for RetainedCell {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RetainedCell")
+            .field("len", &self.len)
+            .field("expanded", &self.expanded.get().is_some())
+            .finish()
+    }
+}
+
+impl RetainedCell {
+    #[inline]
+    fn note_work(&self, _work: usize) {
+        #[cfg(test)]
+        self.work
+            .fetch_add(_work, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// The expanded log (pending records are expanded first, once).
+    fn get(&self) -> &Retained {
+        self.expanded.get_or_init(|| {
+            // SAFETY: see the `Sync` impl: this closure is the only access
+            // to `inner` while it runs.
+            let inner = unsafe { &mut *self.inner.get() };
+            self.note_work(inner.expand());
+        });
+        // SAFETY: initialized: no mutation through `&self` until `&mut self`.
+        unsafe { &*self.inner.get() }
+    }
+
+    /// Expand pending records in place and return the expanded vectors.
+    fn settle(&mut self) -> &mut Retained {
+        if self.expanded.get().is_none() {
+            let work = self.inner.get_mut().expand();
+            self.note_work(work);
+            self.expanded = std::sync::OnceLock::from(());
+            self.pending_records = 0;
+        }
+        self.inner.get_mut()
+    }
+
+    /// Plain events so far (the position of a record appended now).
+    fn plain_len(&mut self) -> usize {
+        self.inner.get_mut().events.len()
+    }
+
+    fn push(&mut self, event: ChangeEvent, meta: ChangeEventMeta, seq: u64, group: Option<u64>) {
+        let r = self.inner.get_mut();
+        r.events.push(event);
+        r.metas.push(meta);
+        r.seqs.push(seq);
+        r.groups.push(group);
+        self.len += 1;
+    }
+
+    fn push_run(&mut self, entry: LazyEntry) {
+        self.len += entry.run.len();
+        self.inner.get_mut().lazy.push(entry);
+        self.pending_records += 1;
+        self.expanded = std::sync::OnceLock::new();
+    }
+
+    fn drain_front(&mut self, n: usize) {
+        let r = self.settle();
+        r.events.drain(0..n);
+        r.metas.drain(0..n);
+        r.seqs.drain(0..n);
+        r.groups.drain(0..n);
+        self.len = r.events.len();
+    }
+
+    fn truncate(&mut self, len: usize) {
+        let r = self.settle();
+        r.events.truncate(len);
+        r.metas.truncate(len);
+        r.seqs.truncate(len);
+        r.groups.truncate(len);
+        self.len = r.events.len();
+    }
+
+    fn split_off(&mut self, index: usize) -> Vec<ChangeEvent> {
+        let r = self.settle();
+        let events = r.events.split_off(index);
+        let _ = r.metas.split_off(index);
+        let _ = r.seqs.split_off(index);
+        let _ = r.groups.split_off(index);
+        self.len = r.events.len();
+        events
+    }
+
+    fn clear(&mut self) {
+        *self = Self {
+            #[cfg(test)]
+            work: std::sync::atomic::AtomicUsize::new(
+                self.work.load(std::sync::atomic::Ordering::Relaxed),
+            ),
+            ..Self::default()
+        };
+    }
+}
+
 /// Audit trail for tracking all changes to the dependency graph
 #[derive(Debug, Default)]
 pub struct ChangeLog {
-    events: Vec<ChangeEvent>,
-    metas: Vec<ChangeEventMeta>,
     enabled: bool,
     /// Optional cap on retained events; when exceeded, oldest events are evicted (FIFO).
     max_changelog_events: Option<usize>,
     /// Track compound operations for atomic rollback
     compound_depth: usize,
-    /// Monotonic sequence number per event
-    seqs: Vec<u64>,
-    /// Optional group id (compound) per event
-    groups: Vec<Option<u64>>,
     next_seq: u64,
     /// Stack of active group ids for nested compounds
     group_stack: Vec<u64>,
     next_group_id: u64,
 
     current_meta: ChangeEventMeta,
+
+    /// Retained events with their metadata, monotonic sequence numbers and
+    /// optional group (compound) ids. Run records (Program 2) stay
+    /// unexpanded until the log is read or indexed by a mutation; each
+    /// record is expanded in place exactly once (see [`RetainedCell`]).
+    retained: RetainedCell,
 }
 
 /// Complete, operation-local mutation capture used by `Engine` correctness paths.
@@ -196,6 +475,9 @@ pub struct ChangeLog {
 #[derive(Debug)]
 pub(crate) struct MutationCapture {
     events: Vec<ChangeEvent>,
+    /// Run records (Program 2): `(pos, run)` stands for the run's events
+    /// placed before `events[pos]`, in order.
+    lazy: Vec<(usize, std::sync::Arc<FormulaRunAdjusted>)>,
     compound_depth: usize,
     current_meta: ChangeEventMeta,
 }
@@ -204,17 +486,59 @@ impl MutationCapture {
     pub(crate) fn new(current_meta: ChangeEventMeta) -> Self {
         Self {
             events: Vec::new(),
+            lazy: Vec::new(),
             compound_depth: 0,
             current_meta,
         }
     }
 
+    /// Number of plain (non-run) events: a position marker for
+    /// [`Self::events`].
     pub(crate) fn len(&self) -> usize {
         self.events.len()
     }
 
+    /// The plain events; run records are not in this slice (see
+    /// [`Self::expanded_events_from`]). Every consumer of a forward edit's
+    /// events ignores `FormulaAdjusted` except invalidation, which also
+    /// asks [`Self::lazy_len`].
     pub(crate) fn events(&self) -> &[ChangeEvent] {
         &self.events
+    }
+
+    /// Number of run records (a position marker for records).
+    pub(crate) fn lazy_len(&self) -> usize {
+        self.lazy.len()
+    }
+
+    /// Record a run's `FormulaAdjusted` events without expanding them.
+    pub(crate) fn record_lazy(&mut self, run: FormulaRunAdjusted) {
+        if run.len == 0 {
+            return;
+        }
+        self.lazy
+            .push((self.events.len(), std::sync::Arc::new(run)));
+    }
+
+    /// Every event from plain position `start` (and run record
+    /// `lazy_start`) on, run records expanded in place.
+    pub(crate) fn expanded_events_from(&self, start: usize, lazy_start: usize) -> Vec<ChangeEvent> {
+        let lazy = &self.lazy[lazy_start.min(self.lazy.len())..];
+        let mut out = Vec::with_capacity(
+            self.events.len().saturating_sub(start)
+                + lazy.iter().map(|(_, r)| r.len()).sum::<usize>(),
+        );
+        let mut k = 0;
+        for p in start..=self.events.len() {
+            while k < lazy.len() && lazy[k].0 <= p {
+                out.extend(lazy[k].1.events());
+                k += 1;
+            }
+            if let Some(e) = self.events.get(p) {
+                out.push(e.clone());
+            }
+        }
+        out
     }
 
     pub(crate) fn close_compounds(&mut self) {
@@ -257,17 +581,14 @@ impl ChangeLogger for MutationCapture {
 impl ChangeLog {
     pub fn new() -> Self {
         Self {
-            events: Vec::new(),
-            metas: Vec::new(),
             enabled: true,
             max_changelog_events: None,
             compound_depth: 0,
-            seqs: Vec::new(),
-            groups: Vec::new(),
             next_seq: 0,
             group_stack: Vec::new(),
             next_group_id: 1,
             current_meta: ChangeEventMeta::default(),
+            retained: RetainedCell::default(),
         }
     }
 
@@ -287,24 +608,37 @@ impl ChangeLog {
             return;
         };
         if max == 0 {
-            self.clear_retained();
+            self.retained.clear();
             return;
         }
-        if self.events.len() <= max {
+        if self.len() <= max {
             return;
         }
-        let drop_n = self.events.len() - max;
-        self.events.drain(0..drop_n);
-        self.metas.drain(0..drop_n);
-        self.seqs.drain(0..drop_n);
-        self.groups.drain(0..drop_n);
+        let drop_n = self.len() - max;
+        self.retained.drain_front(drop_n);
     }
 
-    fn clear_retained(&mut self) {
-        self.events.clear();
-        self.metas.clear();
-        self.seqs.clear();
-        self.groups.clear();
+    fn replay_lazy(
+        &mut self,
+        run: std::sync::Arc<FormulaRunAdjusted>,
+        meta: &ChangeEventMeta,
+        retain: bool,
+    ) {
+        if !self.enabled {
+            return;
+        }
+        let seq0 = self.next_seq;
+        self.next_seq += run.len as u64;
+        if retain {
+            let entry = LazyEntry {
+                pos: self.retained.plain_len(),
+                seq0,
+                group: self.group_stack.last().copied(),
+                meta: meta.clone(),
+                run,
+            };
+            self.retained.push_run(entry);
+        }
     }
 
     fn replay_record(&mut self, event: ChangeEvent, meta: &ChangeEventMeta, retain: bool) {
@@ -314,10 +648,8 @@ impl ChangeLog {
         let seq = self.next_seq;
         self.next_seq += 1;
         if retain {
-            self.events.push(event);
-            self.metas.push(meta.clone());
-            self.seqs.push(seq);
-            self.groups.push(self.group_stack.last().copied());
+            let group = self.group_stack.last().copied();
+            self.retained.push(event, meta.clone(), seq, group);
         }
     }
 
@@ -356,7 +688,11 @@ impl ChangeLog {
     }
 
     fn replay_capture(&mut self, capture: MutationCapture, retain: bool) {
-        for event in capture.events {
+        let mut lazy = capture.lazy.into_iter().peekable();
+        for (p, event) in capture.events.into_iter().enumerate() {
+            while let Some((_, run)) = lazy.next_if(|(pos, _)| *pos <= p) {
+                self.replay_lazy(run, &capture.current_meta, retain);
+            }
             match event {
                 ChangeEvent::CompoundStart { description, .. } => {
                     self.replay_begin_compound(description, &capture.current_meta, retain);
@@ -366,6 +702,9 @@ impl ChangeLog {
                 }
                 event => self.replay_record(event, &capture.current_meta, retain),
             }
+        }
+        for (_, run) in lazy {
+            self.replay_lazy(run, &capture.current_meta, retain);
         }
         if retain {
             self.enforce_cap();
@@ -389,10 +728,8 @@ impl ChangeLog {
             let seq = self.next_seq;
             self.next_seq += 1;
             let current_group = self.group_stack.last().copied();
-            self.events.push(event);
-            self.metas.push(self.current_meta.clone());
-            self.seqs.push(seq);
-            self.groups.push(current_group);
+            self.retained
+                .push(event, self.current_meta.clone(), seq, current_group);
             self.enforce_cap();
         }
     }
@@ -403,10 +740,7 @@ impl ChangeLog {
             let seq = self.next_seq;
             self.next_seq += 1;
             let current_group = self.group_stack.last().copied();
-            self.events.push(event);
-            self.metas.push(meta);
-            self.seqs.push(seq);
-            self.groups.push(current_group);
+            self.retained.push(event, meta, seq, current_group);
             self.enforce_cap();
         }
     }
@@ -446,12 +780,32 @@ impl ChangeLog {
         }
     }
 
+    /// Run records not yet expanded in place (tests: laziness).
+    #[cfg(test)]
+    pub(crate) fn unexpanded_run_records(&self) -> usize {
+        if self.retained.expanded.get().is_some() {
+            0
+        } else {
+            self.retained.pending_records
+        }
+    }
+
+    /// Events written into the retained vectors by run-record expansion
+    /// (expanded members plus plain events moved behind them) over the
+    /// log's life (tests: the work-scaling gate).
+    #[cfg(test)]
+    pub(crate) fn expansion_work(&self) -> usize {
+        self.retained
+            .work
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     pub fn events(&self) -> &[ChangeEvent] {
-        &self.events
+        &self.retained.get().events
     }
 
     pub fn event_meta(&self, index: usize) -> Option<&ChangeEventMeta> {
-        self.metas.get(index)
+        self.retained.get().metas.get(index)
     }
 
     pub fn set_actor_id(&mut self, actor_id: Option<String>) {
@@ -468,33 +822,26 @@ impl ChangeLog {
 
     /// Truncate log (and metadata) to len
     pub fn truncate(&mut self, len: usize) {
-        self.events.truncate(len);
-        self.metas.truncate(len);
-        self.seqs.truncate(len);
-        self.groups.truncate(len);
+        self.retained.truncate(len);
     }
 
     pub fn clear(&mut self) {
-        self.clear_retained();
+        self.retained.clear();
         self.compound_depth = 0;
         self.group_stack.clear();
     }
 
     pub fn len(&self) -> usize {
-        self.events.len()
+        self.retained.len
     }
 
     pub fn is_empty(&self) -> bool {
-        self.events.is_empty()
+        self.len() == 0
     }
 
     /// Extract events from index to end
     pub fn take_from(&mut self, index: usize) -> Vec<ChangeEvent> {
-        let events = self.events.split_off(index);
-        let _ = self.metas.split_off(index);
-        let _ = self.seqs.split_off(index);
-        let _ = self.groups.split_off(index);
-        events
+        self.retained.split_off(index)
     }
 
     /// Temporarily disable logging (for rollback operations)
@@ -509,17 +856,15 @@ impl ChangeLog {
 
     /// Return (sequence_number, group_id) metadata for event index
     pub fn meta(&self, index: usize) -> Option<(u64, Option<u64>)> {
-        self.seqs
-            .get(index)
-            .copied()
-            .zip(self.groups.get(index).copied())
+        let r = self.retained.get();
+        r.seqs.get(index).copied().zip(r.groups.get(index).copied())
     }
 
     /// Collect indices belonging to the last (innermost) complete group. Fallback: last single event.
     pub fn last_group_indices(&self) -> Vec<usize> {
-        if let Some(&last_gid) = self.groups.iter().rev().flatten().next() {
-            let idxs: Vec<usize> = self
-                .groups
+        let groups = &self.retained.get().groups;
+        if let Some(&last_gid) = groups.iter().rev().flatten().next() {
+            let idxs: Vec<usize> = groups
                 .iter()
                 .enumerate()
                 .filter_map(|(i, g)| if *g == Some(last_gid) { Some(i) } else { None })
@@ -528,7 +873,7 @@ impl ChangeLog {
                 return idxs;
             }
         }
-        self.events.len().checked_sub(1).into_iter().collect()
+        self.len().checked_sub(1).into_iter().collect()
     }
 }
 

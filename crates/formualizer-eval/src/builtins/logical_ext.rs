@@ -290,6 +290,9 @@ pub struct IfErrorFn; // IFERROR(value, fallback)
 /// Caps: PURE, SHORT_CIRCUIT
 /// [formualizer-docgen:schema:end]
 impl Function for IfErrorFn {
+    fn family_kernel(&self) -> Option<crate::function::FamilyKernel> {
+        Some(crate::function::FamilyKernel::IfError)
+    }
     fn propagate_format(
         &self,
         result: &crate::traits::CalcValue<'_>,

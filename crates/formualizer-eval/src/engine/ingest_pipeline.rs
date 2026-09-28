@@ -12,17 +12,20 @@ use crate::engine::arena::{
 };
 use crate::engine::graph::DependencyGraph;
 use crate::engine::plan::{DependencyPlan, F_HAS_NAMES, F_HAS_RANGES, F_HAS_TABLES, F_VOLATILE};
+use crate::engine::shape_memo::{
+    self, MemoValidity, ShapeLookup, ShapeMemo, Specialization, VisitTrace,
+};
 use crate::engine::sheet_registry::SheetRegistry;
-use crate::engine::vertex::VertexId;
-use crate::formula_plane::dependency_summary::{AnalyzerContext, function_argument_context};
-use crate::formula_plane::placement::{build_template_slot_map, value_ref_slot_descriptors};
-use crate::formula_plane::producer::{
+use crate::engine::template::canonical::{CanonicalExpr, LiteralSlotDescriptor};
+use crate::engine::template::dependency_summary::{AnalyzerContext, function_argument_context};
+use crate::engine::template::domain::{TemplateSlotMap, ValueRefSlotDescriptor};
+use crate::engine::template::read_summary::{
     AxisProjection, DirtyProjectionRule, ProjectionFallbackReason, ReadProjection,
     SpanReadDependency, SpanReadSummary,
 };
-use crate::formula_plane::region_index::Region;
-use crate::formula_plane::runtime::{TemplateSlotMap, ValueRefSlotDescriptor};
-use crate::formula_plane::template_canonical::LiteralSlotDescriptor;
+use crate::engine::template::region::Region;
+use crate::engine::template::slots::{build_template_slot_map, value_ref_slot_descriptors};
+use crate::engine::vertex::VertexId;
 use crate::function::FnCaps;
 use crate::reference::{CellRef, Coord, RangeRef, SharedRangeRef, SharedRef, SharedSheetLocator};
 use crate::traits::FunctionProvider;
@@ -159,6 +162,14 @@ pub(crate) struct IngestPipeline<'a> {
     function_provider: &'a dyn FunctionProvider,
     policy: CollectPolicy,
     function_semantics_enabled: bool,
+    /// Shape memo for this pipeline's lifetime, allocated at the second
+    /// arena formula (a one-formula pipeline cannot hit).
+    shape_memo: Option<Box<ShapeMemo>>,
+    memo_enabled: bool,
+    arena_formulas_seen: bool,
+    /// `PreparationPolicy::BestEffort`: a missing sheet or table becomes a
+    /// pending symbol link instead of a preparation error.
+    unbound_pending: bool,
 }
 
 impl<'a> IngestPipeline<'a> {
@@ -180,7 +191,78 @@ impl<'a> IngestPipeline<'a> {
             function_provider,
             policy,
             function_semantics_enabled: true,
+            shape_memo: None,
+            memo_enabled: true,
+            arena_formulas_seen: false,
+            unbound_pending: false,
         }
+    }
+
+    pub(crate) fn with_unbound_pending(mut self, on: bool) -> Self {
+        self.unbound_pending = on;
+        self
+    }
+
+    /// Under `BestEffort`, record an unresolvable sheet/table as a pending
+    /// symbol link (it re-binds when added); otherwise keep the error.
+    fn defer_unbound(
+        &self,
+        kind: &str,
+        name: Option<&str>,
+        plan: &mut DependencyPlanRow,
+        error: ExcelError,
+    ) -> Result<(), ExcelError> {
+        match name {
+            Some(name)
+                if self.unbound_pending
+                    && !(kind == "sheet" && DependencyGraph::is_tombstone_sheet(name)) =>
+            {
+                plan.named_refs
+                    .push(DependencyGraph::unbound_symbol_key(kind, name));
+                Ok(())
+            }
+            _ => Err(error),
+        }
+    }
+
+    /// Disable the shape memo (differential tests compare both paths).
+    #[cfg(test)]
+    pub(crate) fn without_shape_memo(mut self) -> Self {
+        self.memo_enabled = false;
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn memo_counts(&self) -> crate::engine::shape_memo::MemoCounts {
+        let mut counts = self
+            .shape_memo
+            .as_ref()
+            .map(|memo| memo.counts)
+            .unwrap_or_default();
+        // The first arena formula is a bypass counted before the memo exists.
+        counts.bypasses += u64::from(self.arena_formulas_seen);
+        counts
+    }
+
+    #[cfg(test)]
+    pub(crate) fn shape_memo_state(&self) -> Option<&ShapeMemo> {
+        self.shape_memo.as_deref()
+    }
+
+    /// Continue with the shape memo of an earlier pipeline over the same
+    /// graph (bulk planning in chunks). The memo revalidates itself against
+    /// the function provider's revision and the registry epoch.
+    pub(crate) fn with_memo_state(mut self, state: Option<MemoState>) -> Self {
+        if let Some((memo, seen)) = state {
+            self.shape_memo = memo;
+            self.arena_formulas_seen = seen;
+        }
+        self
+    }
+
+    /// The memo, for [`Self::with_memo_state`] on the next pipeline.
+    pub(crate) fn take_memo_state(&mut self) -> MemoState {
+        (self.shape_memo.take(), self.arena_formulas_seen)
     }
 
     pub(crate) fn enable_function_semantics(mut self) -> Self {
@@ -194,6 +276,353 @@ impl<'a> IngestPipeline<'a> {
         placement: CellRef,
         formula_text: Option<Arc<str>>,
     ) -> Result<IngestedFormula, ExcelError> {
+        if let FormulaAstInput::Member { template, anchor } = ast {
+            return self.ingest_member(template, anchor, placement);
+        }
+        if let FormulaAstInput::RawArena(id) = ast
+            && self.memo_enabled
+            && std::mem::replace(&mut self.arena_formulas_seen, true)
+        {
+            // A pipeline's first arena formula cannot hit; it skips the key
+            // walk and the memo is only allocated from the second one on.
+            let mut memo = self.shape_memo.take().unwrap_or_default();
+            let outcome =
+                self.ingest_formula_memoized(&mut memo, id, placement, None, &formula_text);
+            if outcome.is_none() {
+                memo.counts.bypasses += 1;
+            }
+            self.shape_memo = Some(memo);
+            match outcome {
+                Some(result) => return result,
+                None => {
+                    return self
+                        .ingest_formula_unmemoized(ast, placement, formula_text, None)
+                        .map(|(formula, _)| formula);
+                }
+            }
+        }
+        self.ingest_formula_unmemoized(ast, placement, formula_text, None)
+            .map(|(formula, _)| formula)
+    }
+
+    /// A load-time family member: the memo path keyed by the template at
+    /// its anchor (the same relative shape), with the member's references
+    /// relocated on a hit; otherwise the per-cell path over the member's
+    /// instantiated tree. A dynamic member gets its own interned AST
+    /// (dynamic formulas are evaluated per cell from their own AST).
+    fn ingest_member(
+        &mut self,
+        template: AstNodeId,
+        anchor: (u32, u32),
+        placement: CellRef,
+    ) -> Result<IngestedFormula, ExcelError> {
+        let offset = (
+            i64::from(placement.coord.row()) - i64::from(anchor.0),
+            i64::from(placement.coord.col()) - i64::from(anchor.1),
+        );
+        let mut outcome = None;
+        if self.memo_enabled && std::mem::replace(&mut self.arena_formulas_seen, true) {
+            let mut memo = self.shape_memo.take().unwrap_or_default();
+            outcome =
+                self.ingest_formula_memoized(&mut memo, template, placement, Some(offset), &None);
+            if outcome.is_none() {
+                memo.counts.bypasses += 1;
+            }
+            self.shape_memo = Some(memo);
+        }
+        let mut formula = match outcome {
+            Some(result) => result?,
+            None => {
+                let input = self.member_tree_input(template, offset)?;
+                self.ingest_formula_unmemoized(input, placement, None, None)?
+                    .0
+            }
+        };
+        formula.member_anchor = Some(anchor);
+        if formula.dep_plan.dynamic {
+            let FormulaAstInput::MemberTree { tree, .. } =
+                self.member_tree_input(template, offset)?
+            else {
+                unreachable!("member tree input");
+            };
+            formula.ast_id = self.data_store.store_ast(&tree, self.sheet_registry);
+            formula.member_anchor = None;
+        }
+        Ok(formula)
+    }
+
+    fn member_tree_input(
+        &self,
+        template: AstNodeId,
+        (dr, dc): (i64, i64),
+    ) -> Result<FormulaAstInput<'static>, ExcelError> {
+        let tree = self
+            .data_store
+            .retrieve_ast(template, self.sheet_registry)
+            .ok_or_else(missing_ast_error)?;
+        let tree = crate::engine::template::relocate::instantiate_member_ast(&tree, dr, dc)?;
+        Ok(FormulaAstInput::MemberTree { tree, template })
+    }
+
+    /// Memo path for arena inputs. `None` means the formula takes the
+    /// unmemoized per-cell path. With `offset`, `id` is a family template
+    /// valid at `placement - offset` and the formula is it relocated.
+    fn ingest_formula_memoized(
+        &mut self,
+        memo: &mut ShapeMemo,
+        id: AstNodeId,
+        placement: CellRef,
+        offset: Option<(i64, i64)>,
+        formula_text: &Option<Arc<str>>,
+    ) -> Option<Result<IngestedFormula, ExcelError>> {
+        // The key walk is relative to the formula's own cell: a member's
+        // key is its template's at the anchor.
+        let key_placement = match offset {
+            None => placement,
+            Some((dr, dc)) => CellRef::new(
+                placement.sheet_id,
+                Coord::new(
+                    (i64::from(placement.coord.row()) - dr) as u32,
+                    (i64::from(placement.coord.col()) - dc) as u32,
+                    true,
+                    true,
+                ),
+            ),
+        };
+        // Never take the global registry lock here: callers may already hold
+        // a semantic-epoch read guard, and a second read behind a waiting
+        // writer deadlocks. The provider revision and the registry's epoch
+        // mirror are lock-free; a function registered mid-pipeline changes
+        // the epoch and clears the memo before any later lookup. A provider
+        // without a planning revision cannot prove its semantics unchanged
+        // between cells, so it gets no memo.
+        let validity = MemoValidity::current(self.function_provider);
+        validity.provider_revision?;
+        if !memo.should_probe() {
+            return None;
+        }
+        #[cfg(test)]
+        {
+            memo.key_walks += 1;
+        }
+        let eligible = shape_memo::shape_tokens(
+            self.data_store,
+            id,
+            key_placement,
+            &mut memo.tokens,
+            &mut memo.refs,
+        );
+        if !eligible {
+            return None;
+        }
+        memo.revalidate(validity);
+        let shape = match memo.lookup_shape() {
+            ShapeLookup::Shape(shape, inserted) => {
+                if inserted {
+                    memo.counts.shape_misses += 1;
+                } else {
+                    memo.counts.shape_hits += 1;
+                }
+                shape
+            }
+            ShapeLookup::FirstSighting => {
+                memo.counts.first_sightings += 1;
+                return None;
+            }
+            ShapeLookup::Full => return None,
+        };
+        if matches!(
+            memo.specialization(shape, placement.sheet_id),
+            Some(Some(_))
+        ) {
+            memo.counts.specialization_hits += 1;
+        }
+        match memo.specialization(shape, placement.sheet_id) {
+            Some(Some(specialization)) => {
+                let formula = self
+                    .instantiate_specialization(
+                        specialization,
+                        &memo.refs,
+                        id,
+                        placement,
+                        offset,
+                        formula_text.clone(),
+                    )
+                    .ok()?;
+                memo.record_hit();
+                // Test builds re-derive every hit on the per-cell path.
+                #[cfg(test)]
+                self.verify_memo_hit(
+                    &formula,
+                    id,
+                    placement,
+                    offset,
+                    formula_text.clone(),
+                    validity,
+                );
+                Some(Ok(formula))
+            }
+            Some(None) => None,
+            None if !memo.can_insert_specialization(shape) => None,
+            None => {
+                memo.counts.specialization_misses += 1;
+                let input = match offset {
+                    None => FormulaAstInput::RawArena(id),
+                    Some(offset) => match self.member_tree_input(id, offset) {
+                        Ok(input) => input,
+                        Err(error) => return Some(Err(error)),
+                    },
+                };
+                let result = self.ingest_formula_unmemoized(
+                    input,
+                    placement,
+                    formula_text.clone(),
+                    Some(memo.refs.len()),
+                );
+                Some(result.map(|(formula, traced)| {
+                    let specialization = traced.and_then(|(expr, trace)| {
+                        let mut trace = trace.filter(|trace| trace.valid)?;
+                        Some(Specialization {
+                            canonical_hash: formula.canonical_hash,
+                            exact_canonical_hash: formula.exact_canonical_hash,
+                            exact_canonical_key: formula.exact_canonical_key.clone(),
+                            parameterized_canonical_hash: formula.parameterized_canonical_hash,
+                            parameterized_canonical_key: formula
+                                .parameterized_canonical_key
+                                .clone(),
+                            literal_slot_descriptors: formula.literal_slot_descriptors.clone(),
+                            literal_bindings: formula.literal_bindings.clone(),
+                            value_ref_slot_descriptors: formula.value_ref_slot_descriptors.clone(),
+                            expr,
+                            labels: formula.labels,
+                            read_projections: formula.read_projections.clone(),
+                            read_projection_fallback: formula.read_projection_fallback,
+                            volatile: formula.dep_plan.volatile,
+                            dynamic: formula.dep_plan.dynamic,
+                            visit: std::mem::take(&mut trace.visit).into_boxed_slice(),
+                        })
+                    });
+                    memo.insert_specialization(shape, placement.sheet_id, specialization);
+                    formula
+                }))
+            }
+        }
+    }
+
+    /// Product 3: per-placement work on a specialization hit.
+    fn instantiate_specialization(
+        &mut self,
+        specialization: &Specialization,
+        refs: &[CompactRefType],
+        ast_id: AstNodeId,
+        placement: CellRef,
+        offset: Option<(i64, i64)>,
+        formula_text: Option<Arc<str>>,
+    ) -> Result<IngestedFormula, ExcelError> {
+        let mut dep_plan = DependencyPlanRow::default();
+        for &index in specialization.visit.iter() {
+            let compact = &refs[index as usize];
+            // A member's references are its template's relocated (cell and
+            // range axes; names are unchanged by relocation).
+            let relocated = match (offset, compact) {
+                (Some((dr, dc)), CompactRefType::Cell { .. } | CompactRefType::Range { .. }) => {
+                    Some(
+                        crate::engine::graph::authority_host::relocate_compact_ref(compact, dr, dc)
+                            .ok_or_else(|| {
+                                ExcelError::new(ExcelErrorKind::Ref)
+                                    .with_message("family member reference out of bounds")
+                            })?,
+                    )
+                }
+                _ => None,
+            };
+            let reference = self.data_store.reconstruct_reference_type_for_eval(
+                relocated.as_ref().unwrap_or(compact),
+                self.sheet_registry,
+            );
+            let semantic = crate::engine::refs::classify(&reference);
+            self.collect_reference(semantic, placement.sheet_id, &mut dep_plan)?;
+        }
+        dep_plan.volatile = specialization.volatile;
+        dep_plan.dynamic = specialization.dynamic;
+        dep_plan.dedup_and_sort();
+        let read_summary = specialization
+            .read_projections
+            .as_ref()
+            .and_then(|projections| {
+                span_read_summary_from_projections(placement, projections).ok()
+            });
+        let template_slot_map =
+            build_template_slot_map(ast_id, self.data_store, &specialization.expr);
+        Ok(IngestedFormula {
+            ast_id,
+            member_anchor: None,
+            placement,
+            canonical_hash: specialization.canonical_hash,
+            exact_canonical_hash: specialization.exact_canonical_hash,
+            exact_canonical_key: specialization.exact_canonical_key.clone(),
+            parameterized_canonical_hash: specialization.parameterized_canonical_hash,
+            parameterized_canonical_key: specialization.parameterized_canonical_key.clone(),
+            literal_slot_descriptors: specialization.literal_slot_descriptors.clone(),
+            literal_bindings: specialization.literal_bindings.clone(),
+            value_ref_slot_descriptors: specialization.value_ref_slot_descriptors.clone(),
+            template_slot_map,
+            labels: specialization.labels,
+            dep_plan,
+            read_summary,
+            read_projections: specialization.read_projections.clone(),
+            read_projection_fallback: specialization.read_projection_fallback,
+            formula_text,
+        })
+    }
+
+    #[cfg(test)]
+    fn verify_memo_hit(
+        &mut self,
+        memoized: &IngestedFormula,
+        id: AstNodeId,
+        placement: CellRef,
+        offset: Option<(i64, i64)>,
+        formula_text: Option<Arc<str>>,
+        validity: MemoValidity,
+    ) {
+        let input = match offset {
+            None => FormulaAstInput::RawArena(id),
+            Some(offset) => self
+                .member_tree_input(id, offset)
+                .expect("member tree for memo verification"),
+        };
+        let reference = self
+            .ingest_formula_unmemoized(input, placement, formula_text, None)
+            .map(|(formula, _)| formula);
+        // A provider revision or registry epoch change makes both paths
+        // observe moving semantics; only compare against unchanged validity.
+        if MemoValidity::current(self.function_provider) != validity {
+            return;
+        }
+        match reference {
+            Ok(reference) => {
+                if let Some(field) = ingested_formula_difference(memoized, &reference) {
+                    panic!("shape memo mismatch at {placement:?} in field {field}");
+                }
+            }
+            Err(error) => {
+                panic!("shape memo hit at {placement:?} where the per-cell path fails: {error:?}")
+            }
+        }
+    }
+
+    /// The unchanged per-cell path. With `trace_refs` (the key walk's
+    /// reference-node count), also records the dependency visit sequence over
+    /// the tree it walks and returns it with the canonical expression.
+    #[allow(clippy::type_complexity)]
+    fn ingest_formula_unmemoized(
+        &mut self,
+        ast: FormulaAstInput<'_>,
+        placement: CellRef,
+        formula_text: Option<Arc<str>>,
+        trace_refs: Option<usize>,
+    ) -> Result<(IngestedFormula, Option<(CanonicalExpr, Option<VisitTrace>)>), ExcelError> {
         let (ast_id, ast_for_oracles) = match ast {
             FormulaAstInput::Tree(mut tree) => {
                 self.rewrite_structured_references_for_cell(&mut tree, placement)?;
@@ -218,6 +647,10 @@ impl<'a> IngestPipeline<'a> {
                     (id, tree)
                 }
             }
+            FormulaAstInput::MemberTree { tree, template } => (template, tree),
+            FormulaAstInput::Member { .. } => {
+                unreachable!("members are planned through ingest_member")
+            }
             FormulaAstInput::_Lifetime(_) => unreachable!("marker variant is not constructible"),
         };
 
@@ -231,15 +664,27 @@ impl<'a> IngestPipeline<'a> {
         let anchor_row = placement.coord.row().saturating_add(1);
         let anchor_col = placement.coord.col().saturating_add(1);
         let canonical_template =
-            crate::formula_plane::template_canonical::canonicalize_template_with_provider(
+            crate::engine::template::canonical::canonicalize_template_with_provider(
                 &ast_for_oracles,
                 anchor_row,
                 anchor_col,
                 self.function_semantics_enabled
                     .then_some(self.function_provider),
             );
+        let mut trace = trace_refs.and_then(|expected| {
+            let mut keys = Vec::with_capacity(expected);
+            shape_memo::tree_reference_keys(&ast_for_oracles, &mut keys);
+            (keys.len() == expected)
+                .then(|| VisitTrace::new(&keys))
+                .flatten()
+        });
         let mut dep_plan = DependencyPlanRow::default();
-        self.collect_dependencies_tree(&ast_for_oracles, placement.sheet_id, &mut dep_plan)?;
+        self.collect_dependencies_tree(
+            &ast_for_oracles,
+            placement.sheet_id,
+            &mut dep_plan,
+            trace.as_mut(),
+        )?;
         dep_plan.volatile = self.ast_is_volatile(&ast_for_oracles);
         dep_plan.dynamic = metadata.labels.has_flag(CanonicalLabels::FLAG_DYNAMIC);
         dep_plan.dedup_and_sort();
@@ -259,8 +704,9 @@ impl<'a> IngestPipeline<'a> {
             span_read_summary_from_projections(placement, projections).ok()
         });
 
-        Ok(IngestedFormula {
+        let formula = IngestedFormula {
             ast_id,
+            member_anchor: None,
             placement,
             canonical_hash: metadata.canonical_hash,
             exact_canonical_hash: canonical_template.key.stable_hash(),
@@ -285,7 +731,11 @@ impl<'a> IngestPipeline<'a> {
             read_projections,
             read_projection_fallback,
             formula_text,
-        })
+        };
+        Ok((
+            formula,
+            trace_refs.map(|_| (canonical_template.expr, trace)),
+        ))
     }
 
     pub(crate) fn ingest_batch<'b, I>(
@@ -334,15 +784,17 @@ impl<'a> IngestPipeline<'a> {
         ast: &ASTNode,
         current_sheet_id: SheetId,
         plan: &mut DependencyPlanRow,
+        trace: Option<&mut VisitTrace>,
     ) -> Result<(), ExcelError> {
-        struct Context<'pipeline, 'plan, 'engine> {
+        struct Context<'pipeline, 'plan, 'engine, 'trace> {
             pipeline: &'pipeline mut IngestPipeline<'engine>,
             current_sheet_id: SheetId,
             plan: &'plan mut DependencyPlanRow,
+            trace: Option<&'trace mut VisitTrace>,
         }
 
         fn local_binding_style(
-            context: &Context<'_, '_, '_>,
+            context: &Context<'_, '_, '_, '_>,
             name: &str,
             arity: usize,
         ) -> crate::engine::refs::LocalBindingStyle {
@@ -368,9 +820,12 @@ impl<'a> IngestPipeline<'a> {
         }
 
         fn consume(
-            context: &mut Context<'_, '_, '_>,
+            context: &mut Context<'_, '_, '_, '_>,
             reference: crate::engine::refs::SemanticReference<'_>,
         ) -> Result<(), ExcelError> {
+            if let Some(trace) = context.trace.as_deref_mut() {
+                trace.record(shape_memo::semantic_reference_key(&reference));
+            }
             context
                 .pipeline
                 .collect_reference(reference, context.current_sheet_id, context.plan)
@@ -380,6 +835,7 @@ impl<'a> IngestPipeline<'a> {
             pipeline: self,
             current_sheet_id,
             plan,
+            trace,
         };
         crate::engine::refs::visit_tree_references(ast, &mut context, local_binding_style, consume)
     }
@@ -409,6 +865,9 @@ impl<'a> IngestPipeline<'a> {
                     if self.sources.resolve_table(name).is_some() {
                         plan.source_refs.push(name.to_string());
                         Ok(())
+                    } else if crate::engine::refs::unbound_external_range_defers(&ext.kind) {
+                        plan.named_refs.push(name.to_string());
+                        Ok(())
                     } else {
                         Err(ExcelError::new(ExcelErrorKind::Name)
                             .with_message(format!("Undefined table: {name}")))
@@ -416,7 +875,11 @@ impl<'a> IngestPipeline<'a> {
                 }
             },
             SemanticReference::Cell(cell) => {
-                let sheet_id = self.resolve_reference_sheet(cell.sheet.name(), current_sheet_id)?;
+                let sheet_id =
+                    match self.resolve_reference_sheet(cell.sheet.name(), current_sheet_id) {
+                        Ok(id) => id,
+                        Err(e) => return self.defer_unbound("sheet", cell.sheet.name(), plan, e),
+                    };
                 plan.direct_cell_deps.push(CellRef::new(
                     sheet_id,
                     Coord::from_excel(cell.row, cell.col, true, true),
@@ -424,9 +887,13 @@ impl<'a> IngestPipeline<'a> {
                 Ok(())
             }
             SemanticReference::OpenRange(range) => {
+                let sheet_name = range.sheet.name();
                 if let Some(SharedRef::Range(range)) = range.original.to_sheet_ref_lossy() {
                     let owned = range.into_owned();
-                    let sheet_id = self.resolve_shared_sheet(owned.sheet, current_sheet_id)?;
+                    let sheet_id = match self.resolve_shared_sheet(owned.sheet, current_sheet_id) {
+                        Ok(id) => id,
+                        Err(e) => return self.defer_unbound("sheet", sheet_name, plan, e),
+                    };
                     plan.range_deps.push(SharedRangeRef {
                         sheet: SharedSheetLocator::Id(sheet_id),
                         start_row: owned.start_row,
@@ -451,8 +918,12 @@ impl<'a> IngestPipeline<'a> {
                 if self.policy.expand_small_ranges
                     && area <= self.policy.range_expansion_limit as u64
                 {
-                    let sheet_id =
-                        self.resolve_reference_sheet(range.sheet.name(), current_sheet_id)?;
+                    let sheet_id = match self
+                        .resolve_reference_sheet(range.sheet.name(), current_sheet_id)
+                    {
+                        Ok(id) => id,
+                        Err(e) => return self.defer_unbound("sheet", range.sheet.name(), plan, e),
+                    };
                     for row in sr..=er {
                         for col in sc..=ec {
                             plan.direct_cell_deps.push(CellRef::new(
@@ -461,9 +932,12 @@ impl<'a> IngestPipeline<'a> {
                             ));
                         }
                     }
-                } else if let Some(SharedRef::Range(range)) = range.original.to_sheet_ref_lossy() {
-                    let owned = range.into_owned();
-                    let sheet_id = self.resolve_shared_sheet(owned.sheet, current_sheet_id)?;
+                } else if let Some(SharedRef::Range(shared)) = range.original.to_sheet_ref_lossy() {
+                    let owned = shared.into_owned();
+                    let sheet_id = match self.resolve_shared_sheet(owned.sheet, current_sheet_id) {
+                        Ok(id) => id,
+                        Err(e) => return self.defer_unbound("sheet", range.sheet.name(), plan, e),
+                    };
                     plan.range_deps.push(SharedRangeRef {
                         sheet: SharedSheetLocator::Id(sheet_id),
                         start_row: owned.start_row,
@@ -492,8 +966,13 @@ impl<'a> IngestPipeline<'a> {
                     plan.source_refs.push(tref.name.clone());
                     Ok(())
                 } else {
-                    Err(ExcelError::new(ExcelErrorKind::Name)
-                        .with_message(format!("Undefined table: {}", tref.name)))
+                    self.defer_unbound(
+                        "table",
+                        Some(&tref.name),
+                        plan,
+                        ExcelError::new(ExcelErrorKind::Name)
+                            .with_message(format!("Undefined table: {}", tref.name)),
+                    )
                 }
             }
             SemanticReference::ThreeDimensional(_) | SemanticReference::Unsupported(_) => Ok(()),
@@ -674,15 +1153,33 @@ impl<'a> IngestPipeline<'a> {
     }
 }
 
+/// A pipeline's shape memo and whether it has seen an arena formula.
+pub(crate) type MemoState = (Option<Box<ShapeMemo>>, bool);
+
 pub(crate) enum FormulaAstInput<'a> {
     Tree(ASTNode),
     RawArena(AstNodeId),
+    /// A load-time family member (P2-M2): `template` is the formula at the
+    /// 0-based `anchor` cell and this cell's formula is it relocated. The
+    /// member is planned without interning its own AST.
+    Member {
+        template: AstNodeId,
+        anchor: (u32, u32),
+    },
+    /// Internal: a member's instantiated tree, planned as `template`.
+    MemberTree {
+        tree: ASTNode,
+        template: AstNodeId,
+    },
     #[doc(hidden)]
     _Lifetime(PhantomData<&'a ()>),
 }
 
 pub(crate) struct IngestedFormula {
     pub(crate) ast_id: AstNodeId,
+    /// `Some(anchor)` when `ast_id` is a family template valid at the
+    /// 0-based anchor cell rather than this formula's own AST.
+    pub(crate) member_anchor: Option<(u32, u32)>,
     pub(crate) placement: CellRef,
     pub(crate) canonical_hash: u64,
     pub(crate) exact_canonical_hash: u64,
@@ -699,6 +1196,65 @@ pub(crate) struct IngestedFormula {
     pub(crate) read_projections: Option<Vec<ReadProjection>>,
     pub(crate) read_projection_fallback: Option<ProjectionFallbackReason>,
     pub(crate) formula_text: Option<Arc<str>>,
+}
+
+/// First field in which two ingest results differ, or `None` if they are
+/// identical in every field (differential memo verification).
+#[cfg(test)]
+pub(crate) fn ingested_formula_difference(
+    a: &IngestedFormula,
+    b: &IngestedFormula,
+) -> Option<&'static str> {
+    let checks: [(&'static str, bool); 18] = [
+        ("ast_id", a.ast_id == b.ast_id),
+        ("placement", a.placement == b.placement),
+        ("canonical_hash", a.canonical_hash == b.canonical_hash),
+        (
+            "exact_canonical_hash",
+            a.exact_canonical_hash == b.exact_canonical_hash,
+        ),
+        (
+            "exact_canonical_key",
+            a.exact_canonical_key == b.exact_canonical_key,
+        ),
+        (
+            "parameterized_canonical_hash",
+            a.parameterized_canonical_hash == b.parameterized_canonical_hash,
+        ),
+        (
+            "parameterized_canonical_key",
+            a.parameterized_canonical_key == b.parameterized_canonical_key,
+        ),
+        (
+            "literal_slot_descriptors",
+            a.literal_slot_descriptors == b.literal_slot_descriptors,
+        ),
+        ("literal_bindings", a.literal_bindings == b.literal_bindings),
+        (
+            "value_ref_slot_descriptors",
+            a.value_ref_slot_descriptors == b.value_ref_slot_descriptors,
+        ),
+        (
+            "template_slot_map",
+            a.template_slot_map == b.template_slot_map,
+        ),
+        ("labels", a.labels == b.labels),
+        ("dep_plan", a.dep_plan == b.dep_plan),
+        ("read_summary", a.read_summary == b.read_summary),
+        ("read_projections", a.read_projections == b.read_projections),
+        (
+            "read_projection_fallback",
+            a.read_projection_fallback == b.read_projection_fallback,
+        ),
+        ("formula_text", a.formula_text == b.formula_text),
+        (
+            "placement_input",
+            a.dep_plan.resolved_named_refs == b.dep_plan.resolved_named_refs,
+        ),
+    ];
+    checks
+        .into_iter()
+        .find_map(|(field, equal)| (!equal).then_some(field))
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -828,7 +1384,7 @@ fn reference_returning_projection_shape(
         }
         ASTNodeType::Function { name, args } => {
             let function =
-                crate::formula_plane::template_canonical::resolve_canonical_function_with_provider(
+                crate::engine::template::canonical::resolve_canonical_function_with_provider(
                     function_provider,
                     name,
                     args.len(),
@@ -1169,11 +1725,12 @@ fn compute_read_projections(
                 )
             }
             ASTNodeType::Function { name, args } => {
-                let function = crate::formula_plane::template_canonical::resolve_canonical_function_with_provider(
-                    function_provider,
-                    name,
-                    args.len(),
-                );
+                let function =
+                    crate::engine::template::canonical::resolve_canonical_function_with_provider(
+                        function_provider,
+                        name,
+                        args.len(),
+                    );
                 let contract = function
                     .contract
                     .ok_or(ProjectionFallbackReason::UnsupportedDependencySummary)?;
@@ -1237,7 +1794,7 @@ fn compute_read_projections(
 pub(crate) fn span_read_summary_from_projections(
     placement: CellRef,
     projections: &[ReadProjection],
-) -> Result<SpanReadSummary, crate::formula_plane::producer::ProjectionFallbackReason> {
+) -> Result<SpanReadSummary, crate::engine::template::read_summary::ProjectionFallbackReason> {
     let result_region = Region::col_interval(
         placement.sheet_id,
         placement.coord.col(),
@@ -2243,7 +2800,7 @@ mod tests {
             &mut local_scopes,
         );
         let mut new = DependencyPlanRow::default();
-        let new_result = pipeline.collect_dependencies_tree(ast, current_sheet, &mut new);
+        let new_result = pipeline.collect_dependencies_tree(ast, current_sheet, &mut new, None);
         assert_eq!(old_result, new_result);
         if old_result.is_ok() {
             old.dedup_and_sort();
@@ -2255,7 +2812,11 @@ mod tests {
     #[test]
     fn frozen_ingest_walk_matches_reference_classes_scopes_and_errors() {
         ensure_builtins_registered();
-        let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+        // The frozen reference walk has only Strict semantics.
+        let mut engine = Engine::new(
+            TestWorkbook::new(),
+            EvalConfig::default().with_preparation_policy(crate::engine::PreparationPolicy::Strict),
+        );
         let sheet = engine.graph.sheet_id_mut("Sheet1");
         engine.graph.sheet_id_mut("Sheet2");
         let mut pipeline = engine.ingest_pipeline();
@@ -2301,7 +2862,7 @@ mod tests {
             let ast = parse(formula).unwrap();
             let mut plan = DependencyPlanRow::default();
             pipeline
-                .collect_dependencies_tree(&ast, sheet, &mut plan)
+                .collect_dependencies_tree(&ast, sheet, &mut plan, None)
                 .unwrap();
             assert!(plan.direct_cell_deps.is_empty(), "{formula}");
             assert_eq!(plan.range_deps.len(), 1, "{formula}");
@@ -2352,7 +2913,10 @@ mod tests {
             let ast = parse(&formula).unwrap_or_else(|error| panic!("{formula}: {error}"));
             let mut engine = Engine::new(
                 TestWorkbook::new(),
-                EvalConfig::default().with_range_expansion_limit(limit),
+                EvalConfig::default()
+                    .with_range_expansion_limit(limit)
+                    // The frozen reference walk has only Strict semantics.
+                    .with_preparation_policy(crate::engine::PreparationPolicy::Strict),
             );
             let sheet = engine.graph.sheet_id_mut("Sheet1");
             engine.graph.sheet_id_mut("Sheet2");
