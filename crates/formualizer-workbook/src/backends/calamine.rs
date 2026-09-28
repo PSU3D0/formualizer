@@ -2310,6 +2310,12 @@ where
     }
 }
 
+/// A source shared-formula index as the `u32` a [`SourceFamilyId`] stores
+/// (an xlsx sheet cannot hold 2^32 shared formulas).
+pub(super) fn shared_source_index(index: usize) -> u32 {
+    u32::try_from(index).unwrap_or(u32::MAX)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2809,10 +2815,4 @@ mod tests {
         assert_eq!(data_ref_format(&datetime), Some(FormatId::DATETIME));
         assert_eq!(data_ref_format(&duration), Some(FormatId::DURATION));
     }
-}
-
-/// A source shared-formula index as the `u32` a [`SourceFamilyId`] stores
-/// (an xlsx sheet cannot hold 2^32 shared formulas).
-pub(super) fn shared_source_index(index: usize) -> u32 {
-    u32::try_from(index).unwrap_or(u32::MAX)
 }
