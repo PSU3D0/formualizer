@@ -23,6 +23,14 @@ pub(super) enum LayerUnit {
     Run(LayerRun),
 }
 
+/// The members of `unit`.
+pub(super) fn unit_members(layer: &Layer, unit: LayerUnit) -> &[VertexId] {
+    match unit {
+        LayerUnit::Cell(i) => &layer.vertices[i..=i],
+        LayerUnit::Run(run) => &layer.vertices[run.start as usize..(run.start + run.len) as usize],
+    }
+}
+
 /// The units of `layer` in vertex order.
 pub(super) fn layer_units(layer: &Layer) -> impl Iterator<Item = LayerUnit> + '_ {
     let mut i = 0usize;
@@ -199,16 +207,6 @@ where
             LayerUnit::Run(run) => layer.vertices[run.start as usize],
         };
         self.graph.reads_compressed_range(first)
-    }
-
-    /// Whether a unit holds a dynamic reader (OFFSET, INDIRECT, ...): a
-    /// run's members share their template, so its first member answers.
-    pub(super) fn unit_is_dynamic(&self, layer: &Layer, unit: LayerUnit) -> bool {
-        let first = match unit {
-            LayerUnit::Cell(i) => layer.vertices[i],
-            LayerUnit::Run(run) => layer.vertices[run.start as usize],
-        };
-        self.graph.is_dynamic(first)
     }
 
     fn evaluate_members_per_cell(&self, members: &[VertexId]) -> Vec<LiteralValue> {

@@ -33,7 +33,7 @@ use crate::engine::used_extent::{
     ExtentPolicy, OpenRangeBounds, resolve_used_extent_with_fallback,
 };
 use crate::engine::virtual_deps::VirtualDepBuilder;
-use family::{LayerUnit, layer_units};
+use family::{LayerUnit, layer_units, unit_members};
 
 #[path = "freshness.rs"]
 mod freshness;
@@ -20147,6 +20147,16 @@ where
         let chained = chain_values.is_some();
         // The chain lift computed every member: one block write, as a run.
         let buffered = buffered || chained;
+        // A dynamic reader's targets are not always ordered before it (its
+        // pre-probe or observed reads can miss them, e.g. after a structural
+        // edit). In a buffered layer a member's dirty flag is cleared at its
+        // commit but its value written at the flush: the members committed
+        // since the last flush count as dirty for the reader's freshness
+        // check, which then re-plans it after them.
+        let track_unflushed = buffered
+            && self.freshness_armed()
+            && layer.vertices.iter().any(|&v| self.graph.is_dynamic(v));
+        let mut committed_unit: &[VertexId] = &[];
         let mut computed_writes = ComputedWriteBuffer::default();
         let mut next_check = 0usize;
         let mut done = 0usize;
@@ -20156,6 +20166,9 @@ where
                 && crate::instant::FzInstant::now() >= stop_at
             {
                 self.flush_computed_write_buffer(&mut computed_writes)?;
+                if track_unflushed {
+                    self.freshness_flushed();
+                }
                 return Ok(done);
             }
             if let Some((flag, every, message)) = cancel
@@ -20171,18 +20184,19 @@ where
                         .with_message(message.to_string()));
                 }
             }
-            // A dynamic reader's freshness check (`freshness_dirty_reads`)
-            // treats a clean formula as written, but a buffered layer
-            // clears a member's dirty flag at commit and writes its value
-            // at the flush. The reader's targets are not always ordered
-            // before it (its pre-probe or observed reads can miss them, e.g.
-            // after a structural edit), so the earlier members' values are
-            // written before it reads.
-            if buffered
-                && (self.unit_reads_compressed_range(layer, unit)
-                    || (!computed_writes.is_empty() && self.unit_is_dynamic(layer, unit)))
-            {
+            if buffered && self.unit_reads_compressed_range(layer, unit) {
                 self.flush_computed_write_buffer(&mut computed_writes)?;
+            }
+            // The previous unit's members are committed (dirty flags
+            // cleared); while their values wait in the buffer, a dynamic
+            // reader's read of them is stale (`freshness_dirty_reads`).
+            if track_unflushed {
+                if computed_writes.is_empty() {
+                    self.freshness_flushed();
+                } else {
+                    self.freshness_note_unflushed(committed_unit);
+                }
+                committed_unit = unit_members(layer, unit);
             }
             let values = match (chain_values.take(), unit) {
                 (Some(chain), LayerUnit::Run(run)) => {
@@ -20266,6 +20280,9 @@ where
             }
         }
         self.flush_computed_write_buffer(&mut computed_writes)?;
+        if track_unflushed {
+            self.freshness_flushed();
+        }
         // Debug builds: every chain member equals the per-cell path, now
         // that the members above it are written.
         #[cfg(debug_assertions)]

@@ -381,8 +381,9 @@ fn alternating_value_edits_reuse_recent_schedules() {
 /// shares a layer with two of them. That layer buffers its writes: a
 /// member's dirty flag is cleared at commit and its value written at the
 /// flush, so the reader's freshness check saw clean targets holding their
-/// pre-formula values (210 instead of 185). The layer now flushes before a
-/// dynamic reader. `extra_reader` adds a static reader that makes main's
+/// pre-formula values (210 instead of 185). Members committed but not yet
+/// written now count as dirty for that check: the reader re-plans after
+/// them. `extra_reader` adds a static reader that makes main's
 /// layer as wide (main fails that variant the same way).
 fn offset_after_history(
     parallel: bool,

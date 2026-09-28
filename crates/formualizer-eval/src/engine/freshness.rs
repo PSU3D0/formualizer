@@ -69,6 +69,9 @@ pub(crate) struct Freshness {
     skipped: Vec<VertexId>,
     /// Vertices whose effects were planned (committed) in this pass.
     committed: crate::engine::idset::DenseIdSet,
+    /// Committed members of a buffered layer whose values are still in the
+    /// layer's computed-write buffer: dirty for a dynamic reader's check.
+    unflushed: crate::engine::idset::DenseIdSet,
     /// Stale readers dropped in this pass (they stay dirty).
     stale_this_pass: Vec<VertexId>,
     /// Fresh members of a parallel group that also held a stale reader:
@@ -249,6 +252,16 @@ impl<R: EvaluationContext> Engine<R> {
         self.graph.clear_dirty_flags(vertices);
     }
 
+    /// Members committed in a buffered layer, values not written yet.
+    pub(super) fn freshness_note_unflushed(&mut self, vertices: &[VertexId]) {
+        self.freshness.unflushed.extend(vertices.iter().copied());
+    }
+
+    /// The buffered layer's writes are flushed.
+    pub(super) fn freshness_flushed(&mut self) {
+        self.freshness.unflushed.clear();
+    }
+
     pub(super) fn freshness_mark_committed(&mut self, vertex: VertexId) {
         self.freshness.committed.insert(vertex);
         self.graph.clear_dirty_flags(&[vertex]);
@@ -398,8 +411,9 @@ impl<R: EvaluationContext> Engine<R> {
         Some(result)
     }
 
-    /// Formula vertices other than `reader` that are dirty and covered by
-    /// `reads`, plus dirty spill anchors whose extent meets a read.
+    /// Formula vertices other than `reader` that are dirty (or committed
+    /// with their value still buffered) and covered by `reads`, plus dirty
+    /// spill anchors whose extent meets a read.
     fn freshness_dirty_reads(
         &self,
         reader: VertexId,
@@ -425,7 +439,7 @@ impl<R: EvaluationContext> Engine<R> {
                             .graph
                             .authority_vertex_of_formula(id, (sheet, row, col))
                             && v != reader
-                            && self.graph.is_dirty(v)
+                            && (self.graph.is_dirty(v) || self.freshness.unflushed.contains(&v))
                         {
                             out.push(v);
                         }
