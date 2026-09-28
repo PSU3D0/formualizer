@@ -330,3 +330,44 @@ fn observed_reads_plan_dynamic_readers_and_key_the_schedule_cache() {
     e.evaluate_all().unwrap();
     assert_eq!(num(&e, 1, 2), Some(402.0));
 }
+
+/// Program 3 (plan reuse): recalculations alternating between a few inputs
+/// reuse their schedules (a small bounded set of recent ones), and a formula
+/// edit invalidates them all.
+#[test]
+fn alternating_value_edits_reuse_recent_schedules() {
+    let mut e = engine();
+    for r in 1..=3u32 {
+        set(&mut e, r, 1, f64::from(r));
+    }
+    // Three independent chains.
+    for r in 1..=3u32 {
+        formula(&mut e, r, 2, &format!("=A{r}*2"));
+        formula(&mut e, r, 3, &format!("=B{r}+1"));
+    }
+    e.evaluate_all().unwrap();
+    // Warm one schedule per input.
+    for r in 1..=3u32 {
+        set(&mut e, r, 1, 10.0 + f64::from(r));
+        e.evaluate_all().unwrap();
+    }
+    e.reset_recalc_reuse_probe();
+    for round in 0..2u32 {
+        for r in 1..=3u32 {
+            let v = 100.0 * f64::from(round + 1) + f64::from(r);
+            set(&mut e, r, 1, v);
+            e.evaluate_all().unwrap();
+            assert_eq!(num(&e, r, 3), Some(v * 2.0 + 1.0));
+        }
+    }
+    let probe = e.recalc_reuse_probe();
+    assert_eq!(probe.schedule_cache_hits, 6, "{probe:?}");
+    // A formula edit: every retained schedule is stale.
+    formula(&mut e, 2, 3, "=B2+5");
+    e.evaluate_all().unwrap();
+    e.reset_recalc_reuse_probe();
+    set(&mut e, 1, 1, 7.0);
+    e.evaluate_all().unwrap();
+    assert_eq!(num(&e, 1, 3), Some(15.0));
+    assert_eq!(e.recalc_reuse_probe().schedule_cache_hits, 0);
+}

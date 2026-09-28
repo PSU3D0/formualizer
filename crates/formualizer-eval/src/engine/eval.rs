@@ -987,6 +987,11 @@ pub struct Engine<R> {
     snapshot_id: std::sync::atomic::AtomicU64,
     topology_epoch: u64,
     cached_static_schedule: Option<CachedScheduleEntry>,
+    /// Program 3 (plan reuse): schedules of recent earlier requests, most
+    /// recent last (a user alternating between a few inputs recalculates
+    /// the same few closures). Bounded by `RECENT_SCHEDULES` entries and
+    /// `RECENT_SCHEDULE_VERTICES` candidate vertices in total.
+    recent_schedules: Vec<CachedScheduleEntry>,
     #[cfg(any(test, feature = "benchmark_internal"))]
     recalc_reuse_probe: std::sync::Mutex<RecalcReuseProbe>,
     spill_mgr: ShimSpillManager,
@@ -1993,6 +1998,11 @@ impl VertexIdRuns {
     fn heap_bytes(&self) -> usize {
         self.0.capacity() * std::mem::size_of::<(u32, u32)>()
     }
+
+    /// The number of ids.
+    fn len(&self) -> usize {
+        self.0.iter().map(|&(_, len)| len as usize).sum()
+    }
 }
 
 #[cfg(test)]
@@ -2599,6 +2609,7 @@ where
             snapshot_id: std::sync::atomic::AtomicU64::new(1),
             topology_epoch: 0,
             cached_static_schedule: None,
+            recent_schedules: Vec::new(),
             #[cfg(any(test, feature = "benchmark_internal"))]
             recalc_reuse_probe: std::sync::Mutex::new(RecalcReuseProbe::default()),
             spill_mgr: ShimSpillManager::default(),
@@ -2759,6 +2770,7 @@ where
             snapshot_id: std::sync::atomic::AtomicU64::new(1),
             topology_epoch: 0,
             cached_static_schedule: None,
+            recent_schedules: Vec::new(),
             #[cfg(any(test, feature = "benchmark_internal"))]
             recalc_reuse_probe: std::sync::Mutex::new(RecalcReuseProbe::default()),
             spill_mgr: ShimSpillManager::default(),
@@ -5314,11 +5326,16 @@ where
     pub fn recalc_reuse_probe(&self) -> RecalcReuseProbe {
         let mut probe = self.recalc_reuse_probe.lock().unwrap().clone();
         if let Some(cached) = self.cached_static_schedule.as_ref() {
-            probe.schedule_retained_bytes = std::mem::size_of::<CachedScheduleEntry>()
-                + cached.candidate_vertices.heap_bytes()
-                + std::mem::size_of::<crate::engine::Schedule>()
-                + 2 * std::mem::size_of::<usize>()
-                + schedule_probe_retained_bytes(&cached.schedule);
+            let entry_bytes = |e: &CachedScheduleEntry| {
+                std::mem::size_of::<CachedScheduleEntry>()
+                    + e.candidate_vertices.heap_bytes()
+                    + std::mem::size_of::<crate::engine::Schedule>()
+                    + 2 * std::mem::size_of::<usize>()
+                    + schedule_probe_retained_bytes(&e.schedule)
+            };
+            probe.schedule_retained_bytes = entry_bytes(cached)
+                + self.recent_schedules.iter().map(entry_bytes).sum::<usize>()
+                + self.recent_schedules.capacity() * std::mem::size_of::<CachedScheduleEntry>();
         }
         probe
     }
@@ -5332,6 +5349,34 @@ where
 
     fn clear_cached_static_schedule(&mut self) {
         self.cached_static_schedule = None;
+        self.recent_schedules.clear();
+    }
+
+    /// Keep a replaced schedule among the recent ones when it is still
+    /// current and small; drop stale ones and the oldest beyond the bounds.
+    fn retain_recent_schedule(&mut self, entry: CachedScheduleEntry) {
+        const RECENT_SCHEDULES: usize = 8;
+        const RECENT_SCHEDULE_VERTICES: usize = 65_536;
+        let revision = self.schedule_cache_authority_revision();
+        let epoch = self.topology_epoch;
+        self.recent_schedules
+            .retain(|e| e.topology_epoch == epoch && e.authority_revision == revision);
+        if entry.topology_epoch != epoch
+            || entry.authority_revision != revision
+            || entry.candidate_vertices.len() > RECENT_SCHEDULE_VERTICES / 4
+        {
+            return;
+        }
+        self.recent_schedules.push(entry);
+        let mut total: usize = self
+            .recent_schedules
+            .iter()
+            .map(|e| e.candidate_vertices.len())
+            .sum();
+        while self.recent_schedules.len() > RECENT_SCHEDULES || total > RECENT_SCHEDULE_VERTICES {
+            let oldest = self.recent_schedules.remove(0);
+            total -= oldest.candidate_vertices.len();
+        }
     }
 
     fn invalidation_baseline(&self) -> InvalidationBaseline {
@@ -10373,6 +10418,7 @@ where
         let changed = !changes.keys.is_empty();
         if global_changed && changed || provider_changed {
             self.cached_static_schedule = None;
+            self.recent_schedules.clear();
         }
         self.function_semantic_epoch_seen = changes.epoch;
         self.function_provider_revision_seen = provider_revision;
@@ -15037,6 +15083,26 @@ where
         // The cache key includes the authority revision: sync first.
         self.graph.authority_sync();
         if self.can_use_static_schedule_cache(to_evaluate) {
+            // A recent schedule for the same request becomes the current one.
+            let revision = self.schedule_cache_authority_revision();
+            let current = |e: &CachedScheduleEntry| {
+                e.topology_epoch == self.topology_epoch && e.authority_revision == revision
+            };
+            if !self
+                .cached_static_schedule
+                .as_ref()
+                .is_some_and(|c| current(c) && c.candidate_vertices.equals(to_evaluate))
+                && let Some(i) = self.recent_schedules.iter().position(|e| {
+                    current(e)
+                        && e.candidate_vertices.len() == to_evaluate.len()
+                        && e.candidate_vertices.equals(to_evaluate)
+                })
+            {
+                let hit = self.recent_schedules.remove(i);
+                if let Some(previous) = self.cached_static_schedule.replace(hit) {
+                    self.retain_recent_schedule(previous);
+                }
+            }
             if let Some(cached) = self.cached_static_schedule.as_ref()
                 && cached.topology_epoch == self.topology_epoch
                 && cached.authority_revision == self.schedule_cache_authority_revision()
@@ -15096,12 +15162,15 @@ where
                         .unwrap()
                         .schedule_shared_handles += 1;
                 }
-                self.cached_static_schedule = Some(CachedScheduleEntry {
+                let entry = CachedScheduleEntry {
                     topology_epoch: self.topology_epoch,
                     authority_revision: self.schedule_cache_authority_revision(),
                     candidate_vertices: VertexIdRuns::from_slice(to_evaluate),
                     schedule: Arc::clone(&schedule),
-                });
+                };
+                if let Some(previous) = self.cached_static_schedule.replace(entry) {
+                    self.retain_recent_schedule(previous);
+                }
                 EvaluationSchedule::Shared(schedule)
             } else {
                 EvaluationSchedule::Owned(schedule)

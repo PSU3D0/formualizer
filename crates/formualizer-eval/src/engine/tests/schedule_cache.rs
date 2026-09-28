@@ -170,23 +170,28 @@ fn schedule_cache_probe_separates_cold_build_warm_reuse_and_noop() {
     }
 }
 
+/// Program 3 (plan reuse): alternating candidate sets miss once each, then
+/// reuse their retained schedules (a bounded set of recent ones; this was
+/// a single-entry cache, so they kept missing).
 #[test]
-fn schedule_cache_probe_alternating_candidates_remain_misses() {
-    if run_probe_in_subprocess("schedule_cache_probe_alternating_candidates_remain_misses") {
+fn schedule_cache_probe_alternating_candidates_reuse_recent_schedules() {
+    if run_probe_in_subprocess("schedule_cache_probe_alternating_candidates_reuse_recent_schedules")
+    {
         return;
     }
     let mut engine = additive_chains(32, 2);
     engine.evaluate_all().unwrap();
-    for (col, value) in [(1, 2), (3, 3), (1, 4), (3, 5)] {
+    for (i, (col, value)) in [(1, 2), (3, 3), (1, 4), (3, 5)].into_iter().enumerate() {
         engine
             .set_cell_value("Sheet1", 1, col, LiteralValue::Int(value))
             .unwrap();
         engine.reset_recalc_reuse_probe();
         assert_eq!(engine.evaluate_all().unwrap().computed_vertices, 32);
         let probe = engine.recalc_reuse_probe();
-        assert_eq!(probe.schedule_cache_hits, 0);
-        assert_eq!(probe.schedule_cache_misses, 1);
-        assert_eq!(probe.schedule_builds, 1);
+        let reused = i >= 2;
+        assert_eq!(probe.schedule_cache_hits, usize::from(reused));
+        assert_eq!(probe.schedule_cache_misses, usize::from(!reused));
+        assert_eq!(probe.schedule_builds, usize::from(!reused));
         assert_eq!(
             engine.get_cell_value("Sheet1", 32, col + 1),
             Some(LiteralValue::Number(value as f64 + 32.0))
