@@ -575,6 +575,13 @@ pub struct DependencyGraph {
     /// Cached list of cell dependencies per named range vertex (for teardown)
     #[cfg(any(test, feature = "legacy_oracle"))]
     name_to_cell_dependencies: FxHashMap<VertexId, Vec<VertexId>>,
+    /// Oracle edges to cells without a vertex (decision 27): readers per
+    /// cell, and cells per reader. A vertex created at such a cell gets its
+    /// readers' oracle edges then, as a placeholder used to have them.
+    #[cfg(any(test, feature = "legacy_oracle"))]
+    oracle_vertexless_readers: FxHashMap<(SheetId, u32, u32), Vec<VertexId>>,
+    #[cfg(any(test, feature = "legacy_oracle"))]
+    oracle_vertexless_of: FxHashMap<VertexId, Vec<(SheetId, u32, u32)>>,
 
     // Evaluation configuration
     config: super::EvalConfig,
@@ -1040,7 +1047,24 @@ impl DependencyGraph {
             #[cfg(feature = "perf_instrumentation")]
             let te0 = PerfInstant::now();
             #[cfg(any(test, feature = "legacy_oracle"))]
-            self.edges.add_vertices_batch(&add_batch);
+            {
+                self.edges.add_vertices_batch(&add_batch);
+                let created: FxHashSet<u32> = if self.oracle_vertexless_readers.is_empty() {
+                    FxHashSet::default()
+                } else {
+                    add_batch.iter().map(|&(_, raw)| raw).collect()
+                };
+                for (i, packed) in packed_cells.iter().enumerate() {
+                    if let Some(v) = ordered[i]
+                        && created.contains(&v.0)
+                    {
+                        self.oracle_cell_vertex_created(
+                            (packed.sheet_id(), packed.row0(), packed.col0()),
+                            v,
+                        );
+                    }
+                }
+            }
             #[cfg(feature = "perf_instrumentation")]
             {
                 t_edge_register_us += te0.elapsed().as_micros();
@@ -1798,6 +1822,10 @@ impl DependencyGraph {
             cell_to_name_dependents: FxHashMap::default(),
             #[cfg(any(test, feature = "legacy_oracle"))]
             name_to_cell_dependencies: FxHashMap::default(),
+            #[cfg(any(test, feature = "legacy_oracle"))]
+            oracle_vertexless_readers: FxHashMap::default(),
+            #[cfg(any(test, feature = "legacy_oracle"))]
+            oracle_vertexless_of: FxHashMap::default(),
             config: config.clone(),
             topology_revision: 0,
             symbol_revision: 0,
@@ -2499,8 +2527,14 @@ impl DependencyGraph {
                 .allocate(VertexAddr::grid(position), sheet_id, 0x01); // dirty flag
 
             #[cfg(any(test, feature = "legacy_oracle"))]
-            self.edges
-                .add_vertex(VertexAddr::grid(position), vertex_id.0);
+            {
+                self.edges
+                    .add_vertex(VertexAddr::grid(position), vertex_id.0);
+                self.oracle_cell_vertex_created(
+                    (sheet_id, position.row(), position.col()),
+                    vertex_id,
+                );
+            }
 
             // Add to sheet index for O(log n + k) range queries
             self.sheet_index_mut(sheet_id)
@@ -2579,8 +2613,11 @@ impl DependencyGraph {
             .store
             .allocate(VertexAddr::grid(position), sheet_id, 0x00); // not dirty
         #[cfg(any(test, feature = "legacy_oracle"))]
-        self.edges
-            .add_vertex(VertexAddr::grid(position), vertex_id.0);
+        {
+            self.edges
+                .add_vertex(VertexAddr::grid(position), vertex_id.0);
+            self.oracle_cell_vertex_created((sheet_id, position.row(), position.col()), vertex_id);
+        }
         self.sheet_index_mut(sheet_id)
             .add_vertex(position, vertex_id);
         self.store.set_kind(vertex_id, VertexKind::Cell);
@@ -2678,7 +2715,12 @@ impl DependencyGraph {
         if !new_vertices.is_empty() {
             let t_edges_start = Instant::now();
             #[cfg(any(test, feature = "legacy_oracle"))]
-            self.edges.add_vertices_batch(&new_vertices);
+            {
+                self.edges.add_vertices_batch(&new_vertices);
+                for &(packed, v) in &index_items {
+                    self.oracle_cell_vertex_created((sheet_id, packed.row(), packed.col()), v);
+                }
+            }
             let t_edges_done = Instant::now();
 
             match self.config.sheet_index_mode {
@@ -2781,13 +2823,8 @@ impl DependencyGraph {
             None
         };
         let mut created_placeholders = Vec::new();
-        let mut new_dependencies = Vec::with_capacity(plan.direct_cell_deps.len());
-        for dep in &plan.direct_cell_deps {
-            let dep_vid = self.get_or_create_vertex(dep, &mut created_placeholders);
-            if !new_dependencies.contains(&dep_vid) {
-                new_dependencies.push(dep_vid);
-            }
-        }
+        let (mut new_dependencies, vertexless_deps) =
+            self.resolve_direct_deps(&plan.direct_cell_deps);
         let mut named_dependencies = Vec::new();
         let mut unresolved_names = Vec::new();
         for name in plan
@@ -2872,8 +2909,9 @@ impl DependencyGraph {
         // saved with self-references under an Iterate config always reload —
         // under any cycle config — and resolve to `#CIRC!`/iteration at
         // evaluation time per the loaded policy.
-        if new_dependencies.contains(&addr_vertex_id) && !self.config.cycle.allows_self_dependency()
-        {
+        let self_reference = new_dependencies.contains(&addr_vertex_id)
+            || vertexless_deps.iter().any(|c| same_cell(c, &addr));
+        if self_reference && !self.config.cycle.allows_self_dependency() {
             return Err(ExcelError::new(ExcelErrorKind::Circ)
                 .with_message("Self-reference detected".to_string()));
         }
@@ -2923,8 +2961,28 @@ impl DependencyGraph {
             }
         }
 
-        // Add new dependency edges
+        // Add new dependency edges (a self-reference whose cell had no
+        // vertex before is an edge to the formula's own vertex).
+        let vertexless_deps: Vec<CellRef> = vertexless_deps
+            .into_iter()
+            .filter(|c| {
+                if same_cell(c, &addr) {
+                    if !new_dependencies.contains(&addr_vertex_id) {
+                        new_dependencies.push(addr_vertex_id);
+                    }
+                    false
+                } else {
+                    true
+                }
+            })
+            .collect();
         self.add_dependent_edges(addr_vertex_id, &new_dependencies);
+        self.note_vertexless_deps(
+            addr_vertex_id,
+            vertexless_deps
+                .iter()
+                .map(|c| (c.sheet_id, c.coord.row(), c.coord.col())),
+        );
         self.add_range_dependent_edges(addr_vertex_id, &plan.range_deps, sheet_id);
 
         Ok(OperationSummary {
@@ -3415,6 +3473,51 @@ impl DependencyGraph {
         let _ = self.mark_dirty_many(&live);
     }
 
+    /// The vertex of a referenced cell, if it has one (Program 3, decision
+    /// 27): a value cell or an empty cell has none, and a reference never
+    /// creates one. The authority tracks references by position.
+    pub(crate) fn dep_vertex(&mut self, addr: &CellRef) -> Option<VertexId> {
+        if let Some(vertex_id) = self.cell_vertex(addr) {
+            return Some(vertex_id);
+        }
+        if self.first_load_assume_new {
+            let packed = Self::packed_cell_key(
+                addr.sheet_id,
+                AbsCoord::new(addr.coord.row(), addr.coord.col()),
+            );
+            if let Some(&existing) = self.load_packed_to_vertex.get(&packed) {
+                self.cell_to_vertex.insert(*addr, existing);
+                return Some(existing);
+            }
+        }
+        None
+    }
+
+    /// Resolve direct cell dependencies to vertices: `(vertices, cells
+    /// without a vertex)`, both deduplicated.
+    pub(crate) fn resolve_direct_deps(
+        &mut self,
+        cells: &[CellRef],
+    ) -> (Vec<VertexId>, Vec<CellRef>) {
+        let mut vertices: Vec<VertexId> = Vec::with_capacity(cells.len());
+        let mut vertexless: Vec<CellRef> = Vec::new();
+        for cell in cells {
+            match self.dep_vertex(cell) {
+                Some(v) => {
+                    if !vertices.contains(&v) {
+                        vertices.push(v);
+                    }
+                }
+                None => {
+                    if !vertexless.iter().any(|c| same_cell(c, cell)) {
+                        vertexless.push(*cell);
+                    }
+                }
+            }
+        }
+        (vertices, vertexless)
+    }
+
     fn get_or_create_vertex(
         &mut self,
         addr: &CellRef,
@@ -3446,8 +3549,14 @@ impl DependencyGraph {
             .allocate(VertexAddr::grid(position), addr.sheet_id, 0x00);
 
         #[cfg(any(test, feature = "legacy_oracle"))]
-        self.edges
-            .add_vertex(VertexAddr::grid(position), vertex_id.0);
+        {
+            self.edges
+                .add_vertex(VertexAddr::grid(position), vertex_id.0);
+            self.oracle_cell_vertex_created(
+                (addr.sheet_id, position.row(), position.col()),
+                vertex_id,
+            );
+        }
 
         // Add to sheet index for O(log n + k) range queries
         self.sheet_index_mut(addr.sheet_id)
@@ -3456,6 +3565,104 @@ impl DependencyGraph {
         self.store.set_kind(vertex_id, VertexKind::Empty);
         self.cell_to_vertex.insert(*addr, vertex_id);
         vertex_id
+    }
+
+    /// Direct dependencies of `dependent` on cells without a vertex: counted
+    /// like edges (the count per distinct cell is what a placeholder vertex
+    /// per cell gave); oracle builds remember them for the vertex a cell may
+    /// get later.
+    pub(crate) fn note_vertexless_deps(
+        &mut self,
+        dependent: VertexId,
+        cells: impl IntoIterator<Item = (SheetId, u32, u32)>,
+    ) {
+        let mut n = 0usize;
+        #[cfg(any(test, feature = "legacy_oracle"))]
+        let mut keys = Vec::new();
+        for cell in cells {
+            n += 1;
+            #[cfg(any(test, feature = "legacy_oracle"))]
+            {
+                self.oracle_vertexless_readers
+                    .entry(cell)
+                    .or_default()
+                    .push(dependent);
+                keys.push(cell);
+            }
+            #[cfg(not(any(test, feature = "legacy_oracle")))]
+            let _ = cell;
+        }
+        #[cfg(any(test, feature = "legacy_oracle"))]
+        if !keys.is_empty() {
+            self.oracle_vertexless_of
+                .entry(dependent)
+                .or_default()
+                .extend(keys);
+        }
+        self.note_dep_edges(dependent, n);
+    }
+
+    /// Oracle builds: a vertex `v` now exists at `cell`; readers that
+    /// referenced the cell while it had none get their oracle edge.
+    #[cfg(any(test, feature = "legacy_oracle"))]
+    pub(crate) fn oracle_cell_vertex_created(&mut self, cell: (SheetId, u32, u32), v: VertexId) {
+        if self.oracle_vertexless_readers.is_empty() {
+            return;
+        }
+        let Some(readers) = self.oracle_vertexless_readers.remove(&cell) else {
+            return;
+        };
+        for reader in readers {
+            if let Some(cells) = self.oracle_vertexless_of.get_mut(&reader) {
+                cells.retain(|c| *c != cell);
+                if cells.is_empty() {
+                    self.oracle_vertexless_of.remove(&reader);
+                }
+            }
+            self.oracle_add_dependent_edges(reader, &[v]);
+        }
+    }
+
+    /// Oracle builds: formulas and names reading `cell`, which has no
+    /// vertex.
+    #[cfg(any(test, feature = "legacy_oracle"))]
+    pub(crate) fn oracle_vertexless_readers_of(
+        &self,
+        cell: crate::engine::authority::geom::Cell,
+    ) -> Vec<VertexId> {
+        self.oracle_vertexless_readers
+            .get(&(cell.0 as SheetId, cell.1, cell.2))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Oracle builds: the cells without a vertex that `dependent` reads
+    /// directly (its other direct dependencies are oracle edges).
+    #[cfg(any(test, feature = "legacy_oracle"))]
+    pub(crate) fn oracle_vertexless_cells(&self, dependent: VertexId) -> Vec<CellRef> {
+        self.oracle_vertexless_of
+            .get(&dependent)
+            .map(|cells| {
+                cells
+                    .iter()
+                    .map(|&(s, r, c)| CellRef::new(s, Coord::new(r, c, true, true)))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[cfg(any(test, feature = "legacy_oracle"))]
+    fn oracle_forget_vertexless(&mut self, dependent: VertexId) {
+        if let Some(cells) = self.oracle_vertexless_of.remove(&dependent) {
+            for cell in cells {
+                if let Some(readers) = self.oracle_vertexless_readers.get_mut(&cell) {
+                    readers.retain(|r| *r != dependent);
+                    if readers.is_empty() {
+                        self.oracle_vertexless_readers.remove(&cell);
+                    }
+                }
+            }
+        }
     }
 
     /// Record `n` direct dependency edges of `dependent` (admission count).
@@ -3680,15 +3887,6 @@ impl DependencyGraph {
             self.materialize_vertex(target);
             target_vids.push(target);
         }
-        // Create direct-dependency placeholders before edge batching starts. If a formula-plane
-        // demotion materializes formulas into an otherwise Arrow-only graph, interleaving
-        // dependency vertex creation with edge insertion forces the CSR delta slab to rebuild on
-        // every new dependency vertex. Pre-creating these vertices keeps bulk edge insertion O(n).
-        for (_, _, _, plan) in &planned {
-            for cell in &plan.direct_cell_deps {
-                self.get_or_create_vertex(cell, &mut created_placeholders);
-            }
-        }
 
         for (i, &tvid) in target_vids.iter().enumerate() {
             if self.vertex_formulas.contains_key(&tvid) {
@@ -3710,13 +3908,13 @@ impl DependencyGraph {
         self.edges.begin_batch();
         for (i, tvid) in target_vids.iter().copied().enumerate() {
             let plan = &planned[i].3;
-            let mut deps: Vec<VertexId> = Vec::new();
-            for cell in &plan.direct_cell_deps {
-                let dep_vid = self.get_or_create_vertex(cell, &mut created_placeholders);
-                if !deps.contains(&dep_vid) {
-                    deps.push(dep_vid);
-                }
-            }
+            let (mut deps, vertexless) = self.resolve_direct_deps(&plan.direct_cell_deps);
+            self.note_vertexless_deps(
+                tvid,
+                vertexless
+                    .iter()
+                    .map(|c| (c.sheet_id, c.coord.row(), c.coord.col())),
+            );
 
             let mut name_vertices = Vec::new();
             for name in plan
@@ -3837,6 +4035,7 @@ impl DependencyGraph {
     /// The oracle-only half (test/oracle builds) of the function above.
     #[cfg(any(test, feature = "legacy_oracle"))]
     fn oracle_remove_dependent_edges(&mut self, vertex: VertexId) {
+        self.oracle_forget_vertexless(vertex);
         // Remove all outgoing edges from this vertex (its dependencies)
         let dependencies = self.edges.out_edges(vertex);
 
@@ -5401,8 +5600,13 @@ impl DependencyGraph {
         let sheet_id = self.store.sheet_id(id);
 
         // Extract dependencies from AST, retaining unresolved names for later linking.
-        let (new_dependencies, new_range_dependencies, _, named_dependencies, unresolved_names) =
-            self.extract_dependencies_with_pending_names(&ast, sheet_id)?;
+        let (
+            new_dependencies,
+            new_range_dependencies,
+            vertexless,
+            named_dependencies,
+            unresolved_names,
+        ) = self.extract_dependencies_with_pending_names(&ast, sheet_id)?;
 
         let old_kind = self.store.kind(id);
 
@@ -5417,6 +5621,12 @@ impl DependencyGraph {
 
         // Add new dependency edges
         self.add_dependent_edges(id, &new_dependencies);
+        self.note_vertexless_deps(
+            id,
+            vertexless
+                .iter()
+                .map(|c| (c.sheet_id, c.coord.row(), c.coord.col())),
+        );
         self.add_range_dependent_edges(id, &new_range_dependencies, sheet_id);
 
         if !named_dependencies.is_empty() {
@@ -5624,7 +5834,7 @@ impl DependencyGraph {
         let (
             new_dependencies,
             new_range_dependencies,
-            _created_placeholders,
+            vertexless,
             named_dependencies,
             unresolved_names,
         ) = match self.extract_dependencies_with_pending_names(ast, sheet_id) {
@@ -5662,6 +5872,12 @@ impl DependencyGraph {
         }
 
         self.add_dependent_edges(vertex_id, &new_dependencies);
+        self.note_vertexless_deps(
+            vertex_id,
+            vertexless
+                .iter()
+                .map(|c| (c.sheet_id, c.coord.row(), c.coord.col())),
+        );
         self.add_range_dependent_edges(vertex_id, &new_range_dependencies, sheet_id);
         self.vertex_formulas.touch(vertex_id);
         let _ = self.mark_dirty(vertex_id);
@@ -5669,3 +5885,8 @@ impl DependencyGraph {
 }
 
 // ========== Sheet Management Operations ==========
+
+/// Same sheet and position (reference flags aside).
+pub(crate) fn same_cell(a: &CellRef, b: &CellRef) -> bool {
+    a.sheet_id == b.sheet_id && a.coord.row() == b.coord.row() && a.coord.col() == b.coord.col()
+}

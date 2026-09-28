@@ -105,27 +105,21 @@ fn test_vertex_kind_transitions() {
     assert_eq!(graph.get_vertex_kind(vertex_ids[0]), VertexKind::Cell);
 }
 
+/// A reference creates no vertex (decision 27; B1 used to get an empty
+/// placeholder): only the formula cell gets one.
 #[test]
 fn test_placeholder_creation() {
     let mut graph = super::common::graph_truth_graph();
     let ast = create_cell_ref_ast(None, 1, 2, "B1"); // A1 = B1
     let summary = graph.set_cell_formula("Sheet1", 1, 1, ast).unwrap();
 
-    // A1 and B1 should have been created
     let vertex_ids = get_vertex_ids_in_order(&graph);
-    assert_eq!(vertex_ids.len(), 2);
-    // Both A1 and B1 are created as placeholders initially
-    assert_eq!(summary.created_placeholders.len(), 2);
-
+    assert_eq!(vertex_ids.len(), 1);
     let a1_addr = abs_cell_ref(0, 1, 1);
     let b1_addr = abs_cell_ref(0, 1, 2);
-
-    assert!(summary.created_placeholders.contains(&a1_addr));
-    assert!(summary.created_placeholders.contains(&b1_addr));
-
-    // Verify B1 is an Empty vertex
-    let b1_id = *graph.cell_to_vertex().get(&b1_addr).unwrap();
-    assert!(matches!(graph.get_vertex_kind(b1_id), VertexKind::Empty));
+    assert_eq!(summary.created_placeholders, vec![a1_addr]);
+    assert!(graph.cell_to_vertex().get(&b1_addr).is_none());
+    assert_eq!(graph.baseline_stats().graph_edge_count, 1);
 
     // Verify A1 is a Formula vertex
     let a1_id = *graph.cell_to_vertex().get(&a1_addr).unwrap();

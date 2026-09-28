@@ -291,6 +291,8 @@ fn graph_shape(graph: &DependencyGraph, formula: VertexId) -> DependencyShape {
             }
         }
     }
+    // Cells without a vertex (decision 27: references create none).
+    shape.cells.extend(graph.oracle_vertexless_cells(formula));
     if let Some(ranges) = graph.get_range_dependencies(formula) {
         shape.ranges.extend(
             ranges
@@ -1042,22 +1044,20 @@ fn default_sheet_inserts_never_bind_a_reference_to_a_symbol_vertex() {
         "an expanded range must not pick up a symbol vertex"
     );
 
-    // Every address a symbol would have been shifted onto resolves to a cell-like vertex — the
-    // empty placeholders the range above created — never to a symbol.
+    // Every address a symbol would have been shifted onto resolves to no vertex at all (a
+    // reference creates none, decision 27; this used to be an empty placeholder) — never to a
+    // symbol — and the covering formula reads it as a cell.
+    let covered = graph_shape(&engine.graph, covering).cells;
     for (row, col) in [(1u32, 1u32), (2, 2), (3, 3), (4, 4), (5, 5)] {
         let cell = CellRef::new(sheet1, Coord::from_excel(row, col, true, true));
-        let resolved = engine
-            .graph
-            .get_vertex_for_cell(&cell)
-            .expect("the covering range materialised a placeholder here");
-        assert!(
-            !engine.graph.vertex_addr(resolved).is_symbol(),
-            "Sheet1 row {row} col {col} must not resolve to a symbol vertex"
-        );
         assert_eq!(
-            engine.graph.get_vertex_kind(resolved),
-            VertexKind::Empty,
-            "Sheet1 row {row} col {col} must resolve to an empty placeholder"
+            engine.graph.get_vertex_for_cell(&cell),
+            None,
+            "Sheet1 row {row} col {col} must not resolve to a vertex"
+        );
+        assert!(
+            covered.contains(&cell),
+            "Sheet1 row {row} col {col} is a cell dependency of the covering formula"
         );
     }
     engine

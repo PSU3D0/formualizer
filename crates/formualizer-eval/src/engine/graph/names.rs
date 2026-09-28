@@ -827,9 +827,9 @@ impl DependencyGraph {
                 NameScope::Sheet(id) => id,
                 NameScope::Workbook => self.default_sheet_id,
             };
-            let (dependencies, range_dependencies, _, _, _pending_names) =
+            let (dependencies, range_dependencies, formula_vertexless, _, _pending_names) =
                 self.extract_dependencies_with_pending_names(ast, current_sheet_id)?;
-            Some((dependencies, range_dependencies))
+            Some((dependencies, range_dependencies, formula_vertexless))
         } else {
             None
         };
@@ -839,13 +839,15 @@ impl DependencyGraph {
 
         let mut dependencies: Vec<VertexId> = Vec::new();
         let mut range_dependencies: Vec<SharedRangeRef<'static>> = Vec::new();
-        let mut placeholders = Vec::new();
+        // Referenced cells without a vertex (decision 27: references create
+        // none); counted as direct dependencies.
+        let mut vertexless: Vec<CellRef> = Vec::new();
 
         match definition {
-            NamedDefinition::Cell(cell_ref) => {
-                let vertex_id = self.get_or_create_vertex(cell_ref, &mut placeholders);
-                dependencies.push(vertex_id);
-            }
+            NamedDefinition::Cell(cell_ref) => match self.dep_vertex(cell_ref) {
+                Some(vertex_id) => dependencies.push(vertex_id),
+                None => vertexless.push(*cell_ref),
+            },
             NamedDefinition::Range(range_ref) => {
                 let height = range_ref
                     .end
@@ -870,8 +872,10 @@ impl DependencyGraph {
                         for col in range_ref.start.coord.col()..=range_ref.end.coord.col() {
                             let coord = Coord::new(row, col, true, true);
                             let addr = CellRef::new(range_ref.start.sheet_id, coord);
-                            let vertex_id = self.get_or_create_vertex(&addr, &mut placeholders);
-                            dependencies.push(vertex_id);
+                            match self.dep_vertex(&addr) {
+                                Some(vertex_id) => dependencies.push(vertex_id),
+                                None => vertexless.push(addr),
+                            }
                         }
                     }
                 } else {
@@ -907,18 +911,26 @@ impl DependencyGraph {
                 // No dependencies.
             }
             NamedDefinition::Formula { .. } => {
-                let Some((formula_deps, range_deps)) = formula_dependencies else {
+                let Some((formula_deps, range_deps, formula_vertexless)) = formula_dependencies
+                else {
                     return Err(ExcelError::new(ExcelErrorKind::Error)
                         .with_message("Internal error: formula dependencies were not extracted"));
                 };
                 dependencies.extend(formula_deps);
                 range_dependencies.extend(range_deps);
+                vertexless.extend(formula_vertexless);
             }
         }
 
         if !dependencies.is_empty() {
             self.add_dependent_edges(vertex, &dependencies);
         }
+        self.note_vertexless_deps(
+            vertex,
+            vertexless
+                .iter()
+                .map(|c| (c.sheet_id, c.coord.row(), c.coord.col())),
+        );
         self.register_name_cell_dependencies(vertex, &dependencies);
 
         if !range_dependencies.is_empty() {

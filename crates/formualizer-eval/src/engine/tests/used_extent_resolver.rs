@@ -511,16 +511,17 @@ fn semantic_engine_source_excludes_dangling_reference_placeholders() {
         end_column: Some(26),
     };
 
-    assert_eq!(
-        engine.used_rows_for_columns("Sheet1", 26, 26),
-        Some((1000, 1000))
-    );
+    // A reference creates no vertex (decision 27): nothing is used in Z
+    // (this was a dangling placeholder at Z1000).
+    assert_eq!(engine.used_rows_for_columns("Sheet1", 26, 26), None);
     let semantic = semantic_extent(&engine, "Sheet1", whole_z);
     assert_eq!(semantic, None);
     assert_eq!(semantic.map(ResolvedExtent::cell_count).unwrap_or(0), 0);
 
+    // The evaluation-compat extent no longer reaches the dangling reference
+    // either: it is the sheet's own extent.
     let evaluation = evaluation_extent(&engine, "Sheet1", whole_z).unwrap();
-    assert_eq!((evaluation.start_row, evaluation.end_row), (1, 1000));
+    assert_eq!((evaluation.start_row, evaluation.end_row), (1, 64));
 }
 
 #[test]

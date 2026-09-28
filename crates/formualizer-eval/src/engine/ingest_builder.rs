@@ -642,11 +642,29 @@ impl<'g> BulkIngestBuilder<'g> {
                             }
                         }
                     }
-                    let (all_vids, add_batch) =
+                    // Targets fill the front of the pool; referenced cells
+                    // after them get no vertex unless they have one
+                    // (decision 27: references create none).
+                    let n_targets = plan
+                        .formula_target_pool_indices
+                        .iter()
+                        .max()
+                        .map_or(0, |&m| m as usize + 1);
+                    let (target_pool_vids, add_batch) =
                         self.g.ensure_vertices_batch_packed_ordered_unmapped(
-                            &plan.vertex_pool_packed,
-                            &mut unmapped,
+                            &plan.vertex_pool_packed[..n_targets],
+                            &mut unmapped[..n_targets],
                         );
+                    let all_vids: Vec<Option<VertexId>> = target_pool_vids
+                        .into_iter()
+                        .map(Some)
+                        .chain(plan.vertex_pool[n_targets..].iter().map(|&(sid, pc)| {
+                            self.g.dep_vertex(&crate::reference::CellRef::new(
+                                sid,
+                                crate::reference::Coord::new(pc.row(), pc.col(), true, true),
+                            ))
+                        }))
+                        .collect();
                     total_vertices += add_batch.len();
                     #[cfg(any(test, feature = "legacy_oracle"))]
                     if !add_batch.is_empty() {
@@ -668,7 +686,8 @@ impl<'g> BulkIngestBuilder<'g> {
                     );
                     self.g.reserve_formula_metadata(plan.formula_targets.len());
 
-                    let mut dep_vids: Vec<VertexId> = Vec::with_capacity(plan.global_cells.len());
+                    let mut dep_vids: Vec<Option<VertexId>> =
+                        Vec::with_capacity(plan.global_cells.len());
                     for &pos in &plan.global_cell_pool_indices {
                         dep_vids.push(all_vids[pos as usize]);
                     }
@@ -678,7 +697,7 @@ impl<'g> BulkIngestBuilder<'g> {
                     let load_fast = self.g.first_load_assume_new();
                     let mut members = Vec::new();
                     for (i, &pos) in plan.formula_target_pool_indices.iter().enumerate() {
-                        let vid = all_vids[pos as usize];
+                        let vid = all_vids[pos as usize].expect("formula targets have vertices");
                         target_vids.push(vid);
                         let row_plan = &row_plans[i].2;
                         if self.g.is_virtual_member(vid) {
@@ -738,11 +757,18 @@ impl<'g> BulkIngestBuilder<'g> {
                         if let Some(indices) = plan.per_formula_cells.get(fi) {
                             let mut dep_count = 0usize;
                             row.reserve(indices.len());
+                            let mut vertexless = Vec::new();
                             for &idx in indices {
-                                let dep_vid = dep_vids[idx as usize];
-                                row.push(dep_vid.0);
+                                match dep_vids[idx as usize] {
+                                    Some(dep_vid) => row.push(dep_vid.0),
+                                    None => {
+                                        let (sid, pc) = plan.global_cells[idx as usize];
+                                        vertexless.push((sid, pc.row(), pc.col()));
+                                    }
+                                }
                                 dep_count += 1;
                             }
+                            self.g.note_vertexless_deps(tvid, vertexless);
                             total_edges += dep_count;
                             n_cell_deps += dep_count;
                         }

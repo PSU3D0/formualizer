@@ -160,6 +160,9 @@ struct PreparedFormula {
     ast_id: AstNodeId,
     plan: DependencyPlanRow,
     direct_dependencies: Vec<VertexId>,
+    /// Direct dependencies on cells without a vertex (decision 27: a
+    /// reference creates none), deduplicated.
+    vertexless_dependencies: Vec<PackedSheetCell>,
     named_dependencies: Vec<VertexId>,
     other_dependencies: Vec<VertexId>,
     unresolved_names: Vec<String>,
@@ -200,6 +203,11 @@ impl PreparedLegacyGraphPlan {
             let mut dependencies: std::collections::BTreeSet<_> =
                 formula.direct_dependencies.iter().copied().collect();
             dependencies.extend(formula.other_dependencies.iter().copied());
+            let vertexless = formula
+                .vertexless_dependencies
+                .iter()
+                .filter(|&&p| p != formula.target_packed)
+                .count();
             let target = formula.target_packed;
             let target_row = target.row0();
             let target_col = target.col0();
@@ -223,10 +231,14 @@ impl PreparedLegacyGraphPlan {
                         .is_none_or(|bound| target_col >= bound.index)
                     && range.end_col.is_none_or(|bound| target_col <= bound.index)
             });
-            if range_contains_target {
+            if range_contains_target
+                || formula
+                    .vertexless_dependencies
+                    .contains(&formula.target_packed)
+            {
                 dependencies.insert(formula.target);
             }
-            total.checked_add(dependencies.len())
+            total.checked_add(dependencies.len() + vertexless)
         })
     }
 }
@@ -430,7 +442,7 @@ impl DependencyGraph {
                     return Err(PreparedLegacyGraphError::Stale);
                 }
                 coordinates.insert(packed, id);
-            } else {
+            } else if seen_targets.contains(&packed) {
                 new_packed.push(packed);
             }
         }
@@ -488,15 +500,19 @@ impl DependencyGraph {
                 .copied()
                 .ok_or(PreparedLegacyGraphError::Stale)?;
             let mut direct_dependencies = Vec::new();
+            let mut vertexless_dependencies = Vec::new();
             for dep in &plan.direct_cell_deps {
                 let packed =
                     PackedSheetCell::try_new(dep.sheet_id, dep.coord.row(), dep.coord.col())
                         .ok_or(PreparedLegacyGraphError::Stale)?;
-                let dependency = coordinates
-                    .get(&packed)
-                    .copied()
-                    .ok_or(PreparedLegacyGraphError::Stale)?;
-                push_unique(&mut direct_dependencies, dependency);
+                match coordinates.get(&packed) {
+                    Some(&dependency) => push_unique(&mut direct_dependencies, dependency),
+                    None => {
+                        if !vertexless_dependencies.contains(&packed) {
+                            vertexless_dependencies.push(packed);
+                        }
+                    }
+                }
             }
             let mut named_dependencies = Vec::new();
             let mut other_dependencies = Vec::new();
@@ -552,6 +568,7 @@ impl DependencyGraph {
                 ast_id,
                 plan,
                 direct_dependencies,
+                vertexless_dependencies,
                 named_dependencies,
                 other_dependencies,
                 unresolved_names,
@@ -680,7 +697,13 @@ impl DependencyGraph {
             let id = *id;
             let coord = GridAddr::new(packed.row0(), packed.col0());
             #[cfg(any(test, feature = "legacy_oracle"))]
-            self.edges.add_vertex(addr, id.0);
+            {
+                self.edges.add_vertex(addr, id.0);
+                self.oracle_cell_vertex_created(
+                    (packed.sheet_id(), packed.row0(), packed.col0()),
+                    id,
+                );
+            }
             #[cfg(not(any(test, feature = "legacy_oracle")))]
             let _ = addr;
             self.sheet_index_mut(packed.sheet_id())
@@ -725,6 +748,13 @@ impl DependencyGraph {
             if !deps.is_empty() {
                 self.add_dependent_edges_nobatch(formula.target, &deps);
             }
+            self.note_vertexless_deps(
+                formula.target,
+                formula
+                    .vertexless_dependencies
+                    .iter()
+                    .map(|p| (p.sheet_id(), p.row0(), p.col0())),
+            );
             self.add_range_dependent_edges(
                 formula.target,
                 &formula.plan.range_deps,
@@ -795,11 +825,13 @@ mod tests {
                 (sheet2, 1, 1, ast2, plan2),
             ])
             .unwrap();
-        assert_eq!(plan.new_vertex_count(), 4);
+        // Targets only: referenced cells get no vertex (decision 27; they
+        // were reserved placeholders).
+        assert_eq!(plan.new_vertex_count(), 2);
         assert_eq!(plan.planned_edge_count(), Some(2));
         assert_eq!(graph.apply_prepared_legacy_graph_plan(plan).unwrap(), 2);
         let stats = graph.baseline_stats();
-        assert_eq!(stats.graph_vertex_count, 4);
+        assert_eq!(stats.graph_vertex_count, 2);
         assert_eq!(stats.graph_formula_vertex_count, 2);
         assert_eq!(stats.graph_edge_count, 2);
     }
@@ -864,6 +896,9 @@ mod tests {
         assert_eq!(graph.baseline_stats().graph_formula_vertex_count, 1);
     }
 
+    /// A change to an existing target between preparation and application
+    /// makes the plan stale (placeholders, the old subject of this test, no
+    /// longer exist: decision 27).
     #[test]
     fn changed_existing_placeholder_is_stale_without_vertex_allocation() {
         let (mut graph, sheet) = graph();
@@ -871,15 +906,13 @@ mod tests {
         let owner = graph.prepare_legacy_graph_plan(sheet, vec![owner]).unwrap();
         graph.apply_prepared_legacy_graph_plan(owner).unwrap();
 
-        let addition = planned(&mut graph, sheet, 1, 2, "=C1", &[(1, 3)]);
+        let addition = planned(&mut graph, sheet, 1, 1, "=C1", &[(1, 3)]);
         let addition = graph
             .prepare_legacy_graph_plan(sheet, vec![addition])
             .unwrap();
-        let vertex_count = graph.baseline_stats().graph_vertex_count;
         graph
-            .set_cell_value("Sheet1", 1, 2, LiteralValue::Number(7.0))
+            .set_cell_formula("Sheet1", 1, 1, parse("=D1").unwrap())
             .unwrap();
-        assert_eq!(graph.baseline_stats().graph_vertex_count, vertex_count);
         let before = graph.baseline_stats();
         assert_eq!(
             graph.apply_prepared_legacy_graph_plan(addition),
@@ -915,8 +948,10 @@ mod tests {
 
     #[test]
     fn dirty_placeholder_state_is_captured_and_becomes_stale_after_prepare() {
+        // An existing formula target (placeholders no longer exist:
+        // decision 27).
         let (mut graph, sheet) = graph();
-        let owner = planned(&mut graph, sheet, 1, 1, "=B1", &[(1, 2)]);
+        let owner = planned(&mut graph, sheet, 1, 2, "=B2", &[(2, 2)]);
         let owner = graph.prepare_legacy_graph_plan(sheet, vec![owner]).unwrap();
         graph.apply_prepared_legacy_graph_plan(owner).unwrap();
         let b1 = CellRef::new(sheet, Coord::from_excel(1, 2, true, true));
@@ -944,16 +979,17 @@ mod tests {
             planned(&mut graph, sheet, 2, 1, "=B2", &[(2, 2)]),
         ];
         let plan = graph.prepare_legacy_graph_plan(sheet, items).unwrap();
+        // Targets only (decision 27: referenced cells get no vertex).
         assert_eq!(
             plan.new_vertices.len(),
-            4,
+            2,
             "reserved coordinates: {:?}",
             plan.new_vertices
         );
         assert_eq!(graph.baseline_stats().graph_vertex_count, 0);
         assert_eq!(graph.apply_prepared_legacy_graph_plan(plan).unwrap(), 2);
         let stats = graph.baseline_stats();
-        assert_eq!(stats.graph_vertex_count, 4);
+        assert_eq!(stats.graph_vertex_count, 2);
         assert_eq!(stats.graph_formula_vertex_count, 2);
         assert_eq!(stats.graph_edge_count, 2);
         assert_eq!(stats.dirty_vertex_count, 2);
@@ -978,9 +1014,10 @@ mod tests {
         assert_eq!(graph.baseline_stats(), before);
         graph.apply_prepared_legacy_graph_plan(second).unwrap();
         assert_eq!(graph.edges_rebuild_count(), rebuilds);
+        // The target only (decision 27: B1 gets no vertex).
         assert_eq!(
             graph.baseline_stats().graph_vertex_count,
-            before.graph_vertex_count + 2
+            before.graph_vertex_count + 1
         );
     }
 

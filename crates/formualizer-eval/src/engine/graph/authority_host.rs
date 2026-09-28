@@ -1335,6 +1335,11 @@ impl DependencyGraph {
                     take(self, n, &mut symbols);
                 }
             }
+        } else {
+            // Readers of a cell without a vertex (decision 27).
+            for d in self.oracle_vertexless_readers_of(cell) {
+                take(self, d, &mut symbols);
+            }
         }
         for d in self.collect_range_dependents_for_rect(cell.0, cell.1, cell.2, cell.1, cell.2) {
             take(self, d, &mut symbols);
@@ -1366,6 +1371,8 @@ impl DependencyGraph {
                 if let Some(names) = self.cell_to_name_dependents.get(&v) {
                     to_visit.extend(names.iter().copied());
                 }
+            } else {
+                to_visit.extend(self.oracle_vertexless_readers_of(c));
             }
             to_visit.extend(self.collect_range_dependents_for_rect(c.0, c.1, c.2, c.1, c.2));
         }

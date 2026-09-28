@@ -278,10 +278,7 @@ fn deferred_first_build_matches_the_eager_first_load() {
         };
         let ((di, dc), (ei, ec)) = (identity(&deferred, ROWS), identity(&eager, ROWS));
         assert_eq!(dc, ec, "vertex, formula vertex and arena node counts");
-        // The deferred load defines `Rate` (a formula cell) before the build,
-        // and the build reuses the vertex the name gave that cell: one id
-        // outside its column's run, which splits the run in two.
-        assert_eq!(runs(&di), runs(&ei) + 2, "identity runs");
+        assert_eq!(runs(&di), runs(&ei), "identity runs");
 
         for wb in [&mut eager, &mut deferred] {
             wb.set_value("Data", 7, 1, LiteralValue::Number(-4.5))
