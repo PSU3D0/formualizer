@@ -40,9 +40,9 @@ fn canonical_mode_disables_graph_value_cache_for_cells_and_formulas() {
     let sid = engine.graph.sheet_id("Sheet1").unwrap();
     let a1 = abs_cell_ref(sid, 1, 1);
     let b1 = abs_cell_ref(sid, 1, 2);
-    let a1_vid = engine.graph.get_vertex_for_cell(&a1).unwrap();
+    // A1 is a value cell: no vertex at all (decision 27).
+    assert!(engine.graph.get_vertex_for_cell(&a1).is_none());
     let b1_vid = engine.graph.get_vertex_for_cell(&b1).unwrap();
-    assert_eq!(engine.graph.get_value(a1_vid), None);
     assert_eq!(engine.graph.get_value(b1_vid), None);
     assert_eq!(engine.graph.get_cell_value("Sheet1", 1, 1), None);
     assert_eq!(engine.graph.get_cell_value("Sheet1", 1, 2), None);

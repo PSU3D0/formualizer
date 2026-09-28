@@ -9,10 +9,20 @@ fn test_dependency_extraction_from_ast() {
 
     // Create some cells to reference
     graph
-        .set_cell_value("Sheet1", 1, 1, LiteralValue::Int(10))
+        .set_cell_formula(
+            "Sheet1",
+            1,
+            1,
+            super::common::literal_ast(LiteralValue::Int(10)),
+        )
         .unwrap();
     graph
-        .set_cell_value("Sheet1", 2, 2, LiteralValue::Int(20))
+        .set_cell_formula(
+            "Sheet1",
+            2,
+            2,
+            super::common::literal_ast(LiteralValue::Int(20)),
+        )
         .unwrap();
 
     // Create a formula that references A1 (Sheet1:1:1)
@@ -64,10 +74,20 @@ fn test_dependency_extraction_multiple_references() {
 
     // Create cells A1 and B1
     graph
-        .set_cell_value("Sheet1", 1, 1, LiteralValue::Int(10))
+        .set_cell_formula(
+            "Sheet1",
+            1,
+            1,
+            super::common::literal_ast(LiteralValue::Int(10)),
+        )
         .unwrap();
     graph
-        .set_cell_value("Sheet1", 1, 2, LiteralValue::Int(20))
+        .set_cell_formula(
+            "Sheet1",
+            1,
+            2,
+            super::common::literal_ast(LiteralValue::Int(20)),
+        )
         .unwrap();
 
     // Create a binary operation A1 + B1
@@ -125,7 +145,12 @@ fn test_dependency_edge_management() {
 
     // Create A1
     graph
-        .set_cell_value("Sheet1", 1, 1, LiteralValue::Int(10))
+        .set_cell_formula(
+            "Sheet1",
+            1,
+            1,
+            super::common::literal_ast(LiteralValue::Int(10)),
+        )
         .unwrap();
 
     // Create A2 = A1
@@ -153,7 +178,12 @@ fn test_dependency_edge_management() {
 
     // Now update A2 to reference B1 instead
     graph
-        .set_cell_value("Sheet1", 1, 2, LiteralValue::Int(20))
+        .set_cell_formula(
+            "Sheet1",
+            1,
+            2,
+            super::common::literal_ast(LiteralValue::Int(20)),
+        )
         .unwrap(); // Create B1
 
     let ast_ref_b1 = ASTNode {
@@ -297,7 +327,12 @@ fn test_cross_sheet_dependencies() {
 
     // Create Sheet1!A1 = 10
     graph
-        .set_cell_value("Sheet1", 1, 1, LiteralValue::Int(10))
+        .set_cell_formula(
+            "Sheet1",
+            1,
+            1,
+            super::common::literal_ast(LiteralValue::Int(10)),
+        )
         .unwrap();
 
     // Create Sheet2!A1 = Sheet1!A1
@@ -347,7 +382,12 @@ fn test_relative_sheet_dependency() {
 
     // Create Sheet2!A1 = 10
     graph
-        .set_cell_value("Sheet2", 1, 1, LiteralValue::Int(10))
+        .set_cell_formula(
+            "Sheet2",
+            1,
+            1,
+            super::common::literal_ast(LiteralValue::Int(10)),
+        )
         .unwrap();
 
     // Create Sheet2!B1 = A1 (which should resolve to Sheet2!A1)

@@ -135,8 +135,9 @@ fn mark_dirty_many_equals_sequential_single_source_marks() {
         graph
             .set_cell_formula("Sheet1", 1, 5, parse("=A4").unwrap())
             .unwrap();
-        // Sources: value cells A1, A2 (mixed kinds) and formula B2.
-        let ids = [(1u32, 1u32), (2, 1), (2, 2)]
+        // Sources: formulas B2 and B1 (value cells have no vertex since
+        // decision 27; value sources are cells, below).
+        let ids = [(2u32, 2u32), (1, 2)]
             .iter()
             .map(|&(r, c)| {
                 *graph
@@ -147,10 +148,14 @@ fn mark_dirty_many_equals_sequential_single_source_marks() {
             .collect();
         (graph, ids)
     }
+    // Value sources A1, A2 as cells (0-based).
+    let cells = [(0u16, 0u32, 0u32), (0, 1, 0)];
 
     let (mut g_multi, sources) = build();
     let mut multi_affected = g_multi.mark_dirty_many(&sources);
+    multi_affected.extend(g_multi.mark_dirty_cells(&cells));
     multi_affected.sort_unstable();
+    multi_affected.dedup();
     let mut multi_eval = g_multi.get_evaluation_vertices();
     multi_eval.sort_unstable();
 
@@ -159,6 +164,9 @@ fn mark_dirty_many_equals_sequential_single_source_marks() {
     let mut seq_affected: Vec<VertexId> = Vec::new();
     for &s in &sources_seq {
         seq_affected.extend(g_seq.mark_dirty_many(&[s]));
+    }
+    for &c in &cells {
+        seq_affected.extend(g_seq.mark_dirty_cells(&[c]));
     }
     seq_affected.sort_unstable();
     seq_affected.dedup();

@@ -163,9 +163,10 @@ fn test_sequential_evaluation_of_dependency_chain() {
     engine.set_cell_formula("Sheet1", 3, 1, a3_ast).unwrap();
 
     // Get vertex IDs after all cells are created
+    // A1 is a value cell: no vertex (decision 27).
     let vertex_ids = get_vertex_ids_in_order(&engine.graph);
-    let a2_id = vertex_ids[1];
-    let a3_id = vertex_ids[2];
+    let a2_id = vertex_ids[0];
+    let a3_id = vertex_ids[1];
 
     // Manually evaluate in topological order, simulating the scheduler
     // A1 is a value, no evaluation needed.

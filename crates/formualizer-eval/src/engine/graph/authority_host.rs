@@ -394,6 +394,7 @@ impl DependencyGraph {
         }
         self.authority_sync_store();
         if !self.authority.pending_dirty.is_empty()
+            || !self.authority.pending_dirty_rects.is_empty()
             || !self.authority.pending_direct_dirty.is_empty()
             || !self.authority.pending_direct_dirty_runs.is_empty()
         {
@@ -560,6 +561,7 @@ impl DependencyGraph {
         }
         if self.authority.structural_pending
             || !self.authority.pending_dirty.is_empty()
+            || !self.authority.pending_dirty_rects.is_empty()
             || !self.authority.pending_direct_dirty.is_empty()
             || !self.authority.pending_direct_dirty_runs.is_empty()
         {
@@ -1152,6 +1154,12 @@ impl DependencyGraph {
                 self.formula_dirty.legacy_insert(reader);
             }
         }
+        let rects = std::mem::take(&mut self.authority.pending_dirty_rects);
+        if !rects.is_empty() {
+            let mut affected = FxHashSet::default();
+            self.authority_mark_rect_closure(&rects, &mut affected);
+            self.formula_dirty.legacy_extend(affected.iter().copied());
+        }
         if self.authority.pending_dirty.is_empty() {
             return;
         }
@@ -1168,15 +1176,102 @@ impl DependencyGraph {
     /// length) of `seeds`: formula cells through the identity side array,
     /// symbol rows to their name vertices.
     pub(crate) fn authority_closure_vertices(&self, seeds: &[VertexId]) -> Vec<VertexId> {
-        let rects: Vec<(u16, Rect)> = seeds
+        let cells: Vec<Cell> = seeds
             .iter()
             .filter_map(|&v| self.authority_cell_of_vertex(v))
-            .map(|c| (c.0, Rect::cell(c.1, c.2)))
             .collect();
+        self.authority_closure_of_cells(&cells)
+    }
+
+    /// Dirty propagation seeded by cells (a value edit: the cell has no
+    /// vertex, decision 27): marks the transitive dependents of `cells`,
+    /// with the same deferral cases as [`Self::authority_mark_dirty`];
+    /// returns them.
+    pub(super) fn authority_mark_dirty_cells(&mut self, cells: &[Cell]) -> Vec<VertexId> {
+        let rects: Vec<(u16, Rect)> = cells.iter().map(|c| (c.0, Rect::cell(c.1, c.2))).collect();
+        self.authority_mark_dirty_rects(&rects)
+    }
+
+    /// [`Self::authority_mark_dirty_cells`] for rectangles.
+    pub(super) fn authority_mark_dirty_rects(&mut self, rects: &[(u16, Rect)]) -> Vec<VertexId> {
+        let mut affected: FxHashSet<VertexId> = FxHashSet::default();
+        if rects.is_empty() || self.authority_load_skips_closures() {
+            return Vec::new();
+        }
+        if self.authority.structural_pending || self.first_load_assume_new {
+            self.authority.pending_dirty_rects.extend_from_slice(rects);
+            return Vec::new();
+        }
+        self.authority_sync();
+        self.authority_mark_rect_closure(rects, &mut affected);
+        let dirtyable: Vec<VertexId> = affected
+            .iter()
+            .copied()
+            .filter(|&v| self.is_dirtyable_kind(v))
+            .collect();
+        self.formula_dirty.legacy_extend(dirtyable);
+        affected.into_iter().collect()
+    }
+
+    /// Mark the closure of `rects` (the host is synced).
+    fn authority_mark_rect_closure(
+        &mut self,
+        rects: &[(u16, Rect)],
+        affected: &mut FxHashSet<VertexId>,
+    ) {
+        if self.authority.state != HostState::Ready {
+            let all: Vec<VertexId> = self
+                .vertex_formulas
+                .keys()
+                .chain(self.name_vertex_lookup.keys().copied())
+                .filter(|&v| !self.store.is_deleted(v))
+                .collect();
+            for v in all {
+                self.store.set_dirty(v, true);
+                affected.insert(v);
+            }
+            return;
+        }
+        let closure = self.authority_closure_of_rects(rects);
+        self.dirty_propagation_visits += closure.len() as u64;
+        for &v in &closure {
+            self.store.set_dirty(v, true);
+            affected.insert(v);
+        }
+        #[cfg(any(test, feature = "legacy_oracle"))]
+        if let Some(mode) = diff_mode()
+            && matches!(mode, DiffMode::Strict)
+            && self.vertex_formulas.len() <= DIFF_MAX_FORMULAS
+            && rects.iter().all(|(_, r)| r.r0 == r.r1 && r.c0 == r.c1)
+        {
+            let grid: Vec<Cell> = rects
+                .iter()
+                .filter(|(s, _)| *s != SYMBOL_SHEET)
+                .map(|(s, r)| (*s, r.r0, r.c0))
+                .collect();
+            let legacy = self.legacy_closure_cells(&grid);
+            let mut mine: Vec<Cell> = closure
+                .iter()
+                .filter_map(|&v| self.get_cell_ref(v).map(|c| cell_of(&c)))
+                .collect();
+            mine.sort_unstable();
+            mine.dedup();
+            assert_eq!(legacy, mine, "cell-seeded dirty closure of {grid:?}");
+        }
+    }
+
+    /// The executor vertices of the transitive dependents of `cells`.
+    pub(crate) fn authority_closure_of_cells(&self, cells: &[Cell]) -> Vec<VertexId> {
+        let rects: Vec<(u16, Rect)> = cells.iter().map(|c| (c.0, Rect::cell(c.1, c.2))).collect();
+        self.authority_closure_of_rects(&rects)
+    }
+
+    /// The executor vertices of the transitive dependents of `rects`.
+    pub(crate) fn authority_closure_of_rects(&self, rects: &[(u16, Rect)]) -> Vec<VertexId> {
         if rects.is_empty() {
             return Vec::new();
         }
-        let (cover, _) = self.authority.store.dependents(&rects, TagFilter::All);
+        let (cover, _) = self.authority.store.dependents(rects, TagFilter::All);
         let ids = self.authority.store.ids();
         let mut out = Vec::new();
         let mut runs = Vec::new();
@@ -1420,7 +1515,14 @@ impl DependencyGraph {
             .iter()
             .filter_map(|&c| self.get_vertex_for_cell(&cell_ref(c)))
             .collect();
-        let affected: FxHashSet<VertexId> = self.mark_dirty_many(&vids).into_iter().collect();
+        // Cells without a vertex (value cells, decision 27) seed by cell.
+        let vertexless: Vec<Cell> = cells
+            .iter()
+            .copied()
+            .filter(|&c| self.get_vertex_for_cell(&cell_ref(c)).is_none())
+            .collect();
+        let mut affected: FxHashSet<VertexId> = self.mark_dirty_many(&vids).into_iter().collect();
+        affected.extend(self.mark_dirty_cells(&vertexless));
         if let HostState::Failed(e) = &self.authority.state {
             return Err(e.clone());
         }

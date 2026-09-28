@@ -613,10 +613,17 @@ fn off_direct_name_vertex_matches_authoritative_and_legacy_controls() {
 #[test]
 fn evaluate_vertex_flushes_active_spans() {
     let mut engine = build_engine_with_active_spans();
-    let input_vertex = engine
-        .graph
-        .get_vertex_id_for_address(&engine.graph.make_cell_ref("Sheet1", TARGET_ROW, 1))
-        .expect("input vertex");
+    // An explicit vertex at the value cell (value cells have none since
+    // decision 27; evaluating a non-formula vertex reads its cell).
+    let sheet = engine.graph.sheet_id("Sheet1").unwrap();
+    let input_vertex = crate::engine::VertexEditor::new(&mut engine.graph).add_vertex(
+        crate::engine::graph::editor::vertex_editor::VertexMeta::new(
+            TARGET_ROW - 1,
+            0,
+            sheet,
+            crate::engine::VertexKind::Cell,
+        ),
+    );
     assert_active_spans(&engine);
 
     let value = engine.evaluate_vertex(input_vertex).unwrap();

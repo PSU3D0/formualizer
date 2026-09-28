@@ -21,7 +21,10 @@ fn debug_dependency_creation() {
 
     // Create A1 with value (note: A1 = row 1, col 1 in Excel's 1-based indexing)
     println!("Creating A1 with value 10.0");
-    let a1 = editor.set_cell_value(cell_ref(0, 1, 1), lit_num(10.0));
+    let a1 = editor.set_cell_formula(
+        cell_ref(0, 1, 1),
+        crate::engine::tests::common::literal_ast(lit_num(10.0)),
+    );
     println!("A1 vertex ID: {a1:?}");
 
     // Drop editor and recreate to verify mapping

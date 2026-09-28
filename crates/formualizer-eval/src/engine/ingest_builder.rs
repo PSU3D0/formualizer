@@ -650,6 +650,16 @@ impl<'g> BulkIngestBuilder<'g> {
                         .iter()
                         .max()
                         .map_or(0, |&m| m as usize + 1);
+                    // A target whose formula was replaced by a value takes
+                    // its retired id back (decision 27).
+                    if self.g.retired_id_count() != 0 {
+                        for &(sid, pc) in &plan.vertex_pool[..n_targets] {
+                            self.g.revive_retired_id(&crate::reference::CellRef::new(
+                                sid,
+                                crate::reference::Coord::new(pc.row(), pc.col(), true, true),
+                            ));
+                        }
+                    }
                     let (target_pool_vids, add_batch) =
                         self.g.ensure_vertices_batch_packed_ordered_unmapped(
                             &plan.vertex_pool_packed[..n_targets],
@@ -957,6 +967,11 @@ impl<'g> BulkIngestBuilder<'g> {
         // On a complete first load every formula is already dirty.
         if !dirty_roots.is_empty() {
             self.g.mark_dirty_many(&dirty_roots);
+        } else if !had_vertices && !self.g.first_load_assume_new() {
+            // Nothing to propagate (no earlier formulas; value cells have
+            // no vertex), but read-only planning needs the authority in
+            // step with the new formulas, as the propagation's sync left it.
+            self.g.authority_sync();
         }
 
         // Restore config

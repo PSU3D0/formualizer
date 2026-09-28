@@ -22,10 +22,20 @@ fn test_schedule_creation_end_to_end() {
     // A1 -> B1 -> C1
     // A2 -> B1
     graph
-        .set_cell_value("Sheet1", 1, 1, LiteralValue::Int(1))
+        .set_cell_formula(
+            "Sheet1",
+            1,
+            1,
+            super::common::literal_ast(LiteralValue::Int(1)),
+        )
         .unwrap(); // A1
     graph
-        .set_cell_value("Sheet1", 1, 2, LiteralValue::Int(1))
+        .set_cell_formula(
+            "Sheet1",
+            1,
+            2,
+            super::common::literal_ast(LiteralValue::Int(1)),
+        )
         .unwrap(); // A2
     graph
         .set_cell_formula("Sheet1", 2, 2, ref_ast(1, 1))
@@ -57,7 +67,12 @@ fn test_cycle_separation_logic() {
         .set_cell_formula("Sheet1", 1, 2, ref_ast(1, 1))
         .unwrap(); // B1 = A1
     graph
-        .set_cell_value("Sheet1", 2, 1, LiteralValue::Int(1))
+        .set_cell_formula(
+            "Sheet1",
+            2,
+            1,
+            super::common::literal_ast(LiteralValue::Int(1)),
+        )
         .unwrap(); // C1
     graph
         .set_cell_formula("Sheet1", 2, 2, ref_ast(2, 1))
@@ -78,7 +93,12 @@ fn test_cycle_separation_logic() {
 fn test_scheduling_with_external_dependencies() {
     let mut graph = DependencyGraph::new();
     graph
-        .set_cell_value("Sheet1", 1, 1, LiteralValue::Int(1))
+        .set_cell_formula(
+            "Sheet1",
+            1,
+            1,
+            super::common::literal_ast(LiteralValue::Int(1)),
+        )
         .unwrap(); // A1
     graph
         .set_cell_formula("Sheet1", 1, 2, ref_ast(1, 1))

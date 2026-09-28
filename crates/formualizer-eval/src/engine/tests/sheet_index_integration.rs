@@ -2,6 +2,16 @@ use crate::engine::*;
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 
+// The vertices these tests index are formula cells (`=<number>`): value
+// cells have no vertex (decision 27); they used value cells.
+fn lit(value: f64) -> ASTNode {
+    ASTNode {
+        node_type: ASTNodeType::Literal(LiteralValue::Number(value)),
+        source_token: None,
+        contains_volatile: false,
+    }
+}
+
 // Helper to create a formula that adds two cells
 fn sum_formula(row1: u32, col1: u32, row2: u32, col2: u32) -> ASTNode {
     ASTNode {
@@ -34,9 +44,7 @@ fn test_sheet_index_updated_on_vertex_creation() {
     let mut graph = DependencyGraph::new();
 
     // Create a cell value
-    let result = graph
-        .set_cell_value("Sheet1", 5, 10, LiteralValue::Number(42.0))
-        .unwrap();
+    let result = graph.set_cell_formula("Sheet1", 5, 10, lit(42.0)).unwrap();
     let vertex_id = result.affected_vertices[0];
 
     // Verify the vertex is in the sheet index
@@ -72,14 +80,10 @@ fn test_sheet_index_multiple_sheets() {
     let mut graph = DependencyGraph::new();
 
     // Create cells in different sheets
-    let result1 = graph
-        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(1.0))
-        .unwrap();
+    let result1 = graph.set_cell_formula("Sheet1", 1, 1, lit(1.0)).unwrap();
     let vertex1 = result1.affected_vertices[0];
 
-    let result2 = graph
-        .set_cell_value("Sheet2", 2, 2, LiteralValue::Number(2.0))
-        .unwrap();
+    let result2 = graph.set_cell_formula("Sheet2", 2, 2, lit(2.0)).unwrap();
     let vertex2 = result2.affected_vertices[0];
 
     let sheet1_id = graph.sheet_id("Sheet1").unwrap();
@@ -109,18 +113,10 @@ fn test_sheet_index_range_query_for_shifts() {
     let mut graph = DependencyGraph::new();
 
     // Create cells that would be affected by "insert rows at row 10"
-    let _r5 = graph
-        .set_cell_value("Sheet1", 5, 1, LiteralValue::Number(5.0))
-        .unwrap();
-    let _r15 = graph
-        .set_cell_value("Sheet1", 15, 1, LiteralValue::Number(15.0))
-        .unwrap();
-    let _r25 = graph
-        .set_cell_value("Sheet1", 25, 1, LiteralValue::Number(25.0))
-        .unwrap();
-    let _r35 = graph
-        .set_cell_value("Sheet1", 35, 1, LiteralValue::Number(35.0))
-        .unwrap();
+    let _r5 = graph.set_cell_formula("Sheet1", 5, 1, lit(5.0)).unwrap();
+    let _r15 = graph.set_cell_formula("Sheet1", 15, 1, lit(15.0)).unwrap();
+    let _r25 = graph.set_cell_formula("Sheet1", 25, 1, lit(25.0)).unwrap();
+    let _r35 = graph.set_cell_formula("Sheet1", 35, 1, lit(35.0)).unwrap();
 
     let sheet_id = graph.sheet_id("Sheet1").unwrap();
     let index = graph
@@ -143,7 +139,7 @@ fn test_sheet_index_column_operations() {
     // Create cells in various columns
     for col in [0, 5, 10, 15, 20, 25] {
         graph
-            .set_cell_value("Sheet1", 1, col + 1, LiteralValue::Number(col as f64))
+            .set_cell_formula("Sheet1", 1, col + 1, lit(col as f64))
             .unwrap();
     }
 
@@ -169,12 +165,7 @@ fn test_sheet_index_rectangular_range() {
     for row in 0..10 {
         for col in 0..5 {
             graph
-                .set_cell_value(
-                    "Sheet1",
-                    row + 1,
-                    col + 1,
-                    LiteralValue::Number((row * 5 + col) as f64),
-                )
+                .set_cell_formula("Sheet1", row + 1, col + 1, lit((row * 5 + col) as f64))
                 .unwrap();
         }
     }
@@ -198,20 +189,18 @@ fn test_sheet_index_sparse_efficiency() {
     let mut graph = DependencyGraph::new();
 
     // Create a very sparse sheet - cells at extreme positions
+    graph.set_cell_formula("Sheet1", 100, 5, lit(1.0)).unwrap();
     graph
-        .set_cell_value("Sheet1", 100, 5, LiteralValue::Number(1.0))
+        .set_cell_formula("Sheet1", 50_000, 10, lit(2.0))
         .unwrap();
     graph
-        .set_cell_value("Sheet1", 50_000, 10, LiteralValue::Number(2.0))
+        .set_cell_formula("Sheet1", 100_000, 15, lit(3.0))
         .unwrap();
     graph
-        .set_cell_value("Sheet1", 100_000, 15, LiteralValue::Number(3.0))
+        .set_cell_formula("Sheet1", 500_000, 20, lit(4.0))
         .unwrap();
     graph
-        .set_cell_value("Sheet1", 500_000, 20, LiteralValue::Number(4.0))
-        .unwrap();
-    graph
-        .set_cell_value("Sheet1", 999_999, 25, LiteralValue::Number(5.0))
+        .set_cell_formula("Sheet1", 999_999, 25, lit(5.0))
         .unwrap();
 
     let sheet_id = graph.sheet_id("Sheet1").unwrap();
@@ -241,12 +230,8 @@ fn test_sheet_index_with_formulas() {
     let mut graph = DependencyGraph::new();
 
     // Create cells with formulas
-    graph
-        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(10.0))
-        .unwrap();
-    graph
-        .set_cell_value("Sheet1", 2, 1, LiteralValue::Number(20.0))
-        .unwrap();
+    graph.set_cell_formula("Sheet1", 1, 1, lit(10.0)).unwrap();
+    graph.set_cell_formula("Sheet1", 2, 1, lit(20.0)).unwrap();
 
     let formula = sum_formula(1, 1, 2, 1); // =A1+A2
     let result = graph.set_cell_formula("Sheet1", 3, 1, formula).unwrap();

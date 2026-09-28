@@ -22,7 +22,12 @@ mod tests {
 
         // Verify we can use the new sheet
         graph
-            .set_cell_value("Sheet2", 1, 1, LiteralValue::Number(42.0))
+            .set_cell_formula(
+                "Sheet2",
+                1,
+                1,
+                crate::engine::tests::common::literal_ast(LiteralValue::Number(42.0)),
+            )
             .unwrap();
         assert!(
             graph
@@ -41,7 +46,12 @@ mod tests {
 
         // Add some data to Sheet2
         graph
-            .set_cell_value("Sheet2", 1, 1, LiteralValue::Number(10.0))
+            .set_cell_formula(
+                "Sheet2",
+                1,
+                1,
+                crate::engine::tests::common::literal_ast(LiteralValue::Number(10.0)),
+            )
             .unwrap();
 
         // Add a formula in Sheet1 that references Sheet2
@@ -74,7 +84,12 @@ mod tests {
         // Add a sheet and some data
         let sheet2_id = graph.add_sheet("Sheet2").unwrap();
         graph
-            .set_cell_value("Sheet2", 1, 1, LiteralValue::Number(5.0))
+            .set_cell_formula(
+                "Sheet2",
+                1,
+                1,
+                crate::engine::tests::common::literal_ast(LiteralValue::Number(5.0)),
+            )
             .unwrap();
 
         // Add a formula in Sheet1 that references Sheet2
@@ -107,10 +122,20 @@ mod tests {
         // Set up source sheet with data and formulas
         graph.add_sheet("Source").unwrap();
         graph
-            .set_cell_value("Source", 1, 1, LiteralValue::Number(10.0))
+            .set_cell_formula(
+                "Source",
+                1,
+                1,
+                crate::engine::tests::common::literal_ast(LiteralValue::Number(10.0)),
+            )
             .unwrap();
         graph
-            .set_cell_value("Source", 2, 1, LiteralValue::Number(20.0))
+            .set_cell_formula(
+                "Source",
+                2,
+                1,
+                crate::engine::tests::common::literal_ast(LiteralValue::Number(20.0)),
+            )
             .unwrap();
 
         // Add an internal formula (references within the same sheet)
@@ -119,7 +144,12 @@ mod tests {
 
         // Add a cross-sheet reference
         graph
-            .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(100.0))
+            .set_cell_formula(
+                "Sheet1",
+                1,
+                1,
+                crate::engine::tests::common::literal_ast(LiteralValue::Number(100.0)),
+            )
             .unwrap();
         let cross_formula = parse("=Sheet1!A1 * 2").unwrap();
         graph

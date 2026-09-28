@@ -26,6 +26,9 @@ impl DependencyGraph {
     /// Remove a sheet from the workbook.
     pub fn remove_sheet(&mut self, sheet_id: SheetId) -> Result<(), ExcelError> {
         let result = self.remove_sheet_impl(sheet_id);
+        if result.is_ok() {
+            self.drop_retired_ids_of_sheet(sheet_id);
+        }
         self.authority_end_structural();
         result
     }

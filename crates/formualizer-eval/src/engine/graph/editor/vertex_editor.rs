@@ -507,8 +507,12 @@ impl<'g> VertexEditor<'g> {
                     self.set_cell_formula(addr, old_formula);
                 } else if let Some(old_value) = old_value {
                     self.set_cell_value(addr, old_value);
-                } else if let Some(id) = self.graph.get_vertex_id_for_address(&addr) {
-                    self.remove_vertex(id)?;
+                } else {
+                    // No prior state the graph holds: the cell is a value or
+                    // empty cell again (Arrow restores its value). Its formula
+                    // id retires at the cell (decision 27), so replaying the
+                    // formula back revives it.
+                    self.graph.retire_cell_for_replay(addr);
                 }
             }
             ChangeEvent::SetFormula {
@@ -522,8 +526,12 @@ impl<'g> VertexEditor<'g> {
                     self.set_cell_formula(addr, old_formula);
                 } else if let Some(old_value) = old_value {
                     self.set_cell_value(addr, old_value);
-                } else if let Some(id) = self.graph.get_vertex_id_for_address(&addr) {
-                    self.remove_vertex(id)?;
+                } else {
+                    // No prior state the graph holds: the cell is a value or
+                    // empty cell again (Arrow restores its value). Its formula
+                    // id retires at the cell (decision 27), so replaying the
+                    // formula back revives it.
+                    self.graph.retire_cell_for_replay(addr);
                 }
             }
             ChangeEvent::SetRowVisibility { .. } => {
@@ -646,8 +654,13 @@ impl<'g> VertexEditor<'g> {
                 // Workbook-level deferred state is replayed by Engine undo/redo wrappers.
             }
             // Granular events for compound operations
-            ChangeEvent::CompoundStart { .. } | ChangeEvent::CompoundEnd { .. } => {
-                // These are markers, no inverse needed
+            ChangeEvent::CompoundStart { description, .. } => {
+                // A marker; a structural edit's marker also shifts the
+                // retired-id side table back (decision 27).
+                self.graph.replay_structural_marker(&description, false);
+            }
+            ChangeEvent::CompoundEnd { .. } => {
+                // A marker, no inverse needed
             }
             ChangeEvent::VertexMoved {
                 id,
@@ -702,27 +715,13 @@ impl<'g> VertexEditor<'g> {
     }
 
     pub fn try_add_vertex(&mut self, meta: VertexMeta) -> Result<VertexId, EditorError> {
-        // For now, use the existing set_cell_value method to create vertices
-        // This is a simplified implementation that works with the current API
-        let sheet_name = self.graph.sheet_name(meta.sheet_id).to_string();
-
-        // VertexEditor/VertexMeta use internal 0-based coordinates, while the
-        // graph mutation API is 1-based and owns common admission.
+        // An explicitly requested vertex: an empty one at the cell (value
+        // cells otherwise have none, decision 27; a value set later removes
+        // it again). VertexMeta uses internal 0-based coordinates.
         let id = self
             .graph
-            .set_cell_value(
-                &sheet_name,
-                meta.coord.row() + 1,
-                meta.coord.col() + 1,
-                LiteralValue::Empty,
-            )
-            .map_err(EditorError::Excel)?
-            .affected_vertices
-            .into_iter()
-            .next()
-            .ok_or_else(|| EditorError::TransactionFailed {
-                reason: "vertex addition produced no affected vertex".to_string(),
-            })?;
+            .add_empty_vertex(meta.sheet_id, meta.coord.row(), meta.coord.col())
+            .map_err(EditorError::Excel)?;
 
         if self.has_logger() && id.0 != 0 {
             self.log_change(ChangeEvent::AddVertex {
@@ -1361,6 +1360,7 @@ impl<'g> VertexEditor<'g> {
         shift: impl Fn(GridAddr) -> GridAddr,
         summary: &mut ShiftSummary,
     ) -> Result<(), EditorError> {
+        self.graph.shift_retired_ids(op);
         let runs = self.graph.shift_virtual_runs(op);
 
         for (id, old_coord) in vertices_to_shift {
@@ -1615,7 +1615,8 @@ impl<'g> VertexEditor<'g> {
         // This would require coordination with the vertex store and dependency tracking
     }
 
-    /// Set a cell value, creating the vertex if it doesn't exist
+    /// Set a cell value. A value cell has no vertex (decision 27): returns
+    /// `VertexId(0)`; a formula it replaces retires its id.
     pub fn set_cell_value(&mut self, cell_ref: CellRef, value: LiteralValue) -> VertexId {
         self.set_cell_value_with_old_state(cell_ref, value, None, None)
     }
@@ -1677,7 +1678,7 @@ impl<'g> VertexEditor<'g> {
             cell_ref.coord.col() + 1,
             value.clone(),
         ) {
-            Ok(summary) => {
+            Ok(_) => {
                 // Log change event
                 let change_event = ChangeEvent::SetValue {
                     addr: cell_ref,
@@ -1691,11 +1692,8 @@ impl<'g> VertexEditor<'g> {
                     logger.end_compound();
                 }
 
-                summary
-                    .affected_vertices
-                    .into_iter()
-                    .next()
-                    .unwrap_or(VertexId::new(0))
+                // A value cell has no vertex (decision 27).
+                VertexId::new(0)
             }
             Err(_) => VertexId::new(0),
         }
@@ -2371,7 +2369,9 @@ mod tests {
         let anchor_cell = CellRef::new(sheet_id, Coord::new(0, 0, true, true));
         let anchor_vid = {
             let mut editor = VertexEditor::new(&mut graph);
-            editor.set_cell_value(anchor_cell, LiteralValue::Number(0.0))
+            // A formula anchors a spill (value cells have no vertex,
+            // decision 27; this used a value cell's vertex).
+            editor.set_cell_formula(anchor_cell, formualizer_parse::parser::parse("=0").unwrap())
         };
 
         let target_cells = vec![
@@ -2446,8 +2446,8 @@ mod tests {
             editor.set_cell_value(cell_ref, value.clone())
         };
 
-        // Verify vertex was created (simplified check)
-        assert!(vertex_id.0 > 0);
+        // A value cell has no vertex (decision 27): the sentinel id.
+        assert_eq!(vertex_id.0, 0);
 
         // Verify change log
         assert_eq!(log.len(), 1);

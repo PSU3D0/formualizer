@@ -73,11 +73,13 @@ fn csr_rebuild_count_scales_linearly_with_edits() {
 #[test]
 fn unrebuilt_edits_are_visible_to_dependent_reads() {
     let mut engine = make_engine();
+    // Literal formulas: the oracle edges under test need vertices at A1 and
+    // C1 (value cells have none since decision 27).
     engine
-        .set_cell_value("Sheet1", 1, 1, LiteralValue::Int(1))
+        .set_cell_formula("Sheet1", 1, 1, parse("=1").unwrap())
         .unwrap();
     engine
-        .set_cell_value("Sheet1", 1, 3, LiteralValue::Int(3))
+        .set_cell_formula("Sheet1", 1, 3, parse("=3").unwrap())
         .unwrap();
 
     // B1 = A1 (single edit: stays in the delta slab, below rebuild threshold)

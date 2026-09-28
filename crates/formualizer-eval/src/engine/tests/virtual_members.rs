@@ -357,8 +357,10 @@ fn member_vertex_pages_drop_rows_and_come_back() {
     };
     let mut a = build(true);
     let mut b = build(false);
+    // Three full 1024-id pages lie inside the member runs (value cells take
+    // no ids since decision 27, so the runs start at the first id).
     assert!(
-        a.graph.virtual_vertex_pages() >= 4,
+        a.graph.virtual_vertex_pages() >= 3,
         "full member pages keep no rows"
     );
     assert_eq!(b.graph.virtual_vertex_pages(), 0);

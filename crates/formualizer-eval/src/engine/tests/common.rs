@@ -62,3 +62,14 @@ pub fn graph_truth_eval_config() -> EvalConfig {
 pub fn graph_truth_graph() -> crate::engine::DependencyGraph {
     crate::engine::DependencyGraph::new_with_config(graph_truth_eval_config())
 }
+
+/// A formula that is just `value` (`=<literal>`). Legacy graph tests that
+/// needed a vertex at a cell used a value cell; value cells have no vertex
+/// since decision 27, so they use a literal formula.
+pub fn literal_ast(value: formualizer_common::LiteralValue) -> ASTNode {
+    ASTNode {
+        node_type: formualizer_parse::parser::ASTNodeType::Literal(value),
+        source_token: None,
+        contains_volatile: false,
+    }
+}

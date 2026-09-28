@@ -68,8 +68,13 @@ fn test_cycle_with_acyclic_branch() {
         .set_cell_formula("Sheet1", 2, 1, ref_ast(2, 2))
         .unwrap(); // C1 = D1
     graph
-        .set_cell_value("Sheet1", 2, 2, formualizer_common::LiteralValue::Int(42))
-        .unwrap(); // D1 = 42
+        .set_cell_formula(
+            "Sheet1",
+            2,
+            2,
+            super::common::literal_ast(formualizer_common::LiteralValue::Int(42)),
+        )
+        .unwrap(); // D1 = 42 (a literal formula: value cells have no vertex)
 
     let scheduler = Scheduler::new(&graph);
     // Get the actual vertex IDs from the graph

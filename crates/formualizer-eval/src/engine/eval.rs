@@ -4612,6 +4612,7 @@ where
                         if compound_stack.last() == Some(depth) {
                             compound_stack.pop();
                         }
+                        editor.apply_inverse(ev.clone())?;
                     }
                     ChangeEvent::SetRowVisibility { .. } => {
                         // Engine-side metadata handled after dropping graph editor borrow.

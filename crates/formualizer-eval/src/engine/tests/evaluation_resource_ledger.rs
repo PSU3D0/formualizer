@@ -158,11 +158,17 @@ fn evaluate_vertex_all_unset_preserves_non_formula_compatibility() {
     engine
         .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(42.0))
         .unwrap();
-    let cell = engine.graph.make_cell_ref("Sheet1", 1, 1);
-    let cell_vertex = engine
-        .graph
-        .get_vertex_id_for_address(&cell)
-        .expect("literal cell vertex");
+    // An explicit vertex at the value cell (value cells have none since
+    // decision 27).
+    let sheet = engine.graph.sheet_id("Sheet1").unwrap();
+    let cell_vertex = crate::engine::VertexEditor::new(&mut engine.graph).add_vertex(
+        crate::engine::graph::editor::vertex_editor::VertexMeta::new(
+            0,
+            0,
+            sheet,
+            crate::engine::VertexKind::Cell,
+        ),
+    );
     engine
         .graph
         .update_vertex_value(cell_vertex, LiteralValue::Number(-1.0));

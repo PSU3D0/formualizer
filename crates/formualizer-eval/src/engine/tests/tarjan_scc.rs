@@ -55,13 +55,28 @@ fn create_test_graph_with_formulas()
 
     // Create some base values
     graph
-        .set_cell_value("Sheet1", 1, 1, LiteralValue::Int(10))
+        .set_cell_formula(
+            "Sheet1",
+            1,
+            1,
+            super::common::literal_ast(LiteralValue::Int(10)),
+        )
         .unwrap(); // A1 = 10
     graph
-        .set_cell_value("Sheet1", 1, 2, LiteralValue::Int(20))
+        .set_cell_formula(
+            "Sheet1",
+            1,
+            2,
+            super::common::literal_ast(LiteralValue::Int(20)),
+        )
         .unwrap(); // B1 = 20
     graph
-        .set_cell_value("Sheet1", 1, 3, LiteralValue::Int(30))
+        .set_cell_formula(
+            "Sheet1",
+            1,
+            3,
+            super::common::literal_ast(LiteralValue::Int(30)),
+        )
         .unwrap(); // C1 = 30
 
     // Create formulas
@@ -129,7 +144,12 @@ fn test_tarjan_cycle_detection() {
 
     // Create a cycle: A1 → B1 → C1 → A1
     graph
-        .set_cell_value("Sheet1", 1, 1, LiteralValue::Int(1))
+        .set_cell_formula(
+            "Sheet1",
+            1,
+            1,
+            super::common::literal_ast(LiteralValue::Int(1)),
+        )
         .unwrap(); // A1 starts as value
 
     // A1 = B1 + 1
@@ -172,7 +192,12 @@ fn test_tarjan_self_loops() {
 
     // Create A1 = 5 (no cycle)
     graph
-        .set_cell_value("Sheet1", 1, 1, LiteralValue::Int(5))
+        .set_cell_formula(
+            "Sheet1",
+            1,
+            1,
+            super::common::literal_ast(LiteralValue::Int(5)),
+        )
         .unwrap();
 
     // Create a self-referencing formula B1 = B1.
@@ -245,7 +270,12 @@ fn test_tarjan_complex_graph() {
 
     // Acyclic part: F1 → G1, F1 → H1
     graph
-        .set_cell_value("Sheet1", 1, 6, LiteralValue::Int(10))
+        .set_cell_formula(
+            "Sheet1",
+            1,
+            6,
+            super::common::literal_ast(LiteralValue::Int(10)),
+        )
         .unwrap(); // F1 = 10
 
     let g1_ast = create_cell_ref_ast(None, 1, 6, "F1"); // G1 = F1
@@ -289,7 +319,12 @@ fn test_tarjan_empty_input() {
 fn test_tarjan_single_vertex() {
     let mut graph = DependencyGraph::new();
     graph
-        .set_cell_value("Sheet1", 1, 1, LiteralValue::Int(42))
+        .set_cell_formula(
+            "Sheet1",
+            1,
+            1,
+            super::common::literal_ast(LiteralValue::Int(42)),
+        )
         .unwrap();
 
     let scheduler = Scheduler::new(&graph);

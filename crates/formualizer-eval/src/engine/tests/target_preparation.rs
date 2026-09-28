@@ -2249,9 +2249,19 @@ fn common_admission_direct_bulk_replacement_and_staged_seams_are_atomic() {
         EvalConfig::default().with_evaluation_budgets(zero_vertices.clone()),
     );
     direct.add_sheet("Sheet1").unwrap();
+    // A value edit needs no vertex (decision 27): admitted under a zero
+    // vertex budget; a formula (which used to be this test's value) is not.
+    direct
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(1.0))
+        .unwrap();
     let before = direct.baseline_stats();
     let error = direct
-        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(1.0))
+        .set_cell_formula(
+            "Sheet1",
+            2,
+            1,
+            formualizer_parse::parser::parse("=1").unwrap(),
+        )
         .unwrap_err();
     assert!(matches!(error.extra, ExcelErrorExtra::Resource { .. }));
     assert_eq!(

@@ -62,24 +62,16 @@ fn test_mark_dirty_propagation() {
         .set_cell_value("Sheet1", 1, 1, LiteralValue::Int(20))
         .unwrap();
 
-    // All 4 vertices should be affected (A1 changed, A2/A3/A4 became dirty)
-    assert_eq!(summary.affected_vertices.len(), 4);
+    // A2/A3/A4 became dirty (A1 is a value cell: no vertex, decision 27;
+    // it used to be listed as affected too)
+    assert_eq!(summary.affected_vertices.len(), 3);
 
     // Verify dirty flags are set correctly
     let vertex_ids = get_vertex_ids_in_order(&graph);
-
-    // A1 is a value, so no dirty flag to check
-    assert!(
-        !graph.is_dirty(vertex_ids[0]),
-        "A1 should be clean, as it is a value"
-    );
-    assert!(
-        graph.get_vertex_kind(vertex_ids[0]) == VertexKind::Cell,
-        "A1 should be a value"
-    );
+    assert_eq!(vertex_ids.len(), 3, "A1 is a value: no vertex");
 
     // A2, A3, A4 should all be dirty
-    for (idx, &vertex_id) in vertex_ids.iter().enumerate().skip(1).take(3) {
+    for (idx, &vertex_id) in vertex_ids.iter().enumerate().take(3) {
         assert!(
             graph.is_dirty(vertex_id),
             "A{} should be dirty after A1 changed",
@@ -163,13 +155,13 @@ fn test_mark_dirty_diamond_dependency() {
         .set_cell_value("Sheet1", 1, 1, LiteralValue::Int(20))
         .unwrap();
 
-    // Should affect A1, A2, A3, A4 (4 total)
-    assert_eq!(summary.affected_vertices.len(), 4);
+    // Should affect A2, A3, A4 (A1 is a value cell: no vertex, decision 27)
+    assert_eq!(summary.affected_vertices.len(), 3);
 
     // Verify A4 is only marked dirty once despite two paths from A1
-    assert!(graph.is_dirty(all_vertex_ids[3]), "A4 should be dirty");
+    assert!(graph.is_dirty(all_vertex_ids[2]), "A4 should be dirty");
     assert!(
-        graph.get_vertex_kind(all_vertex_ids[3]) == VertexKind::FormulaScalar,
+        graph.get_vertex_kind(all_vertex_ids[2]) == VertexKind::FormulaScalar,
         "A4 should be a formula"
     );
 }
@@ -193,31 +185,31 @@ fn test_dirty_flag_clearing() {
     };
     graph.set_cell_formula("Sheet1", 2, 1, ast_ref_a1).unwrap();
 
-    // Both should be dirty after creation
+    // A2 is dirty after creation (A1 is a value cell: no vertex)
     let all_vertex_ids = get_vertex_ids_in_order(&graph);
     assert!(
-        graph.is_dirty(all_vertex_ids[1]),
+        graph.is_dirty(all_vertex_ids[0]),
         "A2 should be dirty after creation"
     );
     assert!(
-        graph.get_vertex_kind(all_vertex_ids[1]) == VertexKind::FormulaScalar,
+        graph.get_vertex_kind(all_vertex_ids[0]) == VertexKind::FormulaScalar,
         "A2 should be a formula"
     );
 
     // Clear dirty flags
-    let vertex_ids = vec![all_vertex_ids[1]]; // Just A2 (second vertex)
+    let vertex_ids = vec![all_vertex_ids[0]]; // Just A2 (second vertex)
     graph.clear_dirty_flags(&vertex_ids);
 
     // A2 should no longer be dirty
     assert!(
-        !graph.is_dirty(all_vertex_ids[1]),
+        !graph.is_dirty(all_vertex_ids[0]),
         "A2 should be clean after clearing"
     );
 
     // get_evaluation_vertices should not include A2
     let eval_vertices = graph.get_evaluation_vertices();
     let all_vertex_ids = get_vertex_ids_in_order(&graph);
-    assert!(!eval_vertices.contains(&all_vertex_ids[1]));
+    assert!(!eval_vertices.contains(&all_vertex_ids[0]));
 
     // But if we change A1 again, A2 should become dirty
     graph
@@ -225,7 +217,7 @@ fn test_dirty_flag_clearing() {
         .unwrap();
 
     assert!(
-        graph.is_dirty(all_vertex_ids[1]),
+        graph.is_dirty(all_vertex_ids[0]),
         "A2 should be dirty after A1 changed"
     );
 }
@@ -336,8 +328,8 @@ fn test_dirty_propagation_performance() {
         .unwrap();
     let elapsed = start.elapsed();
 
-    // Should affect all 20 vertices
-    assert_eq!(summary.affected_vertices.len(), 20);
+    // Should affect the 19 formulas (A1 is a value cell: no vertex)
+    assert_eq!(summary.affected_vertices.len(), 19);
 
     // Performance should be reasonable (this is a rough check)
     // With O(1) HashSet operations, even 20 vertices should be very fast

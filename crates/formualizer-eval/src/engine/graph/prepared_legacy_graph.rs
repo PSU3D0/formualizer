@@ -180,6 +180,9 @@ pub(crate) struct PreparedLegacyGraphPlan {
     coordinates: BTreeMap<PackedSheetCell, VertexId>,
     new_vertices: Vec<(PackedSheetCell, VertexId)>,
     new_vertex_set: std::collections::BTreeSet<PackedSheetCell>,
+    /// New targets whose cell holds a retired formula id (decision 27):
+    /// application revives that id instead of allocating one.
+    revived: Vec<(PackedSheetCell, VertexId)>,
     existing_targets: Vec<(VertexId, ExistingTargetState)>,
     symbols: Vec<SymbolBinding>,
     formulas: Vec<PreparedFormula>,
@@ -425,6 +428,7 @@ impl DependencyGraph {
 
         let mut coordinates = BTreeMap::new();
         let mut new_packed = Vec::new();
+        let mut revived: Vec<(PackedSheetCell, VertexId)> = Vec::new();
         let mut seen_packed = std::collections::BTreeSet::new();
         for packed in packed_inputs {
             if !seen_packed.insert(packed) {
@@ -443,7 +447,16 @@ impl DependencyGraph {
                 }
                 coordinates.insert(packed, id);
             } else if seen_targets.contains(&packed) {
-                new_packed.push(packed);
+                match self
+                    .retired_ids
+                    .get(&(packed.sheet_id(), packed.row0(), packed.col0()))
+                {
+                    Some(&id) => {
+                        coordinates.insert(packed, id);
+                        revived.push((packed, id));
+                    }
+                    None => new_packed.push(packed),
+                }
             }
         }
         let base = u32::try_from(self.store.len())
@@ -468,11 +481,27 @@ impl DependencyGraph {
             new_vertices.push((packed, id));
         }
 
-        let new_vertex_set: std::collections::BTreeSet<_> =
-            new_vertices.iter().map(|(packed, _)| *packed).collect();
+        let new_vertex_set: std::collections::BTreeSet<_> = new_vertices
+            .iter()
+            .chain(revived.iter())
+            .map(|(packed, _)| *packed)
+            .collect();
         let mut existing_targets = Vec::new();
         for target in &target_inputs {
             if new_vertex_set.contains(target) {
+                // A spill child has no vertex (decision 27): still a
+                // conflict.
+                let cell = CellRef::new(
+                    target.sheet_id(),
+                    Coord::new(target.row0(), target.col0(), true, true),
+                );
+                if self.spill_cell_to_anchor.contains_key(&cell) {
+                    return Err(PreparedLegacyGraphError::SpillTargetConflict {
+                        sheet: target.sheet_id(),
+                        row: target.row0() + 1,
+                        col: target.col0() + 1,
+                    });
+                }
                 continue;
             }
             let id = coordinates
@@ -579,6 +608,7 @@ impl DependencyGraph {
             expected_vertex_len: self.store.len(),
             coordinates,
             new_vertex_set,
+            revived,
             new_vertices,
             existing_targets,
             symbols,
@@ -612,6 +642,16 @@ impl DependencyGraph {
                 .or_else(|| self.load_packed_to_vertex.get(packed).copied());
             if plan.new_vertex_set.contains(packed) {
                 if actual.is_some() {
+                    return Err(PreparedLegacyGraphError::Stale);
+                }
+                let retired = self
+                    .retired_ids
+                    .get(&(packed.sheet_id(), packed.row0(), packed.col0()))
+                    .copied();
+                let expect_revival = plan.revived.iter().any(|(p, _)| p == packed);
+                if expect_revival != (retired == Some(*expected))
+                    || (!expect_revival && retired.is_some())
+                {
                     return Err(PreparedLegacyGraphError::Stale);
                 }
             } else if actual != Some(*expected) || !self.store.vertex_exists_active(*expected) {
@@ -692,6 +732,16 @@ impl DependencyGraph {
                 )
             })
             .collect();
+        for &(packed, id) in &plan.revived {
+            self.retired_ids
+                .remove(&(packed.sheet_id(), packed.row0(), packed.col0()));
+            let revived = self.revive_vertex(
+                id,
+                packed.sheet_id(),
+                GridAddr::new(packed.row0(), packed.col0()),
+            );
+            debug_assert!(revived, "a validated retired id revives");
+        }
         self.store.allocate_prevalidated_batch(&allocations);
         for ((packed, id), (addr, _, _)) in plan.new_vertices.iter().zip(allocations) {
             let id = *id;
@@ -1140,8 +1190,10 @@ mod tests {
         let (mut graph, sheet) = graph();
         let item = planned(&mut graph, sheet, 1, 1, "=B1", &[(1, 2)]);
         let plan = graph.prepare_legacy_graph_plan(sheet, vec![item]).unwrap();
+        // A new vertex makes the plan stale (a formula: value cells get no
+        // vertex since decision 27; this used a value).
         graph
-            .set_cell_value("Sheet1", 9, 9, LiteralValue::Number(1.0))
+            .set_cell_formula("Sheet1", 9, 9, parse("=1").unwrap())
             .unwrap();
         let before = graph.baseline_stats();
         assert_eq!(

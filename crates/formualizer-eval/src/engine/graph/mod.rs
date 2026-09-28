@@ -489,6 +489,22 @@ pub struct DependencyGraph {
     deferred_dirty_depth: u32,
     /// Sources queued while a deferred-dirty scope is active.
     deferred_dirty_pending: Vec<VertexId>,
+    /// Decision 27 (option B): the retired id of each cell whose formula
+    /// was replaced by a value, keyed `(sheet, row0, col0)`. Value ->
+    /// formula at the cell takes it back; structural edits shift it; a
+    /// delete drops the band's entries into `vertex_journal`.
+    retired_ids: std::collections::BTreeMap<(SheetId, u32, u32), VertexId>,
+    /// The ids in `retired_ids` (their tombstones stay out of grid scans:
+    /// structural edits must not move or log them).
+    retired_id_set: FxHashSet<VertexId>,
+    /// Entries each structural delete dropped, most recent last (history is
+    /// LIFO: an undone delete takes its batch back).
+    retired_dropped: Vec<RetiredBatch>,
+    /// Entries each undone insert dropped from its band (a redo of the
+    /// insert takes them back).
+    retired_dropped_by_undo: Vec<RetiredBatch>,
+    /// The same for cell/rectangle seeds (value edits: no vertex, decision 27).
+    deferred_dirty_pending_rects: Vec<(u16, crate::engine::authority::geom::Rect)>,
 
     /// Vertices explicitly marked as #REF! by structural operations.
     ///
@@ -1793,6 +1809,11 @@ impl DependencyGraph {
             dirty_propagation_visits: 0,
             deferred_dirty_depth: 0,
             deferred_dirty_pending: Vec::new(),
+            deferred_dirty_pending_rects: Vec::new(),
+            retired_ids: std::collections::BTreeMap::new(),
+            retired_id_set: FxHashSet::default(),
+            retired_dropped: Vec::new(),
+            retired_dropped_by_undo: Vec::new(),
             volatile_vertices: FxHashSet::default(),
             ref_error_vertices: FxHashSet::default(),
             #[cfg(any(test, feature = "legacy_oracle"))]
@@ -2242,14 +2263,9 @@ impl DependencyGraph {
         let existing = self.cell_vertex(&cell);
         let stats = self.baseline_stats();
         let removed_edges = existing.map_or(0, |vertex| self.store.edge_offset(vertex) as usize);
+        // A value cell gets no vertex (decision 27).
         Ok(crate::engine::resource_ledger::GraphAdmission {
-            final_vertices: stats
-                .graph_vertex_count
-                .checked_add(usize::from(existing.is_none()))
-                .ok_or_else(|| {
-                    ExcelError::new(ExcelErrorKind::NImpl)
-                        .with_message("graph vertex count overflow")
-                })?,
+            final_vertices: stats.graph_vertex_count,
             final_edges: stats
                 .graph_edge_count
                 .checked_sub(removed_edges)
@@ -2258,7 +2274,7 @@ impl DependencyGraph {
                         .with_message("graph edge count underflow")
                 })?,
             materialization_cells: 0,
-            added_vertices: usize::from(existing.is_none()),
+            added_vertices: 0,
             added_edges: 0,
         })
     }
@@ -2269,7 +2285,7 @@ impl DependencyGraph {
         cells: &[(u32, u32)],
     ) -> Result<crate::engine::resource_ledger::GraphAdmission, ExcelError> {
         let mut targets = std::collections::BTreeSet::new();
-        let mut added_vertices = 0usize;
+        let added_vertices = 0usize;
         let mut removed_edges = 0usize;
         for (row, col) in cells {
             let packed = PackedSheetCell::try_from_excel_1based(sheet_id, *row, *col)
@@ -2278,13 +2294,10 @@ impl DependencyGraph {
                 continue;
             }
             let reference = CellRef::new(sheet_id, Coord::from_excel(*row, *col, true, true));
+            // A value cell gets no vertex (decision 27).
             if let Some(vertex) = self.cell_vertex(&reference) {
                 removed_edges = removed_edges
                     .checked_add(self.store.edge_offset(vertex) as usize)
-                    .ok_or_else(|| ExcelError::new(ExcelErrorKind::NImpl))?;
-            } else {
-                added_vertices = added_vertices
-                    .checked_add(1)
                     .ok_or_else(|| ExcelError::new(ExcelErrorKind::NImpl))?;
             }
         }
@@ -2471,7 +2484,11 @@ impl DependencyGraph {
         )
     }
 
-    /// Set a value in a cell, returns affected vertex IDs
+    /// Set a value in a cell, returns affected vertex IDs.
+    ///
+    /// Decision 27: a value cell has no vertex. A formula it replaces
+    /// retires its id (value -> formula at the cell takes it back); the
+    /// cell's dependents are dirtied by position. Arrow holds the value.
     pub fn set_cell_value(
         &mut self,
         sheet: &str,
@@ -2479,7 +2496,7 @@ impl DependencyGraph {
         col: u32,
         value: LiteralValue,
     ) -> Result<OperationSummary, ExcelError> {
-        let value = normalize_stored_literal(value);
+        let _ = normalize_stored_literal(value);
         let sheet_id = self.sheet_id_mut(sheet);
         let budgets = self.self_admission_budgets();
         if crate::engine::resource_ledger::graph_admission_enabled(&budgets) {
@@ -2490,71 +2507,10 @@ impl DependencyGraph {
         // External API is 1-based; store 0-based coords internally.
         let coord = Coord::from_excel(row, col, true, true);
         let addr = CellRef::new(sheet_id, coord);
-        let mut created_placeholders = Vec::new();
-
-        let vertex_id = if let Some(existing_id) = self.cell_vertex_mut(&addr) {
-            // Check if it was a formula and remove dependencies
-            let is_formula = matches!(
-                self.store.kind(existing_id),
-                VertexKind::FormulaScalar | VertexKind::FormulaArray
-            );
-
-            if is_formula {
-                self.journal_formula_left(existing_id);
-                self.journal_formula_left(existing_id);
-                self.remove_dependent_edges(existing_id);
-                self.detach_vertex_from_names(existing_id);
-                self.clear_pending_name_references(existing_id);
-                self.vertex_formulas.remove(&existing_id);
-            }
-
-            // Update to value kind
-            self.store.set_kind(existing_id, VertexKind::Cell);
-            if self.value_cache_enabled {
-                let value_ref = self.data_store.store_value(value);
-                self.vertex_values.insert(existing_id, value_ref);
-            } else {
-                // Ensure no stale payload remains if cache is disabled.
-                self.vertex_values.remove(&existing_id);
-            }
-            existing_id
-        } else {
-            // Create new vertex
-            created_placeholders.push(addr);
-            let position = GridAddr::from_coord(AbsCoord::from_excel(row, col));
-            let vertex_id = self
-                .store
-                .allocate(VertexAddr::grid(position), sheet_id, 0x01); // dirty flag
-
-            #[cfg(any(test, feature = "legacy_oracle"))]
-            {
-                self.edges
-                    .add_vertex(VertexAddr::grid(position), vertex_id.0);
-                self.oracle_cell_vertex_created(
-                    (sheet_id, position.row(), position.col()),
-                    vertex_id,
-                );
-            }
-
-            // Add to sheet index for O(log n + k) range queries
-            self.sheet_index_mut(sheet_id)
-                .add_vertex(position, vertex_id);
-
-            self.store.set_kind(vertex_id, VertexKind::Cell);
-            if self.value_cache_enabled {
-                let value_ref = self.data_store.store_value(value);
-                self.vertex_values.insert(vertex_id, value_ref);
-            }
-            self.cell_to_vertex.insert(addr, vertex_id);
-            vertex_id
-        };
-
-        // Cell edits clear any structural #REF! marking for this vertex.
-        self.ref_error_vertices.remove(&vertex_id);
-
+        self.vacate_cell(&addr);
         Ok(OperationSummary {
-            affected_vertices: self.mark_dirty(vertex_id),
-            created_placeholders,
+            affected_vertices: self.mark_dirty_cells(&[(sheet_id, coord.row(), coord.col())]),
+            created_placeholders: Vec::new(),
         })
     }
 
@@ -2569,6 +2525,7 @@ impl DependencyGraph {
     }
 
     /// Fast path for initial bulk load of value cells: avoids dirty propagation & dependency work.
+    /// A value cell gets no vertex (decision 27); a formula there retires.
     pub fn set_cell_value_bulk_untracked(
         &mut self,
         sheet: &str,
@@ -2576,7 +2533,7 @@ impl DependencyGraph {
         col: u32,
         value: LiteralValue,
     ) -> Result<(), ExcelError> {
-        let value = normalize_stored_literal(value);
+        let _ = normalize_stored_literal(value);
         let sheet_id = self.sheet_id_mut(sheet);
         let budgets = self.self_admission_budgets();
         if crate::engine::resource_ledger::graph_admission_enabled(&budgets) {
@@ -2585,59 +2542,17 @@ impl DependencyGraph {
                 .map_err(crate::engine::ResourceLedgerError::into_excel_error)?;
         }
         let coord = Coord::from_excel(row, col, true, true);
-        let addr = CellRef::new(sheet_id, coord);
-        if let Some(existing_id) = self.cell_vertex_mut(&addr) {
-            // Overwrite existing value vertex only (ignore formulas in bulk path)
-            if matches!(
-                self.store.kind(existing_id),
-                VertexKind::FormulaScalar | VertexKind::FormulaArray
-            ) {
-                self.journal_formula_left(existing_id);
-                self.remove_dependent_edges(existing_id);
-                self.detach_vertex_from_names(existing_id);
-                self.clear_pending_name_references(existing_id);
-                self.vertex_formulas.remove(&existing_id);
-            }
-            if self.value_cache_enabled {
-                let value_ref = self.data_store.store_value(value);
-                self.vertex_values.insert(existing_id, value_ref);
-            } else {
-                self.vertex_values.remove(&existing_id);
-            }
-            self.store.set_kind(existing_id, VertexKind::Cell);
-            self.ref_error_vertices.remove(&existing_id);
-            return Ok(());
-        }
-        let position = GridAddr::from_coord(AbsCoord::from_excel(row, col));
-        let vertex_id = self
-            .store
-            .allocate(VertexAddr::grid(position), sheet_id, 0x00); // not dirty
-        #[cfg(any(test, feature = "legacy_oracle"))]
-        {
-            self.edges
-                .add_vertex(VertexAddr::grid(position), vertex_id.0);
-            self.oracle_cell_vertex_created((sheet_id, position.row(), position.col()), vertex_id);
-        }
-        self.sheet_index_mut(sheet_id)
-            .add_vertex(position, vertex_id);
-        self.store.set_kind(vertex_id, VertexKind::Cell);
-        self.ref_error_vertices.remove(&vertex_id);
-        if self.value_cache_enabled {
-            let value_ref = self.data_store.store_value(value);
-            self.vertex_values.insert(vertex_id, value_ref);
-        }
-        self.cell_to_vertex.insert(addr, vertex_id);
+        self.vacate_cell(&CellRef::new(sheet_id, coord));
         Ok(())
     }
 
-    /// Bulk insert a collection of plain value cells (no formulas) more efficiently.
+    /// Bulk insert a collection of plain value cells (no formulas): value
+    /// cells get no vertex (decision 27); a formula at such a cell retires.
+    /// No dirty propagation (load paths).
     pub fn bulk_insert_values<I>(&mut self, sheet: &str, cells: I) -> Result<(), ExcelError>
     where
         I: IntoIterator<Item = (u32, u32, LiteralValue)>,
     {
-        use crate::instant::FzInstant as Instant;
-        let t0 = Instant::now();
-        // Collect first to know size
         let collected: Vec<(u32, u32, LiteralValue)> = cells.into_iter().collect();
         if collected.is_empty() {
             return Ok(());
@@ -2653,91 +2568,18 @@ impl DependencyGraph {
             crate::engine::resource_ledger::preflight_graph_admission(&budgets, usage, None)
                 .map_err(crate::engine::ResourceLedgerError::into_excel_error)?;
         }
-        self.reserve_cells(collected.len());
-        let t_reserve = Instant::now();
-        let mut new_vertices: Vec<(VertexAddr, u32)> = Vec::with_capacity(collected.len());
-        let mut index_items: Vec<(GridAddr, VertexId)> = Vec::with_capacity(collected.len());
-        // For new allocations, accumulate values and assign after a single batch store
-        let mut new_value_coords: Vec<(GridAddr, VertexId)> = Vec::with_capacity(collected.len());
-        let mut new_value_literals: Vec<LiteralValue> = Vec::with_capacity(collected.len());
-        // Detect fast path: during initial ingest, caller may guarantee most cells are new.
+        // During initial ingest the caller may guarantee the cells are new.
         let assume_new = self.first_load_assume_new
             && self
                 .sheet_id(sheet)
                 .map(|sid| !self.ensure_touched_sheets.contains(&sid))
                 .unwrap_or(false);
-
-        for (row, col, value) in collected {
-            let value = normalize_stored_literal(value);
+        if assume_new {
+            return Ok(());
+        }
+        for (row, col, _) in collected {
             let coord = Coord::from_excel(row, col, true, true);
-            let addr = CellRef::new(sheet_id, coord);
-            if !assume_new && let Some(existing_id) = self.cell_vertex_mut(&addr) {
-                if matches!(
-                    self.store.kind(existing_id),
-                    VertexKind::FormulaScalar | VertexKind::FormulaArray
-                ) {
-                    self.journal_formula_left(existing_id);
-                    self.remove_dependent_edges(existing_id);
-                    self.detach_vertex_from_names(existing_id);
-                    self.clear_pending_name_references(existing_id);
-                    self.vertex_formulas.remove(&existing_id);
-                }
-                if self.value_cache_enabled {
-                    let value_ref = self.data_store.store_value(value);
-                    self.vertex_values.insert(existing_id, value_ref);
-                } else {
-                    self.vertex_values.remove(&existing_id);
-                }
-                self.store.set_kind(existing_id, VertexKind::Cell);
-                continue;
-            }
-            let packed = GridAddr::from_coord(AbsCoord::from_excel(row, col));
-            let vertex_id = self
-                .store
-                .allocate(VertexAddr::grid(packed), sheet_id, 0x00);
-            self.store.set_kind(vertex_id, VertexKind::Cell);
-            // Defer value arena storage to a single batch
-            new_value_coords.push((packed, vertex_id));
-            new_value_literals.push(value);
-            self.cell_to_vertex.insert(addr, vertex_id);
-            new_vertices.push((VertexAddr::grid(packed), vertex_id.0));
-            index_items.push((packed, vertex_id));
-        }
-        // Perform a single batch store for newly allocated values
-        if self.value_cache_enabled && !new_value_literals.is_empty() {
-            let vrefs = self.data_store.store_values_batch(new_value_literals);
-            debug_assert_eq!(vrefs.len(), new_value_coords.len());
-            for (i, (_pc, vid)) in new_value_coords.iter().enumerate() {
-                self.vertex_values.insert(*vid, vrefs[i]);
-            }
-        }
-        let t_after_alloc = Instant::now();
-        if !new_vertices.is_empty() {
-            let t_edges_start = Instant::now();
-            #[cfg(any(test, feature = "legacy_oracle"))]
-            {
-                self.edges.add_vertices_batch(&new_vertices);
-                for &(packed, v) in &index_items {
-                    self.oracle_cell_vertex_created((sheet_id, packed.row(), packed.col()), v);
-                }
-            }
-            let t_edges_done = Instant::now();
-
-            match self.config.sheet_index_mode {
-                crate::engine::SheetIndexMode::Eager => {
-                    self.sheet_index_mut(sheet_id)
-                        .add_vertices_batch(&index_items);
-                }
-                crate::engine::SheetIndexMode::Lazy => {
-                    // Skip building index now; will be built on-demand
-                }
-                crate::engine::SheetIndexMode::FastBatch => {
-                    // FastBatch for now delegates to same batch insert (future: build from sorted arrays)
-                    self.sheet_index_mut(sheet_id)
-                        .add_vertices_batch(&index_items);
-                }
-            }
-            let t_index_done = Instant::now();
+            self.vacate_cell(&CellRef::new(sheet_id, coord));
         }
         Ok(())
     }
@@ -3370,14 +3212,47 @@ impl DependencyGraph {
             return Vec::new();
         }
         let pending = std::mem::take(&mut self.deferred_dirty_pending);
+        let rects = std::mem::take(&mut self.deferred_dirty_pending_rects);
+        let mut affected = self.authority_mark_dirty_rects(&rects);
         if pending.is_empty() {
-            return Vec::new();
+            return affected;
         }
         let live: Vec<VertexId> = pending
             .into_iter()
             .filter(|&id| self.vertex_exists(id))
             .collect();
-        self.mark_dirty_many(&live)
+        affected.extend(self.mark_dirty_many(&live));
+        affected
+    }
+
+    /// Dirty the transitive dependents of `cells` (0-based `(sheet, row,
+    /// col)`): a value edit, whose cell has no vertex (decision 27).
+    pub(crate) fn mark_dirty_cells(
+        &mut self,
+        cells: &[crate::engine::authority::geom::Cell],
+    ) -> Vec<VertexId> {
+        let rects: Vec<(SheetId, u32, u32, u32, u32)> =
+            cells.iter().map(|&(s, r, c)| (s, r, r, c, c)).collect();
+        self.mark_dirty_rects(&rects)
+    }
+
+    /// Dirty the transitive dependents of rectangles `(sheet, r0, r1, c0,
+    /// c1)` (0-based, inclusive).
+    pub(crate) fn mark_dirty_rects(
+        &mut self,
+        rects: &[(SheetId, u32, u32, u32, u32)],
+    ) -> Vec<VertexId> {
+        let rects: Vec<(u16, crate::engine::authority::geom::Rect)> = rects
+            .iter()
+            .map(|&(s, r0, r1, c0, c1)| {
+                (s, crate::engine::authority::geom::Rect::new(r0, c0, r1, c1))
+            })
+            .collect();
+        if self.deferred_dirty_depth > 0 {
+            self.deferred_dirty_pending_rects.extend_from_slice(&rects);
+            return Vec::new();
+        }
+        self.authority_mark_dirty_rects(&rects)
     }
 
     /// True while a deferred-dirty scope is active (see
@@ -3493,6 +3368,310 @@ impl DependencyGraph {
         None
     }
 
+    /// Decision 27: a value (or nothing) now fills `addr`, which keeps no
+    /// vertex. A formula's id retires into the side table (value -> formula
+    /// at the cell takes it back); any other vertex (a value vertex of an
+    /// older state, a revived placeholder) is tombstoned. Returns the vertex
+    /// that left and whether it held a formula.
+    pub(crate) fn vacate_cell(&mut self, addr: &CellRef) -> Option<(VertexId, bool)> {
+        let v = self.cell_vertex_mut(addr)?;
+        let was_formula = matches!(
+            self.store.kind(v),
+            VertexKind::FormulaScalar | VertexKind::FormulaArray
+        ) || self.vertex_formulas.contains_key(&v);
+        self.remove_dependent_edges(v);
+        self.detach_vertex_from_names(v);
+        self.clear_pending_name_references(v);
+        self.vertex_formulas.remove(&v);
+        self.vertex_values.remove(&v);
+        self.ref_error_vertices.remove(&v);
+        self.clear_formula_vertex_dirty(v);
+        self.mark_volatile(v, false);
+        self.store.set_dynamic(v, false);
+        self.store.set_kind(v, VertexKind::Empty);
+        let key = (addr.sheet_id, addr.coord.row(), addr.coord.col());
+        // Oracle builds: readers' edges to the vertex become reads of a
+        // cell without one.
+        #[cfg(any(test, feature = "legacy_oracle"))]
+        {
+            let readers = self.get_dependents(v);
+            self.remove_all_edges(v);
+            for r in readers {
+                if !self.store.is_deleted(r) {
+                    self.oracle_vertexless_readers
+                        .entry(key)
+                        .or_default()
+                        .push(r);
+                    self.oracle_vertexless_of.entry(r).or_default().push(key);
+                }
+            }
+        }
+        self.cell_to_vertex.remove(addr);
+        if let Some(index) = self.sheet_indexes.get_mut(&addr.sheet_id) {
+            index.remove_vertex(GridAddr::new(key.1, key.2), v);
+        }
+        self.store.mark_deleted(v, true);
+        if was_formula {
+            self.retired_ids.insert(key, v);
+            self.retired_id_set.insert(v);
+        }
+        Some((v, was_formula))
+    }
+
+    /// An empty vertex at 0-based `(row, col)` of `sheet` (the cell's
+    /// vertex when it has one): the low-level editor's explicit vertex
+    /// creation. References and value edits never create one (decision 27).
+    pub(crate) fn add_empty_vertex(
+        &mut self,
+        sheet: SheetId,
+        row: u32,
+        col: u32,
+    ) -> Result<VertexId, ExcelError> {
+        let budgets = self.self_admission_budgets();
+        if crate::engine::resource_ledger::graph_admission_enabled(&budgets) {
+            let mut usage = self.preview_value_mutation(sheet, row + 1, col + 1)?;
+            if self
+                .cell_vertex(&CellRef::new(sheet, Coord::new(row, col, true, true)))
+                .is_none()
+            {
+                usage.final_vertices = usage.final_vertices.saturating_add(1);
+                usage.added_vertices = 1;
+            }
+            crate::engine::resource_ledger::preflight_graph_admission(&budgets, usage, None)
+                .map_err(crate::engine::ResourceLedgerError::into_excel_error)?;
+        }
+        let addr = CellRef::new(sheet, Coord::new(row, col, true, true));
+        let mut created = Vec::new();
+        let id = self.get_or_create_vertex(&addr, &mut created);
+        self.materialize_vertex(id);
+        let _ = self.mark_dirty(id);
+        Ok(id)
+    }
+
+    /// Replay of a cell edit whose prior state was not a formula (undo of a
+    /// formula typed into a value or empty cell): the cell loses its vertex
+    /// as a value edit does, dependents dirtied by position.
+    pub(crate) fn retire_cell_for_replay(&mut self, addr: CellRef) {
+        if self.vacate_cell(&addr).is_some() {
+            let _ = self.mark_dirty_cells(&[(addr.sheet_id, addr.coord.row(), addr.coord.col())]);
+        }
+    }
+
+    /// The retired id at `addr` comes back (value -> formula, decision 27)
+    /// when the cell has no vertex; returns it.
+    pub(crate) fn revive_retired_id(&mut self, addr: &CellRef) -> Option<VertexId> {
+        if self.retired_ids.is_empty() {
+            return None;
+        }
+        let key = (addr.sheet_id, addr.coord.row(), addr.coord.col());
+        let id = *self.retired_ids.get(&key)?;
+        let coord = GridAddr::new(key.1, key.2);
+        // A live vertex at the cell keeps it (a stale cell-map entry left
+        // by legacy move replay does not).
+        if let Some(x) = self.cell_vertex(addr)
+            && !self.store.is_deleted(x)
+            && self.store.grid_addr(x) == Some(coord)
+        {
+            return None;
+        }
+        self.retired_ids.remove(&key);
+        self.revive_vertex(id, addr.sheet_id, coord).then_some(id)
+    }
+
+    /// Retired ids waiting in the side table (tests, accounting).
+    pub(crate) fn retired_id_count(&self) -> usize {
+        self.retired_ids.len()
+    }
+
+    /// Shift the retired-id side table for a structural edit (called with
+    /// the pre-edit frame). Entries in a deleted band go to the journal, so
+    /// history that brings the cell back revives the id.
+    pub(crate) fn shift_retired_ids(
+        &mut self,
+        op: &crate::engine::graph::editor::reference_adjuster::ShiftOperation,
+    ) {
+        use crate::engine::graph::editor::reference_adjuster::ShiftOperation as Op;
+        let deleting = matches!(*op, Op::DeleteRows { .. } | Op::DeleteColumns { .. });
+        if self.retired_ids.is_empty() {
+            if deleting {
+                self.retired_dropped.push(Vec::new());
+            }
+            return;
+        }
+        let (sheet, rows, start, count, insert) = match *op {
+            Op::InsertRows {
+                sheet_id,
+                before,
+                count,
+            } => (sheet_id, true, before, count, true),
+            Op::DeleteRows {
+                sheet_id,
+                start,
+                count,
+            } => (sheet_id, true, start, count, false),
+            Op::InsertColumns {
+                sheet_id,
+                before,
+                count,
+            } => (sheet_id, false, before, count, true),
+            Op::DeleteColumns {
+                sheet_id,
+                start,
+                count,
+            } => (sheet_id, false, start, count, false),
+        };
+        let entries: Vec<((SheetId, u32, u32), VertexId)> = self
+            .retired_ids
+            .range((sheet, 0, 0)..=(sheet, u32::MAX, u32::MAX))
+            .map(|(k, v)| (*k, *v))
+            .collect();
+        for (key, _) in &entries {
+            self.retired_ids.remove(key);
+        }
+        let mut dropped = Vec::new();
+        for ((s, r, c), id) in entries {
+            let pos = if rows { r } else { c };
+            let moved = if pos < start {
+                Some(pos)
+            } else if insert {
+                pos.checked_add(count)
+            } else if pos < start.saturating_add(count) {
+                None
+            } else {
+                Some(pos - count)
+            };
+            match moved {
+                Some(p) => {
+                    let key = if rows { (s, p, c) } else { (s, r, p) };
+                    self.retired_ids.insert(key, id);
+                }
+                None => dropped.push(((s, r, c), id)),
+            }
+        }
+        if !insert {
+            // Undo of the delete restores them (`replay_structural_marker`).
+            self.retired_dropped.push(dropped);
+        }
+    }
+
+    /// Replay of a structural edit's compound marker (its description, as
+    /// the editor logs it): history replays the edit per vertex, so the
+    /// retired-id side table is shifted here. `forward` for redo, else undo.
+    /// Undo of a delete brings the band's dropped entries back (and dirties
+    /// the band's readers: its cells reappear, value cells have no vertex
+    /// whose revival would dirty them).
+    pub(crate) fn replay_structural_marker(&mut self, description: &str, forward: bool) {
+        use crate::engine::graph::editor::reference_adjuster::ShiftOperation as Op;
+        let Some(op) = parse_structural_description(description) else {
+            return;
+        };
+        if forward {
+            self.shift_retired_ids(&op);
+            if matches!(op, Op::InsertRows { .. } | Op::InsertColumns { .. })
+                && let Some(batch) = self.retired_dropped_by_undo.pop()
+            {
+                // Entries the undo of this insert dropped from its band.
+                for (key, id) in batch {
+                    self.retired_ids.insert(key, id);
+                }
+            }
+            return;
+        }
+        let (inverse, band) = match op {
+            Op::InsertRows {
+                sheet_id,
+                before,
+                count,
+            } => (
+                Op::DeleteRows {
+                    sheet_id,
+                    start: before,
+                    count,
+                },
+                None,
+            ),
+            Op::InsertColumns {
+                sheet_id,
+                before,
+                count,
+            } => (
+                Op::DeleteColumns {
+                    sheet_id,
+                    start: before,
+                    count,
+                },
+                None,
+            ),
+            Op::DeleteRows {
+                sheet_id,
+                start,
+                count,
+            } => (
+                Op::InsertRows {
+                    sheet_id,
+                    before: start,
+                    count,
+                },
+                Some((sheet_id, true, start, count)),
+            ),
+            Op::DeleteColumns {
+                sheet_id,
+                start,
+                count,
+            } => (
+                Op::InsertColumns {
+                    sheet_id,
+                    before: start,
+                    count,
+                },
+                Some((sheet_id, false, start, count)),
+            ),
+        };
+        // Undo of an insert drops the band's entries (retired there after the
+        // insert); redo of the insert takes them back.
+        self.shift_retired_ids(&inverse);
+        if band.is_none() {
+            if let Some(batch) = self.retired_dropped.pop() {
+                self.retired_dropped_by_undo.push(batch);
+            }
+            return;
+        }
+        // Undo of a delete: `inverse` is an insert and recorded nothing.
+        if let Some((sheet, rows, start, count)) = band {
+            if count == 0 {
+                return;
+            }
+            // Entries the delete dropped come back (LIFO with history).
+            if let Some(batch) = self.retired_dropped.pop() {
+                for (key, id) in batch {
+                    self.retired_ids.insert(key, id);
+                }
+            }
+            let end = start.saturating_add(count - 1);
+            // Excel's grid: 1,048,576 rows by 16,384 columns.
+            let rect = if rows {
+                (sheet, start, end, 0, 16_383)
+            } else {
+                (sheet, 0, 1_048_575, start, end)
+            };
+            let _ = self.mark_dirty_rects(&[rect]);
+        }
+    }
+
+    /// A sheet is removed: its retired ids go to the journal.
+    pub(crate) fn drop_retired_ids_of_sheet(&mut self, sheet: SheetId) {
+        let keys: Vec<(SheetId, u32, u32)> = self
+            .retired_ids
+            .range((sheet, 0, 0)..=(sheet, u32::MAX, u32::MAX))
+            .map(|(k, _)| *k)
+            .collect();
+        for key in keys {
+            if let Some(id) = self.retired_ids.remove(&key) {
+                self.vertex_journal.retired(key, id.0);
+            }
+        }
+    }
+
     /// Resolve direct cell dependencies to vertices: `(vertices, cells
     /// without a vertex)`, both deduplicated.
     pub(crate) fn resolve_direct_deps(
@@ -3524,6 +3703,10 @@ impl DependencyGraph {
         created_placeholders: &mut Vec<CellRef>,
     ) -> VertexId {
         if let Some(vertex_id) = self.cell_vertex(addr) {
+            return vertex_id;
+        }
+        // A formula replaced by a value retired its id here: take it back.
+        if let Some(vertex_id) = self.revive_retired_id(addr) {
             return vertex_id;
         }
 
@@ -4511,68 +4694,24 @@ impl DependencyGraph {
             }
         }
 
-        // Prepare a single arena value ref for Empty (only when caching is enabled).
-        let empty_ref = if self.value_cache_enabled {
-            Some(self.data_store.store_value(LiteralValue::Empty))
-        } else {
-            None
-        };
-
-        // Clear all spill children (excluding the anchor cell).
-        let mut changed_vertices: Vec<VertexId> = Vec::new();
+        // Clear all spill children (excluding the anchor cell). A child is a
+        // value cell: no vertex (decision 27); one it still has leaves.
+        let mut changed: Vec<crate::engine::authority::geom::Cell> = Vec::new();
         for cell in cells.iter().copied() {
             let is_anchor = anchor_cell.map(|a| a == cell).unwrap_or(false);
             if is_anchor {
                 continue;
             }
-            let Some(vid) = self.cell_vertex_mut(&cell) else {
-                continue;
-            };
-            // Ensure this vertex is a plain value cell.
-            self.journal_formula_left(vid);
-            if self.vertex_formulas.remove(&vid).is_some() {
-                // Be conservative: remove outgoing edges if this was a formula vertex.
-                // This should be rare for spill children under normal policies.
-                self.remove_dependent_edges(vid);
-            }
-            self.store.set_kind(vid, VertexKind::Cell);
-            if let Some(er) = empty_ref {
-                self.vertex_values.insert(vid, er);
-            } else {
-                self.vertex_values.remove(&vid);
-            }
-            self.store.set_dirty(vid, false);
-            self.formula_dirty.legacy_remove(&vid);
-            changed_vertices.push(vid);
+            self.vacate_cell(&cell);
+            changed.push((cell.sheet_id, cell.coord.row(), cell.coord.col()));
         }
 
         // Single dirty propagation for all changed spill children.
-        if !changed_vertices.is_empty() {
-            self.mark_dirty_many_value_cells(&changed_vertices);
+        if !changed.is_empty() {
+            let _ = self.mark_dirty_cells(&changed);
         }
 
         cells
-    }
-
-    fn mark_dirty_many_value_cells(&mut self, vertex_ids: &[VertexId]) -> Vec<VertexId> {
-        if vertex_ids.is_empty() {
-            return Vec::new();
-        }
-
-        // Deferred-dirty scope (e.g. a spill clear inside a batched
-        // `set_values`): queue the sources for the end-of-scope flush. The
-        // general `mark_dirty_many` flush handles value-cell sources via its
-        // per-source kind check, so one pending list serves both entry
-        // points. (The flush's per-source range-dependent collection is a
-        // subset of this path's bounding-rect collection, which conservatively
-        // over-dirties; the per-source union is the exact required set.)
-        if self.deferred_dirty_depth > 0 {
-            self.deferred_dirty_pending.extend_from_slice(vertex_ids);
-            return vertex_ids.to_vec();
-        }
-        // The authority's closure is exact per source (legacy's bounding
-        // rectangle per sheet may over-dirty).
-        self.authority_mark_dirty(vertex_ids)
     }
 
     #[cfg(any(test, feature = "legacy_oracle"))]
@@ -5579,6 +5718,12 @@ impl DependencyGraph {
             if !self.vertex_exists(id) || self.store.sheet_id(id) != sheet_id {
                 return None;
             }
+            if !self.retired_id_set.is_empty()
+                && self.retired_id_set.contains(&id)
+                && self.store.is_deleted(id)
+            {
+                return None;
+            }
             self.store.grid_addr(id).map(|addr| (id, addr))
         })
     }
@@ -5734,6 +5879,7 @@ impl DependencyGraph {
             self.remove_all_edges(x);
             self.store.mark_deleted(x, true);
         }
+        self.retired_id_set.remove(&id);
         self.store.mark_deleted(id, false);
         self.store.set_addr(id, VertexAddr::grid(coord));
         #[cfg(any(test, feature = "legacy_oracle"))]
@@ -5789,6 +5935,9 @@ impl DependencyGraph {
     /// value, whose value Arrow restores). Outside replay this starts a new
     /// timeline for the cell.
     fn replay_formula_vertex(&mut self, addr: &CellRef) {
+        if self.revive_retired_id(addr).is_some() {
+            return;
+        }
         let cell = (addr.sheet_id, addr.coord.row(), addr.coord.col());
         let Some(id) = self.vertex_journal.created(cell) else {
             return;
@@ -5886,7 +6035,64 @@ impl DependencyGraph {
 
 // ========== Sheet Management Operations ==========
 
+/// Retired ids a structural edit dropped from the side table.
+type RetiredBatch = Vec<((SheetId, u32, u32), VertexId)>;
+
 /// Same sheet and position (reference flags aside).
 pub(crate) fn same_cell(a: &CellRef, b: &CellRef) -> bool {
     a.sheet_id == b.sheet_id && a.coord.row() == b.coord.row() && a.coord.col() == b.coord.col()
+}
+
+/// The shift operation of a structural edit's compound description, as
+/// `VertexEditor` logs it (`InsertRows sheet=S before=B count=N`, ...).
+pub(crate) fn parse_structural_description(
+    description: &str,
+) -> Option<crate::engine::graph::editor::reference_adjuster::ShiftOperation> {
+    use crate::engine::graph::editor::reference_adjuster::ShiftOperation as Op;
+    let mut parts = description.split_whitespace();
+    let kind = parts.next()?;
+    let mut field = |name: &str| -> Option<u32> {
+        parts
+            .next()?
+            .strip_prefix(name)?
+            .strip_prefix('=')?
+            .parse()
+            .ok()
+    };
+    let sheet_id = u16::try_from(field("sheet")?).ok()?;
+    Some(match kind {
+        "InsertRows" => {
+            let before = field("before")?;
+            Op::InsertRows {
+                sheet_id,
+                before,
+                count: field("count")?,
+            }
+        }
+        "DeleteRows" => {
+            let start = field("start")?;
+            Op::DeleteRows {
+                sheet_id,
+                start,
+                count: field("count")?,
+            }
+        }
+        "InsertColumns" => {
+            let before = field("before")?;
+            Op::InsertColumns {
+                sheet_id,
+                before,
+                count: field("count")?,
+            }
+        }
+        "DeleteColumns" => {
+            let start = field("start")?;
+            Op::DeleteColumns {
+                sheet_id,
+                start,
+                count: field("count")?,
+            }
+        }
+        _ => return None,
+    })
 }

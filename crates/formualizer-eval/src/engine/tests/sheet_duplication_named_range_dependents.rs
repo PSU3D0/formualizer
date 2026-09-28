@@ -163,9 +163,12 @@ fn duplicate_sheet_with_no_named_ranges_unaffected() {
     graph.duplicate_sheet(source_id, "Copy").unwrap();
 
     let copy_formula = vertex_for(&graph, "Copy", 3, 1);
-    let copy_a1 = vertex_for(&graph, "Copy", 1, 1);
-    let copy_a2 = vertex_for(&graph, "Copy", 2, 1);
-    let deps: FxHashSet<VertexId> = graph.get_dependencies(copy_formula).into_iter().collect();
+    // Copy!A1 and Copy!A2 are value cells: no vertex (decision 27); the
+    // copied formula reads them as cells.
+    let copy_a1 = graph.make_cell_ref("Copy", 1, 1);
+    let copy_a2 = graph.make_cell_ref("Copy", 2, 1);
+    assert!(graph.get_vertex_id_for_address(&copy_a1).is_none());
+    let deps = graph.oracle_vertexless_cells(copy_formula);
     assert!(deps.contains(&copy_a1));
     assert!(deps.contains(&copy_a2));
     assert!(graph.get_formula(copy_formula).is_some());

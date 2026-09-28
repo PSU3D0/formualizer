@@ -463,7 +463,9 @@ fn graph_compressed_self_use_path_keeps_row_and_column_fallback_caps() {
         engine
             .graph
             .compressed_range_resolved_bounds(sheet_id, (None, None, None, None)),
-        Some((0, 63, 0, 29))
+        // The graph's used extent counts vertices; a value cell has none
+        // (decision 27), so the column cap stays at the fallback.
+        Some((0, 63, 0, 15))
     );
 }
 

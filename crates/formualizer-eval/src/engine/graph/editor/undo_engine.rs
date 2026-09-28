@@ -207,6 +207,11 @@ impl UndoEngine {
                         ChangeEvent::SetRowVisibility { .. } => {
                             // Engine-level sidecar metadata; applied by Engine undo/redo wrappers.
                         }
+                        ChangeEvent::CompoundStart { description, .. } => {
+                            // A structural edit's marker shifts the retired-id
+                            // side table (decision 27).
+                            graph.replay_structural_marker(&description, true);
+                        }
                         _ => {}
                     }
                 }
@@ -267,7 +272,12 @@ mod tests {
                     sheet_id: 0,
                     coord: Coord::new(r, 1, true, true),
                 };
-                editor.set_cell_value(cell, LiteralValue::Number(r as f64));
+                // Formula cells: value cells have no vertex to move
+                // (decision 27).
+                editor.set_cell_formula(
+                    cell,
+                    formualizer_parse::parser::parse(format!("={r}")).unwrap(),
+                );
             }
         }
         log.clear(); // focus on shift only
@@ -305,7 +315,9 @@ mod tests {
         let anchor_cell = CellRef::new(sheet_id, Coord::new(0, 0, true, true));
         let anchor_vid = {
             let mut editor = VertexEditor::new(&mut graph);
-            editor.set_cell_value(anchor_cell, LiteralValue::Number(0.0))
+            // A formula anchors a spill (value cells have no vertex,
+            // decision 27; this used a value cell's vertex).
+            editor.set_cell_formula(anchor_cell, formualizer_parse::parser::parse("=0").unwrap())
         };
 
         let target_cells = vec![
@@ -387,7 +399,12 @@ mod tests {
                     sheet_id: 0,
                     coord: Coord::new(1, c, true, true),
                 };
-                editor.set_cell_value(cell, LiteralValue::Number(c as f64));
+                // Formula cells: value cells have no vertex to move
+                // (decision 27).
+                editor.set_cell_formula(
+                    cell,
+                    formualizer_parse::parser::parse(format!("={c}")).unwrap(),
+                );
             }
         }
         log.clear();

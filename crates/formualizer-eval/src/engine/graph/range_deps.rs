@@ -43,6 +43,19 @@ impl StructuralOccupancy {
         }
     }
 
+    /// Tests: the occupancy of cells `(row0, col0)` (as a scan of their
+    /// vertices would give it).
+    #[cfg(test)]
+    pub(crate) fn of_cells_for_test(cells: impl IntoIterator<Item = (u32, u32)>) -> Self {
+        let mut occupancy = Self::default();
+        for (row, col) in cells {
+            occupancy.occupied_rows.push(row);
+            occupancy.occupied_columns.push(col);
+        }
+        occupancy.finish();
+        occupancy
+    }
+
     fn finish(&mut self) {
         self.occupied_rows.sort_unstable();
         self.occupied_rows.dedup();

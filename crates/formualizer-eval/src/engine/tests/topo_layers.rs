@@ -40,10 +40,20 @@ fn test_kahn_topological_layers() {
 
     // Layer 0
     graph
-        .set_cell_value("Sheet1", 1, 1, LiteralValue::Int(10))
+        .set_cell_formula(
+            "Sheet1",
+            1,
+            1,
+            super::common::literal_ast(LiteralValue::Int(10)),
+        )
         .unwrap(); // A1
     graph
-        .set_cell_value("Sheet1", 2, 1, LiteralValue::Int(20))
+        .set_cell_formula(
+            "Sheet1",
+            2,
+            1,
+            super::common::literal_ast(LiteralValue::Int(20)),
+        )
         .unwrap(); // B1
 
     // Layer 1
@@ -92,10 +102,20 @@ fn test_layer_parallelism_safety_setup() {
     // This is a prerequisite for testing parallel evaluation in the future.
     let mut graph = DependencyGraph::new();
     graph
-        .set_cell_value("Sheet1", 1, 1, LiteralValue::Int(10))
+        .set_cell_formula(
+            "Sheet1",
+            1,
+            1,
+            super::common::literal_ast(LiteralValue::Int(10)),
+        )
         .unwrap();
     graph
-        .set_cell_value("Sheet1", 2, 1, LiteralValue::Int(20))
+        .set_cell_formula(
+            "Sheet1",
+            2,
+            1,
+            super::common::literal_ast(LiteralValue::Int(20)),
+        )
         .unwrap();
     graph
         .set_cell_formula("Sheet1", 3, 1, op_ast(ref_ast(1, 1), ref_ast(2, 1)))
