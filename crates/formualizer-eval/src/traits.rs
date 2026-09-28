@@ -102,6 +102,29 @@ pub trait CustomCallable: Send + Sync {
         interp: &Interpreter<'ctx>,
         args: &[LiteralValue],
     ) -> Result<CalcValue<'ctx>, ExcelError>;
+
+    /// Invoke with each argument's optional bound reference alongside the
+    /// already-materialized values.
+    ///
+    /// `references[i]` is the spreadsheet reference argument `i` was written
+    /// as, when it was written as one; `None` otherwise, and a short slice is
+    /// read as `None` for every missing position. A callable that binds its
+    /// arguments to locals uses this to bind a range-valued parameter as
+    /// [`crate::interpreter::LocalBinding::ValueWithReference`], so a by-ref
+    /// argument slot inside the body sees the range rather than a lifted
+    /// array.
+    ///
+    /// Defaults to [`Self::invoke`], so an implementor that does not care
+    /// about references needs no change.
+    fn invoke_with_references<'ctx>(
+        &self,
+        interp: &Interpreter<'ctx>,
+        args: &[LiteralValue],
+        references: &[Option<ReferenceType>],
+    ) -> Result<CalcValue<'ctx>, ExcelError> {
+        let _ = references;
+        self.invoke(interp, args)
+    }
 }
 
 #[derive(Clone)]
@@ -380,9 +403,15 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
     pub(crate) fn may_return_reference(&self) -> bool {
         match &self.expr {
             ArgumentExpr::Ast(node) => match &node.node_type {
-                ASTNodeType::Reference { reference, .. } => {
-                    !matches!(reference, ReferenceType::NamedRange(name) if self.interp.resolve_local_name(name).is_some())
-                }
+                ASTNodeType::Reference { reference, .. } => match reference {
+                    // A local is a reference only when it was bound to one.
+                    ReferenceType::NamedRange(name)
+                        if self.interp.resolve_local_name(name).is_some() =>
+                    {
+                        self.interp.resolve_local_bound_reference(name).is_some()
+                    }
+                    _ => true,
+                },
                 ASTNodeType::BinaryOp { op, .. } => op == ":",
                 ASTNodeType::Function { name, .. } => self
                     .interp
@@ -392,14 +421,24 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                 _ => false,
             },
             ArgumentExpr::Arena { id, data_store, .. } => match data_store.get_node(*id) {
-                Some(crate::engine::arena::AstNodeData::Reference { ref_type, .. }) => !matches!(
-                    ref_type,
-                    crate::engine::arena::CompactRefType::NamedRange(name_id)
-                        if self
-                            .interp
-                            .resolve_local_name(data_store.resolve_ast_string(*name_id))
-                            .is_some()
-                ),
+                Some(crate::engine::arena::AstNodeData::Reference { ref_type, .. }) => {
+                    match ref_type {
+                        // Same rule as the AST branch above.
+                        crate::engine::arena::CompactRefType::NamedRange(name_id)
+                            if self
+                                .interp
+                                .resolve_local_name(data_store.resolve_ast_string(*name_id))
+                                .is_some() =>
+                        {
+                            self.interp
+                                .resolve_local_bound_reference(
+                                    data_store.resolve_ast_string(*name_id),
+                                )
+                                .is_some()
+                        }
+                        _ => true,
+                    }
+                }
                 Some(crate::engine::arena::AstNodeData::BinaryOp { op_id, .. }) => {
                     data_store.resolve_ast_string(*op_id) == ":"
                 }
@@ -507,6 +546,74 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
         self.interp.local_env().clone()
     }
 
+    /// The spreadsheet reference this binding expression names, evaluated under
+    /// `env`, so a LET/LAMBDA local can keep the range it was bound to.
+    ///
+    /// Only syntactic reference expressions qualify: a computed value has no
+    /// reference to preserve, and a reference-returning function is left to the
+    /// ordinary by-ref path rather than evaluated a second time at bind time.
+    pub(crate) fn bound_reference_in_env(
+        &self,
+        env: &crate::interpreter::LocalEnv,
+    ) -> Option<ReferenceType> {
+        match &self.expr {
+            ArgumentExpr::Ast(node) => match &node.node_type {
+                ASTNodeType::Reference { reference, .. } => {
+                    if let ReferenceType::NamedRange(name) = reference
+                        && let Some(binding) = env.lookup(name)
+                    {
+                        // Rebinding a local: carry its reference forward, if any.
+                        return match binding {
+                            crate::interpreter::LocalBinding::ValueWithReference {
+                                reference,
+                                ..
+                            } => Some(reference),
+                            _ => None,
+                        };
+                    }
+                    self.interp.reference_for_current_offset(reference).ok()
+                }
+                ASTNodeType::BinaryOp { op, .. } if op == ":" => self
+                    .interp
+                    .with_local_env(env.clone())
+                    .evaluate_ast_as_reference(node)
+                    .ok(),
+                _ => None,
+            },
+            ArgumentExpr::Arena {
+                id,
+                data_store,
+                sheet_registry,
+            } => match data_store.get_node(*id) {
+                Some(crate::engine::arena::AstNodeData::Reference { ref_type, .. }) => {
+                    if let crate::engine::arena::CompactRefType::NamedRange(name_id) = ref_type
+                        && let Some(binding) = env.lookup(data_store.resolve_ast_string(*name_id))
+                    {
+                        return match binding {
+                            crate::interpreter::LocalBinding::ValueWithReference {
+                                reference,
+                                ..
+                            } => Some(reference),
+                            _ => None,
+                        };
+                    }
+                    let reference =
+                        data_store.reconstruct_reference_type_for_eval(ref_type, sheet_registry);
+                    self.interp.reference_for_current_offset(&reference).ok()
+                }
+                Some(crate::engine::arena::AstNodeData::BinaryOp { op_id, .. })
+                    if data_store.resolve_ast_string(*op_id) == ":" =>
+                {
+                    self.interp
+                        .with_local_env(env.clone())
+                        .evaluate_arena_ast_as_reference(*id, data_store, sheet_registry)
+                        .ok()
+                }
+                _ => None,
+            },
+        }
+    }
+
     pub fn inline_array_literal(&self) -> Result<Option<Vec<Vec<LiteralValue>>>, ExcelError> {
         match &self.expr {
             ArgumentExpr::Ast(node) => match &node.node_type {
@@ -539,10 +646,48 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
         }
     }
 
+    /// Resolve a name that a LET/LAMBDA local may shadow, on the by-ref path.
+    ///
+    /// `Some(Ok(reference))` when the local was bound to a reference expression.
+    /// That includes a bare workbook defined name: a local bound to `K` carries
+    /// `NamedRange("K")`, and the consumer resolves that workbook name exactly as
+    /// it would resolve `K` written in place, whatever `K` is defined as.
+    /// `Some(Err(#VALUE!))` when the local was bound to a computed value, so the
+    /// consumer's own error path runs instead of the workbook-name route (which
+    /// would report the local's spelling as an undefined name). A consumer that
+    /// has a value fallback (MATCH) takes it; one that does not (OFFSET, ROW,
+    /// COLUMN) answers `#VALUE!`, as Excel does. `None` when the name is not
+    /// locally bound and the workbook-name route is correct.
+    ///
+    /// [`Self::reference_attempt`] and [`Self::may_return_reference`] apply the
+    /// same rule, so a reference-returning selector (`IF`, `CHOOSE`) passes a
+    /// range-bound local through as its range. A local bound to a computed value
+    /// stays on the value path everywhere, which keeps `=LET(p,FALSE,OR(p))` a
+    /// boolean.
+    fn local_named_reference(&self, name: &str) -> Option<Result<ReferenceType, ExcelError>> {
+        // `None` here sends the name down the ordinary workbook-name route.
+        self.interp.resolve_local_name(name)?;
+        Some(
+            self.interp
+                .resolve_local_bound_reference(name)
+                .ok_or_else(|| {
+                    ExcelError::new(ExcelErrorKind::Value)
+                        .with_message("LET/LAMBDA local is not a reference")
+                }),
+        )
+    }
+
     fn reference_for_eval(&self) -> Result<ReferenceType, ExcelError> {
         match &self.expr {
             ArgumentExpr::Ast(node) => match &node.node_type {
                 ASTNodeType::Reference { reference, .. } => {
+                    // A LET/LAMBDA local shadows any workbook name of the same
+                    // spelling, so it must never take the named-range route.
+                    if let ReferenceType::NamedRange(name) = reference
+                        && let Some(local) = self.local_named_reference(name)
+                    {
+                        return local;
+                    }
                     self.interp.reference_for_current_offset(reference)
                 }
                 ASTNodeType::Function { .. } | ASTNodeType::BinaryOp { .. } => {
@@ -561,6 +706,13 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                 })?;
                 match node {
                     crate::engine::arena::AstNodeData::Reference { ref_type, .. } => {
+                        // Same local-shadowing rule as the AST branch above.
+                        if let crate::engine::arena::CompactRefType::NamedRange(name_id) = ref_type
+                            && let Some(local) =
+                                self.local_named_reference(data_store.resolve_ast_string(*name_id))
+                        {
+                            return local;
+                        }
                         let reference = data_store
                             .reconstruct_reference_type_for_eval(ref_type, sheet_registry);
                         self.interp.reference_for_current_offset(&reference)
@@ -671,12 +823,13 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
             ArgumentExpr::Ast(node) => match &node.node_type {
                 ASTNodeType::Reference { reference, .. } => {
                     // A LET/LAMBDA local shadows any workbook name of the same
-                    // spelling; locals only resolve on the value path, so a
-                    // bound name must not be sent down the named-range route.
+                    // spelling, so it never takes the named-range route. A
+                    // local bound to a range is that range; any other local
+                    // resolves on the value path.
                     if let ReferenceType::NamedRange(name) = reference
                         && self.interp.resolve_local_name(name).is_some()
                     {
-                        return None;
+                        return self.interp.resolve_local_bound_reference(name).map(Ok);
                     }
                     Some(self.interp.reference_for_current_offset(reference))
                 }
@@ -713,12 +866,11 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                     crate::engine::arena::AstNodeData::Reference { ref_type, .. } => {
                         // Same local-shadowing rule as the AST branch above.
                         if let crate::engine::arena::CompactRefType::NamedRange(name_id) = ref_type
-                            && self
-                                .interp
-                                .resolve_local_name(data_store.resolve_ast_string(*name_id))
-                                .is_some()
                         {
-                            return None;
+                            let name = data_store.resolve_ast_string(*name_id);
+                            if self.interp.resolve_local_name(name).is_some() {
+                                return self.interp.resolve_local_bound_reference(name).map(Ok);
+                            }
                         }
                         let reference = data_store
                             .reconstruct_reference_type_for_eval(ref_type, sheet_registry);
@@ -1065,17 +1217,31 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
     pub fn lazy_values_owned(
         &'a self,
     ) -> Result<Box<dyn Iterator<Item = LiteralValue> + 'a>, ExcelError> {
-        match &self.expr {
-            ArgumentExpr::Ast(node) => match &node.node_type {
-                ASTNodeType::Reference { .. } => {
-                    let view = self.range_view()?;
-                    let mut values: Vec<LiteralValue> = Vec::new();
-                    view.for_each_cell(&mut |v| {
-                        values.push(v.clone());
+        // Reference-shaped syntax usually names a range, but a bare LET/LAMBDA
+        // local has the same syntax and may be bound to a scalar. Resolve once
+        // and stream whichever shape came back instead of insisting on a range.
+        fn resolved_values<'a, 'b>(
+            handle: &'a ArgumentHandle<'a, 'b>,
+        ) -> Result<Box<dyn Iterator<Item = LiteralValue> + 'a>, ExcelError> {
+            match handle.resolve_once()? {
+                ResolvedArgument::Range(view) => {
+                    let mut values = Vec::new();
+                    view.for_each_cell(&mut |value| {
+                        values.push(value.clone());
                         Ok(())
                     })?;
                     Ok(Box::new(values.into_iter()))
                 }
+                ResolvedArgument::ReferenceError(error) => Err(error),
+                ResolvedArgument::Value(value) => {
+                    Ok(Box::new(std::iter::once(value.into_literal())))
+                }
+            }
+        }
+
+        match &self.expr {
+            ArgumentExpr::Ast(node) => match &node.node_type {
+                ASTNodeType::Reference { .. } => resolved_values(self),
                 ASTNodeType::Array(rows) => {
                     struct ArrayEvalIter<'a, 'b> {
                         rows: &'a [Vec<ASTNode>],
@@ -1134,15 +1300,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                 })?;
 
                 match node {
-                    crate::engine::arena::AstNodeData::Reference { .. } => {
-                        let view = self.range_view()?;
-                        let mut values: Vec<LiteralValue> = Vec::new();
-                        view.for_each_cell(&mut |v| {
-                            values.push(v.clone());
-                            Ok(())
-                        })?;
-                        Ok(Box::new(values.into_iter()))
-                    }
+                    crate::engine::arena::AstNodeData::Reference { .. } => resolved_values(self),
                     crate::engine::arena::AstNodeData::Array { .. } => {
                         let (rows, cols, elements) =
                             data_store.get_array_elems(*id).ok_or_else(|| {
@@ -1222,7 +1380,16 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
     pub fn as_reference(&self) -> Result<&ReferenceType, ExcelError> {
         match &self.expr {
             ArgumentExpr::Ast(node) => match &node.node_type {
-                ASTNodeType::Reference { reference, .. } => Ok(reference),
+                ASTNodeType::Reference { reference, .. } => {
+                    // Same local-shadowing rule as `reference_for_eval`.
+                    if let ReferenceType::NamedRange(name) = reference
+                        && let Some(local) = self.local_named_reference(name)
+                    {
+                        let bound = local?;
+                        return Ok(self.cached_ref.get_or_init(|| bound));
+                    }
+                    Ok(reference)
+                }
                 _ => Err(ExcelError::new(ExcelErrorKind::Ref)
                     .with_message("Expected a reference (by-ref argument)")),
             },
@@ -1239,6 +1406,12 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
         match &self.expr {
             ArgumentExpr::Ast(node) => match &node.node_type {
                 ASTNodeType::Reference { reference, .. } => {
+                    // Same local-shadowing rule as `reference_for_eval`.
+                    if let ReferenceType::NamedRange(name) = reference
+                        && let Some(local) = self.local_named_reference(name)
+                    {
+                        return local;
+                    }
                     self.interp.reference_for_current_offset(reference)
                 }
                 ASTNodeType::Function { .. } | ASTNodeType::BinaryOp { .. } => {
