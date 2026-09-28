@@ -3268,7 +3268,6 @@ impl DependencyGraph {
         let mut result: Vec<VertexId> = self
             .formula_dirty
             .legacy_iter()
-            .copied()
             .chain(self.volatile_vertices.iter().copied())
             .filter(|&id| {
                 // Only include active formula/name vertices; tombstoned vertices can retain stable
@@ -3291,7 +3290,7 @@ impl DependencyGraph {
     /// Whether a dirty (not merely volatile) vertex would be scheduled by
     /// [`Self::get_evaluation_vertices`]: the freshness replan condition.
     pub(crate) fn has_dirty_evaluation_vertices(&self) -> bool {
-        self.formula_dirty.legacy_iter().any(|&id| {
+        self.formula_dirty.legacy_iter().any(|id| {
             self.store.vertex_exists_active(id)
                 && matches!(
                     self.store.kind(id),

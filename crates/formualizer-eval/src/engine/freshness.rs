@@ -68,7 +68,7 @@ pub(crate) struct Freshness {
     /// Scheduled vertices the barrier kept from running.
     skipped: Vec<VertexId>,
     /// Vertices whose effects were planned (committed) in this pass.
-    committed: FxHashSet<VertexId>,
+    committed: crate::engine::idset::DenseIdSet,
     /// Stale readers dropped in this pass (they stay dirty).
     stale_this_pass: Vec<VertexId>,
     /// Fresh members of a parallel group that also held a stale reader:
@@ -296,9 +296,8 @@ impl<R: EvaluationContext> Engine<R> {
             .collect();
         self.graph.clear_dirty_flags(&clear);
         // The pass's committed set is not read after its end (the next pass
-        // starts empty); release it rather than keep a first evaluation's
-        // capacity (one entry per formula) for the life of the engine.
-        self.freshness.committed = FxHashSet::default();
+        // starts empty); a bitmap keeps one bit per vertex id.
+        self.freshness.committed.clear();
         // `changed` is only non-empty from the test hook that forces replans.
         for &v in changed {
             self.graph.set_dirty(v, true);
@@ -323,7 +322,8 @@ impl<R: EvaluationContext> Engine<R> {
             return;
         }
         self.freshness.armed = false;
-        let committed: Vec<VertexId> = self.freshness.committed.drain().collect();
+        let committed: Vec<VertexId> = self.freshness.committed.iter().collect();
+        self.freshness.committed.clear();
         for v in committed {
             if !self.graph.is_dirty(v) && self.graph.is_live_formula_vertex(v) {
                 self.graph.set_dirty(v, true);
