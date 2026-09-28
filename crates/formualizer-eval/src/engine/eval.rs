@@ -9790,12 +9790,10 @@ where
             // relative copies of the formula above (or to the left) become
             // members of its family and are never interned.
             let mut grouper = crate::engine::FormulaFamilyGrouper::new();
-            let mut entries: Vec<_> = staged
-                .entries
-                .iter()
-                .cloned()
-                .map(|(row, col, text)| (row, col, text, None))
-                .collect();
+            // The staged texts, then the deferred package's replayed ones,
+            // are walked once (no combined copy: a replay can be the whole
+            // sheet).
+            let mut replayed_records = Vec::new();
             let deferred_source = None;
             let mut deferred_fallback = None;
             if let Some(package) = staged.deferred_package.as_mut() {
@@ -9837,7 +9835,19 @@ where
                     .map_err(|message| {
                         ExcelError::new(ExcelErrorKind::Value).with_message(message)
                     })?;
-                entries.extend(replayed.into_iter().map(|record| {
+                replayed_records = replayed;
+                let mut report = package.accounting_report();
+                report.source_spool_replays = report.source_spool_replays.saturating_add(1);
+                deferred_fallback = Some((report, package.families.clone(), eligible_partitions));
+            }
+
+            let n_entries = staged.entries.len() + replayed_records.len();
+            let entries = staged
+                .entries
+                .iter()
+                .cloned()
+                .map(|(row, col, text)| (row, col, text, None))
+                .chain(replayed_records.into_iter().map(|record| {
                     (
                         record.row,
                         record.col,
@@ -9845,14 +9855,9 @@ where
                         Some((record.source_order, record.family, record.partition_owner)),
                     )
                 }));
-                let mut report = package.accounting_report();
-                report.source_spool_replays = report.source_spool_replays.saturating_add(1);
-                deferred_fallback = Some((report, package.families.clone(), eligible_partitions));
-            }
-
-            let mut formulas = Vec::new();
-            let staged_order_base = u64::MAX.saturating_sub(entries.len() as u64);
-            for (entry_index, (row, col, txt, source_proof)) in entries.into_iter().enumerate() {
+            let mut formulas = Vec::with_capacity(n_entries);
+            let staged_order_base = u64::MAX.saturating_sub(n_entries as u64);
+            for (entry_index, (row, col, txt, source_proof)) in entries.enumerate() {
                 let key = if txt.starts_with('=') {
                     txt
                 } else {
@@ -19850,12 +19855,33 @@ where
                 self.flush_computed_write_buffer(&mut computed_writes)?;
             }
             let values = match (chain_values.take(), unit) {
-                (Some(chain), LayerUnit::Run(run)) => layer.vertices
-                    [run.start as usize..(run.start + run.len) as usize]
-                    .iter()
-                    .copied()
-                    .zip(chain)
-                    .collect(),
+                (Some(chain), LayerUnit::Run(run)) => {
+                    let members =
+                        &layer.vertices[run.start as usize..(run.start + run.len) as usize];
+                    let delta_active = delta.as_deref().is_some_and(|d| d.mode != DeltaMode::Off);
+                    match self.commit_run_numbers(
+                        run,
+                        members,
+                        &chain,
+                        delta_active,
+                        Some(&mut computed_writes),
+                    ) {
+                        Ok(true) => {
+                            done += chain.len();
+                            continue;
+                        }
+                        Ok(false) => {}
+                        Err(e) => {
+                            self.flush_computed_write_buffer(&mut computed_writes)?;
+                            return Err(e);
+                        }
+                    }
+                    members
+                        .iter()
+                        .copied()
+                        .zip(chain.into_iter().map(LiteralValue::Number))
+                        .collect()
+                }
                 (_, unit) => self.evaluate_unit_immutable(layer, unit),
             };
             done += values.len();

@@ -709,7 +709,7 @@ where
         run: LayerRun,
         anchor: (u32, u32),
         n: usize,
-    ) -> Option<Vec<Lifted>> {
+    ) -> Option<Vec<f64>> {
         enum Source {
             Const(LiteralValue),
             Above,
@@ -902,7 +902,7 @@ where
             match values.pop()? {
                 V::Num(x) if x.is_finite() => {
                     carry = V::Num(x);
-                    out.push(Ok((LiteralValue::Number(x), None)));
+                    out.push(x);
                 }
                 _ => return None,
             }

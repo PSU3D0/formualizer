@@ -322,6 +322,8 @@ pub(super) struct HybridFormulaReplaySpool {
     memory: Vec<u8>,
     encoded_bytes: u64,
     peak_memory_bytes: u64,
+    /// Frames appended (a capacity hint for replay).
+    frames: usize,
     #[cfg(test)]
     append_scratch_heap_allocations: u64,
     limits: FormulaSpoolLimits,
@@ -344,6 +346,7 @@ impl HybridFormulaReplaySpool {
             memory: [MAGIC.as_slice(), &[VERSION]].concat(),
             encoded_bytes: HEADER_LEN as u64,
             peak_memory_bytes: HEADER_LEN as u64,
+            frames: 0,
             #[cfg(test)]
             append_scratch_heap_allocations: 0,
             limits,
@@ -432,6 +435,33 @@ pub(super) struct CalamineDeferredFormulaReplay {
     sheet_instance: u32,
 }
 
+/// Stable sort by source order without a scratch copy of the records (a
+/// stable sort's buffer is as large as the input): usually already sorted;
+/// else sort indices, then permute in place.
+fn sort_by_source_order(formulas: &mut [DeferredReplayFormula]) {
+    if formulas.is_sorted_by_key(|f| f.source_order) {
+        return;
+    }
+    let mut order: Vec<u32> = (0..formulas.len() as u32).collect();
+    order.sort_unstable_by_key(|&i| (formulas[i as usize].source_order, i));
+    // `order[k]` is the record that goes to slot k: follow each cycle.
+    for start in 0..order.len() {
+        if order[start] == u32::MAX {
+            continue;
+        }
+        let mut slot = start;
+        loop {
+            let from = order[slot] as usize;
+            order[slot] = u32::MAX;
+            if from == start {
+                break;
+            }
+            formulas.swap(slot, from);
+            slot = from;
+        }
+    }
+}
+
 impl CalamineDeferredFormulaReplay {
     pub(super) fn new(
         spool: HybridFormulaReplaySpool,
@@ -452,7 +482,7 @@ impl CalamineDeferredFormulaReplay {
         disposition: &FormulaReplayDisposition,
         partitions: &[PartitionedSourceFormulaFamily],
     ) -> Result<Vec<DeferredReplayFormula>, String> {
-        let mut formulas = Vec::new();
+        let mut formulas = Vec::with_capacity(self.spool.frames);
         let sheet_instance = self.sheet_instance;
         let partition_router =
             FormulaReplayPartitionRouter::new(partitions).map_err(str::to_string)?;
@@ -462,7 +492,7 @@ impl CalamineDeferredFormulaReplay {
             |shared_index, coord0| {
                 let family = SourceFamilyId {
                     sheet_instance,
-                    source_index: shared_index,
+                    source_index: super::shared_source_index(shared_index),
                 };
                 let coordinate_disposition =
                     partition_router.shared_disposition(disposition, family, coord0);
@@ -471,7 +501,7 @@ impl CalamineDeferredFormulaReplay {
             |sequence, coord0, text, family| {
                 let family = family.map(|shared_index| SourceFamilyId {
                     sheet_instance,
-                    source_index: shared_index,
+                    source_index: super::shared_source_index(shared_index),
                 });
                 let (coordinate_disposition, partition_owner) = match family {
                     Some(family) => (
@@ -499,7 +529,7 @@ impl CalamineDeferredFormulaReplay {
             },
         )
         .map_err(|error| error.to_string())?;
-        formulas.sort_by_key(|formula| formula.source_order);
+        sort_by_source_order(&mut formulas);
         Ok(formulas)
     }
 
@@ -523,7 +553,7 @@ impl CalamineDeferredFormulaReplay {
                 {
                     let family = family.map(|shared_index| SourceFamilyId {
                         sheet_instance,
-                        source_index: shared_index,
+                        source_index: super::shared_source_index(shared_index),
                     });
                     found = Some(DeferredReplayFormula {
                         source_order: SourceFormulaOrder::new(sequence),
@@ -719,7 +749,7 @@ impl DeferredFormulaReplay for CalamineDeferredFormulaReplay {
                 };
                 let family = family.map(|source_index| SourceFamilyId {
                     sheet_instance: self.sheet_instance,
-                    source_index,
+                    source_index: super::shared_source_index(source_index),
                 });
                 formulas.push(DeferredReplayFormula {
                     source_order: SourceFormulaOrder::new(sequence),
@@ -808,6 +838,7 @@ impl FormulaReplaySpool for HybridFormulaReplaySpool {
         #[cfg(target_arch = "wasm32")]
         append_frame_to_vec(&mut self.memory, record)?;
         self.encoded_bytes = attempted;
+        self.frames += 1;
         self.peak_memory_bytes = self
             .peak_memory_bytes
             .max(u64::try_from(self.memory.len()).unwrap_or(u64::MAX));
@@ -1181,7 +1212,7 @@ impl OwnedSpoolFormulaRecord {
                 FormulaSourceKind::SharedAnchor {
                     family: SourceFamilyId {
                         sheet_instance,
-                        source_index: shared_index,
+                        source_index: super::shared_source_index(shared_index),
                     },
                     declared_range,
                     formula: Arc::from(text),
@@ -1201,7 +1232,7 @@ impl OwnedSpoolFormulaRecord {
                 FormulaSourceKind::SharedDescendant {
                     family: SourceFamilyId {
                         sheet_instance,
-                        source_index: shared_index,
+                        source_index: super::shared_source_index(shared_index),
                     },
                     metadata: FormulaMetadataEnvelope::Shared {
                         shared_index,
@@ -1509,9 +1540,9 @@ pub(super) fn replay_spool_per_cell_with_coordinate_disposition<S: FormulaReplay
 pub(super) fn expand_source_events_per_cell(
     events: &[FormulaSourceEvent],
 ) -> Result<Vec<ExpandedFormulaCell>, SourceFormulaError> {
-    let mut shared: rustc_hash::FxHashMap<usize, (SourceCoord, Arc<str>)> =
+    let mut shared: rustc_hash::FxHashMap<u32, (SourceCoord, Arc<str>)> =
         rustc_hash::FxHashMap::default();
-    let mut pending: rustc_hash::FxHashMap<usize, Vec<SourceCoord>> =
+    let mut pending: rustc_hash::FxHashMap<u32, Vec<SourceCoord>> =
         rustc_hash::FxHashMap::default();
     let mut expanded = Vec::with_capacity(events.len());
     let mut expansion = String::with_capacity(128);
@@ -1585,6 +1616,34 @@ pub(super) fn expand_source_events_per_cell(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_order_sort_is_stable_and_in_place() {
+        let rec = |seq: u64, row: u32| DeferredReplayFormula {
+            source_order: SourceFormulaOrder::new(seq),
+            row,
+            col: 1,
+            text: format!("={row}"),
+            family: None,
+            partition_owner: None,
+        };
+        let seqs = [5u64, 3, 9, 3, 1, 7, 5, 0, 2, 9];
+        let mut v: Vec<_> = seqs
+            .iter()
+            .enumerate()
+            .map(|(i, &q)| rec(q, i as u32))
+            .collect();
+        let mut expected: Vec<(u64, u32)> = seqs
+            .iter()
+            .enumerate()
+            .map(|(i, &q)| (q, i as u32))
+            .collect();
+        expected.sort_by_key(|&(q, _)| q);
+        sort_by_source_order(&mut v);
+        let got: Vec<(u64, u32)> = v.iter().map(|f| (seqs[f.row as usize], f.row)).collect();
+        assert_eq!(got, expected);
+        assert!(v.iter().all(|f| f.text == format!("={}", f.row)));
+    }
 
     fn coord(row: u32, col: u32) -> SourceCoord {
         SourceCoord { row, col }

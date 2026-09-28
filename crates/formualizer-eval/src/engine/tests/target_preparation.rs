@@ -1267,7 +1267,7 @@ fn complete_family_package(
         let col0 = family_index + 1;
         let source_id = SourceFamilyId {
             sheet_instance,
-            source_index: family_index as usize,
+            source_index: family_index as u32,
         };
         families.push(SourceFormulaFamily {
             source_id,
@@ -1322,7 +1322,7 @@ fn overlapping_families_package(sheet: &str, sheet_instance: u32) -> DeferredFor
     for family_index in 0..2u32 {
         let source_id = SourceFamilyId {
             sheet_instance,
-            source_index: family_index as usize,
+            source_index: family_index as u32,
         };
         families.push(SourceFormulaFamily {
             source_id,

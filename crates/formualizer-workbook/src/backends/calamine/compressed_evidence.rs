@@ -870,7 +870,7 @@ mod tests {
     fn family(index: usize) -> SourceFamilyId {
         SourceFamilyId {
             sheet_instance: 0,
-            source_index: index,
+            source_index: index as u32,
         }
     }
 

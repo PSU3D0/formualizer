@@ -929,7 +929,7 @@ impl CalamineAdapter {
                         });
                         let family = SourceFamilyId {
                             sheet_instance,
-                            source_index: shared_index,
+                            source_index: shared_source_index(shared_index),
                         };
                         if let Some(coordinates) = deferred_source_coordinates.as_mut() {
                             coordinates.push((coord0, Some(family)));
@@ -955,7 +955,7 @@ impl CalamineAdapter {
                         shared_formula_tags += 1;
                         let family = SourceFamilyId {
                             sheet_instance,
-                            source_index: shared_index,
+                            source_index: shared_source_index(shared_index),
                         };
                         if let Some(coordinates) = deferred_source_coordinates.as_mut() {
                             coordinates.push((coord0, Some(family)));
@@ -1234,7 +1234,7 @@ impl CalamineAdapter {
                             (shadow_relocation_comparator.as_ref(), shared_index)
                         && let Some(family) = compressed_families
                             .iter()
-                            .find(|family| family.source_id.source_index == shared_index)
+                            .find(|family| family.source_id.source_index as usize == shared_index)
                         && !Self::shadow_relocation_matches(comparator, family, coord0, formula)
                     {
                         relocation_mismatches.insert(shared_index);
@@ -1251,7 +1251,7 @@ impl CalamineAdapter {
             )?;
             if !relocation_mismatches.is_empty() {
                 compressed_families.retain(|family| {
-                    !relocation_mismatches.contains(&family.source_id.source_index)
+                    !relocation_mismatches.contains(&(family.source_id.source_index as usize))
                 });
             }
         }
@@ -2809,4 +2809,10 @@ mod tests {
         assert_eq!(data_ref_format(&datetime), Some(FormatId::DATETIME));
         assert_eq!(data_ref_format(&duration), Some(FormatId::DURATION));
     }
+}
+
+/// A source shared-formula index as the `u32` a [`SourceFamilyId`] stores
+/// (an xlsx sheet cannot hold 2^32 shared formulas).
+pub(super) fn shared_source_index(index: usize) -> u32 {
+    u32::try_from(index).unwrap_or(u32::MAX)
 }

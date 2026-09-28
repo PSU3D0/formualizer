@@ -500,11 +500,7 @@ where
     /// Program 3 chain unit: the members of `run` in row order, each
     /// reading the one above (see `Engine::evaluate_chain_lifted`). `None`
     /// leaves the run to the per-cell path, member by member.
-    pub(super) fn try_chain_lift(
-        &self,
-        run: LayerRun,
-        members: &[VertexId],
-    ) -> Option<Vec<LiteralValue>> {
+    pub(super) fn try_chain_lift(&self, run: LayerRun, members: &[VertexId]) -> Option<Vec<f64>> {
         if !self.config.family_execution || !self.config.family_lift || members.len() < 2 {
             return None;
         }
@@ -546,23 +542,12 @@ where
         #[cfg(test)]
         self.chained_members_for_test
             .fetch_add(members.len() as u64, std::sync::atomic::Ordering::Relaxed);
-        Some(
-            lifted
-                .into_iter()
-                .enumerate()
-                .map(|(i, result)| match result {
-                    Ok((value, format)) => {
-                        let cell = CellRef::new(
-                            run.sheet,
-                            Coord::new(run.row0 + i as u32, run.col, true, true),
-                        );
-                        self.record_derived_format_at(cell, format);
-                        crate::engine::result_finalization::finalize_formula_result(value)
-                    }
-                    Err(e) => LiteralValue::Error(e),
-                })
-                .collect(),
-        )
+        // Every member is a clean finite number (no format).
+        for i in 0..lifted.len() as u32 {
+            let cell = CellRef::new(run.sheet, Coord::new(run.row0 + i, run.col, true, true));
+            self.record_derived_format_at(cell, None);
+        }
+        Some(lifted)
     }
 
     /// Tier 3: a range kernel for the whole run, when the template has one.
@@ -795,6 +780,60 @@ where
     /// reader is stale, no spill is pending and no member anchors a spill.
     /// Returns `false` (having done nothing) otherwise. Effects are those of
     /// `plan_scalar_effects` + `apply_write_cell` per member, in order.
+    /// [`Self::commit_run_scalars`] for a run whose every result is the
+    /// number `values[i]` (the chain lift): no per-member value vector.
+    pub(super) fn commit_run_numbers(
+        &mut self,
+        run: LayerRun,
+        members: &[VertexId],
+        values: &[f64],
+        delta_active: bool,
+        computed_writes: Option<&mut ComputedWriteBuffer>,
+    ) -> Result<bool, ExcelError> {
+        if delta_active
+            || !self.blocked_pending_spills.is_empty()
+            || !self.freshness_group_commit_ok()
+            || (self.graph.has_spill_anchors()
+                && members.iter().any(|&v| self.graph.is_spill_anchor(v)))
+        {
+            return Ok(false);
+        }
+        self.freshness_mark_committed_group(members);
+        for (&v, &x) in members.iter().zip(values) {
+            self.graph.update_vertex_value(v, LiteralValue::Number(x));
+        }
+        if !(self.config.arrow_storage_enabled
+            && self.config.delta_overlay_enabled
+            && self.config.write_formula_overlay_enabled)
+            || self.computed_overlay_mirroring_disabled
+        {
+            return Ok(true);
+        }
+        let sheet_name = self.graph.sheet_name(run.sheet).to_string();
+        let date_system = self.arrow_sheet_date_system(&sheet_name);
+        let overlay =
+            |x: f64| Self::literal_to_overlay_value(&LiteralValue::Number(x), date_system);
+        match computed_writes {
+            Some(buffer) => {
+                // The members' formats are clear (`try_chain_lift`).
+                let entries: Vec<(OverlayValue, Option<crate::format::FormatId>)> =
+                    values.iter().map(|&x| (overlay(x), None)).collect();
+                buffer.push_column_run(run.sheet, run.row0, run.col, entries);
+                if self.should_flush_computed_write_buffer(buffer) {
+                    self.flush_computed_write_buffer(buffer)?;
+                }
+            }
+            None => {
+                for (i, &x) in values.iter().enumerate() {
+                    let row = run.row0 + i as u32;
+                    self.write_computed_overlay_value_0based(&sheet_name, row, run.col, overlay(x));
+                    self.write_computed_overlay_format_0based(&sheet_name, row, run.col, None);
+                }
+            }
+        }
+        Ok(true)
+    }
+
     pub(super) fn commit_run_scalars(
         &mut self,
         run: LayerRun,
