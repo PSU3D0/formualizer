@@ -597,6 +597,12 @@ fn resolve_ifs_reference_or_value<'b>(
 /// # Remarks
 /// - Matching is case-insensitive for text values.
 /// - Numeric comparisons treat `Int` and `Number` values as compatible.
+/// - A blank cell on either side compares as numeric zero, so a blank selector matches a `0`
+///   case; it does not match empty text (`""`) or `FALSE`. This deliberately differs from the
+///   `=` operator, where a blank also equals `""` and `FALSE`: Excel's `SWITCH` was measured
+///   separately and matches a blank against zero only.
+/// - A blank matches only an exact zero, not a number within the `1e-12` tolerance used between
+///   two numbers (`=SWITCH(Z1,1E-13,...)` does not match).
 /// - A trailing unmatched argument acts as the default result.
 /// - When no candidate matches and no default is supplied, returns `#N/A`.
 /// - Errors in `expression` propagate immediately.
@@ -721,6 +727,16 @@ fn switch_values_equal(a: &LiteralValue, b: &LiteralValue) -> bool {
         (LiteralValue::Boolean(x), LiteralValue::Boolean(y)) => x == y,
         (LiteralValue::Text(x), LiteralValue::Text(y)) => x.eq_ignore_ascii_case(y),
         (LiteralValue::Empty, LiteralValue::Empty) => true,
+        // A blank on either side is numeric zero, as in Excel: a blank
+        // selector matches a `0` case and a blank case matches a `0` selector.
+        // It does not match empty text or FALSE, unlike the `=` operator's
+        // blank rule (Excel's SWITCH was measured separately). The test is an
+        // exact zero, without the number-to-number tolerance above; `-0.0`
+        // also matches (Excel stores a typed `-0` as 0).
+        (LiteralValue::Empty, LiteralValue::Int(n))
+        | (LiteralValue::Int(n), LiteralValue::Empty) => *n == 0,
+        (LiteralValue::Empty, LiteralValue::Number(n))
+        | (LiteralValue::Number(n), LiteralValue::Empty) => *n == 0.0,
         _ => false,
     }
 }
@@ -1032,6 +1048,38 @@ mod tests {
                 .into_literal(),
             LiteralValue::Text("b".into())
         );
+    }
+
+    #[test]
+    fn switch_blank_equals_numeric_zero_on_either_side() {
+        for zero in [
+            LiteralValue::Int(0),
+            LiteralValue::Number(0.0),
+            LiteralValue::Number(-0.0),
+        ] {
+            assert!(switch_values_equal(&LiteralValue::Empty, &zero), "{zero:?}");
+            assert!(switch_values_equal(&zero, &LiteralValue::Empty), "{zero:?}");
+        }
+    }
+
+    #[test]
+    fn switch_blank_does_not_equal_empty_text_false_or_nonzero() {
+        for other in [
+            LiteralValue::Text(String::new()),
+            LiteralValue::Text("0".into()),
+            LiteralValue::Boolean(false),
+            LiteralValue::Int(1),
+            LiteralValue::Number(1e-13),
+        ] {
+            assert!(
+                !switch_values_equal(&LiteralValue::Empty, &other),
+                "{other:?}"
+            );
+            assert!(
+                !switch_values_equal(&other, &LiteralValue::Empty),
+                "{other:?}"
+            );
+        }
     }
 
     #[test]
