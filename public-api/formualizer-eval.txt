@@ -7672,6 +7672,9 @@ pub mod formualizer_eval::interpreter
 pub enum formualizer_eval::interpreter::LocalBinding
 pub formualizer_eval::interpreter::LocalBinding::Callable(alloc::sync::Arc<dyn formualizer_eval::traits::CustomCallable>)
 pub formualizer_eval::interpreter::LocalBinding::Value(formualizer_common::value::LiteralValue)
+pub formualizer_eval::interpreter::LocalBinding::ValueWithReference
+pub formualizer_eval::interpreter::LocalBinding::ValueWithReference::reference: formualizer_parse::parser::ReferenceType
+pub formualizer_eval::interpreter::LocalBinding::ValueWithReference::value: formualizer_common::value::LiteralValue
 impl core::clone::Clone for formualizer_eval::interpreter::LocalBinding
 pub fn formualizer_eval::interpreter::LocalBinding::clone(&self) -> formualizer_eval::interpreter::LocalBinding
 pub struct formualizer_eval::interpreter::Interpreter<'a>
@@ -8119,6 +8122,7 @@ impl core::marker::StructuralPartialEq for formualizer_eval::traits::ReferenceIn
 pub trait formualizer_eval::traits::CustomCallable: core::marker::Send + core::marker::Sync
 pub fn formualizer_eval::traits::CustomCallable::arity(&self) -> usize
 pub fn formualizer_eval::traits::CustomCallable::invoke<'ctx>(&self, &formualizer_eval::interpreter::Interpreter<'ctx>, &[formualizer_common::value::LiteralValue]) -> core::result::Result<formualizer_eval::traits::CalcValue<'ctx>, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::traits::CustomCallable::invoke_with_references<'ctx>(&self, &formualizer_eval::interpreter::Interpreter<'ctx>, &[formualizer_common::value::LiteralValue], &[core::option::Option<formualizer_parse::parser::ReferenceType>]) -> core::result::Result<formualizer_eval::traits::CalcValue<'ctx>, formualizer_common::error::ExcelError>
 pub trait formualizer_eval::traits::EvaluationContext: formualizer_eval::traits::Resolver + formualizer_eval::traits::FunctionProvider + formualizer_eval::traits::SourceResolver
 pub fn formualizer_eval::traits::EvaluationContext::backend_caps(&self) -> formualizer_eval::traits::BackendCaps
 pub fn formualizer_eval::traits::EvaluationContext::build_criteria_mask(&self, &formualizer_eval::engine::range_view::RangeView<'_>, usize, &formualizer_eval::args::CriteriaPredicate) -> core::option::Option<alloc::sync::Arc<arrow_array::array::boolean_array::BooleanArray>>

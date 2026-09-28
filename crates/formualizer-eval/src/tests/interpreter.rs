@@ -483,15 +483,293 @@ mod tests {
             LiteralValue::Boolean(true)
         );
 
-        // Mixed type comparisons
+        // Mixed type comparisons. Excel ranks types (number < text < boolean)
+        // and never coerces across a rank boundary; see
+        // relational_operators_rank_number_text_boolean_like_excel below.
         assert_eq!(
             evaluate_formula("=\"5\"=5", &wb).unwrap(),
-            LiteralValue::Boolean(true)
-        );
+            LiteralValue::Boolean(false)
+        ); // text never equals a number
         assert_eq!(
             evaluate_formula("=TRUE=1", &wb).unwrap(),
-            LiteralValue::Boolean(true)
-        );
+            LiteralValue::Boolean(false)
+        ); // boolean outranks number
+    }
+
+    /// The rank applies element by element when a comparison lifts over an
+    /// array literal or a range. Expected values were measured in Excel for the
+    /// web; D1:D3 hold the number 1, the text "1" and TRUE.
+    #[test]
+    fn relational_rank_applies_element_wise_over_arrays_and_ranges() {
+        use crate::engine::{Engine, EvalConfig};
+
+        let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+        engine
+            .set_cell_value("Sheet1", 1, 4, LiteralValue::Number(1.0))
+            .unwrap();
+        engine
+            .set_cell_value("Sheet1", 2, 4, LiteralValue::Text("1".to_string()))
+            .unwrap();
+        engine
+            .set_cell_value("Sheet1", 3, 4, LiteralValue::Boolean(true))
+            .unwrap();
+        let cases = [
+            ("=SUMPRODUCT(--({1,\"1\",TRUE}=1))", 1.0),
+            ("=SUMPRODUCT(--({1,\"1\",TRUE}=\"1\"))", 1.0),
+            ("=SUMPRODUCT(--({1,\"1\",TRUE}=TRUE))", 1.0),
+            ("=SUMPRODUCT(--(D1:D3=1))", 1.0),
+            ("=SUMPRODUCT(--(D1:D3>0))", 3.0),
+            ("=SUMPRODUCT(--(D1:D3<\"a\"))", 2.0),
+        ];
+        for (row, (formula, _)) in cases.iter().enumerate() {
+            engine
+                .set_cell_formula(
+                    "Sheet1",
+                    row as u32 + 1,
+                    10,
+                    formualizer_parse::parser::parse(formula).unwrap(),
+                )
+                .unwrap();
+        }
+        engine.evaluate_all().unwrap();
+        for (row, (formula, expected)) in cases.iter().enumerate() {
+            let actual = match engine.get_cell_value("Sheet1", row as u32 + 1, 10) {
+                Some(LiteralValue::Number(n)) => n,
+                Some(LiteralValue::Int(i)) => i as f64,
+                other => panic!("{formula}: expected a number, got {other:?}"),
+            };
+            assert_eq!(actual, *expected, "{formula}");
+        }
+    }
+
+    /// Excel's relational type rank, `number < text < boolean`, applied
+    /// identically by all six operators.
+    ///
+    /// Every row was measured in Microsoft Excel for Mac 16.105.3 (`en_US`).
+    /// Rows on `$Z$1` reference a never-written cell, written explicitly as
+    /// `LiteralValue::Empty` because `TestWorkbook` answers `#REF!` for an
+    /// absent key; that is the value the engine's resolver hands `compare` for
+    /// a blank in-bounds cell.
+    #[test]
+    fn relational_operators_rank_number_text_boolean_like_excel() {
+        let wb = create_workbook()
+            // Z1: blank. Column 26, row 1.
+            .with_cell("Sheet1", 1, 26, LiteralValue::Empty);
+
+        let cases: [(&str, bool); 33] = [
+            ("=TRUE<=1", false),
+            ("=TRUE>=1", true),
+            ("=TRUE<>1", true),
+            ("=TRUE=1", false),
+            ("=1<TRUE", true),
+            ("=1<=TRUE", true),
+            ("=TRUE>FALSE", true),
+            ("=FALSE>TRUE", false),
+            ("=TRUE>=FALSE", true),
+            ("=\"a\"<TRUE", true),
+            ("=\"Z\"<FALSE", true),
+            ("=TRUE>\"z\"", true),
+            ("=\"TRUE\"=TRUE", false),
+            ("=\"5\"=5", false),
+            ("=\"5\">4", true),
+            ("=\"5\"<4", false),
+            ("=$Z$1=FALSE", true),
+            ("=$Z$1<TRUE", true),
+            ("=$Z$1=0", true),
+            ("=$Z$1=\"\"", true),
+            ("=FALSE=0", false),
+            ("=0<>FALSE", true),
+            ("=FALSE<\"a\"", false),
+            ("=TRUE<=\"a\"", false),
+            ("=FALSE>0", true),
+            ("=TRUE>0", true),
+            ("=FALSE>1", true),
+            ("=TRUE>1", true),
+            ("=FALSE<0", false),
+            ("=TRUE<1", false),
+            ("=TRUE<0", false),
+            ("=\"a\">1", true),
+            ("=FALSE>\"a\"", true),
+        ];
+
+        for (formula, expected) in cases {
+            assert_eq!(
+                evaluate_formula(formula, &wb).unwrap(),
+                LiteralValue::Boolean(expected),
+                "{formula}"
+            );
+        }
+    }
+
+    /// Corollaries of the measured rank and blank rule, not individually
+    /// measured in Excel: blank against blank, blank adopting the other operand's
+    /// type, and numeric text on the remaining operators.
+    #[test]
+    fn relational_rank_corollaries() {
+        let wb = create_workbook()
+            .with_cell("Sheet1", 1, 26, LiteralValue::Empty)
+            .with_cell("Sheet1", 2, 26, LiteralValue::Empty);
+
+        let cases: [(&str, bool); 10] = [
+            // Blank versus blank: equal, on every operator.
+            ("=$Z$1=$Z$2", true),
+            ("=$Z$1<>$Z$2", false),
+            ("=$Z$1<=$Z$2", true),
+            ("=$Z$1>=$Z$2", true),
+            ("=$Z$1<$Z$2", false),
+            // Blank adopts the other operand's type, so it is not ranked.
+            ("=$Z$1<\"a\"", true),
+            ("=$Z$1>TRUE", false),
+            // Numeric text stays text on the remaining operators.
+            ("=\"5\"<>5", true),
+            ("=\"5\">=4", true),
+            // Int/Int still compares numerically (no fast-path arm covers it).
+            ("=2>1", true),
+        ];
+
+        for (formula, expected) in cases {
+            assert_eq!(
+                evaluate_formula(formula, &wb).unwrap(),
+                LiteralValue::Boolean(expected),
+                "{formula}"
+            );
+        }
+    }
+
+    /// Dates and times sit in the number class of the rank: on a sheet a date
+    /// cell is its serial. Derived from the rank, not measured in Excel.
+    ///
+    /// Both shapes pinned here reach `compare` as `LiteralValue::Number`:
+    /// `DATE()`/`TIME()` return numbers, and `TestWorkbook` ingests the
+    /// `Date`/`Time`/`DateTime`/`Duration` cells in A1:A4 through the Arrow
+    /// ingest, which stores a serial. So this pins the number-versus-boolean and
+    /// number-versus-text rank for date-like operands a user can produce; the
+    /// temporal arm of `excel_type_rank` itself is not reached by a formula.
+    #[test]
+    fn relational_rank_places_dates_and_times_in_the_number_class() {
+        crate::builtins::load_builtins();
+
+        // Written as a user would: DATE()/TIME() yield plain numbers here.
+        let wb = create_workbook();
+        let formula_cases: [(&str, bool); 9] = [
+            // Previously the opposite value, from coercing TRUE/FALSE to 1/0.
+            ("=DATE(2003,1,1)<TRUE", true),
+            ("=DATE(2003,1,1)<=TRUE", true),
+            ("=DATE(2003,1,1)>TRUE", false),
+            ("=TIME(12,0,0)<FALSE", true),
+            // Unchanged; regression guards for the number class.
+            ("=DATE(2003,1,1)=37622", true),
+            ("=DATE(2003,1,1)<37623", true),
+            ("=DATE(2003,1,1)>37621", true),
+            ("=TIME(12,0,0)=0.5", true),
+            // Derived temporal-versus-text: rank 0 < rank 1, so a date serial
+            // is below any text on every operator.
+            ("=DATE(2003,1,1)<\"a\"", true),
+        ];
+        for (formula, expected) in formula_cases {
+            assert_eq!(
+                evaluate_formula(formula, &wb).unwrap(),
+                LiteralValue::Boolean(expected),
+                "{formula}"
+            );
+        }
+
+        // Genuine temporal `LiteralValue` variants, which is what
+        // `excel_type_rank`'s `_ => 0` catch-all actually classifies.
+        let wb_temporal = create_workbook()
+            .with_cell(
+                "Sheet1",
+                1,
+                1,
+                LiteralValue::Date(chrono::NaiveDate::from_ymd_opt(2003, 1, 1).unwrap()),
+            )
+            .with_cell(
+                "Sheet1",
+                2,
+                1,
+                LiteralValue::Time(chrono::NaiveTime::from_hms_opt(12, 0, 0).unwrap()),
+            )
+            .with_cell(
+                "Sheet1",
+                3,
+                1,
+                LiteralValue::DateTime(
+                    chrono::NaiveDate::from_ymd_opt(2003, 1, 1)
+                        .unwrap()
+                        .and_hms_opt(12, 0, 0)
+                        .unwrap(),
+                ),
+            )
+            .with_cell(
+                "Sheet1",
+                4,
+                1,
+                LiteralValue::Duration(chrono::Duration::hours(12)),
+            );
+        let cell_cases: [(&str, bool); 17] = [
+            // A1 = Date, A2 = Time, A3 = DateTime, A4 = Duration.
+            // Temporal versus boolean: rank 0 < rank 2.
+            ("=A1<TRUE", true),
+            ("=A1<=TRUE", true),
+            ("=A1>TRUE", false),
+            ("=A1=TRUE", false),
+            ("=A2<FALSE", true),
+            ("=A3<TRUE", true),
+            ("=A4<TRUE", true),
+            // Temporal versus text: rank 0 < rank 1.
+            ("=A1<\"a\"", true),
+            ("=A1>\"a\"", false),
+            ("=A2<\"a\"", true),
+            ("=A3<\"a\"", true),
+            ("=A4<\"a\"", true),
+            // Same rank as a number: compared on the serial, as before.
+            ("=A1=37622", true),
+            ("=A1<37623", true),
+            ("=A1>37621", true),
+            ("=A2=0.5", true),
+            ("=A4=0.5", true),
+        ];
+        for (formula, expected) in cell_cases {
+            assert_eq!(
+                evaluate_formula(formula, &wb_temporal).unwrap(),
+                LiteralValue::Boolean(expected),
+                "{formula}"
+            );
+        }
+    }
+
+    /// Numeric text is never parsed by a relational operator. The measured
+    /// anchors are `"5"=5` FALSE, `"5">4` TRUE and `"5"<4` FALSE in the table
+    /// above; the other literal forms here (percent, exponent, signed, zero,
+    /// padded and decimal text) follow from the rank and are not individually
+    /// measured.
+    ///
+    /// A blank against numeric text adopts the text type and becomes `""`, so
+    /// `blank="0"` is FALSE and `blank<"0"` is TRUE.
+    #[test]
+    fn relational_operators_never_parse_numeric_text() {
+        let wb = create_workbook().with_cell("Sheet1", 1, 26, LiteralValue::Empty);
+
+        let cases: [(&str, bool); 9] = [
+            ("=\"90%\"=0.9", false),
+            ("=\"90%\"<1", false),
+            ("=\"1e3\"=1000", false),
+            ("=\"-5\"<0", false),
+            ("=\"0\"=0", false),
+            ("=\" 5 \"=5", false),
+            ("=\"1.5\"=1.5", false),
+            // Blank versus numeric text: `Empty` becomes `""`, not `0`.
+            ("=$Z$1=\"0\"", false),
+            ("=$Z$1<\"0\"", true),
+        ];
+
+        for (formula, expected) in cases {
+            assert_eq!(
+                evaluate_formula(formula, &wb).unwrap(),
+                LiteralValue::Boolean(expected),
+                "{formula}"
+            );
+        }
     }
 
     #[test]

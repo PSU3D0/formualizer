@@ -84,17 +84,46 @@ fn arg_byref_reference() -> Vec<ArgSchema> {
     ]
 }
 
-/// Resolve a reference's concrete 1-based inclusive bounds as
-/// `(sheet, start_row, start_col, end_row, end_col)`.
+/// Concrete 1-based inclusive bounds `(sheet, start_row, start_col, end_row, end_col)`.
+type ReferenceBounds = (Option<String>, u32, u32, u32, u32);
+
+/// Convert a resolved `RangeView` (absolute, 0-based) into 1-based bounds on
+/// `sheet`. An empty view yields `#REF!`.
+fn view_bounds(
+    view: &crate::engine::range_view::RangeView<'_>,
+    sheet: Option<String>,
+) -> Result<ReferenceBounds, ExcelError> {
+    if view.is_empty() {
+        return Err(ExcelError::new(ExcelErrorKind::Ref));
+    }
+    Ok((
+        sheet,
+        view.start_row() as u32 + 1,
+        view.start_col() as u32 + 1,
+        view.end_row() as u32 + 1,
+        view.end_col() as u32 + 1,
+    ))
+}
+
+/// Resolve a reference's concrete 1-based inclusive bounds.
 ///
 /// Fully bounded ranges use their declared bounds directly. Unbounded
 /// whole-column/whole-row (or open-ended) ranges are clamped to the used
 /// region via `ctx.resolve_range_view`, mirroring how MATCH/VLOOKUP resolve
-/// the same references. An empty resolved view yields `#REF!`.
+/// the same references. A defined name resolves through the same call and
+/// takes the sheet and bounds of the region it names. An empty resolved view
+/// yields `#REF!`.
+///
+/// `Ok(None)` means the reference is a defined name that does not name a
+/// sheet region: a constant (`=5`), an array constant, a formula, or a name
+/// supplied by an external resolver. `resolve_range_view` materialises those
+/// into an owned view on a temporary backing sheet, whose coordinates are not
+/// cell addresses, so there are no bounds to return. Callers decide what that
+/// means (INDEX indexes the name's value; OFFSET answers `#VALUE!`).
 fn resolve_reference_bounds<'b>(
     ctx: &dyn FunctionContext<'b>,
     base: &ReferenceType,
-) -> Result<(Option<String>, u32, u32, u32, u32), ExcelError> {
+) -> Result<Option<ReferenceBounds>, ExcelError> {
     match base {
         ReferenceType::Range {
             sheet,
@@ -107,24 +136,22 @@ fn resolve_reference_bounds<'b>(
             if let (Some(sr), Some(sc), Some(er), Some(ec)) =
                 (start_row, start_col, end_row, end_col)
             {
-                return Ok((sheet.clone(), *sr, *sc, *er, *ec));
+                return Ok(Some((sheet.clone(), *sr, *sc, *er, *ec)));
             }
             let rv = ctx.resolve_range_view(base, ctx.current_sheet())?;
-            if rv.is_empty() {
-                return Err(ExcelError::new(ExcelErrorKind::Ref));
-            }
-            // RangeView exposes absolute 0-based coordinates; ReferenceType is 1-based.
-            Ok((
-                sheet.clone(),
-                rv.start_row() as u32 + 1,
-                rv.start_col() as u32 + 1,
-                rv.end_row() as u32 + 1,
-                rv.end_col() as u32 + 1,
-            ))
+            view_bounds(&rv, sheet.clone()).map(Some)
         }
         ReferenceType::Cell {
             sheet, row, col, ..
-        } => Ok((sheet.clone(), *row, *col, *row, *col)),
+        } => Ok(Some((sheet.clone(), *row, *col, *row, *col))),
+        ReferenceType::NamedRange(_) => {
+            let rv = ctx.resolve_range_view(base, ctx.current_sheet())?;
+            if !rv.is_sheet_backed() {
+                return Ok(None);
+            }
+            let sheet = Some(rv.sheet_name().to_string());
+            view_bounds(&rv, sheet).map(Some)
+        }
         _ => Err(ExcelError::new(ExcelErrorKind::Ref)),
     }
 }
@@ -220,7 +247,10 @@ impl IndexFn {
         };
 
         let (sheet, sr, sc, er, ec) = match resolve_reference_bounds(ctx, &base) {
-            Ok(bounds) => bounds,
+            Ok(Some(bounds)) => bounds,
+            // A name bound to a value rather than a sheet region: let `eval`
+            // index its value (`INDEX(K,1)` with `K` defined as `=5` is `5`).
+            Ok(None) => return None,
             Err(error) => return Some(Err(error)),
         };
         let (row, col) = match explicit_col {
@@ -700,7 +730,13 @@ impl Function for OffsetFn {
         // Unbounded ranges (e.g. B:B, 2:2) are clamped to the used region
         // instead of erroring.
         let (sheet, sr, sc, er, ec) = match resolve_reference_bounds(ctx, &base) {
-            Ok(bounds) => bounds,
+            Ok(Some(bounds)) => bounds,
+            // A name bound to a value rather than a sheet region has no cells
+            // to offset from; Excel answers `#VALUE!`.
+            Ok(None) => {
+                return Some(Err(ExcelError::new(ExcelErrorKind::Value)
+                    .with_message("OFFSET reference is a name bound to a value")));
+            }
             Err(e) => return Some(Err(e)),
         };
 
@@ -755,25 +791,30 @@ impl Function for OffsetFn {
         args: &'c [ArgumentHandle<'a, 'b>],
         ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
-        if let Some(Ok(r)) = self.eval_reference(args, ctx) {
-            let current_sheet = ctx.current_sheet();
-            match ctx.resolve_range_view(&r, current_sheet) {
-                Ok(rv) => {
-                    let (rows, cols) = rv.dims();
-                    if rows == 1 && cols == 1 {
-                        Ok(crate::traits::CalcValue::Scalar(
-                            rv.as_1x1().unwrap_or(LiteralValue::Empty),
-                        ))
-                    } else {
-                        Ok(crate::traits::CalcValue::Range(rv))
-                    }
-                }
-                Err(e) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
+        let r = match self.eval_reference(args, ctx) {
+            Some(Ok(r)) => r,
+            // Report the error the reference path found (an undefined name is
+            // `#NAME?`, a name bound to a value `#VALUE!`), as the reference
+            // callers of `eval_reference` already see it.
+            Some(Err(e)) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
+            None => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new(ExcelErrorKind::Ref),
+                )));
             }
-        } else {
-            Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                ExcelError::new(ExcelErrorKind::Ref),
-            )))
+        };
+        match ctx.resolve_range_view(&r, ctx.current_sheet()) {
+            Ok(rv) => {
+                let (rows, cols) = rv.dims();
+                if rows == 1 && cols == 1 {
+                    Ok(crate::traits::CalcValue::Scalar(
+                        rv.as_1x1().unwrap_or(LiteralValue::Empty),
+                    ))
+                } else {
+                    Ok(crate::traits::CalcValue::Range(rv))
+                }
+            }
+            Err(e) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         }
     }
 }

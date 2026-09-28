@@ -3026,13 +3026,15 @@ impl Function for SequenceFn {
         };
         let rows_f = num(&args[0])?;
         let rows = rows_f as i64;
-        let cols = if args.len() >= 2 {
-            num(&args[1])? as i64
-        } else {
-            1
+        let optional_num = |index: usize, default: f64| -> Result<f64, ExcelError> {
+            match args.get(index) {
+                Some(arg) if !arg.is_omitted() => num(arg),
+                _ => Ok(default),
+            }
         };
-        let start = if args.len() >= 3 { num(&args[2])? } else { 1.0 };
-        let step = if args.len() >= 4 { num(&args[3])? } else { 1.0 };
+        let cols = optional_num(1, 1.0)? as i64;
+        let start = optional_num(2, 1.0)?;
+        let step = optional_num(3, 1.0)?;
         if rows <= 0 || cols <= 0 {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new(ExcelErrorKind::Value),
@@ -4366,6 +4368,56 @@ mod tests {
                 assert_eq!(a[0][0], LiteralValue::Number(5.0));
             }
             other => panic!("expected array got {other:?}"),
+        }
+    }
+
+    fn eval_sequence_formula(formula: &str, wb: TestWorkbook) -> LiteralValue {
+        let wb = wb.with_function(Arc::new(SequenceFn));
+        let ctx = wb.interpreter();
+        match ctx.evaluate_ast(&formualizer_parse::parser::parse(formula).unwrap()) {
+            Ok(value) => value.into_literal(),
+            Err(error) => LiteralValue::Error(error),
+        }
+    }
+
+    #[test]
+    fn sequence_omitted_optional_arguments_use_documented_defaults() {
+        // https://support.microsoft.com/en-us/office/sequence-function-57467a98-57e0-4817-9f14-2eb78519ca90
+        // documents columns, start and step as optional with a default of 1.
+        let cases = [
+            ("=SEQUENCE(3,,2)", vec![vec![2.0], vec![3.0], vec![4.0]]),
+            ("=SEQUENCE(3,1,,2)", vec![vec![1.0], vec![3.0], vec![5.0]]),
+            ("=SEQUENCE(3,1,2,)", vec![vec![2.0], vec![3.0], vec![4.0]]),
+            ("=SEQUENCE(3,,,2)", vec![vec![1.0], vec![3.0], vec![5.0]]),
+        ];
+
+        for (formula, expected) in cases {
+            let expected = expected
+                .into_iter()
+                .map(|row| row.into_iter().map(LiteralValue::Number).collect())
+                .collect();
+            assert_eq!(
+                eval_sequence_formula(formula, TestWorkbook::new()),
+                LiteralValue::Array(expected),
+                "{formula}"
+            );
+        }
+    }
+
+    #[test]
+    fn sequence_explicit_values_do_not_use_omission_defaults() {
+        assert_eq!(
+            eval_sequence_formula("=SEQUENCE(3,1,0,0)", TestWorkbook::new()),
+            LiteralValue::Array(vec![
+                vec![LiteralValue::Number(0.0)],
+                vec![LiteralValue::Number(0.0)],
+                vec![LiteralValue::Number(0.0)],
+            ])
+        );
+
+        match eval_sequence_formula("=SEQUENCE(3,1,1,1/0)", TestWorkbook::new()) {
+            LiteralValue::Error(error) => assert_eq!(error.kind, ExcelErrorKind::Div),
+            other => panic!("expected #DIV/0!, got {other:?}"),
         }
     }
 

@@ -220,6 +220,31 @@ fn omitted_argument_oracle_table() {
             "oracle: uniform-rule",
             Expected::Error(ExcelErrorKind::Value),
         ),
+        (
+            "=TEXTJOIN(\",\",,SEQUENCE(3,,2))",
+            "oracle: excel-web",
+            Expected::Text("2,3,4"),
+        ),
+        (
+            "=TEXTJOIN(\",\",,SEQUENCE(3,1,,2))",
+            "oracle: excel-web",
+            Expected::Text("1,3,5"),
+        ),
+        (
+            "=TEXTJOIN(\",\",,SEQUENCE(3,1,2,))",
+            "oracle: excel-web",
+            Expected::Text("2,3,4"),
+        ),
+        (
+            "=TEXTJOIN(\",\",,SEQUENCE(3,,,2))",
+            "oracle: excel-web",
+            Expected::Text("1,3,5"),
+        ),
+        (
+            "=TEXTJOIN(\",\",,SEQUENCE(3,1,0,0))",
+            "oracle: excel-web explicit-zero control",
+            Expected::Text("0,0,0"),
+        ),
         ("=LEFT(0,2)", "negative control", Expected::Text("0")),
         (
             "=EXACT(\"\",0)",
