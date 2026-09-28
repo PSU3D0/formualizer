@@ -68,6 +68,9 @@ pub struct MinFn; // MIN(...)
 /// Caps: PURE, REDUCTION, NUMERIC_ONLY
 /// [formualizer-docgen:schema:end]
 impl Function for MinFn {
+    fn family_kernel(&self) -> Option<crate::function::FamilyKernel> {
+        Some(crate::function::FamilyKernel::Min)
+    }
     fn propagate_format(
         &self,
         result: &crate::traits::CalcValue<'_>,
@@ -220,6 +223,9 @@ pub struct MaxFn; // MAX(...)
 /// Caps: PURE, REDUCTION, NUMERIC_ONLY
 /// [formualizer-docgen:schema:end]
 impl Function for MaxFn {
+    fn family_kernel(&self) -> Option<crate::function::FamilyKernel> {
+        Some(crate::function::FamilyKernel::Max)
+    }
     fn propagate_format(
         &self,
         result: &crate::traits::CalcValue<'_>,

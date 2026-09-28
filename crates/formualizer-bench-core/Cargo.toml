@@ -12,7 +12,7 @@ publish = false
 [features]
 default = []
 xlsx = ["dep:formualizer-testkit", "dep:umya-spreadsheet"]
-formualizer_runner = ["xlsx", "dep:formualizer-workbook", "formualizer-workbook/benchmark_internal"]
+formualizer_runner = ["xlsx", "formualizer-testkit/workbook", "dep:formualizer-workbook", "formualizer-workbook/benchmark_internal"]
 c6_calibration = [
   "formualizer_runner",
   "dep:formualizer-sheetport",
@@ -21,6 +21,10 @@ c6_calibration = [
 dhat-heap = ["dep:dhat"]
 perf_instrumentation = ["formualizer-workbook/perf_instrumentation"]
 ironcalc_runner = ["dep:ironcalc"]
+# Program 1 M1a corpus harness for the unified authority; never default.
+unified_authority = ["formualizer_runner", "formualizer-eval/unified_authority"]
+# Build formualizer-eval's legacy dependency structures (differential oracle).
+legacy_oracle = ["formualizer-eval/legacy_oracle"]
 
 [dependencies]
 anyhow = { workspace = true }
@@ -42,6 +46,11 @@ formualizer-common = { workspace = true }
 formualizer-eval = { workspace = true, features = ["formula_plane_diagnostics", "test-support"] }
 dhat = { version = "0.3", optional = true }
 ironcalc = { version = "0.7.1", optional = true }
+
+[[bin]]
+name = "authority-corpus"
+path = "src/bin/authority-corpus.rs"
+required-features = ["unified_authority"]
 
 [[bin]]
 name = "probe-layout-envelope"

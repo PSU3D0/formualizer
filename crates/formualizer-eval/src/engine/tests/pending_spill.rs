@@ -2,9 +2,13 @@ use super::*;
 use crate::test_workbook::TestWorkbook;
 
 fn engine() -> Engine<TestWorkbook> {
+    engine_with(EvalConfig::default())
+}
+
+fn engine_with(config: EvalConfig) -> Engine<TestWorkbook> {
     static BUILTINS: std::sync::OnceLock<()> = std::sync::OnceLock::new();
     BUILTINS.get_or_init(crate::builtins::load_builtins);
-    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    let mut engine = Engine::new(TestWorkbook::new(), config);
     engine.add_sheet("S").unwrap();
     engine
         .set_cell_formula("S", 1, 1, formualizer_parse::parse("=SEQUENCE(2)").unwrap())
@@ -13,7 +17,7 @@ fn engine() -> Engine<TestWorkbook> {
 }
 
 fn anchor(engine: &Engine<TestWorkbook>) -> VertexId {
-    *engine
+    engine
         .graph
         .get_vertex_id_for_address(&engine.graph.make_cell_ref("S", 1, 1))
         .unwrap()
@@ -138,7 +142,11 @@ fn pending_spill_retry_replaces_attempted_shape_after_materialization() {
 
 #[test]
 fn pending_spill_retry_ignores_unrelated_edits_and_prunes_removed_sheets() {
-    let mut engine = engine();
+    // The missing-sheet assignment below must be rejected: explicit Strict
+    // policy since BestEffort became the default.
+    let mut engine = engine_with(
+        EvalConfig::default().with_preparation_policy(crate::engine::PreparationPolicy::Strict),
+    );
     engine.stage_formula_text("S", 2, 1, "99".into());
     spill(&mut engine);
     let vertex = anchor(&engine);

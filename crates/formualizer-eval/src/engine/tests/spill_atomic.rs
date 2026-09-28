@@ -20,7 +20,6 @@ fn spill_commit_is_atomic_under_fault() {
     let anchor_vertex = engine
         .graph
         .get_vertex_id_for_address(&engine.graph.make_cell_ref("Sheet1", 1, 1))
-        .copied()
         .expect("anchor vertex");
 
     // Prepare new 2x3 values and targets
@@ -119,7 +118,6 @@ fn spill_resize_shrink_with_fault_rolls_back() {
     let anchor_vertex = engine
         .graph
         .get_vertex_id_for_address(&engine.graph.make_cell_ref("Sheet1", 1, 1))
-        .copied()
         .expect("anchor vertex");
 
     let rows = vec![vec![LiteralValue::Number(9.0)]];

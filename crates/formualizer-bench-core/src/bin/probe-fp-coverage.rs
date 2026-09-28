@@ -37,8 +37,8 @@ mod probe {
 
     use anyhow::{Context, Result};
     use clap::Parser;
+    use formualizer_eval::engine::template::diagnostics::canonical_template_diagnostic;
     use formualizer_eval::engine::{EvalConfig, FormulaPlaneMode};
-    use formualizer_eval::formula_plane::diagnostics::canonical_template_diagnostic;
     use formualizer_parse::parser::parse;
     use formualizer_testkit::build_workbook;
     use formualizer_testkit::fp_coverage::{CoverageWorkbook, SectionVerdict, generate};

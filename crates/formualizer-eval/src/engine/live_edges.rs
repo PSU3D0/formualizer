@@ -206,6 +206,58 @@ impl LiveEdgeCollector {
     }
 }
 
+/* ───────────────────────── ReadSink ───────────────────────── */
+
+/// Where a [`RecordingContext`] sends observed reads (0-based, inclusive).
+pub trait ReadSink: Send + Sync {
+    fn record_scalar(&self, sheet_id: SheetId, row: u32, col: u32);
+    fn record_rect(&self, sheet_id: SheetId, sr: u32, sc: u32, er: u32, ec: u32);
+    fn record_name(&self, folded_name: &str);
+}
+
+impl ReadSink for LiveEdgeCollector {
+    fn record_scalar(&self, sheet_id: SheetId, row: u32, col: u32) {
+        LiveEdgeCollector::record_scalar(self, sheet_id, row, col)
+    }
+    fn record_rect(&self, sheet_id: SheetId, sr: u32, sc: u32, er: u32, ec: u32) {
+        LiveEdgeCollector::record_rect(self, sheet_id, sr, sc, er, ec)
+    }
+    fn record_name(&self, folded_name: &str) {
+        LiveEdgeCollector::record_name(self, folded_name)
+    }
+}
+
+/// Every read of one evaluation, as rectangles `(sheet, r0, c0, r1, c1)`
+/// (0-based, inclusive; a cell read is a 1×1 rectangle). Names are not
+/// recorded: a name's reads flow through the range view of its definition.
+/// Used by the freshness recorder for dynamic readers (design §8.2).
+#[derive(Default)]
+pub struct ReadLog {
+    reads: Mutex<Vec<ReadRect>>,
+}
+
+/// `(sheet, r0, c0, r1, c1)`, 0-based inclusive.
+pub type ReadRect = (SheetId, u32, u32, u32, u32);
+
+impl ReadLog {
+    pub fn take(&self) -> Vec<ReadRect> {
+        std::mem::take(&mut self.reads.lock().unwrap())
+    }
+}
+
+impl ReadSink for ReadLog {
+    fn record_scalar(&self, sheet_id: SheetId, row: u32, col: u32) {
+        self.reads
+            .lock()
+            .unwrap()
+            .push((sheet_id, row, col, row, col));
+    }
+    fn record_rect(&self, sheet_id: SheetId, sr: u32, sc: u32, er: u32, ec: u32) {
+        self.reads.lock().unwrap().push((sheet_id, sr, sc, er, ec));
+    }
+    fn record_name(&self, _folded_name: &str) {}
+}
+
 /* ───────────────────────── RecordingContext ───────────────────────── */
 
 /// Delegating [`EvaluationContext`] that wraps `&Engine<R>` and records reads
@@ -236,13 +288,13 @@ impl LiveEdgeCollector {
 ///   fallback is invisible.
 /// * `TableResolver::resolve_table_reference` — returns an opaque `Table`.
 ///   Engine-registered tables flow through `resolve_range_view` (intercepted).
-pub struct RecordingContext<'a, R: EvaluationContext> {
+pub struct RecordingContext<'a, R: EvaluationContext, S: ReadSink = LiveEdgeCollector> {
     engine: &'a Engine<R>,
-    collector: &'a LiveEdgeCollector,
+    collector: &'a S,
 }
 
-impl<'a, R: EvaluationContext> RecordingContext<'a, R> {
-    pub fn new(engine: &'a Engine<R>, collector: &'a LiveEdgeCollector) -> Self {
+impl<'a, R: EvaluationContext, S: ReadSink> RecordingContext<'a, R, S> {
+    pub fn new(engine: &'a Engine<R>, collector: &'a S) -> Self {
         Self { engine, collector }
     }
 
@@ -282,7 +334,7 @@ impl<'a, R: EvaluationContext> RecordingContext<'a, R> {
     }
 }
 
-impl<'a, R: EvaluationContext> ReferenceResolver for RecordingContext<'a, R> {
+impl<'a, R: EvaluationContext, S: ReadSink> ReferenceResolver for RecordingContext<'a, R, S> {
     fn resolve_cell_reference(
         &self,
         sheet: Option<&str>,
@@ -299,7 +351,7 @@ impl<'a, R: EvaluationContext> ReferenceResolver for RecordingContext<'a, R> {
     }
 }
 
-impl<'a, R: EvaluationContext> RangeResolver for RecordingContext<'a, R> {
+impl<'a, R: EvaluationContext, S: ReadSink> RangeResolver for RecordingContext<'a, R, S> {
     fn resolve_range_reference(
         &self,
         sheet: Option<&str>,
@@ -330,7 +382,7 @@ impl<'a, R: EvaluationContext> RangeResolver for RecordingContext<'a, R> {
     }
 }
 
-impl<'a, R: EvaluationContext> NamedRangeResolver for RecordingContext<'a, R> {
+impl<'a, R: EvaluationContext, S: ReadSink> NamedRangeResolver for RecordingContext<'a, R, S> {
     fn resolve_named_range_reference(
         &self,
         name: &str,
@@ -343,7 +395,7 @@ impl<'a, R: EvaluationContext> NamedRangeResolver for RecordingContext<'a, R> {
     }
 }
 
-impl<'a, R: EvaluationContext> TableResolver for RecordingContext<'a, R> {
+impl<'a, R: EvaluationContext, S: ReadSink> TableResolver for RecordingContext<'a, R, S> {
     fn resolve_table_reference(&self, tref: &TableReference) -> Result<Box<dyn Table>, ExcelError> {
         // Opaque `Table` without region context; engine-registered tables are
         // intercepted in `resolve_range_view` instead.
@@ -351,7 +403,7 @@ impl<'a, R: EvaluationContext> TableResolver for RecordingContext<'a, R> {
     }
 }
 
-impl<'a, R: EvaluationContext> SourceResolver for RecordingContext<'a, R> {
+impl<'a, R: EvaluationContext, S: ReadSink> SourceResolver for RecordingContext<'a, R, S> {
     fn source_scalar_version(&self, name: &str) -> Option<u64> {
         self.engine.source_scalar_version(name)
     }
@@ -366,9 +418,9 @@ impl<'a, R: EvaluationContext> SourceResolver for RecordingContext<'a, R> {
     }
 }
 
-impl<'a, R: EvaluationContext> Resolver for RecordingContext<'a, R> {}
+impl<'a, R: EvaluationContext, S: ReadSink> Resolver for RecordingContext<'a, R, S> {}
 
-impl<'a, R: EvaluationContext> FunctionProvider for RecordingContext<'a, R> {
+impl<'a, R: EvaluationContext, S: ReadSink> FunctionProvider for RecordingContext<'a, R, S> {
     fn planning_semantic_revision(&self) -> Option<u64> {
         self.engine.planning_semantic_revision()
     }
@@ -390,7 +442,7 @@ impl<'a, R: EvaluationContext> FunctionProvider for RecordingContext<'a, R> {
     }
 }
 
-impl<'a, R: EvaluationContext> EvaluationContext for RecordingContext<'a, R> {
+impl<'a, R: EvaluationContext, S: ReadSink> EvaluationContext for RecordingContext<'a, R, S> {
     /* ── intercept-and-record ── */
 
     fn resolve_range_view<'c>(

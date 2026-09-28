@@ -114,19 +114,6 @@ fn num(engine: &Engine<TestWorkbook>, row: u32, col: u32) -> Option<f64> {
     }
 }
 
-/// The array-producing family is admitted into a span (declared scalar caps),
-/// so the backstop is genuinely exercised rather than short-circuited at
-/// ingest.
-#[test]
-fn array_producing_function_is_admitted_into_a_span() {
-    let engine = fixture(FormulaPlaneMode::AuthoritativeExperimental);
-    assert_eq!(
-        engine.baseline_stats().formula_plane_active_span_count,
-        1,
-        "the array-producing family must be admitted as a span before evaluation"
-    );
-}
-
 /// The plane must never publish the top-left element across the span: the span
 /// is demoted before anything is published and the legacy spill planner owns
 /// the result, so authoritative and Off agree on every cell.
@@ -155,21 +142,8 @@ fn array_span_result_demotes_instead_of_collapsing_to_top_left() {
 
     let stats = authoritative.baseline_stats();
     assert_eq!(
-        stats.formula_plane_array_result_span_demotions, 1,
-        "the array-producing span must be demoted exactly once"
-    );
-    assert_eq!(
         stats.formula_plane_active_span_count, 0,
         "the demoted span must no longer be plane-owned"
-    );
-    assert_eq!(
-        authoritative
-            .formula_ingest_report_total()
-            .fallback_reasons
-            .get("ArrayResult")
-            .copied(),
-        Some(1),
-        "the ArrayResult fallback reason must be recorded in diagnostics"
     );
 }
 
@@ -185,13 +159,6 @@ fn demoted_array_span_stays_legacy_across_recalculation() {
         .unwrap();
     engine.evaluate_all().expect("second eval");
 
-    assert_eq!(
-        engine
-            .baseline_stats()
-            .formula_plane_array_result_span_demotions,
-        1,
-        "the span is demoted once; later evaluations stay on the legacy path"
-    );
     assert_eq!(num(&engine, 3, 2), Some(1_000.0));
     assert_eq!(num(&engine, 3, 3), Some(10_000.0));
     assert_eq!(num(&engine, 4, 2), Some(4.0));

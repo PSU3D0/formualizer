@@ -670,6 +670,17 @@ fn reference_value_contains_range_colon(value: &str) -> bool {
     value_part.contains(':')
 }
 
+/// Whether a pending operand contains a structured-reference bracket
+/// (`Table1[Col]`, `Sheet1!Table1[Col]`). A bracket that only appears in the
+/// sheet qualifier is an external workbook (`[1]Sheet1!A1`,
+/// `'[Book.xlsx]Sheet 1'!A1`), whose `:` continues the same range reference.
+fn value_has_structured_reference_bracket(value: &str) -> bool {
+    value
+        .rsplit_once('!')
+        .map_or(value, |(_, value_part)| value_part)
+        .contains('[')
+}
+
 fn is_reference_operand_value(value: &str) -> bool {
     operand_subtype(value) == TokenSubType::Range
         && (reference_value_contains_range_colon(value)
@@ -1310,7 +1321,7 @@ impl<'a> SpanTokenizer<'a> {
                 return false;
             }
             return reference_value_contains_range_colon(value)
-                || value.contains('[')
+                || value_has_structured_reference_bracket(value)
                 || (value.contains('!')
                     && next_reference_has_sheet_qualifier(self.formula, self.offset + 1));
         }
@@ -2090,7 +2101,7 @@ impl Tokenizer {
                 return false;
             }
             return reference_value_contains_range_colon(value)
-                || value.contains('[')
+                || value_has_structured_reference_bracket(value)
                 || (value.contains('!')
                     && next_reference_has_sheet_qualifier(&self.formula, self.offset + 1));
         }

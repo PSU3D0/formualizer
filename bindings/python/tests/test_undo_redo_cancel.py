@@ -328,11 +328,8 @@ class TestEdgeCases:
         assert wb.get_value("S1", 1, 2) == 30.0
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="#301: rewritten empty precedent loses dependency",
-)
+# #301 is fixed by the dependency authority (Program 1): dependencies are
+# derived from formulas, so undo cannot leave a rewritten precedent unlinked.
 def test_rewrite_previously_empty_precedent_after_undo():
     wb = fz.Workbook()
     sheet = wb.sheet("S1")

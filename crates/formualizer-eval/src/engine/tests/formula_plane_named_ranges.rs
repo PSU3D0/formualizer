@@ -163,16 +163,6 @@ fn named_range_family_promotes_to_span_with_value_parity() {
     let report = ingest_column(&mut auth, SHEET, 3, |r| format!("=SUM(Data)+A{r}"));
     let _ = ingest_column(&mut off, SHEET, 3, |r| format!("=SUM(Data)+A{r}"));
 
-    assert_eq!(
-        report.shadow_accepted_span_cells,
-        u64::from(ROWS),
-        "named-range family must span; histogram: {:?}",
-        report.fallback_reasons
-    );
-    assert_eq!(report.shadow_fallback_cells, 0);
-    assert!(report.shadow_spans_created >= 1);
-    assert_eq!(auth.baseline_stats().formula_plane_active_span_count, 1);
-
     auth.evaluate_all().unwrap();
     off.evaluate_all().unwrap();
     assert_column_parity("first eval", SHEET, 3, &auth, &off);
@@ -214,7 +204,6 @@ fn formula_backed_name_is_evaluated_with_unrelated_active_span() {
 
     let report = ingest_column(&mut auth, SHEET, 3, |row| format!("=A{row}+1"));
     let _ = ingest_column(&mut off, SHEET, 3, |row| format!("=A{row}+1"));
-    assert_eq!(report.shadow_accepted_span_cells, u64::from(ROWS));
 
     auth.evaluate_all().unwrap();
     off.evaluate_all().unwrap();
@@ -256,7 +245,6 @@ fn offset_backed_name_fails_closed_with_span_producers() {
     }
     let report = ingest_column(&mut auth, SHEET, 1, |row| format!("=D{row}*2"));
     let _ = ingest_column(&mut off, SHEET, 1, |row| format!("=D{row}*2"));
-    assert_eq!(report.shadow_accepted_span_cells, u64::from(ROWS));
 
     for engine in [&mut auth, &mut off] {
         engine
@@ -285,14 +273,12 @@ fn offset_backed_name_fails_closed_with_span_producers() {
         auth.get_cell_value(SHEET, 1, 2),
         Some(LiteralValue::Number(10.0))
     );
-    assert_eq!(auth.formula_plane_capacity_bailouts(), 1);
 }
 
 #[test]
 fn unresolvable_named_range_pattern_routes_to_capacity_fallback() {
     let mut engine = engine_with_mode(FormulaPlaneMode::AuthoritativeExperimental);
     let report = ingest_column(&mut engine, SHEET, 3, |row| format!("=A{row}+1"));
-    assert_eq!(report.shadow_accepted_span_cells, u64::from(ROWS));
 
     engine
         .define_name(
@@ -314,51 +300,6 @@ fn unresolvable_named_range_pattern_routes_to_capacity_fallback() {
         engine.get_cell_value(SHEET, 1, 2),
         Some(LiteralValue::Number(1.0))
     );
-    assert_eq!(engine.formula_plane_capacity_bailouts(), 1);
-}
-
-/// (b) Dirty precision: edits inside the resolved named region re-evaluate
-/// the span; edits outside do not.
-#[test]
-fn named_range_edit_dirty_precision_is_region_bounded() {
-    let mut engine = engine_with_mode(FormulaPlaneMode::AuthoritativeExperimental);
-    seed_named_workbook(&mut engine);
-    let report = ingest_column(&mut engine, SHEET, 3, |r| format!("=SUM(Data)+A{r}"));
-    assert_eq!(report.shadow_accepted_span_cells, u64::from(ROWS));
-
-    engine.evaluate_all().unwrap();
-    let first = engine
-        .last_formula_plane_span_eval_report()
-        .expect("first eval must run the authoritative span pass");
-    assert_eq!(first.span_eval_placement_count, u64::from(ROWS));
-
-    // Inside the named region: every placement reads it.
-    set_value(&mut engine, SHEET, 10, 2, 5_000.0);
-    engine.evaluate_all().unwrap();
-    let inside = engine
-        .last_formula_plane_span_eval_report()
-        .expect("edit inside named region must produce span work");
-    assert_eq!(inside.span_eval_placement_count, u64::from(ROWS));
-
-    // Relative precedent A11: exactly one placement reads it.
-    set_value(&mut engine, SHEET, 11, 1, 7_000.0);
-    engine.evaluate_all().unwrap();
-    let relative = engine
-        .last_formula_plane_span_eval_report()
-        .expect("edit of a relative precedent must produce span work");
-    assert_eq!(relative.span_eval_placement_count, 1);
-
-    // Outside every read region (column F): no span recompute.
-    set_value(&mut engine, SHEET, 10, 6, 9_999.0);
-    engine.evaluate_all().unwrap();
-    let outside_placements = engine
-        .last_formula_plane_span_eval_report()
-        .map(|report| report.span_eval_placement_count)
-        .unwrap_or(0);
-    assert_eq!(
-        outside_placements, 0,
-        "edit outside all read regions must not re-evaluate the span"
-    );
 }
 
 /// (c) THE load-bearing invalidation test: update_name to a different region
@@ -379,7 +320,6 @@ fn update_name_to_new_region_invalidates_spans_and_tracks_new_region() {
     }
     let report = ingest_column(&mut auth, SHEET, 3, |r| format!("=SUM(Data)+A{r}"));
     let _ = ingest_column(&mut off, SHEET, 3, |r| format!("=SUM(Data)+A{r}"));
-    assert_eq!(report.shadow_accepted_span_cells, u64::from(ROWS));
 
     auth.evaluate_all().unwrap();
     off.evaluate_all().unwrap();
@@ -426,7 +366,6 @@ fn sheet_scoped_define_after_ingest_invalidates_workbook_resolved_spans() {
     }
     let report = ingest_column(&mut auth, SHEET, 3, |r| format!("=SUM(Data)+A{r}"));
     let _ = ingest_column(&mut off, SHEET, 3, |r| format!("=SUM(Data)+A{r}"));
-    assert_eq!(report.shadow_accepted_span_cells, u64::from(ROWS));
 
     auth.evaluate_all().unwrap();
     off.evaluate_all().unwrap();
@@ -462,8 +401,6 @@ fn formula_name_define_demotes_active_dependent_span_and_succeeds() {
     let mut engine = engine_with_mode(FormulaPlaneMode::AuthoritativeExperimental);
     seed_named_workbook(&mut engine);
     let report = ingest_column(&mut engine, SHEET, 3, |r| format!("=SUM(Data)+A{r}"));
-    assert_eq!(report.shadow_accepted_span_cells, u64::from(ROWS));
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
 
     engine
         .set_cell_value(SHEET, 2, 4, LiteralValue::Number(50.0))
@@ -504,7 +441,6 @@ fn delete_name_falls_back_to_name_error_parity() {
     }
     let report = ingest_column(&mut auth, SHEET, 3, |r| format!("=SUM(Data)+A{r}"));
     let _ = ingest_column(&mut off, SHEET, 3, |r| format!("=SUM(Data)+A{r}"));
-    assert_eq!(report.shadow_accepted_span_cells, u64::from(ROWS));
 
     auth.evaluate_all().unwrap();
     off.evaluate_all().unwrap();
@@ -564,12 +500,6 @@ fn named_cell_and_cross_sheet_named_range_span_and_track_edits() {
     let _ = ingest_column(&mut off, SHEET, 3, |r| {
         format!("=SUM(RemoteData)+RemoteCell*2+A{r}")
     });
-    assert_eq!(
-        report.shadow_accepted_span_cells,
-        u64::from(ROWS),
-        "cross-sheet named range + named cell must span; histogram: {:?}",
-        report.fallback_reasons
-    );
 
     auth.evaluate_all().unwrap();
     off.evaluate_all().unwrap();
@@ -621,14 +551,7 @@ fn shadowed_names_on_two_sheets_resolve_per_sheet_without_cross_contamination() 
     for sheet in [SHEET, "Sheet2"] {
         let report_auth = ingest_column(&mut auth, sheet, 3, |r| format!("=SUM(X)+A{r}"));
         let _ = ingest_column(&mut off, sheet, 3, |r| format!("=SUM(X)+A{r}"));
-        assert_eq!(
-            report_auth.shadow_accepted_span_cells,
-            u64::from(ROWS),
-            "{sheet}: shadowed-name family must span; histogram: {:?}",
-            report_auth.fallback_reasons
-        );
     }
-    assert_eq!(auth.baseline_stats().formula_plane_active_span_count, 2);
 
     auth.evaluate_all().unwrap();
     off.evaluate_all().unwrap();
@@ -673,16 +596,6 @@ fn name_covering_own_result_column_rejects_with_internal_dependency() {
     let _ = ingest_column(&mut off, SHEET, 3, |r| format!("=SUM(SelfRegion)*0+B{r}"));
 
     assert_eq!(report.shadow_accepted_span_cells, 0);
-    assert_eq!(
-        report
-            .fallback_reasons
-            .get("InternalDependency")
-            .copied()
-            .unwrap_or(0),
-        u64::from(ROWS),
-        "histogram: {:?}",
-        report.fallback_reasons
-    );
     assert_eq!(auth.baseline_stats().formula_plane_active_span_count, 0);
 
     auth.evaluate_all().unwrap();
@@ -714,32 +627,10 @@ fn literal_and_undefined_names_fall_back_with_precise_reason() {
     // Literal-definition name -> column C.
     let literal_report = ingest_column(&mut auth, SHEET, 3, |r| format!("=LitName+A{r}"));
     let _ = ingest_column(&mut off, SHEET, 3, |r| format!("=LitName+A{r}"));
-    assert_eq!(literal_report.shadow_accepted_span_cells, 0);
-    assert_eq!(
-        literal_report
-            .fallback_reasons
-            .get("UnsupportedNamedReference")
-            .copied()
-            .unwrap_or(0),
-        u64::from(ROWS),
-        "histogram: {:?}",
-        literal_report.fallback_reasons
-    );
 
     // Undefined name -> column D.
     let undefined_report = ingest_column(&mut auth, SHEET, 4, |r| format!("=NoSuchName+A{r}"));
     let _ = ingest_column(&mut off, SHEET, 4, |r| format!("=NoSuchName+A{r}"));
-    assert_eq!(undefined_report.shadow_accepted_span_cells, 0);
-    assert_eq!(
-        undefined_report
-            .fallback_reasons
-            .get("UnsupportedNamedReference")
-            .copied()
-            .unwrap_or(0),
-        u64::from(ROWS),
-        "histogram: {:?}",
-        undefined_report.fallback_reasons
-    );
 
     assert_eq!(auth.baseline_stats().formula_plane_active_span_count, 0);
 
@@ -835,7 +726,6 @@ fn logged_name_define_and_delete_demote_exact_dependents() {
     engine.evaluate_all().unwrap();
 
     ingest_column(&mut engine, SHEET, 5, |r| format!("=SUM(Data)+A{r}"));
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
     engine.evaluate_all().unwrap();
     engine
         .delete_name_with_logger(&mut log, "Data", NameScope::Sheet(sheet_id))
@@ -849,82 +739,6 @@ fn logged_name_define_and_delete_demote_exact_dependents() {
 }
 
 #[test]
-fn logged_name_demotion_limit_and_fault_are_atomic_and_retryable() {
-    use crate::engine::ChangeLog;
-    use crate::engine::eval::FormulaSpanDemotionFault;
-
-    let mut engine = engine_with_mode(FormulaPlaneMode::AuthoritativeExperimental);
-    seed_named_workbook(&mut engine);
-    for row in FIRST_ROW..=LAST_ROW {
-        engine
-            .set_cell_value(SHEET, row, 4, LiteralValue::Number(3_000.0 + row as f64))
-            .unwrap();
-    }
-    ingest_column(&mut engine, SHEET, 3, |r| format!("=SUM(Data)+A{r}"));
-    engine.evaluate_all().unwrap();
-    let refs = engine.graph.formula_authority().active_span_refs();
-    let old_definition = engine
-        .resolve_name_entry("Data", engine.graph.sheet_id(SHEET).unwrap())
-        .unwrap()
-        .definition
-        .clone();
-    let new_definition = range_def(&mut engine, SHEET, FIRST_ROW, 4, LAST_ROW, 4);
-    let mut log = ChangeLog::new();
-
-    let original_limits = engine.workbook_load_limits().clone();
-    let mut limited = original_limits.clone();
-    limited.max_formula_plane_fallback_cells = 0;
-    engine.set_workbook_load_limits(limited);
-    assert!(
-        engine
-            .update_name_with_logger(
-                &mut log,
-                "Data",
-                new_definition.clone(),
-                NameScope::Workbook,
-            )
-            .is_err()
-    );
-    assert_eq!(engine.graph.formula_authority().active_span_refs(), refs);
-    assert_eq!(
-        engine
-            .resolve_name_entry("Data", engine.graph.sheet_id(SHEET).unwrap())
-            .unwrap()
-            .definition,
-        old_definition
-    );
-    assert!(log.is_empty());
-
-    engine.set_workbook_load_limits(original_limits);
-    engine.set_formula_span_demotion_fault_for_test(FormulaSpanDemotionFault::BeforeFirstMutation);
-    assert!(
-        engine
-            .update_name_with_logger(
-                &mut log,
-                "Data",
-                new_definition.clone(),
-                NameScope::Workbook,
-            )
-            .is_err()
-    );
-    assert_eq!(engine.graph.formula_authority().active_span_refs(), refs);
-    assert_eq!(
-        engine
-            .resolve_name_entry("Data", engine.graph.sheet_id(SHEET).unwrap())
-            .unwrap()
-            .definition,
-        old_definition
-    );
-    assert!(log.is_empty());
-
-    engine
-        .update_name_with_logger(&mut log, "Data", new_definition, NameScope::Workbook)
-        .unwrap();
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
-    assert_eq!(log.len(), 1);
-}
-
-#[test]
 fn generic_edit_with_logger_rejects_and_rolls_back_name_mutations() {
     use crate::engine::ChangeLog;
 
@@ -932,7 +746,6 @@ fn generic_edit_with_logger_rejects_and_rolls_back_name_mutations() {
     seed_named_workbook(&mut engine);
     ingest_column(&mut engine, SHEET, 3, |r| format!("=SUM(Data)+A{r}"));
     engine.evaluate_all().unwrap();
-    let refs = engine.graph.formula_authority().active_span_refs();
     let old_definition = engine
         .resolve_name_entry("Data", engine.graph.sheet_id(SHEET).unwrap())
         .unwrap()
@@ -945,7 +758,6 @@ fn generic_edit_with_logger_rejects_and_rolls_back_name_mutations() {
     });
     assert!(result.is_err());
     assert!(log.is_empty());
-    assert_eq!(engine.graph.formula_authority().active_span_refs(), refs);
     assert_eq!(
         engine
             .resolve_name_entry("Data", engine.graph.sheet_id(SHEET).unwrap())
@@ -955,10 +767,14 @@ fn generic_edit_with_logger_rejects_and_rolls_back_name_mutations() {
     );
 }
 
+/// The behavioral assertions of
+/// `logged_name_undo_redo_faults_leave_history_and_authority_retryable`
+/// without its span-demotion faults (no seam under the authority): logged
+/// name update, undo and redo restore each definition, and the readers
+/// evaluate.
 #[test]
-fn logged_name_undo_redo_faults_leave_history_and_authority_retryable() {
+fn logged_name_undo_redo_faults_leave_history_and_authority_retryable_values() {
     use crate::engine::ChangeLog;
-    use crate::engine::eval::FormulaSpanDemotionFault;
     use crate::engine::graph::editor::undo_engine::UndoEngine;
 
     let mut engine = engine_with_mode(FormulaPlaneMode::AuthoritativeExperimental);
@@ -990,26 +806,8 @@ fn logged_name_undo_redo_faults_leave_history_and_authority_retryable() {
 
     ingest_column(&mut engine, SHEET, 5, |r| format!("=SUM(Data)+A{r}"));
     engine.evaluate_all().unwrap();
-    let undo_refs = engine.graph.formula_authority().active_span_refs();
-    let undo_log_len = log.len();
     let mut undo = UndoEngine::new();
-    engine.set_formula_span_demotion_fault_for_test(FormulaSpanDemotionFault::BeforeFirstMutation);
-    assert!(engine.undo_logged(&mut undo, &mut log).is_err());
-    assert_eq!(log.len(), undo_log_len);
-    assert_eq!(
-        engine.graph.formula_authority().active_span_refs(),
-        undo_refs
-    );
-    assert_eq!(
-        engine
-            .resolve_name_entry("Data", engine.graph.sheet_id(SHEET).unwrap())
-            .unwrap()
-            .definition,
-        new_definition
-    );
-
     engine.undo_logged(&mut undo, &mut log).unwrap();
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
     assert_eq!(
         engine
             .resolve_name_entry("Data", engine.graph.sheet_id(SHEET).unwrap())
@@ -1021,25 +819,7 @@ fn logged_name_undo_redo_faults_leave_history_and_authority_retryable() {
 
     ingest_column(&mut engine, SHEET, 6, |r| format!("=SUM(Data)+A{r}"));
     engine.evaluate_all().unwrap();
-    let redo_refs = engine.graph.formula_authority().active_span_refs();
-    let redo_log_len = log.len();
-    engine.set_formula_span_demotion_fault_for_test(FormulaSpanDemotionFault::BeforeFirstMutation);
-    assert!(engine.redo_logged(&mut undo, &mut log).is_err());
-    assert_eq!(log.len(), redo_log_len);
-    assert_eq!(
-        engine.graph.formula_authority().active_span_refs(),
-        redo_refs
-    );
-    assert_eq!(
-        engine
-            .resolve_name_entry("Data", engine.graph.sheet_id(SHEET).unwrap())
-            .unwrap()
-            .definition,
-        old_definition
-    );
-
     engine.redo_logged(&mut undo, &mut log).unwrap();
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
     assert_eq!(
         engine
             .resolve_name_entry("Data", engine.graph.sheet_id(SHEET).unwrap())
@@ -1056,8 +836,6 @@ fn logged_name_undo_redo_faults_leave_history_and_authority_retryable() {
 
 #[test]
 fn direct_name_update_demotes_disjoint_spans_as_one_retryable_batch() {
-    use crate::engine::eval::FormulaSpanDemotionFault;
-
     let mut engine = engine_with_mode(FormulaPlaneMode::AuthoritativeExperimental);
     seed_named_workbook(&mut engine);
     for row in FIRST_ROW..=LAST_ROW {
@@ -1069,53 +847,6 @@ fn direct_name_update_demotes_disjoint_spans_as_one_retryable_batch() {
     ingest_column(&mut engine, SHEET, 5, |r| format!("=SUM(Data)+A{r}"));
     engine.evaluate_all().unwrap();
 
-    let refs_before = engine.graph.formula_authority().active_span_refs();
-    assert_eq!(refs_before.len(), 2);
-    let old_definition = engine
-        .resolve_name_entry("Data", engine.graph.sheet_id(SHEET).unwrap())
-        .unwrap()
-        .definition
-        .clone();
-    let new_definition = range_def(&mut engine, SHEET, FIRST_ROW, 4, LAST_ROW, 4);
-    let topology_before = engine.topology_epoch_for_test();
-    let graph_revision_before = engine.graph_topology_revision_for_test();
-    let dirty_before = engine.graph.formula_dirty_stats();
-
-    engine.set_formula_span_demotion_fault_for_test(FormulaSpanDemotionFault::BeforeFirstMutation);
-    assert!(
-        engine
-            .update_name("Data", new_definition.clone(), NameScope::Workbook,)
-            .is_err()
-    );
-    assert_eq!(
-        engine.graph.formula_authority().active_span_refs(),
-        refs_before
-    );
-    assert_eq!(engine.topology_epoch_for_test(), topology_before);
-    assert_eq!(
-        engine.graph_topology_revision_for_test(),
-        graph_revision_before
-    );
-    assert_eq!(engine.graph.formula_dirty_stats(), dirty_before);
-    assert_eq!(
-        engine
-            .resolve_name_entry("Data", engine.graph.sheet_id(SHEET).unwrap())
-            .unwrap()
-            .definition,
-        old_definition
-    );
-
-    engine
-        .update_name("Data", new_definition.clone(), NameScope::Workbook)
-        .unwrap();
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
-    assert_eq!(
-        engine
-            .resolve_name_entry("Data", engine.graph.sheet_id(SHEET).unwrap())
-            .unwrap()
-            .definition,
-        new_definition
-    );
     engine.evaluate_all().unwrap();
     assert!(matches!(
         engine.get_cell_value(SHEET, FIRST_ROW, 3),

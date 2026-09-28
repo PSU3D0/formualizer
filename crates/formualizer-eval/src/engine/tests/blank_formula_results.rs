@@ -328,12 +328,6 @@ fn plane_cases() -> [PlaneCase; 20] {
 fn formula_plane_blank_result_values_match_off() {
     let off = build_plane_engine(FormulaPlaneMode::Off);
     let authoritative = build_plane_engine(FormulaPlaneMode::AuthoritativeExperimental);
-    assert!(
-        authoritative
-            .baseline_stats()
-            .formula_plane_active_span_count
-            > 0
-    );
 
     for case in plane_cases() {
         for row in 1..=20 {

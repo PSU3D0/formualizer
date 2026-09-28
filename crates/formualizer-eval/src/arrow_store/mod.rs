@@ -10,7 +10,7 @@ use once_cell::sync::OnceCell;
 use crate::format::FormatId;
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use rustc_hash::FxHashMap;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 /// Compact type tag per row (UInt8 backing)
 #[repr(u8)]
@@ -115,11 +115,106 @@ impl FormatRuns {
         (0..len).map(|offset| self.get(offset).0).collect()
     }
 
+    /// Whether every offset in `[offset, offset + len)` is GENERAL.
+    pub(crate) fn all_general_in(&self, offset: usize, len: usize) -> bool {
+        if len == 0 {
+            return true;
+        }
+        let first = self
+            .run_ends
+            .partition_point(|end| (*end as usize) <= offset);
+        let last_off = offset + len - 1;
+        let mut run = first;
+        loop {
+            match self.format_ids.get(run) {
+                // Past the last run: the default (GENERAL).
+                None => return true,
+                Some(&id) if id != FormatId::GENERAL.0 => return false,
+                Some(_) => {}
+            }
+            match self.run_ends.get(run) {
+                Some(&end) if (end as usize) <= last_off => run += 1,
+                _ => return true,
+            }
+        }
+    }
+
     pub fn slice(&self, offset: usize, len: usize) -> Option<Self> {
         let ids: Vec<_> = (offset..offset.saturating_add(len))
             .map(|i| self.get(i).0)
             .collect();
         Self::from_ids(&ids)
+    }
+}
+
+/// One cached merged lane: valid while the base lane (held, so its
+/// address cannot be reused) and both overlay epochs are unchanged.
+struct MergedLane<T> {
+    base: Arc<T>,
+    key: (u64, u64),
+    merged: Option<Arc<T>>,
+    /// Rows requested (and merged per call) since this key was seen.
+    pending: usize,
+}
+
+#[derive(Default)]
+struct MergedInner {
+    numbers: Option<MergedLane<Float64Array>>,
+    errors: Option<MergedLane<UInt8Array>>,
+}
+
+/// Per-chunk merged-lane cache (interior mutability: range reads are `&self`
+/// and may run on the evaluation pool). Cloning a chunk starts empty.
+#[derive(Default)]
+struct MergedLaneCache {
+    /// Boxed on first use: most chunks are never range-read repeatedly.
+    inner: std::sync::Mutex<Option<Box<MergedInner>>>,
+}
+
+impl Clone for MergedLaneCache {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl std::fmt::Debug for MergedLaneCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("MergedLaneCache")
+    }
+}
+
+impl MergedLaneCache {
+    fn lookup<T>(
+        slot: &mut Option<MergedLane<T>>,
+        base: &Arc<T>,
+        key: (u64, u64),
+        request: usize,
+        chunk_len: usize,
+        build: impl FnOnce() -> Arc<T>,
+    ) -> Option<Arc<T>> {
+        let lane = match slot {
+            Some(lane) if Arc::ptr_eq(&lane.base, base) && lane.key == key => lane,
+            _ => slot.insert(MergedLane {
+                base: base.clone(),
+                key,
+                merged: None,
+                pending: 0,
+            }),
+        };
+        if let Some(merged) = &lane.merged {
+            return Some(merged.clone());
+        }
+        lane.pending = lane.pending.saturating_add(request);
+        // Build only once the rows requested since the last change exceed
+        // two chunks: whole-chunk reads repeated once per change (a formula
+        // re-reading its column after each edit) never pay a full merge
+        // they cannot reuse.
+        if lane.pending <= 2 * chunk_len {
+            return None;
+        }
+        let merged = build();
+        lane.merged = Some(merged.clone());
+        Some(merged)
     }
 }
 
@@ -141,6 +236,9 @@ pub struct ColumnChunk {
     lazy_null_errors: OnceCell<Arc<UInt8Array>>,
     // Cache: lowered text lane, nulls preserved
     lowered_text: OnceCell<ArrayRef>,
+    // Whole-chunk merged (base + overlays) lanes, reused across range reads
+    // until either overlay or the base changes (decision 20.3).
+    merged: MergedLaneCache,
     // Phase C: per-chunk overlay (delta edits since last compaction)
     pub overlay: Overlay,
     // Phase 0/1: separate computed overlay (formula/spill outputs)
@@ -151,6 +249,45 @@ impl ColumnChunk {
     #[inline]
     pub fn len(&self) -> usize {
         self.type_tag.len()
+    }
+
+    /// `range` of the numeric lane with both overlays applied, served from
+    /// the chunk's merged-lane cache. `None` when the cache declines (the
+    /// caller then merges per call): a whole-chunk merge is built only once
+    /// requests since the last change have covered more than two chunks'
+    /// worth of rows, so the cache never costs more than the per-call merges
+    /// it replaces plus one, and reads repeated fewer than three times per
+    /// change retain nothing.
+    pub(crate) fn merged_numbers(
+        &self,
+        range: core::ops::Range<usize>,
+    ) -> Option<Arc<Float64Array>> {
+        let base = self.numbers_or_null();
+        let key = (self.overlay.epoch, self.computed_overlay.epoch);
+        let len = self.len();
+        let mut guard = self.merged.inner.lock().ok()?;
+        let inner = guard.get_or_insert_with(Default::default);
+        let entry =
+            MergedLaneCache::lookup(&mut inner.numbers, &base, key, range.len(), len, || {
+                OverlayCascade::new(&self.overlay, &self.computed_overlay)
+                    .select_numbers(0..len, &base)
+            })?;
+        Some(Arc::new(entry.slice(range.start, range.len())))
+    }
+
+    /// [`Self::merged_numbers`] for the error-code lane.
+    pub(crate) fn merged_errors(&self, range: core::ops::Range<usize>) -> Option<Arc<UInt8Array>> {
+        let base = self.errors_or_null();
+        let key = (self.overlay.epoch, self.computed_overlay.epoch);
+        let len = self.len();
+        let mut guard = self.merged.inner.lock().ok()?;
+        let inner = guard.get_or_insert_with(Default::default);
+        let entry =
+            MergedLaneCache::lookup(&mut inner.errors, &base, key, range.len(), len, || {
+                OverlayCascade::new(&self.overlay, &self.computed_overlay)
+                    .select_errors(0..len, &base)
+            })?;
+        Some(Arc::new(entry.slice(range.start, range.len())))
     }
     #[inline]
     pub fn is_empty(&self) -> bool {
@@ -438,6 +575,10 @@ pub struct IngestBuilder {
 
     // Per-column per-lane non-null counters for current chunk
     lane_counts: Vec<LaneCounts>,
+    // Text payload bytes the previous chunk used per column; sizes the next reserve.
+    next_text_bytes: Vec<usize>,
+    // Builders were consumed by a chunk flush and must be re-created before the next row.
+    needs_provision: bool,
 
     // Accumulated chunks
     chunks: Vec<Vec<ColumnChunk>>, // indexed by col
@@ -453,6 +594,9 @@ struct LaneCounts {
     n_err: usize,
 }
 
+/// Initial lane capacity (rows) of a sheet's first ingest chunk.
+const FIRST_CHUNK_ROWS: usize = 1024;
+
 impl IngestBuilder {
     pub fn new(
         sheet_name: &str,
@@ -462,28 +606,37 @@ impl IngestBuilder {
     ) -> Self {
         let mut chunks = Vec::with_capacity(ncols);
         chunks.resize_with(ncols, Vec::new);
+        // The first chunk's lanes start small and grow: a sheet with fewer
+        // rows than a chunk (most sheets) never reserves chunk-row lanes
+        // for every column, which dominated the load peak of wide sheets.
+        // Later chunks follow a full one, so they reserve a whole chunk.
+        let cap = chunk_rows.clamp(1, FIRST_CHUNK_ROWS);
         Self {
             name: Arc::from(sheet_name.to_string()),
             ncols,
             chunk_rows: chunk_rows.max(1),
             date_system,
             num_builders: (0..ncols)
-                .map(|_| Float64Builder::with_capacity(chunk_rows))
+                .map(|_| Float64Builder::with_capacity(cap))
                 .collect(),
             bool_builders: (0..ncols)
-                .map(|_| BooleanBuilder::with_capacity(chunk_rows))
+                .map(|_| BooleanBuilder::with_capacity(cap))
                 .collect(),
+            // Text payload bytes are reserved lazily: most lanes never see text,
+            // and a text lane grows its value buffer on first use.
             text_builders: (0..ncols)
-                .map(|_| StringBuilder::with_capacity(chunk_rows, chunk_rows * 12))
+                .map(|_| StringBuilder::with_capacity(cap, 0))
                 .collect(),
             err_builders: (0..ncols)
-                .map(|_| UInt8Builder::with_capacity(chunk_rows))
+                .map(|_| UInt8Builder::with_capacity(cap))
                 .collect(),
             tag_builders: (0..ncols)
-                .map(|_| UInt8Builder::with_capacity(chunk_rows))
+                .map(|_| UInt8Builder::with_capacity(cap))
                 .collect(),
-            format_builders: (0..ncols).map(|_| Vec::with_capacity(chunk_rows)).collect(),
+            format_builders: (0..ncols).map(|_| Vec::with_capacity(cap)).collect(),
             lane_counts: vec![LaneCounts::default(); ncols],
+            next_text_bytes: vec![0; ncols],
+            needs_provision: false,
             chunks,
             row_in_chunk: 0,
             total_rows: 0,
@@ -494,6 +647,7 @@ impl IngestBuilder {
     /// Text borrows are copied into the internal StringBuilder.
     pub fn append_row_cells<'a>(&mut self, row: &[CellIngest<'a>]) -> Result<(), ExcelError> {
         assert_eq!(row.len(), self.ncols, "row width mismatch");
+        self.provision_if_needed();
         for (c, cell) in row.iter().enumerate() {
             self.format_builders[c].push(match cell {
                 CellIngest::DateSerial(serial) if serial.fract().abs() > f64::EPSILON => {
@@ -584,6 +738,7 @@ impl IngestBuilder {
         I: ExactSizeIterator<Item = CellIngest<'a>>,
     {
         assert_eq!(iter.len(), self.ncols, "row width mismatch");
+        self.provision_if_needed();
         for (c, cell) in iter.enumerate() {
             self.format_builders[c].push(match cell {
                 CellIngest::DateSerial(serial) if serial.fract().abs() > f64::EPSILON => {
@@ -670,6 +825,7 @@ impl IngestBuilder {
     /// Append a single row of values. Length must match `ncols`.
     pub fn append_row(&mut self, row: &[LiteralValue]) -> Result<(), ExcelError> {
         assert_eq!(row.len(), self.ncols, "row width mismatch");
+        self.provision_if_needed();
 
         for (c, v) in row.iter().enumerate() {
             self.format_builders[c].push(match v {
@@ -792,33 +948,76 @@ impl IngestBuilder {
         Ok(())
     }
 
+    /// Re-create full-capacity lane builders after a chunk flush. Deferred to
+    /// the next appended row so a terminal flush (partial or exactly at a chunk
+    /// boundary) never allocates builders that [`Self::finish`] would drop.
+    #[inline]
+    fn provision_if_needed(&mut self) {
+        if !self.needs_provision {
+            return;
+        }
+        self.needs_provision = false;
+        for c in 0..self.ncols {
+            self.num_builders[c] = Float64Builder::with_capacity(self.chunk_rows);
+            self.bool_builders[c] = BooleanBuilder::with_capacity(self.chunk_rows);
+            // The text payload reserve follows what this column's previous chunk used.
+            self.text_builders[c] =
+                StringBuilder::with_capacity(self.chunk_rows, self.next_text_bytes[c]);
+            self.err_builders[c] = UInt8Builder::with_capacity(self.chunk_rows);
+            self.tag_builders[c] = UInt8Builder::with_capacity(self.chunk_rows);
+            self.format_builders[c] = Vec::with_capacity(self.chunk_rows);
+        }
+    }
+
     fn finish_chunk(&mut self) {
         if self.row_in_chunk == 0 {
             return;
         }
+        // A short chunk (a small sheet, or a sheet's last chunk) copies its
+        // lanes into exact-size buffers: `finish` keeps the builder's
+        // chunk-row capacity, which made every small sheet cost the same as
+        // a full chunk per column (8 bytes x 32k rows per numeric lane).
+        let exact = self.row_in_chunk.saturating_mul(2) <= self.chunk_rows;
         for c in 0..self.ncols {
             let len = self.row_in_chunk;
             let numbers_arc: Option<Arc<Float64Array>> = if self.lane_counts[c].n_num == 0 {
                 None
+            } else if exact {
+                Some(Arc::new(self.num_builders[c].finish_cloned()))
             } else {
                 Some(Arc::new(self.num_builders[c].finish()))
             };
             let booleans_arc: Option<Arc<BooleanArray>> = if self.lane_counts[c].n_bool == 0 {
                 None
+            } else if exact {
+                Some(Arc::new(self.bool_builders[c].finish_cloned()))
             } else {
                 Some(Arc::new(self.bool_builders[c].finish()))
             };
+            let mut text_bytes = 0usize;
             let text_ref: Option<ArrayRef> = if self.lane_counts[c].n_text == 0 {
                 None
             } else {
-                Some(Arc::new(self.text_builders[c].finish()))
+                let text = if exact {
+                    self.text_builders[c].finish_cloned()
+                } else {
+                    self.text_builders[c].finish()
+                };
+                text_bytes = text.values().len();
+                Some(Arc::new(text))
             };
             let errors_arc: Option<Arc<UInt8Array>> = if self.lane_counts[c].n_err == 0 {
                 None
+            } else if exact {
+                Some(Arc::new(self.err_builders[c].finish_cloned()))
             } else {
                 Some(Arc::new(self.err_builders[c].finish()))
             };
-            let tags: UInt8Array = self.tag_builders[c].finish();
+            let tags: UInt8Array = if exact {
+                self.tag_builders[c].finish_cloned()
+            } else {
+                self.tag_builders[c].finish()
+            };
 
             let chunk = ColumnChunk {
                 numbers: numbers_arc,
@@ -840,29 +1039,22 @@ impl IngestBuilder {
                 lazy_null_text: OnceCell::new(),
                 lazy_null_errors: OnceCell::new(),
                 lowered_text: OnceCell::new(),
+                merged: MergedLaneCache::default(),
                 overlay: Overlay::new(),
                 computed_overlay: Overlay::new(),
             };
             self.chunks[c].push(chunk);
 
-            // re-init builders for next chunk
-            self.num_builders[c] = Float64Builder::with_capacity(self.chunk_rows);
-            self.bool_builders[c] = BooleanBuilder::with_capacity(self.chunk_rows);
-            self.text_builders[c] =
-                StringBuilder::with_capacity(self.chunk_rows, self.chunk_rows * 12);
-            self.err_builders[c] = UInt8Builder::with_capacity(self.chunk_rows);
-            self.tag_builders[c] = UInt8Builder::with_capacity(self.chunk_rows);
-            self.format_builders[c] = Vec::with_capacity(self.chunk_rows);
             self.lane_counts[c] = LaneCounts::default();
+            self.next_text_bytes[c] = text_bytes;
         }
         self.row_in_chunk = 0;
+        self.needs_provision = true;
     }
 
     pub fn finish(mut self) -> ArrowSheet {
-        // flush partial chunk
-        if self.row_in_chunk > 0 {
-            self.finish_chunk();
-        }
+        // flush partial chunk; builders for a next chunk are never provisioned
+        self.finish_chunk();
 
         let mut columns = Vec::with_capacity(self.ncols);
         for (idx, chunks) in self.chunks.into_iter().enumerate() {
@@ -1174,9 +1366,63 @@ pub(crate) struct OverlayFragmentPayload {
     text: Option<ArrayRef>,
     errors: Option<Arc<UInt8Array>>,
     estimated_bytes: usize,
+    /// Length of the lane buffers this payload views (its own length unless
+    /// it is a zero-copy slice of a larger payload).
+    root_len: usize,
 }
 
 impl OverlayFragmentPayload {
+    /// A slice keeps sharing its parent's buffers while it is at least a
+    /// quarter of them (or they are tiny); smaller slices are copied so a
+    /// split never pins more than max(4x its size, SHARE_ALWAYS_LEN). Each
+    /// element is therefore copied O(log) times over any sequence of splits,
+    /// and a split is O(1) otherwise.
+    const SHARE_MIN_FRACTION: usize = 4;
+    const SHARE_ALWAYS_LEN: usize = 64;
+
+    #[inline]
+    fn shares(root_len: usize, len: usize) -> bool {
+        root_len <= Self::SHARE_ALWAYS_LEN
+            || len.saturating_mul(Self::SHARE_MIN_FRACTION) >= root_len
+    }
+
+    #[inline]
+    fn len(&self) -> usize {
+        self.type_tags.len()
+    }
+
+    fn slice(&self, offset: usize, len: usize) -> Self {
+        debug_assert!(offset.saturating_add(len) <= self.len());
+        if len == self.len() {
+            return self.clone();
+        }
+        if !Self::shares(self.root_len, len) {
+            return Self::from_values(self.values_slice(offset, len));
+        }
+        fn cut<A: Array + Clone + 'static>(a: &Arc<A>, offset: usize, len: usize) -> Arc<A> {
+            let sliced = a.slice(offset, len);
+            Arc::new(
+                sliced
+                    .as_any()
+                    .downcast_ref::<A>()
+                    .expect("slice keeps the array type")
+                    .clone(),
+            )
+        }
+        let own = self.len().max(1);
+        Self {
+            type_tags: cut(&self.type_tags, offset, len),
+            numbers: self.numbers.as_ref().map(|a| cut(a, offset, len)),
+            booleans: self.booleans.as_ref().map(|a| cut(a, offset, len)),
+            text: self.text.as_ref().map(|a| a.slice(offset, len)),
+            errors: self.errors.as_ref().map(|a| cut(a, offset, len)),
+            // Proportional share of the parent's estimate: deterministic, and
+            // the pieces of a split sum to at most the parent.
+            estimated_bytes: self.estimated_bytes.saturating_mul(len) / own,
+            root_len: self.root_len,
+        }
+    }
+
     fn from_values(values: Vec<OverlayValue>) -> Self {
         let len = values.len();
         let mut tag_b = UInt8Builder::with_capacity(len);
@@ -1255,6 +1501,7 @@ impl OverlayFragmentPayload {
             text,
             errors,
             estimated_bytes,
+            root_len: len,
         }
     }
 
@@ -1330,9 +1577,71 @@ pub(crate) enum OverlayFragment {
     RunRange {
         start: u32,
         len: u32,
-        run_ends: Vec<u32>,
+        run_ends: RunEnds,
         payload: OverlayFragmentPayload,
     },
+}
+
+/// Exclusive run ends of a `RunRange`, relative to the fragment start. The
+/// buffer is shared between the pieces of a split: run `i` of a piece ends at
+/// `ends[i] - base`, capped at the piece length.
+#[derive(Debug, Clone)]
+pub(crate) struct RunEnds {
+    ends: arrow_buffer::ScalarBuffer<u32>,
+    base: u32,
+    len: u32,
+}
+
+impl RunEnds {
+    fn new(ends: Vec<u32>) -> Self {
+        let len = ends.last().copied().unwrap_or(0);
+        Self {
+            ends: ends.into(),
+            base: 0,
+            len,
+        }
+    }
+
+    #[inline]
+    fn count(&self) -> usize {
+        self.ends.len()
+    }
+
+    /// Exclusive end of run `idx`, relative to the piece start.
+    #[inline]
+    fn end(&self, idx: usize) -> usize {
+        (self.ends[idx] - self.base).min(self.len) as usize
+    }
+
+    /// Index of the run holding relative offset `rel`.
+    #[inline]
+    fn run_at(&self, rel: usize) -> usize {
+        let key = rel as u64 + self.base as u64;
+        self.ends.partition_point(|end| (*end as u64) <= key)
+    }
+
+    /// The runs of `[rel_start, rel_end)` as `(ends, first run index, run count)`.
+    fn slice(&self, rel_start: usize, rel_end: usize, share: bool) -> (Self, usize, usize) {
+        let lo = self.run_at(rel_start);
+        let hi = self.run_at(rel_end - 1) + 1;
+        let len = (rel_end - rel_start) as u32;
+        let ends = if share {
+            Self {
+                ends: self.ends.slice(lo, hi - lo),
+                base: self.base + rel_start as u32,
+                len,
+            }
+        } else {
+            let mut ends: Vec<u32> = (lo..hi)
+                .map(|idx| (self.end(idx) - rel_start) as u32)
+                .collect();
+            if let Some(last) = ends.last_mut() {
+                *last = (*last).min(len);
+            }
+            Self::new(ends)
+        };
+        (ends, lo, hi - lo)
+    }
 }
 
 impl OverlayFragment {
@@ -1440,7 +1749,7 @@ impl OverlayFragment {
         Some(Self::RunRange {
             start: u32::try_from(start).expect("overlay start fits in u32"),
             len: u32::try_from(len).expect("overlay length fits in u32"),
-            run_ends: merged_ends,
+            run_ends: RunEnds::new(merged_ends),
             payload: OverlayFragmentPayload::from_values(merged_values),
         })
     }
@@ -1457,7 +1766,7 @@ impl OverlayFragment {
             OverlayFragment::RunRange {
                 run_ends, payload, ..
             } => OVERLAY_FRAGMENT_BASE_BYTES
-                .saturating_add(run_ends.len().saturating_mul(core::mem::size_of::<u32>()))
+                .saturating_add(run_ends.count().saturating_mul(core::mem::size_of::<u32>()))
                 .saturating_add(payload.estimated_bytes()),
         }
     }
@@ -1585,6 +1894,82 @@ impl OverlayFragment {
         self.get_scalar(off).is_some()
     }
 
+    /// Coverage test without reading the value (payload entries are never
+    /// null, so coverage is the interval or the offset list).
+    #[inline]
+    fn covers_offset_fast(&self, off: usize) -> bool {
+        match self {
+            OverlayFragment::SparseOffsets { offsets, .. } => {
+                u32::try_from(off).is_ok_and(|off| offsets.binary_search(&off).is_ok())
+            }
+            OverlayFragment::DenseRange { start, len, .. }
+            | OverlayFragment::RunRange { start, len, .. } => {
+                let start = *start as usize;
+                off >= start && off - start < *len as usize
+            }
+        }
+    }
+
+    /// Take the points this fragment covers into a rebuilt fragment of the
+    /// same kind. `None` when it covers no point. Returns the bytes of the
+    /// removed points (estimated like `Overlay::point_estimate`).
+    fn fold_points(
+        &self,
+        points: &mut FxHashMap<usize, OverlayValue>,
+    ) -> Option<(usize, OverlayFragment)> {
+        let mut removed = 0usize;
+        let mut take = |off: usize, points: &mut FxHashMap<usize, OverlayValue>| {
+            points.remove(&off).inspect(|v| {
+                removed = removed.saturating_add(Overlay::point_estimate(v));
+            })
+        };
+        match self {
+            OverlayFragment::SparseOffsets { offsets, payload } => {
+                if !offsets
+                    .iter()
+                    .any(|off| points.contains_key(&(*off as usize)))
+                {
+                    return None;
+                }
+                let cells: Vec<_> = offsets
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(idx, off)| {
+                        let off = *off as usize;
+                        take(off, points)
+                            .or_else(|| payload.overlay_value(idx))
+                            .map(|v| (off, v))
+                    })
+                    .collect();
+                let rebuilt = OverlayFragment::sparse_offsets(cells)?;
+                Some((removed, rebuilt))
+            }
+            OverlayFragment::DenseRange { start, len, .. }
+            | OverlayFragment::RunRange { start, len, .. } => {
+                let start = *start as usize;
+                let len = *len as usize;
+                if !(start..start + len).any(|off| points.contains_key(&off)) {
+                    return None;
+                }
+                let values: Vec<OverlayValue> = (start..start + len)
+                    .map(|off| {
+                        take(off, points).unwrap_or_else(|| {
+                            self.get_scalar(off)
+                                .expect("fragment covers its interval")
+                                .to_overlay_value()
+                        })
+                    })
+                    .collect();
+                let rebuilt = if matches!(self, OverlayFragment::RunRange { .. }) {
+                    OverlayFragment::run_range(start, values)?
+                } else {
+                    OverlayFragment::dense_range(start, values)?
+                };
+                Some((removed, rebuilt))
+            }
+        }
+    }
+
     fn get_scalar(&self, off: usize) -> Option<OverlayScalar<'_>> {
         match self {
             OverlayFragment::SparseOffsets { offsets, payload } => {
@@ -1615,9 +2000,7 @@ impl OverlayFragment {
                 if rel >= *len as usize {
                     return None;
                 }
-                let rel_u32 = u32::try_from(rel).ok()?;
-                let run_idx = run_ends.partition_point(|end| *end <= rel_u32);
-                payload.get_scalar(run_idx)
+                payload.get_scalar(run_ends.run_at(rel))
             }
         }
     }
@@ -1851,8 +2234,17 @@ impl OverlayFragment {
                 }
                 let base = *start as usize;
                 let rel_start = abs_start.checked_sub(base)?;
-                let len = abs_end.saturating_sub(abs_start);
-                OverlayFragment::dense_range(new_start, payload.values_slice(rel_start, len))
+                let len = abs_end
+                    .saturating_sub(abs_start)
+                    .min(payload.len().saturating_sub(rel_start));
+                if len == 0 {
+                    return None;
+                }
+                Some(OverlayFragment::DenseRange {
+                    start: u32::try_from(new_start).expect("overlay start fits in u32"),
+                    len: len as u32,
+                    payload: payload.slice(rel_start, len),
+                })
             }
             _ => None,
         }
@@ -1884,33 +2276,23 @@ impl OverlayFragment {
 
         let rel_start = abs_start - base;
         let rel_end = abs_end - base;
-        let mut new_run_ends = Vec::new();
-        let mut new_values = Vec::new();
-        let mut prev_end = 0usize;
-
-        for (run_idx, end) in run_ends.iter().enumerate() {
-            let run_start = prev_end;
-            let run_end = *end as usize;
-            let inter_start = run_start.max(rel_start);
-            let inter_end = run_end.min(rel_end);
-            if inter_start < inter_end {
-                new_run_ends.push(inter_end - rel_start);
-                if let Some(value) = payload.overlay_value(run_idx) {
-                    new_values.push(value);
-                }
-            }
-            prev_end = run_end;
-            if prev_end >= rel_end {
-                break;
-            }
-        }
-
-        OverlayFragment::run_range_from_parts(
-            new_start,
-            abs_end.saturating_sub(abs_start),
-            new_run_ends,
-            new_values,
-        )
+        // Zero-copy piece (shared run ends and payload) unless it would pin
+        // buffers more than 4x its size; see `OverlayFragmentPayload::slice`.
+        let lo = run_ends.run_at(rel_start);
+        let hi = run_ends.run_at(rel_end - 1) + 1;
+        let share = OverlayFragmentPayload::shares(payload.root_len, hi - lo);
+        let (new_ends, lo, count) = run_ends.slice(rel_start, rel_end, share);
+        let payload = if share {
+            payload.slice(lo, count)
+        } else {
+            OverlayFragmentPayload::from_values(payload.values_slice(lo, count))
+        };
+        Some(OverlayFragment::RunRange {
+            start: u32::try_from(new_start).expect("overlay start fits in u32"),
+            len: (rel_end - rel_start) as u32,
+            run_ends: new_ends,
+            payload,
+        })
     }
 
     fn cells(&self) -> Vec<(usize, OverlayValue)> {
@@ -1990,11 +2372,34 @@ impl OverlayFragment {
         }
     }
 }
-#[derive(Debug, Default, Clone)]
+static OVERLAY_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+#[inline]
+fn next_overlay_epoch() -> u64 {
+    OVERLAY_EPOCH.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+impl Default for Overlay {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Overlay {
-    points: HashMap<usize, OverlayValue>,
-    format_points: HashMap<usize, FormatId>,
+    /// Content epoch: globally unique, renewed on every value mutation
+    /// (formats excluded). Merged-lane caches key on it.
+    epoch: u64,
+    points: FxHashMap<usize, OverlayValue>,
+    /// Allocated on the first format (most overlays never carry one).
+    format_points: Option<Box<FxHashMap<usize, FormatId>>>,
     fragments: Vec<OverlayFragment>,
+    /// Points whose offset a fragment also covers (the point wins). Kept
+    /// exact so `len` stays the logical coverage; folded into the fragments
+    /// once they are a fixed fraction of the fragment coverage.
+    shadowed: u32,
+    /// Sum of fragment coverage lengths (offsets are u32 within a chunk).
+    fragment_coverage: u32,
     // Deterministic (and intentionally approximate) accounting of overlay memory.
     // This is used for budget enforcement/observability; it does not attempt to reflect
     // the allocator's exact overhead.
@@ -2008,9 +2413,12 @@ impl Overlay {
 
     pub fn new() -> Self {
         Self {
-            points: HashMap::new(),
-            format_points: HashMap::new(),
+            epoch: next_overlay_epoch(),
+            points: FxHashMap::default(),
+            format_points: None,
             fragments: Vec::new(),
+            shadowed: 0,
+            fragment_coverage: 0,
             estimated_bytes: 0,
         }
     }
@@ -2044,22 +2452,26 @@ impl Overlay {
 
     #[inline]
     pub fn get_format(&self, off: usize) -> Option<FormatId> {
-        self.format_points.get(&off).copied()
+        self.format_points.as_ref()?.get(&off).copied()
     }
 
     #[inline]
     pub(crate) fn has_formats(&self) -> bool {
-        !self.format_points.is_empty()
+        self.format_points.as_ref().is_some_and(|m| !m.is_empty())
     }
 
     #[inline]
     pub fn set_format(&mut self, off: usize, format: Option<FormatId>) {
         match format.filter(|id| *id != FormatId::GENERAL) {
             Some(id) => {
-                self.format_points.insert(off, id);
+                self.format_points
+                    .get_or_insert_with(Default::default)
+                    .insert(off, id);
             }
             None => {
-                self.format_points.remove(&off);
+                if let Some(map) = self.format_points.as_mut() {
+                    map.remove(&off);
+                }
             }
         }
     }
@@ -2067,30 +2479,99 @@ impl Overlay {
     /// Clear computed formats in `[start, end)`. Empty lanes return in O(1);
     /// populated lanes pay for existing formatted entries, not range length.
     pub(crate) fn clear_format_range(&mut self, start: usize, end: usize) {
-        if self.format_points.is_empty() || start >= end {
+        let Some(map) = self.format_points.as_mut() else {
+            return;
+        };
+        if map.is_empty() || start >= end {
             return;
         }
-        self.format_points
-            .retain(|off, _| *off < start || *off >= end);
+        map.retain(|off, _| *off < start || *off >= end);
     }
 
     /// Clear exact computed-format offsets for a sparse computed write.
     pub(crate) fn clear_format_offsets(&mut self, offsets: &[usize]) {
-        if self.format_points.is_empty() {
+        let Some(map) = self.format_points.as_mut() else {
             return;
-        }
+        };
         for off in offsets {
-            self.format_points.remove(off);
+            map.remove(off);
         }
     }
 
+    /// Set one offset. Points are read before fragments and applied after
+    /// them, so the point shadows any fragment covering `off`: the fragment is
+    /// left as it is (a split would copy it, O(fragment) per point write, and
+    /// add a fragment per write). Its shadowed value stays counted in
+    /// `estimated_bytes` until a fragment write or removal covers it.
     #[inline]
     pub(crate) fn set_scalar(&mut self, off: usize, v: OverlayValue) -> isize {
-        let removed = self.remove_scalar(off);
+        self.epoch = next_overlay_epoch();
         let new_est = Self::point_estimate(&v);
-        self.points.insert(off, v);
-        self.adjust_estimated_bytes(new_est as isize);
-        removed.saturating_add(new_est as isize)
+        let old_est = match self.points.insert(off, v) {
+            Some(old) => Self::point_estimate(&old),
+            None => {
+                if self.fragment_covers(off) {
+                    self.shadowed += 1;
+                }
+                0
+            }
+        };
+        let delta = new_est as isize - old_est as isize;
+        self.adjust_estimated_bytes(delta);
+        if self.shadowed as usize
+            >= Self::SHADOW_FOLD_MIN.max(self.fragment_coverage as usize / Self::SHADOW_FOLD_DEN)
+        {
+            delta.saturating_add(self.fold_shadowed_points())
+        } else {
+            delta
+        }
+    }
+
+    /// Fold shadowed points once they reach `max(MIN, coverage / DEN)`: the
+    /// fold is O(fragment coverage + points), so each point write pays O(DEN)
+    /// amortized for it.
+    const SHADOW_FOLD_MIN: usize = 32;
+    const SHADOW_FOLD_DEN: usize = 8;
+
+    #[inline]
+    fn fragment_covers(&self, off: usize) -> bool {
+        self.fragments.iter().any(|f| f.covers_offset_fast(off))
+    }
+
+    /// Rewrite every fragment holding a shadowed point with the point's value
+    /// and drop those points. Returns the estimated-bytes delta.
+    fn fold_shadowed_points(&mut self) -> isize {
+        if self.shadowed == 0 {
+            return 0;
+        }
+        let mut delta = 0isize;
+        let mut fragments = core::mem::take(&mut self.fragments);
+        for fragment in fragments.iter_mut() {
+            let Some(folded) = fragment.fold_points(&mut self.points) else {
+                continue;
+            };
+            let (points_removed, replacement) = folded;
+            delta = delta.saturating_sub(points_removed as isize);
+            delta = delta.saturating_add(
+                replacement.estimated_bytes() as isize - fragment.estimated_bytes() as isize,
+            );
+            *fragment = replacement;
+        }
+        self.fragments = fragments;
+        self.shadowed = 0;
+        self.adjust_estimated_bytes(delta);
+        delta
+    }
+
+    /// Before points are dropped: how many of them are shadowed.
+    fn shadowed_among(&self, offsets: &[usize]) -> usize {
+        if self.shadowed == 0 {
+            return 0;
+        }
+        offsets
+            .iter()
+            .filter(|off| self.fragment_covers(**off))
+            .count()
     }
 
     #[inline]
@@ -2099,43 +2580,81 @@ impl Overlay {
     }
 
     pub(crate) fn apply_fragment(&mut self, fragment: OverlayFragment) -> isize {
+        self.epoch = next_overlay_epoch();
+        // A write that is small next to the existing fragments goes in as
+        // points: carving it out of them would cost O(fragments) scans and
+        // O(fragment) sparse rewrites per write, and add fragments that every
+        // later read scans. The points fold back in at the shadow threshold.
+        if fragment
+            .coverage_len()
+            .saturating_mul(Self::SHADOW_FOLD_DEN)
+            < self.fragment_coverage as usize
+        {
+            let mut delta = 0isize;
+            for (off, value) in fragment.cells() {
+                delta = delta.saturating_add(self.set_scalar(off, value));
+            }
+            return delta;
+        }
         let mut delta = self.remove_points_covered_by_fragment(&fragment);
         delta = delta.saturating_add(self.remove_fragments_covered_by_fragment(&fragment));
 
         let fragment_est = fragment.estimated_bytes();
+        self.fragment_coverage = self
+            .fragment_coverage
+            .saturating_add(fragment.coverage_len() as u32);
         self.fragments.push(fragment);
         self.adjust_estimated_bytes(fragment_est as isize);
         delta.saturating_add(fragment_est as isize)
     }
 
-    fn remove_points_covered_by_fragment(&mut self, fragment: &OverlayFragment) -> isize {
+    /// Point offsets in `range`: O(min(range, points)).
+    fn point_offsets_in_range(&self, range: core::ops::Range<usize>) -> Vec<usize> {
+        if range.len() < self.points.len() {
+            range.filter(|off| self.points.contains_key(off)).collect()
+        } else {
+            self.points
+                .keys()
+                .copied()
+                .filter(|off| range.contains(off))
+                .collect()
+        }
+    }
+
+    /// Drop the points at `offsets` (fragments untouched). Returns the bytes
+    /// removed; keeps `shadowed` exact.
+    fn drop_points(&mut self, offsets: &[usize]) -> usize {
+        let shadowed = self.shadowed_among(offsets);
         let mut removed = 0usize;
-        match fragment {
-            OverlayFragment::SparseOffsets { offsets, .. } => {
-                for off in offsets.iter().copied() {
-                    if let Some(old) = self.points.remove(&(off as usize)) {
-                        removed = removed.saturating_add(Self::point_estimate(&old));
-                    }
-                }
-            }
-            OverlayFragment::DenseRange { .. } | OverlayFragment::RunRange { .. } => {
-                if let Some(range) = fragment.interval_coverage() {
-                    let keys: Vec<_> = self
-                        .points
-                        .keys()
-                        .copied()
-                        .filter(|off| range.contains(off))
-                        .collect();
-                    for off in keys {
-                        if let Some(old) = self.points.remove(&off) {
-                            removed = removed.saturating_add(Self::point_estimate(&old));
-                        }
-                    }
-                }
+        let mut dropped = 0usize;
+        for off in offsets {
+            if let Some(old) = self.points.remove(off) {
+                removed = removed.saturating_add(Self::point_estimate(&old));
+                dropped += 1;
             }
         }
+        debug_assert!(shadowed <= dropped);
+        self.shadowed = self.shadowed.saturating_sub(shadowed as u32);
         self.estimated_bytes = self.estimated_bytes.saturating_sub(removed);
-        -(removed as isize)
+        removed
+    }
+
+    fn remove_points_covered_by_fragment(&mut self, fragment: &OverlayFragment) -> isize {
+        let offsets: Vec<usize> = match fragment {
+            OverlayFragment::SparseOffsets { offsets, .. } => offsets
+                .iter()
+                .map(|off| *off as usize)
+                .filter(|off| self.points.contains_key(off))
+                .collect(),
+            OverlayFragment::DenseRange { .. } | OverlayFragment::RunRange { .. } => fragment
+                .interval_coverage()
+                .map(|range| self.point_offsets_in_range(range))
+                .unwrap_or_default(),
+        };
+        if offsets.is_empty() {
+            return 0;
+        }
+        -(self.drop_points(&offsets) as isize)
     }
 
     fn remove_fragments_covered_by_fragment(&mut self, replacement: &OverlayFragment) -> isize {
@@ -2161,23 +2680,33 @@ impl Overlay {
             delta = delta.saturating_add(new_est as isize - old_est as isize);
         }
         self.fragments = fragments;
+        self.refresh_fragment_coverage();
         self.adjust_estimated_bytes(delta);
         delta
     }
 
     #[inline]
+    fn refresh_fragment_coverage(&mut self) {
+        self.fragment_coverage = self
+            .fragments
+            .iter()
+            .map(OverlayFragment::coverage_len)
+            .fold(0usize, usize::saturating_add) as u32;
+    }
+
+    #[inline]
     pub(crate) fn remove_scalar(&mut self, off: usize) -> isize {
+        self.epoch = next_overlay_epoch();
         let mut delta = 0isize;
-        if let Some(old) = self.points.remove(&off) {
-            let old_est = Self::point_estimate(&old);
-            self.estimated_bytes = self.estimated_bytes.saturating_sub(old_est);
-            delta = delta.saturating_sub(old_est as isize);
+        if self.points.contains_key(&off) {
+            delta = delta.saturating_sub(self.drop_points(&[off]) as isize);
         }
 
-        if !self.fragments.is_empty() {
-            let mut fragments = Vec::with_capacity(self.fragments.len());
+        if !self.fragments.is_empty() && self.fragment_covers(off) {
+            let mut fragment_delta = 0isize;
+            let mut fragments = Vec::with_capacity(self.fragments.len() + 1);
             for fragment in self.fragments.drain(..) {
-                if fragment.get_scalar(off).is_none() {
+                if !fragment.covers_offset_fast(off) {
                     fragments.push(fragment);
                     continue;
                 }
@@ -2189,10 +2718,12 @@ impl Overlay {
                     .map(OverlayFragment::estimated_bytes)
                     .fold(0usize, usize::saturating_add);
                 fragments.extend(replacements);
-                delta = delta.saturating_add(new_est as isize - old_est as isize);
+                fragment_delta = fragment_delta.saturating_add(new_est as isize - old_est as isize);
             }
             self.fragments = fragments;
-            self.adjust_estimated_bytes(delta);
+            self.refresh_fragment_coverage();
+            self.adjust_estimated_bytes(fragment_delta);
+            delta = delta.saturating_add(fragment_delta);
         }
 
         delta
@@ -2204,29 +2735,25 @@ impl Overlay {
     }
 
     pub(crate) fn remove_range(&mut self, range: core::ops::Range<usize>) -> isize {
+        self.epoch = next_overlay_epoch();
         if range.is_empty() {
             return 0;
         }
 
         let mut delta = 0isize;
-        let removed_points: Vec<_> = self
-            .points
-            .keys()
-            .copied()
-            .filter(|off| range.contains(off))
-            .collect();
-        for off in removed_points {
-            if let Some(old) = self.points.remove(&off) {
-                let old_est = Self::point_estimate(&old);
-                self.estimated_bytes = self.estimated_bytes.saturating_sub(old_est);
-                delta = delta.saturating_sub(old_est as isize);
-            }
+        let offsets = self.point_offsets_in_range(range.clone());
+        if !offsets.is_empty() {
+            delta = delta.saturating_sub(self.drop_points(&offsets) as isize);
         }
 
         if !self.fragments.is_empty() {
             let mut fragment_delta = 0isize;
             let mut fragments = Vec::with_capacity(self.fragments.len());
             for fragment in self.fragments.drain(..) {
+                if !fragment.has_any_in_range(range.clone()) {
+                    fragments.push(fragment);
+                    continue;
+                }
                 let old_est = fragment.estimated_bytes();
                 let replacements = fragment.subtract_interval(range.clone());
                 let new_est = replacements
@@ -2237,6 +2764,7 @@ impl Overlay {
                 fragment_delta = fragment_delta.saturating_add(new_est as isize - old_est as isize);
             }
             self.fragments = fragments;
+            self.refresh_fragment_coverage();
             self.adjust_estimated_bytes(fragment_delta);
             delta = delta.saturating_add(fragment_delta);
         }
@@ -2246,9 +2774,12 @@ impl Overlay {
 
     #[inline]
     pub(crate) fn clear_all(&mut self) -> usize {
+        self.epoch = next_overlay_epoch();
         let freed = self.estimated_bytes;
         self.points.clear();
         self.fragments.clear();
+        self.shadowed = 0;
+        self.fragment_coverage = 0;
         self.estimated_bytes = 0;
         freed
     }
@@ -2258,14 +2789,10 @@ impl Overlay {
         self.clear_all()
     }
 
+    /// Number of covered offsets (a shadowed point counts once).
     #[inline]
     pub fn len(&self) -> usize {
-        self.points.len().saturating_add(
-            self.fragments
-                .iter()
-                .map(OverlayFragment::coverage_len)
-                .sum(),
-        )
+        (self.points.len() - self.shadowed as usize).saturating_add(self.fragment_coverage as usize)
     }
 
     #[inline]
@@ -2280,7 +2807,12 @@ impl Overlay {
 
     #[inline]
     pub(crate) fn has_any_in_range(&self, range: core::ops::Range<usize>) -> bool {
-        self.points.keys().any(|k| range.contains(k))
+        let points = if range.len() < self.points.len() {
+            range.clone().any(|off| self.points.contains_key(&off))
+        } else {
+            self.points.keys().any(|k| range.contains(k))
+        };
+        points
             || self
                 .fragments
                 .iter()
@@ -2305,7 +2837,7 @@ impl Overlay {
                 let _ = out.set_scalar(*k - off, v.clone());
             }
         }
-        for (k, format) in &self.format_points {
+        for (k, format) in self.format_points.iter().flat_map(|m| m.iter()) {
             if *k >= off && *k < end {
                 out.set_format(*k - off, Some(*format));
             }
@@ -2328,6 +2860,34 @@ impl Overlay {
     }
 
     /// Iterate over physical point entries only.
+    /// Visit the points at offsets in `range`: probing each offset when the
+    /// range is shorter than the point map (a small read must not scan every
+    /// point of the chunk), else scanning the map. Each offset is visited at
+    /// most once, so the visit order does not matter to callers.
+    #[inline]
+    pub(crate) fn for_each_point_in_range(
+        &self,
+        range: core::ops::Range<usize>,
+        mut visit: impl FnMut(usize, &OverlayValue),
+    ) {
+        if self.points.is_empty() {
+            return;
+        }
+        if range.len() < self.points.len() {
+            for off in range {
+                if let Some(value) = self.points.get(&off) {
+                    visit(off, value);
+                }
+            }
+        } else {
+            for (off, value) in &self.points {
+                if range.contains(off) {
+                    visit(*off, value);
+                }
+            }
+        }
+    }
+
     pub(crate) fn iter_points(&self) -> impl Iterator<Item = (&usize, &OverlayValue)> {
         self.points.iter()
     }
@@ -2361,13 +2921,10 @@ impl Overlay {
         stats
     }
 
+    /// Fragments are pairwise disjoint; points may shadow fragment offsets
+    /// (counted exactly by `shadowed`); `len` is the logical coverage.
     pub(crate) fn debug_is_normalized(&self) -> bool {
         let mut covered = std::collections::HashSet::new();
-        for off in self.points.keys().copied() {
-            if !covered.insert(off) {
-                return false;
-            }
-        }
         for fragment in &self.fragments {
             for (off, _) in fragment.cells() {
                 if !covered.insert(off) {
@@ -2375,7 +2932,16 @@ impl Overlay {
                 }
             }
         }
-        covered.len() == self.len()
+        let fragment_coverage = covered.len();
+        let mut shadowed = 0usize;
+        for off in self.points.keys().copied() {
+            if !covered.insert(off) {
+                shadowed += 1;
+            }
+        }
+        shadowed == self.shadowed as usize
+            && fragment_coverage == self.fragment_coverage as usize
+            && covered.len() == self.len()
     }
 
     pub(crate) fn debug_recomputed_estimated_bytes(&self) -> usize {
@@ -2406,6 +2972,10 @@ pub(crate) struct OverlaySelectStats {
     pub(crate) row_scalar_fallbacks: usize,
     pub(crate) point_entries_applied: usize,
     pub(crate) fragment_intersections: usize,
+    /// Short point-only ranges merged per offset (no builders or zip).
+    pub(crate) small_point_selects: usize,
+    /// Longer point-only ranges: the base lane copied and patched per point.
+    pub(crate) point_patch_selects: usize,
 }
 
 #[cfg(test)]
@@ -2501,6 +3071,112 @@ impl<'a> OverlayCascade<'a> {
         self.user.has_any_in_range(range.clone()) || self.computed.has_any_in_range(range)
     }
 
+    /// For a short range that no fragment of either layer touches: per
+    /// position `(index, user point, computed point)`.
+    #[allow(clippy::type_complexity)]
+    fn small_points_only(
+        &self,
+        range: core::ops::Range<usize>,
+    ) -> Option<
+        impl Iterator<Item = (usize, Option<&'a OverlayValue>, Option<&'a OverlayValue>)> + 'a,
+    > {
+        const SMALL: usize = 16;
+        if range.len() > SMALL
+            || self
+                .user
+                .fragments
+                .iter()
+                .chain(self.computed.fragments.iter())
+                .any(|f| f.has_any_in_range(range.clone()))
+        {
+            return None;
+        }
+        let (user, computed) = (self.user, self.computed);
+        let start = range.start;
+        Some(range.map(move |off| {
+            (
+                off - start,
+                user.points.get(&off),
+                computed.points.get(&off),
+            )
+        }))
+    }
+
+    /// For a range that no fragment of either layer touches: the base lane
+    /// (aligned to `range`) copied and patched at each point (computed, then
+    /// user), the per-slot layering below without slot vectors, builders or
+    /// zip. A point whose lane value is absent becomes null with a default
+    /// value slot (as a null appended to the zip's value builder). `None` when
+    /// a fragment intersects the range; `Some(base)` when no point does.
+    fn points_only_patch<T: arrow_array::ArrowPrimitiveType>(
+        &self,
+        range: core::ops::Range<usize>,
+        base: &arrow_array::PrimitiveArray<T>,
+        lane: impl Fn(&OverlayValue) -> Option<T::Native>,
+    ) -> Option<Arc<arrow_array::PrimitiveArray<T>>> {
+        if self
+            .user
+            .fragments
+            .iter()
+            .chain(self.computed.fragments.iter())
+            .any(|f| f.has_any_in_range(range.clone()))
+        {
+            return None;
+        }
+        let len = range.len();
+        debug_assert_eq!(base.len(), len);
+        let mut values: Option<Vec<T::Native>> = None;
+        let mut validity: Option<arrow_buffer::BooleanBufferBuilder> = None;
+        for layer in [self.computed, self.user] {
+            layer.for_each_point_in_range(range.clone(), |off, value| {
+                record_overlay_select_stats(|stats| stats.point_entries_applied += 1);
+                let i = off - range.start;
+                let values = values.get_or_insert_with(|| {
+                    // A null base keeps its validity from the first point on
+                    // (a later point may make a null slot valid); an all-valid
+                    // one needs a bitmap only once a point is null.
+                    if let Some(nulls) = base.nulls() {
+                        let mut bits = arrow_buffer::BooleanBufferBuilder::new(len);
+                        bits.append_buffer(nulls.inner());
+                        validity = Some(bits);
+                    }
+                    base.values().to_vec()
+                });
+                match lane(value) {
+                    Some(v) => {
+                        values[i] = v;
+                        if let Some(bits) = validity.as_mut() {
+                            bits.set_bit(i, true);
+                        }
+                    }
+                    None => {
+                        values[i] = T::Native::default();
+                        validity
+                            .get_or_insert_with(|| {
+                                let mut bits = arrow_buffer::BooleanBufferBuilder::new(len);
+                                bits.append_n(len, true);
+                                bits
+                            })
+                            .set_bit(i, false);
+                    }
+                }
+            });
+        }
+        let Some(values) = values else {
+            return Some(Arc::new(base.clone()));
+        };
+        record_overlay_select_stats(|stats| stats.point_patch_selects += 1);
+        let nulls = match validity {
+            Some(mut bits) => Some(arrow_buffer::NullBuffer::new(bits.finish())),
+            None => base.nulls().cloned(),
+        }
+        .filter(|nulls| nulls.null_count() > 0);
+        Some(Arc::new(arrow_array::PrimitiveArray::<T>::new(
+            values.into(),
+            nulls,
+        )))
+    }
+
     pub(crate) fn select_numbers(
         &self,
         range: core::ops::Range<usize>,
@@ -2527,6 +3203,26 @@ impl<'a> OverlayCascade<'a> {
 
         if !self.has_any_in_range(range.clone()) {
             return Arc::new(base.clone());
+        }
+        if let Some(small) = self.small_points_only(range.clone()) {
+            record_overlay_select_stats(|stats| stats.small_point_selects += 1);
+            // Per offset: user point, else computed point, else base (the
+            // layering below, without the builders and zip).
+            let values: Vec<Option<f64>> = small
+                .map(|(i, user, computed)| match user.or(computed) {
+                    Some(v) => {
+                        record_overlay_select_stats(|stats| stats.point_entries_applied += 1);
+                        v.numeric_lane_value()
+                    }
+                    None => base.is_valid(i).then(|| base.value(i)),
+                })
+                .collect();
+            return Arc::new(Float64Array::from(values));
+        }
+        if let Some(patched) =
+            self.points_only_patch(range.clone(), base, OverlayValue::numeric_lane_value)
+        {
+            return patched;
         }
 
         record_overlay_select_stats(|stats| stats.partial_overlay_builds += 1);
@@ -2699,6 +3395,24 @@ impl<'a> OverlayCascade<'a> {
 
         if !self.has_any_in_range(range.clone()) {
             return Arc::new(base.clone());
+        }
+        if let Some(small) = self.small_points_only(range.clone()) {
+            record_overlay_select_stats(|stats| stats.small_point_selects += 1);
+            let values: Vec<Option<u8>> = small
+                .map(|(i, user, computed)| match user.or(computed) {
+                    Some(v) => {
+                        record_overlay_select_stats(|stats| stats.point_entries_applied += 1);
+                        v.error_lane_value()
+                    }
+                    None => base.is_valid(i).then(|| base.value(i)),
+                })
+                .collect();
+            return Arc::new(UInt8Array::from(values));
+        }
+        if let Some(patched) =
+            self.points_only_patch(range.clone(), base, OverlayValue::error_lane_value)
+        {
+            return patched;
         }
 
         record_overlay_select_stats(|stats| stats.partial_overlay_builds += 1);
@@ -3188,12 +3902,10 @@ impl<'a> OverlayCascade<'a> {
         Self::apply_fragment_layer(layer, range.clone(), slots, |payload, idx| {
             payload.number_at(idx)
         });
-        for (off, value) in layer.iter_points() {
-            if range.contains(off) {
-                slots.set(*off - range.start, value.numeric_lane_value());
-                record_overlay_select_stats(|stats| stats.point_entries_applied += 1);
-            }
-        }
+        layer.for_each_point_in_range(range.clone(), |off, value| {
+            slots.set(off - range.start, value.numeric_lane_value());
+            record_overlay_select_stats(|stats| stats.point_entries_applied += 1);
+        });
     }
 
     fn apply_boolean_layer(
@@ -3204,12 +3916,10 @@ impl<'a> OverlayCascade<'a> {
         Self::apply_fragment_layer(layer, range.clone(), slots, |payload, idx| {
             payload.boolean_at(idx)
         });
-        for (off, value) in layer.iter_points() {
-            if range.contains(off) {
-                slots.set(*off - range.start, value.boolean_lane_value());
-                record_overlay_select_stats(|stats| stats.point_entries_applied += 1);
-            }
-        }
+        layer.for_each_point_in_range(range.clone(), |off, value| {
+            slots.set(off - range.start, value.boolean_lane_value());
+            record_overlay_select_stats(|stats| stats.point_entries_applied += 1);
+        });
     }
 
     fn apply_text_layer(
@@ -3220,15 +3930,13 @@ impl<'a> OverlayCascade<'a> {
         Self::apply_fragment_layer(layer, range.clone(), slots, |payload, idx| {
             payload.text_at(idx).map(ToString::to_string)
         });
-        for (off, value) in layer.iter_points() {
-            if range.contains(off) {
-                slots.set(
-                    *off - range.start,
-                    value.text_lane_value().map(ToString::to_string),
-                );
-                record_overlay_select_stats(|stats| stats.point_entries_applied += 1);
-            }
-        }
+        layer.for_each_point_in_range(range.clone(), |off, value| {
+            slots.set(
+                off - range.start,
+                value.text_lane_value().map(ToString::to_string),
+            );
+            record_overlay_select_stats(|stats| stats.point_entries_applied += 1);
+        });
     }
 
     fn apply_error_layer(
@@ -3239,12 +3947,10 @@ impl<'a> OverlayCascade<'a> {
         Self::apply_fragment_layer(layer, range.clone(), slots, |payload, idx| {
             payload.error_at(idx)
         });
-        for (off, value) in layer.iter_points() {
-            if range.contains(off) {
-                slots.set(*off - range.start, value.error_lane_value());
-                record_overlay_select_stats(|stats| stats.point_entries_applied += 1);
-            }
-        }
+        layer.for_each_point_in_range(range.clone(), |off, value| {
+            slots.set(off - range.start, value.error_lane_value());
+            record_overlay_select_stats(|stats| stats.point_entries_applied += 1);
+        });
     }
 
     fn apply_type_tag_layer(
@@ -3255,12 +3961,10 @@ impl<'a> OverlayCascade<'a> {
         Self::apply_fragment_layer(layer, range.clone(), slots, |payload, idx| {
             payload.type_tag_at(idx).map(|tag| tag as u8)
         });
-        for (off, value) in layer.iter_points() {
-            if range.contains(off) {
-                slots.set(*off - range.start, Some(value.type_tag() as u8));
-                record_overlay_select_stats(|stats| stats.point_entries_applied += 1);
-            }
-        }
+        layer.for_each_point_in_range(range.clone(), |off, value| {
+            slots.set(off - range.start, Some(value.type_tag() as u8));
+            record_overlay_select_stats(|stats| stats.point_entries_applied += 1);
+        });
     }
 
     fn apply_lowered_text_layer(
@@ -3269,12 +3973,10 @@ impl<'a> OverlayCascade<'a> {
         slots: &mut OverlaySlots<String>,
     ) {
         Self::apply_fragment_layer(layer, range.clone(), slots, Self::payload_lowered_text_at);
-        for (off, value) in layer.iter_points() {
-            if range.contains(off) {
-                slots.set(*off - range.start, value.lowered_text_value());
-                record_overlay_select_stats(|stats| stats.point_entries_applied += 1);
-            }
-        }
+        layer.for_each_point_in_range(range.clone(), |off, value| {
+            slots.set(off - range.start, value.lowered_text_value());
+            record_overlay_select_stats(|stats| stats.point_entries_applied += 1);
+        });
     }
 
     fn apply_fragment_layer<T>(
@@ -3361,10 +4063,16 @@ impl<'a> OverlayCascade<'a> {
                 if inter_start >= inter_end {
                     return;
                 }
-                let mut prev_end = 0usize;
-                for (run_idx, run_end) in run_ends.iter().enumerate() {
+                let first = run_ends.run_at(inter_start - frag_start);
+                let mut prev_end = if first == 0 {
+                    0
+                } else {
+                    run_ends.end(first - 1)
+                };
+                for run_idx in first..run_ends.count() {
+                    let run_end = run_ends.end(run_idx);
                     let run_start_abs = frag_start.saturating_add(prev_end);
-                    let run_end_abs = frag_start.saturating_add(*run_end as usize);
+                    let run_end_abs = frag_start.saturating_add(run_end);
                     let start_abs = run_start_abs.max(inter_start);
                     let end_abs = run_end_abs.min(inter_end);
                     if start_abs < end_abs {
@@ -3372,7 +4080,7 @@ impl<'a> OverlayCascade<'a> {
                             f(abs - range.start, payload, run_idx);
                         }
                     }
-                    prev_end = *run_end as usize;
+                    prev_end = run_end;
                     if run_end_abs >= inter_end {
                         break;
                     }
@@ -3402,16 +4110,22 @@ impl<'a> OverlayCascade<'a> {
         if inter_start >= inter_end {
             return;
         }
-        let mut prev_end = 0usize;
-        for (run_idx, run_end) in run_ends.iter().enumerate() {
+        let first = run_ends.run_at(inter_start - frag_start);
+        let mut prev_end = if first == 0 {
+            0
+        } else {
+            run_ends.end(first - 1)
+        };
+        for run_idx in first..run_ends.count() {
+            let run_end = run_ends.end(run_idx);
             let run_start_abs = frag_start.saturating_add(prev_end);
-            let run_end_abs = frag_start.saturating_add(*run_end as usize);
+            let run_end_abs = frag_start.saturating_add(run_end);
             let start_abs = run_start_abs.max(inter_start);
             let end_abs = run_end_abs.min(inter_end);
             if start_abs < end_abs {
                 f(payload, run_idx, end_abs - start_abs);
             }
-            prev_end = *run_end as usize;
+            prev_end = run_end;
             if run_end_abs >= inter_end {
                 break;
             }
@@ -3964,6 +4678,7 @@ impl ArrowSheet {
             lazy_null_text: OnceCell::new(),
             lazy_null_errors: OnceCell::new(),
             lowered_text: OnceCell::new(),
+            merged: MergedLaneCache::default(),
             overlay: Overlay::new(),
             computed_overlay: Overlay::new(),
         }
@@ -4035,6 +4750,7 @@ impl ArrowSheet {
             lazy_null_text: OnceCell::new(),
             lazy_null_errors: OnceCell::new(),
             lowered_text: OnceCell::new(),
+            merged: MergedLaneCache::default(),
             overlay,
             computed_overlay,
         }
@@ -4915,6 +5631,105 @@ pub struct ColumnShape {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// FORM-000130: lazy next-chunk provisioning and the text reserve policy
+    /// must not change chunk layout, lane presence, null semantics or formats,
+    /// at exact chunk multiples, partial terminal chunks and lane transitions.
+    #[test]
+    fn ingest_builder_chunk_boundaries_and_lane_transitions_are_preserved() {
+        let date = chrono::NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
+        let value_at = |i: usize| match i % 7 {
+            0 | 1 if i < 8 => LiteralValue::Number(i as f64),
+            0 => LiteralValue::Text(format!("t{i}")),
+            1 => LiteralValue::Boolean(i.is_multiple_of(2)),
+            2 => LiteralValue::Empty,
+            3 => LiteralValue::Error(ExcelError::new(ExcelErrorKind::Div)),
+            4 => LiteralValue::Date(date),
+            5 => LiteralValue::Pending,
+            _ => LiteralValue::Int(i as i64),
+        };
+        // The same rows as borrowed ingest cells (the reader load paths).
+        fn cell_at(value: LiteralValue, i: usize, text: &str) -> CellIngest<'_> {
+            match value {
+                LiteralValue::Number(n) => CellIngest::Number(n),
+                LiteralValue::Text(_) => CellIngest::Text(text),
+                LiteralValue::Boolean(b) => CellIngest::Boolean(b),
+                LiteralValue::Empty => CellIngest::Empty,
+                LiteralValue::Error(e) => CellIngest::ErrorCode(map_error_code(e.kind)),
+                LiteralValue::Date(_) => CellIngest::DateSerial(i as f64 + 45_000.0),
+                LiteralValue::Pending => CellIngest::Pending,
+                LiteralValue::Int(n) => CellIngest::Number(n as f64),
+                other => unreachable!("{other:?}"),
+            }
+        }
+        let cases = [(0usize, 4usize), (4, 4), (8, 4), (9, 4), (3, 4), (23, 5)];
+        for ((rows, chunk_rows), path) in cases
+            .into_iter()
+            .flat_map(|case| ["row", "cells", "cells_iter"].map(|path| (case, path)))
+        {
+            let mut ingest =
+                IngestBuilder::new("S", 2, chunk_rows, crate::engine::DateSystem::Excel1900);
+            for i in 0..rows {
+                let text = format!("t{i}");
+                let number = CellIngest::Number(i as f64);
+                match path {
+                    "row" => ingest
+                        .append_row(&[value_at(i), LiteralValue::Number(i as f64)])
+                        .unwrap(),
+                    "cells" => ingest
+                        .append_row_cells(&[cell_at(value_at(i), i, &text), number])
+                        .unwrap(),
+                    _ => ingest
+                        .append_row_cells_iter([cell_at(value_at(i), i, &text), number].into_iter())
+                        .unwrap(),
+                }
+            }
+            let sheet = ingest.finish();
+            let expected_chunks = rows.div_ceil(chunk_rows);
+            assert_eq!(sheet.nrows as usize, rows);
+            assert_eq!(sheet.chunk_starts.len(), expected_chunks);
+            for (ci, col) in sheet.columns.iter().enumerate() {
+                assert_eq!(col.chunks.len(), expected_chunks, "col {ci} rows {rows}");
+                for (k, chunk) in col.chunks.iter().enumerate() {
+                    let start = k * chunk_rows;
+                    let len = chunk_rows.min(rows - start);
+                    assert_eq!(chunk.meta.len, len);
+                    assert_eq!(chunk.type_tag.len(), len);
+                    for lane_len in [
+                        chunk.numbers.as_ref().map(|a| a.len()),
+                        chunk.booleans.as_ref().map(|a| a.len()),
+                        chunk.text.as_ref().map(|a| a.len()),
+                        chunk.errors.as_ref().map(|a| a.len()),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    {
+                        assert_eq!(lane_len, len, "materialized lanes span the chunk");
+                    }
+                    assert_eq!(chunk.text.is_some(), chunk.meta.non_null_text > 0);
+                    assert_eq!(chunk.numbers.is_some(), chunk.meta.non_null_num > 0);
+                }
+            }
+            for i in 0..rows {
+                let got = sheet.get_cell_value(i, 0);
+                match value_at(i) {
+                    // Dates round-trip through the numeric lane with a DATE format.
+                    LiteralValue::Date(_) => {
+                        assert_eq!(sheet.format_id(i, 0), Some(FormatId::DATE))
+                    }
+                    LiteralValue::Error(e) => {
+                        assert!(matches!(got, LiteralValue::Error(g) if g.kind == e.kind))
+                    }
+                    LiteralValue::Int(n) => assert_eq!(got, LiteralValue::Number(n as f64)),
+                    expected => assert_eq!(
+                        expected, got,
+                        "{path} row {i} rows {rows} chunk {chunk_rows}"
+                    ),
+                }
+                assert_eq!(sheet.get_cell_value(i, 1), LiteralValue::Number(i as f64));
+            }
+        }
+    }
 
     #[test]
     fn explicit_format_precedence_and_general_filter_are_stable() {
@@ -5838,7 +6653,7 @@ mod tests {
     }
 
     #[test]
-    fn overlay_dense_point_replacement_splits_dense_not_sparse() {
+    fn overlay_dense_point_replacement_shadows_without_splitting() {
         let mut overlay = Overlay::new();
         overlay.apply_fragment(
             OverlayFragment::dense_range(
@@ -5852,10 +6667,12 @@ mod tests {
 
         overlay.set_scalar(3, OverlayValue::Number(99.0));
 
+        // The point shadows the fragment (no O(fragment) split per write).
         let stats = overlay.debug_stats();
         assert_eq!(stats.points, 1);
-        assert_eq!(stats.dense_fragments, 2);
+        assert_eq!(stats.dense_fragments, 1);
         assert_eq!(stats.sparse_fragments, 0);
+        assert_eq!(stats.covered_len, 6);
         assert!(overlay.debug_is_normalized());
         assert_eq!(
             overlay.get_scalar(2).unwrap().to_literal(),
@@ -5916,7 +6733,7 @@ mod tests {
     }
 
     #[test]
-    fn overlay_run_point_replacement_splits_run_not_sparse() {
+    fn overlay_run_point_replacement_shadows_without_splitting() {
         let mut overlay = Overlay::new();
         overlay.apply_fragment(
             OverlayFragment::run_range(0, vec![OverlayValue::Number(1.0); 10]).unwrap(),
@@ -5926,8 +6743,9 @@ mod tests {
 
         let stats = overlay.debug_stats();
         assert_eq!(stats.points, 1);
-        assert_eq!(stats.run_fragments, 2);
+        assert_eq!(stats.run_fragments, 1);
         assert_eq!(stats.sparse_fragments, 0);
+        assert_eq!(stats.covered_len, 10);
         assert!(overlay.debug_is_normalized());
         assert_eq!(
             overlay.get_scalar(4).unwrap().to_literal(),
@@ -5941,6 +6759,133 @@ mod tests {
             overlay.get_scalar(6).unwrap().to_literal(),
             LiteralValue::Number(1.0)
         );
+    }
+
+    #[test]
+    fn overlay_point_removal_splits_dense_and_run_zero_copy() {
+        for run in [false, true] {
+            let values: Vec<_> = (0..1000)
+                .map(|i| OverlayValue::Number(if run { (i / 10) as f64 } else { i as f64 }))
+                .collect();
+            let fragment = if run {
+                OverlayFragment::run_range(0, values).unwrap()
+            } else {
+                OverlayFragment::dense_range(0, values).unwrap()
+            };
+            let mut overlay = Overlay::new();
+            overlay.apply_fragment(fragment);
+            overlay.remove_scalar(400);
+            overlay.remove_scalar(10);
+            let stats = overlay.debug_stats();
+            assert_eq!(stats.points, 0);
+            assert_eq!(stats.covered_len, 998);
+            assert!(overlay.debug_is_normalized());
+            assert_eq!(
+                overlay.estimated_bytes(),
+                overlay.debug_recomputed_estimated_bytes()
+            );
+            for i in 0..1000usize {
+                let got = overlay.get_scalar(i).map(|v| v.to_literal());
+                if i == 400 || i == 10 {
+                    assert!(got.is_none(), "{run} {i}");
+                } else {
+                    let want = if run { (i / 10) as f64 } else { i as f64 };
+                    assert_eq!(got, Some(LiteralValue::Number(want)), "{run} {i}");
+                }
+            }
+            // Pieces of a split share the parent's lanes; a small piece
+            // (under a quarter of them) is copied.
+            let mut pieces: Vec<_> = overlay
+                .fragments
+                .iter()
+                .map(|f| {
+                    let p = match f {
+                        OverlayFragment::DenseRange { payload, .. }
+                        | OverlayFragment::RunRange { payload, .. } => payload,
+                        OverlayFragment::SparseOffsets { .. } => unreachable!(),
+                    };
+                    (f.coverage_len(), p.root_len)
+                })
+                .collect();
+            pieces.sort();
+            let root = if run { 100 } else { 1000 };
+            let small = if run { 1 } else { 10 };
+            assert_eq!(pieces[0], (10, small), "{run}");
+            assert!(
+                pieces[1..].iter().all(|(_, r)| *r == root),
+                "{run} {pieces:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn overlay_shadowed_points_fold_into_fragments() {
+        for run in [false, true] {
+            let n = 400usize;
+            let base = |i: usize| if run { 7.0 } else { i as f64 };
+            let values: Vec<_> = (0..n).map(|i| OverlayValue::Number(base(i))).collect();
+            let fragment = if run {
+                OverlayFragment::run_range(0, values).unwrap()
+            } else {
+                OverlayFragment::dense_range(0, values).unwrap()
+            };
+            let mut overlay = Overlay::new();
+            overlay.apply_fragment(fragment);
+            overlay.set_scalar(n + 5, OverlayValue::Number(-1.0));
+            let mut delta_sum = 0isize;
+            let start_bytes = overlay.estimated_bytes() as isize;
+            // Threshold is max(32, 400 / 8) = 50 shadowed points.
+            for k in 0..49usize {
+                delta_sum += overlay.set_scalar(k * 7, OverlayValue::Number(1000.0 + k as f64));
+            }
+            assert_eq!(overlay.debug_stats().points, 50);
+            assert!(overlay.debug_is_normalized());
+            delta_sum += overlay.set_scalar(49 * 7, OverlayValue::Text(Arc::from("t")));
+            let stats = overlay.debug_stats();
+            assert_eq!(stats.points, 1, "only the unshadowed point stays");
+            assert_eq!(stats.covered_len, n + 1);
+            assert!(overlay.debug_is_normalized());
+            assert_eq!(
+                overlay.estimated_bytes(),
+                overlay.debug_recomputed_estimated_bytes()
+            );
+            assert_eq!(overlay.estimated_bytes() as isize, start_bytes + delta_sum);
+            for i in 0..n {
+                let want = if i % 7 == 0 && i / 7 < 49 {
+                    LiteralValue::Number(1000.0 + (i / 7) as f64)
+                } else if i == 49 * 7 {
+                    LiteralValue::Text("t".into())
+                } else {
+                    LiteralValue::Number(base(i))
+                };
+                assert_eq!(
+                    overlay.get_scalar(i).unwrap().to_literal(),
+                    want,
+                    "{run} {i}"
+                );
+            }
+            // Re-setting a shadowed offset, then applying a covering fragment,
+            // keeps the shadow count exact.
+            overlay.set_scalar(3, OverlayValue::Number(3.5));
+            overlay.set_scalar(3, OverlayValue::Number(4.5));
+            assert!(overlay.debug_is_normalized());
+            overlay.apply_fragment(
+                OverlayFragment::dense_range(0, vec![OverlayValue::Number(0.0); 8]).unwrap(),
+            );
+            assert!(overlay.debug_is_normalized());
+            overlay.set_scalar(20, OverlayValue::Number(1.0));
+            overlay.remove_range(15..25);
+            assert!(overlay.debug_is_normalized());
+            assert!(overlay.get_scalar(20).is_none());
+            overlay.set_scalar(30, OverlayValue::Number(1.0));
+            overlay.remove_scalar(30);
+            assert!(overlay.get_scalar(30).is_none());
+            assert!(overlay.debug_is_normalized());
+            assert_eq!(
+                overlay.estimated_bytes(),
+                overlay.debug_recomputed_estimated_bytes()
+            );
+        }
     }
 
     #[test]
@@ -6535,9 +7480,85 @@ mod tests {
         assert!(numbers.is_null(1));
         assert_eq!(numbers.value(2), 3.0);
         let stats = snapshot_overlay_select_stats();
-        assert_eq!(stats.zip_select_calls, 1);
+        // A short point-only range is merged per offset (Program 2), not
+        // through the builders and zip.
+        assert_eq!(stats.small_point_selects, 1);
+        assert_eq!(stats.zip_select_calls, 0);
         assert_eq!(stats.point_entries_applied, 1);
         assert_eq!(stats.row_scalar_fallbacks, 0);
+    }
+
+    #[test]
+    fn points_only_patch_matches_per_offset_layering() {
+        use rand::{Rng, SeedableRng, rngs::SmallRng};
+        let mut rng = SmallRng::seed_from_u64(0x5eed);
+        let pick = |rng: &mut SmallRng| match rng.gen_range(0..7) {
+            0 => OverlayValue::Number(rng.gen_range(-5.0..5.0)),
+            1 => OverlayValue::DateTime(rng.gen_range(0.0..5.0)),
+            2 => OverlayValue::Text(Arc::from("t")),
+            3 => OverlayValue::Empty,
+            4 => OverlayValue::Error(rng.gen_range(1..8)),
+            5 => OverlayValue::Boolean(rng.gen_bool(0.5)),
+            _ => OverlayValue::Number(-0.0),
+        };
+        reset_overlay_select_stats();
+        for case in 0..400 {
+            let n = rng.gen_range(17..300);
+            let total = n + 10;
+            let base_nulls = case % 2 == 0;
+            let nums: Vec<Option<f64>> = (0..total)
+                .map(|i| (!base_nulls || !rng.gen_bool(0.3)).then_some(i as f64 + 0.5))
+                .collect();
+            let errs: Vec<Option<u8>> = (0..total)
+                .map(|i| (!base_nulls || rng.gen_bool(0.3)).then_some((i % 7) as u8 + 1))
+                .collect();
+            let (nums, errs) = (Float64Array::from(nums), UInt8Array::from(errs));
+            let start = rng.gen_range(0..10);
+            let range = start..start + n;
+            let (mut user, mut computed) = (Overlay::new(), Overlay::new());
+            for _ in 0..rng.gen_range(1..40) {
+                let off = rng.gen_range(0..total);
+                let v = pick(&mut rng);
+                if rng.gen_bool(0.5) {
+                    user.set_scalar(off, v);
+                } else {
+                    computed.set_scalar(off, v);
+                }
+            }
+            let cascade = OverlayCascade::new(&user, &computed);
+            let point = |off: usize| user.points.get(&off).or(computed.points.get(&off));
+            let base = nums.slice(start, n);
+            let got = cascade.select_numbers(range.clone(), &base);
+            assert_eq!(got.len(), n);
+            for i in 0..n {
+                let want = match point(start + i) {
+                    Some(v) => v.numeric_lane_value(),
+                    None => base.is_valid(i).then(|| base.value(i)),
+                };
+                let have = got.is_valid(i).then(|| got.value(i));
+                assert_eq!(
+                    have.map(f64::to_bits),
+                    want.map(f64::to_bits),
+                    "case {case} row {i}"
+                );
+            }
+            let base = errs.slice(start, n);
+            let got = cascade.select_errors(range.clone(), &base);
+            for i in 0..n {
+                let want = match point(start + i) {
+                    Some(v) => v.error_lane_value(),
+                    None => base.is_valid(i).then(|| base.value(i)),
+                };
+                assert_eq!(
+                    got.is_valid(i).then(|| got.value(i)),
+                    want,
+                    "case {case} row {i}"
+                );
+            }
+        }
+        let stats = snapshot_overlay_select_stats();
+        assert!(stats.point_patch_selects > 400, "{stats:?}");
+        assert_eq!(stats.zip_select_calls, 0);
     }
 
     #[test]

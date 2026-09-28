@@ -804,3 +804,96 @@ fn invalidate_unknown_source_errors() {
         .expect_err("unknown source should error");
     assert_eq!(err.kind, ExcelErrorKind::Name);
 }
+
+/// An external-workbook range parses as one reference (it used to parse as an
+/// external cell, the `:` operator and a local cell on the formula's sheet).
+/// It binds to the source table named by its full text and carries no
+/// dependency on the local end corner.
+#[test]
+fn external_workbook_range_binds_as_one_source_table() {
+    const RAW: &str = "[16]jan94!$A$53:$IV$163";
+    let formula = format!("=SUM({RAW})");
+    let ast = formualizer_parse::parser::parse(&formula).unwrap();
+
+    // Unbound: assignment fails with #NAME?, as it did for the split form.
+    let mut unbound: Engine<_> = Engine::new(SourceCtx::default(), EvalConfig::default());
+    unbound.add_sheet("Sheet1").unwrap();
+    let err = unbound
+        .set_cell_formula("Sheet1", 1, 1, ast.clone())
+        .unwrap_err();
+    assert_eq!(err.kind, ExcelErrorKind::Name);
+
+    let ctx = SourceCtx::default();
+    ctx.set_table(
+        RAW,
+        Arc::new(MemTable {
+            headers: vec!["V".to_string()],
+            data: vec![
+                vec![LiteralValue::Number(2.0)],
+                vec![LiteralValue::Number(5.0)],
+            ],
+        }),
+    );
+    let mut engine: Engine<_> = Engine::new(ctx, EvalConfig::default());
+    engine.add_sheet("Sheet1").unwrap();
+    engine.define_source_table(RAW, Some(1)).unwrap();
+    engine.set_cell_formula("Sheet1", 1, 1, ast).unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(7.0))
+    );
+
+    // The local cell that used to be the parsed end corner is not a precedent.
+    engine
+        .set_cell_value("Sheet1", 163, 256, LiteralValue::Number(1000.0))
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(7.0))
+    );
+}
+
+/// A range whose start endpoint is a complete cell was an external cell
+/// followed by a local name before the parser kept it whole, so unbound
+/// assignment failed with #NAME? whatever the end endpoint's shape.
+#[test]
+fn unbound_external_range_with_complete_start_fails_with_name_error() {
+    for formula in ["=SUM([1]S!A1:A)", "=SUM([1]S!A1:3)", "=SUM([1]S!$A$1:$B$4)"] {
+        let mut engine: Engine<_> = Engine::new(SourceCtx::default(), EvalConfig::default());
+        engine.add_sheet("Sheet1").unwrap();
+        let err = engine
+            .set_cell_formula(
+                "Sheet1",
+                1,
+                1,
+                formualizer_parse::parser::parse(formula).unwrap(),
+            )
+            .unwrap_err();
+        assert_eq!(err.kind, ExcelErrorKind::Name, "{formula}");
+    }
+}
+
+/// Whole-row/column external ranges loaded as two unresolved names before the
+/// parser kept them whole. They still load and evaluate to #REF! unbound.
+#[test]
+fn unbound_whole_column_external_range_keeps_legacy_ref_error() {
+    for formula in ["=SUM([33]Sheet1!$B:$B)", "=SUM([33]Sheet1!1:3)"] {
+        let mut engine: Engine<_> = Engine::new(SourceCtx::default(), EvalConfig::default());
+        engine.add_sheet("Sheet1").unwrap();
+        engine
+            .set_cell_formula(
+                "Sheet1",
+                1,
+                1,
+                formualizer_parse::parser::parse(formula).unwrap(),
+            )
+            .unwrap();
+        engine.evaluate_all().unwrap();
+        match engine.get_cell_value("Sheet1", 1, 1) {
+            Some(LiteralValue::Error(e)) => assert_eq!(e.kind, ExcelErrorKind::Ref, "{formula}"),
+            other => panic!("{formula}: expected #REF!, got {other:?}"),
+        }
+    }
+}

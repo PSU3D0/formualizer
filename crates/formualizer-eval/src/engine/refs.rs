@@ -12,6 +12,32 @@ use formualizer_parse::parser::{
 };
 use rustc_hash::FxHashSet;
 
+/// Whether an unbound external range defers to evaluation instead of failing
+/// preparation.
+///
+/// Until the parser kept external ranges whole, no formula text reached the
+/// engine as an external range: `[1]S!A1:B2` arrived as an external cell, `:`
+/// and a local cell (preparation fails with `#NAME?`), and whole-row/column
+/// forms such as `[1]S!$B:$B` arrived as two unresolved names (the formula
+/// loads and evaluates to `#REF!`). Both observable outcomes are kept per form
+/// pending the external-reference oracle (semantics log OQ-1).
+pub(crate) fn unbound_external_range_defers(
+    kind: &formualizer_parse::parser::ExternalRefKind,
+) -> bool {
+    match kind {
+        formualizer_parse::parser::ExternalRefKind::Cell { .. } => false,
+        // The legacy tokenizer kept only the start endpoint with the workbook
+        // prefix, so its shape alone decided the outcome: a complete cell
+        // (`[1]S!A1:A`) became an external cell and failed with `#NAME?`,
+        // while a row- or column-only start became an unresolved name.
+        formualizer_parse::parser::ExternalRefKind::Range {
+            start_row,
+            start_col,
+            ..
+        } => start_row.is_none() || start_col.is_none(),
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DeclaredSheet<'a> {
     Current,
@@ -313,6 +339,95 @@ pub(crate) fn visit_arena_references<C>(
         }
         AstNodeData::Literal(_) | AstNodeData::Omitted => Ok(()),
     }
+}
+
+/// [`visit_arena_references`] without materializing sheet names: a cell or
+/// range stored with a sheet id reaches `visitor` with no sheet on the
+/// reference and the id alongside (`Some(id)`), so an extractor can resolve
+/// it without allocating. Every other reference is reconstructed as usual
+/// with `None`. Iterative, in source order.
+pub(crate) fn visit_arena_references_keyed<C>(
+    ast_id: AstNodeId,
+    context: &mut C,
+    data_store: fn(&C) -> &DataStore,
+    sheet_registry: fn(&C) -> &SheetRegistry,
+    visitor: fn(&mut C, SemanticReference<'_>, Option<u16>) -> Result<(), ExcelError>,
+) -> Result<(), ExcelError> {
+    use crate::engine::arena::{CompactRefType, SheetKey};
+    let mut stack = vec![ast_id];
+    while let Some(id) = stack.pop() {
+        let store = data_store(context);
+        let node = store.get_node(id).ok_or_else(missing_ast_error)?;
+        match node {
+            AstNodeData::Reference { ref_type, .. } => {
+                let (compact, key) = match *ref_type {
+                    CompactRefType::Cell {
+                        sheet: Some(SheetKey::Id(sid)),
+                        row,
+                        col,
+                        row_abs,
+                        col_abs,
+                    } => (
+                        CompactRefType::Cell {
+                            sheet: None,
+                            row,
+                            col,
+                            row_abs,
+                            col_abs,
+                        },
+                        Some(sid),
+                    ),
+                    CompactRefType::Range {
+                        sheet: Some(SheetKey::Id(sid)),
+                        start_row,
+                        start_col,
+                        end_row,
+                        end_col,
+                        start_row_abs,
+                        start_col_abs,
+                        end_row_abs,
+                        end_col_abs,
+                    } => (
+                        CompactRefType::Range {
+                            sheet: None,
+                            start_row,
+                            start_col,
+                            end_row,
+                            end_col,
+                            start_row_abs,
+                            start_col_abs,
+                            end_row_abs,
+                            end_col_abs,
+                        },
+                        Some(sid),
+                    ),
+                    other => (other, None),
+                };
+                let reference =
+                    store.reconstruct_reference_type_for_eval(&compact, sheet_registry(context));
+                visitor(context, classify(&reference), key)?;
+            }
+            AstNodeData::UnaryOp { expr_id, .. } => stack.push(*expr_id),
+            AstNodeData::BinaryOp {
+                left_id, right_id, ..
+            } => {
+                stack.push(*right_id);
+                stack.push(*left_id);
+            }
+            AstNodeData::Function { .. } => {
+                if let Some(args) = store.get_args(id) {
+                    stack.extend(args.iter().rev().copied());
+                }
+            }
+            AstNodeData::Array { .. } => {
+                if let Some((_, _, elems)) = store.get_array_elems(id) {
+                    stack.extend(elems.iter().rev().copied());
+                }
+            }
+            AstNodeData::Literal(_) | AstNodeData::Omitted => {}
+        }
+    }
+    Ok(())
 }
 
 fn missing_ast_error() -> ExcelError {

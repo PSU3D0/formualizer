@@ -27,13 +27,13 @@ fn test_insert_rows() {
         .unwrap();
     let sum_id = sum_result.affected_vertices[0];
 
-    let a1_id = *graph
+    let a1_id = graph
         .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 1))
         .unwrap();
-    let a2_id = *graph
+    let a2_id = graph
         .get_vertex_id_for_address(&sheet1_cell(&graph, 2, 1))
         .unwrap();
-    let a3_id = *graph
+    let a3_id = graph
         .get_vertex_id_for_address(&sheet1_cell(&graph, 3, 1))
         .unwrap();
 
@@ -49,19 +49,19 @@ fn test_insert_rows() {
     // Verify shifts via vertex mapping
     assert_eq!(
         graph.get_vertex_id_for_address(&sheet1_cell(&graph, 1, 1)),
-        Some(&a1_id)
+        Some(a1_id)
     );
     assert_eq!(
         graph.get_vertex_id_for_address(&sheet1_cell(&graph, 4, 1)),
-        Some(&a2_id)
+        Some(a2_id)
     );
     assert_eq!(
         graph.get_vertex_id_for_address(&sheet1_cell(&graph, 5, 1)),
-        Some(&a3_id)
+        Some(a3_id)
     );
     assert_eq!(
         graph.get_vertex_id_for_address(&sheet1_cell(&graph, 6, 1)),
-        Some(&sum_id)
+        Some(sum_id)
     );
 
     // Formula should be updated: SUM(A1:A3) -> SUM(A1:A5)
@@ -83,13 +83,13 @@ fn test_delete_rows() {
             .set_cell_value("Sheet1", i, 1, lit_num(i as f64 * 10.0))
             .unwrap();
     }
-    let a1_id = *graph
+    let a1_id = graph
         .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 1))
         .unwrap();
-    let a4_id = *graph
+    let a4_id = graph
         .get_vertex_id_for_address(&sheet1_cell(&graph, 4, 1))
         .unwrap();
-    let a5_id = *graph
+    let a5_id = graph
         .get_vertex_id_for_address(&sheet1_cell(&graph, 5, 1))
         .unwrap();
     let formula_result = graph
@@ -106,15 +106,15 @@ fn test_delete_rows() {
     // Verify remaining vertices
     assert_eq!(
         graph.get_vertex_id_for_address(&sheet1_cell(&graph, 1, 1)),
-        Some(&a1_id)
+        Some(a1_id)
     );
     assert_eq!(
         graph.get_vertex_id_for_address(&sheet1_cell(&graph, 2, 1)),
-        Some(&a4_id)
+        Some(a4_id)
     );
     assert_eq!(
         graph.get_vertex_id_for_address(&sheet1_cell(&graph, 3, 1)),
-        Some(&a5_id)
+        Some(a5_id)
     );
     assert!(
         graph
@@ -230,7 +230,7 @@ fn test_multiple_row_operations() {
             .set_cell_value("Sheet1", i, 1, lit_num(i as f64))
             .unwrap();
     }
-    let a1_id = *graph
+    let a1_id = graph
         .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 1))
         .unwrap();
 
@@ -255,6 +255,6 @@ fn test_multiple_row_operations() {
     // Verify final state: original A1 should now be at A2
     assert_eq!(
         graph.get_vertex_id_for_address(&sheet1_cell(&graph, 2, 1)),
-        Some(&a1_id)
+        Some(a1_id)
     );
 }

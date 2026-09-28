@@ -51,9 +51,20 @@ impl BuildHasher for CoordBuildHasher {
 pub struct CoordHasher(u64);
 
 impl Hasher for CoordHasher {
+    /// A full avalanche of the accumulated state (murmur3 `fmix64`).
+    /// `write_u64`'s rotate-multiply leaves the low bits of the state
+    /// depending on few input bits: for a packed `Coord` (row at bit 24),
+    /// the bucket bits of a `CellRef` depended only on the column and the
+    /// row's top bits, so all rows below 8192 of one column shared one
+    /// probe position and every insert scanned the whole cluster.
     #[inline]
     fn finish(&self) -> u64 {
-        self.0
+        let mut z = self.0;
+        z ^= z >> 33;
+        z = z.wrapping_mul(0xff51_afd7_ed55_8ccd);
+        z ^= z >> 33;
+        z = z.wrapping_mul(0xc4ce_b9fe_1a85_ec53);
+        z ^ (z >> 33)
     }
 
     /// Byte-wise fallback for keys that don't go through the typed
@@ -126,6 +137,31 @@ mod tests {
             assert_eq!(m.get(&Coord::new(r, r % 64)), Some(&r));
         }
         assert_eq!(m.len(), 1000);
+    }
+
+    /// The bits a hash table indexes with (low bits) and matches with
+    /// (top 7 bits) must spread for a column of cells, the shape a filled
+    /// column inserts: all its rows used to share one bucket.
+    #[test]
+    fn a_column_of_cells_spreads_over_buckets() {
+        #[derive(Hash)]
+        struct Cell {
+            sheet: u16,
+            coord: u64,
+        }
+        let mut low = std::collections::HashSet::new();
+        let mut top = std::collections::HashSet::new();
+        for row in 0..8192u32 {
+            let coord = Coord::new(row, 1);
+            let h = CoordBuildHasher.hash_one(Cell {
+                sheet: 0,
+                coord: (u64::from(coord.row()) << 24) | (u64::from(coord.col()) << 10) | 3,
+            });
+            low.insert(h & 0xFFFF);
+            top.insert(h >> 57);
+        }
+        assert!(low.len() > 7000, "low bits: {} distinct of 8192", low.len());
+        assert_eq!(top.len(), 128);
     }
 
     #[test]

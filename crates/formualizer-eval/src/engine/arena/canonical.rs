@@ -5,7 +5,7 @@
 //! its children, it returns the node's canonical labels and a stable 64-bit
 //! FNV-1a hash.
 //!
-//! Hash construction mirrors the legacy `formula_plane::template_canonical`
+//! Hash construction mirrors the legacy `engine::template::canonical`
 //! payload shape without allocating a payload string:
 //!
 //! * mix a version tag and node-kind discriminant;

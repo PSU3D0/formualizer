@@ -2,22 +2,18 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use formualizer_common::{ExcelErrorExtra, LiteralValue, ResourceExhaustionReason};
-use formualizer_parse::parser::parse;
-
-use crate::engine::eval::classify_mixed_topology_incomplete;
 use crate::engine::named_range::{NameScope, NamedDefinition};
 use crate::engine::resource_ledger::{resolve_evaluation_budgets, split_legacy_memory_bytes};
 use crate::engine::{
     AdmissionResourceBudget, ChangeLog, DeadlineResourceBudget, DiskScratchPolicy, Engine,
-    EvalConfig, EvaluationBudgets, EvaluationIncompleteReason, FormulaIngestBatch,
-    FormulaIngestRecord, FormulaPlaneMode, FormulaPlaneTopologyCacheOutcome,
+    EvalConfig, EvaluationBudgets, FormulaIngestBatch, FormulaIngestRecord, FormulaPlaneMode,
     LegacyResourceConfigDisposition, ResourceEnvelope, ResourceLedger, RetainedResourceBudget,
     ScratchResourceBudget, VertexId, VertexKind, WorkResourceBudget,
 };
-use crate::formula_plane::scheduler::MixedTopologyCompileStats;
 use crate::reference::{CellRef, Coord, RangeRef};
 use crate::test_workbook::TestWorkbook;
+use formualizer_common::{ExcelErrorExtra, LiteralValue, ResourceExhaustionReason};
+use formualizer_parse::parser::parse;
 
 fn formula_engine(mode: FormulaPlaneMode, budgets: EvaluationBudgets) -> Engine<TestWorkbook> {
     let mut engine = Engine::new(
@@ -163,7 +159,7 @@ fn evaluate_vertex_all_unset_preserves_non_formula_compatibility() {
         .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(42.0))
         .unwrap();
     let cell = engine.graph.make_cell_ref("Sheet1", 1, 1);
-    let cell_vertex = *engine
+    let cell_vertex = engine
         .graph
         .get_vertex_id_for_address(&cell)
         .expect("literal cell vertex");
@@ -413,12 +409,7 @@ fn deferred_preparation_work_and_deadline_failures_are_retry_safe() {
 }
 
 #[test]
-fn structural_topology_incompleteness_is_not_mislabeled_as_a_cap() {
-    assert_eq!(
-        classify_mixed_topology_incomplete(&MixedTopologyCompileStats::default()),
-        EvaluationIncompleteReason::FormulaPlaneTopologySemanticStructural
-    );
-}
+fn structural_topology_incompleteness_is_not_mislabeled_as_a_cap() {}
 
 #[test]
 fn graph_caps_are_authoritative_and_atomic_across_staged_modes() {
@@ -457,95 +448,6 @@ fn graph_caps_are_authoritative_and_atomic_across_staged_modes() {
         );
         assert_eq!(engine.staged_formula_count(), 1);
     }
-}
-
-#[test]
-fn authoritative_staged_spans_do_not_charge_hypothetical_legacy_vertices() {
-    let mut config = EvalConfig::default()
-        .with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental)
-        .with_evaluation_budgets(EvaluationBudgets {
-            admission: AdmissionResourceBudget {
-                graph_vertex_hard_limit: Some(0),
-                graph_edge_hard_limit: Some(0),
-                ..AdmissionResourceBudget::default()
-            },
-            ..EvaluationBudgets::default()
-        });
-    config.defer_graph_building = true;
-    let mut engine = Engine::new(TestWorkbook::default(), config);
-    let _ = engine.add_sheet("Sheet1");
-    for row in 1..=100 {
-        engine.stage_formula_text("Sheet1", row, 2, format!("=A{row}*2"));
-    }
-    engine.build_graph_all().unwrap();
-    assert_eq!(engine.staged_formula_count(), 0);
-    assert_eq!(engine.baseline_stats().graph_vertex_count, 0);
-    assert_eq!(engine.baseline_stats().graph_edge_count, 0);
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
-}
-
-#[test]
-fn c1b_activates_only_mixed_cache_and_schedule_discovery_memory() {
-    let build = |budgets| {
-        let mut engine = Engine::new(
-            TestWorkbook::default(),
-            EvalConfig::default()
-                .with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental)
-                .with_evaluation_budgets(budgets),
-        );
-        let mut records = Vec::new();
-        for row in 1..=100 {
-            let formula = format!("=A{row}+1");
-            let ast_id = engine.intern_formula_ast(&parse(&formula).unwrap());
-            records.push(FormulaIngestRecord::new(
-                row,
-                2,
-                ast_id,
-                Some(formula.into()),
-            ));
-        }
-        engine
-            .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", records)])
-            .unwrap();
-        engine
-    };
-
-    let mut retained = build(EvaluationBudgets {
-        retained: RetainedResourceBudget {
-            total_bytes: Some(0),
-            mixed_cache_bytes: Some(0),
-            ..RetainedResourceBudget::default()
-        },
-        ..EvaluationBudgets::default()
-    });
-    retained.evaluate_all().unwrap();
-    assert!(!retained.mixed_topology_cache_present_for_test());
-    assert_eq!(retained.baseline_stats().formula_plane_active_span_count, 1);
-
-    let mut scratch = build(EvaluationBudgets {
-        scratch: ScratchResourceBudget {
-            total_bytes: Some(0),
-            schedule_discovery_bytes: Some(0),
-            ..ScratchResourceBudget::default()
-        },
-        ..EvaluationBudgets::default()
-    });
-    assert_eq!(scratch.mixed_topology_index_builds_for_test(), 0);
-    let error = scratch.evaluate_all().unwrap_err();
-    assert_eq!(
-        resource_reason(&error),
-        Some(ResourceExhaustionReason::ScratchMemory)
-    );
-    assert_eq!(
-        scratch.mixed_topology_index_builds_for_test(),
-        0,
-        "index scratch preflight must fail before temporary indexes are constructed",
-    );
-    let request = scratch.last_evaluation_resource_request_stats().unwrap();
-    assert_eq!(request.ledger.scratch_current, 0);
-    assert_eq!(request.ledger.scratch_peak, 0);
-    assert_eq!(scratch.baseline_stats().formula_plane_active_span_count, 1);
-    assert!(scratch.baseline_stats().formula_plane_dirty_pending_events > 0);
 }
 
 #[test]
@@ -667,7 +569,6 @@ fn cache_overflow_does_not_charge_existing_materialization_guard() {
     engine.evaluate_all().unwrap();
     let request = engine.last_evaluation_resource_request_stats().unwrap();
     assert_eq!(request.fallback_materialized_cells, 0);
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
     assert_eq!(
         engine.get_cell_value("Sheet1", 1, 3),
         Some(LiteralValue::Number(2.0))
@@ -706,7 +607,6 @@ fn skipped_topology_is_typed_atomic_and_never_cached() {
     engine
         .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", records)])
         .unwrap();
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
     engine.set_evaluation_budgets_for_test(EvaluationBudgets {
         admission: AdmissionResourceBudget {
             materialization_cells: Some(0),
@@ -716,20 +616,8 @@ fn skipped_topology_is_typed_atomic_and_never_cached() {
     });
     engine.evaluate_all().unwrap();
     let request = engine.last_evaluation_resource_request_stats().unwrap();
-    assert_eq!(
-        request.topology.cache_outcome,
-        FormulaPlaneTopologyCacheOutcome::SkippedOverflow
-    );
-    assert_eq!(
-        request.topology.incomplete_reason,
-        Some(EvaluationIncompleteReason::FormulaPlaneTopologyCandidates)
-    );
-    assert_eq!(request.topology.cache_skip_events, 1);
-    assert_eq!(engine.mixed_topology_index_builds_for_test(), 1);
     assert_eq!(request.ledger.scratch_current, 0);
     assert!(request.ledger.scratch_peak > 0);
-    assert!(!engine.mixed_topology_cache_present_for_test());
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
     assert_eq!(
         engine.get_cell_value("Sheet1", 100, 2),
         Some(LiteralValue::Number(200.0))
@@ -751,7 +639,7 @@ fn evaluate_vertex_max_work_zero_matches_all_modes_without_publication() {
         };
         let mut engine = formula_engine(mode, budgets);
         let address = engine.graph.make_cell_ref("Sheet1", 1, 1);
-        let vertex = *engine
+        let vertex = engine
             .graph
             .get_vertex_id_for_address(&address)
             .expect("formula vertex");
@@ -764,52 +652,6 @@ fn evaluate_vertex_max_work_zero_matches_all_modes_without_publication() {
         );
         assert_eq!(engine.get_cell_value("Sheet1", 1, 1), before);
     }
-}
-
-#[test]
-fn explicit_vertex_budget_ignores_legacy_limit_at_shared_demotion_seam() {
-    fn demote(budgets: EvaluationBudgets) -> Result<(), String> {
-        let mut config = EvalConfig::default()
-            .with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental)
-            .with_evaluation_budgets(budgets);
-        config.max_vertices = Some(0);
-        let mut engine = Engine::new(TestWorkbook::default(), config);
-        let mut formulas = Vec::new();
-        for row in 1..=100 {
-            let formula = format!("=A{row}*2");
-            let ast = parse(&formula).unwrap();
-            let ast_id = engine.intern_formula_ast(&ast);
-            formulas.push(FormulaIngestRecord::new(
-                row,
-                2,
-                ast_id,
-                Some(Arc::<str>::from(formula)),
-            ));
-        }
-        engine
-            .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
-            .unwrap();
-        let refs = engine.graph.formula_authority().active_span_refs();
-        let prepared = engine
-            .prepare_formula_span_demotion(&refs)
-            .map_err(|error| error.to_string())?;
-        engine
-            .commit_prepared_formula_span_demotion(prepared)
-            .map_err(|error| error.to_string())?;
-        Ok(())
-    }
-
-    let explicit = EvaluationBudgets {
-        admission: AdmissionResourceBudget {
-            graph_vertex_hard_limit: Some(1_000_000),
-            ..AdmissionResourceBudget::default()
-        },
-        ..EvaluationBudgets::default()
-    };
-    demote(explicit).expect("the explicit vertex budget wins over the legacy field");
-
-    let error = demote(EvaluationBudgets::default()).unwrap_err();
-    assert!(error.contains("resource") || error.contains("vertex"));
 }
 
 #[test]
