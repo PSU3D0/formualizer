@@ -24,6 +24,7 @@ pub struct GraphInstrumentation {
 mod ast_utils;
 pub(crate) mod authority_host;
 pub mod editor;
+mod extent_record;
 mod formula_analysis;
 #[cfg(test)]
 mod formula_analysis_legacy_tests;
@@ -497,12 +498,21 @@ pub struct DependencyGraph {
     /// The ids in `retired_ids` (their tombstones stay out of grid scans:
     /// structural edits must not move or log them).
     retired_id_set: FxHashSet<VertexId>,
-    /// Entries each structural delete dropped, most recent last (history is
-    /// LIFO: an undone delete takes its batch back).
+    /// Entries each journaled structural delete dropped, most recent last
+    /// (history is LIFO: an undone delete takes its batch back). A delete
+    /// without a change logger cannot be undone and pushes nothing, so the
+    /// stack only grows with the history that can pop it.
     retired_dropped: Vec<RetiredBatch>,
     /// Entries each undone insert dropped from its band (a redo of the
     /// insert takes them back).
     retired_dropped_by_undo: Vec<RetiredBatch>,
+    /// Cells the legacy graph gave a vertex without a formula (placeholders,
+    /// value cells, spill children): the graph's used extent counts them.
+    extent_record: extent_record::ExtentRecord,
+    /// The edited sheet's extent record before each journaled structural
+    /// edit, most recent last: undo restores it (the replay of the edit's
+    /// events notes cells before its marker shifts the record back).
+    extent_snapshots: Vec<(SheetId, Vec<extent_record::ExtentRun>)>,
     /// The same for cell/rectangle seeds (value edits: no vertex, decision 27).
     deferred_dirty_pending_rects: Vec<(u16, crate::engine::authority::geom::Rect)>,
 
@@ -1592,6 +1602,7 @@ impl DependencyGraph {
                 max_r = Some(max_r.map(|m| m.max(r)).unwrap_or(r));
             }
             self.virtual_row_bounds(sheet_id, start_col, end_col, &mut min_r, &mut max_r);
+            self.extent_row_bounds(sheet_id, start_col, end_col, &mut min_r, &mut max_r);
             return match (min_r, max_r) {
                 (Some(a), Some(b)) => Some((a, b)),
                 _ => None,
@@ -1621,6 +1632,7 @@ impl DependencyGraph {
             }
         }
         self.virtual_row_bounds(sheet_id, start_col, end_col, &mut min_r, &mut max_r);
+        self.extent_row_bounds(sheet_id, start_col, end_col, &mut min_r, &mut max_r);
         match (min_r, max_r) {
             (Some(a), Some(b)) => Some((a, b)),
             _ => None,
@@ -1696,6 +1708,7 @@ impl DependencyGraph {
                 max_c = Some(max_c.map(|m| m.max(c)).unwrap_or(c));
             }
             self.virtual_col_bounds(sheet_id, start_row, end_row, &mut min_c, &mut max_c);
+            self.extent_col_bounds(sheet_id, start_row, end_row, &mut min_c, &mut max_c);
             return match (min_c, max_c) {
                 (Some(a), Some(b)) => Some((a, b)),
                 _ => None,
@@ -1725,9 +1738,40 @@ impl DependencyGraph {
             }
         }
         self.virtual_col_bounds(sheet_id, start_row, end_row, &mut min_c, &mut max_c);
+        self.extent_col_bounds(sheet_id, start_row, end_row, &mut min_c, &mut max_c);
         match (min_c, max_c) {
             (Some(a), Some(b)) => Some((a, b)),
             _ => None,
+        }
+    }
+
+    /// Widen `min..max` rows by the extent record in columns `c0..=c1`.
+    fn extent_row_bounds(
+        &self,
+        sheet: SheetId,
+        c0: u32,
+        c1: u32,
+        min: &mut Option<u32>,
+        max: &mut Option<u32>,
+    ) {
+        if let Some((a, b)) = self.extent_record.row_bounds_for_cols(sheet, c0, c1) {
+            *min = Some(min.map_or(a, |m| m.min(a)));
+            *max = Some(max.map_or(b, |m| m.max(b)));
+        }
+    }
+
+    /// Widen `min..max` columns by the extent record in rows `r0..=r1`.
+    fn extent_col_bounds(
+        &self,
+        sheet: SheetId,
+        r0: u32,
+        r1: u32,
+        min: &mut Option<u32>,
+        max: &mut Option<u32>,
+    ) {
+        if let Some((a, b)) = self.extent_record.col_bounds_for_rows(sheet, r0, r1) {
+            *min = Some(min.map_or(a, |m| m.min(a)));
+            *max = Some(max.map_or(b, |m| m.max(b)));
         }
     }
 
@@ -1814,6 +1858,8 @@ impl DependencyGraph {
             retired_id_set: FxHashSet::default(),
             retired_dropped: Vec::new(),
             retired_dropped_by_undo: Vec::new(),
+            extent_record: Default::default(),
+            extent_snapshots: Vec::new(),
             volatile_vertices: FxHashSet::default(),
             ref_error_vertices: FxHashSet::default(),
             #[cfg(any(test, feature = "legacy_oracle"))]
@@ -2575,6 +2621,10 @@ impl DependencyGraph {
                 .map(|sid| !self.ensure_touched_sheets.contains(&sid))
                 .unwrap_or(false);
         if assume_new {
+            for (row, col, _) in collected {
+                self.extent_record
+                    .note(sheet_id, row.saturating_sub(1), col.saturating_sub(1));
+            }
             return Ok(());
         }
         for (row, col, _) in collected {
@@ -3373,6 +3423,10 @@ impl DependencyGraph {
     /// older state, a revived placeholder) is tombstoned. Returns the vertex
     /// that left and whether it held a formula.
     pub(crate) fn vacate_cell(&mut self, addr: &CellRef) -> Option<(VertexId, bool)> {
+        // The legacy graph kept (or created) a value vertex here: it counts
+        // toward the used extent.
+        self.extent_record
+            .note(addr.sheet_id, addr.coord.row(), addr.coord.col());
         let v = self.cell_vertex_mut(addr)?;
         let was_formula = matches!(
             self.store.kind(v),
@@ -3454,7 +3508,48 @@ impl DependencyGraph {
         // The cell's value changes either way (Arrow restores it): its
         // readers are dirty even when it had no vertex.
         self.vacate_cell(&addr);
+        // Legacy removed the cell's vertex: it leaves the used extent.
+        self.forget_extent_cells(
+            addr.sheet_id,
+            (addr.coord.row(), addr.coord.row()),
+            (addr.coord.col(), addr.coord.col()),
+        );
         let _ = self.mark_dirty_cells(&[(addr.sheet_id, addr.coord.row(), addr.coord.col())]);
+    }
+
+    /// A cell the legacy graph gave a placeholder (a reference to a cell
+    /// without a vertex) counts toward the used extent.
+    pub(crate) fn note_extent_cell(&mut self, sheet: SheetId, row0: u32, col0: u32) {
+        self.extent_record.note(sheet, row0, col0);
+    }
+
+    /// Cells of `rows x cols` (0-based, inclusive) leave the extent record:
+    /// the legacy graph removed their vertices.
+    pub(crate) fn forget_extent_cells(
+        &mut self,
+        sheet: SheetId,
+        rows: (u32, u32),
+        cols: (u32, u32),
+    ) {
+        self.extent_record.forget_rect(sheet, rows, cols);
+    }
+
+    /// Whether the legacy graph held a vertex without a formula at `cell`
+    /// (a referenced, value or spill-child cell): the extent record.
+    pub(crate) fn had_legacy_cell_vertex(&self, cell: &CellRef) -> bool {
+        self.extent_record
+            .contains(cell.sheet_id, cell.coord.row(), cell.coord.col())
+    }
+
+    /// Columns of `sheet` with a cell in the extent record.
+    pub(crate) fn extent_record_columns(&self, sheet: SheetId) -> Vec<u32> {
+        self.extent_record.columns(sheet)
+    }
+
+    /// Runs in the extent record (tests).
+    #[cfg(test)]
+    pub(crate) fn extent_record_runs(&self) -> usize {
+        self.extent_record.run_count()
     }
 
     /// The retired id at `addr` comes back (value -> formula, decision 27)
@@ -3486,14 +3581,32 @@ impl DependencyGraph {
     /// Shift the retired-id side table for a structural edit (called with
     /// the pre-edit frame). Entries in a deleted band go to the journal, so
     /// history that brings the cell back revives the id.
+    /// `journal`: the edit is logged, so history may undo it (the band's
+    /// entries are kept for that); an unlogged delete drops them for good.
     pub(crate) fn shift_retired_ids(
         &mut self,
         op: &crate::engine::graph::editor::reference_adjuster::ShiftOperation,
+        journal: bool,
+    ) {
+        if journal {
+            let sheet = shift_sheet(op);
+            self.extent_snapshots
+                .push((sheet, self.extent_record.snapshot(sheet)));
+        }
+        let _ = self.extent_record.shift(op);
+        self.shift_retired_id_table(op, journal);
+    }
+
+    /// The retired-id side table part of [`Self::shift_retired_ids`].
+    fn shift_retired_id_table(
+        &mut self,
+        op: &crate::engine::graph::editor::reference_adjuster::ShiftOperation,
+        journal: bool,
     ) {
         use crate::engine::graph::editor::reference_adjuster::ShiftOperation as Op;
         let deleting = matches!(*op, Op::DeleteRows { .. } | Op::DeleteColumns { .. });
         if self.retired_ids.is_empty() {
-            if deleting {
+            if deleting && journal {
                 self.retired_dropped.push(Vec::new());
             }
             return;
@@ -3548,9 +3661,16 @@ impl DependencyGraph {
                 None => dropped.push(((s, r, c), id)),
             }
         }
-        if !insert {
+        if !insert && journal {
             // Undo of the delete restores them (`replay_structural_marker`).
             self.retired_dropped.push(dropped);
+        }
+    }
+
+    /// Restore the retired ids a delete dropped (its band is back).
+    fn restore_retired_batch(&mut self, batch: RetiredBatch) {
+        for (key, id) in batch {
+            self.retired_ids.insert(key, id);
         }
     }
 
@@ -3566,14 +3686,12 @@ impl DependencyGraph {
             return;
         };
         if forward {
-            self.shift_retired_ids(&op);
+            self.shift_retired_ids(&op, true);
             if matches!(op, Op::InsertRows { .. } | Op::InsertColumns { .. })
                 && let Some(batch) = self.retired_dropped_by_undo.pop()
             {
                 // Entries the undo of this insert dropped from its band.
-                for (key, id) in batch {
-                    self.retired_ids.insert(key, id);
-                }
+                self.restore_retired_batch(batch);
             }
             return;
         }
@@ -3627,9 +3745,15 @@ impl DependencyGraph {
                 Some((sheet_id, false, start, count)),
             ),
         };
+        // The extent record goes back to its state before the edit (the
+        // replay of the edit's events, before this marker, noted cells in
+        // the edited frame).
+        if let Some((sheet, runs)) = self.extent_snapshots.pop() {
+            self.extent_record.restore_sheet(sheet, runs);
+        }
         // Undo of an insert drops the band's entries (retired there after the
         // insert); redo of the insert takes them back.
-        self.shift_retired_ids(&inverse);
+        self.shift_retired_id_table(&inverse, true);
         if band.is_none() {
             if let Some(batch) = self.retired_dropped.pop() {
                 self.retired_dropped_by_undo.push(batch);
@@ -3643,9 +3767,7 @@ impl DependencyGraph {
             }
             // Entries the delete dropped come back (LIFO with history).
             if let Some(batch) = self.retired_dropped.pop() {
-                for (key, id) in batch {
-                    self.retired_ids.insert(key, id);
-                }
+                self.restore_retired_batch(batch);
             }
             let end = start.saturating_add(count - 1);
             // Excel's grid: 1,048,576 rows by 16,384 columns.
@@ -3660,6 +3782,7 @@ impl DependencyGraph {
 
     /// A sheet is removed: its retired ids go to the journal.
     pub(crate) fn drop_retired_ids_of_sheet(&mut self, sheet: SheetId) {
+        self.extent_record.drop_sheet(sheet);
         let keys: Vec<(SheetId, u32, u32)> = self
             .retired_ids
             .range((sheet, 0, 0)..=(sheet, u32::MAX, u32::MAX))
@@ -3764,6 +3887,8 @@ impl DependencyGraph {
         let mut keys = Vec::new();
         for cell in cells {
             n += 1;
+            // The legacy placeholder counted toward the used extent.
+            self.extent_record.note(cell.0, cell.1, cell.2);
             #[cfg(any(test, feature = "legacy_oracle"))]
             {
                 self.oracle_vertexless_readers
@@ -6036,6 +6161,7 @@ impl DependencyGraph {
 // ========== Sheet Management Operations ==========
 
 /// Retired ids a structural edit dropped from the side table.
+/// Retired ids a structural delete dropped from the side table.
 type RetiredBatch = Vec<((SheetId, u32, u32), VertexId)>;
 
 /// Same sheet and position (reference flags aside).
@@ -6045,6 +6171,17 @@ pub(crate) fn same_cell(a: &CellRef, b: &CellRef) -> bool {
 
 /// The shift operation of a structural edit's compound description, as
 /// `VertexEditor` logs it (`InsertRows sheet=S before=B count=N`, ...).
+/// The sheet a structural edit applies to.
+fn shift_sheet(op: &crate::engine::graph::editor::reference_adjuster::ShiftOperation) -> SheetId {
+    use crate::engine::graph::editor::reference_adjuster::ShiftOperation as Op;
+    match *op {
+        Op::InsertRows { sheet_id, .. }
+        | Op::DeleteRows { sheet_id, .. }
+        | Op::InsertColumns { sheet_id, .. }
+        | Op::DeleteColumns { sheet_id, .. } => sheet_id,
+    }
+}
+
 pub(crate) fn parse_structural_description(
     description: &str,
 ) -> Option<crate::engine::graph::editor::reference_adjuster::ShiftOperation> {

@@ -13092,7 +13092,10 @@ where
         if let Some(vid) = self.graph.get_vertex_for_cell(&cell) {
             let ast = self.graph.get_formula(vid);
             Some((ast, v))
-        } else if v.is_some() {
+        } else if v.is_some() || self.graph.had_legacy_cell_vertex(&cell) {
+            // A referenced or emptied value cell has no vertex (decision
+            // 27), but it is a cell the graph knows, as it was when it had
+            // one (the interactive formula edit routes on this).
             Some((None, v))
         } else {
             None

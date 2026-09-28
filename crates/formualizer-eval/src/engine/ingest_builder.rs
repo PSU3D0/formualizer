@@ -669,10 +669,15 @@ impl<'g> BulkIngestBuilder<'g> {
                         .into_iter()
                         .map(Some)
                         .chain(plan.vertex_pool[n_targets..].iter().map(|&(sid, pc)| {
-                            self.g.dep_vertex(&crate::reference::CellRef::new(
+                            let v = self.g.dep_vertex(&crate::reference::CellRef::new(
                                 sid,
                                 crate::reference::Coord::new(pc.row(), pc.col(), true, true),
-                            ))
+                            ));
+                            if v.is_none() {
+                                // Legacy's placeholder: part of the used extent.
+                                self.g.note_extent_cell(sid, pc.row(), pc.col());
+                            }
+                            v
                         }))
                         .collect();
                     total_vertices += add_batch.len();

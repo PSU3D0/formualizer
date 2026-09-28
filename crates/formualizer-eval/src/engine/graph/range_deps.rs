@@ -145,6 +145,13 @@ impl DependencyGraph {
                 occupancy.occupied_columns.push(coord.col());
             }
         }
+        // Cells the legacy graph held as vertices without a formula (the
+        // extent record) move with a row edit and so change the used extent
+        // of open ranges over their columns: those columns are occupied.
+        // (Column edits pass a conservative occupancy; rows are not needed.)
+        occupancy
+            .occupied_columns
+            .extend(self.extent_record_columns(sheet_id));
         occupancy.finish();
         occupancy
     }

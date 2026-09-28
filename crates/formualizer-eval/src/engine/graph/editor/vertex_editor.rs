@@ -808,6 +808,10 @@ impl<'g> VertexEditor<'g> {
         // Remove from cell mapping if it exists
         if let Some(cell_ref) = self.graph.get_cell_ref_for_vertex(id) {
             self.graph.remove_cell_mapping(&cell_ref);
+            // Legacy's cell leaves the used extent with its vertex.
+            let (r, c) = (cell_ref.coord.row(), cell_ref.coord.col());
+            self.graph
+                .forget_extent_cells(cell_ref.sheet_id, (r, r), (c, c));
         }
 
         // Remove all formula/value payloads owned by this vertex.  Tombstoned vertices remain in
@@ -856,6 +860,11 @@ impl<'g> VertexEditor<'g> {
         if let Some(id) = self.graph.get_vertex_for_cell(&cell) {
             self.remove_vertex(id)
         } else {
+            // A value or referenced cell (legacy's vertex) leaves the used
+            // extent.
+            let (r, c) = (cell.coord.row(), cell.coord.col());
+            self.graph
+                .forget_extent_cells(cell.sheet_id, (r, r), (c, c));
             Ok(())
         }
     }
@@ -1378,7 +1387,8 @@ impl<'g> VertexEditor<'g> {
         shift: impl Fn(GridAddr) -> GridAddr,
         summary: &mut ShiftSummary,
     ) -> Result<(), EditorError> {
-        self.graph.shift_retired_ids(op);
+        let journal = self.has_logger();
+        self.graph.shift_retired_ids(op, journal);
         let runs = self.graph.shift_virtual_runs(op);
 
         for (id, old_coord) in vertices_to_shift {
@@ -1961,6 +1971,10 @@ impl<'g> VertexEditor<'g> {
             self.remove_vertex(id)?;
             summary.cells_affected += 1;
         }
+        // Value and referenced cells (legacy's vertices) leave the used
+        // extent too.
+        self.graph
+            .forget_extent_cells(sheet_id, (start_row, end_row), (start_col, end_col));
 
         self.commit_batch();
 

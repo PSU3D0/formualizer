@@ -463,9 +463,7 @@ fn graph_compressed_self_use_path_keeps_row_and_column_fallback_caps() {
         engine
             .graph
             .compressed_range_resolved_bounds(sheet_id, (None, None, None, None)),
-        // The graph's used extent counts vertices; a value cell has none
-        // (decision 27), so the column cap stays at the fallback.
-        Some((0, 63, 0, 15))
+        Some((0, 63, 0, 29))
     );
 }
 
@@ -513,17 +511,16 @@ fn semantic_engine_source_excludes_dangling_reference_placeholders() {
         end_column: Some(26),
     };
 
-    // A reference creates no vertex (decision 27): nothing is used in Z
-    // (this was a dangling placeholder at Z1000).
-    assert_eq!(engine.used_rows_for_columns("Sheet1", 26, 26), None);
+    assert_eq!(
+        engine.used_rows_for_columns("Sheet1", 26, 26),
+        Some((1000, 1000))
+    );
     let semantic = semantic_extent(&engine, "Sheet1", whole_z);
     assert_eq!(semantic, None);
     assert_eq!(semantic.map(ResolvedExtent::cell_count).unwrap_or(0), 0);
 
-    // The evaluation-compat extent no longer reaches the dangling reference
-    // either: it is the sheet's own extent.
     let evaluation = evaluation_extent(&engine, "Sheet1", whole_z).unwrap();
-    assert_eq!((evaluation.start_row, evaluation.end_row), (1, 64));
+    assert_eq!((evaluation.start_row, evaluation.end_row), (1, 1000));
 }
 
 #[test]
@@ -578,4 +575,57 @@ fn semantic_engine_source_treats_placeholder_only_sheet_as_empty() {
         },
     );
     assert_eq!(extent, None);
+}
+
+#[test]
+fn referenced_cells_extent_follows_structural_edits_and_their_undo() {
+    use crate::engine::ChangeLog;
+    use crate::engine::graph::editor::undo_engine::UndoEngine;
+    let mut engine = Engine::new(TestWorkbook::new(), arrow_eval_config());
+    engine.add_sheet("Refs").unwrap();
+    engine
+        .set_cell_formula("Refs", 1, 1, parse("=SUM(Sheet1!AB4999:AB5000)").unwrap())
+        .unwrap();
+    let sheet = engine.graph.sheet_id("Sheet1").unwrap();
+    let bounds = |e: &Engine<TestWorkbook>| {
+        (
+            e.graph.used_row_bounds_for_columns(sheet, 27, 27),
+            e.graph.used_col_bounds_for_rows(sheet, 4999, 4999),
+        )
+    };
+    let start = (Some((4998, 4999)), Some((27, 27)));
+    let shifted = (Some((5000, 5001)), None);
+    assert_eq!(bounds(&engine), start);
+    let mut log = ChangeLog::new();
+    let mut undo = UndoEngine::new();
+    engine
+        .action_with_logger(&mut log, "insert", |a| {
+            a.insert_rows("Sheet1", 3000, 2).map(|_| ())
+        })
+        .unwrap();
+    assert_eq!(bounds(&engine), shifted);
+    // The undo replays the formula's old text (noting its cells) before the
+    // edit's marker shifts back: the record returns to its state before.
+    engine.undo_logged(&mut undo, &mut log).unwrap();
+    assert_eq!(bounds(&engine), start);
+    engine.redo_logged(&mut undo, &mut log).unwrap();
+    assert_eq!(bounds(&engine), shifted);
+    engine.undo_logged(&mut undo, &mut log).unwrap();
+    engine
+        .action_with_logger(&mut log, "insert", |a| {
+            a.insert_rows("Sheet1", 3000, 2).map(|_| ())
+        })
+        .unwrap();
+    assert_eq!(bounds(&engine), shifted);
+    // A delete drops the band's cells.
+    engine.delete_rows("Sheet1", 5001, 1).unwrap();
+    assert_eq!(
+        engine.graph.used_row_bounds_for_columns(sheet, 27, 27),
+        Some((5000, 5000))
+    );
+    engine.delete_columns("Sheet1", 28, 1).unwrap();
+    assert_eq!(
+        engine.graph.used_row_bounds_for_columns(sheet, 27, 27),
+        None
+    );
 }
