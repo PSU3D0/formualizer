@@ -16342,14 +16342,18 @@ where
                             ));
                         }
 
+                        // `get_cell_value` per cell, with the sheet resolved
+                        // once (`read_cell_formatted_in` is its body).
+                        let sheet_id = range_ref.start.sheet_id;
+                        let asheet = self.arrow_sheets.sheet(sheet_name);
                         let mut rows = Vec::with_capacity(h);
                         for r0 in sr0..=er0 {
                             let mut row = Vec::with_capacity(w);
                             for c0 in sc0..=ec0 {
-                                let v = self
-                                    .get_cell_value(sheet_name, r0 + 1, c0 + 1)
-                                    .unwrap_or(LiteralValue::Empty);
-                                row.push(v);
+                                row.push(
+                                    self.read_cell_formatted_in(sheet_id, asheet, r0 + 1, c0 + 1)
+                                        .0,
+                                );
                             }
                             rows.push(row);
                         }
