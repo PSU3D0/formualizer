@@ -186,6 +186,14 @@ impl LiftProgram {
     ) -> Option<Self> {
         let mut program = Self { nodes: Vec::new() };
         program.compile_node(functions, ds, template, names)?;
+        // A template that is itself one run-invariant call (or name) stays
+        // on the walk, member by member, like the walk's own invariant
+        // binding (`invariant_subtrees` leaves the root out): lifting it
+        // would evaluate it once per lifted chunk, and how a run is chunked
+        // depends on the pool's thread count.
+        if matches!(program.nodes.last(), Some(LiftNode::Invariant { .. })) {
+            return None;
+        }
         // A template without any reference is a constant family: the walk
         // is as cheap, keep it there (a run-invariant call is not).
         program

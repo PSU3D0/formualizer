@@ -1000,10 +1000,12 @@ type LookupMatrixExpectation = (u32, u32, LookupExpected, &'static str);
 
 fn blank_zero_lookup_matrix_engine(
     cache_max_bytes: usize,
+    max_threads: Option<usize>,
 ) -> (Engine<TestWorkbook>, Vec<LookupMatrixExpectation>) {
     let mut engine = engine_with_config(EvalConfig {
         formula_plane_mode: FormulaPlaneMode::Off,
         lookup_index_cache_max_bytes: cache_max_bytes,
+        max_threads,
         ..EvalConfig::default()
     });
 
@@ -1399,22 +1401,39 @@ fn assert_blank_zero_lookup_matrix(
 
 #[test]
 fn blank_zero_exact_lookup_matrix_is_identical_cold_and_warm() {
+    assert_blank_zero_lookup_matrix_cold_and_warm(None);
+}
+
+/// The matrix's lookup work does not depend on the pool's thread count.
+/// Its families are 5-member runs of one fully absolute lookup; how a
+/// parallel layer chunks a run depends on the thread count, and a lifted
+/// chunk used to evaluate such a template once for the chunk (plus the
+/// debug build's per-member oracle): 184 misses instead of 160 on 2 and 4
+/// threads, 160 on 24 (one-member chunks are not lifted).
+#[test]
+fn blank_zero_exact_lookup_matrix_counts_do_not_depend_on_thread_count() {
+    for max_threads in [2, 4] {
+        assert_blank_zero_lookup_matrix_cold_and_warm(Some(max_threads));
+    }
+}
+
+fn assert_blank_zero_lookup_matrix_cold_and_warm(max_threads: Option<usize>) {
     for cache_max_bytes in [0, EvalConfig::default().lookup_index_cache_max_bytes] {
-        let (mut engine, expected) = blank_zero_lookup_matrix_engine(cache_max_bytes);
+        let (mut engine, expected) = blank_zero_lookup_matrix_engine(cache_max_bytes, max_threads);
         let snapshot = engine.inspection_mutation_revision();
 
         engine.evaluate_all().unwrap();
         assert_blank_zero_lookup_matrix(&engine, &expected);
         let first = engine.last_lookup_index_cache_report();
         if cache_max_bytes == 0 {
-            assert_eq!(first.builds, 0, "{first:?}");
-            assert_eq!(first.hits, 0, "{first:?}");
-            assert_eq!(first.misses, 160, "{first:?}");
-            assert_eq!(first.skipped_cap, 160, "{first:?}");
+            assert_eq!(first.builds, 0, "threads {max_threads:?}: {first:?}");
+            assert_eq!(first.hits, 0, "threads {max_threads:?}: {first:?}");
+            assert_eq!(first.misses, 160, "threads {max_threads:?}: {first:?}");
+            assert_eq!(first.skipped_cap, 160, "threads {max_threads:?}: {first:?}");
         } else {
-            assert_eq!(first.builds, 8, "{first:?}");
-            assert_eq!(first.hits, 128, "{first:?}");
-            assert_eq!(first.entries_count, 8, "{first:?}");
+            assert_eq!(first.builds, 8, "threads {max_threads:?}: {first:?}");
+            assert_eq!(first.hits, 128, "threads {max_threads:?}: {first:?}");
+            assert_eq!(first.entries_count, 8, "threads {max_threads:?}: {first:?}");
         }
 
         mark_all_formulas_dirty_without_edit(&mut engine);
@@ -1423,19 +1442,25 @@ fn blank_zero_exact_lookup_matrix_is_identical_cold_and_warm() {
         assert_eq!(engine.inspection_mutation_revision(), snapshot);
         assert_blank_zero_lookup_matrix(&engine, &expected);
         let warm = engine.last_lookup_index_cache_report();
-        assert_eq!(warm.builds, 0, "{warm:?}");
+        assert_eq!(warm.builds, 0, "threads {max_threads:?}: {warm:?}");
         assert_eq!(
             warm.misses,
             if cache_max_bytes == 0 { 160 } else { 0 },
-            "{warm:?}"
+            "threads {max_threads:?}: {warm:?}"
         );
         if cache_max_bytes == 0 {
-            assert_eq!(warm.hits, 0, "{warm:?}");
-            assert_eq!(warm.skipped_cap, 160, "{warm:?}");
+            assert_eq!(warm.hits, 0, "threads {max_threads:?}: {warm:?}");
+            assert_eq!(warm.skipped_cap, 160, "threads {max_threads:?}: {warm:?}");
         } else {
-            assert_eq!(warm.hits, 160, "{warm:?}");
-            assert_eq!(warm.entries_count, first.entries_count, "{warm:?}");
-            assert_eq!(warm.bytes_in_cache, first.bytes_in_cache, "{warm:?}");
+            assert_eq!(warm.hits, 160, "threads {max_threads:?}: {warm:?}");
+            assert_eq!(
+                warm.entries_count, first.entries_count,
+                "threads {max_threads:?}: {warm:?}"
+            );
+            assert_eq!(
+                warm.bytes_in_cache, first.bytes_in_cache,
+                "threads {max_threads:?}: {warm:?}"
+            );
         }
     }
 }
