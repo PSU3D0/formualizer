@@ -426,7 +426,9 @@ where
         if !self.config.family_lift || members.len() < 2 {
             return None;
         }
-        let program = super::lift::LiftProgram::compile(self, ds, template)?;
+        let names =
+            |name: &str, as_arg: bool| self.lift_name_is_run_constant(run.sheet, name, as_arg);
+        let program = super::lift::LiftProgram::compile(self, ds, template, &names)?;
         let mut bound = Vec::new();
         let mut cells = Vec::with_capacity(members.len());
         for (i, &v) in members.iter().enumerate() {
@@ -514,7 +516,9 @@ where
         let (template, anchor) = store.owner_template(run.owner);
         let ds = self.graph.data_store();
         let literals = LiteralPlan::new(ds, template, anchor);
-        let program = super::lift::LiftProgram::compile(self, ds, template)?;
+        let names =
+            |name: &str, as_arg: bool| self.lift_name_is_run_constant(run.sheet, name, as_arg);
+        let program = super::lift::LiftProgram::compile(self, ds, template, &names)?;
         // Every member has the template's literal row (a formula cell's
         // authority id is its vertex id).
         #[cfg(debug_assertions)]
@@ -548,6 +552,24 @@ where
             self.record_derived_format_at(cell, None);
         }
         Some(lifted)
+    }
+
+    /// Whether defined name `name`, read from a run on `sheet`, is one value
+    /// for every member (the lift evaluates it once): a cell, a literal or
+    /// a non-volatile, non-dynamic formula; a range only as a call's direct
+    /// argument (`as_arg`: elsewhere it is intersected with the member).
+    fn lift_name_is_run_constant(&self, sheet: SheetId, name: &str, as_arg: bool) -> bool {
+        use crate::engine::named_range::NamedDefinition as D;
+        let Some(named) = self.graph.resolve_name_entry(name, sheet) else {
+            return false;
+        };
+        match &named.definition {
+            D::Cell(_) | D::Literal(_) => true,
+            D::Range(_) => as_arg,
+            D::Formula { .. } => {
+                !self.graph.is_volatile(named.vertex) && !self.graph.is_dynamic(named.vertex)
+            }
+        }
     }
 
     /// Tier 3: a range kernel for the whole run, when the template has one.

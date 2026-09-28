@@ -174,14 +174,18 @@ fn static_unary(op: &str) -> Option<&'static str> {
 }
 
 impl LiftProgram {
-    /// Compile `template`, or `None` when it is not liftable.
+    /// Compile `template`, or `None` when it is not liftable. `names`
+    /// tells whether a defined name is the same value for every member of
+    /// the run (its second argument: the name is a call's direct argument,
+    /// where a range is not intersected with the member).
     pub(super) fn compile(
         functions: &dyn crate::traits::FunctionProvider,
         ds: &DataStore,
         template: AstNodeId,
+        names: &dyn Fn(&str, bool) -> bool,
     ) -> Option<Self> {
         let mut program = Self { nodes: Vec::new() };
-        program.compile_node(functions, ds, template)?;
+        program.compile_node(functions, ds, template, names)?;
         // A template without any reference is a constant family: the walk
         // is as cheap, keep it there (a run-invariant call is not).
         program
@@ -196,8 +200,9 @@ impl LiftProgram {
         functions: &dyn crate::traits::FunctionProvider,
         ds: &DataStore,
         id: AstNodeId,
+        names: &dyn Fn(&str, bool) -> bool,
     ) -> bool {
-        Self::invariant_in(functions, ds, id, false)
+        Self::invariant_in(functions, ds, id, false, names)
     }
 
     /// `as_arg`: `id` is a direct argument of a call. A range only there: as
@@ -208,6 +213,7 @@ impl LiftProgram {
         ds: &DataStore,
         id: AstNodeId,
         as_arg: bool,
+        names: &dyn Fn(&str, bool) -> bool,
     ) -> bool {
         match ds.get_node(id) {
             Some(AstNodeData::Literal(vref)) => {
@@ -226,22 +232,23 @@ impl LiftProgram {
                         && (*start_row_abs || *start_row == 0)
                         && (*end_row_abs || *end_row == u32::MAX)
                 }
+                CompactRefType::NamedRange(name) => names(ds.resolve_ast_string(*name), as_arg),
                 _ => false,
             },
             Some(AstNodeData::UnaryOp { expr_id, .. }) => {
-                Self::invariant_in(functions, ds, *expr_id, false)
+                Self::invariant_in(functions, ds, *expr_id, false, names)
             }
             Some(AstNodeData::BinaryOp {
                 left_id, right_id, ..
             }) => {
-                Self::invariant_in(functions, ds, *left_id, false)
-                    && Self::invariant_in(functions, ds, *right_id, false)
+                Self::invariant_in(functions, ds, *left_id, false, names)
+                    && Self::invariant_in(functions, ds, *right_id, false, names)
             }
             Some(AstNodeData::Function { name_id, .. }) => {
                 pure_listed_function(functions, ds.resolve_ast_string(*name_id))
                     && ds.get_args(id).is_some_and(|args| {
                         args.iter()
-                            .all(|&a| Self::invariant_in(functions, ds, a, true))
+                            .all(|&a| Self::invariant_in(functions, ds, a, true, names))
                     })
             }
             _ => false,
@@ -253,6 +260,7 @@ impl LiftProgram {
         functions: &dyn crate::traits::FunctionProvider,
         ds: &DataStore,
         id: AstNodeId,
+        names: &dyn Fn(&str, bool) -> bool,
     ) -> Option<usize> {
         if self.nodes.len() >= MAX_LIFT_NODES {
             return None;
@@ -286,7 +294,7 @@ impl LiftProgram {
             AstNodeData::UnaryOp { op_id, expr_id } => {
                 let op = static_unary(ds.resolve_ast_string(*op_id))?;
                 let expr_id = *expr_id;
-                let child = self.compile_node(functions, ds, expr_id)?;
+                let child = self.compile_node(functions, ds, expr_id, names)?;
                 LiftNode::Unary { op, child }
             }
             AstNodeData::BinaryOp {
@@ -296,13 +304,18 @@ impl LiftProgram {
             } => {
                 let op = static_binary(ds.resolve_ast_string(*op_id))?;
                 let (left_id, right_id) = (*left_id, *right_id);
-                let left = self.compile_node(functions, ds, left_id)?;
-                let right = self.compile_node(functions, ds, right_id)?;
+                let left = self.compile_node(functions, ds, left_id, names)?;
+                let right = self.compile_node(functions, ds, right_id, names)?;
                 LiftNode::Binary { op, left, right }
             }
-            AstNodeData::Function { .. } if Self::invariant(functions, ds, id) => {
+            AstNodeData::Function { .. } if Self::invariant(functions, ds, id, names) => {
                 LiftNode::Invariant { node: id }
             }
+            // A defined name with one value for the run (`=I2/UOM`).
+            AstNodeData::Reference {
+                ref_type: CompactRefType::NamedRange(_),
+                ..
+            } if Self::invariant(functions, ds, id, names) => LiftNode::Invariant { node: id },
             AstNodeData::Function { name_id, .. } => {
                 // Only the built-in IF (an override keeps `family_kernel`
                 // `None`), with the arities its `eval` accepts.
@@ -326,7 +339,7 @@ impl LiftProgram {
                     let args: smallvec::SmallVec<[AstNodeId; 4]> = args.iter().copied().collect();
                     let mut compiled = smallvec::SmallVec::new();
                     for arg in args {
-                        compiled.push(self.compile_node(functions, ds, arg)?);
+                        compiled.push(self.compile_node(functions, ds, arg, names)?);
                     }
                     self.nodes.push(LiftNode::Builtin {
                         kernel,
@@ -335,10 +348,10 @@ impl LiftProgram {
                     return Some(self.nodes.len() - 1);
                 }
                 let args: smallvec::SmallVec<[AstNodeId; 3]> = args.iter().copied().collect();
-                let cond = self.compile_node(functions, ds, args[0])?;
-                let then = self.compile_node(functions, ds, args[1])?;
+                let cond = self.compile_node(functions, ds, args[0], names)?;
+                let then = self.compile_node(functions, ds, args[1], names)?;
                 let otherwise = match args.get(2) {
-                    Some(&arg) => Some(self.compile_node(functions, ds, arg)?),
+                    Some(&arg) => Some(self.compile_node(functions, ds, arg, names)?),
                     None => None,
                 };
                 LiftNode::If {

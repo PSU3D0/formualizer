@@ -670,6 +670,37 @@ fn family_lift_builtins_match_per_cell() {
 }
 
 fn check_typed(formulas: Vec<(u32, String)>) {
+    check_typed_with_names(formulas, &[]);
+}
+
+/// Defined names (Program 3): a name with one value for the run (a cell,
+/// a literal, a formula; a range as a call's argument) is a lift constant.
+#[test]
+fn family_lift_defined_names_match_per_cell() {
+    let formulas: Vec<(u32, String)> = vec![
+        (4, "=A{r}/Rate".into()),
+        (5, "=A{r}*Lit+Rate".into()),
+        (6, "=B{r}-Twice".into()),
+        (7, "=A{r}+SUM(Block)".into()),
+        (8, "=IF(A{r}>Rate,1,2)*Lit".into()),
+        (9, "=A{r}+COUNT(Column)*Lit".into()),
+        (10, "=Lit*2".into()),
+    ];
+    check_typed_with_names(
+        formulas,
+        &[
+            ("Rate", "=Sheet1!$B$5"),
+            ("Lit", "2.5"),
+            ("Twice", "=Sheet1!$A$3*2"),
+            ("Block", "=Sheet1!$A$1:$C$10"),
+            ("Column", "=Sheet1!$C$1:$C$100"),
+        ],
+    );
+}
+
+fn check_typed_with_names(formulas: Vec<(u32, String)>, names: &[(&str, &str)]) {
+    use crate::engine::named_range::{NameScope, NamedDefinition};
+    use crate::reference::{CellRef, Coord, RangeRef};
     use chrono::NaiveDate;
     const ROWS: u32 = 100;
     let base_value = |r: u32, c: u32| -> LiteralValue {
@@ -699,6 +730,25 @@ fn check_typed(formulas: Vec<(u32, String)>) {
             }
             ab.finish().unwrap();
         }
+        let sheet = e.sheet_id("Sheet1").unwrap();
+        for (name, def) in names {
+            let at = |r: u32, c: u32| CellRef::new(sheet, Coord::from_excel(r, c, true, true));
+            let definition = match *def {
+                "=Sheet1!$B$5" => NamedDefinition::Cell(at(5, 2)),
+                "=Sheet1!$A$1:$C$10" => NamedDefinition::Range(RangeRef::new(at(1, 1), at(10, 3))),
+                "=Sheet1!$C$1:$C$100" => {
+                    NamedDefinition::Range(RangeRef::new(at(1, 3), at(100, 3)))
+                }
+                "2.5" => NamedDefinition::Literal(LiteralValue::Number(2.5)),
+                formula => NamedDefinition::Formula {
+                    ast: parse(formula).unwrap(),
+                    dependencies: Vec::new(),
+                    range_deps: Vec::new(),
+                },
+            };
+            e.define_name(name, definition, NameScope::Workbook)
+                .unwrap();
+        }
         let mut cells = Vec::new();
         for r in 1..=ROWS {
             for (c, f) in &formulas {
@@ -726,6 +776,8 @@ fn check_typed(formulas: Vec<(u32, String)>) {
         e.evaluate_all().unwrap();
         out.push(snapshot(&e));
         let edits = [
+            ((5, 2), LiteralValue::Number(4.0)),
+            ((3, 1), LiteralValue::Number(-7.5)),
             ((10, 1), LiteralValue::Text("x".into())),
             ((17, 1), LiteralValue::Number(-0.0)),
             ((33, 2), LiteralValue::Boolean(true)),
@@ -769,6 +821,14 @@ fn check_typed(formulas: Vec<(u32, String)>) {
         let lift = run_typed(base);
         assert_eq!(oracle.1, 0);
         assert!(lift.1 > 0, "no run was lifted (parallel={parallel})");
+        if !names.is_empty() {
+            // Every formula's run was lifted at the first evaluation.
+            assert!(
+                lift.1 >= formulas.len() as u64 * u64::from(ROWS),
+                "a run with a defined name was not lifted: {}",
+                lift.1
+            );
+        }
         assert_eq!(walk.0, oracle.0, "walk, parallel={parallel}");
         assert_eq!(lift.0, oracle.0, "lift, parallel={parallel}");
     }
