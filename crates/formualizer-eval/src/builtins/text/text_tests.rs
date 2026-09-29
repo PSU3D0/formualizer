@@ -595,9 +595,10 @@ mod tests {
         let ctx = wb.interpreter();
         let f = ctx.context.get_function("", "TEXT").unwrap();
 
-        // Percent format
+        // Percent format. A bare "%" has no digit placeholder, so Excel
+        // renders it as the literal "%"; "0%" shows the scaled digits.
         let num = lit(LiteralValue::Number(0.125));
-        let fmt = lit(LiteralValue::Text("%".into()));
+        let fmt = lit(LiteralValue::Text("0%".into()));
         assert_eq!(
             f.dispatch(
                 &[
@@ -607,7 +608,7 @@ mod tests {
                 &ctx.function_context(None)
             )
             .unwrap(),
-            LiteralValue::Text("12%".into()) // 0.125 * 100 = 12.5, rounds to 12
+            LiteralValue::Text("13%".into()) // 12.5 rounds half away from zero
         );
 
         // Two decimal places
