@@ -97,6 +97,11 @@ name = "fp8_ingest_pipeline_parity"
 path = "tests/fp8_ingest_pipeline_parity.rs"
 required-features = ["test-support"]
 
+[[test]]
+name = "builtin_numeric_overflow"
+path = "tests/builtin_numeric_overflow.rs"
+required-features = ["test-support"]
+
 [features]
 # system-clock: enables SystemClock + chrono ambient-time (Local::now / Utc::now).
 # Included in default for native + wasm-js consumers; disable for portable wasm guests.

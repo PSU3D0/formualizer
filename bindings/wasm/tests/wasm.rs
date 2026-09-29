@@ -31,6 +31,30 @@ fn set_prop(obj: &Object, key: &str, value: JsValue) {
     Reflect::set(obj, &JsValue::from_str(key), &value).unwrap();
 }
 
+#[wasm_bindgen_test]
+fn builtin_numeric_overflow_serializes_as_catchable_error() {
+    let wb = Workbook::new(None).unwrap();
+    let sheet = wb.sheet("Overflow".to_string()).unwrap();
+    for (index, formula) in ["POWER(1E200,2)", "EXP(1000)"].iter().enumerate() {
+        let row = index as u32 + 1;
+        sheet.set_formula(row, 1, formula.to_string()).unwrap();
+        assert_eq!(
+            sheet.evaluate_cell(row, 1).unwrap().as_string().as_deref(),
+            Some("#NUM!")
+        );
+        assert_eq!(
+            sheet.get_value(row, 1).unwrap().as_string().as_deref(),
+            Some("#NUM!")
+        );
+        sheet
+            .set_formula(row, 2, format!("IFERROR({formula},77)"))
+            .unwrap();
+        assert_eq!(sheet.evaluate_cell(row, 2).unwrap().as_f64(), Some(77.0));
+    }
+    sheet.set_formula(3, 1, "EXP(-1000)".to_string()).unwrap();
+    assert_eq!(sheet.evaluate_cell(3, 1).unwrap().as_f64(), Some(0.0));
+}
+
 fn build_fixture_xlsx_bytes() -> Vec<u8> {
     build_named_fixture_xlsx_bytes("Sheet1")
 }
