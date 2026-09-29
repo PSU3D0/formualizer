@@ -25,7 +25,8 @@
 //!
 //! Anything else declines (the memo or the walk evaluates it): other
 //! predicates (empty text, wildcards, booleans, errors, blanks), a 1x1
-//! range, ranges of different heights or past the sheet's last row,
+//! range, numeric text equality over a column containing numbers,
+//! ranges of different heights or past the sheet's last row,
 //! a lane layout the mask path would read differently, a criterion whose
 //! evaluation fails, and `COUNTIF` whose criterion matches an empty cell
 //! (it counts logical cells past the data).
@@ -452,6 +453,14 @@ where
                 return None;
             }
             let column = &index.columns[j];
+            // Numeric text equality can match both text and numeric rows. A
+            // single lane's classes cannot express that mask; use the walk.
+            // Text-only columns can still use the indexed text verdicts.
+            if is_numeric_text_equality(&pred)
+                && !column.numbers(self, ds, sheet, rows)?.values.is_empty()
+            {
+                return None;
+            }
             let verdict = match &pred {
                 P::Gt(n) | P::Ge(n) | P::Lt(n) | P::Le(n) => {
                     number_verdicts(column.numbers(self, ds, sheet, rows)?, &pred, *n)?

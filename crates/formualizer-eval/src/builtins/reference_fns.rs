@@ -1,20 +1,48 @@
 use crate::args::{ArgSchema, CoercionPolicy, ShapeKind};
 use crate::function::{FnCaps, Function, FunctionResolution};
 use crate::traits::{ArgumentHandle, FunctionContext};
-use formualizer_common::{ArgKind, ExcelError, ExcelErrorKind, LiteralValue};
+use formualizer_common::{ArgKind, ExcelError, ExcelErrorKind, LiteralValue, PackedSheetCell};
 use formualizer_parse::parser::ReferenceType;
 
-fn number_strict_scalar() -> ArgSchema {
+fn position_scalar() -> ArgSchema {
     ArgSchema {
         kinds: smallvec::smallvec![ArgKind::Number],
         required: true,
         by_ref: false,
         shape: ShapeKind::Scalar,
-        coercion: CoercionPolicy::NumberStrict,
+        coercion: CoercionPolicy::NumberLenientText,
         max: None,
         repeating: None,
         default: None,
     }
+}
+
+/// Excel's sheet limits (1,048,576 rows, 16,384 columns), taken from the packed
+/// cell layout. OFFSET cannot address a cell past them.
+const SHEET_MAX_ROWS: i64 = PackedSheetCell::MAX_ROW0 as i64 + 1;
+const SHEET_MAX_COLS: i64 = PackedSheetCell::MAX_COL0 as i64 + 1;
+
+/// Coerce an INDEX/OFFSET position or size argument as Excel does.
+///
+/// Numbers truncate toward zero, a blank is 0, `TRUE`/`FALSE` are 1/0 and
+/// numeric text (`"2"`, `" 2 "`, `"1e0"`, `"50%"`) is parsed. Any other text,
+/// including a non-finite spelling such as `"inf"`, is `#VALUE!`; an error
+/// value passes through unchanged. Out-of-range magnitudes saturate, so the
+/// callers' bounds checks turn them into `#REF!`.
+fn position_argument(value: &LiteralValue) -> Result<i64, ExcelError> {
+    let number = crate::coercion::to_number_lenient(value)?;
+    if !number.is_finite() {
+        return Err(ExcelError::new(ExcelErrorKind::Value));
+    }
+    Ok(number.trunc() as i64)
+}
+
+/// A non-negative position as a `usize`, if it is at most `len`.
+///
+/// Converts with `usize::try_from` rather than `as`, so a position of 2^32 or
+/// more cannot truncate back into range on 32-bit targets (wasm32).
+fn position_within(position: i64, len: usize) -> Option<usize> {
+    usize::try_from(position).ok().filter(|&p| p <= len)
 }
 
 fn arg_byref_array() -> Vec<ArgSchema> {
@@ -30,14 +58,14 @@ fn arg_byref_array() -> Vec<ArgSchema> {
             repeating: None,
             default: None,
         },
-        number_strict_scalar(),
+        position_scalar(),
         // Column is optional for 1D arrays
         ArgSchema {
             kinds: smallvec::smallvec![ArgKind::Number],
             required: false,
             by_ref: false,
             shape: ShapeKind::Scalar,
-            coercion: CoercionPolicy::NumberStrict,
+            coercion: CoercionPolicy::NumberLenientText,
             max: None,
             repeating: None,
             default: None,
@@ -57,15 +85,15 @@ fn arg_byref_reference() -> Vec<ArgSchema> {
             repeating: None,
             default: None,
         },
-        number_strict_scalar(),
-        number_strict_scalar(),
+        position_scalar(),
+        position_scalar(),
         ArgSchema {
             // height optional
             kinds: smallvec::smallvec![ArgKind::Number],
             required: false,
             by_ref: false,
             shape: ShapeKind::Scalar,
-            coercion: CoercionPolicy::NumberStrict,
+            coercion: CoercionPolicy::NumberLenientText,
             max: None,
             repeating: None,
             default: None,
@@ -76,7 +104,7 @@ fn arg_byref_reference() -> Vec<ArgSchema> {
             required: false,
             by_ref: false,
             shape: ShapeKind::Scalar,
-            coercion: CoercionPolicy::NumberStrict,
+            coercion: CoercionPolicy::NumberLenientText,
             max: None,
             repeating: None,
             default: None,
@@ -167,11 +195,7 @@ impl IndexFn {
         match arg.value()? {
             crate::traits::CalcValue::Range(_)
             | crate::traits::CalcValue::Scalar(LiteralValue::Array(_)) => Ok(None),
-            value => match value.into_literal() {
-                LiteralValue::Number(number) => Ok(Some(number as i64)),
-                LiteralValue::Int(integer) => Ok(Some(integer)),
-                _ => Err(ExcelError::new(ExcelErrorKind::Value)),
-            },
+            value => position_argument(&value.into_literal()).map(Some),
         }
     }
 
@@ -259,6 +283,11 @@ impl IndexFn {
             None => (position, 1),
         };
         if row < 0 || col < 0 {
+            return Some(Err(ExcelError::new(ExcelErrorKind::Ref)));
+        }
+        // Compare in i64 before narrowing, so a saturated or very large index
+        // cannot wrap back into the range.
+        if row > i64::from(er - sr) + 1 || col > i64::from(ec - sc) + 1 {
             return Some(Err(ExcelError::new(ExcelErrorKind::Ref)));
         }
         let range_ref = |sheet, sr, sc, er, ec| ReferenceType::Range {
@@ -386,8 +415,10 @@ impl IndexFn {
 /// - For rectangular 2D inputs, omitted `column_num` defaults to the first column.
 /// - A `row_num` or `column_num` of `0` selects the entire column or row respectively
 ///   (both `0` selects the whole range), matching Excel.
-/// - Negative or out-of-bounds indexes return `#REF!`.
-/// - Non-numeric index arguments return `#VALUE!`.
+/// - Negative or out-of-bounds indexes return `#REF!`. Excel returns `#VALUE!` for a negative
+///   index; this implementation does not match that yet.
+/// - Index arguments coerce like Excel: a blank is `0`, `TRUE` is `1` and numeric text is
+///   parsed; other text returns `#VALUE!`.
 ///
 /// # Examples
 /// ```yaml,sandbox
@@ -422,7 +453,7 @@ impl IndexFn {
 ///   - q: "How does INDEX behave when column_num is omitted?"
 ///     a: "For single-row or single-column inputs, row_num selects the position along that vector; for 2D inputs, omitted column_num defaults to the first column."
 ///   - q: "Which errors indicate bad indexes?"
-///     a: "Non-numeric index arguments return #VALUE!. A 0 row_num/column_num selects an entire column/row (Excel behavior); negative or out-of-bounds indexes return #REF!."
+///     a: "Text that is not a number returns #VALUE! (a blank index is 0, TRUE is 1, numeric text is parsed). A 0 row_num/column_num selects an entire column/row (Excel behavior); negative or out-of-bounds indexes return #REF!."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: INDEX
@@ -431,7 +462,7 @@ impl IndexFn {
 /// Max args: 3
 /// Variadic: false
 /// Signature: INDEX(arg1: any@range, arg2: number@scalar, arg3?: number@scalar)
-/// Arg schema: arg1{kinds=any,required=true,shape=range,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberStrict,max=None,repeating=None,default=false}; arg3{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberStrict,max=None,repeating=None,default=false}
+/// Arg schema: arg1{kinds=any,required=true,shape=range,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
 /// Caps: PURE, RETURNS_REFERENCE
 /// [formualizer-docgen:schema:end]
 impl Function for IndexFn {
@@ -508,13 +539,10 @@ impl Function for IndexFn {
             let index = if args[1].is_omitted() {
                 0
             } else {
-                match args[1].value()?.into_literal() {
-                    LiteralValue::Number(n) => n as i64,
-                    LiteralValue::Int(i) => i,
-                    _ => {
-                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                            ExcelError::new(ExcelErrorKind::Value),
-                        )));
+                match position_argument(&args[1].value()?.into_literal()) {
+                    Ok(index) => index,
+                    Err(error) => {
+                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(error)));
                     }
                 }
             };
@@ -524,12 +552,11 @@ impl Function for IndexFn {
                 Some(if args[2].is_omitted() {
                     0
                 } else {
-                    match args[2].value()?.into_literal() {
-                        LiteralValue::Number(n) => n as i64,
-                        LiteralValue::Int(i) => i,
-                        _ => {
+                    match position_argument(&args[2].value()?.into_literal()) {
+                        Ok(column) => column,
+                        Err(error) => {
                             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                                ExcelError::new(ExcelErrorKind::Value),
+                                error,
                             )));
                         }
                     }
@@ -579,10 +606,10 @@ impl Function for IndexFn {
                     return Ok(as_range(table));
                 }
                 // INDEX(array, r, 0) -> the entire row r (scalar for a single-column array).
-                if row as usize > nrows {
+                let Some(r) = position_within(row, nrows) else {
                     return Ok(ref_err());
-                }
-                let r = &table[row as usize - 1];
+                };
+                let r = &table[r - 1];
                 if ncols == 1 {
                     return Ok(crate::traits::CalcValue::Scalar(
                         r.first().cloned().unwrap_or(LiteralValue::Empty),
@@ -592,10 +619,10 @@ impl Function for IndexFn {
             }
             if row == 0 {
                 // INDEX(array, 0, c) -> the entire column c (scalar for a single-row array).
-                if col as usize > ncols {
+                let Some(c) = position_within(col, ncols) else {
                     return Ok(ref_err());
-                }
-                let cidx = col as usize - 1;
+                };
+                let cidx = c - 1;
                 if single_row {
                     return Ok(crate::traits::CalcValue::Scalar(
                         table[0].get(cidx).cloned().unwrap_or(LiteralValue::Empty),
@@ -609,12 +636,13 @@ impl Function for IndexFn {
             }
 
             // 1-based positive indexing.
-            if row as usize > nrows || col as usize > ncols {
+            let (Some(r), Some(c)) = (position_within(row, nrows), position_within(col, ncols))
+            else {
                 return Ok(ref_err());
-            }
+            };
             let val = table
-                .get(row as usize - 1)
-                .and_then(|r| r.get(col as usize - 1))
+                .get(r - 1)
+                .and_then(|row| row.get(c - 1))
                 .cloned()
                 .unwrap_or_else(|| LiteralValue::Error(ExcelError::new(ExcelErrorKind::Ref)));
             Ok(crate::traits::CalcValue::Scalar(val))
@@ -633,8 +661,10 @@ pub struct OffsetFn;
 /// # Remarks
 /// - `rows` and `cols` shift from the top-left of `reference`.
 /// - If omitted, `height` and `width` default to the original reference size.
-/// - Non-positive target coordinates or dimensions return `#REF!`.
-/// - Non-numeric offset/size inputs return `#VALUE!`.
+/// - Non-positive target coordinates or dimensions return `#REF!`, and so does a result that
+///   extends past the last row or column of the sheet.
+/// - Offset/size inputs coerce like Excel: a blank is `0`, `TRUE` is `1` and numeric text is
+///   parsed; other text returns `#VALUE!`.
 /// - In value context, a 1x1 result returns a scalar; larger results spill as an array.
 ///
 /// # Examples
@@ -669,7 +699,7 @@ pub struct OffsetFn;
 ///   - q: "What defaults are used when height and width are omitted?"
 ///     a: "OFFSET keeps the source reference size, then applies the row/column shift to that same-sized block."
 ///   - q: "When does OFFSET return #REF!?"
-///     a: "It returns #REF! if the shifted start goes to row/column <= 0 or if requested height/width are non-positive."
+///     a: "It returns #REF! if the shifted start goes to row/column <= 0, if requested height/width are non-positive, or if the result extends past the edge of the sheet."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: OFFSET
@@ -678,7 +708,7 @@ pub struct OffsetFn;
 /// Max args: 5
 /// Variadic: false
 /// Signature: OFFSET(arg1: range@range, arg2: number@scalar, arg3: number@scalar, arg4?: number@scalar, arg5?: number@scalar)
-/// Arg schema: arg1{kinds=range,required=true,shape=range,by_ref=true,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberStrict,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberStrict,max=None,repeating=None,default=false}; arg4{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberStrict,max=None,repeating=None,default=false}; arg5{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberStrict,max=None,repeating=None,default=false}
+/// Arg schema: arg1{kinds=range,required=true,shape=range,by_ref=true,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg4{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg5{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
 /// Caps: PURE, VOLATILE, RETURNS_REFERENCE, DYNAMIC_DEPENDENCY
 /// [formualizer-docgen:schema:end]
 impl Function for OffsetFn {
@@ -710,20 +740,15 @@ impl Function for OffsetFn {
             Ok(r) => r,
             Err(e) => return Some(Err(e)),
         };
-        let dr = match args[1].value() {
-            Ok(cv) => match cv.into_literal() {
-                LiteralValue::Number(n) => n as i64,
-                LiteralValue::Int(i) => i,
-                _ => return Some(Err(ExcelError::new(ExcelErrorKind::Value))),
-            },
+        let numeric_argument = |argument: &ArgumentHandle<'a, 'b>| {
+            position_argument(&argument.value()?.into_literal())
+        };
+        let dr = match numeric_argument(&args[1]) {
+            Ok(value) => value,
             Err(e) => return Some(Err(e)),
         };
-        let dc = match args[2].value() {
-            Ok(cv) => match cv.into_literal() {
-                LiteralValue::Number(n) => n as i64,
-                LiteralValue::Int(i) => i,
-                _ => return Some(Err(ExcelError::new(ExcelErrorKind::Value))),
-            },
+        let dc = match numeric_argument(&args[2]) {
+            Ok(value) => value,
             Err(e) => return Some(Err(e)),
         };
 
@@ -740,27 +765,21 @@ impl Function for OffsetFn {
             Err(e) => return Some(Err(e)),
         };
 
-        let nsr = (sr as i64) + dr;
-        let nsc = (sc as i64) + dc;
+        // Saturating: a huge offset lands past the sheet edge and is `#REF!`
+        // below, instead of overflowing.
+        let nsr = (sr as i64).saturating_add(dr);
+        let nsc = (sc as i64).saturating_add(dc);
         let height = if args.len() >= 4 && !args[3].is_omitted() {
-            match args[3].value() {
-                Ok(cv) => match cv.into_literal() {
-                    LiteralValue::Number(n) => n as i64,
-                    LiteralValue::Int(i) => i,
-                    _ => return Some(Err(ExcelError::new(ExcelErrorKind::Value))),
-                },
+            match numeric_argument(&args[3]) {
+                Ok(value) => value,
                 Err(e) => return Some(Err(e)),
             }
         } else {
             (er as i64) - (sr as i64) + 1
         };
         let width = if args.len() >= 5 && !args[4].is_omitted() {
-            match args[4].value() {
-                Ok(cv) => match cv.into_literal() {
-                    LiteralValue::Number(n) => n as i64,
-                    LiteralValue::Int(i) => i,
-                    _ => return Some(Err(ExcelError::new(ExcelErrorKind::Value))),
-                },
+            match numeric_argument(&args[4]) {
+                Ok(value) => value,
                 Err(e) => return Some(Err(e)),
             }
         } else {
@@ -770,8 +789,14 @@ impl Function for OffsetFn {
         if nsr <= 0 || nsc <= 0 || height <= 0 || width <= 0 {
             return Some(Err(ExcelError::new(ExcelErrorKind::Ref)));
         }
-        let ner = nsr + height - 1;
-        let nec = nsc + width - 1;
+        let ner = nsr.saturating_add(height - 1);
+        let nec = nsc.saturating_add(width - 1);
+        // Excel answers `#REF!` for a result that extends past the last row or
+        // column; building such a reference would also exceed the packed
+        // coordinate range.
+        if ner > SHEET_MAX_ROWS || nec > SHEET_MAX_COLS {
+            return Some(Err(ExcelError::new(ExcelErrorKind::Ref)));
+        }
 
         if height == 1 && width == 1 {
             Some(Ok(ReferenceType::cell(sheet, nsr as u32, nsc as u32)))
@@ -1553,5 +1578,123 @@ mod tests {
             .unwrap()
             .into_literal();
         assert_eq!(v, LiteralValue::Number(5.0));
+    }
+
+    fn assert_error_kind(value: LiteralValue, expected: ExcelErrorKind) {
+        match value {
+            LiteralValue::Error(error) => assert_eq!(error.kind, expected),
+            other => panic!("expected {expected:?}, got {other:?}"),
+        }
+    }
+
+    fn position_workbook() -> TestWorkbook {
+        TestWorkbook::new()
+            .with_cell_a1("Sheet1", "A1", LiteralValue::Int(7))
+            .with_cell_a1("Sheet1", "A2", LiteralValue::Int(8))
+            .with_cell_a1("Sheet1", "A3", LiteralValue::Int(9))
+            .with_cell_a1("Sheet1", "B1", LiteralValue::Empty)
+            .with_cell_a1("Sheet1", "C1", LiteralValue::Text("1".into()))
+            .with_cell_a1(
+                "Sheet1",
+                "D1",
+                LiteralValue::Error(ExcelError::new(ExcelErrorKind::Div)),
+            )
+            .with_function(std::sync::Arc::new(IndexFn))
+            .with_function(std::sync::Arc::new(OffsetFn))
+            .with_function(std::sync::Arc::new(crate::builtins::math::aggregate::SumFn))
+    }
+
+    #[test]
+    fn offset_blank_boolean_and_numeric_text_arguments_coerce() {
+        let wb = position_workbook();
+        for (formula, expected) in [
+            ("=OFFSET(A1,0,B1)", 7.0),
+            ("=OFFSET(A1,B1,0)", 7.0),
+            ("=OFFSET(A1,TRUE,0)", 8.0),
+            ("=OFFSET(A1,\"1\",0)", 8.0),
+            ("=OFFSET(A1,C1,0)", 8.0),
+            ("=OFFSET(A1,\" 1 \",0)", 8.0),
+            ("=OFFSET(A1,\"50%\",0)", 7.0),
+            ("=SUM(OFFSET(A1,0,0,\"2\",1))", 15.0),
+            ("=OFFSET(A3,-1.5,0)", 8.0),
+        ] {
+            assert_eq!(
+                evaluate_formula(formula, &wb).unwrap(),
+                LiteralValue::Number(expected),
+                "{formula}"
+            );
+        }
+    }
+
+    #[test]
+    fn offset_non_numeric_text_is_value_and_errors_pass_through() {
+        let wb = position_workbook();
+        for formula in [
+            "=OFFSET(A1,0,\"x\")",
+            "=OFFSET(A1,\"TRUE\",0)",
+            "=OFFSET(A1,\"inf\",0)",
+            "=OFFSET(A1,0,0,\"x\",1)",
+        ] {
+            assert_error_kind(
+                evaluate_formula(formula, &wb).unwrap(),
+                ExcelErrorKind::Value,
+            );
+        }
+        assert_error_kind(
+            evaluate_formula("=OFFSET(A1,0,D1)", &wb).unwrap(),
+            ExcelErrorKind::Div,
+        );
+    }
+
+    #[test]
+    fn offset_blank_size_and_results_past_the_sheet_edge_are_ref() {
+        let wb = position_workbook();
+        for formula in [
+            "=OFFSET(A1,0,0,B1,1)",
+            "=OFFSET(A1,0,0,1,B1)",
+            "=OFFSET(A1,-1,0)",
+            "=OFFSET(A1,2000000,0)",
+            "=OFFSET(A1,0,20000)",
+            "=OFFSET(A1,1E+300,0)",
+            "=OFFSET(A1,1048575,0,2,1)",
+        ] {
+            assert_error_kind(evaluate_formula(formula, &wb).unwrap(), ExcelErrorKind::Ref);
+        }
+    }
+
+    #[test]
+    fn index_blank_boolean_and_numeric_text_positions_coerce() {
+        let wb = position_workbook();
+        for (formula, expected) in [
+            ("=SUM(INDEX(A1:A3,B1))", 24.0),
+            ("=INDEX(A1:A3,\"2\")", 8.0),
+            ("=INDEX(A1:A3,TRUE)", 7.0),
+            ("=INDEX(A1:A3,C1)", 7.0),
+            ("=INDEX({7;8;9},\"2\")", 8.0),
+            ("=SUM(INDEX({7;8;9},B1))", 24.0),
+        ] {
+            assert_eq!(
+                evaluate_formula(formula, &wb).unwrap(),
+                LiteralValue::Number(expected),
+                "{formula}"
+            );
+        }
+        assert_error_kind(
+            evaluate_formula("=INDEX(A1:A3,\"x\")", &wb).unwrap(),
+            ExcelErrorKind::Value,
+        );
+    }
+
+    #[test]
+    fn index_huge_position_is_ref_without_wrapping() {
+        let wb = position_workbook();
+        // 2^32 + 1 would narrow to 1 as a u32.
+        for formula in [
+            "=INDEX(A1:A3,4294967297)",
+            "=INDEX(A1:A3,1E+300)",
+            "=INDEX({7;8;9},4294967297)",
+        ] {
+            assert_error_kind(evaluate_formula(formula, &wb).unwrap(), ExcelErrorKind::Ref);
+        }
     }
 }

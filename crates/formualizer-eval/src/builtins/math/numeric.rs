@@ -502,8 +502,9 @@ fn round_far_from_boundary(number: f64, digits: i32, mode: DecimalRoundingMode) 
 
 /// The 15-significant-digit view of a positive finite `magnitude`, as
 /// `(coefficient, exponent)` with `coefficient` in `[10^14, 10^15)` and the
-/// view equal to `coefficient * 10^exponent`.
-fn fifteen_digit_view(magnitude: f64, tie_toward_zero: bool) -> (u64, i64) {
+/// view equal to `coefficient * 10^exponent`. `TEXT` renders its digits from
+/// this view too.
+pub(crate) fn fifteen_digit_view(magnitude: f64, tie_toward_zero: bool) -> (u64, i64) {
     // An exact tie at the 16th digit needs an exact decimal expansion of 16
     // significant digits, which binary64 only has between about 2.4e-7 and
     // 1.8e16. This range covers that with exact integer arithmetic.

@@ -387,6 +387,32 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
         }
     }
 
+    /// The reference this argument spells directly, found without evaluating
+    /// anything: a cell or range reference, a defined name, or a LET/LAMBDA
+    /// local bound to a range. `None` for a computed argument (a function
+    /// call, an operator, a literal) and for a reference that fails to
+    /// resolve.
+    ///
+    /// This is not [`Self::as_reference`]: its arena arm resolves through
+    /// `reference_for_eval`, which evaluates a `Function` or `BinaryOp` node
+    /// (such as `OFFSET(...)` or `A1:A3*1`), and its AST arm returns the
+    /// written reference without the current family offset. Here the node kind
+    /// is checked first, so nothing is evaluated, and a bare reference resolves
+    /// the same way on the AST and arena paths.
+    pub(crate) fn bare_reference(&self) -> Option<ReferenceType> {
+        let is_reference = match &self.expr {
+            ArgumentExpr::Ast(node) => matches!(node.node_type, ASTNodeType::Reference { .. }),
+            ArgumentExpr::Arena { id, data_store, .. } => matches!(
+                data_store.get_node(*id),
+                Some(crate::engine::arena::AstNodeData::Reference { .. })
+            ),
+        };
+        if !is_reference {
+            return None;
+        }
+        self.as_reference_or_eval().ok()
+    }
+
     /// Returns whether this argument resolves as a spreadsheet reference rather than a value.
     ///
     /// This uses the interpreter's reference-resolution path, so reference-returning functions

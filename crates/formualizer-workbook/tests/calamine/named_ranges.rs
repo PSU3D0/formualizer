@@ -4,6 +4,163 @@ use formualizer_eval::engine::ingest::EngineLoadStream;
 use formualizer_eval::engine::{Engine, EvalConfig};
 use formualizer_workbook::traits::{DefinedNameDefinition, DefinedNameScope};
 use formualizer_workbook::{CalamineAdapter, LiteralValue, SpreadsheetReader};
+use std::io::Read;
+
+fn defined_name_entity_spacing_fixture() -> Vec<u8> {
+    let path = build_workbook(|book| {
+        let sheet1 = book.get_sheet_by_name_mut("Sheet1").expect("Sheet1");
+        sheet1.get_cell_mut((1, 1)).set_formula("=TightName");
+        sheet1.get_cell_mut((1, 2)).set_formula("=SpacedName");
+        sheet1.get_cell_mut((1, 3)).set_formula("=LeftSpacedName");
+        sheet1.get_cell_mut((1, 4)).set_formula("=LocalSpacedName");
+        sheet1
+            .add_defined_name("TightName", "'Alpha&Beta Rates'!$A$1")
+            .expect("add tight defined name");
+        sheet1
+            .add_defined_name("SpacedName", "'Alpha & Beta Rates'!$A$1")
+            .expect("add spaced defined name");
+        sheet1
+            .add_defined_name("LeftSpacedName", "'Gamma &Delta Rates'!$A$1")
+            .expect("add one-sided-space defined name");
+        // A sheet-scoped name (localSheetId) whose target also has an entity.
+        sheet1
+            .add_defined_name("LocalSpacedName", "'Alpha & Beta Rates'!$A$1")
+            .expect("add sheet-scoped spaced defined name");
+        sheet1
+            .get_defined_names_mut()
+            .last_mut()
+            .expect("sheet-scoped defined name")
+            .set_local_sheet_id(0);
+
+        book.new_sheet("Alpha&Beta Rates")
+            .expect("add tight sheet")
+            .get_cell_mut((1, 1))
+            .set_value_number(11.0);
+        book.new_sheet("Alpha & Beta Rates")
+            .expect("add spaced sheet")
+            .get_cell_mut((1, 1))
+            .set_value_number(22.0);
+        book.new_sheet("Gamma &Delta Rates")
+            .expect("add one-sided-space sheet")
+            .get_cell_mut((1, 1))
+            .set_value_number(33.0);
+    });
+    let bytes = std::fs::read(path).expect("read invented workbook");
+
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).expect("open xlsx zip");
+    let mut workbook_xml = String::new();
+    archive
+        .by_name("xl/workbook.xml")
+        .expect("workbook.xml")
+        .read_to_string(&mut workbook_xml)
+        .expect("read workbook.xml");
+    assert!(workbook_xml.contains("'Alpha&amp;Beta Rates'!$A$1"));
+    assert!(workbook_xml.contains("'Alpha &amp; Beta Rates'!$A$1"));
+    assert!(workbook_xml.contains("'Gamma &amp;Delta Rates'!$A$1"));
+    assert!(workbook_xml.contains("localSheetId=\"0\""));
+
+    bytes
+}
+
+fn assert_defined_name_entity_spacing(mut backend: CalamineAdapter) {
+    let expected_sheets = [
+        "Sheet1",
+        "Alpha&Beta Rates",
+        "Alpha & Beta Rates",
+        "Gamma &Delta Rates",
+    ];
+    assert_eq!(backend.sheet_names().unwrap(), expected_sheets);
+
+    let names = backend.defined_names().expect("read defined names");
+    for (name, expected_sheet, expected_scope_sheet) in [
+        ("TightName", "Alpha&Beta Rates", None),
+        ("SpacedName", "Alpha & Beta Rates", None),
+        ("LeftSpacedName", "Gamma &Delta Rates", None),
+        ("LocalSpacedName", "Alpha & Beta Rates", Some("Sheet1")),
+    ] {
+        let definition = names
+            .iter()
+            .find(|defined| defined.name == name)
+            .unwrap_or_else(|| panic!("missing {name}"));
+        let expected_scope = if expected_scope_sheet.is_some() {
+            DefinedNameScope::Sheet
+        } else {
+            DefinedNameScope::Workbook
+        };
+        assert_eq!(definition.scope, expected_scope, "scope of {name}");
+        assert_eq!(
+            definition.scope_sheet.as_deref(),
+            expected_scope_sheet,
+            "scope sheet of {name}"
+        );
+        match &definition.definition {
+            DefinedNameDefinition::Range { address } => {
+                assert_eq!(address.sheet, expected_sheet, "target sheet for {name}");
+                assert_eq!(
+                    (
+                        address.start_row,
+                        address.start_col,
+                        address.end_row,
+                        address.end_col
+                    ),
+                    (1, 1, 1, 1),
+                    "target cell for {name}"
+                );
+            }
+            other => panic!("expected range definition for {name}, got {other:?}"),
+        }
+    }
+
+    let ctx = formualizer_eval::test_workbook::TestWorkbook::new();
+    let mut engine: Engine<_> = Engine::new(ctx, EvalConfig::default());
+    backend
+        .stream_into_engine(&mut engine)
+        .expect("stream invented workbook");
+    engine.evaluate_all().expect("evaluate invented workbook");
+
+    let registered: Vec<String> = engine
+        .sheet_store()
+        .sheets
+        .iter()
+        .map(|sheet| sheet.name.to_string())
+        .collect();
+    assert_eq!(
+        registered, expected_sheets,
+        "no phantom sheet may be registered"
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(11.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 2, 1),
+        Some(LiteralValue::Number(22.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 3, 1),
+        Some(LiteralValue::Number(33.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 4, 1),
+        Some(LiteralValue::Number(22.0))
+    );
+}
+
+#[test]
+fn defined_name_entity_spacing_open_path_preserves_distinct_targets() {
+    let bytes = defined_name_entity_spacing_fixture();
+    let file = tempfile::NamedTempFile::new().expect("create temp xlsx");
+    std::fs::write(file.path(), bytes).expect("write temp xlsx");
+    let backend = CalamineAdapter::open_path(file.path()).expect("open workbook from path");
+    assert_defined_name_entity_spacing(backend);
+}
+
+#[test]
+fn defined_name_entity_spacing_open_bytes_preserves_distinct_targets() {
+    let bytes = defined_name_entity_spacing_fixture();
+    let backend = CalamineAdapter::open_bytes(bytes).expect("open workbook from bytes");
+    assert_defined_name_entity_spacing(backend);
+}
 
 fn assert_name_error(value: LiteralValue) {
     match value {
