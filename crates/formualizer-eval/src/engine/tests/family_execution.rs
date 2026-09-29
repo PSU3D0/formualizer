@@ -860,8 +860,8 @@ fn check_typed_with_names(formulas: Vec<(u32, String)>, names: &[(&str, &str)], 
 /// invariant ranges index them once per run. Fact columns (ingested in
 /// 16-row chunks, so sums cross chunk boundaries) mix numbers, numeric
 /// text, dates, blanks, booleans, errors, mixed-case text and text with
-/// LIKE metacharacters; report criteria vary per member (numeric
-/// comparisons, text equality and inequality, empty text, wildcards,
+/// LIKE metacharacters; report criteria vary per member (numeric text,
+/// numeric comparisons, text equality and inequality, empty text, wildcards,
 /// blanks). Kernel, walk and per-cell oracle agree on values after load
 /// and after edits to facts and criteria, sequential and parallel.
 #[test]
@@ -881,7 +881,7 @@ fn family_criteria_kernel_matches_per_cell() {
                 _ => LiteralValue::Text("West".into()),
             },
             // Amount: numbers, numeric text, dates, booleans, errors.
-            2 => match r % 11 {
+            2 => match r % 12 {
                 0 => LiteralValue::Text("12".into()),
                 1 => LiteralValue::Date(chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap()),
                 2 => LiteralValue::Boolean(true),
@@ -890,6 +890,8 @@ fn family_criteria_kernel_matches_per_cell() {
                 )),
                 4 => LiteralValue::Number(-0.0),
                 5 => LiteralValue::Empty,
+                // A number that numeric-text criteria (`"12"`) must match.
+                11 => LiteralValue::Number(12.0),
                 _ => LiteralValue::Number((r as f64) * 1.25 - 30.0),
             },
             // Qty.
@@ -897,7 +899,7 @@ fn family_criteria_kernel_matches_per_cell() {
         }
     };
     let crit = |r: u32| -> (LiteralValue, LiteralValue) {
-        let region = match r % 9 {
+        let region = match r % 10 {
             0 => LiteralValue::Text("north".into()),
             1 => LiteralValue::Text("NORTH".into()),
             2 => LiteralValue::Text("so%th".into()),
@@ -906,14 +908,18 @@ fn family_criteria_kernel_matches_per_cell() {
             5 => LiteralValue::Text("".into()),
             6 => LiteralValue::Text("W*".into()),
             7 => LiteralValue::Number(5.0),
+            // Numeric text matches the number 5 in a mixed column.
+            9 => LiteralValue::Text("5".into()),
             _ => LiteralValue::Text("=West".into()),
         };
-        let amount = match r % 6 {
+        let amount = match r % 7 {
             0 => LiteralValue::Text(format!(">={}", r as f64 - 20.0)),
             1 => LiteralValue::Text(format!("<{}", r)),
             2 => LiteralValue::Number(0.0),
             3 => LiteralValue::Text("<>0".into()),
             4 => LiteralValue::Text(">-1E+300".into()),
+            // Numeric text matches both the number 12 and the text "12".
+            5 => LiteralValue::Text("12".into()),
             _ => LiteralValue::Number(r as f64 * 1.25 - 30.0),
         };
         (region, amount)
