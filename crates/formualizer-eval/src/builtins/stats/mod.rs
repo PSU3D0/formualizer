@@ -8273,10 +8273,13 @@ impl Function for FTestFn {
 /// `CHISQ.TEST` compares observed and expected values and computes `1 - CHISQ.DIST(...)`.
 ///
 /// # Remarks
-/// - `actual_range` and `expected_range` must contain the same number of numeric points.
+/// - `actual_range` and `expected_range` must have matching shapes and numeric counts.
 /// - Expected values must be strictly greater than `0`.
-/// - Requires at least two categories (`df >= 1`).
-/// - Returns `#N/A` for length mismatches or empty inputs, and `#NUM!` for invalid expected values.
+/// - For a two-dimensional table, degrees of freedom are `(rows - 1) * (columns - 1)`.
+///   For a row or column vector, they are the number of collected numeric points minus one.
+/// - Numeric collection retains statistical coercion/ignoring rules; cell errors propagate.
+/// - Requires `df >= 1`; a 1×1 input returns `#NUM!`.
+/// - Returns `#N/A` for shape/count mismatches or empty numeric inputs, and `#NUM!` for invalid expected values.
 ///
 /// # Examples
 ///
@@ -8342,8 +8345,11 @@ impl Function for ChisqTestFn {
         let actual = collect_numeric_stats(&args[0..1])?;
         let expected = collect_numeric_stats(&args[1..2])?;
 
-        // Arrays must have same length
-        if actual.len() != expected.len() {
+        // Retain the input geometry: flattening numeric cells loses the table's
+        // degrees of freedom and can make differently shaped inputs look equal.
+        let (rows, cols) = args[0].range_view_or_scalar()?.dims();
+        let expected_shape = args[1].range_view_or_scalar()?.dims();
+        if (rows, cols) != expected_shape || actual.len() != expected.len() {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new_na(),
             )));
@@ -8366,8 +8372,13 @@ impl Function for ChisqTestFn {
             chi_sq += (obs - exp).powi(2) / exp;
         }
 
-        // Degrees of freedom = number of categories - 1
-        let df = (actual.len() - 1) as f64;
+        // Genuine tables use their two axes. Vectors retain the existing
+        // category count (including the existing numeric filtering policy).
+        let df = if rows > 1 && cols > 1 {
+            (rows - 1) as f64 * (cols - 1) as f64
+        } else {
+            (actual.len() - 1) as f64
+        };
 
         if df < 1.0 {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
@@ -10212,6 +10223,222 @@ mod tests_basic_stats {
     fn prev_float(x: f64) -> f64 {
         f64::from_bits(x.to_bits() - 1)
     }
+    fn chisq_formula(wb: &TestWorkbook, formula: &str) -> LiteralValue {
+        let node = formualizer_parse::parser::parse(formula).unwrap();
+        match interp(wb).evaluate_ast(&node) {
+            Ok(value) => value.into_literal(),
+            Err(error) => LiteralValue::Error(error),
+        }
+    }
+
+    fn chisq_workbook() -> TestWorkbook {
+        TestWorkbook::new().with_function(std::sync::Arc::new(ChisqTestFn))
+    }
+
+    fn assert_chisq_probability(value: LiteralValue, expected: f64) {
+        let LiteralValue::Number(got) = value else {
+            panic!("expected probability, got {value:?}");
+        };
+        assert!((got - expected).abs() < 1e-12, "{got} != {expected}");
+    }
+
+    #[test]
+    fn chisq_test_matrix_df_erfc_oracle() {
+        // Independent df=1 identity: Q(x;1) = erfc(sqrt(x/2)).
+        // Here sum((actual-expected)^2/expected) = 5/6; the rounded
+        // erfc reference is 0.36131042852617884, not the df=3 result.
+        let wb = chisq_workbook();
+        for formula in [
+            "=CHISQ.TEST({12,18;28,42},{10,20;30,40})",
+            "=CHISQ.TEST({12,28;18,42},{10,30;20,40})",
+            "=CHITEST({12,18;28,42},{10,20;30,40})",
+        ] {
+            assert_chisq_probability(chisq_formula(&wb, formula), 0.36131042852617884);
+        }
+    }
+
+    #[test]
+    fn chisq_test_rectangular_table_df_two() {
+        let wb = chisq_workbook();
+        // Six residuals of magnitude 1, expected 10: statistic 0.6.
+        // df=(2-1)*(3-1)=2 gives the independent exponential tail.
+        for formula in [
+            "=CHISQ.TEST({11,9,11;9,11,9},{10,10,10;10,10,10})",
+            "=CHISQ.TEST({11,9;9,11;11,9},{10,10;10,10;10,10})",
+        ] {
+            assert_chisq_probability(chisq_formula(&wb, formula), (-0.3_f64).exp());
+        }
+    }
+
+    #[test]
+    fn chisq_test_literal_array_coercion_is_preserved() {
+        let wb = chisq_workbook();
+        let ctx = interp(&wb);
+        let actual = ASTNode::new(
+            ASTNodeType::Literal(LiteralValue::Array(vec![vec![
+                LiteralValue::Text("18".into()),
+                LiteralValue::Int(22),
+            ]])),
+            None,
+        );
+        let expected = arr(vec![20.0, 20.0]);
+        let result = ChisqTestFn
+            .dispatch(
+                &[
+                    ArgumentHandle::new(&actual, &ctx),
+                    ArgumentHandle::new(&expected, &ctx),
+                ],
+                &ctx.function_context(None),
+            )
+            .unwrap();
+        assert_chisq_probability(result.into_literal(), 0.5270892568655381);
+    }
+
+    #[test]
+    fn chisq_test_vectors_and_singleton() {
+        let wb = chisq_workbook();
+        for formula in [
+            "=CHISQ.TEST({12,18,28,42},{10,20,30,40})",
+            "=CHISQ.TEST({12;18;28;42},{10;20;30;40})",
+        ] {
+            // df=3 vector control, preserving the existing distribution.
+            assert_chisq_probability(chisq_formula(&wb, formula), 0.8414786391315309);
+        }
+        for formula in ["=CHISQ.TEST({12},{10})", "=CHISQ.TEST(12,10)"] {
+            assert_eq!(
+                chisq_formula(&wb, formula),
+                LiteralValue::Error(ExcelError::new_num())
+            );
+        }
+    }
+
+    #[test]
+    fn chisq_test_ranges_and_mixed_inputs() {
+        let wb = chisq_workbook()
+            .with_range(
+                "Sheet1",
+                1,
+                1,
+                vec![
+                    vec![LiteralValue::Int(12), LiteralValue::Int(18)],
+                    vec![LiteralValue::Int(28), LiteralValue::Int(42)],
+                ],
+            )
+            .with_range(
+                "Sheet1",
+                1,
+                4,
+                vec![
+                    vec![LiteralValue::Int(10), LiteralValue::Int(20)],
+                    vec![LiteralValue::Int(30), LiteralValue::Int(40)],
+                ],
+            );
+        assert_chisq_probability(
+            chisq_formula(&wb, "=CHISQ.TEST(A1:B1,D1:E1)"),
+            0.4385780260809998,
+        );
+        assert_chisq_probability(
+            chisq_formula(&wb, "=CHISQ.TEST(A1:A2,D1:D2)"),
+            0.4652088184521418,
+        );
+        assert_eq!(
+            chisq_formula(&wb, "=CHISQ.TEST(A1:B2,D1:D4)"),
+            LiteralValue::Error(ExcelError::new_na())
+        );
+        for formula in [
+            "=CHISQ.TEST(A1:B2,D1:E2)",
+            "=CHISQ.TEST(A1:B2,{10,20;30,40})",
+            "=CHISQ.TEST({12,18;28,42},D1:E2)",
+        ] {
+            assert_chisq_probability(chisq_formula(&wb, formula), 0.36131042852617884);
+        }
+    }
+
+    #[test]
+    fn chisq_test_incompatible_shapes() {
+        let wb = chisq_workbook();
+        for formula in [
+            "=CHISQ.TEST({12,18;28,42},{10,20,30,40})",
+            "=CHISQ.TEST({12,18},{10;20})",
+            "=CHISQ.TEST({12,18},{10,20,30})",
+            "=CHISQ.TEST({1,2,3;4,5,6},{1,2;3,4;5,6})",
+        ] {
+            assert_eq!(
+                chisq_formula(&wb, formula),
+                LiteralValue::Error(ExcelError::new_na()),
+                "{formula}"
+            );
+        }
+    }
+
+    #[test]
+    fn chisq_test_existing_cell_contracts() {
+        let wb = chisq_workbook()
+            .with_range(
+                "Sheet1",
+                1,
+                1,
+                vec![vec![
+                    LiteralValue::Int(18),
+                    LiteralValue::Text("ignored".into()),
+                    LiteralValue::Boolean(true),
+                    LiteralValue::Empty,
+                    LiteralValue::Int(22),
+                ]],
+            )
+            .with_range(
+                "Sheet1",
+                1,
+                6,
+                vec![vec![
+                    LiteralValue::Int(20),
+                    LiteralValue::Empty,
+                    LiteralValue::Text("ignored".into()),
+                    LiteralValue::Boolean(false),
+                    LiteralValue::Int(20),
+                ]],
+            );
+        // Preserve the existing numeric collector: range text/logicals/blanks
+        // are skipped, inline numeric text/logicals are coerced.
+        assert_chisq_probability(
+            chisq_formula(&wb, "=CHISQ.TEST(A1:E1,F1:J1)"),
+            0.5270892568655381,
+        );
+        assert_eq!(
+            chisq_formula(&wb, "=CHISQ.TEST({\"18\",22},{20,20})"),
+            LiteralValue::Error(ExcelError::new_na())
+        );
+        assert_eq!(
+            chisq_formula(&wb, "=CHISQ.TEST({TRUE,1},{1,1})"),
+            LiteralValue::Error(ExcelError::new_na())
+        );
+        for (formula, error) in [
+            (
+                "=CHISQ.TEST({\"ignored\",\"ignored\"},{\"ignored\",\"ignored\"})",
+                ExcelError::new_na(),
+            ),
+            (
+                "=CHISQ.TEST({18,\"ignored\"},{20,20})",
+                ExcelError::new_na(),
+            ),
+            ("=CHISQ.TEST({18,22},{0,20})", ExcelError::new_num()),
+            ("=CHISQ.TEST({18,22},{-1,20})", ExcelError::new_num()),
+            ("=CHISQ.TEST({#DIV/0!,22},{20,20})", ExcelError::new_div()),
+            ("=CHISQ.TEST({18,22},{20,#VALUE!})", ExcelError::new_value()),
+        ] {
+            assert_eq!(
+                chisq_formula(&wb, formula),
+                LiteralValue::Error(error),
+                "{formula}"
+            );
+        }
+        let wb = wb.with_cell("Sheet1", 1, 1, LiteralValue::Error(ExcelError::new_ref()));
+        assert_eq!(
+            chisq_formula(&wb, "=CHISQ.TEST(A1:E1,F1:J1)"),
+            LiteralValue::Error(ExcelError::new_ref())
+        );
+    }
+
     #[test]
     fn std_norm_cdf_is_double_precision() {
         // Regressions for #458 and #464. References are 80-digit mpmath values of Φ(z),
