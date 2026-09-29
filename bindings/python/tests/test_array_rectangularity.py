@@ -3,7 +3,9 @@ import pytest
 import formualizer as fz
 
 
-@pytest.mark.parametrize("formula", ["={1,2;3}", "={1;2,3}", "=SUM({1,2;3})", "={{1,2;3}}"])
+@pytest.mark.parametrize(
+    "formula", ["={1,2;3}", "={1;2,3}", "=SUM({1,2;3})", "={{1,2;3}}"]
+)
 def test_ragged_array_parse_error(formula):
     with pytest.raises(fz.ParserError, match="Array rows must have equal length"):
         fz.parse(formula)
