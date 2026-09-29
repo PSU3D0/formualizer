@@ -1,6 +1,8 @@
 <h1 align="center">Formualizer</h1>
 
-<p align="center"><b>A spreadsheet engine that runs anywhere, is built for AI agents, and makes no compromise on speed.</b><br/>Load Excel workbooks, change inputs, recalculate and read results, in-process from Rust, Python or JavaScript: on a server, in the browser or at the edge.</p>
+<p align="center"><b><big>The fastest open-source spreadsheet engine.</big></b></p>
+
+<p align="center">A million formulas in 0.38 seconds, anywhere you run code: Rust, Python or JavaScript, on a server, in the browser or at the edge.<br/>Load Excel workbooks, change inputs, recalculate and read results, in-process. Built for AI agents.</p>
 
 <p align="center">
   <a href="https://github.com/psu3d0/formualizer/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/psu3d0/formualizer/actions/workflows/ci.yml/badge.svg" /></a>
