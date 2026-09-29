@@ -1,4 +1,4 @@
-<h1 align="center">Formualizer for Python</h1>
+<h1 align="center">Formualizer</h1>
 
 <p align="center">
   <img alt="Arrow Powered" src="https://img.shields.io/badge/Arrow-Powered-0A66C2?logo=apache&logoColor=white" />
@@ -11,11 +11,16 @@
   <img alt="Formualizer banner" src="https://raw.githubusercontent.com/psu3d0/formualizer/main/assets/formualizer-banner.png" />
 </p>
 
-<br />
+**The fastest open-source spreadsheet engine. Native speed, from Python.**
 
-**Parse, evaluate, and mutate Excel workbooks at native speed from Python.**
+Load Excel workbooks, change inputs, recalculate and read results—in-process, with no Excel installation or office-suite service. Formualizer runs the calculation in Rust and gives you a Python API. Built for financial models, data pipelines and AI agents.
 
-A Rust-powered spreadsheet engine with 400+ Excel-compatible functions, exposed through a clean Pythonic API. Tokenize formulas, walk ASTs, evaluate workbooks, and use SheetPort to treat spreadsheets as typed APIs.
+- **No compromise on speed.** Copied formulas compute as families over Arrow columns; lookups reuse indexes; only affected cells recalculate. See the [benchmarks and methodology](https://github.com/psu3d0/formualizer#how-fast).
+- **Excel-compatible.** 400+ functions, dynamic arrays, `LET`, `LAMBDA`, names and cross-sheet references. Unlike a file reader, Formualizer computes formulas rather than just returning cached values.
+- **Built for agents.** Inspect dependencies, track edits with undo/redo, inject a clock and random seed, and expose typed inputs and outputs through SheetPort.
+- **Portable.** Native wheels for Linux, macOS and Windows, plus a separate [Pyodide build](#using-in-pyodide-browser--webassembly). The same engine also ships for [Rust and JavaScript](https://github.com/psu3d0/formualizer#bindings).
+
+Need CLI or MCP tools for an agent rather than an embedded library? Use [agent-spreadsheet](https://github.com/PSU3D0/agent-spreadsheet), built on Formualizer.
 
 ## Installation
 
@@ -37,7 +42,9 @@ Full documentation at **[formualizer.dev](https://www.formualizer.dev/docs)**:
 
 ## Quick start
 
-### Evaluate a workbook
+Rows and columns are **1-based**: row 3, column 2 is B3.
+
+### Create and calculate a model
 
 ```python
 import formualizer as fz
@@ -58,8 +65,11 @@ print(wb.evaluate_cell("Sheet1", 1, 2))  # ~85.61
 ```python
 import formualizer as fz
 
+# Use a workbook with Assumptions and Summary sheets.
 wb = fz.load_workbook("financial_model.xlsx", strategy="eager_all")
-print(wb.evaluate_cell("Summary", 1, 2))
+wb.set_value("Assumptions", 3, 2, 0.07)  # B3: change an input
+wb.evaluate_all()                       # calculate affected formulas
+print(wb.get_value("Summary", 5, 2))     # B5: read an output
 
 # Optional native read-only mapping. The underlying file must not be
 # destructively modified or truncated while it is loading.
@@ -201,7 +211,7 @@ Key semantics:
 - Return Python primitives, datetime/date/time/timedelta, dict error objects, or nested lists for array spill output.
 - Python callback exceptions are sanitized and mapped to `#VALUE!`.
 
-Runnable example: `python bindings/python/examples/custom_function_registration.py`
+Runnable [custom-function example](https://github.com/psu3d0/formualizer/blob/main/bindings/python/examples/custom_function_registration.py) (from a source checkout: `python bindings/python/examples/custom_function_registration.py`).
 
 ## Batch operations
 

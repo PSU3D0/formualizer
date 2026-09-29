@@ -1,5 +1,7 @@
 <h1 align="center">Formualizer</h1>
 
+![Formualizer — The fastest open-source spreadsheet engine](https://raw.githubusercontent.com/psu3d0/formualizer/main/assets/formualizer-banner.png)
+
 <p align="center"><b><big>The fastest open-source spreadsheet engine.</big></b></p>
 
 <p align="center">A million formulas in 0.38 seconds, anywhere you run code: Rust, Python or JavaScript, on a server, in the browser or at the edge.<br/>Load Excel workbooks, change inputs, recalculate and read results, in-process. Built for AI agents.</p>
@@ -27,6 +29,18 @@ Calculating a spreadsheet from code usually means automating an office suite: Li
 
 Load an `.xlsx` and calculate every formula in it, from a cold start. The comparison is headless LibreOffice Calc 24.2 with threaded calculation, the usual open-source way to do this, on the same 24-core Linux machine, median of 3 runs:
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/psu3d0/formualizer/main/assets/benchmark-load-calculate-dark.png" />
+  <img alt="Load and calculate time for nine workloads, comparing LibreOffice Calc 24.2 with Formualizer 0.10 on a logarithmic time axis. Exact values and workload descriptions follow." src="https://raw.githubusercontent.com/psu3d0/formualizer/main/assets/benchmark-load-calculate-light.png" />
+</picture>
+
+**Across all 52 workbooks and workloads we measured, Formualizer takes about a quarter of the time and is faster in 48.** The [full report](benchmarks/0.10-vs-0.9.3.md#libreoffice-calc) has the method and the four exceptions. These shared-machine results are indicative, not guarantees for every workload or runtime.
+
+<details>
+<summary>Exact timings and workload descriptions</summary>
+
+Speedups use unrounded measurements; displayed times are rounded.
+
 | Workload | LibreOffice | Formualizer | |
 |---|---:|---:|---:|
 | Product lookups <sup>[1]</sup> | 53.3 s | **0.35 s** | **154× faster** |
@@ -39,8 +53,6 @@ Load an `.xlsx` and calculate every formula in it, from a cold start. The compar
 | 100,000-row running balance <sup>[8]</sup> | 525 ms | **291 ms** | **1.8× faster** |
 | 100,000 copied formulas <sup>[9]</sup> | 550 ms | **347 ms** | **1.6× faster** |
 
-**Across all 52 workbooks and workloads we measured, Formualizer takes about a quarter of the time and is faster in 48.** The [full report](benchmarks/0.10-vs-0.9.3.md#libreoffice-calc) has the method and the four exceptions.
-
 1. 20,000 query rows, each with two `INDEX`/`MATCH` lookups of a product key in a 50,000-row table.
 2. A 5,000-row report that finds each sale in a 50,000-row fact table on another sheet, then looks up its region and product in two dimension tables (`INDEX`/`MATCH` throughout). The fact table computes 50,000 revenue formulas.
 3. A cash-flow forecast from the public Enron spreadsheet corpus: about 4,900 formulas across 18 sheets.
@@ -50,6 +62,8 @@ Load an `.xlsx` and calculate every formula in it, from a cold start. The compar
 7. A trading-volume workbook from the Enron corpus: 65,000 formulas across 16 sheets.
 8. A balance where each row adds to the one above (`=A1+1`, `=A2+1`, …), the hardest shape to parallelize.
 9. One formula (`=A1*2`) filled down 100,000 rows, plus a `SUM` over the results.
+
+</details>
 
 ### And against Formualizer 0.9.3
 
@@ -68,6 +82,10 @@ Load an `.xlsx` and calculate every formula in it, from a cold start. The compar
 Values are unchanged. Every step of the rewrite was checked cell by cell against the previous engine.
 
 ### Why it's fast
+
+![Illustration of filling a formula down a column, evaluating a formula family, and recalculating dependents after an input edit](https://raw.githubusercontent.com/psu3d0/formualizer/main/assets/formualizer-calc.gif)
+
+*Illustrative animation, not a real-time recording. Its timing figures refer to the financial-model benchmark above.*
 
 - **Copied formulas are one unit.** Fill a formula down 100,000 rows and Formualizer stores one template and one dependency node, and evaluates the run in one pass over typed [Apache Arrow](https://arrow.apache.org/) columns. It does not track 100,000 separate formulas.
 - **Lookups and conditional sums index their table once.** A column of `VLOOKUP`, `INDEX`/`MATCH`, `SUMIFS` or `COUNTIFS` over the same range builds one index for the whole run instead of scanning the table once per row.

@@ -1,4 +1,4 @@
-<h1 align="center">Formualizer for WASM</h1>
+<h1 align="center">Formualizer</h1>
 
 <p align="center">
   <img alt="Arrow Powered" src="https://img.shields.io/badge/Arrow-Powered-0A66C2?logo=apache&logoColor=white" />
@@ -11,11 +11,14 @@
   <img alt="Formualizer banner" src="https://raw.githubusercontent.com/psu3d0/formualizer/main/assets/formualizer-banner.png" />
 </p>
 
-<br />
+**The fastest open-source spreadsheet engine. In your JavaScript app.**
 
-**Parse, evaluate, and mutate Excel workbooks in the browser or Node.js.**
+Load Excel workbooks, change inputs, recalculate and read results—in the browser, Node.js or a compatible JavaScript edge runtime. Formualizer ships a Rust calculation engine as WebAssembly with a typed JavaScript API. No Excel installation, office-suite process or remote calculation service. Built for AI agents and applications that need spreadsheet logic without a spreadsheet UI.
 
-A Rust-powered spreadsheet engine compiled to WebAssembly with 400+ Excel-compatible functions, Arrow-powered storage, and a clean TypeScript API.
+- **No compromise on speed.** Copied formulas compute as families over Arrow columns; lookups reuse indexes; only affected cells recalculate. The [engine benchmarks](https://github.com/psu3d0/formualizer#how-fast) report native measurements, not browser or edge timings.
+- **Excel-compatible.** 400+ functions, dynamic arrays, `LET`, `LAMBDA`, names and cross-sheet references. Load XLSX bytes and calculate formulas, not just read cached values.
+- **Built for agents.** Inspect dependencies, group edits with undo/redo, and expose deterministic typed inputs and outputs through SheetPort. For ready-made CLI and MCP tools, see [agent-spreadsheet](https://github.com/PSU3D0/agent-spreadsheet).
+- **One engine across languages.** Also available for [Rust and Python](https://github.com/psu3d0/formualizer#bindings). This npm package targets JavaScript hosts; non-JavaScript WASM hosts use the [portable Rust profile](#runtime-profile).
 
 ## Installation
 
@@ -35,7 +38,9 @@ Full documentation at **[formualizer.dev](https://www.formualizer.dev/docs)**:
 
 ## Quick start
 
-### Evaluate a workbook
+Rows and columns are **1-based**: row 3, column 2 is B3.
+
+### Create and calculate a model
 
 ```typescript
 import init, { Workbook } from 'formualizer';
@@ -52,6 +57,23 @@ wb.setFormula('Loans', 1, 2, '=PMT(A2/12, A3, -A1)');
 console.log(wb.evaluateCell('Loans', 1, 2)); // ~1266.71
 ```
 
+
+### Load an XLSX, change an input and recalculate
+
+```typescript
+import init, { Workbook } from 'formualizer';
+await init();
+
+// Browser example; use a workbook with Assumptions and Summary sheets.
+const response = await fetch('/financial_model.xlsx');
+if (!response.ok) throw new Error(`Workbook fetch failed: ${response.status}`);
+const wb = Workbook.fromXlsxBytes(new Uint8Array(await response.arrayBuffer()));
+wb.setValue('Assumptions', 3, 2, 0.07);  // B3
+wb.evaluateAll();
+console.log(wb.sheet('Summary').getValue(5, 2)); // B5
+```
+
+For Node.js, read the bytes with `readFile` from `node:fs/promises` instead of `fetch`. Initialization and WASM asset loading depend on your runtime and bundler; see the [JS quickstart](https://www.formualizer.dev/docs/quickstarts/js-wasm-quickstart). Calculation methods are synchronous: use a Web Worker for large browser workloads to keep the UI responsive.
 
 ### Cache-only XLSX recalculation
 
@@ -133,7 +155,7 @@ Key semantics:
 - Return scalars, `null`/`undefined`, 1D/2D arrays (array results spill into the grid).
 - JS exceptions are sanitized and mapped to `#VALUE!` errors.
 
-Runnable example: `node bindings/wasm/examples/custom-function-registration.mjs` (after `npm run build`)
+Runnable [custom-function example](https://github.com/psu3d0/formualizer/blob/main/bindings/wasm/examples/custom-function-registration.mjs) (after building from a source checkout).
 
 Note: the Rust-side WASM UDF plugin path (`formualizer-workbook` features `wasm_plugins` / `wasm_runtime_wasmtime`) is not surfaced in the JS API; JS callbacks registered with `registerFunction` are the custom-function mechanism here.
 
@@ -247,7 +269,7 @@ That means:
 - `crypto.getRandomValues` is used for entropy.
 - Ambient wall-clock time is available for `NOW()`, `TODAY()`, etc.
 
-This is the correct profile for browser and Node.js hosts. If you are embedding Formualizer inside a raw **wasmtime** guest or any non-JS wasm host, use the `portable-wasm` Rust feature on the `formualizer` crate instead (see the [main README](../../README.md#webassembly-runtime-profiles)).
+This is the correct profile for browser and Node.js hosts. If you are embedding Formualizer inside a raw **wasmtime** guest or any non-JS wasm host, use the `portable-wasm` Rust feature on the `formualizer` crate instead (see the [main README](https://github.com/psu3d0/formualizer#webassembly-profiles)).
 
 ---
 
@@ -271,14 +293,6 @@ npm run build
 cargo test -p formualizer-wasm
 wasm-pack test --node
 ```
-
-## Why Formualizer?
-
-- **Complete engine**: Parse, evaluate, mutate, and persist — not just read cached values.
-- **400+ functions**: Math, text, lookup (XLOOKUP), date/time, financial, statistics, and more.
-- **Fast**: Arrow-powered storage with incremental dependency tracking and parallel evaluation.
-- **Portable**: Same Rust engine runs natively, in Python, and in the browser via WASM.
-- **Deterministic**: Inject clock, timezone, and RNG for reproducible results.
 
 ## License
 
