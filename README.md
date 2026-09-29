@@ -24,6 +24,8 @@ No Excel COM automation. No LibreOffice UNO bridge. No stitching together slow P
 
 Formualizer combines broad Excel-compatible formula support with Arrow-backed storage, dependency-aware recalculation, dynamic arrays, file I/O, undo/redo, and SheetPort. One permissively licensed Rust core ships to Rust, Python, browsers, and Node.js.
 
+**New in 0.10:** copied formulas compute as families instead of cell by cell. Real-world workbooks load and calculate in about a third of the time 0.9.3 took, recalculate an edit 5–25× faster and use about an eighth of the memory. A 1M-formula model calculates in 0.38 s with 45 MB of heap. Against LibreOffice Calc, loading and calculating takes about a quarter of the time, and lookup-heavy models run up to 150× faster. [See the numbers](#performance).
+
 ---
 
 ## Highlights
@@ -33,13 +35,13 @@ Formualizer combines broad Excel-compatible formula support with Arrow-backed st
 | **400+ Excel functions** | Math, text, lookup (XLOOKUP, VLOOKUP), date/time, statistics, financial, database, engineering |
 | **Three language targets** | Rust, Python (PyO3), and WASM (browser + Node) with consistent APIs |
 | **Arrow-powered storage** | Apache Arrow columnar backing with spill overlays for efficient large-workbook evaluation |
-| **Dependency graph** | Incremental recalculation, cycle detection, topological scheduling, optional parallel evaluation |
+| **Family execution** | Copied formulas are one dependency node and one evaluation over typed Arrow lanes, with range, criteria and lookup kernels |
+| **Incremental recalculation** | Region-based dependency tracking, cycle detection, chained recurrences, optional parallel evaluation |
 | **Dynamic arrays** | FILTER, UNIQUE, SORT, SORTBY, XLOOKUP with automatic spill semantics |
 | **Undo / redo** | Transactional changelog with action grouping, rollback, and replay |
 | **File I/O** | Load and write XLSX (calamine, umya), CSV, JSON — all behind feature flags |
 | **SheetPort** | Treat any spreadsheet as a typed API with YAML manifests, schema validation, and batch evaluation |
 | **Deterministic mode** | Inject clock, timezone, and RNG seed for reproducible evaluation (built for AI agents) |
-| **Experimental span evaluation** | Opt-in FormulaPlane runtime for accelerating eligible large copied-formula families |
 
 ## Documentation
 
@@ -49,8 +51,8 @@ Formualizer combines broad Excel-compatible formula support with Arrow-backed st
 - [Function Reference](https://www.formualizer.dev/docs/reference/functions) — 400+ built-in functions with examples
 - [Formula Parser](https://www.formualizer.dev/formula-parser) — interactive browser-based formula parser and AST inspector
 - [SheetPort Guide](https://www.formualizer.dev/docs/sheetport) — treat spreadsheets as typed, deterministic APIs
-- [Core Concepts](https://www.formualizer.dev/docs/core-concepts) — dependency graph, FormulaPlane span evaluation, evaluation pipeline, coercion rules
-- [Large Workbook Performance](https://www.formualizer.dev/docs/guides/large-workbook-performance) — loading, sparse ingest, and opt-in span acceleration guidance
+- [Core Concepts](https://www.formualizer.dev/docs/core-concepts) — dependency tracking, evaluation pipeline, coercion rules
+- [Large Workbook Performance](https://www.formualizer.dev/docs/guides/large-workbook-performance) — loading, sparse ingest and large-model guidance
 
 ## Who is this for?
 
@@ -102,7 +104,7 @@ let payment = wb.evaluate_cell("Sheet1", 1, 2)?;
 ```toml
 # Cargo.toml
 [dependencies]
-formualizer = "0.6"
+formualizer = "0.10"
 ```
 
 ### Python
@@ -152,20 +154,51 @@ wb.setFormula('Pricing', 1, 2, '=A1*(1-A2)');
 console.log(await wb.evaluateCell('Pricing', 1, 2)); // 85
 ```
 
-## Performance and experimental span evaluation
+## Performance
 
-Formualizer's default execution path is the stable dependency graph. For large read-heavy XLSX workloads, the Calamine backend provides a sparse-compatible loading path. Formualizer 0.6 also includes **experimental, opt-in** FormulaPlane span evaluation for eligible copied-formula families.
+Formualizer 0.10 evaluates copied formulas as families rather than one cell at a time.
+- Fill a formula down a column and the whole run becomes one dependency node, with one shared template.
+- The run evaluates in one pass over typed Arrow columns, and its results are written back as a block.
+- Lookups and conditional aggregates over a fixed table index that table once per run, not once per cell.
+- Cells that hold only values cost no graph vertex at all.
 
-Span evaluation is disabled by default:
+Values are identical to cell-by-cell evaluation. The per-cell path stays in the engine as a differential-testing oracle.
 
-```rust
-use formualizer_workbook::{Workbook, WorkbookConfig};
+**Against Formualizer 0.9.3** (release builds, same machine; lower is better):
 
-let cfg = WorkbookConfig::interactive().with_span_evaluation(true);
-let mut wb = Workbook::new_with_config(cfg);
-```
+| | load + first calculation | value edit + recalc | heap after calculation |
+|---|---|---|---|
+| Enron workbook sample (25 real-world files) | 0.31× | 0.15× | 0.13× |
+| Real financial and operating models | 0.29× | 0.22× | 0.06× |
+| Synthetic benchmark workbooks (17) | 0.30× | 0.10× | 0.21× |
 
-Use it when you can validate critical workbooks against your own regression corpus. Unsupported formulas fall back to the legacy graph path; internal chains/running balances and array-literal families are not span-promoted in 0.6.
+**A 1M-formula financial model:**
+
+| | 0.9.3 | 0.10 |
+|---|---|---|
+| load | 25.1 s | 4.2 s |
+| first calculation | 4.8 s | 0.38 s |
+| value edit + recalc | 2.5 s | 52 ms |
+| heap after calculation | 897 MB | 45 MB |
+| peak heap | 2.9 GB | 195 MB |
+
+**Against LibreOffice Calc 24.2** (headless, threaded calculation), loading and calculating the same 52 workbooks and generated workloads:
+
+| | Formualizer / LibreOffice |
+|---|---|
+| load + first calculation | 0.24× (faster in 48 of 52) |
+| calculation alone | 0.44× |
+| lookup- and criteria-heavy models | 7–150× faster end to end (40k `INDEX`/`MATCH` over 50k rows: 0.35 s vs 53 s) |
+
+Measured on a shared 24-core machine, so treat the figures as indicative. The method and full tables are in [benchmarks/0.10-vs-0.9.3.md](benchmarks/0.10-vs-0.9.3.md).
+
+What makes it fast:
+- **A region-based dependency authority.** A formula family is one node with relative edges, so dependency memory and dirty propagation scale with the number of distinct formulas, not cells.
+- **Family execution on typed lanes.** Arithmetic, comparisons, `IF`/`IFERROR`/`AND`/`OR`, `ROUND`, `MIN`/`MAX`/`SUM`, type tests and date parts run column-wise over `f64` lanes, with the exact scalar semantics for errors and formats.
+- **Kernels.** Windowed `SUM`/`AVERAGE`/`MIN`/`MAX`/`COUNT` replicate the scalar summation order bit for bit. `SUMIFS`-style criteria index their fixed ranges once. Run-invariant lookups are computed once per run, and lookup indexes are shared across threads.
+- **Recurrences as chains.** Running totals and `=C2+D1`-style recurrences evaluate as one sequential unit instead of one scheduling layer per row.
+- **Incremental everything.** Only dirty regions recalculate. Small recalculations skip the planner. Structural edits move runs of copied formulas as blocks.
+- **Optional parallelism.** Independent work runs on Rayon, and cheap layers stay on one thread.
 
 ## Custom functions (workbook-local)
 
@@ -261,17 +294,6 @@ print(result["monthly_payment"])  # deterministic, schema-validated
 ```
 
 Use cases: financial model APIs, AI agent tool-use, configuration-driven business logic, batch scenario evaluation.
-
-## Performance
-
-The evaluation engine is built on Apache Arrow columnar storage with:
-- Incremental dependency graph (only recalculates what changed)
-- CSR (Compressed Sparse Row) edge format for memory-efficient graphs
-- Optional parallel evaluation via Rayon
-- Warm-up planning for large workbooks
-- Spill overlays for dynamic array results
-
-Formal benchmarks are in progress.
 
 ## Bindings
 
