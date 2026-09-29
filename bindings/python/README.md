@@ -68,8 +68,8 @@ import formualizer as fz
 # Use a workbook with Assumptions and Summary sheets.
 wb = fz.load_workbook("financial_model.xlsx", strategy="eager_all")
 wb.set_value("Assumptions", 3, 2, 0.07)  # B3: change an input
-wb.evaluate_all()                       # calculate affected formulas
-print(wb.get_value("Summary", 5, 2))     # B5: read an output
+wb.evaluate_all()  # calculate affected formulas
+print(wb.get_value("Summary", 5, 2))  # B5: read an output
 
 # Optional native read-only mapping. The underlying file must not be
 # destructively modified or truncated while it is loading.
