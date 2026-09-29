@@ -223,12 +223,12 @@ impl Function for NumberValueFn {
     }
 }
 
-// TEXT(value, format_text) - limited formatting (#,0,0.00, percent, yyyy, mm, dd, hh:mm) naive
+// TEXT(value, format_text): number formats in `number_format`, limited dates and times
 #[derive(Debug)]
 pub struct TextFn;
 /// Formats a value as text using a format pattern.
 ///
-/// This implementation supports common numeric, percent, grouping, and basic date tokens.
+/// Number formats are rendered like Excel; date and time support is limited.
 ///
 /// # Remarks
 /// - Requires exactly two arguments: value and format text.
@@ -237,7 +237,16 @@ pub struct TextFn;
 ///   Digit-bearing text that is not a plain number (dates, currency, fractions, or
 ///   locale-ambiguous values like `"1.234,56"`) still returns `#VALUE!` for now.
 /// - Error inputs are propagated unchanged.
-/// - Supported patterns are intentionally limited compared with full Excel formatting.
+/// - Number formats support `0` and `#` placeholders, the decimal point, thousands
+///   grouping, trailing-comma scaling, `%`, quoted, escaped or bare literal text, colour
+///   tags and up to three `;` sections (positive, negative, zero). Digits are rounded half
+///   away from zero on the 15-significant-digit value, as `ROUND` does.
+/// - Excel's `#VALUE!` cases are reproduced: a result longer than 255 characters, and a
+///   date, time or exponent letter (`b d e g h m n s y`) left unquoted beside a digit
+///   placeholder, such as `=TEXT(5,"0 kg")`.
+/// - Scientific, fraction, `?`, `*`, `_`, conditional and locale codes, the fourth (text)
+///   section and a bare colour tag keep a simplified rendering, and date and time tokens
+///   are limited.
 ///
 /// # Examples
 ///
@@ -260,7 +269,7 @@ pub struct TextFn;
 ///   - DOLLAR
 /// faq:
 ///   - q: "How complete is format_text support?"
-///     a: "Only a limited subset of Excel-style numeric/date tokens is supported in this implementation."
+///     a: "Number formats built from 0, #, the decimal point, grouping, %, literals and sections follow Excel. Scientific, fraction and conditional codes and most date/time tokens are simplified."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: TEXT
@@ -299,8 +308,15 @@ impl Function for TextFn {
         }
         let fmt = to_text(&args[1])?;
         if fmt.is_empty() {
+            // An empty format is an empty literal section, which still shows
+            // a negative number's minus sign (`TEXT(-5,"")` is `-`).
+            let negative = match val {
+                LiteralValue::Number(n) => n < 0.0,
+                LiteralValue::Int(i) => i < 0,
+                _ => false,
+            };
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(
-                String::new(),
+                if negative { "-".into() } else { String::new() },
             )));
         }
         let num = match val {
@@ -338,6 +354,19 @@ impl Function for TextFn {
             }
             _ => 0.0,
         };
+        match super::number_format::format_number(num, &fmt) {
+            Ok(text) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(text)));
+            }
+            Err(super::number_format::Fallback::Invalid) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_value(),
+                )));
+            }
+            // Dates, times and the less common number codes keep the
+            // previous rendering below.
+            Err(super::number_format::Fallback::Unsupported) => {}
+        }
         let out = if fmt.contains('%') {
             format_percent(num)
         } else if fmt.contains('#') && fmt.contains(',') {
