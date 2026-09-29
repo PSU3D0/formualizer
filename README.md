@@ -1,6 +1,6 @@
 <h1 align="center">Formualizer</h1>
 
-<p align="center"><b>The Excel calculation engine that outruns LibreOffice.</b><br/>Load a workbook, change inputs, recalculate, read results: from Rust, Python or JavaScript, with no Excel and no LibreOffice.</p>
+<p align="center"><b>A spreadsheet engine that runs anywhere, is built for AI agents, and makes no compromise on speed.</b><br/>Load Excel workbooks, change inputs, recalculate and read results, in-process from Rust, Python or JavaScript: on a server, in the browser or at the edge.</p>
 
 <p align="center">
   <a href="https://github.com/psu3d0/formualizer/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/psu3d0/formualizer/actions/workflows/ci.yml/badge.svg" /></a>
@@ -14,11 +14,18 @@
   <a href="#license"><img alt="License: MIT/Apache-2.0" src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg" /></a>
 </p>
 
+Calculating a spreadsheet from code usually means automating an office suite: LibreOffice over UNO, Excel over COM, or Excel Online through Microsoft Graph and a subscription. They are heavy to deploy, slow to start, hard to sandbox and awkward to hand to an agent. Formualizer is a library instead.
+
+- **Runs anywhere.** One Rust core, shipped as a Rust crate, a Python package (including Pyodide) and a WASM module for browsers, Node and edge runtimes. No external process, no Windows, no license server.
+- **Built for agents.** Deterministic evaluation (injectable clock, timezone and random seed), an auditable change log with undo, typed inputs and outputs through SheetPort, and [agent-spreadsheet](#building-an-ai-agent-use-agent-spreadsheet) for CLI and MCP tooling.
+- **No compromise on speed.** Copied formulas compute as families in one pass over Arrow columns, lookups index their table once, and only what changed recalculates. The numbers are [below](#how-fast).
+- **Excel-compatible.** 400+ functions, dynamic arrays, `LET` and `LAMBDA`, with edge cases checked against Excel.
+
 ## How fast?
 
-Open an `.xlsx` and calculate every formula in it, from a cold start:
+Load an `.xlsx` and calculate every formula in it, from a cold start. The comparison is headless LibreOffice Calc 24.2 with threaded calculation, the usual open-source way to do this, on the same 24-core Linux machine, median of 3 runs:
 
-| Workload | LibreOffice Calc | Formualizer | |
+| Workload | LibreOffice | Formualizer | |
 |---|---:|---:|---:|
 | Product lookups <sup>[1]</sup> | 53.3 s | **0.35 s** | **154× faster** |
 | Sales report joins <sup>[2]</sup> | 19.7 s | **0.50 s** | **40× faster** |
@@ -30,7 +37,7 @@ Open an `.xlsx` and calculate every formula in it, from a cold start:
 | 100,000-row running balance <sup>[8]</sup> | 525 ms | **291 ms** | **1.8× faster** |
 | 100,000 copied formulas <sup>[9]</sup> | 550 ms | **347 ms** | **1.6× faster** |
 
-**Across all 52 workbooks and workloads we measured, Formualizer takes about a quarter of LibreOffice's time, and is faster in 48 of them.** The four where LibreOffice wins are listed in the [full report](benchmarks/0.10-vs-0.9.3.md#libreoffice-calc), along with the method.
+**Across all 52 workbooks and workloads we measured, Formualizer takes about a quarter of the time and is faster in 48.** The [full report](benchmarks/0.10-vs-0.9.3.md#libreoffice-calc) has the method and the four exceptions.
 
 1. 20,000 query rows, each with two `INDEX`/`MATCH` lookups of a product key in a 50,000-row table.
 2. A 5,000-row report that finds each sale in a 50,000-row fact table on another sheet, then looks up its region and product in two dimension tables (`INDEX`/`MATCH` throughout). The fact table computes 50,000 revenue formulas.
@@ -41,8 +48,6 @@ Open an `.xlsx` and calculate every formula in it, from a cold start:
 7. A trading-volume workbook from the Enron corpus: 65,000 formulas across 16 sheets.
 8. A balance where each row adds to the one above (`=A1+1`, `=A2+1`, …), the hardest shape to parallelize.
 9. One formula (`=A1*2`) filled down 100,000 rows, plus a `SUM` over the results.
-
-The results measure load plus the first full calculation. They were taken with LibreOffice Calc 24.2 headless (threaded calculation on) and Formualizer 0.10, on the same 24-core Linux machine, median of 3 runs.
 
 ### And against Formualizer 0.9.3
 
@@ -132,15 +137,13 @@ More in the [quickstarts](https://www.formualizer.dev/docs/quickstarts) for [Rus
 | **Real workbooks** | Load and write XLSX (Calamine, umya), CSV and JSON. Defined names, tables and cross-sheet references. |
 | **Incremental recalculation** | Change an input and only its dependents recalculate. Cycle detection, iterative calculation and optional parallel evaluation. |
 | **Undo / redo** | A transactional change log with action grouping, rollback and replay |
-| **Deterministic mode** | Inject the clock, timezone and random seed for reproducible results (built for AI agents and tests) |
 | **SheetPort** | Treat a spreadsheet as a typed function: YAML-declared inputs and outputs, validated |
 | **Custom functions** | Register workbook-local functions from Rust, Python or JavaScript, or load WASM plugins |
-| **Three targets, one core** | Rust, Python (PyO3, including Pyodide) and WASM (browser and Node) with the same API |
 | **Permissive license** | MIT or Apache-2.0: no AGPL, no commercial license needed |
 
 ## Who uses it for what
 
-- **Financial models as services.** Run pricing, lending, insurance and planning workbooks server-side, with no Excel install and no LibreOffice process to babysit.
+- **Financial models as services.** Run pricing, lending, insurance and planning workbooks server-side, with no Excel install and no office suite to babysit.
 - **AI agents that work with spreadsheets.** Deterministic evaluation, an auditable change log and typed I/O. See [agent-spreadsheet](#building-an-ai-agent-use-agent-spreadsheet).
 - **Products with spreadsheet logic inside.** Calculators, configurators and planning tools that run formulas in the browser or on the server, without shipping a spreadsheet UI.
 - **Data pipelines.** Business logic trapped in spreadsheets, turned into reproducible, testable code paths.
@@ -150,14 +153,12 @@ More in the [quickstarts](https://www.formualizer.dev/docs/quickstarts) for [Rus
 | Library | Language | Parse | Evaluate | Write XLSX | Functions | Incremental recalc | License |
 |---------|----------|-------|----------|------------|-----------|--------------------|---------|
 | **Formualizer** | Rust / Python / WASM | Yes | Yes | Yes | 400+ | Yes | MIT / Apache-2.0 |
-| LibreOffice (headless) | C++ (UNO) | Yes | Yes | Yes | 500+ | Yes | MPL-2.0; a full office suite to deploy |
 | HyperFormula | JavaScript | Yes | Yes | No | ~400 | Yes | **AGPL-3.0** or commercial |
 | calamine | Rust | No | No | No | n/a | n/a | MIT / Apache-2.0 |
 | openpyxl | Python | No | No | Yes | n/a | n/a | MIT |
 | xlcalculator | Python | Yes | Yes | No | ~50 | Partial | MIT |
 | formulajs | JavaScript | No | Yes | No | ~100 | No | MIT |
 
-- **LibreOffice** calculates spreadsheets well, but embedding it means running an office suite over a UNO bridge. Formualizer is a library, and it's faster: see [How fast?](#how-fast).
 - **HyperFormula** is the closest embeddable competitor, but AGPL-3.0 requires you to open-source your application or buy a commercial license.
 - **calamine** and **openpyxl** read (and, for openpyxl, write) XLSX, but don't evaluate formulas.
 
