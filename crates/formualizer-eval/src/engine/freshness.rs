@@ -79,6 +79,9 @@ pub(crate) struct Freshness {
     group_dropped: FxHashSet<VertexId>,
     /// Request-scoped plan-only hints: reader → cells it read while dirty.
     hints: FxHashMap<VertexId, Vec<VertexId>>,
+    /// A spill existed when the pass began (it may have been cleared
+    /// since): only then can a spill re-dirty a committed vertex (FR5).
+    had_spills: bool,
     /// Stale readers dropped over the request (tests, telemetry).
     stale_total: u64,
     /// Passes stopped at a barrier over the request.
@@ -104,6 +107,7 @@ impl<R: EvaluationContext> Engine<R> {
         f.stale.get_mut().unwrap().clear();
         f.fresh_reads.get_mut().unwrap().clear();
         f.armed = true;
+        f.had_spills = self.graph.has_spill_anchors();
     }
 
     /// DirtyExtents (design §8.2, FR2 for static reads): order every dirty
@@ -252,6 +256,58 @@ impl<R: EvaluationContext> Engine<R> {
         self.graph.clear_dirty_flags(vertices);
     }
 
+    /// FR5 for a batch of results evaluated before any of them commits (a
+    /// parallel phase group, or a run unit on the per-vertex path): every
+    /// member read the state from before the batch. When a member may
+    /// write or clear a spill, take the members that will commit out of D
+    /// now, as a sequential commit order would have. A spill committed by
+    /// an earlier member then re-dirties a later member that reads it, and
+    /// [`Self::freshness_batch_redirtied`] keeps that flag across the later
+    /// member's own commit, so the loop replans it (FORM-192).
+    ///
+    /// Returns whether the batch is guarded. Only scans the batch; members
+    /// are recorded as committed so an aborted pass restores their flags.
+    pub(super) fn freshness_begin_batch_commit(
+        &mut self,
+        results: &[(VertexId, LiteralValue)],
+    ) -> bool {
+        if !self.freshness.armed || results.len() < 2 {
+            return false;
+        }
+        let has_spills = self.graph.has_spill_anchors();
+        if !results.iter().any(|(v, value)| {
+            matches!(value, LiteralValue::Array(_))
+                || (has_spills && self.graph.is_spill_anchor(*v))
+        }) {
+            return false;
+        }
+        let stale = self.freshness.stale.get_mut().unwrap();
+        let group_dropped = &self.freshness.group_dropped;
+        let members: Vec<VertexId> = results
+            .iter()
+            .map(|(v, _)| *v)
+            .filter(|v| !stale.contains_key(v) && !group_dropped.contains(v))
+            .collect();
+        self.freshness.committed.extend(members.iter().copied());
+        self.graph.clear_dirty_flags(&members);
+        true
+    }
+
+    /// For a member of a guarded batch, before its commit: whether an
+    /// earlier commit of the batch re-dirtied it.
+    pub(super) fn freshness_batch_redirtied(&self, guarded: bool, vertex: VertexId) -> bool {
+        guarded && self.graph.is_dirty(vertex)
+    }
+
+    /// After the commit of a member that [`Self::freshness_batch_redirtied`]
+    /// reported: it published a value computed before the spill it reads,
+    /// so it stays dirty and the loop replans it.
+    pub(super) fn freshness_keep_redirtied(&mut self, redirtied: bool, vertex: VertexId) {
+        if redirtied && self.graph.is_live_formula_vertex(vertex) {
+            self.graph.set_dirty(vertex, true);
+        }
+    }
+
     /// Members committed in a buffered layer, values not written yet.
     pub(super) fn freshness_note_unflushed(&mut self, vertices: &[VertexId]) {
         self.freshness.unflushed.extend(vertices.iter().copied());
@@ -308,6 +364,24 @@ impl<R: EvaluationContext> Engine<R> {
             .filter(|v| !keep.contains(v) && !self.freshness.committed.contains(v))
             .collect();
         self.graph.clear_dirty_flags(&clear);
+        // FR5 re-dirtied committed vertices (a spill committed or cleared
+        // over their reads after their commit). Their dependents that ran
+        // later in this pass read the stale value and cleared themselves at
+        // their own commit: propagate from the re-dirtied set once, so the
+        // replan re-evaluates them in order (FORM-192). Only a pass that
+        // had or made a spill scans its committed set; the set is empty
+        // unless a spill changed under a committed reader.
+        if self.freshness.had_spills || self.graph.has_spill_anchors() {
+            let redirtied: Vec<VertexId> = self
+                .freshness
+                .committed
+                .iter()
+                .filter(|&v| self.graph.is_dirty(v))
+                .collect();
+            if !redirtied.is_empty() {
+                self.graph.mark_dirty_many(&redirtied);
+            }
+        }
         // The pass's committed set is not read after its end (the next pass
         // starts empty); a bitmap keeps one bit per vertex id.
         self.freshness.committed.clear();

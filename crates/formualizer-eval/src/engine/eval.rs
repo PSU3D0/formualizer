@@ -20266,7 +20266,11 @@ where
                     }
                 }
             }
+            // A run unit's members were all evaluated before any commits
+            // (FR5, FORM-192); a single cell is committed as it runs.
+            let guarded = self.freshness_begin_batch_commit(&values);
             for (vertex_id, value) in values {
+                let redirtied = self.freshness_batch_redirtied(guarded, vertex_id);
                 let effects = if buffered {
                     self.plan_vertex_effects_with_computed_flush(
                         vertex_id,
@@ -20295,6 +20299,7 @@ where
                         return Err(e);
                     }
                 }
+                self.freshness_keep_redirtied(redirtied, vertex_id);
             }
         }
         self.flush_computed_write_buffer(&mut computed_writes)?;
@@ -20416,6 +20421,9 @@ where
                     applied = applied.saturating_add(committed);
                     // Arrays first, then scalars — establishes spill regions before
                     // scalar results that might land inside a spilled region.
+                    // FR5 (FORM-192): members evaluated together must not
+                    // clear a re-dirty from a spill committed before them.
+                    let guarded = self.freshness_begin_batch_commit(&vertex_results);
                     let mut arrays: Vec<(VertexId, LiteralValue)> = Vec::new();
                     let mut others: Vec<(VertexId, LiteralValue)> = Vec::new();
                     for (vertex_id, result) in vertex_results {
@@ -20426,6 +20434,7 @@ where
                         }
                     }
                     for (vertex_id, result) in arrays {
+                        let redirtied = self.freshness_batch_redirtied(guarded, vertex_id);
                         let effects = match self.plan_vertex_effects_with_computed_flush(
                             vertex_id,
                             result,
@@ -20449,11 +20458,13 @@ where
                                 return Err(e);
                             }
                         }
+                        self.freshness_keep_redirtied(redirtied, vertex_id);
                         applied = applied.saturating_add(1);
                     }
                     // Make all array spill/top-left writes visible before scalar effects in this group.
                     self.flush_computed_write_buffer(&mut computed_writes)?;
                     for (vertex_id, result) in others {
+                        let redirtied = self.freshness_batch_redirtied(guarded, vertex_id);
                         let effects = match self.plan_vertex_effects_with_computed_flush(
                             vertex_id,
                             result,
@@ -20477,6 +20488,7 @@ where
                                 return Err(e);
                             }
                         }
+                        self.freshness_keep_redirtied(redirtied, vertex_id);
                         applied = applied.saturating_add(1);
                     }
                     // Flush at the group boundary; phase1 must be visible before phase2.
@@ -20527,6 +20539,9 @@ where
                         &mut computed_writes,
                     )?;
                     applied = applied.saturating_add(committed);
+                    // FR5 (FORM-192): members evaluated together must not
+                    // clear a re-dirty from a spill committed before them.
+                    let guarded = self.freshness_begin_batch_commit(&vertex_results);
                     let mut arrays: Vec<(VertexId, LiteralValue)> = Vec::new();
                     let mut others: Vec<(VertexId, LiteralValue)> = Vec::new();
                     for (vertex_id, result) in vertex_results {
@@ -20537,6 +20552,7 @@ where
                         }
                     }
                     for (vertex_id, result) in arrays {
+                        let redirtied = self.freshness_batch_redirtied(guarded, vertex_id);
                         let effects = match self.plan_vertex_effects_with_computed_flush(
                             vertex_id,
                             result,
@@ -20560,10 +20576,12 @@ where
                                 return Err(e);
                             }
                         }
+                        self.freshness_keep_redirtied(redirtied, vertex_id);
                         applied = applied.saturating_add(1);
                     }
                     self.flush_computed_write_buffer(&mut computed_writes)?;
                     for (vertex_id, result) in others {
+                        let redirtied = self.freshness_batch_redirtied(guarded, vertex_id);
                         let effects = match self.plan_vertex_effects_with_computed_flush(
                             vertex_id,
                             result,
@@ -20587,6 +20605,7 @@ where
                                 return Err(e);
                             }
                         }
+                        self.freshness_keep_redirtied(redirtied, vertex_id);
                         applied = applied.saturating_add(1);
                     }
                     self.flush_computed_write_buffer(&mut computed_writes)?;
@@ -20642,6 +20661,9 @@ where
                         &mut computed_writes,
                     )?;
                     applied = applied.saturating_add(committed);
+                    // FR5 (FORM-192): members evaluated together must not
+                    // clear a re-dirty from a spill committed before them.
+                    let guarded = self.freshness_begin_batch_commit(&vertex_results);
                     let mut arrays: Vec<(VertexId, LiteralValue)> = Vec::new();
                     let mut others: Vec<(VertexId, LiteralValue)> = Vec::new();
                     for (vertex_id, result) in vertex_results {
@@ -20652,6 +20674,7 @@ where
                         }
                     }
                     for (vertex_id, result) in arrays {
+                        let redirtied = self.freshness_batch_redirtied(guarded, vertex_id);
                         let effects = match self.plan_vertex_effects_with_computed_flush(
                             vertex_id,
                             result,
@@ -20675,10 +20698,12 @@ where
                                 return Err(e);
                             }
                         }
+                        self.freshness_keep_redirtied(redirtied, vertex_id);
                         applied = applied.saturating_add(1);
                     }
                     self.flush_computed_write_buffer(&mut computed_writes)?;
                     for (vertex_id, result) in others {
+                        let redirtied = self.freshness_batch_redirtied(guarded, vertex_id);
                         let effects = match self.plan_vertex_effects_with_computed_flush(
                             vertex_id,
                             result,
@@ -20702,6 +20727,7 @@ where
                                 return Err(e);
                             }
                         }
+                        self.freshness_keep_redirtied(redirtied, vertex_id);
                         applied = applied.saturating_add(1);
                     }
                     self.flush_computed_write_buffer(&mut computed_writes)?;

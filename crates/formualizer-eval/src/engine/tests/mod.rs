@@ -90,6 +90,7 @@ mod spill_basic;
 mod spill_config_defaults;
 mod spill_edges;
 mod spill_parallel_501;
+mod spill_reader_invalidation_192;
 mod spill_semantics_101;
 
 mod date_arithmetic_ops;
