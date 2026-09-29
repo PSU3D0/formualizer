@@ -13,7 +13,7 @@ Against 0.9.3 on the same machine and inputs (release builds; head as a fraction
 | | load + first calculation | edit + recalculation (value / formula) | heap after calculation | peak heap |
 |---|---|---|---|---|
 | Enron workbook sample (25 files) | **0.31×** | **0.15× / 0.04×** | **0.13×** | **0.09×** |
-| Real financial and operating models | **0.29×** | **0.22× / 0.12×** | **0.06×** | **0.07×** |
+| Generated finance and operations models (2) | **0.29×** | **0.22× / 0.12×** | **0.06×** | **0.07×** |
 | Synthetic benchmark workbooks (17) | **0.30×** | **0.10× / 0.04×** | **0.21×** | **0.21×** |
 
 - **A 1M-formula financial model:**
@@ -43,7 +43,7 @@ Against 0.9.3 on the same machine and inputs (release builds; head as a fraction
   - Copied formulas share one template instead of storing their own tree.
   - Value cells have no dependency vertex.
   - The loader keeps small sheets small.
-  - Heap after the first calculation is about an eighth of 0.9.3 on real-world workbooks, and a twentieth on the 1M-formula model.
+  - Heap after the first calculation is about an eighth of 0.9.3 on the Enron workbooks, and a twentieth on the 1M-formula model.
 - **Fast loading in every mode.**
   - The interactive mode that Python, WASM and the C API use by default builds its graph through the same grouping and compression as an eager load.
   - Files without a `<dimension>` element no longer load in quadratic time.

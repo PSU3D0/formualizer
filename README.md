@@ -1,111 +1,73 @@
 <h1 align="center">Formualizer</h1>
 
+<p align="center"><b>The Excel calculation engine that outruns LibreOffice.</b><br/>Load a workbook, change inputs, recalculate, read results: from Rust, Python or JavaScript, with no Excel and no LibreOffice.</p>
+
 <p align="center">
-  <img alt="Arrow Powered" src="https://img.shields.io/badge/Arrow-Powered-0A66C2?logo=apache&logoColor=white" />
   <a href="https://github.com/psu3d0/formualizer/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/psu3d0/formualizer/actions/workflows/ci.yml/badge.svg" /></a>
-  <img alt="Python Coverage" src="https://raw.githubusercontent.com/psu3d0/formualizer/badges/coverage.svg" />
-  <img alt="Rust Core Coverage" src="https://raw.githubusercontent.com/psu3d0/formualizer/badges/rust-core-coverage.svg" />
   <a href="https://crates.io/crates/formualizer"><img alt="crates.io" src="https://img.shields.io/crates/v/formualizer.svg" /></a>
   <a href="https://pypi.org/project/formualizer/"><img alt="PyPI" src="https://img.shields.io/pypi/v/formualizer.svg" /></a>
   <a href="https://www.npmjs.com/package/formualizer"><img alt="npm" src="https://img.shields.io/npm/v/formualizer.svg" /></a>
+  <img alt="Arrow Powered" src="https://img.shields.io/badge/Arrow-Powered-0A66C2?logo=apache&logoColor=white" />
+  <img alt="Python Coverage" src="https://raw.githubusercontent.com/psu3d0/formualizer/badges/coverage.svg" />
+  <img alt="Rust Core Coverage" src="https://raw.githubusercontent.com/psu3d0/formualizer/badges/rust-core-coverage.svg" />
   <a href="https://www.formualizer.dev/docs"><img alt="Documentation" src="https://img.shields.io/badge/docs-formualizer.dev-blue" /></a>
   <a href="#license"><img alt="License: MIT/Apache-2.0" src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg" /></a>
 </p>
 
-<p align="center">
-  <img alt="Formualizer banner" src="https://raw.githubusercontent.com/psu3d0/formualizer/main/assets/formualizer-banner.png" />
-</p>
+## How fast?
 
-<br />
+Open an `.xlsx` and calculate every formula in it, from a cold start:
 
-**A lightning-fast, embeddable spreadsheet runtime for Rust, Python, and JavaScript.** Parse formulas, load and edit Excel workbooks, recalculate them incrementally, and expose spreadsheet models as deterministic, typed APIs—without Excel.
+| Workload | LibreOffice Calc | Formualizer | |
+|---|---:|---:|---:|
+| Product lookups <sup>[1]</sup> | 53.3 s | **0.35 s** | **154× faster** |
+| Sales report joins <sup>[2]</sup> | 19.7 s | **0.50 s** | **40× faster** |
+| Enron cash-flow forecast <sup>[3]</sup> | 1.57 s | **0.07 s** | **23× faster** |
+| Multi-criteria summary report <sup>[4]</sup> | 6.11 s | **0.28 s** | **22× faster** |
+| Revenue rollup <sup>[5]</sup> | 4.46 s | **0.58 s** | **7.7× faster** |
+| Service operations model <sup>[6]</sup> | 212 ms | **80 ms** | **2.6× faster** |
+| Enron trading workbook <sup>[7]</sup> | 1.31 s | **0.50 s** | **2.6× faster** |
+| 100,000-row running balance <sup>[8]</sup> | 525 ms | **291 ms** | **1.8× faster** |
+| 100,000 copied formulas <sup>[9]</sup> | 550 ms | **347 ms** | **1.6× faster** |
 
-No Excel COM automation. No LibreOffice UNO bridge. No stitching together slow Python libraries for workbook editing and partial formula evaluation.
+**Across all 52 workbooks and workloads we measured, Formualizer takes about a quarter of LibreOffice's time, and is faster in 48 of them.** The four where LibreOffice wins are listed in the [full report](benchmarks/0.10-vs-0.9.3.md#libreoffice-calc), along with the method.
 
-Formualizer combines broad Excel-compatible formula support with Arrow-backed storage, dependency-aware recalculation, dynamic arrays, file I/O, undo/redo, and SheetPort. One permissively licensed Rust core ships to Rust, Python, browsers, and Node.js.
+1. 20,000 query rows, each with two `INDEX`/`MATCH` lookups of a product key in a 50,000-row table.
+2. A 5,000-row report that finds each sale in a 50,000-row fact table on another sheet, then looks up its region and product in two dimension tables (`INDEX`/`MATCH` throughout). The fact table computes 50,000 revenue formulas.
+3. A cash-flow forecast from the public Enron spreadsheet corpus: about 4,900 formulas across 18 sheets.
+4. 1,000 `COUNTIFS` rows, each counting 100,000 transactions against five conditions.
+5. 100,000 line items (price × quantity) rolled up by 1,000 `SUMIFS` over whole columns.
+6. A generated operations workbook: work orders, priority lookup tables and dashboard rollups (15,000 formulas).
+7. A trading-volume workbook from the Enron corpus: 65,000 formulas across 16 sheets.
+8. A balance where each row adds to the one above (`=A1+1`, `=A2+1`, …), the hardest shape to parallelize.
+9. One formula (`=A1*2`) filled down 100,000 rows, plus a `SUM` over the results.
 
-**New in 0.10:** copied formulas compute as families instead of cell by cell. Real-world workbooks load and calculate in about a third of the time 0.9.3 took, recalculate an edit 5–25× faster and use about an eighth of the memory. A 1M-formula model calculates in 0.38 s with 45 MB of heap. Against LibreOffice Calc, loading and calculating takes about a quarter of the time, and lookup-heavy models run up to 150× faster. [See the numbers](#performance).
+The results measure load plus the first full calculation. They were taken with LibreOffice Calc 24.2 headless (threaded calculation on) and Formualizer 0.10, on the same 24-core Linux machine, median of 3 runs.
 
----
+### And against Formualizer 0.9.3
 
-## Highlights
+0.10 is a new engine under the same API:
 
-| | |
-|---|---|
-| **400+ Excel functions** | Math, text, lookup (XLOOKUP, VLOOKUP), date/time, statistics, financial, database, engineering |
-| **Three language targets** | Rust, Python (PyO3), and WASM (browser + Node) with consistent APIs |
-| **Arrow-powered storage** | Apache Arrow columnar backing with spill overlays for efficient large-workbook evaluation |
-| **Family execution** | Copied formulas are one dependency node and one evaluation over typed Arrow lanes, with range, criteria and lookup kernels |
-| **Incremental recalculation** | Region-based dependency tracking, cycle detection, chained recurrences, optional parallel evaluation |
-| **Dynamic arrays** | FILTER, UNIQUE, SORT, SORTBY, XLOOKUP with automatic spill semantics |
-| **Undo / redo** | Transactional changelog with action grouping, rollback, and replay |
-| **File I/O** | Load and write XLSX (calamine, umya), CSV, JSON — all behind feature flags |
-| **SheetPort** | Treat any spreadsheet as a typed API with YAML manifests, schema validation, and batch evaluation |
-| **Deterministic mode** | Inject clock, timezone, and RNG seed for reproducible evaluation (built for AI agents) |
+| | 0.9.3 | 0.10 | |
+|---|---:|---:|---:|
+| 1M-formula financial model: load | 25.1 s | 4.2 s | 6× faster |
+| … first calculation | 4.8 s | 0.38 s | 12× faster |
+| … change one input and recalculate | 2.5 s | 52 ms | 47× faster |
+| … memory after calculation | 897 MB | 45 MB | 20× less |
+| Enron spreadsheets (25): load and calculate | | | 3.2× faster |
+| … change an input and recalculate | | | 6.7× faster |
+| … memory after calculation | | | 7.7× less |
 
-## Documentation
+Values are unchanged. Every step of the rewrite was checked cell by cell against the previous engine.
 
-📖 **[formualizer.dev](https://www.formualizer.dev/docs)** — full documentation, interactive tools, and API reference.
+### Why it's fast
 
-- [Quickstarts](https://www.formualizer.dev/docs/quickstarts) — get running in Rust, Python, or JS/WASM in minutes
-- [Function Reference](https://www.formualizer.dev/docs/reference/functions) — 400+ built-in functions with examples
-- [Formula Parser](https://www.formualizer.dev/formula-parser) — interactive browser-based formula parser and AST inspector
-- [SheetPort Guide](https://www.formualizer.dev/docs/sheetport) — treat spreadsheets as typed, deterministic APIs
-- [Core Concepts](https://www.formualizer.dev/docs/core-concepts) — dependency tracking, evaluation pipeline, coercion rules
-- [Large Workbook Performance](https://www.formualizer.dev/docs/guides/large-workbook-performance) — loading, sparse ingest and large-model guidance
-
-## Who is this for?
-
-- **Fintech & insurance teams** replacing Excel VBA or server-side workbook evaluation with a fast, deterministic engine that doesn't require Excel installed.
-- **AI / agent builders** who need programmatic spreadsheet manipulation with deterministic evaluation, auditable changelogs, and typed I/O via SheetPort.
-- **SaaS products** embedding spreadsheet logic — pricing calculators, planning tools, configurators — without shipping a full spreadsheet UI.
-- **Data engineers** extracting business logic trapped in spreadsheets into reproducible, testable pipelines.
-
-## Building an AI agent? Use agent-spreadsheet
-
-Formualizer is the **engine**. If you want an agent to *work with* workbooks — read, profile, edit, recalculate, diff, and verify them safely — use **[agent-spreadsheet](https://github.com/PSU3D0/agent-spreadsheet)**, the official agent tooling layer built on this engine:
-
-```
-your agent / app
-      │
-agent-spreadsheet     CLI (`agent-spreadsheet` / `asp`) · MCP server · JS SDK
-      │
-  formualizer         parsing · dependency graph · 400+ functions · recalc
-```
-
-- **CLI** — stateless one-shot reads, safe edits, recalc, and verifiable diffs for shell-native agents and CI (`npm i -g agent-spreadsheet` or `cargo install agent-spreadsheet`)
-- **MCP server** — stateful multi-turn sessions with workbook forks, checkpoints, staged edits, and native recalculation (no LibreOffice fallback)
-- **JS SDK** — typed API for app integrations, backed by the MCP server or an embedded in-process WASM engine
-
-Unlike screenshot-driven UI automation or MCP servers that can't compute a formula, agent-spreadsheet evaluates the actual workbook with this engine — every edit is recalculated, traceable, and diffable.
+- **Copied formulas are one unit.** Fill a formula down 100,000 rows and Formualizer stores one template and one dependency node, and evaluates the run in one pass over typed [Apache Arrow](https://arrow.apache.org/) columns. It does not track 100,000 separate formulas.
+- **Lookups and conditional sums index their table once.** A column of `VLOOKUP`, `INDEX`/`MATCH`, `SUMIFS` or `COUNTIFS` over the same range builds one index for the whole run instead of scanning the table once per row.
+- **Only what changed recalculates.** Dependencies are tracked by region, so editing one input touches only the cells that read it. Row and column inserts move whole runs at once.
+- **Exact results.** The fast paths reproduce Excel's per-cell semantics bit for bit, including summation order, error precedence and number formats. The cell-by-cell engine stays in the codebase as a test oracle.
 
 ## Quick start
-
-### Rust
-
-```rust
-use formualizer_workbook::Workbook;
-use formualizer_common::LiteralValue;
-
-let mut wb = Workbook::new();
-wb.add_sheet("Sheet1")?;
-
-// Populate data
-wb.set_value("Sheet1", 1, 1, LiteralValue::Number(1000.0))?;  // A1: principal
-wb.set_value("Sheet1", 2, 1, LiteralValue::Number(0.05))?;     // A2: rate
-wb.set_value("Sheet1", 3, 1, LiteralValue::Number(12.0))?;     // A3: periods
-
-// Monthly payment formula
-wb.set_formula("Sheet1", 1, 2, "=PMT(A2/12, A3, -A1)")?;
-let payment = wb.evaluate_cell("Sheet1", 1, 2)?;
-// => ~85.61
-```
-
-```toml
-# Cargo.toml
-[dependencies]
-formualizer = "0.10"
-```
 
 ### Python
 
@@ -116,26 +78,31 @@ pip install formualizer
 ```python
 import formualizer as fz
 
-wb = fz.Workbook()
-s = wb.sheet("Forecast")
-
-# Load actuals
-s.set_values_batch(1, 1, [
-    [fz.LiteralValue.text("Month"), fz.LiteralValue.text("Revenue"), fz.LiteralValue.text("Growth")],
-    [fz.LiteralValue.text("Jan"),   fz.LiteralValue.number(50000.0), fz.LiteralValue.empty()],
-    [fz.LiteralValue.text("Feb"),   fz.LiteralValue.number(53000.0), fz.LiteralValue.empty()],
-    [fz.LiteralValue.text("Mar"),   fz.LiteralValue.number(58000.0), fz.LiteralValue.empty()],
-])
-
-# Add growth formulas
-s.set_formula(3, 3, "=(B3-B2)/B2")  # C3: Feb growth
-s.set_formula(4, 3, "=(B4-B3)/B3")  # C4: Mar growth
-
-print(wb.evaluate_cell("Forecast", 3, 3))  # 0.06 (6%)
-print(wb.evaluate_cell("Forecast", 4, 3))  # ~0.094 (9.4%)
+wb = fz.load_workbook("financial_model.xlsx")
+wb.set_value("Assumptions", 3, 2, 0.07)   # change an input (B3)
+wb.evaluate_all()                          # recalculates only what depends on it
+print(wb.get_value("Summary", 5, 2))       # read an output (B5)
 ```
 
-### WASM (browser / Node)
+### Rust
+
+```toml
+[dependencies]
+formualizer = { version = "0.10", features = ["calamine"] }
+```
+
+```rust
+use formualizer::workbook::{CalamineAdapter, SpreadsheetReader};
+use formualizer::{LiteralValue, LoadStrategy, Workbook, WorkbookConfig};
+
+let reader = CalamineAdapter::open_path("financial_model.xlsx")?;
+let mut wb = Workbook::from_reader(reader, LoadStrategy::EagerAll, WorkbookConfig::ephemeral())?;
+wb.set_value("Assumptions", 3, 2, LiteralValue::Number(0.07))?;
+wb.evaluate_all()?;
+println!("{:?}", wb.get_value("Summary", 5, 2));
+```
+
+### JavaScript / WASM (browser and Node)
 
 ```bash
 npm install formualizer
@@ -146,154 +113,128 @@ import init, { Workbook } from 'formualizer';
 await init();
 
 const wb = new Workbook();
-wb.addSheet('Pricing');
-wb.setValue('Pricing', 1, 1, 100);     // base price
-wb.setValue('Pricing', 2, 1, 0.15);    // discount
-wb.setFormula('Pricing', 1, 2, '=A1*(1-A2)');
-
-console.log(await wb.evaluateCell('Pricing', 1, 2)); // 85
+wb.addSheet('Loans');
+wb.setValue('Loans', 1, 1, 250000);  // principal
+wb.setValue('Loans', 2, 1, 0.045);   // annual rate
+wb.setValue('Loans', 3, 1, 360);     // months
+wb.setFormula('Loans', 1, 2, '=PMT(A2/12, A3, -A1)');
+console.log(wb.evaluateCell('Loans', 1, 2)); // ~1266.71
 ```
 
-## Performance
+More in the [quickstarts](https://www.formualizer.dev/docs/quickstarts) for [Rust](https://www.formualizer.dev/docs/quickstarts/rust-quickstart), [Python](https://www.formualizer.dev/docs/quickstarts/python-quickstart), [Pyodide](https://www.formualizer.dev/docs/quickstarts/pyodide-quickstart) and [JS/WASM](https://www.formualizer.dev/docs/quickstarts/js-wasm-quickstart).
 
-Formualizer 0.10 evaluates copied formulas as families rather than one cell at a time.
-- Fill a formula down a column and the whole run becomes one dependency node, with one shared template.
-- The run evaluates in one pass over typed Arrow columns, and its results are written back as a block.
-- Lookups and conditional aggregates over a fixed table index that table once per run, not once per cell.
-- Cells that hold only values cost no graph vertex at all.
+## What you get
 
-Values are identical to cell-by-cell evaluation. The per-cell path stays in the engine as a differential-testing oracle.
-
-**Against Formualizer 0.9.3** (release builds, same machine; lower is better):
-
-| | load + first calculation | value edit + recalc | heap after calculation |
-|---|---|---|---|
-| Enron workbook sample (25 real-world files) | 0.31× | 0.15× | 0.13× |
-| Real financial and operating models | 0.29× | 0.22× | 0.06× |
-| Synthetic benchmark workbooks (17) | 0.30× | 0.10× | 0.21× |
-
-**A 1M-formula financial model:**
-
-| | 0.9.3 | 0.10 |
-|---|---|---|
-| load | 25.1 s | 4.2 s |
-| first calculation | 4.8 s | 0.38 s |
-| value edit + recalc | 2.5 s | 52 ms |
-| heap after calculation | 897 MB | 45 MB |
-| peak heap | 2.9 GB | 195 MB |
-
-**Against LibreOffice Calc 24.2** (headless, threaded calculation), loading and calculating the same 52 workbooks and generated workloads:
-
-| | Formualizer / LibreOffice |
+| | |
 |---|---|
-| load + first calculation | 0.24× (faster in 48 of 52) |
-| calculation alone | 0.44× |
-| lookup- and criteria-heavy models | 7–150× faster end to end (40k `INDEX`/`MATCH` over 50k rows: 0.35 s vs 53 s) |
+| **400+ Excel functions** | Math, text, lookup (`XLOOKUP`, `VLOOKUP`, `INDEX`/`MATCH`), date and time, statistics, financial, database, engineering, with edge cases checked against Excel. |
+| **Dynamic arrays** | `FILTER`, `UNIQUE`, `SORT`, `SORTBY`, `SEQUENCE`, `LET`, `LAMBDA`, with spill semantics |
+| **Real workbooks** | Load and write XLSX (Calamine, umya), CSV and JSON. Defined names, tables and cross-sheet references. |
+| **Incremental recalculation** | Change an input and only its dependents recalculate. Cycle detection, iterative calculation and optional parallel evaluation. |
+| **Undo / redo** | A transactional change log with action grouping, rollback and replay |
+| **Deterministic mode** | Inject the clock, timezone and random seed for reproducible results (built for AI agents and tests) |
+| **SheetPort** | Treat a spreadsheet as a typed function: YAML-declared inputs and outputs, validated |
+| **Custom functions** | Register workbook-local functions from Rust, Python or JavaScript, or load WASM plugins |
+| **Three targets, one core** | Rust, Python (PyO3, including Pyodide) and WASM (browser and Node) with the same API |
+| **Permissive license** | MIT or Apache-2.0: no AGPL, no commercial license needed |
 
-Measured on a shared 24-core machine, so treat the figures as indicative. The method and full tables are in [benchmarks/0.10-vs-0.9.3.md](benchmarks/0.10-vs-0.9.3.md).
+## Who uses it for what
 
-What makes it fast:
-- **A region-based dependency authority.** A formula family is one node with relative edges, so dependency memory and dirty propagation scale with the number of distinct formulas, not cells.
-- **Family execution on typed lanes.** Arithmetic, comparisons, `IF`/`IFERROR`/`AND`/`OR`, `ROUND`, `MIN`/`MAX`/`SUM`, type tests and date parts run column-wise over `f64` lanes, with the exact scalar semantics for errors and formats.
-- **Kernels.** Windowed `SUM`/`AVERAGE`/`MIN`/`MAX`/`COUNT` replicate the scalar summation order bit for bit. `SUMIFS`-style criteria index their fixed ranges once. Run-invariant lookups are computed once per run, and lookup indexes are shared across threads.
-- **Recurrences as chains.** Running totals and `=C2+D1`-style recurrences evaluate as one sequential unit instead of one scheduling layer per row.
-- **Incremental everything.** Only dirty regions recalculate. Small recalculations skip the planner. Structural edits move runs of copied formulas as blocks.
-- **Optional parallelism.** Independent work runs on Rayon, and cheap layers stay on one thread.
+- **Financial models as services.** Run pricing, lending, insurance and planning workbooks server-side, with no Excel install and no LibreOffice process to babysit.
+- **AI agents that work with spreadsheets.** Deterministic evaluation, an auditable change log and typed I/O. See [agent-spreadsheet](#building-an-ai-agent-use-agent-spreadsheet).
+- **Products with spreadsheet logic inside.** Calculators, configurators and planning tools that run formulas in the browser or on the server, without shipping a spreadsheet UI.
+- **Data pipelines.** Business logic trapped in spreadsheets, turned into reproducible, testable code paths.
 
-## Custom functions (workbook-local)
+## How it compares
 
-You can register custom functions per workbook in Rust, Python, and JS/WASM.
+| Library | Language | Parse | Evaluate | Write XLSX | Functions | Incremental recalc | License |
+|---------|----------|-------|----------|------------|-----------|--------------------|---------|
+| **Formualizer** | Rust / Python / WASM | Yes | Yes | Yes | 400+ | Yes | MIT / Apache-2.0 |
+| LibreOffice (headless) | C++ (UNO) | Yes | Yes | Yes | 500+ | Yes | MPL-2.0; a full office suite to deploy |
+| HyperFormula | JavaScript | Yes | Yes | No | ~400 | Yes | **AGPL-3.0** or commercial |
+| calamine | Rust | No | No | No | n/a | n/a | MIT / Apache-2.0 |
+| openpyxl | Python | No | No | Yes | n/a | n/a | MIT |
+| xlcalculator | Python | Yes | Yes | No | ~50 | Partial | MIT |
+| formulajs | JavaScript | No | Yes | No | ~100 | No | MIT |
 
-- Rust: `register_custom_function` / `unregister_custom_function` / `list_custom_functions`
-- Python: `register_function` / `unregister_function` / `list_functions`
-- JS/WASM: `registerFunction` / `unregisterFunction` / `listFunctions`
+- **LibreOffice** calculates spreadsheets well, but embedding it means running an office suite over a UNO bridge. Formualizer is a library, and it's faster: see [How fast?](#how-fast).
+- **HyperFormula** is the closest embeddable competitor, but AGPL-3.0 requires you to open-source your application or buy a commercial license.
+- **calamine** and **openpyxl** read (and, for openpyxl, write) XLSX, but don't evaluate formulas.
 
-Semantics are consistent across hosts:
+## Building an AI agent? Use agent-spreadsheet
 
-- Function names are case-insensitive (`my_fn`, `MY_FN`, and `My_Fn` refer to the same function).
-- Custom functions are workbook-local and resolve before global built-ins.
-- Overriding built-ins is blocked by default; opt in with `allow_override_builtin` (Rust/Python) or `allowOverrideBuiltin` (JS).
-- Arguments are passed by value; range arguments are materialized as 2D arrays/lists.
-- Returning an array spills into the grid using normal dynamic-array behavior.
-- Callback failures become spreadsheet errors (`ExcelError` in Rust, `#VALUE!` mapping for Python/JS exceptions).
+Formualizer is the **engine**. For an agent that *works with* workbooks (read, profile, edit, recalculate, diff and verify them safely), use **[agent-spreadsheet](https://github.com/PSU3D0/agent-spreadsheet)**, the agent tooling layer built on it:
+
+```
+your agent / app
+      │
+agent-spreadsheet     CLI (`agent-spreadsheet` / `asp`) · MCP server · JS SDK
+      │
+  formualizer         parsing · dependency tracking · 400+ functions · recalc
+```
+
+- **CLI:** one-shot reads, safe edits, recalculation and verifiable diffs for shell-native agents and CI (`npm i -g agent-spreadsheet` or `cargo install agent-spreadsheet`).
+- **MCP server:** stateful multi-turn sessions with workbook forks, checkpoints, staged edits and native recalculation.
+- **JS SDK:** a typed API for app integrations, backed by the MCP server or an embedded in-process WASM engine.
+
+Every edit is recalculated with this engine, and is traceable and diffable. That is the difference from screenshot-driven UI automation, or MCP servers that can't compute a formula.
+
+## SheetPort: spreadsheets as typed APIs
+
+SheetPort treats a spreadsheet as a deterministic function with typed inputs and outputs, declared in a YAML manifest:
+
+```python
+from formualizer import SheetPortSession
+
+session = SheetPortSession.from_manifest_yaml(manifest_yaml, workbook)
+session.write_inputs({"loan_amount": 250000, "rate": 0.045, "term_months": 360})
+result = session.evaluate_once(freeze_volatile=True)
+print(result["monthly_payment"])  # deterministic, schema-validated
+```
+
+Use it for financial model APIs, agent tool use, configuration-driven business logic and batch scenario runs. See the [SheetPort guide](https://www.formualizer.dev/docs/sheetport).
+
+## Custom functions
+
+Register workbook-local functions in any host:
+- **Rust:** `register_custom_function`
+- **Python:** `register_function`
+- **JavaScript:** `registerFunction`
+
+The rules are the same everywhere:
+- Names are case-insensitive.
+- Custom functions resolve before built-ins; overriding a built-in requires opting in.
+- Range arguments arrive as 2-D arrays, and returning an array spills.
+- A failing callback becomes a spreadsheet error.
+
+The Rust workbook can also load sandboxed WASM plugins (features `wasm_plugins` and `wasm_runtime_wasmtime`).
 
 Runnable examples:
 
-- Rust callback custom function: `cargo run -p formualizer-workbook --example custom_function_registration`
-- Python callback custom function: `python bindings/python/examples/custom_function_registration.py`
-- JS/WASM callback custom function: `cd bindings/wasm && npm run build && node examples/custom-function-registration.mjs`
-- Rust WASM plugin inspect catalog: `cargo run -p formualizer-workbook --features wasm_plugins --example wasm_plugin_inspect_catalog`
-- Rust WASM plugin inspect + attach + bind: `cargo run -p formualizer-workbook --features wasm_runtime_wasmtime --example wasm_plugin_inspect_attach_bind`
-- Rust WASM plugin directory attach: `cargo run -p formualizer-workbook --features wasm_runtime_wasmtime --example wasm_plugin_attach_dir`
-
-WASM plugin path (Rust workbook API):
-
-- Effect-free inspect APIs are available:
-  - `inspect_wasm_module_bytes`
-  - `inspect_wasm_module_file` *(native only)*
-  - `inspect_wasm_modules_dir` *(native only)*
-- Explicit workbook-local attach/bind APIs are available:
-  - `attach_wasm_module_bytes` / `attach_wasm_module_file` / `attach_wasm_modules_dir`
-  - `bind_wasm_function`
-- Runtime behavior:
-  - `wasm_plugins` only: runtime remains pending (`#N/IMPL` on bind)
-  - `wasm_runtime_wasmtime` (native): `use_wasmtime_runtime()` enables executable plugin bindings
-
-## How is this different?
-
-| Library | Language | Parse | Evaluate | Write | Functions | Dep. graph | License |
-|---------|----------|-------|----------|-------|-----------|------------|---------|
-| **Formualizer** | Rust / Python / WASM | Yes | Yes | Yes | 400+ | Yes (incremental) | MIT / Apache-2.0 |
-| HyperFormula | JavaScript | Yes | Yes | No | ~400 | Yes | **AGPL-3.0** (or commercial) |
-| calamine | Rust | No | No | No | N/A | N/A | MIT / Apache-2.0 |
-| openpyxl | Python | No | No | Yes | N/A | N/A | MIT |
-| xlcalc | Python | Yes | Yes | No | ~50 | Partial | MIT |
-| formulajs | JavaScript | No | Yes | No | ~100 | No | MIT |
-
-- **HyperFormula** is the closest feature competitor, but its AGPL-3.0 license requires you to open-source your entire application or purchase a commercial license from Handsontable. Formualizer is permissively licensed with no strings attached.
-- **calamine** is read-only — it extracts cached values from XLSX files but cannot evaluate formulas.
-- **openpyxl** reads and writes XLSX but has no formula evaluation engine.
-- **xlcalc** evaluates formulas but supports a fraction of Excel's function library and has limited dependency tracking.
-- **Formualizer** is a complete, permissively-licensed engine: parse formulas, track dependencies, evaluate with 400+ functions, mutate workbooks, undo/redo — from Rust, Python, or the browser.
+```bash
+cargo run -p formualizer-workbook --example custom_function_registration
+python bindings/python/examples/custom_function_registration.py
+cd bindings/wasm && npm run build && node examples/custom-function-registration.mjs
+cargo run -p formualizer-workbook --features wasm_runtime_wasmtime --example wasm_plugin_inspect_attach_bind
+```
 
 ## Architecture
 
-Formualizer is organized as a layered crate workspace. Pick the layer that fits your use case:
-
 ```
 formualizer              <-- recommended: batteries-included re-export
-  formualizer-workbook   <-- high-level workbook API, sheets, undo/redo, I/O
-    formualizer-eval     <-- calculation engine, dependency graph, built-ins
+  formualizer-workbook   <-- workbook API, sheets, undo/redo, XLSX/CSV/JSON I/O
+    formualizer-eval     <-- calculation engine, dependency authority, built-ins
       formualizer-parse  <-- tokenizer, parser, AST, pretty-printer
       formualizer-common <-- shared types (values, errors, references)
   formualizer-sheetport  <-- SheetPort runtime (spreadsheets as typed APIs)
 ```
 
-| Crate | When to use it |
-|-------|---------------|
-| `formualizer` | Default choice — re-exports workbook, engine, and SheetPort with feature flags |
-| `formualizer-workbook` | You want the full workbook experience: sheets, I/O, undo/redo, batch operations |
-| `formualizer-eval` | You own your own data model and want just the calculation engine with custom resolvers |
-| `formualizer-parse` | You only need formula parsing, tokenization, AST analysis, or pretty-printing |
-
-## SheetPort: spreadsheets as typed APIs
-
-SheetPort lets you treat any spreadsheet as a deterministic function with typed inputs and outputs, defined by a YAML manifest:
-
-```python
-from formualizer import SheetPortSession, Workbook
-
-session = SheetPortSession.from_manifest_yaml(manifest_yaml, workbook)
-
-# Write typed inputs — validated against schema
-session.write_inputs({"loan_amount": 250000, "rate": 0.045, "term_months": 360})
-
-# Evaluate and read typed outputs
-result = session.evaluate_once(freeze_volatile=True)
-print(result["monthly_payment"])  # deterministic, schema-validated
-```
-
-Use cases: financial model APIs, AI agent tool-use, configuration-driven business logic, batch scenario evaluation.
+| Crate | Use it when |
+|-------|-------------|
+| `formualizer` | Default: re-exports the workbook, engine and SheetPort behind feature flags |
+| `formualizer-workbook` | You want the full workbook: sheets, I/O, undo/redo, batch operations |
+| `formualizer-eval` | You own the data model and want only the calculation engine, with custom resolvers |
+| `formualizer-parse` | You need only formula parsing, tokenizing, AST analysis or pretty-printing |
 
 ## Bindings
 
@@ -301,60 +242,33 @@ Use cases: financial model APIs, AI agent tool-use, configuration-driven busines
 |--------|---------|------|
 | Rust | `cargo add formualizer` | [docs.rs](https://docs.rs/formualizer) · [guide](https://www.formualizer.dev/docs/quickstarts/rust-quickstart) |
 | Python | `pip install formualizer` | [README](bindings/python/README.md) · [guide](https://www.formualizer.dev/docs/quickstarts/python-quickstart) |
-| Python (Pyodide) | `await micropip.install(wheel_url)` (compatible wheel URL) | [README](bindings/python/README.md#using-in-pyodide-browser--webassembly) · [guide](https://www.formualizer.dev/docs/quickstarts/pyodide-quickstart) |
+| Python (Pyodide) | `await micropip.install(wheel_url)` | [README](bindings/python/README.md#using-in-pyodide-browser--webassembly) · [guide](https://www.formualizer.dev/docs/quickstarts/pyodide-quickstart) |
 | WASM | `npm install formualizer` | [README](bindings/wasm/README.md) · [guide](https://www.formualizer.dev/docs/quickstarts/js-wasm-quickstart) |
 
-Both Python and WASM bindings expose the same core API surface: tokenization, parsing, workbook operations, evaluation, undo/redo, and SheetPort.
+### WebAssembly profiles
 
-## WebAssembly runtime profiles
-
-Formualizer supports two explicit wasm profiles so the right runtime assumptions are always in scope.
-
-### `portable-wasm` — raw / wasmtime-safe
-
-No JS globals, no `wasm-bindgen` imports, no browser clock or entropy. Safe to compile as a raw `wasm32-unknown-unknown` module and instantiate inside wasmtime or any non-JS wasm host.
-
-Time-dependent functions (`NOW`, `TODAY`, etc.) default to UTC epoch when no clock is injected; supply a `FixedClock` or implement `ClockProvider` to drive them deterministically.
+- **`wasm-js`:** the browser and Node runtime used by the `formualizer` npm package, with `performance.now()`, JS entropy and wall-clock time.
+- **`portable-wasm`:** no JS imports, safe for raw `wasm32-unknown-unknown` hosts such as wasmtime. Time functions default to the UTC epoch unless you inject a clock (`FixedClock` or a `ClockProvider`).
 
 ```toml
-# Cargo.toml
-[dependencies]
-formualizer = { version = "0.5", default-features = false, features = ["portable-wasm"] }
+formualizer = { version = "0.10", default-features = false, features = ["portable-wasm"] }
 ```
 
-For individual crates:
-```toml
-formualizer-eval = { version = "0.5", default-features = false }
-```
+Native Rust needs no feature selection.
 
-### `wasm-js` — browser / Node via wasm-bindgen
+## Documentation
 
-Full browser-compatible runtime: `web-time` for `performance.now()` timing, JS-backed entropy (`crypto.getRandomValues`), and ambient wall-clock time for date functions. This is the profile used by the `formualizer` npm package.
-
-```toml
-# Cargo.toml — for crates that also depend on wasm-bindgen
-[dependencies]
-formualizer = { version = "0.5", default-features = false, features = ["wasm-js"] }
-```
-
-The `formualizer` npm package (`bindings/wasm`) selects this profile automatically.
-
-### Default (native)
-
-No action needed for native Rust targets. `cargo add formualizer` gives the full stack with system clock, JSON/CSV support, and no wasm-specific features.
-
----
-
-## Roadmap
-
-Roadmap and active development are tracked via GitHub Issues, milestones, and pull requests.
+**[formualizer.dev](https://www.formualizer.dev/docs)** has the full documentation:
+- [Function reference](https://www.formualizer.dev/docs/reference/functions)
+- the interactive [formula parser](https://www.formualizer.dev/formula-parser)
+- [Core concepts](https://www.formualizer.dev/docs/core-concepts)
+- [Large workbook performance](https://www.formualizer.dev/docs/guides/large-workbook-performance)
 
 ## Contributing
 
-Contributions are welcome. If you're looking for something to work on, browse open issues or open a new issue to discuss a proposal.
+Contributions are welcome. Browse the open issues, or open one to discuss a proposal. Excel-compatibility fixes that come with a before-and-after table measured in Excel are especially appreciated.
 
 ```bash
-# Build and test
 cargo test --workspace
 cd bindings/python && maturin develop && pytest
 cd bindings/wasm && wasm-pack build --target bundler && wasm-pack test --node
