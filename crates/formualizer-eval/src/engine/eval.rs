@@ -19528,6 +19528,10 @@ mod authority_schedule_execution;
 #[path = "tests/pending_spill.rs"]
 mod pending_spill_tests;
 
+#[cfg(test)]
+#[path = "tests/spill_batch_abort_192.rs"]
+mod spill_batch_abort_192;
+
 // ── Effects pipeline (ticket 603) ──────────────────────────────────────────
 //
 // Compute → Plan → Apply separation for evaluation side-effects.

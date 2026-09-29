@@ -1488,7 +1488,9 @@ impl Function for PowerFn {
                 ExcelError::new_num(),
             )));
         }
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result)))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            result,
+        )))
     }
 }
 
@@ -1565,7 +1567,9 @@ impl Function for ExpFn {
                 ExcelError::new_num(),
             )));
         }
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result)))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            result,
+        )))
     }
 }
 
