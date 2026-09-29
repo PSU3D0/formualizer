@@ -2261,6 +2261,15 @@ pub(crate) mod visibility_mask_test_hooks {
     }
 }
 
+fn is_numeric_text_equality(pred: &crate::args::CriteriaPredicate) -> bool {
+    match pred {
+        crate::args::CriteriaPredicate::Eq(formualizer_common::LiteralValue::Text(text)) => {
+            text.trim().parse::<f64>().is_ok_and(f64::is_finite)
+        }
+        _ => false,
+    }
+}
+
 fn compute_criteria_mask(
     view: &RangeView<'_>,
     col_in_view: usize,
@@ -2358,13 +2367,9 @@ fn compute_criteria_mask(
     // Wildcards and numeric text equality can match non-text cells. The lowered
     // base lane is text-only, unlike the scalar matcher. Keep the vectorized
     // path for text-only data, but cache a scalar-equivalent mask for mixed data.
-    let numeric_text_equality = match pred {
-        crate::args::CriteriaPredicate::Eq(formualizer_common::LiteralValue::Text(text)) => {
-            text.trim().parse::<f64>().is_ok_and(f64::is_finite)
-        }
-        _ => false,
-    };
-    if numeric_text_equality || matches!(pred, crate::args::CriteriaPredicate::TextLike { .. }) {
+    if is_numeric_text_equality(pred)
+        || matches!(pred, crate::args::CriteriaPredicate::TextLike { .. })
+    {
         for tags in view.type_tags_slices() {
             let (_, _, cols) = tags.ok()?;
             let tags = cols.get(col_in_view)?;
