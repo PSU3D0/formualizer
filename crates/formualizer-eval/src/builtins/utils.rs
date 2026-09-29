@@ -381,7 +381,7 @@ fn text_like_match(pattern: &str, case_insensitive: bool, v: &LiteralValue) -> b
     };
 
     // Fast-path for anchored patterns without '?' or escape sequences
-    if !pat.contains('?') && !pat.contains("~*") && !pat.contains("~?") {
+    if !pat.contains('?') && !pat.contains('~') {
         // Pattern like "text*" - starts with
         if pat.ends_with('*') && !pat[..pat.len() - 1].contains('*') {
             return text.starts_with(&pat[..pat.len() - 1]);
@@ -405,37 +405,54 @@ fn text_like_match(pattern: &str, case_insensitive: bool, v: &LiteralValue) -> b
 }
 
 fn wildcard_match(pat: &str, text: &str) -> bool {
-    // Simple glob-like matcher for * and ? (non-greedy backtracking).
-    fn helper(p: &[u8], t: &[u8]) -> bool {
-        if p.is_empty() {
-            return t.is_empty();
+    wildcard_match_units(pat.as_bytes(), text.as_bytes(), false)
+}
+
+/// Match spreadsheet wildcards without recursive branching or token allocation.
+/// `~` escapes only `*`, `?`, and `~`; other/trailing tildes remain literal.
+/// Criteria retain byte matching; SEARCH supplies characters and accepts a prefix.
+/// Only the latest star needs a retry position: it can absorb any intervening text.
+/// Space is O(1), with at most O(pattern length * text length) matching work.
+pub(crate) fn wildcard_match_units<T: Copy + Eq + From<u8>>(
+    pattern: &[T],
+    text: &[T],
+    prefix: bool,
+) -> bool {
+    let star = T::from(b'*');
+    let question = T::from(b'?');
+    let tilde = T::from(b'~');
+    let (mut p, mut t) = (0, 0);
+    let mut retry = None;
+    loop {
+        if p == pattern.len() && (prefix || t == text.len()) {
+            return true;
         }
-        match p[0] {
-            b'*' => {
-                for i in 0..=t.len() {
-                    if helper(&p[1..], &t[i..]) {
-                        return true;
-                    }
-                }
-                false
+        if let Some(&unit) = pattern.get(p) {
+            let escaped = unit == tilde
+                && pattern
+                    .get(p + 1)
+                    .is_some_and(|&next| next == star || next == question || next == tilde);
+            if !escaped && unit == star {
+                p += 1;
+                retry = Some((p, t));
+                continue;
             }
-            b'?' => {
-                if t.is_empty() {
-                    false
-                } else {
-                    helper(&p[1..], &t[1..])
-                }
+            let literal = if escaped { pattern[p + 1] } else { unit };
+            if t < text.len() && ((!escaped && unit == question) || literal == text[t]) {
+                p += if escaped { 2 } else { 1 };
+                t += 1;
+                continue;
             }
-            ch => {
-                if t.first().copied() == Some(ch) {
-                    helper(&p[1..], &t[1..])
-                } else {
-                    false
-                }
+        }
+        match retry {
+            Some((after_star, consumed)) if consumed < text.len() => {
+                t = consumed + 1;
+                p = after_star;
+                retry = Some((after_star, t));
             }
+            _ => return false,
         }
     }
-    helper(pat.as_bytes(), text.as_bytes())
 }
 
 // ─────────────────────────────── ArgSchema presets ───────────────────────────────

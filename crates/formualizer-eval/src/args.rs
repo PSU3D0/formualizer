@@ -142,8 +142,8 @@ pub fn parse_criteria(v: &LiteralValue) -> Result<CriteriaPredicate, ExcelError>
 
             let plain = unquote(s_trim);
 
-            // Wildcards * or ? => TextLike
-            if plain.contains('*') || plain.contains('?') {
+            // Wildcards or escaped tilde => TextLike (including literal ~* and ~?).
+            if plain.contains('*') || plain.contains('?') || plain.contains("~~") {
                 return Ok(CriteriaPredicate::TextLike {
                     pattern: plain,
                     case_insensitive: true,

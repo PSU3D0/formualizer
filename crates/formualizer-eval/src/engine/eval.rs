@@ -2393,6 +2393,15 @@ fn compute_criteria_mask(
         }
     }
 
+    // SQL LIKE cannot directly represent spreadsheet tilde escapes or literal
+    // SQL pattern punctuation. Let the bounded chunk fallback use the shared
+    // spreadsheet matcher rather than rewriting these patterns into SQL syntax.
+    if matches!(pred, crate::args::CriteriaPredicate::TextLike { pattern, .. }
+        if pattern.contains(['~', '%', '_', '\\']))
+    {
+        return None;
+    }
+
     // TEXT PATH: build masks per row-chunk using lowered text slices.
     // This avoids concatenating full-string columns just to compute a boolean mask.
     let (text_kind, text_pat, empty_special) = match pred {
