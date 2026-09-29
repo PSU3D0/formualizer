@@ -330,89 +330,11 @@ impl Function for IfErrorFn {
                 ExcelError::new_value(),
             )));
         }
-        use crate::traits::CalcValue;
-        let value = match args[0].value() {
-            Ok(cv) if matches!(cv.as_scalar(), Some(LiteralValue::Error(_))) => {
-                return args[1].value();
-            }
-            Ok(cv) => cv,
-            Err(_) => return args[1].value(),
-        };
-        let Some((rows, cols)) = iferror_array_shape(&value) else {
-            return Ok(value);
-        };
-        // Like array generators, guard materialization before allocating. A
-        // range can be much larger than the downstream spill-cell budget.
-        if rows > 1_048_576
-            || cols > 16_384
-            || rows.checked_mul(cols).is_none_or(|cells| cells > (1 << 24))
-        {
-            return Err(ExcelError::new(formualizer_common::ExcelErrorKind::Num));
+        match args[0].value() {
+            Ok(cv) if matches!(cv.as_scalar(), Some(LiteralValue::Error(_))) => args[1].value(),
+            Ok(cv) => Ok(cv),
+            Err(_) => args[1].value(),
         }
-        let has_error = (0..rows).any(|r| {
-            (0..cols).any(|c| matches!(iferror_cell(&value, r, c), LiteralValue::Error(_)))
-        });
-        if !has_error {
-            // Preserve references/annotations and, importantly, don't touch
-            // the fallback arm for an entirely clean array or range.
-            return Ok(value);
-        }
-        let fallback = args[1]
-            .value()
-            .unwrap_or_else(|e| CalcValue::Scalar(LiteralValue::Error(e)));
-        let mut out = Vec::with_capacity(rows);
-        for r in 0..rows {
-            let mut row = Vec::with_capacity(cols);
-            for c in 0..cols {
-                let cell = iferror_cell(&value, r, c);
-                row.push(if matches!(cell, LiteralValue::Error(_)) {
-                    iferror_cell(&fallback, r, c)
-                } else {
-                    cell
-                });
-            }
-            out.push(row);
-        }
-        Ok(CalcValue::Scalar(LiteralValue::Array(out)))
-    }
-}
-
-// IFERROR's result keeps the first argument's shape. Scalar fallbacks and
-// singleton array axes broadcast; unavailable fallback coordinates are #N/A.
-// This deliberately isn't a general function-lifting mechanism.
-fn iferror_array_shape(value: &crate::traits::CalcValue<'_>) -> Option<(usize, usize)> {
-    use crate::traits::CalcValue;
-    match value {
-        CalcValue::Range(view) => Some(view.dims()),
-        CalcValue::Scalar(LiteralValue::Array(rows))
-        | CalcValue::AnnotatedScalar(LiteralValue::Array(rows), _) => {
-            Some((rows.len(), rows.first().map_or(0, Vec::len)))
-        }
-        _ => None,
-    }
-}
-
-fn iferror_cell(value: &crate::traits::CalcValue<'_>, row: usize, col: usize) -> LiteralValue {
-    use crate::traits::CalcValue;
-    let (row, col) = match iferror_array_shape(value) {
-        Some((rows, cols)) => {
-            let r = if rows == 1 { 0 } else { row };
-            let c = if cols == 1 { 0 } else { col };
-            if r >= rows || c >= cols {
-                return LiteralValue::Error(ExcelError::new_na());
-            }
-            (r, c)
-        }
-        None => return value.clone().into_literal(),
-    };
-    match value {
-        CalcValue::Range(view) => view.get_cell(row, col),
-        CalcValue::Scalar(LiteralValue::Array(rows))
-        | CalcValue::AnnotatedScalar(LiteralValue::Array(rows), _) => rows[row]
-            .get(col)
-            .cloned()
-            .unwrap_or_else(|| LiteralValue::Error(ExcelError::new_na())),
-        _ => unreachable!("array shape requires an array or range"),
     }
 }
 
@@ -880,87 +802,6 @@ mod tests {
                 .unwrap()
                 .into_literal(),
             LiteralValue::Boolean(false)
-        );
-    }
-
-    #[derive(Debug)]
-    struct UntouchedFallbackFn;
-    impl Function for UntouchedFallbackFn {
-        func_caps!(PURE);
-        fn name(&self) -> &'static str {
-            "UNTOUCHED"
-        }
-        fn eval<'a, 'b, 'c>(
-            &self,
-            _args: &'c [ArgumentHandle<'a, 'b>],
-            _ctx: &dyn FunctionContext<'b>,
-        ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
-            panic!("clean IFERROR input must not evaluate fallback")
-        }
-    }
-
-    #[test]
-    fn iferror_elementwise_lazy_fallback_is_not_invoked() {
-        let wb = TestWorkbook::new()
-            .with_function(std::sync::Arc::new(IfErrorFn))
-            .with_function(std::sync::Arc::new(UntouchedFallbackFn));
-        let ctx = interp(&wb);
-        let value = ASTNode::new(
-            ASTNodeType::Literal(LiteralValue::Array(vec![vec![
-                LiteralValue::Int(1),
-                LiteralValue::Int(4),
-            ]])),
-            None,
-        );
-        let fallback = ASTNode::new(
-            ASTNodeType::Function {
-                name: "UNTOUCHED".into(),
-                args: vec![],
-            },
-            None,
-        );
-        let args = [
-            ArgumentHandle::new(&value, &ctx),
-            ArgumentHandle::new(&fallback, &ctx),
-        ];
-        let result = IfErrorFn
-            .dispatch(&args, &ctx.function_context(None))
-            .unwrap()
-            .into_literal();
-        assert_eq!(
-            result,
-            LiteralValue::Array(vec![vec![LiteralValue::Int(1), LiteralValue::Int(4)]])
-        );
-    }
-
-    #[test]
-    fn iferror_elementwise_catches_each_error_kind() {
-        use ExcelErrorKind::*;
-        let kinds = [
-            Null, Ref, Name, Value, Div, Na, Num, Error, NImpl, Spill, Calc, Circ, Cancelled,
-        ];
-        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(IfErrorFn));
-        let ctx = interp(&wb);
-        let value = ASTNode::new(
-            ASTNodeType::Literal(LiteralValue::Array(vec![
-                kinds
-                    .into_iter()
-                    .map(|kind| LiteralValue::Error(ExcelError::new(kind)))
-                    .collect(),
-            ])),
-            None,
-        );
-        let fallback = ASTNode::new(ASTNodeType::Literal(LiteralValue::Int(8)), None);
-        let args = [
-            ArgumentHandle::new(&value, &ctx),
-            ArgumentHandle::new(&fallback, &ctx),
-        ];
-        assert_eq!(
-            IfErrorFn
-                .dispatch(&args, &ctx.function_context(None))
-                .unwrap()
-                .into_literal(),
-            LiteralValue::Array(vec![vec![LiteralValue::Int(8); kinds.len()]])
         );
     }
 
