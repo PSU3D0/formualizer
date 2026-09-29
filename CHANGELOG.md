@@ -2,7 +2,7 @@
 
 All notable changes to Formualizer will be documented in this file.
 
-## [0.10.0] - Unreleased
+## [0.10.0] - 2026-09-29
 
 **Formualizer 0.10 is a new engine under the same API.** In 0.9.3, every formula cell had its own parse tree, its own graph vertex and its own edge list, and was evaluated one cell at a time. That is gone. When you fill a formula down a column, the whole run is now one unit: one dependency node, one shared template, and one evaluation that reads its inputs as typed Arrow columns and writes its results back as a block. Lookups and conditional aggregates over a fixed table index that table once, not once per cell. Cells that only hold values no longer cost a graph vertex at all.
 
@@ -54,6 +54,7 @@ Against 0.9.3 on the same machine and inputs (release builds; head as a fraction
 - **Most applications need no changes.** The workbook, Python, WASM and C APIs are unchanged, and none of them exposes the internals that changed.
 - **The `BestEffort` default:** a formula that references a missing sheet or table now loads and evaluates to an error instead of failing preparation. `PreparationPolicy::Strict` keeps the old behavior. See [Changed](#changed).
 - **Low-level `formualizer-eval` users:** the dependency graph's internals, vertex ids and change-log events changed. See [Breaking changes](#breaking-changes-low-level-formualizer-eval-api) and [migrating to the dependency authority](docs/dependency-authority-migration.md).
+- **Versions:** the Rust product crates and the Python and npm packages are 0.10.0. `formualizer-common` and `formualizer-parse` move together to 3.1.3 (the external-range parsing fix and the coordinate hasher change); `sheetport-spec` stays at 0.3.1.
 - **FormulaPlane span evaluation is gone.** Its opt-in switches (`with_span_evaluation`, `FormulaPlaneMode` and the Python/WASM toggles) are accepted and ignored. The default engine is faster than span mode was.
 
 ### Changed

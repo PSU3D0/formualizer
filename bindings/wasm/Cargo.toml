@@ -1,6 +1,6 @@
 [package]
 name = "formualizer-wasm"
-version = "0.9.3"
+version = "0.10.0"
 publish = false
 edition = "2024"
 authors = ["Formualizer Contributors"]

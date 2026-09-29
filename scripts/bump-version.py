@@ -70,6 +70,9 @@ PRODUCT_INTERNAL_DEPS = [
     ("crates/formualizer-workbook/Cargo.toml", "formualizer-eval"),
     ("crates/formualizer-sheetport/Cargo.toml", "formualizer-eval"),
     ("crates/formualizer-sheetport/Cargo.toml", "formualizer-workbook"),
+    # unpublished test kit (versioned path dependencies must still resolve)
+    ("crates/formualizer-testkit/Cargo.toml", "formualizer-eval"),
+    ("crates/formualizer-testkit/Cargo.toml", "formualizer-workbook"),
 ]
 
 # Parser/SDK track
