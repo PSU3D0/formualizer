@@ -1506,6 +1506,7 @@ pub fn formualizer_eval::engine::eval::Engine<R>::record_cell_derived_format(&se
 pub fn formualizer_eval::engine::eval::Engine<R>::resolve_cell_format(&self, core::option::Option<&str>, u32, u32, &str) -> core::option::Option<formualizer_eval::format::FormatId>
 pub fn formualizer_eval::engine::eval::Engine<R>::resolve_cell_reference_value(&self, core::option::Option<&str>, u32, u32, &str) -> core::result::Result<formualizer_common::value::LiteralValue, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::resolve_range_view<'c>(&'c self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<formualizer_eval::engine::range_view::RangeView<'c>, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::eval::Engine<R>::resolve_spill_reference(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<formualizer_parse::parser::ReferenceType, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_eval::engine::eval::Engine<R>::sheet_index_by_name(&self, &str) -> core::option::Option<usize>
 pub fn formualizer_eval::engine::eval::Engine<R>::thread_pool(&self) -> core::option::Option<&alloc::sync::Arc<rayon_core::thread_pool::ThreadPool>>
@@ -3439,6 +3440,7 @@ pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::record_
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::resolve_cell_format(&self, core::option::Option<&str>, u32, u32, &str) -> core::option::Option<formualizer_eval::format::FormatId>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::resolve_cell_reference_value(&self, core::option::Option<&str>, u32, u32, &str) -> core::result::Result<formualizer_common::value::LiteralValue, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::resolve_range_view<'c>(&'c self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<formualizer_eval::engine::range_view::RangeView<'c>, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::resolve_spill_reference(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<formualizer_parse::parser::ReferenceType, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::sheet_index_by_name(&self, &str) -> core::option::Option<usize>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::thread_pool(&self) -> core::option::Option<&alloc::sync::Arc<rayon_core::thread_pool::ThreadPool>>
@@ -4693,6 +4695,7 @@ pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::recor
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::resolve_cell_format(&self, core::option::Option<&str>, u32, u32, &str) -> core::option::Option<formualizer_eval::format::FormatId>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::resolve_cell_reference_value(&self, core::option::Option<&str>, u32, u32, &str) -> core::result::Result<formualizer_common::value::LiteralValue, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::resolve_range_view<'c>(&'c self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<formualizer_eval::engine::range_view::RangeView<'c>, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::resolve_spill_reference(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<formualizer_parse::parser::ReferenceType, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::sheet_index_by_name(&self, &str) -> core::option::Option<usize>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::thread_pool(&self) -> core::option::Option<&alloc::sync::Arc<rayon_core::thread_pool::ThreadPool>>
@@ -6133,6 +6136,7 @@ pub fn formualizer_eval::engine::eval::Engine<R>::record_cell_derived_format(&se
 pub fn formualizer_eval::engine::eval::Engine<R>::resolve_cell_format(&self, core::option::Option<&str>, u32, u32, &str) -> core::option::Option<formualizer_eval::format::FormatId>
 pub fn formualizer_eval::engine::eval::Engine<R>::resolve_cell_reference_value(&self, core::option::Option<&str>, u32, u32, &str) -> core::result::Result<formualizer_common::value::LiteralValue, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::resolve_range_view<'c>(&'c self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<formualizer_eval::engine::range_view::RangeView<'c>, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::eval::Engine<R>::resolve_spill_reference(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<formualizer_parse::parser::ReferenceType, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_eval::engine::eval::Engine<R>::sheet_index_by_name(&self, &str) -> core::option::Option<usize>
 pub fn formualizer_eval::engine::eval::Engine<R>::thread_pool(&self) -> core::option::Option<&alloc::sync::Arc<rayon_core::thread_pool::ThreadPool>>
@@ -8143,6 +8147,7 @@ pub fn formualizer_eval::traits::EvaluationContext::record_cell_derived_format(&
 pub fn formualizer_eval::traits::EvaluationContext::resolve_cell_format(&self, core::option::Option<&str>, u32, u32, &str) -> core::option::Option<formualizer_eval::format::FormatId>
 pub fn formualizer_eval::traits::EvaluationContext::resolve_cell_reference_value(&self, core::option::Option<&str>, u32, u32, &str) -> core::result::Result<formualizer_common::value::LiteralValue, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::traits::EvaluationContext::resolve_range_view<'c>(&'c self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<formualizer_eval::engine::range_view::RangeView<'c>, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::traits::EvaluationContext::resolve_spill_reference(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<formualizer_parse::parser::ReferenceType, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::traits::EvaluationContext::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_eval::traits::EvaluationContext::sheet_index_by_name(&self, &str) -> core::option::Option<usize>
 pub fn formualizer_eval::traits::EvaluationContext::thread_pool(&self) -> core::option::Option<&alloc::sync::Arc<rayon_core::thread_pool::ThreadPool>>
@@ -8172,6 +8177,7 @@ pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::record_
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::resolve_cell_format(&self, core::option::Option<&str>, u32, u32, &str) -> core::option::Option<formualizer_eval::format::FormatId>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::resolve_cell_reference_value(&self, core::option::Option<&str>, u32, u32, &str) -> core::result::Result<formualizer_common::value::LiteralValue, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::resolve_range_view<'c>(&'c self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<formualizer_eval::engine::range_view::RangeView<'c>, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::resolve_spill_reference(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<formualizer_parse::parser::ReferenceType, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::sheet_index_by_name(&self, &str) -> core::option::Option<usize>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::thread_pool(&self) -> core::option::Option<&alloc::sync::Arc<rayon_core::thread_pool::ThreadPool>>
@@ -8201,6 +8207,7 @@ pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::recor
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::resolve_cell_format(&self, core::option::Option<&str>, u32, u32, &str) -> core::option::Option<formualizer_eval::format::FormatId>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::resolve_cell_reference_value(&self, core::option::Option<&str>, u32, u32, &str) -> core::result::Result<formualizer_common::value::LiteralValue, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::resolve_range_view<'c>(&'c self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<formualizer_eval::engine::range_view::RangeView<'c>, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::resolve_spill_reference(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<formualizer_parse::parser::ReferenceType, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::sheet_index_by_name(&self, &str) -> core::option::Option<usize>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::thread_pool(&self) -> core::option::Option<&alloc::sync::Arc<rayon_core::thread_pool::ThreadPool>>
@@ -8230,6 +8237,7 @@ pub fn formualizer_eval::engine::eval::Engine<R>::record_cell_derived_format(&se
 pub fn formualizer_eval::engine::eval::Engine<R>::resolve_cell_format(&self, core::option::Option<&str>, u32, u32, &str) -> core::option::Option<formualizer_eval::format::FormatId>
 pub fn formualizer_eval::engine::eval::Engine<R>::resolve_cell_reference_value(&self, core::option::Option<&str>, u32, u32, &str) -> core::result::Result<formualizer_common::value::LiteralValue, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::resolve_range_view<'c>(&'c self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<formualizer_eval::engine::range_view::RangeView<'c>, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::eval::Engine<R>::resolve_spill_reference(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<formualizer_parse::parser::ReferenceType, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_eval::engine::eval::Engine<R>::sheet_index_by_name(&self, &str) -> core::option::Option<usize>
 pub fn formualizer_eval::engine::eval::Engine<R>::thread_pool(&self) -> core::option::Option<&alloc::sync::Arc<rayon_core::thread_pool::ThreadPool>>

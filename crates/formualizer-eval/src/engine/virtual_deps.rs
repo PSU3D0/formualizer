@@ -292,6 +292,31 @@ impl<'a, R: EvaluationContext> EvaluationContext for DynamicRefCollector<'a, R> 
 
         self.engine.resolve_range_view(reference, current_sheet)
     }
+
+    fn resolve_spill_reference(
+        &self,
+        anchor: &ReferenceType,
+        current_sheet: &str,
+    ) -> Result<ReferenceType, ExcelError> {
+        // The anchor is a dependency whether or not it currently spills.
+        match anchor {
+            ReferenceType::Cell {
+                sheet, row, col, ..
+            } => {
+                let sheet_name = sheet.as_deref().unwrap_or(current_sheet);
+                self.collect_formula_vertices_in_rect(sheet_name, *row, *col, *row, *col);
+            }
+            ReferenceType::NamedRange(name) => {
+                if let Some(sheet_id) = self.engine.sheet_id(current_sheet)
+                    && let Some(named) = self.engine.graph.resolve_name_entry(name, sheet_id)
+                {
+                    self.collected.lock().unwrap().insert(named.vertex);
+                }
+            }
+            _ => {}
+        }
+        self.engine.resolve_spill_reference(anchor, current_sheet)
+    }
 }
 
 pub struct RangeVirtualDepProvider;

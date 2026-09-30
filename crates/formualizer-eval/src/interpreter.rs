@@ -19,6 +19,12 @@ use crate::engine::used_extent::{
 
 /// Postfix calls (`LAMBDA(x,x+1)(B1)`) are parsed and stored but not evaluated;
 /// the parsed tree and its arena copy fail the same way.
+/// A spill reference whose operand is not a single-cell reference or name.
+fn spill_operand_error() -> ExcelError {
+    ExcelError::new(ExcelErrorKind::Ref)
+        .with_message("Spill reference operand must be a single cell or a name")
+}
+
 fn call_expression_error() -> ExcelError {
     ExcelError::new(ExcelErrorKind::NImpl)
         .with_message("Immediate-invocation calls are not yet supported")
@@ -338,6 +344,7 @@ impl<'a> Interpreter<'a> {
                 let rref = self.evaluate_ast_as_reference(right)?;
                 crate::reference::combine_references(&lref, &rref)
             }
+            ASTNodeType::UnaryOp { op, expr } if op == "#" => self.ast_spill_reference(expr),
             ASTNodeType::Array(_)
             | ASTNodeType::UnaryOp { .. }
             | ASTNodeType::BinaryOp { .. }
@@ -432,8 +439,69 @@ impl<'a> Interpreter<'a> {
                     self.evaluate_arena_ast_as_reference(*right_id, data_store, sheet_registry)?;
                 crate::reference::combine_references(&lref, &rref)
             }
+            AstNodeData::UnaryOp { op_id, expr_id }
+                if data_store.resolve_ast_string(*op_id) == "#" =>
+            {
+                self.arena_spill_reference(*expr_id, data_store, sheet_registry)
+            }
             _ => Err(ExcelError::new(ExcelErrorKind::Ref)
                 .with_message("Expression cannot be used as a reference")),
+        }
+    }
+
+    /// The anchor a spill operand names: a single-cell reference or a name,
+    /// including a LET/LAMBDA local bound to one. Anything else is `#REF!`.
+    fn spill_anchor_operand(&self, reference: &ReferenceType) -> Result<ReferenceType, ExcelError> {
+        let anchor = match reference {
+            ReferenceType::NamedRange(name) if self.resolve_local_name(name).is_some() => self
+                .resolve_local_bound_reference(name)
+                .ok_or_else(spill_operand_error)?,
+            _ => self
+                .reference_for_current_offset(reference)
+                .map_err(|_| spill_operand_error())?,
+        };
+        match anchor {
+            ReferenceType::Cell { .. } | ReferenceType::NamedRange(_) => Ok(anchor),
+            _ => Err(spill_operand_error()),
+        }
+    }
+
+    /// Resolve a spill reference (`A1#`, `ANCHORARRAY(A1)`) whose operand is
+    /// the written `reference`, to the anchor's current spill rectangle.
+    pub(crate) fn resolve_spill_reference(
+        &self,
+        reference: &ReferenceType,
+    ) -> Result<ReferenceType, ExcelError> {
+        let anchor = self.spill_anchor_operand(reference)?;
+        self.context
+            .resolve_spill_reference(&anchor, self.current_sheet)
+    }
+
+    /// The `#` operator on an AST operand: only a written reference qualifies.
+    pub(crate) fn ast_spill_reference(
+        &self,
+        operand: &ASTNode,
+    ) -> Result<ReferenceType, ExcelError> {
+        match &operand.node_type {
+            ASTNodeType::Reference { reference, .. } => self.resolve_spill_reference(reference),
+            _ => Err(spill_operand_error()),
+        }
+    }
+
+    /// The `#` operator on an arena operand: only a written reference qualifies.
+    pub(crate) fn arena_spill_reference(
+        &self,
+        operand: AstNodeId,
+        data_store: &DataStore,
+        sheet_registry: &SheetRegistry,
+    ) -> Result<ReferenceType, ExcelError> {
+        match data_store.get_node(operand) {
+            Some(AstNodeData::Reference { ref_type, .. }) => {
+                let reference =
+                    data_store.reconstruct_reference_type_for_eval(ref_type, sheet_registry);
+                self.resolve_spill_reference(&reference)
+            }
+            _ => Err(spill_operand_error()),
         }
     }
 
@@ -783,9 +851,14 @@ impl<'a> Interpreter<'a> {
                 }
             }
             AstNodeData::UnaryOp { op_id, expr_id } => {
+                let op = data_store.resolve_ast_string(*op_id);
+                if op == "#" {
+                    let reference =
+                        self.arena_spill_reference(*expr_id, data_store, sheet_registry)?;
+                    return self.eval_reference_to_calc(&reference);
+                }
                 let expr = self.evaluate_arena_ast(*expr_id, data_store, sheet_registry)?;
 
-                let op = data_store.resolve_ast_string(*op_id);
                 if op == "@" {
                     // Prefer reference-aware implicit intersection so we don't depend on
                     // RangeView absolute coordinates (important for lightweight test contexts).
@@ -953,6 +1026,9 @@ impl<'a> Interpreter<'a> {
             ASTNodeType::Literal(v) => Ok(crate::traits::CalcValue::Scalar(v.clone())),
             ASTNodeType::Omitted => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(0.0))),
             ASTNodeType::Reference { reference, .. } => self.eval_ast_reference_to_calc(reference),
+            ASTNodeType::UnaryOp { op, expr } if op == "#" => {
+                self.eval_reference_to_calc(&self.ast_spill_reference(expr)?)
+            }
             ASTNodeType::UnaryOp { op, expr } => self
                 .eval_unary(op, expr)
                 .map(crate::traits::CalcValue::Scalar),
@@ -972,6 +1048,9 @@ impl<'a> Interpreter<'a> {
             ASTNodeType::Literal(v) => Ok(crate::traits::CalcValue::Scalar(v.clone())),
             ASTNodeType::Omitted => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(0.0))),
             ASTNodeType::Reference { reference, .. } => self.eval_ast_reference_to_calc(reference),
+            ASTNodeType::UnaryOp { op, expr } if op == "#" => {
+                self.eval_reference_to_calc(&self.ast_spill_reference(expr)?)
+            }
             ASTNodeType::UnaryOp { op, expr } => {
                 // For now, reuse existing unary implementation (which recurses).
                 // In a later phase, we can map plan_node.children[0].

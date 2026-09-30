@@ -422,6 +422,23 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
         self.as_reference_or_eval().ok()
     }
 
+    /// The spill rectangle of the anchor this argument names, as `ANCHORARRAY`
+    /// takes it: the argument must be written as a reference (a single cell,
+    /// a name, or a LET/LAMBDA local bound to one), and is resolved through
+    /// the same context hook as the `#` operator. Anything else is `#REF!`.
+    pub(crate) fn spill_reference(&self) -> Result<ReferenceType, ExcelError> {
+        match &self.expr {
+            ArgumentExpr::Ast(node) => self.interp.ast_spill_reference(node),
+            ArgumentExpr::Arena {
+                id,
+                data_store,
+                sheet_registry,
+            } => self
+                .interp
+                .arena_spill_reference(*id, data_store, sheet_registry),
+        }
+    }
+
     /// Returns whether this argument resolves as a spreadsheet reference rather than a value.
     ///
     /// This uses the interpreter's reference-resolution path, so reference-returning functions
@@ -448,6 +465,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                     _ => true,
                 },
                 ASTNodeType::BinaryOp { op, .. } => op == ":",
+                ASTNodeType::UnaryOp { op, .. } => op == "#",
                 ASTNodeType::Function { name, .. } => self
                     .interp
                     .context
@@ -476,6 +494,9 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                 }
                 Some(crate::engine::arena::AstNodeData::BinaryOp { op_id, .. }) => {
                     data_store.resolve_ast_string(*op_id) == ":"
+                }
+                Some(crate::engine::arena::AstNodeData::UnaryOp { op_id, .. }) => {
+                    data_store.resolve_ast_string(*op_id) == "#"
                 }
                 Some(crate::engine::arena::AstNodeData::Function { name_id, .. }) => self
                     .interp
@@ -613,6 +634,11 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                     .with_local_env(env.clone())
                     .evaluate_ast_as_reference(node)
                     .ok(),
+                ASTNodeType::UnaryOp { op, expr } if op == "#" => self
+                    .interp
+                    .with_local_env(env.clone())
+                    .ast_spill_reference(expr)
+                    .ok(),
                 _ => None,
             },
             ArgumentExpr::Arena {
@@ -642,6 +668,14 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                     self.interp
                         .with_local_env(env.clone())
                         .evaluate_arena_ast_as_reference(*id, data_store, sheet_registry)
+                        .ok()
+                }
+                Some(crate::engine::arena::AstNodeData::UnaryOp { op_id, expr_id })
+                    if data_store.resolve_ast_string(*op_id) == "#" =>
+                {
+                    self.interp
+                        .with_local_env(env.clone())
+                        .arena_spill_reference(*expr_id, data_store, sheet_registry)
                         .ok()
                 }
                 _ => None,
@@ -728,6 +762,9 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                 ASTNodeType::Function { .. } | ASTNodeType::BinaryOp { .. } => {
                     self.interp.evaluate_ast_as_reference(node)
                 }
+                ASTNodeType::UnaryOp { op, expr } if op == "#" => {
+                    self.interp.ast_spill_reference(expr)
+                }
                 _ => Err(ExcelError::new(ExcelErrorKind::Ref)
                     .with_message("Expected a reference (by-ref argument)")),
             },
@@ -756,6 +793,12 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                     | crate::engine::arena::AstNodeData::BinaryOp { .. } => self
                         .interp
                         .evaluate_arena_ast_as_reference(*id, data_store, sheet_registry),
+                    crate::engine::arena::AstNodeData::UnaryOp { op_id, expr_id }
+                        if data_store.resolve_ast_string(*op_id) == "#" =>
+                    {
+                        self.interp
+                            .arena_spill_reference(*expr_id, data_store, sheet_registry)
+                    }
                     _ => Err(ExcelError::new(ExcelErrorKind::Ref)
                         .with_message("Expected a reference (by-ref argument)")),
                 }
@@ -871,6 +914,9 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                 ASTNodeType::BinaryOp { op, .. } if op == ":" => {
                     Some(self.interp.evaluate_ast_as_reference(node))
                 }
+                ASTNodeType::UnaryOp { op, expr } if op == "#" => {
+                    Some(self.interp.ast_spill_reference(expr))
+                }
                 ASTNodeType::Function { name, .. }
                     if self
                         .interp
@@ -916,6 +962,15 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                     {
                         Some(self.interp.evaluate_arena_ast_as_reference(
                             *id,
+                            data_store,
+                            sheet_registry,
+                        ))
+                    }
+                    crate::engine::arena::AstNodeData::UnaryOp { op_id, expr_id }
+                        if data_store.resolve_ast_string(*op_id) == "#" =>
+                    {
+                        Some(self.interp.arena_spill_reference(
+                            *expr_id,
                             data_store,
                             sheet_registry,
                         ))
@@ -1452,6 +1507,9 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                 ASTNodeType::Function { .. } | ASTNodeType::BinaryOp { .. } => {
                     self.interp.evaluate_ast_as_reference(node)
                 }
+                ASTNodeType::UnaryOp { op, expr } if op == "#" => {
+                    self.interp.ast_spill_reference(expr)
+                }
                 _ => Err(ExcelError::new(ExcelErrorKind::Ref)
                     .with_message("Argument is not a reference")),
             },
@@ -1472,6 +1530,12 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                     | crate::engine::arena::AstNodeData::BinaryOp { .. } => self
                         .interp
                         .evaluate_arena_ast_as_reference(*id, data_store, sheet_registry),
+                    crate::engine::arena::AstNodeData::UnaryOp { op_id, expr_id }
+                        if data_store.resolve_ast_string(*op_id) == "#" =>
+                    {
+                        self.interp
+                            .arena_spill_reference(*expr_id, data_store, sheet_registry)
+                    }
                     _ => Err(ExcelError::new(ExcelErrorKind::Ref)
                         .with_message("Argument is not a reference")),
                 }
@@ -1970,6 +2034,27 @@ pub trait EvaluationContext: Resolver + FunctionProvider + SourceResolver {
     /// Retrieve formula text for a concrete cell, if that cell stores a formula.
     fn formula_text_at_cell(&self, _cell: CellRef) -> Result<Option<String>, ExcelError> {
         Ok(None)
+    }
+
+    /// Resolve a spill-range reference (`A1#`, `ANCHORARRAY(A1)`) to the
+    /// anchor's current committed spill rectangle.
+    ///
+    /// `anchor` is the operand as written, relocated for the current cell:
+    /// a single-cell [`ReferenceType::Cell`] or a [`ReferenceType::NamedRange`]
+    /// that must name one cell. The result is a real sheet reference, so
+    /// callers read it through the ordinary reference path.
+    ///
+    /// Policy: `#REF!` for any other operand and for an anchor without a
+    /// current spill (a value, an empty cell, a scalar result, or a blocked or
+    /// oversized spill). The default, for contexts without a spill registry,
+    /// is `#REF!`.
+    fn resolve_spill_reference(
+        &self,
+        _anchor: &ReferenceType,
+        _current_sheet: &str,
+    ) -> Result<ReferenceType, ExcelError> {
+        Err(ExcelError::new(ExcelErrorKind::Ref)
+            .with_message("Spill references are not available in this context"))
     }
 
     /// Clock provider for volatile date/time builtins.

@@ -4883,6 +4883,28 @@ impl DependencyGraph {
             .map(|v| v.as_slice())
     }
 
+    /// The committed spill rectangle of `anchor` as its (top-left,
+    /// bottom-right) corners, in O(1).
+    ///
+    /// Spill targets are registered row-major over a rectangle whose first
+    /// cell is the anchor, so the first and last targets are its corners;
+    /// no member cell is scanned.
+    pub(crate) fn spill_extent_for_anchor(&self, anchor: VertexId) -> Option<(CellRef, CellRef)> {
+        let cells = self.spill_anchor_to_cells.get(&anchor)?;
+        let first = *cells.first()?;
+        let last = *cells.last()?;
+        debug_assert!(
+            last.sheet_id == first.sheet_id
+                && last.coord.row() >= first.coord.row()
+                && last.coord.col() >= first.coord.col()
+                && cells.len()
+                    == ((last.coord.row() - first.coord.row() + 1) as usize)
+                        * ((last.coord.col() - first.coord.col() + 1) as usize),
+            "spill targets must be a row-major rectangle"
+        );
+        Some((first, last))
+    }
+
     pub(crate) fn spill_registry_has_anchor(&self, anchor: VertexId) -> bool {
         self.spill_anchor_to_cells.contains_key(&anchor)
     }

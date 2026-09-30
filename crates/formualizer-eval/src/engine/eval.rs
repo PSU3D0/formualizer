@@ -17716,6 +17716,85 @@ where
         Ok(Some(info))
     }
 
+    fn resolve_spill_reference(
+        &self,
+        anchor: &ReferenceType,
+        current_sheet: &str,
+    ) -> Result<ReferenceType, ExcelError> {
+        let no_spill = || {
+            ExcelError::new(ExcelErrorKind::Ref)
+                .with_message("Spill reference anchor has no current spill")
+        };
+        // The rectangle keeps the operand's sheet qualification: an
+        // unqualified anchor on the current sheet yields an unqualified range.
+        let mut qualify = true;
+        let anchor_cell = match anchor {
+            ReferenceType::Cell {
+                sheet, row, col, ..
+            } => {
+                qualify = sheet.is_some();
+                let sheet_name = sheet.as_deref().unwrap_or(current_sheet);
+                let sheet_id = self.graph.sheet_id(sheet_name).ok_or_else(no_spill)?;
+                if *row == 0 || *col == 0 {
+                    return Err(no_spill());
+                }
+                CellRef::new(sheet_id, Coord::from_excel(*row, *col, true, true))
+            }
+            ReferenceType::NamedRange(name) => {
+                let current_id = self.graph.sheet_id(current_sheet).ok_or_else(no_spill)?;
+                let named = self
+                    .graph
+                    .resolve_name_entry(name, current_id)
+                    .ok_or_else(no_spill)?;
+                match &named.definition {
+                    NamedDefinition::Cell(cell) => *cell,
+                    NamedDefinition::Range(range)
+                        if range.start.sheet_id == range.end.sheet_id
+                            && range.start.coord.row() == range.end.coord.row()
+                            && range.start.coord.col() == range.end.coord.col() =>
+                    {
+                        range.start
+                    }
+                    _ => {
+                        return Err(ExcelError::new(ExcelErrorKind::Ref)
+                            .with_message("Spill reference name must refer to a single cell"));
+                    }
+                }
+            }
+            _ => {
+                return Err(ExcelError::new(ExcelErrorKind::Ref)
+                    .with_message("Spill reference operand must be a single cell"));
+            }
+        };
+        let vertex = self
+            .graph
+            .get_vertex_id_for_address(&anchor_cell)
+            .ok_or_else(no_spill)?;
+        let (first, last) = self
+            .graph
+            .spill_extent_for_anchor(vertex)
+            .ok_or_else(no_spill)?;
+        let sheet_name = qualify.then(|| self.graph.sheet_name(first.sheet_id).to_string());
+        let (sr, sc) = (first.coord.row() + 1, first.coord.col() + 1);
+        let (er, ec) = (last.coord.row() + 1, last.coord.col() + 1);
+        // The rectangle is concrete, so its bounds are absolute.
+        Ok(if sr == er && sc == ec {
+            ReferenceType::cell_with_abs(sheet_name, sr, sc, true, true)
+        } else {
+            ReferenceType::Range {
+                sheet: sheet_name,
+                start_row: Some(sr),
+                start_col: Some(sc),
+                end_row: Some(er),
+                end_col: Some(ec),
+                start_row_abs: true,
+                start_col_abs: true,
+                end_row_abs: true,
+                end_col_abs: true,
+            }
+        })
+    }
+
     fn formula_text_at_cell(&self, cell: CellRef) -> Result<Option<String>, ExcelError> {
         let sheet_name = self.graph.sheet_name(cell.sheet_id);
         if sheet_name.is_empty() {
