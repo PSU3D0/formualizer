@@ -13320,6 +13320,47 @@ where
         })
     }
 
+    /// Same rejection publication for owned arrays and pre-admitted range views.
+    fn publish_oversized_spill(
+        &mut self,
+        vertex_id: VertexId,
+        error: ExcelError,
+        mut delta: Option<&mut DeltaCollector>,
+    ) -> LiteralValue {
+        self.clear_spill_projection_and_mirror(vertex_id, delta.as_deref_mut());
+        let anchor = self
+            .graph
+            .get_cell_ref(vertex_id)
+            .expect("cell ref for vertex");
+        let spill_val = LiteralValue::Error(error);
+        if let Some(d) = delta {
+            let old = self
+                .read_cell_value(
+                    self.graph.sheet_name(anchor.sheet_id),
+                    anchor.coord.row() + 1,
+                    anchor.coord.col() + 1,
+                )
+                .unwrap_or(LiteralValue::Empty);
+            if old != spill_val {
+                d.record_cell(anchor.sheet_id, anchor.coord.row(), anchor.coord.col());
+            }
+        }
+        self.graph.update_vertex_value_ref(vertex_id, &spill_val);
+        if self.config.arrow_storage_enabled
+            && self.config.delta_overlay_enabled
+            && self.config.write_formula_overlay_enabled
+        {
+            let sheet_name = self.graph.sheet_name(anchor.sheet_id).to_string();
+            self.mirror_value_to_computed_overlay(
+                &sheet_name,
+                anchor.coord.row() + 1,
+                anchor.coord.col() + 1,
+                &spill_val,
+            );
+        }
+        spill_val
+    }
+
     fn evaluate_vertex_impl(
         &mut self,
         vertex_id: VertexId,
@@ -13412,8 +13453,17 @@ where
             Ok(cv) => {
                 let derived_format = cv.format_id();
                 self.record_derived_format(vertex_id, derived_format);
-                let result_literal =
-                    crate::engine::result_finalization::finalize_formula_result(cv.into_literal());
+                let oversized_range = crate::engine::result_finalization::range_spill_error(
+                    &cv,
+                    self.config.spill.max_spill_cells,
+                );
+                let is_oversized_range = oversized_range.is_some();
+                let result_literal = if let Some(error) = oversized_range {
+                    drop(cv);
+                    LiteralValue::Error(error)
+                } else {
+                    crate::engine::result_finalization::finalize_formula_result(cv.into_literal())
+                };
                 let output_sheet_name = sheet_name.to_string();
                 self.write_computed_overlay_format_0based(
                     &output_sheet_name,
@@ -13421,6 +13471,17 @@ where
                     cell_ref.coord.col(),
                     derived_format,
                 );
+                if is_oversized_range {
+                    let LiteralValue::Error(error) = result_literal else {
+                        unreachable!()
+                    };
+                    self.graph.set_kind(vertex_id, VertexKind::FormulaArray);
+                    return Ok(self.publish_oversized_spill(
+                        vertex_id,
+                        error,
+                        delta.as_deref_mut(),
+                    ));
+                }
                 match result_literal {
                     LiteralValue::Array(rows) => {
                         // Update kind to FormulaArray for tracking
@@ -13438,44 +13499,17 @@ where
                         // Hard cap to avoid vertex explosion from huge dynamic arrays.
                         let spill_cells = (h as u64).saturating_mul(w as u64);
                         if spill_cells > self.config.spill.max_spill_cells as u64 {
-                            self.clear_spill_projection_and_mirror(vertex_id, delta.as_deref_mut());
                             let spill_err = ExcelError::new(ExcelErrorKind::Spill)
                                 .with_message("SpillTooLarge")
                                 .with_extra(formualizer_common::ExcelErrorExtra::Spill {
                                     expected_rows: h,
                                     expected_cols: w,
                                 });
-                            let spill_val = LiteralValue::Error(spill_err.clone());
-                            if let Some(d) = delta.as_deref_mut() {
-                                let old = self
-                                    .read_cell_value(
-                                        self.graph.sheet_name(anchor.sheet_id),
-                                        anchor.coord.row() + 1,
-                                        anchor.coord.col() + 1,
-                                    )
-                                    .unwrap_or(LiteralValue::Empty);
-                                if old != spill_val {
-                                    d.record_cell(
-                                        anchor.sheet_id,
-                                        anchor.coord.row(),
-                                        anchor.coord.col(),
-                                    );
-                                }
-                            }
-                            self.graph.update_vertex_value_ref(vertex_id, &spill_val);
-                            if self.config.arrow_storage_enabled
-                                && self.config.delta_overlay_enabled
-                                && self.config.write_formula_overlay_enabled
-                            {
-                                let sheet_name = self.graph.sheet_name(anchor.sheet_id).to_string();
-                                self.mirror_value_to_computed_overlay(
-                                    &sheet_name,
-                                    anchor.coord.row() + 1,
-                                    anchor.coord.col() + 1,
-                                    &spill_val,
-                                );
-                            }
-                            return Ok(spill_val);
+                            return Ok(self.publish_oversized_spill(
+                                vertex_id,
+                                spill_err,
+                                delta.as_deref_mut(),
+                            ));
                         }
                         // Bounds check to avoid out-of-range writes (align to AbsCoord capacity)
                         const PACKED_MAX_ROW: u32 = 1_048_575; // 20-bit max
@@ -16749,7 +16783,10 @@ where
             .map(|cv| {
                 let format = cv.format_id();
                 self.record_derived_format(vertex_id, format);
-                crate::engine::result_finalization::finalize_formula_result(cv.into_literal())
+                crate::engine::result_finalization::finalize_published_calc_result(
+                    cv,
+                    self.config.spill.max_spill_cells,
+                )
             })
     }
 
@@ -19164,8 +19201,9 @@ where
                     .map(|cv| {
                         let format = cv.format_id();
                         self.record_derived_format(vertex_id, format);
-                        crate::engine::result_finalization::finalize_formula_result(
-                            cv.into_literal(),
+                        crate::engine::result_finalization::finalize_published_calc_result(
+                            cv,
+                            self.config.spill.max_spill_cells,
                         )
                     })
             }
@@ -19612,6 +19650,26 @@ where
         vertex_id: VertexId,
         value: LiteralValue,
     ) -> Result<Vec<Effect>, ExcelError> {
+        // Range admission substitutes the same cap error before allocating rows.
+        // Preserve the owned-array rejection's kind, release and clear effects.
+        if let LiteralValue::Error(error) = &value
+            && error.kind == ExcelErrorKind::Spill
+            && error.message.as_deref() == Some("SpillTooLarge")
+            && let formualizer_common::ExcelErrorExtra::Spill {
+                expected_rows,
+                expected_cols,
+            } = error.extra
+            && u64::from(expected_rows).saturating_mul(u64::from(expected_cols))
+                > u64::from(self.config.spill.max_spill_cells)
+        {
+            self.graph.set_kind(vertex_id, VertexKind::FormulaArray);
+            return self.plan_spill_error_effects(
+                vertex_id,
+                "SpillTooLarge",
+                expected_rows,
+                expected_cols,
+            );
+        }
         if !matches!(&value, LiteralValue::Error(e) if e.kind == ExcelErrorKind::Spill) {
             self.blocked_pending_spills
                 .retain(|entry| entry.0 != vertex_id);

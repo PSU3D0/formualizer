@@ -12,6 +12,7 @@
 use super::ComputedWriteBuffer;
 use super::*;
 use crate::engine::authority::store::Store;
+use crate::engine::result_finalization::materialize_published_calc_result;
 use crate::engine::scheduler::{Layer, LayerRun};
 use crate::engine::template::canonical::LiteralSlotId;
 use crate::interpreter::InterpreterParameterBindings;
@@ -379,7 +380,16 @@ where
                 {
                     let walked = interpreter
                         .evaluate_arena_ast_with_offset(template, row_delta, col_delta, ds, reg)
-                        .map(|cv| (cv.format_id(), cv.into_literal()));
+                        .map(|cv| {
+                            let format = cv.format_id();
+                            (
+                                format,
+                                materialize_published_calc_result(
+                                    cv,
+                                    self.config.spill.max_spill_cells,
+                                ),
+                            )
+                        });
                     match walked {
                         Ok((format, walked)) => assert!(
                             same_value(&walked, &value) && format.is_none(),
@@ -420,7 +430,16 @@ where
                     {
                         let walked = interpreter
                             .evaluate_arena_ast_with_offset(template, row_delta, col_delta, ds, reg)
-                            .map(|cv| (cv.format_id(), cv.into_literal()));
+                            .map(|cv| {
+                                let format = cv.format_id();
+                                (
+                                    format,
+                                    materialize_published_calc_result(
+                                        cv,
+                                        self.config.spill.max_spill_cells,
+                                    ),
+                                )
+                            });
                         match walked {
                             Ok((format, value)) => {
                                 assert!(
@@ -442,7 +461,10 @@ where
                     .evaluate_arena_ast_with_offset(template, row_delta, col_delta, ds, reg)
                     .map(|cv| {
                         let format = cv.format_id();
-                        let value = cv.into_literal();
+                        let value = materialize_published_calc_result(
+                            cv,
+                            self.config.spill.max_spill_cells,
+                        );
                         if let Some(key) = key {
                             memo.insert(key, (value.clone(), format));
                         }
@@ -516,7 +538,13 @@ where
                         .evaluate_arena_ast_with_offset(template, row_delta, col_delta, ds, reg)
                         .map(|cv| {
                             let format = cv.format_id();
-                            (cv.into_literal(), format)
+                            (
+                                materialize_published_calc_result(
+                                    cv,
+                                    self.config.spill.max_spill_cells,
+                                ),
+                                format,
+                            )
                         })
                 });
                 match result {
