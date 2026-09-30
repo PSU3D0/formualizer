@@ -578,6 +578,11 @@ const PARALLEL_LAYER_PROBE: std::time::Duration = std::time::Duration::from_micr
 const PARALLEL_LAYER_WORTH: std::time::Duration = std::time::Duration::from_micros(150);
 /// A member this expensive (ns, measured by the probe) is its own task.
 const EXPENSIVE_VERTEX_NS: u128 = 10_000;
+/// [`Engine::live_cancellation_after_work`] messages.
+const UNIT_CANCELLED: &str = "Evaluation cancelled; the evaluated unit was not committed";
+const GROUP_CANCELLED: &str =
+    "Parallel evaluation cancelled; the evaluated group was not committed";
+const SCC_CANCELLED: &str = "Evaluation cancelled; the evaluated cycle was not completed";
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum ComputedWrite {
@@ -3200,6 +3205,28 @@ where
                 .evaluation_commit_actual_ns
                 .saturating_add(Self::duration_ns(started.elapsed()));
         }
+    }
+
+    /// Post-work cancellation boundary: call after evaluating a unit (or a
+    /// parallel group) and before committing it. A function that observed
+    /// the request's token returns `Err(Cancelled)`, which the evaluator
+    /// turns into a `#CANCELLED` value; any other result computed across the
+    /// signal is equally not a finished result. Neither may publish: the
+    /// caller returns this error before committing, so the unit stays dirty,
+    /// the request reports `Cancelled`, and a failed pass restores the
+    /// vertices it already committed (`freshness_abort_pass`). The token is
+    /// the discriminator: a `#CANCELLED` value with no live cancellation is
+    /// ordinary data and commits. Deadlines are not checked here; finished
+    /// work is not discarded on a deadline.
+    fn live_cancellation_after_work(&self, message: &'static str) -> Result<(), ExcelError> {
+        if self
+            .active_cancel_flag
+            .as_ref()
+            .is_some_and(|cancel| cancel.is_cancelled())
+        {
+            return Err(ExcelError::new(ExcelErrorKind::Cancelled).with_message(message));
+        }
+        Ok(())
     }
 
     fn cancellation_checkpoint(&self, message: &'static str) -> Result<(), ExcelError> {
@@ -19050,6 +19077,13 @@ where
             }
         }
 
+        // Post-work boundary: members are committed write-through, so a
+        // member that ran across a live cancellation is already visible; the
+        // task still must not complete (no delta, retention or iteration
+        // state). The members stay dirty for the retry, as with the
+        // mid-task checks above.
+        self.live_cancellation_after_work(SCC_CANCELLED)?;
+
         // Iteration that ended because the live cycle dissolved and the
         // acyclic settle reached exactness counts as converged (values are
         // exact, strictly better than threshold-converged). The defensive
@@ -20280,6 +20314,10 @@ where
             }
             let values = match (chain_values.take(), unit) {
                 (Some(chain), LayerUnit::Run(run)) => {
+                    if let Err(e) = self.live_cancellation_after_work(UNIT_CANCELLED) {
+                        self.flush_computed_write_buffer(&mut computed_writes)?;
+                        return Err(e);
+                    }
                     let members =
                         &layer.vertices[run.start as usize..(run.start + run.len) as usize];
                     let delta_active = delta.as_deref().is_some_and(|d| d.mode != DeltaMode::Off);
@@ -20308,6 +20346,12 @@ where
                 }
                 (_, unit) => self.evaluate_unit_immutable(layer, unit),
             };
+            // Post-work boundary: the unit ran while (or after) the request
+            // was cancelled; it is not committed and stays dirty.
+            if let Err(e) = self.live_cancellation_after_work(UNIT_CANCELLED) {
+                self.flush_computed_write_buffer(&mut computed_writes)?;
+                return Err(e);
+            }
             done += values.len();
             if let LayerUnit::Run(run) = unit {
                 let members = &layer.vertices[run.start as usize..(run.start + run.len) as usize];
@@ -20468,6 +20512,12 @@ where
             let results: Result<Vec<(VertexId, LiteralValue)>, ExcelError> =
                 thread_pool.install(|| self.evaluate_units_parallel(layer, units, None, min_chunk));
 
+            // Post-work boundary: a group evaluated across a live
+            // cancellation is not committed (it stays dirty).
+            let results = results.and_then(|results| {
+                self.live_cancellation_after_work(GROUP_CANCELLED)
+                    .map(|()| results)
+            });
             // FR3: a parallel group is one commit unit; one stale reader
             // drops the whole group (it stays dirty and replans).
             self.freshness_gate_group(group);
@@ -20588,6 +20638,12 @@ where
             let results: Result<Vec<(VertexId, LiteralValue)>, ExcelError> =
                 thread_pool.install(|| self.evaluate_units_parallel(layer, units, None, 8));
 
+            // Post-work boundary: a group evaluated across a live
+            // cancellation is not committed (it stays dirty).
+            let results = results.and_then(|results| {
+                self.live_cancellation_after_work(GROUP_CANCELLED)
+                    .map(|()| results)
+            });
             // FR3: a parallel group is one commit unit; one stale reader
             // drops the whole group (it stays dirty and replans).
             self.freshness_gate_group(group);
@@ -20710,6 +20766,12 @@ where
             let results: Result<Vec<(VertexId, LiteralValue)>, ExcelError> = thread_pool
                 .install(|| self.evaluate_units_parallel(layer, units, Some(cancel_flag), 8));
 
+            // Post-work boundary: a group evaluated across a live
+            // cancellation is not committed (it stays dirty).
+            let results = results.and_then(|results| {
+                self.live_cancellation_after_work(GROUP_CANCELLED)
+                    .map(|()| results)
+            });
             // FR3: a parallel group is one commit unit; one stale reader
             // drops the whole group (it stays dirty and replans).
             self.freshness_gate_group(group);

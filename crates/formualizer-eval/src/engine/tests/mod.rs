@@ -208,6 +208,7 @@ mod csr_rebuild_amortization;
 mod date_cells_are_numbers;
 mod demand_subgraph_named_range;
 mod dn_range_xlsx_subgraph;
+mod final_vertex_cancellation;
 mod iferror_ifna_elementwise;
 mod iferror_ifna_lazy;
 mod iterate_corpus_chains;
