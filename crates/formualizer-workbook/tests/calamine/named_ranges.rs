@@ -18,6 +18,7 @@ fn calculation_names_import_literals_formulas_and_rebind_cell_dependencies() {
             ("Answer", "DoubleBase"),
             ("DoubleBase", "Sheet1!$A$1*2"),
             ("Rate", "0.07"),
+            ("SignedRate", "-0.07"),
             ("Flag", "TRUE"),
         ] {
             sheet.add_defined_name(name, definition).unwrap();
@@ -27,6 +28,9 @@ fn calculation_names_import_literals_formulas_and_rebind_cell_dependencies() {
     let names = backend.defined_names().unwrap();
     assert!(
         matches!(&names.iter().find(|n| n.name == "Rate").unwrap().definition, DefinedNameDefinition::Literal { value: LiteralValue::Number(n) } if *n == 0.07)
+    );
+    assert!(
+        matches!(&names.iter().find(|n| n.name == "SignedRate").unwrap().definition, DefinedNameDefinition::Literal { value: LiteralValue::Number(n) } if *n == -0.07)
     );
     let mut engine = Engine::new(
         formualizer_eval::test_workbook::TestWorkbook::new(),

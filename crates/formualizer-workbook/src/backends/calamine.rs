@@ -1748,9 +1748,19 @@ impl CalamineAdapter {
         if local_sheet_id.is_some() && scope_sheet.is_none() {
             return None;
         }
-        if let Ok(ast) = formualizer_parse::parser::parse(format!("={trimmed}"))
-            && let formualizer_parse::parser::ASTNodeType::Literal(value) = ast.node_type
-        {
+        let literal = trimmed
+            .parse::<f64>()
+            .ok()
+            .filter(|n| n.is_finite())
+            .map(LiteralValue::Number)
+            .or_else(|| {
+                let ast = formualizer_parse::parser::parse(format!("={trimmed}")).ok()?;
+                match ast.node_type {
+                    formualizer_parse::parser::ASTNodeType::Literal(value) => Some(value),
+                    _ => None,
+                }
+            });
+        if let Some(value) = literal {
             return Some(DefinedName {
                 name: name.to_owned(),
                 scope: if scope_sheet.is_some() {
