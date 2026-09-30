@@ -29,13 +29,14 @@ class CampaignTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             arms = []
-            for name, correct in [("A", False), ("D", True)]:
+            for name, correct in [("A", False), ("D", True), ("E", True)]:
                 binary = root / name
                 binary.write_text(f"#!{sys.executable}\n" + '''import json, pathlib, sys
 out = pathlib.Path(sys.argv[sys.argv.index('--output-dir') + 1])
 out.mkdir()
 correct = ''' + repr(correct) + '''
-(out / 's089-off.json').write_text(json.dumps({'final_invariants_passed': correct}))
+notes = ''' + repr(["expected invariant failure: wrong cell", "expected_failure_reason: known defect"] if name == "E" else []) + '''
+(out / 's089-off.json').write_text(json.dumps({'final_invariants_passed': correct, 'notes': notes}))
 (out / 'summary.csv').write_text('scenario_id,phase,wall_ms\\ns089,phase_first_eval,12\\ns089,phase_recalc_0,2\\n')
 sys.exit(0 if correct else 1)
 ''')
@@ -53,8 +54,8 @@ sys.exit(0 if correct else 1)
                 if row['arm'] == 'A':
                     self.assertIsNone(row['median_ms'])
             provenance = json.loads((root / 'out/provenance.json').read_text())
-            self.assertEqual(len(provenance['binary_sha256']), 2)
-            self.assertEqual(len(list((root / 'out').glob('r*-*/run.json'))), 6)
+            self.assertEqual(len(provenance['binary_sha256']), 3)
+            self.assertEqual(len(list((root / 'out').glob('r*-*/run.json'))), 9)
 
     def test_program1_requires_trusted_digests_and_disables_counting(self):
         with tempfile.TemporaryDirectory() as tmp:

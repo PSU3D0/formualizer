@@ -100,7 +100,14 @@ def main():
                 report_data = [json.loads(p.read_text()) for p in reports]
                 record["fixture_sha256"] = {d["fixture_path"]: sha(d["fixture_path"])
                     for d in report_data if d.get("fixture_path") and Path(d["fixture_path"]).exists()}
-                valid = bool(reports) and all(d["final_invariants_passed"] for d in report_data)
+                # probe-corpus also sets this flag for known/expected failures.
+                # Such classification never establishes correct workbook answers.
+                invalid_prefixes = ("invariant failure", "expected invariant failure", "expected_failure_reason:")
+                valid = bool(reports) and all(
+                    d["final_invariants_passed"]
+                    and not any(note.startswith(invalid_prefixes) for note in d.get("notes", []))
+                    for d in report_data
+                )
                 record["status"] = "CORRECT" if valid and returncode == 0 else "FAILED_OR_WRONG_ANSWER"
                 csv_path = run_dir / "reports" / "summary.csv"
                 if csv_path.exists():
