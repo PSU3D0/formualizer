@@ -491,9 +491,8 @@ pub fn recalculate_xlsx_bytes(
             let address = CellAddress::new(&sheet.name, cell.row, cell.col)
                 .map_err(|e| IoError::from_backend("xlsx-coordinate", e))?;
             let snapshot = engine
-                .inspect_cell(&address, &SnapshotOptions::default())
-                .map_err(|e| IoError::from_backend("xlsx-inspect", e))?
-                .cell;
+                .inspect_cell_result(&address)
+                .map_err(|e| IoError::from_backend("xlsx-inspect", e))?;
             use formualizer_eval::engine::inspect::SpillRole;
             if snapshot.spill.as_ref().is_some_and(|spill| match spill {
                 SpillRole::Anchor { extent } => {
@@ -515,7 +514,7 @@ pub fn recalculate_xlsx_bytes(
                     .coerce_to_single_value()
                     .map_err(|_| unsupported("non-scalar result", "cache-only writer"))?;
             }
-            if snapshot.formula.is_none()
+            if !snapshot.has_formula
                 && !(matches!(value, LiteralValue::Error(_))
                     && coerced.contains(&(sheet.name.clone(), cell.row, cell.col)))
             {
