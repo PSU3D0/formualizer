@@ -29,42 +29,11 @@ use formualizer_common::{ArgKind, ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_macros::func_caps;
 use std::collections::HashMap;
 
-/* ─────────────────── generated-array allocation guard ───────────────────
- *
- * Generator functions (SEQUENCE, RANDARRAY) materialize their full result
- * as `Vec<Vec<LiteralValue>>` before the engine ever sees it, so dimension
- * args taken from user input must be guarded BEFORE allocating — e.g.
- * `=SEQUENCE(1e6,1e6)` would otherwise attempt a 10^12-cell allocation.
- *
- * Cap rationale:
- * - Per-dimension: Excel sheet limits (1,048,576 rows × 16,384 cols — the
- *   same values as `EvalConfig::default().max_sheet_rows/max_sheet_cols`).
- *   A generated array larger than a sheet can never spill successfully
- *   (`SpillBoundsPolicy::Strict`), so it is `#NUM!` unconditionally.
- * - Total cells: 2^24 (16,777,216). `LiteralValue` is ≥32 bytes, so this
- *   already bounds the transient allocation near ~0.5 GiB — three orders
- *   of magnitude above the engine's default spill cap
- *   (`SpillConfig::max_spill_cells` = 10,000) which would reject the
- *   result downstream anyway. Anything larger risks OOM before that
- *   downstream guard can run.
- */
-const GENERATED_ARRAY_MAX_ROWS: i64 = 1_048_576;
-const GENERATED_ARRAY_MAX_COLS: i64 = 16_384;
-
-const GENERATED_ARRAY_MAX_CELLS: i64 = 1 << 24;
-
-/// Returns `Some(#NUM!)` when a `rows x cols` generated array exceeds the
-/// allocation guard; uses checked arithmetic so overflowing products fail
-/// closed. Callers have already rejected `rows <= 0 || cols <= 0`.
-fn generated_array_too_large(rows: i64, cols: i64) -> Option<ExcelError> {
-    if rows > GENERATED_ARRAY_MAX_ROWS || cols > GENERATED_ARRAY_MAX_COLS {
-        return Some(ExcelError::new(ExcelErrorKind::Num));
-    }
-    match rows.checked_mul(cols) {
-        Some(total) if total <= GENERATED_ARRAY_MAX_CELLS => None,
-        _ => Some(ExcelError::new(ExcelErrorKind::Num)),
-    }
-}
+// Generated-array allocation guard: shared with other materializing builtins;
+// the cap rationale lives next to the definition in `builtins::utils`.
+use super::super::utils::{
+    GENERATED_ARRAY_MAX_COLS, GENERATED_ARRAY_MAX_ROWS, generated_array_too_large,
+};
 
 /// The `(rows, cols)` an XLOOKUP array argument declares.
 ///

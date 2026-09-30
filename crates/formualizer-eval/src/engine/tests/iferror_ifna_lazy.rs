@@ -108,17 +108,15 @@ fn iferror_arity_errors_are_value() {
 
 /* ───────────────────── array/spill semantics pin ─────────────────────
  *
- * IFERROR is whole-value in this engine: when arg0 evaluates to an array
- * (e.g. a broadcast division over ranges), the array passes through as-is —
- * element-wise errors inside the array are NOT replaced by the fallback.
- * The fallback is used only when arg0 itself is a (scalar) error / eval
- * failure. This pin guards that the lazy-dispatch change does not alter the
- * array path. (Laziness applies to the same `args[0].value()` call the eval
- * body already made; arrays were never materialized differently.)
+ * IFERROR is elementwise over arrays: when arg0 evaluates to an array
+ * (e.g. a broadcast division over ranges), each error element is replaced
+ * by the fallback and the remaining elements pass through. The detailed
+ * contract (IFNA, broadcast, laziness, cancellation) is pinned in
+ * `iferror_ifna_elementwise.rs`.
  */
 
 #[test]
-fn iferror_array_arg_passes_array_through_with_elementwise_errors() {
+fn iferror_array_arg_replaces_elementwise_errors() {
     let wb = TestWorkbook::new();
     let mut engine = Engine::new(wb, EvalConfig::default());
     // A1:A3 = 1,2,3 ; B1=1, B2=0 (div error), B3=3
@@ -141,13 +139,11 @@ fn iferror_array_arg_passes_array_through_with_elementwise_errors() {
         engine.get_cell_value("Sheet1", 1, 3),
         Some(LiteralValue::Number(1.0))
     );
-    // Element-wise error inside the array is NOT replaced by the fallback.
-    match engine.get_cell_value("Sheet1", 2, 3) {
-        Some(LiteralValue::Error(e)) => {
-            assert_eq!(e.kind, formualizer_common::ExcelErrorKind::Div)
-        }
-        other => panic!("expected #DIV/0! spilled at C2, got {other:?}"),
-    }
+    // The element-wise #DIV/0! is replaced by the fallback.
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 2, 3),
+        Some(LiteralValue::Number(0.0))
+    );
     assert_eq!(
         engine.get_cell_value("Sheet1", 3, 3),
         Some(LiteralValue::Number(1.0))

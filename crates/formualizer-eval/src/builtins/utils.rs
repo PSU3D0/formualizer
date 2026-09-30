@@ -75,6 +75,123 @@ fn calc_from_literal<'b>(
     }
 }
 
+/* ─────────────────── generated-array allocation guard ───────────────────
+ *
+ * Builtins that materialize a whole array result as `Vec<Vec<LiteralValue>>`
+ * before the engine ever sees it (generators such as SEQUENCE/RANDARRAY, and
+ * elementwise selections such as IFERROR/IFNA) must bound the output shape
+ * BEFORE allocating: `=SEQUENCE(1e6,1e6)` would otherwise attempt a
+ * 10^12-cell allocation.
+ *
+ * Cap rationale:
+ * - Per-dimension: Excel sheet limits (1,048,576 rows × 16,384 cols — the
+ *   same values as `EvalConfig::default().max_sheet_rows/max_sheet_cols`).
+ *   A generated array larger than a sheet can never spill successfully
+ *   (`SpillBoundsPolicy::Strict`), so it is `#NUM!` unconditionally.
+ * - Total cells: 2^24 (16,777,216). `LiteralValue` is ≥32 bytes, so this
+ *   already bounds the transient allocation near ~0.5 GiB — three orders
+ *   of magnitude above the engine's default spill cap
+ *   (`SpillConfig::max_spill_cells` = 10,000) which would reject the
+ *   result downstream anyway. Anything larger risks OOM before that
+ *   downstream guard can run.
+ *
+ * This is a fixed per-array bound, not configured resource accounting: it
+ * does not charge the evaluation ledger or observe `EvaluationBudgets`.
+ */
+pub(crate) const GENERATED_ARRAY_MAX_ROWS: i64 = 1_048_576;
+pub(crate) const GENERATED_ARRAY_MAX_COLS: i64 = 16_384;
+pub(crate) const GENERATED_ARRAY_MAX_CELLS: i64 = 1 << 24;
+
+/// Returns `Some(#NUM!)` when a `rows x cols` generated array exceeds the
+/// allocation guard; uses checked arithmetic so overflowing products fail
+/// closed. Callers have already rejected `rows <= 0 || cols <= 0`.
+pub(crate) fn generated_array_too_large(rows: i64, cols: i64) -> Option<ExcelError> {
+    if rows > GENERATED_ARRAY_MAX_ROWS || cols > GENERATED_ARRAY_MAX_COLS {
+        return Some(ExcelError::new(formualizer_common::ExcelErrorKind::Num));
+    }
+    match rows.checked_mul(cols) {
+        Some(total) if total <= GENERATED_ARRAY_MAX_CELLS => None,
+        _ => Some(ExcelError::new(formualizer_common::ExcelErrorKind::Num)),
+    }
+}
+
+/// [`generated_array_too_large`] for an already-computed output shape.
+/// Dimensions that do not fit `i64` fail closed.
+pub(crate) fn materialized_shape_too_large(shape: (usize, usize)) -> Option<ExcelError> {
+    match (i64::try_from(shape.0), i64::try_from(shape.1)) {
+        (Ok(rows), Ok(cols)) => generated_array_too_large(rows, cols),
+        _ => Some(ExcelError::new(formualizer_common::ExcelErrorKind::Num)),
+    }
+}
+
+/// Number of visited cells between cancellation polls in eager array walks.
+pub(crate) const CANCEL_POLL_CELLS: usize = 4096;
+
+/// Cell-count based cancellation polling for eager walks over arrays that
+/// are not driven by a [`RangeView`](crate::engine::range_view::RangeView)
+/// segment iterator. The first [`Self::advance`] always polls, so a
+/// cancellation raised before a walk starts is observed even for tiny or
+/// single-row inputs; later polls happen every [`CANCEL_POLL_CELLS`] cells,
+/// so one very wide row is still interrupted mid-row.
+pub(crate) struct CancelPoll<'p> {
+    is_cancelled: &'p dyn Fn() -> bool,
+    since_poll: usize,
+}
+
+impl<'p> CancelPoll<'p> {
+    pub(crate) fn new(is_cancelled: &'p dyn Fn() -> bool) -> Self {
+        Self {
+            is_cancelled,
+            since_poll: CANCEL_POLL_CELLS,
+        }
+    }
+
+    /// Records `cells` of work, polling first when the stride is reached.
+    #[inline]
+    pub(crate) fn advance(&mut self, cells: usize) -> Result<(), ExcelError> {
+        if self.since_poll >= CANCEL_POLL_CELLS {
+            self.since_poll = 0;
+            if (self.is_cancelled)() {
+                return Err(ExcelError::new(
+                    formualizer_common::ExcelErrorKind::Cancelled,
+                ));
+            }
+        }
+        self.since_poll = self.since_poll.saturating_add(cells);
+        Ok(())
+    }
+}
+
+/// A 2D argument for elementwise builtins: a view, an owned array, or a
+/// scalar that broadcasts over any shape. Out-of-bounds reads are `Empty`.
+pub(crate) enum Grid<'b> {
+    Range(crate::engine::range_view::RangeView<'b>),
+    Array(Vec<Vec<LiteralValue>>),
+    Scalar(LiteralValue),
+}
+
+impl<'b> Grid<'b> {
+    pub(crate) fn shape(&self) -> (usize, usize) {
+        match self {
+            Grid::Range(rv) => rv.dims(),
+            Grid::Array(arr) => (arr.len(), arr.first().map(|r| r.len()).unwrap_or(0)),
+            Grid::Scalar(_) => (1, 1),
+        }
+    }
+
+    pub(crate) fn get(&self, r: usize, c: usize) -> LiteralValue {
+        match self {
+            Grid::Range(rv) => rv.get_cell(r, c),
+            Grid::Array(arr) => arr
+                .get(r)
+                .and_then(|row| row.get(c))
+                .cloned()
+                .unwrap_or(LiteralValue::Empty),
+            Grid::Scalar(v) => v.clone(),
+        }
+    }
+}
+
 pub fn unary_numeric_elementwise<'a, 'b, F>(
     args: &'a [crate::traits::ArgumentHandle<'a, 'b>],
     ctx: &dyn crate::traits::FunctionContext<'b>,
@@ -177,34 +294,6 @@ where
     }
 
     use crate::broadcast::{broadcast_shape, project_index};
-
-    enum Grid<'b> {
-        Range(crate::engine::range_view::RangeView<'b>),
-        Array(Vec<Vec<LiteralValue>>),
-        Scalar(LiteralValue),
-    }
-
-    impl<'b> Grid<'b> {
-        fn shape(&self) -> (usize, usize) {
-            match self {
-                Grid::Range(rv) => rv.dims(),
-                Grid::Array(arr) => (arr.len(), arr.first().map(|r| r.len()).unwrap_or(0)),
-                Grid::Scalar(_) => (1, 1),
-            }
-        }
-
-        fn get(&self, r: usize, c: usize) -> LiteralValue {
-            match self {
-                Grid::Range(rv) => rv.get_cell(r, c),
-                Grid::Array(arr) => arr
-                    .get(r)
-                    .and_then(|row| row.get(c))
-                    .cloned()
-                    .unwrap_or(LiteralValue::Empty),
-                Grid::Scalar(v) => v.clone(),
-            }
-        }
-    }
 
     fn to_grid<'a, 'b>(ah: &crate::traits::ArgumentHandle<'a, 'b>) -> Result<Grid<'b>, ExcelError> {
         if let Ok(rv) = ah.range_view() {
