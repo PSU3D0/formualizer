@@ -2,6 +2,28 @@
 
 All notable changes to Formualizer will be documented in this file.
 
+## [0.10.1] - 2026-09-30
+
+### Fixed
+
+- Corrected cumulative interest and principal allocation in `CUMIPMT` and `CUMPRINC`. #498
+- Corrected `CHISQ.TEST` degrees of freedom for rectangular tables and one-dimensional inputs. #498
+- Rejected ragged array literals at parse time instead of accepting inconsistent row widths. #498
+- Returned catchable `#NUM!` errors for `POWER` and `EXP` overflow. #498
+- Honored tilde-escaped wildcards in criteria functions and `SEARCH`. #498
+- Recalculated spill readers and their dependents when a spill committed earlier in the same evaluation pass, rather than leaving stale results. #498
+- Applied `IFERROR` and `IFNA` elementwise to arrays and ranges, including annotated arrays, with singleton-axis broadcasting. Clean inputs leave the fallback unevaluated; matching errors evaluate it at most once. Generated results respect the array-size cap, and cancellation and resource-limit failures propagate instead of selecting a fallback.
+- Checked range-result spill limits before materializing cells, without limiting intermediate ranges used by reductions.
+- Preserved retryable work when live cancellation occurred during the final evaluation unit: the request now returns cancellation without committing or cleaning that unit.
+
+### Validation
+
+- Added permanent correctness-oracled benchmark scenarios for error guards and excluded expected wrong answers from timing comparisons. Performance acceptance remains pending; no new quantitative performance claim is made here.
+
+### Versions
+
+- Prepared product crates and Python/npm packages at `0.10.1`, with `formualizer-common` and `formualizer-parse` at `3.1.4` for the parser fix. `sheetport-spec` remains `0.3.1`; CFFI and benchmark-core remain `0.1.0`.
+
 ## [0.10.0] - 2026-09-29
 
 **Formualizer 0.10 is a new engine under the same API.** In 0.9.3, every formula cell had its own parse tree, its own graph vertex and its own edge list, and was evaluated one cell at a time. That is gone. When you fill a formula down a column, the whole run is now one unit: one dependency node, one shared template, and one evaluation that reads its inputs as typed Arrow columns and writes its results back as a block. Lookups and conditional aggregates over a fixed table index that table once, not once per cell. Cells that only hold values no longer cost a graph vertex at all.
