@@ -126,6 +126,44 @@ mod tests {
     }
 
     #[test]
+    fn wildcard_escapes_token_boundaries_and_bounded_backtracking() {
+        for (pattern, text, expected) in [
+            ("a~*", "a*", true),
+            ("a~*", "a*x", false),
+            ("a~?", "a?", true),
+            ("a~~", "a~", true),
+            ("a~~*", "a~tail", true),
+            ("a~~~*", "a~*", true),
+            ("~~~~", "~~", true),
+            ("~x", "~x", true),
+            ("a~", "a~", true),
+            ("*~**~?", "xx*yy?", true),
+            ("*~**~?", "xx*yy?z", false),
+            ("a*b?c*d?", "axabQcdZ", true),
+            ("a*b?c*d?", "axabQcd", false),
+            (".[+](x)^$", ".[+](x)^$", true),
+            (".[+](x)^$", "ax", false),
+        ] {
+            assert_eq!(
+                criteria_match(&create_text_like(pattern), &LiteralValue::Text(text.into())),
+                expected,
+                "{pattern} / {text}"
+            );
+        }
+        // Former recursive implementations branch exponentially or exhaust the stack.
+        let stars = "*".repeat(20_000);
+        assert!(criteria_match(
+            &create_text_like(&stars),
+            &LiteralValue::Text("x".into())
+        ));
+        let branching = format!("{}b", "*a".repeat(64));
+        assert!(!criteria_match(
+            &create_text_like(&branching),
+            &LiteralValue::Text("a".repeat(128))
+        ));
+    }
+
+    #[test]
     fn test_numeric_coercion() {
         let pred = create_text_like("123*");
 

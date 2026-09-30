@@ -828,13 +828,13 @@
     },
     {
       "formula": "=CUMIPMT(0.005, 360, 100000, 1, 12, 0)",
-      "result": 5643.128361015309,
+      "result": -5966.594589556309,
       "result_type": "float",
       "description": "cumipmt first year of mortgage"
     },
     {
       "formula": "=CUMPRINC(0.005, 360, 100000, 1, 12, 0)",
-      "result": -12837.734662848414,
+      "result": -1228.011712276774,
       "result_type": "float",
       "description": "cumprinc first year of mortgage"
     },

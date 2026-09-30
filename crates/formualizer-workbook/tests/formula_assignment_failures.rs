@@ -43,6 +43,75 @@ fn rejected_existing_formula_assignment_reports_error_without_history_or_value_c
 }
 
 #[test]
+fn malformed_array_assignment_preserves_source_spill_history_and_admission() {
+    for logged in [false, true] {
+        for deferred in [false, true] {
+            let mut wb = workbook(logged, deferred);
+            wb.set_formula("S", 1, 1, "={1,2;3,4}").unwrap();
+            wb.evaluate_all().unwrap();
+            let source = wb.get_formula("S", 1, 1);
+            let events = wb.changelog().events().len();
+            for formula in ["={1,2;3}", "={1;2,3}", "=SUM({1,2;3})", "={1;;2}"] {
+                let error = wb.set_formula("S", 1, 1, formula).unwrap_err();
+                assert!(error.to_string().contains("parser"), "{error}");
+                assert_eq!(wb.get_formula("S", 1, 1), source);
+                assert_eq!(wb.get_value("S", 2, 2), Some(LiteralValue::Number(4.0)));
+                assert_eq!(wb.changelog().events().len(), events);
+                if !deferred {
+                    assert!(wb.set_formula("S", 5, 5, formula).is_err());
+                    assert_eq!(wb.get_formula("S", 5, 5), None);
+                    assert_eq!(wb.changelog().events().len(), events);
+                }
+            }
+            wb.set_formula("S", 1, 1, "={5,6;7,8}").unwrap();
+            wb.evaluate_all().unwrap();
+            assert_eq!(wb.get_value("S", 2, 2), Some(LiteralValue::Number(8.0)));
+            if logged {
+                wb.undo().unwrap();
+                assert_eq!(wb.get_formula("S", 1, 1), source);
+                wb.evaluate_all().unwrap();
+                assert_eq!(wb.get_value("S", 2, 2), Some(LiteralValue::Number(4.0)));
+            }
+        }
+    }
+    // Parse rejection must not be reclassified as a resource admission error.
+    let mut cfg = WorkbookConfig::interactive();
+    cfg.eval.defer_graph_building = false;
+    cfg.eval.evaluation_budgets.admission.graph_edge_hard_limit = Some(0);
+    let mut wb = Workbook::new_with_config(cfg);
+    wb.add_sheet("S").unwrap();
+    let error = wb.set_formula("S", 1, 1, "={1,2;3}").unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("Array rows must have equal length")
+    );
+    wb.set_formula("S", 1, 1, "=7").unwrap();
+    assert_eq!(
+        wb.evaluate_cell("S", 1, 1).unwrap(),
+        LiteralValue::Number(7.0)
+    );
+}
+
+#[test]
+fn deferred_new_ragged_array_uses_existing_parse_policy_without_panicking() {
+    for logged in [false, true] {
+        let mut wb = workbook(logged, true);
+        wb.set_formula("S", 5, 5, "={1,2;3}").unwrap();
+        assert_eq!(wb.get_formula("S", 5, 5).as_deref(), Some("={1,2;3}"));
+        let events = wb.changelog().events().len();
+        let LiteralValue::Error(error) = wb.evaluate_cell("S", 5, 5).unwrap() else {
+            panic!("ragged staged formula must evaluate to a controlled error");
+        };
+        assert_eq!(error.kind, formualizer_common::ExcelErrorKind::Error);
+        assert_eq!(wb.changelog().events().len(), events);
+        wb.set_formula("S", 5, 5, "={1,2;3,4}").unwrap();
+        wb.evaluate_all().unwrap();
+        assert_eq!(wb.get_value("S", 6, 6), Some(LiteralValue::Number(4.0)));
+    }
+}
+
+#[test]
 fn rejected_new_graph_assignment_leaves_no_formula_or_history() {
     for logged in [false, true] {
         let mut wb = workbook(logged, false);

@@ -30,6 +30,7 @@ mod layer_evaluation;
 mod load_fast_mappings;
 mod perf_ranges;
 mod perf_tranche;
+mod wildcard_escapes;
 //mod mark_dirty_benchmarks;
 mod mark_dirty_multi_source;
 mod mixed_target_coordinator;
@@ -89,6 +90,7 @@ mod spill_basic;
 mod spill_config_defaults;
 mod spill_edges;
 mod spill_parallel_501;
+mod spill_reader_invalidation_192;
 mod spill_semantics_101;
 
 mod date_arithmetic_ops;

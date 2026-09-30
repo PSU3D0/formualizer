@@ -1,5 +1,9 @@
 //! Time Value of Money functions: PMT, PV, FV, NPV, NPER, RATE, IPMT, PPMT, XNPV, XIRR, DOLLARDE, DOLLARFR
 
+#[cfg(test)]
+#[path = "tvm_tests.rs"]
+mod tests;
+
 use crate::args::ArgSchema;
 use crate::coercion::to_serial_strict;
 use crate::function::Function;
@@ -1614,17 +1618,17 @@ impl Function for MirrFn {
 /// - `rate` is the interest rate per payment period.
 /// - `start_period` and `end_period` are 1-based, inclusive integer periods.
 /// - `type` must be `0` (end-of-period) or `1` (beginning-of-period).
-/// - Sign convention follows this implementation's balance model; with positive `pv`, cumulative interest is typically positive.
+/// - With positive `pv`, cumulative interest is a negative cash outflow.
 /// - Returns `#NUM!` for invalid domain values (non-positive rate, invalid ranges, invalid type, or non-positive `pv`).
 ///
 /// # Examples
 /// ```yaml,sandbox
 /// formula: =CUMIPMT(0.06/12, 360, 300000, 1, 12, 0)
-/// result: 16929.385083045923
+/// result: -17899.783768668927
 /// ```
 /// ```yaml,sandbox
 /// formula: =CUMIPMT(0.06/12, 360, 300000, 13, 24, 0)
-/// result: 14681.09233746059
+/// result: -17672.560542597304
 /// ```
 /// ```yaml,docs
 /// related:
@@ -1695,12 +1699,11 @@ impl Function for CumipmtFn {
             ));
         }
 
-        // Calculate PMT
-        let pmt = if rate == 0.0 {
-            -pv / nper as f64
-        } else {
-            -pv * rate * (1.0 + rate).powi(nper) / ((1.0 + rate).powi(nper) - 1.0)
-        };
+        // Negative payment cash flow; annuity-due payments are discounted
+        // by one period because the first payment occurs immediately.
+        let factor = (1.0 + rate).powi(nper);
+        let type_adj = if pay_type == 1 { 1.0 + rate } else { 1.0 };
+        let pmt = -pv * rate * factor / ((factor - 1.0) * type_adj);
 
         // Sum interest payments from start to end
         let mut cum_int = 0.0;
@@ -1710,7 +1713,7 @@ impl Function for CumipmtFn {
             let interest = if pay_type == 1 && period == 1 {
                 0.0
             } else {
-                balance * rate
+                -balance * rate
             };
 
             if period >= start {
@@ -1739,11 +1742,11 @@ impl Function for CumipmtFn {
 /// # Examples
 /// ```yaml,sandbox
 /// formula: =CUMPRINC(0.06/12, 360, 300000, 1, 12, 0)
-/// result: -38513.20398854517
+/// result: -3684.0351368303236
 /// ```
 /// ```yaml,sandbox
 /// formula: =CUMPRINC(0.06/12, 360, 300000, 13, 24, 0)
-/// result: -36264.91124295984
+/// result: -3911.2583629019473
 /// ```
 /// ```yaml,docs
 /// related:
@@ -1814,12 +1817,11 @@ impl Function for CumprincFn {
             ));
         }
 
-        // Calculate PMT
-        let pmt = if rate == 0.0 {
-            -pv / nper as f64
-        } else {
-            -pv * rate * (1.0 + rate).powi(nper) / ((1.0 + rate).powi(nper) - 1.0)
-        };
+        // Negative payment cash flow; annuity-due payments are discounted
+        // by one period because the first payment occurs immediately.
+        let factor = (1.0 + rate).powi(nper);
+        let type_adj = if pay_type == 1 { 1.0 + rate } else { 1.0 };
+        let pmt = -pv * rate * factor / ((factor - 1.0) * type_adj);
 
         // Sum principal payments from start to end
         let mut cum_princ = 0.0;
@@ -1829,7 +1831,7 @@ impl Function for CumprincFn {
             let interest = if pay_type == 1 && period == 1 {
                 0.0
             } else {
-                balance * rate
+                -balance * rate
             };
 
             let principal = pmt - interest;

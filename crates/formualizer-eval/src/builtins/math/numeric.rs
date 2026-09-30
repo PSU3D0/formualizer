@@ -1480,8 +1480,16 @@ impl Function for PowerFn {
                 ExcelError::new_num(),
             )));
         }
+        let result = base.powf(expv);
+        // Only guard overflow from finite builtin inputs. Programmatic
+        // non-finite values have a separate host policy; do not redefine it.
+        if !result.is_finite() && base.is_finite() && expv.is_finite() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
-            base.powf(expv),
+            result,
         )))
     }
 }
@@ -1494,7 +1502,7 @@ pub struct ExpFn; // EXP(number)
 ///
 /// # Remarks
 /// - Computes `e^x` using floating-point math.
-/// - Very large positive inputs may overflow to infinity.
+/// - Finite inputs that overflow floating-point range return `#NUM!`.
 /// - Input errors are propagated.
 ///
 /// # Examples
@@ -1517,7 +1525,7 @@ pub struct ExpFn; // EXP(number)
 ///   - LOG10
 /// faq:
 ///   - q: "Can EXP overflow?"
-///     a: "Yes. Very large positive inputs can overflow floating-point range."
+///     a: "Yes. Very large finite positive inputs return #NUM! on overflow."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: EXP
@@ -1551,8 +1559,16 @@ impl Function for ExpFn {
             }
             other => coerce_num(&other)?,
         };
+        let result = n.exp();
+        // Preserve host-provided NaN/infinity policy, but make overflow from
+        // finite inputs catchable before IFERROR or result storage sees it.
+        if !result.is_finite() && n.is_finite() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
-            n.exp(),
+            result,
         )))
     }
 }

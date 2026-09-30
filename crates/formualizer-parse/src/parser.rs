@@ -2972,6 +2972,18 @@ impl Parser {
             }
         }
 
+        // Array evaluation requires a rectangular shape. Reject malformed
+        // literals before returning an AST to assignment or ingestion; never
+        // silently pad missing elements.
+        if let Some(first) = rows.first() {
+            if rows.iter().any(|row| row.len() != first.len()) {
+                return Err(ParserError {
+                    message: "Array rows must have equal length".to_string(),
+                    position: Some(self.position.saturating_sub(1)),
+                });
+            }
+        }
+
         let contains_volatile = rows
             .iter()
             .flat_map(|r| r.iter())
