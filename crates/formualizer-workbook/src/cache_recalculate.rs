@@ -433,9 +433,34 @@ pub fn recalculate_xlsx_bytes(
         .max_formula_spool_bytes_per_workbook
         .min(options.limits.max_expanded_bytes as u64);
     engine.set_workbook_load_limits(load_limits);
+    adapter.validate_calculation_names(&[])?;
+    checkpoint(&options.cancel)?;
     let ingested = adapter.stream_into_engine(&mut engine);
     checkpoint(&options.cancel)?;
     ingested?;
+    if adapter.has_document_names() {
+        // Metadata-only names may be omitted from the engine only if no source
+        // calculation references them. Inspect after shared-formula replay but
+        // before evaluation/publication; avoid this pass for ordinary workbooks.
+        let mut source_formulas = Vec::with_capacity(formula_count);
+        for (sheet, (_, cells)) in sheets.iter().zip(&plans) {
+            for cell in cells {
+                checkpoint(&options.cancel)?;
+                let address = CellAddress::new(&sheet.name, cell.row, cell.col)
+                    .map_err(|e| IoError::from_backend("xlsx-coordinate", e))?;
+                if let Some(formula) = engine
+                    .inspect_cell(&address, &SnapshotOptions::default())
+                    .map_err(|e| IoError::from_backend("xlsx-inspect", e))?
+                    .cell
+                    .formula
+                {
+                    source_formulas.push(formula);
+                }
+            }
+        }
+        adapter.validate_calculation_names(&source_formulas)?;
+    }
+    checkpoint(&options.cancel)?;
     drop(adapter);
     checkpoint(&options.cancel)?;
     if let Some(cancel) = options.cancel.clone() {

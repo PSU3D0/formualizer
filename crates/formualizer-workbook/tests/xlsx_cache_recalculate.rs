@@ -59,6 +59,176 @@ fn reject(parts: &BTreeMap<String, String>) {
     assert!(recalculate_xlsx_bytes(&pack(parts), XlsxRecalculateOptions::default()).is_err());
 }
 #[test]
+fn defined_constant_is_calculated_not_published_as_name_error() {
+    let mut p = single("Rate*2", "<v>99</v>");
+    let workbook = p.get_mut("xl/workbook.xml").unwrap();
+    *workbook = workbook.replace(
+        "</workbook>",
+        "<definedNames><definedName name=\"Rate\">0.07</definedName></definedNames></workbook>",
+    );
+    let out = recalculate_xlsx_bytes(&pack(&p), Default::default()).unwrap();
+    assert_eq!(data(&out.bytes, 0), Data::Float(0.14));
+    assert_eq!(member(&out.bytes, "xl/workbook.xml"), p["xl/workbook.xml"]);
+    assert_eq!(out.summary.errors, 0);
+    assert_eq!(
+        recalculate_xlsx_bytes(&out.bytes, Default::default())
+            .unwrap()
+            .bytes,
+        out.bytes
+    );
+}
+fn with_names(mut p: BTreeMap<String, String>, names: &str) -> BTreeMap<String, String> {
+    let workbook = p.get_mut("xl/workbook.xml").unwrap();
+    *workbook = workbook.replace(
+        "</workbook>",
+        &format!("<definedNames>{names}</definedNames></workbook>"),
+    );
+    p
+}
+
+#[test]
+fn grounded_formula_names_and_transitive_dependencies() {
+    let p = with_names(
+        parts(
+            "<row r=\"1\"><c r=\"A1\"><v>3</v></c></row><row r=\"2\"><c r=\"A2\"><f>Answer</f><v>99</v></c></row>",
+        ),
+        "<definedName name=\"Answer\">DoubleBase</definedName><definedName name=\"DoubleBase\">SUM(Sheet1!$A$1,Sheet1!$A$1)</definedName>",
+    );
+    let out = recalculate_xlsx_bytes(&pack(&p), Default::default()).unwrap();
+    assert_eq!(data(&out.bytes, 1), Data::Float(6.0));
+    assert_eq!(data(&out.bytes, 0), Data::Float(3.0));
+    assert_eq!(member(&out.bytes, "xl/workbook.xml"), p["xl/workbook.xml"]);
+    assert_eq!(
+        recalculate_xlsx_bytes(&out.bytes, Default::default())
+            .unwrap()
+            .bytes,
+        out.bytes
+    );
+}
+
+#[test]
+fn original_cross_sheet_formula_name_and_reference_control() {
+    for (definition, formula) in [("Base!$A$1*2", "DoubleBase"), ("Base!$A$1", "DoubleBase*2")] {
+        let mut p = with_names(
+            single(formula, "<v>99</v>"),
+            &format!("<definedName name=\"DoubleBase\">{definition}</definedName>"),
+        );
+        let workbook = p.get_mut("xl/workbook.xml").unwrap();
+        *workbook = workbook.replace(
+            "</sheets>",
+            "<sheet name=\"Base\" sheetId=\"2\" r:id=\"rId2\"/></sheets>",
+        );
+        let relationships = p.get_mut("xl/_rels/workbook.xml.rels").unwrap();
+        *relationships = relationships.replace("</Relationships>", &format!("<Relationship Id=\"rId2\" Type=\"{OFFICE}/worksheet\" Target=\"worksheets/sheet2.xml\"/></Relationships>"));
+        let types = p.get_mut("[Content_Types].xml").unwrap();
+        *types = types.replace("</Types>", "<Override PartName=\"/xl/worksheets/sheet2.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/></Types>");
+        p.insert("xl/worksheets/sheet2.xml".into(), format!("<worksheet xmlns=\"{MAIN}\"><sheetData><row r=\"1\"><c r=\"A1\"><v>3</v></c></row></sheetData></worksheet>"));
+        let out = recalculate_xlsx_bytes(&pack(&p), Default::default()).unwrap();
+        assert_eq!(data(&out.bytes, 0), Data::Float(6.0));
+        assert_eq!(
+            member(&out.bytes, "xl/worksheets/sheet2.xml"),
+            p["xl/worksheets/sheet2.xml"]
+        );
+        assert_eq!(out.summary.errors, 0);
+    }
+}
+
+#[test]
+fn calculation_name_literal_types_and_legitimate_error() {
+    for (definition, expected) in [
+        ("TRUE", Data::Bool(true)),
+        ("FALSE", Data::Bool(false)),
+        ("&quot;a &amp; b&quot;", Data::String("a & b".into())),
+        ("#N/A", Data::Error(calamine::CellErrorType::NA)),
+        ("#DIV/0!", Data::Error(calamine::CellErrorType::Div0)),
+        ("#VALUE!", Data::Error(calamine::CellErrorType::Value)),
+        ("#REF!", Data::Error(calamine::CellErrorType::Ref)),
+        ("#NUM!", Data::Error(calamine::CellErrorType::Num)),
+        ("#NULL!", Data::Error(calamine::CellErrorType::Null)),
+        ("#NAME?", Data::Error(calamine::CellErrorType::Name)),
+        ("-0.07", Data::Float(-0.07)),
+    ] {
+        let p = with_names(
+            single("ValueName", "<v>99</v>"),
+            &format!("<definedName name=\"ValueName\">{definition}</definedName>"),
+        );
+        let out = recalculate_xlsx_bytes(&pack(&p), Default::default()).unwrap();
+        assert_eq!(data(&out.bytes, 0), expected, "{definition}");
+        assert_eq!(member(&out.bytes, "xl/workbook.xml"), p["xl/workbook.xml"]);
+    }
+}
+
+#[test]
+fn calculation_name_local_shadowing_and_local_formula_base() {
+    let p = with_names(
+        parts(
+            "<row r=\"1\"><c r=\"A1\"><v>3</v></c></row><row r=\"2\"><c r=\"A2\"><f>ResultName</f><v>99</v></c></row>",
+        ),
+        "<definedName name=\"Rate\">10</definedName><definedName name=\"Rate\" localSheetId=\"0\">2</definedName><definedName name=\"ResultName\" localSheetId=\"0\">$A$1*Rate</definedName>",
+    );
+    let out = recalculate_xlsx_bytes(&pack(&p), Default::default()).unwrap();
+    assert_eq!(data(&out.bytes, 1), Data::Float(6.0));
+}
+
+#[test]
+fn unsupported_and_cyclic_calculation_names_refuse_publication() {
+    for names in [
+        "<definedName name=\"ResultName\">Sheet1!$A$1,Sheet1!$B$1</definedName>",
+        "<definedName name=\"ResultName\">Sheet1!A1</definedName>",
+        "<definedName name=\"ResultName\">$A$1*2</definedName>",
+        "<definedName name=\"ResultName\">Sheet1!A1*2</definedName>",
+        "<definedName name=\"ResultName\">INDIRECT(&quot;A1&quot;)</definedName>",
+        "<definedName name=\"ResultName\">ROW()</definedName>",
+        "<definedName name=\"ResultName\">{1,2}</definedName>",
+        "<definedName name=\"ResultName\">[other.xlsx]Sheet1!$A$1</definedName>",
+        "<definedName name=\"ResultName\">ResultName</definedName>",
+        "<definedName name=\"ResultName\">OtherName</definedName><definedName name=\"OtherName\">ResultName</definedName>",
+    ] {
+        let p = with_names(single("ResultName", "<v>99</v>"), names);
+        let input = pack(&p);
+        assert!(
+            matches!(
+                recalculate_xlsx_bytes(&input, Default::default()),
+                Err(formualizer_workbook::IoError::Unsupported { .. })
+            ),
+            "{names}"
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.xlsx");
+        let destination = dir.path().join("output.xlsx");
+        std::fs::write(&source, &input).unwrap();
+        std::fs::write(&destination, b"keep original destination").unwrap();
+        assert!(
+            formualizer_workbook::recalculate_xlsx_file(
+                &source,
+                Some(&destination),
+                Default::default()
+            )
+            .is_err()
+        );
+        assert_eq!(std::fs::read(&source).unwrap(), input);
+        assert_eq!(
+            std::fs::read(&destination).unwrap(),
+            b"keep original destination"
+        );
+    }
+}
+
+#[test]
+fn print_filter_metadata_is_preserved_but_referenced_unsupported_name_refuses() {
+    let names = "<definedName name=\"_xlnm.Print_Area\" localSheetId=\"0\">Sheet1!$A$1,Sheet1!$B$1</definedName><definedName name=\"_xlnm._FilterDatabase\" localSheetId=\"0\" hidden=\"1\">Sheet1!$A$1:$B$2</definedName>";
+    let p = with_names(single("1+1", "<v>99</v>"), names);
+    let out = recalculate_xlsx_bytes(&pack(&p), Default::default()).unwrap();
+    assert_eq!(data(&out.bytes, 0), Data::Float(2.0));
+    assert_eq!(member(&out.bytes, "xl/workbook.xml"), p["xl/workbook.xml"]);
+    let p = with_names(single("SUM(_xlnm.Print_Area)", "<v>99</v>"), names);
+    assert!(matches!(
+        recalculate_xlsx_bytes(&pack(&p), Default::default()),
+        Err(formualizer_workbook::IoError::Unsupported { .. })
+    ));
+}
+
+#[test]
 fn stale_cache_and_untouched_members_and_metadata() {
     let input = fixture("1+1", "99");
     let out = recalculate_xlsx_bytes(&input, XlsxRecalculateOptions::default()).unwrap();

@@ -35,6 +35,80 @@ def fixture_xlsx(*, formula: bool = True) -> bytes:
     return out.getvalue()
 
 
+def calculation_name_fixture(definitions: str, formula: str) -> bytes:
+    out = BytesIO()
+    with (
+        ZipFile(BytesIO(fixture_xlsx())) as source,
+        ZipFile(out, "w", ZIP_DEFLATED) as target,
+    ):
+        for name in source.namelist():
+            body = source.read(name).decode()
+            if name == "xl/workbook.xml":
+                body = body.replace(
+                    "</workbook>",
+                    f"<definedNames>{definitions}</definedNames></workbook>",
+                )
+            elif name == "xl/worksheets/sheet1.xml":
+                body = body.replace("A1+B1", formula)
+            target.writestr(name, body)
+    return out.getvalue()
+
+
+@pytest.mark.parametrize(
+    "definition,formula,expected,kind",
+    [
+        ("0.07", "Rate*2", "0.14", None),
+        ("Sheet1!$A$1*2", "Rate", "2", None),
+        ("TRUE", "Rate", "1", "b"),
+        ("&quot;original text&quot;", "Rate", "original text", "str"),
+        ("#N/A", "Rate", "#N/A", "e"),
+    ],
+)
+def test_calculation_names_preserve_metadata_and_typed_results(
+    tmp_path, definition, formula, expected, kind
+):
+    payload = calculation_name_fixture(
+        f'<definedName name="Rate">{definition}</definedName>', formula
+    )
+    result = fz.recalculate_xlsx_bytes(payload)
+    ns = {"s": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+    cell = ET.fromstring(worksheet_xml(result["bytes"])).find('.//s:c[@r="C1"]', ns)
+    assert cell.get("t") == kind
+    assert cell.findtext("s:v", namespaces=ns) == expected
+    with (
+        ZipFile(BytesIO(payload)) as before,
+        ZipFile(BytesIO(result["bytes"])) as after,
+    ):
+        assert before.read("xl/workbook.xml") == after.read("xl/workbook.xml")
+    assert fz.recalculate_xlsx_bytes(result["bytes"])["bytes"] == result["bytes"]
+    source, destination = tmp_path / "source.xlsx", tmp_path / "out.xlsx"
+    source.write_bytes(payload)
+    fz.recalculate_xlsx_file(str(source), output=str(destination))
+    assert source.read_bytes() == payload
+    assert destination.read_bytes() == result["bytes"]
+
+
+@pytest.mark.parametrize(
+    "definitions",
+    [
+        '<definedName name="Rate">Sheet1!$A$1,Sheet1!$B$1</definedName>',
+        '<definedName name="Rate">Sheet1!A1*2</definedName>',
+        '<definedName name="Rate">Rate</definedName>',
+    ],
+)
+def test_unsupported_calculation_names_do_not_publish(tmp_path, definitions):
+    payload = calculation_name_fixture(definitions, "Rate*2")
+    with pytest.raises(OSError, match="recalculate XLSX failed"):
+        fz.recalculate_xlsx_bytes(payload)
+    source, destination = tmp_path / "source.xlsx", tmp_path / "out.xlsx"
+    source.write_bytes(payload)
+    destination.write_bytes(b"keep destination")
+    with pytest.raises(OSError, match="recalculate XLSX failed"):
+        fz.recalculate_xlsx_file(str(source), output=str(destination))
+    assert source.read_bytes() == payload
+    assert destination.read_bytes() == b"keep destination"
+
+
 def worksheet_xml(payload: bytes) -> str:
     with ZipFile(BytesIO(payload)) as archive:
         return archive.read("xl/worksheets/sheet1.xml").decode()
