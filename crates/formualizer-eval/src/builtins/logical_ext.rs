@@ -1,9 +1,16 @@
-use super::utils::ARG_ANY_ONE;
+use super::utils::{
+    ARG_ANY_ONE, CANCEL_POLL_CELLS, CancelPoll, Grid, materialized_shape_too_large,
+};
 use crate::args::ArgSchema;
+use crate::arrow_store::map_error_code;
+use crate::broadcast::{broadcast_shape, project_index};
+use crate::engine::CancelToken;
+use crate::engine::range_view::RangeView;
 use crate::function::{Function, FunctionResolution, resolution_to_reference};
 use crate::function_contract::FunctionDependencyContract;
-use crate::traits::{ArgumentHandle, FunctionContext};
-use formualizer_common::{ExcelError, LiteralValue};
+use crate::traits::{ArgumentHandle, CalcValue, FunctionContext};
+use arrow_array::Array as _;
+use formualizer_common::{ExcelError, ExcelErrorExtra, ExcelErrorKind, LiteralValue};
 use formualizer_macros::func_caps;
 
 /* Additional logical & error-handling functions: NOT, XOR, IFERROR, IFNA, IFS */
@@ -253,7 +260,20 @@ pub struct IfErrorFn; // IFERROR(value, fallback)
 /// # Remarks
 /// - Any error kind in the first argument triggers the fallback branch.
 /// - Non-error results pass through unchanged.
-/// - Evaluation failures surfaced as interpreter errors are also caught.
+/// - Evaluation failures surfaced as interpreter errors are also caught, except
+///   cancellation and resource-limit failures, which abort the evaluation
+///   request instead of selecting the fallback.
+/// - When the first argument is an array or range, each error element is
+///   replaced by the matching element of the fallback and other elements pass
+///   through. A scalar fallback applies to every error element; an array
+///   fallback is paired by position using the same broadcast rule as array
+///   operators (a single row or column repeats; other mismatched sizes return
+///   `#VALUE!`). Errors inside the fallback are returned as-is.
+/// - The fallback is evaluated at most once, and only when an error is
+///   present. An array or range with no error elements is returned unchanged,
+///   so a larger array fallback does not change the result's size.
+/// - A replaced array result larger than 16,777,216 cells, or larger than a
+///   sheet in either dimension, returns `#NUM!`.
 /// - Exactly two arguments are required; other arities return `#VALUE!`.
 ///
 /// # Examples
@@ -270,6 +290,16 @@ pub struct IfErrorFn; // IFERROR(value, fallback)
 /// expected: 42
 /// ```
 ///
+/// ```yaml,sandbox
+/// title: "Replace errors element by element"
+/// grid:
+///   A1: 1
+///   A2: 0
+///   A3: 2
+/// formula: '=IFERROR(1/A1:A3, -1)'
+/// expected: [[1],[-1],[0.5]]
+/// ```
+///
 /// ```yaml,docs
 /// related:
 ///   - IFNA
@@ -277,7 +307,9 @@ pub struct IfErrorFn; // IFERROR(value, fallback)
 ///   - ISERROR
 /// faq:
 ///   - q: "Does IFERROR catch all error types?"
-///     a: "An error produced while evaluating the first argument triggers the fallback. Dependency preparation and request-level failures can still abort before the guard runs."
+///     a: "An error produced while evaluating the first argument triggers the fallback. Dependency preparation, cancellation, and resource-limit failures abort the request instead of selecting the fallback."
+///   - q: "How does IFERROR handle arrays?"
+///     a: "Each error element of an array or range is replaced by the corresponding fallback element; clean arrays are returned unchanged without evaluating the fallback."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: IFERROR
@@ -323,18 +355,14 @@ impl Function for IfErrorFn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.len() != 2 {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new_value(),
             )));
         }
-        match args[0].value() {
-            Ok(cv) if matches!(cv.as_scalar(), Some(LiteralValue::Error(_))) => args[1].value(),
-            Ok(cv) => Ok(cv),
-            Err(_) => args[1].value(),
-        }
+        error_guard(args, ctx, ErrorGuard::AnyError)
     }
 }
 
@@ -348,6 +376,11 @@ pub struct IfNaFn; // IFNA(value, fallback)
 /// - Only `#N/A` triggers fallback.
 /// - Other error kinds are returned unchanged.
 /// - Non-error results pass through unchanged.
+/// - When the first argument is an array or range, each `#N/A` element is
+///   replaced by the matching element of the fallback, with the same pairing,
+///   laziness, and size rules as `IFERROR`; other elements, including other
+///   error kinds, pass through.
+/// - Evaluation failures of the first argument are not caught.
 /// - Exactly two arguments are required; other arities return `#VALUE!`.
 ///
 /// # Examples
@@ -371,7 +404,7 @@ pub struct IfNaFn; // IFNA(value, fallback)
 ///   - NA
 /// faq:
 ///   - q: "Which errors does IFNA intercept?"
-///     a: "Only #N/A is intercepted; all other errors pass through unchanged."
+///     a: "Only #N/A is intercepted; all other errors pass through unchanged, including inside arrays."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: IFNA
@@ -412,21 +445,244 @@ impl Function for IfNaFn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.len() != 2 {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new_value(),
             )));
         }
-        let value = args[0].value()?;
-        match value.as_scalar() {
-            Some(LiteralValue::Error(e)) if e.kind == formualizer_common::ExcelErrorKind::Na => {
-                args[1].value()
-            }
-            _ => Ok(value),
+        error_guard(args, ctx, ErrorGuard::NaOnly)
+    }
+}
+
+/* ───────────────────── shared IFERROR / IFNA selection ─────────────────────
+ *
+ * Both guards select, per element of `value`, either the element itself or
+ * the corresponding element of the fallback. They differ only in which error
+ * kinds are replaced and in how an `Err` from evaluating `value` is treated.
+ *
+ * Scalar values keep the historical behaviour exactly. For an array or range
+ * value:
+ * - the value is probed for a matching error (Arrow error lanes for views,
+ *   a direct scan for owned arrays); a clean value is returned untouched and
+ *   the fallback is never evaluated, however large it would be;
+ * - otherwise the fallback is evaluated exactly once and the output shape is
+ *   the operator broadcast of both shapes (`broadcast.rs`: singleton axes
+ *   broadcast, incompatible axes are `#VALUE!`);
+ * - the output is bounded by the shared generated-array cap (`#NUM!`)
+ *   before allocation;
+ * - fallback elements are used as-is, so fallback errors propagate
+ *   positionally.
+ *
+ * Live cancellation and resource failures are request-level outcomes, not
+ * spreadsheet errors: they propagate as `Err` from either argument and from
+ * the scan/copy loops instead of being replaced by the fallback.
+ */
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ErrorGuard {
+    /// IFERROR: every error kind selects the fallback.
+    AnyError,
+    /// IFNA: only `#N/A` selects the fallback.
+    NaOnly,
+}
+
+impl ErrorGuard {
+    #[inline]
+    fn matches_kind(self, kind: ExcelErrorKind) -> bool {
+        match self {
+            ErrorGuard::AnyError => true,
+            ErrorGuard::NaOnly => kind == ExcelErrorKind::Na,
         }
     }
+
+    #[inline]
+    fn matches(self, value: &LiteralValue) -> bool {
+        matches!(value, LiteralValue::Error(e) if self.matches_kind(e.kind))
+    }
+}
+
+/// Failures that describe the evaluation request rather than a cell value.
+fn is_live_fault(error: &ExcelError) -> bool {
+    error.kind == ExcelErrorKind::Cancelled
+        || matches!(error.extra, ExcelErrorExtra::Resource { .. })
+}
+
+fn error_guard<'a, 'b, 'c>(
+    args: &'c [ArgumentHandle<'a, 'b>],
+    ctx: &dyn FunctionContext<'b>,
+    guard: ErrorGuard,
+) -> Result<CalcValue<'b>, ExcelError> {
+    let value = match args[0].value() {
+        Ok(value) => value,
+        Err(error) if is_live_fault(&error) => return Err(error),
+        // IFERROR has always caught evaluation failures of its value; IFNA
+        // has always propagated them.
+        Err(_) if guard == ErrorGuard::AnyError => return args[1].value(),
+        Err(error) => return Err(error),
+    };
+
+    let token = ctx.cancellation_token();
+    let is_cancelled = || token.as_ref().is_some_and(CancelToken::is_cancelled);
+
+    let value_grid = match value {
+        CalcValue::Scalar(LiteralValue::Error(ref e))
+        | CalcValue::AnnotatedScalar(LiteralValue::Error(ref e), _)
+            if guard.matches_kind(e.kind) =>
+        {
+            return args[1].value();
+        }
+        // Host functions may return an annotated array; the annotation is kept
+        // on the clean passthrough and dropped from a rebuilt array, like
+        // every other array result.
+        CalcValue::Scalar(LiteralValue::Array(ref rows))
+        | CalcValue::AnnotatedScalar(LiteralValue::Array(ref rows), _) => {
+            if !array_has_match(rows, guard, &mut CancelPoll::new(&is_cancelled))? {
+                return Ok(value);
+            }
+            let (CalcValue::Scalar(LiteralValue::Array(rows))
+            | CalcValue::AnnotatedScalar(LiteralValue::Array(rows), _)) = value
+            else {
+                unreachable!("matched above");
+            };
+            Grid::Array(rows)
+        }
+        CalcValue::Range(ref view) => {
+            let probe = match &token {
+                Some(token) => view.clone().with_cancel_token(Some(token.clone())),
+                None => view.clone(),
+            };
+            if !view_has_match(&probe, guard, &mut CancelPoll::new(&is_cancelled))? {
+                return Ok(value);
+            }
+            Grid::Range(probe)
+        }
+        other => return Ok(other),
+    };
+
+    let fallback = match args[1].value() {
+        Ok(fallback) => fallback,
+        Err(error) if is_live_fault(&error) => return Err(error),
+        Err(error) => CalcValue::Scalar(LiteralValue::Error(error)),
+    };
+
+    // A single matching element with a single fallback is the scalar case.
+    let fallback_is_single = match &fallback {
+        CalcValue::Scalar(LiteralValue::Array(rows))
+        | CalcValue::AnnotatedScalar(LiteralValue::Array(rows), _) => {
+            rows.len() == 1 && rows.first().is_some_and(|row| row.len() == 1)
+        }
+        CalcValue::Range(view) => view.dims() == (1, 1),
+        _ => true,
+    };
+    if value_grid.shape() == (1, 1) && fallback_is_single {
+        CancelPoll::new(&is_cancelled).advance(1)?;
+        return Ok(fallback);
+    }
+
+    let fallback_grid = match fallback {
+        CalcValue::Range(view) => Grid::Range(view),
+        CalcValue::Scalar(LiteralValue::Array(rows))
+        | CalcValue::AnnotatedScalar(LiteralValue::Array(rows), _) => Grid::Array(rows),
+        other => Grid::Scalar(other.into_literal()),
+    };
+
+    match select_elementwise(
+        &value_grid,
+        &fallback_grid,
+        guard,
+        &mut CancelPoll::new(&is_cancelled),
+    )? {
+        Ok(rows) => Ok(CalcValue::Scalar(LiteralValue::Array(rows))),
+        Err(error) => Ok(CalcValue::Scalar(LiteralValue::Error(error))),
+    }
+}
+
+/// Scans an owned array for an element the guard replaces.
+fn array_has_match(
+    rows: &[Vec<LiteralValue>],
+    guard: ErrorGuard,
+    poll: &mut CancelPoll<'_>,
+) -> Result<bool, ExcelError> {
+    poll.advance(0)?;
+    for row in rows {
+        for cell in row {
+            poll.advance(1)?;
+            if guard.matches(cell) {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+/// Probes a view's overlay-merged Arrow error lanes for an element the guard
+/// replaces, without decoding cells. The view's cancellation token is checked
+/// before each bounded piece is prepared, and `poll` before each is scanned;
+/// a cancelled walk is an `Err`, never a clean result.
+fn view_has_match(
+    view: &RangeView<'_>,
+    guard: ErrorGuard,
+    poll: &mut CancelPoll<'_>,
+) -> Result<bool, ExcelError> {
+    poll.advance(0)?;
+    if view.is_empty() {
+        return Ok(false);
+    }
+    let na_code = map_error_code(ExcelErrorKind::Na);
+    // Pieces are one column by at most CANCEL_POLL_CELLS rows, so neither lane
+    // preparation nor the IFNA scan runs unbounded between polls.
+    view.try_for_each_error_piece(CANCEL_POLL_CELLS, &mut |lane| {
+        poll.advance(lane.len())?;
+        if lane.null_count() == lane.len() {
+            return Ok(false);
+        }
+        Ok(match guard {
+            ErrorGuard::AnyError => true,
+            ErrorGuard::NaOnly => lane.iter().any(|code| code == Some(na_code)),
+        })
+    })
+}
+
+/// Builds the broadcast selection of `value` and `fallback`.
+///
+/// The outer `Result` carries live faults (cancellation); the inner one is a
+/// spreadsheet error result (`#VALUE!` for incompatible shapes, `#NUM!` over
+/// the shared generated-array cap), decided before any output allocation.
+fn select_elementwise(
+    value: &Grid<'_>,
+    fallback: &Grid<'_>,
+    guard: ErrorGuard,
+    poll: &mut CancelPoll<'_>,
+) -> Result<Result<Vec<Vec<LiteralValue>>, ExcelError>, ExcelError> {
+    let value_shape = value.shape();
+    let fallback_shape = fallback.shape();
+    let shape = match broadcast_shape(&[value_shape, fallback_shape]) {
+        Ok(shape) => shape,
+        Err(error) => return Ok(Err(error)),
+    };
+    if let Some(error) = materialized_shape_too_large(shape) {
+        return Ok(Err(error));
+    }
+    poll.advance(0)?;
+    let mut out = Vec::with_capacity(shape.0);
+    for r in 0..shape.0 {
+        let mut row = Vec::with_capacity(shape.1);
+        for c in 0..shape.1 {
+            poll.advance(1)?;
+            let (vr, vc) = project_index((r, c), value_shape);
+            let cell = value.get(vr, vc);
+            row.push(if guard.matches(&cell) {
+                let (fr, fc) = project_index((r, c), fallback_shape);
+                fallback.get(fr, fc)
+            } else {
+                cell
+            });
+        }
+        out.push(row);
+    }
+    Ok(Ok(out))
 }
 
 #[derive(Debug)]
@@ -1206,5 +1462,244 @@ mod tests {
             matches!(switch_value, LiteralValue::Error(ref e) if e.kind == ExcelErrorKind::Na),
             "SWITCH must preserve the expression error, got {switch_value:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod error_guard_tests {
+    use super::*;
+    use std::cell::Cell;
+
+    fn num(n: f64) -> LiteralValue {
+        LiteralValue::Number(n)
+    }
+
+    fn error(kind: ExcelErrorKind) -> LiteralValue {
+        LiteralValue::Error(ExcelError::new(kind))
+    }
+
+    #[test]
+    fn shared_cap_applies_to_output_shape() {
+        assert!(materialized_shape_too_large((4096, 4096)).is_none());
+        assert!(materialized_shape_too_large((4096, 4097)).is_some());
+        assert!(materialized_shape_too_large((1_048_576, 1)).is_none());
+        assert!(materialized_shape_too_large((1_048_577, 1)).is_some());
+        assert!(materialized_shape_too_large((1, 16_385)).is_some());
+        assert!(materialized_shape_too_large((usize::MAX, usize::MAX)).is_some());
+    }
+
+    #[test]
+    fn over_cap_selection_is_num_without_building_output() {
+        // 4097 x 1 against 1 x 4097: rejected from shapes alone, and before
+        // the first cancellation poll (nothing is visited).
+        let polls = Cell::new(0usize);
+        let is_cancelled = || {
+            polls.set(polls.get() + 1);
+            false
+        };
+        let value = Grid::Array(vec![vec![error(ExcelErrorKind::Div)]; 4097]);
+        let fallback = Grid::Array(vec![vec![num(0.0); 4097]]);
+        let result = select_elementwise(
+            &value,
+            &fallback,
+            ErrorGuard::AnyError,
+            &mut CancelPoll::new(&is_cancelled),
+        )
+        .unwrap();
+        assert_eq!(result.unwrap_err().kind, ExcelErrorKind::Num);
+        assert_eq!(polls.get(), 0);
+    }
+
+    #[test]
+    fn incompatible_shapes_are_value_error() {
+        let is_cancelled = || false;
+        let value = Grid::Array(vec![vec![error(ExcelErrorKind::Na); 3]]);
+        let fallback = Grid::Array(vec![vec![num(1.0), num(2.0)]]);
+        let result = select_elementwise(
+            &value,
+            &fallback,
+            ErrorGuard::NaOnly,
+            &mut CancelPoll::new(&is_cancelled),
+        )
+        .unwrap();
+        assert_eq!(result.unwrap_err().kind, ExcelErrorKind::Value);
+    }
+
+    /// Cancellation raised part-way through one wide row is observed inside
+    /// that row, not only at row boundaries.
+    #[test]
+    fn wide_row_copy_is_interrupted_mid_row() {
+        let polls = Cell::new(0usize);
+        let is_cancelled = || {
+            polls.set(polls.get() + 1);
+            polls.get() >= 3
+        };
+        let mut row = vec![num(1.0); 16_384];
+        row[0] = error(ExcelErrorKind::Div);
+        let value = Grid::Array(vec![row]);
+        let result = select_elementwise(
+            &value,
+            &Grid::Scalar(num(0.0)),
+            ErrorGuard::AnyError,
+            &mut CancelPoll::new(&is_cancelled),
+        );
+        assert_eq!(result.unwrap_err().kind, ExcelErrorKind::Cancelled);
+        assert_eq!(polls.get(), 3);
+        // The row spans several poll strides, so poll 3 lands mid-row.
+        const _: () = assert!(16_384 / CANCEL_POLL_CELLS >= 3);
+    }
+
+    #[test]
+    fn wide_row_scan_is_interrupted_mid_row() {
+        let polls = Cell::new(0usize);
+        let is_cancelled = || {
+            polls.set(polls.get() + 1);
+            polls.get() >= 2
+        };
+        // Clean row: the scan must not report "no match" once cancelled.
+        let rows = vec![vec![num(1.0); 16_384]];
+        let result = array_has_match(
+            &rows,
+            ErrorGuard::AnyError,
+            &mut CancelPoll::new(&is_cancelled),
+        );
+        assert_eq!(result.unwrap_err().kind, ExcelErrorKind::Cancelled);
+        assert_eq!(polls.get(), 2);
+    }
+
+    #[test]
+    fn view_probe_reads_error_lanes_by_guard() {
+        let is_cancelled = || false;
+        let view = RangeView::from_owned_rows(
+            vec![
+                vec![num(1.0), LiteralValue::Text("x".into())],
+                vec![error(ExcelErrorKind::Div), LiteralValue::Empty],
+            ],
+            crate::engine::DateSystem::Excel1900,
+        );
+        let any = view_has_match(
+            &view,
+            ErrorGuard::AnyError,
+            &mut CancelPoll::new(&is_cancelled),
+        );
+        let na = view_has_match(
+            &view,
+            ErrorGuard::NaOnly,
+            &mut CancelPoll::new(&is_cancelled),
+        );
+        assert!(any.unwrap());
+        assert!(!na.unwrap());
+
+        let clean = RangeView::from_owned_rows(
+            vec![vec![num(1.0)], vec![LiteralValue::Boolean(true)]],
+            crate::engine::DateSystem::Excel1900,
+        );
+        assert!(
+            !view_has_match(
+                &clean,
+                ErrorGuard::AnyError,
+                &mut CancelPoll::new(&is_cancelled)
+            )
+            .unwrap()
+        );
+    }
+
+    /// 32,768 rows in one chunk whose error lane comes from a dense computed
+    /// overlay of `#DIV/0!` (no `#N/A`), so the IFNA scan must read every lane.
+    fn dense_div_sheet() -> crate::arrow_store::ArrowSheet {
+        use crate::arrow_store::{IngestBuilder, OverlayFragment, OverlayValue};
+        let rows = 32_768;
+        let mut ingest = IngestBuilder::new("S", 1, rows, crate::engine::DateSystem::Excel1900);
+        for _ in 0..rows {
+            ingest.append_row(&[num(1.0)]).unwrap();
+        }
+        let mut sheet = ingest.finish();
+        let dense = vec![OverlayValue::Error(map_error_code(ExcelErrorKind::Div)); rows];
+        sheet
+            .ensure_column_chunk_mut(0, 0)
+            .unwrap()
+            .computed_overlay
+            .apply_fragment(OverlayFragment::dense_range(0, dense).unwrap());
+        sheet
+    }
+
+    #[test]
+    fn ifna_lane_scan_over_dense_overlay_is_polled_per_bounded_piece() {
+        use crate::engine::range_view::range_work;
+        let sheet = dense_div_sheet();
+        let view = sheet.range_view(0, 0, 32_767, 0);
+
+        // Clean for IFNA after scanning all eight 4096-row pieces.
+        let is_cancelled = || false;
+        range_work::begin();
+        let found = view_has_match(
+            &view,
+            ErrorGuard::NaOnly,
+            &mut CancelPoll::new(&is_cancelled),
+        );
+        let work = range_work::take();
+        assert!(!found.unwrap());
+        assert_eq!(work.error_pieces, 8);
+        assert_eq!(work.error_piece_max_rows, CANCEL_POLL_CELLS);
+
+        // Poll 1 is the walk start and poll 2 precedes the scan of piece 2;
+        // the third poll (before scanning piece 3) reports cancellation, so
+        // piece 3 is never scanned and pieces 4..8 are never prepared.
+        let polls = Cell::new(0usize);
+        let is_cancelled = || {
+            polls.set(polls.get() + 1);
+            polls.get() >= 3
+        };
+        range_work::begin();
+        let result = view_has_match(
+            &view,
+            ErrorGuard::NaOnly,
+            &mut CancelPoll::new(&is_cancelled),
+        );
+        let work = range_work::take();
+        assert_eq!(result.unwrap_err().kind, ExcelErrorKind::Cancelled);
+        assert_eq!(polls.get(), 3);
+        assert_eq!(work.error_pieces, 3);
+
+        // The request token attached to the view is checked before each piece
+        // is prepared: cancelled while piece 2 is scanned, piece 3 is never
+        // built.
+        let token = CancelToken::new();
+        let tokened = view.clone().with_cancel_token(Some(token.clone()));
+        let polls = Cell::new(0usize);
+        let is_cancelled = || {
+            polls.set(polls.get() + 1);
+            if polls.get() == 2 {
+                token.cancel();
+            }
+            false
+        };
+        range_work::begin();
+        let result = view_has_match(
+            &tokened,
+            ErrorGuard::NaOnly,
+            &mut CancelPoll::new(&is_cancelled),
+        );
+        let work = range_work::take();
+        assert_eq!(result.unwrap_err().kind, ExcelErrorKind::Cancelled);
+        assert_eq!(work.error_pieces, 2);
+    }
+
+    #[test]
+    fn view_probe_propagates_iterator_cancellation() {
+        // The view's own token is honoured by segment iteration even when the
+        // poll closure never reports cancellation.
+        let token = CancelToken::new();
+        token.cancel();
+        let is_cancelled = || false;
+        let view =
+            RangeView::from_owned_rows(vec![vec![num(1.0)]], crate::engine::DateSystem::Excel1900)
+                .with_cancel_token(Some(token));
+        let result = view_has_match(
+            &view,
+            ErrorGuard::AnyError,
+            &mut CancelPoll::new(&is_cancelled),
+        );
+        assert_eq!(result.unwrap_err().kind, ExcelErrorKind::Cancelled);
     }
 }

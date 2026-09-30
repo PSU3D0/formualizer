@@ -28,6 +28,10 @@ cargo run -p formualizer-bench-core --features xlsx --bin generate-corpus -- \
   --only headline_100k_single_edit --only chain_100k
 ```
 
+## Error-guard lifecycle scenarios
+
+The Rust `ScenarioRegistry` includes permanent IFERROR/IFNA clean, sparse-error, and dense-error workloads (`s088`–`s090`) with independent full-output oracles and deterministic edits. See [error-guards.md](error-guards.md) for quick checks, the interleaved immutable four-arm campaign, and wrong-answer/timing reporting rules. These lifecycle scenarios are separate from the cross-engine YAML generator catalog.
+
 ## Governance highlights
 
 - Scenario families are normalized into `incremental_locality`, `chain_topology`, `lookup_dimension_join`, `aggregate_analytics`, `structural_edit`, `real_world_anchor`, and `nightly_stress`.

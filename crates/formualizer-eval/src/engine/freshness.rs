@@ -468,7 +468,10 @@ impl<R: EvaluationContext> Engine<R> {
                 .map(|cv| {
                     let format = cv.format_id();
                     self.record_derived_format(vertex, format);
-                    crate::engine::result_finalization::finalize_formula_result(cv.into_literal())
+                    crate::engine::result_finalization::finalize_published_calc_result(
+                        cv,
+                        self.config.spill.max_spill_cells,
+                    )
                 })
         };
         let reads = log.take();

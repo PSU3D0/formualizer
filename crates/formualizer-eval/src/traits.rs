@@ -176,12 +176,21 @@ impl<'a> std::fmt::Debug for CalcValue<'a> {
     }
 }
 
+// Thread-local instrumentation keeps serial publication regressions deterministic
+// without counting materialization performed by unrelated parallel tests.
+#[cfg(test)]
+thread_local! {
+    pub(crate) static RANGE_MATERIALIZED_CELLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 impl<'a> CalcValue<'a> {
     pub fn into_literal(self) -> LiteralValue {
         match self {
             CalcValue::Scalar(s) | CalcValue::AnnotatedScalar(s, _) => s,
             CalcValue::Range(rv) => {
                 let (rows, cols) = rv.dims();
+                #[cfg(test)]
+                RANGE_MATERIALIZED_CELLS.with(|count| count.set(count.get() + rows * cols));
                 if rows == 1 && cols == 1 {
                     rv.get_cell(0, 0)
                 } else {

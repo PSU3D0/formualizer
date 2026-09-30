@@ -99,6 +99,7 @@ mod s084_affine_row_literals_periodic_outliers;
 mod s085_affine_row_literals_gap;
 mod s086_non_integer_literal_dictionary;
 mod s087_stable_scc_unrelated_edit;
+mod s088_error_guard_arrays;
 
 pub use s001_no_formulas_static_grid::S001NoFormulasStaticGrid;
 pub use s002_single_column_trivial_family::S002SingleColumnTrivialFamily;
@@ -187,6 +188,7 @@ pub use s084_affine_row_literals_periodic_outliers::S084AffineRowLiteralsPeriodi
 pub use s085_affine_row_literals_gap::S085AffineRowLiteralsGap;
 pub use s086_non_integer_literal_dictionary::S086NonIntegerLiteralDictionary;
 pub use s087_stable_scc_unrelated_edit::S087StableSccUnrelatedEdit;
+pub use s088_error_guard_arrays::ErrorGuardArrays;
 
 pub trait Scenario: Send + Sync {
     /// Stable, immutable identifier. Format: "sNNN-name".
@@ -507,6 +509,9 @@ impl ScenarioRegistry {
             Box::new(S085AffineRowLiteralsGap::new()),
             Box::new(S086NonIntegerLiteralDictionary::new()),
             Box::new(S087StableSccUnrelatedEdit::new()),
+            Box::new(ErrorGuardArrays::new(0)),
+            Box::new(ErrorGuardArrays::new(100)),
+            Box::new(ErrorGuardArrays::new(2)),
         ]
     }
 }
@@ -712,7 +717,7 @@ mod runner_tests {
     #[test]
     fn unified_registry_has_unique_ids() {
         let specs = unified_registry(256);
-        assert_eq!(specs.len(), 101, "87 adapted plus 14 native witnesses");
+        assert_eq!(specs.len(), 104, "90 adapted plus 14 native witnesses");
         let mut ids: Vec<_> = specs.iter().map(|spec| &spec.id).collect();
         ids.sort();
         ids.dedup();
