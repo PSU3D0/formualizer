@@ -529,6 +529,35 @@ fn test_workbook_sheet_eval() {
     assert_eq!(v2.as_f64().unwrap(), 30.0);
 }
 
+/// FORM214: `A1#` and `_xlfn.ANCHORARRAY(A1)` evaluate to the anchor's
+/// current spill range; no current spill is `#REF!`.
+#[wasm_bindgen_test]
+fn spill_references_both_spellings() {
+    let wb = Workbook::new(None).unwrap();
+    let sheet = wb.sheet("S".to_string()).unwrap();
+    sheet.set_formula(1, 1, "=SEQUENCE(2)".to_string()).unwrap();
+    sheet.set_formula(1, 2, "=SUM(A1#)".to_string()).unwrap();
+    sheet
+        .set_formula(1, 3, "=SUM(_xlfn.ANCHORARRAY(A1))".to_string())
+        .unwrap();
+    sheet.set_formula(1, 4, "=ROWS(A1#)".to_string()).unwrap();
+    sheet.set_value(1, 5, JsValue::from_f64(5.0)).unwrap();
+    sheet.set_formula(1, 6, "=SUM(E1#)".to_string()).unwrap();
+    wb.evaluate_all().unwrap();
+    assert_eq!(sheet.get_value(1, 2).unwrap().as_f64(), Some(3.0));
+    assert_eq!(sheet.get_value(1, 3).unwrap().as_f64(), Some(3.0));
+    assert_eq!(sheet.get_value(1, 4).unwrap().as_f64(), Some(2.0));
+    assert_eq!(
+        sheet.get_value(1, 6).unwrap().as_string().as_deref(),
+        Some("#REF!")
+    );
+
+    sheet.set_formula(1, 1, "=SEQUENCE(4)".to_string()).unwrap();
+    wb.evaluate_all().unwrap();
+    assert_eq!(sheet.get_value(1, 2).unwrap().as_f64(), Some(10.0));
+    assert_eq!(sheet.get_value(1, 3).unwrap().as_f64(), Some(10.0));
+}
+
 #[wasm_bindgen_test]
 fn test_workbook_from_xlsx_bytes_evaluates_formula() {
     let bytes = build_fixture_xlsx_bytes();
