@@ -514,9 +514,9 @@ pub fn recalculate_xlsx_bytes(
                     .coerce_to_single_value()
                     .map_err(|_| unsupported("non-scalar result", "cache-only writer"))?;
             }
-            if !snapshot.has_formula
-                && !(matches!(value, LiteralValue::Error(_))
-                    && coerced.contains(&(sheet.name.clone(), cell.row, cell.col)))
+            if !(snapshot.has_formula
+                || (matches!(value, LiteralValue::Error(_))
+                    && coerced.contains(&(sheet.name.clone(), cell.row, cell.col))))
             {
                 return Err(unsupported("source formula was not ingested", &sheet.name));
             }
