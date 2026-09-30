@@ -1,7 +1,10 @@
 //! Strict cache-only XLSX recalculation, without a rich document model.
 //! Unsupported package/formula cases fail before any output is published.
+mod dynamic_metadata;
 mod package;
 mod sheet;
+#[cfg(test)]
+mod tests;
 mod xml;
 
 use super::recalculate::{DEFAULT_ERROR_LOCATION_LIMIT, RecalculateStatus, RecalculateSummary};
@@ -9,7 +12,10 @@ use crate::{CalamineAdapter, IoError, SpreadsheetReader, workbook::WBResolver};
 use formualizer_common::{CellAddress, DateSystem, LiteralValue};
 use formualizer_eval::engine::ingest::EngineLoadStream;
 use formualizer_eval::engine::inspect::{SnapshotOptions, Staleness};
-use formualizer_eval::engine::{CancelToken, Engine, EvalConfig, FormulaParsePolicy};
+use formualizer_eval::engine::{
+    CancelToken, Engine, EvalConfig, FormulaParsePolicy, SpillBoundsPolicy, SpillConfig,
+    SpillConflictPolicy,
+};
 use std::collections::{BTreeMap, HashSet};
 #[cfg(not(target_arch = "wasm32"))]
 use std::io::Read;
@@ -331,15 +337,45 @@ impl Seek for BoundedOutput {
     }
 }
 
-/// Recalculate ordinary/shared formula caches without importing/rewriting rich
-/// workbook structures. Unsupported geometry/metadata cases return an error;
-/// there is no lossy fallback. Exact no-ops return the original package bytes.
-pub fn recalculate_xlsx_bytes(
-    bytes: &[u8],
-    options: XlsxRecalculateOptions,
-) -> Result<XlsxRecalculateResult, IoError> {
-    let mut archive = package::admit(bytes, &options)?;
-    let (sheets, date_system) = package::discover(&mut archive, &options)?;
+/// Crate-private switch for source-preserving dynamic-array support. The
+/// default (disabled) keeps every public refusal; only in-crate tests enable
+/// it until the complete feature (ownership, ingestion, projection, geometry,
+/// metadata/container additions) is integrated.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct SpillSupport {
+    pub(crate) enabled: bool,
+}
+/// Worksheet source, formula cells and (spill support only) its source index
+/// and prior-footprint ownership.
+struct SheetPlan {
+    data: Vec<u8>,
+    cells: Vec<sheet::Cell>,
+    #[allow(dead_code)] // consumed by the ingestion/geometry packets
+    index: Option<sheet::SourceIndex>,
+    ownership: Option<dynamic_metadata::SheetOwnership>,
+}
+struct SourceAdmission<'a> {
+    archive: package::Archive<'a>,
+    sheets: Vec<package::Sheet>,
+    date_system: DateSystem,
+    plans: Vec<SheetPlan>,
+    formula_count: usize,
+    #[allow(dead_code)] // consumed by the metadata packet
+    metadata: Option<dynamic_metadata::DynamicMetadata>,
+}
+/// Bounded package/worksheet admission. With spill support enabled this also
+/// resolves the XLDAPR metadata chain and returns disjoint prior-footprint
+/// ownership per worksheet, or a precise unsupported error.
+fn admit_source<'a>(
+    bytes: &'a [u8],
+    options: &XlsxRecalculateOptions,
+    spill: SpillSupport,
+) -> Result<SourceAdmission<'a>, IoError> {
+    let mut archive = package::admit(bytes, options, spill)?;
+    let (sheets, date_system, metadata_part) = package::discover(&mut archive, options, spill)?;
+    let metadata = metadata_part
+        .map(|part| dynamic_metadata::parse(&mut archive, &part, options))
+        .transpose()?;
     let mut plans = Vec::new();
     let mut observed = 0;
     let mut logical_cells = 0u64;
@@ -351,14 +387,89 @@ pub fn recalculate_xlsx_bytes(
             &sheet.part,
             options.limits.max_worksheet_bytes,
         )?;
-        let cells = sheet::scan(&data, &options, &mut observed, &mut logical_cells)?;
+        let scan = sheet::scan(&data, options, spill, &mut observed, &mut logical_cells)?;
         formula_count = formula_count
-            .checked_add(cells.len())
+            .checked_add(scan.cells.len())
             .ok_or_else(|| unsupported("formula count overflow", "workbook"))?;
         if formula_count > options.limits.max_formula_cells {
             return Err(unsupported("formula cell count limit", "workbook"));
         }
-        plans.push((data, cells));
+        let ownership = scan
+            .index
+            .as_ref()
+            .map(|index| {
+                dynamic_metadata::own_sheet(index, &scan.cells, metadata.as_ref(), options)
+            })
+            .transpose()?;
+        plans.push(SheetPlan {
+            data,
+            cells: scan.cells,
+            index: scan.index,
+            ownership,
+        });
+    }
+    Ok(SourceAdmission {
+        archive,
+        sheets,
+        date_system,
+        plans,
+        formula_count,
+        metadata,
+    })
+}
+/// A permissive engine spill policy could overwrite source-unowned inputs or
+/// publish a truncated spill; refuse anything but the defaults up front.
+fn check_spill_policy(spill: &SpillConfig) -> Result<(), IoError> {
+    if spill.conflict_policy != SpillConflictPolicy::Error {
+        return Err(unsupported(
+            "non-default spill conflict policy",
+            "source-preserving spill recalculation",
+        ));
+    }
+    if spill.bounds_policy != SpillBoundsPolicy::Strict {
+        return Err(unsupported(
+            "non-default spill bounds policy",
+            "source-preserving spill recalculation",
+        ));
+    }
+    Ok(())
+}
+
+/// Recalculate ordinary/shared formula caches without importing/rewriting rich
+/// workbook structures. Unsupported geometry/metadata cases return an error;
+/// there is no lossy fallback. Exact no-ops return the original package bytes.
+pub fn recalculate_xlsx_bytes(
+    bytes: &[u8],
+    options: XlsxRecalculateOptions,
+) -> Result<XlsxRecalculateResult, IoError> {
+    recalculate_xlsx_bytes_with(bytes, options, SpillSupport::default())
+}
+pub(crate) fn recalculate_xlsx_bytes_with(
+    bytes: &[u8],
+    options: XlsxRecalculateOptions,
+    spill: SpillSupport,
+) -> Result<XlsxRecalculateResult, IoError> {
+    if spill.enabled {
+        check_spill_policy(&options.eval_config.spill)?;
+    }
+    let SourceAdmission {
+        mut archive,
+        sheets,
+        date_system,
+        plans,
+        formula_count,
+        metadata: _,
+    } = admit_source(bytes, &options, spill)?;
+    if plans
+        .iter()
+        .any(|p| p.ownership.as_ref().is_some_and(|o| !o.anchors.is_empty()))
+    {
+        // Admission/ownership is parse-only for now; masking, projection,
+        // geometry and metadata publication are not implemented yet.
+        return Err(unsupported(
+            "dynamic spill ingestion view is not implemented",
+            "source-preserving spill recalculation",
+        ));
     }
     let empty_result = |summary| XlsxRecalculateResult {
         bytes: bytes.to_vec(),
@@ -379,7 +490,8 @@ pub fn recalculate_xlsx_bytes(
     // although formula ingestion ignores cached results. Clear those caches in a
     // bounded, transient ingestion view; the authoritative package stays intact.
     let mut view_parts = BTreeMap::new();
-    for (sheet, (data, cells)) in sheets.iter().zip(&plans) {
+    for (sheet, plan) in sheets.iter().zip(&plans) {
+        let (data, cells) = (&plan.data, &plan.cells);
         let mut patches = Vec::new();
         for cell in cells {
             if !sheet::readable_scalar_cache(cell, data)
@@ -443,8 +555,8 @@ pub fn recalculate_xlsx_bytes(
         // calculation references them. Inspect after shared-formula replay but
         // before evaluation/publication; avoid this pass for ordinary workbooks.
         let mut source_formulas = Vec::with_capacity(formula_count);
-        for (sheet, (_, cells)) in sheets.iter().zip(&plans) {
-            for cell in cells {
+        for (sheet, plan) in sheets.iter().zip(&plans) {
+            for cell in &plan.cells {
                 checkpoint(&options.cancel)?;
                 let address = CellAddress::new(&sheet.name, cell.row, cell.col)
                     .map_err(|e| IoError::from_backend("xlsx-coordinate", e))?;
@@ -484,7 +596,8 @@ pub fn recalculate_xlsx_bytes(
             .ok_or_else(|| unsupported("ZIP expanded-size overflow", "workbook"))?,
     )
     .map_err(|_| unsupported("ZIP expanded-size overflow", "workbook"))?;
-    for (sheet, (data, cells)) in sheets.iter().zip(plans) {
+    for (sheet, plan) in sheets.iter().zip(plans) {
+        let SheetPlan { data, cells, .. } = plan;
         let mut patches = Vec::new();
         for cell in cells {
             checkpoint(&options.cancel)?;

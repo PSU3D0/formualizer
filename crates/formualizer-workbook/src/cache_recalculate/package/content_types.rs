@@ -3,11 +3,15 @@ use super::{
     xml,
 };
 
+/// `metadata` is the relationship-resolved sheet metadata part; it is only
+/// `Some` when private spill support is enabled.
 pub(super) fn validate(
     archive: &mut Archive<'_>,
     sheets: &[Sheet],
+    metadata: Option<&str>,
     options: &XlsxRecalculateOptions,
 ) -> Result<(), IoError> {
+    use super::super::dynamic_metadata::SHEET_METADATA_CONTENT_TYPE;
     const NS: &str = "http://schemas.openxmlformats.org/package/2006/content-types";
     const PREFIX: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.";
     let data = read_part(
@@ -36,10 +40,23 @@ pub(super) fn validate(
             let content = node.required("ContentType")?;
             if content.is_empty()
                 || content.contains("digital-signature")
-                || content.contains("sheetMetadata")
+                || (metadata.is_none() && content.contains("sheetMetadata"))
                 || content.contains("externalLink")
             {
                 return Err(unsupported("unsupported content type", "XLSX package"));
+            }
+            if let Some(metadata) = metadata
+                && content.contains("sheetMetadata")
+            {
+                if e.local != "Override" || content != SHEET_METADATA_CONTENT_TYPE {
+                    return Err(unsupported(
+                        "sheet metadata content-type disagreement",
+                        "XLSX package",
+                    ));
+                }
+                if node.required("PartName")?.strip_prefix('/') != Some(metadata) {
+                    return Err(unsupported("unrelated sheet metadata part", "XLSX package"));
+                }
             }
             if e.local == "Default" {
                 let extension = node.required("Extension")?;
@@ -84,6 +101,15 @@ pub(super) fn validate(
                     .and_then(|(_, e)| defaults.get(&e.to_ascii_lowercase()))
             })
             .ok_or_else(|| unsupported("part without content type", name))?;
+        if Some(name) == metadata {
+            if content != SHEET_METADATA_CONTENT_TYPE {
+                return Err(unsupported(
+                    "sheet metadata content-type disagreement",
+                    name,
+                ));
+            }
+            continue;
+        }
         let expected = if name == "xl/workbook.xml" {
             Some(format!("{PREFIX}sheet.main+xml"))
         } else if sheets.iter().any(|s| s.part == name) {

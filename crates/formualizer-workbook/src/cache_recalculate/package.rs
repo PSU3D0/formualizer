@@ -1,7 +1,7 @@
 //! Bounded package admission and relationship-aware workbook discovery.
 mod content_types;
 mod rewrite;
-use super::{IoError, XlsxRecalculateOptions, checkpoint, unsupported, xml};
+use super::{IoError, SpillSupport, XlsxRecalculateOptions, checkpoint, unsupported, xml};
 pub(super) use rewrite::rewrite;
 use std::collections::{BTreeMap, HashSet};
 use std::io::{Cursor, Read};
@@ -154,6 +154,7 @@ fn audit_directory(
 pub(super) fn admit<'a>(
     bytes: &'a [u8],
     options: &XlsxRecalculateOptions,
+    spill: SpillSupport,
 ) -> Result<Archive<'a>, IoError> {
     checkpoint(&options.cancel)?;
     if bytes.len() > options.limits.max_input_bytes {
@@ -202,7 +203,7 @@ pub(super) fn admit<'a>(
             return Err(unsupported("package digital signature", "XLSX package"));
         }
         if file.name().starts_with("xl/externalLinks/")
-            || file.name() == "xl/metadata.xml"
+            || (!spill.enabled && file.name() == "xl/metadata.xml")
             || file.name().starts_with("xl/richData/")
         {
             return Err(unsupported(
@@ -304,10 +305,13 @@ pub(super) fn relationships(
     })?;
     Ok(result)
 }
+/// Workbook discovery. With spill support enabled, also returns the single
+/// relationship-resolved sheet metadata part, if any.
 pub(super) fn discover(
     archive: &mut Archive<'_>,
     options: &XlsxRecalculateOptions,
-) -> Result<(Vec<Sheet>, formualizer_common::DateSystem), IoError> {
+    spill: SpillSupport,
+) -> Result<(Vec<Sheet>, formualizer_common::DateSystem, Option<String>), IoError> {
     let root = relationships(archive, "", options)?;
     if root.values().any(|r| r.kind.contains("digital-signature")) {
         return Err(unsupported(
@@ -342,6 +346,11 @@ pub(super) fn discover(
             }
         }
     }
+    let metadata = if spill.enabled {
+        sheet_metadata_part(archive, &relations)?
+    } else {
+        None
+    };
     let data = read_part(
         archive,
         "xl/workbook.xml",
@@ -511,8 +520,48 @@ pub(super) fn discover(
             }
         }
     }
-    content_types::validate(archive, &sheets, options)?;
-    Ok((sheets, epoch))
+    content_types::validate(archive, &sheets, metadata.as_deref(), options)?;
+    Ok((sheets, epoch, metadata))
+}
+/// Exactly zero or one internal sheetMetadata relationship whose target
+/// exists; no metadata member may exist without that relationship.
+fn sheet_metadata_part(
+    archive: &Archive<'_>,
+    relations: &BTreeMap<String, Relationship>,
+) -> Result<Option<String>, IoError> {
+    use super::dynamic_metadata::SHEET_METADATA_RELATIONSHIP;
+    let mut part = None;
+    for rel in relations
+        .values()
+        .filter(|r| r.kind == SHEET_METADATA_RELATIONSHIP)
+    {
+        let target = rel.target.clone().ok_or_else(|| {
+            unsupported(
+                "external sheet metadata relationship",
+                "workbook relationships",
+            )
+        })?;
+        if part.replace(target).is_some() {
+            return Err(unsupported(
+                "duplicate sheet metadata relationship",
+                "workbook relationships",
+            ));
+        }
+    }
+    if let Some(name) = &part
+        && !archive.file_names().any(|n| n == name)
+    {
+        return Err(unsupported("missing sheet metadata part", name));
+    }
+    if archive.file_names().any(|n| n == "xl/metadata.xml")
+        && part.as_deref() != Some("xl/metadata.xml")
+    {
+        return Err(unsupported(
+            "unrelated sheet metadata part",
+            "xl/metadata.xml",
+        ));
+    }
+    Ok(part)
 }
 fn validate_aux(
     archive: &mut Archive<'_>,
