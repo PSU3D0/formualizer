@@ -912,6 +912,18 @@ mod enabled {
                     has_tables: false,
                 }
             }
+            "s088-error-guards-clean" | "s089-error-guards-sparse" | "s090-error-guards-dense" => {
+                let rows = formualizer_bench_core::scenarios::ErrorGuardArrays::rows(scale);
+                FixtureMetadata {
+                    rows,
+                    cols: 11,
+                    sheets: 1,
+                    formula_cells: 2 * rows + 9,
+                    value_cells: 3 * rows,
+                    has_named_ranges: false,
+                    has_tables: false,
+                }
+            }
             other => bail!("no fixture metadata helper registered for {other}"),
         };
         Ok(metadata)

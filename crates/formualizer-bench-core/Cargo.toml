@@ -47,6 +47,9 @@ formualizer-eval = { workspace = true, features = ["formula_plane_diagnostics", 
 dhat = { version = "0.3", optional = true }
 ironcalc = { version = "0.7.1", optional = true }
 
+[dev-dependencies]
+tempfile = { workspace = true }
+
 [[bin]]
 name = "authority-corpus"
 path = "src/bin/authority-corpus.rs"
