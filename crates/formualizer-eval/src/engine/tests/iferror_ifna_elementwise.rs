@@ -72,6 +72,11 @@ impl Function for Probe {
     fn min_args(&self) -> usize {
         0
     }
+    // Host functions that propagate their own annotation (as IFERROR does)
+    // can hand an annotated array to the guards.
+    fn propagate_format(&self, result: &CalcValue<'_>) -> Option<crate::format::FormatId> {
+        result.format_id()
+    }
     fn eval<'a, 'b, 'c>(
         &self,
         _args: &'c [ArgumentHandle<'a, 'b>],
@@ -613,4 +618,105 @@ fn engine_cancel_does_not_commit_fallback_and_retry_recomputes() {
     assert_eq!(column(&engine, 1, 1..=1), "-1");
     assert_eq!(column(&engine, 2, 1..=1), "4");
     assert_eq!(column(&engine, 1, 3..=3), "99");
+}
+
+/* ─────────────────────── annotated host arrays ─────────────────────── */
+
+/// Host functions may return an array carrying a format annotation
+/// (`CalcValue::with_format`); it must be matched like any other array.
+fn annotated_harness() -> (TestWorkbook, Arc<AtomicUsize>) {
+    crate::builtins::load_builtins();
+    let counter = Arc::new(AtomicUsize::new(0));
+    let probes: [(&'static str, Behavior); 4] = [
+        ("COUNTING", |_, _| {
+            Ok(CalcValue::Scalar(LiteralValue::Int(7)))
+        }),
+        ("DATED_ERRORS", |_, _| {
+            Ok(CalcValue::Scalar(LiteralValue::Array(vec![vec![
+                err(ExcelErrorKind::Na),
+                LiteralValue::Number(45000.0),
+            ]]))
+            .with_format(Some(crate::format::FormatId::DATE)))
+        }),
+        ("DATED_CLEAN", |_, _| {
+            Ok(CalcValue::Scalar(LiteralValue::Array(vec![vec![
+                LiteralValue::Number(1.0),
+                LiteralValue::Number(2.0),
+            ]]))
+            .with_format(Some(crate::format::FormatId::DATE)))
+        }),
+        ("DATED_FALLBACK", |_, _| {
+            Ok(CalcValue::Scalar(LiteralValue::Array(vec![vec![
+                LiteralValue::Number(10.0),
+                LiteralValue::Number(20.0),
+            ]]))
+            .with_format(Some(crate::format::FormatId::DATE)))
+        }),
+    ];
+    let mut wb = TestWorkbook::new();
+    for (name, behavior) in probes {
+        let calls = if name == "COUNTING" {
+            counter.clone()
+        } else {
+            Arc::new(AtomicUsize::new(0))
+        };
+        wb = wb.with_function(Arc::new(Probe {
+            name,
+            calls,
+            behavior,
+        }));
+    }
+    (wb, counter)
+}
+
+#[test]
+fn annotated_array_values_are_matched_elementwise() {
+    let (wb, counter) = annotated_harness();
+    let interp = wb.interpreter();
+    let eval = |f: &str| interp.evaluate_ast(&parse(f).unwrap()).unwrap();
+
+    // The helper really produces an annotated array.
+    assert!(matches!(
+        eval("=DATED_ERRORS()"),
+        CalcValue::AnnotatedScalar(LiteralValue::Array(_), _)
+    ));
+    assert_eq!(
+        norm(&eval("=IFERROR(DATED_ERRORS(),0)").into_literal()),
+        "[0,45000]"
+    );
+    assert_eq!(
+        norm(&eval("=IFNA(DATED_ERRORS(),0)").into_literal()),
+        "[0,45000]"
+    );
+
+    // Clean annotated array: returned as-is (annotation kept), fallback lazy.
+    for f in [
+        "=IFERROR(DATED_CLEAN(),COUNTING())",
+        "=IFNA(DATED_CLEAN(),COUNTING())",
+    ] {
+        let out = eval(f);
+        assert_eq!(out.format_id(), Some(crate::format::FormatId::DATE), "{f}");
+        assert_eq!(norm(&out.into_literal()), "[1,2]", "{f}");
+    }
+    assert_eq!(counter.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn annotated_array_fallback_is_paired_not_nested() {
+    let (wb, _) = annotated_harness();
+    let interp = wb.interpreter();
+    let eval = |f: &str| {
+        norm(
+            &interp
+                .evaluate_ast(&parse(f).unwrap())
+                .unwrap()
+                .into_literal(),
+        )
+    };
+    assert_eq!(eval("=IFERROR(1/{0,0},DATED_FALLBACK())"), "[10,20]");
+    assert_eq!(
+        eval("=IFERROR(DATED_ERRORS(),DATED_FALLBACK())"),
+        "[10,45000]"
+    );
+    assert_eq!(eval("=IFERROR({#N/A;1},DATED_FALLBACK())"), "[10,20;1,1]");
 }

@@ -1,4 +1,6 @@
-use super::utils::{ARG_ANY_ONE, CancelPoll, Grid, materialized_shape_too_large};
+use super::utils::{
+    ARG_ANY_ONE, CANCEL_POLL_CELLS, CancelPoll, Grid, materialized_shape_too_large,
+};
 use crate::args::ArgSchema;
 use crate::arrow_store::map_error_code;
 use crate::broadcast::{broadcast_shape, project_index};
@@ -531,11 +533,17 @@ fn error_guard<'a, 'b, 'c>(
         {
             return args[1].value();
         }
-        CalcValue::Scalar(LiteralValue::Array(ref rows)) => {
+        // Host functions may return an annotated array; the annotation is kept
+        // on the clean passthrough and dropped from a rebuilt array, like
+        // every other array result.
+        CalcValue::Scalar(LiteralValue::Array(ref rows))
+        | CalcValue::AnnotatedScalar(LiteralValue::Array(ref rows), _) => {
             if !array_has_match(rows, guard, &mut CancelPoll::new(&is_cancelled))? {
                 return Ok(value);
             }
-            let CalcValue::Scalar(LiteralValue::Array(rows)) = value else {
+            let (CalcValue::Scalar(LiteralValue::Array(rows))
+            | CalcValue::AnnotatedScalar(LiteralValue::Array(rows), _)) = value
+            else {
                 unreachable!("matched above");
             };
             Grid::Array(rows)
@@ -561,7 +569,8 @@ fn error_guard<'a, 'b, 'c>(
 
     // A single matching element with a single fallback is the scalar case.
     let fallback_is_single = match &fallback {
-        CalcValue::Scalar(LiteralValue::Array(rows)) => {
+        CalcValue::Scalar(LiteralValue::Array(rows))
+        | CalcValue::AnnotatedScalar(LiteralValue::Array(rows), _) => {
             rows.len() == 1 && rows.first().is_some_and(|row| row.len() == 1)
         }
         CalcValue::Range(view) => view.dims() == (1, 1),
@@ -574,7 +583,8 @@ fn error_guard<'a, 'b, 'c>(
 
     let fallback_grid = match fallback {
         CalcValue::Range(view) => Grid::Range(view),
-        CalcValue::Scalar(LiteralValue::Array(rows)) => Grid::Array(rows),
+        CalcValue::Scalar(LiteralValue::Array(rows))
+        | CalcValue::AnnotatedScalar(LiteralValue::Array(rows), _) => Grid::Array(rows),
         other => Grid::Scalar(other.into_literal()),
     };
 
@@ -608,8 +618,9 @@ fn array_has_match(
 }
 
 /// Probes a view's overlay-merged Arrow error lanes for an element the guard
-/// replaces, without decoding cells. Segment iteration polls the view's
-/// cancellation token; a cancelled walk is an `Err`, never a clean result.
+/// replaces, without decoding cells. The view's cancellation token is checked
+/// before each bounded piece is prepared, and `poll` before each is scanned;
+/// a cancelled walk is an `Err`, never a clean result.
 fn view_has_match(
     view: &RangeView<'_>,
     guard: ErrorGuard,
@@ -620,23 +631,18 @@ fn view_has_match(
         return Ok(false);
     }
     let na_code = map_error_code(ExcelErrorKind::Na);
-    for segment in view.errors_slices() {
-        let (_, _, lanes) = segment?;
-        for lane in lanes {
-            poll.advance(lane.len())?;
-            if lane.null_count() == lane.len() {
-                continue;
-            }
-            let found = match guard {
-                ErrorGuard::AnyError => true,
-                ErrorGuard::NaOnly => lane.iter().any(|code| code == Some(na_code)),
-            };
-            if found {
-                return Ok(true);
-            }
+    // Pieces are one column by at most CANCEL_POLL_CELLS rows, so neither lane
+    // preparation nor the IFNA scan runs unbounded between polls.
+    view.try_for_each_error_piece(CANCEL_POLL_CELLS, &mut |lane| {
+        poll.advance(lane.len())?;
+        if lane.null_count() == lane.len() {
+            return Ok(false);
         }
-    }
-    Ok(false)
+        Ok(match guard {
+            ErrorGuard::AnyError => true,
+            ErrorGuard::NaOnly => lane.iter().any(|code| code == Some(na_code)),
+        })
+    })
 }
 
 /// Builds the broadcast selection of `value` and `fallback`.
@@ -1462,7 +1468,6 @@ mod tests {
 #[cfg(test)]
 mod error_guard_tests {
     use super::*;
-    use crate::builtins::utils::CANCEL_POLL_CELLS;
     use std::cell::Cell;
 
     fn num(n: f64) -> LiteralValue {
@@ -1597,6 +1602,87 @@ mod error_guard_tests {
             )
             .unwrap()
         );
+    }
+
+    /// 32,768 rows in one chunk whose error lane comes from a dense computed
+    /// overlay of `#DIV/0!` (no `#N/A`), so the IFNA scan must read every lane.
+    fn dense_div_sheet() -> crate::arrow_store::ArrowSheet {
+        use crate::arrow_store::{IngestBuilder, OverlayFragment, OverlayValue};
+        let rows = 32_768;
+        let mut ingest = IngestBuilder::new("S", 1, rows, crate::engine::DateSystem::Excel1900);
+        for _ in 0..rows {
+            ingest.append_row(&[num(1.0)]).unwrap();
+        }
+        let mut sheet = ingest.finish();
+        let dense = vec![OverlayValue::Error(map_error_code(ExcelErrorKind::Div)); rows];
+        sheet
+            .ensure_column_chunk_mut(0, 0)
+            .unwrap()
+            .computed_overlay
+            .apply_fragment(OverlayFragment::dense_range(0, dense).unwrap());
+        sheet
+    }
+
+    #[test]
+    fn ifna_lane_scan_over_dense_overlay_is_polled_per_bounded_piece() {
+        use crate::engine::range_view::range_work;
+        let sheet = dense_div_sheet();
+        let view = sheet.range_view(0, 0, 32_767, 0);
+
+        // Clean for IFNA after scanning all eight 4096-row pieces.
+        let is_cancelled = || false;
+        range_work::begin();
+        let found = view_has_match(
+            &view,
+            ErrorGuard::NaOnly,
+            &mut CancelPoll::new(&is_cancelled),
+        );
+        let work = range_work::take();
+        assert!(!found.unwrap());
+        assert_eq!(work.error_pieces, 8);
+        assert_eq!(work.error_piece_max_rows, CANCEL_POLL_CELLS);
+
+        // Poll 1 is the walk start and poll 2 precedes the scan of piece 2;
+        // the third poll (before scanning piece 3) reports cancellation, so
+        // piece 3 is never scanned and pieces 4..8 are never prepared.
+        let polls = Cell::new(0usize);
+        let is_cancelled = || {
+            polls.set(polls.get() + 1);
+            polls.get() >= 3
+        };
+        range_work::begin();
+        let result = view_has_match(
+            &view,
+            ErrorGuard::NaOnly,
+            &mut CancelPoll::new(&is_cancelled),
+        );
+        let work = range_work::take();
+        assert_eq!(result.unwrap_err().kind, ExcelErrorKind::Cancelled);
+        assert_eq!(polls.get(), 3);
+        assert_eq!(work.error_pieces, 3);
+
+        // The request token attached to the view is checked before each piece
+        // is prepared: cancelled while piece 2 is scanned, piece 3 is never
+        // built.
+        let token = CancelToken::new();
+        let tokened = view.clone().with_cancel_token(Some(token.clone()));
+        let polls = Cell::new(0usize);
+        let is_cancelled = || {
+            polls.set(polls.get() + 1);
+            if polls.get() == 2 {
+                token.cancel();
+            }
+            false
+        };
+        range_work::begin();
+        let result = view_has_match(
+            &tokened,
+            ErrorGuard::NaOnly,
+            &mut CancelPoll::new(&is_cancelled),
+        );
+        let work = range_work::take();
+        assert_eq!(result.unwrap_err().kind, ExcelErrorKind::Cancelled);
+        assert_eq!(work.error_pieces, 2);
     }
 
     #[test]

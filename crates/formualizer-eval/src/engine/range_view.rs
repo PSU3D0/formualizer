@@ -24,6 +24,8 @@ pub(crate) mod range_work {
         pub provider_requests: [usize; 4],
         pub provider_builds: [usize; 4],
         pub provider_slots: [usize; 4],
+        pub error_pieces: usize,
+        pub error_piece_max_rows: usize,
     }
 
     thread_local! {
@@ -984,6 +986,77 @@ impl<'a> RangeView<'a> {
         })
     }
 
+    /// Visits overlay-merged error lanes in bounded pieces: one column and at
+    /// most `max_rows` rows each, in column-major order within each row
+    /// segment. `visit` returns `Ok(true)` to stop early; the method then
+    /// returns `Ok(true)`.
+    ///
+    /// Unlike [`Self::errors_slices`], preparing a piece never builds more
+    /// than `max_rows` slots: it does not consult the whole-chunk merged-lane
+    /// cache, does not materialize whole-chunk null lanes, and skips columns
+    /// and chunks without an error lane or overlay entries in the piece
+    /// (they hold no errors). The view's cancellation token is checked before
+    /// every piece is prepared, so a cancelled walk returns
+    /// `Err(Cancelled)` rather than a partial clean result.
+    pub(crate) fn try_for_each_error_piece(
+        &self,
+        max_rows: usize,
+        visit: &mut dyn FnMut(&arrow_array::UInt8Array) -> Result<bool, ExcelError>,
+    ) -> Result<bool, ExcelError> {
+        let max_rows = max_rows.max(1);
+        let cancelled = || {
+            self.cancel_token
+                .as_ref()
+                .is_some_and(CancelToken::is_cancelled)
+        };
+        let sheet = self.sheet();
+        for segment in self.iter_row_segments() {
+            let segment = segment?;
+            for col_idx in self.sc..=self.ec {
+                let Some(ch) = sheet
+                    .columns
+                    .get(col_idx)
+                    .and_then(|col| col.chunk(segment.chunk_idx))
+                else {
+                    continue;
+                };
+                let cascade = arrow_store::OverlayCascade::new(&ch.overlay, &ch.computed_overlay);
+                let mut done = 0usize;
+                while done < segment.row_len {
+                    if cancelled() {
+                        return Err(ExcelError::new(
+                            formualizer_common::ExcelErrorKind::Cancelled,
+                        ));
+                    }
+                    let len = (segment.row_len - done).min(max_rows);
+                    let start = segment.chunk_offset + done;
+                    let range = start..start + len;
+                    done += len;
+                    #[cfg(test)]
+                    range_work::record(|w| {
+                        w.error_pieces += 1;
+                        w.error_piece_max_rows = w.error_piece_max_rows.max(len);
+                    });
+                    let lane = if cascade.has_any_in_range(range.clone()) {
+                        let base = match &ch.errors {
+                            Some(errors) => errors.slice(start, len),
+                            None => arrow_array::UInt8Array::new_null(len),
+                        };
+                        cascade.select_errors(range, &base)
+                    } else if let Some(errors) = &ch.errors {
+                        Arc::new(errors.slice(start, len))
+                    } else {
+                        continue;
+                    };
+                    if visit(&lane)? {
+                        return Ok(true);
+                    }
+                }
+            }
+        }
+        Ok(false)
+    }
+
     /// Typed type-tag slices per row-segment.
     pub fn type_tags_slices(
         &self,
@@ -1699,6 +1772,135 @@ mod bounded_projection_tests {
         assert_eq!(errors.provider_requests, [0, 0, 1, 0]);
         assert_eq!(errors.provider_builds, [0, 0, 1, 0]);
         assert_eq!(errors.provider_slots, [0, 0, 32768, 0]);
+    }
+
+    /// One 32,768-row chunk: column 0 numbers only, column 1 a dense computed
+    /// overlay of `#DIV/0!` with `#N/A` at row 30,000, column 2 a single user
+    /// `#REF!` point at row 20,000.
+    fn dense_error_sheet() -> ArrowSheet {
+        let rows = 32_768;
+        let mut ingest = IngestBuilder::new("S", 3, rows, DateSystem::Excel1900);
+        for row in 0..rows {
+            ingest
+                .append_row(&[
+                    LiteralValue::Number(row as f64),
+                    LiteralValue::Number(1.0),
+                    LiteralValue::Empty,
+                ])
+                .unwrap();
+        }
+        let mut sheet = ingest.finish();
+        let mut dense =
+            vec![OverlayValue::Error(arrow_store::map_error_code(ExcelErrorKind::Div)); rows];
+        dense[30_000] = OverlayValue::Error(arrow_store::map_error_code(ExcelErrorKind::Na));
+        sheet
+            .ensure_column_chunk_mut(1, 0)
+            .unwrap()
+            .computed_overlay
+            .apply_fragment(OverlayFragment::dense_range(0, dense).unwrap());
+        sheet.ensure_column_chunk_mut(2, 0).unwrap().overlay.set(
+            20_000,
+            OverlayValue::Error(arrow_store::map_error_code(ExcelErrorKind::Ref)),
+        );
+        sheet
+    }
+
+    fn error_codes_by_slices(view: &RangeView<'_>) -> Vec<u8> {
+        let mut out = Vec::new();
+        for segment in view.errors_slices() {
+            for lane in segment.unwrap().2 {
+                out.extend(lane.iter().flatten());
+            }
+        }
+        out.sort_unstable();
+        out
+    }
+
+    #[test]
+    fn error_pieces_are_bounded_and_match_errors_slices() {
+        let sheet = dense_error_sheet();
+        for (sr, er) in [(0, 32_767), (5, 30_001), (29_999, 30_000)] {
+            let view = sheet.range_view(sr, 0, er, 2);
+            let mut codes = Vec::new();
+            range_work::begin();
+            let stopped = view
+                .try_for_each_error_piece(4096, &mut |lane| {
+                    assert!(lane.len() <= 4096);
+                    codes.extend(lane.iter().flatten());
+                    Ok(false)
+                })
+                .unwrap();
+            let work = range_work::take();
+            assert!(!stopped);
+            codes.sort_unstable();
+            assert_eq!(codes, error_codes_by_slices(&view), "rows {sr}..={er}");
+            assert!(work.error_piece_max_rows <= 4096);
+            // No whole-chunk null error lane is materialized for columns
+            // without an error lane.
+            assert_eq!(work.provider_builds[2], 0);
+        }
+    }
+
+    #[test]
+    fn error_pieces_stop_early_and_observe_cancellation_between_pieces() {
+        let sheet = dense_error_sheet();
+        // Dense overlay: cancellation raised while visiting a piece stops
+        // preparation of the next one.
+        let token = CancelToken::new();
+        let view = sheet
+            .range_view(0, 1, 32_767, 1)
+            .with_cancel_token(Some(token.clone()));
+        let mut visits = 0;
+        range_work::begin();
+        let error = view
+            .try_for_each_error_piece(4096, &mut |_| {
+                visits += 1;
+                if visits == 2 {
+                    token.cancel();
+                }
+                Ok(false)
+            })
+            .unwrap_err();
+        let work = range_work::take();
+        assert_eq!(error.kind, ExcelErrorKind::Cancelled);
+        assert_eq!(visits, 2);
+        assert_eq!(work.error_pieces, 2);
+
+        // Early stop reports a match without preparing further pieces.
+        let view = sheet.range_view(0, 1, 32_767, 1);
+        range_work::begin();
+        assert!(
+            view.try_for_each_error_piece(4096, &mut |_| Ok(true))
+                .unwrap()
+        );
+        assert_eq!(range_work::take().error_pieces, 1);
+
+        // Wide single-row view: every column is a piece, and cancellation is
+        // observed between columns.
+        let mut ingest = IngestBuilder::new("W", 64, 8, DateSystem::Excel1900);
+        ingest
+            .append_row(&vec![
+                LiteralValue::Error(ExcelError::new(
+                    ExcelErrorKind::Div
+                ));
+                64
+            ])
+            .unwrap();
+        let wide = ingest.finish();
+        let token = CancelToken::new();
+        let view = wide
+            .range_view(0, 0, 0, 63)
+            .with_cancel_token(Some(token.clone()));
+        let mut visits = 0;
+        let error = view
+            .try_for_each_error_piece(4096, &mut |_| {
+                visits += 1;
+                token.cancel();
+                Ok(false)
+            })
+            .unwrap_err();
+        assert_eq!(error.kind, ExcelErrorKind::Cancelled);
+        assert_eq!(visits, 1);
     }
 
     #[test]
