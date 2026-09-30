@@ -203,7 +203,7 @@ fn edit(cycle: usize, clean: bool) -> (u32, u32, f64) {
 }
 fn inputs(row: u32, period: u32, cycles: usize) -> (f64, f64, f64) {
     let mut a = (row % 16 + 1) as f64;
-    let mut b = if period != 0 && row % period == 0 {
+    let mut b = if period != 0 && row.is_multiple_of(period) {
         0.0
     } else {
         4.0
