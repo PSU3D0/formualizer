@@ -253,8 +253,9 @@ fn grow_and_shrink_with_unchanged_top_left() {
 }
 
 /// A blocker in the way when the anchor recomputes: the anchor is
-/// `#SPILL!` and its spill references are `#REF!`; removing the blocker
-/// re-spills and the readers follow.
+/// `#SPILL!` and its spill references are `#REF!`. After the blocker is
+/// removed, the next anchor recompute (here an input edit) re-spills and
+/// the readers follow.
 #[test]
 fn blocker_added_then_removed() {
     for parallel in [false, true] {
@@ -410,7 +411,8 @@ fn no_current_spill_policy() {
 fn unsupported_operands_are_ref_errors() {
     let mut e = engine(false);
     f(&mut e, "Sheet1", 1, 1, "=SEQUENCE(3)");
-    let formulas = [
+    // Every unsupported operand the parser accepts is exactly `#REF!`.
+    let unsupported = [
         "=SUM(ANCHORARRAY(A1:A2))",
         "=SUM(ANCHORARRAY(A1:A1))",
         "=SUM(ANCHORARRAY(INDEX(A1:A3,1)))",
@@ -423,44 +425,28 @@ fn unsupported_operands_are_ref_errors() {
         "=SUM(INDEX(A1:A3,1)#)",
         "=SUM((A1:A2)#)",
         "=SUM(A1##)",
-        "=SUM(ANCHORARRAY(A1,A1))",
-        "=ANCHORARRAY()",
     ];
+    // Wrong arity is exactly `#VALUE!`.
+    let wrong_arity = ["=SUM(ANCHORARRAY(A1,A1))", "=ANCHORARRAY()"];
+    let mut placed = Vec::new();
     let mut row = 5;
-    for src in formulas {
+    for (src, kind) in unsupported
+        .iter()
+        .map(|src| (*src, ExcelErrorKind::Ref))
+        .chain(wrong_arity.iter().map(|src| (*src, ExcelErrorKind::Value)))
+    {
+        // A spelling the parser rejects never reaches evaluation.
         let Ok(ast) = parse(src) else {
-            // A spelling the parser rejects is out of scope here.
             continue;
         };
         e.set_cell_formula("Sheet1", row, 3, ast).unwrap();
+        placed.push((row, src, kind));
         row += 1;
     }
+    assert!(placed.len() >= 10, "most spellings parse: {placed:?}");
     e.evaluate_all().unwrap();
-    let mut row = 5;
-    for src in formulas {
-        if parse(src).is_err() {
-            continue;
-        }
-        match get(&e, "Sheet1", row, 3) {
-            Some(LiteralValue::Error(err)) => assert!(
-                matches!(err.kind, ExcelErrorKind::Ref | ExcelErrorKind::Value),
-                "{src}: {err:?}"
-            ),
-            other => panic!("{src}: expected an error, got {other:?}"),
-        }
-        row += 1;
-    }
-    // The operand policy proper is `#REF!`.
-    for (r, src) in [
-        (20, "=SUM(ANCHORARRAY(A1:A2))"),
-        (21, "=SUM(ANCHORARRAY(INDEX(A1:A3,1)))"),
-        (22, "=SUM(ANCHORARRAY(5))"),
-        (23, "=SUM(ANCHORARRAY(A1+0))"),
-        (24, "=SUM(ANCHORARRAY(A1#))"),
-    ] {
-        f(&mut e, "Sheet1", r, 3, src);
-        e.evaluate_all().unwrap();
-        assert_ref(get(&e, "Sheet1", r, 3), src);
+    for (row, src, kind) in placed {
+        assert_err(get(&e, "Sheet1", row, 3), kind, src);
     }
 }
 
@@ -732,6 +718,9 @@ fn spill_batch_abort_then_retry_converges() {
 
 /* ─────────────────────── cycles and footprints ──────────────────────── */
 
+/// Non-regression coverage, not evidence for the feature: the existing
+/// dependency extraction and cycle guards already see the anchor edge of
+/// `#` and `ANCHORARRAY`, and this passes on the base engine as well.
 #[test]
 fn self_reference_stays_a_cycle() {
     let mut e = engine(false);
@@ -866,8 +855,10 @@ fn recording_context_forwards_and_records_the_anchor() {
 
 /* ───────────────────────── interpreter paths ────────────────────────── */
 
-/// The tree interpreter (planner and plain tree walks) and the arena path
-/// agree with the engine.
+/// The tree interpreter, with the planner (`evaluate_ast`) and without it
+/// (`evaluate_ast_with_offset` at offset zero), agrees with the engine. The
+/// arena path is covered by the engine-level tests; nonzero offsets by
+/// `relative_anchor_at_nonzero_offset`.
 #[test]
 fn tree_interpreter_paths() {
     let mut e = engine(false);
@@ -938,4 +929,162 @@ fn default_hook_is_ref_error() {
         matches!(v, LiteralValue::Error(ref e) if e.kind == ExcelErrorKind::Ref),
         "{v:?}"
     );
+}
+
+/* ───────────────────── relocation, names, restored state ────────────── */
+
+/// A relative `#` operand relocates with the evaluation offset (the path a
+/// template member would take), on both the tree and the arena walks, and
+/// an absolute one does not. Also filled-down relative readers in the
+/// engine, each resolving its own row's anchor.
+#[test]
+fn relative_anchor_at_nonzero_offset() {
+    let mut e = engine(false);
+    f(&mut e, "Sheet1", 1, 1, "=SEQUENCE(2)"); // A1:A2 -> 3
+    f(&mut e, "Sheet1", 5, 1, "=SEQUENCE(3)"); // A5:A7 -> 6
+    f(&mut e, "Sheet1", 1, 2, "=SUM(A1#)");
+    f(&mut e, "Sheet1", 1, 3, "=SUM($A$1#)");
+    e.evaluate_all().unwrap();
+    assert_eq!(get(&e, "Sheet1", 1, 2), n(3.0));
+
+    let b1 = cell(&e, "Sheet1", 1, 2);
+    let interp = Interpreter::new_with_cell(&e, "Sheet1", b1);
+    for (src, expected) in [("=SUM(A1#)", 6.0), ("=SUM($A$1#)", 3.0)] {
+        let tree = interp
+            .evaluate_ast_with_offset(&parse(src).unwrap(), 4, 0)
+            .map(|cv| number(cv.into_literal()))
+            .unwrap_or_else(LiteralValue::Error);
+        assert_eq!(tree, LiteralValue::Number(expected), "tree {src}");
+    }
+    for (col, expected) in [(2, 6.0), (3, 3.0)] {
+        let v = e
+            .graph
+            .get_vertex_id_for_address(&cell(&e, "Sheet1", 1, col))
+            .unwrap();
+        let view = e.graph.formula_view(v).unwrap();
+        let arena = interp
+            .evaluate_arena_ast_with_offset(
+                view.template,
+                4,
+                0,
+                e.graph.data_store(),
+                e.graph.sheet_reg(),
+            )
+            .map(|cv| number(cv.into_literal()))
+            .unwrap_or_else(LiteralValue::Error);
+        assert_eq!(arena, LiteralValue::Number(expected), "arena col {col}");
+    }
+
+    // Filled-down relative readers in the engine.
+    let mut e = engine(false);
+    for row in [1u32, 5, 9] {
+        f(
+            &mut e,
+            "Sheet1",
+            row,
+            1,
+            &format!("=SEQUENCE({})", row / 4 + 2),
+        );
+    }
+    for row in 1..=12u32 {
+        f(&mut e, "Sheet1", row, 3, &format!("=SUM(A{row}#)"));
+    }
+    e.evaluate_all().unwrap();
+    for row in 1..=12u32 {
+        match row {
+            1 => assert_eq!(get(&e, "Sheet1", row, 3), n(3.0)),
+            5 => assert_eq!(get(&e, "Sheet1", row, 3), n(6.0)),
+            9 => assert_eq!(get(&e, "Sheet1", row, 3), n(10.0)),
+            _ => assert_ref(get(&e, "Sheet1", row, 3), &format!("C{row}: spill child")),
+        }
+    }
+}
+
+/// A sheet-scoped name wins over a workbook name of the same spelling on
+/// its own sheet; elsewhere the workbook name applies.
+#[test]
+fn sheet_scoped_name_wins_over_workbook_name() {
+    let mut e = engine(false);
+    e.add_sheet("Other").unwrap();
+    f(&mut e, "Sheet1", 1, 1, "=SEQUENCE(2)"); // 3
+    f(&mut e, "Other", 1, 1, "=SEQUENCE(4)"); // 10
+    let workbook_anchor = cell(&e, "Sheet1", 1, 1);
+    let local_anchor = cell(&e, "Other", 1, 1);
+    let other_id = e.sheet_id("Other").unwrap();
+    e.define_name(
+        "Anc",
+        NamedDefinition::Cell(workbook_anchor),
+        NameScope::Workbook,
+    )
+    .unwrap();
+    e.define_name(
+        "Anc",
+        NamedDefinition::Cell(local_anchor),
+        NameScope::Sheet(other_id),
+    )
+    .unwrap();
+    for sheet in ["Sheet1", "Other"] {
+        f(&mut e, sheet, 1, 3, "=SUM(Anc#)");
+        f(&mut e, sheet, 1, 4, "=SUM(_xlfn.ANCHORARRAY(Anc))");
+    }
+    e.evaluate_all().unwrap();
+    assert_eq!(get(&e, "Sheet1", 1, 3), n(3.0), "workbook name");
+    assert_eq!(get(&e, "Sheet1", 1, 4), n(3.0), "workbook name");
+    assert_eq!(get(&e, "Other", 1, 3), n(10.0), "sheet-scoped name wins");
+    assert_eq!(get(&e, "Other", 1, 4), n(10.0), "sheet-scoped name wins");
+}
+
+/// Review #1: undo can restore a spill snapshot truncated to
+/// `max_spill_cells` (a cell prefix, not a rectangle). The O(1) shape check
+/// must reject it: a spill reference is `#REF!`, not a partial range, and
+/// debug builds do not panic.
+#[test]
+fn truncated_restored_spill_snapshot_is_ref_not_partial_range() {
+    use crate::engine::ChangeLog;
+    use crate::engine::graph::editor::undo_engine::UndoEngine;
+
+    let mut e = engine(false);
+    set(&mut e, "Sheet1", 1, 4, LiteralValue::Number(1.0));
+    f(&mut e, "Sheet1", 1, 1, "=IF($D$1=1,SEQUENCE(2,3),5)");
+    e.evaluate_all().unwrap();
+    let anchor = e
+        .graph
+        .get_vertex_id_for_address(&cell(&e, "Sheet1", 1, 1))
+        .unwrap();
+    assert_eq!(e.graph.spill_cells_for_anchor(anchor).unwrap().len(), 6);
+
+    // Lower the cap so the logged snapshot keeps only [A1,B1,C1,A2].
+    e.config.spill.max_spill_cells = 4;
+    set(&mut e, "Sheet1", 1, 4, LiteralValue::Number(0.0));
+    let mut log = ChangeLog::new();
+    e.evaluate_all_logged(&mut log).unwrap();
+    assert_eq!(get(&e, "Sheet1", 1, 1), n(5.0), "anchor is now a scalar");
+    assert!(e.graph.spill_cells_for_anchor(anchor).is_none());
+
+    let mut undo = UndoEngine::new();
+    e.undo_logged(&mut undo, &mut log).unwrap();
+    let restored = e
+        .graph
+        .spill_cells_for_anchor(anchor)
+        .expect("undo re-registers the logged spill snapshot")
+        .to_vec();
+    assert_eq!(restored.len(), 4, "the snapshot was truncated");
+    assert!(
+        e.graph.spill_extent_for_anchor(anchor).is_none(),
+        "a truncated registry entry has no extent"
+    );
+
+    // Evaluate a reader directly, without re-evaluating the anchor.
+    let f1 = cell(&e, "Sheet1", 1, 6);
+    let interp = Interpreter::new_with_cell(&e, "Sheet1", f1);
+    for src in ["=SUM(A1#)", "=SUM(_xlfn.ANCHORARRAY(A1))", "=ROWS(A1#)"] {
+        let v = interp
+            .evaluate_ast(&parse(src).unwrap())
+            .map(|cv| cv.into_literal())
+            .unwrap_or_else(LiteralValue::Error);
+        assert!(
+            matches!(v, LiteralValue::Error(ref err) if err.kind == ExcelErrorKind::Ref),
+            "{src}: {v:?}"
+        );
+    }
 }

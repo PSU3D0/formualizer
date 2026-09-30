@@ -17,14 +17,14 @@ use crate::engine::used_extent::{
     ExtentPolicy, OpenRangeBounds, resolve_used_extent_with_fallback,
 };
 
-/// Postfix calls (`LAMBDA(x,x+1)(B1)`) are parsed and stored but not evaluated;
-/// the parsed tree and its arena copy fail the same way.
 /// A spill reference whose operand is not a single-cell reference or name.
 fn spill_operand_error() -> ExcelError {
     ExcelError::new(ExcelErrorKind::Ref)
         .with_message("Spill reference operand must be a single cell or a name")
 }
 
+/// Postfix calls (`LAMBDA(x,x+1)(B1)`) are parsed and stored but not evaluated;
+/// the parsed tree and its arena copy fail the same way.
 fn call_expression_error() -> ExcelError {
     ExcelError::new(ExcelErrorKind::NImpl)
         .with_message("Immediate-invocation calls are not yet supported")

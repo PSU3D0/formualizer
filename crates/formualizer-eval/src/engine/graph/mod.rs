@@ -4721,6 +4721,12 @@ impl DependencyGraph {
     /// Commit a spill atomically with an internal shadow buffer and optional fault injection.
     /// If a fault is injected partway through, all changes are rolled back to the pre-commit state.
     /// This does not change behavior under normal operation; it's primarily for Phase 3 guarantees and tests.
+    ///
+    /// Precondition: `target_cells` is the full spill rectangle in row-major
+    /// order, starting at the anchor cell. The registry stores the vector
+    /// verbatim, and [`Self::spill_extent_for_anchor`] reads the rectangle
+    /// from its first and last cells in O(1) (returning `None` for a vector
+    /// that fails its shape check, such as a truncated snapshot).
     pub fn commit_spill_region_atomic_with_fault(
         &mut self,
         anchor: VertexId,
@@ -4888,20 +4894,25 @@ impl DependencyGraph {
     ///
     /// Spill targets are registered row-major over a rectangle whose first
     /// cell is the anchor, so the first and last targets are its corners;
-    /// no member cell is scanned.
+    /// no member cell is scanned. A registry entry that is not such a
+    /// rectangle (for example a truncated snapshot restored by undo or
+    /// replay) is detected by the O(1) shape check and yields `None`, so a
+    /// spill reference to it is `#REF!` rather than a partial range.
     pub(crate) fn spill_extent_for_anchor(&self, anchor: VertexId) -> Option<(CellRef, CellRef)> {
         let cells = self.spill_anchor_to_cells.get(&anchor)?;
         let first = *cells.first()?;
         let last = *cells.last()?;
-        debug_assert!(
-            last.sheet_id == first.sheet_id
-                && last.coord.row() >= first.coord.row()
-                && last.coord.col() >= first.coord.col()
-                && cells.len()
-                    == ((last.coord.row() - first.coord.row() + 1) as usize)
-                        * ((last.coord.col() - first.coord.col() + 1) as usize),
-            "spill targets must be a row-major rectangle"
-        );
+        if last.sheet_id != first.sheet_id
+            || last.coord.row() < first.coord.row()
+            || last.coord.col() < first.coord.col()
+        {
+            return None;
+        }
+        let rows = (last.coord.row() - first.coord.row()) as usize + 1;
+        let cols = (last.coord.col() - first.coord.col()) as usize + 1;
+        if rows.checked_mul(cols) != Some(cells.len()) {
+            return None;
+        }
         Some((first, last))
     }
 
