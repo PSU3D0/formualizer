@@ -1,5 +1,6 @@
-//! Namespace-validated XLDAPR dynamic-array metadata and prior-footprint
-//! ownership. Parse-only: nothing here edits source bytes.
+//! Namespace-validated XLDAPR dynamic-array metadata, prior-footprint
+//! ownership and (FORM211-E) the binding resolver for anchors that need a
+//! new XLDAPR record.
 //!
 //! Index bases (ECMA-376 Part 1 §18.9 plus the MS-XLSX XLDAPR extension):
 //! * `c/@cm` is ONE-based into `cellMetadata/bk`;
@@ -7,9 +8,12 @@
 //! * `rc/@v` is ZERO-based into the `bk` list of the `futureMetadata` block
 //!   whose `name` equals the selected metadata type name.
 use super::sheet::{Cell, SourceIndex, SourceRect};
-use super::{IoError, XlsxRecalculateOptions, checkpoint, package, unsupported, xml};
+use super::{
+    IoError, Patch, XlsxRecalculateOptions, apply_patches, checkpoint, package, unsupported, xml,
+};
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap};
+use std::ops::Range;
 
 pub(super) const SHEET_METADATA_RELATIONSHIP: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/sheetMetadata";
@@ -38,9 +42,28 @@ pub(super) struct DynamicBinding {
 #[derive(Debug)]
 pub(super) struct DynamicMetadata {
     /// Package part name, relationship-resolved from the workbook.
-    #[allow(dead_code)] // edited by the metadata packet
     pub part: String,
     blocks: Vec<DynamicBinding>,
+    /// The source bytes, for appending records surgically.
+    source: Vec<u8>,
+    /// One-based index of the XLDAPR `metadataType`, if declared.
+    xldapr_type: Option<u32>,
+    /// Number of XLDAPR `futureMetadata` blocks.
+    future_len: usize,
+    future_section: Option<Section>,
+    cell_section: Option<Section>,
+}
+/// Source spans of a `futureMetadata` or `cellMetadata` element.
+#[derive(Debug, Clone)]
+struct Section {
+    qualified: String,
+    /// Start tag (or the whole self-closing element).
+    open: Range<usize>,
+    empty: bool,
+    /// Start of the end tag, for a non-empty element.
+    close_start: Option<usize>,
+    /// `count="…"` attribute span.
+    count: Option<Range<usize>>,
 }
 impl DynamicMetadata {
     pub fn resolve(&self, cm: u32) -> Result<DynamicBinding, IoError> {
@@ -112,6 +135,17 @@ struct Parsed {
     future_section: Option<Option<usize>>,
     cells: Vec<Vec<(String, String)>>,
     cells_section: Option<Option<usize>>,
+    future_span: Option<Section>,
+    cells_span: Option<Section>,
+}
+fn section(path: &[xml::Element], node: &xml::Node) -> Section {
+    Section {
+        qualified: path.last().expect("open XML element").qualified.clone(),
+        open: node.span.clone(),
+        empty: matches!(node.kind, xml::Kind::Open { empty: true, .. }),
+        close_start: None,
+        count: node.attribute("", "count").map(|a| a.span.clone()),
+    }
 }
 /// Parse and fully validate the relationship-resolved metadata part.
 pub(super) fn parse(
@@ -122,7 +156,7 @@ pub(super) fn parse(
     let data = package::read_part(archive, part, options.limits.max_worksheet_bytes)?;
     parse_bytes(&data, part, options)
 }
-fn parse_bytes(
+pub(super) fn parse_bytes(
     data: &[u8],
     part: &str,
     options: &XlsxRecalculateOptions,
@@ -182,6 +216,7 @@ fn parse_bytes(
                         if p.future_section.replace(count(&node)?).is_some() {
                             return Err(unsupported("duplicate XLDAPR future metadata", CONTEXT));
                         }
+                        p.future_span = Some(section(path, &node));
                     }
                     ["metadata", "futureMetadata", "bk"] => {
                         if p.future.len() >= limit {
@@ -241,6 +276,7 @@ fn parse_bytes(
                         if p.cells_section.replace(count(&node)?).is_some() {
                             return Err(unsupported("duplicate cellMetadata", CONTEXT));
                         }
+                        p.cells_span = Some(section(path, &node));
                     }
                     ["metadata", "cellMetadata", "bk"] => {
                         if p.cells.len() >= limit {
@@ -270,7 +306,17 @@ fn parse_bytes(
                     return Err(unsupported("unexpected sheet metadata text", CONTEXT));
                 }
             }
-            xml::Kind::Close => {}
+            xml::Kind::Close => match names.as_slice() {
+                ["metadata", "futureMetadata"] => {
+                    p.future_span.as_mut().expect("open section").close_start =
+                        Some(node.span.start);
+                }
+                ["metadata", "cellMetadata"] => {
+                    p.cells_span.as_mut().expect("open section").close_start =
+                        Some(node.span.start);
+                }
+                _ => {}
+            },
         }
         Ok(())
     })?;
@@ -320,7 +366,191 @@ fn parse_bytes(
     Ok(DynamicMetadata {
         part: part.to_owned(),
         blocks,
+        source: data.to_vec(),
+        // Parsing admits at most one metadata type, and only XLDAPR.
+        xldapr_type: (!p.types.is_empty()).then_some(1),
+        future_len: p.future.len(),
+        future_section: p.future_span,
+        cell_section: p.cells_span,
     })
+}
+
+/// Canonical part name of a synthesized metadata part.
+pub(super) const METADATA_PART: &str = "xl/metadata.xml";
+/// The minimal canonical metadata part: one XLDAPR metadata type, one
+/// `fDynamic=1 fCollapsed=0` future block and one cell block selecting it.
+/// The same prefix/namespace layout the parser above validates.
+fn canonical_metadata() -> String {
+    format!(
+        concat!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n",
+            "<metadata xmlns=\"{main}\" xmlns:xda=\"{ns}\">",
+            "<metadataTypes count=\"1\"><metadataType name=\"XLDAPR\" ",
+            "minSupportedVersion=\"120000\" copy=\"1\" pasteAll=\"1\" pasteValues=\"1\" ",
+            "merge=\"1\" splitFirst=\"1\" rowColShift=\"1\" clearFormats=\"1\" ",
+            "clearComments=\"1\" assign=\"1\" coerce=\"1\" cellMeta=\"1\"/></metadataTypes>",
+            "<futureMetadata name=\"XLDAPR\" count=\"1\"><bk><extLst><ext uri=\"{uri}\">",
+            "<xda:dynamicArrayProperties fDynamic=\"1\" fCollapsed=\"0\"/>",
+            "</ext></extLst></bk></futureMetadata>",
+            "<cellMetadata count=\"1\"><bk><rc t=\"1\" v=\"0\"/></bk></cellMetadata>",
+            "</metadata>"
+        ),
+        main = xml::MAIN,
+        ns = DYNAMIC_ARRAY_NS,
+        uri = XLDAPR_URI,
+    )
+}
+/// The prefix (with colon) of a qualified element name.
+fn prefix(qualified: &str) -> &str {
+    qualified
+        .rsplit_once(':')
+        .map_or("", |(p, _)| &qualified[..p.len() + 1])
+}
+/// The metadata part a publication must write.
+#[derive(Debug)]
+pub(super) struct MetadataPart {
+    pub part: String,
+    pub bytes: Vec<u8>,
+    /// The package has no metadata part: this one is added, with its
+    /// relationship and content type.
+    pub added: bool,
+}
+/// Resolves the XLDAPR binding (`c/@cm`) of every anchor that needs one
+/// (a new multi-cell anchor, or one whose source record is collapsed).
+///
+/// * The lowest existing compatible block (`fDynamic=1`, `fCollapsed=0`) is
+///   reused; nothing is edited.
+/// * Otherwise exactly one future block and one cell block are appended
+///   (one new `cm` shared by every request), the `count` attributes are
+///   updated, and existing records keep their bytes and indexes.
+/// * Without a metadata part, the canonical minimal part is synthesized.
+///
+/// A shared record's `fCollapsed` is never toggled. Anchors that keep their
+/// binding never reach the resolver, so a repeated recalc edits nothing.
+pub(super) struct Binder<'m> {
+    metadata: Option<&'m DynamicMetadata>,
+    reuse: Option<u32>,
+    appended: Option<u32>,
+}
+impl<'m> Binder<'m> {
+    pub fn new(metadata: Option<&'m DynamicMetadata>) -> Self {
+        let reuse = metadata.and_then(|m| {
+            m.blocks
+                .iter()
+                .find(|b| !b.collapsed)
+                .map(|b| b.cell_metadata)
+        });
+        Self {
+            metadata,
+            reuse,
+            appended: None,
+        }
+    }
+    /// The one-based `cm` of a compatible XLDAPR binding.
+    pub fn bind(&mut self, options: &XlsxRecalculateOptions) -> Result<u32, IoError> {
+        if let Some(cm) = self.reuse.or(self.appended) {
+            return Ok(cm);
+        }
+        let next = self.metadata.map_or(0, |m| m.blocks.len()) + 1;
+        if next > options.limits.max_cells {
+            return Err(unsupported("sheet metadata record limit", CONTEXT));
+        }
+        let cm =
+            u32::try_from(next).map_err(|_| unsupported("sheet metadata record limit", CONTEXT))?;
+        self.appended = Some(cm);
+        Ok(cm)
+    }
+    /// The metadata part to publish, if a binding was appended. The result
+    /// is re-parsed and must resolve every old `cm` unchanged and the new one
+    /// to a non-collapsed XLDAPR block.
+    pub fn finish(self, options: &XlsxRecalculateOptions) -> Result<Option<MetadataPart>, IoError> {
+        let Some(cm) = self.appended else {
+            return Ok(None);
+        };
+        let (part, bytes, added, old) = match self.metadata {
+            None => (
+                METADATA_PART.to_owned(),
+                canonical_metadata().into_bytes(),
+                true,
+                &[][..],
+            ),
+            Some(m) => (
+                m.part.clone(),
+                append_block(m, options)?,
+                false,
+                &m.blocks[..],
+            ),
+        };
+        let parsed = parse_bytes(&bytes, &part, options)?;
+        let expected = DynamicBinding {
+            cell_metadata: cm,
+            metadata_type: 1,
+            future_block: u32::try_from(self.metadata.map_or(0, |m| m.future_len))
+                .map_err(|_| unsupported("sheet metadata record limit", CONTEXT))?,
+            collapsed: false,
+        };
+        if parsed.blocks.len() != old.len() + 1
+            || parsed.blocks[..old.len()] != *old
+            || parsed.resolve(cm)? != expected
+        {
+            return Err(unsupported(
+                "dynamic array metadata edit did not validate",
+                CONTEXT,
+            ));
+        }
+        Ok(Some(MetadataPart { part, bytes, added }))
+    }
+}
+/// Append one XLDAPR future block and one cell block selecting it.
+fn append_block(m: &DynamicMetadata, options: &XlsxRecalculateOptions) -> Result<Vec<u8>, IoError> {
+    let incomplete = || {
+        unsupported(
+            "sheet metadata part without XLDAPR sections cannot be extended",
+            CONTEXT,
+        )
+    };
+    let t = m.xldapr_type.ok_or_else(incomplete)?;
+    let future = m.future_section.as_ref().ok_or_else(incomplete)?;
+    let cells = m.cell_section.as_ref().ok_or_else(incomplete)?;
+    let fp = prefix(&future.qualified);
+    // Declare the dynamic-array namespace on the new `ext`, with a prefix
+    // that cannot shadow the section's own.
+    let xda = if fp == "xda:" { "xda1" } else { "xda" };
+    let future_block = format!(
+        "<{fp}bk><{fp}extLst><{fp}ext uri=\"{XLDAPR_URI}\" xmlns:{xda}=\"{DYNAMIC_ARRAY_NS}\"><{xda}:dynamicArrayProperties fDynamic=\"1\" fCollapsed=\"0\"/></{fp}ext></{fp}extLst></{fp}bk>"
+    );
+    let cp = prefix(&cells.qualified);
+    let cell_block = format!(
+        "<{cp}bk><{cp}rc t=\"{t}\" v=\"{}\"/></{cp}bk>",
+        m.future_len
+    );
+    let mut patches = Vec::new();
+    for (section, block, count) in [
+        (future, future_block, m.future_len + 1),
+        (cells, cell_block, m.blocks.len() + 1),
+    ] {
+        if let Some(span) = &section.count {
+            patches.push(Patch {
+                span: span.clone(),
+                replacement: format!("count=\"{count}\"").into_bytes(),
+            });
+        }
+        if section.empty {
+            // `<x …/>` becomes `<x …>block</x>`.
+            let end = section.open.end;
+            patches.push(Patch {
+                span: end - 2..end,
+                replacement: format!(">{block}</{}>", section.qualified).into_bytes(),
+            });
+        } else {
+            let at = section.close_start.ok_or_else(incomplete)?;
+            patches.push(Patch {
+                span: at..at,
+                replacement: block.into_bytes(),
+            });
+        }
+    }
+    apply_patches(&m.source, patches, options.limits.max_worksheet_bytes)
 }
 
 /// Build the disjoint prior-footprint ownership of one worksheet and apply
