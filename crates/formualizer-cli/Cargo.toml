@@ -7,6 +7,17 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 
+# Prebuilt binaries attached to the product GitHub release (see
+# .github/workflows/cli-build.yml) for `cargo binstall formualizer-cli`.
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/formualizer-cli-v{ version }-{ target }.tar.gz"
+bin-dir = "formualizer-cli-v{ version }-{ target }/{ bin }{ binary-ext }"
+pkg-fmt = "tgz"
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-url = "{ repo }/releases/download/v{ version }/formualizer-cli-v{ version }-{ target }.zip"
+pkg-fmt = "zip"
+
 [features]
 default = ["signals"]
 # Bindings disable defaults and supply their own cancellation token.

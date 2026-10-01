@@ -718,5 +718,72 @@ class ReleasePreflightTests(unittest.TestCase):
         )
 
 
+class CliReleaseWorkflowTests(unittest.TestCase):
+    """Keep the native CLI release wiring aligned with preflight and safe."""
+
+    workflows = release_preflight.ROOT / ".github" / "workflows"
+
+    def job_block(self, text: str, job: str) -> str:
+        start = text.index(f"\n  {job}:\n")
+        lines = text[start + 1 :].splitlines()
+        block = [lines[0]]
+        for line in lines[1:]:
+            # The next two-space-indented key starts the next job.
+            if line.startswith("  ") and not line.startswith("   ") and line.strip():
+                break
+            block.append(line)
+        return "\n".join(block)
+
+    def test_product_crate_publication_follows_preflight_order(self) -> None:
+        text = (self.workflows / "release.yml").read_text(encoding="utf-8")
+        published = [
+            line.split()[1]
+            for line in self.job_block(text, "publish-product-crates").splitlines()
+            if line.strip().startswith("publish_with_retry ")
+        ]
+        product = [package.name for package in release_preflight.TRACKS["product"]]
+        self.assertEqual(published, [name for name in product if name in published])
+        self.assertEqual(published[-2:], ["formualizer", "formualizer-cli"])
+
+    def test_cli_build_workflow_cannot_publish(self) -> None:
+        text = (self.workflows / "cli-build.yml").read_text(encoding="utf-8")
+        for forbidden in (
+            "secrets.",
+            "npm publish",
+            "cargo publish",
+            "id-token",
+            "contents: write",
+            "action-gh-release",
+            "gh release",
+        ):
+            self.assertNotIn(forbidden, text)
+        self.assertIn("permissions:\n  contents: read\n", text)
+
+    def test_cli_publish_jobs_only_run_for_product_tag_pushes(self) -> None:
+        text = (self.workflows / "release.yml").read_text(encoding="utf-8")
+        for job in ("build-cli", "publish-npm-cli"):
+            self.assertIn(
+                "if: github.event_name == 'push' && startsWith(github.ref_name, 'v')",
+                self.job_block(text, job),
+            )
+        self.assertIn("--provenance", self.job_block(text, "publish-npm-cli"))
+        self.assertIn("files: cli-dist/*", self.job_block(text, "github-release"))
+
+    def test_binstall_metadata_matches_release_archive_names(self) -> None:
+        manifest = tomllib.loads(
+            (release_preflight.ROOT / "crates/formualizer-cli/Cargo.toml").read_text(encoding="utf-8")
+        )
+        binstall = manifest["package"]["metadata"]["binstall"]
+        stem = "formualizer-cli-v{ version }-{ target }"
+        self.assertTrue(binstall["pkg-url"].endswith(f"/releases/download/v{{ version }}/{stem}.tar.gz"))
+        self.assertEqual(binstall["bin-dir"], f"{stem}/{{ bin }}{{ binary-ext }}")
+        windows = binstall["overrides"]["x86_64-pc-windows-msvc"]
+        self.assertTrue(windows["pkg-url"].endswith(f"{stem}.zip"))
+        workflow = (self.workflows / "cli-build.yml").read_text(encoding="utf-8")
+        self.assertIn('name="formualizer-cli-v${version}-${target}"', workflow)
+        self.assertIn('"release-assets/${name}.tar.gz"', workflow)
+        self.assertIn('"../release-assets/${name}.zip"', workflow)
+
+
 if __name__ == "__main__":
     unittest.main()
