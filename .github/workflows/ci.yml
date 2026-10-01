@@ -400,6 +400,7 @@ jobs:
           -p formualizer-parse \
           -p formualizer-eval \
           -p formualizer-workbook \
+          -p formualizer-cli \
           -p formualizer-sheetport \
           -p sheetport-spec \
           -p formualizer-macros \

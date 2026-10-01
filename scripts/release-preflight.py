@@ -62,11 +62,12 @@ EVAL = Package("formualizer-eval", "crates/formualizer-eval/Cargo.toml")
 WORKBOOK = Package("formualizer-workbook", "crates/formualizer-workbook/Cargo.toml")
 SHEETPORT = Package("formualizer-sheetport", "crates/formualizer-sheetport/Cargo.toml")
 FORMUALIZER = Package("formualizer", "crates/formualizer/Cargo.toml")
+CLI = Package("formualizer-cli", "crates/formualizer-cli/Cargo.toml")
 
 TRACKS: dict[str, tuple[Package, ...]] = {
     "parse": (COMMON, PARSE),
     "spec": (SPEC,),
-    "product": (COMMON, PARSE, SPEC, MACROS, EVAL, WORKBOOK, SHEETPORT, FORMUALIZER),
+    "product": (COMMON, PARSE, SPEC, MACROS, EVAL, WORKBOOK, SHEETPORT, FORMUALIZER, CLI),
 }
 
 # Binding crates ship through C, PyPI, and npm channels rather than crates.io.

@@ -713,6 +713,7 @@ class ReleasePreflightTests(unittest.TestCase):
                 "formualizer-workbook",
                 "formualizer-sheetport",
                 "formualizer",
+                "formualizer-cli",
             ],
         )
 

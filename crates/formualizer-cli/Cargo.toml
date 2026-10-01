@@ -1,0 +1,30 @@
+[package]
+name = "formualizer-cli"
+version = "0.10.1"
+edition = "2024"
+description = "Source-preserving XLSX formula-cache recalculation command"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[features]
+default = ["signals"]
+# Bindings disable defaults and supply their own cancellation token.
+signals = ["dep:ctrlc"]
+
+[dependencies]
+formualizer-common.workspace = true
+formualizer-workbook = { path = "../formualizer-workbook", version = "0.10.1", default-features = false, features = ["xlsx-recalc"] }
+clap = { workspace = true, features = ["derive"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+ctrlc = { version = "3.5.2", optional = true }
+
+[[bin]]
+name = "formualizer"
+path = "src/main.rs"
+required-features = ["signals"]
+
+[dev-dependencies]
+tempfile.workspace = true
+zip = { version = "7.2", default-features = false, features = ["deflate"] }
