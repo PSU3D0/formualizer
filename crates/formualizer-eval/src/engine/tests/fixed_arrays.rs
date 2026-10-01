@@ -22,7 +22,7 @@ fn copied_fixed_arrays_per_cell_sequential_and_parallel() {
                     "Sheet1",
                     row,
                     2,
-                    parse(&format!("=SEQUENCE(1,3,A{row})")).unwrap(),
+                    parse(format!("=SEQUENCE(1,3,A{row})")).unwrap(),
                 )
                 .unwrap();
             }
