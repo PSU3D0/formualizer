@@ -19,6 +19,7 @@ This repo publishes multiple artifacts (crates.io, PyPI, npm) from one monorepo.
 - `formualizer-workbook`: workbook abstraction + loaders.
 - `formualizer-sheetport`: SheetPort runtime over a workbook.
 - `formualizer`: roll-up (“product surface”) crate; intended primary interface for bindings and most downstreams.
+- `formualizer-cli`: the `formualizer` command (`formualizer recalc`); `cargo install formualizer-cli`, or `cargo binstall formualizer-cli` from the release archives.
 
 **Spec track**
 - `sheetport-spec`: YAML/JSON schema + validation + CLI.
@@ -33,6 +34,11 @@ This repo publishes multiple artifacts (crates.io, PyPI, npm) from one monorepo.
 ### JS/WASM (npm)
 
 - `formualizer` (wasm-pack output + TypeScript wrapper): the product surface for JS.
+- `formualizer-cli` (launcher, bin `formualizer`) plus seven `@formualizer/cli-<platform>` native binary packages. See [Native CLI pipeline](#native-cli-pipeline).
+
+### GitHub Releases
+
+- `formualizer-cli-v<version>-<rust-target>.tar.gz` (`.zip` for Windows) for the seven CLI targets, plus `SHA256SUMS`.
 
 ## Version Tracks
 
@@ -43,6 +49,7 @@ This repo publishes multiple artifacts (crates.io, PyPI, npm) from one monorepo.
 - `crates/formualizer/Cargo.toml` (`package.version`)
 - `bindings/python/pyproject.toml` (`project.version`)
 - `bindings/wasm/package.json` (`version`)
+- `crates/formualizer-cli/Cargo.toml` (`package.version`), which is also the version of every CLI npm package
 
 This is the public “Formualizer product version”.
 
@@ -63,7 +70,7 @@ Product releases may depend on a `sheetport-spec` version; if the product needs 
 Tags encode *which track* is being released.
 
 - **Product release:** `vX.Y.Z`
-  - publishes: Rust product crates + PyPI + npm
+  - publishes: Rust product crates (including `formualizer-cli`) + PyPI + npm (WASM library and native CLI) + CLI release archives
 - **Parser/SDK release:** `parse-vX.Y.Z`
   - publishes: `formualizer-common`, `formualizer-parse`
 - **Spec release:** `sheetport-spec-vX.Y.Z`
@@ -157,6 +164,7 @@ Publish in dependency order:
 3. `formualizer-workbook`
 4. `formualizer-sheetport`
 5. `formualizer` (roll-up)
+6. `formualizer-cli` (the `formualizer` command)
 
 ## GitHub Actions Release Principles
 
@@ -168,6 +176,47 @@ Release workflows should:
 - Publish without masking failures (no `|| true`).
 
 For npm builds, ensure the wasm-pack target matches what we publish (bundler vs web target) and that the generated `pkg/` content matches what `package.json` expects.
+
+## Native CLI pipeline
+
+The `formualizer` command ships as native binaries for speed; there is no WebAssembly fallback. Seven targets match the wheel matrix:
+
+| Rust target | Runner | npm package |
+| --- | --- | --- |
+| `x86_64-unknown-linux-gnu` | `ubuntu-24.04`, cargo-zigbuild, glibc 2.17 | `@formualizer/cli-linux-x64-gnu` |
+| `aarch64-unknown-linux-gnu` | `ubuntu-24.04-arm`, cargo-zigbuild, glibc 2.17 | `@formualizer/cli-linux-arm64-gnu` |
+| `x86_64-unknown-linux-musl` | `ubuntu-24.04`, cargo-zigbuild, static | `@formualizer/cli-linux-x64-musl` |
+| `aarch64-unknown-linux-musl` | `ubuntu-24.04-arm`, cargo-zigbuild, static | `@formualizer/cli-linux-arm64-musl` |
+| `x86_64-apple-darwin` | `macos-latest` (cross) | `@formualizer/cli-darwin-x64` |
+| `aarch64-apple-darwin` | `macos-latest` | `@formualizer/cli-darwin-arm64` |
+| `x86_64-pc-windows-msvc` | `windows-latest`, static CRT | `@formualizer/cli-win32-x64-msvc` |
+
+Pieces:
+
+- `.github/workflows/cli-build.yml` builds `formualizer-cli --release --locked` for every target (stripped via `CARGO_PROFILE_RELEASE_STRIP=symbols`) and smoke-runs `--version` wherever the runner can execute the binary. Its `package` job runs the launcher tests and assembles and validates the npm packages. It checks the executable format, the architecture, that the musl builds are static, and the glibc symbol-version floor. It then packs the tarballs in publish order, smoke-tests the packed launcher (gnu, and the musl fallback), and builds the release archives plus `SHA256SUMS`. Everything leaves the workflow as artifacts (`cli-release-assets`, `cli-npm-tarballs`). The workflow has a read-only token, no secrets, and no publish or release-upload steps.
+- `release.yml` calls it on product tags (`build-cli`, after `verify-product`). `publish-npm-cli` publishes the platform tarballs and then the `formualizer-cli` meta package with `--provenance`, skipping versions that already exist. `publish-product-crates` publishes the crate after `formualizer`, and `github-release` attaches the archives and `SHA256SUMS`.
+- `npm/formualizer-cli/` holds the launcher (`bin/formualizer.js`), the template `package.template.json`, the README, `platforms.json` and `scripts/assemble.js`. `platforms.json` is the single place for the npm scope and package names: `platformPackage` is `@formualizer/cli-{platform}`, and changing it to `formualizer-cli-{platform}` switches to unscoped names. The launcher and the assembly script both read it.
+- The npm packages carry no committed version. `assemble.js` takes it from `crates/formualizer-cli/Cargo.toml` and rejects a mismatched `--version`. `bump-version.py` and the tag check therefore cover them through that manifest.
+
+Linux glibc builds use cargo-zigbuild's `.2.17` target suffix rather than a manylinux container. The glibc floor is then explicit in the target name, independent of the runner image, and one pinned zig toolchain also links musl statically on both architectures. The pins are `CARGO_ZIGBUILD_VERSION`, `ZIG_VERSION` and `MAX_GLIBC` in `cli-build.yml`; bump them together.
+
+Dry run without publishing: dispatch the **CLI binaries** workflow (Actions → CLI binaries → Run workflow) on any branch. It also runs on pull requests that touch `npm/formualizer-cli/**` or the workflow. Download the artifacts to inspect the tarballs and archives. Locally:
+
+```bash
+node --test npm/formualizer-cli/test/*.test.js
+cargo build --release --locked -p formualizer-cli
+mkdir -p /tmp/cli-bins/x86_64-unknown-linux-gnu && cp target/release/formualizer /tmp/cli-bins/x86_64-unknown-linux-gnu/
+node npm/formualizer-cli/scripts/assemble.js --binaries /tmp/cli-bins --targets x86_64-unknown-linux-gnu --out /tmp/cli-npm
+npm pack /tmp/cli-npm/formualizer-cli-linux-x64-gnu && npm pack /tmp/cli-npm/formualizer-cli
+```
+
+### One-time maintainer setup (before the first CLI release)
+
+1. **npm scope.** Create the npm organization `formualizer` (free for public packages), with the publishing account as owner. If the scope cannot be had, set `platformPackage` in `npm/formualizer-cli/platforms.json` to `formualizer-cli-{platform}` and update the package table in `npm/formualizer-cli/README.md`; the launcher tests pin the scoped names and need the same update.
+2. **npm authentication.** `publish-npm-cli` uses the same OIDC pattern as the WASM package (`id-token: write`, `--provenance`). For each of the eight packages, add a trusted publisher on npmjs.com: repository `PSU3D0/formualizer`, workflow `release.yml`. npm only allows a trusted publisher on a package that already exists. For the first publish, either publish the eight packages once by hand, or add a short-lived granular automation token as repository secret `NPM_TOKEN` (the job passes it as `NODE_AUTH_TOKEN`; it stays empty when unset). Delete the token after trusted publishing is configured.
+3. **crates.io.** `formualizer-cli` is a new crate name. The `CARGO_REGISTRY_TOKEN` used by `publish-product-crates` must be allowed to publish new crates (crates.io scoped tokens need the `publish-new` scope). After the first publish, add the other owners with `cargo owner --add`.
+4. **Runners.** The arm64 Linux builds use the GitHub-hosted `ubuntu-24.04-arm` runners, which are available to public repositories.
+5. Run the dry run once on the release commit, and check the archives and npm tarballs before tagging.
 
 ## Pyodide wheel pipeline
 
