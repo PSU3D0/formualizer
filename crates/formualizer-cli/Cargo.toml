@@ -31,6 +31,13 @@ serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 ctrlc = { version = "3.5.2", optional = true }
 
+# musl's allocator makes the parallel evaluator orders of magnitude slower
+# (a 9k SUMPRODUCT workbook: >90 s vs ~7.6 s with jemalloc, matching glibc).
+# Static musl binaries therefore use jemalloc; other targets keep the system
+# allocator.
+[target.'cfg(target_env = "musl")'.dependencies]
+tikv-jemallocator = "0.6"
+
 [[bin]]
 name = "formualizer"
 path = "src/main.rs"

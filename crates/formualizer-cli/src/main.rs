@@ -1,3 +1,8 @@
+// See Cargo.toml: musl's allocator is pathologically slow for this workload.
+#[cfg(target_env = "musl")]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 fn main() {
     let cancel = formualizer_cli::CancelToken::new();
     let signal_token = cancel.clone();
