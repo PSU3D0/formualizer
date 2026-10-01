@@ -706,10 +706,10 @@ fn eval_array_if<'b>(
                 Err(error) if super::logical_ext::is_live_fault(&error) => return Err(error),
                 Err(error) => LiteralValue::Error(error),
             };
-            if let LiteralValue::Error(ref error) = selected {
-                if super::logical_ext::is_live_fault(error) {
-                    return Err(error.clone());
-                }
+            if let LiteralValue::Error(ref error) = selected
+                && super::logical_ext::is_live_fault(error)
+            {
+                return Err(error.clone());
             }
             row.push(selected);
         }
