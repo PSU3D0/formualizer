@@ -60,6 +60,29 @@ mod tests {
     use formualizer_parse::parser::parse;
 
     #[test]
+    fn extent_hints_without_registry_preserve_existing_dependencies() {
+        let mut e = Engine::new(
+            TestWorkbook::new(),
+            EvalConfig {
+                family_execution: false,
+                ..EvalConfig::default()
+            },
+        );
+        e.set_cell_formula("Sheet1", 1, 1, parse("=SEQUENCE(3)").unwrap())
+            .unwrap();
+        e.declare_fixed_array_formula("Sheet1", 1, 1, 1, 1).unwrap();
+        let vertex = e
+            .graph
+            .get_vertex_id_for_address(&e.graph.make_cell_ref("Sheet1", 1, 1))
+            .unwrap();
+        assert!(!e.graph.has_spill_anchors());
+        let mut deps = FxHashMap::default();
+        deps.insert(vertex, vec![vertex]);
+        e.freshness_extent_hints(&[vertex], &mut deps);
+        assert_eq!(deps[&vertex], vec![vertex]);
+    }
+
+    #[test]
     fn extent_hints_malformed_registry_keeps_conservative_bounds() {
         let mut e = Engine::new(TestWorkbook::new(), EvalConfig::default());
         e.set_cell_formula("Sheet1", 1, 1, parse("=1").unwrap())
@@ -185,9 +208,16 @@ impl<R: EvaluationContext> Engine<R> {
     ) {
         use crate::engine::authority::geom::Rect;
         use crate::engine::authority::store::TagFilter;
+        // Ordinary and fixed-1x1-only workloads have no registered extents.
+        // Keep them entirely off the per-candidate spill lookup path.
+        if !self.graph.has_spill_anchors() {
+            return;
+        }
         let anchors: Vec<(VertexId, u16, Rect)> = candidates
             .iter()
             .filter_map(|&v| {
+                // One lookup for non-anchors, even in a workbook with spills.
+                let cells = self.graph.spill_cells_for_anchor(v)?;
                 if let Some((first, last)) = self.graph.spill_extent_for_anchor(v) {
                     return Some((
                         v,
@@ -202,7 +232,6 @@ impl<R: EvaluationContext> Engine<R> {
                 }
                 // Undo/replay can restore a malformed registry. Preserve the
                 // conservative legacy bounding box in that exceptional case.
-                let cells = self.graph.spill_cells_for_anchor(v)?;
                 let first = cells.first()?;
                 let (mut r0, mut c0, mut r1, mut c1) = (u32::MAX, u32::MAX, 0u32, 0u32);
                 for c in cells {
