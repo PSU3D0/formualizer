@@ -1336,6 +1336,7 @@ pub fn formualizer_eval::engine::eval::Engine<R>::stage_formula_ast(&mut self, &
 impl<R: formualizer_eval::traits::EvaluationContext> formualizer_eval::engine::eval::Engine<R>
 pub fn formualizer_eval::engine::eval::Engine<R>::dependents(&self, &formualizer_common::grid_address::CellAddress, &formualizer_eval::engine::inspect::DependentsOptions) -> core::result::Result<formualizer_eval::engine::inspect::DependentsReport, formualizer_eval::engine::inspect::InspectError>
 pub fn formualizer_eval::engine::eval::Engine<R>::inspect_cell(&self, &formualizer_common::grid_address::CellAddress, &formualizer_eval::engine::inspect::SnapshotOptions) -> core::result::Result<formualizer_eval::engine::inspect::CellSnapshotReport, formualizer_eval::engine::inspect::InspectError>
+pub fn formualizer_eval::engine::eval::Engine<R>::inspect_cell_result(&self, &formualizer_common::grid_address::CellAddress) -> core::result::Result<formualizer_eval::engine::inspect::CellResultState, formualizer_eval::engine::inspect::InspectError>
 pub fn formualizer_eval::engine::eval::Engine<R>::precedents(&self, &formualizer_common::grid_address::CellAddress, &formualizer_eval::engine::inspect::PrecedentOptions) -> core::result::Result<formualizer_eval::engine::inspect::PrecedentReport, formualizer_eval::engine::inspect::InspectError>
 pub fn formualizer_eval::engine::eval::Engine<R>::range_page(&self, &formualizer_common::grid_address::RangeArea, &formualizer_eval::engine::inspect::RangePageOptions) -> core::result::Result<formualizer_eval::engine::inspect::RangePage, formualizer_eval::engine::inspect::InspectError>
 pub fn formualizer_eval::engine::eval::Engine<R>::trace(&self, &[formualizer_common::grid_address::CellAddress], &formualizer_eval::engine::inspect::TraceOptions) -> core::result::Result<formualizer_eval::engine::inspect::TraceGraph, formualizer_eval::engine::inspect::InspectError>
@@ -2966,6 +2967,21 @@ impl core::marker::Copy for formualizer_eval::engine::inspect::TraceLinkKind
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::inspect::TraceLinkKind
 impl serde_core::ser::Serialize for formualizer_eval::engine::inspect::TraceLinkKind
 pub fn formualizer_eval::engine::inspect::TraceLinkKind::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+#[non_exhaustive] pub struct formualizer_eval::engine::inspect::CellResultState
+pub formualizer_eval::engine::inspect::CellResultState::address: formualizer_common::grid_address::CellAddress
+pub formualizer_eval::engine::inspect::CellResultState::has_formula: bool
+pub formualizer_eval::engine::inspect::CellResultState::spill: core::option::Option<formualizer_eval::engine::inspect::SpillRole>
+pub formualizer_eval::engine::inspect::CellResultState::staleness: formualizer_eval::engine::inspect::Staleness
+pub formualizer_eval::engine::inspect::CellResultState::value: core::option::Option<formualizer_common::value::LiteralValue>
+impl core::clone::Clone for formualizer_eval::engine::inspect::CellResultState
+pub fn formualizer_eval::engine::inspect::CellResultState::clone(&self) -> formualizer_eval::engine::inspect::CellResultState
+impl core::cmp::PartialEq for formualizer_eval::engine::inspect::CellResultState
+pub fn formualizer_eval::engine::inspect::CellResultState::eq(&self, &formualizer_eval::engine::inspect::CellResultState) -> bool
+impl core::fmt::Debug for formualizer_eval::engine::inspect::CellResultState
+pub fn formualizer_eval::engine::inspect::CellResultState::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::inspect::CellResultState
+impl serde_core::ser::Serialize for formualizer_eval::engine::inspect::CellResultState
+pub fn formualizer_eval::engine::inspect::CellResultState::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 #[non_exhaustive] pub struct formualizer_eval::engine::inspect::CellSnapshot
 pub formualizer_eval::engine::inspect::CellSnapshot::address: formualizer_common::grid_address::CellAddress
 pub formualizer_eval::engine::inspect::CellSnapshot::formula: core::option::Option<alloc::string::String>
@@ -5967,6 +5983,7 @@ pub fn formualizer_eval::engine::eval::Engine<R>::stage_formula_ast(&mut self, &
 impl<R: formualizer_eval::traits::EvaluationContext> formualizer_eval::engine::eval::Engine<R>
 pub fn formualizer_eval::engine::eval::Engine<R>::dependents(&self, &formualizer_common::grid_address::CellAddress, &formualizer_eval::engine::inspect::DependentsOptions) -> core::result::Result<formualizer_eval::engine::inspect::DependentsReport, formualizer_eval::engine::inspect::InspectError>
 pub fn formualizer_eval::engine::eval::Engine<R>::inspect_cell(&self, &formualizer_common::grid_address::CellAddress, &formualizer_eval::engine::inspect::SnapshotOptions) -> core::result::Result<formualizer_eval::engine::inspect::CellSnapshotReport, formualizer_eval::engine::inspect::InspectError>
+pub fn formualizer_eval::engine::eval::Engine<R>::inspect_cell_result(&self, &formualizer_common::grid_address::CellAddress) -> core::result::Result<formualizer_eval::engine::inspect::CellResultState, formualizer_eval::engine::inspect::InspectError>
 pub fn formualizer_eval::engine::eval::Engine<R>::precedents(&self, &formualizer_common::grid_address::CellAddress, &formualizer_eval::engine::inspect::PrecedentOptions) -> core::result::Result<formualizer_eval::engine::inspect::PrecedentReport, formualizer_eval::engine::inspect::InspectError>
 pub fn formualizer_eval::engine::eval::Engine<R>::range_page(&self, &formualizer_common::grid_address::RangeArea, &formualizer_eval::engine::inspect::RangePageOptions) -> core::result::Result<formualizer_eval::engine::inspect::RangePage, formualizer_eval::engine::inspect::InspectError>
 pub fn formualizer_eval::engine::eval::Engine<R>::trace(&self, &[formualizer_common::grid_address::CellAddress], &formualizer_eval::engine::inspect::TraceOptions) -> core::result::Result<formualizer_eval::engine::inspect::TraceGraph, formualizer_eval::engine::inspect::InspectError>
