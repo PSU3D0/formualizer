@@ -6,6 +6,8 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Added
 
+- Added legacy fixed-extent CSE array recalculation, including single-cell top-left results, broadcasting, padding and truncation. Re-saved spills without dynamic metadata retain their declared extent; spill-reference readers return `#REF!`.
+
 - Added the native `formualizer recalc` CLI with source-preserving XLSX cache updates, JSON outcomes, strict refusals and read-only freshness checks; prepared Python wheel, npm native launcher and Rust crate/release-binary distribution channels (publication pending).
 - Added an agent edit/recalc/inspect workflow guide and a portable `formualizer-recalc` skill for use with existing workbook editors.
 - Added current-spill references through `A1#` and `_xlfn.ANCHORARRAY(A1)` in Rust, Python and WASM evaluation.

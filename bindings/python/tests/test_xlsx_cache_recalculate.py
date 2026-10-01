@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import subprocess
+
 from io import BytesIO
 from pathlib import Path
 from xml.etree import ElementTree as ET
@@ -8,6 +11,48 @@ from zipfile import ZIP_DEFLATED, ZipFile
 import pytest
 
 import formualizer as fz
+
+
+@pytest.mark.parametrize("size", [2, 5])
+@pytest.mark.parametrize("backend", ["python", "cli"])
+def test_openpyxl_resave_becomes_fixed_extent(tmp_path, size, backend):
+    openpyxl = pytest.importorskip("openpyxl")
+    cli = os.environ.get("FORMUALIZER_CLI")
+    if backend == "cli" and not cli:
+        pytest.skip("set FORMUALIZER_CLI to test the candidate executable")
+    path = tmp_path / "roundtrip.xlsx"
+    workbook = openpyxl.Workbook()
+    workbook.active["A1"] = 3
+    workbook.active["B1"] = "=SEQUENCE(A1)"
+    workbook.active["D1"] = "=SUM(B1:B3)"
+    workbook.active["E1"] = "=SUM(B1#)"
+    workbook.save(path)
+
+    def recalc():
+        if backend == "python":
+            fz.recalculate_xlsx_file(str(path))
+        else:
+            result = subprocess.run([cli, "recalc", str(path)], capture_output=True)
+            assert result.returncode == 0, result.stderr.decode()
+
+    recalc()
+    workbook = openpyxl.load_workbook(path)
+    workbook.active["A1"] = size
+    workbook.save(path)
+    recalc()
+    cached = openpyxl.load_workbook(path, data_only=True).active
+    assert [cached[f"B{row}"].value for row in range(1, 4)] == (
+        [1, 2, "#N/A"] if size == 2 else [1, 2, 3]
+    )
+    assert cached["D1"].value == ("#N/A" if size == 2 else 6)
+    assert cached["E1"].value == "#REF!"
+    formulas = openpyxl.load_workbook(path).active
+    assert formulas["B1"].value.ref == "B1:B3"
+    with ZipFile(path) as archive:
+        assert "xl/metadata.xml" not in archive.namelist()
+        xml = ET.fromstring(archive.read("xl/worksheets/sheet1.xml"))
+        cell = xml.find('.//{*}c[@r="B1"]')
+        assert "cm" not in cell.attrib
 
 
 def fixture_xlsx(*, formula: bool = True) -> bytes:

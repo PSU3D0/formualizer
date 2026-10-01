@@ -271,9 +271,7 @@ def test_source_1904_epoch(tmp_path):
     assert book.active["C3"].value == 42370
 
 
-@pytest.mark.parametrize(
-    "kwargs,message", [({"merge": True}, "merged"), ({"cse": True}, "legacy CSE")]
-)
+@pytest.mark.parametrize("kwargs,message", [({"merge": True}, "merged")])
 def test_refusal_preserves_destination_bytes_and_permissions(tmp_path, kwargs, message):
     payload = fixture(**kwargs)
     with pytest.raises(OSError, match=message):

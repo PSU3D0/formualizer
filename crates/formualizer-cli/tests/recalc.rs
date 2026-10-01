@@ -55,6 +55,30 @@ fn json(path: &Path, extra: &[&str]) -> (i32, Value) {
     (code, serde_json::from_str(&out).unwrap())
 }
 #[test]
+fn fixed_cse_recalculates_with_exit_zero_and_no_metadata() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("cse.xlsx");
+    std::fs::write(&path, fixture("<row r=\"1\"><c r=\"A1\"><f t=\"array\" ref=\"A1:A3\">SEQUENCE(2)</f><v>99</v></c><c r=\"B1\"><f>SUM(A1:A3)</f><v>99</v></c></row>", "")).unwrap();
+    let (code, report) = json(&path, &[]);
+    assert_eq!(code, 0);
+    assert_eq!(report["status"], "written");
+    let output = std::fs::read(&path).unwrap();
+    let mut archive = zip::ZipArchive::new(Cursor::new(&output)).unwrap();
+    assert!(archive.by_name("xl/metadata.xml").is_err());
+    let mut xml = String::new();
+    archive
+        .by_name("xl/worksheets/sheet1.xml")
+        .unwrap()
+        .read_to_string(&mut xml)
+        .unwrap();
+    assert!(xml.contains("ref=\"A1:A3\""));
+    assert!(xml.contains("#N/A"));
+    assert!(!xml.contains(" cm="));
+    assert_eq!(json(&path, &[]).0, 0);
+    assert_eq!(std::fs::read(&path).unwrap(), output);
+}
+
+#[test]
 fn written_and_unchanged_preserve_bytes_and_mtime() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("book.xlsx");
@@ -118,7 +142,7 @@ fn refusals_are_structured_and_do_not_publish() {
             "<tableParts count=\"1\"/>",
         ),
         fixture(
-            "<row r=\"1\"><c r=\"A1\"><f t=\"array\" ref=\"A1:A2\">1+1</f><v>99</v></c></row>",
+            "<row r=\"1\"><c r=\"A1\"><f t=\"dataTable\" ref=\"A1:A2\">1+1</f><v>99</v></c></row>",
             "",
         ),
     ] {

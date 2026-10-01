@@ -92,7 +92,7 @@ untouched unless the output is that same path. Symlink destinations are refused.
 ## Boundaries and don'ts
 
 - Only the strict supported XLSX subset is recalculated; no fallback engine.
-  Tables, legacy CSE arrays, external links and unsupported names/metadata are
+  Tables, data tables, external links and unsupported names/metadata are
   refused, as are unsupported package structures/results and resource bounds.
 - New multi-cell spills and validated existing XLDAPR anchors are supported,
   including `A1#`. Fresh ordinary 1×1 results stay scalar (`A1#` is `#REF!`);
@@ -100,8 +100,10 @@ untouched unless the output is that same path. Symlink destinations are refused.
 - Formula text and untouched styles/drawings/package content are preserved;
   formula/generated caches and spill geometry/required metadata can change.
   Source-declared spill children are regenerated, not independent inputs.
-- Do not save through openpyxl after recalc: that drops caches again.
-  openpyxl 3.1.5 also loses new-spill dynamic metadata on re-save; another recalc
-  then refuses it. Keep the pre-recalc editing source, not just published output.
+- Recalc after every openpyxl save, which drops caches again. A re-save can
+  strip dynamic metadata: the next recalc retains a fixed-size CSE array,
+  without growth/shrink or new metadata. Scalars/errors broadcast, short
+  results pad with `#N/A`, excess results truncate, and Empty members become
+  zero. `A1#` readers of these anchors become `#REF!`; range readers work.
 - Do not run concurrent writers on the same file: atomic writes are not CAS.
 - Do not claim full Excel equivalence or silently accept a refusal.

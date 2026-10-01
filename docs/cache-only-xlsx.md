@@ -57,11 +57,21 @@ Publication writes the current shape:
 
 This writer makes no claim of Excel equivalence. The encodings follow the format documentation and independently produced packages; no Excel execution oracle was used. In particular, Excel's own encodings of blocked or erroring anchors and of `SEQUENCE(0)` are not verified. The engine returns `#VALUE!` for `SEQUENCE(0)`, where Excel documents `#CALC!`.
 
+## Legacy fixed-extent arrays
+
+A top-left `t="array"` formula with a finite `ref` and no `cm` binding is a legacy CSE array. Its children are owned generated caches. The expression is evaluated once and fitted to the declared rectangle: scalars (including errors) fill it, single rows/columns broadcast, missing positions become `#N/A`, and excess positions are truncated. Empty members become numeric zero, as on the dynamic-spill path. A single-cell declaration takes the top-left result without spilling. The declared extent is capped at admission; large intermediate arrays still materialize fully.
+
+The writer keeps the original `t="array"` and `ref`, without adding metadata or `cm`; the extent never grows or shrinks. Other dynamic spills cannot occupy its children. `A1#` and `ANCHORARRAY(A1)` on a CSE anchor return `#REF!`; ordinary range readers see fitted values. Child formulas/metadata, overlaps and over-cap declarations are refused.
+
+When openpyxl re-saves a published dynamic spill, it can discard XLDAPR metadata while retaining the array formula. A subsequent recalc treats this as a fixed-size CSE array, not a dynamic spill. Recalc must still be the last writing step to retain caches. These are explicit policies, not claims of Excel equivalence.
+
+For CSE-containing source recalculation, family execution is disabled for the whole engine run to avoid declaration-insensitive family memoization. Other workbooks retain the caller's configuration. The Rust declaration API requires `family_execution = false`.
+
 ## Strict eligibility
 
 This is not a fallback for every XLSX package. It rejects unsupported inputs/results instead of silently producing incomplete caches:
 
-- Legacy CSE array formulas (`t="array"` without dynamic metadata), data-table formulas, rich value metadata (`vm`, `xl/richData/`), metadata other than XLDAPR (value/MDX metadata, other types or extension URIs), dangling or malformed `cm` chains, external workbook links and package signatures.
+- Data-table formulas, rich value metadata (`vm`, `xl/richData/`), metadata other than XLDAPR (value/MDX metadata, other types or extension URIs), dangling or malformed `cm` chains, external workbook links and package signatures.
 - Non-default spill conflict or bounds policies, when the workbook has dynamic arrays.
 - A spill over a merged range, over an unowned source value or formula, or from a member of a source shared-formula family. A spill that exceeds the cell or width limits is refused before any member is materialized.
 - Tables: the existing Calamine adapter does not populate the evaluator's table registry. Preserving table XML while evaluating structured references against an empty registry would be incorrect. Table-bearing sheets are therefore explicitly unsupported in this first path.

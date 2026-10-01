@@ -56,6 +56,54 @@ fn single_cell_fixed_array_never_spills() {
 }
 
 #[test]
+fn fixed_extent_broadcast_truncation_and_error_fill() {
+    for (formula, expected) in [
+        ("7", ["7", "7", "7"]),
+        ("SEQUENCE(5)", ["1", "2", "3"]),
+        ("1/0", ["#DIV/0!", "#DIV/0!", "#DIV/0!"]),
+    ] {
+        let out =
+            recalculate_xlsx_bytes(&source(formula, "B1:B3", ""), Default::default()).unwrap();
+        let sheet = parse_sheet(&sheet_xml(&out.bytes));
+        for (row, expected) in expected.into_iter().enumerate() {
+            assert_eq!(
+                sheet.cell(&format!("B{}", row + 1)).v.as_deref(),
+                Some(expected)
+            );
+        }
+        assert_eq!(
+            recalculate_xlsx_bytes(&out.bytes, Default::default())
+                .unwrap()
+                .bytes,
+            out.bytes
+        );
+    }
+}
+
+#[test]
+fn refuses_overlaps_metadata_data_tables_and_non_top_left_anchors() {
+    for children in [
+        "<row r=\"2\"><c r=\"B2\"><f t=\"array\" ref=\"B2:C2\">1</f><v>1</v></c></row>",
+        "<row r=\"2\"><c r=\"B2\" cm=\"1\"><v>1</v></c></row>",
+        "<row r=\"2\"><c r=\"B2\" vm=\"1\"><v>1</v></c></row>",
+    ] {
+        assert!(
+            recalculate_xlsx_bytes(
+                &source("SEQUENCE(3)", "B1:B3", children),
+                Default::default()
+            )
+            .is_err()
+        );
+    }
+    assert!(recalculate_xlsx_bytes(&source("1", "A1:B3", ""), Default::default()).is_err());
+    let bytes = source("1", "B1:B3", "");
+    let mut parts = unpack(&bytes);
+    let xml = parts.get_mut(SHEET).unwrap();
+    *xml = xml.replace("t=\"array\"", "t=\"dataTable\"");
+    assert!(recalculate_xlsx_bytes(&pack(&parts), Default::default()).is_err());
+}
+
+#[test]
 fn refuses_child_formula_and_over_cap() {
     assert!(
         recalculate_xlsx_bytes(

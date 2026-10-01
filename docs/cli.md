@@ -99,7 +99,7 @@ for file in reports/*.xlsx; do formualizer recalc "$file" --json || break; done
 
 ## Non-goals
 
-No editing, reading/dumping values, engine selection, configuration files, watch mode, directory/batch globbing, limit/thread tuning or legacy fallback. This writer does not claim Excel equivalence for every function or workbook. Tables, legacy CSE arrays and external links are among the strict refusals; supported dynamic arrays are documented in the library reference.
+No editing, reading/dumping values, engine selection, configuration files, watch mode, directory/batch globbing, limit/thread tuning or legacy fallback. This writer does not claim Excel equivalence for every function or workbook. Tables, data tables and external links are among the strict refusals. Dynamic arrays and fixed-extent CSE arrays are supported; after an openpyxl re-save strips dynamic metadata, the array retains its fixed extent and its `A1#` readers return `#REF!`. See the library reference for fitting and admission policies.
 
 ## Embedding
 

@@ -1597,7 +1597,37 @@ fn test_computed_date_native_by_default_and_serial_opt_out() {
 
 // Deliberately duplicated in the WASM test: fixed timestamps and stored inputs
 // make native/WASM input drift detectable independently of compression.
+#[wasm_bindgen_test]
+fn test_recalculate_cse_retains_extent_without_metadata() {
+    let input = Uint8Array::from(facade_array_fixture(false, true).as_slice());
+    let result: Object = recalculate_xlsx_bytes(input, None)
+        .unwrap()
+        .unchecked_into();
+    let bytes: Uint8Array = js_get(&result, "bytes").dyn_into().unwrap();
+    let output = bytes.to_vec();
+    let mut archive = zip::ZipArchive::new(Cursor::new(&output)).unwrap();
+    assert!(archive.by_name("xl/metadata.xml").is_err());
+    let mut xml = String::new();
+    archive
+        .by_name("xl/worksheets/sheet1.xml")
+        .unwrap()
+        .read_to_string(&mut xml)
+        .unwrap();
+    assert!(xml.contains("ref=\"C2:C4\""));
+    assert!(!xml.contains(" cm="));
+    assert!(xml.contains("#REF!"));
+    let repeated: Object = recalculate_xlsx_bytes(bytes, None)
+        .unwrap()
+        .unchecked_into();
+    let bytes: Uint8Array = js_get(&repeated, "bytes").dyn_into().unwrap();
+    assert_eq!(bytes.to_vec(), output);
+}
+
 fn facade_spill_fixture(grow: bool) -> Vec<u8> {
+    facade_array_fixture(grow, false)
+}
+
+fn facade_array_fixture(grow: bool, cse: bool) -> Vec<u8> {
     let main = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
     let office = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
     let rels = "http://schemas.openxmlformats.org/package/2006/relationships";
@@ -1614,7 +1644,7 @@ fn facade_spill_fixture(grow: bool) -> Vec<u8> {
         ""
     };
     let anchor = if grow { " cm=\"1\"" } else { "" };
-    let array = if grow {
+    let array = if grow || cse {
         " t=\"array\" ref=\"C2:C4\""
     } else {
         ""

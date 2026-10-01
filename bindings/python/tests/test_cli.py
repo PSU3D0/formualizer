@@ -72,11 +72,11 @@ def test_output(tmp_path):
 
 
 def test_refusal(tmp_path):
-    source = tmp_path / "cse.xlsx"
-    original = fixture(cse=True)
+    source = tmp_path / "merged.xlsx"
+    original = fixture(merge=True)
     source.write_bytes(original)
     result = report(invoke("recalc", source, "--json"), 2, "refused")
-    assert "legacy CSE" in result["refusal"]["feature"]
+    assert "merged" in result["refusal"]["feature"]
     assert not result["written"]
     assert source.read_bytes() == original
 
