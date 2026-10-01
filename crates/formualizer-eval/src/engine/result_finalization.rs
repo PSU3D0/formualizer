@@ -123,14 +123,13 @@ impl<R: crate::traits::EvaluationContext> super::Engine<R> {
         let value = if matches!(value, LiteralValue::Array(_))
             && self.graph.fixed_single_arrays.contains(&vertex)
         {
-            let LiteralValue::Array(mut rows) = value else {
+            let LiteralValue::Array(rows) = value else {
                 unreachable!()
             };
-            if rows.is_empty() || rows[0].is_empty() {
-                LiteralValue::Empty
-            } else {
-                rows[0].remove(0)
-            }
+            rows.into_iter()
+                .next()
+                .and_then(|row| row.into_iter().next())
+                .unwrap_or(LiteralValue::Empty)
         } else {
             value
         };
