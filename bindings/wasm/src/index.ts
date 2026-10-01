@@ -674,8 +674,11 @@ export interface XlsxRecalculateResult {
   /** Recalculated XLSX package bytes. */
   bytes: Uint8Array;
   summary: XlsxRecalculateSummary;
+  /** Source formulas/anchors, excluding generated spill children. */
   formula_cells: number;
+  /** Physical caches inserted, replaced or cleared, including spill children. */
   cache_cells_changed: number;
+  /** Changed worksheets only; metadata/relationships are not counted. */
   worksheet_parts_changed: number;
 }
 
@@ -685,6 +688,17 @@ export interface XlsxRecalculateResult {
  * The input accepts a typed-array view or `ArrayBuffer`; the output `bytes` is a
  * real `Uint8Array`. `errorLocationLimit` optionally caps locations retained per
  * error token while safe core resource limits remain in effect.
+ *
+ * Supports ordinary/shared scalar formulas, supported calculation names, new
+ * non-shared multi-cell spills and validated XLDAPR dynamic anchors. Source-
+ * declared children are recalculated caches, even if externally edited. Spills
+ * may grow, shrink, collapse or become blocked; A1# and _xlfn.ANCHORARRAY read
+ * the current spill. Fresh unmarked 1x1 results remain scalars (#REF! readers).
+ * Legacy CSE/data tables, table-bearing sheets, external links, rich/unknown
+ * metadata, shared-family multi-cell spills and spills crossing merges are
+ * refused. Deterministic unchanged output is byte-identical on rerun. This is
+ * a supported subset, not an Excel-equivalence claim. See
+ * docs/cache-only-xlsx.md for exact eligibility, ownership and bounds.
  */
 export async function recalculateXlsxBytes(
   bytes: XlsxBytesSource,

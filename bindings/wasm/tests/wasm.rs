@@ -1594,3 +1594,124 @@ fn test_computed_date_native_by_default_and_serial_opt_out() {
     wb.set_temporal_egress("serial".to_string()).unwrap();
     assert_eq!(sheet.get_value(1, 1).unwrap().as_f64(), Some(45_627.0));
 }
+
+// Deliberately duplicated in the WASM test: fixed timestamps and stored inputs
+// make native/WASM input drift detectable independently of compression.
+fn facade_spill_fixture(grow: bool) -> Vec<u8> {
+    let main = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+    let office = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+    let rels = "http://schemas.openxmlformats.org/package/2006/relationships";
+    let metadata_rel = if grow {
+        format!(
+            "<Relationship Id=\"rId2\" Type=\"{office}/sheetMetadata\" Target=\"metadata.xml\"/>"
+        )
+    } else {
+        String::new()
+    };
+    let metadata_type = if grow {
+        "<Override PartName=\"/xl/metadata.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheetMetadata+xml\"/>"
+    } else {
+        ""
+    };
+    let anchor = if grow { " cm=\"1\"" } else { "" };
+    let array = if grow {
+        " t=\"array\" ref=\"C2:C4\""
+    } else {
+        ""
+    };
+    let children = if grow {
+        "<row r=\"3\"><c r=\"C3\"><v>2</v></c></row><row r=\"4\"><c r=\"C4\"><v>3</v></c></row>"
+    } else {
+        ""
+    };
+    let mut parts = vec![
+        (
+            "[Content_Types].xml",
+            format!(
+                "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/><Override PartName=\"/xl/worksheets/sheet1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>{metadata_type}</Types>"
+            ),
+        ),
+        (
+            "_rels/.rels",
+            format!(
+                "<Relationships xmlns=\"{rels}\"><Relationship Id=\"rId1\" Type=\"{office}/officeDocument\" Target=\"xl/workbook.xml\"/></Relationships>"
+            ),
+        ),
+        (
+            "xl/workbook.xml",
+            format!(
+                "<workbook xmlns=\"{main}\" xmlns:r=\"{office}\"><sheets><sheet name=\"Sheet1\" sheetId=\"1\" r:id=\"rId1\"/></sheets></workbook>"
+            ),
+        ),
+        (
+            "xl/_rels/workbook.xml.rels",
+            format!(
+                "<Relationships xmlns=\"{rels}\"><Relationship Id=\"rId1\" Type=\"{office}/worksheet\" Target=\"worksheets/sheet1.xml\"/>{metadata_rel}</Relationships>"
+            ),
+        ),
+        (
+            "xl/worksheets/sheet1.xml",
+            format!(
+                "<worksheet xmlns=\"{main}\"><dimension ref=\"B1:C10\"/><sheetData><row r=\"1\"><c r=\"B1\"><v>{}</v></c></row><row r=\"2\"><c r=\"C2\"{anchor}><f{array}>_xlfn.SEQUENCE($B$1)</f><v>99</v></c></row>{children}<row r=\"9\"><c r=\"C9\"><f>SUM(C2#)</f><v>99</v></c></row><row r=\"10\"><c r=\"C10\"><f>SUM(_xlfn.ANCHORARRAY(C2))</f><v>99</v></c></row></sheetData></worksheet>",
+                if grow { 5 } else { 3 }
+            ),
+        ),
+    ];
+    if grow {
+        parts.push(("xl/metadata.xml", format!("<metadata xmlns=\"{main}\" xmlns:xda=\"http://schemas.microsoft.com/office/spreadsheetml/2017/dynamicarray\"><metadataTypes count=\"1\"><metadataType name=\"XLDAPR\" minSupportedVersion=\"120000\" cellMeta=\"1\"/></metadataTypes><futureMetadata name=\"XLDAPR\" count=\"1\"><bk><extLst><ext uri=\"{{bdbb8cdc-fa1e-496e-a857-3c3f30c029c3}}\"><xda:dynamicArrayProperties fDynamic=\"1\" fCollapsed=\"0\"/></ext></extLst></bk></futureMetadata><cellMetadata count=\"1\"><bk><rc t=\"1\" v=\"0\"/></bk></cellMetadata></metadata>")));
+    }
+    let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Stored)
+        .last_modified_time(zip::DateTime::from_date_and_time(2020, 1, 2, 3, 4, 6).unwrap());
+    for (name, body) in parts {
+        zip.start_file(name, options).unwrap();
+        std::io::Write::write_all(&mut zip, body.as_bytes()).unwrap();
+    }
+    zip.finish().unwrap().into_inner()
+}
+
+fn facade_digest(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf29ce484222325, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+    })
+}
+
+// The native workbook test pins these same input/output length and FNV digests.
+// This compares package bytes across targets without adding hash dependencies.
+#[wasm_bindgen_test]
+fn test_source_spill_new_and_grow_match_native_bytes() {
+    for (grow, input_len, input_hash, output_len, output_hash) in [
+        (false, 2120, 0x294121765944cf03, 3004, 0xe616d27aa207a8ea),
+        (true, 3140, 0x3ce6d5315a538805, 3217, 0x2ab4247034ff1dcf),
+    ] {
+        let input = facade_spill_fixture(grow);
+        assert_eq!(
+            (input.len(), facade_digest(&input)),
+            (input_len, input_hash)
+        );
+        let result: Object = recalculate_xlsx_bytes(Uint8Array::from(input.as_slice()), None)
+            .unwrap()
+            .dyn_into()
+            .unwrap();
+        let bytes: Uint8Array = js_get(&result, "bytes").dyn_into().unwrap();
+        let output = bytes.to_vec();
+        assert_eq!(
+            (output.len(), facade_digest(&output)),
+            (output_len, output_hash)
+        );
+        assert_eq!(js_get_f64(&result, "formula_cells"), 3.0);
+        assert_eq!(js_get_f64(&result, "cache_cells_changed"), 5.0);
+        assert_eq!(js_get_f64(&result, "worksheet_parts_changed"), 1.0);
+        let summary: Object = js_get(&result, "summary").dyn_into().unwrap();
+        assert_eq!(js_get_f64(&summary, "evaluated"), 3.0);
+        assert_eq!(js_get_string(&summary, "status"), "success");
+        let repeated: Object = recalculate_xlsx_bytes(bytes, None)
+            .unwrap()
+            .dyn_into()
+            .unwrap();
+        let repeated_bytes: Uint8Array = js_get(&repeated, "bytes").dyn_into().unwrap();
+        assert_eq!(repeated_bytes.to_vec(), output);
+        assert_eq!(js_get_f64(&repeated, "cache_cells_changed"), 0.0);
+    }
+}

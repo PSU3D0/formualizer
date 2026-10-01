@@ -91,6 +91,27 @@ unrelated package members are retained, while formula cached values are updated.
 Safe core resource limits apply; `errorLocationLimit` only limits stored error
 locations.
 
+Supported inputs include ordinary/shared scalar formulas, supported calculation
+names, new multi-cell spills from ordinary non-shared formulas, and existing
+XLDAPR anchors with validated `cm`/array-`ref` metadata. Growth, shrink, collapse
+and blocked anchors are supported, with readers `A1#` and
+`_xlfn.ANCHORARRAY(A1)`. Source-declared children are generated caches, not
+independent inputs: externally edited child values are recalculated while their
+ownership remains declared. Obsolete caches are cleared while styles remain.
+
+`formula_cells` and `summary.evaluated` count source formulas/anchors, not
+children. `cache_cells_changed` counts physical caches inserted, replaced or
+cleared, including children, and may exceed `formula_cells`.
+`worksheet_parts_changed` counts worksheets only, not metadata/relationships.
+Deterministic unchanged outputs recalculate to byte-identical no-ops.
+
+Legacy CSE/data tables, table-bearing sheets, external links, rich/unknown or
+malformed metadata, shared-family multi-cell spills and spill publication across
+merges remain refused. Safe ZIP/XML/cell/output limits remain in effect.
+Fresh unmarked 1x1 results have no spill identity (`A1#` returns `#REF!`).
+No Excel-equivalence claim is made; no Excel execution oracle was used.
+See [the precise eligibility contract](../../docs/cache-only-xlsx.md).
+
 ### Parse formulas
 
 ```typescript

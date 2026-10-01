@@ -126,6 +126,29 @@ These APIs use the shared cache-only Rust implementation, retaining formula text
 and unrelated package members. Safe core resource limits apply;
 `error_location_limit=` only caps retained error locations.
 
+Supported inputs include ordinary/shared scalar formulas, supported calculation
+names, new multi-cell spills from ordinary non-shared formulas, and existing
+XLDAPR dynamic-array anchors with validated `cm`/array-`ref` metadata. Spills can
+grow, shrink, collapse or become blocked; `A1#` and `_xlfn.ANCHORARRAY(A1)` read
+the current spill. Source-declared children are generated caches, not independent
+inputs: even externally edited child values are recalculated while their source
+ownership remains declared. Obsolete caches are cleared, keeping styled shells.
+
+`formula_cells` and `summary["evaluated"]` count source formulas/anchors, not
+children. `cache_cells_changed` counts physical caches inserted, replaced or
+cleared (including children), so it can exceed the formula count.
+`worksheet_parts_changed` counts worksheets only, not metadata/relationships.
+Deterministic unchanged outputs recalculate to byte-identical no-ops.
+
+Legacy CSE/data tables, table-bearing sheets, external links, rich/unknown or
+malformed metadata, shared-family multi-cell spills and spill publication across
+merges remain refused. Configured ZIP/XML/cell/output bounds still apply.
+Fresh unmarked 1x1 results have no spill identity (`A1#` returns `#REF!`); this is
+not a claim of Excel equivalence and no Excel execution oracle was used.
+See [the precise eligibility and publication contract](../../docs/cache-only-xlsx.md).
+The file API preserves existing destination permissions and leaves it untouched
+on pre-publication failure; omitted `output` recalculates in place.
+
 ### Parse and analyze formulas
 
 ```python

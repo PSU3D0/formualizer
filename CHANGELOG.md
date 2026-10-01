@@ -2,6 +2,22 @@
 
 All notable changes to Formualizer will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- Added current-spill references through `A1#` and `_xlfn.ANCHORARRAY(A1)` in Rust, Python and WASM evaluation.
+- Added source-preserving XLSX writeback for new multi-cell spills and validated existing XLDAPR dynamic arrays, including growth, shrink, collapse and blocked/re-expanded anchors. Source-declared child caches are recalculated, while formula text, styled obsolete cell shells and unrelated package content are retained.
+
+### Fixed
+
+- Preserved calculation names during Calamine import, including supported constants, grounded formulas and sheet-local shadowing; refused unsupported or cyclic definitions instead of publishing metadata-loss `#NAME?` results.
+
+### Known limitations
+
+- Fresh unmarked 1x1 results remain scalars, so their spill readers return `#REF!`. In the mutable workbook API, overwriting a spill child can leave spill readers stale until the anchor recomputes. Source-preserving XLSX recalculation uses declared ownership instead and recalculates those children.
+- Legacy CSE/data tables, tables, external links, rich/unknown metadata, shared-family multi-cell spills and spill publication across merged cells remain unsupported. This subset has no Excel execution oracle and makes no Excel-equivalence claim.
+
 ## [0.10.1] - 2026-09-30
 
 ### Fixed
