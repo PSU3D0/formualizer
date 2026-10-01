@@ -40,6 +40,9 @@ pyo3 = { workspace = true, features = ["chrono", "abi3-py310", "multiple-pymetho
 chrono = { workspace = true }
 serde_json = { workspace = true }
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+formualizer-cli = { path = "../../crates/formualizer-cli", default-features = false }
+
 [target.'cfg(not(target_os = "emscripten"))'.dependencies]
 # `system-clock` is required for TODAY()/NOW() to read the wall clock. Without
 # it the engine falls back to the FixedClock at the UTC epoch and every

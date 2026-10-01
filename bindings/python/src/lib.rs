@@ -30,6 +30,8 @@ use pyo3_stub_gen::derive::gen_stub_pyfunction;
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 mod ast;
+#[cfg(not(target_arch = "wasm32"))]
+mod cli;
 mod engine;
 mod enums;
 mod errors;
@@ -352,6 +354,8 @@ fn recalculate_xlsx_file(
 /// The main formualizer Python module
 #[pymodule]
 fn formualizer_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    #[cfg(not(target_arch = "wasm32"))]
+    cli::register(m)?;
     // Register all submodules
     enums::register(m)?;
     errors::register(m)?;

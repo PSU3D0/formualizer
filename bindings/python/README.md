@@ -20,7 +20,7 @@ Load Excel workbooks, change inputs, recalculate and read results—in-process, 
 - **Built for agents.** Inspect dependencies, track edits with undo/redo, inject a clock and random seed, and expose typed inputs and outputs through SheetPort.
 - **Portable.** Native wheels for Linux, macOS and Windows, plus a separate [Pyodide build](#using-in-pyodide-browser--webassembly). The same engine also ships for [Rust and JavaScript](https://github.com/psu3d0/formualizer#bindings).
 
-Need CLI or MCP tools for an agent rather than an embedded library? Use [agent-spreadsheet](https://github.com/PSU3D0/agent-spreadsheet), built on Formualizer.
+Need broader workbook editing CLI or MCP tools? Use [agent-spreadsheet](https://github.com/PSU3D0/agent-spreadsheet), built on Formualizer.
 
 ## Installation
 
@@ -29,6 +29,19 @@ pip install formualizer
 ```
 
 Prebuilt stable-ABI (`abi3`) wheels are published for Python 3.10 and newer on Linux (glibc and musl), macOS, and Windows. No Rust toolchain required.
+
+## Command line
+
+```bash
+uvx formualizer recalc book.xlsx
+# Or after pip install formualizer:
+formualizer recalc book.xlsx --check --json
+python -m formualizer recalc book.xlsx
+```
+
+The native CLI updates formula caches in place, preserving workbook structure.
+See [CLI usage and exit codes](https://github.com/PSU3D0/formualizer/blob/main/docs/cli.md).
+The CLI is not available in Pyodide/WebAssembly.
 
 ## Documentation
 

@@ -1777,6 +1777,7 @@ version = "0.10.1"
 dependencies = [
  "chrono",
  "formualizer",
+ "formualizer-cli",
  "pyo3",
  "pyo3-stub-gen",
  "serde_json",

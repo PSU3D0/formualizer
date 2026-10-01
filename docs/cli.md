@@ -8,7 +8,8 @@ Distribution channels are **planned**, not yet published:
 
 ```sh
 uvx formualizer recalc book.xlsx                 # Python native wheel
-pip install formualizer                        # planned console script
+pip install formualizer                        # then: formualizer recalc book.xlsx
+python -m formualizer recalc book.xlsx          # same Python native CLI
 npx formualizer-cli recalc book.xlsx             # npm native launcher
 cargo install formualizer-cli                   # Rust crate
 cargo binstall formualizer-cli                  # planned release binaries
