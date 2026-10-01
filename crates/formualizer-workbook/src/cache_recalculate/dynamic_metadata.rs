@@ -66,6 +66,10 @@ struct Section {
     count: Option<Range<usize>>,
 }
 impl DynamicMetadata {
+    /// Expanded size of the source part.
+    pub fn source_len(&self) -> usize {
+        self.source.len()
+    }
     pub fn resolve(&self, cm: u32) -> Result<DynamicBinding, IoError> {
         cm.checked_sub(1)
             .and_then(|i| self.blocks.get(i as usize))

@@ -1,7 +1,38 @@
 use super::{
-    Archive, BTreeMap, IoError, Sheet, XlsxRecalculateOptions, part_name, read_part, unsupported,
-    xml,
+    Archive, BTreeMap, IoError, Sheet, XlsxRecalculateOptions, append_child, part_name, read_part,
+    unsupported, xml,
 };
+
+const PART: &str = "[Content_Types].xml";
+
+/// Add an `Override` for `part` (a validated package part name) to the
+/// content types, unless any declaration already names it: the result is
+/// refused rather than given a duplicate. All other bytes are kept.
+pub(in crate::cache_recalculate) fn add_override(
+    archive: &mut Archive<'_>,
+    part: &str,
+    content_type: &str,
+    options: &XlsxRecalculateOptions,
+) -> Result<Vec<u8>, IoError> {
+    part_name(part)?;
+    let data = read_part(archive, PART, options.limits.max_worksheet_bytes)?;
+    let name = format!("/{part}");
+    xml::walk(&data, options, |_, node| {
+        if node
+            .value("PartName")
+            .is_some_and(|p| p.eq_ignore_ascii_case(&name))
+        {
+            return Err(unsupported("duplicate content-type override", PART));
+        }
+        Ok(())
+    })?;
+    append_child(
+        &data,
+        PART,
+        |prefix| format!("<{prefix}Override PartName=\"{name}\" ContentType=\"{content_type}\"/>"),
+        options,
+    )
+}
 
 /// `metadata` is the relationship-resolved sheet metadata part; it is only
 /// `Some` when private spill support is enabled.
@@ -14,11 +45,7 @@ pub(super) fn validate(
     use super::super::dynamic_metadata::SHEET_METADATA_CONTENT_TYPE;
     const NS: &str = "http://schemas.openxmlformats.org/package/2006/content-types";
     const PREFIX: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.";
-    let data = read_part(
-        archive,
-        "[Content_Types].xml",
-        options.limits.max_worksheet_bytes,
-    )?;
+    let data = read_part(archive, PART, options.limits.max_worksheet_bytes)?;
     let mut defaults = BTreeMap::new();
     let mut overrides = BTreeMap::new();
     xml::walk(&data, options, |path, node| {

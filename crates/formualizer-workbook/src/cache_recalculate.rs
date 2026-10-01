@@ -365,7 +365,6 @@ struct SourceAdmission<'a> {
     date_system: DateSystem,
     plans: Vec<SheetPlan>,
     formula_count: usize,
-    #[allow(dead_code)] // consumed by the metadata packet
     metadata: Option<dynamic_metadata::DynamicMetadata>,
 }
 /// Bounded package/worksheet admission. With spill support enabled this also
@@ -458,6 +457,8 @@ struct Ingested<'a> {
     engine: Engine<WBResolver>,
     /// Spill support admitted at least one dynamic-array anchor.
     anchors: bool,
+    /// The validated sheet metadata part, if the package has one.
+    metadata: Option<dynamic_metadata::DynamicMetadata>,
 }
 /// Build the transient ingestion view, replay it through Calamine into a new
 /// engine, validate calculation names and, with spill support, declare every
@@ -473,7 +474,7 @@ fn ingest_source<'a>(
         date_system,
         plans,
         formula_count,
-        metadata: _,
+        metadata,
     } = admission;
     let anchors = plans
         .iter()
@@ -573,6 +574,7 @@ fn ingest_source<'a>(
         plans,
         engine,
         anchors,
+        metadata,
     })
 }
 /// Give every admitted anchor its source spill identity, so a current
@@ -715,11 +717,31 @@ fn record_result(
         }
     }
 }
-/// Worksheet replacements produced by a publication path.
+/// Package edits produced by a publication path.
 struct Publication {
     summary: RecalculateSummary,
     changed: usize,
-    replacements: BTreeMap<String, Vec<u8>>,
+    /// Worksheet replacements, plus (spill support) metadata, relationship
+    /// and content-type edits.
+    edits: package::Edits,
+    worksheets: usize,
+}
+/// Account a replaced (`old` bytes) or added (`old == 0`) member against
+/// the expanded-output bound.
+fn expand(
+    expanded: &mut usize,
+    old: usize,
+    new: usize,
+    options: &XlsxRecalculateOptions,
+) -> Result<(), IoError> {
+    *expanded = expanded
+        .checked_sub(old)
+        .and_then(|n| n.checked_add(new))
+        .ok_or_else(|| unsupported("expanded output overflow", "workbook"))?;
+    if *expanded > options.limits.max_expanded_bytes {
+        return Err(unsupported("expanded output byte limit", "workbook"));
+    }
+    Ok(())
 }
 /// Apply one worksheet's patches within the worksheet and expanded-output
 /// bounds.
@@ -735,14 +757,12 @@ fn replace_sheet(
         return Ok(());
     }
     let patched = apply_patches(data, patches, options.limits.max_worksheet_bytes)?;
-    *expanded = expanded
-        .checked_sub(data.len())
-        .and_then(|n| n.checked_add(patched.len()))
-        .ok_or_else(|| unsupported("expanded output overflow", "workbook"))?;
-    if *expanded > options.limits.max_expanded_bytes {
-        return Err(unsupported("expanded output byte limit", "workbook"));
-    }
-    publication.replacements.insert(sheet.part.clone(), patched);
+    expand(expanded, data.len(), patched.len(), options)?;
+    publication
+        .edits
+        .replace
+        .insert(sheet.part.clone(), patched);
+    publication.worksheets += 1;
     Ok(())
 }
 /// Validate every evaluated result, build the worksheet edits and write the
@@ -760,6 +780,7 @@ fn publish(
         plans,
         engine,
         anchors,
+        metadata,
     } = ingested;
     let coerced: HashSet<_> = engine
         .formula_parse_diagnostics()
@@ -776,9 +797,19 @@ fn publish(
     let Publication {
         mut summary,
         changed,
-        replacements,
+        edits,
+        worksheets,
     } = if spill.enabled {
-        spill_publication(&engine, &sheets, &plans, &coerced, &mut expanded, options)?
+        spill_publication(
+            &engine,
+            &mut archive,
+            &sheets,
+            &plans,
+            metadata.as_ref(),
+            &coerced,
+            &mut expanded,
+            options,
+        )?
     } else {
         debug_assert!(!anchors);
         scalar_publication(&engine, &sheets, plans, &coerced, &mut expanded, options)?
@@ -789,25 +820,24 @@ fn publish(
         RecalculateStatus::ErrorsFound
     };
     checkpoint(&options.cancel)?;
-    if replacements.is_empty() {
+    if edits.is_empty() {
         if bytes.len() > options.limits.max_output_bytes {
             return Err(unsupported("output byte limit", "XLSX package"));
         }
         return Ok(unchanged(bytes, formula_count, summary));
     }
-    let worksheet_parts_changed = replacements.len();
-    let edits = package::Edits {
-        replace: replacements,
-        add: BTreeMap::new(),
-    };
     let output = package::rewrite(bytes, &mut archive, &edits, options)?;
+    if !edits.add.is_empty() {
+        // An added part must agree with its relationship and content type.
+        package::check_output(&output, options)?;
+    }
     checkpoint(&options.cancel)?;
     Ok(XlsxRecalculateResult {
         bytes: output,
         summary,
         formula_cells: formula_count,
         cache_cells_changed: changed,
-        worksheet_parts_changed,
+        worksheet_parts_changed: worksheets,
     })
 }
 /// The public scalar writer: every formula result is one scalar cache, and
@@ -823,7 +853,8 @@ fn scalar_publication(
     let mut publication = Publication {
         summary: RecalculateSummary::default(),
         changed: 0,
-        replacements: BTreeMap::new(),
+        edits: package::Edits::default(),
+        worksheets: 0,
     };
     for (sheet, plan) in sheets.iter().zip(plans) {
         let SheetPlan { data, cells, .. } = plan;
@@ -871,34 +902,42 @@ fn scalar_publication(
     }
     Ok(publication)
 }
-/// The metadata packet (FORM211-E) has not landed: a new XLDAPR binding
-/// cannot be written yet. Refused after the geometry plan is built.
-const BINDING_PLACEHOLDER: &str =
-    "dynamic array metadata binding is not implemented (FORM211-E, P4)";
-/// Spill-aware publication (private switch only). New XLDAPR bindings are
-/// not available until the metadata packet, so a plan needing one is
-/// refused after it was built and before any output.
+/// Spill-aware publication: worksheet geometry plus, when an anchor needs
+/// a new XLDAPR binding, the metadata part edit (or addition with its
+/// relationship and content-type override).
+#[allow(clippy::too_many_arguments)]
 fn spill_publication(
     engine: &Engine<WBResolver>,
+    archive: &mut package::Archive<'_>,
     sheets: &[package::Sheet],
     plans: &[SheetPlan],
+    metadata: Option<&dynamic_metadata::DynamicMetadata>,
     coerced: &HashSet<(String, u32, u32)>,
     expanded: &mut usize,
     options: &XlsxRecalculateOptions,
 ) -> Result<Publication, IoError> {
-    let planned = plan_spill_publication(engine, sheets, plans, coerced, options, &mut |_, _| {
-        Ok(None)
-    })?;
-    if !planned.unbound.is_empty() {
-        return Err(unsupported(
-            BINDING_PLACEHOLDER,
-            "source-preserving spill recalculation",
-        ));
-    }
+    let mut binder = dynamic_metadata::Binder::new(metadata);
+    let planned = plan_spill_publication(
+        engine,
+        sheets,
+        plans,
+        coerced,
+        options,
+        &mut |sheet, request| {
+            if !request.multi_cell {
+                return Err(unsupported(
+                    "dynamic array binding requested for a one-cell result",
+                    format!("{sheet} R{}C{}", request.row, request.col),
+                ));
+            }
+            binder.bind(options)
+        },
+    )?;
     let mut publication = Publication {
         summary: planned.summary,
         changed: planned.changed,
-        replacements: BTreeMap::new(),
+        edits: package::Edits::default(),
+        worksheets: 0,
     };
     for ((sheet, plan), patches) in sheets.iter().zip(plans).zip(planned.patches) {
         checkpoint(&options.cancel)?;
@@ -911,25 +950,62 @@ fn spill_publication(
             options,
         )?;
     }
+    if let Some(part) = binder.finish(options)? {
+        checkpoint(&options.cancel)?;
+        let edits = &mut publication.edits;
+        if part.added {
+            expand(expanded, 0, part.bytes.len(), options)?;
+            for (name, data) in [
+                (
+                    package::WORKBOOK_RELS,
+                    package::add_relationship(
+                        archive,
+                        "xl/workbook.xml",
+                        dynamic_metadata::SHEET_METADATA_RELATIONSHIP,
+                        "metadata.xml",
+                        options,
+                    )?,
+                ),
+                (
+                    "[Content_Types].xml",
+                    package::add_override(
+                        archive,
+                        &part.part,
+                        dynamic_metadata::SHEET_METADATA_CONTENT_TYPE,
+                        options,
+                    )?,
+                ),
+            ] {
+                let old = archive
+                    .by_name(name)
+                    .map_err(|e| IoError::from_backend("zip", e))?
+                    .size();
+                expand(expanded, old as usize, data.len(), options)?;
+                edits.replace.insert(name.to_owned(), data);
+            }
+            edits.add.insert(part.part, part.bytes);
+        } else {
+            let old = metadata.map_or(0, |m| m.source_len());
+            expand(expanded, old, part.bytes.len(), options)?;
+            edits.replace.insert(part.part, part.bytes);
+        }
+    }
     Ok(publication)
 }
-/// [`geometry::BindingResolver`] with the worksheet name: the interface the
-/// metadata packet (FORM211-E) implements.
+/// [`geometry::BindingResolver`] with the worksheet name.
 type SheetBindingResolver<'a> =
-    dyn FnMut(&str, geometry::BindingRequest) -> Result<Option<u32>, IoError> + 'a;
+    dyn FnMut(&str, geometry::BindingRequest) -> Result<u32, IoError> + 'a;
 /// Validated projection and geometry of every worksheet, not yet applied.
 struct SpillPlan {
     summary: RecalculateSummary,
     changed: usize,
     /// Ordered patches per worksheet, parallel to the sheet plans.
     patches: Vec<Vec<Patch>>,
-    /// `(sheet, request)` for every binding `bind` could not resolve.
-    unbound: Vec<(String, geometry::BindingRequest)>,
 }
 /// Project every source formula (nothing materialized), check the spill
 /// bounds, then build one ordered geometry plan per worksheet, reading each
 /// member at the final engine state. `bind` resolves a requested XLDAPR
-/// binding to a one-based `cm` (the metadata packet's interface).
+/// binding to a one-based `cm`.
 fn plan_spill_publication(
     engine: &Engine<WBResolver>,
     sheets: &[package::Sheet],
@@ -943,7 +1019,6 @@ fn plan_spill_publication(
         summary: RecalculateSummary::default(),
         changed: 0,
         patches: Vec::with_capacity(plans.len()),
-        unbound: Vec::new(),
     };
     // 1. Project every source formula; nothing is materialized yet.
     let mut projected = Vec::with_capacity(plans.len());
@@ -1056,12 +1131,6 @@ fn plan_spill_publication(
             &options.cancel,
         )?;
         publication.changed += edits.caches_changed;
-        publication.unbound.extend(
-            edits
-                .unbound
-                .into_iter()
-                .map(|request| (sheet.name.clone(), request)),
-        );
         patches.extend(edits.patches);
         // Scalar and geometry edits touch disjoint cells; merging them
         // refuses any equal-offset insertion conflict or overlap.

@@ -124,7 +124,9 @@ fn a_new_member_is_appended_and_old_records_and_payloads_are_preserved() {
     for (i, (&(a, len), &(b, _))) in old.iter().zip(&new).enumerate() {
         let replaced = i == 2;
         for k in 0..len {
-            if !(42..46).contains(&k) && !(replaced && (16..28).contains(&k)) {
+            let offset = (42..46).contains(&k);
+            let sizes = replaced && (16..28).contains(&k);
+            if !offset && !sizes {
                 assert_eq!(input[a + k], output[b + k], "central {i} byte {k}");
             }
         }

@@ -2,6 +2,7 @@
 mod content_types;
 mod rewrite;
 use super::{IoError, SpillSupport, XlsxRecalculateOptions, checkpoint, unsupported, xml};
+pub(super) use content_types::add_override;
 pub(super) use rewrite::{Edits, rewrite};
 use std::collections::{BTreeMap, HashSet};
 use std::io::{Cursor, Read};
@@ -522,6 +523,97 @@ pub(super) fn discover(
     }
     content_types::validate(archive, &sheets, metadata.as_deref(), options)?;
     Ok((sheets, epoch, metadata))
+}
+/// The workbook relationship part.
+pub(super) const WORKBOOK_RELS: &str = "xl/_rels/workbook.xml.rels";
+/// Append one `Relationship` element to a validated relationship part.
+/// The new `Id` is `rId<n>` with `n` above every existing numeric `rIdN`,
+/// so it collides with no existing ID; all other bytes are kept.
+pub(super) fn add_relationship(
+    archive: &mut Archive<'_>,
+    source: &str,
+    kind: &str,
+    target: &str,
+    options: &XlsxRecalculateOptions,
+) -> Result<Vec<u8>, IoError> {
+    let (parent, name) = source.rsplit_once('/').unwrap_or(("", source));
+    let part = format!("{parent}/_rels/{name}.rels");
+    let resolved = crate::xlsx_path::resolve(source, target)?;
+    let existing = relationships(archive, source, options)?;
+    if existing
+        .values()
+        .any(|r| r.kind == kind || r.target.as_deref() == Some(resolved.as_str()))
+    {
+        return Err(unsupported("duplicate package relationship", &part));
+    }
+    let next = existing
+        .keys()
+        .filter_map(|id| id.strip_prefix("rId")?.parse::<u64>().ok())
+        .max()
+        .unwrap_or(0)
+        .checked_add(1)
+        .ok_or_else(|| unsupported("relationship ID overflow", &part))?;
+    let id = format!("rId{next}");
+    if existing.contains_key(&id) {
+        return Err(unsupported("relationship ID collision", &part));
+    }
+    let data = read_part(archive, &part, options.limits.max_worksheet_bytes)?;
+    let element = |prefix: &str| {
+        format!("<{prefix}Relationship Id=\"{id}\" Type=\"{kind}\" Target=\"{target}\"/>")
+    };
+    append_child(&data, &part, element, options)
+}
+/// Insert one child element at the end of the root element (expanding a
+/// self-closing root), in the root's prefix. Every other byte is kept.
+pub(super) fn append_child(
+    data: &[u8],
+    part: &str,
+    element: impl FnOnce(&str) -> String,
+    options: &XlsxRecalculateOptions,
+) -> Result<Vec<u8>, IoError> {
+    let mut root: Option<(String, std::ops::Range<usize>, bool)> = None;
+    let mut close = None;
+    xml::walk(data, options, |path, node| {
+        match node.kind {
+            xml::Kind::Open { empty, .. } if path.len() == 1 => {
+                root = Some((path[0].qualified.clone(), node.span.clone(), empty));
+            }
+            xml::Kind::Close if path.len() == 1 => close = Some(node.span.start),
+            _ => {}
+        }
+        Ok(())
+    })?;
+    let (qualified, open, empty) = root.ok_or_else(|| unsupported("missing XML root", part))?;
+    let prefix = qualified
+        .rsplit_once(':')
+        .map_or(String::new(), |(p, _)| format!("{p}:"));
+    let child = element(&prefix);
+    let patch = if empty {
+        super::Patch {
+            span: open.end - 2..open.end,
+            replacement: format!(">{child}</{qualified}>").into_bytes(),
+        }
+    } else {
+        let at = close.ok_or_else(|| unsupported("unbalanced XML root", part))?;
+        super::Patch {
+            span: at..at,
+            replacement: child.into_bytes(),
+        }
+    };
+    super::apply_patches(data, vec![patch], options.limits.max_worksheet_bytes)
+}
+/// Re-audit a package that gained members: the bounded ZIP directory audit,
+/// workbook discovery with its relationship/content-type agreement and the
+/// sheet metadata part, read in full (CRC-checked) and parsed.
+pub(super) fn check_output(bytes: &[u8], options: &XlsxRecalculateOptions) -> Result<(), IoError> {
+    let mut archive =
+        ZipArchive::new(Cursor::new(bytes)).map_err(|e| IoError::from_backend("zip", e))?;
+    audit_directory(bytes, &archive, options)?;
+    let (_, _, metadata) = discover(&mut archive, options, SpillSupport { enabled: true })?;
+    let part =
+        metadata.ok_or_else(|| unsupported("unrelated added metadata part", "XLSX output"))?;
+    super::dynamic_metadata::parse(&mut archive, &part, options)?;
+    Ok(())
 }
 /// Exactly zero or one internal sheetMetadata relationship whose target
 /// exists; no metadata member may exist without that relationship.

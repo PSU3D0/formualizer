@@ -12,7 +12,7 @@
 //!   on an unowned serialized value or formula is refused;
 //! * each anchor gets `t="array"` and `ref="<current extent>"` (the anchor
 //!   cell when collapsed, blocked or erroring); its cell-metadata binding is
-//!   kept, or requested from the metadata packet through [`Binding`];
+//!   kept, or requested from the binding resolver through [`Binding`];
 //! * the dimension grows when needed (a still-valid old one is kept), and
 //!   optional row `spans` follow the policy in [`row_spans`];
 //! * a successful spill intersecting a merge rectangle is refused.
@@ -37,11 +37,11 @@ pub(super) enum Binding {
     Keep,
     /// The anchor needs an XLDAPR binding that the source does not supply
     /// (a new anchor, or a collapsed record now describing a multi-cell
-    /// spill). The metadata packet resolves it to a one-based `cm`.
+    /// spill). The binding resolver supplies a one-based `cm`.
     NeedsXldapr,
 }
 
-/// A binding the geometry plan asks the metadata packet to resolve.
+/// A binding the geometry plan asks the binding resolver for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct BindingRequest {
     pub row: u32,
@@ -50,10 +50,9 @@ pub(super) struct BindingRequest {
     pub multi_cell: bool,
 }
 
-/// The metadata packet's binding resolver: a one-based `cm` for the
-/// request, or `None` when no binding can be supplied (yet).
-pub(super) type BindingResolver<'a> =
-    dyn FnMut(BindingRequest) -> Result<Option<u32>, IoError> + 'a;
+/// The binding resolver: a one-based `cm` of a compatible XLDAPR record
+/// for the request (see `dynamic_metadata::Binder`).
+pub(super) type BindingResolver<'a> = dyn FnMut(BindingRequest) -> Result<u32, IoError> + 'a;
 /// Reads the current value of one generated member of an anchor.
 pub(super) type MemberReader<'a> = dyn FnMut(&AnchorEdit, u32, u32) -> Result<Cache, IoError> + 'a;
 
@@ -87,8 +86,6 @@ pub(super) struct SheetEdits {
     pub patches: Vec<Patch>,
     /// Physical caches inserted, replaced or cleared (anchors and members).
     pub caches_changed: usize,
-    /// Bindings the resolver could not supply yet.
-    pub unbound: Vec<BindingRequest>,
 }
 
 /// Bounds of one sheet's current spills, checked before any member value
@@ -171,8 +168,8 @@ struct Pending {
 }
 
 /// Build the ordered patch plan for one worksheet. `member` reads the
-/// current value of one generated member; `bind` is the metadata packet's
-/// binding resolver (`Ok(None)`: not available yet). The caller has already
+/// current value of one generated member; `bind` resolves a requested
+/// XLDAPR binding to a one-based `cm`. The caller has already
 /// run [`preflight`] and the workbook-wide generated-cell budget.
 pub(super) fn plan(
     plan: &SheetPlan,
@@ -345,7 +342,6 @@ pub(super) fn plan(
     }
 
     // Anchors: own cache, `t="array"`/`ref`, cell-metadata binding.
-    let mut unbound = Vec::new();
     for anchor in anchors {
         checkpoint(cancel)?;
         let cell = &plan.cells[anchor.formula];
@@ -403,10 +399,8 @@ pub(super) fn plan(
                 col: anchor.col,
                 multi_cell: anchor.spill.is_some(),
             };
-            match bind(request)? {
-                Some(cm) => set_cell_metadata(&mut cell_patches, cell, cm),
-                None => unbound.push(request),
-            }
+            let cm = bind(request)?;
+            set_cell_metadata(&mut cell_patches, cell, cm);
         }
         coalesce(&mut cell_patches)?;
         patches.append(&mut cell_patches);
@@ -429,7 +423,6 @@ pub(super) fn plan(
     Ok(SheetEdits {
         patches,
         caches_changed: changed,
-        unbound,
     })
 }
 

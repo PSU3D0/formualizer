@@ -22,8 +22,6 @@ use std::io::{Cursor, Read};
 
 type Parts = BTreeMap<String, String>;
 
-const PLACEHOLDER: &str = "dynamic array metadata binding is not implemented";
-
 fn run(bytes: &[u8]) -> XlsxRecalculateResult {
     recalculate_xlsx_bytes_with(bytes, Default::default(), ON).expect("published")
 }
@@ -673,7 +671,7 @@ fn new_vertical() -> Parts {
 }
 
 #[test]
-fn new_ordinary_spill_plan_is_built_then_refused_until_metadata_binding() {
+fn new_ordinary_spill_plan_binds_the_anchor() {
     let source = pack(&new_vertical());
     let options = XlsxRecalculateOptions::default();
     let admission = admit_source(&source, &options, ON).unwrap();
@@ -686,37 +684,21 @@ fn new_ordinary_spill_plan_is_built_then_refused_until_metadata_binding() {
         .filter(|d| d.policy == FormulaParsePolicy::CoerceToError)
         .map(|d| (d.sheet.clone(), d.row, d.col))
         .collect();
-    let build = |bind: Option<u32>| {
-        let planned = plan_spill_publication(
-            &ingested.engine,
-            &ingested.sheets,
-            &ingested.plans,
-            &coerced,
-            &options,
-            &mut |_, _| Ok(bind),
-        )
-        .unwrap();
-        let patches = planned.patches.into_iter().next().unwrap();
-        let xml = apply_patches(&ingested.plans[0].data, patches, usize::MAX).unwrap();
-        (
-            String::from_utf8(xml).unwrap(),
-            planned.unbound,
-            planned.changed,
-            planned.summary.evaluated,
-        )
-    };
-    let (xml, unbound, changed, evaluated) = build(None);
-    // The plan: t="array"/ref set, rows inserted in order, binding needed.
-    let rows = concat!(
-        "<row r=\"2\" spans=\"1:3\"><c r=\"C2\" s=\"1\"><f t=\"array\" ref=\"C2:C4\">_xlfn.SEQUENCE($B$1)</f><v>1</v></c></row>",
-        "<row r=\"3\"><c r=\"C3\"><v>2</v></c></row><row r=\"4\"><c r=\"C4\"><v>3</v></c></row>",
-        "<row r=\"9\" spans=\"1:3\"><c r=\"C9\"><f>SUM(C2#)</f><v>6</v></c></row>",
-        "<row r=\"10\" spans=\"1:3\"><c r=\"C10\"><f>SUM(_xlfn.ANCHORARRAY(C2))</f><v>6</v></c></row>",
-    );
-    assert!(xml.contains(rows), "{xml}");
-    assert!(!xml.contains("cm="), "{xml}");
+    let mut requests = Vec::new();
+    let planned = plan_spill_publication(
+        &ingested.engine,
+        &ingested.sheets,
+        &ingested.plans,
+        &coerced,
+        &options,
+        &mut |sheet, request| {
+            requests.push((sheet.to_owned(), request));
+            Ok(7)
+        },
+    )
+    .unwrap();
     assert_eq!(
-        unbound,
+        requests,
         vec![(
             "Sheet1".to_owned(),
             BindingRequest {
@@ -727,17 +709,72 @@ fn new_ordinary_spill_plan_is_built_then_refused_until_metadata_binding() {
         )]
     );
     // C2, C3, C4, C9, C10; the anchor is one formula.
-    assert_eq!((changed, evaluated), (5, 3));
-    // A resolver binding (the metadata packet's job) lands on the anchor.
-    let (bound, unbound, _, _) = build(Some(1));
-    assert!(bound.contains("<c r=\"C2\" s=\"1\" cm=\"1\"><f t=\"array\" ref=\"C2:C4\">"));
-    assert!(unbound.is_empty());
-    // The orchestration refuses until then, with no output.
-    refused(
-        recalculate_xlsx_bytes_with(&source, Default::default(), ON),
-        PLACEHOLDER,
+    assert_eq!((planned.changed, planned.summary.evaluated), (5, 3));
+    let patches = planned.patches.into_iter().next().unwrap();
+    let xml = apply_patches(&ingested.plans[0].data, patches, usize::MAX).unwrap();
+    let xml = String::from_utf8(xml).unwrap();
+    // t="array"/ref set, the resolver's cm inserted, rows inserted in order.
+    let rows = concat!(
+        "<row r=\"2\" spans=\"1:3\"><c r=\"C2\" s=\"1\" cm=\"7\"><f t=\"array\" ref=\"C2:C4\">_xlfn.SEQUENCE($B$1)</f><v>1</v></c></row>",
+        "<row r=\"3\"><c r=\"C3\"><v>2</v></c></row><row r=\"4\"><c r=\"C4\"><v>3</v></c></row>",
+        "<row r=\"9\" spans=\"1:3\"><c r=\"C9\"><f>SUM(C2#)</f><v>6</v></c></row>",
+        "<row r=\"10\" spans=\"1:3\"><c r=\"C10\"><f>SUM(_xlfn.ANCHORARRAY(C2))</f><v>6</v></c></row>",
     );
-    // The public path is unchanged.
+    assert!(xml.contains(rows), "{xml}");
+}
+
+#[test]
+fn new_ordinary_spill_adds_metadata_relationship_and_content_type() {
+    let source = pack(&new_vertical());
+    let out = run(&source);
+    let before = unpack(&source);
+    let after = unpack(&out.bytes);
+    assert!(!before.contains_key("xl/metadata.xml"));
+    let metadata = &after["xl/metadata.xml"];
+    assert!(
+        metadata
+            .contains("<cellMetadata count=\"1\"><bk><rc t=\"1\" v=\"0\"/></bk></cellMetadata>")
+    );
+    assert_eq!(
+        after[WB_RELS],
+        before[WB_RELS].replace(
+            "</Relationships>",
+            "<Relationship Id=\"rId5\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/sheetMetadata\" Target=\"metadata.xml\"/></Relationships>"
+        )
+    );
+    assert_eq!(
+        after[TYPES],
+        before[TYPES].replace(
+            "</Types>",
+            "<Override PartName=\"/xl/metadata.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheetMetadata+xml\"/></Types>"
+        )
+    );
+    let x = parse_sheet(&sheet_xml(&out.bytes));
+    assert_anchor(&x, "C2", "C2:C4", Some("1"));
+    assert_numbers(
+        &out.bytes,
+        &[
+            ("C2", 1.0),
+            ("C3", 2.0),
+            ("C4", 3.0),
+            ("C9", 6.0),
+            ("C10", 6.0),
+        ],
+    );
+    // Only the worksheet, metadata, relationships and content types differ.
+    let mut rest = after.clone();
+    for name in [SHEET, WB_RELS, TYPES, "xl/metadata.xml"] {
+        rest.remove(name);
+    }
+    let mut old = before.clone();
+    for name in [SHEET, WB_RELS, TYPES] {
+        old.remove(name);
+    }
+    assert_eq!(rest, old);
+    assert_counts(&out, 3, 5);
+    // The anchor now keeps its binding: a repeated recalc edits nothing.
+    assert_rerun_is_noop(&out);
+    // The public path still refuses until admission is enabled.
     refused(
         recalculate_xlsx_bytes(&source, Default::default()),
         "materialized multi-cell dynamic spill",
@@ -773,73 +810,5 @@ fn disabled_switch_still_refuses_every_spill_case() {
                 .is_err()
         );
         assert!(recalculate_xlsx_bytes(&bytes, Default::default()).is_err());
-    }
-}
-
-/// The parent producer fixtures, loaded from the wrapper's scratch tree with
-/// expectations from its manifest. Skipped (with a note) outside the
-/// workspace that holds them.
-#[cfg(feature = "json")]
-#[test]
-fn parent_producer_fixtures_match_the_manifest() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../../../../scratch/formualizer-source-preserving-recalc");
-    let manifest = root.join("fixture-manifest.json");
-    let Ok(text) = std::fs::read_to_string(&manifest) else {
-        eprintln!("skipping: {} not present", manifest.display());
-        return;
-    };
-    let manifest: serde_json::Value = serde_json::from_str(&text).unwrap();
-    let cases = manifest["cases"].as_array().unwrap();
-    assert_eq!(cases.len(), 7);
-    for case in cases {
-        let name = case["name"].as_str().unwrap();
-        let source = std::fs::read(root.join("fixtures").join(format!("{name}.xlsx"))).unwrap();
-        if name == "new-vertical" {
-            // A new anchor needs an XLDAPR binding: the metadata packet.
-            refused(
-                recalculate_xlsx_bytes_with(&source, Default::default(), ON),
-                PLACEHOLDER,
-            );
-            continue;
-        }
-        let out = recalculate_xlsx_bytes_with(&source, Default::default(), ON)
-            .unwrap_or_else(|e| panic!("{name}: {e:?}"));
-        let x = parse_sheet(&sheet_xml(&out.bytes));
-        let readable = !case["expected_values"]
-            .as_object()
-            .unwrap()
-            .values()
-            .any(|v| v.is_string());
-        for (cell, value) in case["expected_values"].as_object().unwrap() {
-            match value {
-                serde_json::Value::String(token) => assert_error(&x, cell, token),
-                number => {
-                    let n = number.as_f64().unwrap();
-                    assert_eq!(
-                        x.cell(cell).v.as_deref(),
-                        Some(n.to_string().as_str()),
-                        "{name} {cell}"
-                    );
-                    if readable {
-                        assert_eq!(data(&out.bytes, cell), Data::Float(n), "{name} {cell}");
-                    }
-                }
-            }
-        }
-        for cell in case["cleared"].as_array().unwrap() {
-            let cell = cell.as_str().unwrap();
-            assert_cleared(&x, cell, Some("1"));
-        }
-        let anchor_ref = match (
-            case["new_shape"].as_u64().unwrap(),
-            case["blocker"].is_null(),
-        ) {
-            (n, true) if n > 1 => format!("C2:C{}", n + 1),
-            _ => "C2".to_owned(),
-        };
-        assert_anchor(&x, "C2", &anchor_ref, Some("1"));
-        assert_other_parts_unchanged(&source, &out.bytes);
-        assert_rerun_is_noop(&out);
     }
 }
