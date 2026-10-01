@@ -39,9 +39,13 @@ pub(super) fn patches(
             .get(&(cell.row, cell.col))
             .is_some_and(|anchor| anchor.formula == i)
         {
-            for span in [&cell.cm_span, &cell.formula_kind_span, &cell.array_ref_span]
-                .into_iter()
-                .flatten()
+            for span in [
+                cell.cm_span(),
+                cell.formula_kind_span.as_ref(),
+                cell.array_ref_span(),
+            ]
+            .into_iter()
+            .flatten()
             {
                 cell_patches.push(remove(span));
             }
@@ -52,7 +56,8 @@ pub(super) fn patches(
         checkpoint(cancel)?;
         let child = plan
             .index
-            .cell_at(row, col)
+            .as_ref()
+            .and_then(|index| index.cell_at(row, col))
             .ok_or_else(|| unsupported("dynamic array child is not indexed", "ingestion view"))?;
         mask_child(child, &mut cell_patches);
         flush_cell(&mut cell_patches, &mut out)?;

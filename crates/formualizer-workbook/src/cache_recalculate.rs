@@ -341,13 +341,16 @@ impl Seek for BoundedOutput {
     }
 }
 
-/// Worksheet source, formula cells, its source index and prior-footprint
-/// dynamic-array ownership.
+/// Worksheet source, formula cells and prior-footprint dynamic-array
+/// ownership. The per-cell source index exists only for worksheets with
+/// admitted anchors; a sheet with a new spill builds it after evaluation.
 struct SheetPlan {
     data: Vec<u8>,
     cells: Vec<sheet::Cell>,
-    index: sheet::SourceIndex,
+    index: Option<sheet::SourceIndex>,
     ownership: dynamic_metadata::SheetOwnership,
+    /// Serialized `<c>` elements, counted toward the generated-cell bound.
+    serialized: usize,
     /// Logical `(max_row, max_col)` counted toward the workbook area bound.
     bounds: (u32, u32),
 }
@@ -382,20 +385,46 @@ fn admit_source<'a>(
             &sheet.part,
             options.limits.max_worksheet_bytes,
         )?;
-        let scan = sheet::scan(&data, options, &mut observed, &mut logical_cells)?;
+        let counted = (observed, logical_cells);
+        let mut scanned = sheet::scan(
+            &data,
+            options,
+            sheet::Mode::Plain,
+            &mut observed,
+            &mut logical_cells,
+        )?;
+        if matches!(scanned, sheet::Scanned::NeedsIndex) {
+            // Dynamic cell metadata: index this sheet only.
+            (observed, logical_cells) = counted;
+            scanned = sheet::scan(
+                &data,
+                options,
+                sheet::Mode::Indexed,
+                &mut observed,
+                &mut logical_cells,
+            )?;
+        }
+        let sheet::Scanned::Done(scan) = scanned else {
+            return Err(unsupported("unindexed dynamic cell metadata", "worksheet"));
+        };
         formula_count = formula_count
             .checked_add(scan.cells.len())
             .ok_or_else(|| unsupported("formula count overflow", "workbook"))?;
         if formula_count > options.limits.max_formula_cells {
             return Err(unsupported("formula cell count limit", "workbook"));
         }
-        let ownership =
-            dynamic_metadata::own_sheet(&scan.index, &scan.cells, metadata.as_ref(), options)?;
+        let ownership = match &scan.index {
+            Some(index) => {
+                dynamic_metadata::own_sheet(index, &scan.cells, metadata.as_ref(), options)?
+            }
+            None => dynamic_metadata::SheetOwnership::default(),
+        };
         plans.push(SheetPlan {
             data,
             cells: scan.cells,
             index: scan.index,
             ownership,
+            serialized: scan.serialized,
             bounds: scan.bounds,
         });
     }
@@ -934,7 +963,9 @@ fn plan_spill_publication(
     // 1. Project every source formula; nothing is materialized yet.
     let mut projected = Vec::with_capacity(plans.len());
     for (sheet, plan) in sheets.iter().zip(plans) {
-        let mut scalars = Vec::new();
+        // Scalar caches are encoded into patches right away, as on the
+        // pre-spill writer; only anchors are retained for the bounds pass.
+        let mut scalar_patches = Vec::new();
         let mut anchors = Vec::new();
         for (i, cell) in plan.cells.iter().enumerate() {
             checkpoint(&options.cancel)?;
@@ -963,7 +994,12 @@ fn plan_spill_publication(
                 },
             )?;
             match projection {
-                result_projection::Projection::Scalar(cache) => scalars.push((i, cache)),
+                result_projection::Projection::Scalar(cache) => {
+                    if !cache.matches(cell) {
+                        publication.changed += 1;
+                        cache_patches(&plan.data, cell, &cache, &mut scalar_patches);
+                    }
+                }
                 result_projection::Projection::Anchor(anchor) => {
                     check_spill_policy(&options.eval_config.spill)?;
                     use result_projection::Shape;
@@ -990,17 +1026,45 @@ fn plan_spill_publication(
                 }
             }
         }
-        projected.push((scalars, anchors));
+        projected.push((scalar_patches, anchors));
     }
     // 2. Bounds before any member value is read: width, merges, generated
     //    serialized cells and the logical area, within the existing limits.
     let mut serialized = 0u64;
     let mut inserted = 0u64;
     let mut logical = 0u64;
+    // A sheet with a new spill but no admitted anchor gets its source index
+    // now, from the retained worksheet bytes; sheets without any anchor
+    // projection never build one.
+    let mut built = Vec::with_capacity(plans.len());
     for (plan, (_, anchors)) in plans.iter().zip(&projected) {
-        let index = &plan.index;
-        let preflight = geometry::preflight(index, anchors, options)?;
-        serialized = serialized.saturating_add(index.cells.len() as u64);
+        checkpoint(&options.cancel)?;
+        built.push(if plan.index.is_none() && !anchors.is_empty() {
+            match sheet::scan(&plan.data, options, sheet::Mode::Indexed, &mut 0, &mut 0)? {
+                sheet::Scanned::Done(scan) => scan.index,
+                sheet::Scanned::NeedsIndex => None,
+            }
+        } else {
+            None
+        });
+    }
+    let indexes: Vec<Option<&sheet::SourceIndex>> = plans
+        .iter()
+        .zip(&built)
+        .map(|(plan, built)| plan.index.as_ref().or(built.as_ref()))
+        .collect();
+    for ((plan, (_, anchors)), index) in plans.iter().zip(&projected).zip(&indexes) {
+        serialized = serialized.saturating_add(plan.serialized as u64);
+        let preflight = match index {
+            Some(index) => geometry::preflight(index, anchors, options)?,
+            None if anchors.is_empty() => geometry::Preflight::default(),
+            None => {
+                return Err(unsupported(
+                    "spill geometry without a source index",
+                    "worksheet",
+                ));
+            }
+        };
         inserted = inserted.saturating_add(preflight.inserted);
         let rows = plan.bounds.0.max(preflight.bounds.0);
         let cols = plan.bounds.1.max(preflight.bounds.1);
@@ -1013,18 +1077,18 @@ fn plan_spill_publication(
         return Err(unsupported("workbook logical cell limit", "workbook"));
     }
     // 3. One ordered geometry plan per worksheet.
-    for ((sheet, plan), (scalars, anchors)) in sheets.iter().zip(plans).zip(projected) {
-        let mut patches = Vec::new();
-        for (i, cache) in scalars {
-            checkpoint(&options.cancel)?;
-            let cell = &plan.cells[i];
-            if !cache.matches(cell) {
-                publication.changed += 1;
-                cache_patches(&plan.data, cell, &cache, &mut patches);
-            }
-        }
+    for (((sheet, plan), (mut patches, anchors)), index) in
+        sheets.iter().zip(plans).zip(projected).zip(indexes)
+    {
+        let Some(index) = index.filter(|_| !anchors.is_empty()) else {
+            // No dynamic array on this sheet: scalar caches only.
+            ingest_view::coalesce(&mut patches)?;
+            publication.patches.push(patches);
+            continue;
+        };
         let edits = geometry::plan(
             plan,
+            index,
             &anchors,
             &mut |anchor, row, col| {
                 result_projection::member(

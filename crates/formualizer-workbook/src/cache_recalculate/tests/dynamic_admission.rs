@@ -192,7 +192,7 @@ fn producer_shaped_anchor_ownership_and_source_index() {
         assert!(!anchor.binding.collapsed);
         let cell = &plan.cells[anchor.formula];
         assert_eq!((cell.row, cell.col), (anchor.row, anchor.col));
-        assert_eq!(text(cell.cm_span.as_ref().unwrap()), "cm=\"1\"");
+        assert_eq!(text(cell.cm_span().unwrap()), "cm=\"1\"");
         assert_eq!(
             text(cell.formula_kind_span.as_ref().unwrap()),
             "t=\"array\""
@@ -200,9 +200,9 @@ fn producer_shaped_anchor_ownership_and_source_index() {
         assert!(text(&cell.formula_open).starts_with("<f t=\"array\""));
     }
     let c2 = &plan.cells[own.anchors[&(2, 3)].formula];
-    assert_eq!(text(c2.array_ref_span.as_ref().unwrap()), "ref=\"C2:C4\"");
+    assert_eq!(text(c2.array_ref_span().unwrap()), "ref=\"C2:C4\"");
     assert_eq!(c2.formula_text, "_xlfn.SEQUENCE($B$1)");
-    let index = &plan.index;
+    let index = plan.index.as_ref().expect("indexed anchor sheet");
     let (dimension, dimension_span) = index.dimension.clone().unwrap();
     assert_eq!(dimension, rect(1, 1, 11, 3));
     assert_eq!(text(&dimension_span), "ref=\"A1:C11\"");
@@ -315,7 +315,7 @@ fn sparse_extent_keeps_missing_children_missing_and_records_merges() {
     // and are not manufactured. D6 is outside the footprint.
     assert_eq!(children, vec![((3, 4), (2, 3)), ((4, 3), (2, 3))]);
     with_admission(&p, &Default::default(), |a| {
-        let index = &a.plans[0].index;
+        let index = a.plans[0].index.as_ref().expect("indexed anchor sheet");
         assert_eq!(index.merges, vec![rect(7, 5, 8, 6)]);
         assert_eq!(index.cells.len(), 5);
         assert!(index.cell_at(3, 4).unwrap().empty);

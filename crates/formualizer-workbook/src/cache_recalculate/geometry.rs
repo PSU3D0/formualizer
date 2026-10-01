@@ -172,13 +172,13 @@ struct Pending {
 /// run [`preflight`] and the workbook-wide generated-cell budget.
 pub(super) fn plan(
     plan: &SheetPlan,
+    index: &SourceIndex,
     anchors: &[AnchorEdit],
     member: &mut MemberReader<'_>,
     bind: &mut BindingResolver<'_>,
     cancel: &Option<CancelToken>,
 ) -> Result<SheetEdits, IoError> {
     let data = &plan.data;
-    let index = &plan.index;
     let ownership = &plan.ownership;
     let mut polled = 0usize;
     let mut poll = || {
@@ -349,10 +349,10 @@ pub(super) fn plan(
         let reference = format!("ref=\"{}\"", a1_rect(extent));
         if cell.formula_kind == "array" {
             let span = cell
-                .array_ref_span
-                .clone()
+                .array_ref_span()
+                .cloned()
                 .ok_or_else(|| unsupported("missing dynamic array extent", "worksheet"))?;
-            if cell.array_ref != Some(extent) {
+            if cell.array_ref() != Some(extent) {
                 cell_patches.push(Patch {
                     span,
                     replacement: reference.into_bytes(),
@@ -591,7 +591,7 @@ fn cell_name(data: &[u8], start: usize) -> String {
 /// the end of the start tag, after any type attribute inserted there.
 fn set_cell_metadata(out: &mut Vec<Patch>, cell: &super::sheet::Cell, cm: u32) {
     let attribute = format!("cm=\"{cm}\"");
-    if let Some(span) = &cell.cm_span {
+    if let Some(span) = cell.cm_span() {
         out.push(Patch {
             span: span.clone(),
             replacement: attribute.into_bytes(),

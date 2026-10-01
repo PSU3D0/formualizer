@@ -570,12 +570,12 @@ pub(super) fn own_sheet(
         if i & 1023 == 0 {
             checkpoint(&options.cancel)?;
         }
-        let Some(cm) = cell.cm else {
+        let Some(cm) = cell.cm() else {
             continue;
         };
         // The scan admitted `cm` only on top-left array anchors with a ref.
         let footprint = cell
-            .array_ref
+            .array_ref()
             .ok_or_else(|| unsupported("missing dynamic array extent", "worksheet"))?;
         let binding = metadata
             .ok_or_else(|| {
