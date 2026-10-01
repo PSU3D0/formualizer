@@ -5549,7 +5549,7 @@ impl DependencyGraph {
         self.materialize_vertex(id);
         // A declared dynamic-array anchor's identity does not follow a moved
         // vertex (FORM211): the declaration is cleared.
-        if self.store.grid_addr(id) != Some(coord) {
+        if !self.declared_dynamic_anchors.is_empty() && self.store.grid_addr(id) != Some(coord) {
             self.forget_declared_dynamic_anchor(id);
         }
         self.store.set_addr(id, VertexAddr::grid(coord));
