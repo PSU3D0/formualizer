@@ -129,7 +129,7 @@ impl<R: crate::traits::EvaluationContext> super::Engine<R> {
             rows.into_iter()
                 .next()
                 .and_then(|row| row.into_iter().next())
-                .unwrap_or(LiteralValue::Empty)
+                .unwrap_or_else(|| LiteralValue::Error(ExcelError::new(ExcelErrorKind::Na)))
         } else {
             value
         };
@@ -164,6 +164,37 @@ mod tests {
     use crate::engine::range_view::RangeView;
     use crate::traits::RANGE_MATERIALIZED_CELLS;
     use formualizer_common::DateSystem;
+
+    #[test]
+    fn fixed_single_missing_top_left_is_na_but_empty_member_is_zero() {
+        use crate::engine::{Engine, EvalConfig};
+        use crate::test_workbook::TestWorkbook;
+        use formualizer_parse::parser::parse;
+        let mut e = Engine::new(
+            TestWorkbook::new(),
+            EvalConfig {
+                family_execution: false,
+                ..EvalConfig::default()
+            },
+        );
+        e.set_cell_formula("Sheet1", 1, 1, parse("=1").unwrap())
+            .unwrap();
+        e.declare_fixed_array_formula("Sheet1", 1, 1, 1, 1).unwrap();
+        let vertex = e
+            .graph
+            .get_vertex_id_for_address(&e.graph.make_cell_ref("Sheet1", 1, 1))
+            .unwrap();
+        for rows in [vec![], vec![vec![]]] {
+            assert_eq!(
+                e.fit_formula_result(vertex, LiteralValue::Array(rows)),
+                LiteralValue::Error(ExcelError::new(ExcelErrorKind::Na))
+            );
+        }
+        assert_eq!(
+            e.fit_formula_result(vertex, LiteralValue::Array(vec![vec![LiteralValue::Empty]])),
+            LiteralValue::Number(0.0)
+        );
+    }
 
     #[test]
     fn fixed_shape_broadcast_padding_truncation_and_error_fill() {
