@@ -665,6 +665,51 @@ mod tests {
     }
 
     #[test]
+    fn array_if_truthiness_and_broadcast() {
+        crate::builtins::load_builtins();
+        let wb = TestWorkbook::new();
+        for (formula, expected) in [
+            ("=IF({TRUE;FALSE;2}, {10;20;30}, 0)", "[[10], [0], [30]]"),
+            ("=IF({TRUE;FALSE}, {10,20}, 0)", "[[10, 20], [0, 0]]"),
+            ("=IF({TRUE;FALSE}, 7)", "[[7], [FALSE]]"),
+            ("=IF({TRUE;FALSE}, IF({FALSE;TRUE}, 1, 2), 0)", "[[2], [0]]"),
+        ] {
+            let actual = evaluate_formula(formula, &wb);
+            fn norm(value: &LiteralValue) -> String {
+                match value {
+                    LiteralValue::Array(rows) => format!(
+                        "[{}]",
+                        rows.iter()
+                            .map(|row| format!(
+                                "[{}]",
+                                row.iter().map(norm).collect::<Vec<_>>().join(", ")
+                            ))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                    LiteralValue::Boolean(b) => b.to_string().to_uppercase(),
+                    other => other.to_string(),
+                }
+            }
+            assert_eq!(norm(&actual), expected, "{formula}: {actual:?}");
+        }
+    }
+
+    #[test]
+    fn array_if_only_evaluates_selected_branches_once() {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let wb = TestWorkbook::new()
+            .with_function(Arc::new(IfFn))
+            .with_function(Arc::new(CountFn(counter.clone())));
+        let result = evaluate_formula("=IF({TRUE;TRUE}, 7, COUNTING())", &wb);
+        assert!(matches!(result, LiteralValue::Array(_)), "{result:?}");
+        assert_eq!(counter.load(Ordering::SeqCst), 0);
+        let result = evaluate_formula("=IF({TRUE;FALSE;TRUE}, COUNTING(), COUNTING())", &wb);
+        assert!(matches!(result, LiteralValue::Array(_)), "{result:?}");
+        assert_eq!(counter.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
     fn test_true_false() {
         let wb = TestWorkbook::new()
             .with_function(std::sync::Arc::new(TrueFn))
