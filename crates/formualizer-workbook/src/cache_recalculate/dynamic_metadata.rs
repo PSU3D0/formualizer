@@ -93,7 +93,8 @@ pub(super) struct DynamicAnchor {
     pub formula: usize,
     /// Declared `f/@ref`; the anchor is its top-left cell.
     pub footprint: SourceRect,
-    pub binding: DynamicBinding,
+    /// None denotes a legacy fixed-extent CSE formula.
+    pub binding: Option<DynamicBinding>,
 }
 /// Disjoint anchor -> prior footprint map for one worksheet, plus the mask
 /// set of proven generated child cells (serialized cells only, anchor
@@ -570,22 +571,37 @@ pub(super) fn own_sheet(
         if i & 1023 == 0 {
             checkpoint(&options.cancel)?;
         }
-        let Some(cm) = cell.cm() else {
+        if cell.cm().is_none() && cell.formula_kind != "array" {
             continue;
-        };
+        }
         // The scan admitted `cm` only on top-left array anchors with a ref.
         let footprint = cell
             .array_ref()
             .ok_or_else(|| unsupported("missing dynamic array extent", "worksheet"))?;
-        let binding = metadata
-            .ok_or_else(|| {
-                unsupported(
-                    "dangling or invalid dynamic cell metadata index (cm)",
-                    "worksheet",
-                )
-            })?
-            .resolve(cm)?;
-        if binding.collapsed && footprint.cell_count() != Some(1) {
+        let binding = cell
+            .cm()
+            .map(|cm| {
+                metadata
+                    .ok_or_else(|| {
+                        unsupported(
+                            "dangling or invalid dynamic cell metadata index (cm)",
+                            "worksheet",
+                        )
+                    })?
+                    .resolve(cm)
+            })
+            .transpose()?;
+        if binding.is_none()
+            && footprint
+                .cell_count()
+                .is_none_or(|n| n > u64::from(options.eval_config.spill.max_spill_cells))
+        {
+            return Err(unsupported(
+                "fixed CSE array extent exceeds spill cap",
+                "worksheet",
+            ));
+        }
+        if binding.is_some_and(|b| b.collapsed) && footprint.cell_count() != Some(1) {
             return Err(unsupported(
                 "collapsed dynamic array block with a multi-cell extent",
                 "worksheet",

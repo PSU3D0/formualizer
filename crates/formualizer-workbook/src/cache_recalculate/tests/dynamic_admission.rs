@@ -183,13 +183,13 @@ fn producer_shaped_anchor_ownership_and_source_index() {
         // cm one-based -> cellMetadata bk; rc t one-based type; rc v zero-based block.
         assert_eq!(
             (
-                anchor.binding.cell_metadata,
-                anchor.binding.metadata_type,
-                anchor.binding.future_block
+                anchor.binding.unwrap().cell_metadata,
+                anchor.binding.unwrap().metadata_type,
+                anchor.binding.unwrap().future_block
             ),
             (1, 1, 0)
         );
-        assert!(!anchor.binding.collapsed);
+        assert!(!anchor.binding.unwrap().collapsed);
         let cell = &plan.cells[anchor.formula];
         assert_eq!((cell.row, cell.col), (anchor.row, anchor.col));
         assert_eq!(text(cell.cm_span().unwrap()), "cm=\"1\"");
@@ -513,15 +513,18 @@ fn out_of_range_metadata_type_and_block_indexes_are_rejected() {
 }
 
 #[test]
-fn legacy_cse_and_data_table_formulas_are_rejected() {
-    rejects(
-        &edit(
-            producer(),
-            SHEET,
-            "<c r=\"C2\" s=\"1\" cm=\"1\">",
-            "<c r=\"C2\" s=\"1\">",
-        ),
-        "legacy CSE",
+fn legacy_cse_is_admitted_but_data_tables_are_rejected() {
+    let bytes = pack(&edit(
+        producer(),
+        SHEET,
+        "<c r=\"C2\" s=\"1\" cm=\"1\">",
+        "<c r=\"C2\" s=\"1\">",
+    ));
+    let admission = admit_source(&bytes, &XlsxRecalculateOptions::default()).unwrap();
+    assert!(
+        admission.plans[0].ownership.anchors[&(2, 3)]
+            .binding
+            .is_none()
     );
     let table = edit(
         producer(),

@@ -557,6 +557,14 @@ fn ingest_source<'a>(
     }
     let mut config = options.eval_config.clone();
     config.date_system = date_system;
+    // Policy: CSE evaluation bypasses family memoization, whose admitted
+    // cached results are not declaration-sensitive. Non-CSE runs are unchanged.
+    if plans
+        .iter()
+        .any(|p| p.ownership.anchors.values().any(|a| a.binding.is_none()))
+    {
+        config.family_execution = false;
+    }
     // XLSX dates are serial caches. Native chrono materialization cannot retain
     // Excel-1900 phantom serial 60 and can discard fractional duration precision.
     config.temporal_egress = formualizer_eval::engine::TemporalEgress::Serial;
@@ -634,13 +642,21 @@ fn declare_anchors(
         .map(|d| (d.sheet.clone(), d.row, d.col))
         .collect();
     for (sheet, plan) in sheets.iter().zip(plans) {
-        for &(row, col) in plan.ownership.anchors.keys() {
+        for (&(row, col), anchor) in &plan.ownership.anchors {
             checkpoint(&options.cancel)?;
-            if engine
-                .declare_dynamic_array_anchor(&sheet.name, row, col)
-                .is_err()
-                && !coerced.contains(&(sheet.name.clone(), row, col))
-            {
+            let declaration = if anchor.binding.is_none() {
+                let extent = anchor.footprint;
+                engine.declare_fixed_array_formula(
+                    &sheet.name,
+                    row,
+                    col,
+                    extent.last_row - extent.first_row + 1,
+                    extent.last_col - extent.first_col + 1,
+                )
+            } else {
+                engine.declare_dynamic_array_anchor(&sheet.name, row, col)
+            };
+            if declaration.is_err() && !coerced.contains(&(sheet.name.clone(), row, col)) {
                 return Err(unsupported(
                     "dynamic array anchor was not ingested as a formula",
                     &sheet.name,
@@ -1010,7 +1026,11 @@ fn plan_spill_publication(
                     // A source record keeps describing the anchor unless it
                     // is a collapsed record and the result spills again.
                     let binding = match anchor.prior {
-                        Some(prior) if !(prior.binding.collapsed && spill.is_some()) => {
+                        Some(prior)
+                            if !prior
+                                .binding
+                                .is_some_and(|b| b.collapsed && spill.is_some()) =>
+                        {
                             geometry::Binding::Keep
                         }
                         _ => geometry::Binding::NeedsXldapr,

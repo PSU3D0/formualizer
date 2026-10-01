@@ -112,13 +112,25 @@ pub(super) fn project_formula(
         sheet,
     )?;
     record(&value);
-    let shape = match (spill, &value) {
-        (Some(extent), _) => Shape::Spill(extent),
-        (None, LiteralValue::Error(e)) if e.kind == formualizer_common::ExcelErrorKind::Spill => {
-            Shape::Blocked
+    let shape = if let Some(prior) = prior.filter(|a| a.binding.is_none()) {
+        if prior.footprint.cell_count() != Some(1) && spill != Some(prior.footprint) {
+            return Err(unsupported(
+                "fixed array result did not retain its extent",
+                sheet,
+            ));
         }
-        (None, LiteralValue::Error(_)) => Shape::Error,
-        (None, _) => Shape::Collapsed,
+        Shape::Spill(prior.footprint)
+    } else {
+        match (spill, &value) {
+            (Some(extent), _) => Shape::Spill(extent),
+            (None, LiteralValue::Error(e))
+                if e.kind == formualizer_common::ExcelErrorKind::Spill =>
+            {
+                Shape::Blocked
+            }
+            (None, LiteralValue::Error(_)) => Shape::Error,
+            (None, _) => Shape::Collapsed,
+        }
     };
     let cache = Cache::from_value(value, date_system)?;
     if prior.is_none() && !matches!(shape, Shape::Spill(_)) {

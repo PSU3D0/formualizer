@@ -697,19 +697,14 @@ fn cancellation_publishes_nothing() {
 
 #[test]
 fn unsupported_metadata_and_structures_stay_refused() {
-    // Legacy CSE: an array formula without dynamic metadata.
-    refused(
-        recalculate_xlsx_bytes(
-            &pack(&edit(
-                producer(),
-                SHEET,
-                " cm=\"1\"><f t=\"array\" ref=\"C2:C4\">",
-                "><f t=\"array\" ref=\"C2:C4\">",
-            )),
-            Default::default(),
-        ),
-        "legacy CSE",
-    );
+    // Array formulas without dynamic metadata retain their fixed CSE extent.
+    let cse = run(&pack(&edit(
+        producer(),
+        SHEET,
+        " cm=\"1\"><f t=\"array\" ref=\"C2:C4\">",
+        "><f t=\"array\" ref=\"C2:C4\">",
+    )));
+    assert_anchor(&parse_sheet(&sheet_xml(&cse.bytes)), "C2", "C2:C4", None);
     // Data tables.
     refused(
         recalculate_xlsx_bytes(

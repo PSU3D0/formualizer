@@ -265,12 +265,6 @@ fn dynamic_anchor_extent(cell: &Cell) -> Result<Option<SourceRect>, IoError> {
             "worksheet",
         ));
     }
-    if cell.cm().is_none() {
-        return Err(unsupported(
-            "legacy CSE array formula without dynamic metadata",
-            "worksheet",
-        ));
-    }
     let extent = cell
         .array_ref()
         .ok_or_else(|| unsupported("missing dynamic array extent", "worksheet"))?;
@@ -620,6 +614,10 @@ fn scan_inner(
                             cell.formula_kind_span =
                                 node.attribute("", "t").map(|a| a.span.clone());
                             if cell.formula_kind == "array" {
+                                if index.is_none() {
+                                    *needs_index = true;
+                                    return Err(unsupported(NEEDS_INDEX, "worksheet"));
+                                }
                                 if let Some(extent) = node.attribute("", "ref") {
                                     let rect = SourceRect::parse(&extent.value)?;
                                     // Validate declared geometry before any

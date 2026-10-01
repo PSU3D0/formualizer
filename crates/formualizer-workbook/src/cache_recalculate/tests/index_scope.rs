@@ -71,6 +71,21 @@ fn scalar_workbooks_build_no_source_index() {
 }
 
 #[test]
+fn cse_indexes_only_its_sheet() {
+    let bytes = pack(&with_scalar_sheet(edit(
+        producer(),
+        "xl/worksheets/sheet1.xml",
+        " cm=\"1\"",
+        "",
+    )));
+    let (admission, scans) =
+        counting(|| admit_source(&bytes, &XlsxRecalculateOptions::default()).unwrap());
+    assert_eq!(scans, 1);
+    assert!(admission.plans[0].index.is_some());
+    assert!(admission.plans[1].index.is_none());
+}
+
+#[test]
 fn only_the_sheet_with_admitted_anchors_is_indexed() {
     let bytes = pack(&with_scalar_sheet(producer()));
     let options = XlsxRecalculateOptions::default();
