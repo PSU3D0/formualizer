@@ -1,6 +1,7 @@
 //! Strict cache-only XLSX recalculation, without a rich document model.
 //! Unsupported package/formula cases fail before any output is published.
 mod dynamic_metadata;
+mod ingest_view;
 mod package;
 mod sheet;
 #[cfg(test)]
@@ -281,7 +282,8 @@ fn cache_patches(xml: &[u8], cell: &sheet::Cell, value: &Cache, patches: &mut Ve
     });
 }
 fn apply_patches(bytes: &[u8], mut patches: Vec<Patch>, limit: usize) -> Result<Vec<u8>, IoError> {
-    patches.sort_by_key(|p| p.span.start);
+    // An insertion sorts before a replacement starting at the same offset.
+    patches.sort_by_key(|p| (p.span.start, p.span.end));
     let mut length = bytes.len();
     let mut previous = 0;
     for patch in &patches {
@@ -350,7 +352,6 @@ pub(crate) struct SpillSupport {
 struct SheetPlan {
     data: Vec<u8>,
     cells: Vec<sheet::Cell>,
-    #[allow(dead_code)] // consumed by the ingestion/geometry packets
     index: Option<sheet::SourceIndex>,
     ownership: Option<dynamic_metadata::SheetOwnership>,
 }
@@ -444,14 +445,23 @@ pub fn recalculate_xlsx_bytes(
 ) -> Result<XlsxRecalculateResult, IoError> {
     recalculate_xlsx_bytes_with(bytes, options, SpillSupport::default())
 }
-pub(crate) fn recalculate_xlsx_bytes_with(
+/// The admitted source with its ingested, not yet evaluated, engine.
+struct Ingested<'a> {
+    archive: package::Archive<'a>,
+    sheets: Vec<package::Sheet>,
+    plans: Vec<SheetPlan>,
+    engine: Engine<WBResolver>,
+    /// Spill support admitted at least one dynamic-array anchor.
+    anchors: bool,
+}
+/// Build the transient ingestion view, replay it through Calamine into a new
+/// engine, validate calculation names and, with spill support, declare every
+/// admitted dynamic-array anchor. Nothing is evaluated or published.
+fn ingest_source<'a>(
     bytes: &[u8],
-    options: XlsxRecalculateOptions,
-    spill: SpillSupport,
-) -> Result<XlsxRecalculateResult, IoError> {
-    if spill.enabled {
-        check_spill_policy(&options.eval_config.spill)?;
-    }
+    admission: SourceAdmission<'a>,
+    options: &XlsxRecalculateOptions,
+) -> Result<Ingested<'a>, IoError> {
     let SourceAdmission {
         mut archive,
         sheets,
@@ -459,58 +469,29 @@ pub(crate) fn recalculate_xlsx_bytes_with(
         plans,
         formula_count,
         metadata: _,
-    } = admit_source(bytes, &options, spill)?;
-    if plans
+    } = admission;
+    let anchors = plans
         .iter()
-        .any(|p| p.ownership.as_ref().is_some_and(|o| !o.anchors.is_empty()))
-    {
-        // Admission/ownership is parse-only for now; masking, projection,
-        // geometry and metadata publication are not implemented yet.
-        return Err(unsupported(
-            "dynamic spill ingestion view is not implemented",
-            "source-preserving spill recalculation",
-        ));
-    }
-    let empty_result = |summary| XlsxRecalculateResult {
-        bytes: bytes.to_vec(),
-        summary,
-        formula_cells: formula_count,
-        cache_cells_changed: 0,
-        worksheet_parts_changed: 0,
-    };
-    if formula_count == 0 {
-        checkpoint(&options.cancel)?;
-        if bytes.len() > options.limits.max_output_bytes {
-            return Err(unsupported("output byte limit", "XLSX package"));
-        }
-        return Ok(empty_result(RecalculateSummary::default()));
-    }
+        .any(|p| p.ownership.as_ref().is_some_and(|o| !o.anchors.is_empty()));
     checkpoint(&options.cancel)?;
     // Calamine 0.36 cannot decode every legal/stale cache representation,
-    // although formula ingestion ignores cached results. Clear those caches in a
-    // bounded, transient ingestion view; the authoritative package stays intact.
+    // although formula ingestion ignores cached results. Clear those caches,
+    // and mask/normalize dynamic arrays, in a bounded transient ingestion
+    // view; the authoritative package stays intact.
     let mut view_parts = BTreeMap::new();
     for (sheet, plan) in sheets.iter().zip(&plans) {
-        let (data, cells) = (&plan.data, &plan.cells);
-        let mut patches = Vec::new();
-        for cell in cells {
-            if !sheet::readable_scalar_cache(cell, data)
-                || matches!(cell.kind.as_deref(), Some("s" | "inlineStr" | "d"))
-            {
-                cache_patches(data, cell, &Cache::Empty, &mut patches);
-            }
-        }
+        let patches = ingest_view::patches(plan, &options.cancel)?;
         if !patches.is_empty() {
             view_parts.insert(
                 sheet.part.clone(),
-                apply_patches(data, patches, options.limits.max_worksheet_bytes)?,
+                apply_patches(&plan.data, patches, options.limits.max_worksheet_bytes)?,
             );
         }
     }
     let ingest_bytes = if view_parts.is_empty() {
         bytes.to_vec()
     } else {
-        package::rewrite(bytes, &mut archive, &view_parts, &options)?
+        package::rewrite(bytes, &mut archive, &view_parts, options)?
     };
     let opened = if let Some(cancel) = options.cancel.clone() {
         CalamineAdapter::open_bytes_cancellable(ingest_bytes, cancel)
@@ -574,13 +555,101 @@ pub(crate) fn recalculate_xlsx_bytes_with(
     }
     checkpoint(&options.cancel)?;
     drop(adapter);
+    if anchors {
+        declare_anchors(&mut engine, &sheets, &plans, options)?;
+    }
+    Ok(Ingested {
+        archive,
+        sheets,
+        plans,
+        engine,
+        anchors,
+    })
+}
+/// Give every admitted anchor its source spill identity, so a current
+/// scalar (1x1) result still resolves `A1#`/`ANCHORARRAY(A1)`. A formula
+/// coerced to a parse error has no formula vertex and stays undeclared.
+fn declare_anchors(
+    engine: &mut Engine<WBResolver>,
+    sheets: &[package::Sheet],
+    plans: &[SheetPlan],
+    options: &XlsxRecalculateOptions,
+) -> Result<(), IoError> {
+    if engine.has_staged_formulas() {
+        // Deferred graph building: anchors need formula vertices.
+        engine.build_graph_all()?;
+        checkpoint(&options.cancel)?;
+    }
+    let coerced: HashSet<_> = engine
+        .formula_parse_diagnostics()
+        .iter()
+        .filter(|d| d.policy == FormulaParsePolicy::CoerceToError)
+        .map(|d| (d.sheet.clone(), d.row, d.col))
+        .collect();
+    for (sheet, plan) in sheets.iter().zip(plans) {
+        let Some(ownership) = &plan.ownership else {
+            continue;
+        };
+        for &(row, col) in ownership.anchors.keys() {
+            checkpoint(&options.cancel)?;
+            if engine
+                .declare_dynamic_array_anchor(&sheet.name, row, col)
+                .is_err()
+                && !coerced.contains(&(sheet.name.clone(), row, col))
+            {
+                return Err(unsupported(
+                    "dynamic array anchor was not ingested as a formula",
+                    &sheet.name,
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+fn evaluate(
+    engine: &mut Engine<WBResolver>,
+    options: &XlsxRecalculateOptions,
+) -> Result<(), IoError> {
     checkpoint(&options.cancel)?;
     if let Some(cancel) = options.cancel.clone() {
         engine.evaluate_all_cancellable(cancel)?;
     } else {
         engine.evaluate_all()?;
     }
-    checkpoint(&options.cancel)?;
+    checkpoint(&options.cancel)
+}
+pub(crate) fn recalculate_xlsx_bytes_with(
+    bytes: &[u8],
+    options: XlsxRecalculateOptions,
+    spill: SpillSupport,
+) -> Result<XlsxRecalculateResult, IoError> {
+    if spill.enabled {
+        check_spill_policy(&options.eval_config.spill)?;
+    }
+    let admission = admit_source(bytes, &options, spill)?;
+    let formula_count = admission.formula_count;
+    let empty_result = |summary| XlsxRecalculateResult {
+        bytes: bytes.to_vec(),
+        summary,
+        formula_cells: formula_count,
+        cache_cells_changed: 0,
+        worksheet_parts_changed: 0,
+    };
+    if formula_count == 0 {
+        checkpoint(&options.cancel)?;
+        if bytes.len() > options.limits.max_output_bytes {
+            return Err(unsupported("output byte limit", "XLSX package"));
+        }
+        return Ok(empty_result(RecalculateSummary::default()));
+    }
+    let Ingested {
+        mut archive,
+        sheets,
+        plans,
+        mut engine,
+        anchors,
+    } = ingest_source(bytes, admission, &options)?;
+    evaluate(&mut engine, &options)?;
     let coerced: HashSet<_> = engine
         .formula_parse_diagnostics()
         .iter()
@@ -672,6 +741,16 @@ pub(crate) fn recalculate_xlsx_bytes_with(
             }
             replacements.insert(sheet.part.clone(), patched);
         }
+    }
+    if anchors {
+        // Dynamic-array projection, worksheet geometry and metadata
+        // publication are not implemented yet (FORM211-C/D/E). A run whose
+        // spills all collapsed to scalars must not publish stale children
+        // or extents either.
+        return Err(unsupported(
+            "dynamic spill publication is not implemented",
+            "source-preserving spill recalculation",
+        ));
     }
     summary.status = if summary.errors == 0 {
         RecalculateStatus::Success

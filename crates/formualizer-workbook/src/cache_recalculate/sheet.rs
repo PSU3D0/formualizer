@@ -76,18 +76,15 @@ pub(super) struct Cell {
     /// One-based cellMetadata index from `c/@cm` (spill support only).
     pub cm: Option<u32>,
     /// `cm="…"` attribute span on the cell start tag.
-    #[allow(dead_code)] // edited by the ingestion/geometry packets
     pub cm_span: Option<Range<usize>>,
     /// `<f …>` start tag (or whole empty element) span.
     #[allow(dead_code)] // edited by the ingestion/geometry packets
     pub formula_open: Range<usize>,
     /// `t="…"` attribute span on the formula start tag.
-    #[allow(dead_code)] // edited by the ingestion/geometry packets
     pub formula_kind_span: Option<Range<usize>>,
     /// Declared array extent from `f/@ref` for `t="array"` formulas.
     pub array_ref: Option<SourceRect>,
     /// `ref="…"` attribute span on an array formula start tag.
-    #[allow(dead_code)] // edited by the ingestion/geometry packets
     pub array_ref_span: Option<Range<usize>>,
 }
 /// One serialized worksheet row (spill support only).
@@ -143,7 +140,6 @@ pub(super) struct SourceIndex {
     pub cells: Vec<IndexedCell>,
     pub merges: Vec<SourceRect>,
 }
-#[allow(dead_code)]
 impl SourceIndex {
     pub fn cell_at(&self, row: u32, col: u32) -> Option<&IndexedCell> {
         self.cells

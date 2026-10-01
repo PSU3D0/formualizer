@@ -9,20 +9,21 @@ use formualizer_eval::engine::{SpillBoundsPolicy, SpillConflictPolicy};
 use std::collections::BTreeMap;
 use std::io::{Cursor, Write};
 
-const MAIN: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
-const RELS: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
-const OFFICE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+pub(super) const MAIN: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+pub(super) const RELS: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
+pub(super) const OFFICE: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 const DYNAMIC: &str = "http://schemas.microsoft.com/office/spreadsheetml/2017/dynamicarray";
 const XLDAPR_URI: &str = "{bdbb8cdc-fa1e-496e-a857-3c3f30c029c3}";
-const SHEET: &str = "xl/worksheets/sheet1.xml";
+pub(super) const SHEET: &str = "xl/worksheets/sheet1.xml";
 const METADATA: &str = "xl/metadata.xml";
-const WB_RELS: &str = "xl/_rels/workbook.xml.rels";
-const TYPES: &str = "[Content_Types].xml";
+pub(super) const WB_RELS: &str = "xl/_rels/workbook.xml.rels";
+pub(super) const TYPES: &str = "[Content_Types].xml";
 const METADATA_REL: &str = "<Relationship Id=\"rId5\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/sheetMetadata\" Target=\"metadata.xml\"/>";
 const METADATA_TYPE: &str = "<Override PartName=\"/xl/metadata.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheetMetadata+xml\"/>";
 
 /// Shape copied from the original XlsxWriter `existing-grow` fixture.
-const PRODUCER_ROWS: &str = concat!(
+pub(super) const PRODUCER_ROWS: &str = concat!(
     "<row r=\"1\" spans=\"1:3\"><c r=\"A1\" t=\"s\"><v>0</v></c><c r=\"B1\"><v>5</v></c></row>",
     "<row r=\"2\" spans=\"1:3\"><c r=\"C2\" s=\"1\" cm=\"1\"><f t=\"array\" ref=\"C2:C4\">_xlfn.SEQUENCE($B$1)</f><v>1</v></c></row>",
     "<row r=\"3\" spans=\"1:3\"><c r=\"C3\" s=\"1\"><v>2</v></c></row>",
@@ -32,7 +33,7 @@ const PRODUCER_ROWS: &str = concat!(
     "<row r=\"11\" spans=\"1:3\"><c r=\"A11\" t=\"s\"><v>1</v></c></row>",
 );
 /// Shape copied from the original `two-anchors-shared-metadata` fixture.
-const TWO_ANCHOR_ROWS: &str = concat!(
+pub(super) const TWO_ANCHOR_ROWS: &str = concat!(
     "<row r=\"1\" spans=\"1:6\"><c r=\"A1\" t=\"s\"><v>0</v></c><c r=\"B1\"><v>4</v></c></row>",
     "<row r=\"2\" spans=\"1:6\"><c r=\"C2\" s=\"1\" cm=\"1\"><f t=\"array\" ref=\"C2:C4\">_xlfn.SEQUENCE($B$1)</f><v>1</v></c><c r=\"F2\" s=\"1\" cm=\"1\"><f t=\"array\" ref=\"F2:F4\">_xlfn.SEQUENCE($B$1)</f><v>1</v></c></row>",
     "<row r=\"3\" spans=\"1:6\"><c r=\"C3\" s=\"1\"><v>2</v></c><c r=\"F3\" s=\"1\"><v>2</v></c></row>",
@@ -55,7 +56,7 @@ fn worksheet(dimension: &str, rows: &str, tail: &str) -> String {
 }
 /// Producer-shaped package: explicit sheetMetadata relationship/content type,
 /// shared strings, comments/VML sheet relationships and opaque members.
-fn package(dimension: &str, rows: &str, tail: &str) -> BTreeMap<String, String> {
+pub(super) fn package(dimension: &str, rows: &str, tail: &str) -> BTreeMap<String, String> {
     [
         (TYPES, format!("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Default Extension=\"vml\" ContentType=\"application/vnd.openxmlformats-officedocument.vmlDrawing\"/><Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/><Override PartName=\"/xl/worksheets/sheet1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/><Override PartName=\"/xl/comments1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml\"/><Override PartName=\"/xl/sharedStrings.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml\"/>{METADATA_TYPE}</Types>")),
         ("_rels/.rels", format!("<Relationships xmlns=\"{RELS}\"><Relationship Id=\"rId1\" Type=\"{OFFICE}/officeDocument\" Target=\"xl/workbook.xml\"/></Relationships>")),
@@ -72,13 +73,13 @@ fn package(dimension: &str, rows: &str, tail: &str) -> BTreeMap<String, String> 
     .map(|(k, v)| (k.to_owned(), v))
     .collect()
 }
-fn producer() -> BTreeMap<String, String> {
+pub(super) fn producer() -> BTreeMap<String, String> {
     package("A1:C11", PRODUCER_ROWS, "")
 }
-fn producer_wide() -> BTreeMap<String, String> {
+pub(super) fn producer_wide() -> BTreeMap<String, String> {
     package("A1:H11", PRODUCER_ROWS, "")
 }
-fn pack(parts: &BTreeMap<String, String>) -> Vec<u8> {
+pub(super) fn pack(parts: &BTreeMap<String, String>) -> Vec<u8> {
     let mut z = zip::ZipWriter::new(Cursor::new(Vec::new()));
     let options = zip::write::SimpleFileOptions::default()
         .last_modified_time(zip::DateTime::from_date_and_time(2020, 1, 2, 3, 4, 6).unwrap());
@@ -89,7 +90,7 @@ fn pack(parts: &BTreeMap<String, String>) -> Vec<u8> {
     z.finish().unwrap().into_inner()
 }
 /// Replace an exact fragment; a mutation that matches nothing is a test bug.
-fn edit(
+pub(super) fn edit(
     mut p: BTreeMap<String, String>,
     name: &str,
     old: &str,
@@ -100,7 +101,7 @@ fn edit(
     *part = part.replacen(old, new, 1);
     p
 }
-const ON: SpillSupport = SpillSupport { enabled: true };
+pub(super) const ON: SpillSupport = SpillSupport { enabled: true };
 fn with_admission<T>(
     p: &BTreeMap<String, String>,
     options: &XlsxRecalculateOptions,
@@ -109,7 +110,7 @@ fn with_admission<T>(
     let bytes = pack(p);
     admit_source(&bytes, options, ON).map(check)
 }
-fn refused<T>(result: Result<T, IoError>, needle: &str) {
+pub(super) fn refused<T>(result: Result<T, IoError>, needle: &str) {
     match result {
         Ok(_) => panic!("admitted; expected refusal containing {needle:?}"),
         Err(IoError::Unsupported { feature, context }) => assert!(
@@ -380,11 +381,11 @@ fn disabled_switch_keeps_every_public_refusal() {
 }
 
 #[test]
-fn enabled_orchestration_is_parse_only_and_ordinary_workbooks_are_unchanged() {
-    // Admission succeeds, but P1 stops before ingestion rather than publishing.
+fn enabled_orchestration_refuses_spill_publication_and_ordinary_workbooks_are_unchanged() {
+    // Admission and ingestion succeed; publishing the multi-cell spill does not.
     refused(
         recalculate_xlsx_bytes_with(&pack(&producer()), Default::default(), ON),
-        "dynamic spill ingestion",
+        "materialized multi-cell dynamic spill",
     );
     let rows = "<row r=\"1\"><c r=\"A1\"><f>1+1</f><v>9</v></c></row>";
     let mut p = edit(package("A1", rows, ""), WB_RELS, METADATA_REL, "");
