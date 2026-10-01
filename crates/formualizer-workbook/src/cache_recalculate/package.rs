@@ -2,7 +2,7 @@
 mod content_types;
 mod rewrite;
 use super::{IoError, SpillSupport, XlsxRecalculateOptions, checkpoint, unsupported, xml};
-pub(super) use rewrite::rewrite;
+pub(super) use rewrite::{Edits, rewrite};
 use std::collections::{BTreeMap, HashSet};
 use std::io::{Cursor, Read};
 use zip::ZipArchive;

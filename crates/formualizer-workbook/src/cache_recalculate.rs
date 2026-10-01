@@ -496,7 +496,11 @@ fn ingest_source<'a>(
     let ingest_bytes = if view_parts.is_empty() {
         bytes.to_vec()
     } else {
-        package::rewrite(bytes, &mut archive, &view_parts, options)?
+        let edits = package::Edits {
+            replace: view_parts,
+            add: BTreeMap::new(),
+        };
+        package::rewrite(bytes, &mut archive, &edits, options)?
     };
     let opened = if let Some(cancel) = options.cancel.clone() {
         CalamineAdapter::open_bytes_cancellable(ingest_bytes, cancel)
@@ -791,14 +795,19 @@ fn publish(
         }
         return Ok(unchanged(bytes, formula_count, summary));
     }
-    let output = package::rewrite(bytes, &mut archive, &replacements, options)?;
+    let worksheet_parts_changed = replacements.len();
+    let edits = package::Edits {
+        replace: replacements,
+        add: BTreeMap::new(),
+    };
+    let output = package::rewrite(bytes, &mut archive, &edits, options)?;
     checkpoint(&options.cancel)?;
     Ok(XlsxRecalculateResult {
         bytes: output,
         summary,
         formula_cells: formula_count,
         cache_cells_changed: changed,
-        worksheet_parts_changed: replacements.len(),
+        worksheet_parts_changed,
     })
 }
 /// The public scalar writer: every formula result is one scalar cache, and
