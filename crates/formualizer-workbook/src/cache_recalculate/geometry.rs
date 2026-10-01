@@ -3,8 +3,10 @@
 //! One ordered patch plan per worksheet, built in one bounded pass over the
 //! desired cell states (row-major) merged with the source index:
 //! * members of a current spill get typed caches through the cache encoders;
-//!   missing `<c>`/`<row>` elements are inserted in coordinate order with the
-//!   source namespace prefix;
+//!   missing `<c>`/`<row>` elements are inserted in coordinate order with a
+//!   prefix proven to resolve to the main namespace at that scope: the
+//!   enclosing row's own prefix inside an existing row, the `sheetData`
+//!   prefix for new rows, the cell's own prefix for a `<v>` in a cell;
 //! * obsolete old-child caches are cleared with `mask_child`; styled or
 //!   commented shells (the elements and their other attributes) stay;
 //! * genuine inputs and unrelated formulas are never edited; a member landing
@@ -269,11 +271,14 @@ pub(super) fn plan(
         let Some(cache) = want.filter(|c| !matches!(c, Cache::Empty)) else {
             continue;
         };
-        let xml = new_cell(&prefix, row, col, &cache);
         changed += 1;
         match index.rows.binary_search_by_key(&row, |r| r.row) {
             Ok(r) => {
                 let entry = &index.rows[r];
+                // Namespace bindings are scoped: the row may rebind the
+                // default namespace or the `sheetData` prefix. Its own
+                // prefix is the one proven to resolve to main inside it.
+                let xml = new_cell(&qualified_prefix(&entry.qualified), row, col, &cache);
                 let cells = &index.cells[entry.cells.clone()];
                 let at = cells.partition_point(|c| c.col < col);
                 let slot = if let Some(next) = cells.get(at) {
@@ -307,6 +312,8 @@ pub(super) fn plan(
                         .extend_from_slice(format!("<{prefix}row r=\"{row}\">").as_bytes());
                     open_row = Some((row, key));
                 }
+                // A new row is a `sheetData` child: its prefix applies.
+                let xml = new_cell(&prefix, row, col, &cache);
                 let key = open_row.expect("open row").1;
                 pending
                     .get_mut(&key)
@@ -454,6 +461,13 @@ fn close_row(pending: &mut BTreeMap<usize, Pending>, key: usize, prefix: &str) {
         .extend_from_slice(format!("</{prefix}row>").as_bytes());
 }
 
+/// `p:` for a qualified element name, or empty.
+fn qualified_prefix(qualified: &str) -> String {
+    qualified
+        .rsplit_once(':')
+        .map(|(p, _)| format!("{p}:"))
+        .unwrap_or_default()
+}
 /// `p:` for an element whose start tag begins at `start`, or empty.
 fn element_prefix(data: &[u8], start: usize) -> String {
     let name: Vec<u8> = data[start + 1..]
@@ -522,7 +536,7 @@ fn write_existing(data: &[u8], cell: &IndexedCell, cache: &Cache, out: &mut Vec<
         mask_child(cell, out);
         return;
     }
-    let qualified_prefix = element_prefix(data, cell.span.start);
+    let cell_prefix = element_prefix(data, cell.span.start);
     let wanted = cache.kind();
     let current = cell.kind.as_deref().filter(|t| *t != "n");
     if wanted != current {
@@ -552,10 +566,7 @@ fn write_existing(data: &[u8], cell: &IndexedCell, cache: &Cache, out: &mut Vec<
             replacement: Vec::new(),
         });
     }
-    let v = format!(
-        "<{qualified_prefix}v>{}</{qualified_prefix}v>",
-        cache.text()
-    );
+    let v = format!("<{cell_prefix}v>{}</{cell_prefix}v>", cache.text());
     match &cell.value {
         Some(span) => {
             if data[span.clone()] != *v.as_bytes() {

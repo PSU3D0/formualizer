@@ -527,6 +527,83 @@ fn dimension_grows_and_rows_are_inserted_before_between_and_after() {
     assert_rerun_is_noop(&out);
 }
 
+/// A worksheet with custom root namespace declarations and `sheetData`.
+fn namespaced(root_ns: &str, sheet_data: &str) -> Parts {
+    let mut p = package("A1:B2", "", "");
+    let xml = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<worksheet xmlns=\"{MAIN}\" xmlns:r=\"{OFFICE}\" {root_ns}><dimension ref=\"A1:B2\"/>{sheet_data}<pageMargins left=\"0.7\" right=\"0.7\" top=\"0.75\" bottom=\"0.75\" header=\"0.3\" footer=\"0.3\"/><legacyDrawing r:id=\"rId1\"/></worksheet>"
+    );
+    p.insert(SHEET.to_owned(), xml);
+    p
+}
+/// Every listed cell and its `v` are in the main namespace after a public
+/// recalc, the output re-admits cold and a rerun is byte-identical.
+#[track_caller]
+fn assert_main_namespace_cells(source: &[u8], cells: &[(&str, f64)]) -> String {
+    let out = run(source);
+    let xml = sheet_xml(&out.bytes);
+    let resolved = ns_cells(&xml);
+    for (cell, n) in cells {
+        let c = &resolved[*cell];
+        assert_eq!(c.ns, MAIN, "{cell} element namespace: {xml}");
+        assert!(
+            c.children.iter().all(|(ns, _)| ns == MAIN)
+                && c.children.last().is_some_and(|(_, local)| local == "v"),
+            "{cell} children {:?}: {xml}",
+            c.children
+        );
+        assert_eq!(data(&out.bytes, cell), Data::Float(*n), "calamine {cell}");
+    }
+    assert_rerun_is_noop(&out);
+    xml
+}
+
+#[test]
+fn cells_inserted_into_a_row_that_rebinds_the_default_namespace_stay_in_main() {
+    // Row 2 rebinds the default namespace and uses `x` (bound to main at
+    // the root) for itself; the prior footprint A1:B2 is spilled 2x2.
+    let p = namespaced(
+        &format!("xmlns:x=\"{MAIN}\""),
+        concat!(
+            "<sheetData>",
+            "<row r=\"1\"><c r=\"A1\" cm=\"1\"><f t=\"array\" ref=\"A1:B2\">_xlfn.SEQUENCE(2,2)</f><v>1</v></c></row>",
+            "<x:row xmlns=\"urn:other\" r=\"2\"><x:c r=\"B2\" s=\"1\"/></x:row>",
+            "</sheetData>",
+        ),
+    );
+    let xml = assert_main_namespace_cells(
+        &pack(&p),
+        &[("A1", 1.0), ("B1", 2.0), ("A2", 3.0), ("B2", 4.0)],
+    );
+    // Inserted into row 2 with the row's own prefix; the self-closing
+    // shell B2 is expanded with its own prefix.
+    assert!(
+        xml.contains("<x:row xmlns=\"urn:other\" r=\"2\"><x:c r=\"A2\"><x:v>3</x:v></x:c><x:c r=\"B2\" s=\"1\"><x:v>4</x:v></x:c></x:row>"),
+        "{xml}"
+    );
+}
+
+#[test]
+fn cells_inserted_into_a_row_that_rebinds_the_sheet_data_prefix_stay_in_main() {
+    // `x:sheetData`; row 2 rebinds `x` to a foreign namespace and is itself
+    // spelled with `y` (main). Row 3 is missing and is inserted at the
+    // sheetData scope, where `x` is main.
+    let p = namespaced(
+        &format!("xmlns:x=\"{MAIN}\" xmlns:y=\"{MAIN}\""),
+        concat!(
+            "<x:sheetData>",
+            "<x:row r=\"1\"><x:c r=\"A1\" cm=\"1\"><x:f t=\"array\" ref=\"A1:A2\">_xlfn.SEQUENCE(3)</x:f><x:v>1</x:v></x:c></x:row>",
+            "<y:row xmlns:x=\"urn:other\" r=\"2\"><y:c r=\"B2\"><y:v>9</y:v></y:c></y:row>",
+            "</x:sheetData>",
+        ),
+    );
+    let xml = assert_main_namespace_cells(&pack(&p), &[("A1", 1.0), ("A2", 2.0), ("A3", 3.0)]);
+    assert!(
+        xml.contains("<y:row xmlns:x=\"urn:other\" r=\"2\"><y:c r=\"A2\"><y:v>2</y:v></y:c><y:c r=\"B2\"><y:v>9</y:v></y:c></y:row><x:row r=\"3\"><x:c r=\"A3\"><x:v>3</x:v></x:c></x:row></x:sheetData>"),
+        "{xml}"
+    );
+}
+
 #[test]
 fn spill_across_a_merge_is_refused_and_a_clear_one_publishes() {
     let merged = |b1| {

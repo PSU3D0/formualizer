@@ -351,6 +351,38 @@ fn ns_elements(xml: &str) -> Vec<NsElement> {
     out
 }
 
+/// A worksheet cell resolved with namespace scoping: the expanded namespace
+/// of the `c` element and of each direct child (`(namespace, local)`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NsCell {
+    pub ns: String,
+    pub children: Vec<(String, String)>,
+}
+/// Every element named `c` (in any namespace) carrying `r`, keyed by `r`.
+pub fn ns_cells(xml: &str) -> BTreeMap<String, NsCell> {
+    let elements = ns_elements(xml);
+    let mut out = BTreeMap::new();
+    for (i, e) in elements.iter().enumerate() {
+        let (true, Some(r)) = (e.local == "c", e.attr("r")) else {
+            continue;
+        };
+        let children = elements[i + 1..]
+            .iter()
+            .take_while(|x| x.depth > e.depth)
+            .filter(|x| x.depth == e.depth + 1)
+            .map(|x| (x.ns.clone(), x.local.clone()))
+            .collect();
+        out.insert(
+            r.to_owned(),
+            NsCell {
+                ns: e.ns.clone(),
+                children,
+            },
+        );
+    }
+    out
+}
+
 /// The resolved dynamic-array metadata chain of one cell.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Chain {
