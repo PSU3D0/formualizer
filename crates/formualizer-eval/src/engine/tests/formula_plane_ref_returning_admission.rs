@@ -155,7 +155,9 @@ fn semantic_fixture(mode: FormulaPlaneMode) -> Engine<TestWorkbook> {
         "=IF(FALSE,$B$2)",
         "=IF(TRUE,,1)",
         "=IF($A$3,$B$2,$C$2)",
-        "=IF($D$1:$D$3>0,$B$2,$C$2)",
+        // Array-condition IF now returns an array. Reduce it so repeated
+        // members test admission/fallback without overlapping 3-row spills.
+        "=SUM(IF($D$1:$D$3>0,$B$2,$C$2))",
         "=IF(TRUE,IF(FALSE,$B$1,$B$2),$C$1)",
         "=CHOOSE(4,$B$1,$B$2)",
         "=CHOOSE(1.5,$B$1,$B$2)",
@@ -206,9 +208,13 @@ fn reference_returning_error_empty_and_short_circuit_semantics_match_legacy() {
         Some(LiteralValue::Number(7.0)),
         "CHOOSE truncates a non-integer numeric selector"
     );
+    assert_eq!(
+        authoritative.get_cell_value("Sheet1", 10, 15),
+        Some(LiteralValue::Number(33.0)),
+        "non-scalar IF condition falls back to elementwise selection"
+    );
     for (col, kind) in [
         (14, ExcelErrorKind::Value),
-        (15, ExcelErrorKind::Value),
         (17, ExcelErrorKind::Value),
         (19, ExcelErrorKind::Div),
         (20, ExcelErrorKind::Na),

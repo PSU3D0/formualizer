@@ -122,6 +122,21 @@ fn array_if_range_spill_reduction_and_fixed_extents_arena() {
 }
 
 #[test]
+fn array_if_result_uses_existing_spill_admission_cap() {
+    let mut config = EvalConfig::default();
+    config.spill.max_spill_cells = 2;
+    let mut engine = Engine::new(TestWorkbook::new(), config);
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse("=IF({TRUE;FALSE;TRUE},7,0)").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    let Some(LiteralValue::Error(error)) = engine.get_cell_value("Sheet1", 1, 1) else {
+        panic!("expected spill error")
+    };
+    assert_eq!(error.kind, ExcelErrorKind::Spill);
+}
+
+#[test]
 fn array_if_copied_family_sequential_and_parallel() {
     for parallel in [false, true] {
         let mut engine = Engine::new(
@@ -153,6 +168,52 @@ fn array_if_copied_family_sequential_and_parallel() {
                 (3 * r + 3).to_string(),
                 "parallel={parallel}, row={r}"
             );
+        }
+    }
+}
+
+#[test]
+fn array_if_bare_copied_family_spills_with_room() {
+    use crate::engine::{FormulaIngestBatch, FormulaIngestRecord, FormulaPlaneMode};
+    for parallel in [false, true] {
+        for mode in [
+            FormulaPlaneMode::Off,
+            FormulaPlaneMode::AuthoritativeExperimental,
+        ] {
+            let config = EvalConfig {
+                enable_parallel: parallel,
+                ..EvalConfig::default().with_formula_plane_mode(mode)
+            };
+            let mut engine = Engine::new(TestWorkbook::new(), config);
+            let mut records = Vec::new();
+            for r in 1..=120 {
+                engine
+                    .set_cell_value("Sheet1", r, 1, LiteralValue::Number(r as f64))
+                    .unwrap();
+                engine
+                    .set_cell_value("Sheet1", r, 2, LiteralValue::Number(-(r as f64)))
+                    .unwrap();
+                let formula = format!("=IF(A{r}:B{r}>0,A{r}:B{r},0)");
+                let ast_id = engine.intern_formula_ast(&parse(&formula).unwrap());
+                records.push(FormulaIngestRecord::new(
+                    r,
+                    4,
+                    ast_id,
+                    Some(Arc::<str>::from(formula)),
+                ));
+            }
+            engine
+                .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", records)])
+                .unwrap();
+            engine.evaluate_all().unwrap();
+            for r in 1..=120 {
+                assert_eq!(
+                    norm(engine.get_cell_value("Sheet1", r, 4).unwrap()),
+                    r.to_string(),
+                    "parallel={parallel}, mode={mode:?}"
+                );
+                assert_eq!(norm(engine.get_cell_value("Sheet1", r, 5).unwrap()), "0");
+            }
         }
     }
 }
