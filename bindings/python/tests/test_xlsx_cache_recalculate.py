@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import subprocess
-
 from io import BytesIO
 from pathlib import Path
 from xml.etree import ElementTree as ET
