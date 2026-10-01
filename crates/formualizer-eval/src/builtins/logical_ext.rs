@@ -504,7 +504,7 @@ impl ErrorGuard {
 }
 
 /// Failures that describe the evaluation request rather than a cell value.
-fn is_live_fault(error: &ExcelError) -> bool {
+pub(super) fn is_live_fault(error: &ExcelError) -> bool {
     error.kind == ExcelErrorKind::Cancelled
         || matches!(error.extra, ExcelErrorExtra::Resource { .. })
 }

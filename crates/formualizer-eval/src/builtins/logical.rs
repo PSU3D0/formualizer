@@ -406,6 +406,12 @@ pub struct IfFn;
 /// - A blank condition is treated as FALSE.
 /// - Text or other non-numeric/non-boolean conditions return `#VALUE!`.
 /// - With only two arguments, the FALSE branch defaults to logical `FALSE`.
+/// - Array and range conditions select elementwise. Scalar branches and singleton
+///   axes broadcast; incompatible non-singleton dimensions return `#VALUE!`.
+/// - Each needed branch evaluates once; an unused branch is not evaluated and
+///   does not contribute to the result shape. Condition errors remain positional.
+/// - Generated arrays use the shared size cap (`#NUM!`); cancellation and
+///   resource failures abort evaluation rather than becoming array elements.
 ///
 /// # Examples
 ///
@@ -507,8 +513,20 @@ impl Function for IfFn {
             )));
         }
 
-        let condition = args[0].value()?.into_literal();
+        let condition = match args[0].value()? {
+            crate::traits::CalcValue::Range(view) => {
+                return eval_array_if(args, _ctx, crate::traits::CalcValue::Range(view));
+            }
+            other => other.into_literal(),
+        };
         let b = match condition {
+            LiteralValue::Array(rows) => {
+                return eval_array_if(
+                    args,
+                    _ctx,
+                    crate::traits::CalcValue::Scalar(LiteralValue::Array(rows)),
+                );
+            }
             LiteralValue::Boolean(b) => b,
             LiteralValue::Number(n) => n != 0.0,
             LiteralValue::Int(i) => i != 0,
@@ -546,8 +564,13 @@ fn try_resolve_if_reference_or_value<'b>(
             )),
         )));
     }
-    let condition = args[0].value()?.into_literal();
-    let selected = match condition {
+    let condition = args[0].value()?;
+    // An array condition selects values elementwise, never a single reference.
+    // Keep ranges borrowed rather than materializing them to discover this.
+    if matches!(condition, crate::traits::CalcValue::Range(_)) {
+        return Ok(None);
+    }
+    let selected = match condition.into_literal() {
         LiteralValue::Boolean(value) => value,
         LiteralValue::Number(value) => value != 0.0,
         LiteralValue::Int(value) => value != 0,
@@ -575,6 +598,124 @@ fn try_resolve_if_reference_or_value<'b>(
             crate::traits::CalcValue::Scalar(LiteralValue::Boolean(false)),
         )))
     }
+}
+
+/// Array-only IF path. Keeping this out of line leaves the scalar coercion,
+/// reference selection and family kernel independent of materialization.
+#[inline(never)]
+fn eval_array_if<'b>(
+    args: &[ArgumentHandle<'_, 'b>],
+    ctx: &dyn FunctionContext<'b>,
+    condition: crate::traits::CalcValue<'b>,
+) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+    use super::utils::{CancelPoll, Grid, materialized_shape_too_large};
+    use crate::broadcast::{broadcast_shape, project_index};
+    use crate::traits::CalcValue;
+
+    fn grid(value: CalcValue<'_>) -> Grid<'_> {
+        match value {
+            CalcValue::Range(view) => Grid::Range(view),
+            CalcValue::Scalar(LiteralValue::Array(rows))
+            | CalcValue::AnnotatedScalar(LiteralValue::Array(rows), _) => Grid::Array(rows),
+            other => Grid::Scalar(other.into_literal()),
+        }
+    }
+    fn truth(cell: LiteralValue) -> Result<bool, ExcelError> {
+        match cell {
+            LiteralValue::Boolean(b) => Ok(b),
+            LiteralValue::Number(n) => Ok(n != 0.0),
+            LiteralValue::Int(n) => Ok(n != 0),
+            LiteralValue::Empty => Ok(false),
+            LiteralValue::Error(error) => Err(error),
+            _ => {
+                Err(ExcelError::new_value().with_message("IF condition must be boolean or number"))
+            }
+        }
+    }
+    let token = ctx.cancellation_token();
+    let is_cancelled = || {
+        token
+            .as_ref()
+            .is_some_and(crate::engine::CancelToken::is_cancelled)
+    };
+    let mut poll = CancelPoll::new(&is_cancelled);
+    let condition = grid(condition);
+    let condition_shape = condition.shape();
+    poll.advance(0)?;
+    if let Some(error) = materialized_shape_too_large(condition_shape) {
+        return Ok(CalcValue::Scalar(LiteralValue::Error(error)));
+    }
+    // Scan without allocating a mask. Invalid conditions select neither arm.
+    // A view stays a view; no owned copy is needed for probing or selection.
+    let (mut needs_true, mut needs_false) = (false, false);
+    'scan: for r in 0..condition_shape.0 {
+        for c in 0..condition_shape.1 {
+            poll.advance(1)?;
+            match truth(condition.get(r, c)) {
+                Ok(true) => needs_true = true,
+                Ok(false) => needs_false = true,
+                Err(error) if super::logical_ext::is_live_fault(&error) => return Err(error),
+                Err(_) => {}
+            }
+            if needs_true && needs_false {
+                break 'scan;
+            }
+        }
+    }
+    // An unused branch contributes only a singleton shape, and is not evaluated.
+    let yes = if needs_true {
+        grid(args[1].value()?)
+    } else {
+        Grid::Scalar(LiteralValue::Empty)
+    };
+    let no = if needs_false {
+        match args.get(2) {
+            Some(arg) => grid(arg.value()?),
+            None => Grid::Scalar(LiteralValue::Boolean(false)),
+        }
+    } else {
+        Grid::Scalar(LiteralValue::Empty)
+    };
+    // Branch evaluation may have cancelled since the scan's last poll.
+    let mut poll = CancelPoll::new(&is_cancelled);
+    poll.advance(0)?;
+    let yes_shape = yes.shape();
+    let no_shape = no.shape();
+    let shape = match broadcast_shape(&[condition_shape, yes_shape, no_shape]) {
+        Ok(shape) => shape,
+        Err(error) => return Ok(CalcValue::Scalar(LiteralValue::Error(error))),
+    };
+    if let Some(error) = materialized_shape_too_large(shape) {
+        return Ok(CalcValue::Scalar(LiteralValue::Error(error)));
+    }
+    let mut output = Vec::with_capacity(shape.0);
+    for r in 0..shape.0 {
+        let mut row = Vec::with_capacity(shape.1);
+        for c in 0..shape.1 {
+            poll.advance(1)?;
+            let (cr, cc) = project_index((r, c), condition_shape);
+            let selected = match truth(condition.get(cr, cc)) {
+                Ok(true) => {
+                    let (r, c) = project_index((r, c), yes_shape);
+                    yes.get(r, c)
+                }
+                Ok(false) => {
+                    let (r, c) = project_index((r, c), no_shape);
+                    no.get(r, c)
+                }
+                Err(error) if super::logical_ext::is_live_fault(&error) => return Err(error),
+                Err(error) => LiteralValue::Error(error),
+            };
+            if let LiteralValue::Error(ref error) = selected {
+                if super::logical_ext::is_live_fault(error) {
+                    return Err(error.clone());
+                }
+            }
+            row.push(selected);
+        }
+        output.push(row);
+    }
+    Ok(CalcValue::Scalar(LiteralValue::Array(output)))
 }
 
 pub fn register_builtins() {
@@ -693,6 +834,40 @@ mod tests {
             }
             assert_eq!(norm(&actual), expected, "{formula}: {actual:?}");
         }
+    }
+
+    #[test]
+    fn array_if_blank_integer_and_invalid_conditions() {
+        use formualizer_parse::parser::{ASTNode, ASTNodeType};
+        let wb = TestWorkbook::new();
+        let interp = wb.interpreter();
+        let condition = ASTNode::new(
+            ASTNodeType::Literal(LiteralValue::Array(vec![vec![
+                LiteralValue::Empty,
+                LiteralValue::Int(0),
+                LiteralValue::Int(-2),
+                LiteralValue::Text("bad".into()),
+                LiteralValue::Error(ExcelError::new_na()),
+            ]])),
+            None,
+        );
+        let branch = ASTNode::new(ASTNodeType::Literal(LiteralValue::Int(7)), None);
+        let args = [
+            ArgumentHandle::new(&condition, &interp),
+            ArgumentHandle::new(&branch, &interp),
+        ];
+        let actual = IfFn
+            .eval(&args, &interp.function_context(None))
+            .unwrap()
+            .into_literal();
+        let LiteralValue::Array(rows) = actual else {
+            panic!("{actual:?}")
+        };
+        assert_eq!(rows[0][0], LiteralValue::Boolean(false));
+        assert_eq!(rows[0][1], LiteralValue::Boolean(false));
+        assert_eq!(rows[0][2], LiteralValue::Int(7));
+        assert_error_kind(rows[0][3].clone(), ExcelErrorKind::Value);
+        assert_error_kind(rows[0][4].clone(), ExcelErrorKind::Na);
     }
 
     #[test]

@@ -211,6 +211,7 @@ mod declared_anchor_211;
 mod demand_subgraph_named_range;
 mod dn_range_xlsx_subgraph;
 mod final_vertex_cancellation;
+mod if_elementwise;
 mod iferror_ifna_elementwise;
 mod iferror_ifna_lazy;
 mod iterate_corpus_chains;
