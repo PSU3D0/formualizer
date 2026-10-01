@@ -181,6 +181,13 @@ where
                     1
                 };
             }
+            if !json_requested {
+                return if write!(stderr, "{error}").is_ok() {
+                    64
+                } else {
+                    1
+                };
+            }
             let message = error.to_string().replace('\n', " ").trim().to_owned();
             return emit(
                 &Report::new("error", message),

@@ -157,7 +157,8 @@ fn invalid_and_usage_errors() {
             assert!(err.is_empty());
         } else {
             assert!(out.is_empty());
-            assert!(!err.is_empty());
+            assert!(err.contains("\nUsage:"));
+            assert!(err.contains("\n\nFor more information"));
         }
     }
 }
