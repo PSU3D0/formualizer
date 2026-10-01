@@ -770,12 +770,14 @@ impl DependencyGraph {
             self.remove_dependent_edges(*target);
             self.detach_vertex_from_names(*target);
             self.clear_pending_name_references(*target);
+            self.forget_declared_dynamic_anchor(*target);
             self.vertex_formulas.remove(target);
             self.vertex_values.remove(target);
             self.ref_error_vertices.remove(target);
         }
         let targets: Vec<_> = plan.formulas.iter().map(|formula| formula.target).collect();
         for formula in &plan.formulas {
+            self.forget_declared_dynamic_anchor(formula.target);
             self.store
                 .set_kind(formula.target, VertexKind::FormulaScalar);
             self.vertex_formulas.insert(formula.target, formula.ast_id);

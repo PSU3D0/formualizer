@@ -636,6 +636,13 @@ pub struct DependencyGraph {
     spill_cell_to_anchor: std::collections::HashMap<CellRef, VertexId, CoordBuildHasher>,
     spill_cells_by_sheet: FxHashMap<SheetId, std::collections::BTreeMap<(u32, u32), VertexId>>,
 
+    /// Declared dynamic-array anchors (imported source spill identity, for
+    /// example XLSX XLDAPR cell metadata): formula vertex -> the cell it was
+    /// declared at. Empty unless a caller declares one, so workbooks without
+    /// declarations pay only an `is_empty` check on the forget paths. See
+    /// [`Self::is_current_declared_dynamic_anchor`].
+    declared_dynamic_anchors: FxHashMap<VertexId, CellRef>,
+
     /// Request-scoped admission budgets used by graph-owned mutation paths.
     admission_budget_override: Option<crate::engine::EvaluationBudgets>,
 
@@ -1275,6 +1282,7 @@ impl DependencyGraph {
         dynamic: bool,
     ) {
         self.materialize_vertex(vid);
+        self.forget_declared_dynamic_anchor(vid);
         if self.vertex_formulas.contains_key(&vid) {
             self.remove_dependent_edges(vid);
         }
@@ -1315,6 +1323,7 @@ impl DependencyGraph {
             !self.vertex_formulas.contains_key(&vid),
             "load-fast formula assignment expects fresh/non-formula vertices"
         );
+        self.forget_declared_dynamic_anchor(vid);
         self.store
             .set_kind(vid, crate::engine::vertex::VertexKind::FormulaScalar);
         self.vertex_values.remove(&vid);
@@ -1912,6 +1921,7 @@ impl DependencyGraph {
             spill_anchor_to_cells: FxHashMap::default(),
             spill_cell_to_anchor: std::collections::HashMap::with_hasher(CoordBuildHasher),
             spill_cells_by_sheet: FxHashMap::default(),
+            declared_dynamic_anchors: FxHashMap::default(),
             admission_budget_override: None,
             first_load_assume_new: false,
             ensure_touched_sheets: FxHashSet::default(),
@@ -2827,6 +2837,7 @@ impl DependencyGraph {
         }
 
         // Remove old dependencies first
+        self.forget_declared_dynamic_anchor(addr_vertex_id);
         self.remove_dependent_edges(addr_vertex_id);
         self.detach_vertex_from_names(addr_vertex_id);
         self.clear_pending_name_references(addr_vertex_id);
@@ -3445,6 +3456,7 @@ impl DependencyGraph {
         self.remove_dependent_edges(v);
         self.detach_vertex_from_names(v);
         self.clear_pending_name_references(v);
+        self.forget_declared_dynamic_anchor(v);
         self.vertex_formulas.remove(&v);
         self.vertex_values.remove(&v);
         self.ref_error_vertices.remove(&v);
@@ -4298,6 +4310,7 @@ impl DependencyGraph {
         }
 
         for (i, &tvid) in target_vids.iter().enumerate() {
+            self.forget_declared_dynamic_anchor(tvid);
             if self.vertex_formulas.contains_key(&tvid) {
                 self.remove_dependent_edges(tvid);
             }
@@ -4931,6 +4944,50 @@ impl DependencyGraph {
         )
     }
 
+    /// Record `anchor`, a formula vertex at `cell`, as a declared dynamic
+    /// array anchor. Returns whether it was newly declared.
+    pub(crate) fn declare_dynamic_anchor(&mut self, anchor: VertexId, cell: CellRef) -> bool {
+        let cell = CellRef::new(
+            cell.sheet_id,
+            Coord::new(cell.coord.row(), cell.coord.col(), true, true),
+        );
+        self.declared_dynamic_anchors.insert(anchor, cell) != Some(cell)
+    }
+
+    /// Drop a declaration because its formula vertex was replaced, removed or
+    /// moved. Free when nothing is declared.
+    #[inline]
+    pub(crate) fn forget_declared_dynamic_anchor(&mut self, vertex: VertexId) {
+        if !self.declared_dynamic_anchors.is_empty() {
+            self.declared_dynamic_anchors.remove(&vertex);
+        }
+    }
+
+    /// Whether `vertex` is a declared dynamic-array anchor that still holds
+    /// a formula at the cell it was declared at. The position check is a
+    /// backstop for edit paths that move a vertex without passing through
+    /// [`Self::set_grid_addr`]; such a declaration is ignored, not revived.
+    pub(crate) fn is_current_declared_dynamic_anchor(&self, vertex: VertexId) -> bool {
+        if self.declared_dynamic_anchors.is_empty() {
+            return false;
+        }
+        self.declared_dynamic_anchors
+            .get(&vertex)
+            .is_some_and(|declared| {
+                self.vertex_has_formula(vertex)
+                    && self.get_cell_ref(vertex).is_some_and(|at| {
+                        at.sheet_id == declared.sheet_id
+                            && at.coord.row() == declared.coord.row()
+                            && at.coord.col() == declared.coord.col()
+                    })
+            })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn declared_dynamic_anchor_count(&self) -> usize {
+        self.declared_dynamic_anchors.len()
+    }
+
     /// Clear an existing spill region for an anchor (set cells to Empty and forget ownership)
     pub fn clear_spill_region(&mut self, anchor: VertexId) {
         let _ = self.clear_spill_region_bulk(anchor);
@@ -5490,6 +5547,11 @@ impl DependencyGraph {
     #[doc(hidden)]
     pub fn set_grid_addr(&mut self, id: VertexId, coord: GridAddr) {
         self.materialize_vertex(id);
+        // A declared dynamic-array anchor's identity does not follow a moved
+        // vertex (FORM211): the declaration is cleared.
+        if self.store.grid_addr(id) != Some(coord) {
+            self.forget_declared_dynamic_anchor(id);
+        }
         self.store.set_addr(id, VertexAddr::grid(coord));
     }
 

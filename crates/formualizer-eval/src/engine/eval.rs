@@ -13072,6 +13072,66 @@ where
         Ok(n)
     }
 
+    /// Declare the formula cell at `sheet!(row, col)` (1-based) a dynamic
+    /// array anchor whose spill identity comes from the source document, for
+    /// example an XLSX `t="array"` formula bound to XLDAPR cell metadata.
+    ///
+    /// This changes only spill references to the anchor (`A1#`,
+    /// `_xlfn.ANCHORARRAY(A1)`). A declared anchor with a committed
+    /// multi-cell spill resolves to that spill, exactly as an undeclared
+    /// one. Without a committed spill, a declared anchor whose current
+    /// result is a scalar (not an error, so not a blocked `#SPILL!`
+    /// anchor, and not empty) resolves to its own cell as a 1x1 reference,
+    /// matching a spilled 1x1 dynamic array. Every other case keeps the
+    /// `#REF!` of an undeclared anchor. Undeclared cells are unaffected, and
+    /// fresh 1x1 results are not given spill identity by function name.
+    ///
+    /// The declaration belongs to the formula vertex. It is dropped when the
+    /// cell's formula is replaced, the cell is cleared or overwritten with a
+    /// value, the vertex is removed (including with its sheet), or a
+    /// structural row/column edit moves the vertex. A structural edit that
+    /// only adjusts the formula's references, without moving the anchor,
+    /// keeps it. Declaring again re-establishes it.
+    ///
+    /// The anchor and its dependents are marked dirty, so the next
+    /// evaluation observes the declaration.
+    ///
+    /// Returns `#REF!` if the sheet does not exist or the cell holds no
+    /// formula vertex. A formula still staged by deferred graph building has
+    /// no vertex: build the graph (for example [`Self::build_graph_all`])
+    /// before declaring.
+    pub fn declare_dynamic_array_anchor(
+        &mut self,
+        sheet: &str,
+        row: u32,
+        col: u32,
+    ) -> Result<(), ExcelError> {
+        let not_a_formula = || {
+            ExcelError::new(ExcelErrorKind::Ref)
+                .with_message("Declared dynamic array anchor must be a formula cell")
+        };
+        if row == 0 || col == 0 {
+            return Err(not_a_formula());
+        }
+        if self.get_staged_formula_text(sheet, row, col).is_some() {
+            return Err(ExcelError::new(ExcelErrorKind::Ref).with_message(
+                "Declared dynamic array anchor is still staged; build the graph first",
+            ));
+        }
+        let sheet_id = self.graph.sheet_id(sheet).ok_or_else(not_a_formula)?;
+        let cell = CellRef::new(sheet_id, Coord::from_excel(row, col, true, true));
+        let vertex = self
+            .graph
+            .cell_vertex_mut(&cell)
+            .filter(|v| self.graph.vertex_has_formula(*v))
+            .ok_or_else(not_a_formula)?;
+        if self.graph.declare_dynamic_anchor(vertex, cell) {
+            self.graph.mark_dirty_many(&[vertex]);
+            self.mark_topology_edited();
+        }
+        Ok(())
+    }
+
     #[inline]
     fn normalize_public_cell_read(v: LiteralValue) -> Option<LiteralValue> {
         match v {
@@ -13215,6 +13275,27 @@ where
     }
 
     /// Unified internal read API for a single cell value (Arrow-truth).
+    /// The 1x1 spill fallback of a declared dynamic-array anchor: its
+    /// committed result is a non-error, non-empty scalar. Scheduling orders
+    /// the anchor before its spill readers (the reference keeps a static
+    /// edge to it), exactly as for committed multi-cell spills.
+    fn declared_anchor_holds_scalar(&self, anchor: CellRef) -> bool {
+        let sheet = self.graph.sheet_name(anchor.sheet_id);
+        if sheet.is_empty() {
+            return false;
+        }
+        matches!(
+            self.read_cell_value(sheet, anchor.coord.row() + 1, anchor.coord.col() + 1),
+            Some(value) if !matches!(
+                value,
+                LiteralValue::Error(_)
+                    | LiteralValue::Array(_)
+                    | LiteralValue::Pending
+                    | LiteralValue::Empty
+            )
+        )
+    }
+
     pub(crate) fn read_cell_value(&self, sheet: &str, row: u32, col: u32) -> Option<LiteralValue> {
         let asheet = self.sheet_store().sheet(sheet)?;
         let r0 = row.saturating_sub(1) as usize;
@@ -17770,10 +17851,19 @@ where
             .graph
             .get_vertex_id_for_address(&anchor_cell)
             .ok_or_else(no_spill)?;
-        let (first, last) = self
-            .graph
-            .spill_extent_for_anchor(vertex)
-            .ok_or_else(no_spill)?;
+        let (first, last) = match self.graph.spill_extent_for_anchor(vertex) {
+            Some(extent) => extent,
+            // FORM211: a declared anchor (source spill identity) holding a
+            // current scalar result is a 1x1 spill. A malformed registry
+            // entry stays `#REF!`, as do blocked/error/empty results.
+            None if !self.graph.spill_registry_has_anchor(vertex)
+                && self.graph.is_current_declared_dynamic_anchor(vertex)
+                && self.declared_anchor_holds_scalar(anchor_cell) =>
+            {
+                (anchor_cell, anchor_cell)
+            }
+            None => return Err(no_spill()),
+        };
         let sheet_name = qualify.then(|| self.graph.sheet_name(first.sheet_id).to_string());
         let (sr, sc) = (first.coord.row() + 1, first.coord.col() + 1);
         let (er, ec) = (last.coord.row() + 1, last.coord.col() + 1);

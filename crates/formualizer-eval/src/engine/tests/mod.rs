@@ -206,6 +206,7 @@ mod visibility_mask_cache;
 
 mod csr_rebuild_amortization;
 mod date_cells_are_numbers;
+mod declared_anchor_211;
 mod demand_subgraph_named_range;
 mod dn_range_xlsx_subgraph;
 mod final_vertex_cancellation;
