@@ -1,13 +1,13 @@
 //! FORM211-B: transient ingestion view (masked old children, normalized
-//! anchors) and declared-anchor identity, through the private switch.
+//! anchors) and declared-anchor identity.
 //! Engine state is checked on the ingested and evaluated engine before
 //! publication; `dynamic_publication` checks the published output.
 use super::super::{
     Ingested, XlsxRecalculateOptions, admit_source, apply_patches, evaluate, ingest_source,
-    ingest_view, recalculate_xlsx_bytes_with,
+    ingest_view, recalculate_xlsx_bytes,
 };
 use super::dynamic_admission::{
-    MAIN, OFFICE, ON, PRODUCER_ROWS, SHEET, TWO_ANCHOR_ROWS, TYPES, WB_RELS, edit, pack, package,
+    MAIN, OFFICE, PRODUCER_ROWS, SHEET, TWO_ANCHOR_ROWS, TYPES, WB_RELS, edit, pack, package,
     producer, producer_wide,
 };
 use crate::workbook::WBResolver;
@@ -22,7 +22,7 @@ type Parts = BTreeMap<String, String>;
 fn with_ingested<T>(p: &Parts, check: impl FnOnce(&mut Ingested<'_>) -> T) -> T {
     let bytes = pack(p);
     let options = XlsxRecalculateOptions::default();
-    let admission = admit_source(&bytes, &options, ON).expect("admitted");
+    let admission = admit_source(&bytes, &options).expect("admitted");
     let mut ingested = ingest_source(&bytes, admission, &options).expect("ingested");
     check(&mut ingested)
 }
@@ -37,7 +37,7 @@ fn with_evaluated<T>(p: &Parts, check: impl FnOnce(&Engine<WBResolver>) -> T) ->
 fn view(p: &Parts) -> String {
     let bytes = pack(p);
     let options = XlsxRecalculateOptions::default();
-    let admission = admit_source(&bytes, &options, ON).expect("admitted");
+    let admission = admit_source(&bytes, &options).expect("admitted");
     let plan = &admission.plans[0];
     let patches = ingest_view::patches(plan, &None).expect("view patches");
     String::from_utf8(apply_patches(&plan.data, patches, usize::MAX).expect("view")).unwrap()
@@ -146,7 +146,7 @@ fn existing_spill_old_children_are_masked_and_the_anchor_grows() {
         assert_eq!(value(e, "C10"), n(15.0), "SUM(_xlfn.ANCHORARRAY(C2))");
     });
     // The grown spill publishes (FORM211-C/D): C5, C6, C9 and C10.
-    let out = recalculate_xlsx_bytes_with(&pack(&p), Default::default(), ON).unwrap();
+    let out = recalculate_xlsx_bytes(&pack(&p), Default::default()).unwrap();
     assert_eq!(out.cache_cells_changed, 4);
 }
 
@@ -240,7 +240,7 @@ fn genuine_outside_footprint_obstruction_still_blocks() {
         );
     });
     // The blocked anchor publishes a typed `#SPILL!` (FORM211-C/D).
-    let out = recalculate_xlsx_bytes_with(&pack(&p), Default::default(), ON).unwrap();
+    let out = recalculate_xlsx_bytes(&pack(&p), Default::default()).unwrap();
     assert_eq!(out.summary.error_summary["#SPILL!"].count, 1);
 }
 
@@ -335,7 +335,7 @@ fn one_by_one_declared_anchors_resolve_as_one_cell_spills() {
         assert_eq!(value(e, "E10"), n(1.0));
     });
     // The collapse publishes with the anchor's 1x1 extent (FORM211-C/D).
-    let out = recalculate_xlsx_bytes_with(&pack(&collapsed), Default::default(), ON).unwrap();
+    let out = recalculate_xlsx_bytes(&pack(&collapsed), Default::default()).unwrap();
     assert_eq!(out.summary.errors, 0);
 
     // Contrast: the same cell as an ordinary (undeclared) formula.
@@ -384,7 +384,7 @@ fn formula_counts_do_not_depend_on_generated_caches() {
     ];
     for (i, p) in variants.iter().enumerate() {
         let bytes = pack(p);
-        let admission = admit_source(&bytes, &Default::default(), ON).unwrap();
+        let admission = admit_source(&bytes, &Default::default()).unwrap();
         assert_eq!(admission.formula_count, 3, "variant {i}");
         with_ingested(p, |ingested| {
             let e = &mut ingested.engine;
@@ -412,7 +412,7 @@ fn anchors_are_declared_under_deferred_graph_building() {
     let bytes = pack(&collapsed);
     let mut options = XlsxRecalculateOptions::default();
     options.eval_config.defer_graph_building = true;
-    let admission = admit_source(&bytes, &options, ON).unwrap();
+    let admission = admit_source(&bytes, &options).unwrap();
     let mut ingested = ingest_source(&bytes, admission, &options).unwrap();
     assert!(!ingested.engine.has_staged_formulas());
     evaluate(&mut ingested.engine, &options).unwrap();

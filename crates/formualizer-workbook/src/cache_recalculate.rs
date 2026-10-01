@@ -14,7 +14,7 @@ use super::recalculate::{DEFAULT_ERROR_LOCATION_LIMIT, RecalculateStatus, Recalc
 use crate::{CalamineAdapter, IoError, SpreadsheetReader, workbook::WBResolver};
 use formualizer_common::{CellAddress, DateSystem, LiteralValue};
 use formualizer_eval::engine::ingest::EngineLoadStream;
-use formualizer_eval::engine::inspect::{SnapshotOptions, SpillRole, Staleness};
+use formualizer_eval::engine::inspect::{SnapshotOptions, Staleness};
 use formualizer_eval::engine::{
     CancelToken, Engine, EvalConfig, FormulaParsePolicy, SpillBoundsPolicy, SpillConfig,
     SpillConflictPolicy,
@@ -341,21 +341,13 @@ impl Seek for BoundedOutput {
     }
 }
 
-/// Crate-private switch for source-preserving dynamic-array support. The
-/// default (disabled) keeps every public refusal; only in-crate tests enable
-/// it until the complete feature (ownership, ingestion, projection, geometry,
-/// metadata/container additions) is integrated.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct SpillSupport {
-    pub(crate) enabled: bool,
-}
-/// Worksheet source, formula cells and (spill support only) its source index
-/// and prior-footprint ownership.
+/// Worksheet source, formula cells, its source index and prior-footprint
+/// dynamic-array ownership.
 struct SheetPlan {
     data: Vec<u8>,
     cells: Vec<sheet::Cell>,
-    index: Option<sheet::SourceIndex>,
-    ownership: Option<dynamic_metadata::SheetOwnership>,
+    index: sheet::SourceIndex,
+    ownership: dynamic_metadata::SheetOwnership,
     /// Logical `(max_row, max_col)` counted toward the workbook area bound.
     bounds: (u32, u32),
 }
@@ -367,16 +359,15 @@ struct SourceAdmission<'a> {
     formula_count: usize,
     metadata: Option<dynamic_metadata::DynamicMetadata>,
 }
-/// Bounded package/worksheet admission. With spill support enabled this also
-/// resolves the XLDAPR metadata chain and returns disjoint prior-footprint
-/// ownership per worksheet, or a precise unsupported error.
+/// Bounded package/worksheet admission. This also resolves the XLDAPR
+/// metadata chain and returns disjoint prior-footprint ownership per
+/// worksheet, or a precise unsupported error.
 fn admit_source<'a>(
     bytes: &'a [u8],
     options: &XlsxRecalculateOptions,
-    spill: SpillSupport,
 ) -> Result<SourceAdmission<'a>, IoError> {
-    let mut archive = package::admit(bytes, options, spill)?;
-    let (sheets, date_system, metadata_part) = package::discover(&mut archive, options, spill)?;
+    let mut archive = package::admit(bytes, options)?;
+    let (sheets, date_system, metadata_part) = package::discover(&mut archive, options)?;
     let metadata = metadata_part
         .map(|part| dynamic_metadata::parse(&mut archive, &part, options))
         .transpose()?;
@@ -391,20 +382,15 @@ fn admit_source<'a>(
             &sheet.part,
             options.limits.max_worksheet_bytes,
         )?;
-        let scan = sheet::scan(&data, options, spill, &mut observed, &mut logical_cells)?;
+        let scan = sheet::scan(&data, options, &mut observed, &mut logical_cells)?;
         formula_count = formula_count
             .checked_add(scan.cells.len())
             .ok_or_else(|| unsupported("formula count overflow", "workbook"))?;
         if formula_count > options.limits.max_formula_cells {
             return Err(unsupported("formula cell count limit", "workbook"));
         }
-        let ownership = scan
-            .index
-            .as_ref()
-            .map(|index| {
-                dynamic_metadata::own_sheet(index, &scan.cells, metadata.as_ref(), options)
-            })
-            .transpose()?;
+        let ownership =
+            dynamic_metadata::own_sheet(&scan.index, &scan.cells, metadata.as_ref(), options)?;
         plans.push(SheetPlan {
             data,
             cells: scan.cells,
@@ -423,7 +409,9 @@ fn admit_source<'a>(
     })
 }
 /// A permissive engine spill policy could overwrite source-unowned inputs or
-/// publish a truncated spill; refuse anything but the defaults up front.
+/// publish a truncated spill; refuse anything but the defaults wherever a
+/// dynamic array is involved (admitted anchors before evaluation, new
+/// spills at projection). Scalar workbooks are unaffected.
 fn check_spill_policy(spill: &SpillConfig) -> Result<(), IoError> {
     if spill.conflict_policy != SpillConflictPolicy::Error {
         return Err(unsupported(
@@ -440,14 +428,38 @@ fn check_spill_policy(spill: &SpillConfig) -> Result<(), IoError> {
     Ok(())
 }
 
-/// Recalculate ordinary/shared formula caches without importing/rewriting rich
-/// workbook structures. Unsupported geometry/metadata cases return an error;
-/// there is no lossy fallback. Exact no-ops return the original package bytes.
+/// Recalculate ordinary/shared formula caches and the supported subset of
+/// dynamic arrays (see `docs/cache-only-xlsx.md`) without importing or
+/// rewriting rich workbook structures. Unsupported geometry/metadata cases
+/// return an error; there is no lossy fallback. Exact no-ops return the
+/// original package bytes.
 pub fn recalculate_xlsx_bytes(
     bytes: &[u8],
     options: XlsxRecalculateOptions,
 ) -> Result<XlsxRecalculateResult, IoError> {
-    recalculate_xlsx_bytes_with(bytes, options, SpillSupport::default())
+    let admission = admit_source(bytes, &options)?;
+    if admission
+        .plans
+        .iter()
+        .any(|p| !p.ownership.anchors.is_empty())
+    {
+        check_spill_policy(&options.eval_config.spill)?;
+    }
+    let formula_count = admission.formula_count;
+    if formula_count == 0 {
+        checkpoint(&options.cancel)?;
+        if bytes.len() > options.limits.max_output_bytes {
+            return Err(unsupported("output byte limit", "XLSX package"));
+        }
+        return Ok(unchanged(
+            bytes,
+            formula_count,
+            RecalculateSummary::default(),
+        ));
+    }
+    let mut ingested = ingest_source(bytes, admission, &options)?;
+    evaluate(&mut ingested.engine, &options)?;
+    publish(bytes, ingested, formula_count, &options)
 }
 /// The admitted source with its ingested, not yet evaluated, engine.
 struct Ingested<'a> {
@@ -455,13 +467,11 @@ struct Ingested<'a> {
     sheets: Vec<package::Sheet>,
     plans: Vec<SheetPlan>,
     engine: Engine<WBResolver>,
-    /// Spill support admitted at least one dynamic-array anchor.
-    anchors: bool,
     /// The validated sheet metadata part, if the package has one.
     metadata: Option<dynamic_metadata::DynamicMetadata>,
 }
 /// Build the transient ingestion view, replay it through Calamine into a new
-/// engine, validate calculation names and, with spill support, declare every
+/// engine, validate calculation names and declare every
 /// admitted dynamic-array anchor. Nothing is evaluated or published.
 fn ingest_source<'a>(
     bytes: &[u8],
@@ -476,9 +486,7 @@ fn ingest_source<'a>(
         formula_count,
         metadata,
     } = admission;
-    let anchors = plans
-        .iter()
-        .any(|p| p.ownership.as_ref().is_some_and(|o| !o.anchors.is_empty()));
+    let anchors = plans.iter().any(|p| !p.ownership.anchors.is_empty());
     checkpoint(&options.cancel)?;
     // Calamine 0.36 cannot decode every legal/stale cache representation,
     // although formula ingestion ignores cached results. Clear those caches,
@@ -573,7 +581,6 @@ fn ingest_source<'a>(
         sheets,
         plans,
         engine,
-        anchors,
         metadata,
     })
 }
@@ -598,10 +605,7 @@ fn declare_anchors(
         .map(|d| (d.sheet.clone(), d.row, d.col))
         .collect();
     for (sheet, plan) in sheets.iter().zip(plans) {
-        let Some(ownership) = &plan.ownership else {
-            continue;
-        };
-        for &(row, col) in ownership.anchors.keys() {
+        for &(row, col) in plan.ownership.anchors.keys() {
             checkpoint(&options.cancel)?;
             if engine
                 .declare_dynamic_array_anchor(&sheet.name, row, col)
@@ -628,31 +632,6 @@ fn evaluate(
         engine.evaluate_all()?;
     }
     checkpoint(&options.cancel)
-}
-pub(crate) fn recalculate_xlsx_bytes_with(
-    bytes: &[u8],
-    options: XlsxRecalculateOptions,
-    spill: SpillSupport,
-) -> Result<XlsxRecalculateResult, IoError> {
-    if spill.enabled {
-        check_spill_policy(&options.eval_config.spill)?;
-    }
-    let admission = admit_source(bytes, &options, spill)?;
-    let formula_count = admission.formula_count;
-    if formula_count == 0 {
-        checkpoint(&options.cancel)?;
-        if bytes.len() > options.limits.max_output_bytes {
-            return Err(unsupported("output byte limit", "XLSX package"));
-        }
-        return Ok(unchanged(
-            bytes,
-            formula_count,
-            RecalculateSummary::default(),
-        ));
-    }
-    let mut ingested = ingest_source(bytes, admission, &options)?;
-    evaluate(&mut ingested.engine, &options)?;
-    publish(bytes, ingested, formula_count, &options, spill)
 }
 fn unchanged(
     bytes: &[u8],
@@ -721,7 +700,7 @@ fn record_result(
 struct Publication {
     summary: RecalculateSummary,
     changed: usize,
-    /// Worksheet replacements, plus (spill support) metadata, relationship
+    /// Worksheet replacements, plus metadata, relationship
     /// and content-type edits.
     edits: package::Edits,
     worksheets: usize,
@@ -772,14 +751,12 @@ fn publish(
     ingested: Ingested<'_>,
     formula_count: usize,
     options: &XlsxRecalculateOptions,
-    spill: SpillSupport,
 ) -> Result<XlsxRecalculateResult, IoError> {
     let Ingested {
         mut archive,
         sheets,
         plans,
         engine,
-        anchors,
         metadata,
     } = ingested;
     let coerced: HashSet<_> = engine
@@ -799,21 +776,16 @@ fn publish(
         changed,
         edits,
         worksheets,
-    } = if spill.enabled {
-        spill_publication(
-            &engine,
-            &mut archive,
-            &sheets,
-            &plans,
-            metadata.as_ref(),
-            &coerced,
-            &mut expanded,
-            options,
-        )?
-    } else {
-        debug_assert!(!anchors);
-        scalar_publication(&engine, &sheets, plans, &coerced, &mut expanded, options)?
-    };
+    } = spill_publication(
+        &engine,
+        &mut archive,
+        &sheets,
+        &plans,
+        metadata.as_ref(),
+        &coerced,
+        &mut expanded,
+        options,
+    )?;
     summary.status = if summary.errors == 0 {
         RecalculateStatus::Success
     } else {
@@ -840,69 +812,8 @@ fn publish(
         worksheet_parts_changed: worksheets,
     })
 }
-/// The public scalar writer: every formula result is one scalar cache, and
-/// any materialized multi-cell spill is refused.
-fn scalar_publication(
-    engine: &Engine<WBResolver>,
-    sheets: &[package::Sheet],
-    plans: Vec<SheetPlan>,
-    coerced: &HashSet<(String, u32, u32)>,
-    expanded: &mut usize,
-    options: &XlsxRecalculateOptions,
-) -> Result<Publication, IoError> {
-    let mut publication = Publication {
-        summary: RecalculateSummary::default(),
-        changed: 0,
-        edits: package::Edits::default(),
-        worksheets: 0,
-    };
-    for (sheet, plan) in sheets.iter().zip(plans) {
-        let SheetPlan { data, cells, .. } = plan;
-        let mut patches = Vec::new();
-        for cell in cells {
-            checkpoint(&options.cancel)?;
-            let address = CellAddress::new(&sheet.name, cell.row, cell.col)
-                .map_err(|e| IoError::from_backend("xlsx-coordinate", e))?;
-            let snapshot = engine
-                .inspect_cell_result(&address)
-                .map_err(|e| IoError::from_backend("xlsx-inspect", e))?;
-            if snapshot.spill.as_ref().is_some_and(|spill| match spill {
-                SpillRole::Anchor { extent } => {
-                    extent.start_row != extent.end_row || extent.start_col != extent.end_col
-                }
-                SpillRole::Member { .. } => true,
-                _ => true,
-            }) {
-                return Err(unsupported(
-                    "materialized multi-cell dynamic spill",
-                    &sheet.name,
-                ));
-            }
-            let value = validated_result(
-                snapshot.value,
-                snapshot.has_formula,
-                snapshot.staleness,
-                coerced.contains(&(sheet.name.clone(), cell.row, cell.col)),
-                &sheet.name,
-            )?;
-            record_result(
-                &mut publication.summary,
-                &sheet.name,
-                &cell.address,
-                &value,
-                options.error_location_limit,
-            );
-            let cache = Cache::from_value(value, engine.config.date_system)?;
-            if !cache.matches(&cell) {
-                publication.changed += 1;
-                cache_patches(&data, &cell, &cache, &mut patches);
-            }
-        }
-        replace_sheet(&mut publication, expanded, sheet, &data, patches, options)?;
-    }
-    Ok(publication)
-}
-/// Spill-aware publication: worksheet geometry plus, when an anchor needs
+/// Publication: scalar caches and dynamic-array geometry, plus, when an
+/// anchor needs
 /// a new XLDAPR binding, the metadata part edit (or addition with its
 /// relationship and content-type override).
 #[allow(clippy::too_many_arguments)]
@@ -1029,8 +940,8 @@ fn plan_spill_publication(
             checkpoint(&options.cancel)?;
             let prior = plan
                 .ownership
-                .as_ref()
-                .and_then(|o| o.anchors.get(&(cell.row, cell.col)))
+                .anchors
+                .get(&(cell.row, cell.col))
                 .filter(|a| a.formula == i);
             let summary = &mut publication.summary;
             let projection = result_projection::project_formula(
@@ -1054,6 +965,7 @@ fn plan_spill_publication(
             match projection {
                 result_projection::Projection::Scalar(cache) => scalars.push((i, cache)),
                 result_projection::Projection::Anchor(anchor) => {
+                    check_spill_policy(&options.eval_config.spill)?;
                     use result_projection::Shape;
                     let spill = match anchor.shape {
                         Shape::Spill(extent) => Some(extent),
@@ -1086,10 +998,7 @@ fn plan_spill_publication(
     let mut inserted = 0u64;
     let mut logical = 0u64;
     for (plan, (_, anchors)) in plans.iter().zip(&projected) {
-        let index = plan
-            .index
-            .as_ref()
-            .ok_or_else(|| unsupported("spill geometry without a source index", "worksheet"))?;
+        let index = &plan.index;
         let preflight = geometry::preflight(index, anchors, options)?;
         serialized = serialized.saturating_add(index.cells.len() as u64);
         inserted = inserted.saturating_add(preflight.inserted);

@@ -1,7 +1,7 @@
 //! Bounded package admission and relationship-aware workbook discovery.
 mod content_types;
 mod rewrite;
-use super::{IoError, SpillSupport, XlsxRecalculateOptions, checkpoint, unsupported, xml};
+use super::{IoError, XlsxRecalculateOptions, checkpoint, unsupported, xml};
 pub(super) use content_types::add_override;
 pub(super) use rewrite::{Edits, rewrite};
 use std::collections::{BTreeMap, HashSet};
@@ -155,7 +155,6 @@ fn audit_directory(
 pub(super) fn admit<'a>(
     bytes: &'a [u8],
     options: &XlsxRecalculateOptions,
-    spill: SpillSupport,
 ) -> Result<Archive<'a>, IoError> {
     checkpoint(&options.cancel)?;
     if bytes.len() > options.limits.max_input_bytes {
@@ -203,12 +202,9 @@ pub(super) fn admit<'a>(
         if file.name().starts_with("_xmlsignatures/") || file.name().ends_with("origin.sigs") {
             return Err(unsupported("package digital signature", "XLSX package"));
         }
-        if file.name().starts_with("xl/externalLinks/")
-            || (!spill.enabled && file.name() == "xl/metadata.xml")
-            || file.name().starts_with("xl/richData/")
-        {
+        if file.name().starts_with("xl/externalLinks/") || file.name().starts_with("xl/richData/") {
             return Err(unsupported(
-                "external links or rich/dynamic cell metadata",
+                "external links or rich value data",
                 "XLSX package",
             ));
         }
@@ -306,12 +302,11 @@ pub(super) fn relationships(
     })?;
     Ok(result)
 }
-/// Workbook discovery. With spill support enabled, also returns the single
-/// relationship-resolved sheet metadata part, if any.
+/// Workbook discovery. Also returns the single relationship-resolved sheet
+/// metadata part, if any.
 pub(super) fn discover(
     archive: &mut Archive<'_>,
     options: &XlsxRecalculateOptions,
-    spill: SpillSupport,
 ) -> Result<(Vec<Sheet>, formualizer_common::DateSystem, Option<String>), IoError> {
     let root = relationships(archive, "", options)?;
     if root.values().any(|r| r.kind.contains("digital-signature")) {
@@ -347,11 +342,7 @@ pub(super) fn discover(
             }
         }
     }
-    let metadata = if spill.enabled {
-        sheet_metadata_part(archive, &relations)?
-    } else {
-        None
-    };
+    let metadata = sheet_metadata_part(archive, &relations)?;
     let data = read_part(
         archive,
         "xl/workbook.xml",
@@ -609,7 +600,7 @@ pub(super) fn check_output(bytes: &[u8], options: &XlsxRecalculateOptions) -> Re
     let mut archive =
         ZipArchive::new(Cursor::new(bytes)).map_err(|e| IoError::from_backend("zip", e))?;
     audit_directory(bytes, &archive, options)?;
-    let (_, _, metadata) = discover(&mut archive, options, SpillSupport { enabled: true })?;
+    let (_, _, metadata) = discover(&mut archive, options)?;
     let part =
         metadata.ok_or_else(|| unsupported("unrelated added metadata part", "XLSX output"))?;
     super::dynamic_metadata::parse(&mut archive, &part, options)?;

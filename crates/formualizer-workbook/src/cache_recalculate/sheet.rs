@@ -1,7 +1,7 @@
-//! Formula locations/cache spans without a rich cell graph. With private
-//! spill support enabled, the same bounded pass also builds a source index of
-//! rows, cells, dimensions and merges for dynamic-array ownership.
-use super::{IoError, SpillSupport, XlsxRecalculateOptions, unsupported, xml};
+//! Formula locations/cache spans without a rich cell graph. The same bounded
+//! pass also builds a source index of rows, cells, dimensions and merges for
+//! dynamic-array ownership and geometry.
+use super::{IoError, XlsxRecalculateOptions, unsupported, xml};
 use formualizer_common::coord::parse_a1_1based;
 use std::{collections::HashMap, ops::Range};
 
@@ -67,12 +67,12 @@ pub(super) struct Cell {
     pub formula_text: String,
     pub value: Option<ValueNode>,
     pub inline: Option<Range<usize>>,
-    /// `normal`, `shared` or (spill support only) `array`.
+    /// `normal`, `shared` or `array`.
     pub formula_kind: String,
     pub shared_id: Option<u32>,
     shared_range: Option<(u32, u32, u32, u32)>,
     has_formula: bool,
-    /// One-based cellMetadata index from `c/@cm` (spill support only).
+    /// One-based cellMetadata index from `c/@cm`.
     pub cm: Option<u32>,
     /// `cm="…"` attribute span on the cell start tag.
     pub cm_span: Option<Range<usize>>,
@@ -85,7 +85,7 @@ pub(super) struct Cell {
     /// `ref="…"` attribute span on an array formula start tag.
     pub array_ref_span: Option<Range<usize>>,
 }
-/// One serialized worksheet row (spill support only).
+/// One serialized worksheet row.
 #[derive(Debug)]
 pub(super) struct RowEntry {
     pub row: u32,
@@ -99,7 +99,7 @@ pub(super) struct RowEntry {
     /// Index range into `SourceIndex::cells`.
     pub cells: Range<usize>,
 }
-/// One serialized cell, formula or not (spill support only).
+/// One serialized cell, formula or not.
 #[derive(Debug)]
 pub(super) struct IndexedCell {
     pub row: u32,
@@ -122,7 +122,7 @@ pub(super) struct IndexedCell {
     /// generated child is masked, any other such literal is still refused.
     pub(super) literal_refusal: Option<&'static str>,
 }
-/// Bounded source geometry of one worksheet (spill support only).
+/// Bounded source geometry of one worksheet.
 #[derive(Debug)]
 pub(super) struct SourceIndex {
     /// Declared dimension and the span of its `ref="…"` attribute.
@@ -146,7 +146,7 @@ impl SourceIndex {
 }
 pub(super) struct Scan {
     pub cells: Vec<Cell>,
-    pub index: Option<SourceIndex>,
+    pub index: SourceIndex,
     /// Logical `(max_row, max_col)` counted toward the workbook area bound:
     /// serialized cells, declared array extents and the dimension.
     pub bounds: (u32, u32),
@@ -217,7 +217,7 @@ fn literal_refusal(cell: &Cell, bytes: &[u8]) -> Option<&'static str> {
     }
     None
 }
-/// Dynamic-array cell rules (spill support only). Ownership through the
+/// Dynamic-array cell rules. Ownership through the
 /// metadata chain is resolved later; this validates the source encoding.
 fn dynamic_anchor_extent(cell: &Cell) -> Result<Option<SourceRect>, IoError> {
     if cell.cm.is_none() && cell.formula_kind != "array" {
@@ -258,7 +258,6 @@ fn dynamic_anchor_extent(cell: &Cell) -> Result<Option<SourceRect>, IoError> {
 pub(super) fn scan(
     bytes: &[u8],
     options: &XlsxRecalculateOptions,
-    spill: SpillSupport,
     observed: &mut usize,
     logical_cells: &mut u64,
 ) -> Result<Scan, IoError> {
@@ -270,7 +269,7 @@ pub(super) fn scan(
     let mut dimension = None;
     let mut max_row = 0u32;
     let mut max_col = 0u32;
-    let mut index = spill.enabled.then(|| SourceIndex {
+    let mut index = SourceIndex {
         dimension: None,
         sheet_data: 0..0,
         sheet_data_open_end: 0,
@@ -278,7 +277,7 @@ pub(super) fn scan(
         rows: Vec::new(),
         cells: Vec::new(),
         merges: Vec::new(),
-    });
+    };
     let mut extent_cells = 0u64;
     xml::walk(bytes, options, |path, node| {
         let Some(element) = path.last() else {
@@ -310,8 +309,7 @@ pub(super) fn scan(
                     "dimension",
                 ];
                 if (structural.contains(&element.local.as_str())
-                    || index.is_some()
-                        && matches!(element.local.as_str(), "mergeCells" | "mergeCell"))
+                    || matches!(element.local.as_str(), "mergeCells" | "mergeCell"))
                     && element.ns != xml::MAIN
                 {
                     return Err(unsupported("foreign worksheet lookalike", &element.local));
@@ -341,22 +339,20 @@ pub(super) fn scan(
                         return Err(unsupported("worksheet dimension cell limit", "worksheet"));
                     }
                     dimension = Some(range);
-                    if let Some(index) = index.as_mut() {
-                        let span = node
-                            .attribute("", "ref")
-                            .expect("required ref")
-                            .span
-                            .clone();
-                        index.dimension = Some((
-                            SourceRect {
-                                first_row: range.0,
-                                first_col: range.1,
-                                last_row: range.2,
-                                last_col: range.3,
-                            },
-                            span,
-                        ));
-                    }
+                    let span = node
+                        .attribute("", "ref")
+                        .expect("required ref")
+                        .span
+                        .clone();
+                    index.dimension = Some((
+                        SourceRect {
+                            first_row: range.0,
+                            first_col: range.1,
+                            last_row: range.2,
+                            last_col: range.3,
+                        },
+                        span,
+                    ));
                 }
                 if element.local == "sheetData" {
                     if !xml::path_is(path, xml::MAIN, &["worksheet", "sheetData"]) {
@@ -366,15 +362,11 @@ pub(super) fn scan(
                     if sheet_data_count != 1 {
                         return Err(unsupported("duplicate sheetData", "worksheet"));
                     }
-                    if let Some(index) = index.as_mut() {
-                        index.sheet_data = node.span.clone();
-                        index.sheet_data_open_end = node.span.end;
-                        index.sheet_data_empty = *empty;
-                    }
+                    index.sheet_data = node.span.clone();
+                    index.sheet_data_open_end = node.span.end;
+                    index.sheet_data_empty = *empty;
                 }
-                if let Some(index) = index.as_mut()
-                    && element.local == "mergeCell"
-                {
+                if element.local == "mergeCell" {
                     if !xml::path_is(path, xml::MAIN, &["worksheet", "mergeCells", "mergeCell"]) {
                         return Err(unsupported("misplaced merge cell", "worksheet"));
                     }
@@ -396,18 +388,16 @@ pub(super) fn scan(
                     }
                     row = next_row;
                     column = 0;
-                    if let Some(index) = index.as_mut() {
-                        let at = index.cells.len();
-                        index.rows.push(RowEntry {
-                            row,
-                            span: node.span.clone(),
-                            open_end: node.span.end,
-                            empty: *empty,
-                            qualified: element.qualified.clone(),
-                            spans_attr: node.attribute("", "spans").map(|a| a.span.clone()),
-                            cells: at..at,
-                        });
-                    }
+                    let at = index.cells.len();
+                    index.rows.push(RowEntry {
+                        row,
+                        span: node.span.clone(),
+                        open_end: node.span.end,
+                        empty: *empty,
+                        qualified: element.qualified.clone(),
+                        spans_attr: node.attribute("", "spans").map(|a| a.span.clone()),
+                        cells: at..at,
+                    });
                 }
                 if element.local == "c" {
                     if !is_cell || current.is_some() {
@@ -438,24 +428,20 @@ pub(super) fn scan(
                     if *observed > options.limits.max_cells {
                         return Err(unsupported("serialized cell count limit", "worksheet"));
                     }
-                    let mut cm = None;
-                    if index.is_some() {
-                        if node.value("vm").is_some() {
-                            return Err(unsupported("rich value metadata (vm)", "worksheet"));
-                        }
-                        if let Some(value) = node.value("cm") {
-                            cm = Some(value.parse::<u32>().ok().filter(|n| *n > 0).ok_or_else(
-                                || {
-                                    unsupported(
-                                        "dangling or invalid dynamic cell metadata index (cm)",
-                                        "worksheet",
-                                    )
-                                },
-                            )?);
-                        }
-                    } else if node.value("cm").is_some() || node.value("vm").is_some() {
-                        return Err(unsupported("dynamic/rich cell metadata", "worksheet"));
+                    if node.value("vm").is_some() {
+                        return Err(unsupported("rich value metadata (vm)", "worksheet"));
                     }
+                    let cm = node
+                        .value("cm")
+                        .map(|value| {
+                            value.parse::<u32>().ok().filter(|n| *n > 0).ok_or_else(|| {
+                                unsupported(
+                                    "dangling or invalid dynamic cell metadata index (cm)",
+                                    "worksheet",
+                                )
+                            })
+                        })
+                        .transpose()?;
                     let kind = node.value("t").map(str::to_owned);
                     if !matches!(
                         kind.as_deref(),
@@ -488,7 +474,7 @@ pub(super) fn scan(
                             array_ref: None,
                             array_ref_span: None,
                         });
-                    } else if let Some(index) = index.as_mut() {
+                    } else {
                         if cm.is_some() {
                             return Err(unsupported(
                                 "cell metadata on a non-dynamic-array cell",
@@ -529,14 +515,7 @@ pub(super) fn scan(
                             cell.formula_open = node.span.clone();
                             cell.formula_kind_span =
                                 node.attribute("", "t").map(|a| a.span.clone());
-                            if index.is_none() {
-                                if !matches!(cell.formula_kind.as_str(), "normal" | "shared") {
-                                    return Err(unsupported(
-                                        "array/data-table/unknown formula kind",
-                                        "worksheet",
-                                    ));
-                                }
-                            } else if cell.formula_kind == "dataTable" {
+                            if cell.formula_kind == "dataTable" {
                                 return Err(unsupported("data-table formula", "worksheet"));
                             } else if !matches!(
                                 cell.formula_kind.as_str(),
@@ -639,43 +618,37 @@ pub(super) fn scan(
                         _ => {}
                     }
                 }
-                if let Some(index) = index.as_mut() {
-                    if xml::path_is(path, xml::MAIN, &["worksheet", "sheetData", "row"]) {
-                        let entry = index.rows.last_mut().expect("open row");
-                        entry.span.end = node.span.end;
-                    }
-                    if xml::path_is(path, xml::MAIN, &["worksheet", "sheetData"]) {
-                        index.sheet_data.end = node.span.end;
-                    }
+                if xml::path_is(path, xml::MAIN, &["worksheet", "sheetData", "row"]) {
+                    let entry = index.rows.last_mut().expect("open row");
+                    entry.span.end = node.span.end;
+                }
+                if xml::path_is(path, xml::MAIN, &["worksheet", "sheetData"]) {
+                    index.sheet_data.end = node.span.end;
                 }
                 if is_cell {
                     let mut cell = current
                         .take()
                         .ok_or_else(|| unsupported("unbalanced cell", "worksheet"))?;
                     cell.span.end = node.span.end;
+                    // Ownership decides later whether a refused literal is a
+                    // masked generated child or a refused input.
                     let refusal = literal_refusal(&cell, bytes);
-                    if let Some(index) = index.as_mut() {
-                        // Ownership decides later whether this literal is a
-                        // masked generated child or a refused input.
-                        dynamic_anchor_extent(&cell)?;
-                        index.cells.push(IndexedCell {
-                            row: cell.row,
-                            col: cell.col,
-                            span: cell.span.clone(),
-                            open_end: cell.open_end,
-                            empty: false,
-                            kind: cell.kind.clone(),
-                            kind_span: cell.kind_span.clone(),
-                            cm: cell.cm,
-                            value: cell.value.as_ref().map(|v| v.span.clone()),
-                            inline: cell.inline.clone(),
-                            formula: cell.has_formula.then_some(cells.len()),
-                            literal_refusal: refusal,
-                        });
-                        index.rows.last_mut().expect("open row").cells.end = index.cells.len();
-                    } else if let Some(refusal) = refusal {
-                        return Err(unsupported(refusal, "worksheet"));
-                    }
+                    dynamic_anchor_extent(&cell)?;
+                    index.cells.push(IndexedCell {
+                        row: cell.row,
+                        col: cell.col,
+                        span: cell.span.clone(),
+                        open_end: cell.open_end,
+                        empty: false,
+                        kind: cell.kind.clone(),
+                        kind_span: cell.kind_span.clone(),
+                        cm: cell.cm,
+                        value: cell.value.as_ref().map(|v| v.span.clone()),
+                        inline: cell.inline.clone(),
+                        formula: cell.has_formula.then_some(cells.len()),
+                        literal_refusal: refusal,
+                    });
+                    index.rows.last_mut().expect("open row").cells.end = index.cells.len();
                     if cell.has_formula {
                         if cell.formula_kind == "normal" && cell.formula_text.trim().is_empty() {
                             return Err(unsupported("empty ordinary formula", "worksheet"));

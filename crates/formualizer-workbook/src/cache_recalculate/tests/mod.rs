@@ -1,5 +1,6 @@
-//! In-crate tests for the private source-preserving spill path. Everything
-//! here enables `SpillSupport`; public entry points keep it disabled.
+//! In-crate tests of the source-preserving spill internals: admission,
+//! ingestion, geometry plans, metadata binding and ZIP additions. Public
+//! end-to-end cases live in `tests/xlsx_source_recalculate_spills.rs`.
 mod dynamic_admission;
 mod dynamic_ingestion;
 mod dynamic_publication;

@@ -1,13 +1,12 @@
 //! FORM211-E: surgical ZIP32 member addition. Outputs are re-read by the
 //! `zip` crate (which verifies CRCs) and re-audited by package admission.
+use super::super::XlsxRecalculateOptions;
 use super::super::package::{self, Edits};
-use super::super::{SpillSupport, XlsxRecalculateOptions};
 use super::dynamic_admission::refused;
 use std::collections::BTreeMap;
 use std::io::{Cursor, Read, Write};
 use zip::{CompressionMethod, ZipArchive, ZipWriter, write::SimpleFileOptions};
 
-const ON: SpillSupport = SpillSupport { enabled: true };
 const COMMENT: &[u8] = b"archive comment kept";
 const NEW: &str = "xl/metadata.xml";
 
@@ -70,7 +69,7 @@ fn rewrite(
     edits: &Edits,
     options: &XlsxRecalculateOptions,
 ) -> Result<Vec<u8>, crate::IoError> {
-    let mut archive = package::admit(bytes, options, ON)?;
+    let mut archive = package::admit(bytes, options)?;
     package::rewrite(bytes, &mut archive, edits, options)
 }
 fn edits(replace: &[(&str, &[u8])], add: &[(&str, &[u8])]) -> Edits {
@@ -166,7 +165,7 @@ fn a_new_member_is_appended_and_old_records_and_payloads_are_preserved() {
     assert_eq!(h32(&output, new_end + 16), directory_start);
     assert_eq!(output[new_end + 20..], input[old_end + 20..]);
     // The output passes the same bounded admission audit as any input.
-    package::admit(&output, &options, ON).unwrap();
+    package::admit(&output, &options).unwrap();
 }
 
 #[test]

@@ -4,7 +4,7 @@
 //! bytes and the source index are never edited. The view:
 //! * clears formula caches Calamine 0.36 cannot decode (the pre-existing
 //!   unreadable-cache rule, unchanged);
-//! * with spill support, masks proven old-child caches (`c/@t`, `<v>`,
+//! * masks proven old-child caches (`c/@t`, `<v>`,
 //!   `<is>`), so stale generated values neither enter the value plane nor
 //!   obstruct the anchor's new spill, while styled/empty shells stay;
 //! * strips admitted anchors' `c/@cm`, `f/@t="array"` and `f/@ref`, so the
@@ -33,11 +33,11 @@ pub(super) fn patches(
         {
             cache_patches(data, cell, &Cache::Empty, &mut cell_patches);
         }
-        if let Some(ownership) = &plan.ownership
-            && ownership
-                .anchors
-                .get(&(cell.row, cell.col))
-                .is_some_and(|anchor| anchor.formula == i)
+        if plan
+            .ownership
+            .anchors
+            .get(&(cell.row, cell.col))
+            .is_some_and(|anchor| anchor.formula == i)
         {
             for span in [&cell.cm_span, &cell.formula_kind_span, &cell.array_ref_span]
                 .into_iter()
@@ -48,15 +48,14 @@ pub(super) fn patches(
         }
         flush_cell(&mut cell_patches, &mut out)?;
     }
-    if let (Some(ownership), Some(index)) = (&plan.ownership, &plan.index) {
-        for &(row, col) in ownership.children.keys() {
-            checkpoint(cancel)?;
-            let child = index.cell_at(row, col).ok_or_else(|| {
-                unsupported("dynamic array child is not indexed", "ingestion view")
-            })?;
-            mask_child(child, &mut cell_patches);
-            flush_cell(&mut cell_patches, &mut out)?;
-        }
+    for &(row, col) in plan.ownership.children.keys() {
+        checkpoint(cancel)?;
+        let child = plan
+            .index
+            .cell_at(row, col)
+            .ok_or_else(|| unsupported("dynamic array child is not indexed", "ingestion view"))?;
+        mask_child(child, &mut cell_patches);
+        flush_cell(&mut cell_patches, &mut out)?;
     }
     out.sort_by_key(|p| (p.span.start, p.span.end));
     Ok(out)

@@ -1,5 +1,4 @@
-//! Worksheet geometry for dynamic-array publication (FORM211-D), spill
-//! support only.
+//! Worksheet geometry for dynamic-array publication (FORM211-D).
 //!
 //! One ordered patch plan per worksheet, built in one bounded pass over the
 //! desired cell states (row-major) merged with the source index:
@@ -179,11 +178,8 @@ pub(super) fn plan(
     cancel: &Option<CancelToken>,
 ) -> Result<SheetEdits, IoError> {
     let data = &plan.data;
-    let index = plan
-        .index
-        .as_ref()
-        .ok_or_else(|| unsupported("spill geometry without a source index", "worksheet"))?;
-    let ownership = plan.ownership.as_ref();
+    let index = &plan.index;
+    let ownership = &plan.ownership;
     let mut polled = 0usize;
     let mut poll = || {
         polled += 1;
@@ -198,11 +194,9 @@ pub(super) fn plan(
     // child, `Some` writes a member. Bounded by the source children plus the
     // budget-checked extents.
     let mut desired: BTreeMap<(u32, u32), Option<Cache>> = BTreeMap::new();
-    if let Some(ownership) = ownership {
-        for &key in ownership.children.keys() {
-            poll()?;
-            desired.insert(key, None);
-        }
+    for &key in ownership.children.keys() {
+        poll()?;
+        desired.insert(key, None);
     }
     for anchor in anchors {
         checkpoint(cancel)?;
@@ -222,7 +216,7 @@ pub(super) fn plan(
                             "worksheet",
                         ));
                     }
-                    let owned = ownership.and_then(|o| o.owner_of(row, col)).is_some();
+                    let owned = ownership.owner_of(row, col).is_some();
                     if !owned && (cell.value.is_some() || cell.inline.is_some()) {
                         return Err(unsupported(
                             "dynamic spill over an unowned source value",

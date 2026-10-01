@@ -438,13 +438,17 @@ fn limits_and_precancellation() {
 }
 #[test]
 fn unsupported_spill_does_not_return_a_partial_package() {
-    assert!(
-        recalculate_xlsx_bytes(
-            &fixture("SEQUENCE(2)", "99"),
-            XlsxRecalculateOptions::default()
-        )
-        .is_err()
+    // Multi-cell spills are published since FORM211; one crossing a merge
+    // is still refused as a whole.
+    let mut p = single("SEQUENCE(2)", "<v>99</v>");
+    let sheet = p.get_mut(SHEET).unwrap();
+    *sheet = sheet.replace(
+        "</sheetData>",
+        "</sheetData><mergeCells count=\"1\"><mergeCell ref=\"A2:B2\"/></mergeCells>",
     );
+    reject(&p);
+    let out = recalculate_xlsx_bytes(&fixture("SEQUENCE(2)", "99"), Default::default()).unwrap();
+    assert_eq!(data(&out.bytes, 1), Data::Float(2.0));
 }
 #[test]
 fn error_locations_are_bounded() {

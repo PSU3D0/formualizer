@@ -34,8 +34,7 @@ pub(in crate::cache_recalculate) fn add_override(
     )
 }
 
-/// `metadata` is the relationship-resolved sheet metadata part; it is only
-/// `Some` when private spill support is enabled.
+/// `metadata` is the relationship-resolved sheet metadata part, if any.
 pub(super) fn validate(
     archive: &mut Archive<'_>,
     sheets: &[Sheet],

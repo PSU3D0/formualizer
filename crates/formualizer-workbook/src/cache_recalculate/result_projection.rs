@@ -1,4 +1,4 @@
-//! Validated output projection (FORM211-C), spill support only.
+//! Validated output projection (FORM211-C).
 //!
 //! Every source formula is read once at the final engine state through
 //! `inspect_cell_result` and classified as an ordinary scalar or as a

@@ -1,8 +1,8 @@
 //! FORM211-A: namespace-validated XLDAPR admission and prior-footprint
 //! ownership, independent of the evaluator.
 use super::super::{
-    SourceAdmission, SpillSupport, XlsxRecalculateOptions, admit_source, recalculate_xlsx_bytes,
-    recalculate_xlsx_bytes_with, sheet::SourceRect,
+    SourceAdmission, XlsxRecalculateOptions, admit_source, recalculate_xlsx_bytes,
+    sheet::SourceRect,
 };
 use crate::IoError;
 use formualizer_eval::engine::{SpillBoundsPolicy, SpillConflictPolicy};
@@ -101,14 +101,13 @@ pub(super) fn edit(
     *part = part.replacen(old, new, 1);
     p
 }
-pub(super) const ON: SpillSupport = SpillSupport { enabled: true };
 fn with_admission<T>(
     p: &BTreeMap<String, String>,
     options: &XlsxRecalculateOptions,
     check: impl FnOnce(SourceAdmission<'_>) -> T,
 ) -> Result<T, IoError> {
     let bytes = pack(p);
-    admit_source(&bytes, options, ON).map(check)
+    admit_source(&bytes, options).map(check)
 }
 pub(super) fn refused<T>(result: Result<T, IoError>, needle: &str) {
     match result {
@@ -136,10 +135,7 @@ type Owned = (Vec<((u32, u32), SourceRect)>, Vec<((u32, u32), (u32, u32))>);
 fn owned(p: &BTreeMap<String, String>) -> Owned {
     with_admission(p, &Default::default(), |a| {
         assert_eq!(a.plans.len(), 1);
-        let own = a.plans[0]
-            .ownership
-            .as_ref()
-            .expect("spill-enabled ownership");
+        let own = &a.plans[0].ownership;
         (
             own.anchors.iter().map(|(k, v)| (*k, v.footprint)).collect(),
             own.children.iter().map(|(k, v)| (*k, *v)).collect(),
@@ -162,13 +158,13 @@ fn source_rect_geometry_is_one_based_inclusive() {
 fn producer_shaped_anchor_ownership_and_source_index() {
     let p = producer();
     let bytes = pack(&p);
-    let admission = admit_source(&bytes, &Default::default(), ON).expect("admitted");
+    let admission = admit_source(&bytes, &Default::default()).expect("admitted");
     let meta = admission.metadata.as_ref().expect("sheet metadata");
     assert_eq!(meta.part, METADATA);
     let plan = &admission.plans[0];
     let xml = &plan.data;
     let text = |r: &std::ops::Range<usize>| std::str::from_utf8(&xml[r.clone()]).unwrap();
-    let own = plan.ownership.as_ref().unwrap();
+    let own = &plan.ownership;
     assert_eq!(
         own.anchors
             .iter()
@@ -206,7 +202,7 @@ fn producer_shaped_anchor_ownership_and_source_index() {
     let c2 = &plan.cells[own.anchors[&(2, 3)].formula];
     assert_eq!(text(c2.array_ref_span.as_ref().unwrap()), "ref=\"C2:C4\"");
     assert_eq!(c2.formula_text, "_xlfn.SEQUENCE($B$1)");
-    let index = plan.index.as_ref().unwrap();
+    let index = &plan.index;
     let (dimension, dimension_span) = index.dimension.clone().unwrap();
     assert_eq!(dimension, rect(1, 1, 11, 3));
     assert_eq!(text(&dimension_span), "ref=\"A1:C11\"");
@@ -319,7 +315,7 @@ fn sparse_extent_keeps_missing_children_missing_and_records_merges() {
     // and are not manufactured. D6 is outside the footprint.
     assert_eq!(children, vec![((3, 4), (2, 3)), ((4, 3), (2, 3))]);
     with_admission(&p, &Default::default(), |a| {
-        let index = a.plans[0].index.as_ref().unwrap();
+        let index = &a.plans[0].index;
         assert_eq!(index.merges, vec![rect(7, 5, 8, 6)]);
         assert_eq!(index.cells.len(), 5);
         assert!(index.cell_at(3, 4).unwrap().empty);
@@ -350,78 +346,27 @@ fn owned_children_are_classified_before_literal_readability_refusal() {
 }
 
 #[test]
-fn disabled_switch_keeps_every_public_refusal() {
+fn non_default_spill_policy_is_rejected_before_evaluation_with_anchors() {
     let bytes = pack(&producer());
-    refused(
-        admit_source(&bytes, &Default::default(), SpillSupport::default()).map(|_| ()),
-        "rich/dynamic cell metadata",
-    );
-    assert!(recalculate_xlsx_bytes(&bytes, Default::default()).is_err());
-    // Without the metadata member, content types/worksheet refusals remain.
-    let mut p = edit(producer(), WB_RELS, METADATA_REL, "");
-    p.remove(METADATA);
-    let bytes = pack(&p);
-    refused(
-        admit_source(&bytes, &Default::default(), SpillSupport::default()).map(|_| ()),
-        "unsupported content type",
-    );
-    let p = edit(p, TYPES, METADATA_TYPE, "");
-    let bytes = pack(&p);
-    refused(
-        admit_source(&bytes, &Default::default(), SpillSupport::default()).map(|_| ()),
-        "dynamic/rich cell metadata",
-    );
-    let p = edit(p, SHEET, " cm=\"1\"", "");
-    let p = edit(p, SHEET, " cm=\"1\"", "");
-    let bytes = pack(&p);
-    refused(
-        admit_source(&bytes, &Default::default(), SpillSupport::default()).map(|_| ()),
-        "array/data-table/unknown formula kind",
-    );
-}
-
-#[test]
-fn enabled_orchestration_publishes_spills_and_ordinary_workbooks_are_unchanged() {
-    // Admission, ingestion and (FORM211-C/D) publication succeed when
-    // enabled; `dynamic_publication` checks the output. Public stays refused.
-    assert!(recalculate_xlsx_bytes_with(&pack(&producer()), Default::default(), ON).is_ok());
-    refused(
-        recalculate_xlsx_bytes(&pack(&producer()), Default::default()),
-        "external links or rich/dynamic cell metadata",
-    );
-    let rows = "<row r=\"1\"><c r=\"A1\"><f>1+1</f><v>9</v></c></row>";
-    let mut p = edit(package("A1", rows, ""), WB_RELS, METADATA_REL, "");
-    p.remove(METADATA);
-    let p = edit(p, TYPES, METADATA_TYPE, "");
-    let bytes = pack(&p);
-    let public = recalculate_xlsx_bytes(&bytes, Default::default()).unwrap();
-    let private = recalculate_xlsx_bytes_with(&bytes, Default::default(), ON).unwrap();
-    assert_eq!(private.bytes, public.bytes);
-    assert_eq!(private.cache_cells_changed, 1);
-    assert_eq!(private.formula_cells, public.formula_cells);
-}
-
-#[test]
-fn non_default_spill_conflict_policy_is_rejected_before_evaluation() {
-    let rows = "<row r=\"1\"><c r=\"A1\"><f>1+1</f><v>9</v></c></row>";
-    let mut p = edit(package("A1", rows, ""), WB_RELS, METADATA_REL, "");
-    p.remove(METADATA);
-    let p = edit(p, TYPES, METADATA_TYPE, "");
-    let bytes = pack(&p);
     let mut preempt = XlsxRecalculateOptions::default();
     preempt.eval_config.spill.conflict_policy = SpillConflictPolicy::Preempt;
     refused(
-        recalculate_xlsx_bytes_with(&bytes, preempt.clone(), ON),
+        recalculate_xlsx_bytes(&bytes, preempt.clone()),
         "spill conflict policy",
     );
     let mut truncate = XlsxRecalculateOptions::default();
     truncate.eval_config.spill.bounds_policy = SpillBoundsPolicy::Truncate;
     refused(
-        recalculate_xlsx_bytes_with(&bytes, truncate, ON),
+        recalculate_xlsx_bytes(&bytes, truncate),
         "spill bounds policy",
     );
-    // Public scalar behavior is unchanged while the switch stays disabled.
-    assert!(recalculate_xlsx_bytes(&bytes, preempt).is_ok());
+    // An ordinary scalar workbook keeps accepting the (unused) policy.
+    let rows = "<row r=\"1\"><c r=\"A1\"><f>1+1</f><v>9</v></c></row>";
+    let mut p = edit(package("A1", rows, ""), WB_RELS, METADATA_REL, "");
+    p.remove(METADATA);
+    let p = edit(p, TYPES, METADATA_TYPE, "");
+    let out = recalculate_xlsx_bytes(&pack(&p), preempt).unwrap();
+    assert_eq!(out.cache_cells_changed, 1);
 }
 
 #[test]
@@ -699,10 +644,10 @@ fn metadata_part_relationship_and_content_type_must_agree() {
         ),
         "content-type disagreement",
     );
-    // Rich data parts remain unsupported even when spill support is enabled.
+    // Rich data parts remain unsupported.
     let mut rich = producer();
     rich.insert("xl/richData/rdrichvalue.xml".into(), "<rv/>".into());
-    rejects(&rich, "rich/dynamic cell metadata");
+    rejects(&rich, "rich value data");
 }
 
 #[test]
