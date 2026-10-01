@@ -553,11 +553,9 @@ impl<R: EvaluationContext> Engine<R> {
                 .map(|cv| {
                     let format = cv.format_id();
                     self.record_derived_format(vertex, format);
-                    crate::engine::result_finalization::finalize_published_calc_result(
-                        cv,
-                        self.config.spill.max_spill_cells,
-                    )
+                    self.materialize_formula_result(vertex, cv)
                 })
+                .or_else(|error| self.fit_formula_error(vertex, error))
         };
         let reads = log.take();
         let dirty = self.freshness_dirty_reads(vertex, &reads);

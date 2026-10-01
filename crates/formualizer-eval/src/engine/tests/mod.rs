@@ -48,6 +48,7 @@ mod column_operations;
 mod debug_vertex_lifecycle;
 mod dynamic_freshness;
 mod dynamic_topo;
+mod fixed_arrays;
 mod lambda_call_arena;
 mod legacy_semantics_pins;
 mod named_ranges;

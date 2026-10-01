@@ -1361,6 +1361,7 @@ pub fn formualizer_eval::engine::eval::Engine<R>::clear_formula_parse_diagnostic
 pub fn formualizer_eval::engine::eval::Engine<R>::clear_staged_formula_text(&mut self, &str, u32, u32) -> core::option::Option<alloc::string::String>
 pub fn formualizer_eval::engine::eval::Engine<R>::clear_staged_formulas_for_sheet(&mut self, &str)
 pub fn formualizer_eval::engine::eval::Engine<R>::declare_dynamic_array_anchor(&mut self, &str, u32, u32) -> core::result::Result<(), formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::eval::Engine<R>::declare_fixed_array_formula(&mut self, &str, u32, u32, u32, u32) -> core::result::Result<(), formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::default_sheet_id(&self) -> formualizer_eval::reference::SheetId
 pub fn formualizer_eval::engine::eval::Engine<R>::default_sheet_name(&self) -> &str
 pub fn formualizer_eval::engine::eval::Engine<R>::define_name(&mut self, &str, formualizer_eval::engine::named_range::NamedDefinition, formualizer_eval::engine::named_range::NameScope) -> core::result::Result<(), formualizer_common::error::ExcelError>
@@ -6008,6 +6009,7 @@ pub fn formualizer_eval::engine::eval::Engine<R>::clear_formula_parse_diagnostic
 pub fn formualizer_eval::engine::eval::Engine<R>::clear_staged_formula_text(&mut self, &str, u32, u32) -> core::option::Option<alloc::string::String>
 pub fn formualizer_eval::engine::eval::Engine<R>::clear_staged_formulas_for_sheet(&mut self, &str)
 pub fn formualizer_eval::engine::eval::Engine<R>::declare_dynamic_array_anchor(&mut self, &str, u32, u32) -> core::result::Result<(), formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::eval::Engine<R>::declare_fixed_array_formula(&mut self, &str, u32, u32, u32, u32) -> core::result::Result<(), formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::default_sheet_id(&self) -> formualizer_eval::reference::SheetId
 pub fn formualizer_eval::engine::eval::Engine<R>::default_sheet_name(&self) -> &str
 pub fn formualizer_eval::engine::eval::Engine<R>::define_name(&mut self, &str, formualizer_eval::engine::named_range::NamedDefinition, formualizer_eval::engine::named_range::NameScope) -> core::result::Result<(), formualizer_common::error::ExcelError>

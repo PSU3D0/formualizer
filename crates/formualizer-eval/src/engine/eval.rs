@@ -13132,6 +13132,82 @@ where
         Ok(())
     }
 
+    /// Declare a legacy array formula with a fixed output rectangle after
+    /// ingestion and before evaluation. Coordinates are one-based. Replacement,
+    /// removal or movement of the formula clears the declaration.
+    /// Single-cell declarations do not register a spill anchor. Requires
+    /// `EvalConfig::family_execution = false` to bypass family memoization.
+    pub fn declare_fixed_array_formula(
+        &mut self,
+        sheet: &str,
+        row: u32,
+        col: u32,
+        rows: u32,
+        cols: u32,
+    ) -> Result<(), ExcelError> {
+        if self.config.family_execution {
+            return Err(ExcelError::new(ExcelErrorKind::Ref)
+                .with_message("Fixed arrays require family_execution = false"));
+        }
+        if row == 0
+            || col == 0
+            || rows == 0
+            || cols == 0
+            || row.checked_add(rows - 1).is_none_or(|r| r > 1_048_576)
+            || col.checked_add(cols - 1).is_none_or(|c| c > 16_384)
+            || u64::from(rows) * u64::from(cols) > u64::from(self.config.spill.max_spill_cells)
+        {
+            return Err(ExcelError::new(ExcelErrorKind::Ref)
+                .with_message("Invalid or over-cap fixed array extent"));
+        }
+        if self.get_staged_formula_text(sheet, row, col).is_some() {
+            return Err(ExcelError::new(ExcelErrorKind::Ref)
+                .with_message("Fixed array formula is still staged; build the graph first"));
+        }
+        let sheet_id = self.graph.sheet_id(sheet).ok_or_else(|| {
+            ExcelError::new(ExcelErrorKind::Ref).with_message("Unknown fixed array sheet")
+        })?;
+        let cell = CellRef::new(sheet_id, Coord::from_excel(row, col, true, true));
+        let vertex = self
+            .graph
+            .cell_vertex_mut(&cell)
+            .filter(|v| self.graph.vertex_has_formula(*v))
+            .ok_or_else(|| {
+                ExcelError::new(ExcelErrorKind::Ref)
+                    .with_message("Fixed array anchor must be a formula cell")
+            })?;
+        if (rows == 1 && cols == 1 && self.graph.fixed_single_arrays.contains(&vertex))
+            || self.graph.fixed_array_shapes.get(&vertex) == Some(&(rows, cols))
+        {
+            return Ok(());
+        }
+        if self.graph.fixed_single_arrays.contains(&vertex)
+            || self.graph.spill_registry_has_anchor(vertex)
+            || self.graph.is_current_declared_dynamic_anchor(vertex)
+        {
+            return Err(ExcelError::new(ExcelErrorKind::Ref)
+                .with_message("Array declaration already exists; replace the formula first"));
+        }
+        if rows == 1 && cols == 1 {
+            self.graph.fixed_single_arrays.insert(vertex);
+        } else {
+            let mut targets = Vec::with_capacity((rows * cols) as usize);
+            for r in 0..rows {
+                for c in 0..cols {
+                    targets.push(self.graph.make_cell_ref(sheet, row + r, col + c));
+                }
+            }
+            self.graph.plan_spill_region(vertex, &targets)?;
+            // Reserve ownership before evaluation, even for Empty members.
+            self.graph
+                .commit_spill_region_atomic_with_fault(vertex, targets, vec![], None)?;
+            self.graph.fixed_array_shapes.insert(vertex, (rows, cols));
+        }
+        self.graph.mark_dirty_many(&[vertex]);
+        self.mark_topology_edited();
+        Ok(())
+    }
+
     #[inline]
     fn normalize_public_cell_read(v: LiteralValue) -> Option<LiteralValue> {
         match v {
@@ -13481,7 +13557,8 @@ where
             return Err(ExcelError::new(formualizer_common::ExcelErrorKind::Ref)
                 .with_message(format!("Vertex not found: {vertex_id:?}")));
         }
-        if self.active_resource_ledger.is_some()
+        if (self.active_resource_ledger.is_some()
+            || self.graph.fixed_array_shapes.contains_key(&vertex_id))
             && matches!(
                 self.graph.get_vertex_kind(vertex_id),
                 VertexKind::FormulaScalar | VertexKind::FormulaArray
@@ -13561,16 +13638,22 @@ where
             Ok(cv) => {
                 let derived_format = cv.format_id();
                 self.record_derived_format(vertex_id, derived_format);
-                let oversized_range = crate::engine::result_finalization::range_spill_error(
-                    &cv,
-                    self.config.spill.max_spill_cells,
-                );
+                let oversized_range = if matches!(cv, crate::traits::CalcValue::Range(_))
+                    && self.graph.fixed_single_arrays.contains(&vertex_id)
+                {
+                    None
+                } else {
+                    crate::engine::result_finalization::range_spill_error(
+                        &cv,
+                        self.config.spill.max_spill_cells,
+                    )
+                };
                 let is_oversized_range = oversized_range.is_some();
                 let result_literal = if let Some(error) = oversized_range {
                     drop(cv);
                     LiteralValue::Error(error)
                 } else {
-                    crate::engine::result_finalization::finalize_formula_result(cv.into_literal())
+                    self.materialize_formula_result(vertex_id, cv)
                 };
                 let output_sheet_name = sheet_name.to_string();
                 self.write_computed_overlay_format_0based(
@@ -16891,11 +16974,9 @@ where
             .map(|cv| {
                 let format = cv.format_id();
                 self.record_derived_format(vertex_id, format);
-                crate::engine::result_finalization::finalize_published_calc_result(
-                    cv,
-                    self.config.spill.max_spill_cells,
-                )
+                self.materialize_formula_result(vertex_id, cv)
             })
+            .or_else(|error| self.fit_formula_error(vertex_id, error))
     }
 
     /// Get access to the shared thread pool for parallel evaluation
@@ -17851,6 +17932,14 @@ where
             .graph
             .get_vertex_id_for_address(&anchor_cell)
             .ok_or_else(no_spill)?;
+        // Policy: the spill operator applies only to dynamic arrays, never
+        // to a legacy fixed-extent formula (including a single-cell one).
+        if self.graph.fixed_single_arrays.contains(&vertex)
+            || self.graph.fixed_array_shapes.contains_key(&vertex)
+        {
+            return Err(ExcelError::new(ExcelErrorKind::Ref)
+                .with_message("Spill reference to a fixed array formula"));
+        }
         let (first, last) = match self.graph.spill_extent_for_anchor(vertex) {
             Some(extent) => extent,
             // FORM211: a declared anchor (source spill identity) holding a
@@ -19404,11 +19493,9 @@ where
                     .map(|cv| {
                         let format = cv.format_id();
                         self.record_derived_format(vertex_id, format);
-                        crate::engine::result_finalization::finalize_published_calc_result(
-                            cv,
-                            self.config.spill.max_spill_cells,
-                        )
+                        self.materialize_formula_result(vertex_id, cv)
                     })
+                    .or_else(|error| self.fit_formula_error(vertex_id, error))
             }
             VertexKind::NamedScalar | VertexKind::NamedArray => {
                 let named_range = self.graph.named_range_by_vertex(vertex_id).ok_or_else(|| {

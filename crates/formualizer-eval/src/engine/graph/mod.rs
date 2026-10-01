@@ -633,6 +633,9 @@ pub struct DependencyGraph {
     // `spill_cell_to_anchor` is keyed by `CellRef` and uses the tuned hasher
     // for the same reason as `cell_to_vertex`.
     spill_anchor_to_cells: FxHashMap<VertexId, Vec<CellRef>>,
+    /// Single-cell fixed arrays have no spill role or registry entry.
+    pub(crate) fixed_single_arrays: FxHashSet<VertexId>,
+    pub(crate) fixed_array_shapes: FxHashMap<VertexId, (u32, u32)>,
     spill_cell_to_anchor: std::collections::HashMap<CellRef, VertexId, CoordBuildHasher>,
     spill_cells_by_sheet: FxHashMap<SheetId, std::collections::BTreeMap<(u32, u32), VertexId>>,
 
@@ -1919,6 +1922,8 @@ impl DependencyGraph {
             #[cfg(any(test, feature = "legacy_oracle"))]
             pk_order: None,
             spill_anchor_to_cells: FxHashMap::default(),
+            fixed_single_arrays: FxHashSet::default(),
+            fixed_array_shapes: FxHashMap::default(),
             spill_cell_to_anchor: std::collections::HashMap::with_hasher(CoordBuildHasher),
             spill_cells_by_sheet: FxHashMap::default(),
             declared_dynamic_anchors: FxHashMap::default(),
@@ -4958,6 +4963,12 @@ impl DependencyGraph {
     /// moved. Free when nothing is declared.
     #[inline]
     pub(crate) fn forget_declared_dynamic_anchor(&mut self, vertex: VertexId) {
+        if !self.fixed_single_arrays.is_empty() {
+            self.fixed_single_arrays.remove(&vertex);
+        }
+        if !self.fixed_array_shapes.is_empty() {
+            self.fixed_array_shapes.remove(&vertex);
+        }
         if !self.declared_dynamic_anchors.is_empty() {
             self.declared_dynamic_anchors.remove(&vertex);
         }
