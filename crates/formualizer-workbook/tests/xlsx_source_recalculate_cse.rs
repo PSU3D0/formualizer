@@ -46,6 +46,23 @@ fn fixed_extent_inserts_missing_members_and_preserves_source() {
 }
 
 #[test]
+fn array_if_reduction_and_spill_roundtrip() {
+    let bytes = pack(&without_metadata(package(
+        "A1:C3",
+        "<row r=\"1\"><c r=\"A1\"><v>1</v></c><c r=\"B1\"><f t=\"array\" ref=\"B1\">SUM(IF(A1:A3&gt;0,A1:A3))</f><v>99</v></c><c r=\"C1\"><f>IF(A1:A3&gt;1,A1:A3,0)</f><v>99</v></c></row><row r=\"2\"><c r=\"A2\"><v>2</v></c></row><row r=\"3\"><c r=\"A3\"><v>3</v></c></row>",
+        "",
+    )));
+    let out = recalculate_xlsx_bytes(&bytes, Default::default()).unwrap();
+    let sheet = parse_sheet(&sheet_xml(&out.bytes));
+    for (cell, expected) in [("B1", "6"), ("C1", "0"), ("C2", "2"), ("C3", "3")] {
+        assert_eq!(sheet.cell(cell).v.as_deref(), Some(expected));
+    }
+    assert_eq!(out.formula_cells, 2);
+    let again = recalculate_xlsx_bytes(&out.bytes, Default::default()).unwrap();
+    assert_eq!(again.bytes, out.bytes);
+}
+
+#[test]
 fn single_cell_fixed_array_never_spills() {
     let out =
         recalculate_xlsx_bytes(&source("SEQUENCE(10)", "B1", ""), Default::default()).unwrap();

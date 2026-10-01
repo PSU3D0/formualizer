@@ -54,6 +54,38 @@ def test_openpyxl_resave_becomes_fixed_extent(tmp_path, size, backend):
         assert "cm" not in cell.attrib
 
 
+@pytest.mark.parametrize("backend", ["python", "cli"])
+def test_array_if_cse_and_dynamic_roundtrip(tmp_path, backend):
+    openpyxl = pytest.importorskip("openpyxl")
+    from openpyxl.worksheet.formula import ArrayFormula
+
+    cli = os.environ.get("FORMUALIZER_CLI")
+    if backend == "cli" and not cli:
+        pytest.skip("set FORMUALIZER_CLI to test the candidate executable")
+    path = tmp_path / "array-if.xlsx"
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    for row in range(1, 4):
+        sheet.cell(row, 1, row)
+    sheet["B1"] = ArrayFormula(ref="B1", text="=SUM(IF(A1:A3>0,A1:A3))")
+    sheet["C1"] = "=IF(A1:A3>1,A1:A3,0)"
+    workbook.save(path)
+    for _ in range(2):
+        if backend == "python":
+            fz.recalculate_xlsx_file(str(path))
+        else:
+            result = subprocess.run([cli, "recalc", str(path)], capture_output=True)
+            assert result.returncode == 0, result.stderr.decode()
+        cached = openpyxl.load_workbook(path, data_only=True)
+        assert cached.active["B1"].value == 6
+        assert [cached.active[f"C{row}"].value for row in range(1, 4)] == [0, 2, 3]
+        cached.close()
+    formulas = openpyxl.load_workbook(path)
+    assert formulas.active["B1"].value.ref == "B1"
+    assert formulas.active["C1"].value.ref == "C1:C3"
+    formulas.close()
+
+
 def fixture_xlsx(*, formula: bool = True) -> bytes:
     worksheet = (
         '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'

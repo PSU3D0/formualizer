@@ -65,7 +65,7 @@ The writer keeps the original `t="array"` and `ref`, without adding metadata or 
 
 When openpyxl re-saves a published dynamic spill, it can discard XLDAPR metadata while retaining the array formula. A subsequent recalc treats this as a fixed-size CSE array, not a dynamic spill. Recalc must still be the last writing step to retain caches. These are explicit policies, not claims of Excel equivalence.
 
-Existing function limitations still apply: array-condition `IF`, including `SUM(IF(A1:A3>0,A1:A3))`, currently returns `#VALUE!` for both ordinary and CSE formulas. Fixed-extent support does not add elementwise `IF` semantics.
+Array-condition `IF`, including `SUM(IF(A1:A3>0,A1:A3))`, selects branches elementwise in both ordinary and CSE formulas. Singleton axes broadcast; incompatible shapes return `#VALUE!` rather than padding with `#N/A`. Each needed branch evaluates once; unused branches are not evaluated. Scalar conditions retain reference selection and short-circuit behavior.
 
 For CSE-containing source recalculation, family execution is disabled for the whole engine run to avoid declaration-insensitive family memoization. Other workbooks retain the caller's configuration. The Rust declaration API requires `family_execution = false`.
 

@@ -15,6 +15,7 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Fixed
 
+- Applied `IF` elementwise to array and range conditions with singleton-axis broadcasting, lazy branch evaluation and per-element errors. Scalar conditions retain short-circuit reference selection.
 - Preserved calculation names during Calamine import, including supported constants, grounded formulas and sheet-local shadowing; refused unsupported or cyclic definitions instead of publishing metadata-loss `#NAME?` results.
 
 ### Known limitations

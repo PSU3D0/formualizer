@@ -105,5 +105,7 @@ untouched unless the output is that same path. Symlink destinations are refused.
   without growth/shrink or new metadata. Scalars/errors broadcast, short
   results pad with `#N/A`, excess results truncate, and Empty members become
   zero. `A1#` readers of these anchors become `#REF!`; range readers work.
+- Array-condition `IF` works elementwise, including `SUM(IF(...))` in CSE
+  arrays. Singleton axes broadcast; incompatible shapes return `#VALUE!`.
 - Do not run concurrent writers on the same file: atomic writes are not CAS.
 - Do not claim full Excel equivalence or silently accept a refusal.
