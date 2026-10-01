@@ -6,6 +6,8 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Added
 
+- Added the native `formualizer recalc` CLI with source-preserving XLSX cache updates, JSON outcomes, strict refusals and read-only freshness checks; prepared Python wheel, npm native launcher and Rust crate/release-binary distribution channels (publication pending).
+- Added an agent edit/recalc/inspect workflow guide and a portable `formualizer-recalc` skill for use with existing workbook editors.
 - Added current-spill references through `A1#` and `_xlfn.ANCHORARRAY(A1)` in Rust, Python and WASM evaluation.
 - Added source-preserving XLSX writeback for new multi-cell spills and validated existing XLDAPR dynamic arrays, including growth, shrink, collapse and blocked/re-expanded anchors. Source-declared child caches are recalculated, while formula text, styled obsolete cell shells and unrelated package content are retained.
 

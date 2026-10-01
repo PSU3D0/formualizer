@@ -13,6 +13,13 @@ formualizer recalc <INPUT> [-o|--output <PATH>] [--check] [--json] [--max-errors
 
 Exit codes: 0 success, 1 error, 2 refused (unsupported workbook feature, nothing written), 3 `--check` found stale caches, 64 usage error, 130 interrupted. See the [CLI reference](https://github.com/psu3d0/formualizer/blob/main/docs/cli.md).
 
+## For agents
+
+Keep your workbook editor: save, then run `npx formualizer-cli recalc file.xlsx --json`.
+Branch on exit code/status, inspect `errors`, fix and repeat. Exit 2 means refused: do not retry the same unsupported workbook or claim recalculation.
+Recalc must be the last writing step; never run concurrent writers on the same file.
+CLI distribution is planned, not yet published. See the [agent guide](https://github.com/psu3d0/formualizer/blob/main/docs/agents.md) and [portable skill](https://github.com/psu3d0/formualizer/blob/main/skills/formualizer-recalc/SKILL.md).
+
 ## How it installs
 
 This package contains only a small launcher. The binary comes from one optional dependency selected by npm through its `os`, `cpu` and `libc` fields:

@@ -43,6 +43,13 @@ The native CLI updates formula caches in place, preserving workbook structure.
 See [CLI usage and exit codes](https://github.com/PSU3D0/formualizer/blob/main/docs/cli.md).
 The CLI is not available in Pyodide/WebAssembly.
 
+## For agents
+
+After saving edits with openpyxl, run `python -m formualizer recalc file.xlsx --json` with a CLI-enabled native wheel.
+Branch on exit code/status and inspect `errors`; fix inputs/formulas and repeat. Exit 2 is a refusal: do not retry the same unsupported workbook or claim recalculation.
+Read caches with `data_only=True`, but do not save again after recalc: openpyxl drops formula caches.
+CLI distribution is planned, not yet published. See the [agent workflow guide](../../docs/agents.md) and [portable skill](../../skills/formualizer-recalc/SKILL.md).
+
 ## Documentation
 
 Full documentation at **[formualizer.dev](https://www.formualizer.dev/docs)**:

@@ -25,6 +25,13 @@ Calculating a spreadsheet from code usually means automating an office suite: Li
 - **No compromise on speed.** Copied formulas compute as families in one pass over Arrow columns, lookups index their table once, and only what changed recalculates. The numbers are [below](#how-fast).
 - **Excel-compatible.** 400+ functions, dynamic arrays, `LET` and `LAMBDA`, with edge cases checked against Excel.
 
+## For agents
+
+Already editing `.xlsx` files with openpyxl or another tool? Keep that editor, then run `formualizer recalc file.xlsx --json` to fill supported formula caches.
+Branch on the exit code/status, inspect `errors`, fix inputs or formulas and repeat; exit 2 means refused, not recalculated.
+Recalc must be the last writing step: saving with openpyxl afterwards drops caches again.
+The CLI channels are planned, not yet published; see the [agent guide and install options](docs/agents.md) and [portable skill](skills/formualizer-recalc/SKILL.md).
+
 ## How fast?
 
 Load an `.xlsx` and calculate every formula in it, from a cold start. The comparison is headless LibreOffice Calc 24.2 with threaded calculation, the usual open-source way to do this, on the same 24-core Linux machine, median of 3 runs:
