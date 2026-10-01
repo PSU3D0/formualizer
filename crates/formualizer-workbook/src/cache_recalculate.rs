@@ -1,8 +1,10 @@
 //! Strict cache-only XLSX recalculation, without a rich document model.
 //! Unsupported package/formula cases fail before any output is published.
 mod dynamic_metadata;
+mod geometry;
 mod ingest_view;
 mod package;
+mod result_projection;
 mod sheet;
 #[cfg(test)]
 mod tests;
@@ -12,7 +14,7 @@ use super::recalculate::{DEFAULT_ERROR_LOCATION_LIMIT, RecalculateStatus, Recalc
 use crate::{CalamineAdapter, IoError, SpreadsheetReader, workbook::WBResolver};
 use formualizer_common::{CellAddress, DateSystem, LiteralValue};
 use formualizer_eval::engine::ingest::EngineLoadStream;
-use formualizer_eval::engine::inspect::{SnapshotOptions, Staleness};
+use formualizer_eval::engine::inspect::{SnapshotOptions, SpillRole, Staleness};
 use formualizer_eval::engine::{
     CancelToken, Engine, EvalConfig, FormulaParsePolicy, SpillBoundsPolicy, SpillConfig,
     SpillConflictPolicy,
@@ -354,6 +356,8 @@ struct SheetPlan {
     cells: Vec<sheet::Cell>,
     index: Option<sheet::SourceIndex>,
     ownership: Option<dynamic_metadata::SheetOwnership>,
+    /// Logical `(max_row, max_col)` counted toward the workbook area bound.
+    bounds: (u32, u32),
 }
 struct SourceAdmission<'a> {
     archive: package::Archive<'a>,
@@ -407,6 +411,7 @@ fn admit_source<'a>(
             cells: scan.cells,
             index: scan.index,
             ownership,
+            bounds: scan.bounds,
         });
     }
     Ok(SourceAdmission {
@@ -628,43 +633,189 @@ pub(crate) fn recalculate_xlsx_bytes_with(
     }
     let admission = admit_source(bytes, &options, spill)?;
     let formula_count = admission.formula_count;
-    let empty_result = |summary| XlsxRecalculateResult {
-        bytes: bytes.to_vec(),
-        summary,
-        formula_cells: formula_count,
-        cache_cells_changed: 0,
-        worksheet_parts_changed: 0,
-    };
     if formula_count == 0 {
         checkpoint(&options.cancel)?;
         if bytes.len() > options.limits.max_output_bytes {
             return Err(unsupported("output byte limit", "XLSX package"));
         }
-        return Ok(empty_result(RecalculateSummary::default()));
+        return Ok(unchanged(
+            bytes,
+            formula_count,
+            RecalculateSummary::default(),
+        ));
     }
+    let mut ingested = ingest_source(bytes, admission, &options)?;
+    evaluate(&mut ingested.engine, &options)?;
+    publish(bytes, ingested, formula_count, &options, spill)
+}
+fn unchanged(
+    bytes: &[u8],
+    formula_count: usize,
+    summary: RecalculateSummary,
+) -> XlsxRecalculateResult {
+    XlsxRecalculateResult {
+        bytes: bytes.to_vec(),
+        summary,
+        formula_cells: formula_count,
+        cache_cells_changed: 0,
+        worksheet_parts_changed: 0,
+    }
+}
+/// The validated value of one source formula, exactly as the scalar writer
+/// requires it: present, 1x1 arrays coerced, ingested as a formula (or a
+/// coerced parse error) and current.
+fn validated_result(
+    value: Option<LiteralValue>,
+    has_formula: bool,
+    staleness: Staleness,
+    coerced: bool,
+    sheet: &str,
+) -> Result<LiteralValue, IoError> {
+    let mut value = value.ok_or_else(|| unsupported("absent formula result", sheet))?;
+    if matches!(&value,LiteralValue::Array(rows) if rows.len()==1 && rows[0].len()==1) {
+        value = value
+            .coerce_to_single_value()
+            .map_err(|_| unsupported("non-scalar result", "cache-only writer"))?;
+    }
+    if !(has_formula || (matches!(value, LiteralValue::Error(_)) && coerced)) {
+        return Err(unsupported("source formula was not ingested", sheet));
+    }
+    if staleness != Staleness::Current {
+        return Err(unsupported("formula result is not current", sheet));
+    }
+    Ok(value)
+}
+/// Count one evaluated source formula (anchors included) in the summary.
+fn record_result(
+    summary: &mut RecalculateSummary,
+    sheet: &str,
+    address: &str,
+    value: &LiteralValue,
+    limit: usize,
+) {
+    let stats = summary.sheets.entry(sheet.to_owned()).or_default();
+    stats.evaluated += 1;
+    summary.evaluated += 1;
+    if let LiteralValue::Error(error) = value {
+        summary.errors += 1;
+        stats.errors += 1;
+        let errors = summary
+            .error_summary
+            .entry(error.kind.to_string())
+            .or_default();
+        errors.count += 1;
+        if errors.locations.len() < limit {
+            errors.locations.push(format!("{sheet}!{address}"));
+        } else {
+            errors.locations_truncated += 1;
+        }
+    }
+}
+/// Worksheet replacements produced by a publication path.
+struct Publication {
+    summary: RecalculateSummary,
+    changed: usize,
+    replacements: BTreeMap<String, Vec<u8>>,
+}
+/// Apply one worksheet's patches within the worksheet and expanded-output
+/// bounds.
+fn replace_sheet(
+    publication: &mut Publication,
+    expanded: &mut usize,
+    sheet: &package::Sheet,
+    data: &[u8],
+    patches: Vec<Patch>,
+    options: &XlsxRecalculateOptions,
+) -> Result<(), IoError> {
+    if patches.is_empty() {
+        return Ok(());
+    }
+    let patched = apply_patches(data, patches, options.limits.max_worksheet_bytes)?;
+    *expanded = expanded
+        .checked_sub(data.len())
+        .and_then(|n| n.checked_add(patched.len()))
+        .ok_or_else(|| unsupported("expanded output overflow", "workbook"))?;
+    if *expanded > options.limits.max_expanded_bytes {
+        return Err(unsupported("expanded output byte limit", "workbook"));
+    }
+    publication.replacements.insert(sheet.part.clone(), patched);
+    Ok(())
+}
+/// Validate every evaluated result, build the worksheet edits and write the
+/// package. Nothing is published before every check passed.
+fn publish(
+    bytes: &[u8],
+    ingested: Ingested<'_>,
+    formula_count: usize,
+    options: &XlsxRecalculateOptions,
+    spill: SpillSupport,
+) -> Result<XlsxRecalculateResult, IoError> {
     let Ingested {
         mut archive,
         sheets,
         plans,
-        mut engine,
+        engine,
         anchors,
-    } = ingest_source(bytes, admission, &options)?;
-    evaluate(&mut engine, &options)?;
+    } = ingested;
     let coerced: HashSet<_> = engine
         .formula_parse_diagnostics()
         .iter()
         .filter(|d| d.policy == FormulaParsePolicy::CoerceToError)
         .map(|d| (d.sheet.clone(), d.row, d.col))
         .collect();
-    let mut summary = RecalculateSummary::default();
-    let mut changed = 0usize;
-    let mut replacements = BTreeMap::new();
     let mut expanded = usize::try_from(
         archive
             .decompressed_size()
             .ok_or_else(|| unsupported("ZIP expanded-size overflow", "workbook"))?,
     )
     .map_err(|_| unsupported("ZIP expanded-size overflow", "workbook"))?;
+    let Publication {
+        mut summary,
+        changed,
+        replacements,
+    } = if spill.enabled {
+        spill_publication(&engine, &sheets, &plans, &coerced, &mut expanded, options)?
+    } else {
+        debug_assert!(!anchors);
+        scalar_publication(&engine, &sheets, plans, &coerced, &mut expanded, options)?
+    };
+    summary.status = if summary.errors == 0 {
+        RecalculateStatus::Success
+    } else {
+        RecalculateStatus::ErrorsFound
+    };
+    checkpoint(&options.cancel)?;
+    if replacements.is_empty() {
+        if bytes.len() > options.limits.max_output_bytes {
+            return Err(unsupported("output byte limit", "XLSX package"));
+        }
+        return Ok(unchanged(bytes, formula_count, summary));
+    }
+    let output = package::rewrite(bytes, &mut archive, &replacements, options)?;
+    checkpoint(&options.cancel)?;
+    Ok(XlsxRecalculateResult {
+        bytes: output,
+        summary,
+        formula_cells: formula_count,
+        cache_cells_changed: changed,
+        worksheet_parts_changed: replacements.len(),
+    })
+}
+/// The public scalar writer: every formula result is one scalar cache, and
+/// any materialized multi-cell spill is refused.
+fn scalar_publication(
+    engine: &Engine<WBResolver>,
+    sheets: &[package::Sheet],
+    plans: Vec<SheetPlan>,
+    coerced: &HashSet<(String, u32, u32)>,
+    expanded: &mut usize,
+    options: &XlsxRecalculateOptions,
+) -> Result<Publication, IoError> {
+    let mut publication = Publication {
+        summary: RecalculateSummary::default(),
+        changed: 0,
+        replacements: BTreeMap::new(),
+    };
     for (sheet, plan) in sheets.iter().zip(plans) {
         let SheetPlan { data, cells, .. } = plan;
         let mut patches = Vec::new();
@@ -675,7 +826,6 @@ pub(crate) fn recalculate_xlsx_bytes_with(
             let snapshot = engine
                 .inspect_cell_result(&address)
                 .map_err(|e| IoError::from_backend("xlsx-inspect", e))?;
-            use formualizer_eval::engine::inspect::SpillRole;
             if snapshot.spill.as_ref().is_some_and(|spill| match spill {
                 SpillRole::Anchor { extent } => {
                     extent.start_row != extent.end_row || extent.start_col != extent.end_col
@@ -688,91 +838,228 @@ pub(crate) fn recalculate_xlsx_bytes_with(
                     &sheet.name,
                 ));
             }
-            let mut value = snapshot
-                .value
-                .ok_or_else(|| unsupported("absent formula result", &sheet.name))?;
-            if matches!(&value,LiteralValue::Array(rows) if rows.len()==1 && rows[0].len()==1) {
-                value = value
-                    .coerce_to_single_value()
-                    .map_err(|_| unsupported("non-scalar result", "cache-only writer"))?;
-            }
-            if !(snapshot.has_formula
-                || (matches!(value, LiteralValue::Error(_))
-                    && coerced.contains(&(sheet.name.clone(), cell.row, cell.col))))
-            {
-                return Err(unsupported("source formula was not ingested", &sheet.name));
-            }
-            if snapshot.staleness != Staleness::Current {
-                return Err(unsupported("formula result is not current", &sheet.name));
-            }
-            let stats = summary.sheets.entry(sheet.name.clone()).or_default();
-            stats.evaluated += 1;
-            summary.evaluated += 1;
-            if let LiteralValue::Error(error) = &value {
-                summary.errors += 1;
-                stats.errors += 1;
-                let errors = summary
-                    .error_summary
-                    .entry(error.kind.to_string())
-                    .or_default();
-                errors.count += 1;
-                if errors.locations.len() < options.error_location_limit {
-                    errors
-                        .locations
-                        .push(format!("{}!{}", sheet.name, cell.address));
-                } else {
-                    errors.locations_truncated += 1;
-                }
-            }
+            let value = validated_result(
+                snapshot.value,
+                snapshot.has_formula,
+                snapshot.staleness,
+                coerced.contains(&(sheet.name.clone(), cell.row, cell.col)),
+                &sheet.name,
+            )?;
+            record_result(
+                &mut publication.summary,
+                &sheet.name,
+                &cell.address,
+                &value,
+                options.error_location_limit,
+            );
             let cache = Cache::from_value(value, engine.config.date_system)?;
             if !cache.matches(&cell) {
-                changed += 1;
+                publication.changed += 1;
                 cache_patches(&data, &cell, &cache, &mut patches);
             }
         }
-        if !patches.is_empty() {
-            let patched = apply_patches(&data, patches, options.limits.max_worksheet_bytes)?;
-            expanded = expanded
-                .checked_sub(data.len())
-                .and_then(|n| n.checked_add(patched.len()))
-                .ok_or_else(|| unsupported("expanded output overflow", "workbook"))?;
-            if expanded > options.limits.max_expanded_bytes {
-                return Err(unsupported("expanded output byte limit", "workbook"));
-            }
-            replacements.insert(sheet.part.clone(), patched);
-        }
+        replace_sheet(&mut publication, expanded, sheet, &data, patches, options)?;
     }
-    if anchors {
-        // Dynamic-array projection, worksheet geometry and metadata
-        // publication are not implemented yet (FORM211-C/D/E). A run whose
-        // spills all collapsed to scalars must not publish stale children
-        // or extents either.
+    Ok(publication)
+}
+/// The metadata packet (FORM211-E) has not landed: a new XLDAPR binding
+/// cannot be written yet. Refused after the geometry plan is built.
+const BINDING_PLACEHOLDER: &str =
+    "dynamic array metadata binding is not implemented (FORM211-E, P4)";
+/// Spill-aware publication (private switch only). New XLDAPR bindings are
+/// not available until the metadata packet, so a plan needing one is
+/// refused after it was built and before any output.
+fn spill_publication(
+    engine: &Engine<WBResolver>,
+    sheets: &[package::Sheet],
+    plans: &[SheetPlan],
+    coerced: &HashSet<(String, u32, u32)>,
+    expanded: &mut usize,
+    options: &XlsxRecalculateOptions,
+) -> Result<Publication, IoError> {
+    let planned = plan_spill_publication(engine, sheets, plans, coerced, options, &mut |_, _| {
+        Ok(None)
+    })?;
+    if !planned.unbound.is_empty() {
         return Err(unsupported(
-            "dynamic spill publication is not implemented",
+            BINDING_PLACEHOLDER,
             "source-preserving spill recalculation",
         ));
     }
-    summary.status = if summary.errors == 0 {
-        RecalculateStatus::Success
-    } else {
-        RecalculateStatus::ErrorsFound
+    let mut publication = Publication {
+        summary: planned.summary,
+        changed: planned.changed,
+        replacements: BTreeMap::new(),
     };
-    checkpoint(&options.cancel)?;
-    if replacements.is_empty() {
-        if bytes.len() > options.limits.max_output_bytes {
-            return Err(unsupported("output byte limit", "XLSX package"));
-        }
-        return Ok(empty_result(summary));
+    for ((sheet, plan), patches) in sheets.iter().zip(plans).zip(planned.patches) {
+        checkpoint(&options.cancel)?;
+        replace_sheet(
+            &mut publication,
+            expanded,
+            sheet,
+            &plan.data,
+            patches,
+            options,
+        )?;
     }
-    let output = package::rewrite(bytes, &mut archive, &replacements, &options)?;
-    checkpoint(&options.cancel)?;
-    Ok(XlsxRecalculateResult {
-        bytes: output,
-        summary,
-        formula_cells: formula_count,
-        cache_cells_changed: changed,
-        worksheet_parts_changed: replacements.len(),
-    })
+    Ok(publication)
+}
+/// [`geometry::BindingResolver`] with the worksheet name: the interface the
+/// metadata packet (FORM211-E) implements.
+type SheetBindingResolver<'a> =
+    dyn FnMut(&str, geometry::BindingRequest) -> Result<Option<u32>, IoError> + 'a;
+/// Validated projection and geometry of every worksheet, not yet applied.
+struct SpillPlan {
+    summary: RecalculateSummary,
+    changed: usize,
+    /// Ordered patches per worksheet, parallel to the sheet plans.
+    patches: Vec<Vec<Patch>>,
+    /// `(sheet, request)` for every binding `bind` could not resolve.
+    unbound: Vec<(String, geometry::BindingRequest)>,
+}
+/// Project every source formula (nothing materialized), check the spill
+/// bounds, then build one ordered geometry plan per worksheet, reading each
+/// member at the final engine state. `bind` resolves a requested XLDAPR
+/// binding to a one-based `cm` (the metadata packet's interface).
+fn plan_spill_publication(
+    engine: &Engine<WBResolver>,
+    sheets: &[package::Sheet],
+    plans: &[SheetPlan],
+    coerced: &HashSet<(String, u32, u32)>,
+    options: &XlsxRecalculateOptions,
+    bind: &mut SheetBindingResolver<'_>,
+) -> Result<SpillPlan, IoError> {
+    let date_system = engine.config.date_system;
+    let mut publication = SpillPlan {
+        summary: RecalculateSummary::default(),
+        changed: 0,
+        patches: Vec::with_capacity(plans.len()),
+        unbound: Vec::new(),
+    };
+    // 1. Project every source formula; nothing is materialized yet.
+    let mut projected = Vec::with_capacity(plans.len());
+    for (sheet, plan) in sheets.iter().zip(plans) {
+        let mut scalars = Vec::new();
+        let mut anchors = Vec::new();
+        for (i, cell) in plan.cells.iter().enumerate() {
+            checkpoint(&options.cancel)?;
+            let prior = plan
+                .ownership
+                .as_ref()
+                .and_then(|o| o.anchors.get(&(cell.row, cell.col)))
+                .filter(|a| a.formula == i);
+            let summary = &mut publication.summary;
+            let projection = result_projection::project_formula(
+                engine,
+                &sheet.name,
+                cell,
+                i,
+                prior,
+                coerced.contains(&(sheet.name.clone(), cell.row, cell.col)),
+                date_system,
+                &mut |value| {
+                    record_result(
+                        summary,
+                        &sheet.name,
+                        &cell.address,
+                        value,
+                        options.error_location_limit,
+                    )
+                },
+            )?;
+            match projection {
+                result_projection::Projection::Scalar(cache) => scalars.push((i, cache)),
+                result_projection::Projection::Anchor(anchor) => {
+                    use result_projection::Shape;
+                    let spill = match anchor.shape {
+                        Shape::Spill(extent) => Some(extent),
+                        Shape::Collapsed | Shape::Blocked | Shape::Error => None,
+                    };
+                    // A source record keeps describing the anchor unless it
+                    // is a collapsed record and the result spills again.
+                    let binding = match anchor.prior {
+                        Some(prior) if !(prior.binding.collapsed && spill.is_some()) => {
+                            geometry::Binding::Keep
+                        }
+                        _ => geometry::Binding::NeedsXldapr,
+                    };
+                    anchors.push(geometry::AnchorEdit {
+                        row: anchor.row,
+                        col: anchor.col,
+                        formula: anchor.formula,
+                        spill,
+                        cache: anchor.cache,
+                        binding,
+                    });
+                }
+            }
+        }
+        projected.push((scalars, anchors));
+    }
+    // 2. Bounds before any member value is read: width, merges, generated
+    //    serialized cells and the logical area, within the existing limits.
+    let mut serialized = 0u64;
+    let mut inserted = 0u64;
+    let mut logical = 0u64;
+    for (plan, (_, anchors)) in plans.iter().zip(&projected) {
+        let index = plan
+            .index
+            .as_ref()
+            .ok_or_else(|| unsupported("spill geometry without a source index", "worksheet"))?;
+        let preflight = geometry::preflight(index, anchors, options)?;
+        serialized = serialized.saturating_add(index.cells.len() as u64);
+        inserted = inserted.saturating_add(preflight.inserted);
+        let rows = plan.bounds.0.max(preflight.bounds.0);
+        let cols = plan.bounds.1.max(preflight.bounds.1);
+        logical = logical.saturating_add(u64::from(rows) * u64::from(cols));
+    }
+    if serialized.saturating_add(inserted) > options.limits.max_cells as u64 {
+        return Err(unsupported("generated spill cell limit", "workbook"));
+    }
+    if logical > options.limits.max_cells as u64 {
+        return Err(unsupported("workbook logical cell limit", "workbook"));
+    }
+    // 3. One ordered geometry plan per worksheet.
+    for ((sheet, plan), (scalars, anchors)) in sheets.iter().zip(plans).zip(projected) {
+        let mut patches = Vec::new();
+        for (i, cache) in scalars {
+            checkpoint(&options.cancel)?;
+            let cell = &plan.cells[i];
+            if !cache.matches(cell) {
+                publication.changed += 1;
+                cache_patches(&plan.data, cell, &cache, &mut patches);
+            }
+        }
+        let edits = geometry::plan(
+            plan,
+            &anchors,
+            &mut |anchor, row, col| {
+                result_projection::member(
+                    engine,
+                    &sheet.name,
+                    (anchor.row, anchor.col),
+                    row,
+                    col,
+                    date_system,
+                )
+            },
+            &mut |request| bind(&sheet.name, request),
+            &options.cancel,
+        )?;
+        publication.changed += edits.caches_changed;
+        publication.unbound.extend(
+            edits
+                .unbound
+                .into_iter()
+                .map(|request| (sheet.name.clone(), request)),
+        );
+        patches.extend(edits.patches);
+        // Scalar and geometry edits touch disjoint cells; merging them
+        // refuses any equal-offset insertion conflict or overlap.
+        ingest_view::coalesce(&mut patches)?;
+        publication.patches.push(patches);
+    }
+    Ok(publication)
 }
 
 /// Native bounded snapshot + same-directory temporary + atomic replace. This

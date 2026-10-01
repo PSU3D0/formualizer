@@ -381,11 +381,13 @@ fn disabled_switch_keeps_every_public_refusal() {
 }
 
 #[test]
-fn enabled_orchestration_refuses_spill_publication_and_ordinary_workbooks_are_unchanged() {
-    // Admission and ingestion succeed; publishing the multi-cell spill does not.
+fn enabled_orchestration_publishes_spills_and_ordinary_workbooks_are_unchanged() {
+    // Admission, ingestion and (FORM211-C/D) publication succeed when
+    // enabled; `dynamic_publication` checks the output. Public stays refused.
+    assert!(recalculate_xlsx_bytes_with(&pack(&producer()), Default::default(), ON).is_ok());
     refused(
-        recalculate_xlsx_bytes_with(&pack(&producer()), Default::default(), ON),
-        "materialized multi-cell dynamic spill",
+        recalculate_xlsx_bytes(&pack(&producer()), Default::default()),
+        "external links or rich/dynamic cell metadata",
     );
     let rows = "<row r=\"1\"><c r=\"A1\"><f>1+1</f><v>9</v></c></row>";
     let mut p = edit(package("A1", rows, ""), WB_RELS, METADATA_REL, "");

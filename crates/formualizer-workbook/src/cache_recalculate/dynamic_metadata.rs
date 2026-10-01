@@ -57,9 +57,10 @@ impl DynamicMetadata {
 }
 /// A source-declared dynamic-array anchor and its prior footprint.
 #[derive(Debug, Clone, Copy)]
-#[allow(dead_code)] // consumed by the ingestion/geometry packets
 pub(super) struct DynamicAnchor {
+    #[allow(dead_code)] // the map key is authoritative; kept for diagnostics
     pub row: u32,
+    #[allow(dead_code)] // the map key is authoritative; kept for diagnostics
     pub col: u32,
     /// Index into the sheet scan's formula cells.
     pub formula: usize,
@@ -76,7 +77,6 @@ pub(super) struct SheetOwnership {
     /// Child cell -> owning anchor.
     pub children: BTreeMap<(u32, u32), (u32, u32)>,
 }
-#[allow(dead_code)]
 impl SheetOwnership {
     pub fn owner_of(&self, row: u32, col: u32) -> Option<(u32, u32)> {
         self.children.get(&(row, col)).copied()

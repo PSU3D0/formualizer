@@ -21,7 +21,6 @@ impl SourceRect {
             && col >= self.first_col
             && col <= self.last_col
     }
-    #[allow(dead_code)] // merge/extent obstruction checks in the geometry packet
     pub fn intersects(self, other: Self) -> bool {
         self.first_row <= other.last_row
             && other.first_row <= self.last_row
@@ -78,7 +77,6 @@ pub(super) struct Cell {
     /// `cm="…"` attribute span on the cell start tag.
     pub cm_span: Option<Range<usize>>,
     /// `<f …>` start tag (or whole empty element) span.
-    #[allow(dead_code)] // edited by the ingestion/geometry packets
     pub formula_open: Range<usize>,
     /// `t="…"` attribute span on the formula start tag.
     pub formula_kind_span: Option<Range<usize>>,
@@ -89,7 +87,6 @@ pub(super) struct Cell {
 }
 /// One serialized worksheet row (spill support only).
 #[derive(Debug)]
-#[allow(dead_code)] // consumed by the geometry packet
 pub(super) struct RowEntry {
     pub row: u32,
     /// Start tag through end tag, or the whole self-closing element.
@@ -104,7 +101,6 @@ pub(super) struct RowEntry {
 }
 /// One serialized cell, formula or not (spill support only).
 #[derive(Debug)]
-#[allow(dead_code)] // consumed by the ingestion/geometry packets
 pub(super) struct IndexedCell {
     pub row: u32,
     pub col: u32,
@@ -114,6 +110,7 @@ pub(super) struct IndexedCell {
     pub empty: bool,
     pub kind: Option<String>,
     pub kind_span: Option<Range<usize>>,
+    #[allow(dead_code)] // `cm` outside anchors is refused at scan time
     pub cm: Option<u32>,
     /// Whole `<v>` element span.
     pub value: Option<Range<usize>>,
@@ -127,7 +124,6 @@ pub(super) struct IndexedCell {
 }
 /// Bounded source geometry of one worksheet (spill support only).
 #[derive(Debug)]
-#[allow(dead_code)] // consumed by the geometry packet
 pub(super) struct SourceIndex {
     /// Declared dimension and the span of its `ref="…"` attribute.
     pub dimension: Option<(SourceRect, Range<usize>)>,
@@ -151,6 +147,9 @@ impl SourceIndex {
 pub(super) struct Scan {
     pub cells: Vec<Cell>,
     pub index: Option<SourceIndex>,
+    /// Logical `(max_row, max_col)` counted toward the workbook area bound:
+    /// serialized cells, declared array extents and the dimension.
+    pub bounds: (u32, u32),
 }
 /// Calamine's fast scalar reader consumes just one raw ASCII text event.
 /// Literal cells must satisfy that assumption; formula caches may instead be
@@ -746,5 +745,9 @@ pub(super) fn scan(
             }
         }
     }
-    Ok(Scan { cells, index })
+    Ok(Scan {
+        cells,
+        index,
+        bounds: (max_row, max_col),
+    })
 }

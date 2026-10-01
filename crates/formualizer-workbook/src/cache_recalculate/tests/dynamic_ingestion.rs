@@ -1,15 +1,14 @@
 //! FORM211-B: transient ingestion view (masked old children, normalized
 //! anchors) and declared-anchor identity, through the private switch.
-//! Publication of multi-cell spills stays refused until the geometry and
-//! metadata packets land, so engine state is checked on the ingested and
-//! evaluated engine before publication.
+//! Engine state is checked on the ingested and evaluated engine before
+//! publication; `dynamic_publication` checks the published output.
 use super::super::{
     Ingested, XlsxRecalculateOptions, admit_source, apply_patches, evaluate, ingest_source,
     ingest_view, recalculate_xlsx_bytes_with,
 };
 use super::dynamic_admission::{
     MAIN, OFFICE, ON, PRODUCER_ROWS, SHEET, TWO_ANCHOR_ROWS, TYPES, WB_RELS, edit, pack, package,
-    producer, producer_wide, refused,
+    producer, producer_wide,
 };
 use crate::workbook::WBResolver;
 use formualizer_common::{CellAddress, ExcelErrorKind, LiteralValue, RangeAddress};
@@ -146,11 +145,9 @@ fn existing_spill_old_children_are_masked_and_the_anchor_grows() {
         assert_eq!(value(e, "C9"), n(15.0), "SUM(C2#)");
         assert_eq!(value(e, "C10"), n(15.0), "SUM(_xlfn.ANCHORARRAY(C2))");
     });
-    // Publication of a multi-cell spill is still refused.
-    refused(
-        recalculate_xlsx_bytes_with(&pack(&p), Default::default(), ON),
-        "materialized multi-cell dynamic spill",
-    );
+    // The grown spill publishes (FORM211-C/D): C5, C6, C9 and C10.
+    let out = recalculate_xlsx_bytes_with(&pack(&p), Default::default(), ON).unwrap();
+    assert_eq!(out.cache_cells_changed, 4);
 }
 
 #[test]
@@ -242,11 +239,9 @@ fn genuine_outside_footprint_obstruction_still_blocks() {
             "SUM(C2#) of a blocked anchor",
         );
     });
-    // No multi-cell spill, yet dynamic publication is not implemented.
-    refused(
-        recalculate_xlsx_bytes_with(&pack(&p), Default::default(), ON),
-        "dynamic spill publication is not implemented",
-    );
+    // The blocked anchor publishes a typed `#SPILL!` (FORM211-C/D).
+    let out = recalculate_xlsx_bytes_with(&pack(&p), Default::default(), ON).unwrap();
+    assert_eq!(out.summary.error_summary["#SPILL!"].count, 1);
 }
 
 #[test]
@@ -339,11 +334,9 @@ fn one_by_one_declared_anchors_resolve_as_one_cell_spills() {
         assert_eq!(value(e, "C10"), n(1.0), "SUM(_xlfn.ANCHORARRAY(C2))");
         assert_eq!(value(e, "E10"), n(1.0));
     });
-    // Nothing spills, but stale children/extents must not be published.
-    refused(
-        recalculate_xlsx_bytes_with(&pack(&collapsed), Default::default(), ON),
-        "dynamic spill publication is not implemented",
-    );
+    // The collapse publishes with the anchor's 1x1 extent (FORM211-C/D).
+    let out = recalculate_xlsx_bytes_with(&pack(&collapsed), Default::default(), ON).unwrap();
+    assert_eq!(out.summary.errors, 0);
 
     // Contrast: the same cell as an ordinary (undeclared) formula.
     let undeclared = edit(

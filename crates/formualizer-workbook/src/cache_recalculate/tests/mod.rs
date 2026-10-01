@@ -2,3 +2,4 @@
 //! here enables `SpillSupport`; public entry points keep it disabled.
 mod dynamic_admission;
 mod dynamic_ingestion;
+mod dynamic_publication;
