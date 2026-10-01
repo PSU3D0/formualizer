@@ -65,6 +65,8 @@ The writer keeps the original `t="array"` and `ref`, without adding metadata or 
 
 When openpyxl re-saves a published dynamic spill, it can discard XLDAPR metadata while retaining the array formula. A subsequent recalc treats this as a fixed-size CSE array, not a dynamic spill. Recalc must still be the last writing step to retain caches. These are explicit policies, not claims of Excel equivalence.
 
+Existing function limitations still apply: array-condition `IF`, including `SUM(IF(A1:A3>0,A1:A3))`, currently returns `#VALUE!` for both ordinary and CSE formulas. Fixed-extent support does not add elementwise `IF` semantics.
+
 For CSE-containing source recalculation, family execution is disabled for the whole engine run to avoid declaration-insensitive family memoization. Other workbooks retain the caller's configuration. The Rust declaration API requires `family_execution = false`.
 
 ## Strict eligibility
@@ -72,7 +74,7 @@ For CSE-containing source recalculation, family execution is disabled for the wh
 This is not a fallback for every XLSX package. It rejects unsupported inputs/results instead of silently producing incomplete caches:
 
 - Data-table formulas, rich value metadata (`vm`, `xl/richData/`), metadata other than XLDAPR (value/MDX metadata, other types or extension URIs), dangling or malformed `cm` chains, external workbook links and package signatures.
-- Non-default spill conflict or bounds policies, when the workbook has dynamic arrays.
+- Non-default spill conflict or bounds policies, when array anchors or spills are involved (including fixed-extent CSE).
 - A spill over a merged range, over an unowned source value or formula, or from a member of a source shared-formula family. A spill that exceeds the cell or width limits is refused before any member is materialized.
 - Tables: the existing Calamine adapter does not populate the evaluator's table registry. Preserving table XML while evaluating structured references against an empty registry would be incorrect. Table-bearing sheets are therefore explicitly unsupported in this first path.
 - Ambiguous namespaces/relationships, noncanonical internal part targets, duplicate or non-increasing rows/cells, invalid shared families, unsupported XML encodings/names, DTDs and CDATA in parsed parts.
