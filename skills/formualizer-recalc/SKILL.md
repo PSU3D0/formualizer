@@ -92,7 +92,8 @@ untouched unless the output is that same path. Symlink destinations are refused.
 ## Boundaries and don'ts
 
 - Only the strict supported XLSX subset is recalculated; no fallback engine.
-  Tables, data tables, external links and unsupported names/metadata are
+  Data tables, connection-backed tables, missing table-managed cell formulas,
+  external links and unsupported names/metadata are
   refused, as are unsupported package structures/results and resource bounds.
 - New multi-cell spills and validated existing XLDAPR anchors are supported,
   including `A1#`. Fresh ordinary 1×1 results stay scalar (`A1#` is `#REF!`);
@@ -109,3 +110,7 @@ untouched unless the output is that same path. Symlink destinations are refused.
   arrays. Singleton axes broadcast; incompatible shapes return `#VALUE!`.
 - Do not run concurrent writers on the same file: atomic writes are not CAS.
 - Do not claim full Excel equivalence or silently accept a refusal.
+
+Excel tables retain their original XML and geometry. Supported tables require valid relationships, bounded nonoverlapping ranges and matching column headers. Calculated columns and totals must have worksheet formulas in every managed cell; write each new row formula before recalculation. Multi-cell spills into or from a table produce `#SPILL!`; scalar 1x1 results remain valid.
+
+Volatile formulas are recomputed per run with one clock sample and the configured RNG policy. Rerun byte identity is conditional on unchanged samples; `--check` reports stale when they differ. Hidden-row intersections in `SUBTOTAL`/`AGGREGATE` are refused rather than guessed, including dynamic ranges whose intersection cannot be proved. Iterative/stale results are still refused.

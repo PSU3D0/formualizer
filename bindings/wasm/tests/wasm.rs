@@ -1745,3 +1745,59 @@ fn test_source_spill_new_and_grow_match_native_bytes() {
         assert_eq!(js_get_f64(&repeated, "cache_cells_changed"), 0.0);
     }
 }
+
+#[wasm_bindgen_test]
+fn test_source_table_hydrates_before_formula_ingestion() {
+    use std::io::{Cursor, Read, Write};
+    let input = facade_spill_fixture(false);
+    let mut archive = zip::ZipArchive::new(Cursor::new(input)).unwrap();
+    let mut parts = std::collections::BTreeMap::new();
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i).unwrap();
+        let mut body = String::new();
+        file.read_to_string(&mut body).unwrap();
+        parts.insert(file.name().to_owned(), body);
+    }
+    let sheet = parts.get_mut("xl/worksheets/sheet1.xml").unwrap();
+    *sheet = sheet.replace("_xlfn.SEQUENCE($B$1)", "SUM(Table1[Qty])")
+        .replace("<row r=\"2\">", "<row r=\"2\"><c r=\"B2\"><v>2</v></c>")
+        .replace("</sheetData>", "</sheetData><tableParts count=\"1\"><tablePart xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" r:id=\"rId1\"/></tableParts>");
+    let types = parts.get_mut("[Content_Types].xml").unwrap();
+    *types = types.replace("</Types>", "<Override PartName=\"/xl/tables/table1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml\"/></Types>");
+    parts.insert("xl/worksheets/_rels/sheet1.xml.rels".into(), "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/table\" Target=\"../tables/table1.xml\"/></Relationships>".into());
+    let table = "<table xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" id=\"1\" name=\"Table1\" displayName=\"Table1\" ref=\"B1:B3\" headerRowCount=\"0\"><tableColumns count=\"1\"><tableColumn id=\"1\" name=\"Qty\"/></tableColumns></table>";
+    parts.insert("xl/tables/table1.xml".into(), table.into());
+    let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for (name, body) in parts {
+        zip.start_file(name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(body.as_bytes()).unwrap();
+    }
+    let input = zip.finish().unwrap().into_inner();
+    let result: Object = recalculate_xlsx_bytes(Uint8Array::from(input.as_slice()), None)
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    let bytes: Uint8Array = js_get(&result, "bytes").dyn_into().unwrap();
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes.to_vec())).unwrap();
+    let mut sheet = String::new();
+    archive
+        .by_name("xl/worksheets/sheet1.xml")
+        .unwrap()
+        .read_to_string(&mut sheet)
+        .unwrap();
+    assert!(sheet.contains("SUM(Table1[Qty])</f><v>5</v>"), "{sheet}");
+    let mut preserved = String::new();
+    archive
+        .by_name("xl/tables/table1.xml")
+        .unwrap()
+        .read_to_string(&mut preserved)
+        .unwrap();
+    assert_eq!(preserved, table);
+    let repeated: Object = recalculate_xlsx_bytes(bytes.clone(), None)
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    let repeated_bytes: Uint8Array = js_get(&repeated, "bytes").dyn_into().unwrap();
+    assert_eq!(repeated_bytes.to_vec(), bytes.to_vec());
+}

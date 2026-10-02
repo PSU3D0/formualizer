@@ -99,7 +99,7 @@ esac
 | 64 | `error` | Correct command-line arguments. |
 | 130 | `interrupted` | Cancellation before publication; nothing written. Resume only when intended. |
 
-For example, Excel table-bearing sheets are refused, even if you only wanted ordinary formula caches. There is no automatic fallback engine. Branch on structured fields, not wording in `message`.
+Excel table-bearing sheets are supported only within the validated subset described in [cache-only XLSX eligibility](cache-only-xlsx.md). When extending a calculated column, write a worksheet formula into every new row: table-level formula metadata alone is refused. Table XML and geometry are never rewritten. There is no automatic fallback engine; branch on explicit refusal rather than publish stale values.
 
 ### Verify without writing
 
@@ -127,3 +127,5 @@ Exit 0 / `current` means caches and spill shape are current; exit 3 / `stale` me
 See [cache-only XLSX eligibility, refusals and resource bounds](cache-only-xlsx.md) for the supported subset (including fixed-extent array policies and refusals for tables, external links and unsupported names/metadata), and [the authoritative CLI reference](cli.md) for JSON fields, counters and publication details. Limits are bounded by default and have no CLI tuning flags.
 
 A copyable [agent skill](../skills/formualizer-recalc/SKILL.md) teaches the same workflow without requiring these docs alongside it.
+
+Volatile formulas are recomputed with one request clock sample and the configured RNG policy on each source-recalc run. Their dependents must agree with that same evaluation; byte-identical reruns are conditional on unchanged sampled values, and `--check` reports stale when a sample differs. `SUBTOTAL`/`AGGREGATE` ranges intersecting stored hidden row or active-filter rows are refused because source row visibility is not hydrated; dynamic reducer ranges with unprovable hidden-row intersections are also refused.

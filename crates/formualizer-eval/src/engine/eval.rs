@@ -19716,7 +19716,10 @@ where
         let Some(last) = targets.last() else {
             return Ok(());
         };
-        let occupied = self.pending_spill_occupied(anchor, last.coord.row(), last.coord.col());
+        let occupied = self.pending_spill_occupied(anchor, last.coord.row(), last.coord.col())
+            || self
+                .graph
+                .table_intersects_spill(anchor, last.coord.row(), last.coord.col());
         if (occupied
             || self
                 .blocked_pending_spills
@@ -20057,6 +20060,9 @@ where
             return self.plan_spill_error_effects(vertex_id, "Spill exceeds sheet bounds", h, w);
         }
 
+        if h != 0 && w != 0 && self.graph.table_intersects_spill(anchor, end_row, end_col) {
+            return self.plan_spill_error_effects(vertex_id, "Spill blocked by table", h, w);
+        }
         let mut targets = Vec::new();
         for r in 0..h {
             for c in 0..w {

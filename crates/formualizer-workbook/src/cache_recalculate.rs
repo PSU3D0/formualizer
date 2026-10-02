@@ -6,8 +6,13 @@ mod ingest_view;
 mod package;
 mod result_projection;
 mod sheet;
+mod table_lowering;
+mod tables;
 #[cfg(test)]
 mod tests;
+mod visibility_guard;
+#[cfg(not(feature = "system-clock"))]
+mod wall_clock_guard;
 mod xml;
 
 use super::recalculate::{DEFAULT_ERROR_LOCATION_LIMIT, RecalculateStatus, RecalculateSummary};
@@ -345,6 +350,9 @@ impl Seek for BoundedOutput {
 /// ownership. The per-cell source index exists only for worksheets with
 /// admitted anchors; a sheet with a new spill builds it after evaluation.
 struct SheetPlan {
+    tables: Vec<tables::Table>,
+    hidden_rows: Vec<u32>,
+    active_filters: Vec<sheet::SourceRect>,
     data: Vec<u8>,
     cells: Vec<sheet::Cell>,
     index: Option<sheet::SourceIndex>,
@@ -378,6 +386,8 @@ fn admit_source<'a>(
     let mut observed = 0;
     let mut logical_cells = 0u64;
     let mut formula_count = 0usize;
+    let mut table_budget = tables::Budget::default();
+    let mut table_names = HashSet::new();
     for sheet in &sheets {
         checkpoint(&options.cancel)?;
         let data = package::read_part(
@@ -389,7 +399,11 @@ fn admit_source<'a>(
         let mut scanned = sheet::scan(
             &data,
             options,
-            sheet::Mode::Plain,
+            if sheet.tables.is_empty() {
+                sheet::Mode::Plain
+            } else {
+                sheet::Mode::TablePlain
+            },
             &mut observed,
             &mut logical_cells,
         )?;
@@ -407,6 +421,48 @@ fn admit_source<'a>(
         let sheet::Scanned::Done(scan) = scanned else {
             return Err(unsupported("unindexed dynamic cell metadata", "worksheet"));
         };
+        let mut table_ids = HashSet::new();
+        let mut tables = Vec::new();
+        for id in &scan.table_ids {
+            if !table_ids.insert(id) {
+                return Err(unsupported("duplicate tablePart", &sheet.name));
+            }
+            let part = sheet
+                .tables
+                .get(id)
+                .ok_or_else(|| unsupported("missing/wrong-kind table relationship", &sheet.name))?;
+            let table = tables::parse(&mut archive, part, options, &mut table_budget)?;
+            if !table_names.insert(table.name.to_lowercase()) {
+                return Err(unsupported("table name collision", &table.name));
+            }
+            if tables
+                .iter()
+                .any(|t: &tables::Table| t.rect.intersects(table.rect))
+            {
+                return Err(unsupported("overlapping tables", &table.name));
+            }
+            tables::validate(
+                &table,
+                &scan.cells,
+                scan.index
+                    .as_ref()
+                    .map_or(scan.table_merges.as_slice(), |i| i.merges.as_slice()),
+                scan.bounds,
+                options,
+            )?;
+            tables.push(table);
+        }
+        if table_ids.len() != sheet.tables.len() {
+            return Err(unsupported("unreferenced table relationship", &sheet.name));
+        }
+        #[cfg(not(feature = "system-clock"))]
+        for cell in &scan.cells {
+            wall_clock_guard::validate(
+                &cell.formula_text,
+                &format!("{}!{}", sheet.name, cell.address),
+                options,
+            )?;
+        }
         formula_count = formula_count
             .checked_add(scan.cells.len())
             .ok_or_else(|| unsupported("formula count overflow", "workbook"))?;
@@ -420,6 +476,9 @@ fn admit_source<'a>(
             None => dynamic_metadata::SheetOwnership::default(),
         };
         plans.push(SheetPlan {
+            hidden_rows: scan.hidden_rows,
+            active_filters: scan.active_filters,
+            tables,
             data,
             cells: scan.cells,
             index: scan.index,
@@ -427,6 +486,37 @@ fn admit_source<'a>(
             serialized: scan.serialized,
             bounds: scan.bounds,
         });
+    }
+    if !table_names.is_empty() {
+        let workbook = package::read_part(
+            &mut archive,
+            "xl/workbook.xml",
+            options.limits.max_worksheet_bytes,
+        )?;
+        xml::walk(&workbook, options, |path, node| {
+            if xml::path_is(
+                path,
+                xml::MAIN,
+                &["workbook", "definedNames", "definedName"],
+            ) && let xml::Kind::Text(text) = &node.kind
+                && text.contains('[')
+            {
+                return Err(unsupported(
+                    "defined-name formula contains structured references",
+                    "table-bearing workbook",
+                ));
+            }
+            if xml::path_is(
+                path,
+                xml::MAIN,
+                &["workbook", "definedNames", "definedName"],
+            ) && let Some(n) = node.value("name")
+                && table_names.contains(&n.to_lowercase())
+            {
+                return Err(unsupported("table/defined-name collision", n));
+            }
+            Ok(())
+        })?;
     }
     Ok(SourceAdmission {
         archive,
@@ -475,7 +565,7 @@ pub fn recalculate_xlsx_bytes(
         check_spill_policy(&options.eval_config.spill)?;
     }
     let formula_count = admission.formula_count;
-    if formula_count == 0 {
+    if formula_count == 0 && admission.plans.iter().all(|p| p.tables.is_empty()) {
         checkpoint(&options.cancel)?;
         if bytes.len() > options.limits.max_output_bytes {
             return Err(unsupported("output byte limit", "XLSX package"));
@@ -521,9 +611,19 @@ fn ingest_source<'a>(
     // although formula ingestion ignores cached results. Clear those caches,
     // and mask/normalize dynamic arrays, in a bounded transient ingestion
     // view; the authoritative package stays intact.
+    let has_tables = plans.iter().any(|p| !p.tables.is_empty());
     let mut view_parts = BTreeMap::new();
     for (sheet, plan) in sheets.iter().zip(&plans) {
-        let patches = ingest_view::patches(plan, &options.cancel)?;
+        let mut patches = ingest_view::patches(plan, &options.cancel)?;
+        if has_tables {
+            patches.extend(table_lowering::patches(
+                &sheet.name,
+                plan,
+                &sheets,
+                &plans,
+                options,
+            )?);
+        }
         if !patches.is_empty() {
             view_parts.insert(
                 sheet.part.clone(),
@@ -582,10 +682,58 @@ fn ingest_source<'a>(
         .min(options.limits.max_expanded_bytes as u64);
     engine.set_workbook_load_limits(load_limits);
     adapter.validate_calculation_names(&[])?;
+    if plans.iter().any(|p| !p.tables.is_empty()) {
+        use formualizer_eval::reference::{CellRef, Coord, RangeRef};
+        engine.adopt_file_sheets(sheets.iter().map(|s| s.name.as_str()))?;
+        for (sheet, plan) in sheets.iter().zip(&plans) {
+            let id = engine.sheet_id(&sheet.name).expect("adopted worksheet");
+            for table in &plan.tables {
+                checkpoint(&options.cancel)?;
+                let r = table.rect;
+                engine.define_table(
+                    &table.name,
+                    RangeRef::new(
+                        CellRef::new(id, Coord::from_excel(r.first_row, r.first_col, true, true)),
+                        CellRef::new(id, Coord::from_excel(r.last_row, r.last_col, true, true)),
+                    ),
+                    table.header,
+                    table.columns.iter().map(|c| c.name.clone()).collect(),
+                    table.totals,
+                )?;
+            }
+        }
+    }
     checkpoint(&options.cancel)?;
     let ingested = adapter.stream_into_engine(&mut engine);
     checkpoint(&options.cancel)?;
     ingested?;
+    for (sheet, plan) in sheets.iter().zip(&plans) {
+        for table in &plan.tables {
+            if table.header {
+                for (i, column) in table.columns.iter().enumerate() {
+                    checkpoint(&options.cancel)?;
+                    let address = CellAddress::new(
+                        &sheet.name,
+                        table.rect.first_row,
+                        table.rect.first_col + i as u32,
+                    )
+                    .map_err(|e| IoError::from_backend("xlsx-coordinate", e))?;
+                    let snapshot = engine
+                        .inspect_cell(&address, &SnapshotOptions::default())
+                        .map_err(|e| IoError::from_backend("xlsx-inspect", e))?
+                        .cell;
+                    if snapshot.formula.is_some()
+                        || snapshot.value != Some(LiteralValue::Text(column.name.clone()))
+                    {
+                        return Err(unsupported(
+                            "table header cached text mismatch",
+                            format!("table {} column {}", table.name, column.name),
+                        ));
+                    }
+                }
+            }
+        }
+    }
     if adapter.has_document_names() {
         // Metadata-only names may be omitted from the engine only if no source
         // calculation references them. Inspect after shared-formula replay but
@@ -608,6 +756,7 @@ fn ingest_source<'a>(
         }
         adapter.validate_calculation_names(&source_formulas)?;
     }
+    visibility_guard::validate(&engine, &sheets, &plans, options)?;
     checkpoint(&options.cancel)?;
     drop(adapter);
     if anchors {
@@ -671,11 +820,7 @@ fn evaluate(
     options: &XlsxRecalculateOptions,
 ) -> Result<(), IoError> {
     checkpoint(&options.cancel)?;
-    if let Some(cancel) = options.cancel.clone() {
-        engine.evaluate_all_cancellable(cancel)?;
-    } else {
-        engine.evaluate_all()?;
-    }
+    engine.evaluate_all_for_snapshot(options.cancel.clone())?;
     checkpoint(&options.cancel)
 }
 fn unchanged(
@@ -711,7 +856,10 @@ fn validated_result(
         return Err(unsupported("source formula was not ingested", sheet));
     }
     if staleness != Staleness::Current {
-        return Err(unsupported("formula result is not current", sheet));
+        return Err(unsupported(
+            format!("formula result is not current: {staleness:?} after evaluation"),
+            sheet,
+        ));
     }
     Ok(value)
 }

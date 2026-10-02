@@ -18,6 +18,7 @@ pub(super) struct Relationship {
 pub(super) struct Sheet {
     pub name: String,
     pub part: String,
+    pub tables: BTreeMap<String, String>,
 }
 fn u16_at(bytes: &[u8], offset: usize) -> Result<usize, IoError> {
     let b = bytes
@@ -356,7 +357,36 @@ pub(super) fn discover(
     let mut metadata_sections = HashSet::new();
     let mut defined_names = HashSet::new();
     let mut sheet_ids = HashSet::new();
+    #[cfg(not(feature = "system-clock"))]
+    let mut clock_name: Option<(String, String)> = None;
     xml::walk(&data, options, |path, node| {
+        #[cfg(not(feature = "system-clock"))]
+        if xml::path_is(
+            path,
+            xml::MAIN,
+            &["workbook", "definedNames", "definedName"],
+        ) {
+            match &node.kind {
+                xml::Kind::Open { empty: false, .. } => {
+                    clock_name = Some((node.required("name")?.to_owned(), String::new()))
+                }
+                xml::Kind::Text(text) => {
+                    if let Some((_, formula)) = &mut clock_name {
+                        formula.push_str(text);
+                    }
+                }
+                xml::Kind::Close => {
+                    if let Some((name, formula)) = clock_name.take() {
+                        super::wall_clock_guard::validate(
+                            &formula,
+                            &format!("defined name {name}"),
+                            options,
+                        )?;
+                    }
+                }
+                _ => {}
+            }
+        }
         if !matches!(node.kind, xml::Kind::Open { .. }) {
             return Ok(());
         }
@@ -461,6 +491,7 @@ pub(super) fn discover(
             sheets.push(Sheet {
                 name: name.to_owned(),
                 part,
+                tables: BTreeMap::new(),
             });
         }
         Ok(())
@@ -495,19 +526,28 @@ pub(super) fn discover(
             validate_aux(archive, name, root, options)?;
         }
     }
-    for sheet in &sheets {
+    let mut table_targets = HashSet::new();
+    for sheet in &mut sheets {
         let (parent, name) = sheet.part.rsplit_once('/').unwrap_or(("", &sheet.part));
         let rel_part = format!("{parent}/_rels/{name}.rels");
         if archive.file_names().any(|n| n == rel_part) {
-            for rel in relationships(archive, &sheet.part, options)?.values() {
-                if rel.kind == format!("{}/table", xml::OFFICE) {
-                    // The existing CalamineAdapter does not hydrate the engine
-                    // table registry. Preserving XML alone would silently make
-                    // valid structured references evaluate against missing data.
+            for (id, rel) in relationships(archive, &sheet.part, options)? {
+                if rel.kind == format!("{}/queryTable", xml::OFFICE) {
                     return Err(unsupported(
-                        "table metadata ingestion is not supported",
-                        "cache-only recalculation",
+                        "connection-backed worksheet table",
+                        &sheet.part,
                     ));
+                }
+                if rel.kind == format!("{}/table", xml::OFFICE) {
+                    let target = rel
+                        .target
+                        .ok_or_else(|| unsupported("external table relationship", &sheet.part))?;
+                    if !archive.file_names().any(|n| n == target)
+                        || !table_targets.insert(target.clone())
+                    {
+                        return Err(unsupported("missing/duplicate table target", &sheet.part));
+                    }
+                    sheet.tables.insert(id, target);
                 }
             }
         }

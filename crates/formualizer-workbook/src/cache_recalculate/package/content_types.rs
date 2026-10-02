@@ -136,7 +136,13 @@ pub(super) fn validate(
             }
             continue;
         }
-        let expected = if name == "xl/workbook.xml" {
+        let table = sheets.iter().any(|s| s.tables.values().any(|p| p == name));
+        if !table && (content == &format!("{PREFIX}table+xml") || name.starts_with("xl/tables/")) {
+            return Err(unsupported("orphan table part", name));
+        }
+        let expected = if table {
+            Some(format!("{PREFIX}table+xml"))
+        } else if name == "xl/workbook.xml" {
             Some(format!("{PREFIX}sheet.main+xml"))
         } else if sheets.iter().any(|s| s.part == name) {
             Some(format!("{PREFIX}worksheet+xml"))

@@ -506,7 +506,7 @@ fn defined_names_are_evaluated_without_metadata_rewrite() {
     reject(&p);
 }
 #[test]
-fn nonportable_literal_errors_and_tables_are_explicitly_rejected() {
+fn nonportable_literal_errors_are_refused_and_empty_table_parts_are_inert() {
     let p = parts(
         "<row r=\"1\"><c r=\"A1\" t=\"e\"><v>#SPILL!</v></c><c r=\"B1\"><f>IFERROR(A1,0)</f><v>99</v></c></row>",
     );
@@ -517,10 +517,8 @@ fn nonportable_literal_errors_and_tables_are_explicitly_rejected() {
     let mut p = single("1+1", "<v>99</v>");
     let s = p.get_mut(SHEET).unwrap();
     *s = s.replace("</worksheet>", "<tableParts count=\"0\"/></worksheet>");
-    let error = recalculate_xlsx_bytes(&pack(&p), Default::default()).unwrap_err();
-    assert!(
-        matches!(error,formualizer_workbook::IoError::Unsupported{feature,..} if feature.contains("table metadata"))
-    );
+    let out = recalculate_xlsx_bytes(&pack(&p), Default::default()).unwrap();
+    assert_eq!(data(&out.bytes, 0), Data::Float(2.0));
 }
 #[test]
 fn engine_specific_errors_are_unsupported_results_not_invented_excel_tokens() {

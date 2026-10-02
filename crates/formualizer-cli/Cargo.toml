@@ -19,7 +19,8 @@ pkg-url = "{ repo }/releases/download/v{ version }/formualizer-cli-v{ version }-
 pkg-fmt = "zip"
 
 [features]
-default = ["signals"]
+default = ["signals", "system-clock"]
+system-clock = ["formualizer-workbook/system-clock"]
 # Bindings disable defaults and supply their own cancellation token.
 signals = ["dep:ctrlc"]
 

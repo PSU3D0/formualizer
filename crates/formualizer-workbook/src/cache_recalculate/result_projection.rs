@@ -109,7 +109,7 @@ pub(super) fn project_formula(
         snapshot.has_formula,
         snapshot.staleness,
         coerced,
-        sheet,
+        &format!("{sheet}!{}", cell.address),
     )?;
     record(&value);
     let shape = if let Some(prior) = prior.filter(|a| a.binding.is_none()) {

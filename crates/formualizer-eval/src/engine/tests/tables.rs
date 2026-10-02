@@ -269,3 +269,48 @@ fn table_definition_rejects_case_insensitive_collisions() {
         .expect_err("expected collision error");
     assert_eq!(err.kind, ExcelErrorKind::Name);
 }
+
+#[test]
+fn empty_table_rectangles_obstruct_spills_before_dependents_are_published() {
+    for (header, totals) in [(false, false), (true, false), (false, true)] {
+        let mut engine = Engine::new(
+            crate::test_workbook::TestWorkbook::new(),
+            EvalConfig::default(),
+        );
+        let id = engine.add_sheet("Sheet1").unwrap();
+        engine
+            .define_table(
+                "Table1",
+                RangeRef::new(
+                    CellRef::new(id, Coord::from_excel(2, 2, true, true)),
+                    CellRef::new(id, Coord::from_excel(4, 2, true, true)),
+                ),
+                header,
+                vec!["Qty".into()],
+                totals,
+            )
+            .unwrap();
+        engine
+            .set_cell_formula(
+                "Sheet1",
+                1,
+                2,
+                formualizer_parse::parser::parse("=SEQUENCE(3)").unwrap(),
+            )
+            .unwrap();
+        engine
+            .set_cell_formula(
+                "Sheet1",
+                1,
+                4,
+                formualizer_parse::parser::parse("=SUM(B1)").unwrap(),
+            )
+            .unwrap();
+        engine.evaluate_all().unwrap();
+        for col in [2, 4] {
+            assert!(
+                matches!(engine.get_cell_value("Sheet1",1,col),Some(LiteralValue::Error(e)) if e.kind==ExcelErrorKind::Spill)
+            );
+        }
+    }
+}

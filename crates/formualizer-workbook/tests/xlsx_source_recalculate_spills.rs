@@ -767,7 +767,7 @@ fn unsupported_metadata_and_structures_stay_refused() {
             )),
             Default::default(),
         ),
-        "table metadata",
+        "missing/wrong-kind table relationship",
     );
     // A dangling binding.
     refused(

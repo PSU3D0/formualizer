@@ -93,6 +93,15 @@ struct DynamicAttributes {
     array_ref_span: Option<Range<usize>>,
 }
 impl Cell {
+    pub fn shared_rect(&self) -> Option<SourceRect> {
+        self.shared_range
+            .map(|(first_row, first_col, last_row, last_col)| SourceRect {
+                first_row,
+                first_col,
+                last_row,
+                last_col,
+            })
+    }
     /// One-based cellMetadata index from `c/@cm`.
     pub fn cm(&self) -> Option<u32> {
         self.dynamic.as_ref().and_then(|d| d.cm)
@@ -173,6 +182,10 @@ impl SourceIndex {
 }
 pub(super) struct Scan {
     pub cells: Vec<Cell>,
+    pub table_ids: Vec<String>,
+    pub table_merges: Vec<SourceRect>,
+    pub hidden_rows: Vec<u32>,
+    pub active_filters: Vec<SourceRect>,
     /// Built only when requested.
     pub index: Option<SourceIndex>,
     /// Serialized `<c>` elements.
@@ -287,9 +300,14 @@ pub(super) enum Mode {
     /// generated child (children follow their top-left anchor in document
     /// order), so literal refusals before it are final.
     Plain,
+    /// Scalar table admission: retain merge rectangles, not a per-cell index.
+    TablePlain,
     /// Build the source index and defer literal refusals to ownership.
     Indexed,
 }
+// One scan result crosses this boundary per sheet; retain the unboxed
+// scalar hot path instead of adding a heap allocation to every worksheet.
+#[allow(clippy::large_enum_variant)]
 pub(super) enum Scanned {
     Done(Scan),
     /// A `Plain` scan met dynamic cell metadata; rescan `Indexed`.
@@ -333,6 +351,14 @@ fn scan_inner(
     logical_cells: &mut u64,
     needs_index: &mut bool,
 ) -> Result<Scan, IoError> {
+    let mut hidden_rows = Vec::new();
+    let mut active_filters = Vec::new();
+    let mut filter_seen = false;
+    let mut filter_ref: Option<SourceRect> = None;
+    let mut filter_active = false;
+    let mut table_merges = Vec::new();
+    let mut table_ids = Vec::new();
+    let mut table_count = None;
     let mut serialized = 0usize;
     let mut cells = Vec::new();
     let mut current: Option<Cell> = None;
@@ -365,6 +391,20 @@ fn scan_inner(
             );
         match &node.kind {
             xml::Kind::Open { empty, .. } => {
+                if xml::path_is(path, xml::MAIN, &["worksheet", "autoFilter"]) {
+                    if filter_seen {
+                        return Err(unsupported("duplicate worksheet autoFilter", "worksheet"));
+                    }
+                    filter_seen = true;
+                    filter_ref = Some(SourceRect::parse(node.required("ref")?)?);
+                }
+                if path.len() == 4
+                    && path[1].ns == xml::MAIN
+                    && path[1].local == "autoFilter"
+                    && path[2].local == "filterColumn"
+                {
+                    filter_active = true;
+                }
                 if path.len() == 1 && !xml::path_is(path, xml::MAIN, &["worksheet"]) {
                     return Err(unsupported("worksheet root/namespace", "worksheet"));
                 }
@@ -391,10 +431,39 @@ fn scan_inner(
                     return Err(unsupported("misplaced cell payload", "worksheet"));
                 }
                 if matches!(element.local.as_str(), "tableParts" | "tablePart") {
-                    return Err(unsupported(
-                        "table metadata ingestion is not supported",
-                        "cache-only recalculation",
-                    ));
+                    let valid = if element.local == "tableParts" {
+                        xml::path_is(path, xml::MAIN, &["worksheet", "tableParts"])
+                    } else {
+                        xml::path_is(path, xml::MAIN, &["worksheet", "tableParts", "tablePart"])
+                    };
+                    if !valid {
+                        return Err(unsupported("misplaced/foreign table metadata", "worksheet"));
+                    }
+                    if element.local == "tableParts" {
+                        if table_count.is_some() {
+                            return Err(unsupported("duplicate tableParts", "worksheet"));
+                        }
+                        let count = node
+                            .required("count")?
+                            .parse::<usize>()
+                            .map_err(|_| unsupported("invalid tableParts count", "worksheet"))?;
+                        if count > options.limits.max_entries.min(options.limits.max_cells) {
+                            return Err(unsupported("table count limit", "worksheet"));
+                        }
+                        table_count = Some(count);
+                    } else {
+                        if table_ids.len() >= table_count.unwrap_or(0) {
+                            return Err(unsupported("tablePart count disagreement", "worksheet"));
+                        }
+                        table_ids.push(
+                            node.attribute(xml::OFFICE, "id")
+                                .ok_or_else(|| {
+                                    unsupported("missing table relationship ID", "worksheet")
+                                })?
+                                .value
+                                .clone(),
+                        );
+                    }
                 }
                 if element.local == "dimension" {
                     if !xml::path_is(path, xml::MAIN, &["worksheet", "dimension"])
@@ -448,6 +517,12 @@ fn scan_inner(
                         return Err(unsupported("misplaced merge cell", "worksheet"));
                     }
                     let merge = SourceRect::parse(node.required("ref")?)?;
+                    if mode == Mode::TablePlain {
+                        if table_merges.len() >= options.limits.max_cells {
+                            return Err(unsupported("merge count limit", "worksheet"));
+                        }
+                        table_merges.push(merge);
+                    }
                     if let Some(index) = index.as_mut() {
                         if index.merges.len() >= options.limits.max_cells {
                             return Err(unsupported("merge count limit", "worksheet"));
@@ -465,6 +540,14 @@ fn scan_inner(
                             "invalid/non-increasing worksheet row",
                             "worksheet",
                         ));
+                    }
+                    if matches!(node.value("hidden"), Some("1" | "true")) {
+                        if hidden_rows.len() >= options.limits.max_cells {
+                            return Err(unsupported("hidden row count limit", "worksheet"));
+                        }
+                        hidden_rows.push(next_row);
+                    } else if !matches!(node.value("hidden"), None | Some("0" | "false")) {
+                        return Err(unsupported("invalid row hidden flag", "worksheet"));
                     }
                     row = next_row;
                     column = 0;
@@ -698,6 +781,13 @@ fn scan_inner(
                 }
             }
             xml::Kind::Close => {
+                if xml::path_is(path, xml::MAIN, &["worksheet", "autoFilter"]) && filter_active {
+                    let mut rect = filter_ref.take().expect("validated autoFilter");
+                    rect.first_row += 1;
+                    if rect.first_row <= rect.last_row {
+                        active_filters.push(rect);
+                    }
+                }
                 if direct {
                     let cell = current
                         .as_mut()
@@ -819,7 +909,14 @@ fn scan_inner(
             }
         }
     }
+    if table_count.is_some_and(|n| n != table_ids.len()) {
+        return Err(unsupported("tablePart count disagreement", "worksheet"));
+    }
     Ok(Scan {
+        active_filters,
+        hidden_rows,
+        table_merges,
+        table_ids,
         cells,
         index,
         serialized,

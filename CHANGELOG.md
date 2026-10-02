@@ -4,7 +4,11 @@ All notable changes to Formualizer will be documented in this file.
 
 ## [Unreleased]
 
+
 ### Added
+
+- Added strict source-preserving XLSX table admission and pre-ingestion table hydration, with byte-preserved table XML, managed-formula coverage checks and table spill obstructions.
+- Added `Engine::evaluate_all_for_snapshot` for consistent one-request volatile results without suppressing iterative-SCC or other freshness checks; enabled current volatile cache publication in source XLSX recalculation, with hidden-row reducer refusals.
 
 - Added legacy fixed-extent CSE array recalculation, including single-cell top-left results, broadcasting, padding and truncation. Re-saved spills without dynamic metadata retain their declared extent; spill-reference readers return `#REF!`.
 
@@ -21,7 +25,7 @@ All notable changes to Formualizer will be documented in this file.
 ### Known limitations
 
 - Fresh unmarked 1x1 results remain scalars, so their spill readers return `#REF!`. In the mutable workbook API, overwriting a spill child can leave spill readers stale until the anchor recomputes. Source-preserving XLSX recalculation uses declared ownership instead and recalculates those children.
-- Legacy CSE/data tables, tables, external links, rich/unknown metadata, shared-family multi-cell spills and spill publication across merged cells remain unsupported. This subset has no Excel execution oracle and makes no Excel-equivalence claim.
+- What-If data tables, connection-backed tables, external links, rich/unknown metadata, shared-family multi-cell spills and spill publication across merged cells remain unsupported. This subset has no Excel execution oracle and makes no Excel-equivalence claim.
 
 ## [0.10.1] - 2026-09-30
 

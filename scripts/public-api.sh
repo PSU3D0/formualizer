@@ -60,7 +60,7 @@ feature_profile() {
       printf '%s\n' 'common,parse,eval,workbook,sheetport,calamine,xlsx-recalc,json,csv,umya,umya3,tracing,tracing_chrome,system-clock'
       ;;
     formualizer-cli)
-      printf '%s\n' 'signals'
+      printf '%s\n' 'signals,system-clock'
       ;;
     formualizer-common)
       printf '%s\n' 'serde'

@@ -53,7 +53,7 @@ Publication writes the current shape:
 - Shrink and collapse clear the members that are no longer covered. A collapsed anchor keeps `t="array"`, its `cm` and `ref="<anchor>"`.
 - A blocked anchor gets a typed `#SPILL!` cache, `ref` set to the anchor cell and no children, and keeps its `cm`. This means a later reopen claims no stale cells, and the next recalculation can expand again. An erroring anchor is encoded the same way with its own error token. Readers of a blocked or erroring spill are `#REF!` (the engine's semantics).
 - A new or rebound anchor reuses the lowest existing XLDAPR record with `fCollapsed="0"`. If there is none, exactly one future block and one cell block are appended, without renumbering existing records. A shared record's `fCollapsed` is never toggled. If the package has no metadata part, a minimal canonical `xl/metadata.xml` is added, together with a non-colliding workbook relationship ID and a content-type override.
-- An unchanged anchor requests no metadata edit, so recalculating a published output again is a byte-identical no-op.
+- An unchanged anchor requests no metadata edit, so recalculating a published output again is a byte-identical no-op when its computed caches are unchanged (see volatile snapshots below).
 
 This writer makes no claim of Excel equivalence. The encodings follow the format documentation and independently produced packages; no Excel execution oracle was used. In particular, Excel's own encodings of blocked or erroring anchors and of `SEQUENCE(0)` are not verified. The engine returns `#VALUE!` for `SEQUENCE(0)`, where Excel documents `#CALC!`.
 
@@ -69,6 +69,20 @@ Array-condition `IF`, including `SUM(IF(A1:A3>0,A1:A3))`, selects branches eleme
 
 For CSE-containing source recalculation, family execution is disabled for the whole engine run to avoid declaration-insensitive family memoization. Other workbooks retain the caller's configuration. The Rust declaration API requires `family_execution = false`.
 
+## Excel tables
+
+Excel ListObjects are admitted after relationship, content-type, bounded geometry, ordered column/header, collision and formula-coverage validation. Table XML, relationships and content types stay byte-for-byte unchanged, and table geometry never changes. Calculated columns and totals require worksheet `<f>` formulas in every managed cell: write the formula into each row when extending a table. Cell formulas, including calculated-column exceptions, remain the authority; table-level formulas are never evaluated or rewritten.
+
+Stored structured references are lowered only in the transient ingestion view, before dependency analysis: columns and column spans, `#Data`, `#All`, `#Headers`, `#Totals`, `#This Row`, `[@Qty]`, combinations selecting a contiguous rectangle and apostrophe-escaped names. Output `<f>` text is retained exactly. A shared master uses absolute table bounds and row-relative this-row references; its declared extent must stay inside the table's body/totals region. Unknown tables/columns, this-row references outside that context, empty or disjoint selections, text-built table references through `INDIRECT` and defined-name formulas containing structured references are refused. An empty data-body table itself is valid.
+
+Multi-cell dynamic results intersecting any table rectangle give `#SPILL!` before publication, even if table cells are blank. A 1x1 result inside a table remains scalar. Source-declared dynamic and legacy CSE footprints intersecting a table are refused. The general mutable workbook loaders and their native table-reference behavior are unchanged; this support is specific to immutable source recalculation.
+
+## Volatile snapshots
+
+Source recalculation evaluates a throwaway engine using `Engine::evaluate_all_for_snapshot`. Volatile values and their dependents remain Current for result projection; iterative-SCC redirty and every other stale-result check remain in force. The engine samples its clock once per evaluation request and uses the configured RNG policy/seed. `TODAY`, `NOW`, `RAND`, `OFFSET`, `INDIRECT`, `SUBTOTAL` and `AGGREGATE` can therefore publish a consistent single-request result instead of being refused for next-cycle volatile dirtiness.
+
+Volatile formulas are recomputed on every run. Byte-identical reruns are guaranteed only when the newly computed values also match; `NOW` and RNG-policy changes may alter caches, and CLI `--check` reports stale whenever the new sample differs. Source row visibility is not hydrated: `SUBTOTAL`/`AGGREGATE` ranges intersecting a stored hidden row or active-filter row are refused, as are dynamic reducer ranges whose intersection cannot be proved. Static reducer ranges that avoid hidden rows remain supported.
+
 ## Strict eligibility
 
 This is not a fallback for every XLSX package. It rejects unsupported inputs/results instead of silently producing incomplete caches:
@@ -76,7 +90,7 @@ This is not a fallback for every XLSX package. It rejects unsupported inputs/res
 - Data-table formulas, rich value metadata (`vm`, `xl/richData/`), metadata other than XLDAPR (value/MDX metadata, other types or extension URIs), dangling or malformed `cm` chains, external workbook links and package signatures.
 - Non-default spill conflict or bounds policies, when array anchors or spills are involved (including fixed-extent CSE).
 - A spill over a merged range, over an unowned source value or formula, or from a member of a source shared-formula family. A spill that exceeds the cell or width limits is refused before any member is materialized.
-- Tables: the existing Calamine adapter does not populate the evaluator's table registry. Preserving table XML while evaluating structured references against an empty registry would be incorrect. Table-bearing sheets are therefore explicitly unsupported in this first path.
+- Unsupported table metadata, connection/query-backed tables, missing managed worksheet formulas, mismatched headers, table/name/merge/array collisions and unlowerable structured-reference contexts.
 - Ambiguous namespaces/relationships, noncanonical internal part targets, duplicate or non-increasing rows/cells, invalid shared families, unsupported XML encodings/names, DTDs and CDATA in parsed parts.
 - Literal scalar representations that differ from Calamine's raw ASCII parsing assumptions; unsupported literal error tokens are rejected before ingestion. Ordinary XML escapes remain supported for formula/text content.
 - Missing/noncurrent results, non-finite numbers, pending values and unrepresentable arrays.
@@ -91,3 +105,5 @@ Default limits are 64 MiB input/output, 10,000 entries, 256 MiB actual expanded 
 Cancellation is cooperative. Preflight, cancellable Calamine reads/row/replay boundaries, evaluation and output construction check the token. A parser/engine operation already in progress runs until its next checkpoint. `CalamineAdapter::open_bytes_cancellable` also exposes cancellable parsing/streaming independently of this feature.
 
 The file wrapper takes a bounded input snapshot, computes privately, writes a same-directory temporary, syncs it and atomically replaces the destination. It preserves existing destination permissions and rejects symlink destinations. Errors and cancellation observed before the commit point leave the destination unchanged; there is no cancellation error reported after publication. This is not source compare-and-swap or a guarantee of directory-entry crash durability. Higher-level session/CAS authority remains the caller's responsibility.
+
+Native CLI defaults explicitly enable `system-clock`; native Python also enables it. WASM/npm's `wasm-js` profile uses the JavaScript Date clock. Portable/Pyodide source builds without `system-clock` refuse `TODAY`/`NOW` in cells or defined names rather than publish the epoch fallback. Rust callers can supply `EvalConfig::deterministic_mode = Enabled` with a fixed instant. The current Python/WASM source facade does not expose a fixed-timestamp option.

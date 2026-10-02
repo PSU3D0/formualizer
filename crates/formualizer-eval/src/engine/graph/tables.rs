@@ -34,6 +34,22 @@ impl TableEntry {
 }
 
 impl DependencyGraph {
+    /// Empty table cells obstruct arrays just as populated table cells do.
+    pub(crate) fn table_intersects_spill(
+        &self,
+        anchor: crate::reference::CellRef,
+        end_row: u32,
+        end_col: u32,
+    ) -> bool {
+        self.tables.values().any(|t| {
+            t.sheet_id() == anchor.sheet_id
+                && t.range.start.coord.row() <= end_row
+                && anchor.coord.row() <= t.range.end.coord.row()
+                && t.range.start.coord.col() <= end_col
+                && anchor.coord.col() <= t.range.end.coord.col()
+        })
+    }
+
     #[inline]
     fn table_lookup_key(&self, name: &str) -> String {
         if self.config.case_sensitive_tables {
