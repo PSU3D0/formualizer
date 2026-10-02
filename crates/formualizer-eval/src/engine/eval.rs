@@ -1137,6 +1137,9 @@ pub struct Engine<R> {
     /// [`Self::retained_scc_members`] instead and stay clean until the dirty
     /// graph (or a config change) reaches them (#368).
     pending_iterative_redirty: Vec<VertexId>,
+    /// Opt-in snapshot request: defer only next-cycle volatile redirty.
+    snapshot_evaluation_active: bool,
+    snapshot_volatile_redirty_pending: bool,
     /// Members of iterating SCCs retained across recalcs (#368), keyed to the
     /// id of the retained SCC they belong to (ids come from
     /// `next_retained_scc_id`; grouping is only used for telemetry).
@@ -2719,6 +2722,8 @@ where
             source_cache_footprints: Vec::new(),
             source_cache_accounted: 0,
             pending_iterative_redirty: Vec::new(),
+            snapshot_evaluation_active: false,
+            snapshot_volatile_redirty_pending: false,
             retained_scc_members: FxHashMap::default(),
             next_retained_scc_id: 0,
             retained_scc_config_fingerprint: 0,
@@ -2881,6 +2886,8 @@ where
             source_cache_footprints: Vec::new(),
             source_cache_accounted: 0,
             pending_iterative_redirty: Vec::new(),
+            snapshot_evaluation_active: false,
+            snapshot_volatile_redirty_pending: false,
             retained_scc_members: FxHashMap::default(),
             next_retained_scc_id: 0,
             retained_scc_config_fingerprint: 0,
@@ -3026,6 +3033,10 @@ where
         evaluate: impl FnOnce(&mut Self) -> Result<T, ExcelError>,
     ) -> Result<T, ExcelError> {
         let outermost = self.evaluation_resource_request_depth == 0;
+        if outermost && self.snapshot_volatile_redirty_pending {
+            self.snapshot_volatile_redirty_pending = false;
+            self.graph.redirty_volatiles();
+        }
         #[cfg(feature = "tracing")]
         if outermost {
             self.trace_evaluation_counters = TraceEvaluationCounters::default();
@@ -3484,7 +3495,11 @@ where
     /// `graph.redirty_volatiles()` call at every evaluation-flow exit; must
     /// run AFTER the flow's `clear_dirty_flags`.
     fn redirty_for_next_recalc(&mut self) {
-        self.graph.redirty_volatiles();
+        if self.snapshot_evaluation_active {
+            self.snapshot_volatile_redirty_pending = true;
+        } else {
+            self.graph.redirty_volatiles();
+        }
         let pending = std::mem::take(&mut self.pending_iterative_redirty);
         let dirty_at_begin = std::mem::take(&mut self.retained_scc_dirty_at_begin);
         for (vertex, scc) in dirty_at_begin {
@@ -14778,6 +14793,36 @@ where
     }
 
     /// Evaluate all dirty/volatile vertices
+    /// Evaluate a current result snapshot, optionally with cancellation.
+    ///
+    /// This evaluates exactly like [`Self::evaluate_all`] (or its cancellable
+    /// counterpart), but leaves volatile vertices and their dependents Current
+    /// at return rather than marking them dirty for the next cycle. It does
+    /// not suppress iterative-SCC redirty or any other freshness check.
+    ///
+    /// Callers retaining the engine must start another evaluation request
+    /// (`evaluate_all`, `evaluate_until`, `evaluate_cell`, or equivalent) to
+    /// refresh volatile values. That request restores the deferred volatile
+    /// redirty before selecting its work. Errors and cancellation never leave
+    /// the snapshot mode active.
+    pub fn evaluate_all_for_snapshot(
+        &mut self,
+        cancel: Option<crate::engine::CancelToken>,
+    ) -> Result<EvalResult, ExcelError> {
+        self.snapshot_evaluation_active = true;
+        let result = match cancel {
+            Some(cancel) => self.evaluate_all_cancellable(cancel),
+            None => self.evaluate_all(),
+        };
+        self.snapshot_evaluation_active = false;
+        if result.is_err() {
+            self.snapshot_volatile_redirty_pending = false;
+            self.graph.redirty_volatiles();
+        }
+        result
+    }
+
+    /// Evaluate all dirty/volatile vertices.
     pub fn evaluate_all(&mut self) -> Result<EvalResult, ExcelError> {
         // `evaluate_all_unobserved` owns the `observe_function_semantic_epoch` guard.
         self.observe_evaluation_resource_request(EvaluationRequestKind::Full, |engine| {
