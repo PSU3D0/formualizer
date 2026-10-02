@@ -4,9 +4,7 @@
 
 use std::sync::Arc;
 
-use crate::engine::{
-    Engine, EvalConfig, FormulaIngestBatch, FormulaIngestRecord, FormulaPlaneMode,
-};
+use crate::engine::{Engine, EvalConfig, FormulaIngestBatch, FormulaIngestRecord};
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::parse;
@@ -29,18 +27,19 @@ enum Route {
 
 const APIS: [Api; 2] = [Api::Bulk, Api::Single];
 const ROUTES: [Route; 4] = [Route::All, Route::Until, Route::Plan, Route::Cell];
-const PLANES: [FormulaPlaneMode; 2] = [
-    FormulaPlaneMode::Off,
-    FormulaPlaneMode::AuthoritativeExperimental,
-];
+/// Grouped (family) evaluation of copied-down formulas, on and off.
+const FAMILY_EXECUTION: [bool; 2] = [true, false];
 
 type Edit = (u32, u32, &'static str);
 type Check = (&'static str, u32, u32, f64);
 
-fn engine(plane: FormulaPlaneMode) -> TestEngine {
+fn engine(family_execution: bool) -> TestEngine {
     Engine::new(
         TestWorkbook::default(),
-        EvalConfig::default().with_formula_plane_mode(plane),
+        EvalConfig {
+            family_execution,
+            ..EvalConfig::default()
+        },
     )
 }
 
@@ -103,13 +102,13 @@ fn number(engine: &TestEngine, sheet: &str, row: u32, col: u32) -> Option<f64> {
 }
 
 /// Runs setup, a full evaluation, the edit, and a recalculation for every
-/// API x route x formula-plane mode, and collects every mismatch.
+/// API x route x family-execution setting, and collects every mismatch.
 fn run_matrix(setup: fn(&mut TestEngine), sheet: &str, edits: &[Edit], checks: &[Check]) {
     let mut failures = Vec::new();
-    for plane in PLANES {
+    for family in FAMILY_EXECUTION {
         for api in APIS {
             for route in ROUTES {
-                let mut engine = engine(plane);
+                let mut engine = engine(family);
                 setup(&mut engine);
                 engine.evaluate_all().unwrap();
                 apply(&mut engine, api, sheet, edits);
@@ -118,7 +117,7 @@ fn run_matrix(setup: fn(&mut TestEngine), sheet: &str, edits: &[Edit], checks: &
                     let got = number(&engine, s, r, c);
                     if got != Some(want) {
                         failures.push(format!(
-                            "{plane:?}/{api:?}/{route:?}: {s}!R{r}C{c} expected {want}, got {got:?}"
+                            "family={family}/{api:?}/{route:?}: {s}!R{r}C{c} expected {want}, got {got:?}"
                         ));
                     }
                 }
@@ -269,8 +268,8 @@ fn bulk_set_formulas_inside_formula_family_dirties_readers() {
 
 #[test]
 fn bulk_set_formulas_inside_deferred_dirty_scope_dirties_readers() {
-    for plane in PLANES {
-        let mut engine = engine(plane);
+    for family in FAMILY_EXECUTION {
+        let mut engine = engine(family);
         formula(&mut engine, "Sheet1", 1, 1, "=1");
         formula(&mut engine, "Sheet1", 1, 2, "=A1+1");
         engine.evaluate_all().unwrap();
@@ -282,6 +281,10 @@ fn bulk_set_formulas_inside_deferred_dirty_scope_dirties_readers() {
         engine.end_deferred_dirty();
         engine.evaluate_all().unwrap();
 
-        assert_eq!(number(&engine, "Sheet1", 1, 2), Some(6.0), "{plane:?}");
+        assert_eq!(
+            number(&engine, "Sheet1", 1, 2),
+            Some(6.0),
+            "family={family}"
+        );
     }
 }
