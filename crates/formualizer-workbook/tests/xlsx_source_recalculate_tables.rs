@@ -807,3 +807,111 @@ fn formula_free_tables_still_validate_headers_and_rerun_without_changes() {
         .to_string();
     assert!(e.contains("header"), "{e}");
 }
+
+#[test]
+fn multicolumn_shared_this_row_keeps_column_identity_for_every_follower() {
+    let mut rows = "<row r=\"1\">".to_owned();
+    for name in ["A", "B", "C", "D"] {
+        rows.push_str(&format!(
+            "<c r=\"{name}1\" t=\"inlineStr\"><is><t>{name}</t></is></c>"
+        ));
+    }
+    rows.push_str("</row>");
+    for row in 2..=5 {
+        let master = if row == 2 {
+            "<f t=\"shared\" si=\"0\" ref=\"C2:D5\">[@A]</f>"
+        } else {
+            "<f t=\"shared\" si=\"0\"/>"
+        };
+        rows.push_str(&format!("<row r=\"{row}\"><c r=\"A{row}\"><v>{}</v></c><c r=\"B{row}\"><v>999</v></c><c r=\"C{row}\">{master}<v>99</v></c><c r=\"D{row}\"><f t=\"shared\" si=\"0\"/><v>99</v></c></row>",(row-1)*10));
+    }
+    let mut p = fixture("1+2");
+    let xml = &p[SHEET];
+    let start = xml.find("<sheetData>").unwrap() + "<sheetData>".len();
+    let end = xml.find("</sheetData>").unwrap();
+    let mut xml = xml.clone();
+    xml.replace_range(start..end, &rows);
+    p.insert(SHEET.into(), xml.replace("A1:D4", "A1:D5"));
+    p.insert(TABLE.into(),format!("<table xmlns=\"{MAIN}\" id=\"1\" name=\"Table1\" displayName=\"Table1\" ref=\"A1:D5\"><tableColumns count=\"4\"><tableColumn id=\"1\" name=\"A\"/><tableColumn id=\"2\" name=\"B\"/><tableColumn id=\"3\" name=\"C\"/><tableColumn id=\"4\" name=\"D\"/></tableColumns></table>"));
+    // Compare both a vertical shared master and a horizontal+vertical one
+    // against native plain-A1 references over independently seeded literals.
+    for vertical_only in [false, true] {
+        let source = if vertical_only {
+            edit(p.clone(), SHEET, "ref=\"C2:D5\"", "ref=\"C2:C5\"")
+        } else {
+            p.clone()
+        };
+        let source = if vertical_only {
+            let mut source = source;
+            let mut xml = source[SHEET].clone();
+            for row in 2..=5 {
+                xml = xml.replace(
+                    &format!("<c r=\"D{row}\"><f t=\"shared\" si=\"0\"/><v>99</v></c>"),
+                    &format!("<c r=\"D{row}\"><v>999</v></c>"),
+                );
+            }
+            source.insert(SHEET.into(), xml);
+            source
+        } else {
+            source
+        };
+        let mut native = formualizer_eval::engine::Engine::new(
+            formualizer_workbook::workbook::WBResolver::default(),
+            Default::default(),
+        );
+        for row in 2..=5 {
+            native
+                .set_cell_value(
+                    "Sheet1",
+                    row,
+                    1,
+                    formualizer_common::LiteralValue::Number(f64::from((row - 1) * 10)),
+                )
+                .unwrap();
+            for col in [3, 4] {
+                native
+                    .set_cell_formula(
+                        "Sheet1",
+                        row,
+                        col,
+                        formualizer_parse::parser::parse(format!("=$A{row}")).unwrap(),
+                    )
+                    .unwrap();
+            }
+        }
+        native.evaluate_all().unwrap();
+        let out = recalculate_xlsx_bytes(&pack(&source), Default::default()).unwrap();
+        let sheet = parse_sheet(&sheet_xml(&out.bytes));
+        for row in 2..=5 {
+            for col in if vertical_only {
+                &["C"][..]
+            } else {
+                &["C", "D"][..]
+            } {
+                assert_eq!(
+                    native.get_cell_value("Sheet1", row, if *col == "C" { 3 } else { 4 }),
+                    Some(formualizer_common::LiteralValue::Number(f64::from(
+                        (row - 1) * 10
+                    )))
+                );
+                assert_eq!(
+                    sheet
+                        .cell(&format!("{col}{row}"))
+                        .v
+                        .as_ref()
+                        .unwrap()
+                        .parse::<u32>()
+                        .unwrap(),
+                    (row - 1) * 10
+                );
+            }
+        }
+        assert_eq!(unpack(&out.bytes)[TABLE], p[TABLE]);
+        assert_eq!(
+            recalculate_xlsx_bytes(&out.bytes, Default::default())
+                .unwrap()
+                .bytes,
+            out.bytes
+        );
+    }
+}

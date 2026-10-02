@@ -188,10 +188,37 @@ fn lower(
         .cols
         .map(|(a, b)| (r.first_col + a as u32, r.first_col + b as u32))
         .unwrap_or((r.first_col, r.last_col));
-    let prefix = format!("'{}'!", sheet.name.replace('\'', "''"));
+    let prefix = if sheet.name == sheet_name {
+        String::new()
+    } else {
+        format!("'{}'!", sheet.name.replace('\'', "''"))
+    };
+    // Relative this-row columns are exact only when replay cannot displace
+    // the formula horizontally. Whole-table bounds always stay absolute.
+    let one_column_placement = if cell.formula_kind == "shared" {
+        cell.shared_rect()
+            .is_some_and(|span| span.first_col == span.last_col)
+    } else {
+        cell.formula_kind == "normal"
+    };
+    let col_absolute = if rows == 8 && one_column_placement {
+        ""
+    } else {
+        "$"
+    };
     let row_absolute = if rows == 8 { "" } else { "$" };
-    let first = format!("${}{}{}", column(first_col), row_absolute, first_row);
-    let last = format!("${}{}{}", column(last_col), row_absolute, last_row);
+    let first = format!(
+        "{col_absolute}{}{}{}",
+        column(first_col),
+        row_absolute,
+        first_row
+    );
+    let last = format!(
+        "{col_absolute}{}{}{}",
+        column(last_col),
+        row_absolute,
+        last_row
+    );
     Ok(if first == last {
         format!("{prefix}{first}")
     } else {
