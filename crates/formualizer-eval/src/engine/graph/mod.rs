@@ -4397,6 +4397,12 @@ impl DependencyGraph {
         #[cfg(any(test, feature = "legacy_oracle"))]
         self.edges.end_batch();
 
+        // Readers of the written cells hold values computed from the old
+        // contents. Propagate once from every target, as `set_cell_formula`
+        // does per cell: one multi-source pass (or one queued flush inside a
+        // deferred-dirty scope), not a walk per target.
+        self.mark_dirty_many(&target_vids);
+
         Ok(planned.len())
     }
 

@@ -44,6 +44,7 @@ mod schedule_units;
 mod sheet_index_integration;
 //mod streaming_evaluation;
 mod bulk_ingest;
+mod bulk_set_formulas_dirty;
 mod column_operations;
 mod debug_vertex_lifecycle;
 mod dynamic_freshness;
