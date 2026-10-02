@@ -156,3 +156,44 @@ fn resource_error_restores_the_normal_volatile_mode() {
         Staleness::Dirty
     ));
 }
+
+struct PanicFn;
+impl crate::function::Function for PanicFn {
+    fn caps(&self) -> crate::function::FnCaps {
+        crate::function::FnCaps::PURE
+    }
+    fn name(&self) -> &'static str {
+        "SNAPSHOT_TEST_PANIC"
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        _args: &'c [crate::traits::ArgumentHandle<'a, 'b>],
+        _ctx: &dyn crate::traits::FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, formualizer_common::ExcelError> {
+        panic!("snapshot test panic")
+    }
+}
+#[test]
+fn panic_during_snapshot_evaluation_does_not_leave_snapshot_mode_active() {
+    let wb = TestWorkbook::new().with_function(std::sync::Arc::new(PanicFn));
+    let mut e = Engine::new(wb, EvalConfig::default());
+    e.set_cell_formula("Sheet1", 1, 1, parse("=RAND()").unwrap())
+        .unwrap();
+    e.set_cell_formula("Sheet1", 1, 2, parse("=SNAPSHOT_TEST_PANIC()").unwrap())
+        .unwrap();
+    let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = e.evaluate_all_for_snapshot(None);
+    }));
+    assert!(caught.is_err(), "the test function must panic");
+    // A caller that keeps the engine and evaluates normally must get the
+    // ordinary next-cycle volatile redirty again.
+    e.set_cell_formula("Sheet1", 1, 2, parse("=1").unwrap())
+        .unwrap();
+    e.evaluate_all().unwrap();
+    assert_eq!(
+        e.inspect_cell_result(&CellAddress::new("Sheet1", 1, 1).unwrap())
+            .unwrap()
+            .staleness,
+        Staleness::Dirty
+    );
+}

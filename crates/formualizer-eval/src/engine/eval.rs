@@ -14809,12 +14809,26 @@ where
         &mut self,
         cancel: Option<crate::engine::CancelToken>,
     ) -> Result<EvalResult, ExcelError> {
+        /// Leaves snapshot mode even when evaluation unwinds. A panic
+        /// keeps the deferred volatile redirty pending, so the next request
+        /// restores volatile work without touching the graph mid-unwind.
+        struct SnapshotScope<'e, R: EvaluationContext>(&'e mut Engine<R>);
+        impl<R: EvaluationContext> Drop for SnapshotScope<'_, R> {
+            fn drop(&mut self) {
+                self.0.snapshot_evaluation_active = false;
+                if std::thread::panicking() {
+                    self.0.snapshot_volatile_redirty_pending = true;
+                }
+            }
+        }
         self.snapshot_evaluation_active = true;
-        let result = match cancel {
-            Some(cancel) => self.evaluate_all_cancellable(cancel),
-            None => self.evaluate_all(),
+        let result = {
+            let scope = SnapshotScope(self);
+            match cancel {
+                Some(cancel) => scope.0.evaluate_all_cancellable(cancel),
+                None => scope.0.evaluate_all(),
+            }
         };
-        self.snapshot_evaluation_active = false;
         if result.is_err() {
             self.snapshot_volatile_redirty_pending = false;
             self.graph.redirty_volatiles();
