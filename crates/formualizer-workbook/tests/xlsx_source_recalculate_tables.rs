@@ -547,7 +547,9 @@ fn existing_dynamic_growth_into_table_preserves_anchor_identity() {
 }
 
 #[test]
-fn this_row_body_totals_placements_use_native_or_independent_oracles() {
+fn this_row_body_placements_use_native_or_independent_oracles() {
+    // Row 4 is the totals row: #This Row there is refused (see
+    // `this_row_in_the_totals_row_is_refused`).
     for row in [2, 3, 4] {
         for spelling in [
             "[@Qty]",
@@ -574,6 +576,10 @@ fn this_row_body_totals_placements_use_native_or_independent_oracles() {
                 ),
                 &format!("<c r=\"B{row}\"><f>{formula}</f><v>99</v></c>"),
             );
+            if row == 4 {
+                unsupported(&pack(&p), &format!("{formula} in the totals row"));
+                continue;
+            }
             let out = recalculate_xlsx_bytes(&pack(&p), Default::default()).unwrap();
             assert_eq!(
                 parse_sheet(&sheet_xml(&out.bytes))
@@ -914,4 +920,311 @@ fn multicolumn_shared_this_row_keeps_column_identity_for_every_follower() {
             out.bytes
         );
     }
+}
+
+// ---- Shared-formula sheet qualifiers, bare table names, INDIRECT text ----
+
+fn unsupported(bytes: &[u8], context: &str) -> String {
+    match recalculate_xlsx_bytes(bytes, Default::default()) {
+        Err(e @ formualizer_workbook::IoError::Unsupported { .. }) => e.to_string(),
+        Err(other) => panic!("{context}: expected Unsupported, got {other:?}"),
+        Ok(_) => panic!("{context}: expected Unsupported, got a published package"),
+    }
+}
+/// `Qty` 2/4/6, `Price` 3/5/7 and a blank `Amount` column in `Table1`
+/// (A1:C4, or A1:C5 with an empty totals row).
+fn priced(sheet: &str, totals: bool, extra: Vec<(String, String)>) -> Ws {
+    let mut cells = vec![
+        text("A1", "Qty"),
+        text("B1", "Price"),
+        text("C1", "Amount"),
+        num("A2", 2.0),
+        num("B2", 3.0),
+        num("A3", 4.0),
+        num("B3", 5.0),
+        num("A4", 6.0),
+        num("B4", 7.0),
+    ];
+    cells.extend(extra);
+    Ws::new(sheet, cells).table(table_xml(
+        1,
+        "Table1",
+        if totals { "A1:C5" } else { "A1:C4" },
+        &["Qty", "Price", "Amount"],
+        totals,
+    ))
+}
+/// `Table` (Qty 1/2/3) on `table_sheet`, a decoy sheet, and `Calc` with the
+/// shared formula `formula` over C2:C4 (A2:A4 = 10/20/30).
+fn shared_calc(table_sheet: &str, decoy: &str, formula: &str) -> Vec<u8> {
+    let table = Ws::new(
+        table_sheet,
+        vec![
+            text("A1", "Qty"),
+            num("A2", 1.0),
+            num("A3", 2.0),
+            num("A4", 3.0),
+        ],
+    )
+    .table(table_xml(1, "Sales", "A1:A4", &["Qty"], false));
+    let decoy = Ws::new(
+        decoy,
+        vec![num("A2", 100.0), num("A3", 100.0), num("A4", 100.0)],
+    );
+    let calc = Ws::new(
+        "Calc",
+        vec![
+            num("A2", 10.0),
+            num("A3", 20.0),
+            num("A4", 30.0),
+            formula_with("C2", formula, " t=\"shared\" si=\"0\" ref=\"C2:C4\""),
+            follower("C3", 0),
+            follower("C4", 0),
+        ],
+    );
+    book(&[table, decoy, calc], "")
+}
+fn calc_values(bytes: &[u8]) -> Vec<Option<String>> {
+    ["C2", "C3", "C4"]
+        .iter()
+        .map(|c| value_at(bytes, 3, c))
+        .collect()
+}
+#[test]
+fn shared_cross_sheet_lowering_refuses_qualifiers_calamine_would_shift() {
+    for (sheet, decoy) in [("FY2024", "FY2025"), ("Q1", "Q2"), ("x\"y", "Other")] {
+        let e = unsupported(
+            &shared_calc(sheet, decoy, "A2*SUM(Sales[Qty])"),
+            &format!("table on {sheet}"),
+        );
+        assert!(e.contains("shared formula"), "{sheet}: {e}");
+    }
+    // Ordinary sheet names keep the exact cross-sheet lowering.
+    for sheet in ["Data", "Sheet 1", "Summary", "Sheet2", "It's"] {
+        let out = recalculate_xlsx_bytes(
+            &shared_calc(sheet, "Other", "A2*SUM(Sales[Qty])"),
+            Default::default(),
+        )
+        .unwrap_or_else(|e| panic!("{sheet}: {e}"));
+        assert_eq!(
+            calc_values(&out.bytes),
+            [Some("60".into()), Some("120".into()), Some("180".into())],
+            "{sheet}"
+        );
+    }
+}
+#[test]
+fn plain_shared_formulas_refuse_shiftable_or_quote_bearing_sheet_qualifiers() {
+    for (sheet, formula) in [
+        ("Q1", "SUM('Q1'!$A$2:$A$4)+A2"),
+        ("FY2024", "'FY2024'!A2+A2"),
+        ("x\"y", "'x\"y'!$A$2+A2"),
+        ("ABC1", "ABC1!$A$2+A2"),
+    ] {
+        let e = unsupported(&shared_calc(sheet, "Q2", formula), formula);
+        assert!(e.contains("shared formula"), "{formula}: {e}");
+    }
+    for (sheet, formula, expected) in [
+        ("Sheet2", "Sheet2!A2*2", ["2", "4", "6"]),
+        ("Sheet 1", "'Sheet 1'!A2+A2", ["11", "22", "33"]),
+        ("Data", "'Data'!$A$2+A2", ["11", "21", "31"]),
+        ("Summary", "SUM('Summary'!$A$2:$A$4)+A2", ["16", "26", "36"]),
+        ("Q1", "IF(\"'Q1'!\"=\"\",0,A2)", ["10", "20", "30"]),
+    ] {
+        let out = recalculate_xlsx_bytes(&shared_calc(sheet, "Other", formula), Default::default())
+            .unwrap_or_else(|e| panic!("{formula}: {e}"));
+        assert_eq!(
+            calc_values(&out.bytes),
+            expected.map(|v| Some(v.to_owned())),
+            "{formula}"
+        );
+    }
+}
+#[test]
+fn bare_table_names_lower_to_the_data_body() {
+    for (formula, expected) in [
+        ("SUM(Table1)", "27"),
+        ("ROWS(Table1)", "3"),
+        ("COLUMNS(Table1)", "3"),
+        ("SUM(Table1)*1", "27"),
+        ("VLOOKUP(4,Table1,2,FALSE)", "5"),
+        ("SUM(table1)+LEN(\"Table1\")", "33"),
+        ("Table10+Table1x", "5"),
+    ] {
+        let p = book(
+            &[priced(
+                "Sheet1",
+                false,
+                vec![formula_with("E2", formula, "")],
+            )],
+            "<definedName name=\"Table10\">Sheet1!$A$2</definedName><definedName name=\"Table1x\">Sheet1!$B$2</definedName>",
+        );
+        let out = recalculate_xlsx_bytes(&p, Default::default())
+            .unwrap_or_else(|e| panic!("{formula}: {e}"));
+        assert_eq!(
+            value_at(&out.bytes, 1, "E2").as_deref(),
+            Some(expected),
+            "{formula}"
+        );
+        let xml = unpack(&out.bytes).remove(SHEET).unwrap();
+        assert!(
+            xml.contains(&format!("<f>{}</f>", quick_xml::escape::escape(formula))),
+            "{xml}"
+        );
+    }
+    // Another sheet, and a shared formula over a bare name.
+    let p = book(
+        &[
+            priced("Sheet1", false, vec![]),
+            Ws::new(
+                "S2",
+                vec![
+                    formula("A1", "SUM(Table1)"),
+                    formula_with(
+                        "B1",
+                        "COUNT(Table1)+A1",
+                        " t=\"shared\" si=\"0\" ref=\"B1:B2\"",
+                    ),
+                    follower("B2", 0),
+                ],
+            ),
+        ],
+        "",
+    );
+    let out = recalculate_xlsx_bytes(&p, Default::default()).unwrap();
+    assert_eq!(value_at(&out.bytes, 2, "A1").as_deref(), Some("27"));
+    assert_eq!(value_at(&out.bytes, 2, "B1").as_deref(), Some("33"));
+    assert_eq!(value_at(&out.bytes, 2, "B2").as_deref(), Some("6"));
+}
+#[test]
+fn unprovable_bare_table_names_are_refused() {
+    let p = book(
+        &[priced("Sheet1", false, vec![formula("E2", "SUM(T)")])],
+        "<definedName name=\"T\">Table1</definedName>",
+    );
+    unsupported(&p, "defined name over a bare table name");
+    for formula in ["SUM(Sheet1!Table1)", "LET(x,Table1,SUM(x))"] {
+        let p = book(
+            &[priced(
+                "Sheet1",
+                false,
+                vec![formula_with("E2", formula, "")],
+            )],
+            "",
+        );
+        unsupported(&p, formula);
+    }
+}
+#[test]
+fn indirect_in_table_workbooks_requires_literal_table_free_text() {
+    for (e1, formula) in [
+        ("Table1", "COUNTA(INDIRECT(E1))"),
+        ("Table1[Qty]:Table1[Price]", "COUNTA(INDIRECT(E1))"),
+        ("Table1[#All]", "COUNTA(INDIRECT(E1))"),
+        ("A2:A4", "SUM(INDIRECT(E1))"),
+        ("A2", "SUM(INDIRECT(\"Tab\"&\"le1\"))"),
+        ("A2", "SUM(INDIRECT(\"table1\"))"),
+        ("A2", "SUM(INDIRECT(\"A2\"&E1))"),
+    ] {
+        let p = book(
+            &[priced(
+                "Sheet1",
+                false,
+                vec![text("E1", e1), formula_with("E2", formula, "")],
+            )],
+            "",
+        );
+        let e = unsupported(&p, &format!("{formula} with E1={e1}"));
+        assert!(e.contains("INDIRECT"), "{e}");
+    }
+    for (formula, expected) in [
+        ("SUM(INDIRECT(\"A2:A4\"))", "12"),
+        ("SUM(INDIRECT(\"A\"&\"2:A\"&4))", "12"),
+        ("IF(\"Table1\"=\"x\",0,SUM(INDIRECT(\"B2:B4\")))", "15"),
+    ] {
+        let p = book(
+            &[priced(
+                "Sheet1",
+                false,
+                vec![formula_with("E2", formula, "")],
+            )],
+            "",
+        );
+        let out = recalculate_xlsx_bytes(&p, Default::default())
+            .unwrap_or_else(|e| panic!("{formula}: {e}"));
+        assert_eq!(
+            value_at(&out.bytes, 1, "E2").as_deref(),
+            Some(expected),
+            "{formula}"
+        );
+    }
+    // Workbooks without tables keep cell-sourced INDIRECT.
+    let p = book(
+        &[Ws::new(
+            "Sheet1",
+            vec![
+                num("A2", 5.0),
+                text("E1", "A2"),
+                formula("E2", "INDIRECT(E1)*2"),
+            ],
+        )],
+        "",
+    );
+    let out = recalculate_xlsx_bytes(&p, Default::default()).unwrap();
+    assert_eq!(value_at(&out.bytes, 1, "E2").as_deref(), Some("10"));
+}
+#[test]
+fn this_row_in_the_totals_row_is_refused() {
+    for formula in [
+        "[@Price]+1",
+        "Table1[@Price]+1",
+        "Table1[[#This Row],[Price]]",
+    ] {
+        let p = book(
+            &[priced(
+                "Sheet1",
+                true,
+                vec![formula_with("A5", formula, "")],
+            )],
+            "",
+        );
+        unsupported(&p, formula);
+    }
+    // A shared this-row master whose extent reaches the totals row.
+    let p = book(
+        &[priced(
+            "Sheet1",
+            true,
+            vec![
+                formula_with(
+                    "C2",
+                    "[@Qty]*[@Price]",
+                    " t=\"shared\" si=\"0\" ref=\"C2:C5\"",
+                ),
+                follower("C3", 0),
+                follower("C4", 0),
+                follower("C5", 0),
+            ],
+        )],
+        "",
+    );
+    unsupported(&p, "shared this-row into the totals row");
+}
+#[test]
+fn table_past_the_last_stored_cell_without_dimension_is_admitted() {
+    let p = book(
+        &[Ws::new(
+            "Sheet1",
+            vec![
+                text("A1", "Qty"),
+                num("A2", 1.0),
+                num("A3", 2.0),
+                formula("C1", "SUM(Table1[Qty])+ROWS(Table1[Qty])"),
+            ],
+        )
+        .table(table_xml(1, "Table1", "A1:A6", &["Qty"], false))],
+        "",
+    );
+    let out = recalculate_xlsx_bytes(&p, Default::default()).unwrap();
+    assert_eq!(value_at(&out.bytes, 1, "C1").as_deref(), Some("8"));
 }

@@ -188,6 +188,8 @@ pub(super) struct Scan {
     pub hidden_rows: Vec<u32>,
     /// `sheetFormatPr/@zeroHeight`: unlisted rows are hidden by default.
     pub rows_hidden_by_default: bool,
+    /// Whether the worksheet declares a `<dimension>`.
+    pub has_dimension: bool,
     pub active_filters: Vec<SourceRect>,
     /// Built only when requested.
     pub index: Option<SourceIndex>,
@@ -916,6 +918,9 @@ fn scan_inner(
                         "worksheet",
                     ));
                 }
+                if area > 1 {
+                    super::shared_qualifiers::validate(&cell.formula_text, &cell.address)?;
+                }
             } else if cell.shared_range.is_some() {
                 return Err(unsupported("shared descendant declares range", "worksheet"));
             }
@@ -948,6 +953,7 @@ fn scan_inner(
         active_filters,
         hidden_rows,
         rows_hidden_by_default,
+        has_dimension: dimension.is_some(),
         table_merges,
         table_ids,
         cells,

@@ -5,6 +5,7 @@ mod geometry;
 mod ingest_view;
 mod package;
 mod result_projection;
+mod shared_qualifiers;
 mod sheet;
 mod table_lowering;
 mod tables;
@@ -420,7 +421,7 @@ fn admit_source<'a>(
                 &mut logical_cells,
             )?;
         }
-        let sheet::Scanned::Done(scan) = scanned else {
+        let sheet::Scanned::Done(mut scan) = scanned else {
             return Err(unsupported("unindexed dynamic cell metadata", "worksheet"));
         };
         let mut table_ids = HashSet::new();
@@ -442,6 +443,28 @@ fn admit_source<'a>(
                 .any(|t: &tables::Table| t.rect.intersects(table.rect))
             {
                 return Err(unsupported("overlapping tables", &table.name));
+            }
+            // Without a `<dimension>`, trailing empty table rows/columns are
+            // not serialized; admit them within the sheet limits, counting the
+            // grown logical area exactly as a declared dimension would be.
+            if !scan.has_dimension
+                && (table.rect.last_row > scan.bounds.0 || table.rect.last_col > scan.bounds.1)
+            {
+                let grown = (
+                    scan.bounds.0.max(table.rect.last_row),
+                    scan.bounds.1.max(table.rect.last_col),
+                );
+                if grown.1 > options.limits.max_columns {
+                    return Err(unsupported("worksheet width limit", &table.name));
+                }
+                logical_cells = (logical_cells
+                    - u64::from(scan.bounds.0) * u64::from(scan.bounds.1))
+                .checked_add(u64::from(grown.0) * u64::from(grown.1))
+                .ok_or_else(|| unsupported("logical area overflow", "workbook"))?;
+                if logical_cells > options.limits.max_cells as u64 {
+                    return Err(unsupported("workbook logical cell limit", "workbook"));
+                }
+                scan.bounds = grown;
             }
             tables::validate(
                 &table,
@@ -496,6 +519,7 @@ fn admit_source<'a>(
             "xl/workbook.xml",
             options.limits.max_worksheet_bytes,
         )?;
+        let table_name_list: Vec<String> = table_names.iter().cloned().collect();
         xml::walk(&workbook, options, |path, node| {
             if xml::path_is(
                 path,
@@ -508,6 +532,14 @@ fn admit_source<'a>(
                     "defined-name formula contains structured references",
                     "table-bearing workbook",
                 ));
+            }
+            if xml::path_is(
+                path,
+                xml::MAIN,
+                &["workbook", "definedNames", "definedName"],
+            ) && let xml::Kind::Text(text) = &node.kind
+            {
+                table_lowering::validate_defined_name(text, &table_name_list)?;
             }
             if xml::path_is(
                 path,

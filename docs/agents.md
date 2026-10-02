@@ -99,7 +99,7 @@ esac
 | 64 | `error` | Correct command-line arguments. |
 | 130 | `interrupted` | Cancellation before publication; nothing written. Resume only when intended. |
 
-Excel table-bearing sheets are supported only within the validated subset described in [cache-only XLSX eligibility](cache-only-xlsx.md). When extending a calculated column, write a worksheet formula into every new row: table-level formula metadata alone is refused. Table XML and geometry are never rewritten. There is no automatic fallback engine; branch on explicit refusal rather than publish stale values.
+Excel table-bearing sheets are supported only within the validated subset described in [cache-only XLSX eligibility](cache-only-xlsx.md). When extending a calculated column, write a worksheet formula into every new row: table-level formula metadata alone is refused. Bare table names such as `SUM(Table1)` mean the data body. In table-bearing workbooks, `INDIRECT` needs literal text that names no table; cell-sourced `INDIRECT` text is refused there. `[#This Row]` is supported only in the data body. Shared formulas whose sheet qualifiers look like cell references (for example `'Q1'!` or `'FY2024'!`) are refused; write ordinary per-cell formulas instead. Table XML and geometry are never rewritten. There is no automatic fallback engine; branch on explicit refusal rather than publish stale values.
 
 ### Verify without writing
 
