@@ -518,3 +518,177 @@ pub fn metadata_chain(bytes: &[u8], cell: &str) -> Chain {
         relationship: rels[0].attr("Id").unwrap().to_owned(),
     }
 }
+
+/// One worksheet for [`book`]: `(A1 reference, <c> element)` cells in any
+/// order, per-row attribute text, and XML placed before `sheetData`.
+#[derive(Default)]
+pub struct Ws {
+    pub name: String,
+    pub cells: Vec<(String, String)>,
+    pub row_attrs: Vec<(u32, String)>,
+    pub pre: String,
+    pub tables: Vec<String>,
+}
+impl Ws {
+    pub fn new(name: &str, cells: Vec<(String, String)>) -> Self {
+        Self {
+            name: name.to_owned(),
+            cells,
+            ..Default::default()
+        }
+    }
+    pub fn table(mut self, xml: String) -> Self {
+        self.tables.push(xml);
+        self
+    }
+    pub fn row_attr(mut self, row: u32, attrs: &str) -> Self {
+        self.row_attrs.push((row, attrs.to_owned()));
+        self
+    }
+    pub fn pre(mut self, xml: &str) -> Self {
+        self.pre = xml.to_owned();
+        self
+    }
+}
+pub fn num(r: &str, v: f64) -> (String, String) {
+    (r.to_owned(), format!("<c r=\"{r}\"><v>{v}</v></c>"))
+}
+pub fn text(r: &str, t: &str) -> (String, String) {
+    (
+        r.to_owned(),
+        format!(
+            "<c r=\"{r}\" t=\"inlineStr\"><is><t>{}</t></is></c>",
+            quick_xml::escape::escape(t)
+        ),
+    )
+}
+pub fn formula(r: &str, f: &str) -> (String, String) {
+    formula_with(r, f, "")
+}
+pub fn formula_with(r: &str, f: &str, attrs: &str) -> (String, String) {
+    (
+        r.to_owned(),
+        format!(
+            "<c r=\"{r}\"><f{attrs}>{}</f><v>99</v></c>",
+            quick_xml::escape::escape(f)
+        ),
+    )
+}
+/// A shared-formula follower of `si`.
+pub fn follower(r: &str, si: u32) -> (String, String) {
+    (
+        r.to_owned(),
+        format!("<c r=\"{r}\"><f t=\"shared\" si=\"{si}\"/><v>99</v></c>"),
+    )
+}
+pub fn table_xml(id: u32, name: &str, rect: &str, columns: &[&str], totals: bool) -> String {
+    let cols: String = columns
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            format!(
+                "<tableColumn id=\"{}\" name=\"{}\"/>",
+                i + 1,
+                quick_xml::escape::escape(*c)
+            )
+        })
+        .collect();
+    format!(
+        "<table xmlns=\"{MAIN}\" id=\"{id}\" name=\"{name}\" displayName=\"{name}\" ref=\"{rect}\" totalsRowCount=\"{}\"><tableColumns count=\"{}\">{cols}</tableColumns></table>",
+        u8::from(totals),
+        columns.len()
+    )
+}
+fn a1(r: &str) -> (u32, u32) {
+    let letters: String = r.chars().take_while(|c| c.is_ascii_alphabetic()).collect();
+    let col = letters
+        .bytes()
+        .fold(0u32, |n, b| n * 26 + u32::from(b - b'A' + 1));
+    (r[letters.len()..].parse().unwrap(), col)
+}
+/// A minimal multi-sheet package (no styles/shared strings) with optional
+/// `<definedName>` elements.
+pub fn book(sheets: &[Ws], defined_names: &str) -> Vec<u8> {
+    let mut parts = Parts::new();
+    let mut types = String::new();
+    let mut wb_sheets = String::new();
+    let mut wb_rels = String::new();
+    let mut table_no = 0;
+    for (i, ws) in sheets.iter().enumerate() {
+        let i = i + 1;
+        let mut rows: BTreeMap<u32, Vec<(u32, &str)>> = BTreeMap::new();
+        for (r, xml) in &ws.cells {
+            let (row, col) = a1(r);
+            rows.entry(row).or_default().push((col, xml));
+        }
+        for (row, _) in &ws.row_attrs {
+            rows.entry(*row).or_default();
+        }
+        let data: String = rows
+            .iter_mut()
+            .map(|(row, cells)| {
+                cells.sort_by_key(|(c, _)| *c);
+                let attrs = ws
+                    .row_attrs
+                    .iter()
+                    .find(|(r, _)| r == row)
+                    .map(|(_, a)| format!(" {a}"))
+                    .unwrap_or_default();
+                let body: String = cells.iter().map(|(_, x)| *x).collect();
+                format!("<row r=\"{row}\"{attrs}>{body}</row>")
+            })
+            .collect();
+        let mut rels = String::new();
+        let mut parts_xml = String::new();
+        for (j, t) in ws.tables.iter().enumerate() {
+            table_no += 1;
+            parts.insert(format!("xl/tables/table{table_no}.xml"), t.clone());
+            types.push_str(&format!("<Override PartName=\"/xl/tables/table{table_no}.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml\"/>"));
+            rels.push_str(&format!("<Relationship Id=\"rId{}\" Type=\"{OFFICE}/table\" Target=\"../tables/table{table_no}.xml\"/>", j + 1));
+            parts_xml.push_str(&format!("<tablePart r:id=\"rId{}\"/>", j + 1));
+        }
+        if !ws.tables.is_empty() {
+            parts.insert(
+                format!("xl/worksheets/_rels/sheet{i}.xml.rels"),
+                format!("<Relationships xmlns=\"{RELS}\">{rels}</Relationships>"),
+            );
+            parts_xml = format!(
+                "<tableParts count=\"{}\">{parts_xml}</tableParts>",
+                ws.tables.len()
+            );
+        }
+        parts.insert(
+            format!("xl/worksheets/sheet{i}.xml"),
+            format!(
+                "<worksheet xmlns=\"{MAIN}\" xmlns:r=\"{OFFICE}\">{}<sheetData>{data}</sheetData>{parts_xml}</worksheet>",
+                ws.pre
+            ),
+        );
+        types.push_str(&format!("<Override PartName=\"/xl/worksheets/sheet{i}.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>"));
+        wb_rels.push_str(&format!("<Relationship Id=\"rId{i}\" Type=\"{OFFICE}/worksheet\" Target=\"worksheets/sheet{i}.xml\"/>"));
+        wb_sheets.push_str(&format!(
+            "<sheet name=\"{}\" sheetId=\"{i}\" r:id=\"rId{i}\"/>",
+            quick_xml::escape::escape(ws.name.as_str())
+        ));
+    }
+    let names = if defined_names.is_empty() {
+        String::new()
+    } else {
+        format!("<definedNames>{defined_names}</definedNames>")
+    };
+    parts.insert(TYPES.into(), format!("<Types xmlns=\"{CONTENT_TYPES}\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/>{types}</Types>"));
+    parts.insert("_rels/.rels".into(), format!("<Relationships xmlns=\"{RELS}\"><Relationship Id=\"rId1\" Type=\"{OFFICE}/officeDocument\" Target=\"xl/workbook.xml\"/></Relationships>"));
+    parts.insert("xl/workbook.xml".into(), format!("<workbook xmlns=\"{MAIN}\" xmlns:r=\"{OFFICE}\"><sheets>{wb_sheets}</sheets>{names}</workbook>"));
+    parts.insert(
+        WB_RELS.into(),
+        format!("<Relationships xmlns=\"{RELS}\">{wb_rels}</Relationships>"),
+    );
+    pack(&parts)
+}
+/// Cached `<v>` text of `cell` on worksheet `index` (1-based).
+pub fn value_at(bytes: &[u8], index: usize, cell: &str) -> Option<String> {
+    let xml = unpack(bytes)
+        .remove(&format!("xl/worksheets/sheet{index}.xml"))
+        .expect("worksheet");
+    parse_sheet(&xml).cell(cell).v.clone()
+}

@@ -21,6 +21,7 @@ All notable changes to Formualizer will be documented in this file.
 
 - Applied `IF` elementwise to array and range conditions with singleton-axis broadcasting, lazy branch evaluation and per-element errors. Scalar conditions retain short-circuit reference selection.
 - Preserved calculation names during Calamine import, including supported constants, grounded formulas and sheet-local shadowing; refused unsupported or cyclic definitions instead of publishing metadata-loss `#NAME?` results.
+- Refused source XLSX `SUBTOTAL`/`AGGREGATE` results whose hidden-row exclusion could not be proved: range, intersection and union operators are checked over their whole row span (function operands, names and LET/LAMBDA-bound arguments are refused), and zero-height rows, collapsed outline groups and `zeroHeight` sheets count as hidden. Previously `SUBTOTAL(109,A1:A2:A5)` and similar forms could publish sums that included hidden rows.
 - Left snapshot mode when `Engine::evaluate_all_for_snapshot` unwinds from a panic, so a caller that catches the panic and keeps the engine gets ordinary volatile redirty on its next evaluation.
 - Recalculated readers of cells written by `Engine::bulk_set_formulas`, including chains, range, cross-sheet and formula-family readers. Previously only the written cells were recomputed and their dependents kept stale values, unlike `Engine::set_cell_formula`.
 

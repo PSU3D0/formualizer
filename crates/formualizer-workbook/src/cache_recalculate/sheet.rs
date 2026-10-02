@@ -184,7 +184,10 @@ pub(super) struct Scan {
     pub cells: Vec<Cell>,
     pub table_ids: Vec<String>,
     pub table_merges: Vec<SourceRect>,
+    /// Sorted rows hidden by `hidden`, a zero height or a collapsed outline.
     pub hidden_rows: Vec<u32>,
+    /// `sheetFormatPr/@zeroHeight`: unlisted rows are hidden by default.
+    pub rows_hidden_by_default: bool,
     pub active_filters: Vec<SourceRect>,
     /// Built only when requested.
     pub index: Option<SourceIndex>,
@@ -352,6 +355,9 @@ fn scan_inner(
     needs_index: &mut bool,
 ) -> Result<Scan, IoError> {
     let mut hidden_rows = Vec::new();
+    let mut rows_hidden_by_default = false;
+    let mut outline_rows = Vec::new();
+    let mut outline_collapsed = false;
     let mut active_filters = Vec::new();
     let mut filter_seen = false;
     let mut filter_ref: Option<SourceRect> = None;
@@ -391,6 +397,11 @@ fn scan_inner(
             );
         match &node.kind {
             xml::Kind::Open { empty, .. } => {
+                if xml::path_is(path, xml::MAIN, &["worksheet", "sheetFormatPr"])
+                    && matches!(node.value("zeroHeight"), Some("1" | "true"))
+                {
+                    rows_hidden_by_default = true;
+                }
                 if xml::path_is(path, xml::MAIN, &["worksheet", "autoFilter"]) {
                     if filter_seen {
                         return Err(unsupported("duplicate worksheet autoFilter", "worksheet"));
@@ -541,13 +552,27 @@ fn scan_inner(
                             "worksheet",
                         ));
                     }
-                    if matches!(node.value("hidden"), Some("1" | "true")) {
+                    // Excel shows a zero-height row as hidden even without
+                    // the `hidden` flag.
+                    let zero_height = node
+                        .value("ht")
+                        .is_some_and(|h| h.trim().parse::<f64>().map_or(true, |h| h <= 0.0));
+                    if matches!(node.value("hidden"), Some("1" | "true")) || zero_height {
                         if hidden_rows.len() >= options.limits.max_cells {
                             return Err(unsupported("hidden row count limit", "worksheet"));
                         }
                         hidden_rows.push(next_row);
                     } else if !matches!(node.value("hidden"), None | Some("0" | "false")) {
                         return Err(unsupported("invalid row hidden flag", "worksheet"));
+                    }
+                    if node.value("outlineLevel").is_some_and(|l| l.trim() != "0") {
+                        if outline_rows.len() >= options.limits.max_cells {
+                            return Err(unsupported("outline row count limit", "worksheet"));
+                        }
+                        outline_rows.push(next_row);
+                    }
+                    if !matches!(node.value("collapsed"), None | Some("0" | "false")) {
+                        outline_collapsed = true;
                     }
                     row = next_row;
                     column = 0;
@@ -912,9 +937,17 @@ fn scan_inner(
     if table_count.is_some_and(|n| n != table_ids.len()) {
         return Err(unsupported("tablePart count disagreement", "worksheet"));
     }
+    // A collapsed outline may hide grouped rows that carry no `hidden` flag:
+    // treat every grouped row as hidden.
+    if outline_collapsed && !outline_rows.is_empty() {
+        hidden_rows.extend(outline_rows);
+        hidden_rows.sort_unstable();
+        hidden_rows.dedup();
+    }
     Ok(Scan {
         active_filters,
         hidden_rows,
+        rows_hidden_by_default,
         table_merges,
         table_ids,
         cells,

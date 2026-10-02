@@ -352,6 +352,8 @@ impl Seek for BoundedOutput {
 struct SheetPlan {
     tables: Vec<tables::Table>,
     hidden_rows: Vec<u32>,
+    /// `sheetFormatPr/@zeroHeight`: row visibility is not provable.
+    rows_hidden_by_default: bool,
     active_filters: Vec<sheet::SourceRect>,
     data: Vec<u8>,
     cells: Vec<sheet::Cell>,
@@ -477,6 +479,7 @@ fn admit_source<'a>(
         };
         plans.push(SheetPlan {
             hidden_rows: scan.hidden_rows,
+            rows_hidden_by_default: scan.rows_hidden_by_default,
             active_filters: scan.active_filters,
             tables,
             data,
