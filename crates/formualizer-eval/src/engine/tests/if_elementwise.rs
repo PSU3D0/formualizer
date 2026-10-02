@@ -174,15 +174,13 @@ fn array_if_copied_family_sequential_and_parallel() {
 
 #[test]
 fn array_if_bare_copied_family_spills_with_room() {
-    use crate::engine::{FormulaIngestBatch, FormulaIngestRecord, FormulaPlaneMode};
+    use crate::engine::{FormulaIngestBatch, FormulaIngestRecord};
     for parallel in [false, true] {
-        for mode in [
-            FormulaPlaneMode::Off,
-            FormulaPlaneMode::AuthoritativeExperimental,
-        ] {
+        for family_execution in [true, false] {
             let config = EvalConfig {
                 enable_parallel: parallel,
-                ..EvalConfig::default().with_formula_plane_mode(mode)
+                family_execution,
+                ..EvalConfig::default()
             };
             let mut engine = Engine::new(TestWorkbook::new(), config);
             let mut records = Vec::new();
@@ -210,7 +208,7 @@ fn array_if_bare_copied_family_spills_with_room() {
                 assert_eq!(
                     norm(engine.get_cell_value("Sheet1", r, 4).unwrap()),
                     r.to_string(),
-                    "parallel={parallel}, mode={mode:?}"
+                    "parallel={parallel}, family_execution={family_execution}"
                 );
                 assert_eq!(norm(engine.get_cell_value("Sheet1", r, 5).unwrap()), "0");
             }
