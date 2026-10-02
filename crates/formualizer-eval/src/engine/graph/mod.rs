@@ -4398,12 +4398,31 @@ impl DependencyGraph {
         self.edges.end_batch();
 
         // Readers of the written cells hold values computed from the old
-        // contents. Propagate once from every target, as `set_cell_formula`
-        // does per cell: one multi-source pass (or one queued flush inside a
-        // deferred-dirty scope), not a walk per target.
-        self.mark_dirty_many(&target_vids);
+        // contents. The targets are already dirty; dirty their transitive
+        // readers once, as `set_cell_formula` does per cell. The cells are
+        // coalesced into vertical runs so a copied-down batch is a handful of
+        // rectangles for one closure query (or one queued flush inside a
+        // deferred-dirty scope), not a query per target. The plans are
+        // dropped first: the closure query syncs the dependency authority,
+        // and holding every plan across that sync raises peak memory.
+        let written = planned.len();
+        let mut cells: Vec<(u32, u32)> = planned
+            .iter()
+            .map(|(row, col, _, _)| (col.saturating_sub(1), row.saturating_sub(1)))
+            .collect();
+        drop(planned);
+        cells.sort_unstable();
+        cells.dedup();
+        let mut runs: Vec<(SheetId, u32, u32, u32, u32)> = Vec::new();
+        for (col, row) in cells {
+            match runs.last_mut() {
+                Some((_, _, r1, c0, _)) if *c0 == col && *r1 + 1 == row => *r1 = row,
+                _ => runs.push((sheet_id, row, row, col, col)),
+            }
+        }
+        self.mark_dirty_rects(&runs);
 
-        Ok(planned.len())
+        Ok(written)
     }
 
     #[cfg(any(test, feature = "legacy_oracle"))]
