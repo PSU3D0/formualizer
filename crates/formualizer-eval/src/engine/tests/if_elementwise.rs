@@ -157,7 +157,7 @@ fn array_if_copied_family_sequential_and_parallel() {
                     "Sheet1",
                     r,
                     2,
-                    parse(&format!("=SUM(IF(A{r}:A{}>0,A{r}:A{}))", r + 2, r + 2)).unwrap(),
+                    parse(format!("=SUM(IF(A{r}:A{}>0,A{r}:A{}))", r + 2, r + 2)).unwrap(),
                 )
                 .unwrap();
         }
