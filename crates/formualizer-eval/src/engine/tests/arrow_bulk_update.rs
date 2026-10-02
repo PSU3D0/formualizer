@@ -159,3 +159,40 @@ fn bulk_update_noncontiguous_dense_triggers_rebuild_varied_chunk() {
     assert_eq!(av.get_cell(9, 0), LiteralValue::Number(10.0));
     assert_eq!(av.get_cell(59, 0), LiteralValue::Number(60.0));
 }
+
+/// Known limitation: `ArrowBulkUpdateBuilder::finish` writes the Arrow store
+/// only. It neither dirties formulas that read the updated cells nor advances
+/// the snapshot, so a reader keeps its old value after `evaluate_all`. This
+/// test pins the expected behavior and is ignored until the builder
+/// propagates dirtiness.
+#[test]
+#[ignore = "known limitation: ArrowBulkUpdateBuilder does not dirty readers"]
+fn bulk_update_dirties_formula_readers() {
+    let mut engine = Engine::new(TestWorkbook::default(), arrow_eval_config());
+    engine
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(1.0))
+        .unwrap();
+    engine
+        .set_cell_formula(
+            "Sheet1",
+            1,
+            2,
+            formualizer_parse::parser::parse("=A1+1").unwrap(),
+        )
+        .unwrap();
+    engine.evaluate_all().unwrap();
+
+    let mut ub = engine.begin_bulk_update_arrow();
+    ub.update_cell("Sheet1", 1, 1, LiteralValue::Number(5.0));
+    ub.finish().unwrap();
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(5.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 2),
+        Some(LiteralValue::Number(6.0))
+    );
+}
