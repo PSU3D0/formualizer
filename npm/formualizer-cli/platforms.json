@@ -1,5 +1,5 @@
 {
-  "metaPackage": "formualizer-cli",
+  "metaPackage": "@formualizer/cli",
   "platformPackage": "@formualizer/cli-{platform}",
   "binName": "formualizer",
   "platforms": [

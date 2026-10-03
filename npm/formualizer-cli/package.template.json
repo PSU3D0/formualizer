@@ -1,5 +1,5 @@
 {
-  "name": "formualizer-cli",
+  "name": "@formualizer/cli",
   "version": "0.0.0-assembled",
   "description": "Native `formualizer` command: recompute XLSX formula caches in place, preserving the source workbook.",
   "homepage": "https://github.com/psu3d0/formualizer",

@@ -94,7 +94,7 @@ test('full assembly writes synced platform and meta packages', () => {
   assert.equal(manifest.packages.length, 8);
 
   const meta = JSON.parse(fs.readFileSync(path.join(out, 'formualizer-cli', 'package.json'), 'utf8'));
-  assert.equal(meta.name, 'formualizer-cli');
+  assert.equal(meta.name, '@formualizer/cli');
   assert.equal(meta.version, version);
   assert.deepEqual(meta.bin, { formualizer: 'bin/formualizer.js' });
   assert.equal(meta.scripts, undefined);

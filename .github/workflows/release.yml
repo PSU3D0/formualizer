@@ -699,9 +699,9 @@ jobs:
           path: npm-tarballs
 
       # publish-order.txt lists the platform packages first and the
-      # formualizer-cli meta package last, so the meta package never points
+      # @formualizer/cli meta package last, so the meta package never points
       # at unpublished optional dependencies. Reruns skip published versions.
-      - name: Publish platform packages, then formualizer-cli
+      - name: Publish platform packages, then @formualizer/cli
         shell: bash
         env:
           # Optional bootstrap token for the first publish of new packages;

@@ -7,8 +7,9 @@
 //     [--max-glibc 2.17] [--check]
 //
 // DIR/<rust-target-triple>/formualizer[.exe] holds each binary. The output
-// gets one directory per platform package plus `formualizer-cli/` for the meta
-// package, and a manifest.json listing package directories in publish order
+// gets one directory per platform package plus `formualizer-cli/` for the
+// `@formualizer/cli` meta package, and a manifest.json listing package
+// directories in publish order
 // (platform packages first). --check validates everything without writing.
 'use strict';
 
