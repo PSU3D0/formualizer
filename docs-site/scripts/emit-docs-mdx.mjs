@@ -47,7 +47,8 @@ async function main() {
   // Next.js excludes `_`-prefixed files from the public/ copy, so `_headers` is
   // placed into the export output here (Cloudflare reads it from the assets root).
   await cp(join(root, 'public', '_headers'), join(root, 'out', '_headers'));
-  console.log('[emit-docs-mdx] copied _headers into out/');
+  await cp(join(root, 'public', '_redirects'), join(root, 'out', '_redirects'));
+  console.log('[emit-docs-mdx] copied _headers and _redirects into out/');
 
   // Serve the portable agent skill as a plain file next to the docs.
   const skill = join(dirname(root), 'skills', 'formualizer-recalc', 'SKILL.md');

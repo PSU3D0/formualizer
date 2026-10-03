@@ -51,27 +51,11 @@ let outputs = wb.evaluate_cells(&[("Summary", 10, 2), ("Summary", 11, 2)])?;
 
 Targeted evaluation is often enough for API-style spreadsheet workflows.
 
-## Experimental span evaluation
+## Copied-formula families
 
-FormulaPlane span evaluation is an opt-in acceleration path in 0.6:
+Copied formulas that share a shape (a column of `=B2*C2`, `=B3*C3`, ...) are evaluated together as one family over Arrow columns. This is the default and needs no configuration.
 
-```rust
-use formualizer_workbook::{Workbook, WorkbookConfig};
-
-let cfg = WorkbookConfig::interactive().with_span_evaluation(true);
-let mut wb = Workbook::new_with_config(cfg);
-```
-
-It can speed up large copied-formula families by storing eligible families as compact spans instead of one graph formula vertex per cell.
-
-Keep these constraints in mind:
-
-- The mode is experimental and off by default.
-- Unsupported formulas fall back to the legacy graph path.
-- Internal chains/running balances and array literal families are not span-promoted in 0.6.
-- Validate application-critical workbooks before enabling it in production.
-
-See [FormulaPlane Span Evaluation](/docs/core-concepts/formula-plane-span-evaluation).
+FormulaPlane span evaluation, the opt-in accelerator in earlier releases, was removed in 0.10.0. `WorkbookConfig::with_span_evaluation`, `FormulaPlaneMode` and the Python/WASM `span_evaluation` toggles are still accepted but ignored, and the default engine is faster than span mode was. Remove them when convenient.
 
 ## Benchmark responsibly
 

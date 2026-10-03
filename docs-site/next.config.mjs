@@ -31,8 +31,8 @@ const config = {
     return config;
   },
   // NOTE: The `/docs/*.mdx` -> `/llms.mdx/docs/*` rewrite is unavailable under
-  // `output: 'export'`. It is reproduced at the edge via docs-site/public/_redirects
-  // (a Cloudflare static-assets rewrite).
+  // `output: 'export'`. scripts/emit-docs-mdx.mjs mirrors the emitted files to
+  // those URLs after the build instead.
 };
 
 export default withMDX(config);
