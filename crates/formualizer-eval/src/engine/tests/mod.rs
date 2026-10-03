@@ -93,6 +93,7 @@ mod spill_basic;
 mod spill_blocked_by_formula;
 mod spill_config_defaults;
 mod spill_edges;
+mod spill_intrusion_routes;
 mod spill_parallel_501;
 mod spill_reader_invalidation_192;
 mod spill_semantics_101;
