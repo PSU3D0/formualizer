@@ -70,7 +70,9 @@ Scalar branches and single-row or single-column arguments are broadcast; shapes 
 - [Workbook Edits and Batching](../guides/workbook-edits-and-batching)
 
 ## Conflict resolution
-When a spill range overlaps existing content, the anchor cell receives a `#SPILL!` error instead of writing partial results. The engine does not overwrite or shift existing data. Clear the blocking cells or move the formula to resolve the conflict.
+When a spill range overlaps a value, another formula or another spill's cells, the anchor cell receives a `#SPILL!` error instead of writing partial results, and evaluation continues. The engine does not overwrite or shift existing data: a blocking formula keeps its own value, and a formula entered into a live spill blocks it. Clear the blocking cells or move the formula to resolve the conflict. Once a formula or spill blocker is removed, the anchor spills again on the next recalculation; a value typed into a live spill takes effect when the anchor next recalculates.
+
+When two spill rectangles collide and neither anchor lies inside the other's rectangle, the anchor first in (sheet, column, row) order spills and the other gets `#SPILL!`, regardless of evaluation or edit order. This is engine policy, not a claim of Excel equivalence.
 
 ## Resize and shrink behavior
 If a formula's result array changes dimensions (e.g., FILTER returns fewer rows after an input change), the spill range shrinks. Previously occupied cells outside the new bounds are cleared automatically. When the result grows, the engine checks the expanded target for conflicts before writing.

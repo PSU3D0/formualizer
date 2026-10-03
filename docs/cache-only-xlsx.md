@@ -35,6 +35,7 @@ Recalculated, with formula text and untouched package content preserved:
 - Excel tables: structured references, bare table names and calculated columns whose every row carries a worksheet formula.
 - Volatile functions (`TODAY`, `NOW`, `RAND`, `OFFSET`, `INDIRECT`, `SUBTOTAL`, `AGGREGATE`), sampled once per run.
 - Formula errors such as `#DIV/0!`, `#NAME?` or `#SPILL!`. These are calculated results, reported as error cells; they are not refusals.
+- Blocked spills. A dynamic-array result whose spill range is occupied by a value, another formula or another spill's cells leaves the anchor as `#SPILL!` and recalculation continues: the blocking formula keeps its own value, readers of the anchor see `#SPILL!` and `A1#` readers `#REF!`. The anchor is written with the blocked-anchor encoding (`#SPILL!` cache, `ref` collapsed to the anchor) and the run exits 0. When two spill rectangles collide and neither anchor lies inside the other's rectangle, the anchor first in (sheet, column, row) order spills and the other is `#SPILL!`, whatever the evaluation order. This is engine policy, not an Excel equivalence claim.
 
 Refused as a whole, with nothing written (CLI exit 2):
 
@@ -114,7 +115,7 @@ This is not a fallback for every XLSX package. It rejects unsupported inputs/res
 
 - Data-table formulas, rich value metadata (`vm`, `xl/richData/`), metadata other than XLDAPR (value/MDX metadata, other types or extension URIs), dangling or malformed `cm` chains, external workbook links and package signatures.
 - Non-default spill conflict or bounds policies, when array anchors or spills are involved (including fixed-extent CSE).
-- A spill over a merged range, over an unowned source value or formula, or from a member of a source shared-formula family. A spill that exceeds the cell or width limits is refused before any member is materialized.
+- A spill over a merged range, or from a member of a source shared-formula family. A spill that exceeds the cell or width limits is refused before any member is materialized.
 - Unsupported table metadata, connection/query-backed tables, missing managed worksheet formulas, mismatched headers, table/name/merge/array collisions, unlowerable structured-reference contexts and non-literal `INDIRECT` text in table-bearing workbooks.
 - Multi-cell shared formulas whose sheet qualifiers shared-formula expansion would rewrite (cell-like names such as `'Q1'` or names containing `"`).
 - Ambiguous namespaces/relationships, noncanonical internal part targets, duplicate or non-increasing rows/cells, invalid shared families, unsupported XML encodings/names, DTDs and CDATA in parsed parts.
