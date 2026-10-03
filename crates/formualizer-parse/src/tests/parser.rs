@@ -4320,3 +4320,107 @@ mod external_range_tests {
         }
     }
 }
+
+/// A `:` between two operands that cannot both be A1 range ends is the range
+/// operator, as in Excel: `=SUM(D22:Total)` is D22, `:`, and the defined name
+/// `Total`. Such formulas used to fail with "Invalid column".
+#[cfg(test)]
+mod range_operator_with_name_tests {
+    use crate::parser::{ASTNodeType, ReferenceType, parse};
+    use crate::tokenizer::{TokenStream, TokenType, Tokenizer};
+
+    fn token_values(formula: &str) -> Vec<(String, TokenType)> {
+        let legacy: Vec<(String, TokenType)> = Tokenizer::new(formula)
+            .unwrap()
+            .items
+            .iter()
+            .map(|token| (token.value.clone(), token.token_type))
+            .collect();
+        let spans: Vec<(String, TokenType)> = TokenStream::new(formula)
+            .unwrap()
+            .to_tokens()
+            .into_iter()
+            .map(|token| (token.value, token.token_type))
+            .collect();
+        assert_eq!(legacy, spans, "tokenizers disagree on {formula}");
+        legacy
+    }
+
+    fn range_operator_ends(formula: &str) -> (ReferenceType, ReferenceType) {
+        let ast = parse(formula).unwrap_or_else(|e| panic!("{formula}: {e}"));
+        let ASTNodeType::Function { args, .. } = &ast.node_type else {
+            panic!("{formula}: expected a call, got {:?}", ast.node_type);
+        };
+        let ASTNodeType::BinaryOp { op, left, right } = &args[0].node_type else {
+            panic!(
+                "{formula}: expected the range operator, got {:?}",
+                args[0].node_type
+            );
+        };
+        assert_eq!(op, ":", "{formula}");
+        let reference = |node: &crate::parser::ASTNode| match &node.node_type {
+            ASTNodeType::Reference { reference, .. } => reference.clone(),
+            other => panic!("{formula}: expected a reference, got {other:?}"),
+        };
+        (reference(left), reference(right))
+    }
+
+    #[test]
+    fn name_at_either_end_is_the_range_operator() {
+        let name = |n: &str| ReferenceType::NamedRange(n.to_string());
+        let cell = |sheet: Option<&str>, row, col| ReferenceType::Cell {
+            sheet: sheet.map(str::to_string),
+            row,
+            col,
+            row_abs: false,
+            col_abs: false,
+        };
+        assert_eq!(
+            range_operator_ends("=SUM(D22:Total)"),
+            (cell(None, 22, 4), name("Total"))
+        );
+        assert_eq!(
+            range_operator_ends("=SUM(Start:B10)"),
+            (name("Start"), cell(None, 10, 2))
+        );
+        assert_eq!(
+            range_operator_ends("=SUM(Seed_1:Seed_4)"),
+            (name("Seed_1"), name("Seed_4"))
+        );
+        assert_eq!(
+            range_operator_ends("=SUM(Data!A1:Finish)"),
+            (cell(Some("Data"), 1, 1), name("Finish"))
+        );
+
+        let tokens = token_values("=SUM(D22:Total)");
+        assert_eq!(tokens[1], ("D22".to_string(), TokenType::Operand));
+        assert_eq!(tokens[2], (":".to_string(), TokenType::OpInfix));
+        assert_eq!(tokens[3], ("Total".to_string(), TokenType::Operand));
+    }
+
+    #[test]
+    fn a1_ranges_stay_one_reference() {
+        for formula in [
+            "=SUM(A1:B5)",
+            "=SUM($A$1:$B5)",
+            "=SUM(A:C)",
+            "=SUM($1:$3)",
+            "=SUM(A1:XFD1048576)",
+            "=SUM(Sheet1!A1:B2)",
+            "=SUM('My Sheet'!A:A)",
+            "=SUM(Jan:Dec!B5)",
+            "=SUM(A1:A)",
+            "=SUM(A:A10)",
+        ] {
+            let ast = parse(formula).unwrap_or_else(|e| panic!("{formula}: {e}"));
+            let ASTNodeType::Function { args, .. } = &ast.node_type else {
+                panic!("{formula}: {:?}", ast.node_type);
+            };
+            assert!(
+                matches!(args[0].node_type, ASTNodeType::Reference { .. }),
+                "{formula}: {:?}",
+                args[0].node_type
+            );
+        }
+    }
+}
