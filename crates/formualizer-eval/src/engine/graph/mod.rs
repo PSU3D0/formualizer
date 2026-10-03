@@ -4661,6 +4661,16 @@ impl DependencyGraph {
         target_cells: &[CellRef],
     ) -> Result<(), ExcelError> {
         self.plan_spill_region_yielding(anchor, target_cells, &[])
+            .map_err(|(error, _)| error)
+    }
+
+    /// [`Self::plan_spill_region`], also returning the first blocking cell.
+    pub(crate) fn plan_spill_region_with_blocker(
+        &self,
+        anchor: VertexId,
+        target_cells: &[CellRef],
+    ) -> Result<(), (ExcelError, CellRef)> {
+        self.plan_spill_region_yielding(anchor, target_cells, &[])
     }
 
     /// [`Self::plan_spill_region`] with the spills of `yielding` anchors
@@ -4670,7 +4680,7 @@ impl DependencyGraph {
         anchor: VertexId,
         target_cells: &[CellRef],
         yielding: &[VertexId],
-    ) -> Result<(), ExcelError> {
+    ) -> Result<(), (ExcelError, CellRef)> {
         use formualizer_common::{ExcelErrorExtra, ExcelErrorKind};
         // Compute expected spill shape from the target rectangle for better diagnostics
         let (expected_rows, expected_cols) = if target_cells.is_empty() {
@@ -4708,12 +4718,15 @@ impl DependencyGraph {
                 Some(&existing_anchor) if existing_anchor == anchor => true,
                 Some(other) if yielding.contains(other) => false,
                 Some(_other) => {
-                    return Err(ExcelError::new(ExcelErrorKind::Spill)
-                        .with_message("BlockedBySpill")
-                        .with_extra(ExcelErrorExtra::Spill {
-                            expected_rows,
-                            expected_cols,
-                        }));
+                    return Err((
+                        ExcelError::new(ExcelErrorKind::Spill)
+                            .with_message("BlockedBySpill")
+                            .with_extra(ExcelErrorExtra::Spill {
+                                expected_rows,
+                                expected_cols,
+                            }),
+                        *cell,
+                    ));
                 }
                 None => false,
             };
@@ -4732,24 +4745,30 @@ impl DependencyGraph {
                 // Prevent clobbering formulas (array or scalar) in the target area
                 match self.store.kind(vid) {
                     VertexKind::FormulaScalar | VertexKind::FormulaArray => {
-                        return Err(ExcelError::new(ExcelErrorKind::Spill)
-                            .with_message("BlockedByFormula")
-                            .with_extra(ExcelErrorExtra::Spill {
-                                expected_rows,
-                                expected_cols,
-                            }));
+                        return Err((
+                            ExcelError::new(ExcelErrorKind::Spill)
+                                .with_message("BlockedByFormula")
+                                .with_extra(ExcelErrorExtra::Spill {
+                                    expected_rows,
+                                    expected_cols,
+                                }),
+                            *cell,
+                        ));
                     }
                     _ => {
                         // If a non-empty value exists (and not this anchor), block
                         if let Some(vref) = self.vertex_values.get(&vid) {
                             let v = self.data_store.retrieve_value(*vref);
                             if !matches!(v, LiteralValue::Empty) {
-                                return Err(ExcelError::new(ExcelErrorKind::Spill)
-                                    .with_message("BlockedByValue")
-                                    .with_extra(ExcelErrorExtra::Spill {
-                                        expected_rows,
-                                        expected_cols,
-                                    }));
+                                return Err((
+                                    ExcelError::new(ExcelErrorKind::Spill)
+                                        .with_message("BlockedByValue")
+                                        .with_extra(ExcelErrorExtra::Spill {
+                                            expected_rows,
+                                            expected_cols,
+                                        }),
+                                    *cell,
+                                ));
                             }
                         }
                     }

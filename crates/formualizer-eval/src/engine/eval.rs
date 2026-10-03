@@ -1072,11 +1072,12 @@ pub struct Engine<R> {
     staged_formulas: StagedFormulaMap,
     /// Presence and generation authority for ordinary staged formula discovery.
     staged_formula_index: StagedFormulaIndex,
-    // Occupancy invalidation only: never a formula/read dependency. Anchors
-    // whose spill is blocked by a pending source formula, an in-graph
-    // formula or another spill; an edit inside the attempted region wakes
-    // them.
+    // Occupancy invalidation only: never a formula/read dependency.
     blocked_pending_spills: Vec<(VertexId, CellRef, Region)>,
+    /// Anchors whose spill is blocked by a formula or by another spill's
+    /// cell, keyed by that blocking cell: a change to the cell (an edit, or
+    /// the other spill clearing) wakes them. Never a read dependency.
+    spill_blocker_waiters: SpillBlockerWaiters,
     /// Per-sheet row visibility sidecar state.
     row_visibility: FxHashMap<SheetId, RowVisibilityState>,
     /// Cached row visibility masks keyed by sheet/span/mode/version.
@@ -1753,6 +1754,110 @@ enum StructuralScope {
     RemovedSheet(SheetId),
     OpaqueGlobal,
     AllSheets,
+}
+
+/// Anchors blocked by a formula or another spill, indexed by the blocking
+/// cell so that a single-cell change finds its waiters in O(1).
+#[derive(Default)]
+struct SpillBlockerWaiters {
+    by_cell: FxHashMap<CellRef, Vec<VertexId>>,
+    by_anchor: FxHashMap<VertexId, CellRef>,
+}
+
+impl SpillBlockerWaiters {
+    /// Largest region scanned cell by cell; a larger one scans the waiters.
+    const REGION_PROBE_CELLS: u64 = 4096;
+
+    fn is_empty(&self) -> bool {
+        self.by_anchor.is_empty()
+    }
+
+    fn wait(&mut self, anchor: VertexId, blocker: CellRef) {
+        match self.by_anchor.insert(anchor, blocker) {
+            Some(old) if old == blocker => return,
+            Some(old) => self.unlink(anchor, old),
+            None => {}
+        }
+        self.by_cell.entry(blocker).or_default().push(anchor);
+    }
+
+    fn forget(&mut self, anchor: VertexId) {
+        if self.by_anchor.is_empty() {
+            return;
+        }
+        if let Some(old) = self.by_anchor.remove(&anchor) {
+            self.unlink(anchor, old);
+        }
+    }
+
+    fn unlink(&mut self, anchor: VertexId, cell: CellRef) {
+        if let Some(waiters) = self.by_cell.get_mut(&cell) {
+            waiters.retain(|&v| v != anchor);
+            if waiters.is_empty() {
+                self.by_cell.remove(&cell);
+            }
+        }
+    }
+
+    /// Remove and return the anchors waiting on a cell inside `scope`.
+    fn take_affected(&mut self, scope: StructuralScope) -> Vec<VertexId> {
+        let cells: Vec<CellRef> = match scope {
+            StructuralScope::Cell { sheet, row, col } => {
+                let cell = CellRef::new(sheet, Coord::new(row, col, true, true));
+                if self.by_cell.contains_key(&cell) {
+                    vec![cell]
+                } else {
+                    Vec::new()
+                }
+            }
+            StructuralScope::Region(region) => {
+                let (rows, cols) = region.axis_ranges();
+                let (r0, r1) = rows.query_bounds();
+                let (c0, c1) = cols.query_bounds();
+                let area = u64::from(r1.saturating_sub(r0) + 1)
+                    .saturating_mul(u64::from(c1.saturating_sub(c0) + 1));
+                if area <= Self::REGION_PROBE_CELLS {
+                    let sheet = region.sheet_id();
+                    (r0..=r1)
+                        .flat_map(|r| (c0..=c1).map(move |c| (r, c)))
+                        .map(|(r, c)| CellRef::new(sheet, Coord::new(r, c, true, true)))
+                        .filter(|cell| self.by_cell.contains_key(cell))
+                        .collect()
+                } else {
+                    self.by_cell
+                        .keys()
+                        .filter(|cell| {
+                            region.intersects(&Region::point(
+                                cell.sheet_id,
+                                cell.coord.row(),
+                                cell.coord.col(),
+                            ))
+                        })
+                        .copied()
+                        .collect()
+                }
+            }
+            StructuralScope::Sheet(sheet) | StructuralScope::RemovedSheet(sheet) => self
+                .by_cell
+                .keys()
+                .filter(|cell| cell.sheet_id == sheet)
+                .copied()
+                .collect(),
+            StructuralScope::OpaqueGlobal | StructuralScope::AllSheets => {
+                self.by_cell.keys().copied().collect()
+            }
+        };
+        let mut woken = Vec::new();
+        for cell in cells {
+            if let Some(waiters) = self.by_cell.remove(&cell) {
+                for anchor in waiters {
+                    self.by_anchor.remove(&anchor);
+                    woken.push(anchor);
+                }
+            }
+        }
+        woken
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -2702,6 +2807,7 @@ where
             staged_formulas: std::collections::HashMap::new(),
             staged_formula_index: StagedFormulaIndex::default(),
             blocked_pending_spills: Vec::new(),
+            spill_blocker_waiters: SpillBlockerWaiters::default(),
             row_visibility: FxHashMap::default(),
             row_visibility_mask_cache: std::sync::RwLock::new(FxHashMap::default()),
             formula_parse_diagnostics: Vec::new(),
@@ -2866,6 +2972,7 @@ where
             staged_formulas: std::collections::HashMap::new(),
             staged_formula_index: StagedFormulaIndex::default(),
             blocked_pending_spills: Vec::new(),
+            spill_blocker_waiters: SpillBlockerWaiters::default(),
             row_visibility: FxHashMap::default(),
             row_visibility_mask_cache: std::sync::RwLock::new(FxHashMap::default()),
             formula_parse_diagnostics: Vec::new(),
@@ -12916,7 +13023,31 @@ where
         if let StructuralScope::Cell { sheet, row, col } = scope {
             self.wake_spill_owner_of_entered_formula(sheet, row, col);
         }
+        self.wake_spill_blocker_waiters(scope);
         self.invalidate_pending_spills(scope);
+    }
+
+    /// Wake anchors waiting on a blocking cell inside `scope`, with their
+    /// dependents: the anchor's value changes when it spills. A woken anchor
+    /// registers again if it is still blocked.
+    fn wake_spill_blocker_waiters(&mut self, scope: StructuralScope) {
+        if self.spill_blocker_waiters.is_empty() {
+            return;
+        }
+        let woken = self.spill_blocker_waiters.take_affected(scope);
+        let woken: Vec<VertexId> = woken
+            .into_iter()
+            .filter(|&vertex| {
+                self.graph.vertex_exists(vertex)
+                    && matches!(
+                        self.graph.get_vertex_kind(vertex),
+                        VertexKind::FormulaScalar | VertexKind::FormulaArray
+                    )
+            })
+            .collect();
+        if !woken.is_empty() {
+            self.graph.mark_dirty_many(&woken);
+        }
     }
 
     /// A formula entered into a live spill blocks it: wake the owning anchor
@@ -17403,6 +17534,7 @@ impl ShimSpillManager {
         engine
             .blocked_pending_spills
             .retain(|entry| entry.0 != anchor_vertex);
+        engine.spill_blocker_waiters.forget(anchor_vertex);
 
         // Mirror into Arrow overlay when enabled
         if engine.config.arrow_storage_enabled
@@ -19699,7 +19831,6 @@ where
                 .retain(|entry| entry.1.sheet_id != sheet);
             return;
         }
-        let mut woken = Vec::new();
         for &(vertex, anchor, region) in &self.blocked_pending_spills {
             let affected = match scope {
                 StructuralScope::Cell { sheet, row, col } => {
@@ -19719,13 +19850,8 @@ where
                     VertexKind::FormulaScalar | VertexKind::FormulaArray
                 )
             {
-                woken.push(vertex);
+                self.graph.mark_vertex_dirty(vertex);
             }
-        }
-        // The anchor's value changes when it spills, so its dependents
-        // recompute with it.
-        if !woken.is_empty() {
-            self.graph.mark_dirty_many(&woken);
         }
     }
 
@@ -19865,6 +19991,7 @@ where
 
         self.blocked_pending_spills
             .retain(|entry| entry.0 != anchor_vertex);
+        self.spill_blocker_waiters.forget(anchor_vertex);
         if let Some(scope) = Self::structural_scope_from_cells(&prev_spill_cells) {
             self.record_structural_change(scope);
         }
@@ -20021,6 +20148,7 @@ where
         if !matches!(&value, LiteralValue::Error(e) if e.kind == ExcelErrorKind::Spill) {
             self.blocked_pending_spills
                 .retain(|entry| entry.0 != vertex_id);
+            self.spill_blocker_waiters.forget(vertex_id);
         }
         let has_spill = self
             .graph
@@ -20122,7 +20250,10 @@ where
             Ok(()) => {
                 // Validate spill region is available.
                 let mut yield_effects = Vec::new();
-                if let Err(e) = self.graph.plan_spill_region(vertex_id, &targets) {
+                if let Err((e, blocker)) = self
+                    .graph
+                    .plan_spill_region_with_blocker(vertex_id, &targets)
+                {
                     let yielding = if e.message.as_deref() == Some("BlockedBySpill") {
                         self.graph.spills_yielding_to(vertex_id, &targets)
                     } else {
@@ -20160,17 +20291,7 @@ where
                             e.message.as_deref(),
                             Some("BlockedByFormula" | "BlockedBySpill")
                         ) {
-                            self.remember_pending_spill(
-                                vertex_id,
-                                anchor,
-                                Region::rect(
-                                    sheet_id,
-                                    anchor.coord.row(),
-                                    end_row,
-                                    anchor.coord.col(),
-                                    end_col,
-                                ),
-                            )?;
+                            self.spill_blocker_waiters.wait(vertex_id, blocker);
                         }
                         return self.plan_spill_error_effects(vertex_id, "Spill blocked", h, w);
                     }

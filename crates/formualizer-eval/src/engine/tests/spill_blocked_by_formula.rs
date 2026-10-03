@@ -434,3 +434,29 @@ fn removing_the_intruder_restores_the_incumbent() {
         }
     }
 }
+
+/// The spill a crossing anchor yielded to goes away: the yielding anchor
+/// spills on the next recalc.
+#[test]
+fn removing_the_crossing_winner_releases_the_loser() {
+    for mode in modes() {
+        let ctx = format!("{mode:?}");
+        let mut e = engine(mode);
+        f(&mut e, 2, 1, "=SEQUENCE(1,3)");
+        f(&mut e, 1, 2, "=SEQUENCE(3)");
+        f(&mut e, 1, 4, "=B1+0");
+        eval(&mut e, mode);
+        assert_kind(get(&e, 1, 2), ExcelErrorKind::Spill, &ctx);
+        assert_kind(get(&e, 1, 4), ExcelErrorKind::Spill, &ctx);
+
+        e.set_cell_value("Sheet1", 2, 1, LiteralValue::Empty)
+            .unwrap();
+        eval(&mut e, mode);
+        assert_eq!(get(&e, 1, 2), n(1.0), "{ctx}");
+        assert_eq!(get(&e, 2, 2), n(2.0), "{ctx}");
+        assert_eq!(get(&e, 3, 2), n(3.0), "{ctx}");
+        assert_eq!(get(&e, 2, 3), None, "{ctx}: winner's child cleared");
+        assert_eq!(get(&e, 1, 4), n(1.0), "{ctx}: dependent follows");
+        assert!(has_spill(&e, 1, 2), "{ctx}");
+    }
+}
