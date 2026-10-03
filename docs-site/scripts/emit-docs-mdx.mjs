@@ -48,6 +48,13 @@ async function main() {
   // placed into the export output here (Cloudflare reads it from the assets root).
   await cp(join(root, 'public', '_headers'), join(root, 'out', '_headers'));
   console.log('[emit-docs-mdx] copied _headers into out/');
+
+  // Serve the portable agent skill as a plain file next to the docs.
+  const skill = join(dirname(root), 'skills', 'formualizer-recalc', 'SKILL.md');
+  const skillDest = join(root, 'out', 'skills', 'formualizer-recalc', 'SKILL.md');
+  await mkdir(dirname(skillDest), { recursive: true });
+  await cp(skill, skillDest);
+  console.log('[emit-docs-mdx] copied skills/formualizer-recalc/SKILL.md into out/');
 }
 
 main().catch((err) => {

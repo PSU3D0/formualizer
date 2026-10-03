@@ -1,0 +1,30 @@
+---
+title: Agent Workflow
+description: The edit, save, recalc, inspect, fix loop for agents that change .xlsx files with openpyxl or another editor.
+---
+
+Keep the editing tool you already use. Formualizer only fills in formula results, so the loop is:
+
+1. **Edit** inputs or formulas with openpyxl (or any editor) and **save**.
+2. **Recalc last:** `formualizer recalc file.xlsx --json`. Capture stdout and the exit code.
+3. **Read the JSON:** branch on the exit code and `status`, then inspect `error_cells` and `errors`.
+4. **Fix and repeat:** if errors are unexpected, fix inputs or formulas, save, and recalc again.
+5. **Read values** with a cached-value reader such as openpyxl `data_only=True`, without saving that view.
+
+<Callout type="warn" title="Recalc must be the last writing step">Saving with openpyxl after a recalc drops the formula caches again. Any later save needs another recalc before values are read or the file is handed off.</Callout>
+
+Formula errors such as `#DIV/0!` are calculated results and exit 0; decide whether they are expected. Exit 2 means the workbook is outside the [supported subset](/docs/recalc-cli/supported-and-refused): do not retry the same file and never claim its values were recalculated. Install options are on the [overview](/docs/recalc-cli).
+
+The sections below are maintained in the repository's [agent guide](https://github.com/psu3d0/formualizer/blob/main/docs/agents.md).
+
+<include>../../../../docs/agents.md#python-editrecalcread-loop</include>
+
+<include>../../../../docs/agents.md#shell-loop-step</include>
+
+<include>../../../../docs/agents.md#branch-on-the-outcome</include>
+
+<include>../../../../docs/agents.md#verify-without-writing</include>
+
+<include>../../../../docs/agents.md#read-formula-errors</include>
+
+<include>../../../../docs/agents.md#spills-preservation-and-safety</include>

@@ -26,6 +26,43 @@ If C2 already has a literal value, B2 evaluates to a spill-related error.
 - Recompute spill bounds when inputs change shape.
 - Keep spill diagnostics explicit so users can fix conflicts quickly.
 
+## Spill references: `A1#`
+
+`A1#` refers to the whole current spill of the anchor in `A1`, and follows it as it grows or shrinks. `_xlfn.ANCHORARRAY(A1)` is the same reference as stored in XLSX files.
+
+```text
+C1 = SEQUENCE(3)       spills into C1:C3
+D1 = SUM(C1#)          6
+```
+
+A fresh formula whose result is a single cell is an ordinary scalar, not a spill: `A1#` on it returns `#REF!`. An anchor that already spilled keeps its spill identity if its result later collapses to one cell. A blocked or erroring anchor makes its `A1#` readers return `#REF!`.
+
+## Legacy CSE arrays
+
+A legacy array formula (entered with Ctrl+Shift+Enter in older Excel, stored with a fixed `ref`) never grows or shrinks. The result is fitted to the declared rectangle:
+
+- a scalar or error fills every cell;
+- a single row or column is broadcast across the other axis;
+- positions beyond the result are `#N/A`, and results larger than the rectangle are truncated.
+
+`A1#` on a legacy array anchor returns `#REF!`; read it through an ordinary range such as `A1:A4`. When openpyxl re-saves a dynamic spill it can drop the dynamic-array metadata while keeping the array formula, which turns the spill into a fixed-extent array of the same size.
+
+## Elementwise `IF`
+
+When the condition of `IF` is an array or range, `IF` selects elementwise, in ordinary formulas, inside other functions and in CSE arrays:
+
+```text
+A1:A3 = 5, -2, 7
+=IF(A1:A3>0, A1:A3*10, 0)        {50; 0; 70}
+=SUM(IF(A1:A3>0, A1:A3))         12
+```
+
+Scalar branches and single-row or single-column arguments are broadcast; shapes that cannot be broadcast give `#VALUE!`. Each needed branch is evaluated once and branches that no element selects are not evaluated. With a scalar condition, `IF` keeps its usual short-circuit behavior and can return a reference.
+
+## Spills in saved XLSX files
+
+[`formualizer recalc`](/docs/recalc-cli) writes spills back into the workbook: new multi-cell results become dynamic-array anchors with their member cells filled in, existing anchors are resized, and a blocked spill is saved as `#SPILL!`. Legacy CSE arrays keep their declared extent. See [Supported and refused](/docs/recalc-cli/supported-and-refused#dynamic-arrays) for the exact rules.
+
 ## Related
 
 - [Values, Coercion, and Errors](/docs/core-concepts/values-coercion-and-errors)

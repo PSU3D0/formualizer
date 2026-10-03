@@ -2,6 +2,7 @@
   "name": "formualizer-docs",
   "version": "0.0.0",
   "private": true,
+  "packageManager": "pnpm@11.0.9",
   "scripts": {
     "build": "next build && node scripts/emit-docs-mdx.mjs",
     "dev": "next dev",

@@ -17,6 +17,10 @@
 /llms.mdx/*
   Content-Type: text/markdown; charset=utf-8
 
+# Portable agent skill, copied from the repository by scripts/emit-docs-mdx.mjs.
+/skills/*
+  Content-Type: text/markdown; charset=utf-8
+
 /llms.txt
   Content-Type: text/plain; charset=utf-8
 /llms-full.txt

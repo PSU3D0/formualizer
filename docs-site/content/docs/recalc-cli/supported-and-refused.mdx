@@ -1,0 +1,32 @@
+---
+title: Supported and Refused
+description: What formualizer recalc recalculates (dynamic spills, CSE arrays, tables, volatile functions) and what it refuses (data tables, external links, hidden-row SUBTOTAL, shifted-sheet shared formulas, ...), with the meaning of each refusal message.
+---
+
+`formualizer recalc` uses a strict source-preserving path. It recalculates a defined subset of XLSX and refuses everything else as a whole: a refused workbook exits 2, nothing is written, and its caches must not be reported as recalculated. There is no fallback engine. Formula errors such as `#DIV/0!` or `#SPILL!` are different: they are calculated results, reported in `errors` with exit 0.
+
+A refusal in `--json` output looks like this:
+
+```json
+{"schema":"formualizer.recalc/1","status":"refused","input":"model.xlsx","output":"model.xlsx","written":false,"formula_cells":null,"cache_cells_changed":null,"worksheet_parts_changed":null,"evaluated":null,"error_cells":null,"errors":null,"errors_truncated":null,"refusal":{"feature":"data-table formula","context":"worksheet"},"message":"model.xlsx: Unsupported feature: data-table formula in worksheet. Nothing was written."}
+```
+
+The rest of this page is included at build time from the repository's [eligibility contract](https://github.com/psu3d0/formualizer/blob/main/docs/cache-only-xlsx.md), which is shared with the Rust, Python and WASM recalculation APIs.
+
+<include>../../../../docs/cache-only-xlsx.md#supported-at-a-glance</include>
+
+<include>../../../../docs/cache-only-xlsx.md#refusal-messages</include>
+
+<include>../../../../docs/cache-only-xlsx.md#dynamic-arrays</include>
+
+<include>../../../../docs/cache-only-xlsx.md#legacy-fixed-extent-arrays</include>
+
+<include>../../../../docs/cache-only-xlsx.md#excel-tables</include>
+
+<include>../../../../docs/cache-only-xlsx.md#volatile-snapshots</include>
+
+<include>../../../../docs/cache-only-xlsx.md#strict-eligibility</include>
+
+<include>../../../../docs/cache-only-xlsx.md#bounds-and-cancellation</include>
+
+<include>../../../../docs/cache-only-xlsx.md#ownership-and-writeback</include>

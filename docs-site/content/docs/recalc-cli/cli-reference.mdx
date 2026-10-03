@@ -1,0 +1,52 @@
+---
+title: CLI Reference
+description: Every formualizer recalc flag, in-place and -o publication, --check, exit codes 0/1/2/3/64/130, the formualizer.recalc/1 JSON schema and cancellation.
+---
+
+The sections below are included at build time from the repository's [CLI reference](https://github.com/psu3d0/formualizer/blob/main/docs/cli.md), the authority for the command's behavior.
+
+<include>../../../../docs/cli.md#installation</include>
+
+## Built-in help
+
+```text
+$ formualizer --help
+Recalculate XLSX formula caches without reconstructing the workbook
+
+Usage: formualizer <COMMAND>
+
+Commands:
+  recalc  Recalculate formula caches using the strict source-preserving path
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+
+$ formualizer recalc --help
+Recalculate formula caches using the strict source-preserving path
+
+Usage: formualizer recalc [OPTIONS] <INPUT>
+
+Arguments:
+  <INPUT>
+
+Options:
+  -o, --output <OUTPUT>
+      --check
+      --json
+      --max-errors <MAX_ERRORS>  [default: 20]
+  -h, --help                     Print help
+```
+
+<include>../../../../docs/cli.md#commands</include>
+
+<include>../../../../docs/cli.md#exit-codes</include>
+
+<include>../../../../docs/cli.md#json</include>
+
+<include>../../../../docs/cli.md#examples</include>
+
+<include>../../../../docs/cli.md#non-goals</include>
+
+<include>../../../../docs/cli.md#embedding</include>

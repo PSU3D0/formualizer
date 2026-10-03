@@ -3,6 +3,7 @@
   "pages": [
     "index",
     "introduction",
+    "recalc-cli",
     "quickstarts",
     "core-concepts",
     "guides",

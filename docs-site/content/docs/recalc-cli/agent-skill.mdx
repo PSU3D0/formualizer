@@ -1,0 +1,26 @@
+---
+title: Agent Skill
+description: A portable SKILL.md that teaches coding agents the edit, recalc, inspect, fix loop for .xlsx files, and how to install it.
+---
+
+The `formualizer-recalc` skill is a single self-contained `SKILL.md` in the Agent Skills format: YAML front matter with a `name` and a `description` that tells the agent when to load it, followed by the workflow. It needs no other file from these docs.
+
+## Install
+
+The file lives at [`skills/formualizer-recalc/SKILL.md`](https://github.com/psu3d0/formualizer/blob/main/skills/formualizer-recalc/SKILL.md) in the repository and is also served by this site at [`/skills/formualizer-recalc/SKILL.md`](/skills/formualizer-recalc/SKILL.md).
+
+For Claude Code, put it in the project (or in `~/.claude/skills/` for every project):
+
+```sh
+mkdir -p .claude/skills/formualizer-recalc
+curl -fsSL https://www.formualizer.dev/skills/formualizer-recalc/SKILL.md \
+  -o .claude/skills/formualizer-recalc/SKILL.md
+```
+
+Other agents that support skills load the same directory from their own skills folder. For an agent without skill support, paste the body (everything after the front matter) into its instruction file, such as `AGENTS.md`.
+
+The skill assumes the `formualizer` command is available; see the [install options](/docs/recalc-cli).
+
+## SKILL.md
+
+<include lang="md">../../../../skills/formualizer-recalc/SKILL.md</include>
