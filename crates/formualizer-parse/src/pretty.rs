@@ -78,17 +78,11 @@ fn child_needs_parens(
         }
         Side::Right => {
             if parent_assoc == Associativity::Left {
-                if let ASTNodeType::BinaryOp { op: child_op, .. } = &child.node_type {
-                    if child_op != parent_op {
-                        return true;
-                    }
-
-                    // Even with same op, some operators are not associative.
-                    if parent_op == "-" || parent_op == "/" {
-                        return true;
-                    }
-                }
-                false
+                // A same-precedence right operand of a left-associative
+                // operator only exists because the source grouped it, so the
+                // brackets are part of the tree: `A1*(B1*C1)` is not
+                // `(A1*B1)*C1`, and `1=(2=3)` is not `1=2=3`.
+                matches!(child.node_type, ASTNodeType::BinaryOp { .. })
             } else {
                 // Right-assoc ops: parenthesize if mixing ops at same precedence.
                 if let ASTNodeType::BinaryOp { op: child_op, .. } = &child.node_type {
@@ -135,7 +129,15 @@ fn pretty_print_arguments(args: &[ASTNode]) -> String {
                 rendered.push(' ');
             }
         }
-        rendered.push_str(&pretty_print_node(arg));
+        // A union argument keeps its brackets; bare, its `,` would read as
+        // an argument separator: `RANK(A1,(B1,B5))` has two arguments.
+        if matches!(&arg.node_type, ASTNodeType::BinaryOp { op, .. } if op == ",") {
+            rendered.push('(');
+            rendered.push_str(&pretty_print_node(arg));
+            rendered.push(')');
+        } else {
+            rendered.push_str(&pretty_print_node(arg));
+        }
     }
     rendered
 }
@@ -296,6 +298,45 @@ mod tests {
         let formula = "=(a1+b2)*c3";
         let pretty = pretty_parse_render(formula).unwrap();
         assert_eq!(pretty, "=(A1 + B2) * C3");
+    }
+
+    #[test]
+    fn test_pretty_print_keeps_same_precedence_right_grouping() {
+        for (formula, expected) in [
+            ("=A1*(B1*C1)", "=A1 * (B1 * C1)"),
+            ("=A1+(B1+C1)", "=A1 + (B1 + C1)"),
+            ("=1=(2=3)", "=1 = (2 = 3)"),
+            ("=\"a\"&(\"b\"&\"c\")", "=\"a\" & (\"b\" & \"c\")"),
+            ("=A1-(B1+C1)", "=A1 - (B1 + C1)"),
+            // Left grouping is the default and needs no brackets.
+            ("=(A1*B1)*C1", "=A1 * B1 * C1"),
+            ("=(1=2)=3", "=1 = 2 = 3"),
+        ] {
+            let pretty = pretty_parse_render(formula).unwrap();
+            assert_eq!(pretty, expected, "{formula}");
+            assert_eq!(
+                parse(&pretty).unwrap().fingerprint(),
+                parse(formula).unwrap().fingerprint(),
+                "{formula} must re-parse to the same tree"
+            );
+        }
+    }
+
+    #[test]
+    fn test_pretty_print_keeps_union_argument_brackets() {
+        for (formula, expected) in [
+            ("=RANK(A1,(B1,B5))", "=RANK(A1, (B1, B5))"),
+            ("=SUM((A1,B1),C1)", "=SUM((A1, B1), C1)"),
+            ("=SUM((A1,B1,C1))", "=SUM((A1, B1, C1))"),
+        ] {
+            let pretty = pretty_parse_render(formula).unwrap();
+            assert_eq!(pretty, expected, "{formula}");
+            assert_eq!(
+                parse(&pretty).unwrap().fingerprint(),
+                parse(formula).unwrap().fingerprint(),
+                "{formula} must re-parse to the same tree"
+            );
+        }
     }
 
     #[test]
