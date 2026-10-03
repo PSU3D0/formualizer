@@ -3122,6 +3122,20 @@ mod structured_references {
         );
     }
 
+    #[test]
+    fn empty_specifier_is_the_data_body() {
+        // Excel reads `Table1[]` as the table name alone, which is the data
+        // body without headers or totals; it stores `=SUM(Table1[])` as
+        // `=SUM(Table1)`.
+        let t = expect_table("=Table1[]");
+        assert_eq!(t.name, "Table1");
+        assert_eq!(t.specifier, Some(TableSpecifier::Data));
+        assert_eq!(
+            expect_table("=Table1[ ]").specifier,
+            Some(TableSpecifier::Data)
+        );
+    }
+
     // ----------- negative -----------
 
     #[test]
