@@ -49,7 +49,7 @@ The same recalculation is available in-process:
 ```python
 import formualizer as fz
 
-result = fz.recalculate_xlsx_file("book.xlsx")               # in place
+result = fz.recalculate_xlsx_file("book.xlsx")  # in place
 result = fz.recalculate_xlsx_file("book.xlsx", output="calculated.xlsx")
 print(result["summary"]["status"], result["cache_cells_changed"])
 ```
@@ -65,19 +65,23 @@ import json, subprocess, sys
 from openpyxl import load_workbook
 
 wb = load_workbook("book.xlsx")
-wb.active["A1"] = 100                         # edit inputs or formulas
+wb.active["A1"] = 100  # edit inputs or formulas
 wb.save("book.xlsx")
 
-p = subprocess.run([sys.executable, "-m", "formualizer", "recalc", "book.xlsx", "--json"],
-                   capture_output=True, text=True)
+p = subprocess.run(
+    [sys.executable, "-m", "formualizer", "recalc", "book.xlsx", "--json"],
+    capture_output=True,
+    text=True,
+)
 r = json.loads(p.stdout)
 if p.returncode == 2:
     raise SystemExit(f"refused, do not retry: {r['refusal']}")
 if p.returncode != 0:
     raise SystemExit(r["message"])
-print(r["status"], r["error_cells"], r["errors"])   # inspect formula errors
+print(r["status"], r["error_cells"], r["errors"])  # inspect formula errors
 
-print(load_workbook("book.xlsx", data_only=True).active["B1"].value)   # read; do not save
+# Read the result; do not save again, or the caches are lost.
+print(load_workbook("book.xlsx", data_only=True).active["B1"].value)
 ```
 
 If `errors` lists unexpected cells, fix inputs or formulas, save and recalc again. Never save the `data_only=True` view: it would replace formulas with values. See the [agent workflow guide](https://github.com/psu3d0/formualizer/blob/main/docs/agents.md) and [portable skill](https://github.com/psu3d0/formualizer/blob/main/skills/formualizer-recalc/SKILL.md).
