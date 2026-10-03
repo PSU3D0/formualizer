@@ -987,3 +987,116 @@ fn native_facade_spill_digests() {
         assert_eq!(again.cache_cells_changed, 0);
     }
 }
+
+/// The producer with an ordinary formula `C6 = 1+1` just below the prior
+/// footprint, and `B1 = b1`.
+fn formula_obstructed(b1: u32) -> Parts {
+    sized(
+        edit(
+            producer(),
+            SHEET,
+            "<row r=\"9\"",
+            "<row r=\"6\" spans=\"1:3\"><c r=\"C6\"><f>1+1</f><v>0</v></c></row><row r=\"9\"",
+        ),
+        5,
+        b1,
+    )
+}
+
+/// Recalculate with and without a cancellation token (the CLI passes one,
+/// which takes the cancellable evaluation path).
+fn run_both(bytes: &[u8]) -> XlsxRecalculateResult {
+    let plain = run(bytes);
+    let with_token = recalculate_xlsx_bytes(
+        bytes,
+        XlsxRecalculateOptions {
+            cancel: Some(CancelToken::new()),
+            ..Default::default()
+        },
+    )
+    .expect("published with a cancellation token");
+    assert_eq!(plain.bytes, with_token.bytes, "same output on both paths");
+    plain
+}
+
+/// A spill growing onto an ordinary source formula publishes the blocked
+/// anchor exactly as a value obstruction does, and the formula keeps its
+/// own (recalculated) cache.
+#[test]
+fn spill_blocked_by_a_source_formula_publishes_a_spill_error() {
+    let source = pack(&formula_obstructed(5));
+    let out = run_both(&source);
+    let x = parse_sheet(&sheet_xml(&out.bytes));
+    assert_error(&x, "C2", "#SPILL!");
+    assert_anchor(&x, "C2", "C2", Some("1"));
+    assert_cleared(&x, "C3", Some("1"));
+    assert_cleared(&x, "C4", Some("1"));
+    assert_eq!(x.cell("C6").formula, "1+1");
+    assert_eq!(x.cell("C6").v.as_deref(), Some("2"), "blocker evaluates");
+    assert_error(&x, "C9", "#REF!");
+    assert_error(&x, "C10", "#REF!");
+    assert_eq!(out.summary.error_summary["#SPILL!"].count, 1);
+    assert_eq!(out.summary.error_summary["#REF!"].count, 2);
+    assert_other_parts_unchanged(&source, &out.bytes);
+    assert_rerun_is_noop(&out);
+
+    // The anchor cell is encoded as for a value obstruction.
+    let by_value = run(&pack(&obstructed(5)));
+    let value_x = parse_sheet(&sheet_xml(&by_value.bytes));
+    assert_eq!(x.cell("C2"), value_x.cell("C2"));
+
+    // Once the spill fits again it re-expands.
+    let second = edit(
+        unpack(&out.bytes),
+        SHEET,
+        "<c r=\"B1\"><v>5</v></c>",
+        "<c r=\"B1\"><v>3</v></c>",
+    );
+    let again = run_both(&pack(&second));
+    assert_numbers(
+        &again.bytes,
+        &[
+            ("C2", 1.0),
+            ("C3", 2.0),
+            ("C4", 3.0),
+            ("C6", 2.0),
+            ("C9", 6.0),
+        ],
+    );
+    assert_anchor(
+        &parse_sheet(&sheet_xml(&again.bytes)),
+        "C2",
+        "C2:C4",
+        Some("1"),
+    );
+    assert_rerun_is_noop(&again);
+}
+
+/// A new spill (no prior dynamic metadata) landing on an ordinary source
+/// formula: the anchor is `#SPILL!` with the value-obstruction encoding.
+#[test]
+fn new_spill_onto_a_source_formula_publishes_a_spill_error() {
+    let blocker = |cell: &str| {
+        edit(
+            new_vertical(),
+            SHEET,
+            "<row r=\"9\"",
+            &format!("<row r=\"4\" spans=\"1:3\">{cell}</row><row r=\"9\""),
+        )
+    };
+    let source = pack(&blocker("<c r=\"C4\"><f>1+1</f><v>0</v></c>"));
+    let out = run_both(&source);
+    let x = parse_sheet(&sheet_xml(&out.bytes));
+    assert_error(&x, "C2", "#SPILL!");
+    assert_eq!(x.cell("C4").formula, "1+1");
+    assert_eq!(x.cell("C4").v.as_deref(), Some("2"), "blocker evaluates");
+    assert_error(&x, "C9", "#REF!");
+    assert_error(&x, "C10", "#REF!");
+    assert_rerun_is_noop(&out);
+
+    let by_value = run(&pack(&blocker("<c r=\"C4\"><v>77</v></c>")));
+    assert_eq!(
+        x.cell("C2"),
+        parse_sheet(&sheet_xml(&by_value.bytes)).cell("C2")
+    );
+}

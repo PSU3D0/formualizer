@@ -76,7 +76,7 @@ fn empty_schedule() -> Schedule {
 
 fn commit(e: &mut Engine<TestWorkbook>, vertex: VertexId, value: LiteralValue) {
     let redirtied = e.freshness_batch_redirtied(true, vertex);
-    for effect in e.plan_vertex_effects(vertex, value, None).unwrap() {
+    for effect in e.plan_vertex_effects(vertex, value).unwrap() {
         e.apply_effect(&effect, None, None).unwrap();
     }
     e.freshness_keep_redirtied(redirtied, vertex);

@@ -208,11 +208,13 @@ fn formula_cells_block_spill() {
 }
 
 #[test]
-fn overlapping_spills_firstwins_is_deterministic_sequential() {
+fn anchor_entered_into_a_live_spill_blocks_it() {
     let wb = TestWorkbook::new();
     let mut engine = Engine::new(wb, serial_eval_config());
 
-    // Evaluate A1 first, then A2; A2 should conflict and show #SPILL! (FirstWins)
+    // A1 spills A1:B2, then A2 is entered inside that spill. A2 is a formula
+    // in A1's rectangle, so A1 is #SPILL! and A2 spills: the same result as
+    // evaluating both together.
     engine
         .set_cell_formula("Sheet1", 1, 1, parse("={1,2;3,4}").unwrap())
         .unwrap();
@@ -225,10 +227,15 @@ fn overlapping_spills_firstwins_is_deterministic_sequential() {
 
     let a1 = engine.get_cell_value("Sheet1", 1, 1).unwrap();
     let a2 = engine.get_cell_value("Sheet1", 2, 1).unwrap();
-    match a2 {
+    match a1 {
         LiteralValue::Error(e) => assert_eq!(e, "#SPILL!"),
-        v => panic!("expected #SPILL! at A2, got {v:?} (A1={a1:?})"),
+        v => panic!("expected #SPILL! at A1, got {v:?} (A2={a2:?})"),
     }
+    assert_eq!(a2, LiteralValue::Number(5.0));
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 3, 2),
+        Some(LiteralValue::Number(8.0))
+    );
 }
 
 #[test]

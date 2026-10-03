@@ -1072,7 +1072,10 @@ pub struct Engine<R> {
     staged_formulas: StagedFormulaMap,
     /// Presence and generation authority for ordinary staged formula discovery.
     staged_formula_index: StagedFormulaIndex,
-    // Occupancy invalidation only: never a formula/read dependency.
+    // Occupancy invalidation only: never a formula/read dependency. Anchors
+    // whose spill is blocked by a pending source formula, an in-graph
+    // formula or another spill; an edit inside the attempted region wakes
+    // them.
     blocked_pending_spills: Vec<(VertexId, CellRef, Region)>,
     /// Per-sheet row visibility sidecar state.
     row_visibility: FxHashMap<SheetId, RowVisibilityState>,
@@ -12821,15 +12824,24 @@ where
         let sheet_existed = self.graph.sheet_id(sheet).is_some();
         let sheet_id = self.graph.sheet_id_mut(sheet);
         let cell_ref = CellRef::new(sheet_id, Coord::from_excel(row, col, true, true));
-        let replaced_formula =
-            self.graph
-                .get_vertex_id_for_address(&cell_ref)
-                .is_some_and(|vertex| {
-                    matches!(
-                        self.graph.get_vertex_kind(vertex),
-                        VertexKind::FormulaScalar | VertexKind::FormulaArray
-                    )
-                });
+        let replaced = self
+            .graph
+            .get_vertex_id_for_address(&cell_ref)
+            .filter(|&vertex| {
+                matches!(
+                    self.graph.get_vertex_kind(vertex),
+                    VertexKind::FormulaScalar | VertexKind::FormulaArray
+                )
+            });
+        let replaced_formula = replaced.is_some();
+        // A value replacing a spilled anchor takes its spill with it (no
+        // evaluation will revisit the anchor); anchors that spill blocked
+        // wake through the cleared region.
+        if let Some(anchor) = replaced
+            && self.graph.spill_registry_has_anchor(anchor)
+        {
+            self.clear_spill_projection_and_mirror(anchor, None);
+        }
         self.graph.set_cell_value(sheet, row, col, value.clone())?;
         self.clear_cell_format_state(sheet, cell_ref);
         self.record_changed_cell(sheet, row, col);
@@ -12901,7 +12913,22 @@ where
     }
 
     fn record_structural_change(&mut self, scope: StructuralScope) {
+        if let StructuralScope::Cell { sheet, row, col } = scope {
+            self.wake_spill_owner_of_entered_formula(sheet, row, col);
+        }
         self.invalidate_pending_spills(scope);
+    }
+
+    /// A formula entered into a live spill blocks it: wake the owning anchor
+    /// so its next recalc re-plans (and reports `#SPILL!`). The spill keeps
+    /// its registry until then; clearing it leaves the formula cell alone.
+    fn wake_spill_owner_of_entered_formula(&mut self, sheet: SheetId, row: u32, col: u32) {
+        let cell = self.graph.make_cell_ref_internal(sheet, row, col);
+        if let Some(owner) = self.graph.spill_registry_anchor_for_cell(cell)
+            && self.graph.is_foreign_formula_cell(&cell, owner)
+        {
+            self.graph.mark_dirty_many(&[owner]);
+        }
     }
 
     fn structural_scope_from_cells(cells: &[CellRef]) -> Option<StructuralScope> {
@@ -13582,7 +13609,7 @@ where
             let value = self
                 .evaluate_vertex_immutable(vertex_id)
                 .unwrap_or_else(LiteralValue::Error);
-            let effects = self.plan_vertex_effects(vertex_id, value.clone(), None)?;
+            let effects = self.plan_vertex_effects(vertex_id, value.clone())?;
             // Do not publish the selected result until the outer request's deadline succeeds.
             self.resource_checkpoint(0)?;
             let mut delta = delta;
@@ -13792,7 +13819,6 @@ where
                                     &targets,
                                     rows.clone(),
                                     delta.as_deref_mut(),
-                                    None,
                                 ) {
                                     if e.kind != ExcelErrorKind::Spill {
                                         return Err(e);
@@ -13895,11 +13921,7 @@ where
                     }
                     other => {
                         // Scalar result: store value and ensure any previous spill is cleared
-                        let spill_cells = self
-                            .graph
-                            .spill_cells_for_anchor(vertex_id)
-                            .map(|cells| cells.to_vec())
-                            .unwrap_or_default();
+                        let spill_cells = self.graph.spill_cells_to_clear(vertex_id);
                         if let Some(d) = delta.as_deref_mut()
                             && let Some(anchor) = self.graph.get_cell_ref_for_vertex(vertex_id)
                         {
@@ -13984,11 +14006,7 @@ where
             Err(e) => {
                 // Runtime Excel error: store as a cell value instead of propagating
                 // as an exception so bulk eval paths don't fail the whole pass.
-                let spill_cells = self
-                    .graph
-                    .spill_cells_for_anchor(vertex_id)
-                    .map(|cells| cells.to_vec())
-                    .unwrap_or_default();
+                let spill_cells = self.graph.spill_cells_to_clear(vertex_id);
                 let err_val = LiteralValue::Error(e.clone());
                 if let Some(d) = delta
                     && let Some(anchor) = self.graph.get_cell_ref_for_vertex(vertex_id)
@@ -17255,7 +17273,6 @@ impl ShimSpillManager {
         anchor_vertex: VertexId,
         targets: &[CellRef],
         rows: Vec<Vec<LiteralValue>>,
-        overwritable_formulas: Option<&rustc_hash::FxHashSet<VertexId>>,
         mut value_probe: F,
     ) -> Result<(), ExcelError>
     where
@@ -17266,11 +17283,7 @@ impl ShimSpillManager {
         // Re-run plan on concrete targets before committing to respect blockers.
         // This plan checks formula/spill ownership in the graph, but when the graph value cache
         // is disabled (Arrow-canonical mode), it cannot see non-empty value blockers.
-        let plan_res = graph.plan_spill_region_allowing_formula_overwrite(
-            anchor_vertex,
-            targets,
-            overwritable_formulas,
-        );
+        let plan_res = graph.plan_spill_region(anchor_vertex, targets);
         if let Err(e) = plan_res {
             if let Some(id) = self.active_locks.remove(&anchor_vertex) {
                 self.region_locks.release(id);
@@ -17363,18 +17376,13 @@ impl ShimSpillManager {
         anchor_vertex: VertexId,
         targets: &[CellRef],
         rows: Vec<Vec<LiteralValue>>,
-        overwritable_formulas: Option<&rustc_hash::FxHashSet<VertexId>>,
     ) -> Result<(), ExcelError> {
         if let Err(error) = engine.guard_pending_spill_commit(anchor_vertex, targets) {
             self.release_owner(anchor_vertex);
             return Err(error);
         }
         // Re-run plan on concrete targets before committing to respect blockers.
-        let plan_res = engine.graph.plan_spill_region_allowing_formula_overwrite(
-            anchor_vertex,
-            targets,
-            overwritable_formulas,
-        );
+        let plan_res = engine.graph.plan_spill_region(anchor_vertex, targets);
         if let Err(e) = plan_res {
             if let Some(id) = self.active_locks.remove(&anchor_vertex) {
                 self.region_locks.release(id);
@@ -18725,11 +18733,7 @@ where
         anchor_vertex: VertexId,
         delta: Option<&mut DeltaCollector>,
     ) {
-        let spill_cells = self
-            .graph
-            .spill_cells_for_anchor(anchor_vertex)
-            .map(|cells| cells.to_vec())
-            .unwrap_or_default();
+        let spill_cells = self.graph.spill_cells_to_clear(anchor_vertex);
         if spill_cells.is_empty() {
             return;
         }
@@ -19695,6 +19699,7 @@ where
                 .retain(|entry| entry.1.sheet_id != sheet);
             return;
         }
+        let mut woken = Vec::new();
         for &(vertex, anchor, region) in &self.blocked_pending_spills {
             let affected = match scope {
                 StructuralScope::Cell { sheet, row, col } => {
@@ -19714,8 +19719,13 @@ where
                     VertexKind::FormulaScalar | VertexKind::FormulaArray
                 )
             {
-                self.graph.mark_vertex_dirty(vertex);
+                woken.push(vertex);
             }
+        }
+        // The anchor's value changes when it spills, so its dependents
+        // recompute with it.
+        if !woken.is_empty() {
+            self.graph.mark_dirty_many(&woken);
         }
     }
 
@@ -19773,14 +19783,9 @@ where
         targets: &[CellRef],
         rows: Vec<Vec<LiteralValue>>,
         delta: Option<&mut DeltaCollector>,
-        overwritable_formulas: Option<&rustc_hash::FxHashSet<VertexId>>,
     ) -> Result<(), ExcelError> {
         self.guard_pending_spill_commit(anchor_vertex, targets)?;
-        let prev_spill_cells = self
-            .graph
-            .spill_cells_for_anchor(anchor_vertex)
-            .map(|cells| cells.to_vec())
-            .unwrap_or_default();
+        let prev_spill_cells = self.graph.spill_cells_to_clear(anchor_vertex);
 
         if let Some(delta) = delta
             && delta.mode != DeltaMode::Off
@@ -19844,7 +19849,6 @@ where
             anchor_vertex,
             targets,
             rows.clone(),
-            overwritable_formulas,
             |g, cell| {
                 let sheet_name = g.sheet_name(cell.sheet_id);
                 let asheet = arrow_sheets.sheet(sheet_name)?;
@@ -19943,7 +19947,6 @@ where
         &mut self,
         vertex_id: VertexId,
         computed_value: LiteralValue,
-        overwritable_formulas: Option<&rustc_hash::FxHashSet<VertexId>>,
     ) -> Result<Vec<Effect>, ExcelError> {
         // FR3: a stale dynamic reader publishes nothing; FR2: anything else
         // leaves the dirty set at its commit (design §8.2).
@@ -19951,22 +19954,17 @@ where
             if self.freshness_drop_stale(vertex_id) {
                 return Ok(Vec::new());
             }
-            let effects = self.plan_vertex_effects_unrecorded(
-                vertex_id,
-                computed_value,
-                overwritable_formulas,
-            )?;
+            let effects = self.plan_vertex_effects_unrecorded(vertex_id, computed_value)?;
             self.freshness_mark_committed(vertex_id);
             return Ok(effects);
         }
-        self.plan_vertex_effects_unrecorded(vertex_id, computed_value, overwritable_formulas)
+        self.plan_vertex_effects_unrecorded(vertex_id, computed_value)
     }
 
     fn plan_vertex_effects_unrecorded(
         &mut self,
         vertex_id: VertexId,
         computed_value: LiteralValue,
-        overwritable_formulas: Option<&rustc_hash::FxHashSet<VertexId>>,
     ) -> Result<Vec<Effect>, ExcelError> {
         let kind = self.graph.get_vertex_kind(vertex_id);
         let is_formula = matches!(kind, VertexKind::FormulaScalar | VertexKind::FormulaArray);
@@ -19989,9 +19987,7 @@ where
         }
 
         match computed_value {
-            LiteralValue::Array(rows) => {
-                self.plan_array_effects(vertex_id, rows, overwritable_formulas)
-            }
+            LiteralValue::Array(rows) => self.plan_array_effects(vertex_id, rows),
             other => self.plan_scalar_effects(vertex_id, other),
         }
     }
@@ -20046,7 +20042,6 @@ where
         &mut self,
         vertex_id: VertexId,
         rows: Vec<Vec<LiteralValue>>,
-        overwritable_formulas: Option<&rustc_hash::FxHashSet<VertexId>>,
     ) -> Result<Vec<Effect>, ExcelError> {
         // Lightweight mutation needed for correct spill-blocking checks.
         self.graph.set_kind(vertex_id, VertexKind::FormulaArray);
@@ -20126,12 +20121,59 @@ where
         ) {
             Ok(()) => {
                 // Validate spill region is available.
-                if let Err(_e) = self.graph.plan_spill_region_allowing_formula_overwrite(
-                    vertex_id,
-                    &targets,
-                    overwritable_formulas,
-                ) {
-                    return self.plan_spill_error_effects(vertex_id, "Spill blocked", h, w);
+                let mut yield_effects = Vec::new();
+                if let Err(e) = self.graph.plan_spill_region(vertex_id, &targets) {
+                    let yielding = if e.message.as_deref() == Some("BlockedBySpill") {
+                        self.graph.spills_yielding_to(vertex_id, &targets)
+                    } else {
+                        None
+                    };
+                    if let Some(yielding) = yielding {
+                        // A colliding spill later in (sheet, column, row)
+                        // order yields: it is cleared and replans to
+                        // `#SPILL!` with its dependents.
+                        for &other in &yielding {
+                            let (rows, cols) = self
+                                .graph
+                                .spill_extent_for_anchor(other)
+                                .map(|(first, last)| {
+                                    (
+                                        last.coord.row() - first.coord.row() + 1,
+                                        last.coord.col() - first.coord.col() + 1,
+                                    )
+                                })
+                                .unwrap_or((0, 0));
+                            yield_effects.push(Effect::SpillClear {
+                                anchor_vertex: other,
+                            });
+                            yield_effects.push(Effect::WriteCell {
+                                vertex_id: other,
+                                value: Self::spill_error_value("Spill blocked", rows, cols),
+                            });
+                        }
+                        self.graph.mark_dirty_many(&yielding);
+                    } else {
+                        // A formula or spill blocker can go away without this
+                        // anchor recomputing: remember the attempted region so
+                        // an edit inside it wakes the anchor.
+                        if matches!(
+                            e.message.as_deref(),
+                            Some("BlockedByFormula" | "BlockedBySpill")
+                        ) {
+                            self.remember_pending_spill(
+                                vertex_id,
+                                anchor,
+                                Region::rect(
+                                    sheet_id,
+                                    anchor.coord.row(),
+                                    end_row,
+                                    anchor.coord.col(),
+                                    end_col,
+                                ),
+                            )?;
+                        }
+                        return self.plan_spill_error_effects(vertex_id, "Spill blocked", h, w);
+                    }
                 }
 
                 // Arrow-canonical mode: graph planning cannot see non-empty value blockers because
@@ -20183,7 +20225,7 @@ where
                     .cloned()
                     .unwrap_or(LiteralValue::Empty);
 
-                let mut effects = Vec::new();
+                let mut effects = yield_effects;
                 // Clear previous spill if any.
                 let has_prev = self
                     .graph
@@ -20213,6 +20255,18 @@ where
         }
     }
 
+    /// The `#SPILL!` value a blocked anchor holds.
+    fn spill_error_value(message: &str, expected_rows: u32, expected_cols: u32) -> LiteralValue {
+        LiteralValue::Error(
+            ExcelError::new(ExcelErrorKind::Spill)
+                .with_message(message)
+                .with_extra(formualizer_common::ExcelErrorExtra::Spill {
+                    expected_rows,
+                    expected_cols,
+                }),
+        )
+    }
+
     /// Build the effect list for a spill that failed validation.
     fn plan_spill_error_effects(
         &mut self,
@@ -20222,13 +20276,7 @@ where
         expected_cols: u32,
     ) -> Result<Vec<Effect>, ExcelError> {
         self.spill_mgr.release_owner(vertex_id);
-        let spill_err = ExcelError::new(ExcelErrorKind::Spill)
-            .with_message(message)
-            .with_extra(formualizer_common::ExcelErrorExtra::Spill {
-                expected_rows,
-                expected_cols,
-            });
-        let spill_val = LiteralValue::Error(spill_err);
+        let spill_val = Self::spill_error_value(message, expected_rows, expected_cols);
 
         let effects = vec![
             Effect::SpillClear {
@@ -20326,11 +20374,7 @@ where
             self.flush_computed_write_buffer(buffer)?;
         }
 
-        let spill_cells = self
-            .graph
-            .spill_cells_for_anchor(anchor_vertex)
-            .map(|cells| cells.to_vec())
-            .unwrap_or_default();
+        let spill_cells = self.graph.spill_cells_to_clear(anchor_vertex);
         if spill_cells.is_empty() {
             return Ok(());
         }
@@ -20415,13 +20459,7 @@ where
         };
 
         // Delegate to existing commit_spill_and_mirror for delta + overlay logic.
-        self.commit_spill_and_mirror(
-            anchor_vertex,
-            target_cells,
-            values.clone(),
-            delta,
-            None, // overwritable_formulas already validated in plan phase
-        )?;
+        self.commit_spill_and_mirror(anchor_vertex, target_cells, values.clone(), delta)?;
 
         // ChangeLog.
         if let Some(log) = log {
@@ -20507,13 +20545,12 @@ where
         &mut self,
         vertex_id: VertexId,
         computed_value: LiteralValue,
-        overwritable_formulas: Option<&rustc_hash::FxHashSet<VertexId>>,
         computed_writes: &mut ComputedWriteBuffer,
     ) -> Result<Vec<Effect>, ExcelError> {
         if matches!(&computed_value, LiteralValue::Array(_)) {
             self.flush_computed_write_buffer(computed_writes)?;
         }
-        self.plan_vertex_effects(vertex_id, computed_value, overwritable_formulas)
+        self.plan_vertex_effects(vertex_id, computed_value)
     }
 
     // ── Layer evaluation via effects pipeline ──────────────────────────────
@@ -20702,11 +20739,10 @@ where
                     self.plan_vertex_effects_with_computed_flush(
                         vertex_id,
                         value,
-                        None,
                         &mut computed_writes,
                     )
                 } else {
-                    self.plan_vertex_effects(vertex_id, value, None)
+                    self.plan_vertex_effects(vertex_id, value)
                 };
                 let effects = match effects {
                     Ok(effects) => effects,
@@ -20819,8 +20855,6 @@ where
         let thread_pool = self.thread_pool.as_ref().unwrap().clone();
 
         let phases = self.parallel_phases(layer);
-
-        let inflight: rustc_hash::FxHashSet<VertexId> = layer.vertices.iter().copied().collect();
         let mut applied = 0usize;
 
         for (units, group) in &phases {
@@ -20871,7 +20905,6 @@ where
                         let effects = match self.plan_vertex_effects_with_computed_flush(
                             vertex_id,
                             result,
-                            Some(&inflight),
                             &mut computed_writes,
                         ) {
                             Ok(effects) => effects,
@@ -20901,7 +20934,6 @@ where
                         let effects = match self.plan_vertex_effects_with_computed_flush(
                             vertex_id,
                             result,
-                            Some(&inflight),
                             &mut computed_writes,
                         ) {
                             Ok(effects) => effects,
@@ -20946,8 +20978,6 @@ where
         let thread_pool = self.thread_pool.as_ref().unwrap().clone();
 
         let phases = self.parallel_phases(layer);
-
-        let inflight: rustc_hash::FxHashSet<VertexId> = layer.vertices.iter().copied().collect();
         let mut applied = 0usize;
 
         for (units, group) in &phases {
@@ -20995,7 +21025,6 @@ where
                         let effects = match self.plan_vertex_effects_with_computed_flush(
                             vertex_id,
                             result,
-                            Some(&inflight),
                             &mut computed_writes,
                         ) {
                             Ok(effects) => effects,
@@ -21024,7 +21053,6 @@ where
                         let effects = match self.plan_vertex_effects_with_computed_flush(
                             vertex_id,
                             result,
-                            Some(&inflight),
                             &mut computed_writes,
                         ) {
                             Ok(effects) => effects,
@@ -21073,8 +21101,6 @@ where
         }
 
         let phases = self.parallel_phases(layer);
-
-        let inflight: rustc_hash::FxHashSet<VertexId> = layer.vertices.iter().copied().collect();
         let mut applied = 0usize;
 
         for (units, group) in &phases {
@@ -21123,7 +21149,6 @@ where
                         let effects = match self.plan_vertex_effects_with_computed_flush(
                             vertex_id,
                             result,
-                            Some(&inflight),
                             &mut computed_writes,
                         ) {
                             Ok(effects) => effects,
@@ -21152,7 +21177,6 @@ where
                         let effects = match self.plan_vertex_effects_with_computed_flush(
                             vertex_id,
                             result,
-                            Some(&inflight),
                             &mut computed_writes,
                         ) {
                             Ok(effects) => effects,

@@ -4650,24 +4650,26 @@ impl DependencyGraph {
         self.vertex_values.insert(vertex_id, value_ref);
     }
 
-    /// Plan a spill region for an anchor; returns #SPILL! if blocked
+    /// Plan a spill region for an anchor; returns #SPILL! if blocked.
+    ///
+    /// A target cell blocks the spill when it is owned by another anchor's
+    /// spill, holds another formula (scalar or array), or holds a non-empty
+    /// value. Evaluation turns a blocked plan into a `#SPILL!` anchor value.
     pub fn plan_spill_region(
         &self,
         anchor: VertexId,
         target_cells: &[CellRef],
     ) -> Result<(), ExcelError> {
-        self.plan_spill_region_allowing_formula_overwrite(anchor, target_cells, None)
+        self.plan_spill_region_yielding(anchor, target_cells, &[])
     }
 
-    /// Plan a spill region, optionally allowing specific formula vertices to be overwritten.
-    ///
-    /// This is used by parallel evaluation to allow spill anchors to take precedence over
-    /// other formula vertices that are being evaluated in the same layer.
-    pub(crate) fn plan_spill_region_allowing_formula_overwrite(
+    /// [`Self::plan_spill_region`] with the spills of `yielding` anchors
+    /// treated as already cleared.
+    fn plan_spill_region_yielding(
         &self,
         anchor: VertexId,
         target_cells: &[CellRef],
-        overwritable_formulas: Option<&rustc_hash::FxHashSet<VertexId>>,
+        yielding: &[VertexId],
     ) -> Result<(), ExcelError> {
         use formualizer_common::{ExcelErrorExtra, ExcelErrorKind};
         // Compute expected spill shape from the target rectangle for better diagnostics
@@ -4704,6 +4706,7 @@ impl DependencyGraph {
             // If cell is already owned by this anchor's previous spill, it's allowed.
             let owned_by_anchor = match self.spill_cell_to_anchor.get(cell) {
                 Some(&existing_anchor) if existing_anchor == anchor => true,
+                Some(other) if yielding.contains(other) => false,
                 Some(_other) => {
                     return Err(ExcelError::new(ExcelErrorKind::Spill)
                         .with_message("BlockedBySpill")
@@ -4715,22 +4718,20 @@ impl DependencyGraph {
                 None => false,
             };
 
-            if owned_by_anchor {
+            // A spill child is a value cell, so a formula there was entered
+            // after this anchor last spilled: it blocks the next spill like
+            // any other formula. (Values keep the previous behavior.)
+            if owned_by_anchor && !self.is_foreign_formula_cell(cell, anchor) {
                 continue;
             }
 
-            // If cell is occupied by another formula anchor, block unless explicitly allowed.
+            // If cell is occupied by another formula, block.
             if let Some(vid) = self.cell_vertex(cell)
                 && vid != anchor
             {
                 // Prevent clobbering formulas (array or scalar) in the target area
                 match self.store.kind(vid) {
                     VertexKind::FormulaScalar | VertexKind::FormulaArray => {
-                        if let Some(allow) = overwritable_formulas
-                            && allow.contains(&vid)
-                        {
-                            continue;
-                        }
                         return Err(ExcelError::new(ExcelErrorKind::Spill)
                             .with_message("BlockedByFormula")
                             .with_extra(ExcelErrorExtra::Spill {
@@ -4820,7 +4821,7 @@ impl DependencyGraph {
 
         // Clears for cells no longer used
         for cell in prev_cells.iter() {
-            if !new_set.contains(cell) {
+            if !new_set.contains(cell) && !self.is_foreign_formula_cell(cell, anchor) {
                 let sheet = self.sheet_name(cell.sheet_id).to_string();
                 ops.push(Op {
                     sheet,
@@ -5024,6 +5025,84 @@ impl DependencyGraph {
         self.declared_dynamic_anchors.len()
     }
 
+    /// Spills that must yield to `anchor` when its planned rectangle
+    /// `target_cells` (row-major) collides with them; `None` when `anchor`
+    /// is blocked instead.
+    ///
+    /// Engine policy for colliding spill extents, independent of evaluation
+    /// and edit order: when neither anchor lies inside the other's rectangle,
+    /// the anchor first in (sheet, column, row) order spills and the other
+    /// gets `#SPILL!`. That is the order in which a schedule layer commits
+    /// its cells, so a fresh evaluation already resolves this way; a later
+    /// edit or a different layer order reaches the same result by making the
+    /// later anchor yield. An anchor inside the other's rectangle is a formula
+    /// blocker and is handled by the formula rule, not here. Every blocker
+    /// must yield for the anchor to spill.
+    pub(crate) fn spills_yielding_to(
+        &self,
+        anchor: VertexId,
+        target_cells: &[CellRef],
+    ) -> Option<Vec<VertexId>> {
+        let anchor_cell = self.get_cell_ref(anchor)?;
+        let (first, last) = (*target_cells.first()?, *target_cells.last()?);
+        let inside = |cell: CellRef, first: CellRef, last: CellRef| {
+            cell.sheet_id == first.sheet_id
+                && (first.coord.row()..=last.coord.row()).contains(&cell.coord.row())
+                && (first.coord.col()..=last.coord.col()).contains(&cell.coord.col())
+        };
+        let key = |cell: CellRef| (cell.sheet_id, cell.coord.col(), cell.coord.row());
+        let mut yielding: Vec<VertexId> = Vec::new();
+        for cell in target_cells {
+            let Some(&owner) = self.spill_cell_to_anchor.get(cell) else {
+                continue;
+            };
+            if owner == anchor || yielding.contains(&owner) {
+                continue;
+            }
+            let owner_cell = self.get_cell_ref(owner)?;
+            let (owner_first, owner_last) = self.spill_extent_for_anchor(owner)?;
+            if inside(owner_cell, first, last)
+                || inside(anchor_cell, owner_first, owner_last)
+                || key(owner_cell) <= key(anchor_cell)
+            {
+                return None;
+            }
+            yielding.push(owner);
+        }
+        if yielding.is_empty() {
+            return None;
+        }
+        self.plan_spill_region_yielding(anchor, target_cells, &yielding)
+            .ok()
+            .map(|()| yielding)
+    }
+
+    /// The anchor's registered spill cells that clearing the spill empties:
+    /// every cell except a formula entered into the spill after it was
+    /// committed, which keeps its own value.
+    pub(crate) fn spill_cells_to_clear(&self, anchor: VertexId) -> Vec<CellRef> {
+        self.spill_cells_for_anchor(anchor)
+            .map(|cells| {
+                cells
+                    .iter()
+                    .copied()
+                    .filter(|cell| !self.is_foreign_formula_cell(cell, anchor))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Whether `cell` holds a formula vertex other than `anchor`.
+    pub(crate) fn is_foreign_formula_cell(&self, cell: &CellRef, anchor: VertexId) -> bool {
+        self.cell_vertex(cell).is_some_and(|vid| {
+            vid != anchor
+                && matches!(
+                    self.store.kind(vid),
+                    VertexKind::FormulaScalar | VertexKind::FormulaArray
+                )
+        })
+    }
+
     /// Clear an existing spill region for an anchor (set cells to Empty and forget ownership)
     pub fn clear_spill_region(&mut self, anchor: VertexId) {
         let _ = self.clear_spill_region_bulk(anchor);
@@ -5063,7 +5142,9 @@ impl DependencyGraph {
         let mut changed: Vec<crate::engine::authority::geom::Cell> = Vec::new();
         for cell in cells.iter().copied() {
             let is_anchor = anchor_cell.map(|a| a == cell).unwrap_or(false);
-            if is_anchor {
+            // A formula entered into the spill after it was committed is the
+            // user's cell, not a child: it stays.
+            if is_anchor || self.is_foreign_formula_cell(&cell, anchor) {
                 continue;
             }
             self.vacate_cell(&cell);

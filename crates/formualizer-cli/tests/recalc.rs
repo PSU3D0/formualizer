@@ -226,6 +226,78 @@ fn dynamic_spill_written_and_then_unchanged() {
     assert!(zip.by_name("xl/metadata.xml").is_ok());
     assert_eq!(json(&path, &[]).1["status"], "unchanged");
 }
+/// The worksheet XML of the package at `path`.
+fn sheet_xml(path: &Path) -> String {
+    let mut zip = zip::ZipArchive::new(Cursor::new(std::fs::read(path).unwrap())).unwrap();
+    let mut sheet = String::new();
+    zip.by_name("xl/worksheets/sheet1.xml")
+        .unwrap()
+        .read_to_string(&mut sheet)
+        .unwrap();
+    sheet
+}
+/// The `<c r="cell" ...>...</c>` element of `cell` in `sheet`.
+fn cell_xml<'a>(sheet: &'a str, cell: &str) -> &'a str {
+    let start = sheet.find(&format!("<c r=\"{cell}\"")).expect(cell);
+    let end = start + sheet[start..].find("</c>").expect(cell) + 4;
+    &sheet[start..end]
+}
+#[test]
+fn spill_blocked_by_a_formula_or_another_spill_is_written_as_spill_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let by_value = dir.path().join("value.xlsx");
+    std::fs::write(&by_value, fixture("<row r=\"1\"><c r=\"A1\"><f>_xlfn.SEQUENCE(3)</f><v>99</v></c></row><row r=\"3\"><c r=\"A3\"><v>99</v></c></row>", "")).unwrap();
+    let (code, report) = json(&by_value, &[]);
+    assert_eq!(code, 0, "{report}");
+    let value_sheet = sheet_xml(&by_value);
+    for (name, blocker, blocker_cache) in [
+        (
+            "formula",
+            "<row r=\"3\"><c r=\"A3\"><f>1+1</f><v>0</v></c></row>",
+            ("A3", "<v>2</v>"),
+        ),
+        (
+            "spill",
+            "<row r=\"2\"><c r=\"A2\"><f>_xlfn.SEQUENCE(2)</f><v>0</v></c></row>",
+            ("A3", "<v>2</v>"),
+        ),
+    ] {
+        let path = dir.path().join(format!("{name}.xlsx"));
+        std::fs::write(&path, fixture(&format!("<row r=\"1\"><c r=\"A1\"><f>_xlfn.SEQUENCE(3)</f><v>99</v></c><c r=\"B1\"><f>A1+0</f><v>99</v></c></row>{blocker}"), "")).unwrap();
+        // The binary passes a cancellation token, which takes the
+        // cancellable evaluation path.
+        let args = ["recalc", path.to_str().unwrap(), "--json"];
+        let (code, out, err) = invoke(&args, Some(CancelToken::new()));
+        assert!(err.is_empty(), "{name}: {err}");
+        let report: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(code, 0, "{name}: {report}");
+        assert_eq!(report["status"], "written", "{name}");
+        let errors = report["errors"].as_array().unwrap();
+        assert!(
+            errors
+                .iter()
+                .any(|e| e["cell"] == "A1" && e["error"] == "#SPILL!"),
+            "{name}: {report}"
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|e| e["cell"] == "B1" && e["error"] == "#SPILL!"),
+            "{name}: dependent sees #SPILL!: {report}"
+        );
+        let sheet = sheet_xml(&path);
+        assert_eq!(
+            cell_xml(&sheet, "A1"),
+            cell_xml(&value_sheet, "A1"),
+            "{name}: encoding"
+        );
+        assert!(
+            cell_xml(&sheet, blocker_cache.0).contains(blocker_cache.1),
+            "{name}: {sheet}"
+        );
+        assert_eq!(json(&path, &[]).1["status"], "unchanged", "{name}");
+    }
+}
 #[test]
 fn schema_field_set_pinned_for_success_and_usage() {
     let dir = tempfile::tempdir().unwrap();
