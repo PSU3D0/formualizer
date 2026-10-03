@@ -681,6 +681,16 @@ fn value_has_structured_reference_bracket(value: &str) -> bool {
         .contains('[')
 }
 
+/// The byte offset of a range `:` inside an accumulated function-name token,
+/// as in `B10:INDEX(` or `Sheet1!B10:OFFSET(`. No function name contains a
+/// colon, so the text before it is the left end of a range and the call is
+/// the right end: `B10`, `:`, `INDEX(`.
+fn range_colon_before_call(value: &str) -> Option<usize> {
+    let name_start = value.rfind('!').map_or(0, |bang| bang + 1);
+    let colon = name_start + value[name_start..].rfind(':')?;
+    (colon > 0 && colon + 1 < value.len()).then_some(colon)
+}
+
 fn is_reference_operand_value(value: &str) -> bool {
     operand_subtype(value) == TokenSubType::Range
         && (reference_value_contains_range_colon(value)
@@ -1449,6 +1459,15 @@ impl<'a> SpanTokenizer<'a> {
                 end: self.offset + 1,
             }
         } else if self.has_token() {
+            if let Some(colon) =
+                range_colon_before_call(&self.formula[self.token_start..self.token_end])
+            {
+                let colon = self.token_start + colon;
+                let subtype = operand_subtype(&self.formula[self.token_start..colon]);
+                self.push_span(TokenType::Operand, subtype, self.token_start, colon);
+                self.push_span(TokenType::OpInfix, TokenSubType::None, colon, colon + 1);
+                self.token_start = colon + 1;
+            }
             let token = TokenSpan {
                 token_type: TokenType::Func,
                 subtype: TokenSubType::Open,
@@ -2195,6 +2214,24 @@ impl Tokenizer {
             self.save_token();
             Token::make_subexp_from_slice(&self.formula, false, self.offset, self.offset + 1)
         } else if self.has_token() {
+            if let Some(colon) =
+                range_colon_before_call(&self.formula[self.token_start..self.token_end])
+            {
+                let colon = self.token_start + colon;
+                self.items.push(Token::make_operand_from_slice(
+                    &self.formula,
+                    self.token_start,
+                    colon,
+                ));
+                self.items.push(Token::from_slice(
+                    &self.formula,
+                    TokenType::OpInfix,
+                    TokenSubType::None,
+                    colon,
+                    colon + 1,
+                ));
+                self.token_start = colon + 1;
+            }
             // Function call
             let token = Token::make_subexp_from_slice(
                 &self.formula,

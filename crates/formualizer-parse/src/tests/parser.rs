@@ -4320,3 +4320,94 @@ mod external_range_tests {
         }
     }
 }
+
+/// `B10:INDEX(...)` is the reference `B10`, the range operator, and a call.
+/// No function name contains `:`, so the colon used to be swallowed into a
+/// function called `B10:INDEX`.
+#[cfg(test)]
+mod range_operator_before_call_tests {
+    use crate::parser::{ASTNodeType, ReferenceType, parse};
+    use crate::tokenizer::{TokenStream, TokenType, Tokenizer};
+
+    fn token_values(formula: &str) -> Vec<(String, TokenType)> {
+        let legacy: Vec<(String, TokenType)> = Tokenizer::new(formula)
+            .unwrap()
+            .items
+            .iter()
+            .map(|token| (token.value.clone(), token.token_type))
+            .collect();
+        let spans: Vec<(String, TokenType)> = TokenStream::new(formula)
+            .unwrap()
+            .to_tokens()
+            .into_iter()
+            .map(|token| (token.value, token.token_type))
+            .collect();
+        assert_eq!(legacy, spans, "tokenizers disagree on {formula}");
+        legacy
+    }
+
+    #[test]
+    fn range_colon_before_call_is_an_operator() {
+        let tokens = token_values("=SUM(B10:INDEX(B:B,5))");
+        assert_eq!(tokens[1], ("B10".to_string(), TokenType::Operand));
+        assert_eq!(tokens[2], (":".to_string(), TokenType::OpInfix));
+        assert_eq!(tokens[3], ("INDEX(".to_string(), TokenType::Func));
+
+        let tokens = token_values("=Sheet1!$B$5:OFFSET(A1,3,0)");
+        assert_eq!(tokens[0], ("Sheet1!$B$5".to_string(), TokenType::Operand));
+        assert_eq!(tokens[1], (":".to_string(), TokenType::OpInfix));
+        assert_eq!(tokens[2], ("OFFSET(".to_string(), TokenType::Func));
+    }
+
+    #[test]
+    fn range_colon_before_call_parses_as_range_operator() {
+        for (formula, left_sheet) in [
+            ("=SUM(B10:INDEX(B:B,5))", None),
+            ("=SUM($B$5:INDEX($B:$B,ROW()))", None),
+            ("=SUM(A1:OFFSET(A1,3,0))", None),
+            ("=SUM(Data!B10:INDEX(Data!B:B,5))", Some("Data")),
+        ] {
+            let ast = parse(formula).unwrap_or_else(|e| panic!("{formula}: {e}"));
+            let ASTNodeType::Function { name, args } = &ast.node_type else {
+                panic!("{formula}: expected SUM, got {:?}", ast.node_type);
+            };
+            assert_eq!(name, "SUM", "{formula}");
+            let ASTNodeType::BinaryOp { op, left, right } = &args[0].node_type else {
+                panic!(
+                    "{formula}: expected a range operator, got {:?}",
+                    args[0].node_type
+                );
+            };
+            assert_eq!(op, ":", "{formula}");
+            assert!(
+                matches!(&left.node_type, ASTNodeType::Reference {
+                    reference: ReferenceType::Cell { sheet, .. }, ..
+                } if sheet.as_deref() == left_sheet),
+                "{formula}: left end {:?}",
+                left.node_type
+            );
+            assert!(
+                matches!(&right.node_type, ASTNodeType::Function { name, .. }
+                    if name == "INDEX" || name == "OFFSET"),
+                "{formula}: right end {:?}",
+                right.node_type
+            );
+        }
+    }
+
+    #[test]
+    fn plain_calls_and_ranges_are_unchanged() {
+        assert_eq!(
+            token_values("=INDEX(B:B,5)")[0],
+            ("INDEX(".to_string(), TokenType::Func)
+        );
+        assert_eq!(
+            token_values("=SUM(B10:C20)")[1],
+            ("B10:C20".to_string(), TokenType::Operand)
+        );
+        assert_eq!(
+            token_values("=_xlfn.XLOOKUP(1,A1:A3,B1:B3)")[0],
+            ("_xlfn.XLOOKUP(".to_string(), TokenType::Func)
+        );
+    }
+}
