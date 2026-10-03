@@ -4,18 +4,22 @@ All notable changes to Formualizer will be documented in this file.
 
 ## [Unreleased]
 
+### Recalc CLI
+
+This release introduces `formualizer recalc`: after openpyxl or another editor saves an `.xlsx`, it recomputes the cached formula values and writes them back without rebuilding the workbook. Formula text, styles, drawings, names and untouched package content are preserved. Workbooks outside the supported subset are refused as a whole instead of published with guessed values.
+
+- Added the native `formualizer recalc <INPUT> [-o PATH] [--check] [--json] [--max-errors N]` command. It writes in place atomically by default (a true no-op leaves the file untouched), `-o` always publishes a separate file, and `--check` computes without writing (exit 3 when stale). Exit codes are 0 success, 1 error, 2 refused, 3 stale, 64 usage error and 130 interrupted; Ctrl-C cancels cooperatively before publication. `--json` prints one `formualizer.recalc/1` object with counters, error-cell locations and structured refusals.
+- Added distribution channels for the same Rust command: the `formualizer` console script and `python -m formualizer` in native Python wheels (not Pyodide); the npm package `@formualizer/cli`, a launcher with seven `@formualizer/cli-<platform>` native binary packages and no WebAssembly fallback (the unscoped `formualizer` npm package remains the WASM library); the `formualizer-cli` crate for `cargo install` and `cargo binstall`; and `formualizer-cli-v<version>-<target>` archives with `SHA256SUMS` on GitHub releases, for Linux x64/arm64 (glibc and static musl), macOS x64/arm64 and Windows x64.
+- Added source-preserving XLSX writeback for new multi-cell spills and validated existing XLDAPR dynamic arrays, including growth, shrink, collapse and blocked/re-expanded anchors. Source-declared child caches are recalculated, while formula text, styled obsolete cell shells and unrelated package content are retained.
+- Added current-spill references through `A1#` and `_xlfn.ANCHORARRAY(A1)` in Rust, Python and WASM evaluation.
+- Added legacy fixed-extent CSE array recalculation, including single-cell top-left results, broadcasting, padding and truncation. Re-saved spills without dynamic metadata retain their declared extent; spill-reference readers return `#REF!`.
+- Added strict source-preserving XLSX table admission and pre-ingestion table hydration, with byte-preserved table XML, managed-formula coverage checks and table spill obstructions.
+- Enabled current volatile cache publication (`TODAY`, `NOW`, `RAND`, `OFFSET`, `INDIRECT`, `SUBTOTAL`, `AGGREGATE`) in source XLSX recalculation, sampled once per run, with hidden-row reducer refusals.
+- Added an agent edit/recalc/inspect workflow guide, a portable `formualizer-recalc` agent skill and a Recalc CLI section on formualizer.dev with install, agent workflow, CLI reference, supported/refused and agent skill pages.
 
 ### Added
 
-- Added strict source-preserving XLSX table admission and pre-ingestion table hydration, with byte-preserved table XML, managed-formula coverage checks and table spill obstructions.
-- Added `Engine::evaluate_all_for_snapshot` for consistent one-request volatile results without suppressing iterative-SCC or other freshness checks; enabled current volatile cache publication in source XLSX recalculation, with hidden-row reducer refusals.
-
-- Added legacy fixed-extent CSE array recalculation, including single-cell top-left results, broadcasting, padding and truncation. Re-saved spills without dynamic metadata retain their declared extent; spill-reference readers return `#REF!`.
-
-- Added the native `formualizer recalc` CLI with source-preserving XLSX cache updates, JSON outcomes, strict refusals and read-only freshness checks; prepared Python wheel, npm native launcher and Rust crate/release-binary distribution channels (publication pending).
-- Added an agent edit/recalc/inspect workflow guide and a portable `formualizer-recalc` skill for use with existing workbook editors.
-- Added current-spill references through `A1#` and `_xlfn.ANCHORARRAY(A1)` in Rust, Python and WASM evaluation.
-- Added source-preserving XLSX writeback for new multi-cell spills and validated existing XLDAPR dynamic arrays, including growth, shrink, collapse and blocked/re-expanded anchors. Source-declared child caches are recalculated, while formula text, styled obsolete cell shells and unrelated package content are retained.
+- Added `Engine::evaluate_all_for_snapshot` for consistent one-request volatile results without suppressing iterative-SCC or other freshness checks.
 
 ### Fixed
 

@@ -11,23 +11,23 @@ run recalculation as the last writing step before reading or handing off the fil
 
 ## Get the native CLI
 
-These distribution channels are planned, not yet published; use a source build
-until a CLI-enabled release is available:
+> **Not yet published:** these channels go live with the first release that includes `formualizer recalc`. Until then, use the source build below.
 
 ```sh
-uvx formualizer recalc file.xlsx --json
-# Or: pip install formualizer
-python -m formualizer recalc file.xlsx --json
-npx formualizer-cli recalc file.xlsx --json
-# Or: cargo install formualizer-cli / cargo binstall formualizer-cli
+uvx formualizer recalc file.xlsx --json          # Python wheel, no install
+python -m formualizer recalc file.xlsx --json    # after: pip install formualizer
+npx @formualizer/cli recalc file.xlsx --json     # npm native launcher
+# Or: npm i -g @formualizer/cli
+# Or: cargo binstall formualizer-cli / cargo install formualizer-cli
 # Or: download the native archive + SHA256SUMS from GitHub releases:
 # https://github.com/psu3d0/formualizer/releases
 # Source checkout:
 cargo run --release -p formualizer-cli -- recalc file.xlsx --json
 ```
 
-The installed command is `formualizer`. npm's `formualizer-cli` uses native
-binaries, not the `formualizer` WASM library. No Pyodide CLI or npm WASM fallback.
+The installed command is `formualizer`. `@formualizer/cli` runs native
+binaries; the unscoped `formualizer` npm package is the WASM library and has
+no CLI. No Pyodide CLI or npm WASM fallback.
 
 ## Workflow
 
@@ -93,7 +93,7 @@ untouched unless the output is that same path. Symlink destinations are refused.
 
 - Only the strict supported XLSX subset is recalculated; no fallback engine.
   Data tables, connection-backed tables, missing table-managed cell formulas,
-  external links and unsupported names/metadata are
+  external links, circular references and unsupported names/metadata are
   refused, as are unsupported package structures/results and resource bounds.
 - New multi-cell spills and validated existing XLDAPR anchors are supported,
   including `A1#`. Fresh ordinary 1×1 results stay scalar (`A1#` is `#REF!`);

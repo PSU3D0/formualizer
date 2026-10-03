@@ -22,6 +22,29 @@ cargo run -p formualizer-workbook --release --no-default-features \
   --features xlsx-recalc --example cache_recalculate -- input.xlsx output.xlsx
 ```
 
+The `formualizer recalc` command, the Python `recalculate_xlsx_*` functions and the WASM source facade all use this path. The sections below are the authoritative description of what it admits and refuses.
+
+## Supported at a glance
+
+Recalculated, with formula text and untouched package content preserved:
+
+- Ordinary and shared formulas over values, other formulas and other sheets, using the engine's built-in function library.
+- Supported defined names: constants, absolute cell/range names and grounded formula names (see [Ownership and writeback](#ownership-and-writeback)).
+- Dynamic arrays: new multi-cell spills from ordinary formulas, and existing dynamic-array anchors that grow, shrink, collapse or become blocked. `A1#` and `_xlfn.ANCHORARRAY(A1)` read the current spill. A spill blocked by existing content publishes `#SPILL!` as a formula result.
+- Legacy fixed-extent (CSE) array formulas, including elementwise `IF` such as `SUM(IF(A1:A3>0,A1:A3))`.
+- Excel tables: structured references, bare table names and calculated columns whose every row carries a worksheet formula.
+- Volatile functions (`TODAY`, `NOW`, `RAND`, `OFFSET`, `INDIRECT`, `SUBTOTAL`, `AGGREGATE`), sampled once per run.
+- Formula errors such as `#DIV/0!`, `#NAME?` or `#SPILL!`. These are calculated results, reported as error cells; they are not refusals.
+
+Refused as a whole, with nothing written (CLI exit 2):
+
+- What-If data tables, external workbook links, rich values, metadata other than dynamic-array metadata, and digitally signed packages.
+- `SUBTOTAL`/`AGGREGATE` ranges over hidden or filtered rows, or whose hidden-row intersection cannot be proved.
+- Multi-cell shared formulas whose sheet qualifiers look like cell references (`'Q1'!`, `'FY2024'!`).
+- Table features outside the validated subset: connection-backed tables, table-managed formulas missing from some row, unknown tables or columns, `[#This Row]` outside the data body, computed `INDIRECT` text in table-bearing workbooks, and defined names that refer to tables.
+- Unsupported or cyclic defined names, and results that cannot be cached faithfully: circular references (`#CIRC!`), functions the engine recognizes but does not implement (`#N/IMPL!`), non-finite numbers and results that are not current after evaluation.
+- Malformed or ambiguous packages, and inputs over the resource bounds.
+
 ## Ownership and writeback
 
 The source package is authoritative. A reconstructible evaluator consumes its values, ordinary/shared formulas and supported defined names. No rich document graph or independent evaluator is introduced.
@@ -100,6 +123,34 @@ This is not a fallback for every XLSX package. It rejects unsupported inputs/res
 - XML-invalid output text controls and literal `_xHHHH_`-looking strings. Their cross-reader escaping semantics are not silently guessed.
 
 Computed representable Excel errors, including scalar `#SPILL!` and `#CALC!`, produce `ErrorsFound` summaries and typed error caches. Internal engine errors without an approved Excel cache representation (`#N/IMPL!`, `#CIRC!`, `#ERROR!`) are unsupported results, not invented Excel tokens. Unsupported or noncurrent outcomes can only be identified after evaluation; they still publish no package. No evaluation-result error is silently mapped to another error kind.
+
+## Refusal messages
+
+A refusal is `IoError::Unsupported { feature, context }`. The CLI reports it as exit 2 with `"status": "refused"` and `"refusal": {"feature": ..., "context": ...}`; Python raises `RuntimeError("Unsupported feature: <feature> in <context>")`. `feature` names what was declined and `context` says where (a sheet and cell, a table, a package part or `XLSX package`). Both are diagnostics for people, not a stable enumeration: branch on the exit code or status, not on the text. A refusal means the workbook is outside the supported subset, so retrying the same file gives the same answer; change the workbook or use another tool, and never report its caches as recalculated.
+
+Common refusals:
+
+| `feature` (`context`) | Meaning |
+| --- | --- |
+| `data-table formula` (`worksheet`) | A What-If data table (`t="dataTable"`). Data tables are never evaluated. |
+| `external links or rich value data` (`XLSX package`) | The package has external workbook links or rich values. External references are not resolved. |
+| `package digital signature` (`XLSX package`) | Rewriting the package would invalidate its signature. |
+| `SUBTOTAL/AGGREGATE references a stored hidden row; source row visibility is not hydrated` (`Sheet1!C1 range Sheet1!1:5`) | The reducer's range includes a hidden, zero-height, collapsed-outline or filtered row, so the result would depend on visibility the recalc does not model. |
+| `cannot prove ... against stored hidden rows` (cell) | A dynamic, range-operator or LET/LAMBDA-bound reducer range whose hidden-row intersection cannot be checked statically. |
+| `shared formula sheet qualifier would be rewritten by shared-formula expansion` (`C2 qualifier 'Q1'!`) | A copied (shared) formula refers to a sheet named like a cell reference. Write ordinary per-cell formulas instead. |
+| `cross-sheet table reference in a shared formula would be rewritten by shared-formula expansion` (table, sheet, reference) | The same problem, through a structured reference to a table on such a sheet. |
+| `INDIRECT text in a table-bearing workbook must be literal and free of table names/structured references` (cell) | `INDIRECT` in a workbook with tables reads its text from a cell, computes it, or names a table. |
+| `table-managed formula is missing a worksheet <f>; ...` (table, column) | A calculated column or totals cell lacks a formula in some row. Write the formula into every row, then recalc. |
+| `unknown table in structured reference`, `unsupported structured-reference spelling/context` (reference) | A structured reference names an unknown table or column, or uses `[#This Row]` outside the data body. |
+| `defined-name formula refers to a table name`, `defined-name formula contains structured references` (name) | Defined names that point at tables are not lowered. |
+| `connection-backed table` (table part) | A table backed by a query or data connection. |
+| `unsupported or cyclic calculation name` (name) | A defined name outside the supported subset, or one that depends on itself, even if unused. |
+| `engine-specific error has no approved XLSX cache encoding` (`#CIRC!`, `#N/IMPL!`, ...) | A circular reference, a function the engine does not implement, or another result that has no Excel cache representation. |
+| `formula result is not current: ...` (sheet) | A formula was still not current after evaluation. Stale values are never published. |
+| `input byte limit`, `formula cell count limit`, `worksheet width limit`, ... (`XLSX package`, part) | The input exceeds a resource bound (see below). |
+| `symlink destination` (`atomic XLSX output`) | The destination path is a symbolic link. Write to a regular path. |
+
+Other features name the malformed, ambiguous or unsupported package structure that was found (ZIP layout, XML encoding, relationships, content types, metadata records). They are refused rather than guessed at.
 
 ## Bounds and cancellation
 

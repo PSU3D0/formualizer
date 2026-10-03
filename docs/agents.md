@@ -6,20 +6,19 @@ openpyxl writes formulas but does not calculate them; saving a formula workbook 
 
 ## Install or run
 
-The CLI distribution channels below are **planned, not yet published**. Use a source build until a release containing the CLI is available.
+> **Not yet published:** these install channels go live with the first release that includes `formualizer recalc`. Until then, build from a source checkout with `cargo run --release -p formualizer-cli -- recalc file.xlsx --json`.
 
 ```sh
-uvx formualizer recalc file.xlsx --json         # native Python wheel
-pip install formualizer                       # then: formualizer recalc file.xlsx --json
-python -m formualizer recalc file.xlsx --json   # same native Python CLI
-npx formualizer-cli recalc file.xlsx --json     # native npm launcher, not the WASM library
-cargo install formualizer-cli                  # installs the formualizer command
+uvx formualizer recalc file.xlsx --json          # native Python wheel, no install step
+pip install formualizer                        # then: formualizer recalc file.xlsx --json
+python -m formualizer recalc file.xlsx --json    # same CLI through the Python module
+npx @formualizer/cli recalc file.xlsx --json     # native npm launcher, not the WASM library
+npm i -g @formualizer/cli                      # then: formualizer recalc file.xlsx --json
 cargo binstall formualizer-cli                 # prebuilt release binary
-# Source checkout today:
-cargo run --release -p formualizer-cli -- recalc file.xlsx --json
+cargo install formualizer-cli                  # build the formualizer command from crates.io
 ```
 
-Alternatively, download the matching native archive and `SHA256SUMS` from [GitHub releases](https://github.com/psu3d0/formualizer/releases) once published; verify the checksum, extract it and put `formualizer` on PATH. Planned platforms are Linux x64/arm64 (GNU or musl), macOS x64/arm64 and Windows x64. The CLI is not available in Pyodide; npm has no WASM fallback.
+Or download the matching `formualizer-cli-v<version>-<target>` archive and `SHA256SUMS` from [GitHub releases](https://github.com/psu3d0/formualizer/releases), verify the checksum, extract it and put `formualizer` on PATH. Prebuilt binaries cover Linux x64/arm64 (glibc or static musl), macOS x64/arm64 and Windows x64. The CLI is not available in Pyodide, and npm has no WASM fallback: the unscoped `formualizer` npm package is the library, not the CLI.
 
 ## Python edit/recalc/read loop
 
@@ -94,7 +93,7 @@ esac
 | --- | --- | --- |
 | 0 | `written`, `unchanged`; `current` with `--check` | Computation succeeded. Inspect `errors` before accepting results. |
 | 1 | `error` | Diagnose I/O, invalid input or engine/internal failure; do not claim updated caches. |
-| 2 | `refused` | Read `refusal.feature` and `refusal.context`. **Do not retry the same unsupported workbook.** Leave caches as-is or use another engine; never claim values were recalculated. |
+| 2 | `refused` | Read `refusal.feature` and `refusal.context` ([what they mean](cache-only-xlsx.md#refusal-messages)). **Do not retry the same unsupported workbook.** Leave caches as-is or use another engine; never claim values were recalculated. |
 | 3 | `stale` | `--check` only: nothing written. Run without `--check` to publish updates. |
 | 64 | `error` | Correct command-line arguments. |
 | 130 | `interrupted` | Cancellation before publication; nothing written. Resume only when intended. |
