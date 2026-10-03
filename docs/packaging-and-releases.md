@@ -217,7 +217,7 @@ npm pack /tmp/cli-npm/formualizer-cli-linux-x64-gnu && npm pack /tmp/cli-npm/for
 3. **crates.io.** `formualizer-cli` is a new crate name. The `CARGO_REGISTRY_TOKEN` used by `publish-product-crates` must be allowed to publish new crates (crates.io scoped tokens need the `publish-new` scope). After the first publish, add the other owners with `cargo owner --add`.
 4. **Runners.** The arm64 Linux builds use the GitHub-hosted `ubuntu-24.04-arm` runners, which are available to public repositories.
 5. Run the dry run once on the release commit, and check the archives and npm tarballs before tagging.
-6. Remove the "Not yet published" notices (one per file: the READMEs, `docs/cli.md`, `docs/agents.md`, the agent skill and the docs site Recalc CLI overview). `python3 scripts/release-preflight.py --check-prerelease-wording` lists any that remain; the product preflight in `release.yml` runs the same check and fails the release until they are gone.
+6. Remove the pre-release install notices (one blockquote or Callout per file: the READMEs, `docs/cli.md`, `docs/agents.md`, the agent skill and the docs site Recalc CLI overview). `python3 scripts/release-preflight.py --check-prerelease-wording` lists any that remain; the product preflight in `release.yml` runs the same check and fails the release until they are gone.
 
 ## Pyodide wheel pipeline
 
