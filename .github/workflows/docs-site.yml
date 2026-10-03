@@ -1,9 +1,11 @@
 name: Docs site
 
-# Builds formualizer.dev (docs-site/, Next.js static export) on pull requests
-# and deploys it to Cloudflare Workers static assets on pushes to main. The
-# Recalc CLI pages include docs/cli.md, docs/agents.md, docs/cache-only-xlsx.md
-# and skills/** at build time, so changes there rebuild the site too.
+# Builds and checks formualizer.dev (docs-site/, Next.js static export).
+# Deployment is not done here: Cloudflare Workers Builds deploys main through
+# its own GitHub integration, so no Cloudflare credential lives in this repo.
+# The Recalc CLI pages include docs/cli.md, docs/agents.md,
+# docs/cache-only-xlsx.md and skills/** at build time, so changes there are
+# checked too. Keep these paths in step with the Workers Builds watch paths.
 
 on:
   pull_request:
@@ -94,62 +96,3 @@ jobs:
           printf 'Linting %s\n' "${files[@]}"
           pnpm exec biome check --no-errors-on-unmatched --files-ignore-unknown=true "${files[@]}"
 
-      - name: Upload static export
-        if: github.event_name != 'pull_request'
-        uses: actions/upload-artifact@v6
-        with:
-          name: docs-site-out
-          path: docs-site/out/
-          include-hidden-files: true
-          if-no-files-found: error
-          retention-days: 7
-
-  deploy:
-    needs: build
-    # Only pushes to main (or a manual run on main) in the upstream repository
-    # deploy; forks and pull requests never reach the Cloudflare secrets.
-    if: >-
-      github.repository == 'PSU3D0/formualizer' &&
-      github.ref == 'refs/heads/main' &&
-      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    concurrency:
-      group: docs-site-deploy
-      cancel-in-progress: false
-    defaults:
-      run:
-        working-directory: docs-site
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-
-      - name: Download static export
-        uses: actions/download-artifact@v7
-        with:
-          name: docs-site-out
-          path: docs-site/out
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24
-
-      # The account id is also in wrangler.jsonc; the secret only overrides it.
-      - name: Deploy with wrangler
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          ACCOUNT_ID_SECRET: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          WRANGLER_VERSION: 4.147.0
-        run: |
-          set -euo pipefail
-          if [[ -z "${CLOUDFLARE_API_TOKEN}" ]]; then
-            echo "::error::CLOUDFLARE_API_TOKEN secret is not set"
-            exit 1
-          fi
-          if [[ -n "${ACCOUNT_ID_SECRET}" ]]; then
-            export CLOUDFLARE_ACCOUNT_ID="${ACCOUNT_ID_SECRET}"
-          fi
-          npx --yes "wrangler@${WRANGLER_VERSION}" deploy
