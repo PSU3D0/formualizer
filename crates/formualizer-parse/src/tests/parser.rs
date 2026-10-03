@@ -3287,21 +3287,41 @@ mod semantics_regressions {
     use crate::parser::{ASTNodeType, Parser, ReferenceType};
 
     #[test]
-    fn exponent_is_right_associative() {
+    fn exponent_is_left_associative() {
+        // Excel evaluates `^` left to right: =2^3^2 is (2^3)^2 = 64, not 2^(3^2) = 512.
         let mut p = Parser::new("=2^3^2").unwrap();
         let ast = p.parse().unwrap();
 
         match ast.node_type {
-            ASTNodeType::BinaryOp { op, left: _, right } => {
+            ASTNodeType::BinaryOp { op, left, right } => {
                 assert_eq!(op, "^");
-                // Expected: 2^(3^2)
-                match right.node_type {
+                // Expected: (2^3)^2
+                match left.node_type {
                     ASTNodeType::BinaryOp { op: op2, .. } => assert_eq!(op2, "^"),
-                    other => panic!("expected right child to be exponent, got {other:?}"),
+                    other => panic!("expected left child to be exponent, got {other:?}"),
                 }
+                assert!(
+                    matches!(right.node_type, ASTNodeType::Literal(_)),
+                    "expected right child to be the literal 2, got {:?}",
+                    right.node_type
+                );
             }
             other => panic!("expected BinaryOp, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn exponent_chain_pretty_prints_round_trip() {
+        use crate::pretty::pretty_print;
+        assert_eq!(pretty_print(&crate::parse("=2^3^2").unwrap()), "2 ^ 3 ^ 2");
+        assert_eq!(
+            pretty_print(&crate::parse("=(2^3)^2").unwrap()),
+            "2 ^ 3 ^ 2"
+        );
+        assert_eq!(
+            pretty_print(&crate::parse("=2^(3^2)").unwrap()),
+            "2 ^ (3 ^ 2)"
+        );
     }
 
     #[test]
@@ -4184,7 +4204,8 @@ mod parser_hardening {
             format!("={}1{}", "1+(".repeat(5000), ")".repeat(5000)),
             format!("={}1{}", "IF(A1>0,".repeat(5000), ",0)".repeat(5000)),
             format!("={}1{}", "{".repeat(5000), "}".repeat(5000)),
-            format!("={}1", "1^".repeat(5000)),
+            // `1^1^...` is no longer listed: `^` is left-associative, so a bare
+            // chain does not nest; `1+(` above covers binary-operator recursion.
         ] {
             let error = parse_on_small_stack(formula).expect_err("reject excessive recursion");
             assert!(error.message.contains("Formula nesting too deep"));

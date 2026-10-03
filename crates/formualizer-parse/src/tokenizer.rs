@@ -268,7 +268,7 @@ impl Token {
         //   reference ops (:
         //   postfix %
         //   prefix unary +/- (binds tighter than ^)
-        //   exponent ^ (right-assoc)
+        //   exponent ^ (left-assoc, as in Excel: 2^3^2 = (2^3)^2)
         //   */
         //   +-
         //   &
@@ -280,7 +280,7 @@ impl Token {
             "," => Some((8, Associativity::Left)),
             "%" => Some((7, Associativity::Left)),
             "u" => Some((6, Associativity::Right)),
-            "^" => Some((5, Associativity::Right)),
+            "^" => Some((5, Associativity::Left)),
             "*" | "/" => Some((4, Associativity::Left)),
             "+" | "-" => Some((3, Associativity::Left)),
             "&" => Some((2, Associativity::Left)),

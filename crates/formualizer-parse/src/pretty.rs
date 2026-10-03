@@ -25,7 +25,7 @@ fn infix_info(op: &str) -> (u8, Associativity) {
         ":" => (10, Associativity::Left),
         " " => (9, Associativity::Left),
         "," => (8, Associativity::Left),
-        "^" => (5, Associativity::Right),
+        "^" => (5, Associativity::Left),
         "*" | "/" => (4, Associativity::Left),
         "+" | "-" => (3, Associativity::Left),
         "&" => (2, Associativity::Left),
@@ -84,7 +84,7 @@ fn child_needs_parens(
                     }
 
                     // Even with same op, some operators are not associative.
-                    if parent_op == "-" || parent_op == "/" {
+                    if parent_op == "-" || parent_op == "/" || parent_op == "^" {
                         return true;
                     }
                 }
