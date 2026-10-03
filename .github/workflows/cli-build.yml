@@ -198,7 +198,7 @@ jobs:
             cp "binaries/${target}/formualizer${exe}" "stage/${name}/"
             chmod 0755 "stage/${name}/formualizer${exe}"
             cp LICENSE-MIT LICENSE-APACHE "stage/${name}/"
-            cp docs/cli.md "stage/${name}/README.md"
+            cp crates/formualizer-cli/README.md "stage/${name}/README.md"
             if [[ -n "${exe}" ]]; then
               (cd stage && zip -X -q -r "../release-assets/${name}.zip" "${name}")
             else
