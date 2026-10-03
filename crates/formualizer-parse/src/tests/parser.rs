@@ -3843,19 +3843,59 @@ mod semantics_regressions {
         }
 
         #[test]
-        fn test_sheet_named_with_embedded_colon() {
-            // Excel forbids ':' in sheet names, so a quoted sheet whose name
-            // contains ':' must still parse as a single-sheet reference.
+        fn test_quoted_segment_with_colon_is_3d_span() {
+            // Excel forbids ':' in sheet names, so a colon inside one quoted
+            // segment can only separate the two ends of a 3D span. Excel
+            // writes spans over names that need quoting this way:
+            // `'Jan 24:Mar 24'!B5` is Jan 24, Feb 24 and Mar 24.
             let r = ReferenceType::from_string("'Weird:Name'!A1").unwrap();
             assert_eq!(
                 r,
-                ReferenceType::Cell {
-                    sheet: Some("Weird:Name".to_string()),
+                ReferenceType::Cell3D {
+                    sheet_first: "Weird".to_string(),
+                    sheet_last: "Name".to_string(),
                     row: 1,
                     col: 1,
                     row_abs: false,
                     col_abs: false,
                 }
+            );
+
+            let ast = parse_both("=SUM('Jan 24:Mar 24'!B5)");
+            let ASTNodeType::Function { args, .. } = &ast.node_type else {
+                panic!("expected SUM, got {:?}", ast.node_type);
+            };
+            assert_eq!(
+                extract_reference(&args[0]),
+                &ReferenceType::Cell3D {
+                    sheet_first: "Jan 24".to_string(),
+                    sheet_last: "Mar 24".to_string(),
+                    row: 5,
+                    col: 2,
+                    row_abs: false,
+                    col_abs: false,
+                }
+            );
+
+            let ast = parse_both("='Bob''s:End Sheet'!A1:B2");
+            assert!(
+                matches!(extract_reference(&ast), ReferenceType::Range3D { sheet_first, sheet_last, .. }
+                    if sheet_first == "Bob's" && sheet_last == "End Sheet"),
+                "{:?}",
+                extract_reference(&ast)
+            );
+        }
+
+        #[test]
+        fn test_quoted_book_path_colon_is_not_a_3d_span() {
+            // A drive colon inside an external book path is not a span.
+            let r = ReferenceType::from_string(r"'C:\Data\[Book.xlsx]Sheet1'!A1").unwrap();
+            assert!(
+                !matches!(
+                    r,
+                    ReferenceType::Cell3D { .. } | ReferenceType::Range3D { .. }
+                ),
+                "{r:?}"
             );
         }
 
@@ -3879,8 +3919,9 @@ mod semantics_regressions {
                 "=Sheet1:Sheet3!A1",
                 "=Sheet1:Sheet3!A1:B2",
                 "=Sheet1:Sheet3!$A$1:$B$2",
-                "='Sheet 1':'Sheet 3'!A1",
-                "='Bob''s Sheet':'End Sheet'!A1",
+                "='Sheet 1:Sheet 3'!A1",
+                "='Bob''s Sheet:End Sheet'!A1",
+                "='Jan 24:Mar'!B5:C6",
             ];
             for input in cases {
                 let ast = parse_both(input);
@@ -3892,6 +3933,28 @@ mod semantics_regressions {
                     extract_reference(&reparsed_ast),
                     r,
                     "reparse mismatch for {input}"
+                );
+            }
+        }
+
+        #[test]
+        fn test_3d_two_quoted_segments_display_as_one() {
+            // Excel writes a quoted 3D span as one quoted segment.
+            for (input, expected) in [
+                ("='Sheet 1':'Sheet 3'!A1", "='Sheet 1:Sheet 3'!A1"),
+                (
+                    "='Bob''s Sheet':'End Sheet'!A1",
+                    "='Bob''s Sheet:End Sheet'!A1",
+                ),
+                ("='Sheet 1':Sheet3!A1:B2", "='Sheet 1:Sheet3'!A1:B2"),
+            ] {
+                let ast = parse_both(input);
+                let r = extract_reference(&ast);
+                assert_eq!(format!("={r}"), expected, "display mismatch for {input}");
+                assert_eq!(
+                    extract_reference(&parse_both(expected)),
+                    r,
+                    "reparse of {input}"
                 );
             }
         }
@@ -3913,9 +3976,9 @@ mod string_colon_interaction {
 
     #[test]
     fn test_cross_sheet_range_still_parses() {
-        // Single-quoted sheet continuation must still produce a single Range
-        // reference. Use a single-sheet form that exercises the `:`-glue path
-        // currently supported end-to-end by both parsers.
+        // Single-quoted sheet continuation must still produce a single range
+        // reference. A colon inside the quoted segment is a 3D span, the way
+        // Excel writes one over names that need quoting.
         let formula = "='Sheet 1:Sheet 3'!A1:C10";
 
         let mut parser = Parser::new(formula).unwrap();
@@ -3924,8 +3987,8 @@ mod string_colon_interaction {
             .expect("classic parser should accept formula");
         let reference = extract_reference(&ast);
         assert!(
-            matches!(reference, ReferenceType::Range { .. }),
-            "expected Range reference, got {reference:?}"
+            matches!(reference, ReferenceType::Range3D { .. }),
+            "expected Range3D reference, got {reference:?}"
         );
 
         let span_ast = crate::parser::parse(formula).expect("span parser should accept formula");

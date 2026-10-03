@@ -1114,19 +1114,16 @@ impl Display for ReferenceType {
     }
 }
 
-/// Render the `Sheet1:SheetN` portion of a 3D reference. Either side may
-/// require quoting independently; quoting one side does not force the other
-/// to be quoted, matching Excel's behaviour.
+/// Render the `Sheet1:SheetN` portion of a 3D reference. When either name
+/// needs quoting, Excel quotes the whole span as one segment
+/// (`'Jan 24:Mar 24'!B5`), never each name on its own.
 fn format_3d_sheet_prefix(first: &str, last: &str) -> String {
-    let format_one = |name: &str| -> String {
-        if sheet_name_needs_quoting(name) {
-            let escaped = name.replace('\'', "''");
-            format!("'{escaped}'")
-        } else {
-            name.to_string()
-        }
-    };
-    format!("{}:{}", format_one(first), format_one(last))
+    if sheet_name_needs_quoting(first) || sheet_name_needs_quoting(last) {
+        let escaped = format!("{first}:{last}").replace('\'', "''");
+        format!("'{escaped}'")
+    } else {
+        format!("{first}:{last}")
+    }
 }
 
 impl TryFrom<&str> for ReferenceType {
@@ -1206,8 +1203,6 @@ impl ReferenceType {
             // `!` separator (e.g. external book tokens such as `[1]Sheet!A1`).
             return Self::extract_sheet_spec_fallback(reference);
         };
-        let _ = first_quoted;
-
         let bytes = reference.as_bytes();
 
         // 3D form: Name1:Name2!...
@@ -1250,6 +1245,23 @@ impl ReferenceType {
         // Single-sheet form: Name!...
         if after_first < bytes.len() && bytes[after_first] == b'!' {
             let ref_part = reference[after_first + 1..].to_string();
+            // Excel forbids ':' in sheet names, so one quoted segment holding
+            // a single ':' is a 3D span written the way Excel writes it:
+            // `'Jan 24:Mar 24'!B5`. A book path (`'C:\x\[Book.xlsx]S'!A1`)
+            // is left alone.
+            if first_quoted && !first_name.contains('[') {
+                if let Some((first, last)) = first_name.split_once(':') {
+                    if !first.is_empty() && !last.is_empty() && !last.contains(':') {
+                        return (
+                            SheetSpec::Range {
+                                first: first.to_string(),
+                                last: last.to_string(),
+                            },
+                            ref_part,
+                        );
+                    }
+                }
+            }
             return (SheetSpec::Single(first_name), ref_part);
         }
 
