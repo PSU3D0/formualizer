@@ -4320,3 +4320,49 @@ mod external_range_tests {
         }
     }
 }
+
+/// Excel shows a defined name whose sheet was deleted as `=#REF!#REF!`: a
+/// deleted sheet qualifier and a deleted address. It is one `#REF!` operand.
+#[cfg(test)]
+mod double_ref_error_tests {
+    use crate::parser::{ASTNode, ASTNodeType, Parser, parse};
+    use crate::tokenizer::{TokenStream, Tokenizer};
+    use formualizer_common::{ExcelErrorKind, LiteralValue};
+
+    fn is_ref_error(node: &ASTNode) -> bool {
+        matches!(&node.node_type, ASTNodeType::Literal(LiteralValue::Error(e)) if e.kind == ExcelErrorKind::Ref)
+    }
+
+    #[test]
+    fn double_ref_is_one_error_operand() {
+        for formula in ["=#REF!#REF!", "=#ref!#REF!"] {
+            let span = parse(formula).unwrap_or_else(|e| panic!("{formula}: {e}"));
+            assert!(is_ref_error(&span), "{formula}: {:?}", span.node_type);
+            let classic = Parser::new(formula).unwrap().parse().unwrap();
+            assert_eq!(classic.node_type, span.node_type, "{formula}");
+
+            let legacy = Tokenizer::new(formula).unwrap();
+            assert_eq!(legacy.items.len(), 1, "{formula}: {:?}", legacy.items);
+            assert_eq!(TokenStream::new(formula).unwrap().len(), 1, "{formula}");
+        }
+
+        let ast = parse("=SUM(#REF!#REF!,1)").unwrap();
+        let ASTNodeType::Function { args, .. } = &ast.node_type else {
+            panic!("{:?}", ast.node_type);
+        };
+        assert_eq!(args.len(), 2);
+        assert!(is_ref_error(&args[0]));
+
+        let ast = parse("=#REF!#REF!+1").unwrap();
+        assert!(
+            matches!(&ast.node_type, ASTNodeType::BinaryOp { op, left, .. }
+            if op == "+" && is_ref_error(left))
+        );
+    }
+
+    #[test]
+    fn single_ref_error_is_unchanged() {
+        assert!(is_ref_error(&parse("=#REF!").unwrap()));
+        assert!(parse("=#REF!#N/A").is_err());
+    }
+}
