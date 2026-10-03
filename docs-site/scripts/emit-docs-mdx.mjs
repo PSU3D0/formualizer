@@ -7,20 +7,20 @@
 // original public Markdown URLs (used by the "Copy Markdown" / "Open in ..."
 // page actions) keep working as plain static assets — no runtime rewrite needed.
 
-import { cp, mkdir, readdir, stat } from 'node:fs/promises';
-import { dirname, join, relative } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { cp, mkdir, readdir, stat } from "node:fs/promises";
+import { dirname, join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const srcRoot = join(root, 'out', 'llms.mdx', 'docs');
-const destRoot = join(root, 'out', 'docs');
+const srcRoot = join(root, "out", "llms.mdx", "docs");
+const destRoot = join(root, "out", "docs");
 
 async function walk(dir) {
   const out = [];
   for (const entry of await readdir(dir, { withFileTypes: true })) {
     const full = join(dir, entry.name);
     if (entry.isDirectory()) out.push(...(await walk(full)));
-    else if (entry.name.endsWith('.mdx')) out.push(full);
+    else if (entry.name.endsWith(".mdx")) out.push(full);
   }
   return out;
 }
@@ -42,20 +42,30 @@ async function main() {
     await cp(file, dest);
     copied++;
   }
-  console.log(`[emit-docs-mdx] mirrored ${copied} Markdown files to out/docs/**.mdx`);
+  console.log(
+    `[emit-docs-mdx] mirrored ${copied} Markdown files to out/docs/**.mdx`,
+  );
 
   // Next.js excludes `_`-prefixed files from the public/ copy, so `_headers` is
   // placed into the export output here (Cloudflare reads it from the assets root).
-  await cp(join(root, 'public', '_headers'), join(root, 'out', '_headers'));
-  await cp(join(root, 'public', '_redirects'), join(root, 'out', '_redirects'));
-  console.log('[emit-docs-mdx] copied _headers and _redirects into out/');
+  await cp(join(root, "public", "_headers"), join(root, "out", "_headers"));
+  await cp(join(root, "public", "_redirects"), join(root, "out", "_redirects"));
+  console.log("[emit-docs-mdx] copied _headers and _redirects into out/");
 
   // Serve the portable agent skill as a plain file next to the docs.
-  const skill = join(dirname(root), 'skills', 'formualizer-recalc', 'SKILL.md');
-  const skillDest = join(root, 'out', 'skills', 'formualizer-recalc', 'SKILL.md');
+  const skill = join(dirname(root), "skills", "formualizer-recalc", "SKILL.md");
+  const skillDest = join(
+    root,
+    "out",
+    "skills",
+    "formualizer-recalc",
+    "SKILL.md",
+  );
   await mkdir(dirname(skillDest), { recursive: true });
   await cp(skill, skillDest);
-  console.log('[emit-docs-mdx] copied skills/formualizer-recalc/SKILL.md into out/');
+  console.log(
+    "[emit-docs-mdx] copied skills/formualizer-recalc/SKILL.md into out/",
+  );
 }
 
 main().catch((err) => {
