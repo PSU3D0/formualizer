@@ -681,6 +681,14 @@ fn value_has_structured_reference_bracket(value: &str) -> bool {
         .contains('[')
 }
 
+/// Whether a `#REF!` error literal starts at `offset`.
+fn ref_error_starts_at(formula: &str, offset: usize) -> bool {
+    formula
+        .as_bytes()
+        .get(offset..offset + 5)
+        .is_some_and(|s| s.eq_ignore_ascii_case(b"#REF!"))
+}
+
 fn is_reference_operand_value(value: &str) -> bool {
     operand_subtype(value) == TokenSubType::Range
         && (reference_value_contains_range_colon(value)
@@ -1214,6 +1222,16 @@ impl<'a> SpanTokenizer<'a> {
         } else if self.has_token() {
             self.save_token();
             self.start_token();
+        }
+
+        // A defined name whose sheet was deleted decays to `#REF!#REF!`: a
+        // deleted sheet qualifier followed by a deleted address. Like the
+        // `Sheet1!#REF!` prefix above, the qualifier is discarded and the
+        // operand is the single error literal `#REF!`.
+        if ref_error_starts_at(self.formula, self.offset)
+            && ref_error_starts_at(self.formula, self.offset + 5)
+        {
+            self.offset += 5;
         }
 
         let error_start = self.offset;
@@ -1990,6 +2008,13 @@ impl Tokenizer {
         } else if self.has_token() {
             self.save_token();
             self.start_token();
+        }
+
+        // `#REF!#REF!`: see `SpanTokenizer::parse_error`.
+        if ref_error_starts_at(&self.formula, self.offset)
+            && ref_error_starts_at(&self.formula, self.offset + 5)
+        {
+            self.offset += 5;
         }
 
         let error_start = self.offset;
