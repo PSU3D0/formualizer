@@ -4320,3 +4320,110 @@ mod external_range_tests {
         }
     }
 }
+
+/// A range end that points at deleted cells is stored as `#REF!`:
+/// `=SUM(A1:#REF!)`. The `:` is still the range operator, and the live end
+/// is kept.
+#[cfg(test)]
+mod deleted_range_end_tests {
+    use crate::parser::{ASTNode, ASTNodeType, ReferenceType, parse};
+    use crate::tokenizer::{TokenStream, TokenType, Tokenizer};
+    use formualizer_common::{ExcelErrorKind, LiteralValue};
+
+    fn token_values(formula: &str) -> Vec<(String, TokenType)> {
+        let legacy: Vec<(String, TokenType)> = Tokenizer::new(formula)
+            .unwrap()
+            .items
+            .iter()
+            .map(|token| (token.value.clone(), token.token_type))
+            .collect();
+        let spans: Vec<(String, TokenType)> = TokenStream::new(formula)
+            .unwrap()
+            .to_tokens()
+            .into_iter()
+            .map(|token| (token.value, token.token_type))
+            .collect();
+        assert_eq!(legacy, spans, "tokenizers disagree on {formula}");
+        legacy
+    }
+
+    fn is_ref_error(node: &ASTNode) -> bool {
+        matches!(&node.node_type, ASTNodeType::Literal(LiteralValue::Error(e)) if e.kind == ExcelErrorKind::Ref)
+    }
+
+    fn is_a1(node: &ASTNode) -> bool {
+        matches!(
+            &node.node_type,
+            ASTNodeType::Reference {
+                reference: ReferenceType::Cell { row: 1, col: 1, .. },
+                ..
+            }
+        )
+    }
+
+    #[test]
+    fn deleted_end_is_a_range_operand() {
+        for (formula, live_left) in [
+            ("=A1:#REF!", true),
+            ("=A1:#ref!", true),
+            ("=#REF!:A1", false),
+            ("=Sheet1!#REF!:A1", false),
+        ] {
+            let ast = parse(formula).unwrap_or_else(|e| panic!("{formula}: {e}"));
+            let ASTNodeType::BinaryOp { op, left, right } = &ast.node_type else {
+                panic!(
+                    "{formula}: expected the range operator, got {:?}",
+                    ast.node_type
+                );
+            };
+            assert_eq!(op, ":", "{formula}");
+            let (live, dead) = if live_left {
+                (left, right)
+            } else {
+                (right, left)
+            };
+            assert!(
+                is_a1(live),
+                "{formula}: live end lost: {:?}",
+                live.node_type
+            );
+            assert!(is_ref_error(dead), "{formula}: {:?}", dead.node_type);
+        }
+
+        let ast = parse("=SUM(A1:#REF!)").unwrap();
+        let ASTNodeType::Function { args, .. } = &ast.node_type else {
+            panic!("{:?}", ast.node_type);
+        };
+        assert!(matches!(&args[0].node_type, ASTNodeType::BinaryOp { op, .. } if op == ":"));
+    }
+
+    #[test]
+    fn deleted_end_tokens() {
+        assert_eq!(
+            token_values("=A1:#REF!"),
+            vec![
+                ("A1".to_string(), TokenType::Operand),
+                (":".to_string(), TokenType::OpInfix),
+                ("#REF!".to_string(), TokenType::Operand),
+            ]
+        );
+        assert_eq!(
+            token_values("=#REF!:A1"),
+            vec![
+                ("#REF!".to_string(), TokenType::Operand),
+                (":".to_string(), TokenType::OpInfix),
+                ("A1".to_string(), TokenType::Operand),
+            ]
+        );
+    }
+
+    #[test]
+    fn spill_after_a_range_is_unchanged() {
+        // `#` directly after a reference is still the spill operator.
+        assert!(matches!(
+            parse("=A1#").unwrap().node_type,
+            ASTNodeType::UnaryOp { ref op, .. } if op == "#"
+        ));
+        assert!(parse("=A1:#N/A").is_err());
+    }
+}

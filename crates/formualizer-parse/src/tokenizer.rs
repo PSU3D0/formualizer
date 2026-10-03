@@ -681,6 +681,14 @@ fn value_has_structured_reference_bracket(value: &str) -> bool {
         .contains('[')
 }
 
+/// Whether a `#REF!` error literal starts at `offset`.
+fn ref_error_starts_at(formula: &str, offset: usize) -> bool {
+    formula
+        .as_bytes()
+        .get(offset..offset + 5)
+        .is_some_and(|s| s.eq_ignore_ascii_case(b"#REF!"))
+}
+
 fn is_reference_operand_value(value: &str) -> bool {
     operand_subtype(value) == TokenSubType::Range
         && (reference_value_contains_range_colon(value)
@@ -1322,10 +1330,16 @@ impl<'a> SpanTokenizer<'a> {
             }
             return reference_value_contains_range_colon(value)
                 || value_has_structured_reference_bracket(value)
+                // A range end pointing at deleted cells is stored as `#REF!`
+                // (`A1:#REF!`); the `:` next to it is still the range operator.
+                || ref_error_starts_at(self.formula, self.offset + 1)
                 || (value.contains('!')
                     && next_reference_has_sheet_qualifier(self.formula, self.offset + 1));
         }
         self.prev_is_reference_producing()
+            || self.prev_non_whitespace().is_some_and(|prev| {
+                prev.subtype == TokenSubType::Error && ref_error_starts_at(self.formula, prev.start)
+            })
     }
 
     fn emit_infix_operator(&mut self, start: usize, end: usize) {
@@ -2102,10 +2116,16 @@ impl Tokenizer {
             }
             return reference_value_contains_range_colon(value)
                 || value_has_structured_reference_bracket(value)
+                // A range end pointing at deleted cells is stored as `#REF!`
+                // (`A1:#REF!`); the `:` next to it is still the range operator.
+                || ref_error_starts_at(&self.formula, self.offset + 1)
                 || (value.contains('!')
                     && next_reference_has_sheet_qualifier(&self.formula, self.offset + 1));
         }
         self.prev_is_reference_producing()
+            || self.prev_non_whitespace().is_some_and(|prev| {
+                prev.subtype == TokenSubType::Error && prev.value.eq_ignore_ascii_case("#REF!")
+            })
     }
 
     fn emit_infix_operator(&mut self, start: usize, end: usize) {
