@@ -638,13 +638,16 @@ class ReleasePreflightTests(unittest.TestCase):
                 record("features"),
             ),
             mock.patch.object(
+                release_preflight, "validate_no_prerelease_wording", record("wording")
+            ),
+            mock.patch.object(
                 release_preflight, "validate_parser_track_lockstep", record("parser")
             ),
             mock.patch("builtins.print"),
             self.assertRaisesRegex(RuntimeError, "stop before registry lookup"),
         ):
             release_preflight.preflight("product", False)
-        self.assertEqual(calls, ["package", "features", "parser"])
+        self.assertEqual(calls, ["package", "features", "wording", "parser"])
 
     def test_parser_track_versions_are_in_lockstep_in_tree(self) -> None:
         self.assertEqual(
@@ -783,6 +786,83 @@ class CliReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('name="formualizer-cli-v${version}-${target}"', workflow)
         self.assertIn('"release-assets/${name}.tar.gz"', workflow)
         self.assertIn('"../release-assets/${name}.zip"', workflow)
+
+
+class PrereleaseWordingTests(unittest.TestCase):
+    NOTICE = "> **Not yet published:** these install channels go live soon.\n"
+
+    def write(self, root: Path, relative: str, text: str) -> None:
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+    def test_clean_shipped_docs_pass(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.write(root, "README.md", "# Formualizer\n\nInstall with pip.\n")
+            self.write(root, "docs/cli.md", "Planned work lives elsewhere.\n")
+            release_preflight.validate_no_prerelease_wording(root)
+
+    def test_every_shipped_location_is_reported(self) -> None:
+        shipped = (
+            "README.md",
+            "CHANGELOG.md",
+            "bindings/python/README.md",
+            "crates/formualizer-cli/README.md",
+            "npm/formualizer-cli/README.md",
+            "docs/agents.md",
+            "docs/nested/page.md",
+            "skills/formualizer-recalc/SKILL.md",
+            "docs-site/content/docs/recalc-cli/index.mdx",
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for relative in shipped:
+                self.write(root, relative, "intro\n" + self.NOTICE)
+            hits = release_preflight.find_prerelease_wording(root)
+        self.assertEqual(
+            sorted(hit.split(":", 1)[0] for hit in hits), sorted(shipped)
+        )
+        self.assertTrue(all(":2: > **Not yet published:**" in hit for hit in hits))
+
+    def test_all_phrasings_and_mdx_callouts_are_caught(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.write(
+                root,
+                "docs-site/content/docs/a.mdx",
+                '<Callout type="warn" title="Not yet published">soon</Callout>\n'
+                "Channels are planned (publication pending).\n"
+                "Download the archive once published.\n",
+            )
+            hits = release_preflight.find_prerelease_wording(root)
+        self.assertEqual([hit.split(":")[1] for hit in hits], ["1", "2", "3"])
+
+    def test_unshipped_files_are_ignored(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.write(root, "docs-site/node_modules/pkg/README.md", self.NOTICE)
+            self.write(root, "scripts/notes.md", self.NOTICE)
+            self.write(root, "crates/formualizer-cli/src/lib.rs", "// not yet published\n")
+            self.assertEqual(release_preflight.find_prerelease_wording(root), [])
+
+    def test_validation_lists_each_location(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.write(root, "docs/cli.md", "x\n" + self.NOTICE)
+            with self.assertRaisesRegex(RuntimeError, r"docs/cli\.md:2: > \*\*Not yet published"):
+                release_preflight.validate_no_prerelease_wording(root)
+
+    def test_cli_flag_runs_only_the_wording_check(self) -> None:
+        with (
+            mock.patch.object(sys, "argv", ["release-preflight.py", "--check-prerelease-wording"]),
+            mock.patch.object(release_preflight, "validate_no_prerelease_wording") as check,
+            mock.patch.object(release_preflight, "preflight") as preflight,
+            mock.patch("builtins.print"),
+        ):
+            self.assertEqual(release_preflight.main(), 0)
+        check.assert_called_once_with()
+        preflight.assert_not_called()
 
 
 if __name__ == "__main__":
