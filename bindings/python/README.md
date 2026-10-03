@@ -32,28 +32,61 @@ Prebuilt stable-ABI (`abi3`) wheels are published for Python 3.10 and newer on L
 
 ## Command line
 
+Native wheels include the `formualizer` command, which recalculates the cached formula values in an `.xlsx` after another tool has edited it:
+
+> **Not yet published:** the CLI goes live with the first release that includes `formualizer recalc`; earlier wheels do not have it.
+
 ```bash
-uvx formualizer recalc book.xlsx
-# Or after pip install formualizer:
-formualizer recalc book.xlsx --check --json
-python -m formualizer recalc book.xlsx
+uvx formualizer recalc book.xlsx                  # run without installing
+formualizer recalc book.xlsx --check --json       # after pip install formualizer
+python -m formualizer recalc book.xlsx --json     # same CLI through the module
 ```
 
-The native CLI updates formula caches in place, preserving workbook structure.
-See [CLI usage and exit codes](https://github.com/PSU3D0/formualizer/blob/main/docs/cli.md).
-The CLI is not available in Pyodide/WebAssembly.
+The CLI updates formula caches in place (or writes `-o other.xlsx`), preserving formula text and the rest of the workbook. Exit codes: 0 done, 1 error, 2 refused (unsupported workbook, nothing written), 3 `--check` found stale caches, 64 usage error, 130 interrupted. See the [CLI reference](https://github.com/psu3d0/formualizer/blob/main/docs/cli.md). The CLI is not available in Pyodide.
 
-## For agents
+The same recalculation is available in-process:
 
-After saving edits with openpyxl, run `python -m formualizer recalc file.xlsx --json` with a CLI-enabled native wheel.
-Branch on exit code/status and inspect `errors`; fix inputs/formulas and repeat. Exit 2 is a refusal: do not retry the same unsupported workbook or claim recalculation.
-Read caches with `data_only=True`, but do not save again after recalc: openpyxl drops formula caches.
-CLI distribution is planned, not yet published. See the [agent workflow guide](../../docs/agents.md) and [portable skill](../../skills/formualizer-recalc/SKILL.md).
+```python
+import formualizer as fz
+
+result = fz.recalculate_xlsx_file("book.xlsx")               # in place
+result = fz.recalculate_xlsx_file("book.xlsx", output="calculated.xlsx")
+print(result["summary"]["status"], result["cache_cells_changed"])
+```
+
+A refusal raises `RuntimeError("Unsupported feature: ... in ...")` and writes nothing. The CLI's `--json` output carries the same refusal as structured `feature`/`context` fields, which is easier for agents to branch on.
+
+## For agents: edit with openpyxl, then recalc
+
+openpyxl writes formulas but does not calculate them, and saving drops the cached values that `data_only=True` readers (and pandas) see. Recalc after the last save:
+
+```python
+import json, subprocess, sys
+from openpyxl import load_workbook
+
+wb = load_workbook("book.xlsx")
+wb.active["A1"] = 100                         # edit inputs or formulas
+wb.save("book.xlsx")
+
+p = subprocess.run([sys.executable, "-m", "formualizer", "recalc", "book.xlsx", "--json"],
+                   capture_output=True, text=True)
+r = json.loads(p.stdout)
+if p.returncode == 2:
+    raise SystemExit(f"refused, do not retry: {r['refusal']}")
+if p.returncode != 0:
+    raise SystemExit(r["message"])
+print(r["status"], r["error_cells"], r["errors"])   # inspect formula errors
+
+print(load_workbook("book.xlsx", data_only=True).active["B1"].value)   # read; do not save
+```
+
+If `errors` lists unexpected cells, fix inputs or formulas, save and recalc again. Never save the `data_only=True` view: it would replace formulas with values. See the [agent workflow guide](https://github.com/psu3d0/formualizer/blob/main/docs/agents.md) and [portable skill](https://github.com/psu3d0/formualizer/blob/main/skills/formualizer-recalc/SKILL.md).
 
 ## Documentation
 
 Full documentation at **[formualizer.dev](https://www.formualizer.dev/docs)**:
 
+- [Recalc CLI](https://www.formualizer.dev/docs/recalc-cli) — recalculate `.xlsx` caches after openpyxl edits
 - [Python Quickstart](https://www.formualizer.dev/docs/quickstarts/python-quickstart)
 - [Python API Reference](https://www.formualizer.dev/docs/reference/python-api-map)
 - [Function Reference](https://www.formualizer.dev/docs/reference/functions) — 400+ built-in functions
@@ -160,12 +193,14 @@ cleared (including children), so it can exceed the formula count.
 `worksheet_parts_changed` counts worksheets only, not metadata/relationships.
 Deterministic unchanged outputs recalculate to byte-identical no-ops.
 
-Legacy CSE/data tables, table-bearing sheets, external links, rich/unknown or
-malformed metadata, shared-family multi-cell spills and spill publication across
-merges remain refused. Configured ZIP/XML/cell/output bounds still apply.
-Fresh unmarked 1x1 results have no spill identity (`A1#` returns `#REF!`); this is
-not a claim of Excel equivalence and no Excel execution oracle was used.
-See [the precise eligibility and publication contract](../../docs/cache-only-xlsx.md).
+Legacy fixed-extent (CSE) arrays, elementwise `IF`, Excel tables within a
+validated subset and volatile functions are recalculated too. Data tables,
+external links, rich/unknown or malformed metadata, hidden-row `SUBTOTAL`/`AGGREGATE`
+ranges, circular references, shared-family multi-cell spills and spill
+publication across merges are refused. Configured ZIP/XML/cell/output bounds
+still apply. Fresh unmarked 1x1 results have no spill identity (`A1#` returns
+`#REF!`); this is not a claim of Excel equivalence and no Excel execution oracle
+was used. See [the precise eligibility and publication contract](https://github.com/psu3d0/formualizer/blob/main/docs/cache-only-xlsx.md).
 The file API preserves existing destination permissions and leaves it untouched
 on pre-publication failure; omitted `output` recalculates in place.
 

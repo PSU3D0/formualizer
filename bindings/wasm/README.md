@@ -20,6 +20,8 @@ Load Excel workbooks, change inputs, recalculate and read results—in the brows
 - **Built for agents.** Inspect dependencies, group edits with undo/redo, and expose deterministic typed inputs and outputs through SheetPort. For ready-made CLI and MCP tools, see [agent-spreadsheet](https://github.com/PSU3D0/agent-spreadsheet).
 - **One engine across languages.** Also available for [Rust and Python](https://github.com/psu3d0/formualizer#bindings). This npm package targets JavaScript hosts; non-JavaScript WASM hosts use the [portable Rust profile](#runtime-profile).
 
+> This package is the WebAssembly library. The `formualizer recalc` command-line tool is the separate native package [`@formualizer/cli`](https://www.npmjs.com/package/@formualizer/cli) (`npx @formualizer/cli recalc book.xlsx`); it is not included here.
+
 ## Installation
 
 ```bash
@@ -105,12 +107,14 @@ cleared, including children, and may exceed `formula_cells`.
 `worksheet_parts_changed` counts worksheets only, not metadata/relationships.
 Deterministic unchanged outputs recalculate to byte-identical no-ops.
 
-Legacy CSE/data tables, table-bearing sheets, external links, rich/unknown or
-malformed metadata, shared-family multi-cell spills and spill publication across
-merges remain refused. Safe ZIP/XML/cell/output limits remain in effect.
-Fresh unmarked 1x1 results have no spill identity (`A1#` returns `#REF!`).
-No Excel-equivalence claim is made; no Excel execution oracle was used.
-See [the precise eligibility contract](../../docs/cache-only-xlsx.md).
+Legacy fixed-extent (CSE) arrays, elementwise `IF`, Excel tables within a
+validated subset and volatile functions are recalculated too. Data tables,
+external links, rich/unknown or malformed metadata, hidden-row
+`SUBTOTAL`/`AGGREGATE` ranges, circular references, shared-family multi-cell
+spills and spill publication across merges are refused. Safe ZIP/XML/cell/output
+limits remain in effect. Fresh unmarked 1x1 results have no spill identity
+(`A1#` returns `#REF!`). No Excel-equivalence claim is made; no Excel execution
+oracle was used. See [the precise eligibility contract](https://github.com/psu3d0/formualizer/blob/main/docs/cache-only-xlsx.md).
 
 ### Parse formulas
 

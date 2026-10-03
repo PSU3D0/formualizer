@@ -25,12 +25,27 @@ Calculating a spreadsheet from code usually means automating an office suite: Li
 - **No compromise on speed.** Copied formulas compute as families in one pass over Arrow columns, lookups index their table once, and only what changed recalculates. The numbers are [below](#how-fast).
 - **Excel-compatible.** 400+ functions, dynamic arrays, `LET` and `LAMBDA`, with edge cases checked against Excel.
 
-## For agents
+## Recalc CLI: for agents
 
-Already editing `.xlsx` files with openpyxl or another tool? Keep that editor, then run `formualizer recalc file.xlsx --json` to fill supported formula caches.
-Branch on the exit code/status, inspect `errors`, fix inputs or formulas and repeat; exit 2 means refused, not recalculated.
-Recalc must be the last writing step: saving with openpyxl afterwards drops caches again.
-The CLI channels are planned, not yet published; see the [agent guide and install options](docs/agents.md) and [portable skill](skills/formualizer-recalc/SKILL.md).
+Already editing `.xlsx` files with openpyxl or another tool? Keep that editor, then let `formualizer recalc` fill the formula caches it leaves empty or stale. Formula text, styles and the rest of the package are preserved.
+
+> **Not yet published:** these install channels go live with the first release that includes `formualizer recalc`. Until then, build from source with `cargo run --release -p formualizer-cli -- recalc book.xlsx`.
+
+```sh
+pip install formualizer        # or: uvx formualizer recalc book.xlsx
+npm i -g @formualizer/cli      # or: npx @formualizer/cli recalc book.xlsx
+cargo binstall formualizer-cli # or: cargo install formualizer-cli
+```
+
+Prebuilt archives for Linux, macOS and Windows are attached to each [GitHub release](https://github.com/psu3d0/formualizer/releases).
+
+```sh
+python edit_model.py                      # your editor saves book.xlsx
+formualizer recalc book.xlsx --json       # recalc last; exit 0 ok, 2 refused
+python -c "import openpyxl; print(openpyxl.load_workbook('book.xlsx', data_only=True).active['B1'].value)"
+```
+
+Branch on the exit code, inspect `errors`, fix inputs or formulas and repeat; exit 2 means refused, not recalculated. Recalc must be the last writing step: saving with openpyxl afterwards drops caches again. See the [Recalc CLI docs](https://www.formualizer.dev/docs/recalc-cli), the [CLI reference](docs/cli.md) and the [portable agent skill](skills/formualizer-recalc/SKILL.md).
 
 ## How fast?
 
