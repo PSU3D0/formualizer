@@ -7,7 +7,12 @@ fn limits(
     frames: usize,
     height: usize,
 ) -> ParserLimits {
-    ParserLimits::new(source, tokens, nodes, frames, height).unwrap()
+    ParserLimits::default()
+        .with_source_bytes(source)
+        .with_tokens(tokens)
+        .with_ast_nodes(nodes)
+        .with_pratt_frames(frames)
+        .with_ast_height(height)
 }
 #[test]
 fn tiny_boundaries() {
@@ -48,8 +53,16 @@ fn tiny_boundaries() {
             .parse("é")
             .is_err()
     );
-    assert!(ParserLimits::new(10, 10, 10, 73, 256).is_err());
-    assert!(ParserLimits::new(10, 10, 10, 72, 257).is_err());
+    // Setters store exactly what they are given; nothing is clamped.
+    let raised = ParserLimits::default()
+        .with_pratt_frames(73)
+        .with_ast_height(257);
+    assert_eq!((raised.pratt_frames(), raised.ast_height()), (73, 257));
+    assert_eq!(
+        ParserLimits::default().with_tokens(0).tokens(),
+        0,
+        "zero budgets are kept"
+    );
     for formula in ["=F(,)", "={1,2}", "=F(1,2)"] {
         assert!(
             Parser::builder()

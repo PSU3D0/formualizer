@@ -48,7 +48,14 @@ assert_eq!(canonical_formula(&ast), "=SUM(A1:B3)");
 
 Default parsing admits at most 64 KiB of UTF-8 source bytes, 16,384 tokens, 8,192 AST nodes (including omitted arguments), 72 active Pratt frames and AST height 256. Height counts the root as one; parentheses do not add AST nodes. Limits apply independently, so a formula can hit one before another. Errors retain the existing parser/tokenizer error types.
 
-Use immutable `ParserLimits::new(source_bytes, tokens, ast_nodes, pratt_frames, ast_height)` and `Parser::builder().limits(limits)` (or `BatchParser::builder().limits(limits)`) to configure budgets. Stack-sensitive limits cannot exceed 72 frames / height 256; there is no unbounded stack mode. Other budgets may be raised by trusted callers. These guarantees concern parser-produced trees, not manually constructed or externally deserialized ASTs.
+Start from `ParserLimits::default()` and adjust budgets with the `with_source_bytes`, `with_tokens`, `with_ast_nodes`, `with_pratt_frames` and `with_ast_height` setters, then pass the value to `Parser::builder().limits(limits)` (or `BatchParser::builder().limits(limits)`). Values are used exactly as given; nothing is clamped. Raising `pratt_frames` or `ast_height` above the defaults requires a correspondingly larger stack on every thread that parses, clones, drops or evaluates the tree. These guarantees concern parser-produced trees, not manually constructed or externally deserialized ASTs.
+
+```rust
+use formualizer_parse::{Parser, ParserLimits};
+
+let limits = ParserLimits::default().with_ast_nodes(1_024);
+let ast = Parser::builder().limits(limits).parse("=SUM(A1:B3)").unwrap();
+```
 
 `parser::BatchParser` retains lexical results in a FIFO cache bounded by 16,384 entries and 8 MiB of source/token payload (excluding container overhead). Hits do not reorder entries. `cache_capacity(entries, bytes)` configures retention; zero entries disables it. Entries exceeding the byte capacity still parse without retention. Eviction does not change formula semantics, but a working set larger than either bound may lose token-cache reuse. Tune the capacity for such workloads.
 

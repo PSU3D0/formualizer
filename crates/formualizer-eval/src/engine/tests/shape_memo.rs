@@ -721,14 +721,7 @@ fn differential_bounded(engine: &mut Engine<TestWorkbook>, cells: &Cells) -> (Me
             // Payload-bound tests deliberately exceed ordinary formula text
             // limits; retain all structural/stack limits under explicit trust.
             let defaults = formualizer_parse::ParserLimits::default();
-            let limits = formualizer_parse::ParserLimits::new(
-                defaults.source_bytes().max(text.len()),
-                defaults.tokens(),
-                defaults.ast_nodes(),
-                defaults.pratt_frames(),
-                defaults.ast_height(),
-            )
-            .unwrap();
+            let limits = defaults.with_source_bytes(defaults.source_bytes().max(text.len()));
             let ast = formualizer_parse::Parser::builder()
                 .limits(limits)
                 .parse(text)
@@ -841,14 +834,7 @@ fn differential_key_walks(
             // Payload-bound tests deliberately exceed ordinary formula text
             // limits; retain all structural/stack limits under explicit trust.
             let defaults = formualizer_parse::ParserLimits::default();
-            let limits = formualizer_parse::ParserLimits::new(
-                defaults.source_bytes().max(text.len()),
-                defaults.tokens(),
-                defaults.ast_nodes(),
-                defaults.pratt_frames(),
-                defaults.ast_height(),
-            )
-            .unwrap();
+            let limits = defaults.with_source_bytes(defaults.source_bytes().max(text.len()));
             let ast = formualizer_parse::Parser::builder()
                 .limits(limits)
                 .parse(text)
