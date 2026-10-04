@@ -1,6 +1,6 @@
 ---
 title: CLI Reference
-description: Every formualizer recalc flag, in-place and -o publication, --check, exit codes 0/1/2/3/64/130, the formualizer.recalc/1 JSON schema and cancellation.
+description: Every formualizer recalc flag, in-place and -o publication, --check, reproducible --now/--tz/--seed runs, exit codes 0/1/2/3/64/130, the formualizer.recalc/1 JSON schema and cancellation.
 ---
 
 The sections below are included at build time from the repository's [CLI reference](https://github.com/psu3d0/formualizer/blob/main/docs/cli.md), the authority for the command's behavior.
@@ -29,19 +29,39 @@ Recalculate formula caches using the strict source-preserving path
 Usage: formualizer recalc [OPTIONS] <INPUT>
 
 Arguments:
-  <INPUT>
+  <INPUT>  Workbook (.xlsx) to recalculate
 
 Options:
-  -o, --output <OUTPUT>
-      --check
-      --json
-      --max-errors <MAX_ERRORS>  [default: 20]
-  -h, --help                     Print help
+  -o, --output <PATH>    Write the result to PATH instead of replacing INPUT
+      --check            Compute without writing; exit 3 if any cache is stale
+      --json             Print one formualizer.recalc/1 JSON object on stdout
+      --max-errors <N>   List at most N error-cell locations [default: 20]
+      --now <TIMESTAMP>  Fixed TODAY/NOW instant: RFC 3339 with an offset or Z
+      --tz <ZONE>        TODAY/NOW timezone: UTC or ±HH:MM [default: --now offset, else local]
+      --seed <U64>       RAND/RANDBETWEEN seed [default: built-in seed]
+  -h, --help             Print help
+
+Writes INPUT in place unless -o or --check is given.
+Run recalc as the last step that writes the workbook: later edits leave its
+caches stale.
+
+RAND/RANDBETWEEN are reproducible run to run. Without --now, TODAY/NOW use
+the host clock (local time unless --tz).
+
+Exit codes:
+  0    written, unchanged or current
+  1    error; nothing written
+  2    refused (unsupported input); nothing written
+  3    --check: caches are stale
+  64   usage error or invalid option value
+  130  interrupted; nothing written
 ```
 
 <include>../../../../docs/cli.md#commands</include>
 
 <include>../../../../docs/cli.md#exit-codes</include>
+
+<include>../../../../docs/cli.md#reproducible-runs</include>
 
 <include>../../../../docs/cli.md#json</include>
 

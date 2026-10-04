@@ -12,11 +12,13 @@ npm i -D @formualizer/cli                       # per project: npx formualizer r
 
 ```text
 formualizer recalc <INPUT> [-o|--output <PATH>] [--check] [--json] [--max-errors <N>]
+                   [--now <TIMESTAMP>] [--tz <ZONE>] [--seed <U64>]
 ```
 
 - Default: recalculate in place, atomically. `-o calculated.xlsx` writes a separate file and leaves the input untouched.
 - `--check`: compute only; exit 0 if caches are current, 3 if stale. Never writes.
-- `--json`: print one `formualizer.recalc/1` JSON object with counts, error-cell locations and any refusal.
+- `--json`: print one `formualizer.recalc/1` JSON object with counts, error-cell locations, any refusal, and the `clock` and `seed` used.
+- `--now 2026-01-31T09:00:00Z` (offset or `Z` required), `--tz UTC|±HH:MM`, `--seed <u64>`: fix `TODAY`/`NOW` and the `RAND` seed for byte-identical reruns. `RAND` is reproducible by default; without `--now`, `TODAY`/`NOW` use host local time.
 
 Exit codes: 0 success, 1 error, 2 refused (unsupported workbook feature, nothing written), 3 `--check` found stale caches, 64 usage error, 130 interrupted. See the [CLI reference](https://www.formualizer.dev/docs/recalc-cli/cli-reference).
 

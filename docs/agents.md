@@ -108,6 +108,10 @@ formualizer recalc file.xlsx --check --json
 
 Exit 0 / `current` means caches and spill shape are current; exit 3 / `stale` means they would change. Neither writes a file, even with `-o`.
 
+### Reproducible runs
+
+`RAND`/`RANDBETWEEN` are reproducible run to run by default. `TODAY`/`NOW` use the host's local time unless you pass `--now <RFC 3339 with offset or Z>` (and optionally `--tz UTC|±HH:MM`, `--seed <u64>`). With `--now`, output is byte-identical across runs, so `--check` with the same flags is meaningful for volatile workbooks. Each computed JSON report echoes `clock` and `seed`; `--now <clock.now> --seed <seed>` (plus `--tz <clock.timezone>` unless it is `Local`) replays it. See [reproducible runs](cli.md#reproducible-runs).
+
 ### Read formula errors
 
 `errors` contains `{sheet, cell, error}` locations such as `Sheet1`, `B4`, `#DIV/0!`. These are **formula results, not tool failures**: representable error results can be written successfully with exit 0. Decide whether they are expected; otherwise fix inputs/formulas and repeat the whole edit/save/recalc loop. `error_cells` is the total count; `errors_truncated` means some locations were omitted. Use `--max-errors N` to raise the default 20-location cap (0 lists none); it does not change the total count.
@@ -127,4 +131,4 @@ See [cache-only XLSX eligibility, refusals and resource bounds](cache-only-xlsx.
 
 A copyable [agent skill](../skills/formualizer-recalc/SKILL.md) teaches the same workflow without requiring these docs alongside it.
 
-Volatile formulas are recomputed with one request clock sample and the configured RNG policy on each source-recalc run. Their dependents must agree with that same evaluation; byte-identical reruns are conditional on unchanged sampled values, and `--check` reports stale when a sample differs. `SUBTOTAL`/`AGGREGATE` ranges intersecting stored hidden row or active-filter rows are refused because source row visibility is not hydrated; zero-height rows, rows grouped under a collapsed outline and `zeroHeight` sheets count as hidden. Dynamic reducer ranges, range operators over functions or names, and LET/LAMBDA-bound reducer arguments are refused when their hidden-row intersection cannot be proved.
+Volatile formulas are recomputed with one request clock sample and the configured RNG seed on each source-recalc run. Their dependents must agree with that same evaluation; without `--now`, byte-identical reruns are conditional on an unchanged clock sample, and `--check` reports stale when it differs. `SUBTOTAL`/`AGGREGATE` ranges intersecting stored hidden row or active-filter rows are refused because source row visibility is not hydrated; zero-height rows, rows grouped under a collapsed outline and `zeroHeight` sheets count as hidden. Dynamic reducer ranges, range operators over functions or names, and LET/LAMBDA-bound reducer arguments are refused when their hidden-row intersection cannot be proved.

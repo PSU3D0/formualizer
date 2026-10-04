@@ -85,6 +85,11 @@ formualizer recalc file.xlsx --check --json  # 0 current, 3 stale; never writes
 formualizer recalc file.xlsx -o calculated.xlsx --json
 ```
 
+For TODAY/NOW workbooks, pass the same `--now 2026-01-31T09:00:00Z` (offset or
+`Z` required; `--tz UTC|±HH:MM`, `--seed <u64>` optional) to the write and the
+`--check`; without it they use host local time. RAND is reproducible by
+default. Computed reports echo `clock` and `seed` for replay.
+
 Default writes atomically in place; a true no-op preserves bytes and mtime.
 `-o` always publishes the destination, even with zero changes; the input is
 untouched unless the output is that same path. Symlink destinations are refused.
@@ -113,4 +118,4 @@ untouched unless the output is that same path. Symlink destinations are refused.
 
 Excel tables retain their original XML and geometry. Supported tables require valid relationships, bounded nonoverlapping ranges and matching column headers. Calculated columns and totals must have worksheet formulas in every managed cell; write each new row formula before recalculation. Bare table names (`SUM(Table1)`) mean the data body; `[#This Row]` works only in data-body rows. In table-bearing workbooks `INDIRECT` must take literal text that names no table. Shared formulas with cell-like sheet qualifiers (`'Q1'!`, `'FY2024'!`) are refused; write per-cell formulas instead. Multi-cell spills into or from a table produce `#SPILL!`; scalar 1x1 results remain valid.
 
-Volatile formulas are recomputed per run with one clock sample and the configured RNG policy. Rerun byte identity is conditional on unchanged samples; `--check` reports stale when they differ. Hidden-row intersections in `SUBTOTAL`/`AGGREGATE` are refused rather than guessed (zero-height and collapsed-outline rows count as hidden), including dynamic ranges, range operators over functions and LET/LAMBDA-bound arguments whose intersection cannot be proved. Iterative/stale results are still refused.
+Volatile formulas are recomputed per run with one clock sample and the configured RNG seed. Without `--now`, rerun byte identity is conditional on an unchanged clock sample; `--check` reports stale when it differs. Hidden-row intersections in `SUBTOTAL`/`AGGREGATE` are refused rather than guessed (zero-height and collapsed-outline rows count as hidden), including dynamic ranges, range operators over functions and LET/LAMBDA-bound arguments whose intersection cannot be proved. Iterative/stale results are still refused.
