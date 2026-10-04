@@ -865,6 +865,37 @@ mod tests {
         );
     }
 
+    /// A defined name used as a `:` endpoint is not resolved to its bounds yet,
+    /// so the range operator must report `#N/IMPL!` rather than a misleading
+    /// `#REF!` (Excel computes the bounding range in these cases).
+    #[test]
+    fn defined_name_range_endpoints_are_not_implemented() {
+        let wb = create_workbook()
+            .with_named_range("Start", vec![vec![LiteralValue::Number(1.0)]])
+            .with_named_range("Total", vec![vec![LiteralValue::Number(5.0)]])
+            .with_cell("Sheet1", 1, 1, LiteralValue::Number(1.0))
+            .with_cell("Sheet1", 2, 1, LiteralValue::Number(2.0));
+        for formula in [
+            "=SUM(A1:Total)",
+            "=SUM(Start:A2)",
+            "=SUM(Start:Total)",
+            "=A1:Total",
+            "=Start:Total",
+        ] {
+            let kind = match evaluate_formula(formula, &wb) {
+                Ok(LiteralValue::Error(e)) | Err(e) => e.kind,
+                Ok(other) => panic!("{formula}: expected #N/IMPL!, got {other:?}"),
+            };
+            assert_eq!(kind, ExcelErrorKind::NImpl, "{formula}");
+        }
+        // A deleted endpoint is still Excel's `#REF!`.
+        let kind = match evaluate_formula("=SUM(A1:#REF!)", &wb) {
+            Ok(LiteralValue::Error(e)) | Err(e) => e.kind,
+            Ok(other) => panic!("expected #REF!, got {other:?}"),
+        };
+        assert_eq!(kind, ExcelErrorKind::Ref);
+    }
+
     #[test]
     fn test_array_operations() {
         let wb = create_workbook();
