@@ -289,21 +289,39 @@ impl PySheetPortSession {
     }
 }
 
+/// `±HH:MM` (hours 00-23, minutes 00-59) as seconds east of UTC.
+pub(crate) fn parse_offset_text(text: &str) -> Option<i32> {
+    let b = text.as_bytes();
+    if b.len() != 6 || !matches!(b[0], b'+' | b'-') || b[3] != b':' {
+        return None;
+    }
+    let two = |i: usize| {
+        (b[i].is_ascii_digit() && b[i + 1].is_ascii_digit())
+            .then(|| i32::from(b[i] - b'0') * 10 + i32::from(b[i + 1] - b'0'))
+    };
+    let (h, m) = (two(1)?, two(4)?);
+    if h > 23 || m > 59 {
+        return None;
+    }
+    let secs = (h * 60 + m) * 60;
+    Some(if b[0] == b'-' { -secs } else { secs })
+}
+
 pub(crate) fn parse_timezone_spec(obj: &Bound<'_, PyAny>) -> PyResult<TimeZoneSpec> {
+    const MESSAGE: &str =
+        "timezone must be 'utc', 'local', an offset like '+02:00', or an offset in seconds";
     if let Ok(s) = obj.extract::<String>() {
         match s.to_ascii_lowercase().as_str() {
             "utc" => Ok(TimeZoneSpec::Utc),
             "local" => Ok(TimeZoneSpec::Local),
-            _ => Err(PyErr::new::<PyTypeError, _>(
-                "timezone must be 'utc', 'local', or an offset in seconds",
-            )),
+            _ => parse_offset_text(&s)
+                .map(TimeZoneSpec::FixedOffsetSeconds)
+                .ok_or_else(|| PyErr::new::<PyTypeError, _>(MESSAGE)),
         }
     } else if let Ok(secs) = obj.extract::<i32>() {
         Ok(TimeZoneSpec::FixedOffsetSeconds(secs))
     } else {
-        Err(PyErr::new::<PyTypeError, _>(
-            "timezone must be 'utc', 'local', or an offset in seconds",
-        ))
+        Err(PyErr::new::<PyTypeError, _>(MESSAGE))
     }
 }
 

@@ -581,7 +581,7 @@ fn test_workbook_from_xlsx_bytes_evaluates_formula() {
 #[wasm_bindgen_test]
 fn test_recalculate_xlsx_bytes_preserves_prototype_like_sheet_names() {
     let input = Uint8Array::from(build_named_fixture_xlsx_bytes("__proto__").as_slice());
-    let result: Object = recalculate_xlsx_bytes(input, None)
+    let result: Object = recalculate_xlsx_bytes(input, None, JsValue::UNDEFINED)
         .unwrap()
         .unchecked_into();
     let summary: Object = js_get(&result, "summary").unchecked_into();
@@ -598,7 +598,7 @@ fn test_recalculate_xlsx_bytes_preserves_prototype_like_sheet_names() {
 #[wasm_bindgen_test]
 fn test_recalculate_xlsx_bytes_returns_typed_array_and_counts() {
     let input = Uint8Array::from(build_fixture_xlsx_bytes().as_slice());
-    let result: Object = recalculate_xlsx_bytes(input, None)
+    let result: Object = recalculate_xlsx_bytes(input, None, JsValue::UNDEFINED)
         .unwrap()
         .dyn_into()
         .unwrap();
@@ -617,7 +617,7 @@ fn test_recalculate_xlsx_bytes_returns_typed_array_and_counts() {
         .unwrap();
     assert!(xml.contains("<v>3</v>"));
     assert!(!xml.contains("t=\"str\""));
-    let repeated: Object = recalculate_xlsx_bytes(bytes, None)
+    let repeated: Object = recalculate_xlsx_bytes(bytes, None, JsValue::UNDEFINED)
         .unwrap()
         .unchecked_into();
     let repeated_bytes: Uint8Array = js_get(&repeated, "bytes").dyn_into().unwrap();
@@ -1600,7 +1600,7 @@ fn test_computed_date_native_by_default_and_serial_opt_out() {
 #[wasm_bindgen_test]
 fn test_recalculate_cse_retains_extent_without_metadata() {
     let input = Uint8Array::from(facade_array_fixture(false, true).as_slice());
-    let result: Object = recalculate_xlsx_bytes(input, None)
+    let result: Object = recalculate_xlsx_bytes(input, None, JsValue::UNDEFINED)
         .unwrap()
         .unchecked_into();
     let bytes: Uint8Array = js_get(&result, "bytes").dyn_into().unwrap();
@@ -1616,7 +1616,7 @@ fn test_recalculate_cse_retains_extent_without_metadata() {
     assert!(xml.contains("ref=\"C2:C4\""));
     assert!(!xml.contains(" cm="));
     assert!(xml.contains("#REF!"));
-    let repeated: Object = recalculate_xlsx_bytes(bytes, None)
+    let repeated: Object = recalculate_xlsx_bytes(bytes, None, JsValue::UNDEFINED)
         .unwrap()
         .unchecked_into();
     let bytes: Uint8Array = js_get(&repeated, "bytes").dyn_into().unwrap();
@@ -1720,10 +1720,11 @@ fn test_source_spill_new_and_grow_match_native_bytes() {
             (input.len(), facade_digest(&input)),
             (input_len, input_hash)
         );
-        let result: Object = recalculate_xlsx_bytes(Uint8Array::from(input.as_slice()), None)
-            .unwrap()
-            .dyn_into()
-            .unwrap();
+        let result: Object =
+            recalculate_xlsx_bytes(Uint8Array::from(input.as_slice()), None, JsValue::UNDEFINED)
+                .unwrap()
+                .dyn_into()
+                .unwrap();
         let bytes: Uint8Array = js_get(&result, "bytes").dyn_into().unwrap();
         let output = bytes.to_vec();
         assert_eq!(
@@ -1736,7 +1737,7 @@ fn test_source_spill_new_and_grow_match_native_bytes() {
         let summary: Object = js_get(&result, "summary").dyn_into().unwrap();
         assert_eq!(js_get_f64(&summary, "evaluated"), 3.0);
         assert_eq!(js_get_string(&summary, "status"), "success");
-        let repeated: Object = recalculate_xlsx_bytes(bytes, None)
+        let repeated: Object = recalculate_xlsx_bytes(bytes, None, JsValue::UNDEFINED)
             .unwrap()
             .dyn_into()
             .unwrap();
@@ -1774,10 +1775,11 @@ fn test_source_table_hydrates_before_formula_ingestion() {
         zip.write_all(body.as_bytes()).unwrap();
     }
     let input = zip.finish().unwrap().into_inner();
-    let result: Object = recalculate_xlsx_bytes(Uint8Array::from(input.as_slice()), None)
-        .unwrap()
-        .dyn_into()
-        .unwrap();
+    let result: Object =
+        recalculate_xlsx_bytes(Uint8Array::from(input.as_slice()), None, JsValue::UNDEFINED)
+            .unwrap()
+            .dyn_into()
+            .unwrap();
     let bytes: Uint8Array = js_get(&result, "bytes").dyn_into().unwrap();
     let mut archive = zip::ZipArchive::new(Cursor::new(bytes.to_vec())).unwrap();
     let mut sheet = String::new();
@@ -1794,10 +1796,154 @@ fn test_source_table_hydrates_before_formula_ingestion() {
         .read_to_string(&mut preserved)
         .unwrap();
     assert_eq!(preserved, table);
-    let repeated: Object = recalculate_xlsx_bytes(bytes.clone(), None)
+    let repeated: Object = recalculate_xlsx_bytes(bytes.clone(), None, JsValue::UNDEFINED)
         .unwrap()
         .dyn_into()
         .unwrap();
     let repeated_bytes: Uint8Array = js_get(&repeated, "bytes").dyn_into().unwrap();
     assert_eq!(repeated_bytes.to_vec(), bytes.to_vec());
+}
+
+/// The default fixture with its worksheet replaced by TODAY/NOW/RAND formulas.
+fn volatile_fixture_xlsx_bytes() -> Vec<u8> {
+    let source = build_fixture_xlsx_bytes();
+    let mut archive = zip::ZipArchive::new(Cursor::new(&source)).unwrap();
+    let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i).unwrap();
+        let name = file.name().to_owned();
+        let mut contents = String::new();
+        file.read_to_string(&mut contents).unwrap();
+        if name == "xl/worksheets/sheet1.xml" {
+            contents = r#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><dimension ref="A1:A3"/><sheetData><row r="1"><c r="A1"><f>TODAY()</f><v>0</v></c></row><row r="2"><c r="A2"><f>NOW()</f><v>0</v></c></row><row r="3"><c r="A3"><f>RAND()</f><v>0</v></c></row></sheetData></worksheet>"#.to_owned();
+        }
+        zip.start_file(name, SimpleFileOptions::default()).unwrap();
+        zip.write_all(contents.as_bytes()).unwrap();
+    }
+    zip.finish().unwrap().into_inner()
+}
+
+fn cached_value(bytes: &Uint8Array, cell: &str) -> f64 {
+    let output = bytes.to_vec();
+    let mut archive = zip::ZipArchive::new(Cursor::new(&output)).unwrap();
+    let mut xml = String::new();
+    archive
+        .by_name("xl/worksheets/sheet1.xml")
+        .unwrap()
+        .read_to_string(&mut xml)
+        .unwrap();
+    let start = xml.find(&format!("<c r=\"{cell}\"")).unwrap();
+    let cell = &xml[start..start + xml[start..].find("</c>").unwrap()];
+    let value = &cell[cell.find("<v>").unwrap() + 3..];
+    value[..value.find("</v>").unwrap()].parse().unwrap()
+}
+
+#[wasm_bindgen_test]
+fn test_recalculate_xlsx_bytes_reproducibility_options_and_echo() {
+    let options = Object::new();
+    Reflect::set(
+        &options,
+        &JsValue::from_str("deterministicTimestampUtc"),
+        &JsValue::from_str("2026-03-01T23:30:00Z"),
+    )
+    .unwrap();
+    Reflect::set(
+        &options,
+        &JsValue::from_str("deterministicTimezone"),
+        &JsValue::from_str("+01:00"),
+    )
+    .unwrap();
+    Reflect::set(
+        &options,
+        &JsValue::from_str("rngSeed"),
+        &JsValue::from_f64(42.0),
+    )
+    .unwrap();
+    let run = |options: &JsValue| -> Object {
+        recalculate_xlsx_bytes(
+            Uint8Array::from(volatile_fixture_xlsx_bytes().as_slice()),
+            None,
+            options.clone(),
+        )
+        .unwrap()
+        .unchecked_into()
+    };
+    let first = run(&options.clone().into());
+    let second = run(&options.clone().into());
+    let bytes = |result: &Object| -> Uint8Array { js_get(result, "bytes").unchecked_into() };
+    assert_eq!(bytes(&first).to_vec(), bytes(&second).to_vec());
+    // 2026-03-02 00:30 at +01:00: serial 46083 + 0.5/24.
+    assert_eq!(cached_value(&bytes(&first), "A1"), 46083.0);
+    assert!((cached_value(&bytes(&first), "A2") - (46083.0 + 0.5 / 24.0)).abs() < 1e-9);
+    let clock: Object = js_get(&first, "clock").unchecked_into();
+    assert_eq!(js_get_string(&clock, "now"), "2026-03-02T00:30:00+01:00");
+    assert_eq!(js_get_string(&clock, "timezone"), "+01:00");
+    assert_eq!(js_get(&clock, "fixed").as_bool(), Some(true));
+    let seed = js_get(&first, "seed");
+    assert!(seed.is_bigint());
+    assert_eq!(js_sys::BigInt::from(seed).to_string(10).unwrap(), "42");
+    // A different seed changes RAND; the echoed default seed (a bigint beyond
+    // Number.MAX_SAFE_INTEGER) reproduces a default run.
+    Reflect::set(
+        &options,
+        &JsValue::from_str("rngSeed"),
+        &JsValue::from_f64(43.0),
+    )
+    .unwrap();
+    let other = run(&options.clone().into());
+    assert_ne!(
+        cached_value(&bytes(&first), "A3"),
+        cached_value(&bytes(&other), "A3")
+    );
+    let default = run(&JsValue::UNDEFINED);
+    let default_clock: Object = js_get(&default, "clock").unchecked_into();
+    assert_eq!(js_get(&default_clock, "fixed").as_bool(), Some(false));
+    assert_eq!(js_get_string(&default_clock, "timezone"), "Local");
+    let now = js_get_string(&default_clock, "now");
+    let replay = Object::new();
+    Reflect::set(
+        &replay,
+        &JsValue::from_str("rngSeed"),
+        &js_get(&default, "seed"),
+    )
+    .unwrap();
+    Reflect::set(
+        &replay,
+        &JsValue::from_str("deterministicTimestampUtc"),
+        &JsValue::from_str(&now),
+    )
+    .unwrap();
+    let offset_seconds = chrono::DateTime::parse_from_rfc3339(&now)
+        .unwrap()
+        .offset()
+        .local_minus_utc();
+    Reflect::set(
+        &replay,
+        &JsValue::from_str("deterministicTimezone"),
+        &JsValue::from_f64(offset_seconds.into()),
+    )
+    .unwrap();
+    let replayed = run(&replay.into());
+    assert_eq!(bytes(&default).to_vec(), bytes(&replayed).to_vec());
+    // Invalid options are rejected before any work.
+    for (key, value) in [
+        ("rngSeed", JsValue::from_f64(-1.0)),
+        ("deterministicTimezone", JsValue::from_str("utc")),
+        (
+            "deterministicTimestampUtc",
+            JsValue::from_str("2026-03-01T23:30:00"),
+        ),
+    ] {
+        let bad = Object::new();
+        Reflect::set(&bad, &JsValue::from_str(key), &value).unwrap();
+        assert!(
+            recalculate_xlsx_bytes(
+                Uint8Array::from(volatile_fixture_xlsx_bytes().as_slice()),
+                None,
+                bad.into(),
+            )
+            .is_err(),
+            "{key}"
+        );
+    }
 }

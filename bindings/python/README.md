@@ -177,7 +177,23 @@ print(result["summary"]["status"], result["cache_cells_changed"])
 
 # The file API snapshots input and atomically replaces the destination on success.
 result = fz.recalculate_xlsx_file("model.xlsx", output="model.recalc.xlsx")
+
+# Reproducible TODAY/NOW and RAND, as with the CLI's --now/--tz/--seed:
+from datetime import datetime, timezone
+
+result = fz.recalculate_xlsx_file(
+    "model.xlsx",
+    output="model.recalc.xlsx",
+    rng_seed=7,
+    deterministic_timestamp_utc=datetime(2026, 1, 31, 9, tzinfo=timezone.utc),
+    deterministic_timezone="+01:00",  # default UTC
+)
+print(result["clock"], result["seed"])  # what the run used, for replay
 ```
+
+`RAND` is reproducible by default. Without `deterministic_timestamp_utc`,
+`TODAY`/`NOW` use host local time; `result["clock"]["now"]` is the aware
+`datetime` they saw.
 
 These APIs use the shared cache-only Rust implementation, retaining formula text
 and unrelated package members. Safe core resource limits apply;
@@ -402,8 +418,8 @@ parse(formula: str, dialect: FormulaDialect = None) -> ASTNode
 load_workbook(path: str, strategy: str = None, *, path_source: XlsxPathSource | None = None, span_evaluation: bool | None = None) -> Workbook
 load_workbook_bytes(data: bytes, strategy: str = None, backend: str | None = None, *, span_evaluation: bool | None = None) -> Workbook
 recalculate_file(path: str, output: str | None = None) -> dict
-recalculate_xlsx_bytes(data: bytes, *, error_location_limit: int | None = None) -> dict
-recalculate_xlsx_file(path: str, output: str | None = None, *, error_location_limit: int | None = None) -> dict
+recalculate_xlsx_bytes(data: bytes, *, error_location_limit: int | None = None, rng_seed: int | None = None, deterministic_timestamp_utc: datetime | None = None, deterministic_timezone: str | int | None = None) -> dict
+recalculate_xlsx_file(path: str, output: str | None = None, *, error_location_limit: int | None = None, rng_seed: int | None = None, deterministic_timestamp_utc: datetime | None = None, deterministic_timezone: str | int | None = None) -> dict
 ```
 
 ### Core classes

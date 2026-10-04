@@ -898,8 +898,8 @@ impl PyWorkbook {
     /// on the next recalculation. Takes effect on a live workbook; no
     /// reload is required.
     ///
-    /// `deterministic_timezone` accepts `"utc"`, `"local"`, or a fixed
-    /// offset in seconds — the same spelling as
+    /// `deterministic_timezone` accepts `"utc"`, `"local"`, a fixed offset
+    /// such as `"+02:00"`, or an offset in seconds — the same spelling as
     /// `SheetPortSession.evaluate_once(deterministic_timezone=...)`.
     /// Omitted means UTC.
     #[pyo3(signature = (deterministic_timestamp_utc, deterministic_timezone=None))]

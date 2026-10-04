@@ -86,7 +86,19 @@ const input = new Uint8Array(await (await fetch('/model.xlsx')).arrayBuffer());
 const result = await recalculateXlsxBytes(input);
 console.log(result.summary.status, result.cache_cells_changed);
 // `result.bytes` is a Uint8Array ready for download/upload.
+
+// Reproducible TODAY/NOW and RAND (the CLI's --now/--tz/--seed):
+const fixed = await recalculateXlsxBytes(input, undefined, {
+  deterministicTimestampUtc: '2026-01-31T09:00:00Z',
+  deterministicTimezone: '+01:00', // default 'utc'
+  rngSeed: 7,
+});
+console.log(fixed.clock, fixed.seed); // what the run used; seed is a bigint
 ```
+
+`RAND` is reproducible by default. Without `deterministicTimestampUtc`,
+`TODAY`/`NOW` use the host's local time; `result.clock.now` reports the instant
+they saw.
 
 This delegates to the shared Rust cache-only XLSX recalculator: formula text and
 unrelated package members are retained, while formula cached values are updated.

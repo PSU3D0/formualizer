@@ -512,7 +512,10 @@ fn parse_eval_options(options: JsValue) -> Result<EvalOptions, JsValue> {
     Ok(eval)
 }
 
-fn get_optional_value(obj: &js_sys::Object, key: &str) -> Result<Option<JsValue>, JsValue> {
+pub(crate) fn get_optional_value(
+    obj: &js_sys::Object,
+    key: &str,
+) -> Result<Option<JsValue>, JsValue> {
     let value = js_sys::Reflect::get(obj, &JsValue::from_str(key))
         .map_err(|err| js_error(format!("failed to read `{key}`: {err:?}")))?;
     if value.is_undefined() || value.is_null() {
@@ -540,7 +543,7 @@ fn get_optional_number(obj: &js_sys::Object, key: &str) -> Result<Option<f64>, J
     })?))
 }
 
-fn parse_timestamp_utc(value: &JsValue) -> Result<DateTime<Utc>, JsValue> {
+pub(crate) fn parse_timestamp_utc(value: &JsValue) -> Result<DateTime<Utc>, JsValue> {
     if let Ok(date) = value.clone().dyn_into::<js_sys::Date>() {
         let millis = date.get_time();
         if !millis.is_finite() {
@@ -573,14 +576,36 @@ fn parse_timestamp_utc(value: &JsValue) -> Result<DateTime<Utc>, JsValue> {
     ))
 }
 
-fn parse_timezone_spec(value: &JsValue) -> Result<TimeZoneSpec, JsValue> {
+/// `±HH:MM` (hours 00-23, minutes 00-59) as seconds east of UTC.
+fn parse_offset_text(text: &str) -> Option<i32> {
+    let b = text.as_bytes();
+    if b.len() != 6 || !matches!(b[0], b'+' | b'-') || b[3] != b':' {
+        return None;
+    }
+    let two = |i: usize| {
+        (b[i].is_ascii_digit() && b[i + 1].is_ascii_digit())
+            .then(|| i32::from(b[i] - b'0') * 10 + i32::from(b[i + 1] - b'0'))
+    };
+    let (h, m) = (two(1)?, two(4)?);
+    if h > 23 || m > 59 {
+        return None;
+    }
+    let secs = (h * 60 + m) * 60;
+    Some(if b[0] == b'-' { -secs } else { secs })
+}
+
+pub(crate) fn parse_timezone_spec(value: &JsValue) -> Result<TimeZoneSpec, JsValue> {
     if let Some(text) = value.as_string() {
         return match text.to_ascii_lowercase().as_str() {
             "utc" => Ok(TimeZoneSpec::Utc),
             "local" => Ok(TimeZoneSpec::Local),
-            _ => Err(js_error(
-                "`deterministicTimezone` must be 'utc', 'local', or an integer offset in seconds",
-            )),
+            _ => parse_offset_text(&text)
+                .map(TimeZoneSpec::FixedOffsetSeconds)
+                .ok_or_else(|| {
+                    js_error(
+                        "`deterministicTimezone` must be 'utc', 'local', '±HH:MM', or an integer offset in seconds",
+                    )
+                }),
         };
     }
 

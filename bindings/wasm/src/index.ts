@@ -569,7 +569,8 @@ export interface RegisteredFunctionInfo {
   allowOverrideBuiltin: boolean;
 }
 
-export type DeterministicTimezone = 'utc' | 'local' | number;
+/** `'utc'`, `'local'`, a fixed offset such as `'+02:00'`, or offset seconds. */
+export type DeterministicTimezone = 'utc' | 'local' | `${'+' | '-'}${string}:${string}` | number;
 
 export interface SheetPortEvaluateOptions {
   freezeVolatile?: boolean;
@@ -680,6 +681,30 @@ export interface XlsxRecalculateResult {
   cache_cells_changed: number;
   /** Changed worksheets only; metadata/relationships are not counted. */
   worksheet_parts_changed: number;
+  /** The clock this run used; pass it back to replay the run exactly. */
+  clock: {
+    /**
+     * RFC 3339 instant TODAY/NOW observed, in the UTC offset that was applied
+     * (the host offset for `'Local'`). Null only without a clock.
+     */
+    now: string | null;
+    /** `'Local'`, `'UTC'` or `'±HH:MM'`. */
+    timezone: string;
+    /** True when `deterministicTimestampUtc` fixed the instant. */
+    fixed: boolean;
+  };
+  /** RAND/RANDBETWEEN seed (64-bit, so a bigint); accepted back as `rngSeed`. */
+  seed: bigint;
+}
+
+/** Reproducibility options for `recalculateXlsxBytes`, spelled as in `evaluateOnce`. */
+export interface XlsxRecalculateOptions {
+  /** RAND/RANDBETWEEN seed. The default seed is already stable run to run. */
+  rngSeed?: number | bigint;
+  /** Fixed instant for TODAY/NOW. Without it they use the host's local time. */
+  deterministicTimestampUtc?: Date | string;
+  /** Zone for TODAY/NOW (default UTC); requires `deterministicTimestampUtc`. */
+  deterministicTimezone?: DeterministicTimezone;
 }
 
 /**
@@ -699,14 +724,19 @@ export interface XlsxRecalculateResult {
  * refused. Deterministic unchanged output is byte-identical on rerun. This is
  * a supported subset, not an Excel-equivalence claim. See
  * docs/cache-only-xlsx.md for exact eligibility, ownership and bounds.
+ *
+ * `options` fixes the clock and RAND seed; the result's `clock` and `seed`
+ * replay any run.
  */
 export async function recalculateXlsxBytes(
   bytes: XlsxBytesSource,
   errorLocationLimit?: number,
+  options?: XlsxRecalculateOptions,
 ): Promise<XlsxRecalculateResult> {
   return ensureInitialized(() => wasm.recalculateXlsxBytes(
     bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes),
     errorLocationLimit,
+    options,
   ) as XlsxRecalculateResult);
 }
 

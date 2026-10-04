@@ -1817,8 +1817,8 @@ class Workbook:
         on the next recalculation. Takes effect on a live workbook; no
         reload is required.
         
-        `deterministic_timezone` accepts `"utc"`, `"local"`, or a fixed
-        offset in seconds — the same spelling as
+        `deterministic_timezone` accepts `"utc"`, `"local"`, a fixed offset
+        such as `"+02:00"`, or an offset in seconds — the same spelling as
         `SheetPortSession.evaluate_once(deterministic_timezone=...)`.
         Omitted means UTC.
         """
@@ -2174,15 +2174,28 @@ def recalculate_file(path: builtins.str, output: typing.Optional[builtins.str] =
         `umya-spreadsheet` implementation.
     """
 
-def recalculate_xlsx_bytes(data: bytes, *, error_location_limit: typing.Optional[builtins.int] = None) -> typing.Any:
+def recalculate_xlsx_bytes(data: bytes, *, error_location_limit: typing.Optional[builtins.int] = None, rng_seed: typing.Optional[builtins.int] = None, deterministic_timestamp_utc: typing.Optional[datetime.datetime] = None, deterministic_timezone: typing.Optional[typing.Any] = None) -> typing.Any:
     r"""
     Recalculate XLSX formula caches in memory without rewriting unrelated package parts.
     Returns a dictionary with output ``bytes``, a ``summary``, and formula/cache/worksheet counts.
+    ``rng_seed`` seeds ``RAND``/``RANDBETWEEN`` (the default seed is already
+    stable run to run). ``deterministic_timestamp_utc`` (an aware ``datetime``
+    with a fixed offset) fixes ``TODAY``/``NOW``; ``deterministic_timezone`` (``'utc'``, ``'+02:00'``
+    or offset seconds, default UTC) requires it. Without them ``TODAY``/``NOW``
+    use the host's local time. The result's ``clock`` (``now``, ``timezone``,
+    ``fixed``) and ``seed`` replay the run.
     """
 
-def recalculate_xlsx_file(path: builtins.str, output: typing.Optional[builtins.str] = None, *, error_location_limit: typing.Optional[builtins.int] = None) -> typing.Any:
+def recalculate_xlsx_file(path: builtins.str, output: typing.Optional[builtins.str] = None, *, error_location_limit: typing.Optional[builtins.int] = None, rng_seed: typing.Optional[builtins.int] = None, deterministic_timestamp_utc: typing.Optional[datetime.datetime] = None, deterministic_timezone: typing.Optional[typing.Any] = None) -> typing.Any:
     r"""
     Recalculate XLSX formula caches from a path using atomic output replacement.
+    Returns the same dictionary as ``recalculate_xlsx_bytes``.
+    ``rng_seed`` seeds ``RAND``/``RANDBETWEEN`` (the default seed is already
+    stable run to run). ``deterministic_timestamp_utc`` (an aware ``datetime``
+    with a fixed offset) fixes ``TODAY``/``NOW``; ``deterministic_timezone`` (``'utc'``, ``'+02:00'``
+    or offset seconds, default UTC) requires it. Without them ``TODAY``/``NOW``
+    use the host's local time. The result's ``clock`` (``now``, ``timezone``,
+    ``fixed``) and ``seed`` replay the run.
     """
 
 def tokenize(formula: builtins.str, dialect: typing.Optional[FormulaDialect] = None) -> Tokenizer:
