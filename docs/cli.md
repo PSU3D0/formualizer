@@ -100,7 +100,7 @@ With `--json`, every outcome except help and version, including usage errors, pr
   "errors_truncated": false,
   "refusal": null,
   "clock": {"now": "2026-10-04T09:15:02+02:00", "timezone": "Local", "fixed": false},
-  "seed": 17361641481138401621,
+  "seed": 17361606158148326741,
   "message": "book.xlsx: recalculated 5 formulas, 7 cached values changed, 1 error cells (Sheet1!B2 #DIV/0!) (written)"
 }
 ```

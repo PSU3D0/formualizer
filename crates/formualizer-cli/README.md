@@ -28,7 +28,7 @@ $ formualizer recalc book.xlsx --check
 book.xlsx: recalculated 5 formulas, 0 cached values changed, 1 error cells (Sheet1!B2 #DIV/0!) (current)
 
 $ formualizer recalc book.xlsx -o calculated.xlsx --json
-{"schema":"formualizer.recalc/1","status":"written","input":"book.xlsx","output":"calculated.xlsx","written":true,"formula_cells":5,"cache_cells_changed":0,"worksheet_parts_changed":0,"evaluated":5,"error_cells":1,"errors":[{"sheet":"Sheet1","cell":"B2","error":"#DIV/0!"}],"errors_truncated":false,"refusal":null,"clock":{"now":"2026-10-04T09:15:02+02:00","timezone":"Local","fixed":false},"seed":17361641481138401621,"message":"book.xlsx: recalculated 5 formulas, 0 cached values changed, 1 error cells (Sheet1!B2 #DIV/0!) (written)"}
+{"schema":"formualizer.recalc/1","status":"written","input":"book.xlsx","output":"calculated.xlsx","written":true,"formula_cells":5,"cache_cells_changed":0,"worksheet_parts_changed":0,"evaluated":5,"error_cells":1,"errors":[{"sheet":"Sheet1","cell":"B2","error":"#DIV/0!"}],"errors_truncated":false,"refusal":null,"clock":{"now":"2026-10-04T09:15:02+02:00","timezone":"Local","fixed":false},"seed":17361606158148326741,"message":"book.xlsx: recalculated 5 formulas, 0 cached values changed, 1 error cells (Sheet1!B2 #DIV/0!) (written)"}
 ```
 
 - Default: recalculate in place, atomically; a no-op leaves the file untouched. `-o PATH` always writes PATH and leaves the input alone.
