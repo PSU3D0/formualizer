@@ -128,8 +128,9 @@ impl<'a> SpecifierParser<'a> {
 fn parse_content(content: &str) -> Result<TableSpecifier, ParsingError> {
     let trimmed = content.trim();
     if trimmed.is_empty() {
-        // `Table1[]` is canonically the whole table.
-        return Ok(TableSpecifier::All);
+        // `Table1[]` is the table name alone, which Excel reads as the data
+        // body (no headers or totals), the same as `Table1[#Data]`.
+        return Ok(TableSpecifier::Data);
     }
 
     // Decide between three top-level shapes based on a structural scan that

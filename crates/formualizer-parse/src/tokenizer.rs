@@ -268,7 +268,7 @@ impl Token {
         //   reference ops (:
         //   postfix %
         //   prefix unary +/- (binds tighter than ^)
-        //   exponent ^ (right-assoc)
+        //   exponent ^ (left-assoc, as in Excel: 2^3^2 = (2^3)^2)
         //   */
         //   +-
         //   &
@@ -280,7 +280,7 @@ impl Token {
             "," => Some((8, Associativity::Left)),
             "%" => Some((7, Associativity::Left)),
             "u" => Some((6, Associativity::Right)),
-            "^" => Some((5, Associativity::Right)),
+            "^" => Some((5, Associativity::Left)),
             "*" | "/" => Some((4, Associativity::Left)),
             "+" | "-" => Some((3, Associativity::Left)),
             "&" => Some((2, Associativity::Left)),
@@ -681,6 +681,75 @@ fn value_has_structured_reference_bracket(value: &str) -> bool {
         .contains('[')
 }
 
+/// The byte offset of a range `:` inside an accumulated function-name token,
+/// as in `B10:INDEX(` or `Sheet1!B10:OFFSET(`. No function name contains a
+/// colon, so the text before it is the left end of a range and the call is
+/// the right end: `B10`, `:`, `INDEX(`.
+fn range_colon_before_call(value: &str) -> Option<usize> {
+    let name_start = value.rfind('!').map_or(0, |bang| bang + 1);
+    let colon = name_start + value[name_start..].rfind(':')?;
+    (colon > 0 && colon + 1 < value.len()).then_some(colon)
+}
+
+/// Whether `piece` can be one end of an A1 range: a cell (`B5`, `$B$5`), a
+/// column (`B`, `$XFD`) or a row (`5`, `$5`) inside the grid.
+fn is_a1_range_end(piece: &str) -> bool {
+    let bytes = piece.as_bytes();
+    let mut i = 0;
+    if bytes.get(i) == Some(&b'$') {
+        i += 1;
+    }
+    let letters_start = i;
+    let mut col: u32 = 0;
+    while i < bytes.len() && bytes[i].is_ascii_alphabetic() && i - letters_start < 3 {
+        col = col * 26 + u32::from(bytes[i].to_ascii_uppercase() - b'A' + 1);
+        i += 1;
+    }
+    let has_letters = i > letters_start;
+    if has_letters && (col > 16_384 || bytes.get(i).is_some_and(u8::is_ascii_alphabetic)) {
+        return false;
+    }
+    if has_letters && bytes.get(i) == Some(&b'$') {
+        i += 1;
+    }
+    let digits_start = i;
+    while i < bytes.len() && bytes[i].is_ascii_digit() {
+        i += 1;
+    }
+    let digits = &piece[digits_start..i];
+    let row_ok = digits.is_empty()
+        || (digits.len() <= 7
+            && digits
+                .parse::<u32>()
+                .is_ok_and(|r| (1..=1_048_576).contains(&r)));
+    i == bytes.len() && (has_letters || !digits.is_empty()) && row_ok
+}
+
+/// The byte offset of a `:` inside an accumulated operand that is the range
+/// operator between two operands rather than part of one A1 range. Excel
+/// reads `A1:Finish` as the cell A1, `:`, and the name `Finish`, and
+/// `Seed_1:Seed_4` as two names, because neither end can be an A1 range end.
+fn range_operator_colon(value: &str) -> Option<usize> {
+    let start = value.rfind('!').map_or(0, |bang| bang + 1);
+    let part = &value[start..];
+    if part.contains(['[', '\'', '"', '#']) || part.matches(':').count() != 1 {
+        return None;
+    }
+    let (left, right) = part.split_once(':')?;
+    if left.is_empty() || right.is_empty() || (is_a1_range_end(left) && is_a1_range_end(right)) {
+        return None;
+    }
+    Some(start + left.len())
+}
+
+/// Whether a `#REF!` error literal starts at `offset`.
+fn ref_error_starts_at(formula: &str, offset: usize) -> bool {
+    formula
+        .as_bytes()
+        .get(offset..offset + 5)
+        .is_some_and(|s| s.eq_ignore_ascii_case(b"#REF!"))
+}
+
 fn is_reference_operand_value(value: &str) -> bool {
     operand_subtype(value) == TokenSubType::Range
         && (reference_value_contains_range_colon(value)
@@ -796,6 +865,15 @@ impl<'a> SpanTokenizer<'a> {
 
     fn save_token(&mut self) {
         if self.has_token() {
+            if let Some(colon) =
+                range_operator_colon(&self.formula[self.token_start..self.token_end])
+            {
+                let colon = self.token_start + colon;
+                let left = operand_subtype(&self.formula[self.token_start..colon]);
+                self.push_span(TokenType::Operand, left, self.token_start, colon);
+                self.push_span(TokenType::OpInfix, TokenSubType::None, colon, colon + 1);
+                self.token_start = colon + 1;
+            }
             let value_str = &self.formula[self.token_start..self.token_end];
             let subtype = operand_subtype(value_str);
             self.push_span(
@@ -1216,6 +1294,16 @@ impl<'a> SpanTokenizer<'a> {
             self.start_token();
         }
 
+        // A defined name whose sheet was deleted decays to `#REF!#REF!`: a
+        // deleted sheet qualifier followed by a deleted address. Like the
+        // `Sheet1!#REF!` prefix above, the qualifier is discarded and the
+        // operand is the single error literal `#REF!`.
+        if ref_error_starts_at(self.formula, self.offset)
+            && ref_error_starts_at(self.formula, self.offset + 5)
+        {
+            self.offset += 5;
+        }
+
         let error_start = self.offset;
 
         for &err_code in ERROR_CODES {
@@ -1322,10 +1410,16 @@ impl<'a> SpanTokenizer<'a> {
             }
             return reference_value_contains_range_colon(value)
                 || value_has_structured_reference_bracket(value)
+                // A range end pointing at deleted cells is stored as `#REF!`
+                // (`A1:#REF!`); the `:` next to it is still the range operator.
+                || ref_error_starts_at(self.formula, self.offset + 1)
                 || (value.contains('!')
                     && next_reference_has_sheet_qualifier(self.formula, self.offset + 1));
         }
         self.prev_is_reference_producing()
+            || self.prev_non_whitespace().is_some_and(|prev| {
+                prev.subtype == TokenSubType::Error && ref_error_starts_at(self.formula, prev.start)
+            })
     }
 
     fn emit_infix_operator(&mut self, start: usize, end: usize) {
@@ -1449,6 +1543,15 @@ impl<'a> SpanTokenizer<'a> {
                 end: self.offset + 1,
             }
         } else if self.has_token() {
+            if let Some(colon) =
+                range_colon_before_call(&self.formula[self.token_start..self.token_end])
+            {
+                let colon = self.token_start + colon;
+                let subtype = operand_subtype(&self.formula[self.token_start..colon]);
+                self.push_span(TokenType::Operand, subtype, self.token_start, colon);
+                self.push_span(TokenType::OpInfix, TokenSubType::None, colon, colon + 1);
+                self.token_start = colon + 1;
+            }
             let token = TokenSpan {
                 token_type: TokenType::Func,
                 subtype: TokenSubType::Open,
@@ -1798,6 +1901,24 @@ impl Tokenizer {
     /// If there is an accumulated token, convert it to an operand token and add it to the list.
     fn save_token(&mut self) {
         if self.has_token() {
+            if let Some(colon) =
+                range_operator_colon(&self.formula[self.token_start..self.token_end])
+            {
+                let colon = self.token_start + colon;
+                self.items.push(Token::make_operand_from_slice(
+                    &self.formula,
+                    self.token_start,
+                    colon,
+                ));
+                self.items.push(Token::from_slice(
+                    &self.formula,
+                    TokenType::OpInfix,
+                    TokenSubType::None,
+                    colon,
+                    colon + 1,
+                ));
+                self.token_start = colon + 1;
+            }
             let token =
                 Token::make_operand_from_slice(&self.formula, self.token_start, self.token_end);
             self.items.push(token);
@@ -1992,6 +2113,13 @@ impl Tokenizer {
             self.start_token();
         }
 
+        // `#REF!#REF!`: see `SpanTokenizer::parse_error`.
+        if ref_error_starts_at(&self.formula, self.offset)
+            && ref_error_starts_at(&self.formula, self.offset + 5)
+        {
+            self.offset += 5;
+        }
+
         let error_start = self.offset;
 
         // Try to match error codes
@@ -2102,10 +2230,16 @@ impl Tokenizer {
             }
             return reference_value_contains_range_colon(value)
                 || value_has_structured_reference_bracket(value)
+                // A range end pointing at deleted cells is stored as `#REF!`
+                // (`A1:#REF!`); the `:` next to it is still the range operator.
+                || ref_error_starts_at(&self.formula, self.offset + 1)
                 || (value.contains('!')
                     && next_reference_has_sheet_qualifier(&self.formula, self.offset + 1));
         }
         self.prev_is_reference_producing()
+            || self.prev_non_whitespace().is_some_and(|prev| {
+                prev.subtype == TokenSubType::Error && prev.value.eq_ignore_ascii_case("#REF!")
+            })
     }
 
     fn emit_infix_operator(&mut self, start: usize, end: usize) {
@@ -2195,6 +2329,24 @@ impl Tokenizer {
             self.save_token();
             Token::make_subexp_from_slice(&self.formula, false, self.offset, self.offset + 1)
         } else if self.has_token() {
+            if let Some(colon) =
+                range_colon_before_call(&self.formula[self.token_start..self.token_end])
+            {
+                let colon = self.token_start + colon;
+                self.items.push(Token::make_operand_from_slice(
+                    &self.formula,
+                    self.token_start,
+                    colon,
+                ));
+                self.items.push(Token::from_slice(
+                    &self.formula,
+                    TokenType::OpInfix,
+                    TokenSubType::None,
+                    colon,
+                    colon + 1,
+                ));
+                self.token_start = colon + 1;
+            }
             // Function call
             let token = Token::make_subexp_from_slice(
                 &self.formula,
