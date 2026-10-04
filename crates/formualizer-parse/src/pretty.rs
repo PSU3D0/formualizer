@@ -111,12 +111,14 @@ fn pretty_child(
     parent_prec: u8,
     parent_assoc: Associativity,
     side: Side,
+    comma_delimited: bool,
 ) -> String {
-    let s = pretty_print_node(child);
     if child_needs_parens(child, parent_op, parent_prec, parent_assoc, side) {
-        format!("({s})")
+        // Explicit grouping shields any union below this child from the
+        // surrounding argument/array separator grammar.
+        format!("({})", pretty_print_node(child))
     } else {
-        s
+        pretty_print_node_in_context(child, comma_delimited)
     }
 }
 
@@ -129,20 +131,21 @@ fn pretty_print_arguments(args: &[ASTNode]) -> String {
                 rendered.push(' ');
             }
         }
-        // A union argument keeps its brackets; bare, its `,` would read as
-        // an argument separator: `RANK(A1,(B1,B5))` has two arguments.
-        if matches!(&arg.node_type, ASTNodeType::BinaryOp { op, .. } if op == ",") {
-            rendered.push('(');
-            rendered.push_str(&pretty_print_node(arg));
-            rendered.push(')');
-        } else {
-            rendered.push_str(&pretty_print_node(arg));
-        }
+        // Union operators need grouping anywhere in the unparenthesized
+        // argument expression, not only at its root: SUM((A1,B1)+1).
+        rendered.push_str(&pretty_print_node_in_context(arg, true));
     }
     rendered
 }
 
 fn pretty_print_node(ast: &ASTNode) -> String {
+    pretty_print_node_in_context(ast, false)
+}
+
+fn pretty_print_node_in_context(ast: &ASTNode, comma_delimited: bool) -> String {
+    if comma_delimited && matches!(&ast.node_type, ASTNodeType::BinaryOp { op, .. } if op == ",") {
+        return format!("({})", pretty_print_node(ast));
+    }
     match &ast.node_type {
         ASTNodeType::Literal(value) => match value {
             // Quote and escape text literals to preserve Excel semantics
@@ -155,11 +158,10 @@ fn pretty_print_node(ast: &ASTNode) -> String {
         ASTNodeType::Omitted => String::new(),
         ASTNodeType::Reference { reference, .. } => reference.normalise(),
         ASTNodeType::UnaryOp { op, expr } => {
-            let inner = pretty_print_node(expr);
             let inner = if unary_operand_needs_parens(op, expr) {
-                format!("({inner})")
+                format!("({})", pretty_print_node(expr))
             } else {
-                inner
+                pretty_print_node_in_context(expr, comma_delimited)
             };
 
             if op == "%" || op == "#" {
@@ -170,8 +172,8 @@ fn pretty_print_node(ast: &ASTNode) -> String {
         }
         ASTNodeType::BinaryOp { op, left, right } => {
             let (prec, assoc) = infix_info(op);
-            let left_s = pretty_child(left, op, prec, assoc, Side::Left);
-            let right_s = pretty_child(right, op, prec, assoc, Side::Right);
+            let left_s = pretty_child(left, op, prec, assoc, Side::Left, comma_delimited);
+            let right_s = pretty_child(right, op, prec, assoc, Side::Right, comma_delimited);
 
             match op.as_str() {
                 // Reference range operator prints tight; intersection is a
@@ -203,7 +205,7 @@ fn pretty_print_node(ast: &ASTNode) -> String {
                 .iter()
                 .map(|row| {
                     row.iter()
-                        .map(pretty_print_node)
+                        .map(|cell| pretty_print_node_in_context(cell, true))
                         .collect::<Vec<String>>()
                         .join(", ")
                 })
