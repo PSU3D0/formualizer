@@ -2,6 +2,7 @@ import pytest
 
 import formualizer as fz
 
+
 def expected_error(shape: str) -> str:
     if shape in {"power", "arithmetic", "postfix"}:
         return "Formula AST height limit exceeded"

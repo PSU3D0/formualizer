@@ -8,6 +8,7 @@ assert sys.platform == "emscripten", sys.platform
 ast = fz.parse("=SUM(A1:A2)")
 assert "SUM" in ast.to_formula()
 
+
 def expected_error(shape):
     if shape in {"power", "arithmetic", "postfix"}:
         return "Formula AST height limit exceeded"
