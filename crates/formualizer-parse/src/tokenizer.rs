@@ -75,6 +75,8 @@ pub struct TokenizerError {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RecoveryAction {
+    /// Tokenization stopped at a resource budget; source may have been discarded.
+    ResourceLimitExceeded,
     /// Unmatched closer was emitted as a recovery span and scanning continued.
     SkippedUnmatchedCloser,
     /// Unterminated string was emitted as one recovery span.
@@ -97,6 +99,18 @@ pub struct TokenDiagnostic {
 }
 
 impl TokenDiagnostic {
+    fn resource_limit(message: String) -> Self {
+        Self::new(
+            TokenSpan {
+                token_type: TokenType::Literal,
+                subtype: TokenSubType::None,
+                start: 0,
+                end: 0,
+            },
+            message,
+            RecoveryAction::ResourceLimitExceeded,
+        )
+    }
     fn new(span: TokenSpan, message: String, recovery: RecoveryAction) -> Self {
         Self {
             span,
@@ -467,6 +481,7 @@ pub struct TokenView<'a> {
 /// `Token`s when needed (FFI/debug).
 #[derive(Debug, Clone)]
 pub struct TokenStream {
+    pub(crate) pending_error: Option<String>,
     source: Arc<str>,
     pub spans: Vec<TokenSpan>,
     dialect: FormulaDialect,
@@ -496,9 +511,10 @@ impl TokenStream {
         formula: &str,
         dialect: FormulaDialect,
     ) -> Result<Self, TokenizerError> {
+        let spans = tokenize_spans_with_dialect(formula, dialect)?;
         let source: Arc<str> = Arc::from(formula);
-        let spans = tokenize_spans_with_dialect(source.as_ref(), dialect)?;
         Ok(TokenStream {
+            pending_error: None,
             source,
             spans,
             dialect,
@@ -511,16 +527,67 @@ impl TokenStream {
     }
 
     pub fn new_best_effort_with_dialect(formula: &str, dialect: FormulaDialect) -> Self {
+        if let Err(error) = crate::ParserLimits::default().check_source(formula) {
+            return TokenStream {
+                source: Arc::from(""),
+                spans: Vec::new(),
+                dialect,
+                diagnostics: vec![TokenDiagnostic::resource_limit(error.message.clone())],
+                pending_error: Some(error.message),
+            };
+        }
         let source: Arc<str> = Arc::from(formula);
         let mut tokenizer = SpanTokenizer::new(source.as_ref(), dialect);
         let spans = tokenizer.parse_best_effort();
-        let diagnostics = tokenizer.diagnostics;
+        let pending_error = tokenizer.exceeded.then(|| {
+            format!(
+                "Formula token limit exceeded (max {})",
+                tokenizer.token_limit
+            )
+        });
+        let mut diagnostics = tokenizer.diagnostics;
+        if let Some(message) = &pending_error {
+            diagnostics.push(TokenDiagnostic::resource_limit(message.clone()));
+        }
         TokenStream {
+            pending_error,
             source,
             spans,
             dialect,
             diagnostics,
         }
+    }
+
+    /// Admission for external mutable streams, before any owned materialization.
+    pub(crate) fn admission_error(&self, limits: crate::ParserLimits) -> Option<TokenizerError> {
+        if let Some(message) = &self.pending_error {
+            return Some(TokenizerError {
+                message: message.clone(),
+                pos: 0,
+            });
+        }
+        if let Err(error) = limits.check_source(&self.source) {
+            return Some(error);
+        }
+        if self.spans.len() > limits.tokens() {
+            return Some(TokenizerError {
+                message: format!("Formula token limit exceeded (max {})", limits.tokens()),
+                pos: 0,
+            });
+        }
+        let mut previous_end = 0;
+        for span in &self.spans {
+            // Disjoint ordered spans prevent repeating a large source slice
+            // thousands of times into otherwise shallow, budget-compliant ASTs.
+            if span.start < previous_end || self.source.get(span.start..span.end).is_none() {
+                return Some(TokenizerError {
+                    message: "Invalid external token span sequence".into(),
+                    pos: span.start,
+                });
+            }
+            previous_end = span.end;
+        }
+        None
     }
 
     pub fn diagnostics(&self) -> Vec<TokenDiagnostic> {
@@ -616,7 +683,15 @@ pub(crate) fn tokenize_spans_with_dialect(
     formula: &str,
     dialect: FormulaDialect,
 ) -> Result<Vec<TokenSpan>, TokenizerError> {
-    let mut tokenizer = SpanTokenizer::new(formula, dialect);
+    tokenize_spans_with_limits(formula, dialect, crate::ParserLimits::default())
+}
+pub(crate) fn tokenize_spans_with_limits(
+    formula: &str,
+    dialect: FormulaDialect,
+    limits: crate::ParserLimits,
+) -> Result<Vec<TokenSpan>, TokenizerError> {
+    limits.check_source(formula)?;
+    let mut tokenizer = SpanTokenizer::new_with_limit(formula, dialect, limits.tokens());
     tokenizer.parse()?;
     Ok(tokenizer.spans)
 }
@@ -811,19 +886,26 @@ struct SpanTokenizer<'a> {
     token_end: usize,
     dialect: FormulaDialect,
     diagnostics: Vec<TokenDiagnostic>,
+    token_limit: usize,
+    exceeded: bool,
 }
 
 impl<'a> SpanTokenizer<'a> {
     fn new(formula: &'a str, dialect: FormulaDialect) -> Self {
+        Self::new_with_limit(formula, dialect, crate::ParserLimits::default().tokens())
+    }
+    fn new_with_limit(formula: &'a str, dialect: FormulaDialect, token_limit: usize) -> Self {
         SpanTokenizer {
             formula,
-            spans: Vec::with_capacity(formula.len() / 2),
+            spans: Vec::with_capacity((formula.len() / 2).min(token_limit)),
             token_stack: Vec::with_capacity(16),
             offset: 0,
             token_start: 0,
             token_end: 0,
             dialect,
             diagnostics: Vec::new(),
+            token_limit,
+            exceeded: false,
         }
     }
 
@@ -855,6 +937,10 @@ impl<'a> SpanTokenizer<'a> {
         start: usize,
         end: usize,
     ) {
+        if self.spans.len() >= self.token_limit {
+            self.exceeded = true;
+            return;
+        }
         self.spans.push(TokenSpan {
             token_type,
             subtype,
@@ -936,7 +1022,14 @@ impl<'a> SpanTokenizer<'a> {
     }
 
     fn parse(&mut self) -> Result<(), TokenizerError> {
-        self.parse_with_recovery(false).map_err(Into::into)
+        let result = self.parse_with_recovery(false).map_err(Into::into);
+        if self.exceeded {
+            return Err(TokenizerError {
+                message: format!("Formula token limit exceeded (max {})", self.token_limit),
+                pos: self.offset,
+            });
+        }
+        result
     }
 
     pub(crate) fn parse_best_effort(&mut self) -> Vec<TokenSpan> {
@@ -963,6 +1056,9 @@ impl<'a> SpanTokenizer<'a> {
         self.start_token();
 
         while self.offset < self.formula.len() {
+            if self.exceeded {
+                break;
+            }
             if self.check_scientific_notation() {
                 continue;
             }
@@ -1024,8 +1120,16 @@ impl<'a> SpanTokenizer<'a> {
             }
         }
 
+        // Do not recover/sweep unmatched openers after budget exhaustion.
+        // Admission failure is reported by parse() or the best-effort adapter.
+        if self.exceeded {
+            return Ok(());
+        }
         if self.has_token() {
             self.save_token();
+        }
+        if self.exceeded {
+            return Ok(());
         }
 
         if !self.token_stack.is_empty() {
@@ -1059,6 +1163,10 @@ impl<'a> SpanTokenizer<'a> {
     }
 
     fn recover_from_error(&mut self, error: SpanTokenizerError) {
+        if self.spans.len() >= self.token_limit {
+            self.exceeded = true;
+            return;
+        }
         match error.kind {
             SpanTokenizerErrorKind::NoMatchingOpener => {
                 let span = TokenSpan {
@@ -1570,6 +1678,10 @@ impl<'a> SpanTokenizer<'a> {
             }
         };
 
+        if self.spans.len() >= self.token_limit {
+            self.exceeded = true;
+            return Ok(());
+        }
         self.spans.push(token);
         self.token_stack.push(token);
         self.offset += 1;
@@ -1665,6 +1777,8 @@ impl<'a> SpanTokenizer<'a> {
 
 /// A tokenizer for Excel worksheet formulas.
 pub struct Tokenizer {
+    exceeded: bool,
+    admission_error: Option<TokenizerError>,
     formula: String, // The formula string
     pub items: Vec<Token>,
     token_stack: Vec<Token>,
@@ -1680,7 +1794,9 @@ impl Tokenizer {
         Self::new_with_dialect(formula, FormulaDialect::Excel)
     }
 
-    /// Create a new tokenizer with best-effort parsing (never fails).
+    /// Recover malformed syntax without returning a Result.
+    /// Check [`Self::admission_error`] before using output: resource rejection
+    /// produces empty output rather than a silently truncated formula.
     pub fn new_best_effort(formula: &str) -> Self {
         Self::new_best_effort_with_dialect(formula, FormulaDialect::Excel)
     }
@@ -1696,23 +1812,46 @@ impl Tokenizer {
         formula: &str,
         dialect: FormulaDialect,
     ) -> Result<Self, TokenizerError> {
+        crate::ParserLimits::default().check_source(formula)?;
         let mut tokenizer = Tokenizer {
+            exceeded: false,
+            admission_error: None,
             formula: formula.to_string(),
-            items: Vec::with_capacity(formula.len() / 2), // Reasonable estimate
+            items: Vec::with_capacity(
+                (formula.len() / 2).min(crate::ParserLimits::default().tokens()),
+            ), // Reasonable estimate
             token_stack: Vec::with_capacity(16),
             offset: 0,
             token_start: 0,
             token_end: 0,
             dialect,
         };
-        tokenizer.parse()?;
+        let result = tokenizer.parse();
+        if tokenizer.exceeded {
+            return Err(TokenizerError {
+                message: format!(
+                    "Formula token limit exceeded (max {})",
+                    crate::ParserLimits::default().tokens()
+                ),
+                pos: tokenizer.offset,
+            });
+        }
+        result?;
         Ok(tokenizer)
     }
 
     pub fn from_token_stream(stream: &TokenStream) -> Self {
+        let admission_error = stream.admission_error(crate::ParserLimits::default());
+        let (formula, items) = if admission_error.is_some() {
+            (String::new(), Vec::new())
+        } else {
+            (stream.source.to_string(), stream.to_tokens())
+        };
         Tokenizer {
-            formula: stream.source.to_string(),
-            items: stream.to_tokens(),
+            exceeded: false,
+            admission_error,
+            formula,
+            items,
             token_stack: Vec::with_capacity(16),
             offset: 0,
             token_start: 0,
@@ -1721,6 +1860,18 @@ impl Tokenizer {
         }
     }
 
+    /// Why an infallible best-effort/stream constructor could not admit input.
+    pub fn admission_error(&self) -> Option<&TokenizerError> {
+        self.admission_error.as_ref()
+    }
+
+    fn emit(&mut self, token: Token) {
+        if self.items.len() >= crate::ParserLimits::default().tokens() {
+            self.exceeded = true;
+            return;
+        }
+        self.items.push(token);
+    }
     /// Get byte at current offset
     #[inline]
     fn current_byte(&self) -> Option<u8> {
@@ -1754,7 +1905,7 @@ impl Tokenizer {
 
         // Check for literal formula (doesn't start with '=')
         if self.formula.as_bytes()[0] != b'=' {
-            self.items.push(Token::new_with_span(
+            self.emit(Token::new_with_span(
                 self.formula.clone(),
                 TokenType::Literal,
                 TokenSubType::None,
@@ -1769,6 +1920,9 @@ impl Tokenizer {
         self.start_token();
 
         while self.offset < self.formula.len() {
+            if self.exceeded {
+                break;
+            }
             if self.check_scientific_notation()? {
                 continue;
             }
@@ -1905,12 +2059,12 @@ impl Tokenizer {
                 range_operator_colon(&self.formula[self.token_start..self.token_end])
             {
                 let colon = self.token_start + colon;
-                self.items.push(Token::make_operand_from_slice(
+                self.emit(Token::make_operand_from_slice(
                     &self.formula,
                     self.token_start,
                     colon,
                 ));
-                self.items.push(Token::from_slice(
+                self.emit(Token::from_slice(
                     &self.formula,
                     TokenType::OpInfix,
                     TokenSubType::None,
@@ -1921,7 +2075,7 @@ impl Tokenizer {
             }
             let token =
                 Token::make_operand_from_slice(&self.formula, self.token_start, self.token_end);
-            self.items.push(token);
+            self.emit(token);
         }
     }
 
@@ -1972,7 +2126,7 @@ impl Tokenizer {
                             string_start,
                             self.offset,
                         );
-                        self.items.push(token);
+                        self.emit(token);
                         self.start_token();
                     } else {
                         // Single-quoted string becomes part of current token
@@ -2076,7 +2230,7 @@ impl Tokenizer {
     fn emit_hash_postfix(&mut self) {
         self.save_token();
         self.start_token();
-        self.items.push(Token::from_slice(
+        self.emit(Token::from_slice(
             &self.formula,
             TokenType::OpPostfix,
             TokenSubType::None,
@@ -2133,7 +2287,7 @@ impl Tokenizer {
                         error_start,
                         self.offset + err_bytes.len(),
                     );
-                    self.items.push(token);
+                    self.emit(token);
                     self.offset += err_bytes.len();
                     self.start_token();
                     return Ok(());
@@ -2192,7 +2346,7 @@ impl Tokenizer {
                 self.offset,
             )
         };
-        self.items.push(token);
+        self.emit(token);
         self.start_token();
         Ok(())
     }
@@ -2245,7 +2399,7 @@ impl Tokenizer {
     fn emit_infix_operator(&mut self, start: usize, end: usize) {
         self.save_token();
         self.start_token();
-        self.items.push(Token::from_slice(
+        self.emit(Token::from_slice(
             &self.formula,
             TokenType::OpInfix,
             TokenSubType::None,
@@ -2264,7 +2418,7 @@ impl Tokenizer {
         if self.offset + 1 < self.formula.len() {
             let two_char = &self.formula.as_bytes()[self.offset..self.offset + 2];
             if two_char == b">=" || two_char == b"<=" || two_char == b"<>" {
-                self.items.push(Token::from_slice(
+                self.emit(Token::from_slice(
                     &self.formula,
                     TokenType::OpInfix,
                     TokenSubType::None,
@@ -2308,7 +2462,7 @@ impl Tokenizer {
             _ => TokenType::OpInfix,
         };
 
-        self.items.push(Token::from_slice(
+        self.emit(Token::from_slice(
             &self.formula,
             token_type,
             TokenSubType::None,
@@ -2333,12 +2487,12 @@ impl Tokenizer {
                 range_colon_before_call(&self.formula[self.token_start..self.token_end])
             {
                 let colon = self.token_start + colon;
-                self.items.push(Token::make_operand_from_slice(
+                self.emit(Token::make_operand_from_slice(
                     &self.formula,
                     self.token_start,
                     colon,
                 ));
-                self.items.push(Token::from_slice(
+                self.emit(Token::from_slice(
                     &self.formula,
                     TokenType::OpInfix,
                     TokenSubType::None,
@@ -2361,7 +2515,7 @@ impl Tokenizer {
             Token::make_subexp_from_slice(&self.formula, false, self.offset, self.offset + 1)
         };
 
-        self.items.push(token.clone());
+        self.emit(token.clone());
         self.token_stack.push(token);
         self.offset += 1;
         self.start_token();
@@ -2386,7 +2540,7 @@ impl Tokenizer {
                 });
             }
 
-            self.items.push(Token::from_slice(
+            self.emit(Token::from_slice(
                 &self.formula,
                 closer.token_type,
                 TokenSubType::Close,
@@ -2443,7 +2597,7 @@ impl Tokenizer {
             _ => (TokenType::OpInfix, TokenSubType::None),
         };
 
-        self.items.push(Token::from_slice(
+        self.emit(Token::from_slice(
             &self.formula,
             token_type,
             subtype,

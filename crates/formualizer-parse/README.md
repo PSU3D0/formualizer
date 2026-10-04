@@ -44,6 +44,18 @@ assert_eq!(canonical_formula(&ast), "=SUM(A1:B3)");
 - **Source spans** — every token and AST node carries byte positions for precise error reporting.
 - **Fingerprinting** — 64-bit structural hashes for formula identity comparison.
 
+## Resource limits
+
+Default parsing admits at most 64 KiB of UTF-8 source bytes, 16,384 tokens, 8,192 AST nodes (including omitted arguments), 72 active Pratt frames and AST height 256. Height counts the root as one; parentheses do not add AST nodes. Limits apply independently, so a formula can hit one before another. Errors retain the existing parser/tokenizer error types.
+
+Use immutable `ParserLimits::new(source_bytes, tokens, ast_nodes, pratt_frames, ast_height)` and `Parser::builder().limits(limits)` (or `BatchParser::builder().limits(limits)`) to configure budgets. Stack-sensitive limits cannot exceed 72 frames / height 256; there is no unbounded stack mode. Other budgets may be raised by trusted callers. These guarantees concern parser-produced trees, not manually constructed or externally deserialized ASTs.
+
+`parser::BatchParser` retains lexical results in a FIFO cache bounded by 16,384 entries and 8 MiB of source/token payload (excluding container overhead). Hits do not reorder entries. `cache_capacity(entries, bytes)` configures retention; zero entries disables it. Entries exceeding the byte capacity still parse without retention. Eviction does not change formula semantics, but a working set larger than either bound may lose token-cache reuse. Tune the capacity for such workloads.
+
+Externally supplied `TokenStream.spans` must be ordered, disjoint and valid UTF-8 byte ranges. Stream-to-parser and stream-to-owned-tokenizer admission validates these before copying. Infallible best-effort stream tokenization reports resource failures through its diagnostics; `Tokenizer::new_best_effort` and `Tokenizer::from_token_stream` expose them through `admission_error()`, with empty output on admission failure.
+
+These are resource policies, not exact Excel compatibility limits: a valid Excel formula with more than 256 operands in a left-associated chain can exceed the AST-height ceiling even if its text fits Excel's character limit.
+
 ## License
 
 Dual-licensed under MIT or Apache-2.0, at your option.

@@ -4275,17 +4275,21 @@ mod parser_hardening {
     #[test]
     fn deeply_nested_formula_errors_instead_of_overflowing_stack() {
         for formula in [
-            format!("={}1{}", "(".repeat(5000), ")".repeat(5000)),
-            format!("={}1", "-".repeat(5000)),
-            format!("={}1{}", "SUM(".repeat(5000), ")".repeat(5000)),
-            format!("={}1{}", "1+(".repeat(5000), ")".repeat(5000)),
-            format!("={}1{}", "IF(A1>0,".repeat(5000), ",0)".repeat(5000)),
-            format!("={}1{}", "{".repeat(5000), "}".repeat(5000)),
-            // `1^1^...` is no longer listed: `^` is left-associative, so a bare
-            // chain does not nest; `1+(` above covers binary-operator recursion.
+            format!("={}1{}", "(".repeat(1000), ")".repeat(1000)),
+            format!("={}1", "-".repeat(1000)),
+            format!("={}1{}", "SUM(".repeat(1000), ")".repeat(1000)),
+            format!("={}1{}", "1+(".repeat(1000), ")".repeat(1000)),
+            format!("={}1{}", "IF(A1>0,".repeat(1000), ",0)".repeat(1000)),
+            format!("={}1{}", "{".repeat(1000), "}".repeat(1000)),
+            format!("={}1", "1^".repeat(1000)),
+            format!("={}1", "1+".repeat(1000)),
+            format!("=1{}", "%".repeat(1000)),
         ] {
             let error = parse_on_small_stack(formula).expect_err("reject excessive recursion");
-            assert!(error.message.contains("Formula nesting too deep"));
+            assert!(
+                error.message.contains("Formula nesting too deep")
+                    || error.message.contains("AST height")
+            );
         }
     }
 }

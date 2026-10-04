@@ -5,6 +5,9 @@
 #![allow(clippy::collapsible_if)]
 
 mod hasher;
+mod limits;
+mod token_cache;
+pub use limits::ParserLimits;
 pub mod parser;
 pub mod pretty;
 mod structured_ref;
