@@ -112,13 +112,12 @@ fn reduce<const LANES: usize>(mut acc: [f64; LANES]) -> f64 {
 #[inline(never)]
 fn nonnull_lanes<const LANES: usize>(values: &[f64]) -> f64 {
     let mut acc = [0.0f64; LANES];
-    let mut chunks = values.chunks_exact(LANES);
-    for chunk in chunks.by_ref() {
+    let (chunks, remainder) = values.as_chunks::<LANES>();
+    for chunk in chunks {
         for i in 0..LANES {
             acc[i] += chunk[i];
         }
     }
-    let remainder = chunks.remainder();
     for i in 0..remainder.len() {
         acc[i] += remainder[i];
     }
@@ -143,25 +142,23 @@ fn nullable_chunk<const LANES: usize>(acc: &mut [f64; LANES], values: &[f64], va
 #[inline(never)]
 fn nullable_lanes<const LANES: usize>(values: &[f64], bytes: &[u8], offset: usize) -> f64 {
     let mut acc = [0.0f64; LANES];
-    let mut values_chunks = values.chunks_exact(64);
+    let (values_chunks, remainder) = values.as_chunks::<64>();
     let validity_chunks = BitChunks::new(bytes, offset, values.len());
     let mut validity_iter = validity_chunks.iter();
-    for chunk in values_chunks.by_ref() {
+    for chunk in values_chunks {
         let mut validity = validity_iter.next().unwrap_or(0);
-        for lane_chunk in chunk.chunks_exact(LANES) {
+        for lane_chunk in chunk.as_chunks::<LANES>().0 {
             nullable_chunk(&mut acc, lane_chunk, validity);
             validity >>= LANES;
         }
     }
-    let remainder = values_chunks.remainder();
     if !remainder.is_empty() {
         let mut validity = validity_chunks.remainder_bits();
-        let mut remainder_chunks = remainder.chunks_exact(LANES);
-        for lane_chunk in remainder_chunks.by_ref() {
+        let (remainder_chunks, rest) = remainder.as_chunks::<LANES>();
+        for lane_chunk in remainder_chunks {
             nullable_chunk(&mut acc, lane_chunk, validity);
             validity >>= LANES;
         }
-        let rest = remainder_chunks.remainder();
         let mut bit = 1u64;
         for i in 0..rest.len() {
             let sum = acc[i];

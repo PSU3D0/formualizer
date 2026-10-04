@@ -899,9 +899,7 @@ impl DependencyGraph {
                 match self.config.sheet_index_mode {
                     crate::engine::SheetIndexMode::Eager
                     | crate::engine::SheetIndexMode::FastBatch => {
-                        for ((input_idx, packed), vid) in
-                            missing_items.into_iter().zip(vids.into_iter())
-                        {
+                        for ((input_idx, packed), vid) in missing_items.into_iter().zip(vids) {
                             let pc = AbsCoord::new(packed.row0(), packed.col0());
                             ordered[input_idx] = Some(vid);
                             add_batch.push((VertexAddr::grid(GridAddr::from_coord(pc)), vid.0));
@@ -934,9 +932,7 @@ impl DependencyGraph {
                         }
                     }
                     crate::engine::SheetIndexMode::Lazy => {
-                        for ((input_idx, packed), vid) in
-                            missing_items.into_iter().zip(vids.into_iter())
-                        {
+                        for ((input_idx, packed), vid) in missing_items.into_iter().zip(vids) {
                             let pc = AbsCoord::new(packed.row0(), packed.col0());
                             ordered[input_idx] = Some(vid);
                             add_batch.push((VertexAddr::grid(GridAddr::from_coord(pc)), vid.0));
@@ -1033,7 +1029,7 @@ impl DependencyGraph {
                     t_alloc_us += ta0.elapsed().as_micros();
                 }
 
-                for ((input_idx, packed), vid) in items.into_iter().zip(vids.into_iter()) {
+                for ((input_idx, packed), vid) in items.into_iter().zip(vids) {
                     let pc = AbsCoord::new(packed.row0(), packed.col0());
                     ordered[input_idx] = Some(vid);
                     add_batch.push((VertexAddr::grid(GridAddr::from_coord(pc)), vid.0));

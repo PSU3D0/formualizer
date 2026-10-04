@@ -1387,10 +1387,10 @@ fn merge_with_default(mut current: PortValue, default: &PortValue) -> PortValue 
                 *current_rows = default_rows.clone();
             }
         }
-        (PortValue::Table(current_table), PortValue::Table(default_table)) => {
-            if current_table.is_empty() {
-                *current_table = default_table.clone();
-            }
+        (PortValue::Table(current_table), PortValue::Table(default_table))
+            if current_table.is_empty() =>
+        {
+            *current_table = default_table.clone();
         }
         _ => {}
     }

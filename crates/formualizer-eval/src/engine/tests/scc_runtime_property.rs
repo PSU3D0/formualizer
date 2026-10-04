@@ -384,9 +384,7 @@ impl Oracle {
 
     fn compute_membership(&mut self) {
         for root in 0..self.n {
-            for s in &mut self.on_stack {
-                *s = false;
-            }
+            self.on_stack.fill(false);
             self.member_root = root;
             self.member_hit = false;
             self.member_walk(root);
@@ -517,9 +515,7 @@ impl Oracle {
     /// resolve to `#CIRC` directly (matching the engine's structural stamp);
     /// every other cell evaluates lazily, reading members as `CircSettled`.
     fn value_of(&mut self, i: usize) -> OVal {
-        for m in &mut self.memo {
-            *m = None;
-        }
+        self.memo.fill(None);
         self.eval_cell(i)
     }
 

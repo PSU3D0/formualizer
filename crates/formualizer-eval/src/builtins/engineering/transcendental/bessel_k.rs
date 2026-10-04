@@ -4,6 +4,9 @@ use super::bessel_i::bessel_i0;
 use super::bessel_i::bessel_i1;
 
 fn bessel_k0(x: f64) -> f64 {
+    // Rounded coefficient of the approximation polynomial: the exact
+    // `EULER_GAMMA` would change results (and needs Rust newer than 1.93).
+    #[allow(clippy::approx_constant)]
     let p1 = -0.57721566;
     let p2 = 0.42278420;
     let p3 = 0.23069756;

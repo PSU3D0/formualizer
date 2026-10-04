@@ -5015,10 +5015,8 @@ where
                 }
                 ChangeEvent::SetFormula {
                     addr, old_formula, ..
-                } => {
-                    if forward || old_formula.is_some() {
-                        formula_cells.insert((addr.sheet_id, addr.coord.row(), addr.coord.col()));
-                    }
+                } if (forward || old_formula.is_some()) => {
+                    formula_cells.insert((addr.sheet_id, addr.coord.row(), addr.coord.col()));
                 }
                 _ => {}
             }
@@ -10548,13 +10546,10 @@ where
                 let normalized = name.to_uppercase();
                 let mut spellings = vec![(String::new(), normalized.clone())];
                 let mut stripped = normalized.as_str();
-                loop {
-                    let Some(rest) = ["_XLFN.", "_XLL.", "_XLWS."]
-                        .iter()
-                        .find_map(|prefix| stripped.strip_prefix(prefix))
-                    else {
-                        break;
-                    };
+                while let Some(rest) = ["_XLFN.", "_XLL.", "_XLWS."]
+                    .iter()
+                    .find_map(|prefix| stripped.strip_prefix(prefix))
+                {
                     stripped = rest;
                     spellings.push((String::new(), stripped.to_string()));
                 }

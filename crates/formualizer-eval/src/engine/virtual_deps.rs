@@ -65,10 +65,10 @@ impl<'a, R: EvaluationContext> DynamicRefCollector<'a, R> {
                 continue;
             }
             match self.engine.graph.get_vertex_kind(u) {
-                VertexKind::FormulaScalar | VertexKind::FormulaArray => {
-                    if self.engine.graph.is_dirty(u) || self.engine.graph.is_volatile(u) {
-                        out.insert(u);
-                    }
+                VertexKind::FormulaScalar | VertexKind::FormulaArray
+                    if (self.engine.graph.is_dirty(u) || self.engine.graph.is_volatile(u)) =>
+                {
+                    out.insert(u);
                 }
                 _ => {}
             }
@@ -365,12 +365,11 @@ impl RangeVirtualDepProvider {
                             continue;
                         }
                         match engine.graph.get_vertex_kind(u) {
-                            VertexKind::FormulaScalar | VertexKind::FormulaArray => {
+                            VertexKind::FormulaScalar | VertexKind::FormulaArray
                                 if (engine.graph.is_dirty(u) || engine.graph.is_volatile(u))
-                                    && u != v
-                                {
-                                    deps.push(u);
-                                }
+                                    && u != v =>
+                            {
+                                deps.push(u);
                             }
                             _ => {}
                         }
