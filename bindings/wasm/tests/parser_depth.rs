@@ -4,15 +4,24 @@ use formualizer_wasm::{ASTNode, Parser, parse};
 use wasm_bindgen::JsValue;
 use wasm_bindgen_test::*;
 
-const DEPTH_ERROR: &str = "Formula nesting too deep (max 72)";
+fn expected_error(shape: &str) -> &'static str {
+    if matches!(shape, "power" | "arithmetic" | "postfix") {
+        "Formula AST height limit exceeded"
+    } else {
+        "Formula nesting too deep (max 72)"
+    }
+}
 
-fn accepted_formulas() -> [(&'static str, String); 3] {
+fn accepted_formulas() -> [(&'static str, String); 6] {
     [
         (
             "parentheses",
             format!("={}1{}", "(".repeat(64), ")".repeat(64)),
         ),
         ("sum", format!("={}1{}", "SUM(".repeat(64), ")".repeat(64))),
+        ("flat-height", format!("={}A1", "A1+".repeat(255))),
+        ("postfix-height", format!("=1{}", "%".repeat(255))),
+        ("power-height", format!("={}1", "1^".repeat(255))),
         (
             "if",
             format!("={}1{}", "IF(A1>0,".repeat(64), ",0)".repeat(64)),
@@ -20,34 +29,36 @@ fn accepted_formulas() -> [(&'static str, String); 3] {
     ]
 }
 
-fn hostile_formulas() -> [(&'static str, String); 7] {
+fn hostile_formulas() -> [(&'static str, String); 9] {
     [
         (
             "parentheses",
-            format!("={}1{}", "(".repeat(5000), ")".repeat(5000)),
+            format!("={}1{}", "(".repeat(1000), ")".repeat(1000)),
         ),
-        ("unary", format!("={}1", "-".repeat(5000))),
+        ("unary", format!("={}1", "-".repeat(1000))),
         (
             "sum",
-            format!("={}1{}", "SUM(".repeat(5000), ")".repeat(5000)),
+            format!("={}1{}", "SUM(".repeat(1000), ")".repeat(1000)),
         ),
         (
             "right-infix",
-            format!("={}1{}", "1+(".repeat(5000), ")".repeat(5000)),
+            format!("={}1{}", "1+(".repeat(1000), ")".repeat(1000)),
         ),
         (
             "if",
-            format!("={}1{}", "IF(A1>0,".repeat(5000), ",0)".repeat(5000)),
+            format!("={}1{}", "IF(A1>0,".repeat(1000), ",0)".repeat(1000)),
         ),
         (
             "arrays",
-            format!("={}1{}", "{".repeat(5000), "}".repeat(5000)),
+            format!("={}1{}", "{".repeat(1000), "}".repeat(1000)),
         ),
-        ("power", format!("={}1", "1^".repeat(5000))),
+        ("power", format!("={}1", "1^".repeat(1000))),
+        ("arithmetic", format!("={}1", "1+".repeat(1000))),
+        ("postfix", format!("=1{}", "%".repeat(1000))),
     ]
 }
 
-fn assert_depth_error(result: Result<ASTNode, JsValue>) {
+fn assert_depth_error(result: Result<ASTNode, JsValue>, shape: &str) {
     let error = match result {
         Ok(_) => panic!("deep formula must return a parser error"),
         Err(error) => error,
@@ -56,7 +67,7 @@ fn assert_depth_error(result: Result<ASTNode, JsValue>) {
         .as_string()
         .expect("parser errors are thrown as strings");
     assert!(
-        message.contains("Parser error: ") && message.contains(DEPTH_ERROR),
+        message.contains("Parser error: ") && message.contains(expected_error(shape)),
         "unexpected parser error: {message}"
     );
 }
@@ -71,9 +82,9 @@ fn test_top_level_parse_depth_boundary_and_rejections() {
         drop(ast);
     }
 
-    for (_shape, formula) in hostile_formulas() {
+    for (shape, formula) in hostile_formulas() {
         let result = parse(&formula, None);
-        assert_depth_error(result);
+        assert_depth_error(result, shape);
     }
 
     let ast = parse("=A1+1", None).expect("normal parse after depth errors");
@@ -98,7 +109,7 @@ fn test_stateful_parser_depth_errors_and_fresh_parser_success() {
     for (shape, formula) in hostile_formulas() {
         let mut parser = Parser::new(&formula, None)
             .unwrap_or_else(|error| panic!("{shape} tokenizer should accept formula: {error:?}"));
-        assert_depth_error(parser.parse());
+        assert_depth_error(parser.parse(), shape);
         drop(parser);
     }
 

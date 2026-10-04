@@ -5,7 +5,10 @@ if len(sys.argv) != 2:
     raise SystemExit(f"usage: {sys.argv[0]} <library-path>")
 
 LIB_PATH = sys.argv[1]
-DEPTH_ERROR = b"Formula nesting too deep (max 72)"
+def expected_error(shape):
+    if shape in ("power", "arithmetic", "postfix"):
+        return b"Formula AST height limit exceeded"
+    return b"Formula nesting too deep (max 72)"
 
 
 class Buffer(ctypes.Structure):
@@ -55,19 +58,24 @@ def accepted_formulas():
     return [
         ("parentheses", "=" + "(" * 64 + "1" + ")" * 64),
         ("sum", "=" + "SUM(" * 64 + "1" + ")" * 64),
+        ("flat-height", "=" + "A1+" * 255 + "A1"),
+        ("postfix-height", "=1" + "%" * 255),
+        ("power-height", "=" + "1^" * 255 + "1"),
         ("if", "=" + "IF(A1>0," * 64 + "1" + ",0)" * 64),
     ]
 
 
 def hostile_formulas():
     return [
-        ("parentheses", "=" + "(" * 5000 + "1" + ")" * 5000),
-        ("unary", "=" + "-" * 5000 + "1"),
-        ("sum", "=" + "SUM(" * 5000 + "1" + ")" * 5000),
-        ("right-infix", "=" + "1+(" * 5000 + "1" + ")" * 5000),
-        ("if", "=" + "IF(A1>0," * 5000 + "1" + ",0)" * 5000),
-        ("arrays", "=" + "{" * 5000 + "1" + "}" * 5000),
-        ("power", "=" + "1^" * 5000 + "1"),
+        ("parentheses", "=" + "(" * 1000 + "1" + ")" * 1000),
+        ("unary", "=" + "-" * 1000 + "1"),
+        ("sum", "=" + "SUM(" * 1000 + "1" + ")" * 1000),
+        ("right-infix", "=" + "1+(" * 1000 + "1" + ")" * 1000),
+        ("if", "=" + "IF(A1>0," * 1000 + "1" + ",0)" * 1000),
+        ("arrays", "=" + "{" * 1000 + "1" + "}" * 1000),
+        ("power", "=" + "1^" * 1000 + "1"),
+        ("arithmetic", "=" + "1+" * 1000 + "1"),
+        ("postfix", "=1" + "%" * 1000),
     ]
 
 
@@ -103,9 +111,9 @@ for shape, formula in accepted_formulas():
 
 for shape, formula in hostile_formulas():
     code, output, error = ast_call(formula)
-    assert code == 1 and not output and DEPTH_ERROR in error, (shape, code, error)
+    assert code == 1 and not output and expected_error(shape) in error, (shape, code, error)
     code, output, error = canonical_call(formula)
-    assert code == 1 and not output and DEPTH_ERROR in error, (shape, code, error)
+    assert code == 1 and not output and expected_error(shape) in error, (shape, code, error)
 
 code, output, error = ast_call("=A1+1")
 assert code == 0 and output and not error

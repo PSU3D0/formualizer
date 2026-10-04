@@ -1,15 +1,24 @@
 use formualizer_cffi::*;
 use std::ffi::CString;
 
-const DEPTH_ERROR: &str = "Formula nesting too deep (max 72)";
+fn expected_error(shape: &str) -> &'static str {
+    if matches!(shape, "power" | "arithmetic" | "postfix") {
+        "Formula AST height limit exceeded"
+    } else {
+        "Formula nesting too deep (max 72)"
+    }
+}
 
-fn accepted_formulas() -> [(&'static str, String); 3] {
+fn accepted_formulas() -> [(&'static str, String); 6] {
     [
         (
             "parentheses",
             format!("={}1{}", "(".repeat(64), ")".repeat(64)),
         ),
         ("sum", format!("={}1{}", "SUM(".repeat(64), ")".repeat(64))),
+        ("flat-height", format!("={}A1", "A1+".repeat(255))),
+        ("postfix-height", format!("=1{}", "%".repeat(255))),
+        ("power-height", format!("={}1", "1^".repeat(255))),
         (
             "if",
             format!("={}1{}", "IF(A1>0,".repeat(64), ",0)".repeat(64)),
@@ -17,30 +26,32 @@ fn accepted_formulas() -> [(&'static str, String); 3] {
     ]
 }
 
-fn hostile_formulas() -> [(&'static str, String); 7] {
+fn hostile_formulas() -> [(&'static str, String); 9] {
     [
         (
             "parentheses",
-            format!("={}1{}", "(".repeat(5000), ")".repeat(5000)),
+            format!("={}1{}", "(".repeat(1000), ")".repeat(1000)),
         ),
-        ("unary", format!("={}1", "-".repeat(5000))),
+        ("unary", format!("={}1", "-".repeat(1000))),
         (
             "sum",
-            format!("={}1{}", "SUM(".repeat(5000), ")".repeat(5000)),
+            format!("={}1{}", "SUM(".repeat(1000), ")".repeat(1000)),
         ),
         (
             "right-infix",
-            format!("={}1{}", "1+(".repeat(5000), ")".repeat(5000)),
+            format!("={}1{}", "1+(".repeat(1000), ")".repeat(1000)),
         ),
         (
             "if",
-            format!("={}1{}", "IF(A1>0,".repeat(5000), ",0)".repeat(5000)),
+            format!("={}1{}", "IF(A1>0,".repeat(1000), ",0)".repeat(1000)),
         ),
         (
             "arrays",
-            format!("={}1{}", "{".repeat(5000), "}".repeat(5000)),
+            format!("={}1{}", "{".repeat(1000), "}".repeat(1000)),
         ),
-        ("power", format!("={}1", "1^".repeat(5000))),
+        ("power", format!("={}1", "1^".repeat(1000))),
+        ("arithmetic", format!("={}1", "1+".repeat(1000))),
+        ("postfix", format!("=1{}", "%".repeat(1000))),
     ]
 }
 
@@ -101,7 +112,10 @@ fn assert_ast_rejects(shape: &str, formula: &str) {
 
     assert_eq!(code, fz_status_code::FZ_STATUS_ERROR, "{shape}");
     assert!(output.is_empty(), "{shape} AST output should be empty");
-    assert!(error.contains(DEPTH_ERROR), "{shape} error: {error}");
+    assert!(
+        error.contains(expected_error(shape)),
+        "{shape} error: {error}"
+    );
 }
 
 fn assert_canonical_accepts(shape: &str, formula: &str) {
@@ -151,7 +165,10 @@ fn assert_canonical_rejects(shape: &str, formula: &str) {
         output.is_empty(),
         "{shape} canonical output should be empty"
     );
-    assert!(error.contains(DEPTH_ERROR), "{shape} error: {error}");
+    assert!(
+        error.contains(expected_error(shape)),
+        "{shape} error: {error}"
+    );
 }
 
 #[test]

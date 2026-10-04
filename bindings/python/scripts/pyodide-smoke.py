@@ -8,34 +8,42 @@ assert sys.platform == "emscripten", sys.platform
 ast = fz.parse("=SUM(A1:A2)")
 assert "SUM" in ast.to_formula()
 
-DEPTH_ERROR = "Formula nesting too deep (max 72)"
+def expected_error(shape):
+    if shape in {"power", "arithmetic", "postfix"}:
+        return "Formula AST height limit exceeded"
+    return "Formula nesting too deep (max 72)"
 
 
 def accepted_formulas():
     return [
         ("parentheses", f"={'(' * 64}1{')' * 64}"),
         ("sum", f"={'SUM(' * 64}1{')' * 64}"),
+        ("flat-height", f"={'A1+' * 255}A1"),
+        ("postfix-height", f"=1{'%' * 255}"),
+        ("power-height", f"={'1^' * 255}1"),
         ("if", f"={'IF(A1>0,' * 64}1{',0)' * 64}"),
     ]
 
 
 def hostile_formulas():
     return [
-        ("parentheses", f"={'(' * 5000}1{')' * 5000}"),
-        ("unary", f"={'-' * 5000}1"),
-        ("sum", f"={'SUM(' * 5000}1{')' * 5000}"),
-        ("right-infix", f"={'1+(' * 5000}1{')' * 5000}"),
-        ("if", f"={'IF(A1>0,' * 5000}1{',0)' * 5000}"),
-        ("arrays", f"={'{' * 5000}1{'}' * 5000}"),
-        ("power", f"={'1^' * 5000}1"),
+        ("parentheses", f"={'(' * 1000}1{')' * 1000}"),
+        ("unary", f"={'-' * 1000}1"),
+        ("sum", f"={'SUM(' * 1000}1{')' * 1000}"),
+        ("right-infix", f"={'1+(' * 1000}1{')' * 1000}"),
+        ("if", f"={'IF(A1>0,' * 1000}1{',0)' * 1000}"),
+        ("arrays", f"={'{' * 1000}1{'}' * 1000}"),
+        ("power", f"={'1^' * 1000}1"),
+        ("arithmetic", f"={'1+' * 1000}1"),
+        ("postfix", f"=1{'%' * 1000}"),
     ]
 
 
-def assert_depth_error(parse_call):
+def assert_depth_error(parse_call, shape):
     try:
         parse_call()
     except fz.ParserError as error:
-        assert DEPTH_ERROR in str(error), str(error)
+        assert expected_error(shape) in str(error), str(error)
     else:
         raise AssertionError("deep formula must raise ParserError")
 
@@ -51,7 +59,7 @@ for _shape, formula in accepted_formulas():
     exercise_ast(fz.parse(formula))
 
 for _shape, formula in hostile_formulas():
-    assert_depth_error(lambda formula=formula: fz.parse(formula))
+    assert_depth_error(lambda formula=formula: fz.parse(formula), _shape)
 
 exercise_ast(fz.parse("=A1+1"))
 
@@ -59,7 +67,7 @@ parser = fz.Parser()
 for _shape, formula in accepted_formulas():
     exercise_ast(parser.parse_string(formula))
 for _shape, formula in hostile_formulas():
-    assert_depth_error(lambda formula=formula: parser.parse_string(formula))
+    assert_depth_error(lambda formula=formula: parser.parse_string(formula), _shape)
 exercise_ast(parser.parse_string("=A1+1"))
 
 token_parser = fz.Parser()
@@ -67,7 +75,7 @@ accepted_tokens = fz.tokenize(accepted_formulas()[1][1])
 exercise_ast(token_parser.parse_tokens(accepted_tokens))
 for _shape, formula in hostile_formulas():
     assert_depth_error(
-        lambda formula=formula: token_parser.parse_tokens(fz.tokenize(formula))
+        lambda formula=formula: token_parser.parse_tokens(fz.tokenize(formula)), _shape
     )
 exercise_ast(token_parser.parse_tokens(fz.tokenize("=A1+1")))
 

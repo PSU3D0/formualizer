@@ -718,7 +718,22 @@ fn differential_bounded(engine: &mut Engine<TestWorkbook>, cells: &Cells) -> (Me
     let inputs: Vec<_> = cells
         .iter()
         .map(|(sheet, row, col, text)| {
-            let ast_id = engine.intern_formula_ast(&parse(text).unwrap());
+            // Payload-bound tests deliberately exceed ordinary formula text
+            // limits; retain all structural/stack limits under explicit trust.
+            let defaults = formualizer_parse::ParserLimits::default();
+            let limits = formualizer_parse::ParserLimits::new(
+                defaults.source_bytes().max(text.len()),
+                defaults.tokens(),
+                defaults.ast_nodes(),
+                defaults.pratt_frames(),
+                defaults.ast_height(),
+            )
+            .unwrap();
+            let ast = formualizer_parse::Parser::builder()
+                .limits(limits)
+                .parse(text)
+                .unwrap();
+            let ast_id = engine.intern_formula_ast(&ast);
             let sheet_id = engine.graph.sheet_id_mut(sheet);
             (
                 ast_id,
@@ -823,7 +838,22 @@ fn differential_key_walks(
     let inputs: Vec<_> = cells
         .iter()
         .map(|(sheet, row, col, text)| {
-            let ast_id = engine.intern_formula_ast(&parse(text).unwrap());
+            // Payload-bound tests deliberately exceed ordinary formula text
+            // limits; retain all structural/stack limits under explicit trust.
+            let defaults = formualizer_parse::ParserLimits::default();
+            let limits = formualizer_parse::ParserLimits::new(
+                defaults.source_bytes().max(text.len()),
+                defaults.tokens(),
+                defaults.ast_nodes(),
+                defaults.pratt_frames(),
+                defaults.ast_height(),
+            )
+            .unwrap();
+            let ast = formualizer_parse::Parser::builder()
+                .limits(limits)
+                .parse(text)
+                .unwrap();
+            let ast_id = engine.intern_formula_ast(&ast);
             let sheet_id = engine.graph.sheet_id_mut(sheet);
             (
                 ast_id,
