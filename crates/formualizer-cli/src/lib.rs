@@ -106,7 +106,6 @@ struct Report {
     formula_cells: Option<usize>,
     cache_cells_changed: Option<usize>,
     worksheet_parts_changed: Option<usize>,
-    evaluated: Option<usize>,
     error_cells: Option<usize>,
     errors: Option<Vec<ErrorCell>>,
     errors_truncated: Option<bool>,
@@ -126,7 +125,6 @@ impl Report {
             formula_cells: None,
             cache_cells_changed: None,
             worksheet_parts_changed: None,
-            evaluated: None,
             error_cells: None,
             errors: None,
             errors_truncated: None,
@@ -140,7 +138,6 @@ impl Report {
         self.formula_cells = Some(result.formula_cells);
         self.cache_cells_changed = Some(result.cache_cells_changed);
         self.worksheet_parts_changed = Some(result.worksheet_parts_changed);
-        self.evaluated = Some(result.summary.evaluated);
         self.error_cells = Some(result.summary.errors);
         let errors: Vec<_> = result
             .summary

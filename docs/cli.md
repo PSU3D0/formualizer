@@ -94,7 +94,6 @@ With `--json`, every outcome except help and version, including usage errors, pr
   "formula_cells": 5,
   "cache_cells_changed": 7,
   "worksheet_parts_changed": 1,
-  "evaluated": 5,
   "error_cells": 1,
   "errors": [{"sheet": "Sheet1", "cell": "B2", "error": "#DIV/0!"}],
   "errors_truncated": false,
@@ -112,7 +111,7 @@ With `--json`, every outcome except help and version, including usage errors, pr
 | `input` | string or null | The input path; null for usage errors. |
 | `output` | string or null | The intended destination (the input unless `-o`); null for `--check` and usage errors. |
 | `written` | boolean | Whether a file was published. Always false for `--check`, refusals, errors and interruption. |
-| `formula_cells`, `evaluated` | integer or null | Source formulas, counting spill anchors but not generated spill members. |
+| `formula_cells` | integer or null | Source formulas, counting spill anchors but not generated spill members. |
 | `cache_cells_changed` | integer or null | Physical caches inserted, replaced or cleared; can exceed the formula count. |
 | `worksheet_parts_changed` | integer or null | Changed worksheets (not metadata parts). Nonzero means `stale` under `--check`. |
 | `error_cells` | integer or null | Total formula cells whose result is an Excel error. |
@@ -131,13 +130,13 @@ Counters, `errors`, `errors_truncated`, `clock` and `seed` are present after a s
 A refusal:
 
 ```json
-{"schema":"formualizer.recalc/1","status":"refused","input":"model.xlsx","output":"model.xlsx","written":false,"formula_cells":null,"cache_cells_changed":null,"worksheet_parts_changed":null,"evaluated":null,"error_cells":null,"errors":null,"errors_truncated":null,"refusal":{"feature":"data-table formula","context":"worksheet"},"clock":null,"seed":null,"message":"model.xlsx: Unsupported feature: data-table formula in worksheet. Nothing was written."}
+{"schema":"formualizer.recalc/1","status":"refused","input":"model.xlsx","output":"model.xlsx","written":false,"formula_cells":null,"cache_cells_changed":null,"worksheet_parts_changed":null,"error_cells":null,"errors":null,"errors_truncated":null,"refusal":{"feature":"data-table formula","context":"worksheet"},"clock":null,"seed":null,"message":"model.xlsx: Unsupported feature: data-table formula in worksheet. Nothing was written."}
 ```
 
 A usage error (exit 64):
 
 ```json
-{"schema":"formualizer.recalc/1","status":"error","input":null,"output":null,"written":false,"formula_cells":null,"cache_cells_changed":null,"worksheet_parts_changed":null,"evaluated":null,"error_cells":null,"errors":null,"errors_truncated":null,"refusal":null,"clock":null,"seed":null,"message":"error: unexpected argument '--bogus' found ..."}
+{"schema":"formualizer.recalc/1","status":"error","input":null,"output":null,"written":false,"formula_cells":null,"cache_cells_changed":null,"worksheet_parts_changed":null,"error_cells":null,"errors":null,"errors_truncated":null,"refusal":null,"clock":null,"seed":null,"message":"error: unexpected argument '--bogus' found ..."}
 ```
 
 ## Examples

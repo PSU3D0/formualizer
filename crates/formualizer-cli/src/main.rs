@@ -18,7 +18,7 @@ fn main() {
                     "schema": "formualizer.recalc/1", "status": "error", "input": null,
                     "output": null, "written": false, "formula_cells": null,
                     "cache_cells_changed": null, "worksheet_parts_changed": null,
-                    "evaluated": null, "error_cells": null, "errors": null,
+                    "error_cells": null, "errors": null,
                     "errors_truncated": null, "refusal": null, "clock": null,
                     "seed": null, "message": message
                 })

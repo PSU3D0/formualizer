@@ -323,7 +323,6 @@ fn schema_field_set_pinned_for_success_and_usage() {
             "formula_cells",
             "cache_cells_changed",
             "worksheet_parts_changed",
-            "evaluated",
             "error_cells",
             "errors",
             "errors_truncated",

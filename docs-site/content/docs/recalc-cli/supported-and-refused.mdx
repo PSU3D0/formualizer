@@ -8,7 +8,7 @@ description: What formualizer recalc recalculates (dynamic spills, CSE arrays, t
 A refusal in `--json` output looks like this:
 
 ```json
-{"schema":"formualizer.recalc/1","status":"refused","input":"model.xlsx","output":"model.xlsx","written":false,"formula_cells":null,"cache_cells_changed":null,"worksheet_parts_changed":null,"evaluated":null,"error_cells":null,"errors":null,"errors_truncated":null,"refusal":{"feature":"data-table formula","context":"worksheet"},"message":"model.xlsx: Unsupported feature: data-table formula in worksheet. Nothing was written."}
+{"schema":"formualizer.recalc/1","status":"refused","input":"model.xlsx","output":"model.xlsx","written":false,"formula_cells":null,"cache_cells_changed":null,"worksheet_parts_changed":null,"error_cells":null,"errors":null,"errors_truncated":null,"refusal":{"feature":"data-table formula","context":"worksheet"},"message":"model.xlsx: Unsupported feature: data-table formula in worksheet. Nothing was written."}
 ```
 
 The rest of this page is included at build time from the repository's [eligibility contract](https://github.com/psu3d0/formualizer/blob/main/docs/cache-only-xlsx.md), which is shared with the Rust, Python and WASM recalculation APIs.
