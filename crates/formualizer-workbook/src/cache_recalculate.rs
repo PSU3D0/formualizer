@@ -18,7 +18,9 @@ mod xml;
 
 use super::recalculate::{DEFAULT_ERROR_LOCATION_LIMIT, RecalculateStatus, RecalculateSummary};
 use crate::{CalamineAdapter, IoError, SpreadsheetReader, workbook::WBResolver};
+use chrono::{DateTime, Utc};
 use formualizer_common::{CellAddress, DateSystem, LiteralValue};
+use formualizer_eval::engine::DeterministicMode;
 use formualizer_eval::engine::ingest::EngineLoadStream;
 use formualizer_eval::engine::inspect::{SnapshotOptions, Staleness};
 use formualizer_eval::engine::{
@@ -88,6 +90,13 @@ pub struct XlsxRecalculateResult {
     pub formula_cells: usize,
     pub cache_cells_changed: usize,
     pub worksheet_parts_changed: usize,
+    /// The UTC instant `NOW()`/`TODAY()` observed in this run, interpreted in
+    /// `eval_config.deterministic_mode.timezone()`. It is the fixed timestamp
+    /// in deterministic mode, otherwise the single system-clock sample (whole
+    /// seconds) taken immediately before evaluation. `None` only when the build has no
+    /// system clock and no fixed timestamp was supplied (such builds refuse
+    /// `TODAY`/`NOW` workbooks).
+    pub clock_now_utc: Option<DateTime<Utc>>,
 }
 fn unsupported(feature: impl Into<String>, context: impl Into<String>) -> IoError {
     IoError::Unsupported {
@@ -591,6 +600,9 @@ pub fn recalculate_xlsx_bytes(
     bytes: &[u8],
     options: XlsxRecalculateOptions,
 ) -> Result<XlsxRecalculateResult, IoError> {
+    // The engine would otherwise fall back to the system clock and the run
+    // would report an instant it did not use.
+    options.eval_config.deterministic_mode.validate()?;
     let admission = admit_source(bytes, &options)?;
     if admission
         .plans
@@ -605,15 +617,31 @@ pub fn recalculate_xlsx_bytes(
         if bytes.len() > options.limits.max_output_bytes {
             return Err(unsupported("output byte limit", "XLSX package"));
         }
-        return Ok(unchanged(
-            bytes,
-            formula_count,
-            RecalculateSummary::default(),
-        ));
+        let mut result = unchanged(bytes, formula_count, RecalculateSummary::default());
+        result.clock_now_utc = clock_instant(&options);
+        return Ok(result);
     }
     let mut ingested = ingest_source(bytes, admission, &options)?;
-    evaluate(&mut ingested.engine, &options)?;
-    publish(bytes, ingested, formula_count, &options)
+    let clock_now_utc = evaluate(&mut ingested.engine, &options)?;
+    let mut result = publish(bytes, ingested, formula_count, &options)?;
+    result.clock_now_utc = clock_now_utc;
+    Ok(result)
+}
+/// The instant this run's `NOW()`/`TODAY()` observe: the fixed timestamp in
+/// deterministic mode, otherwise one system-clock sample (when the build has a
+/// system clock).
+fn clock_instant(options: &XlsxRecalculateOptions) -> Option<DateTime<Utc>> {
+    match &options.eval_config.deterministic_mode {
+        DeterministicMode::Enabled { timestamp_utc, .. } => Some(*timestamp_utc),
+        // NOW() has one-second resolution. A whole-second sample is exactly
+        // what the caches record and round-trips through every binding.
+        #[cfg(feature = "system-clock")]
+        DeterministicMode::Disabled { .. } => {
+            Some(chrono::SubsecRound::trunc_subsecs(Utc::now(), 0))
+        }
+        #[cfg(not(feature = "system-clock"))]
+        DeterministicMode::Disabled { .. } => None,
+    }
 }
 /// The admitted source with its ingested, not yet evaluated, engine.
 struct Ingested<'a> {
@@ -850,13 +878,26 @@ fn declare_anchors(
     }
     Ok(())
 }
+/// Evaluate once and return the clock instant the run observed. A system
+/// clock is pinned to one UTC sample so the reported instant is exactly what
+/// `NOW()`/`TODAY()` saw (the engine also samples once per request).
 fn evaluate(
     engine: &mut Engine<WBResolver>,
     options: &XlsxRecalculateOptions,
-) -> Result<(), IoError> {
+) -> Result<Option<DateTime<Utc>>, IoError> {
     checkpoint(&options.cancel)?;
+    let now = clock_instant(options);
+    #[cfg(feature = "system-clock")]
+    if let (Some(now), DeterministicMode::Disabled { timezone }) =
+        (now, &options.eval_config.deterministic_mode)
+    {
+        engine.set_clock(std::sync::Arc::new(
+            formualizer_eval::timezone::FixedClock::new(now, timezone.clone()),
+        ));
+    }
     engine.evaluate_all_for_snapshot(options.cancel.clone())?;
-    checkpoint(&options.cancel)
+    checkpoint(&options.cancel)?;
+    Ok(now)
 }
 fn unchanged(
     bytes: &[u8],
@@ -869,6 +910,7 @@ fn unchanged(
         formula_cells: formula_count,
         cache_cells_changed: 0,
         worksheet_parts_changed: 0,
+        clock_now_utc: None,
     }
 }
 /// The validated value of one source formula, exactly as the scalar writer
@@ -1038,6 +1080,7 @@ fn publish(
         formula_cells: formula_count,
         cache_cells_changed: changed,
         worksheet_parts_changed: worksheets,
+        clock_now_utc: None,
     })
 }
 /// Publication: scalar caches and dynamic-array geometry, plus, when an

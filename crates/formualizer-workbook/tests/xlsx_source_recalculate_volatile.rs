@@ -272,3 +272,107 @@ fn zero_height_and_collapsed_outline_rows_count_as_hidden() {
         Some("15")
     );
 }
+
+fn clock_options(
+    timestamp_utc: chrono::DateTime<chrono::Utc>,
+    timezone: formualizer_eval::timezone::TimeZoneSpec,
+) -> XlsxRecalculateOptions {
+    let mut options = XlsxRecalculateOptions::default();
+    options.eval_config.deterministic_mode = formualizer_eval::engine::DeterministicMode::Enabled {
+        timestamp_utc,
+        timezone,
+    };
+    options
+}
+
+#[test]
+fn clock_now_utc_reports_the_instant_today_and_now_observed() {
+    use formualizer_common::{DateSystem, LiteralValue};
+    use formualizer_eval::timezone::TimeZoneSpec;
+    let fixed = chrono::DateTime::parse_from_rfc3339("2026-03-01T23:30:00Z")
+        .unwrap()
+        .to_utc();
+    let out = recalculate_xlsx_bytes(
+        &source("NOW()", ""),
+        clock_options(fixed, TimeZoneSpec::FixedOffsetSeconds(3600)),
+    )
+    .unwrap();
+    assert_eq!(out.clock_now_utc, Some(fixed));
+    let b: f64 = parse_sheet(&sheet_xml(&out.bytes))
+        .cell("B1")
+        .v
+        .as_ref()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let local = chrono::NaiveDate::from_ymd_opt(2026, 3, 2)
+        .unwrap()
+        .and_hms_opt(0, 30, 0)
+        .unwrap();
+    assert_eq!(
+        b,
+        LiteralValue::DateTime(local)
+            .as_serial_number_for(DateSystem::Excel1900)
+            .unwrap()
+    );
+    // A fixed-zone system clock reports its single whole-second sample.
+    #[cfg(feature = "system-clock")]
+    {
+        let mut options = XlsxRecalculateOptions::default();
+        options.eval_config.deterministic_mode =
+            formualizer_eval::engine::DeterministicMode::Disabled {
+                timezone: TimeZoneSpec::FixedOffsetSeconds(-5 * 3600),
+            };
+        let out = recalculate_xlsx_bytes(&source("NOW()", ""), options).unwrap();
+        let now = out.clock_now_utc.expect("system clock sample");
+        assert_eq!(now.timestamp_subsec_nanos(), 0);
+        let local = now
+            .with_timezone(&chrono::FixedOffset::west_opt(5 * 3600).unwrap())
+            .naive_local();
+        let b: f64 = parse_sheet(&sheet_xml(&out.bytes))
+            .cell("B1")
+            .v
+            .as_ref()
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert_eq!(
+            b,
+            LiteralValue::DateTime(local)
+                .as_serial_number_for(DateSystem::Excel1900)
+                .unwrap()
+        );
+    }
+}
+
+#[test]
+fn deterministic_mode_with_local_timezone_is_rejected_not_ignored() {
+    let error = recalculate_xlsx_bytes(
+        &source("NOW()", ""),
+        clock_options(
+            chrono::DateTime::UNIX_EPOCH,
+            formualizer_eval::timezone::TimeZoneSpec::Local,
+        ),
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("Local"), "{error}");
+}
+
+#[cfg(not(feature = "system-clock"))]
+#[test]
+fn portable_fixed_clock_admits_today_and_now() {
+    let fixed = chrono::DateTime::parse_from_rfc3339("2026-03-01T23:30:00Z")
+        .unwrap()
+        .to_utc();
+    for formula in ["TODAY()", "NOW()"] {
+        let out = recalculate_xlsx_bytes(
+            &source(formula, ""),
+            clock_options(fixed, formualizer_eval::timezone::TimeZoneSpec::Utc),
+        )
+        .unwrap();
+        assert_eq!(out.clock_now_utc, Some(fixed));
+    }
+    let out = recalculate_xlsx_bytes(&source("1+1", ""), Default::default()).unwrap();
+    assert_eq!(out.clock_now_utc, None);
+}
