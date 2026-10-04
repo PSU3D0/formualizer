@@ -350,7 +350,7 @@ Full type stubs are included in the package (`.pyi` files) for IDE autocompletio
 
 ## Building from source
 
-Requires Rust 1.93.0 (the pinned release toolchain; edition 2024) and [maturin](https://github.com/PyO3/maturin):
+Requires Rust 1.99.0 (the pinned release toolchain; edition 2024) and [maturin](https://github.com/PyO3/maturin):
 
 ```bash
 pip install maturin
