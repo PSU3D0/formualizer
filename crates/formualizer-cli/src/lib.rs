@@ -1,6 +1,8 @@
 //! Shared command implementation. Arguments include the program name.
 //! No signal handlers, TTY assumptions or process exits occur here.
+use chrono::{DateTime, FixedOffset, Local, SecondsFormat, Utc};
 use clap::{Parser, Subcommand};
+use formualizer_eval::{engine::DeterministicMode, timezone::TimeZoneSpec};
 pub use formualizer_workbook::CancelToken;
 use formualizer_workbook::{
     IoError, XlsxRecalculateOptions, XlsxRecalculateResult, recalculate_xlsx_bytes,
@@ -15,6 +17,21 @@ use std::{
 
 const SCHEMA: &str = "formualizer.recalc/1";
 const DEFAULT_MAX_ERRORS: usize = 20;
+const RECALC_AFTER_HELP: &str = "\
+Writes INPUT in place unless -o or --check is given.
+Run recalc as the last step that writes the workbook: later edits leave its
+caches stale.
+
+RAND/RANDBETWEEN are reproducible run to run. Without --now, TODAY/NOW use
+the host clock (local time unless --tz).
+
+Exit codes:
+  0    written, unchanged or current
+  1    error; nothing written
+  2    refused (unsupported input); nothing written
+  3    --check: caches are stale
+  64   usage error or invalid option value
+  130  interrupted; nothing written";
 
 #[derive(Parser)]
 #[command(
@@ -29,16 +46,31 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Recalculate formula caches using the strict source-preserving path.
+    #[command(after_help = RECALC_AFTER_HELP)]
     Recalc {
+        /// Workbook (.xlsx) to recalculate
         input: PathBuf,
-        #[arg(short, long)]
+        /// Write the result to PATH instead of replacing INPUT
+        #[arg(short, long, value_name = "PATH")]
         output: Option<PathBuf>,
+        /// Compute without writing; exit 3 if any cache is stale
         #[arg(long)]
         check: bool,
+        /// Print one formualizer.recalc/1 JSON object on stdout
         #[arg(long)]
         json: bool,
-        #[arg(long, default_value_t = DEFAULT_MAX_ERRORS)]
+        /// List at most N error-cell locations
+        #[arg(long, value_name = "N", default_value_t = DEFAULT_MAX_ERRORS)]
         max_errors: usize,
+        /// Fixed TODAY/NOW instant: RFC 3339 with an offset or Z
+        #[arg(long, value_name = "TIMESTAMP", value_parser = parse_now)]
+        now: Option<DateTime<FixedOffset>>,
+        /// TODAY/NOW timezone: UTC or ±HH:MM [default: --now offset, else local]
+        #[arg(long, value_name = "ZONE", value_parser = parse_tz, allow_hyphen_values = true)]
+        tz: Option<TimeZoneSpec>,
+        /// RAND/RANDBETWEEN seed [default: built-in seed]
+        #[arg(long, value_name = "U64")]
+        seed: Option<u64>,
     },
 }
 #[derive(Serialize)]
@@ -51,6 +83,18 @@ struct ErrorCell {
 struct Refusal {
     feature: String,
     context: String,
+}
+/// The clock a computed run used: enough, with `seed`, to replay it.
+#[derive(Serialize)]
+struct Clock {
+    /// RFC 3339 instant TODAY/NOW observed, written in the UTC offset that
+    /// was applied to it (so `--now <now>` alone replays it); null when the
+    /// build has no system clock and `--now` was not given.
+    now: Option<String>,
+    /// `Local`, `UTC` or `±HH:MM`.
+    timezone: String,
+    /// True when the instant came from `--now`.
+    fixed: bool,
 }
 #[derive(Serialize)]
 struct Report {
@@ -67,6 +111,8 @@ struct Report {
     errors: Option<Vec<ErrorCell>>,
     errors_truncated: Option<bool>,
     refusal: Option<Refusal>,
+    clock: Option<Clock>,
+    seed: Option<u64>,
     message: String,
 }
 impl Report {
@@ -85,6 +131,8 @@ impl Report {
             errors: None,
             errors_truncated: None,
             refusal: None,
+            clock: None,
+            seed: None,
             message,
         }
     }
@@ -113,6 +161,69 @@ impl Report {
             .collect();
         self.errors_truncated = Some(errors.len() < result.summary.errors);
         self.errors = Some(errors);
+    }
+}
+
+fn parse_now(value: &str) -> Result<DateTime<FixedOffset>, String> {
+    DateTime::parse_from_rfc3339(value).map_err(|_| {
+        "expected an RFC 3339 timestamp with an offset or Z, e.g. 2026-01-31T09:00:00Z".into()
+    })
+}
+fn offset_zone(seconds: i32) -> TimeZoneSpec {
+    if seconds == 0 {
+        TimeZoneSpec::Utc
+    } else {
+        TimeZoneSpec::FixedOffsetSeconds(seconds)
+    }
+}
+fn parse_tz(value: &str) -> Result<TimeZoneSpec, String> {
+    if value.eq_ignore_ascii_case("utc") || value == "Z" {
+        return Ok(TimeZoneSpec::Utc);
+    }
+    let bytes = value.as_bytes();
+    let digits = |r: std::ops::Range<usize>| {
+        bytes[r.clone()]
+            .iter()
+            .all(u8::is_ascii_digit)
+            .then(|| value[r].parse::<i32>().ok())
+            .flatten()
+    };
+    if bytes.len() == 6
+        && matches!(bytes[0], b'+' | b'-')
+        && bytes[3] == b':'
+        && let (Some(h), Some(m)) = (digits(1..3), digits(4..6))
+        && h <= 23
+        && m <= 59
+    {
+        let seconds = (h * 60 + m) * 60;
+        return Ok(offset_zone(if bytes[0] == b'-' {
+            -seconds
+        } else {
+            seconds
+        }));
+    }
+    Err("expected UTC or an offset ±HH:MM, e.g. +02:00 or -05:00".into())
+}
+/// The UTC offset `zone` applies at `now` (for `Local`, the host's offset
+/// at that instant, as the engine's clock computes it).
+fn applied_offset(now: DateTime<Utc>, zone: &TimeZoneSpec) -> FixedOffset {
+    zone.fixed_offset()
+        .unwrap_or_else(|| *now.with_timezone(&Local).offset())
+}
+fn zone_label(zone: &TimeZoneSpec) -> String {
+    match zone {
+        TimeZoneSpec::Local => "Local".into(),
+        TimeZoneSpec::Utc => "UTC".into(),
+        TimeZoneSpec::FixedOffsetSeconds(seconds) => {
+            let sign = if *seconds < 0 { '-' } else { '+' };
+            let s = seconds.unsigned_abs();
+            let (h, m, rest) = (s / 3600, s / 60 % 60, s % 60);
+            if rest == 0 {
+                format!("{sign}{h:02}:{m:02}")
+            } else {
+                format!("{sign}{h:02}:{m:02}:{rest:02}")
+            }
+        }
     }
 }
 
@@ -204,12 +315,37 @@ where
         check,
         json,
         max_errors,
+        now,
+        tz,
+        seed,
     } = cli.command;
-    let options = XlsxRecalculateOptions {
+    let mut options = XlsxRecalculateOptions {
         cancel: cancel.clone(),
         error_location_limit: max_errors,
         ..Default::default()
     };
+    // No flags leave the default configuration (system clock, local time,
+    // built-in seed) untouched.
+    if now.is_some() || tz.is_some() {
+        let timezone = tz.unwrap_or_else(|| {
+            now.map_or(TimeZoneSpec::Local, |n| {
+                offset_zone(n.offset().local_minus_utc())
+            })
+        });
+        options.eval_config.deterministic_mode = match now {
+            Some(now) => DeterministicMode::Enabled {
+                timestamp_utc: now.with_timezone(&Utc),
+                timezone,
+            },
+            None => DeterministicMode::Disabled { timezone },
+        };
+    }
+    if let Some(seed) = seed {
+        options.eval_config.workbook_seed = seed;
+    }
+    let zone = options.eval_config.deterministic_mode.timezone().clone();
+    let zone = &zone;
+    let seed = options.eval_config.workbook_seed;
     let result = (|| -> Result<XlsxRecalculateResult, IoError> {
         if cancel.as_ref().is_some_and(CancelToken::is_cancelled) {
             return Err(IoError::Engine(formualizer_common::ExcelError::new(
@@ -265,6 +401,15 @@ where
                 "unchanged"
             };
             report.result(&result, max_errors);
+            report.clock = Some(Clock {
+                now: result.clock_now_utc.map(|now| {
+                    now.with_timezone(&applied_offset(now, zone))
+                        .to_rfc3339_opts(SecondsFormat::AutoSi, true)
+                }),
+                timezone: zone_label(zone),
+                fixed: now.is_some(),
+            });
+            report.seed = Some(seed);
             let locations = report
                 .errors
                 .as_ref()

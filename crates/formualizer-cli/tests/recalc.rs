@@ -153,6 +153,8 @@ fn refusals_are_structured_and_do_not_publish() {
         assert!(report["refusal"]["feature"].is_string());
         assert!(report["refusal"]["context"].is_string());
         assert_eq!(report["written"], false);
+        assert_eq!(report["clock"], Value::Null);
+        assert_eq!(report["seed"], Value::Null);
         assert_eq!(std::fs::read(&path).unwrap(), bytes);
     }
 }
@@ -326,6 +328,8 @@ fn schema_field_set_pinned_for_success_and_usage() {
             "errors",
             "errors_truncated",
             "refusal",
+            "clock",
+            "seed",
             "message",
         ];
         expected.sort_unstable();

@@ -1697,9 +1697,11 @@ dependencies = [
 name = "formualizer-cli"
 version = "0.10.1"
 dependencies = [
+ "chrono",
  "clap",
  "ctrlc",
  "formualizer-common",
+ "formualizer-eval",
  "formualizer-workbook",
  "serde",
  "serde_json",

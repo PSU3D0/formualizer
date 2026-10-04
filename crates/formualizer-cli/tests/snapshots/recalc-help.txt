@@ -1,0 +1,31 @@
+Recalculate formula caches using the strict source-preserving path
+
+Usage: formualizer recalc [OPTIONS] <INPUT>
+
+Arguments:
+  <INPUT>  Workbook (.xlsx) to recalculate
+
+Options:
+  -o, --output <PATH>    Write the result to PATH instead of replacing INPUT
+      --check            Compute without writing; exit 3 if any cache is stale
+      --json             Print one formualizer.recalc/1 JSON object on stdout
+      --max-errors <N>   List at most N error-cell locations [default: 20]
+      --now <TIMESTAMP>  Fixed TODAY/NOW instant: RFC 3339 with an offset or Z
+      --tz <ZONE>        TODAY/NOW timezone: UTC or ±HH:MM [default: --now offset, else local]
+      --seed <U64>       RAND/RANDBETWEEN seed [default: built-in seed]
+  -h, --help             Print help
+
+Writes INPUT in place unless -o or --check is given.
+Run recalc as the last step that writes the workbook: later edits leave its
+caches stale.
+
+RAND/RANDBETWEEN are reproducible run to run. Without --now, TODAY/NOW use
+the host clock (local time unless --tz).
+
+Exit codes:
+  0    written, unchanged or current
+  1    error; nothing written
+  2    refused (unsupported input); nothing written
+  3    --check: caches are stale
+  64   usage error or invalid option value
+  130  interrupted; nothing written
