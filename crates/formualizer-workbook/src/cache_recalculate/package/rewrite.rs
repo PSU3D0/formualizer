@@ -3,16 +3,20 @@
 //! Admission has rejected ZIP64, encryption and extra fields outside its
 //! metadata-only allow-list.
 //!
-//! Replaced members keep their local/central records (only CRC/sizes and
-//! relocated offsets change); replacing a member that has extra fields or a
-//! data descriptor is refused. Untouched members keep every byte. Added members get a fresh minimal ZIP32 local
-//! record inserted before the original central directory and a matching
-//! central record appended to it; the end record's counts, directory size
-//! and offset are patched and the archive comment is kept.
+//! Untouched members keep every byte (local header, extra fields, payload,
+//! data descriptor and central record); only central local-offset fields of
+//! relocated members change. A replaced member is rewritten in one simple
+//! form: its name, original version, flags (without the data-descriptor
+//! bit), method and DOS time, the new CRC/sizes, no extra fields and no data
+//! descriptor, in both its local and its central record (which also keeps
+//! made-by version and attributes). Added members get a fresh minimal ZIP32
+//! local record inserted before the original central directory and a
+//! matching central record appended to it. The end record's counts,
+//! directory size and offset are patched and the archive comment is kept.
 use super::super::{BoundedOutput, Patch, apply_patches};
 use super::{
     Archive, BTreeMap, IoError, XlsxRecalculateOptions, audit_directory, checkpoint, part_name,
-    u16_at, u32_at, unsupported,
+    u16_at, unsupported,
 };
 use std::io::{Cursor, Write};
 use zip::{CompressionMethod, ZipArchive, ZipWriter, write::SimpleFileOptions};
@@ -82,71 +86,85 @@ pub(in crate::cache_recalculate) fn rewrite(
 ) -> Result<Vec<u8>, IoError> {
     let replacements = &edits.replace;
     let directory = audit_directory(bytes, options)?;
-    let directory_start = archive.central_directory_start() as usize;
-    let mut at = directory_start;
-    let mut headers = Vec::new();
+    let directory_start = directory.start;
+    let at = directory.footer;
     let mut changes = Vec::new();
     let mut patches = Vec::new();
-    for _ in 0..archive.len() {
+    let mut directory_delta = 0isize;
+    let mut fresh = BTreeMap::new();
+    for member in &directory.members {
         checkpoint(&options.cancel)?;
-        let length = u16_at(bytes, at + 28)?;
-        let name = std::str::from_utf8(&bytes[at + 46..at + 46 + length])
-            .map_err(|e| IoError::from_backend("zip-name", e))?;
+        let c = member.central;
+        let length = u16_at(bytes, c + 28)?;
+        let raw_name = &bytes[c + 46..c + 46 + length];
+        let name =
+            std::str::from_utf8(raw_name).map_err(|e| IoError::from_backend("zip-name", e))?;
         if edits.add.keys().any(|n| n.eq_ignore_ascii_case(name)) {
             return Err(unsupported("duplicate ZIP member", name));
         }
-        let local = u32_at(bytes, at + 42)?;
-        headers.push((at, local));
-        if let Some(data) = replacements.get(name) {
-            let member = directory
-                .members
-                .iter()
-                .find(|m| m.central == at)
-                .ok_or_else(|| unsupported("unaudited ZIP member", name))?;
-            if member.end != member.data_end
-                || member.data != member.local + 30 + length
-                || member.central_len != 46 + length
-            {
-                return Err(unsupported(
-                    "rewrite of a ZIP member with extra fields or a data descriptor",
-                    name,
-                ));
-            }
-            let source = archive
-                .by_name(name)
-                .map_err(|e| IoError::from_backend("zip", e))?;
-            let start = source.data_start() as usize;
-            let end = start + source.compressed_size() as usize;
-            let (crc, compressed) = encode(data, source.options(), name, options)?;
-            let mut fields = Vec::with_capacity(12);
-            fields.extend_from_slice(&crc.to_le_bytes());
-            fields.extend_from_slice(
-                &u32::try_from(compressed.len())
-                    .map_err(|_| unsupported("ZIP32 compressed size overflow", name))?
-                    .to_le_bytes(),
-            );
-            fields.extend_from_slice(
-                &u32::try_from(data.len())
-                    .map_err(|_| unsupported("ZIP32 expanded size overflow", name))?
-                    .to_le_bytes(),
-            );
-            changes.push((end, compressed.len() as i128 - (end - start) as i128));
-            patches.push(Patch {
-                span: local + 14..local + 26,
-                replacement: fields.clone(),
-            });
-            patches.push(Patch {
-                span: at + 16..at + 28,
-                replacement: fields,
-            });
-            patches.push(Patch {
-                span: start..end,
-                replacement: compressed,
-            });
+        let Some(data) = replacements.get(name) else {
+            continue;
+        };
+        let source = archive
+            .by_name(name)
+            .map_err(|e| IoError::from_backend("zip", e))?;
+        if source.data_start() as usize != member.data
+            || source.compressed_size() as usize != member.data_end - member.data
+        {
+            return Err(unsupported("inconsistent ZIP member range", name));
         }
-        at += 46 + length + u16_at(bytes, at + 30)? + u16_at(bytes, at + 32)?;
+        let (crc, compressed) = encode(data, source.options(), name, options)?;
+        drop(source);
+        // The replaced member's simple form: its name, the original
+        // version, flags without the data-descriptor bit, method and time;
+        // final CRC/sizes; no extra fields and no data descriptor.
+        let mut common = Vec::with_capacity(24);
+        common.extend_from_slice(&bytes[c + 6..c + 8]);
+        let flags = (u16_at(bytes, c + 8)? & !0x0008) as u16;
+        common.extend_from_slice(&flags.to_le_bytes());
+        common.extend_from_slice(&bytes[c + 10..c + 16]);
+        common.extend_from_slice(&crc.to_le_bytes());
+        common.extend_from_slice(
+            &u32::try_from(compressed.len())
+                .ok()
+                .filter(|n| *n != u32::MAX)
+                .ok_or_else(|| unsupported("ZIP32 compressed size overflow", name))?
+                .to_le_bytes(),
+        );
+        common.extend_from_slice(
+            &u32::try_from(data.len())
+                .ok()
+                .filter(|n| *n != u32::MAX)
+                .ok_or_else(|| unsupported("ZIP32 expanded size overflow", name))?
+                .to_le_bytes(),
+        );
+        common.extend_from_slice(&bytes[c + 28..c + 30]);
+        common.extend_from_slice(&0u16.to_le_bytes());
+        let mut record = Vec::with_capacity(30 + length + compressed.len());
+        record.extend_from_slice(b"PK\x03\x04");
+        record.extend_from_slice(&common);
+        record.extend_from_slice(raw_name);
+        record.extend_from_slice(&compressed);
+        let old = member.end - member.local;
+        changes.push((member.end, record.len() as i128 - old as i128));
+        patches.push(Patch {
+            span: member.local..member.end,
+            replacement: record,
+        });
+        // Central record: made-by version, the common fields, comment
+        // length 0, disk 0, the original attributes and (patched below) the
+        // relocated offset, then the name.
+        let mut central = Vec::with_capacity(46 + length);
+        central.extend_from_slice(b"PK\x01\x02");
+        central.extend_from_slice(&bytes[c + 4..c + 6]);
+        central.extend_from_slice(&common);
+        central.extend_from_slice(&[0; 4]);
+        central.extend_from_slice(&bytes[c + 36..c + 46]);
+        central.extend_from_slice(raw_name);
+        directory_delta += central.len() as isize - member.central_len as isize;
+        fresh.insert(c, central);
     }
-    if at != directory.footer || changes.len() != replacements.len() {
+    if fresh.len() != replacements.len() {
         return Err(unsupported("unmatched package replacement", "XLSX output"));
     }
     changes.sort_by_key(|(end, _)| *end);
@@ -161,11 +179,22 @@ pub(in crate::cache_recalculate) fn rewrite(
         usize::try_from(old as i128 + delta)
             .map_err(|_| unsupported("ZIP32 relocated offset overflow", "XLSX output"))
     };
-    for (central, local) in headers {
-        patches.push(Patch {
-            span: central + 42..central + 46,
-            replacement: zip32(relocate(local)?, "XLSX output")?.to_vec(),
-        });
+    // Relocated local offsets: in place for untouched central records, in
+    // the fresh record of a replaced member.
+    for member in &directory.members {
+        let offset = zip32(relocate(member.local)?, "XLSX output")?;
+        if let Some(mut record) = fresh.remove(&member.central) {
+            record[42..46].copy_from_slice(&offset);
+            patches.push(Patch {
+                span: member.central..member.central + member.central_len,
+                replacement: record,
+            });
+        } else {
+            patches.push(Patch {
+                span: member.central + 42..member.central + 46,
+                replacement: offset.to_vec(),
+            });
+        }
     }
     // New members: local records before the original central directory,
     // central records after its last entry.
@@ -223,12 +252,13 @@ pub(in crate::cache_recalculate) fn rewrite(
             .checked_add(locals.len() - record_start)
             .ok_or_else(|| unsupported("ZIP32 size or offset overflow", name.to_owned()))?;
     }
+    let size = (at - directory_start)
+        .checked_add_signed(directory_delta)
+        .and_then(|n| n.checked_add(centrals.len()))
+        .ok_or_else(|| unsupported("ZIP32 directory size overflow", "XLSX output"))?;
+    // The directory must end below the ZIP64 sentinel as well.
+    zip32(offset.saturating_add(size), "XLSX output")?;
     if !edits.add.is_empty() {
-        let size = (at - directory_start)
-            .checked_add(centrals.len())
-            .ok_or_else(|| unsupported("ZIP32 directory size overflow", "XLSX output"))?;
-        // The directory must end below the ZIP64 sentinel as well.
-        zip32(offset.saturating_add(size), "XLSX output")?;
         patches.push(Patch {
             span: directory_start..directory_start,
             replacement: locals,
@@ -237,15 +267,19 @@ pub(in crate::cache_recalculate) fn rewrite(
             span: at..at,
             replacement: centrals,
         });
-        let count = (entries as u16).to_le_bytes();
-        patches.push(Patch {
-            span: at + 8..at + 16,
-            replacement: [&count[..], &count[..], &zip32(size, "XLSX output")?[..]].concat(),
-        });
     }
+    // End record: entry counts, directory size and offset; the archive
+    // comment is kept.
+    let count = (entries as u16).to_le_bytes();
     patches.push(Patch {
-        span: at + 16..at + 20,
-        replacement: zip32(offset, "XLSX output")?.to_vec(),
+        span: at + 8..at + 20,
+        replacement: [
+            &count[..],
+            &count[..],
+            &zip32(size, "XLSX output")?[..],
+            &zip32(offset, "XLSX output")?[..],
+        ]
+        .concat(),
     });
     checkpoint(&options.cancel)?;
     let result = apply_patches(bytes, patches, options.limits.max_output_bytes)?;

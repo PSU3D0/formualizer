@@ -420,3 +420,88 @@ fn find(bytes: &[u8], name: &str) -> Found {
         at += 46 + len + h16(at + 30) + h16(at + 32);
     }
 }
+
+/// Every member carries extras and a descriptor; one in the middle is
+/// replaced (growing) and one is added.
+#[test]
+fn rewrite_relocates_untouched_members_verbatim_and_simplifies_replaced_ones() {
+    use package::Edits;
+    let mut entries = workbook();
+    for (i, e) in entries.iter_mut().enumerate() {
+        e.local_extra = [growth_hint(256, 256), timestamp(1, 1)].concat();
+        e.central_extra = [timestamp(1, 1), ntfs()].concat();
+        e.descriptor = if i % 2 == 0 {
+            Descriptor::Signed
+        } else {
+            Descriptor::Unsigned
+        };
+        e.local_sizes = i % 3 == 0;
+    }
+    let input = build(&entries);
+    let sheet = "xl/worksheets/sheet1.xml";
+    let body = b"<worksheet/>".repeat(300);
+    let added = "xl/metadata.xml";
+    let options = XlsxRecalculateOptions::default();
+    let mut archive = package::admit(&input, &options).unwrap();
+    let edits = Edits {
+        replace: [(sheet.to_owned(), body.clone())].into(),
+        add: [(added.to_owned(), b"<metadata/>".to_vec())].into(),
+    };
+    let output = package::rewrite(&input, &mut archive, &edits, &options).unwrap();
+    admit(&output).unwrap();
+    let mut z = ZipArchive::new(Cursor::new(&output)).unwrap();
+    for e in &entries {
+        let mut data = Vec::new();
+        z.by_name(&e.name).unwrap().read_to_end(&mut data).unwrap();
+        let expected = if e.name == sheet { &body } else { &e.data };
+        assert_eq!(&data, expected, "{}", e.name);
+    }
+    let mut data = Vec::new();
+    z.by_name(added).unwrap().read_to_end(&mut data).unwrap();
+    assert_eq!(data, b"<metadata/>");
+    let (old, new) = (raw(&input), raw(&output));
+    for e in &entries {
+        let ((oc, om), (nc, nm)) = (&old[&e.name], &new[&e.name]);
+        if e.name == sheet {
+            // No extras, no descriptor, final local CRC/sizes.
+            assert_eq!(nm[6] & 8, 0);
+            assert_eq!(&nm[28..30], &[0, 0]);
+            assert_eq!(&nc[30..32], &[0, 0]);
+            assert_eq!(nm[14..26], nc[16..28]);
+            assert_eq!(nm.len(), 30 + sheet.len() + h32(nc, 20));
+        } else {
+            assert_eq!(om, nm, "{} local bytes", e.name);
+            assert_eq!(oc, nc, "{} central record", e.name);
+        }
+    }
+}
+fn h32(b: &[u8], i: usize) -> usize {
+    u32::from_le_bytes(b[i..i + 4].try_into().unwrap()) as usize
+}
+/// Per member: central record (offset zeroed) and the local bytes up to
+/// the next member or the directory.
+fn raw(bytes: &[u8]) -> std::collections::BTreeMap<String, (Vec<u8>, Vec<u8>)> {
+    let z = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let start = z.central_directory_start() as usize;
+    let h16 = |i: usize| u16::from_le_bytes([bytes[i], bytes[i + 1]]) as usize;
+    let mut at = start;
+    let mut entries = Vec::new();
+    for _ in 0..z.len() {
+        let len = 46 + h16(at + 28) + h16(at + 30) + h16(at + 32);
+        entries.push((at, len, h32(bytes, at + 42)));
+        at += len;
+    }
+    let mut starts: Vec<_> = entries.iter().map(|e| e.2).collect();
+    starts.push(start);
+    starts.sort_unstable();
+    entries
+        .into_iter()
+        .map(|(c, len, local)| {
+            let name = String::from_utf8(bytes[c + 46..c + 46 + h16(c + 28)].to_vec()).unwrap();
+            let end = starts[starts.partition_point(|s| *s <= local)];
+            let mut central = bytes[c..c + len].to_vec();
+            central[42..46].fill(0);
+            (name, (central, bytes[local..end].to_vec()))
+        })
+        .collect()
+}
