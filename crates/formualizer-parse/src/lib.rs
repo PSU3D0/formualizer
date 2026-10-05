@@ -1,7 +1,6 @@
-#![cfg_attr(target_os = "emscripten", feature(let_chains))]
-// See formualizer-common/lib.rs for rationale: the Pyodide nightly predates
-// let-chain stabilization, so nested `if let ... { if cond { ... } }` is
-// deliberate here; silence clippy's collapse suggestion crate-wide.
+// See formualizer-common/lib.rs for rationale: nested
+// `if let ... { if cond { ... } }` predates let chains on the Pyodide
+// toolchain; silence clippy's collapse suggestion crate-wide.
 #![allow(clippy::collapsible_if)]
 
 mod hasher;

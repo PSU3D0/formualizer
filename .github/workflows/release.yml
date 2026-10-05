@@ -558,11 +558,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      # Host Python must match xbuildenv CPython major.minor (3.13 for Pyodide
-      # 0.29.x). See bindings/python/scripts/build-pyodide-wheel.sh.
+      # Host Python must match xbuildenv CPython major.minor (3.14 for Pyodide
+      # 314.0.x). See bindings/python/scripts/build-pyodide-wheel.sh.
       - uses: actions/setup-python@v6
         with:
-          python-version: '3.13'
+          python-version: '3.14'
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -580,9 +580,9 @@ jobs:
       - name: Smoke-test Pyodide wheel
         working-directory: bindings/python
         run: |
-          wheel="$(ls dist/pyodide/*-pyodide_*_wasm32.whl | head -1)"
+          wheel="$(ls dist/pyodide/*_wasm32.whl | head -1)"
           if [[ -z "$wheel" ]]; then
-            echo "No retagged pyodide wheel found in dist/pyodide" >&2
+            echo "No Pyodide wheel found in dist/pyodide" >&2
             exit 1
           fi
           ./scripts/smoke-pyodide-wheel.sh "$wheel"
@@ -590,7 +590,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: wheels-pyodide
-          path: bindings/python/dist/pyodide/*-pyodide_*_wasm32.whl
+          path: bindings/python/dist/pyodide/*_wasm32.whl
           if-no-files-found: error
 
   publish-pypi:

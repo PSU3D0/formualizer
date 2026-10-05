@@ -17,7 +17,7 @@ fi
 
 # Match the default pinned in build-pyodide-wheel.sh. The smoke test uses the
 # Pyodide npm package at this version to host the wheel under test.
-PYODIDE_NPM_VERSION="${PYODIDE_NPM_VERSION:-0.29.3}"
+PYODIDE_NPM_VERSION="${PYODIDE_NPM_VERSION:-314.0.7}"
 PYODIDE_TMPDIR="$(mktemp -d)"
 trap 'rm -rf "$PYODIDE_TMPDIR"' EXIT
 

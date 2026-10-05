@@ -379,7 +379,7 @@ wb.set_formula("Sheet1", 1, 2, "=SUM(A1:A2)")
 wb.evaluate_cell("Sheet1", 1, 2)  # -> 42.0
 ```
 
-**Tested Pyodide target:** CI and release smoke tests use Pyodide 0.29.3 and the wheel's derived ABI (currently `pyodide_2025_0`). Rebuild and smoke-test a wheel when targeting another runtime; no persistent public wheel URL is promised.
+**Tested Pyodide target:** CI and release smoke tests use Pyodide 314.0.7 (Python 3.14) and the wheel's derived platform tag (currently `pyemscripten_2026_0_wasm32`). Wheels for this ABI do not install in Pyodide 0.29.x (`pyodide_2025_0`). Rebuild and smoke-test a wheel when targeting another runtime; no persistent public wheel URL is promised.
 
 **Pyodide-specific behavior:**
 - `EvaluationConfig()` and `Workbook()` default `enable_parallel = False` on `sys.platform == "emscripten"` (Pyodide has no threads). You can still opt in, but it falls back to single-threaded execution.
@@ -392,10 +392,10 @@ For local development or targeting a Pyodide version without a retained Actions 
 
 ```bash
 ./scripts/build-pyodide-wheel.sh
-./scripts/smoke-pyodide-wheel.sh dist/pyodide/*-pyodide_*_wasm32.whl
+./scripts/smoke-pyodide-wheel.sh dist/pyodide/*_wasm32.whl
 ```
 
-The build script defaults to xbuildenv Pyodide 0.29.3, derives Python, ABI, Emscripten, and Rust toolchain values from `pyodide config`, installs Pyodide's custom wasm-EH Rust sysroot over the stock rustup target, and retags the output wheel to the platform tag Pyodide's `micropip` expects. `pyodide-cli` and `pyodide-build` are resolved through `uvx` and are not pinned by the script.
+The build script defaults to xbuildenv Pyodide 314.0.7, derives Python, ABI, Emscripten, and Rust toolchain values from `pyodide config`, installs that Rust toolchain's `wasm32-unknown-emscripten` target (or, for an xbuildenv that names one, Pyodide's custom wasm-EH sysroot), and tags the output wheel with the platform tag Pyodide's `micropip` expects. `pyodide-cli` and `pyodide-build` are resolved through `uvx` and are not pinned by the script.
 
 ## Testing
 
