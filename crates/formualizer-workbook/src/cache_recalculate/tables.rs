@@ -33,10 +33,44 @@ fn number(node: &xml::Node, name: &str, default: Option<u32>) -> Result<u32, IoE
             default.ok_or_else(|| unsupported(format!("missing table {name}"), "table XML"))
         })
 }
+const MC: &str = "http://schemas.openxmlformats.org/markup-compatibility/2006";
+/// Excel revision namespaces whose `uid` attributes Excel 2016+ writes on
+/// tables (`xr`) and table columns (`xr3`).
+const XR: &str = "http://schemas.microsoft.com/office/spreadsheetml/2014/revision";
+const XR3: &str = "http://schemas.microsoft.com/office/spreadsheetml/2016/revision3";
+/// Extension attributes admitted on a table element. Calamine does not read
+/// table parts during source recalculation (structured references are lowered
+/// in the ingestion view), the parser here reads only the attributes it names,
+/// and the part is never rewritten. `mc:Ignorable` only lists namespaces a
+/// consumer may skip, and neither reader applies markup compatibility, so
+/// every attribute in another namespace must still be listed here.
+const ROOT_EXTENSIONS: &[(&str, &str)] = &[(MC, "Ignorable"), (XR, "uid")];
+const COLUMN_EXTENSIONS: &[(&str, &str)] = &[(XR3, "uid")];
+fn prefix_list(value: &str) -> bool {
+    !value.is_empty()
+        && value.split(' ').all(|p| {
+            p.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+                && p.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
+        })
+}
 fn attrs(node: &xml::Node, allowed: &[&str]) -> Result<(), IoError> {
+    extended_attrs(node, allowed, &[])
+}
+fn extended_attrs(
+    node: &xml::Node,
+    allowed: &[&str],
+    extensions: &[(&str, &str)],
+) -> Result<(), IoError> {
     if let xml::Kind::Open { attributes, .. } = &node.kind {
         for a in attributes {
-            if !a.ns.is_empty() || !allowed.contains(&a.local.as_str()) {
+            let admitted = if a.ns.is_empty() {
+                allowed.contains(&a.local.as_str())
+            } else {
+                extensions.contains(&(a.ns.as_str(), a.local.as_str()))
+                    && (a.ns != MC || prefix_list(&a.value))
+            };
+            if !admitted {
                 return Err(unsupported(
                     format!("unsupported table attribute {}", a.qualified),
                     "table XML",
@@ -99,7 +133,7 @@ pub(super) fn parse(
             if !xml::path_is(path, xml::MAIN, &["table"]) || table.is_some() {
                 return Err(unsupported("table XML root/namespace", part));
             }
-            attrs(
+            extended_attrs(
                 &node,
                 &[
                     "id",
@@ -121,6 +155,7 @@ pub(super) fn parse(
                     "dataCellStyle",
                     "totalsRowCellStyle",
                 ],
+                ROOT_EXTENSIONS,
             )?;
             if number(&node, "id", None)? == 0 {
                 return Err(unsupported("invalid table ID", part));
@@ -212,7 +247,7 @@ pub(super) fn parse(
                 return Err(unsupported("tableColumns width disagreement", part));
             }
         } else if xml::path_is(path, xml::MAIN, &["table", "tableColumns", "tableColumn"]) {
-            attrs(
+            extended_attrs(
                 &node,
                 &[
                     "id",
@@ -226,6 +261,7 @@ pub(super) fn parse(
                     "dataCellStyle",
                     "totalsRowCellStyle",
                 ],
+                COLUMN_EXTENSIONS,
             )?;
             let t = table
                 .as_mut()

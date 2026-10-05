@@ -24,8 +24,10 @@ const DATE1904: &[u8] = fixture!("date1904_x15.xlsx");
 const DATE1900: &[u8] = fixture!("date1900_x15.xlsx");
 const CONTROLS: &[u8] = fixture!("controls.xlsx");
 const CONTROLS_PLAIN: &[u8] = fixture!("controls_plain.xlsx");
+const TABLES: &[u8] = fixture!("tables_xr.xlsx");
 const WORKBOOK: &str = "xl/workbook.xml";
 const SHEET: &str = "xl/worksheets/sheet1.xml";
+const TABLE: &str = "xl/tables/table1.xml";
 const X15_EXT: &str = "<ext uri=\"{140A7094-0E35-4892-8432-C4D2E57EDEB5}\" xmlns:x15=\"http://schemas.microsoft.com/office/spreadsheetml/2010/11/main\"><x15:workbookPr chartTrackingRefBase=\"1\"/></ext>";
 const X15_PR: &str = "<x15:workbookPr chartTrackingRefBase=\"1\"/>";
 
@@ -266,4 +268,48 @@ fn calamine_does_not_ignore_extension_content_inside_cells() {
         ),
     );
     assert!(formula(&cell_ext, (0, 1)).is_err());
+}
+
+#[test]
+fn excel_revision_attributes_on_tables_are_admitted_and_preserved() {
+    let table = text(TABLES, TABLE);
+    assert!(table.contains("mc:Ignorable=\"xr xr3\"") && table.contains("xr3:uid="));
+    let out = recalc(TABLES);
+    assert_eq!(number(&out, "Sales", (0, 3)), 9.0);
+    assert_eq!(number(&out, "Sales", (1, 3)), 24.5);
+    assert_eq!(members(&out)[TABLE], members(TABLES)[TABLE]);
+    untouched_except_sheet(TABLES, &out);
+}
+
+#[test]
+fn other_table_extension_attributes_are_refused() {
+    for (old, new) in [
+        (
+            "revision3\" id=\"1\"",
+            "revision3\" id=\"1\" xmlns:u=\"urn:unknown\" u:flag=\"1\"",
+        ),
+        (
+            "revision3\" id=\"1\"",
+            "revision3\" id=\"1\" xr3:uid=\"{0}\"",
+        ),
+        ("mc:Ignorable=\"xr xr3\"", "mc:Ignorable=\"\""),
+        (
+            "<tableColumn id=\"1\"",
+            "<tableColumn mc:Ignorable=\"xr3\" id=\"1\"",
+        ),
+        (
+            "<tableColumn id=\"1\"",
+            "<tableColumn xr:uid=\"{0}\" id=\"1\"",
+        ),
+        (
+            "<tableColumns count=\"2\"",
+            "<tableColumns xr:uid=\"{0}\" count=\"2\"",
+        ),
+    ] {
+        let error = refusal(&edit(TABLES, TABLE, old, new));
+        assert!(
+            error.contains("unsupported table attribute"),
+            "{new}: {error}"
+        );
+    }
 }
