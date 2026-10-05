@@ -197,3 +197,40 @@ fn prefilter_never_hides_a_rewrite() {
         assert!(!may_intersect(f), "{f}");
     }
 }
+
+#[test]
+fn shape_cache_reuses_only_equivalent_shapes() {
+    let mut lowerer = Lowerer::default();
+    // Same shape, different cells: the second is answered from the cache.
+    assert_eq!(
+        lowerer.lower("IF(VLOOKUP(S2,$J$1:$L$9,3,FALSE)=1,A2,B2)"),
+        Lowering::Unchanged
+    );
+    assert_eq!(
+        lowerer.lower("IF(VLOOKUP(S3,$J$1:$L$9,3,FALSE)=1,A3,B3)"),
+        Lowering::Unchanged
+    );
+    assert_eq!(lowerer.unchanged.len(), 1);
+    // A cell and a range, or a name past the last column, are different shapes.
+    assert_eq!(lowerer.lower("A1*2"), Lowering::Unchanged);
+    assert_eq!(lowerer.lower("A1:A1*2"), Lowering::Unchanged);
+    assert!(matches!(lowerer.lower("A1:A3*2"), Lowering::Rewritten(_)));
+    assert!(matches!(lowerer.lower("ZZZ1*2"), Lowering::Rewritten(_)));
+    assert!(matches!(
+        lowerer.lower("Sheet1:Sheet3!A1*2"),
+        Lowering::Skipped(_)
+    ));
+    assert_eq!(lowerer.lower("Sheet2!B9*2"), Lowering::Unchanged);
+}
+
+#[test]
+fn shape_key_abstracts_only_single_cells() {
+    assert_eq!(shape_key("IF(S2=1,$A$2,B2)"), "IF(\u{1}=1,\u{1},\u{1})");
+    assert_eq!(shape_key("A1:A1+B2"), "A1:A1+\u{1}");
+    assert_eq!(shape_key("Sheet2!B9&\"C3\""), "Sheet2!\u{1}&\"C3\"");
+    assert_eq!(
+        shape_key("'Q1 A1'!B2*LOG10(ZZZ1)"),
+        "'Q1 A1'!\u{1}*LOG10(ZZZ1)"
+    );
+    assert_eq!(shape_key("1E5+A1"), "1E5+\u{1}");
+}

@@ -24,6 +24,7 @@ use super::{IoError, Patch, SheetPlan, checkpoint, package, xml};
 use crate::XlsxRecalculateOptions;
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 use formualizer_parse::tokenizer::{TokenStream, TokenSubType, TokenType};
+use rustc_hash::FxHashSet;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// Excel token class of a function's return value.
@@ -145,22 +146,107 @@ struct Walk<'a> {
 }
 
 /// Rewrite `formula` (stored text, with or without the leading `=`).
+#[cfg(test)]
 pub(super) fn lower(formula: &str) -> Lowering {
-    match lower_inner(formula) {
-        Ok(Some(text)) => Lowering::Rewritten(text),
-        Ok(None) => Lowering::Unchanged,
-        Err(skip) => Lowering::Skipped(skip),
+    Lowerer::default().lower(formula)
+}
+
+/// Lowers formulas, remembering token shapes that need no rewrite.
+///
+/// The classification depends only on the formula text with single-cell
+/// addresses abstracted: which cell a reference names never changes a
+/// position's class or whether it can hold more than one cell. Formulas
+/// filled down a sheet (`IF(VLOOKUP(S2,…)=…)`, `…S3…`) share one shape, so
+/// only the first is parsed.
+#[derive(Default)]
+pub(super) struct Lowerer {
+    unchanged: HashSet<String>,
+}
+impl Lowerer {
+    pub fn lower(&mut self, formula: &str) -> Lowering {
+        match self.lower_inner(formula) {
+            Ok(Some(text)) => Lowering::Rewritten(text),
+            Ok(None) => Lowering::Unchanged,
+            Err(skip) => Lowering::Skipped(skip),
+        }
+    }
+
+    fn lower_inner(&mut self, formula: &str) -> Result<Option<String>, Skip> {
+        let key = shape_key(formula);
+        if self.unchanged.contains(&key) {
+            return Ok(None);
+        }
+        let (source, offset) = if formula.starts_with('=') {
+            (formula.to_string(), 0)
+        } else {
+            (format!("={formula}"), 1)
+        };
+        let stream = TokenStream::new(&source).map_err(|_| Skip("tokenizer"))?;
+        let result = lower_stream(&source, offset, &stream);
+        if matches!(result, Ok(None)) {
+            self.unchanged.insert(key);
+        }
+        result
     }
 }
 
-fn lower_inner(formula: &str) -> Result<Option<String>, Skip> {
-    let (source, offset) = if formula.starts_with('=') {
-        (formula.to_string(), 0)
-    } else {
-        (format!("={formula}"), 1)
-    };
-    let stream = TokenStream::new(&source).map_err(|_| Skip("tokenizer"))?;
-    let ast = formualizer_parse::parser::parse(&source).map_err(|_| Skip("parser"))?;
+/// The formula text with each single-cell address replaced by one marker.
+/// Addresses that are range endpoints (next to `:`), function names, sheet
+/// names and text inside string literals or quoted sheet names are kept.
+fn shape_key(formula: &str) -> String {
+    let bytes = formula.as_bytes();
+    let mut key = String::with_capacity(formula.len());
+    let (mut i, mut at) = (0, 0);
+    let (mut in_string, mut in_sheet) = (false, false);
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == b'"' && !in_sheet {
+            in_string = !in_string;
+        } else if b == b'\'' && !in_string {
+            in_sheet = !in_sheet;
+        }
+        let word_start = !in_string
+            && !in_sheet
+            && (b.is_ascii_alphabetic() || b == b'$')
+            && (i == 0
+                || !(bytes[i - 1].is_ascii_alphanumeric()
+                    || matches!(bytes[i - 1], b'_' | b'.' | b'$')));
+        if !word_start {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < bytes.len()
+            && (bytes[i].is_ascii_alphanumeric() || matches!(bytes[i], b'_' | b'.' | b'$'))
+        {
+            i += 1;
+        }
+        let next = bytes.get(i).copied();
+        let prev = start.checked_sub(1).map(|p| bytes[p]);
+        if !matches!(next, Some(b'(' | b':' | b'!' | b'['))
+            && prev != Some(b':')
+            && is_single_cell(&formula[start..i])
+        {
+            key.push_str(&formula[at..start]);
+            key.push('\u{1}');
+            at = i;
+        }
+    }
+    key.push_str(&formula[at..]);
+    key
+}
+
+/// `A1` or `$B$7` within the sheet bounds.
+fn is_single_cell(text: &str) -> bool {
+    is_cell_address(text)
+        && formualizer_common::coord::parse_a1_1based(text)
+            .is_ok_and(|(row, col, _, _)| row <= 1_048_576 && col <= 16_384)
+}
+
+fn lower_stream(source: &str, offset: usize, stream: &TokenStream) -> Result<Option<String>, Skip> {
+    let ast = formualizer_parse::parser::Parser::from_token_stream(stream)
+        .parse()
+        .map_err(|_| Skip("parser"))?;
     let mut closer = HashMap::new();
     let mut by_start = HashMap::new();
     let mut open: Vec<usize> = Vec::new();
@@ -184,7 +270,7 @@ fn lower_inner(formula: &str) -> Result<Option<String>, Skip> {
         }
     }
     let mut walk = Walk {
-        stream: &stream,
+        stream,
         closer,
         by_start,
         wraps: Vec::new(),
@@ -208,7 +294,7 @@ fn lower_inner(formula: &str) -> Result<Option<String>, Skip> {
         inserts.push((e, 0, len, ")"));
     }
     inserts.sort();
-    let mut out = String::with_capacity(formula.len() + inserts.len() * 2);
+    let mut out = String::with_capacity(source.len() + inserts.len() * 2);
     let mut at = offset;
     for (pos, _, _, text) in inserts {
         if pos < at {
@@ -501,7 +587,7 @@ fn reference_multi(reference: &ReferenceType) -> Result<bool, Skip> {
 /// Formula cells Excel calculated, by worksheet position in the workbook.
 #[derive(Debug, Default)]
 pub(super) struct CalcChain {
-    cells: Vec<HashSet<(u32, u32)>>,
+    cells: Vec<FxHashSet<(u32, u32)>>,
 }
 impl CalcChain {
     pub fn contains(&self, sheet: usize, row: u32, col: u32) -> bool {
@@ -510,7 +596,7 @@ impl CalcChain {
             .is_some_and(|cells| cells.contains(&(row, col)))
     }
     pub fn is_empty(&self) -> bool {
-        self.cells.iter().all(HashSet::is_empty)
+        self.cells.iter().all(FxHashSet::is_empty)
     }
 }
 
@@ -533,51 +619,94 @@ pub(super) fn calc_chain(
         .enumerate()
         .map(|(i, s)| (s.sheet_id, i))
         .collect();
-    let mut chain = CalcChain {
-        cells: vec![HashSet::new(); sheets.len()],
+    Ok(read_chain(&data, &by_id, sheets.len(), options)?.unwrap_or_default())
+}
+
+/// A lightweight namespace-checked pass over `calcChain/c` elements (the
+/// part can list every formula cell of a large workbook). `None`: malformed
+/// or foreign, which is no evidence.
+fn read_chain(
+    data: &[u8],
+    by_id: &BTreeMap<u32, usize>,
+    sheets: usize,
+    options: &XlsxRecalculateOptions,
+) -> Result<Option<CalcChain>, IoError> {
+    use quick_xml::events::Event;
+    use quick_xml::name::ResolveResult;
+    let Ok(text) = std::str::from_utf8(data) else {
+        return Ok(None);
     };
+    let mut reader = quick_xml::NsReader::from_str(text);
+    reader.config_mut().check_end_names = true;
+    let mut chain = CalcChain {
+        cells: vec![FxHashSet::default(); sheets],
+    };
+    let mut depth = 0usize;
+    let mut roots = 0usize;
     let mut current: Option<usize> = None;
-    let mut valid = true;
-    let parsed = xml::walk(&data, options, |path, node| {
-        if !valid || !matches!(node.kind, xml::Kind::Open { .. }) {
-            return Ok(());
+    let mut events = 0u64;
+    loop {
+        events += 1;
+        if events & 4095 == 0 {
+            checkpoint(&options.cancel)?;
         }
-        if path.len() == 1 {
-            if !xml::path_is(path, xml::MAIN, &["calcChain"]) {
-                valid = false;
+        let (resolved, event) = match reader.read_resolved_event() {
+            Ok(x) => x,
+            Err(_) => return Ok(None),
+        };
+        let (start, empty) = match &event {
+            Event::Start(e) => (e, false),
+            Event::Empty(e) => (e, true),
+            Event::End(_) => {
+                depth = depth.saturating_sub(1);
+                continue;
             }
-            return Ok(());
-        }
-        if !xml::path_is(path, xml::MAIN, &["calcChain", "c"]) {
-            return Ok(());
-        }
-        if let Some(id) = node.value("i") {
-            current = id
-                .parse::<u32>()
-                .ok()
-                .and_then(|id| by_id.get(&id).copied());
-            if current.is_none() {
-                valid = false;
-                return Ok(());
+            Event::Eof => break,
+            _ => continue,
+        };
+        let main =
+            matches!(resolved, ResolveResult::Bound(ns) if ns.as_ref() == xml::MAIN.as_bytes());
+        let local = start.local_name();
+        if depth == 0 {
+            roots += 1;
+            if roots != 1 || !main || local.as_ref() != b"calcChain" {
+                return Ok(None);
+            }
+        } else if depth == 1 && main && local.as_ref() == b"c" {
+            let (mut r, mut i) = (None, None);
+            for a in start.attributes() {
+                let Ok(a) = a else { return Ok(None) };
+                match a.key.as_ref() {
+                    b"r" => r = Some(a.value),
+                    b"i" => i = Some(a.value),
+                    _ => {}
+                }
+            }
+            if let Some(id) = i {
+                current = std::str::from_utf8(&id)
+                    .ok()
+                    .and_then(|id| id.parse::<u32>().ok())
+                    .and_then(|id| by_id.get(&id).copied());
+                if current.is_none() {
+                    return Ok(None);
+                }
+            }
+            let cell = r
+                .as_deref()
+                .and_then(|r| std::str::from_utf8(r).ok())
+                .and_then(|r| formualizer_common::coord::parse_a1_1based(r).ok());
+            match (current, cell) {
+                (Some(sheet), Some((row, col, _, _))) => {
+                    chain.cells[sheet].insert((row, col));
+                }
+                _ => return Ok(None),
             }
         }
-        let cell = node
-            .value("r")
-            .and_then(|r| formualizer_common::coord::parse_a1_1based(r).ok());
-        match (current, cell) {
-            (Some(sheet), Some((row, col, _, _))) => {
-                chain.cells[sheet].insert((row, col));
-            }
-            _ => valid = false,
+        if !empty {
+            depth += 1;
         }
-        Ok(())
-    });
-    if parsed.is_err() {
-        // Cancellation still stops the run; anything else is no evidence.
-        checkpoint(&options.cancel)?;
-        return Ok(CalcChain::default());
     }
-    Ok(if valid { chain } else { CalcChain::default() })
+    Ok((roots == 1 && depth == 0).then_some(chain))
 }
 
 /// Counters for one worksheet, reported in debug output and tests.
@@ -599,7 +728,7 @@ pub(super) fn patches(
 ) -> Result<(Vec<Patch>, Stats), IoError> {
     let mut stats = Stats::default();
     let mut out = Vec::new();
-    if chain.cells.get(sheet_index).is_none_or(HashSet::is_empty) {
+    if chain.cells.get(sheet_index).is_none_or(FxHashSet::is_empty) {
         return Ok((out, stats));
     }
     // Shared families with a member missing from the chain.
@@ -611,6 +740,7 @@ pub(super) fn patches(
             unproven.insert(si);
         }
     }
+    let mut lowerer = Lowerer::default();
     for cell in &plan.cells {
         checkpoint(&options.cancel)?;
         let formula = cell.formula_text.as_str();
@@ -631,7 +761,7 @@ pub(super) fn patches(
             stats.skipped += 1;
             continue;
         }
-        let text = match lower(formula) {
+        let text = match lowerer.lower(formula) {
             Lowering::Unchanged => continue,
             Lowering::Skipped(_) => {
                 stats.skipped += 1;
