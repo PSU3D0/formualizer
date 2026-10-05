@@ -28,7 +28,7 @@ The `formualizer recalc` command, the Python `recalculate_xlsx_*` functions and 
 
 Recalculated, with formula text and untouched package content preserved:
 
-- Workbooks as saved by Excel (desktop, Mac and Online), LibreOffice, Google Sheets, openpyxl and other ZIP writers, including Info-ZIP `zip`. Their containers' metadata-only ZIP extra fields (Excel's growth-hint padding, extended timestamps, Unix owners, NTFS times) and data descriptors are admitted; see [ZIP containers](#zip-containers).
+- Workbooks as saved by Excel (desktop, Mac and Online), LibreOffice, Google Sheets, openpyxl and other ZIP writers, including Info-ZIP `zip`. Their containers' metadata-only ZIP extra fields (Excel's growth-hint padding, extended timestamps, Unix owners, NTFS times) and data descriptors are admitted; see [ZIP containers](#zip-containers). Excel's routine extension markup (`x15:workbookPr`, form-control and OLE-object anchors, x14 data validations, table revision IDs) is admitted; see [Excel extension markup](#excel-extension-markup).
 - Ordinary and shared formulas over values, other formulas and other sheets, using the engine's built-in function library.
 - Supported defined names: constants, absolute cell/range names and grounded formula names (see [Ownership and writeback](#ownership-and-writeback)).
 - Dynamic arrays: new multi-cell spills from ordinary formulas, and existing dynamic-array anchors that grow, shrink, collapse or become blocked. `A1#` and `_xlfn.ANCHORARRAY(A1)` read the current spill. A spill blocked by existing content publishes `#SPILL!` as a formula result.
@@ -46,7 +46,7 @@ Refused as a whole, with nothing written (CLI exit 2):
 - Table features outside the validated subset: connection-backed tables, table-managed formulas missing from some row, unknown tables or columns, `[#This Row]` outside the data body, computed `INDIRECT` text in table-bearing workbooks, and defined names that refer to tables.
 - Unsupported or cyclic defined names, and results that cannot be cached faithfully: circular references (`#CIRC!`), functions the engine recognizes but does not implement (`#N/IMPL!`), non-finite numbers and results that are not current after evaluation.
 - Stored formulas the parser cannot read (`unparseable formula`).
-- Malformed or ambiguous packages, ZIP features outside the admitted container subset (ZIP64, encryption, entry comments, unknown extra fields), and inputs over the resource bounds.
+- Malformed or ambiguous packages, ZIP features outside the admitted container subset (ZIP64, encryption, entry comments, unknown extra fields), extension markup that reuses a SpreadsheetML name outside the positions Excel writes it in (see [Excel extension markup](#excel-extension-markup)), and inputs over the resource bounds.
 
 ## Ownership and writeback
 
@@ -77,6 +77,19 @@ Package admission audits the ZIP structure itself, before ZIP7 indexes it. The c
 Each extra block is parsed in full and must be well formed: `0xA220` is the Microsoft growth hint (signature `0xA028`, a padding-size word, then zero padding), `0x5455` a flag byte with one 32-bit time per flag (central records may carry only the modification time), `0x7875` version 1 with sized UID/GID, and `0x000A` a zero reserved word with at most one 24-byte times attribute. A data descriptor is admitted for 32-bit members with or without its signature; its CRC-32 and sizes must equal the central record's, and the local header's must be zero or equal to them.
 
 Still refused: ZIP64 (sizes, offsets, the `0x0001` extra field or 64-bit descriptors), encryption (traditional, strong or AES), compression methods other than stored and deflate, entry comments, any other extra field ID (for example the `0x4453` NT security descriptor and `0x7075` Unicode path), duplicate or malformed extra blocks, split, prefixed or self-extracting archives, and unaccounted bytes between members. The archive comment is admitted. None of the producers above writes entry comments.
+
+## Excel extension markup
+
+Excel 2010 and later write extension markup into most workbooks. Extension elements outside the SpreadsheetML main namespace are ignored unless they reuse the local name of an element the readers interpret (`workbookPr`, `sheet`, `definedName`, `row`, `c`, `f`, `v`, `mergeCell`, ...). Calamine, which ingests the workbook, matches such elements by local name, so a lookalike in the wrong place could change the date system, the defined names or the cell data. A lookalike is admitted only in the form and position Excel writes it, where neither Calamine nor the source index reads it, and refused everywhere else:
+
+| Markup | Written by | Admitted where |
+| --- | --- | --- |
+| `<x15:workbookPr chartTrackingRefBase="1"/>` | Excel 2013+ | Once, in `workbook/extLst/ext` with URI `{140A7094-0E35-4892-8432-C4D2E57EDEB5}`, with `chartTrackingRefBase` as its only attribute. The date system always comes from the main `workbookPr`. |
+| `xdr:row` in form-control and OLE-object anchors | Excel 2010+ | In the `from`/`to` of an `anchor` inside `mc:AlternateContent`, outside `sheetData`. |
+| `xm:f` in x14 data validations, conditional formats and sparklines | Excel 2010+ | Under `worksheet/extLst/ext`. |
+| `mc:Ignorable` and `xr:uid` on `table`, `xr3:uid` on `tableColumn` | Excel 2016+ | On those elements; table parts stay byte-for-byte unchanged. |
+
+Still refused: an `x15:workbookPr` with a `date1904` or any other attribute, in another position or extension, or repeated; main-namespace duplicates such as a second `workbookPr` in the extension list; extension defined names (`x15:definedName`); any lookalike inside `sheetData`, where Calamine's cell reader matches `row` by local name and reads every element inside a cell as cell content; extension merge cells; other drawing names (`xdr:c`) and anchors outside markup-compatibility content; lookalikes in unknown namespaces; and other namespaced table attributes. Calamine resets its own 1904 flag from an `x15:workbookPr`, but source recalculation reads Calamine dates as raw serials and never uses that flag.
 
 ## Dynamic arrays
 
@@ -165,6 +178,7 @@ Common refusals:
 | `connection-backed table` (table part) | A table backed by a query or data connection. |
 | `unsupported or cyclic calculation name` (name) | A defined name outside the supported subset, or one that depends on itself, even if unused. |
 | `unparseable formula` (`Sheet1!D1: <parser message>`) | A stored formula the formula parser cannot read. Fix or rewrite the formula. |
+| `foreign workbook metadata lookalike`, `foreign worksheet lookalike`, `unsupported table attribute ...` (element or attribute) | Extension markup that reuses a SpreadsheetML name outside the [admitted positions](#excel-extension-markup). |
 | `unsupported ZIP extra field 0x....`, `ZIP64 member`, `ZIP entry comment` (part) | A ZIP container feature outside the [admitted subset](#zip-containers). Re-saving the workbook in Excel, LibreOffice or openpyxl writes an admitted container. |
 | `engine-specific error has no approved XLSX cache encoding` (`#CIRC!`, `#N/IMPL!`, ...) | A circular reference, a function the engine does not implement, or another result that has no Excel cache representation. |
 | `formula result is not current: ...` (sheet) | A formula was still not current after evaluation. Stale values are never published. |

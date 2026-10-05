@@ -348,6 +348,49 @@ pub(super) fn scan(
         result => result.map(Scanned::Done),
     }
 }
+const MC: &str = "http://schemas.openxmlformats.org/markup-compatibility/2006";
+const XDR: &str = "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing";
+const XM: &str = "http://schemas.microsoft.com/office/excel/2006/main";
+/// Excel extension markup that reuses a structural local name but is inert:
+/// - `xdr:row` in the `from`/`to` anchor of a form control or OLE object,
+///   which Excel 2010+ writes inside `mc:AlternateContent`;
+/// - `xm:f` in an x14 data validation, conditional format or sparkline under
+///   `worksheet/extLst/ext`.
+///
+/// Calamine 0.36 reads worksheet cells only between `sheetData` and its first
+/// closing tag (before it, only `dimension` and `sheetData`), and elsewhere in
+/// the part only `mergeCells`/`mergeCell`/`hyperlinks`; the source index
+/// reads main-namespace elements by path. Neither reads these positions.
+/// Anything under `sheetData` stays refused: there Calamine's cell reader
+/// matches `row` by local name and treats any element inside a cell as its
+/// payload.
+fn inert_extension(path: &[xml::Element]) -> bool {
+    let (element, ancestors) = path.split_last().expect("open XML element");
+    if ancestors
+        .iter()
+        .any(|a| a.ns == xml::MAIN && a.local == "sheetData")
+    {
+        return false;
+    }
+    match (element.ns.as_str(), element.local.as_str()) {
+        (XDR, "row") => {
+            let n = ancestors.len();
+            n >= 3
+                && ancestors[n - 1].ns == xml::MAIN
+                && matches!(ancestors[n - 1].local.as_str(), "from" | "to")
+                && ancestors[n - 2].ns == xml::MAIN
+                && ancestors[n - 2].local == "anchor"
+                && ancestors
+                    .iter()
+                    .any(|a| a.ns == MC && a.local == "AlternateContent")
+        }
+        (XM, "f") => {
+            ancestors.len() >= 3
+                && xml::path_is(&ancestors[..3], xml::MAIN, &["worksheet", "extLst", "ext"])
+        }
+        _ => false,
+    }
+}
 fn scan_inner(
     bytes: &[u8],
     options: &XlsxRecalculateOptions,
@@ -438,6 +481,9 @@ fn scan_inner(
                     || matches!(element.local.as_str(), "mergeCells" | "mergeCell"))
                     && element.ns != xml::MAIN
                 {
+                    if inert_extension(path) {
+                        return Ok(());
+                    }
                     return Err(unsupported("foreign worksheet lookalike", &element.local));
                 }
                 if matches!(element.local.as_str(), "f" | "v" | "is") && !direct {
