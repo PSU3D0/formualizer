@@ -159,6 +159,27 @@ fn refusals_are_structured_and_do_not_publish() {
     }
 }
 #[test]
+fn unparseable_formula_is_a_refusal_not_an_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("in.xlsx");
+    let bytes = fixture(
+        "<row r=\"1\"><c r=\"A1\"><f>1+1</f><v>2</v></c><c r=\"B1\"><f>SUM((A1</f><v>2</v></c></row>",
+        "",
+    );
+    std::fs::write(&path, &bytes).unwrap();
+    for extra in [vec![], vec!["--check"]] {
+        let (code, report) = json(&path, &extra);
+        assert_eq!(code, 2, "{report}");
+        assert_eq!(report["status"], "refused");
+        assert_eq!(report["refusal"]["feature"], "unparseable formula");
+        let context = report["refusal"]["context"].as_str().unwrap();
+        assert!(context.starts_with("Sheet1!B1: "), "{context}");
+        assert!(context.contains("parenthesis"), "{context}");
+        assert_eq!(report["written"], false);
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    }
+}
+#[test]
 fn invalid_and_usage_errors() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("in.xlsx");

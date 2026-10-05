@@ -750,3 +750,43 @@ fn atomic_native_output_and_permissions() {
     recalculate_xlsx_file(&input, None, Default::default()).unwrap();
     assert_eq!(data(&std::fs::read(&input).unwrap(), 0), Data::Float(2.0));
 }
+#[test]
+fn unparseable_stored_formula_is_a_refusal_naming_the_cell() {
+    use formualizer_eval::engine::FormulaParsePolicy;
+    use formualizer_workbook::IoError;
+    // A second, valid formula keeps both eager and deferred ingestion busy.
+    let mut p = parts(
+        "<row r=\"1\"><c r=\"A1\"><v>1</v></c><c r=\"B1\"><f>A1+1</f><v>9</v></c><c r=\"C1\"><f>SUM((A1</f><v>9</v></c></row>",
+    );
+    let input = pack(&p);
+    for defer in [false, true] {
+        let mut o = XlsxRecalculateOptions::default();
+        o.eval_config.defer_graph_building = defer;
+        match recalculate_xlsx_bytes(&input, o) {
+            Err(IoError::Unsupported { feature, context }) => {
+                assert_eq!(feature, "unparseable formula");
+                assert!(context.starts_with("Sheet1!C1: "), "{context}");
+                assert!(context.contains("parenthesis"), "{context}");
+            }
+            other => panic!("defer={defer}: expected a refusal, got {other:?}"),
+        }
+    }
+    // A caller's explicit non-strict policy keeps its meaning: the coerced
+    // #ERROR! result has no XLSX cache encoding.
+    let mut o = XlsxRecalculateOptions::default();
+    o.eval_config.formula_parse_policy = FormulaParsePolicy::CoerceToError;
+    match recalculate_xlsx_bytes(&input, o) {
+        Err(IoError::Unsupported { feature, context }) => {
+            assert!(
+                feature.contains("no approved XLSX cache encoding"),
+                "{feature}"
+            );
+            assert_eq!(context, "#ERROR!");
+        }
+        other => panic!("expected the coerced-error refusal, got {other:?}"),
+    }
+    // Valid formulas are unaffected.
+    let sheet = p.get_mut(SHEET).unwrap();
+    *sheet = sheet.replace("SUM((A1", "SUM((A1))");
+    assert!(recalculate_xlsx_bytes(&pack(&p), Default::default()).is_ok());
+}

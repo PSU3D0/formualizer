@@ -623,6 +623,8 @@ pub fn recalculate_xlsx_bytes(
     }
     let mut ingested = ingest_source(bytes, admission, &options)?;
     let clock_now_utc = evaluate(&mut ingested.engine, &options)?;
+    // Deferred graph building parses formulas during evaluation.
+    refuse_parse_failure(&ingested.engine, ingested.refuse_parse_failures)?;
     let mut result = publish(bytes, ingested, formula_count, &options)?;
     result.clock_now_utc = clock_now_utc;
     Ok(result)
@@ -651,6 +653,24 @@ struct Ingested<'a> {
     engine: Engine<WBResolver>,
     /// The validated sheet metadata part, if the package has one.
     metadata: Option<dynamic_metadata::DynamicMetadata>,
+    /// The caller's policy was strict: a recorded parse failure refuses.
+    refuse_parse_failures: bool,
+}
+/// Under the default strict policy, a stored formula the parser cannot read
+/// is an unsupported feature of this input, not an engine failure. Ingestion
+/// records parse failures instead of stopping; this refuses with the first.
+fn refuse_parse_failure(engine: &Engine<WBResolver>, refuse: bool) -> Result<(), IoError> {
+    match engine.formula_parse_diagnostics().first() {
+        Some(d) if refuse => {
+            let col = formualizer_common::col_letters_from_1based(d.col)
+                .unwrap_or_else(|_| d.col.to_string());
+            Err(unsupported(
+                "unparseable formula",
+                format!("{}!{col}{}: {}", d.sheet, d.row, d.message),
+            ))
+        }
+        _ => Ok(()),
+    }
 }
 /// Build the transient ingestion view, replay it through Calamine into a new
 /// engine, validate calculation names and declare every
@@ -720,6 +740,10 @@ fn ingest_source<'a>(
     }
     let mut config = options.eval_config.clone();
     config.date_system = date_system;
+    let refuse_parse_failures = config.formula_parse_policy == FormulaParsePolicy::Strict;
+    if refuse_parse_failures {
+        config.formula_parse_policy = FormulaParsePolicy::CoerceToError;
+    }
     // Policy: CSE evaluation bypasses family memoization, whose admitted
     // cached results are not declaration-sensitive. Non-CSE runs are unchanged.
     if plans
@@ -770,6 +794,7 @@ fn ingest_source<'a>(
     let ingested = adapter.stream_into_engine(&mut engine);
     checkpoint(&options.cancel)?;
     ingested?;
+    refuse_parse_failure(&engine, refuse_parse_failures)?;
     for (sheet, plan) in sheets.iter().zip(&plans) {
         for table in &plan.tables {
             if table.header {
@@ -824,6 +849,7 @@ fn ingest_source<'a>(
     drop(adapter);
     if anchors {
         declare_anchors(&mut engine, &sheets, &plans, options)?;
+        refuse_parse_failure(&engine, refuse_parse_failures)?;
     }
     Ok(Ingested {
         archive,
@@ -831,6 +857,7 @@ fn ingest_source<'a>(
         plans,
         engine,
         metadata,
+        refuse_parse_failures,
     })
 }
 /// Give every admitted anchor its source spill identity, so a current
@@ -1028,6 +1055,7 @@ fn publish(
         plans,
         engine,
         metadata,
+        refuse_parse_failures: _,
     } = ingested;
     let coerced: HashSet<_> = engine
         .formula_parse_diagnostics()
