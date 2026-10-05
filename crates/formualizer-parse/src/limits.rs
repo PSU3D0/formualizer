@@ -63,8 +63,11 @@ impl ParserLimits {
     }
     /// Maximum AST height, counting the root as one.
     ///
-    /// Raising this above the default needs a correspondingly larger stack on
-    /// every thread that parses, clones, drops or evaluates the tree.
+    /// The default (256) is tested on a 1 MiB thread stack in release builds
+    /// through parsing, workbook evaluation and XLSX cache recalculation.
+    /// Raising it needs about 2.5 KiB more stack per level (up to 4.2 KiB for
+    /// right-nested shapes; release, x86-64) on every thread that parses,
+    /// clones, drops or evaluates the tree.
     #[must_use]
     pub const fn with_ast_height(mut self, ast_height: usize) -> Self {
         self.ast_height = ast_height;

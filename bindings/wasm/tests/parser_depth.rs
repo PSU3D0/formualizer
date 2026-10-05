@@ -1,6 +1,6 @@
 #![cfg(target_arch = "wasm32")]
 
-use formualizer_wasm::{ASTNode, Parser, parse};
+use formualizer_wasm::{ASTNode, Parser, Workbook, parse};
 use wasm_bindgen::JsValue;
 use wasm_bindgen_test::*;
 
@@ -119,4 +119,74 @@ fn test_stateful_parser_depth_errors_and_fresh_parser_success() {
     assert!(ast.to_string().contains("Function"));
     drop(ast);
     drop(parser);
+}
+
+/// Height exercised through the workbook. Release builds must evaluate the
+/// default AST-height limit (256) on the default 1 MiB wasm stack. Unoptimized
+/// builds use several times more stack per level, so they check a lower height.
+const WORKBOOK_HEIGHT: usize = if cfg!(debug_assertions) {
+    DEBUG_HEIGHT
+} else {
+    256
+};
+const DEBUG_HEIGHT: usize = 64;
+
+/// Formulas at the default AST-height limit must evaluate through the
+/// workbook API on the default wasm stack, not only parse.
+#[wasm_bindgen_test]
+fn test_default_height_formulas_evaluate_through_workbook() {
+    let h = WORKBOOK_HEIGHT;
+    let levels = 30.min(h / 4);
+    let concat = format!(
+        "={}&\",\"",
+        (1..=h / 2)
+            .map(|i| format!("A{i}"))
+            .collect::<Vec<_>>()
+            .join("&\",\"&")
+    );
+    let cases = [
+        ("add", format!("={}A1", "A1+".repeat(h - 1)), Some(h as f64)),
+        ("power", format!("={}1", "1^".repeat(h - 1)), Some(1.0)),
+        ("concat", concat, None),
+        (
+            "nested",
+            format!(
+                "={}{}A1{}",
+                "1+(".repeat(levels),
+                "A1+".repeat(h - levels - 1),
+                ")".repeat(levels)
+            ),
+            Some(h as f64),
+        ),
+    ];
+    let wb = Workbook::new(None).unwrap();
+    wb.add_sheet("Sheet1".to_string()).unwrap();
+    wb.set_value("Sheet1".to_string(), 1, 1, JsValue::from_f64(1.0))
+        .unwrap();
+    for (col, (shape, formula, _)) in cases.iter().enumerate() {
+        let col = col as u32 + 3;
+        let ast = parse(formula, None).unwrap_or_else(|e| panic!("{shape}: {e:?}"));
+        drop(ast);
+        if h == 256 {
+            assert!(
+                parse(&format!("{formula}&1"), None).is_err(),
+                "{shape} must sit at the height limit"
+            );
+        }
+        wb.set_formula("Sheet1".to_string(), 1, col, formula.clone())
+            .unwrap_or_else(|e| panic!("{shape}: {e:?}"));
+    }
+    wb.evaluate_all().unwrap();
+    for (col, (shape, _, expected)) in cases.iter().enumerate() {
+        let value = wb
+            .evaluate_cell("Sheet1".to_string(), 1, col as u32 + 3)
+            .unwrap_or_else(|e| panic!("{shape}: {e:?}"));
+        match expected {
+            Some(n) => assert_eq!(value.as_f64(), Some(*n), "{shape}"),
+            None => assert!(
+                value.as_string().is_some_and(|s| s.starts_with("1,")),
+                "{shape}: {value:?}"
+            ),
+        }
+    }
 }

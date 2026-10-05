@@ -253,7 +253,7 @@ fn resource_stack_subprocess() {
                             .contains("AST height")
                     );
                 }
-                // Stack ceilings stay effective independently of relaxed work budgets.
+                // Stack limits stay effective independently of relaxed work budgets.
                 let relaxed = limits(1 << 20, 1 << 20, 1 << 20, 72, 256);
                 for source in [
                     format!("={}1{}", "IF(A1>0,".repeat(5000), ",0)".repeat(5000)),
@@ -315,4 +315,34 @@ fn resource_stack_subprocess() {
         .status()
         .unwrap();
     assert!(status.success(), "small-stack subprocess failed: {status}");
+}
+#[test]
+fn stack_limits_can_be_raised_without_a_ceiling() {
+    // The caller owns the stack when raising stack-sensitive limits.
+    std::thread::Builder::new()
+        .stack_size(256 * 1024 * 1024)
+        .spawn(|| {
+            let chain = format!("={}1", "1+".repeat(1999));
+            assert!(parse(&chain).unwrap_err().message.contains("AST height"));
+            let tall = ParserLimits::default().with_ast_height(2000);
+            let ast = Parser::builder().limits(tall).parse(&chain).unwrap();
+            assert!(!formualizer_parse::pretty_print(&ast).is_empty());
+            let error = Parser::builder()
+                .limits(tall.with_ast_height(1999))
+                .parse(&chain)
+                .unwrap_err();
+            assert!(
+                error
+                    .message
+                    .contains("AST height limit exceeded (max 1999)")
+            );
+
+            let nested = format!("={}1{}", "(".repeat(200), ")".repeat(200));
+            assert!(parse(&nested).unwrap_err().message.contains("nesting"));
+            let deep = ParserLimits::default().with_pratt_frames(201);
+            assert!(Parser::builder().limits(deep).parse(&nested).is_ok());
+        })
+        .unwrap()
+        .join()
+        .unwrap();
 }
