@@ -28,6 +28,7 @@ The `formualizer recalc` command, the Python `recalculate_xlsx_*` functions and 
 
 Recalculated, with formula text and untouched package content preserved:
 
+- Workbooks as saved by Excel (desktop, Mac and Online), LibreOffice, Google Sheets, openpyxl and other ZIP writers, including Info-ZIP `zip`. Their containers' metadata-only ZIP extra fields (Excel's growth-hint padding, extended timestamps, Unix owners, NTFS times) and data descriptors are admitted; see [ZIP containers](#zip-containers).
 - Ordinary and shared formulas over values, other formulas and other sheets, using the engine's built-in function library.
 - Supported defined names: constants, absolute cell/range names and grounded formula names (see [Ownership and writeback](#ownership-and-writeback)).
 - Dynamic arrays: new multi-cell spills from ordinary formulas, and existing dynamic-array anchors that grow, shrink, collapse or become blocked. `A1#` and `_xlfn.ANCHORARRAY(A1)` read the current spill. A spill blocked by existing content publishes `#SPILL!` as a formula result.
@@ -44,7 +45,8 @@ Refused as a whole, with nothing written (CLI exit 2):
 - Multi-cell shared formulas whose sheet qualifiers look like cell references (`'Q1'!`, `'FY2024'!`).
 - Table features outside the validated subset: connection-backed tables, table-managed formulas missing from some row, unknown tables or columns, `[#This Row]` outside the data body, computed `INDIRECT` text in table-bearing workbooks, and defined names that refer to tables.
 - Unsupported or cyclic defined names, and results that cannot be cached faithfully: circular references (`#CIRC!`), functions the engine recognizes but does not implement (`#N/IMPL!`), non-finite numbers and results that are not current after evaluation.
-- Malformed or ambiguous packages, and inputs over the resource bounds.
+- Stored formulas the parser cannot read (`unparseable formula`).
+- Malformed or ambiguous packages, ZIP features outside the admitted container subset (ZIP64, encryption, entry comments, unknown extra fields), and inputs over the resource bounds.
 
 ## Ownership and writeback
 
@@ -56,9 +58,25 @@ Strict recalculation conservatively refuses unsupported non-built-in definitions
 
 Preflight uses namespace-aware XML events and source offsets. Changed worksheet XML is assembled once from non-overlapping edits to formula cache types/values. Formula XML, styles, drawings and other untouched content retain their original bytes. Existing dates are evaluated in the source workbook's epoch; serial egress avoids lossy native-date conversion, including Excel-1900 serial 60.
 
-The admitted ZIP32 package is edited surgically. ZIP7 supplies compression/CRC generation for changed and added payloads. Original local and central metadata is preserved; only payloads, affected CRC/size fields, relocated local-header offsets and the directory offset change. When a dynamic-array metadata part must be added, it is written as one deflated ZIP32 local record before the original central directory with a matching central record after the existing ones, and the end record's entry counts, directory size and offset are patched. Duplicate names, entry-count overflow, ZIP64 sizes/offsets and the output/expanded-byte limits are refused, and the resulting package is re-audited before it is returned. Untouched compressed payloads and the archive comment are preserved. Entry extras/comments, descriptors, ZIP64 and split/prefixed containers are outside the admitted subset. A true cache no-op returns the entire original byte sequence.
+The admitted ZIP32 package is edited surgically. ZIP7 supplies compression/CRC generation for changed and added payloads. Untouched members keep every byte (local header, extra fields, payload, data descriptor and central record); only the central local-offset fields of relocated members change. A changed member is rewritten in one simple form: its name, versions, general-purpose flags (less the data-descriptor bit), compression method, DOS time and attributes are kept, its new CRC-32 and sizes are written in both its local and its central record, and it has no extra fields and no data descriptor. When a dynamic-array metadata part must be added, it is written as one deflated ZIP32 local record before the original central directory with a matching central record after the existing ones. The end record's entry counts, directory size and offset are patched. Duplicate names, entry-count overflow, ZIP64 sizes/offsets and the output/expanded-byte limits are refused, and the resulting package is re-audited before it is returned. The archive comment is preserved. A true cache no-op returns the entire original byte sequence.
 
 Calamine's cached-value decoder is not authority for formula results. If an old formula cache uses a representation it cannot decode faithfully, a bounded transient ingestion view clears that cache only. The original package is still used for comparison/writeback, including exact no-op output. Literal dependency values are never cleared this way.
+
+## ZIP containers
+
+Package admission audits the ZIP structure itself, before ZIP7 indexes it. The central directory is authoritative: every local header must agree with its central record, and the members (with any data descriptors) must tile the bytes before the directory without gaps or overlaps.
+
+| Producer | Container | Admitted |
+| --- | --- | --- |
+| Excel (desktop, Mac, Online) | `0xA220` growth-hint padding in local headers | Yes |
+| LibreOffice, Google Sheets | Data descriptors (`PK\x07\x08`), zero CRC/sizes in local headers | Yes |
+| openpyxl, XlsxWriter, Python `zipfile` | Plain ZIP32 | Yes |
+| Info-ZIP `zip` | `0x5455` extended timestamp and `0x7875` Unix UID/GID, local and central | Yes |
+| 7-Zip and other Windows archivers | `0x000A` NTFS times | Yes |
+
+Each extra block is parsed in full and must be well formed: `0xA220` is the Microsoft growth hint (signature `0xA028`, a padding-size word, then zero padding), `0x5455` a flag byte with one 32-bit time per flag (central records may carry only the modification time), `0x7875` version 1 with sized UID/GID, and `0x000A` a zero reserved word with at most one 24-byte times attribute. A data descriptor is admitted for 32-bit members with or without its signature; its CRC-32 and sizes must equal the central record's, and the local header's must be zero or equal to them.
+
+Still refused: ZIP64 (sizes, offsets, the `0x0001` extra field or 64-bit descriptors), encryption (traditional, strong or AES), compression methods other than stored and deflate, entry comments, any other extra field ID (for example the `0x4453` NT security descriptor and `0x7075` Unicode path), duplicate or malformed extra blocks, split, prefixed or self-extracting archives, and unaccounted bytes between members. The archive comment is admitted. None of the producers above writes entry comments.
 
 ## Dynamic arrays
 
@@ -146,6 +164,8 @@ Common refusals:
 | `defined-name formula refers to a table name`, `defined-name formula contains structured references` (name) | Defined names that point at tables are not lowered. |
 | `connection-backed table` (table part) | A table backed by a query or data connection. |
 | `unsupported or cyclic calculation name` (name) | A defined name outside the supported subset, or one that depends on itself, even if unused. |
+| `unparseable formula` (`Sheet1!D1: <parser message>`) | A stored formula the formula parser cannot read. Fix or rewrite the formula. |
+| `unsupported ZIP extra field 0x....`, `ZIP64 member`, `ZIP entry comment` (part) | A ZIP container feature outside the [admitted subset](#zip-containers). Re-saving the workbook in Excel, LibreOffice or openpyxl writes an admitted container. |
 | `engine-specific error has no approved XLSX cache encoding` (`#CIRC!`, `#N/IMPL!`, ...) | A circular reference, a function the engine does not implement, or another result that has no Excel cache representation. |
 | `formula result is not current: ...` (sheet) | A formula was still not current after evaluation. Stale values are never published. |
 | `input byte limit`, `formula cell count limit`, `worksheet width limit`, ... (`XLSX package`, part) | The input exceeds a resource bound (see below). |

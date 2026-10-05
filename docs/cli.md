@@ -58,7 +58,7 @@ The library reads a bounded snapshot, writes a same-directory temporary file, pr
 | 64 | `error` | Command-line usage error, including an invalid `--now`, `--tz` or `--seed` value |
 | 130 | `interrupted` | Cancelled (Ctrl-C/SIGINT) before publication. Nothing written. |
 
-A file without the XLSX ZIP local-header signature is an error (1). Malformed ZIPs that pass that check may be structured strict-path refusals (2). Refusals pass the library's feature/context through verbatim; see [refusal messages](cache-only-xlsx.md#refusal-messages) for their meaning.
+A file without the XLSX ZIP local-header signature is an error (1). Malformed ZIPs that pass that check may be structured strict-path refusals (2). Workbooks saved by Excel (desktop, Mac and Online), LibreOffice, Google Sheets, openpyxl and Info-ZIP `zip` are admitted as containers; ZIP64, encryption, entry comments and unknown ZIP extra fields are refused (see [ZIP containers](cache-only-xlsx.md#zip-containers)). A stored formula the parser cannot read is a refusal (`unparseable formula`, with the sheet, cell and parser message in `context`), not an error. Refusals pass the library's feature/context through verbatim; see [refusal messages](cache-only-xlsx.md#refusal-messages) for their meaning.
 
 Without `--json`, success and `--check` lines (exit 0 and 3) go to stdout; errors, refusals and usage errors go to stderr. `--version` and help print ordinary text to stdout.
 
