@@ -22,6 +22,8 @@ macro_rules! fixture {
 }
 const DATE1904: &[u8] = fixture!("date1904_x15.xlsx");
 const DATE1900: &[u8] = fixture!("date1900_x15.xlsx");
+const CONTROLS: &[u8] = fixture!("controls.xlsx");
+const CONTROLS_PLAIN: &[u8] = fixture!("controls_plain.xlsx");
 const WORKBOOK: &str = "xl/workbook.xml";
 const SHEET: &str = "xl/worksheets/sheet1.xml";
 const X15_EXT: &str = "<ext uri=\"{140A7094-0E35-4892-8432-C4D2E57EDEB5}\" xmlns:x15=\"http://schemas.microsoft.com/office/spreadsheetml/2010/11/main\"><x15:workbookPr chartTrackingRefBase=\"1\"/></ext>";
@@ -165,4 +167,103 @@ fn x15_workbook_pr_lookalikes_are_refused() {
             assert!(error.contains(reason), "{new}: {error}");
         }
     }
+}
+
+fn control_values(out: &[u8]) -> Vec<f64> {
+    let mut v: Vec<f64> = (0..5).map(|r| number(out, "Data", (r, 1))).collect();
+    v.extend((0..3).map(|r| number(out, "Data", (r, 3))));
+    v
+}
+const OLE_OBJECTS: &str = "<oleObjects><mc:AlternateContent xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\"><mc:Choice Requires=\"x14\"><oleObject progId=\"Paint.Picture\" shapeId=\"1026\"><objectPr defaultSize=\"0\"><anchor moveWithCells=\"1\"><from><xdr:col>0</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>0</xdr:row><xdr:rowOff>28575</xdr:rowOff></from><to><xdr:col>3</xdr:col><xdr:colOff>466725</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>314325</xdr:rowOff></to></anchor></objectPr></oleObject></mc:Choice><mc:Fallback><oleObject progId=\"Paint.Picture\" shapeId=\"1026\"/></mc:Fallback></mc:AlternateContent></oleObjects>";
+
+#[test]
+fn form_controls_and_x14_validations_compute_as_without_them() {
+    let sheet = text(CONTROLS, SHEET);
+    assert!(sheet.contains("<xdr:row>3</xdr:row>") && sheet.contains("<xm:f>"));
+    let plain = recalc(CONTROLS_PLAIN);
+    let expected = vec![20.0, 40.0, 60.0, 80.0, 100.0, 300.0, 2.0, 10.0];
+    assert_eq!(control_values(&plain), expected);
+    let out = recalc(CONTROLS);
+    assert_eq!(control_values(&out), expected);
+    untouched_except_sheet(CONTROLS, &out);
+    // The extension markup after sheetData is carried through verbatim.
+    let tail = |s: &str| s[s.find("</sheetData>").unwrap()..].to_owned();
+    assert_eq!(tail(&text(&out, SHEET)), tail(&sheet));
+    // OLE object anchors, as Excel writes them.
+    let ole = edit(
+        CONTROLS,
+        SHEET,
+        "<extLst>",
+        &format!("{OLE_OBJECTS}<extLst>"),
+    );
+    assert_eq!(control_values(&recalc(&ole)), expected);
+}
+
+#[test]
+fn worksheet_lookalikes_in_data_bearing_or_unknown_positions_are_refused() {
+    let lookalike = "foreign worksheet lookalike";
+    let in_row = "<row r=\"2\"><mc:AlternateContent><mc:Choice Requires=\"x14\"><anchor><from><xdr:row>4</xdr:row></from></anchor></mc:Choice></mc:AlternateContent>";
+    for (old, new) in [
+        // Calamine reads any `row` or `f` inside sheetData as data.
+        ("<row r=\"2\">", in_row),
+        (
+            "<c r=\"B1\"><f>A1*2</f>",
+            "<c r=\"B1\"><f>A1*2</f><extLst><ext uri=\"{0}\"><xm:f xmlns:xm=\"http://schemas.microsoft.com/office/excel/2006/main\">A1*3</xm:f></ext></extLst>",
+        ),
+        // An unknown namespace in the anchor.
+        (
+            "<xdr:row>3</xdr:row>",
+            "<u:row xmlns:u=\"urn:unknown\">3</u:row>",
+        ),
+        // Drawing names other than the anchor row/column, and anchors
+        // outside markup-compatibility content.
+        ("<xdr:row>3</xdr:row>", "<xdr:c>3</xdr:c>"),
+        (
+            "<extLst>",
+            "<controls><control shapeId=\"1\"><controlPr><anchor><from><xdr:row>0</xdr:row></from></anchor></controlPr></control></controls><extLst>",
+        ),
+        (
+            "<xdr:row>3</xdr:row>",
+            "<xdr:row>3</xdr:row><xdr:sheetData/>",
+        ),
+        // xm:f outside the worksheet extension list.
+        (
+            "<controls>",
+            "<controls><xm:f xmlns:xm=\"http://schemas.microsoft.com/office/excel/2006/main\">1</xm:f>",
+        ),
+        // Calamine reads merge cells by local name anywhere in the part.
+        (
+            "<xm:sqref>",
+            "<x14:mergeCells><x14:mergeCell ref=\"A1:B2\"/></x14:mergeCells><xm:sqref>",
+        ),
+    ] {
+        let error = refusal(&edit(CONTROLS, SHEET, old, new));
+        assert!(error.contains(lookalike), "{new}: {error}");
+    }
+}
+
+/// Under sheetData Calamine's cell reader treats every element inside a cell
+/// as cell payload: an extension list holding `xm:f` there is not ignored.
+#[test]
+fn calamine_does_not_ignore_extension_content_inside_cells() {
+    let formula = |bytes: &[u8], cell| {
+        let mut x = Xlsx::new(Cursor::new(bytes)).unwrap();
+        x.worksheet_formula("Data")
+            .map(|r| r.get_value(cell).cloned())
+    };
+    // A recalculated copy, whose caches Calamine can decode.
+    let base = recalc(CONTROLS_PLAIN);
+    assert_eq!(formula(&base, (0, 1)).unwrap().as_deref(), Some("A1*2"));
+    let cell = text(&base, SHEET);
+    let b1 = &cell[cell.find("<c r=\"B1\"").unwrap()..];
+    let b1 = &b1[..b1.find("</c>").unwrap()];
+    let cell_ext = edit(
+        &base,
+        SHEET,
+        b1,
+        &format!(
+            "{b1}<extLst><ext uri=\"{{0}}\"><xm:f xmlns:xm=\"http://schemas.microsoft.com/office/excel/2006/main\">A1*3</xm:f></ext></extLst>"
+        ),
+    );
+    assert!(formula(&cell_ext, (0, 1)).is_err());
 }
