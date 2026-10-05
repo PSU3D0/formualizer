@@ -3,7 +3,7 @@ title: Pyodide Quickstart
 description: Run formualizer in the browser via Pyodide — install with micropip and evaluate workbook formulas client-side.
 ---
 
-Formualizer publishes native CPython wheels to PyPI. Pyodide wheels (`*-pyodide_<abi>_wasm32.whl`) are built and smoke-tested in CI and release workflows, then uploaded only as the `wheels-pyodide` Actions artifact; they are not uploaded to PyPI or attached to GitHub Releases. The core Formualizer API is available in Pyodide, subject to the platform-specific defaults and runtime limitations noted below.
+Formualizer publishes native CPython wheels to PyPI. Pyodide wheels (`*-pyemscripten_<abi>_wasm32.whl`) are built and smoke-tested in CI and release workflows, then uploaded only as the `wheels-pyodide` Actions artifact; they are not uploaded to PyPI or attached to GitHub Releases. The core Formualizer API is available in Pyodide, subject to the platform-specific defaults and runtime limitations noted below.
 
 ## 1) Install in a Pyodide runtime
 
@@ -60,7 +60,7 @@ restored.evaluate_cell("Sheet1", 1, 2)
 
 ## Tested Pyodide target
 
-The CI and release smoke paths currently use **Pyodide 0.29.3** and the wheel's derived ABI (currently `pyodide_2025_0`). Rebuild and smoke-test a wheel when targeting another runtime.
+The CI and release smoke paths currently use **Pyodide 314.0.7** (Python 3.14) and the wheel's derived platform tag (currently `pyemscripten_2026_0_wasm32`). The wheel does not install in Pyodide 0.29.x. Rebuild and smoke-test a wheel when targeting another runtime.
 
 ## Pyodide-specific behavior
 

@@ -1,6 +1,5 @@
 // See crates/formualizer-common/src/lib.rs for rationale. The nested-if form
-// is kept so the Pyodide-matched Rust nightly (pre let-chain stabilization)
-// still builds this crate.
+// predates let chains on the Pyodide toolchain.
 #![allow(clippy::collapsible_if)]
 
 use pyo3::prelude::*;

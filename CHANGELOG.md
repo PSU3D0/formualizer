@@ -24,6 +24,7 @@ This release introduces `formualizer recalc`: after openpyxl or another editor s
 
 ### Changed
 
+- Retargeted the Pyodide wheel from Pyodide 0.29.x to Pyodide 314.0.7 (Python 3.14). The wheel is now tagged `pyemscripten_2026_0_wasm32` and no longer installs in Pyodide 0.29.x. CI and releases build with Rust 1.99.0; the Pyodide wheel builds with Pyodide's Rust 1.93.0.
 - **`^` is now left-associative, as in Excel.** `=2^3^2` returns `64` (was `512`), and `=2^-1^2` returns `0.25` (was `2`). Formulas that chain `^` without brackets change value. (#508, @mcdonaldsam)
 
 ### Added

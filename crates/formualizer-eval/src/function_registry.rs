@@ -125,15 +125,22 @@ impl BuiltinLoadState {
     }
 
     fn record_displacement(&self) {
-        let _ = self
-            .displacements
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
-                Some(
-                    count
-                        .checked_add(1)
-                        .unwrap_or(BUILTIN_DISPLACEMENTS_EXHAUSTED),
-                )
-            });
+        // `fetch_update` is deprecated in newer Rust and its replacement
+        // `try_update` is missing from the Pyodide wheel's Rust 1.93, so use
+        // a compare-exchange loop that builds on both.
+        let mut count = self.displacements.load(Ordering::Acquire);
+        loop {
+            let next = count.saturating_add(1);
+            match self.displacements.compare_exchange_weak(
+                count,
+                next,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => break,
+                Err(observed) => count = observed,
+            }
+        }
     }
 
     fn loaded(&self) -> bool {
@@ -1609,6 +1616,24 @@ pub(crate) mod tests {
                 state.displacements.load(Ordering::Acquire),
                 BUILTIN_DISPLACEMENTS_EXHAUSTED
             );
+        }
+    }
+
+    #[test]
+    fn builtin_load_state_displacements_are_atomic_and_saturating() {
+        for (initial, expected) in [(0, 8_000), (u64::MAX - 10, BUILTIN_DISPLACEMENTS_EXHAUSTED)] {
+            let state = BuiltinLoadState::new(initial);
+            std::thread::scope(|scope| {
+                for _ in 0..8 {
+                    let state = &state;
+                    scope.spawn(move || {
+                        for _ in 0..1_000 {
+                            state.record_displacement();
+                        }
+                    });
+                }
+            });
+            assert_eq!(state.displacements.load(Ordering::Acquire), expected);
         }
     }
 

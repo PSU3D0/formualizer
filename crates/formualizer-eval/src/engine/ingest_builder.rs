@@ -562,7 +562,7 @@ impl<'g> BulkIngestBuilder<'g> {
                             prepared.iter().map(|(formula, _)| *formula).collect();
                         let row_plans: Vec<(u32, u32, DependencyPlanRow)> = chunk
                             .iter()
-                            .zip(prepared.into_iter())
+                            .zip(prepared)
                             .map(|(formula, (_, plan))| (formula.row, formula.col, plan))
                             .collect();
                         (ast_ids, row_plans)

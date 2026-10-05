@@ -1692,7 +1692,7 @@ impl Function for CountBlankFn {
                         let (_, _, tag_cols) = tag_res?;
                         let (_, _, text_cols) = text_res?;
 
-                        for (tc, xc) in tag_cols.into_iter().zip(text_cols.into_iter()) {
+                        for (tc, xc) in tag_cols.into_iter().zip(text_cols) {
                             visited_cells += tc.len() as u64;
                             let text_arr = xc
                                 .as_any()

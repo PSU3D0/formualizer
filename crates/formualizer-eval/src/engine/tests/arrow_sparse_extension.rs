@@ -48,10 +48,7 @@ fn sparse_overlay_write_does_not_densify_untouched_columns() {
         .sheet_store()
         .sheet(sheet)
         .expect("arrow sheet exists");
-    assert!(
-        (asheet.nrows as u32) >= far_row,
-        "sheet should track logical growth"
-    );
+    assert!(asheet.nrows >= far_row, "sheet should track logical growth");
 
     // Untouched columns should not be densified with hundreds of empty chunks.
     for c in 0..ncols {

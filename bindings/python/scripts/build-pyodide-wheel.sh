@@ -8,8 +8,8 @@ PYODIDE_CMD=(uvx --from pyodide-cli --with pyodide-build pyodide)
 
 # Target a specific Pyodide runtime version. The `pyodide_<abi>_wasm32` tag
 # and downstream config values all derive from this pin. Override at invocation
-# time if you need to retarget: `PYODIDE_XBUILDENV_VERSION=0.30.0 ./scripts/...`.
-PYODIDE_XBUILDENV_VERSION="${PYODIDE_XBUILDENV_VERSION:-0.29.3}"
+# time if you need to retarget: `PYODIDE_XBUILDENV_VERSION=0.29.5 ./scripts/...`.
+PYODIDE_XBUILDENV_VERSION="${PYODIDE_XBUILDENV_VERSION:-314.0.7}"
 
 printf 'Preparing Pyodide wheel build\n'
 printf '  xbuildenv:   %s\n' "$PYODIDE_XBUILDENV_VERSION"
@@ -47,25 +47,36 @@ if ! rustup toolchain list | grep -Fq "$RUST_TOOLCHAIN"; then
 fi
 export RUSTUP_TOOLCHAIN="$RUST_TOOLCHAIN"
 
-# Replace the stock wasm32-unknown-emscripten sysroot with Pyodide's wasm-EH
-# sysroot. Stock rustup ships a std built with JS-trampoline exceptions
-# (invoke_*), which fails to import under Pyodide 0.29+ (expects wasm EH).
 RUSTC_SYSROOT="$(rustc --print sysroot)"
 RUSTLIB_DIR="$RUSTC_SYSROOT/lib/rustlib"
 EH_TARGET_DIR="$RUSTLIB_DIR/wasm32-unknown-emscripten"
 EH_MARKER="$EH_TARGET_DIR/.pyodide-wasm-eh.sentinel"
-EH_EXPECTED_TAG="$(basename "$RUST_EMSCRIPTEN_TARGET_URL" .tar.bz2)"
 
-if [[ ! -f "$EH_MARKER" || "$(cat "$EH_MARKER" 2>/dev/null)" != "$EH_EXPECTED_TAG" ]]; then
-    printf 'Installing Pyodide wasm-EH rust sysroot (%s)\n' "$EH_EXPECTED_TAG"
-    tmpdir="$(mktemp -d)"
-    trap 'rm -rf "$tmpdir"' RETURN
-    tarball="$tmpdir/sysroot.tar.bz2"
-    curl -fL --retry 3 -o "$tarball" "$RUST_EMSCRIPTEN_TARGET_URL"
-    mkdir -p "$RUSTLIB_DIR"
-    rm -rf "$EH_TARGET_DIR"
-    tar -xjf "$tarball" -C "$RUSTLIB_DIR"
-    printf '%s' "$EH_EXPECTED_TAG" > "$EH_MARKER"
+if [[ -n "$RUST_EMSCRIPTEN_TARGET_URL" ]]; then
+    # Pyodide 0.29.x builds with a nightly whose stock wasm32-unknown-emscripten
+    # std uses JS-trampoline exceptions (invoke_*), which fails to import under
+    # Pyodide 0.29+ (expects wasm EH). Replace it with Pyodide's wasm-EH sysroot.
+    EH_EXPECTED_TAG="$(basename "$RUST_EMSCRIPTEN_TARGET_URL" .tar.bz2)"
+    if [[ ! -f "$EH_MARKER" || "$(cat "$EH_MARKER" 2>/dev/null)" != "$EH_EXPECTED_TAG" ]]; then
+        printf 'Installing Pyodide wasm-EH rust sysroot (%s)\n' "$EH_EXPECTED_TAG"
+        tmpdir="$(mktemp -d)"
+        trap 'rm -rf "$tmpdir"' RETURN
+        tarball="$tmpdir/sysroot.tar.bz2"
+        curl -fL --retry 3 -o "$tarball" "$RUST_EMSCRIPTEN_TARGET_URL"
+        mkdir -p "$RUSTLIB_DIR"
+        rm -rf "$EH_TARGET_DIR"
+        tar -xjf "$tarball" -C "$RUSTLIB_DIR"
+        printf '%s' "$EH_EXPECTED_TAG" > "$EH_MARKER"
+    fi
+else
+    # Pyodide 314+ pins a stable Rust whose stock wasm32-unknown-emscripten std
+    # already uses wasm EH, so the rustup target is used as is. Drop a custom
+    # sysroot left over from an older xbuildenv first.
+    if [[ -f "$EH_MARKER" ]]; then
+        rustup target remove --toolchain "$RUST_TOOLCHAIN" wasm32-unknown-emscripten || true
+        rm -rf "$EH_TARGET_DIR"
+    fi
+    rustup target add --toolchain "$RUST_TOOLCHAIN" wasm32-unknown-emscripten
 fi
 
 rm -rf dist/pyodide
@@ -74,7 +85,7 @@ mkdir -p dist/pyodide
 # Purge any previously cached wasm build — cargo will otherwise reuse
 # artifacts compiled with the stock (non-wasm-EH) sysroot and flags.
 WORKSPACE_ROOT="$(cargo locate-project --workspace --message-format plain | xargs dirname)"
-rm -rf "$WORKSPACE_ROOT/target/wasm32-unknown-emscripten"
+rm -rf "${CARGO_TARGET_DIR:-$WORKSPACE_ROOT/target}/wasm32-unknown-emscripten"
 
 # Export the canonical Pyodide toolchain flags so `pyodide build` (which,
 # unlike `pyodide build-recipes`, doesn't inject them automatically) emits
@@ -96,14 +107,17 @@ if [[ -z "$wheel_path" ]]; then
     exit 1
 fi
 
-# pyodide-build 0.34 repacks wheels with the forward-looking
-# `pyemscripten_2025_0_wasm32` tag, which the micropip shipped with
-# Pyodide 0.29.x parses as a bogus "Emscripten v pyemscripten.2025.0"
-# string and rejects. The actual tag Pyodide 0.29.x expects (matching
-# its own lockfile) is `pyodide_2025_0_wasm32`. Retag to that so
-# `micropip.install(...)` accepts the wheel without falling back to
-# zip extraction.
-CANONICAL_PLATFORM_TAG="pyodide_${PYODIDE_ABI_VERSION}_wasm32"
+# Recent pyodide-build repacks wheels with the `pyemscripten_<abi>_wasm32`
+# tag. Pyodide 314+ expects exactly that, but the micropip shipped with
+# Pyodide 0.29.x parses it as a bogus "Emscripten v pyemscripten.2025.0"
+# string and rejects it; 0.29.x expects `pyodide_2025_0_wasm32`. Retag for
+# that ABI so `micropip.install(...)` accepts the wheel without falling
+# back to zip extraction.
+if [[ "$PYODIDE_ABI_VERSION" == 2025_* ]]; then
+    CANONICAL_PLATFORM_TAG="pyodide_${PYODIDE_ABI_VERSION}_wasm32"
+else
+    CANONICAL_PLATFORM_TAG="pyemscripten_${PYODIDE_ABI_VERSION}_wasm32"
+fi
 current_plat_tag="$(basename "$wheel_path" .whl | awk -F- '{print $NF}')"
 if [[ "$current_plat_tag" != "$CANONICAL_PLATFORM_TAG" ]]; then
     printf 'Retagging wheel platform tag: %s -> %s\n' "$current_plat_tag" "$CANONICAL_PLATFORM_TAG"

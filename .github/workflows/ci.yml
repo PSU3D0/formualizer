@@ -30,7 +30,9 @@ jobs:
         python-version: ${{ matrix.python-version }}
 
     - name: Set up Rust
-      uses: dtolnay/rust-toolchain@stable
+      uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      with:
+        toolchain: 1.99.0
 
     - name: Cache Rust dependencies
       uses: actions/cache@v4
@@ -108,9 +110,9 @@ jobs:
     - uses: actions/checkout@v4
 
     - name: Set up Rust
-      uses: dtolnay/rust-toolchain@stable
+      uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
       with:
-        toolchain: 1.93.0
+        toolchain: 1.99.0
         components: rustfmt, clippy
 
     - name: Cache Rust dependencies
@@ -211,13 +213,16 @@ jobs:
     - uses: actions/checkout@v4
 
     - name: Set up Rust
-      uses: dtolnay/rust-toolchain@stable
+      uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      with:
+        toolchain: 1.99.0
 
     - name: Build wheels
       uses: PyO3/maturin-action@v1
       with:
         # Avoid maturin-action's broken automatic range resolution on Node 24.
         maturin-version: v1.11.5
+        rust-toolchain: 1.99.0
         working-directory: bindings/python
         # Build a single abi3 wheel (not one per Python interpreter)
         # In `act` (local CI), avoid nested manylinux Docker to keep things working.
@@ -239,22 +244,26 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    # Host Python major.minor must match the xbuildenv's CPython (3.13 for
-    # Pyodide 0.29.x) so maturin's sysconfig introspection can find the
+    # Host Python major.minor must match the xbuildenv's CPython (3.14 for
+    # Pyodide 314.0.x) so maturin's sysconfig introspection can find the
     # emscripten sysconfigdata module. Don't downgrade this without also
     # changing bindings/python/scripts/build-pyodide-wheel.sh's pin.
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.13'
+        python-version: '3.14'
 
     - name: Set up Node.js
       uses: actions/setup-node@v4
       with:
         node-version: '24'
 
+    # Provides rustup; the wheel itself is compiled with the Rust toolchain
+    # pinned by the Pyodide xbuildenv (see build-pyodide-wheel.sh).
     - name: Set up Rust
-      uses: dtolnay/rust-toolchain@stable
+      uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      with:
+        toolchain: 1.99.0
 
     - name: Cache Rust dependencies
       uses: actions/cache@v4
@@ -270,7 +279,7 @@ jobs:
     - name: Set up uv
       uses: astral-sh/setup-uv@v7
       with:
-        python-version: '3.13'
+        python-version: '3.14'
         working-directory: bindings/python
 
     - name: Build Pyodide wheel
@@ -280,9 +289,9 @@ jobs:
     - name: Smoke-test Pyodide wheel
       working-directory: bindings/python
       run: |
-        wheel="$(ls dist/pyodide/*-pyodide_*_wasm32.whl | head -1)"
+        wheel="$(ls dist/pyodide/*_wasm32.whl | head -1)"
         if [[ -z "$wheel" ]]; then
-          echo "No retagged pyodide wheel found in dist/pyodide" >&2
+          echo "No Pyodide wheel found in dist/pyodide" >&2
           exit 1
         fi
         ./scripts/smoke-pyodide-wheel.sh "$wheel"
@@ -382,8 +391,9 @@ jobs:
         PY
 
     - name: Set up Rust
-      uses: dtolnay/rust-toolchain@stable
+      uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
       with:
+        toolchain: 1.99.0
         components: llvm-tools-preview
 
     - name: Install cargo-llvm-cov

@@ -1,7 +1,5 @@
-#![cfg_attr(target_os = "emscripten", feature(let_chains))]
-// The Pyodide-matched Rust nightly predates let-chain stabilization, so this
-// crate intentionally keeps `if let ... { if cond { ... } }` nesting in a few
-// places. Allow clippy's collapse-suggestion globally rather than annotating
+// This crate keeps `if let ... { if cond { ... } }` nesting in a few places,
+// written when the Pyodide wheel built on a nightly without let chains. Allow clippy's collapse-suggestion globally rather than annotating
 // each site and risking drift.
 #![allow(clippy::collapsible_if)]
 

@@ -1727,7 +1727,7 @@ impl OverlayFragment {
         let mut merged_ends: Vec<u32> = Vec::with_capacity(run_ends.len());
         let mut merged_values: Vec<OverlayValue> = Vec::with_capacity(values.len());
         let mut prev_end = 0usize;
-        for (end, value) in run_ends.into_iter().zip(values.into_iter()) {
+        for (end, value) in run_ends.into_iter().zip(values) {
             if end <= prev_end || end > len {
                 return None;
             }

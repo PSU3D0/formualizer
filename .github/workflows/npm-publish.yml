@@ -22,6 +22,9 @@ env:
 jobs:
   publish-npm:
     runs-on: ubuntu-latest
+    env:
+      # Keep the `-D warnings` default the previous setup-rust-toolchain action set.
+      RUSTFLAGS: -D warnings
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -29,9 +32,9 @@ jobs:
           ref: ${{ inputs.ref }}
 
       - name: Set up Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
-          toolchain: stable
+          toolchain: 1.99.0
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
