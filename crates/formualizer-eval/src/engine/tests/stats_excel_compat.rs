@@ -432,3 +432,126 @@ fn legacy_names_are_case_insensitive_and_nest() {
         1e-9,
     );
 }
+
+/* ───────────────────────── paired two-array functions ───────────────────────── */
+
+/// y = A1:A5 = 2, 4, <blank>, 8, 10 and x = B1:B5 = 1, 2, 3, "t", 5:
+/// rows 3 and 4 are dropped, leaving the pairs (1,2), (2,4), (5,10).
+fn paired_fixture() -> Engine<TestWorkbook> {
+    let mut e = engine();
+    num(&mut e, "A1", 2.0);
+    num(&mut e, "A2", 4.0);
+    num(&mut e, "A4", 8.0);
+    num(&mut e, "A5", 10.0);
+    num(&mut e, "B1", 1.0);
+    num(&mut e, "B2", 2.0);
+    num(&mut e, "B3", 3.0);
+    set(&mut e, "B4", LiteralValue::Text("t".into()));
+    num(&mut e, "B5", 5.0);
+    e
+}
+
+#[test]
+fn correl_drops_the_pair_when_one_side_is_blank() {
+    // Repro: A1:A4 = 1..4, B1 blank, B2:B4 = 4, 6, 8. Excel: 1.
+    let mut e = engine();
+    for (i, v) in [1.0, 2.0, 3.0, 4.0].iter().enumerate() {
+        num(&mut e, &format!("A{}", i + 1), *v);
+    }
+    for (i, v) in [4.0, 6.0, 8.0].iter().enumerate() {
+        num(&mut e, &format!("B{}", i + 2), *v);
+    }
+    assert_close(
+        eval_in(&mut e, "=CORREL(A1:A4,B1:B4)"),
+        1.0,
+        1e-12,
+        "CORREL",
+    );
+}
+
+#[test]
+fn paired_functions_drop_pairs_with_blank_text_or_logical() {
+    // Pairs (1,2), (2,4), (5,10): y = 2x exactly.
+    let cases: [(&str, f64); 12] = [
+        ("=CORREL(A1:A5,B1:B5)", 1.0),
+        ("=PEARSON(A1:A5,B1:B5)", 1.0),
+        ("=RSQ(A1:A5,B1:B5)", 1.0),
+        ("=SLOPE(A1:A5,B1:B5)", 2.0),
+        ("=INTERCEPT(A1:A5,B1:B5)", 0.0),
+        ("=STEYX(A1:A5,B1:B5)", 0.0),
+        // mean x = 8/3, sum dx^2 = 78/9, cov(x, 2x) = 2 * 78/9 / n
+        ("=COVAR(A1:A5,B1:B5)", 2.0 * 78.0 / 9.0 / 3.0),
+        ("=COVARIANCE.P(A1:A5,B1:B5)", 2.0 * 78.0 / 9.0 / 3.0),
+        ("=COVARIANCE.S(A1:A5,B1:B5)", 2.0 * 78.0 / 9.0 / 2.0),
+        ("=_xlfn.COVARIANCE.S(A1:A5,B1:B5)", 2.0 * 78.0 / 9.0 / 2.0),
+        ("=FORECAST(6,A1:A5,B1:B5)", 12.0),
+        ("=FORECAST.LINEAR(6,A1:A5,B1:B5)", 12.0),
+    ];
+    for (formula, expected) in cases {
+        let mut e = paired_fixture();
+        assert_close(eval_in(&mut e, formula), expected, 1e-9, formula);
+    }
+}
+
+#[test]
+fn paired_functions_drop_logical_cells_pairwise() {
+    let mut e = engine();
+    for (i, v) in [1.0, 2.0, 3.0, 4.0].iter().enumerate() {
+        num(&mut e, &format!("A{}", i + 1), *v);
+        num(&mut e, &format!("B{}", i + 1), 3.0 * v);
+    }
+    // A logical in y at row 2: the pair is dropped, not the value alone.
+    set(&mut e, "A2", LiteralValue::Boolean(true));
+    num(&mut e, "B2", 100.0);
+    assert_close(eval_in(&mut e, "=SLOPE(B1:B4,A1:A4)"), 3.0, 1e-12, "SLOPE");
+}
+
+#[test]
+fn paired_functions_reject_different_sizes() {
+    for formula in [
+        "=CORREL(A1:A4,B1:B5)",
+        "=PEARSON(A1:A4,B1:B5)",
+        "=RSQ(A1:A4,B1:B5)",
+        "=SLOPE(A1:A4,B1:B5)",
+        "=INTERCEPT(A1:A4,B1:B5)",
+        "=STEYX(A1:A4,B1:B5)",
+        "=COVAR(A1:A4,B1:B5)",
+        "=COVARIANCE.P(A1:A4,B1:B5)",
+        "=COVARIANCE.S(A1:A4,B1:B5)",
+        "=FORECAST(1,A1:A4,B1:B5)",
+    ] {
+        let mut e = paired_fixture();
+        // A 4-cell array against a 5-cell array is #N/A whatever the cells hold.
+        assert_error(eval_in(&mut e, formula), ExcelErrorKind::Na, formula);
+    }
+}
+
+#[test]
+fn correl_pairs_whole_columns_by_row() {
+    // Columns with different used extents still pair row by row.
+    let mut e = engine();
+    for (i, v) in [1.0, 2.0, 3.0, 4.0, 5.0].iter().enumerate() {
+        num(&mut e, &format!("D{}", i + 3), *v);
+    }
+    // E starts one row later and runs two rows past D; the extra rows pair
+    // with blanks in D and are dropped.
+    for (i, v) in [5.0, 7.0, 9.0, 11.0, 50.0, 60.0].iter().enumerate() {
+        num(&mut e, &format!("E{}", i + 4), *v);
+    }
+    // Rows 4..7 pair (2,5), (3,7), (4,9), (5,11): slope 2, correlation 1.
+    assert_close(eval_in(&mut e, "=CORREL(D:D,E:E)"), 1.0, 1e-12, "CORREL");
+    assert_close(eval_in(&mut e, "=SLOPE(E:E,D:D)"), 2.0, 1e-12, "SLOPE");
+    assert_close(
+        eval_in(&mut e, "=INTERCEPT(E:E,D:D)"),
+        1.0,
+        1e-12,
+        "INTERCEPT",
+    );
+}
+
+#[test]
+fn paired_inline_arrays_pair_by_position() {
+    check("=CORREL({1,2,3,4},{\"x\",4,6,8})", 1.0, 1e-12);
+    check("=SLOPE({2,4,6},{1,2,3})", 2.0, 1e-12);
+    check_err("=SLOPE({2,4,6},{1,2})", ExcelErrorKind::Na);
+}

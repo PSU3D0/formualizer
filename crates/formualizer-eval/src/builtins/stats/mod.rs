@@ -2514,19 +2514,150 @@ impl Function for TrimmeanFn {
 /* ─────────────────────────── CORREL ──────────────────────────── */
 
 /// Helper to collect two paired arrays for regression/correlation functions
-fn collect_paired_arrays(args: &[ArgumentHandle]) -> Result<(Vec<f64>, Vec<f64>), ExcelError> {
-    let y_nums = collect_numeric_stats(&args[0..1])?;
-    let x_nums = collect_numeric_stats(&args[1..2])?;
+/// The numeric cells of one array argument of a paired function, keyed by
+/// their row-major position in the argument's full (logical) extent.
+struct PairedSide {
+    /// Number of cells the argument spans, blanks included.
+    len: u64,
+    /// `(position, value)` for each numeric cell, in increasing position.
+    values: Vec<(u64, f64)>,
+}
 
-    // Arrays must have same length
-    if y_nums.len() != x_nums.len() {
-        return Err(ExcelError::new_na());
+/// Logical extent and the view's offset inside it, for an open-ended range
+/// (`A:A`, `3:3`, `A5:A`). Evaluation trims those to the used region of the
+/// sheet, which differs between two columns, so cells must be positioned
+/// against the declared extent rather than against the trimmed view.
+fn open_range_frame(
+    arg: &ArgumentHandle<'_, '_>,
+    view: &crate::engine::range_view::RangeView<'_>,
+) -> Option<(u64, u64, u64, u64)> {
+    use formualizer_parse::parser::ReferenceType;
+    if !view.is_sheet_backed() {
+        return None;
+    }
+    let Ok(ReferenceType::Range {
+        start_row,
+        end_row,
+        start_col,
+        end_col,
+        ..
+    }) = arg.as_reference()
+    else {
+        return None;
+    };
+    if start_row.is_some() && end_row.is_some() && start_col.is_some() && end_col.is_some() {
+        return None;
+    }
+    let (r1, r2) = (start_row.unwrap_or(1), end_row.unwrap_or(1_048_576));
+    let (c1, c2) = (start_col.unwrap_or(1), end_col.unwrap_or(16_384));
+    let rows = u64::from(r1.abs_diff(r2)) + 1;
+    let cols = u64::from(c1.abs_diff(c2)) + 1;
+    let row_off = (view.start_row() as u64 + 1).checked_sub(u64::from(r1.min(r2)))?;
+    let col_off = (view.start_col() as u64 + 1).checked_sub(u64::from(c1.min(c2)))?;
+    Some((rows, cols, row_off, col_off))
+}
+
+fn collect_paired_side(arg: &ArgumentHandle<'_, '_>) -> Result<PairedSide, ExcelError> {
+    let mut values = Vec::new();
+    if let Some(arr) = arg.inline_array_literal()? {
+        let mut pos = 0u64;
+        for row in arr {
+            for cell in row {
+                match cell {
+                    LiteralValue::Error(e) => return Err(e),
+                    other => {
+                        if let Ok(n) = coerce_num(&other) {
+                            values.push((pos, n));
+                        }
+                    }
+                }
+                pos += 1;
+            }
+        }
+        return Ok(PairedSide { len: pos, values });
     }
 
+    if let Ok(view) = arg.range_view() {
+        let (rows, cols) = view.dims();
+        let (len, logical_cols, row_off, col_off) = match open_range_frame(arg, &view) {
+            Some((lr, lc, ro, co)) => (lr * lc, lc, ro, co),
+            None => (rows as u64 * cols as u64, cols as u64, 0, 0),
+        };
+        let date_system = arg.date_system();
+        let (mut r, mut c) = (0u64, 0u64);
+        view.for_each_cell(&mut |v| {
+            let n = match v {
+                LiteralValue::Error(e) => return Err(e.clone()),
+                LiteralValue::Number(n) => Some(*n),
+                LiteralValue::Int(i) => Some(*i as f64),
+                LiteralValue::Date(_)
+                | LiteralValue::DateTime(_)
+                | LiteralValue::Time(_)
+                | LiteralValue::Duration(_) => {
+                    crate::coercion::to_serial_strict(v, date_system).ok()
+                }
+                _ => None,
+            };
+            if let Some(n) = n {
+                values.push(((r + row_off) * logical_cols + c + col_off, n));
+            }
+            c += 1;
+            if c == cols as u64 {
+                c = 0;
+                r += 1;
+            }
+            Ok(())
+        })?;
+        return Ok(PairedSide { len, values });
+    }
+
+    match scalar_like_value(arg)? {
+        LiteralValue::Error(e) => Err(e),
+        other => Ok(PairedSide {
+            len: 1,
+            values: coerce_num(&other).map(|n| vec![(0, n)]).unwrap_or_default(),
+        }),
+    }
+}
+
+/// Pair two array arguments by position, as Excel's two-array statistics do
+/// (CORREL, PEARSON, RSQ, SLOPE, INTERCEPT, STEYX, COVAR, COVARIANCE.*,
+/// FORECAST): a position contributes only when both cells are numbers, so a
+/// blank, text or logical on either side drops the pair. Arrays of different
+/// sizes are `#N/A`. The result may be empty; callers choose that error.
+fn collect_pairs(
+    y_arg: &ArgumentHandle<'_, '_>,
+    x_arg: &ArgumentHandle<'_, '_>,
+) -> Result<(Vec<f64>, Vec<f64>), ExcelError> {
+    let y = collect_paired_side(y_arg)?;
+    let x = collect_paired_side(x_arg)?;
+    if y.len != x.len {
+        return Err(ExcelError::new_na());
+    }
+    let (mut ys, mut xs) = (Vec::new(), Vec::new());
+    let (mut i, mut j) = (0, 0);
+    while i < y.values.len() && j < x.values.len() {
+        let (py, vy) = y.values[i];
+        let (px, vx) = x.values[j];
+        match py.cmp(&px) {
+            std::cmp::Ordering::Less => i += 1,
+            std::cmp::Ordering::Greater => j += 1,
+            std::cmp::Ordering::Equal => {
+                ys.push(vy);
+                xs.push(vx);
+                i += 1;
+                j += 1;
+            }
+        }
+    }
+    Ok((ys, xs))
+}
+
+fn collect_paired_arrays(args: &[ArgumentHandle]) -> Result<(Vec<f64>, Vec<f64>), ExcelError> {
+    let (y_nums, x_nums) = collect_pairs(&args[0], &args[1])?;
     if y_nums.is_empty() {
         return Err(ExcelError::new_div());
     }
-
     Ok((y_nums, x_nums))
 }
 
@@ -6169,15 +6300,10 @@ impl Function for ForecastLinearFn {
             }
         };
 
-        let y_vals = collect_numeric_stats(&args[1..2])?;
-        let x_vals = collect_numeric_stats(&args[2..3])?;
-
-        // Arrays must have same length
-        if y_vals.len() != x_vals.len() {
-            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                ExcelError::new_na(),
-            )));
-        }
+        let (y_vals, x_vals) = match collect_pairs(&args[1], &args[2]) {
+            Ok(v) => v,
+            Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
+        };
 
         if y_vals.is_empty() {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
