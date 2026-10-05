@@ -118,6 +118,7 @@ mod arrow_sparse_extension;
 mod arrow_sparse_structural_ops;
 mod arrow_sparse_used_bounds;
 mod blank_formula_results;
+mod chain_anchor;
 mod chain_units;
 mod compressed_range_scheduler;
 mod computed_array_aggregates;
