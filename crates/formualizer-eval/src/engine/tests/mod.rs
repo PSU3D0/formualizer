@@ -249,3 +249,4 @@ mod xlookup_declared_length;
 mod xlookup_excel_parity;
 
 mod snapshot_evaluation;
+mod stats_excel_compat;

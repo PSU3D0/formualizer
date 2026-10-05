@@ -29,6 +29,8 @@ use formualizer_common::{ExcelError, LiteralValue};
 // use std::collections::BTreeMap; // removed unused import
 use formualizer_macros::func_caps;
 
+mod legacy;
+
 fn scalar_like_value(arg: &ArgumentHandle<'_, '_>) -> Result<LiteralValue, ExcelError> {
     Ok(match arg.value()? {
         crate::traits::CalcValue::Scalar(v) | crate::traits::CalcValue::AnnotatedScalar(v, _) => v,
@@ -3076,6 +3078,7 @@ impl Function for NormSDistFn {
 /// - Returns `#NUM!` when `probability <= 0` or `probability >= 1`.
 /// - Output can be negative, zero, or positive depending on which side of `0.5` you query.
 /// - Invalid numeric coercions propagate as spreadsheet errors.
+/// - Alias `NORMSINV` (the Excel 2007 compatibility name) is supported.
 ///
 /// # Examples
 ///
@@ -3106,6 +3109,9 @@ impl Function for NormSInvFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
         "NORM.S.INV"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["NORMSINV"]
     }
     fn min_args(&self) -> usize {
         1
@@ -3142,6 +3148,7 @@ impl Function for NormSInvFn {
 /// - `standard_dev` must be strictly greater than `0`.
 /// - Returns `#NUM!` when `standard_dev <= 0`.
 /// - Invalid numeric coercions propagate as spreadsheet errors.
+/// - Alias `NORMDIST` (the Excel 2007 compatibility name) is supported.
 ///
 /// # Examples
 ///
@@ -3172,6 +3179,9 @@ impl Function for NormDistFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
         "NORM.DIST"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["NORMDIST"]
     }
     fn min_args(&self) -> usize {
         4
@@ -3226,6 +3236,7 @@ impl Function for NormDistFn {
 /// - `standard_dev` must be strictly greater than `0`.
 /// - Returns `#NUM!` for invalid probability bounds or non-positive standard deviation.
 /// - Invalid numeric coercions propagate as spreadsheet errors.
+/// - Alias `NORMINV` (the Excel 2007 compatibility name) is supported.
 ///
 /// # Examples
 ///
@@ -3256,6 +3267,9 @@ impl Function for NormInvFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
         "NORM.INV"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["NORMINV"]
     }
     fn min_args(&self) -> usize {
         3
@@ -3390,6 +3404,7 @@ impl Function for LognormDistFn {
 /// - `standard_dev` must be strictly greater than `0`.
 /// - Returns `#NUM!` when inputs violate probability or scale constraints.
 /// - Invalid numeric coercions propagate as spreadsheet errors.
+/// - Alias `LOGINV` (the Excel 2007 compatibility name) is supported.
 ///
 /// # Examples
 ///
@@ -3420,6 +3435,9 @@ impl Function for LognormInvFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
         "LOGNORM.INV"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["LOGINV"]
     }
     fn min_args(&self) -> usize {
         3
@@ -3813,35 +3831,73 @@ fn chisq_cdf(x: f64, df: f64) -> f64 {
     gamma_p(df / 2.0, x / 2.0)
 }
 
-/// Helper: Chi-square inverse CDF using Newton-Raphson
+/// Helper: solve `cdf(x) = p` for an increasing CDF with density `pdf`.
+///
+/// Newton steps are kept inside a bracket `[lo, hi]` that tightens on every
+/// iteration, falling back to bisection whenever a step would leave it. Plain
+/// Newton from a fixed starting point diverges in the flat tails (a large
+/// shape parameter, or a probability close to 0 or 1). When `hi` is `None` the
+/// support is unbounded above and the bracket is grown from `start` by doubling.
+fn solve_increasing_cdf(
+    p: f64,
+    cdf: impl Fn(f64) -> f64,
+    pdf: impl Fn(f64) -> f64,
+    lo: f64,
+    hi: Option<f64>,
+    start: f64,
+) -> Option<f64> {
+    let mut lo = lo;
+    let mut hi = match hi {
+        Some(hi) => hi,
+        None => {
+            let mut hi = start.max(1.0);
+            while cdf(hi) < p {
+                lo = hi;
+                hi *= 2.0;
+                if !hi.is_finite() {
+                    return None;
+                }
+            }
+            hi
+        }
+    };
+    let mut x = if start > lo && start < hi {
+        start
+    } else {
+        0.5 * (lo + hi)
+    };
+    for _ in 0..300 {
+        let f = cdf(x) - p;
+        if f == 0.0 {
+            return Some(x);
+        }
+        if f < 0.0 {
+            lo = x;
+        } else {
+            hi = x;
+        }
+        let d = pdf(x);
+        let newton = x - f / d;
+        let next = if d > 0.0 && newton.is_finite() && newton > lo && newton < hi {
+            newton
+        } else {
+            0.5 * (lo + hi)
+        };
+        let scale = next.abs().max(f64::MIN_POSITIVE);
+        if (next - x).abs() <= 4.0 * f64::EPSILON * scale || hi - lo <= 4.0 * f64::EPSILON * scale {
+            return Some(next);
+        }
+        x = next;
+    }
+    Some(x)
+}
+
+/// Helper: Chi-square inverse CDF (safeguarded Newton, see `solve_increasing_cdf`)
 fn chisq_inv(p: f64, df: f64) -> Option<f64> {
     if p <= 0.0 || p >= 1.0 {
         return None;
     }
-
-    // Initial guess
-    let mut x = df.max(1.0);
-    if p < 0.5 {
-        x = x.min(1.0);
-    }
-
-    // Newton-Raphson iteration
-    for _ in 0..100 {
-        let cdf = chisq_cdf(x, df);
-        let pdf = chisq_pdf(x, df);
-        if pdf.abs() < 1e-30 {
-            break;
-        }
-        let delta = (cdf - p) / pdf;
-        let new_x = (x - delta).max(1e-15);
-        if (new_x - x).abs() < 1e-12 * x {
-            x = new_x;
-            break;
-        }
-        x = new_x;
-    }
-
-    Some(x)
+    solve_increasing_cdf(p, |x| chisq_cdf(x, df), |x| chisq_pdf(x, df), 0.0, None, df)
 }
 
 /// Helper: Chi-square PDF
@@ -3862,32 +3918,19 @@ fn f_cdf(f: f64, d1: f64, d2: f64) -> f64 {
     beta_i(x, d1 / 2.0, d2 / 2.0)
 }
 
-/// Helper: F distribution inverse CDF using Newton-Raphson
+/// Helper: F distribution inverse CDF (safeguarded Newton, see `solve_increasing_cdf`)
 fn f_inv(p: f64, d1: f64, d2: f64) -> Option<f64> {
     if p <= 0.0 || p >= 1.0 {
         return None;
     }
-
-    // Initial guess
-    let mut f = 1.0;
-
-    // Newton-Raphson iteration
-    for _ in 0..100 {
-        let cdf = f_cdf(f, d1, d2);
-        let pdf = f_pdf(f, d1, d2);
-        if pdf.abs() < 1e-30 {
-            break;
-        }
-        let delta = (cdf - p) / pdf;
-        let new_f = (f - delta).max(1e-15);
-        if (new_f - f).abs() < 1e-12 * f {
-            f = new_f;
-            break;
-        }
-        f = new_f;
-    }
-
-    Some(f)
+    solve_increasing_cdf(
+        p,
+        |f| f_cdf(f, d1, d2),
+        |f| f_pdf(f, d1, d2),
+        0.0,
+        None,
+        1.0,
+    )
 }
 
 /// Helper: F distribution PDF
@@ -4495,6 +4538,7 @@ fn ln_binom(n: i64, k: i64) -> f64 {
 /// - Requires `0 <= number_s <= trials`, `trials >= 0`, and `0 <= probability_s <= 1`.
 /// - Set `cumulative` to non-zero for CDF mode, or `0` for PMF mode.
 /// - Returns `#NUM!` for invalid count or probability ranges.
+/// - Alias `BINOMDIST` (the Excel 2007 compatibility name) is supported.
 ///
 /// # Examples
 ///
@@ -4525,6 +4569,9 @@ impl Function for BinomDistFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
         "BINOM.DIST"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["BINOMDIST"]
     }
     fn min_args(&self) -> usize {
         4
@@ -4587,6 +4634,7 @@ impl Function for BinomDistFn {
 /// - `mean` must be non-negative.
 /// - Set `cumulative` to non-zero for CDF mode, or `0` for PMF mode.
 /// - Returns `#NUM!` for negative counts or negative mean values.
+/// - Alias `POISSON` (the Excel 2007 compatibility name) is supported.
 ///
 /// # Examples
 ///
@@ -4617,6 +4665,9 @@ impl Function for PoissonDistFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
         "POISSON.DIST"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["POISSON"]
     }
     fn min_args(&self) -> usize {
         3
@@ -4673,6 +4724,7 @@ impl Function for PoissonDistFn {
 /// - Set `cumulative` to non-zero for CDF mode, or `0` for PDF mode.
 /// - Returns `#NUM!` when inputs violate domain requirements.
 /// - Invalid numeric coercions propagate as spreadsheet errors.
+/// - Alias `EXPONDIST` (the Excel 2007 compatibility name) is supported.
 ///
 /// # Examples
 ///
@@ -4703,6 +4755,9 @@ impl Function for ExponDistFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
         "EXPON.DIST"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["EXPONDIST"]
     }
     fn min_args(&self) -> usize {
         3
@@ -4756,6 +4811,7 @@ impl Function for ExponDistFn {
 /// - Set `cumulative` to non-zero for CDF mode, or `0` for PDF mode.
 /// - Returns `#NUM!` when any parameter is outside its valid range.
 /// - Invalid numeric coercions propagate as spreadsheet errors.
+/// - Alias `GAMMADIST` (the Excel 2007 compatibility name) is supported.
 ///
 /// # Examples
 ///
@@ -4786,6 +4842,9 @@ impl Function for GammaDistFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
         "GAMMA.DIST"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["GAMMADIST"]
     }
     fn min_args(&self) -> usize {
         4
@@ -4842,6 +4901,7 @@ impl Function for GammaDistFn {
 /// - Set `cumulative` to non-zero for CDF mode, or `0` for PDF mode.
 /// - Returns `#NUM!` when parameters fall outside valid ranges.
 /// - In PDF mode at `x = 0`, behavior follows the Weibull shape-specific limit.
+/// - Alias `WEIBULL` (the Excel 2007 compatibility name) is supported.
 ///
 /// # Examples
 ///
@@ -4872,6 +4932,9 @@ impl Function for WeibullDistFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
         "WEIBULL.DIST"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["WEIBULL"]
     }
     fn min_args(&self) -> usize {
         4
@@ -7885,7 +7948,7 @@ impl Function for TDist2TFn {
 /// - `probability` must satisfy `0 < probability <= 1`.
 /// - `deg_freedom` must be at least `1`.
 /// - Returns `#NUM!` for invalid probability or degree-of-freedom arguments.
-/// - Alias `TINV` is supported.
+/// - The compatibility name `TINV` is a separate function that also truncates `deg_freedom`.
 ///
 /// # Examples
 ///
@@ -7916,9 +7979,6 @@ impl Function for TInv2TFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
         "T.INV.2T"
-    }
-    fn aliases(&self) -> &'static [&'static str] {
-        &["TINV"]
     }
     fn min_args(&self) -> usize {
         2
@@ -8464,7 +8524,7 @@ fn collect_numeric_a(args: &[ArgumentHandle]) -> Result<Vec<f64>, ExcelError> {
 }
 
 /// Helper: inverse of the regularized incomplete beta function.
-/// Given p = I_x(a,b), find x. Uses Newton-Raphson with beta_i / beta PDF.
+/// Given p = I_x(a,b), find x (safeguarded Newton, see `solve_increasing_cdf`).
 fn beta_inv_helper(p: f64, a: f64, b: f64) -> Option<f64> {
     if p <= 0.0 {
         return Some(0.0);
@@ -8475,33 +8535,15 @@ fn beta_inv_helper(p: f64, a: f64, b: f64) -> Option<f64> {
     if a <= 0.0 || b <= 0.0 {
         return None;
     }
-
-    // Initial guess from normal approximation (Abramowitz & Stegun 26.5.22)
-    let mut x = 0.5f64;
-
-    // Newton-Raphson
     let ln_beta_ab = ln_gamma(a) + ln_gamma(b) - ln_gamma(a + b);
-    for _ in 0..100 {
-        let cdf = beta_i(x, a, b);
-        // Beta PDF: x^(a-1) * (1-x)^(b-1) / B(a,b)
-        let pdf = if x > 0.0 && x < 1.0 {
+    let pdf = |x: f64| {
+        if x > 0.0 && x < 1.0 {
             ((a - 1.0) * x.ln() + (b - 1.0) * (1.0 - x).ln() - ln_beta_ab).exp()
         } else {
-            1e-30
-        };
-        if pdf.abs() < 1e-30 {
-            break;
+            0.0
         }
-        let delta = (cdf - p) / pdf;
-        let new_x = (x - delta).clamp(1e-15, 1.0 - 1e-15);
-        if (new_x - x).abs() < 1e-14 {
-            x = new_x;
-            break;
-        }
-        x = new_x;
-    }
-
-    Some(x)
+    };
+    solve_increasing_cdf(p, |x| beta_i(x, a, b), pdf, 0.0, Some(1.0), a / (a + b))
 }
 
 /// Helper: inverse of GAMMA.DIST CDF. Given p = P(alpha, x/beta), find x.
@@ -8515,36 +8557,16 @@ fn gamma_inv_helper(p: f64, alpha: f64, beta: f64) -> Option<f64> {
     if alpha <= 0.0 || beta <= 0.0 {
         return None;
     }
-
-    // Initial guess
-    let mut x = alpha * beta;
-    if p < 0.5 {
-        x = x.min(beta);
-    }
-
-    // Newton-Raphson on the standardized gamma CDF (gamma_p)
-    for _ in 0..100 {
-        let z = x / beta;
-        let cdf = gamma_p(alpha, z);
-        // Gamma PDF: z^(alpha-1) * e^(-z) / Gamma(alpha) / beta
-        let pdf = if z > 0.0 {
-            ((alpha - 1.0) * z.ln() - z - ln_gamma(alpha)).exp() / beta
+    // Solve on the standardized scale z = x / beta.
+    let ln_ga = ln_gamma(alpha);
+    let pdf = |z: f64| {
+        if z > 0.0 {
+            ((alpha - 1.0) * z.ln() - z - ln_ga).exp()
         } else {
-            1e-30
-        };
-        if pdf.abs() < 1e-30 {
-            break;
+            0.0
         }
-        let delta = (cdf - p) / pdf;
-        let new_x = (x - delta).max(1e-15);
-        if (new_x - x).abs() < 1e-12 * x.max(1e-15) {
-            x = new_x;
-            break;
-        }
-        x = new_x;
-    }
-
-    Some(x)
+    };
+    solve_increasing_cdf(p, |z| gamma_p(alpha, z), pdf, 0.0, None, alpha).map(|z| z * beta)
 }
 
 /* ─────────────────────────── AVERAGEA ──────────────────────────── */
@@ -10089,6 +10111,7 @@ impl Function for GammaLnPreciseFn {
 
 pub fn register_builtins() {
     use std::sync::Arc;
+    legacy::register_builtins();
     crate::function_registry::register_builtin(Arc::new(ForecastLinearFn));
     crate::function_registry::register_builtin(Arc::new(LinestFn));
     crate::function_registry::register_builtin(Arc::new(LARGE));
