@@ -351,7 +351,7 @@ pub struct ReptFn;
 ///
 /// # Remarks
 /// - Repeat count is truncated to an integer.
-/// - Negative counts return `#VALUE!`.
+/// - Negative counts return `#VALUE!`, including fractions such as `-0.5`.
 /// - Output longer than 32,767 characters returns `#VALUE!`.
 /// - Non-text first argument is coerced to text.
 ///
@@ -419,24 +419,26 @@ impl Function for ReptFn {
             other => coerce_num(&other)?,
         };
 
-        let count = count.trunc() as i64;
-
-        if count < 0 {
+        // The sign is checked before truncation: a negative fraction such as
+        // -0.13 is #VALUE! in Excel, not a zero count.
+        if count < 0.0 || count.is_nan() {
+            return Ok(CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+        // Excel limits the result to 32,767 characters.
+        const MAX_RESULT_CHARS: usize = 32_767;
+        if text.is_empty() {
+            return Ok(CalcValue::Scalar(LiteralValue::Text(String::new())));
+        }
+        let count = count.trunc().min(MAX_RESULT_CHARS as f64 + 1.0) as usize;
+        if text.chars().count().saturating_mul(count) > MAX_RESULT_CHARS {
             return Ok(CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new_value(),
             )));
         }
 
-        // Excel limits result to 32767 characters
-        let max_result_len = 32767;
-        let result_len = text.len() * (count as usize);
-        if result_len > max_result_len {
-            return Ok(CalcValue::Scalar(LiteralValue::Error(
-                ExcelError::new_value(),
-            )));
-        }
-
-        let result = text.repeat(count as usize);
+        let result = text.repeat(count);
         Ok(CalcValue::Scalar(LiteralValue::Text(result)))
     }
 }
@@ -530,5 +532,49 @@ mod tests {
             .into_literal(),
             LiteralValue::Text("ababab".to_string())
         );
+    }
+
+    fn rept(text: &str, count: f64) -> LiteralValue {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(ReptFn));
+        let ctx = interp(&wb);
+        let s = lit(LiteralValue::Text(text.to_string()));
+        let n = lit(LiteralValue::Number(count));
+        let f = ctx.context.get_function("", "REPT").unwrap();
+        f.dispatch(
+            &[ArgumentHandle::new(&s, &ctx), ArgumentHandle::new(&n, &ctx)],
+            &ctx.function_context(None),
+        )
+        .unwrap()
+        .into_literal()
+    }
+
+    fn assert_value_error(value: LiteralValue) {
+        assert!(
+            matches!(value, LiteralValue::Error(ref e) if e.kind == ExcelErrorKind::Value),
+            "expected #VALUE!, got {value:?}"
+        );
+    }
+
+    #[test]
+    fn rept_negative_count_is_value_error_even_when_fractional() {
+        // number_times must not be negative; the sign is checked before the
+        // fraction is truncated, so -0.13 does not become a zero count.
+        assert_value_error(rept("O", -0.13));
+        assert_value_error(rept("O", -0.07));
+        assert_value_error(rept("O", -1.0));
+        assert_eq!(rept("O", 0.0), LiteralValue::Text(String::new()));
+        assert_eq!(rept("O", 0.9), LiteralValue::Text(String::new()));
+        assert_eq!(rept("ab", 2.9), LiteralValue::Text("abab".to_string()));
+    }
+
+    #[test]
+    fn rept_limit_counts_characters_not_bytes() {
+        // The 32,767 limit is on characters: a two-byte character repeated
+        // 32,767 times fits, one more does not.
+        assert_eq!(rept("é", 32_767.0), LiteralValue::Text("é".repeat(32_767)));
+        assert_value_error(rept("é", 32_768.0));
+        assert_value_error(rept("ab", 16_384.0));
+        assert_value_error(rept("ab", 1e300));
+        assert_eq!(rept("", 1e300), LiteralValue::Text(String::new()));
     }
 }
