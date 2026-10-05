@@ -249,6 +249,11 @@ pub(crate) fn display_equal(old: f64, new: f64) -> bool {
         return false;
     }
     let larger = old.abs().max(new.abs());
+    // 10^E <= larger, so the bound never exceeds larger * 1e-14: anything
+    // ten times further apart is stale without deriving the exponent.
+    if (old - new).abs() > larger * 1e-13 {
+        return false;
+    }
     // 18 significant digits never round a double below a power of ten up
     // to it, so this exponent is floor(log10) of the exact value.
     let scientific = format!("{larger:.17e}");
