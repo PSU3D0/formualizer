@@ -352,7 +352,8 @@ fn criteria_text_is_exact_and_date_text_is_a_date() {
             ];
             for j in 0..3 {
                 assert_eq!(
-                    got[k * 3 + j], want[j],
+                    got[k * 3 + j],
+                    want[j],
                     "family={family} criterion {c}: {}",
                     formulas[k * 3 + j]
                 );
