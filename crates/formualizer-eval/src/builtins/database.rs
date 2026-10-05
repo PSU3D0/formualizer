@@ -88,13 +88,22 @@ fn resolve_field_index(
     }
 }
 
+/// One criteria row: its (column_index, predicate) conditions, ANDed, or
+/// `None` when the row can match no record.
+type CriteriaRow = Option<Vec<(usize, CriteriaPredicate)>>;
+
 /// Parse criteria range into a list of criteria rows.
-/// Each row is a vector of (column_index, predicate) pairs.
 /// Multiple rows have OR relationship; columns within a row have AND relationship.
+///
+/// A column whose header is blank or not a database label is a computed
+/// criterion (Excel evaluates its formula per record and keeps the records
+/// for which it is TRUE). The criterion's value is used as the result for
+/// every record: TRUE sets no condition, any other value (text, FALSE, a
+/// number, an error) matches no record. An empty cell sets no condition.
 fn parse_criteria_range(
     criteria_view: &crate::engine::range_view::RangeView<'_>,
     db_headers: &[LiteralValue],
-) -> Result<Vec<Vec<(usize, CriteriaPredicate)>>, ExcelError> {
+) -> Result<Vec<CriteriaRow>, ExcelError> {
     let (crit_rows, crit_cols) = criteria_view.dims();
     if crit_rows < 1 || crit_cols < 1 {
         return Ok(vec![]);
@@ -116,10 +125,8 @@ fn parse_criteria_range(
                 }
             }
             crit_col_map.push(found);
-        } else if matches!(crit_header, LiteralValue::Empty) {
-            crit_col_map.push(None);
         } else {
-            // Non-text, non-empty header - try to match as-is
+            // Blank or non-text header: not a database label.
             crit_col_map.push(None);
         }
     }
@@ -129,6 +136,7 @@ fn parse_criteria_range(
     for r in 1..crit_rows {
         let mut row_criteria = Vec::new();
         let mut has_any_criteria = false;
+        let mut never = false;
 
         for (c, db_col) in crit_col_map.iter().enumerate() {
             let crit_val = criteria_view.get_cell(r, c);
@@ -136,15 +144,22 @@ fn parse_criteria_range(
                 continue;
             }
 
-            if let Some(db_col) = db_col {
-                let pred = parse_criteria(&crit_val)?;
-                row_criteria.push((*db_col, pred));
-                has_any_criteria = true;
+            has_any_criteria = true;
+            match db_col {
+                Some(db_col) => {
+                    let pred = parse_criteria(&crit_val)?;
+                    row_criteria.push((*db_col, pred));
+                }
+                None => {
+                    if !matches!(crit_val, LiteralValue::Boolean(true)) {
+                        never = true;
+                    }
+                }
             }
         }
 
         if has_any_criteria {
-            criteria_rows.push(row_criteria);
+            criteria_rows.push(if never { None } else { Some(row_criteria) });
         }
     }
 
@@ -156,7 +171,7 @@ fn parse_criteria_range(
 fn row_matches_criteria(
     db_view: &crate::engine::range_view::RangeView<'_>,
     row: usize,
-    criteria_rows: &[Vec<(usize, CriteriaPredicate)>],
+    criteria_rows: &[CriteriaRow],
 ) -> bool {
     // If no criteria, all rows match
     if criteria_rows.is_empty() {
@@ -164,7 +179,7 @@ fn row_matches_criteria(
     }
 
     // OR relationship between criteria rows
-    for crit_row in criteria_rows {
+    for crit_row in criteria_rows.iter().flatten() {
         let mut all_match = true;
         // AND relationship within a criteria row
         for (col_idx, pred) in crit_row {
@@ -180,6 +195,40 @@ fn row_matches_criteria(
     }
 
     false
+}
+
+/// Resolve a database or criteria argument to a range. An error argument
+/// (for example a defined name whose formula is `#REF!`) is returned as that
+/// error; any other non-range value is `#VALUE!`.
+fn resolve_table_arg<'a, 'b>(
+    arg: &ArgumentHandle<'a, 'b>,
+    database: bool,
+) -> Result<crate::engine::range_view::RangeView<'b>, ExcelError> {
+    let view = if database {
+        arg.range_view_or_scalar()
+    } else {
+        arg.range_view()
+    };
+    match view {
+        // A name or expression that evaluates to an error arrives as a 1x1
+        // view of that error.
+        Ok(v) => match v.as_1x1() {
+            Some(LiteralValue::Error(e)) => Err(e),
+            _ => Ok(v),
+        },
+        Err(_) => match arg.value()?.into_literal() {
+            LiteralValue::Array(arr) => Ok(crate::engine::range_view::RangeView::from_owned_rows(
+                arr,
+                crate::engine::DateSystem::Excel1900,
+            )),
+            LiteralValue::Error(e) => Err(e),
+            _ => Err(ExcelError::new_value().with_message(if database {
+                "Database must be a range or array"
+            } else {
+                "Criteria must be a range or array"
+            })),
+        },
+    }
 }
 
 /// Core evaluation function for all D-functions.
@@ -198,22 +247,9 @@ fn eval_d_function<'a, 'b>(
     }
 
     // Get database range
-    let db_view = match args[0].range_view_or_scalar() {
+    let db_view = match resolve_table_arg(&args[0], true) {
         Ok(v) => v,
-        Err(_) => {
-            // Try to get as array literal
-            let val = args[0].value()?.into_literal();
-            if let LiteralValue::Array(arr) = val {
-                crate::engine::range_view::RangeView::from_owned_rows(
-                    arr,
-                    crate::engine::DateSystem::Excel1900,
-                )
-            } else {
-                return Ok(CalcValue::Scalar(LiteralValue::Error(
-                    ExcelError::new_value().with_message("Database must be a range or array"),
-                )));
-            }
-        }
+        Err(e) => return Ok(CalcValue::Scalar(LiteralValue::Error(e))),
     };
 
     let (db_rows, db_cols) = db_view.dims();
@@ -232,21 +268,9 @@ fn eval_d_function<'a, 'b>(
     let field_idx = resolve_field_index(&field_val, &headers)?;
 
     // Get criteria range
-    let crit_view = match args[2].range_view() {
+    let crit_view = match resolve_table_arg(&args[2], false) {
         Ok(v) => v,
-        Err(_) => {
-            let val = args[2].value()?.into_literal();
-            if let LiteralValue::Array(arr) = val {
-                crate::engine::range_view::RangeView::from_owned_rows(
-                    arr,
-                    crate::engine::DateSystem::Excel1900,
-                )
-            } else {
-                return Ok(CalcValue::Scalar(LiteralValue::Error(
-                    ExcelError::new_value().with_message("Criteria must be a range or array"),
-                )));
-            }
-        }
+        Err(e) => return Ok(CalcValue::Scalar(LiteralValue::Error(e))),
     };
 
     // Parse criteria
@@ -362,21 +386,9 @@ fn eval_d_stat_function<'a, 'b>(
     }
 
     // Get database range
-    let db_view = match args[0].range_view_or_scalar() {
+    let db_view = match resolve_table_arg(&args[0], true) {
         Ok(v) => v,
-        Err(_) => {
-            let val = args[0].value()?.into_literal();
-            if let LiteralValue::Array(arr) = val {
-                crate::engine::range_view::RangeView::from_owned_rows(
-                    arr,
-                    crate::engine::DateSystem::Excel1900,
-                )
-            } else {
-                return Ok(CalcValue::Scalar(LiteralValue::Error(
-                    ExcelError::new_value().with_message("Database must be a range or array"),
-                )));
-            }
-        }
+        Err(e) => return Ok(CalcValue::Scalar(LiteralValue::Error(e))),
     };
 
     let (db_rows, db_cols) = db_view.dims();
@@ -395,21 +407,9 @@ fn eval_d_stat_function<'a, 'b>(
     let field_idx = resolve_field_index(&field_val, &headers)?;
 
     // Get criteria range
-    let crit_view = match args[2].range_view() {
+    let crit_view = match resolve_table_arg(&args[2], false) {
         Ok(v) => v,
-        Err(_) => {
-            let val = args[2].value()?.into_literal();
-            if let LiteralValue::Array(arr) = val {
-                crate::engine::range_view::RangeView::from_owned_rows(
-                    arr,
-                    crate::engine::DateSystem::Excel1900,
-                )
-            } else {
-                return Ok(CalcValue::Scalar(LiteralValue::Error(
-                    ExcelError::new_value().with_message("Criteria must be a range or array"),
-                )));
-            }
-        }
+        Err(e) => return Ok(CalcValue::Scalar(LiteralValue::Error(e))),
     };
 
     // Parse criteria
@@ -491,21 +491,9 @@ fn eval_dget<'a, 'b>(
     }
 
     // Get database range
-    let db_view = match args[0].range_view_or_scalar() {
+    let db_view = match resolve_table_arg(&args[0], true) {
         Ok(v) => v,
-        Err(_) => {
-            let val = args[0].value()?.into_literal();
-            if let LiteralValue::Array(arr) = val {
-                crate::engine::range_view::RangeView::from_owned_rows(
-                    arr,
-                    crate::engine::DateSystem::Excel1900,
-                )
-            } else {
-                return Ok(CalcValue::Scalar(LiteralValue::Error(
-                    ExcelError::new_value().with_message("Database must be a range or array"),
-                )));
-            }
-        }
+        Err(e) => return Ok(CalcValue::Scalar(LiteralValue::Error(e))),
     };
 
     let (db_rows, db_cols) = db_view.dims();
@@ -524,21 +512,9 @@ fn eval_dget<'a, 'b>(
     let field_idx = resolve_field_index(&field_val, &headers)?;
 
     // Get criteria range
-    let crit_view = match args[2].range_view() {
+    let crit_view = match resolve_table_arg(&args[2], false) {
         Ok(v) => v,
-        Err(_) => {
-            let val = args[2].value()?.into_literal();
-            if let LiteralValue::Array(arr) = val {
-                crate::engine::range_view::RangeView::from_owned_rows(
-                    arr,
-                    crate::engine::DateSystem::Excel1900,
-                )
-            } else {
-                return Ok(CalcValue::Scalar(LiteralValue::Error(
-                    ExcelError::new_value().with_message("Criteria must be a range or array"),
-                )));
-            }
-        }
+        Err(e) => return Ok(CalcValue::Scalar(LiteralValue::Error(e))),
     };
 
     // Parse criteria
@@ -588,21 +564,9 @@ fn eval_dcounta<'a, 'b>(
     }
 
     // Get database range
-    let db_view = match args[0].range_view_or_scalar() {
+    let db_view = match resolve_table_arg(&args[0], true) {
         Ok(v) => v,
-        Err(_) => {
-            let val = args[0].value()?.into_literal();
-            if let LiteralValue::Array(arr) = val {
-                crate::engine::range_view::RangeView::from_owned_rows(
-                    arr,
-                    crate::engine::DateSystem::Excel1900,
-                )
-            } else {
-                return Ok(CalcValue::Scalar(LiteralValue::Error(
-                    ExcelError::new_value().with_message("Database must be a range or array"),
-                )));
-            }
-        }
+        Err(e) => return Ok(CalcValue::Scalar(LiteralValue::Error(e))),
     };
 
     let (db_rows, db_cols) = db_view.dims();
@@ -621,21 +585,9 @@ fn eval_dcounta<'a, 'b>(
     let field_idx = resolve_field_index(&field_val, &headers)?;
 
     // Get criteria range
-    let crit_view = match args[2].range_view() {
+    let crit_view = match resolve_table_arg(&args[2], false) {
         Ok(v) => v,
-        Err(_) => {
-            let val = args[2].value()?.into_literal();
-            if let LiteralValue::Array(arr) = val {
-                crate::engine::range_view::RangeView::from_owned_rows(
-                    arr,
-                    crate::engine::DateSystem::Excel1900,
-                )
-            } else {
-                return Ok(CalcValue::Scalar(LiteralValue::Error(
-                    ExcelError::new_value().with_message("Criteria must be a range or array"),
-                )));
-            }
-        }
+        Err(e) => return Ok(CalcValue::Scalar(LiteralValue::Error(e))),
     };
 
     // Parse criteria

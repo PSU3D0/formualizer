@@ -10,6 +10,7 @@ mod common;
 mod cross_sheet_named_range_first_cell;
 mod cycle_detection;
 mod database_blank_semantics;
+mod database_criteria_excel;
 mod date_arithmetic_negative_serial;
 mod default_sheet_resolution;
 mod deferred_dirty;
