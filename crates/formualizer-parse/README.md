@@ -44,6 +44,39 @@ assert_eq!(canonical_formula(&ast), "=SUM(A1:B3)");
 - **Source spans** — every token and AST node carries byte positions for precise error reporting.
 - **Fingerprinting** — 64-bit structural hashes for formula identity comparison.
 
+## Resource limits
+
+Default parsing admits at most 64 KiB of UTF-8 source bytes, 16,384 tokens, 8,192 AST nodes (including omitted arguments), 72 active Pratt frames and AST height 256. Height counts the root as one; parentheses do not add AST nodes. Limits apply independently, so a formula can hit one before another. Errors retain the existing parser/tokenizer error types.
+
+Start from `ParserLimits::default()` and adjust budgets with the `with_source_bytes`, `with_tokens`, `with_ast_nodes`, `with_pratt_frames` and `with_ast_height` setters, then pass the value to `Parser::builder().limits(limits)` (or `BatchParser::builder().limits(limits)`). Values are used exactly as given; nothing is clamped. Raising `pratt_frames` or `ast_height` above the defaults requires a correspondingly larger stack on every thread that parses, clones, drops or evaluates the tree. These guarantees concern parser-produced trees, not manually constructed or externally deserialized ASTs.
+
+```rust
+use formualizer_parse::{Parser, ParserLimits};
+
+let limits = ParserLimits::default().with_ast_nodes(1_024);
+let ast = Parser::builder().limits(limits).parse("=SUM(A1:B3)").unwrap();
+```
+
+### Stack cost
+
+Parsing a left-associated chain (`A1+A2+...`, `&`, `^`) is iterative. However, cloning, printing, hashing, dropping and evaluating the tree recurse once per level. Right-nested shapes (`-(-(...))`, `1+(1+(...))`, nested `IF`) also recurse in the parser, which is why `pratt_frames` bounds them separately. Measured on x86-64 Linux release builds (Rust 1.93), per AST level:
+
+| Path | Stack per level |
+|---|---|
+| Drop, hash/fingerprint, dependency collection | 48–80 bytes |
+| Clone, `pretty_print`, `canonical_formula` | 0.3–0.7 KiB |
+| Parse (right-nested shapes only) | 2.7–4.2 KiB |
+| `formualizer-workbook` `set_formula` (arena ingest and dependency analysis) | 1.7 KiB (chains), up to 4.2 KiB (right-nested) |
+| Workbook evaluation, Calamine XLSX load plus evaluation, XLSX cache recalculation | 2.5 KiB (chains), up to 4.2 KiB (right-nested) |
+
+XLSX cache recalculation is the deepest path. A default-height (256) formula needs about 0.9 MiB of stack there, including roughly 190 KiB of fixed overhead. The defaults are therefore tested on a 1 MiB thread stack in release builds, which is the Windows main-thread and wasm default. Unoptimized (debug) builds use several times more stack per level: about 5 MiB natively for height 256, and the default 1 MiB wasm stack fits only about 100 levels. If you raise `ast_height`, budget about 2.5 KiB per extra level (4.2 KiB for right-nested shapes) on **every** thread that parses, clones, drops or evaluates the tree. Engine and workbook parse sites use the defaults.
+
+`parser::BatchParser` retains lexical results in a FIFO cache bounded by 16,384 entries and 8 MiB of source/token payload (excluding container overhead). Hits do not reorder entries. `cache_capacity(entries, bytes)` configures retention; zero entries disables it. Entries exceeding the byte capacity still parse without retention. Eviction does not change formula semantics, but a working set larger than either bound may lose token-cache reuse. Tune the capacity for such workloads.
+
+Externally supplied `TokenStream.spans` must be ordered, disjoint and valid UTF-8 byte ranges. Stream-to-parser and stream-to-owned-tokenizer admission validates these before copying. Infallible best-effort stream tokenization reports resource failures through its diagnostics; `Tokenizer::new_best_effort` and `Tokenizer::from_token_stream` expose them through `admission_error()`, with empty output on admission failure.
+
+These are resource policies, not exact Excel compatibility limits: a valid Excel formula with more than 256 operands in a left-associated chain exceeds the default AST height even if its text fits Excel's character limit.
+
 ## License
 
 Dual-licensed under MIT or Apache-2.0, at your option.

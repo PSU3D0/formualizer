@@ -22,9 +22,16 @@ This release introduces `formualizer recalc`: after openpyxl or another editor s
 - Refused stored formulas the parser cannot read as `unparseable formula` (exit 2, with the sheet, cell and parser message) instead of failing with a Calamine I/O error (exit 1).
 - Added an agent edit/recalc/inspect workflow guide, a portable `formualizer-recalc` agent skill and a Recalc CLI section on formualizer.dev with install, agent workflow, CLI reference, supported/refused and agent skill pages.
 
+### Changed
+
+- **`^` is now left-associative, as in Excel.** `=2^3^2` returns `64` (was `512`), and `=2^-1^2` returns `0.25` (was `2`). Formulas that chain `^` without brackets change value. (#508, @mcdonaldsam)
+
 ### Added
 
 - Added `Engine::evaluate_all_for_snapshot` for consistent one-request volatile results without suppressing iterative-SCC or other freshness checks.
+- Parser resource limits. By default a formula may have at most 65,536 source bytes, 16,384 tokens, 8,192 AST nodes, 72 active Pratt-parser frames (about 64 levels of nested calls or brackets) and an AST height of 256. A formula over a limit is a parse error instead of a potential stack overflow. Rust callers can change any limit with `ParserLimits::default().with_ast_height(..)` (also `with_source_bytes`, `with_tokens`, `with_ast_nodes`, `with_pratt_frames`) and pass it to `Parser::builder().limits(..)` or `BatchParser::builder().limits(..)`. Raising the stack-sensitive limits needs more thread stack, about 2.5 KiB per extra AST level in release builds; see the `formualizer-parse` README.
+- `BatchParser` bounds its token cache to 16,384 entries and 8 MiB of source and token payload (FIFO). `BatchParser::builder().cache_capacity(entries, bytes)` configures it; zero entries disables caching.
+- Externally constructed token streams are validated (ordered, disjoint, in-bounds UTF-8 spans) before parsing.
 
 ### Fixed
 
@@ -40,11 +47,21 @@ This release introduces `formualizer recalc`: after openpyxl or another editor s
 - Reported a dynamic-array spill blocked by another formula or by another spill as `#SPILL!` on the anchor (with its attempted extent, encoded as for a value blocker) instead of aborting the evaluation with a `BlockedByFormula`/`BlockedBySpill` error; `formualizer recalc` now writes the blocked anchor and exits 0. The blocking formula evaluates normally, the anchor's dependents see `#SPILL!` and its `A1#` readers `#REF!`. Removing the blocker re-spills the anchor on the next recalc.
 - Made a formula entered into a live spill block it, as on a fresh evaluation: the anchor becomes `#SPILL!` and the new formula keeps its value. Previously the anchor overwrote the formula's cell on its next recompute and could delete the formula when its spill was cleared; an anchor entered into a live spill was itself `#SPILL!`. When two spill extents collide without either anchor inside the other's rectangle, the anchor first in (sheet, column, row) order spills and the other is `#SPILL!`, whatever the evaluation or edit order.
 - Cleared a spill when `Engine::set_cell_value` replaces its anchor formula with a value. Previously the old children and their ownership remained.
+- A range from a cell to a reference function's result parses as the range operator followed by the call. `=SUM(B10:INDEX(B:B,5))` and `=STDEV(G3:OFFSET(G3,-4,0))` now compute the range, where they previously returned `#NAME?` for an unknown function `B10:INDEX`. (#501, @mcdonaldsam)
+- A quoted sheet span such as `'Jan 24:Mar 24'!B5` is read as a 3D reference over those sheets, not as one sheet with a colon in its name. 3D references are not evaluated yet, so these formulas return `#N/IMPL!` instead of a silent `#REF!`, and XLSX cache recalculation refuses such workbooks rather than writing `#REF!`. The printer writes such spans the way Excel does. (#502, @mcdonaldsam)
+- `Table1[]` refers to the table's data body, like `Table1`, instead of including the header and totals rows. (#503, @mcdonaldsam)
+- A defined name on either side of `:` parses as the range operator (`=SUM(D22:Total)`, `Start:B10`), where it was a parse error. Name endpoints are not resolved yet, so these ranges return `#N/IMPL!` with an explanatory message; Excel computes the bounding range. XLSX cache recalculation refuses such workbooks instead of writing a value. (#504, @mcdonaldsam)
+- Ranges with a deleted end, which Excel writes as `=SUM(A1:#REF!)`, `=#REF!:A1` or `=Sheet1!#REF!:A1`, parse and evaluate to `#REF!`, as in Excel. (#505, @mcdonaldsam)
+- A defined name whose sheet was deleted, which Excel shows as `=#REF!#REF!`, parses as a single `#REF!` error. (#506, @mcdonaldsam)
+- The pretty printer and `canonical_formula` keep brackets the formula needs. `A1*(B1*C1)` and `1=(2=3)` no longer print in a form that re-parses differently. A union passed as an argument keeps its brackets, so `RANK(A1,(B1,B5))` and `LARGE((F38,C38),1)` keep the same number of arguments when printed. The same applies inside nested calls and array constants, such as `SUM((A1,B1)+1)`. (#507, @mcdonaldsam)
 
 ### Known limitations
 
 - Fresh unmarked 1x1 results remain scalars, so their spill readers return `#REF!`. In the mutable workbook API, overwriting a spill child with a value can leave spill readers stale until the anchor recomputes, and clearing a value blocker does not by itself re-spill the anchor. Source-preserving XLSX recalculation uses declared ownership instead and recalculates those children.
 - What-If data tables, connection-backed tables, external links, rich/unknown metadata, shared-family multi-cell spills and spill publication across merged cells remain unsupported. This subset has no Excel execution oracle and makes no Excel-equivalence claim.
+- A formula taller than the default AST height of 256 is rejected. For example, more than 256 operands chained with `+` or `&` is a parse error, even though Excel accepts it within its 8,192-character limit. Version 0.10.1 evaluated such chains up to roughly 2,700 terms and overflowed the stack beyond that. Workbook, XLSX, Python, WASM and C API parse sites use the default limits. In release builds, a default-height formula needs about 0.9 MiB of thread stack on the deepest path, XLSX cache recalculation. Debug builds need several times more.
+
+Thanks to @mcdonaldsam for the parser fixes in this release.
 
 ## [0.10.1] - 2026-09-30
 

@@ -458,13 +458,22 @@ mod tests {
         } else {
             100_000
         };
-        let formula = format!(
-            "={}",
-            std::iter::repeat_n("A1", terms)
-                .collect::<Vec<_>>()
-                .join("+")
-        );
-        let ast = parse(&formula).unwrap();
+        // This tests the iterative planner, not parser admission: source parsing
+        // intentionally rejects spines above its supported stack-safe height.
+        let leaf = parse("=A1").unwrap();
+        let mut ast = leaf.clone();
+        for _ in 1..terms {
+            ast = formualizer_parse::ASTNode::new(
+                formualizer_parse::ASTNodeType::BinaryOp {
+                    op: "+".into(),
+                    left: Box::new(ast),
+                    right: Box::new(leaf.clone()),
+                },
+                None,
+            );
+        }
+        // Also avoid recursive destruction if an assertion fails.
+        let ast = std::mem::ManuallyDrop::new(ast);
         let policy = CollectPolicy {
             expand_small_ranges: true,
             range_expansion_limit: 16,
@@ -473,17 +482,13 @@ mod tests {
         let mut registry = SheetRegistry::new();
         let plan = build_dependency_plan(
             &mut registry,
-            std::iter::once(("Sheet1", 1, 1, &ast)),
+            std::iter::once(("Sheet1", 1, 1, &*ast)),
             &policy,
             None,
         )
         .unwrap();
         assert_eq!(plan.global_cells.len(), 1);
         assert_eq!(plan.per_formula_cells[0].len(), terms);
-
-        // ASTNode owns a recursively boxed tree, so avoid making this traversal
-        // test depend on the standard library's recursive drop implementation.
-        std::mem::forget(ast);
     }
 
     #[test]

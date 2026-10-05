@@ -506,6 +506,30 @@ fn defined_names_are_evaluated_without_metadata_rewrite() {
     reject(&p);
 }
 #[test]
+fn defined_name_range_endpoints_are_refused_not_written() {
+    // Excel computes the bounding range (14 / 6 / 9 here); the evaluator does
+    // not resolve name endpoints yet, so the package must be refused rather
+    // than rewritten with a cached error.
+    for formula in ["SUM(A1:Total)", "SUM(Start:A3)", "SUM(Start:Total)"] {
+        let mut p = parts(&format!(
+            "<row r=\"1\"><c r=\"A1\"><v>2</v></c><c r=\"B1\"><f>{formula}</f><v>99</v></c></row><row r=\"2\"><c r=\"A2\"><v>3</v></c></row><row r=\"3\"><c r=\"A3\"><v>4</v></c></row>"
+        ));
+        let wb = p.get_mut("xl/workbook.xml").unwrap();
+        *wb = wb.replace(
+            "</workbook>",
+            "<definedNames><definedName name=\"Start\">Sheet1!$A$2</definedName><definedName name=\"Total\">Sheet1!$A$3</definedName></definedNames></workbook>",
+        );
+        let Err(error) = recalculate_xlsx_bytes(&pack(&p), Default::default()) else {
+            panic!("{formula}: recalculation wrote the package");
+        };
+        assert!(
+            matches!(&error, formualizer_workbook::IoError::Unsupported { feature, context }
+                if feature.contains("no approved XLSX cache encoding") && context == "#N/IMPL!"),
+            "{formula}: unexpected error: {error:?}"
+        );
+    }
+}
+#[test]
 fn nonportable_literal_errors_are_refused_and_empty_table_parts_are_inert() {
     let p = parts(
         "<row r=\"1\"><c r=\"A1\" t=\"e\"><v>#SPILL!</v></c><c r=\"B1\"><f>IFERROR(A1,0)</f><v>99</v></c></row>",

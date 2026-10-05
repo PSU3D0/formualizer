@@ -125,6 +125,7 @@ mod imp {
         formulas: Vec<(String, u32, u32, String)>,
         formula_count: usize,
         value_count: usize,
+        parser_rejections: usize,
         /// every formula cell, for value digests
         all: Vec<(String, u32, u32)>,
     }
@@ -149,6 +150,7 @@ mod imp {
             sheets.iter().position(|x| x.eq_ignore_ascii_case(s))
         };
         let mut value_count = 0;
+        let mut parser_rejections = 0;
         for (si, name) in sheets.iter().enumerate() {
             let data = a.read_sheet(name).map_err(|e| anyhow!("{e}"))?;
             for ((r, c), cell) in data.cells {
@@ -158,7 +160,9 @@ mod imp {
                     } else {
                         format!("={f}")
                     };
-                    if let Ok(ast) = formualizer_parse::parse(&text) {
+                    let parsed = formualizer_parse::parse(&text);
+                    parser_rejections += usize::from(parsed.is_err());
+                    if let Ok(ast) = parsed {
                         for d in ast.get_dependencies() {
                             let (sh, row, col) = match d {
                                 ReferenceType::Cell {
@@ -222,6 +226,7 @@ mod imp {
                 .collect(),
             formula_count,
             value_count,
+            parser_rejections,
             all,
         })
     }
@@ -503,6 +508,7 @@ mod imp {
             "mode": mode,
             "formulas": tg.formula_count,
             "values": tg.value_count,
+            "parser_rejections": tg.parser_rejections,
             "load_ms": load_ms,
             "first_eval_ms": first_ms,
             "prebuild_ms": prebuild_ms,
