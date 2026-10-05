@@ -13,9 +13,12 @@ fn coerce_to_int(arg: &ArgumentHandle) -> Result<i32, ExcelError> {
     match v {
         LiteralValue::Int(i) => Ok(i as i32),
         LiteralValue::Number(f) => Ok(f.trunc() as i32),
-        LiteralValue::Text(s) => s.parse::<f64>().map(|f| f.trunc() as i32).map_err(|_| {
-            ExcelError::new_value().with_message("DATE/TIME argument is not a valid number")
-        }),
+        LiteralValue::Text(s) => crate::locale::Locale::invariant()
+            .parse_number_invariant(&s)
+            .map(|f| f.trunc() as i32)
+            .ok_or_else(|| {
+                ExcelError::new_value().with_message("DATE/TIME argument is not a valid number")
+            }),
         LiteralValue::Boolean(b) => Ok(if b { 1 } else { 0 }),
         LiteralValue::Empty => Ok(0),
         LiteralValue::Error(e) => Err(e),

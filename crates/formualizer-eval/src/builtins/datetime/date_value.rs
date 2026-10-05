@@ -5,8 +5,8 @@ use crate::function::Function;
 use crate::traits::{ArgumentHandle, FunctionContext};
 use chrono::NaiveDate;
 use formualizer_common::{
-    ExcelError, LiteralValue, date_to_serial_for, parse_excel_date_text, parse_excel_time_text,
-    time_to_fraction,
+    ExcelError, LiteralValue, date_to_serial_for, parse_excel_date_text, parse_excel_datetime_text,
+    parse_excel_time_text, time_to_fraction,
 };
 
 fn parse_legacy_datevalue_text(input: &str) -> Option<NaiveDate> {
@@ -36,6 +36,8 @@ use formualizer_macros::func_caps;
 /// # Remarks
 /// - Accepted formats are a fixed supported subset (for example `YYYY-MM-DD`, `MM/DD/YYYY`, and month-name forms).
 /// - Parsing is not locale-driven; ambiguous text may parse differently than Excel locales.
+/// - Two-digit years follow Excel's rule: `00`-`29` are 2000-2029, `30`-`99` are 1930-1999.
+/// - A time after the date is ignored.
 /// - The returned serial uses the workbook's date system (Excel 1900 or Excel 1904).
 ///
 /// # Examples
@@ -115,8 +117,10 @@ impl Function for DateValueFn {
             }
         };
 
-        if let Some(date) =
-            parse_excel_date_text(&date_text).or_else(|| parse_legacy_datevalue_text(&date_text))
+        // A time after the date is ignored (`DATEVALUE("8/22/2011 10:00 AM")`).
+        if let Some(date) = parse_excel_date_text(&date_text)
+            .or_else(|| parse_excel_datetime_text(&date_text).map(|datetime| datetime.date()))
+            .or_else(|| parse_legacy_datevalue_text(&date_text))
         {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
                 date_to_serial_for(system, &date),

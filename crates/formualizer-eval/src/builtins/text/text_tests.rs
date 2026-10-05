@@ -547,10 +547,18 @@ mod tests {
     fn test_text_hh_mm_rounding_carries_the_displayed_day() {
         use crate::engine::DateSystem;
 
+        // The time is rounded to whole seconds (not minutes) before it is
+        // split, so x.999995 (23:59:59.57) carries to the next day while
+        // x.9997 (23:59:34) still shows 23:59.
+        assert_eq!(
+            eval_text_formula(DateSystem::Excel1900, "=TEXT(59.9997,\"yyyy-mm-dd hh:mm\")"),
+            LiteralValue::Text("1900-02-28 23:59".into())
+        );
+
         let cases_1900 = [
-            (59.9997, "1900-02-29 00:00"),
-            (60.9997, "1900-03-01 00:00"),
-            (61.9997, "1900-03-02 00:00"),
+            (59.999995, "1900-02-29 00:00"),
+            (60.999995, "1900-03-01 00:00"),
+            (61.999995, "1900-03-02 00:00"),
         ];
         for (serial, expected) in cases_1900 {
             assert_eq!(
@@ -564,9 +572,9 @@ mod tests {
         }
 
         let cases_1904 = [
-            (59.9997, "1904-03-01 00:00"),
-            (60.9997, "1904-03-02 00:00"),
-            (61.9997, "1904-03-03 00:00"),
+            (59.999995, "1904-03-01 00:00"),
+            (60.999995, "1904-03-02 00:00"),
+            (61.999995, "1904-03-03 00:00"),
         ];
         for (serial, expected) in cases_1904 {
             assert_eq!(
@@ -581,11 +589,11 @@ mod tests {
 
         assert_value_error(eval_text_formula(
             DateSystem::Excel1900,
-            "=TEXT(2958465.9997,\"yyyy-mm-dd hh:mm\")",
+            "=TEXT(2958465.999995,\"yyyy-mm-dd hh:mm\")",
         ));
         assert_value_error(eval_text_formula(
             DateSystem::Excel1904,
-            "=TEXT(2957003.9997,\"yyyy-mm-dd hh:mm\")",
+            "=TEXT(2957003.999995,\"yyyy-mm-dd hh:mm\")",
         ));
     }
 

@@ -22,6 +22,7 @@ mod dirty_propagation_precision;
 mod evaluation;
 mod evaluation_resource_ledger;
 mod evaluation_resource_observability;
+mod excel_datetime_compat;
 mod graph_basic;
 mod graph_internal_helpers;
 mod issue_326_error_skip_oracle;

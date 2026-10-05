@@ -98,7 +98,7 @@ pub(super) fn format_number(value: f64, code: &str) -> Result<String, Fallback> 
 }
 
 /// Splits on `;` outside quotes, escapes and brackets.
-fn split_sections(code: &str) -> Result<Vec<&str>, Fallback> {
+pub(super) fn split_sections(code: &str) -> Result<Vec<&str>, Fallback> {
     let mut sections = Vec::new();
     let mut start = 0;
     let mut quoted = false;
@@ -308,7 +308,7 @@ fn parse_section(code: &str) -> Result<Section, Fallback> {
 
 /// `Some(true)` for a colour tag, `Some(false)` for a `[ColorN]` outside
 /// 1 to 56, `None` for any other tag.
-fn colour_tag(tag: &str) -> Option<bool> {
+pub(super) fn colour_tag(tag: &str) -> Option<bool> {
     let lower = tag.to_ascii_lowercase();
     if let Some(index) = lower.strip_prefix("color")
         && !index.is_empty()
