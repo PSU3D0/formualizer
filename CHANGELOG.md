@@ -30,6 +30,7 @@ This release introduces `formualizer recalc`: after openpyxl or another editor s
 ### Changed
 
 - **`^` is now left-associative, as in Excel.** `=2^3^2` returns `64` (was `512`), and `=2^-1^2` returns `0.25` (was `2`). Formulas that chain `^` without brackets change value. (#508, @mcdonaldsam)
+- **AND, OR and XOR evaluate every argument, as in Excel.** They no longer stop at the first FALSE (AND) or TRUE (OR): an error in any argument is returned, the first one in argument order, so `=AND(FALSE,1/0)` is `#DIV/0!` (was FALSE). Text and blank cells inside references are ignored, direct text arguments are `#VALUE!`, and arguments with no logical values at all give `#VALUE!`. A blank cell no longer counts as FALSE in AND.
 - Retargeted the Pyodide wheel from Pyodide 0.29.x to Pyodide 314.0.7 (Python 3.14). The wheel is now tagged `pyemscripten_2026_0_wasm32` and no longer installs in Pyodide 0.29.x. CI and releases build with Rust 1.99.0; the Pyodide wheel builds with Pyodide's Rust 1.93.0.
 
 ### Added
@@ -63,6 +64,20 @@ This release introduces `formualizer recalc`: after openpyxl or another editor s
 - Ranges with a deleted end, which Excel writes as `=SUM(A1:#REF!)`, `=#REF!:A1` or `=Sheet1!#REF!:A1`, parse and evaluate to `#REF!`, as in Excel. (#505, @mcdonaldsam)
 - A defined name whose sheet was deleted, which Excel shows as `=#REF!#REF!`, parses as a single `#REF!` error. (#506, @mcdonaldsam)
 - The pretty printer and `canonical_formula` keep brackets the formula needs. `A1*(B1*C1)` and `1=(2=3)` no longer print in a form that re-parses differently. A union passed as an argument keeps its brackets, so `RANK(A1,(B1,B5))` and `LARGE((F38,C38),1)` keep the same number of arguments when printed. The same applies inside nested calls and array constants, such as `SUM((A1,B1)+1)`. (#507, @mcdonaldsam)
+- Criteria functions (COUNTIF, SUMIF, AVERAGEIF, their *IFS forms, MAXIFS/MINIFS) follow Excel: a criterion that references an empty cell is 0, so blank cells no longer match it; wildcards match text only, never numbers; `"="` matches only blank cells and `"<>"` every non-blank cell; text comparisons such as `">b"` compare text; trailing spaces in criteria text are significant; and date text such as `"=2/1/02"` or `">2/15/02"` matches dates. `CriteriaPredicate` has new variants for these cases.
+- SUBTOTAL ignores cells in its ranges whose formulas contain SUBTOTAL, and AGGREGATE (options 0 to 3) ignores cells containing SUBTOTAL or AGGREGATE, so nested subtotals are no longer counted twice.
+- Database functions (DSUM, DCOUNT, DGET, ...) match no records when a criteria header is not a database label, instead of ignoring that column, and return the error of an error database or criteria argument (such as a name defined as `#REF!`) instead of `#VALUE!`. DSUM with no matching records returns 0, not -0.
+- TEXT renders date and time format codes as Excel does: `yy`, `ddd`/`dddd`, month names, `m`/`mm` as minutes after `h` or before `s`, AM/PM and A/P, elapsed `[h]`/`[m]`/`[s]`, fractional seconds, and quoted or escaped literals. `DATEVALUE(TEXT(date,"mm/dd/yy"))` now round-trips.
+- YEAR, MONTH and DAY of 0 or a blank cell return 1900, 1 and 0 (Excel's "January 0, 1900"), and `DAY(60)` is 29.
+- YEARFRAC returns a positive value when the start date is after the end date, and bases 0 and 1 follow Excel's month-end and leap-year rules. DAYS360 (US method) moves an end date only when it is the 31st, so `DAYS360("11/24/2001","11/30/2001")` is 6.
+- HOUR rounds the time to the nearest second, like MINUTE and SECOND, so a serial a hair below the hour returns that hour (`HOUR(37054.54166666666)` is 13). TEXT time codes round the same way.
+- Text such as "NaN", "inf" or "1e400" is no longer read as a number; arithmetic on it returns `#VALUE!`. VALUE converts date and time text with Excel's two-digit-year rule (`VALUE("12/31/00")` is 36891), and DATEVALUE accepts a date followed by a time.
+- REPT with a negative count, including fractions such as -0.13, returns `#VALUE!`; the 32,767-character limit counts characters, not bytes.
+- Added the Excel 2007 statistical names NORMSDIST, NORMSINV, NORMDIST, NORMINV, TDIST, CHIDIST, CHIINV, FDIST, FINV, BETADIST, BETAINV, GAMMADIST, LOGNORMDIST, LOGINV, POISSON, BINOMDIST, EXPONDIST, WEIBULL, HYPGEOMDIST and NEGBINOMDIST with their original argument lists and tails, and made TINV two-tailed with truncated degrees of freedom. GAMMA.INV, CHISQ.INV, F.INV and BETA.INV no longer return wrong values in the tails.
+- CORREL, PEARSON, RSQ, SLOPE, INTERCEPT, STEYX, COVAR, COVARIANCE.P/S and FORECAST skip a position when either array has a blank, text or logical value there, instead of returning `#N/A`.
+- LINEST, LOGEST, TREND and GROWTH support several x variables (multiple regression), with the full statistics block, collinear columns removed as Excel does, and legacy array formulas wider than the result padded with `#N/A` instead of `#REF!`.
+- Formulas using Excel's current-workbook qualifier (`[0]!Name`, `[0]Sheet1!A1`) resolve to the local name or sheet instead of `#NAME?`.
+- XLSX import keeps stored zero-length strings as empty text, so COUNTA counts them, ISBLANK is FALSE and references return `""`, and keeps the exact value of date- and time-formatted numbers instead of rounding them to whole seconds.
 
 ### Known limitations
 

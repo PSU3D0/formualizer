@@ -372,9 +372,58 @@ struct DebugTimer {
 struct DenseState {
     aib: IngestBuilder,
     row_vals: Vec<LiteralValue>,
+    /// Number formats of the pending row's date-formatted cells; consulted
+    /// only when `row_formatted` is set, so plain rows pay nothing.
+    row_formats: Vec<Option<formualizer_eval::format::FormatId>>,
+    row_formatted: bool,
     current_row0: usize,
     rows_appended: usize,
     row_started: bool,
+}
+
+impl DenseState {
+    fn set(
+        &mut self,
+        col: usize,
+        value: LiteralValue,
+        format: Option<formualizer_eval::format::FormatId>,
+    ) {
+        self.row_vals[col] = value;
+        if format.is_some() || self.row_formatted {
+            self.row_formats[col] = format;
+            self.row_formatted |= format.is_some();
+        }
+    }
+
+    /// Append the pending row. A row holding date-formatted numbers goes
+    /// through the typed-token path so each serial keeps its exact value and
+    /// its format; other rows use the literal path unchanged.
+    fn append_pending_row(&mut self) -> Result<(), ExcelError> {
+        if !self.row_formatted {
+            return self.aib.append_row(&self.row_vals);
+        }
+        use formualizer_eval::arrow_store::CellIngest;
+        let cells = self
+            .row_vals
+            .iter()
+            .zip(&self.row_formats)
+            .map(|(value, format)| match (value, format) {
+                (LiteralValue::Number(n), Some(format)) => CellIngest::FormattedNumber(*n, *format),
+                (LiteralValue::Number(n), None) => CellIngest::Number(*n),
+                (LiteralValue::Int(i), _) => CellIngest::Number(*i as f64),
+                (LiteralValue::Boolean(b), _) => CellIngest::Boolean(*b),
+                (LiteralValue::Text(s), _) => CellIngest::Text(s),
+                (LiteralValue::Error(e), _) => CellIngest::ErrorCode(map_error_code(e.kind)),
+                (LiteralValue::Pending, _) => CellIngest::Pending,
+                (LiteralValue::Empty, _) => CellIngest::Empty,
+                // The value plane never stages other variants.
+                _ => CellIngest::ErrorCode(map_error_code(ExcelErrorKind::Value)),
+            });
+        let result = self.aib.append_row_cells_iter(cells);
+        self.row_formats.fill(None);
+        self.row_formatted = false;
+        result
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -435,12 +484,14 @@ struct StreamedSheet {
     stream_millis: u128,
 }
 
+/// A stored cell value for the dense value plane. A zero-length string is
+/// empty text (Excel counts it with `COUNTA` and `ISBLANK` is FALSE), not a
+/// blank cell. A date-formatted number keeps its exact serial; the date
+/// format travels separately through [`data_ref_format`].
 #[inline]
-fn data_ref_to_literal(value: &DataRef<'_>, date_system: DateSystem) -> Option<LiteralValue> {
+fn data_ref_to_literal(value: &DataRef<'_>) -> Option<LiteralValue> {
     match value {
         DataRef::Empty => None,
-        DataRef::String(s) if s.is_empty() => None,
-        DataRef::SharedString("") => None,
         DataRef::String(s) => Some(LiteralValue::Text(s.clone())),
         DataRef::SharedString(s) => Some(LiteralValue::Text((*s).to_string())),
         DataRef::Float(f) => Some(LiteralValue::Number(*f)),
@@ -458,10 +509,7 @@ fn data_ref_to_literal(value: &DataRef<'_>, date_system: DateSystem) -> Option<L
                 _ => ExcelErrorKind::Error,
             },
         ))),
-        DataRef::DateTime(dt) => Some(
-            LiteralValue::try_from_serial_number_for(date_system, dt.as_f64())
-                .unwrap_or_else(LiteralValue::Error),
-        ),
+        DataRef::DateTime(dt) => Some(LiteralValue::Number(dt.as_f64())),
         DataRef::DateTimeIso(s) => Some(LiteralValue::Text(s.clone())),
         DataRef::DurationIso(s) => Some(LiteralValue::Text(s.clone())),
     }
@@ -518,8 +566,6 @@ impl SparseValueBatch {
 fn data_ref_to_overlay(value: &DataRef<'_>) -> Option<OverlayValue> {
     match value {
         DataRef::Empty => None,
-        DataRef::String(s) if s.is_empty() => None,
-        DataRef::SharedString("") => None,
         DataRef::String(s) => Some(OverlayValue::Text(Arc::from(s.as_str()))),
         DataRef::SharedString(s) => Some(OverlayValue::Text(Arc::from(*s))),
         DataRef::Float(f) => Some(OverlayValue::Number(*f)),
@@ -803,6 +849,8 @@ impl CalamineAdapter {
         let mut dense = (!force_sparse_from_start).then(|| DenseState {
             aib: IngestBuilder::new(sheet, dims_cols, chunk_rows, engine.config.date_system),
             row_vals: vec![LiteralValue::Empty; dims_cols],
+            row_formats: vec![None; dims_cols],
+            row_formatted: false,
             current_row0: 0,
             rows_appended: 0,
             row_started: false,
@@ -994,7 +1042,7 @@ impl CalamineAdapter {
                     && state.current_row0 == row
                     && col < state.row_vals.len()
                 {
-                    state.row_vals[col] = LiteralValue::Empty;
+                    state.set(col, LiteralValue::Empty, None);
                 }
                 formula_count += 1;
             }
@@ -1004,8 +1052,7 @@ impl CalamineAdapter {
             if has_formula {
                 continue;
             }
-            let Some(literal) = data_ref_to_literal(&record.value, engine.config.date_system)
-            else {
+            let Some(literal) = data_ref_to_literal(&record.value) else {
                 continue;
             };
             value_cells_observed += 1;
@@ -1053,7 +1100,7 @@ impl CalamineAdapter {
             if non_monotonic || col_overflow || large_gap || would_exceed_dense_budget {
                 let mut state = dense.take().expect("dense state present");
                 if state.row_started && state.current_row0 == state.rows_appended {
-                    state.aib.append_row(&state.row_vals).map_err(|error| {
+                    state.append_pending_row().map_err(|error| {
                         calamine::Error::Io(std::io::Error::other(error.to_string()))
                     })?;
                     state.rows_appended += 1;
@@ -1094,7 +1141,7 @@ impl CalamineAdapter {
                 state.current_row0 = row;
                 state.row_started = true;
             } else if row > state.current_row0 {
-                state.aib.append_row(&state.row_vals).map_err(|error| {
+                state.append_pending_row().map_err(|error| {
                     calamine::Error::Io(std::io::Error::other(error.to_string()))
                 })?;
                 state.rows_appended += 1;
@@ -1110,7 +1157,7 @@ impl CalamineAdapter {
                 }
                 state.current_row0 = row;
             }
-            state.row_vals[col] = literal;
+            state.set(col, literal, data_ref_format(&record.value));
             values_handed_to_engine += 1;
         }
 
@@ -1283,7 +1330,7 @@ impl CalamineAdapter {
         } else {
             let mut state = dense.take().expect("dense state present");
             if state.row_started {
-                state.aib.append_row(&state.row_vals).map_err(|error| {
+                state.append_pending_row().map_err(|error| {
                     calamine::Error::Io(std::io::Error::other(error.to_string()))
                 })?;
             }
@@ -2055,7 +2102,6 @@ impl CalamineAdapter {
             // Convert value (skip empty cells and empty strings)
             let value = match val {
                 Data::Empty => None,
-                Data::String(s) if s.is_empty() => None, // Treat empty strings as no value
                 Data::String(s) => Some(LiteralValue::Text(s.clone())),
                 Data::Float(f) => Some(LiteralValue::Number(*f)),
                 Data::Int(i) => Some(LiteralValue::Int(*i)),
@@ -3033,7 +3079,7 @@ mod tests {
     fn new_calamine_error_variants_preserve_generic_error_semantics() {
         let error = calamine::CellErrorType::GettingData;
         assert!(matches!(
-            data_ref_to_literal(&DataRef::Error(error.clone()), DateSystem::Excel1900),
+            data_ref_to_literal(&DataRef::Error(error.clone())),
             Some(LiteralValue::Error(ref value)) if value.kind == ExcelErrorKind::Error
         ));
         assert!(matches!(

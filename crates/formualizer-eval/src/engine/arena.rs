@@ -11,9 +11,11 @@ pub mod value_ref;
 
 // Re-export commonly used types
 pub use array::{ArrayArena, ArrayRef};
-pub use ast::{AstArena, AstNodeData, AstNodeId, CompactRefType, SheetKey};
 #[allow(unused_imports)]
-pub(crate) use ast::{AstNodeEntry, AstNodeMetadata, CanonicalLabels};
+pub(crate) use ast::{
+    AGGREGATE_CALL, AstNodeEntry, AstNodeMetadata, CanonicalLabels, SUBTOTAL_CALL,
+};
+pub use ast::{AstArena, AstNodeData, AstNodeId, CompactRefType, SheetKey};
 pub use data_store::{DataStore, DataStoreStats};
 pub use error_arena::{ErrorArena, ErrorRef};
 pub use scalar::{ScalarArena, ScalarRef};

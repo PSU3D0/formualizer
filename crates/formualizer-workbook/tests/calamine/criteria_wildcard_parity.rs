@@ -2,11 +2,11 @@ use formualizer_workbook::{
     CalamineAdapter, LiteralValue, LoadStrategy, SpreadsheetReader, Workbook, WorkbookConfig,
 };
 
-// Compatibility oracle: the engine's established scalar wildcard contract,
-// including numeric/boolean rendering and Empty matching '*'. This intentionally
-// does not assert Excel parity (and LibreOffice excludes truly absent cells).
+// Loaded and constructed workbooks agree on Excel's wildcard rule: `*`, `?`
+// and `1*` match text cells only, so the numbers 1-3, TRUE and the blank A6
+// never match; only the text "1" does.
 #[test]
-fn wildcard_import_and_overlay_follow_existing_scalar_contract() {
+fn wildcard_import_and_overlay_match_text_only() {
     let mut source = umya_spreadsheet::new_file();
     let sheet = source.get_sheet_by_name_mut("Sheet1").unwrap();
     for r in 1..=3 {
@@ -18,12 +18,12 @@ fn wildcard_import_and_overlay_follow_existing_scalar_contract() {
         sheet.get_cell_mut((2, r)).set_value_number(10);
     }
     let formulas = [
-        (r#"COUNTIF(A1:A6,"*")"#, 6.0),
-        (r#"COUNTIF(A1:A6,"1*")"#, 2.0),
-        (r#"COUNTIF(A1:A6,"?")"#, 4.0),
-        (r#"COUNTIFS(A1:A6,"*",B1:B6,">0")"#, 6.0),
-        (r#"SUMIF(A1:A6,"*",B1:B6)"#, 60.0),
-        (r#"SUMIFS(B1:B6,A1:A6,"*")"#, 60.0),
+        (r#"COUNTIF(A1:A6,"*")"#, 1.0),
+        (r#"COUNTIF(A1:A6,"1*")"#, 1.0),
+        (r#"COUNTIF(A1:A6,"?")"#, 1.0),
+        (r#"COUNTIFS(A1:A6,"*",B1:B6,">0")"#, 1.0),
+        (r#"SUMIF(A1:A6,"*",B1:B6)"#, 10.0),
+        (r#"SUMIFS(B1:B6,A1:A6,"*")"#, 10.0),
     ];
     for (i, (f, _)) in formulas.iter().enumerate() {
         sheet.get_cell_mut((3, i as u32 + 1)).set_formula(*f);
@@ -74,7 +74,7 @@ fn wildcard_import_and_overlay_follow_existing_scalar_contract() {
         wb.evaluate_all().unwrap();
         assert_eq!(
             wb.get_value("Sheet1", 1, 3),
-            Some(LiteralValue::Number(6.0))
+            Some(LiteralValue::Number(1.0))
         );
         assert_eq!(
             wb.get_value("Sheet1", 2, 3),

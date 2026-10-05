@@ -1346,6 +1346,15 @@ enum ErrorPolicy {
     Ignore,
 }
 
+/// Which nested aggregate formulas in a range argument are skipped.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+enum NestedPolicy {
+    /// SUBTOTAL: cells whose formulas call SUBTOTAL.
+    SkipSubtotal,
+    /// AGGREGATE options 0-3: cells whose formulas call SUBTOTAL or AGGREGATE.
+    SkipSubtotalAndAggregate,
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 enum AggregateOp {
     Average,
@@ -1439,13 +1448,14 @@ impl AggregateCollector {
         op: AggregateOp,
         visibility_policy: VisibilityPolicy,
         error_policy: ErrorPolicy,
+        nested: NestedPolicy,
     ) -> Result<Self, ExcelError> {
         let mut out = Self::default();
 
         for arg in args.iter().skip(start_idx) {
             match resolve_aggregate_argument(arg, ctx)? {
                 AggregateArgument::Range(view) => {
-                    out.collect_range_arg(&view, ctx, op, visibility_policy, error_policy)?;
+                    out.collect_range_arg(&view, ctx, op, visibility_policy, error_policy, nested)?;
                 }
                 AggregateArgument::ReferenceError(error) => {
                     out.consume_scalar_value(LiteralValue::Error(error), op, error_policy)?;
@@ -1466,6 +1476,7 @@ impl AggregateCollector {
         op: AggregateOp,
         visibility_policy: VisibilityPolicy,
         error_policy: ErrorPolicy,
+        nested: NestedPolicy,
     ) -> Result<(), ExcelError> {
         let visibility_mask = match visibility_policy {
             VisibilityPolicy::IncludeAll => None,
@@ -1479,6 +1490,14 @@ impl AggregateCollector {
             return Ok(());
         }
 
+        // Cells whose formulas call SUBTOTAL (or AGGREGATE) are skipped, as
+        // Excel ignores nested subtotals to avoid double counting.
+        let nested_cells = match nested {
+            NestedPolicy::SkipSubtotal => ctx.get_nested_subtotal_cells(view, false),
+            NestedPolicy::SkipSubtotalAndAggregate => ctx.get_nested_subtotal_cells(view, true),
+        }
+        .filter(|cells| !cells.is_empty());
+
         for chunk in view.iter_row_chunks() {
             let chunk = chunk?;
             for row_offset in 0..chunk.row_len {
@@ -1488,8 +1507,12 @@ impl AggregateCollector {
                 }
 
                 for col in 0..cols {
-                    // Phase-1 contract: nested SUBTOTAL/AGGREGATE exclusion is deferred.
-                    // Nested aggregate results are treated as ordinary scalar values.
+                    if nested_cells
+                        .as_ref()
+                        .is_some_and(|cells| cells.binary_search(&(rel_row, col)).is_ok())
+                    {
+                        continue;
+                    }
                     self.consume_range_value(view.get_cell(rel_row, col), op, error_policy)?;
                 }
             }
@@ -1734,6 +1757,7 @@ impl Function for SubtotalFn {
             op,
             visibility,
             ErrorPolicy::Propagate,
+            NestedPolicy::SkipSubtotal,
         ) {
             Ok(c) => c,
             Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
@@ -1832,11 +1856,19 @@ impl Function for AggregateFn {
             }
         };
 
-        let collected =
-            match AggregateCollector::collect_args(args, 2, ctx, op, visibility, error_policy) {
-                Ok(c) => c,
-                Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
-            };
+        // Options 0-3 ignore nested SUBTOTAL and AGGREGATE functions.
+        let collected = match AggregateCollector::collect_args(
+            args,
+            2,
+            ctx,
+            op,
+            visibility,
+            error_policy,
+            NestedPolicy::SkipSubtotalAndAggregate,
+        ) {
+            Ok(c) => c,
+            Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
+        };
 
         Ok(crate::traits::CalcValue::Scalar(collected.finalize(op)))
     }

@@ -48,7 +48,7 @@ fn blank_masks_use_cell_types_across_base_overlay_and_chunk_slices() {
             let range =
                 ReferenceType::range(Some("S".into()), Some(start), Some(1), Some(end), Some(1));
             let view = engine.resolve_range_view(&range, "S").unwrap();
-            for criterion in ["", "<>"] {
+            for criterion in ["", "=", "<>"] {
                 let pred =
                     crate::args::parse_criteria(&LiteralValue::Text(criterion.into())).unwrap();
                 for _ in 0..3 {
@@ -58,11 +58,19 @@ fn blank_masks_use_cell_types_across_base_overlay_and_chunk_slices() {
                         .iter()
                         .enumerate()
                     {
-                        let blank = matches!(value, LiteralValue::Empty)
-                            || matches!(value, LiteralValue::Text(s) if s.is_empty());
+                        // Excel: "" matches blank cells and empty text, "=" only
+                        // blank cells, "<>" every cell that is not blank.
+                        let truly_blank = matches!(value, LiteralValue::Empty);
+                        let blank =
+                            truly_blank || matches!(value, LiteralValue::Text(s) if s.is_empty());
+                        let expected = match criterion {
+                            "" => blank,
+                            "=" => truly_blank,
+                            _ => !truly_blank,
+                        };
                         assert_eq!(
                             mask.is_valid(i) && mask.value(i),
-                            if criterion.is_empty() { blank } else { !blank },
+                            expected,
                             "overlay={overlay} range={start}:{end} criterion={criterion} row={i}"
                         );
                     }

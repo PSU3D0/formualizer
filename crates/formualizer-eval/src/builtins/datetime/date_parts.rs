@@ -6,7 +6,7 @@ use crate::traits::{ArgumentHandle, FunctionContext};
 use chrono::{Datelike, NaiveDate, Timelike};
 use formualizer_common::{
     DateSystem, ExcelError, ExcelErrorKind, LiteralValue, try_serial_to_date_for,
-    try_serial_to_datetime_for,
+    try_serial_to_datetime_for, try_serial_to_display_date_parts_for,
 };
 use formualizer_macros::func_caps;
 
@@ -45,6 +45,62 @@ fn next_month(year: i32, month: u32) -> (i32, u32) {
     }
 }
 
+/// Day count of YEARFRAC basis 0 (US 30/360) for `start <= end`.
+///
+/// Excel's rule differs from DAYS360's US method: an end day of 31 only
+/// becomes 30 when the start day is 30 or 31, and February month-ends are
+/// adjusted only on the start date, or on both dates when both are the last
+/// day of February.
+fn yearfrac_us_30_360_days(start: NaiveDate, end: NaiveDate) -> i64 {
+    let mut sd = start.day();
+    let mut ed = end.day();
+    let start_last_feb = start.month() == 2 && is_last_day_of_month(start);
+    let end_last_feb = end.month() == 2 && is_last_day_of_month(end);
+    if sd == 31 && ed == 31 {
+        sd = 30;
+        ed = 30;
+    } else if sd == 31 {
+        sd = 30;
+    } else if sd == 30 && ed == 31 {
+        ed = 30;
+    } else if start_last_feb && end_last_feb {
+        sd = 30;
+        ed = 30;
+    } else if start_last_feb {
+        sd = 30;
+    }
+    360 * i64::from(end.year() - start.year())
+        + 30 * i64::from(end.month() as i32 - start.month() as i32)
+        + i64::from(ed as i32 - sd as i32)
+}
+
+/// Year length of YEARFRAC basis 1 (actual/actual) for `start < end`.
+///
+/// Up to one year apart (same year, or the next year on or before the
+/// start's month and day), the year has 366 days when the period is inside a
+/// leap year or covers a February 29, else 365. Longer periods use the
+/// average length of every calendar year they touch.
+fn actual_actual_year_length(start: NaiveDate, end: NaiveDate) -> f64 {
+    let (sy, ey) = (start.year(), end.year());
+    let within_a_year =
+        sy == ey || (ey == sy + 1 && (start.month(), start.day()) >= (end.month(), end.day()));
+    if within_a_year {
+        let covers_feb_29 = |year: i32| {
+            NaiveDate::from_ymd_opt(year, 2, 29)
+                .is_some_and(|leap_day| start <= leap_day && leap_day <= end)
+        };
+        if (sy == ey && days_in_year(sy) == 366.0) || covers_feb_29(sy) || covers_feb_29(ey) {
+            366.0
+        } else {
+            365.0
+        }
+    } else {
+        let years = f64::from(ey - sy + 1);
+        let days: f64 = (sy..=ey).map(days_in_year).sum();
+        days / years
+    }
+}
+
 fn days_360_between(start: NaiveDate, end: NaiveDate, european: bool) -> i64 {
     let sy = start.year();
     let sm = start.month();
@@ -62,11 +118,16 @@ fn days_360_between(start: NaiveDate, end: NaiveDate, european: bool) -> i64 {
             ed = 30;
         }
     } else {
+        // US (NASD) method as Excel applies it: a start date on the last day
+        // of its month (February included) is the 30th; only an end date on
+        // the 31st moves, to the 1st of the next month when the start day is
+        // before the 30th and to the 30th otherwise. An end date on the 30th
+        // or on February 28/29 stays.
         if sd == 31 || is_last_day_of_month(start) {
             sd = 30;
         }
 
-        if ed == 31 || is_last_day_of_month(end) {
+        if ed == 31 {
             if sd < 30 {
                 let (ny, nm) = next_month(ey, em);
                 ey = ny;
@@ -167,6 +228,10 @@ impl Function for DaysFn {
 ///
 /// # Remarks
 /// - `method` omitted or `FALSE` uses U.S. (NASD) rules; `TRUE` uses the European 30E/360 method.
+/// - U.S. rules as Excel applies them: a start date on the last day of its month becomes the
+///   30th; an end date on the 31st becomes the 1st of the next month when the start day is
+///   before the 30th, otherwise the 30th. An end date on the 30th or on the last day of
+///   February is not adjusted (`DAYS360(DATE(2001,11,24),DATE(2001,11,30))` is 6).
 /// - Inputs are coerced to dates by truncating serials to integer days.
 /// - Serials are interpreted with the workbook's date system (Excel 1900 or Excel 1904).
 ///
@@ -174,7 +239,7 @@ impl Function for DaysFn {
 /// ```yaml,sandbox
 /// title: "U.S. 30/360 method"
 /// formula: "=DAYS360(40574, 40602)"
-/// expected: 30
+/// expected: 28
 /// ```
 ///
 /// ```yaml,sandbox
@@ -270,7 +335,13 @@ impl Function for Days360Fn {
 ///
 /// # Remarks
 /// - Supported `basis` values: `0` (US 30/360), `1` (actual/actual), `2` (actual/360), `3` (actual/365), `4` (European 30/360).
-/// - If `start_date > end_date`, the result is negative.
+/// - The dates are ordered first, so swapping them gives the same positive result.
+/// - Basis `0` follows Excel's US 30/360 month-end rules, which differ from `DAYS360`'s:
+///   an end day of 31 becomes 30 only when the start day is 30 or 31, and February
+///   month-ends are adjusted on the start date (on both dates when both are the last day
+///   of February).
+/// - Basis `1` divides by 366 or 365 for periods up to a year (366 when the period is in a
+///   leap year or covers February 29) and by the average year length otherwise.
 /// - Invalid `basis` values return `#NUM!`.
 /// - Serial dates are interpreted with the workbook's date system (Excel 1900 or Excel 1904).
 ///
@@ -380,38 +451,24 @@ impl Function for YearFracFn {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(0.0)));
         }
 
-        let (s, e, sign) = if start <= end {
-            (start, end, 1.0)
+        // Excel orders the dates first, so the result is never negative.
+        let (s, e) = if start <= end {
+            (start, end)
         } else {
-            (end, start, -1.0)
+            (end, start)
         };
 
         let actual_days = (e - s).num_days() as f64;
         let frac = match basis {
-            0 => days_360_between(s, e, false) as f64 / 360.0,
-            1 => {
-                if s.year() == e.year() {
-                    actual_days / days_in_year(s.year())
-                } else {
-                    let start_year_end = NaiveDate::from_ymd_opt(s.year() + 1, 1, 1).unwrap();
-                    let end_year_start = NaiveDate::from_ymd_opt(e.year(), 1, 1).unwrap();
-
-                    let mut out = (start_year_end - s).num_days() as f64 / days_in_year(s.year());
-                    for year in (s.year() + 1)..e.year() {
-                        out += 1.0;
-                    }
-                    out + (e - end_year_start).num_days() as f64 / days_in_year(e.year())
-                }
-            }
+            0 => yearfrac_us_30_360_days(s, e) as f64 / 360.0,
+            1 => actual_days / actual_actual_year_length(s, e),
             2 => actual_days / 360.0,
             3 => actual_days / 365.0,
             4 => days_360_between(s, e, true) as f64 / 360.0,
             _ => unreachable!(),
         };
 
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
-            sign * frac,
-        )))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(frac)))
     }
 }
 
@@ -558,9 +615,10 @@ impl Function for YearFn {
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let system = ctx.date_system();
         let serial = coerce_to_serial(&args[0], system)?;
-        let date = try_serial_to_date_for(system, serial)?;
+        // Serial 0 is "January 0, 1900" and 60 is February 29, 1900.
+        let parts = try_serial_to_display_date_parts_for(system, serial)?;
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(
-            date.year() as i64,
+            parts.year as i64,
         )))
     }
 }
@@ -636,9 +694,10 @@ impl Function for MonthFn {
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let system = ctx.date_system();
         let serial = coerce_to_serial(&args[0], system)?;
-        let date = try_serial_to_date_for(system, serial)?;
+        // Serial 0 is "January 0, 1900" and 60 is February 29, 1900.
+        let parts = try_serial_to_display_date_parts_for(system, serial)?;
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(
-            date.month() as i64,
+            parts.month as i64,
         )))
     }
 }
@@ -714,9 +773,10 @@ impl Function for DayFn {
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let system = ctx.date_system();
         let serial = coerce_to_serial(&args[0], system)?;
-        let date = try_serial_to_date_for(system, serial)?;
+        // Serial 0 is "January 0, 1900" and 60 is February 29, 1900.
+        let parts = try_serial_to_display_date_parts_for(system, serial)?;
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(
-            date.day() as i64,
+            parts.day as i64,
         )))
     }
 }
@@ -786,14 +846,16 @@ impl Function for HourFn {
         args: &'c [ArgumentHandle<'a, 'b>],
         ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
-        let serial = coerce_to_serial(&args[0], ctx.date_system())?;
+        let system = ctx.date_system();
+        let serial = coerce_to_serial(&args[0], system)?;
 
-        // For time values < 1, we just use the fractional part
-        let time_fraction = if serial < 1.0 { serial } else { serial.fract() };
-
-        // Convert fraction to hours (24 hours = 1.0)
-        let hours = (time_fraction * 24.0) as i64;
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(hours)))
+        // The time of day is rounded to the nearest second first, as for
+        // MINUTE and SECOND: 37054.54166666666 is 13:00:00, and a time that
+        // rounds to 24:00:00 is hour 0 of the next day.
+        let datetime = try_serial_to_datetime_for(system, serial)?;
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(
+            datetime.hour() as i64,
+        )))
     }
 }
 
@@ -1172,7 +1234,8 @@ mod tests {
             )
             .unwrap()
             .into_literal();
-        assert_eq!(us, LiteralValue::Number(30.0));
+        // Excel's US method leaves a February 28 end date alone.
+        assert_eq!(us, LiteralValue::Number(28.0));
         assert_eq!(eu, LiteralValue::Number(28.0));
     }
 

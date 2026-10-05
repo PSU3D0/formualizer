@@ -2186,6 +2186,19 @@ pub trait EvaluationContext: Resolver + FunctionProvider + SourceResolver {
     ) -> Option<std::sync::Arc<arrow_array::BooleanArray>> {
         None
     }
+
+    /// Optional: the cells of a sheet-backed `view` whose formulas call
+    /// SUBTOTAL (and AGGREGATE when `include_aggregate`), as sorted
+    /// (row, column) offsets within the view. SUBTOTAL and AGGREGATE skip
+    /// these cells (Excel ignores nested subtotals). `None` when the context
+    /// does not track formulas.
+    fn nested_subtotal_cells(
+        &self,
+        _view: &RangeView<'_>,
+        _include_aggregate: bool,
+    ) -> Option<Vec<(usize, usize)>> {
+        None
+    }
 }
 
 /// Minimal backend capability descriptor for planning and adapters.
@@ -2319,6 +2332,17 @@ pub trait FunctionContext<'ctx> {
     ) -> Option<std::sync::Arc<arrow_array::BooleanArray>> {
         None
     }
+
+    /// Optional: cells of `view` holding nested SUBTOTAL (and AGGREGATE when
+    /// `include_aggregate`) formulas; see
+    /// [`EvaluationContext::nested_subtotal_cells`].
+    fn get_nested_subtotal_cells(
+        &self,
+        _view: &RangeView<'_>,
+        _include_aggregate: bool,
+    ) -> Option<Vec<(usize, usize)>> {
+        None
+    }
 }
 
 /// Default adapter that wraps an EvaluationContext and provides the narrow FunctionContext.
@@ -2449,5 +2473,13 @@ impl<'a> FunctionContext<'a> for DefaultFunctionContext<'a> {
         mode: VisibilityMaskMode,
     ) -> Option<std::sync::Arc<arrow_array::BooleanArray>> {
         self.base.build_row_visibility_mask(view, mode)
+    }
+
+    fn get_nested_subtotal_cells(
+        &self,
+        view: &RangeView<'_>,
+        include_aggregate: bool,
+    ) -> Option<Vec<(usize, usize)>> {
+        self.base.nested_subtotal_cells(view, include_aggregate)
     }
 }

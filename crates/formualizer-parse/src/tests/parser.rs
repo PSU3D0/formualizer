@@ -2181,6 +2181,51 @@ mod reference_tests {
     }
 
     #[test]
+    fn current_workbook_index_zero_is_a_local_qualifier() {
+        // Excel numbers external workbooks from 1; `[0]` is the workbook the
+        // formula lives in, so `[0]!Name` is the workbook-scoped `Name` and
+        // `[0]Sheet1!A1` is `Sheet1!A1`.
+        assert_eq!(
+            ReferenceType::from_string("[0]!MPRR").unwrap(),
+            ReferenceType::NamedRange("MPRR".to_string())
+        );
+        assert_eq!(
+            ReferenceType::from_string("[0]Sheet1!$A$1").unwrap(),
+            ReferenceType::from_string("Sheet1!$A$1").unwrap()
+        );
+        assert_eq!(
+            ReferenceType::from_string("'[0]My Sheet'!B2:C3").unwrap(),
+            ReferenceType::from_string("'My Sheet'!B2:C3").unwrap()
+        );
+        // A real external index keeps its external meaning.
+        assert_eq!(
+            ReferenceType::from_string("[1]!MPRR").unwrap(),
+            ReferenceType::NamedRange("[1]!MPRR".to_string())
+        );
+        assert!(matches!(
+            ReferenceType::from_string("[10]Sheet1!A1").unwrap(),
+            ReferenceType::External(_)
+        ));
+
+        let ast = Parser::new("=INDEX([0]!MPRR, MATCH(1,[0]Sheet1!A1:A3,))")
+            .unwrap()
+            .parse()
+            .unwrap();
+        let ASTNodeType::Function { args, .. } = &ast.node_type else {
+            panic!("expected INDEX");
+        };
+        let ASTNodeType::Reference {
+            original,
+            reference,
+        } = &args[0].node_type
+        else {
+            panic!("expected a reference");
+        };
+        assert_eq!(original, "[0]!MPRR");
+        assert_eq!(reference, &ReferenceType::NamedRange("MPRR".to_string()));
+    }
+
+    #[test]
     fn test_external_workbook_reference_parsing() {
         let ref_type = ReferenceType::from_string("[33]Sheet1!$B:$B").unwrap();
         assert_eq!(

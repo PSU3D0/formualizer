@@ -613,4 +613,11 @@ impl<'a, R: EvaluationContext, S: ReadSink> EvaluationContext for RecordingConte
     ) -> Option<std::sync::Arc<arrow_array::BooleanArray>> {
         self.engine.build_row_visibility_mask(view, mode)
     }
+    fn nested_subtotal_cells(
+        &self,
+        view: &RangeView<'_>,
+        include_aggregate: bool,
+    ) -> Option<Vec<(usize, usize)>> {
+        self.engine.nested_subtotal_cells(view, include_aggregate)
+    }
 }

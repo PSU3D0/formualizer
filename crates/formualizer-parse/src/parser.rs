@@ -779,6 +779,21 @@ impl ReferenceType {
     }
 
     fn parse_excel_reference(reference: &str) -> Result<Self, ParsingError> {
+        // Workbook index 0 is the workbook the formula lives in (external
+        // workbooks are numbered from 1), as Excel stores it in OOXML:
+        // `[0]!Name` is the workbook-scoped `Name` and `[0]Sheet1!A1` is
+        // `Sheet1!A1`.
+        if let Some(rest) = reference.strip_prefix("[0]")
+            && rest.contains('!')
+        {
+            return Self::parse_excel_reference(rest.strip_prefix('!').unwrap_or(rest));
+        }
+        if let Some(rest) = reference.strip_prefix("'[0]")
+            && rest.contains('!')
+        {
+            return Self::parse_excel_reference(&format!("'{rest}"));
+        }
+
         // Excel structured reference shorthands that appear as a single bracketed token.
         //
         // We use these forms to avoid ambiguity with cell refs / named ranges:

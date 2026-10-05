@@ -345,6 +345,12 @@ impl DataStore {
         self.asts.get(id)
     }
 
+    /// SUBTOTAL/AGGREGATE call bits of the formula rooted at `id` (see
+    /// `AstNodeEntry::subtotal_calls`).
+    pub(crate) fn ast_subtotal_calls(&self, id: AstNodeId) -> u8 {
+        self.asts.subtotal_calls(id)
+    }
+
     pub fn get_args(&self, id: AstNodeId) -> Option<&[AstNodeId]> {
         self.asts.get_function_args(id)
     }

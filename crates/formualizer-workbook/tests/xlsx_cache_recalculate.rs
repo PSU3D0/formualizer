@@ -107,6 +107,31 @@ fn grounded_formula_names_and_transitive_dependencies() {
 }
 
 #[test]
+fn current_workbook_index_zero_resolves_names_and_keeps_formula_text() {
+    // Excel stores `[0]!Name` for a workbook-scoped name qualified with the
+    // current workbook (external links are numbered from 1).
+    let p = with_names(
+        parts(
+            "<row r=\"1\"><c r=\"A1\"><v>7</v></c><c r=\"B1\"><f>INDEX([0]!MPRR,2,1)</f></c></row>\
+             <row r=\"2\"><c r=\"A2\"><v>8</v></c><c r=\"B2\"><f>SUM([0]!MPRR)+[0]Sheet1!A1</f></c></row>",
+        ),
+        "<definedName name=\"MPRR\">Sheet1!$A$1:$A$2</definedName>",
+    );
+    let out = recalculate_xlsx_bytes(&pack(&p), Default::default()).unwrap();
+    assert_eq!(data(&out.bytes, 0).to_string(), "7");
+    let mut x = Xlsx::new(Cursor::new(&out.bytes)).unwrap();
+    let range = x.worksheet_range("Sheet1").unwrap();
+    assert_eq!(range.get_value((0, 1)), Some(&Data::Float(8.0)));
+    assert_eq!(range.get_value((1, 1)), Some(&Data::Float(22.0)));
+    let sheet = member(&out.bytes, SHEET);
+    assert!(sheet.contains("<f>INDEX([0]!MPRR,2,1)</f>"), "{sheet}");
+    assert!(
+        sheet.contains("<f>SUM([0]!MPRR)+[0]Sheet1!A1</f>"),
+        "{sheet}"
+    );
+}
+
+#[test]
 fn original_cross_sheet_formula_name_and_reference_control() {
     for (definition, formula) in [("Base!$A$1*2", "DoubleBase"), ("Base!$A$1", "DoubleBase*2")] {
         let mut p = with_names(
