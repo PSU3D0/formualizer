@@ -41,6 +41,8 @@ This release introduces `formualizer recalc`: after openpyxl or another editor s
 
 ### Fixed
 
+- Fixed `@` (implicit intersection) on whole-row and whole-column references, such as `=@21:21` or `=@A:A`, which returned `#VALUE!` when the formula's column or row lay outside the row's or column's used cells. The intersection now uses the sheet bounds.
+- Fixed `@` on a relative range in formulas filled down a column (one shape shared by many cells): every cell intersected the first cell's range, so rows past that range returned `#VALUE!` (for example `=@A4:A10` filled from `B5` gave `#VALUE!` from `B11` on).
 - Fixed silently wrong values in recurrences filled down a column that also read a fixed cell in that same column, such as a decay schedule `B9=+B8-(B8*$B$4)` with its rate in `B4`. Once the run was long enough (about 32 rows or more), every row computed as if the fixed cell were blank, so the schedule repeated its starting value instead of 17700, 17405, and so on. The same applied to fixed cells below the run and to an absolute-row reference to the row above the run. Affected 0.10.0 and 0.10.1; 0.9.3 and earlier were not affected.
 - Applied `IF` elementwise to array and range conditions with singleton-axis broadcasting, lazy branch evaluation and per-element errors. Scalar conditions retain short-circuit reference selection.
 - Preserved calculation names during Calamine import, including supported constants, grounded formulas and sheet-local shadowing; refused unsupported or cyclic definitions instead of publishing metadata-loss `#NAME?` results.
