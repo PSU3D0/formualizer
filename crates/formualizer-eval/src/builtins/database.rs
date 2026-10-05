@@ -317,7 +317,8 @@ fn eval_d_function<'a, 'b>(
     // Compute aggregate result
     let result = match agg_type {
         DAggregate::Sum => {
-            let sum: f64 = values.iter().sum();
+            // `Iterator::sum` of no f64 values is -0.0; Excel has no negative zero.
+            let sum = values.iter().fold(0.0, |acc, v| acc + v);
             LiteralValue::Number(sum)
         }
         DAggregate::Average => {

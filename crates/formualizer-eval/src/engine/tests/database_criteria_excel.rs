@@ -89,6 +89,16 @@ fn criteria_header_that_is_not_a_label_matches_no_record() {
         error_kind(eval(&mut e, "=DGET(A1:C4,3,E1:F2)")),
         Some(ExcelErrorKind::Value)
     );
+    // Excel has no negative zero: an empty DSUM is +0, not the -0 an empty
+    // floating-point sum produces.
+    for formula in ["=DSUM(A1:C4,3,E1:F2)", "=DPRODUCT(A1:C4,3,E1:F2)"] {
+        match eval(&mut e, formula) {
+            LiteralValue::Number(v) => {
+                assert!(v == 0.0 && v.is_sign_positive(), "{formula} gave {v:?}")
+            }
+            other => panic!("{formula} gave {other:?}"),
+        }
+    }
 }
 
 #[test]
