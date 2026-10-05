@@ -1417,18 +1417,19 @@ impl Lane {
                     }
                 }
                 // `YEAR`/`MONTH`/`DAY` of a clean number: the serial's
-                // date in the workbook's system, an integer result (boxed:
-                // the builtin returns `Int`); a serial off the calendar is
-                // left to the walk.
+                // displayed date in the workbook's system (serial 0 is
+                // January 0, 1900; 60 is February 29, 1900), an integer
+                // result (boxed: the builtin returns `Int`); a serial off
+                // the calendar is left to the walk.
                 K::Year | K::Month | K::Day => {
                     if let Some(x) = num(&elems[0])
-                        && let Ok(date) = formualizer_common::try_serial_to_date_for(date_system, x)
+                        && let Ok(date) =
+                            formualizer_common::try_serial_to_display_date_parts_for(date_system, x)
                     {
-                        use chrono::Datelike;
                         let part = match kernel {
-                            K::Year => i64::from(date.year()),
-                            K::Month => i64::from(date.month()),
-                            _ => i64::from(date.day()),
+                            K::Year => i64::from(date.year),
+                            K::Month => i64::from(date.month),
+                            _ => i64::from(date.day),
                         };
                         out.boxed
                             .push((i as u32, Ok((LiteralValue::Int(part), None))));
