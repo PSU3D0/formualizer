@@ -555,3 +555,340 @@ fn paired_inline_arrays_pair_by_position() {
     check("=SLOPE({2,4,6},{1,2,3})", 2.0, 1e-12);
     check_err("=SLOPE({2,4,6},{1,2})", ExcelErrorKind::Na);
 }
+
+/* ───────────────────────────── multiple regression ───────────────────────────── */
+
+fn array_at(
+    engine: &Engine<TestWorkbook>,
+    row: u32,
+    col: u32,
+    rows: u32,
+    cols: u32,
+) -> Vec<Vec<LiteralValue>> {
+    (0..rows)
+        .map(|r| {
+            (0..cols)
+                .map(|c| {
+                    engine
+                        .get_cell_value(SHEET, row + r, col + c)
+                        .unwrap_or(LiteralValue::Empty)
+                })
+                .collect()
+        })
+        .collect()
+}
+
+fn eval_array(
+    engine: &mut Engine<TestWorkbook>,
+    formula: &str,
+    rows: u32,
+    cols: u32,
+) -> Vec<Vec<LiteralValue>> {
+    engine
+        .set_cell_formula(SHEET, 1000, 30, parse(formula).unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    array_at(engine, 1000, 30, rows, cols)
+}
+
+#[track_caller]
+fn assert_row(row: &[LiteralValue], expected: &[Option<f64>], rel: f64, what: &str) {
+    assert_eq!(row.len(), expected.len(), "{what}");
+    for (i, (got, want)) in row.iter().zip(expected).enumerate() {
+        match want {
+            Some(w) => assert_close(
+                got.clone(),
+                *w,
+                rel * w.abs().max(1.0),
+                &format!("{what}[{i}]"),
+            ),
+            None => assert_error(got.clone(), ExcelErrorKind::Na, &format!("{what}[{i}]")),
+        }
+    }
+}
+
+/// The multiple-regression example on the LINEST support page (Example 3:
+/// floor space, offices, entrances and age against assessed value).
+fn assessed_value_fixture() -> Engine<TestWorkbook> {
+    let data: [[f64; 5]; 11] = [
+        [2310.0, 2.0, 2.0, 20.0, 142000.0],
+        [2333.0, 2.0, 2.0, 12.0, 144000.0],
+        [2356.0, 3.0, 1.5, 33.0, 151000.0],
+        [2379.0, 3.0, 2.0, 43.0, 150000.0],
+        [2402.0, 2.0, 3.0, 53.0, 139000.0],
+        [2425.0, 4.0, 2.0, 23.0, 169000.0],
+        [2448.0, 2.0, 1.5, 99.0, 126000.0],
+        [2471.0, 2.0, 2.0, 34.0, 142900.0],
+        [2494.0, 3.0, 3.0, 23.0, 163000.0],
+        [2517.0, 4.0, 4.0, 55.0, 169000.0],
+        [2540.0, 2.0, 3.0, 22.0, 149000.0],
+    ];
+    let mut e = engine();
+    for (r, row) in data.iter().enumerate() {
+        for (c, v) in row.iter().enumerate() {
+            e.set_cell_value(SHEET, r as u32 + 2, c as u32 + 1, LiteralValue::Number(*v))
+                .unwrap();
+        }
+    }
+    e
+}
+
+#[test]
+fn linest_multiple_regression_matches_documented_example() {
+    let mut e = assessed_value_fixture();
+    let out = eval_array(&mut e, "=LINEST(E2:E12,A2:D12,TRUE,TRUE)", 5, 5);
+    // Coefficients come back in reverse order of the x columns, then b.
+    assert_row(
+        &out[0],
+        &[
+            Some(-234.2371645),
+            Some(2553.21066),
+            Some(12529.76817),
+            Some(27.64138737),
+            Some(52317.83051),
+        ],
+        1e-8,
+        "coefficients",
+    );
+    assert_row(
+        &out[1],
+        &[
+            Some(13.26801148),
+            Some(530.6691519),
+            Some(400.0668382),
+            Some(5.429374042),
+            Some(12237.3616),
+        ],
+        1e-8,
+        "standard errors",
+    );
+    assert_row(
+        &out[2],
+        &[Some(0.996747993), Some(970.5784629), None, None, None],
+        1e-8,
+        "r2/sey",
+    );
+    assert_row(
+        &out[3],
+        &[Some(459.7536742), Some(6.0), None, None, None],
+        1e-8,
+        "F/df",
+    );
+    assert_row(
+        &out[4],
+        &[Some(1732393319.0), Some(5652135.316), None, None, None],
+        1e-8,
+        "ssreg/ssresid",
+    );
+}
+
+#[test]
+fn linest_multiple_predictors_repro() {
+    // y = 2*x1 + 3*x2 + 5 exactly; Excel's first cell is the x2 coefficient.
+    let mut e = engine();
+    let y = [10.0, 12.0, 11.0, 13.0, 21.0];
+    let x1 = [1.0, 2.0, 3.0, 4.0, 5.0];
+    let x2 = [1.0, 1.0, 0.0, 0.0, 2.0];
+    for i in 0..5 {
+        num(&mut e, &format!("A{}", i + 1), y[i]);
+        num(&mut e, &format!("B{}", i + 1), x1[i]);
+        num(&mut e, &format!("C{}", i + 1), x2[i]);
+    }
+    let out = eval_array(&mut e, "=LINEST(A1:A5,B1:C5)", 1, 3);
+    assert_row(
+        &out[0],
+        &[Some(3.0), Some(2.0), Some(5.0)],
+        1e-12,
+        "coefficients",
+    );
+}
+
+#[test]
+fn linest_without_constant_reports_na_for_seb() {
+    let mut e = engine();
+    let y = [10.0, 12.0, 11.0, 13.0, 21.0];
+    let x1 = [1.0, 2.0, 3.0, 4.0, 5.0];
+    let x2 = [1.0, 1.0, 0.0, 0.0, 2.0];
+    for i in 0..5 {
+        num(&mut e, &format!("A{}", i + 1), y[i]);
+        num(&mut e, &format!("B{}", i + 1), x1[i]);
+        num(&mut e, &format!("C{}", i + 1), x2[i]);
+    }
+    // Reference values from an independent normal-equations solve.
+    let out = eval_array(&mut e, "=LINEST(A1:A5,B1:C5,FALSE,TRUE)", 5, 3);
+    assert_row(
+        &out[0],
+        &[Some(3.7763975155279472), Some(3.180124223602484), Some(0.0)],
+        1e-10,
+        "coefficients",
+    );
+    assert_row(
+        &out[1],
+        &[Some(1.5450115483022049), Some(0.5103005194147511), None],
+        1e-10,
+        "standard errors",
+    );
+    assert_row(
+        &out[2],
+        &[Some(0.9784997611084567), Some(2.643402663188405), None],
+        1e-10,
+        "r2/sey",
+    );
+    assert_row(
+        &out[3],
+        &[Some(68.26666666666667), Some(3.0), None],
+        1e-10,
+        "F/df",
+    );
+    assert_row(
+        &out[4],
+        &[Some(954.0372670807453), Some(20.96273291925466), None],
+        1e-10,
+        "ss",
+    );
+}
+
+#[test]
+fn linest_removes_collinear_columns() {
+    // x2 = 2*x1 is redundant: one of the two gets coefficient 0 and se 0,
+    // and df goes up by one (n - k - 1 + 1 = 5 - 2 - 1 + 1 = 3).
+    let mut e = engine();
+    let x1 = [1.0, 2.0, 3.0, 4.0, 5.0];
+    let y = [3.1, 4.9, 7.2, 8.8, 11.1];
+    for i in 0..5 {
+        num(&mut e, &format!("A{}", i + 1), y[i]);
+        num(&mut e, &format!("B{}", i + 1), x1[i]);
+        num(&mut e, &format!("C{}", i + 1), 2.0 * x1[i]);
+    }
+    let out = eval_array(&mut e, "=LINEST(A1:A5,B1:C5,TRUE,TRUE)", 5, 3);
+    let single = eval_array(&mut e, "=LINEST(A1:A5,B1:B5,TRUE,TRUE)", 5, 2);
+    let n = |v: &LiteralValue| match v {
+        LiteralValue::Number(n) => *n,
+        other => panic!("{other:?}"),
+    };
+    let (m2, m1) = (n(&out[0][0]), n(&out[0][1]));
+    let (se2, se1) = (n(&out[1][0]), n(&out[1][1]));
+    let slope = n(&single[0][0]);
+    // Exactly one column is dropped; the other carries the whole slope.
+    assert!(
+        (m2 == 0.0 && se2 == 0.0 && (m1 - slope).abs() < 1e-12)
+            || (m1 == 0.0 && se1 == 0.0 && (2.0 * m2 - slope).abs() < 1e-12),
+        "m2={m2} m1={m1} se2={se2} se1={se1} slope={slope}"
+    );
+    assert_close(out[0][2].clone(), n(&single[0][1]), 1e-12, "intercept");
+    assert_close(out[3][1].clone(), 3.0, 0.0, "df");
+    assert_close(out[2][0].clone(), n(&single[2][0]), 1e-12, "r2");
+}
+
+#[test]
+fn linest_constant_x_is_collinear_not_div0() {
+    // LINEST support page: with y = 0 and x = 1, LINEST returns 0.
+    let out = eval_array(&mut engine(), "=LINEST({0,0,0},{1,1,1})", 1, 2);
+    assert_row(&out[0], &[Some(0.0), Some(0.0)], 0.0, "coefficients");
+}
+
+#[test]
+fn linest_row_oriented_variables() {
+    // known_y's in a row: each row of known_x's is a variable.
+    let out = eval_array(
+        &mut engine(),
+        "=LINEST({10,12,11,13,21},{1,2,3,4,5;1,1,0,0,2})",
+        1,
+        3,
+    );
+    assert_row(
+        &out[0],
+        &[Some(3.0), Some(2.0), Some(5.0)],
+        1e-12,
+        "coefficients",
+    );
+}
+
+#[test]
+fn linest_incompatible_shapes_are_ref_errors() {
+    check_err("=LINEST({1,2,3},{1,2})", ExcelErrorKind::Ref);
+    check_err("=LINEST({1;2;3},{1,2;3,4})", ExcelErrorKind::Ref);
+}
+
+#[test]
+fn trend_and_growth_use_every_predictor() {
+    // y = 2*x1 + 3*x2 + 5; predict at (6, 1) and (7, 0) -> 20, 19.
+    check(
+        "=INDEX(TREND({10;12;11;13;21},{1,1;2,1;3,0;4,0;5,2},{6,1;7,0}),1)",
+        20.0,
+        1e-9,
+    );
+    check(
+        "=INDEX(TREND({10;12;11;13;21},{1,1;2,1;3,0;4,0;5,2},{6,1;7,0}),2)",
+        19.0,
+        1e-9,
+    );
+    // y = 3 * 2^x1 * 5^x2: GROWTH at (4, 1) = 3*16*5 = 240.
+    check(
+        "=GROWTH({6;12;120;48;600},{1,0;2,0;3,1;4,0;3,2},{4,1})",
+        240.0,
+        1e-8,
+    );
+}
+
+#[test]
+fn trend_result_takes_the_shape_of_new_x() {
+    let out = eval_array(&mut engine(), "=TREND({3;5;7},{1;2;3},{4;5})", 2, 1);
+    assert_close(out[0][0].clone(), 9.0, 1e-12, "TREND[0]");
+    assert_close(out[1][0].clone(), 11.0, 1e-12, "TREND[1]");
+}
+
+#[test]
+fn logest_multiple_regression() {
+    // y = 3 * 2^x1 * 5^x2: LOGEST returns {m2, m1, b} = {5, 2, 3}.
+    let out = eval_array(
+        &mut engine(),
+        "=LOGEST({6;12;120;48;600},{1,0;2,0;3,1;4,0;3,2})",
+        1,
+        3,
+    );
+    assert_row(&out[0], &[Some(5.0), Some(2.0), Some(3.0)], 1e-9, "LOGEST");
+}
+
+#[test]
+fn legacy_array_formula_wider_than_linest_pads_na() {
+    // A fixed (Ctrl+Shift+Enter) LINEST over E1:H5 with two predictors:
+    // the result is 3 x 5, so column H is #N/A, as are the unused stats cells.
+    let mut e = Engine::new(
+        TestWorkbook::new(),
+        EvalConfig {
+            enable_parallel: false,
+            family_execution: false,
+            ..EvalConfig::default()
+        },
+    );
+    let y = [2.0, 4.0, 8.0, 10.0];
+    let x1 = [1.0, 2.0, 3.0, 4.0];
+    let x2 = [0.0, 1.0, 0.0, 1.0];
+    for i in 0..4 {
+        num(&mut e, &format!("A{}", i + 2), y[i]);
+        num(&mut e, &format!("B{}", i + 2), x1[i]);
+        num(&mut e, &format!("C{}", i + 2), x2[i]);
+    }
+    e.set_cell_formula(
+        SHEET,
+        1,
+        5,
+        parse("=LINEST(A2:A5,B2:C5,TRUE,TRUE)").unwrap(),
+    )
+    .unwrap();
+    e.build_graph_all().unwrap();
+    e.declare_fixed_array_formula(SHEET, 1, 5, 5, 4).unwrap();
+    e.evaluate_all().unwrap();
+    let out = array_at(&e, 1, 5, 5, 4);
+    // y = 3*x1 - x2 - 1 exactly.
+    assert_row(
+        &out[0],
+        &[Some(-1.0), Some(3.0), Some(-1.0), None],
+        1e-12,
+        "row 1",
+    );
+    assert_close(out[1][1].clone(), 0.0, 1e-12, "se(x1)");
+    assert_error(out[3][2].clone(), ExcelErrorKind::Na, "G4");
+    assert_error(out[3][3].clone(), ExcelErrorKind::Na, "H4");
+}

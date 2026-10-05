@@ -30,6 +30,7 @@ use formualizer_common::{ExcelError, LiteralValue};
 use formualizer_macros::func_caps;
 
 mod legacy;
+mod regression;
 
 fn scalar_like_value(arg: &ArgumentHandle<'_, '_>) -> Result<LiteralValue, ExcelError> {
     Ok(match arg.value()? {
@@ -6345,14 +6346,20 @@ impl Function for ForecastLinearFn {
 
 /// Returns linear-regression coefficients and optional fit statistics.
 ///
-/// `LINEST` fits a straight line to known y/x pairs and returns either `[slope, intercept]` or a
-/// larger statistics matrix.
+/// `LINEST` fits `y = m1*x1 + ... + mk*xk + b` by least squares and returns either
+/// `{mk, ..., m1, b}` or that row followed by the regression statistics.
 ///
 /// # Remarks
 /// - `known_y` is required; `known_x` defaults to `1..n` when omitted.
-/// - `const` controls whether an intercept is fitted (`TRUE` by default).
-/// - `stats=TRUE` returns a `5x2` result block; otherwise it returns `1x2`.
-/// - Returns spreadsheet errors for mismatched lengths, empty data, or degenerate x-values.
+/// - When `known_y` is a column, each column of `known_x` is a variable; when it is a row, each
+///   row is. With one variable the two ranges only need equal dimensions.
+/// - Coefficients are returned in reverse order of the variables, then `b`.
+/// - `const` controls whether an intercept is fitted (`TRUE` by default); with `FALSE`, `b = 0`.
+/// - `stats=TRUE` returns 5 rows: coefficients, standard errors (`se_b` is `#N/A` without a
+///   constant), `r2`/`sey`, `F`/`df`, and `ssreg`/`ssresid`, padded with `#N/A`.
+/// - A variable that is a linear combination of the others is removed: its coefficient and
+///   standard error are `0` and `df` grows by one.
+/// - Returns `#VALUE!` for non-numeric data and `#REF!` for incompatible shapes.
 ///
 /// # Examples
 ///
@@ -6400,199 +6407,7 @@ impl Function for LinestFn {
         args: &'c [ArgumentHandle<'a, 'b>],
         _ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
-        // args[0] = known_y's (required)
-        // args[1] = known_x's (optional, defaults to {1,2,3,...})
-        // args[2] = const (optional, default TRUE - whether to compute intercept)
-        // args[3] = stats (optional, default FALSE - whether to return additional statistics)
-
-        let y_vals = collect_numeric_stats(&args[0..1])?;
-
-        if y_vals.is_empty() {
-            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                ExcelError::new_na(),
-            )));
-        }
-
-        // Get known_x's or generate default {1, 2, 3, ...}
-        let x_vals = if args.len() >= 2 {
-            collect_numeric_stats(&args[1..2])?
-        } else {
-            (1..=y_vals.len()).map(|i| i as f64).collect()
-        };
-
-        // Arrays must have same length
-        if y_vals.len() != x_vals.len() {
-            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                ExcelError::new_ref(),
-            )));
-        }
-
-        // Parse const argument (default TRUE)
-        let use_const = if args.len() >= 3 {
-            match scalar_like_value(&args[2])? {
-                LiteralValue::Boolean(b) => b,
-                LiteralValue::Number(n) => n != 0.0,
-                LiteralValue::Int(i) => i != 0,
-                _ => true,
-            }
-        } else {
-            true
-        };
-
-        // Parse stats argument (default FALSE)
-        let return_stats = if args.len() >= 4 {
-            match scalar_like_value(&args[3])? {
-                LiteralValue::Boolean(b) => b,
-                LiteralValue::Number(n) => n != 0.0,
-                LiteralValue::Int(i) => i != 0,
-                _ => false,
-            }
-        } else {
-            false
-        };
-
-        let n = x_vals.len() as f64;
-
-        // Calculate regression coefficients
-        let (slope, intercept) = if use_const {
-            // Normal linear regression with intercept
-            let mean_x = x_vals.iter().sum::<f64>() / n;
-            let mean_y = y_vals.iter().sum::<f64>() / n;
-
-            let mut sum_xy = 0.0;
-            let mut sum_x2 = 0.0;
-
-            for i in 0..x_vals.len() {
-                let dx = x_vals[i] - mean_x;
-                let dy = y_vals[i] - mean_y;
-                sum_xy += dx * dy;
-                sum_x2 += dx * dx;
-            }
-
-            if sum_x2 == 0.0 {
-                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                    ExcelError::new_div(),
-                )));
-            }
-
-            let slope = sum_xy / sum_x2;
-            let intercept = mean_y - slope * mean_x;
-            (slope, intercept)
-        } else {
-            // Regression through origin (intercept = 0)
-            let mut sum_xy = 0.0;
-            let mut sum_x2 = 0.0;
-
-            for i in 0..x_vals.len() {
-                sum_xy += x_vals[i] * y_vals[i];
-                sum_x2 += x_vals[i] * x_vals[i];
-            }
-
-            if sum_x2 == 0.0 {
-                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                    ExcelError::new_div(),
-                )));
-            }
-
-            let slope = sum_xy / sum_x2;
-            (slope, 0.0)
-        };
-
-        if !return_stats {
-            // Return just slope and intercept as 1x2 array: [[slope, intercept]]
-            let row = vec![LiteralValue::Number(slope), LiteralValue::Number(intercept)];
-            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Array(vec![
-                row,
-            ])));
-        }
-
-        // Calculate additional statistics for stats=TRUE
-        // Row 1: [slope, intercept]
-        // Row 2: [se_slope, se_intercept]
-        // Row 3: [r_squared, se_y]
-        // Row 4: [F_statistic, df]
-        // Row 5: [ss_reg, ss_resid]
-
-        let mean_y = y_vals.iter().sum::<f64>() / n;
-
-        // Calculate residuals and sums of squares
-        let mut ss_resid = 0.0; // Sum of squared residuals
-        let mut ss_tot = 0.0; // Total sum of squares
-
-        for i in 0..x_vals.len() {
-            let y_pred = slope * x_vals[i] + intercept;
-            let residual = y_vals[i] - y_pred;
-            ss_resid += residual * residual;
-            let dy_tot = y_vals[i] - mean_y;
-            ss_tot += dy_tot * dy_tot;
-        }
-
-        let ss_reg = ss_tot - ss_resid; // Regression sum of squares
-
-        // R-squared
-        let r_squared = if ss_tot == 0.0 {
-            1.0 // Perfect fit or all y values are the same
-        } else {
-            1.0 - (ss_resid / ss_tot)
-        };
-
-        // Degrees of freedom
-        let df = if use_const {
-            (n as i64 - 2).max(1) as f64 // n - k - 1 where k=1 (one predictor)
-        } else {
-            (n as i64 - 1).max(1) as f64 // n - k when no intercept
-        };
-
-        // Standard error of y estimate
-        let se_y = if df > 0.0 {
-            (ss_resid / df).sqrt()
-        } else {
-            0.0
-        };
-
-        // Standard errors of coefficients
-        let mean_x = x_vals.iter().sum::<f64>() / n;
-        let mut sum_x2_centered = 0.0;
-        let mut sum_x2_raw = 0.0;
-        for &xi in &x_vals {
-            sum_x2_centered += (xi - mean_x).powi(2);
-            sum_x2_raw += xi * xi;
-        }
-
-        let se_slope = if sum_x2_centered > 0.0 && df > 0.0 {
-            se_y / sum_x2_centered.sqrt()
-        } else {
-            f64::NAN
-        };
-
-        let se_intercept = if use_const && sum_x2_centered > 0.0 && df > 0.0 {
-            se_y * (sum_x2_raw / (n * sum_x2_centered)).sqrt()
-        } else {
-            f64::NAN
-        };
-
-        // F-statistic
-        let f_stat = if ss_resid > 0.0 && df > 0.0 {
-            (ss_reg / 1.0) / (ss_resid / df) // MSR / MSE
-        } else if ss_resid == 0.0 {
-            f64::INFINITY // Perfect fit
-        } else {
-            f64::NAN
-        };
-
-        // Build 5x2 result array
-        let rows = vec![
-            vec![LiteralValue::Number(slope), LiteralValue::Number(intercept)],
-            vec![
-                LiteralValue::Number(se_slope),
-                LiteralValue::Number(se_intercept),
-            ],
-            vec![LiteralValue::Number(r_squared), LiteralValue::Number(se_y)],
-            vec![LiteralValue::Number(f_stat), LiteralValue::Number(df)],
-            vec![LiteralValue::Number(ss_reg), LiteralValue::Number(ss_resid)],
-        ];
-
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Array(rows)))
+        regression::eval_linest(args, false)
     }
 }
 
@@ -6930,13 +6745,16 @@ impl Function for ZTestFn {
 
 /// Returns fitted y-values along a linear trend derived from known data.
 ///
-/// `TREND` performs simple linear regression and returns predictions for `new_x` (or defaults).
+/// `TREND` fits the same least-squares model as `LINEST` and returns predictions for `new_x`
+/// (or defaults).
 ///
 /// # Remarks
 /// - `known_y` is required; `known_x` defaults to `1..n` when omitted.
-/// - `new_x` defaults to `known_x` when omitted.
+/// - `new_x` defaults to `known_x` when omitted. With one variable the result has the shape of
+///   `new_x`; with several, `new_x` holds one observation per row (or per column when `known_y`
+///   is a row).
 /// - `const` defaults to `TRUE`; set to `FALSE` to force a zero intercept.
-/// - Returns spreadsheet errors for empty data, mismatched lengths, or degenerate x-variance.
+/// - Returns `#VALUE!` for non-numeric data and `#REF!` for incompatible shapes.
 ///
 /// # Examples
 ///
@@ -6984,126 +6802,7 @@ impl Function for TrendFn {
         args: &'c [ArgumentHandle<'a, 'b>],
         _ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
-        // TREND: args[0] = known_y's (required)
-        // args[1] = known_x's (optional, defaults to {1,2,3,...})
-        // args[2] = new_x's (optional, defaults to known_x's)
-        // args[3] = const (optional, default TRUE - whether to compute intercept)
-
-        let y_vals = collect_numeric_stats(&args[0..1])?;
-
-        if y_vals.is_empty() {
-            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                ExcelError::new_na(),
-            )));
-        }
-
-        // Helper to check if argument is empty/omitted
-        // Note: Empty arguments are represented as empty text strings by the parser
-        fn is_arg_empty(arg: &ArgumentHandle) -> bool {
-            match scalar_like_value(arg) {
-                Ok(LiteralValue::Empty) => true,
-                Ok(LiteralValue::Text(s)) if s.is_empty() => true,
-                _ => false,
-            }
-        }
-
-        // Get known_x's or generate default {1, 2, 3, ...}
-        let x_vals = if args.len() >= 2 && !is_arg_empty(&args[1]) {
-            collect_numeric_stats(&args[1..2])?
-        } else {
-            (1..=y_vals.len()).map(|i| i as f64).collect()
-        };
-
-        // Arrays must have same length
-        if y_vals.len() != x_vals.len() {
-            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                ExcelError::new_ref(),
-            )));
-        }
-
-        // Get new_x's or use known_x's - check if argument is empty/omitted
-        let new_x_vals = if args.len() >= 3 && !is_arg_empty(&args[2]) {
-            collect_numeric_stats(&args[2..3])?
-        } else {
-            x_vals.clone()
-        };
-
-        if new_x_vals.is_empty() {
-            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                ExcelError::new_na(),
-            )));
-        }
-
-        // Parse const argument (default TRUE)
-        let use_const = if args.len() >= 4 {
-            match scalar_like_value(&args[3])? {
-                LiteralValue::Boolean(b) => b,
-                LiteralValue::Number(n) => n != 0.0,
-                LiteralValue::Int(i) => i != 0,
-                LiteralValue::Empty => true, // empty defaults to TRUE
-                _ => true,
-            }
-        } else {
-            true
-        };
-
-        let n = x_vals.len() as f64;
-
-        // Calculate regression coefficients
-        let (slope, intercept) = if use_const {
-            // Normal linear regression with intercept
-            let mean_x = x_vals.iter().sum::<f64>() / n;
-            let mean_y = y_vals.iter().sum::<f64>() / n;
-
-            let mut sum_xy = 0.0;
-            let mut sum_x2 = 0.0;
-
-            for i in 0..x_vals.len() {
-                let dx = x_vals[i] - mean_x;
-                let dy = y_vals[i] - mean_y;
-                sum_xy += dx * dy;
-                sum_x2 += dx * dx;
-            }
-
-            if sum_x2 == 0.0 {
-                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                    ExcelError::new_div(),
-                )));
-            }
-
-            let slope = sum_xy / sum_x2;
-            let intercept = mean_y - slope * mean_x;
-            (slope, intercept)
-        } else {
-            // Regression through origin (intercept = 0)
-            let mut sum_xy = 0.0;
-            let mut sum_x2 = 0.0;
-
-            for i in 0..x_vals.len() {
-                sum_xy += x_vals[i] * y_vals[i];
-                sum_x2 += x_vals[i] * x_vals[i];
-            }
-
-            if sum_x2 == 0.0 {
-                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                    ExcelError::new_div(),
-                )));
-            }
-
-            let slope = sum_xy / sum_x2;
-            (slope, 0.0)
-        };
-
-        // Calculate predicted y values for new_x's
-        let predicted: Vec<LiteralValue> = new_x_vals
-            .iter()
-            .map(|&x| LiteralValue::Number(slope * x + intercept))
-            .collect();
-
-        // Return as 1xN array (row vector)
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Array(vec![
-            predicted,
-        ])))
+        regression::eval_trend(args, false)
     }
 }
 
@@ -7115,9 +6814,11 @@ impl Function for TrendFn {
 ///
 /// # Remarks
 /// - All known y-values must be strictly greater than `0`.
-/// - `known_x` defaults to `1..n`; `new_x` defaults to `known_x`.
+/// - `known_x` defaults to `1..n`; `new_x` defaults to `known_x`. Several variables are laid
+///   out as in `TREND`.
 /// - `const` defaults to `TRUE`; set to `FALSE` to force `b = 1`.
-/// - Returns spreadsheet errors for invalid domains, mismatched lengths, or degenerate x-variance.
+/// - Returns `#NUM!` for non-positive y-values, `#VALUE!` for non-numeric data and `#REF!` for
+///   incompatible shapes.
 ///
 /// # Examples
 ///
@@ -7165,143 +6866,7 @@ impl Function for GrowthFn {
         args: &'c [ArgumentHandle<'a, 'b>],
         _ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
-        // GROWTH: args[0] = known_y's (required)
-        // args[1] = known_x's (optional, defaults to {1,2,3,...})
-        // args[2] = new_x's (optional, defaults to known_x's)
-        // args[3] = const (optional, default TRUE - whether to compute intercept)
-
-        let y_vals = collect_numeric_stats(&args[0..1])?;
-
-        if y_vals.is_empty() {
-            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                ExcelError::new_na(),
-            )));
-        }
-
-        // Check that all y values are positive (required for log transformation)
-        for &y in &y_vals {
-            if y <= 0.0 {
-                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                    ExcelError::new_num(),
-                )));
-            }
-        }
-
-        // Helper to check if argument is empty/omitted
-        // Note: Empty arguments are represented as empty text strings by the parser
-        fn is_arg_empty(arg: &ArgumentHandle) -> bool {
-            match scalar_like_value(arg) {
-                Ok(LiteralValue::Empty) => true,
-                Ok(LiteralValue::Text(s)) if s.is_empty() => true,
-                _ => false,
-            }
-        }
-
-        // Get known_x's or generate default {1, 2, 3, ...}
-        let x_vals = if args.len() >= 2 && !is_arg_empty(&args[1]) {
-            collect_numeric_stats(&args[1..2])?
-        } else {
-            (1..=y_vals.len()).map(|i| i as f64).collect()
-        };
-
-        // Arrays must have same length
-        if y_vals.len() != x_vals.len() {
-            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                ExcelError::new_ref(),
-            )));
-        }
-
-        // Get new_x's or use known_x's - check if argument is empty/omitted
-        let new_x_vals = if args.len() >= 3 && !is_arg_empty(&args[2]) {
-            collect_numeric_stats(&args[2..3])?
-        } else {
-            x_vals.clone()
-        };
-
-        if new_x_vals.is_empty() {
-            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                ExcelError::new_na(),
-            )));
-        }
-
-        // Parse const argument (default TRUE)
-        let use_const = if args.len() >= 4 {
-            match scalar_like_value(&args[3])? {
-                LiteralValue::Boolean(b) => b,
-                LiteralValue::Number(n) => n != 0.0,
-                LiteralValue::Int(i) => i != 0,
-                LiteralValue::Empty => true, // empty defaults to TRUE
-                _ => true,
-            }
-        } else {
-            true
-        };
-
-        // Transform to log space: ln(y) = ln(b) + x*ln(m)
-        // This is linear regression on log-transformed y values
-        let ln_y_vals: Vec<f64> = y_vals.iter().map(|&y| y.ln()).collect();
-
-        let n = x_vals.len() as f64;
-
-        // Calculate regression coefficients in log space
-        let (ln_m, ln_b) = if use_const {
-            // Normal linear regression with intercept
-            let mean_x = x_vals.iter().sum::<f64>() / n;
-            let mean_ln_y = ln_y_vals.iter().sum::<f64>() / n;
-
-            let mut sum_xy = 0.0;
-            let mut sum_x2 = 0.0;
-
-            for i in 0..x_vals.len() {
-                let dx = x_vals[i] - mean_x;
-                let dy = ln_y_vals[i] - mean_ln_y;
-                sum_xy += dx * dy;
-                sum_x2 += dx * dx;
-            }
-
-            if sum_x2 == 0.0 {
-                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                    ExcelError::new_div(),
-                )));
-            }
-
-            let ln_m = sum_xy / sum_x2;
-            let ln_b = mean_ln_y - ln_m * mean_x;
-            (ln_m, ln_b)
-        } else {
-            // Regression through origin in log space (ln_b = 0, so b = 1)
-            let mut sum_xy = 0.0;
-            let mut sum_x2 = 0.0;
-
-            for i in 0..x_vals.len() {
-                sum_xy += x_vals[i] * ln_y_vals[i];
-                sum_x2 += x_vals[i] * x_vals[i];
-            }
-
-            if sum_x2 == 0.0 {
-                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                    ExcelError::new_div(),
-                )));
-            }
-
-            let ln_m = sum_xy / sum_x2;
-            (ln_m, 0.0)
-        };
-
-        // Convert back from log space: m = e^ln_m, b = e^ln_b
-        let m = ln_m.exp();
-        let b = ln_b.exp();
-
-        // Calculate predicted y values: y = b * m^x
-        let predicted: Vec<LiteralValue> = new_x_vals
-            .iter()
-            .map(|&x| LiteralValue::Number(b * m.powf(x)))
-            .collect();
-
-        // Return as 1xN array (row vector)
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Array(vec![
-            predicted,
-        ])))
+        regression::eval_trend(args, true)
     }
 }
 
@@ -7313,9 +6878,10 @@ impl Function for GrowthFn {
 ///
 /// # Remarks
 /// - All known y-values must be strictly greater than `0`.
-/// - `known_x` defaults to `1..n` when omitted.
+/// - `known_x` defaults to `1..n` when omitted; several variables are laid out as in `LINEST`
+///   and the bases come back in reverse order of the variables, then `b`.
 /// - `const` controls whether `b` is fitted (`TRUE` by default).
-/// - `stats=TRUE` returns a `5x2` statistics block; otherwise returns `1x2`.
+/// - `stats=TRUE` returns the `LINEST` statistics block of the fit of `ln(y)`.
 ///
 /// # Examples
 ///
@@ -7363,221 +6929,7 @@ impl Function for LogestFn {
         args: &'c [ArgumentHandle<'a, 'b>],
         _ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
-        // args[0] = known_y's (required)
-        // args[1] = known_x's (optional, defaults to {1,2,3,...})
-        // args[2] = const (optional, default TRUE - whether to compute b)
-        // args[3] = stats (optional, default FALSE - whether to return additional statistics)
-
-        let y_vals = collect_numeric_stats(&args[0..1])?;
-
-        if y_vals.is_empty() {
-            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                ExcelError::new_na(),
-            )));
-        }
-
-        // Check that all y values are positive (required for log transformation)
-        for &y in &y_vals {
-            if y <= 0.0 {
-                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                    ExcelError::new_num(),
-                )));
-            }
-        }
-
-        // Get known_x's or generate default {1, 2, 3, ...}
-        let x_vals = if args.len() >= 2 {
-            collect_numeric_stats(&args[1..2])?
-        } else {
-            (1..=y_vals.len()).map(|i| i as f64).collect()
-        };
-
-        // Arrays must have same length
-        if y_vals.len() != x_vals.len() {
-            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                ExcelError::new_ref(),
-            )));
-        }
-
-        // Parse const argument (default TRUE)
-        let use_const = if args.len() >= 3 {
-            match scalar_like_value(&args[2])? {
-                LiteralValue::Boolean(b) => b,
-                LiteralValue::Number(n) => n != 0.0,
-                LiteralValue::Int(i) => i != 0,
-                _ => true,
-            }
-        } else {
-            true
-        };
-
-        // Parse stats argument (default FALSE)
-        let return_stats = if args.len() >= 4 {
-            match scalar_like_value(&args[3])? {
-                LiteralValue::Boolean(b) => b,
-                LiteralValue::Number(n) => n != 0.0,
-                LiteralValue::Int(i) => i != 0,
-                _ => false,
-            }
-        } else {
-            false
-        };
-
-        // Transform to log space: ln(y) = ln(b) + x*ln(m)
-        let ln_y_vals: Vec<f64> = y_vals.iter().map(|&y| y.ln()).collect();
-
-        let n = x_vals.len() as f64;
-
-        // Calculate regression coefficients in log space
-        let (ln_m, ln_b) = if use_const {
-            // Normal linear regression with intercept
-            let mean_x = x_vals.iter().sum::<f64>() / n;
-            let mean_ln_y = ln_y_vals.iter().sum::<f64>() / n;
-
-            let mut sum_xy = 0.0;
-            let mut sum_x2 = 0.0;
-
-            for i in 0..x_vals.len() {
-                let dx = x_vals[i] - mean_x;
-                let dy = ln_y_vals[i] - mean_ln_y;
-                sum_xy += dx * dy;
-                sum_x2 += dx * dx;
-            }
-
-            if sum_x2 == 0.0 {
-                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                    ExcelError::new_div(),
-                )));
-            }
-
-            let ln_m = sum_xy / sum_x2;
-            let ln_b = mean_ln_y - ln_m * mean_x;
-            (ln_m, ln_b)
-        } else {
-            // Regression through origin in log space (ln_b = 0, so b = 1)
-            let mut sum_xy = 0.0;
-            let mut sum_x2 = 0.0;
-
-            for i in 0..x_vals.len() {
-                sum_xy += x_vals[i] * ln_y_vals[i];
-                sum_x2 += x_vals[i] * x_vals[i];
-            }
-
-            if sum_x2 == 0.0 {
-                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                    ExcelError::new_div(),
-                )));
-            }
-
-            let ln_m = sum_xy / sum_x2;
-            (ln_m, 0.0)
-        };
-
-        // Convert from log space to get m and b
-        let m = ln_m.exp();
-        let b = ln_b.exp();
-
-        if !return_stats {
-            // Return just m and b as 1x2 array: [[m, b]]
-            let row = vec![LiteralValue::Number(m), LiteralValue::Number(b)];
-            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Array(vec![
-                row,
-            ])));
-        }
-
-        // Calculate additional statistics for stats=TRUE
-        // Statistics are computed in log space, then converted
-        // Row 1: [m, b]
-        // Row 2: [se_m, se_b] - standard errors (converted from log space)
-        // Row 3: [r_squared, se_y] - R-squared and standard error of y estimate
-        // Row 4: [F_statistic, df] - F-statistic and degrees of freedom
-        // Row 5: [ss_reg, ss_resid] - regression sum of squares and residual sum of squares
-
-        let mean_ln_y = ln_y_vals.iter().sum::<f64>() / n;
-
-        // Calculate residuals and sums of squares in log space
-        let mut ss_resid = 0.0;
-        let mut ss_tot = 0.0;
-
-        for i in 0..x_vals.len() {
-            let ln_y_pred = ln_m * x_vals[i] + ln_b;
-            let residual = ln_y_vals[i] - ln_y_pred;
-            ss_resid += residual * residual;
-            let dy_tot = ln_y_vals[i] - mean_ln_y;
-            ss_tot += dy_tot * dy_tot;
-        }
-
-        let ss_reg = ss_tot - ss_resid;
-
-        // R-squared (same in both spaces for transformed regression)
-        let r_squared = if ss_tot == 0.0 {
-            1.0
-        } else {
-            1.0 - (ss_resid / ss_tot)
-        };
-
-        // Degrees of freedom
-        let df = if use_const {
-            (n as i64 - 2).max(1) as f64
-        } else {
-            (n as i64 - 1).max(1) as f64
-        };
-
-        // Standard error of y estimate (in log space)
-        let se_ln_y = if df > 0.0 {
-            (ss_resid / df).sqrt()
-        } else {
-            0.0
-        };
-
-        // Standard errors of coefficients in log space
-        let mean_x = x_vals.iter().sum::<f64>() / n;
-        let mut sum_x2_centered = 0.0;
-        let mut sum_x2_raw = 0.0;
-        for &xi in &x_vals {
-            sum_x2_centered += (xi - mean_x).powi(2);
-            sum_x2_raw += xi * xi;
-        }
-
-        let se_ln_m = if sum_x2_centered > 0.0 && df > 0.0 {
-            se_ln_y / sum_x2_centered.sqrt()
-        } else {
-            f64::NAN
-        };
-
-        let se_ln_b = if use_const && sum_x2_centered > 0.0 && df > 0.0 {
-            se_ln_y * (sum_x2_raw / (n * sum_x2_centered)).sqrt()
-        } else {
-            f64::NAN
-        };
-
-        // Convert standard errors: se_m = m * se_ln_m (delta method approximation)
-        let se_m = m * se_ln_m;
-        let se_b = b * se_ln_b;
-
-        // Standard error of y estimate - convert from log space
-        // This is an approximation; for exponential models, se_y in original space varies with x
-        let se_y = se_ln_y;
-
-        // F-statistic
-        let f_stat = if ss_resid > 0.0 && df > 0.0 {
-            (ss_reg / 1.0) / (ss_resid / df)
-        } else if ss_resid == 0.0 {
-            f64::INFINITY
-        } else {
-            f64::NAN
-        };
-
-        // Build 5x2 result array
-        let rows = vec![
-            vec![LiteralValue::Number(m), LiteralValue::Number(b)],
-            vec![LiteralValue::Number(se_m), LiteralValue::Number(se_b)],
-            vec![LiteralValue::Number(r_squared), LiteralValue::Number(se_y)],
-            vec![LiteralValue::Number(f_stat), LiteralValue::Number(df)],
-            vec![LiteralValue::Number(ss_reg), LiteralValue::Number(ss_resid)],
-        ];
-
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Array(rows)))
+        regression::eval_linest(args, true)
     }
 }
 
