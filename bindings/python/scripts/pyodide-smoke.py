@@ -1,3 +1,4 @@
+import datetime
 import json
 import sys
 
@@ -198,11 +199,12 @@ except OSError as error:
     assert "TODAY/NOW need a wall clock" in str(error), str(error)
 else:
     raise AssertionError("Pyodide must refuse TODAY() without a fixed timestamp")
-import datetime
 
 fixed = fz.recalculate_xlsx_bytes(
     source_xlsx("TODAY()", 0),
-    deterministic_timestamp_utc=datetime.datetime(2026, 1, 31, 9, tzinfo=datetime.timezone.utc),
+    deterministic_timestamp_utc=datetime.datetime(
+        2026, 1, 31, 9, tzinfo=datetime.timezone.utc
+    ),
 )
 assert cached_b1(fixed["bytes"]) == "46053", cached_b1(fixed["bytes"])
 assert fixed["clock"]["fixed"] is True

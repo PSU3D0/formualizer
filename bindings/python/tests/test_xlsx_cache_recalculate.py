@@ -251,7 +251,7 @@ def test_error_reasons_and_unknown_functions_are_reported():
     result = fz.recalculate_xlsx_bytes(buffer.getvalue(), error_location_limit=10)
     summary = result["summary"]
     name = summary["error_summary"]["#NAME?"]
-    assert dict(zip(name["locations"], name["messages"])) == {
+    assert dict(zip(name["locations"], name["messages"], strict=True)) == {
         "Sheet!A1": "Unknown function: SPDVOL",
         "Sheet!A2": "Unknown function: SPDVOL",
         "Sheet!A3": "Unknown function: _xll.EURO",
