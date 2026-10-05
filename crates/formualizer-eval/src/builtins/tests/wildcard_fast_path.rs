@@ -164,15 +164,22 @@ mod tests {
     }
 
     #[test]
-    fn test_numeric_coercion() {
+    fn test_wildcards_match_text_only() {
+        // Excel: wildcard criteria match text cells only; numbers never match,
+        // even when their digits fit the pattern.
         let pred = create_text_like("123*");
 
-        assert!(criteria_match(&pred, &LiteralValue::Number(123.0)));
-        assert!(criteria_match(&pred, &LiteralValue::Number(123.456)));
-        assert!(criteria_match(&pred, &LiteralValue::Int(123)));
+        assert!(!criteria_match(&pred, &LiteralValue::Number(123.0)));
+        assert!(!criteria_match(&pred, &LiteralValue::Number(123.456)));
+        assert!(!criteria_match(&pred, &LiteralValue::Int(123)));
+        assert!(!criteria_match(&pred, &LiteralValue::Boolean(true)));
+        assert!(criteria_match(&pred, &LiteralValue::Text("123".into())));
+        assert!(criteria_match(&pred, &LiteralValue::Text("1234".into())));
+        assert!(!criteria_match(&pred, &LiteralValue::Text("12.3".into())));
 
-        assert!(!criteria_match(&pred, &LiteralValue::Number(12.3)));
-        assert!(!criteria_match(&pred, &LiteralValue::Int(12)));
+        let four = create_text_like("????");
+        assert!(!criteria_match(&four, &LiteralValue::Number(2025.0)));
+        assert!(criteria_match(&four, &LiteralValue::Text("2025".into())));
     }
 
     #[test]
@@ -180,7 +187,8 @@ mod tests {
         let pred_empty = create_text_like("*");
         let pred_something = create_text_like("some*");
 
-        assert!(criteria_match(&pred_empty, &LiteralValue::Empty));
+        // `*` matches any text, including empty text, but not a blank cell.
+        assert!(!criteria_match(&pred_empty, &LiteralValue::Empty));
         assert!(criteria_match(&pred_empty, &LiteralValue::Text("".into())));
 
         assert!(!criteria_match(&pred_something, &LiteralValue::Empty));

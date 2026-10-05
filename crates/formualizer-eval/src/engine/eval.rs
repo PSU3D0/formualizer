@@ -2386,6 +2386,53 @@ fn is_numeric_text_equality(pred: &crate::args::CriteriaPredicate) -> bool {
     }
 }
 
+/// Resolve the null (non-number) rows of an `=n` / `<>n` criteria mask over
+/// one row segment: numeric text compares by value, every other non-number
+/// cell (blank, boolean, error) is unequal. Segments without text stay
+/// vectorized.
+fn fill_numeric_equality_nulls(
+    view: &RangeView<'_>,
+    row_start: usize,
+    row_len: usize,
+    col_in_view: usize,
+    mask: &arrow_array::BooleanArray,
+    n: f64,
+    ne: bool,
+) -> Option<arrow_array::BooleanArray> {
+    use arrow_array::Array as _;
+    let texts = view.slice_lowered_text(row_start, row_len);
+    let text = texts.get(col_in_view).and_then(|t| t.as_ref());
+    match text {
+        None => {
+            if !ne {
+                // Nulls are already "no match".
+                return Some(mask.clone());
+            }
+            let nulls = arrow::compute::is_null(mask).ok()?;
+            crate::compute_prelude::boolean::or_kleene(mask, &nulls).ok()
+        }
+        Some(text) => {
+            if text.len() != mask.len() {
+                return None;
+            }
+            let mut out = arrow_array::builder::BooleanBuilder::with_capacity(mask.len());
+            for i in 0..mask.len() {
+                if mask.is_valid(i) {
+                    out.append_value(mask.value(i));
+                } else if text.is_valid(i) {
+                    let equal = crate::locale::Locale::invariant()
+                        .parse_number_invariant(text.value(i))
+                        .is_some_and(|x| (x - n).abs() < 1e-12);
+                    out.append_value(equal != ne);
+                } else {
+                    out.append_value(ne);
+                }
+            }
+            Some(out.finish())
+        }
+    }
+}
+
 fn compute_criteria_mask(
     view: &RangeView<'_>,
     col_in_view: usize,
@@ -2455,11 +2502,29 @@ fn compute_criteria_mask(
     // concatenates boolean masks (1-bit per element) - a 64x memory reduction.
     if is_numeric_pred {
         let mut bool_parts: Vec<BooleanArray> = Vec::new();
+        // `=n` / `<>n`: the number lane is null for blank, text, boolean and
+        // error cells. Blanks, booleans and errors never equal a number;
+        // numeric text does (`5` matches "5"), as in `criteria_match`.
+        let number = |v: &formualizer_common::LiteralValue| match v {
+            formualizer_common::LiteralValue::Number(n) => Some(*n),
+            formualizer_common::LiteralValue::Int(i) => Some(*i as f64),
+            _ => None,
+        };
+        let equality = match pred {
+            crate::args::CriteriaPredicate::Eq(v) => number(v).map(|n| (n, false)),
+            crate::args::CriteriaPredicate::Ne(v) => number(v).map(|n| (n, true)),
+            _ => None,
+        };
         for res in view.numbers_slices() {
-            let (_rs, _rl, cols_seg) = res.ok()?;
+            let (rs, rl, cols_seg) = res.ok()?;
             if col_in_view < cols_seg.len() {
                 let chunk = cols_seg[col_in_view].as_ref();
-                let mask = apply_numeric_pred(chunk, pred)?;
+                let mut mask = apply_numeric_pred(chunk, pred)?;
+                if let Some((n, ne)) = equality
+                    && mask.null_count() > 0
+                {
+                    mask = fill_numeric_equality_nulls(view, rs, rl, col_in_view, &mask, n, ne)?;
+                }
                 bool_parts.push(mask);
             }
         }
@@ -2520,6 +2585,38 @@ fn compute_criteria_mask(
 
     // TEXT PATH: build masks per row-chunk using lowered text slices.
     // This avoids concatenating full-string columns just to compute a boolean mask.
+    // `"="` / `"<>"`: truly blank cells only (empty text is not blank).
+    if matches!(
+        pred,
+        crate::args::CriteriaPredicate::IsBlank | crate::args::CriteriaPredicate::NotBlank
+    ) {
+        let want_blank = matches!(pred, crate::args::CriteriaPredicate::IsBlank);
+        let mut bool_parts: Vec<BooleanArray> = Vec::new();
+        for tags in view.type_tags_slices() {
+            let (_, _, cols) = tags.ok()?;
+            let tags = cols.get(col_in_view)?;
+            let mut bb = BooleanBuilder::with_capacity(tags.len());
+            for i in 0..tags.len() {
+                let blank = tags.value(i) == crate::arrow_store::TypeTag::Empty as u8;
+                bb.append_value(blank == want_blank);
+            }
+            bool_parts.push(bb.finish());
+        }
+        return match bool_parts.len() {
+            0 => None,
+            1 => Some(std::sync::Arc::new(bool_parts.remove(0))),
+            _ => {
+                let anys: Vec<&dyn arrow_array::Array> = bool_parts
+                    .iter()
+                    .map(|a| a as &dyn arrow_array::Array)
+                    .collect();
+                let conc: ArrayRef = concat_arrays(&anys).ok()?;
+                let ba = conc.as_any().downcast_ref::<BooleanArray>()?.clone();
+                Some(std::sync::Arc::new(ba))
+            }
+        };
+    }
+
     let (text_kind, text_pat, empty_special) = match pred {
         crate::args::CriteriaPredicate::Eq(formualizer_common::LiteralValue::Text(t)) => {
             (0u8, t.to_lowercase(), t.is_empty())

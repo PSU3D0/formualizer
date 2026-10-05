@@ -396,22 +396,33 @@ pub fn collapse_if_scalar(
 // ─────────────────────────────── Criteria helpers (shared by *IF* aggregators) ───────────────────────────────
 
 /// Match a value against a parsed `CriteriaPredicate` (see `crate::args::CriteriaPredicate`).
-/// Implements Excel-style semantics for equality (case-insensitive text, lenient numeric),
-/// inequality comparisons with numeric coercion, wildcard text matching, and type tests.
+/// Implements Excel's criteria semantics: equality is case-insensitive for text and
+/// lenient for numeric text (`5` matches the text `"5"`), but a number never matches
+/// a blank cell or a boolean; numeric comparisons only match numbers; wildcard and
+/// text comparisons only match text.
 pub fn criteria_match(pred: &crate::args::CriteriaPredicate, v: &LiteralValue) -> bool {
     use crate::args::CriteriaPredicate as P;
     match pred {
         P::Eq(t) => values_equal_invariant(t, v),
         P::Ne(t) => !values_equal_invariant(t, v),
-        P::Gt(n) => value_to_number(v).map(|x| x > *n).unwrap_or(false),
-        P::Ge(n) => value_to_number(v).map(|x| x >= *n).unwrap_or(false),
-        P::Lt(n) => value_to_number(v).map(|x| x < *n).unwrap_or(false),
-        P::Le(n) => value_to_number(v).map(|x| x <= *n).unwrap_or(false),
+        P::Gt(n) => criteria_number(v).is_some_and(|x| x > *n),
+        P::Ge(n) => criteria_number(v).is_some_and(|x| x >= *n),
+        P::Lt(n) => criteria_number(v).is_some_and(|x| x < *n),
+        P::Le(n) => criteria_number(v).is_some_and(|x| x <= *n),
         P::TextLike {
             pattern,
             case_insensitive,
         } => text_like_match(pattern, *case_insensitive, v),
+        P::NotTextLike {
+            pattern,
+            case_insensitive,
+        } => !text_like_match(pattern, *case_insensitive, v),
+        P::TextGt(t) => text_compare(v, t).is_some_and(|o| o.is_gt()),
+        P::TextGe(t) => text_compare(v, t).is_some_and(|o| o.is_ge()),
+        P::TextLt(t) => text_compare(v, t).is_some_and(|o| o.is_lt()),
+        P::TextLe(t) => text_compare(v, t).is_some_and(|o| o.is_le()),
         P::IsBlank => matches!(v, LiteralValue::Empty),
+        P::NotBlank => !matches!(v, LiteralValue::Empty),
         P::IsNumber => value_to_number(v).is_ok(),
         P::IsText => matches!(v, LiteralValue::Text(_)),
         P::IsLogical => matches!(v, LiteralValue::Boolean(_)),
@@ -420,6 +431,24 @@ pub fn criteria_match(pred: &crate::args::CriteriaPredicate, v: &LiteralValue) -
 
 fn value_to_number(v: &LiteralValue) -> Result<f64, ExcelError> {
     crate::coercion::to_number_lenient(v)
+}
+
+/// The number a numeric comparison (`>5`) sees: numbers and dates only.
+/// Blank cells, text (even numeric text), booleans and errors never match.
+fn criteria_number(v: &LiteralValue) -> Option<f64> {
+    match v {
+        LiteralValue::Boolean(_) => None,
+        other => other.as_serial_number(),
+    }
+}
+
+/// Case-insensitive ordering of a text cell against a text operand; `None`
+/// for any other cell.
+fn text_compare(v: &LiteralValue, operand: &str) -> Option<std::cmp::Ordering> {
+    match v {
+        LiteralValue::Text(t) => Some(t.to_lowercase().cmp(&operand.to_lowercase())),
+        _ => None,
+    }
 }
 
 fn values_equal_invariant(a: &LiteralValue, b: &LiteralValue) -> bool {
@@ -435,38 +464,36 @@ fn values_equal_invariant(a: &LiteralValue, b: &LiteralValue) -> bool {
         // Date/time/duration equality: compare by serial value.
         // This matches criteria semantics (COUNTIF(S), SUMIF(S), database criteria, etc.) where
         // date-like values participate in numeric comparisons.
-        (x, y) if x.as_serial_number().is_some() && y.as_serial_number().is_some() => x
-            .as_serial_number()
-            .zip(y.as_serial_number())
-            .map(|(sx, sy)| (sx - sy).abs() < 1e-12)
-            .unwrap_or(false),
-        (LiteralValue::Number(x), _) => value_to_number(b)
-            .map(|y| (x - y).abs() < 1e-12)
-            .unwrap_or(false),
-        (_, LiteralValue::Number(_)) => values_equal_invariant(b, a),
+        (x, y) if criteria_number(x).is_some() && criteria_number(y).is_some() => {
+            criteria_number(x)
+                .zip(criteria_number(y))
+                .is_some_and(|(sx, sy)| (sx - sy).abs() < 1e-12)
+        }
+        // A number equals numeric text (Excel's criteria coerce text), but never a
+        // blank cell, a boolean or an error.
+        (LiteralValue::Number(_) | LiteralValue::Int(_), LiteralValue::Text(_)) => {
+            criteria_number(a)
+                .zip(value_to_number(b).ok())
+                .is_some_and(|(x, y)| (x - y).abs() < 1e-12)
+        }
+        (LiteralValue::Text(_), LiteralValue::Number(_) | LiteralValue::Int(_)) => {
+            values_equal_invariant(b, a)
+        }
         _ => false,
     }
 }
 
+/// Wildcard criteria match text cells only: Excel never matches a number,
+/// boolean, error or blank cell against `*`, `?` or `~` patterns.
 fn text_like_match(pattern: &str, case_insensitive: bool, v: &LiteralValue) -> bool {
     let s = match v {
-        LiteralValue::Text(t) => t.clone(),
-        LiteralValue::Number(n) => n.to_string(),
-        LiteralValue::Int(i) => i.to_string(),
-        LiteralValue::Boolean(b) => {
-            if *b {
-                "TRUE".into()
-            } else {
-                "FALSE".into()
-            }
-        }
-        LiteralValue::Empty => String::new(),
+        LiteralValue::Text(t) => t.as_str(),
         _ => return false,
     };
     let (pat, text) = if case_insensitive {
         (pattern.to_lowercase(), s.to_lowercase())
     } else {
-        (pattern.to_string(), s)
+        (pattern.to_string(), s.to_string())
     };
 
     // Fast-path for anchored patterns without '?' or escape sequences

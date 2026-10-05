@@ -7,7 +7,9 @@
 //! matches when every mask is non-null true. For the predicates taken here
 //! that mask is a pure function of one row's merged lanes:
 //! - numeric (`>` `>=` `<` `<=`, `=`/`<>` a number): Arrow `cmp` of the
-//!   row's number lane against the operand; a non-number row is null;
+//!   row's number lane against the operand; a non-number row is null (no
+//!   match), except for `<>` a number, where it matches (a column with
+//!   numeric text, which `=`/`<>` a number compare by value, declines);
 //! - `=`/`<>` a non-empty text: Arrow `ilike`/`nilike` of the row's
 //!   lowered-text lane against the lowered operand; a non-text row is null
 //!   for `=` and true for `<>`.
@@ -182,6 +184,10 @@ struct ColumnIndex {
     range: AstNodeId,
     numbers: std::sync::OnceLock<Option<Classes<f64>>>,
     texts: std::sync::OnceLock<Option<Classes<String>>>,
+    /// Whether any text in the column reads as a number (`"5"`), on first
+    /// use: `=n`/`<>n` then match text rows by value, which the number
+    /// classes cannot express.
+    numeric_text: std::sync::OnceLock<Option<bool>>,
 }
 
 impl ColumnIndex {
@@ -207,6 +213,25 @@ impl ColumnIndex {
         self.texts
             .get_or_init(|| index_texts(&engine.criteria_view(ds, self.range, sheet)?, rows))
             .as_ref()
+    }
+
+    fn has_numeric_text<R: EvaluationContext>(
+        &self,
+        engine: &Engine<R>,
+        ds: &DataStore,
+        sheet: &str,
+        rows: usize,
+    ) -> Option<bool> {
+        *self.numeric_text.get_or_init(|| {
+            let texts = self.texts(engine, ds, sheet, rows)?;
+            let locale = crate::locale::Locale::invariant();
+            Some(
+                texts
+                    .values
+                    .iter()
+                    .any(|t| locale.parse_number_invariant(t).is_some()),
+            )
+        })
     }
 }
 
@@ -317,6 +342,7 @@ where
                 range,
                 numbers: std::sync::OnceLock::new(),
                 texts: std::sync::OnceLock::new(),
+                numeric_text: std::sync::OnceLock::new(),
             })
             .collect();
         Some(CriteriaIndex {
@@ -465,11 +491,20 @@ where
                 P::Gt(n) | P::Ge(n) | P::Lt(n) | P::Le(n) => {
                     number_verdicts(column.numbers(self, ds, sheet, rows)?, &pred, *n)?
                 }
-                P::Eq(LiteralValue::Number(x)) | P::Ne(LiteralValue::Number(x)) => {
-                    number_verdicts(column.numbers(self, ds, sheet, rows)?, &pred, *x)?
-                }
-                P::Eq(LiteralValue::Int(i)) | P::Ne(LiteralValue::Int(i)) => {
-                    number_verdicts(column.numbers(self, ds, sheet, rows)?, &pred, *i as f64)?
+                // `=n` matches numeric text by value and `<>n` matches every
+                // non-number row but such text: decline when the column has
+                // numeric text, else the null class is all-unequal.
+                P::Eq(LiteralValue::Number(_) | LiteralValue::Int(_))
+                | P::Ne(LiteralValue::Number(_) | LiteralValue::Int(_)) => {
+                    if column.has_numeric_text(self, ds, sheet, rows)? {
+                        return None;
+                    }
+                    let x = match &pred {
+                        P::Eq(LiteralValue::Number(x)) | P::Ne(LiteralValue::Number(x)) => *x,
+                        P::Eq(LiteralValue::Int(i)) | P::Ne(LiteralValue::Int(i)) => *i as f64,
+                        _ => unreachable!(),
+                    };
+                    number_verdicts(column.numbers(self, ds, sheet, rows)?, &pred, x)?
                 }
                 P::Eq(LiteralValue::Text(t)) | P::Ne(LiteralValue::Text(t)) if !t.is_empty() => {
                     text_verdicts(
@@ -767,7 +802,8 @@ fn number_verdicts(classes: &Classes<f64>, pred: &P, n: f64) -> Option<(Vec<bool
         _ => return None,
     }
     .ok()?;
-    Some((mask_bools(&mask), false, false))
+    // A non-number row (blank, text, boolean, error) never equals a number.
+    Some((mask_bools(&mask), matches!(pred, P::Ne(_)), false))
 }
 
 /// A text `=`/`<>` verdict per lowered-text class with Arrow's
