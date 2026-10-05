@@ -500,6 +500,47 @@ pub(super) fn relationships(
     })?;
     Ok(result)
 }
+/// Excel 2013 (x15) SpreadsheetML extension namespace.
+const X15: &str = "http://schemas.microsoft.com/office/spreadsheetml/2010/11/main";
+/// The workbook `ext` URI under which Excel 2013+ writes `x15:workbookPr`.
+const X15_WORKBOOK_PR_EXT: &str = "{140A7094-0E35-4892-8432-C4D2E57EDEB5}";
+/// Excel 2013+ writes `<x15:workbookPr chartTrackingRefBase="1"/>` in the
+/// workbook `extLst`. Calamine matches `workbookPr` by local name and resets
+/// its own 1904 flag from it, but that flag only reaches
+/// `ExcelDateTime::is_1904`, which ingestion never reads: values are taken as
+/// raw serials and the date system comes from the main `workbookPr` here.
+/// Admit exactly Excel's form, once; refuse any other position, extension
+/// URI or attribute (a `date1904` here would make the readers disagree).
+fn x15_workbook_pr(
+    path: &[xml::Element],
+    node: &xml::Node,
+    ext_uri: Option<&str>,
+    seen: &mut bool,
+) -> Result<(), IoError> {
+    let placed = path.len() == 4
+        && xml::path_is(&path[..3], xml::MAIN, &["workbook", "extLst", "ext"])
+        && ext_uri.is_some_and(|u| u.eq_ignore_ascii_case(X15_WORKBOOK_PR_EXT));
+    if !placed || std::mem::replace(seen, true) {
+        return Err(unsupported(
+            "foreign workbook metadata lookalike",
+            "misplaced or duplicate x15:workbookPr",
+        ));
+    }
+    if let xml::Kind::Open { attributes, .. } = &node.kind {
+        for a in attributes {
+            if !(a.ns.is_empty()
+                && a.local == "chartTrackingRefBase"
+                && matches!(a.value.as_str(), "0" | "1" | "false" | "true"))
+            {
+                return Err(unsupported(
+                    "foreign workbook metadata lookalike",
+                    format!("x15:workbookPr attribute {}", a.qualified),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
 /// Workbook discovery. Also returns the single relationship-resolved sheet
 /// metadata part, if any.
 pub(super) fn discover(
@@ -551,6 +592,8 @@ pub(super) fn discover(
     let mut targets = HashSet::new();
     let mut epoch = formualizer_common::DateSystem::Excel1900;
     let mut workbook_pr = false;
+    let mut ext_uri: Option<String> = None;
+    let mut x15_seen = false;
     let mut metadata_sections = HashSet::new();
     let mut defined_names = HashSet::new();
     let mut sheet_ids = HashSet::new();
@@ -590,6 +633,13 @@ pub(super) fn discover(
         let e = path.last().expect("open XML element");
         if path.len() == 1 && !xml::path_is(path, xml::MAIN, &["workbook"]) {
             return Err(unsupported("workbook XML root/namespace", "XLSX package"));
+        }
+        if xml::path_is(path, xml::MAIN, &["workbook", "extLst", "ext"]) {
+            ext_uri = node.value("uri").map(str::to_owned);
+        }
+        if e.ns == X15 && e.local == "workbookPr" {
+            x15_workbook_pr(path, &node, ext_uri.as_deref(), &mut x15_seen)?;
+            return Ok(());
         }
         if [
             "workbook",
