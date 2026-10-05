@@ -10666,6 +10666,58 @@ where
         )
     }
 
+    /// Cells of a sheet-backed `view` whose formula (own or a family
+    /// template) calls SUBTOTAL, or AGGREGATE when `include_aggregate`, as
+    /// sorted offsets within the view. Each formula's call bits are
+    /// precomputed in the AST arena, so this is one region query of the
+    /// sheet index plus an O(1) check per vertex.
+    fn nested_subtotal_cells_for_view(
+        &self,
+        view: &RangeView<'_>,
+        include_aggregate: bool,
+    ) -> Option<Vec<(usize, usize)>> {
+        if !view.is_sheet_backed() {
+            return None;
+        }
+        let (rows, cols) = view.dims();
+        if rows == 0 || cols == 0 {
+            return Some(Vec::new());
+        }
+        let sheet_id = self.graph.sheet_id(view.sheet_name())?;
+        let (r0, c0) = (view.start_row(), view.start_col());
+        let mask = if include_aggregate {
+            crate::engine::arena::SUBTOTAL_CALL | crate::engine::arena::AGGREGATE_CALL
+        } else {
+            crate::engine::arena::SUBTOTAL_CALL
+        };
+        let ds = self.graph.data_store();
+        let mut out: Vec<(usize, usize)> = self
+            .graph
+            .vertices_in_region(
+                sheet_id,
+                r0 as u32,
+                (r0 + rows - 1) as u32,
+                c0 as u32,
+                (c0 + cols - 1) as u32,
+            )
+            .into_iter()
+            .filter(|&v| {
+                self.graph
+                    .formula_view(v)
+                    .is_some_and(|f| ds.ast_subtotal_calls(f.template) & mask != 0)
+            })
+            .filter_map(|v| {
+                let cell = self.graph.get_cell_ref(v)?;
+                let (row, col) = (cell.coord.row() as usize, cell.coord.col() as usize);
+                (row >= r0 && row < r0 + rows && col >= c0 && col < c0 + cols)
+                    .then(|| (row - r0, col - c0))
+            })
+            .collect();
+        out.sort_unstable();
+        out.dedup();
+        Some(out)
+    }
+
     fn build_row_visibility_mask_for_view(
         &self,
         view: &RangeView<'_>,
@@ -18945,6 +18997,14 @@ where
         mode: VisibilityMaskMode,
     ) -> Option<std::sync::Arc<arrow_array::BooleanArray>> {
         self.build_row_visibility_mask_for_view(view, mode)
+    }
+
+    fn nested_subtotal_cells(
+        &self,
+        view: &RangeView<'_>,
+        include_aggregate: bool,
+    ) -> Option<Vec<(usize, usize)>> {
+        self.nested_subtotal_cells_for_view(view, include_aggregate)
     }
 }
 

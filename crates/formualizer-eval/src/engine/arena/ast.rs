@@ -157,6 +157,33 @@ pub enum CompactRefType {
 pub(crate) struct AstNodeEntry {
     pub(crate) data: AstNodeData,
     pub(crate) meta: AstNodeMetadata,
+    /// Which of SUBTOTAL ([`SUBTOTAL_CALL`]) and AGGREGATE
+    /// ([`AGGREGATE_CALL`]) the subtree calls: a cell whose formula calls
+    /// them is skipped by an enclosing SUBTOTAL/AGGREGATE (Excel's "nested
+    /// subtotals are ignored"). Derived from the node's data and its
+    /// children's bits, so dedup and compaction carry it unchanged.
+    pub(crate) subtotal_calls: u8,
+}
+
+/// [`AstNodeEntry::subtotal_calls`] bit: the subtree calls SUBTOTAL.
+pub(crate) const SUBTOTAL_CALL: u8 = 1;
+/// [`AstNodeEntry::subtotal_calls`] bit: the subtree calls AGGREGATE.
+pub(crate) const AGGREGATE_CALL: u8 = 2;
+
+/// The [`AstNodeEntry::subtotal_calls`] bit of a function name
+/// (case-insensitive, with or without the `_xlfn.` prefix).
+pub(crate) fn subtotal_call_bit(name: &str) -> u8 {
+    let name = match name.get(..6) {
+        Some(prefix) if prefix.eq_ignore_ascii_case("_xlfn.") => &name[6..],
+        _ => name,
+    };
+    if name.eq_ignore_ascii_case("SUBTOTAL") {
+        SUBTOTAL_CALL
+    } else if name.eq_ignore_ascii_case("AGGREGATE") {
+        AGGREGATE_CALL
+    } else {
+        0
+    }
 }
 
 /// Canonical metadata associated with an arena AST node.
@@ -333,7 +360,12 @@ impl AstArena {
 
         // Add new node
         let id = AstNodeId(self.nodes.len() as u32);
-        self.nodes.push(AstNodeEntry { data: node, meta });
+        let subtotal_calls = self.node_subtotal_calls(&node);
+        self.nodes.push(AstNodeEntry {
+            data: node,
+            meta,
+            subtotal_calls,
+        });
         self.dedup_map.insert(hash, id);
         id
     }
@@ -424,6 +456,47 @@ impl AstArena {
     #[allow(dead_code)]
     pub(crate) fn metadata(&self, id: AstNodeId) -> Option<AstNodeMetadata> {
         self.entry(id).map(|entry| entry.meta)
+    }
+
+    /// The SUBTOTAL/AGGREGATE call bits of the subtree rooted at `id`
+    /// (precomputed at insertion; O(1)).
+    pub(crate) fn subtotal_calls(&self, id: AstNodeId) -> u8 {
+        self.nodes
+            .get(id.0 as usize)
+            .map_or(0, |entry| entry.subtotal_calls)
+    }
+
+    /// `subtotal_calls` of a node about to be inserted: its own function
+    /// name's bit and its children's (children are inserted first).
+    fn node_subtotal_calls(&self, node: &AstNodeData) -> u8 {
+        let children = |ids: &[AstNodeId]| {
+            ids.iter()
+                .fold(0, |bits, id| bits | self.subtotal_calls(*id))
+        };
+        match node {
+            AstNodeData::Function {
+                name_id,
+                args_offset,
+                args_count,
+            } => {
+                let start = *args_offset as usize;
+                subtotal_call_bit(self.strings.resolve(*name_id))
+                    | children(&self.function_args[start..start + *args_count as usize])
+            }
+            AstNodeData::UnaryOp { expr_id, .. } => self.subtotal_calls(*expr_id),
+            AstNodeData::BinaryOp {
+                left_id, right_id, ..
+            } => self.subtotal_calls(*left_id) | self.subtotal_calls(*right_id),
+            AstNodeData::Array {
+                rows,
+                cols,
+                elements_offset,
+            } => {
+                let start = *elements_offset as usize;
+                children(&self.array_elements[start..start + (*rows as usize) * (*cols as usize)])
+            }
+            AstNodeData::Literal(_) | AstNodeData::Omitted | AstNodeData::Reference { .. } => 0,
+        }
     }
 
     /// Get function arguments for a function node
@@ -626,12 +699,17 @@ impl AstArena {
                     other => other.clone(),
                 };
                 let meta = entry.meta;
+                let subtotal_calls = entry.subtotal_calls;
                 let hash = self.hash_node(&data);
                 let new_id = match dedup_map.get(&hash) {
                     Some(&existing) if nodes[existing.0 as usize].data == data => existing,
                     _ => {
                         let new_id = AstNodeId(nodes.len() as u32);
-                        nodes.push(AstNodeEntry { data, meta });
+                        nodes.push(AstNodeEntry {
+                            data,
+                            meta,
+                            subtotal_calls,
+                        });
                         dedup_map.insert(hash, new_id);
                         new_id
                     }
