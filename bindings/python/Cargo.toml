@@ -53,11 +53,11 @@ chrono = { workspace = true, features = ["clock"] }
 formualizer = { path = "../../crates/formualizer", default-features = false, features = ["eval", "workbook", "sheetport", "parse", "calamine", "umya", "xlsx-recalc", "system-clock"] }
 pyo3-stub-gen = "0.23.0"
 
-# Pyodide 0.29's wasm-EH sysroot is pinned to Rust 1.86, while Calamine 0.36
-# requires Rust 1.88. Pyodide retains the Umya byte-oriented XLSX path and
-# reports the unavailable Calamine backend explicitly at runtime.
+# Pyodide 314 builds with Rust 1.93, so Calamine and source recalculation are
+# available there. There is no system clock: TODAY()/NOW() workbooks are
+# refused unless a fixed timestamp is supplied.
 [target.'cfg(target_os = "emscripten")'.dependencies]
-formualizer = { path = "../../crates/formualizer", default-features = false, features = ["eval", "workbook", "sheetport", "parse", "umya"] }
+formualizer = { path = "../../crates/formualizer", default-features = false, features = ["eval", "workbook", "sheetport", "parse", "calamine", "umya", "xlsx-recalc"] }
 
 # Optional jemalloc global allocator (see `allocator-jemalloc` feature).
 # The crate itself builds unconditionally on any platform, but we only

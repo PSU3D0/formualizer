@@ -58,6 +58,7 @@ if p.returncode == 2:
 if p.returncode != 0:
     raise SystemExit(f"Stop and diagnose: {p.returncode}: {r['message']}")
 print(r["status"], r["error_cells"], r["errors"], r["errors_truncated"])
+print(r["unknown_functions"])  # [{"name": "_xll.EURO", "cells": 3}, ...]
 # Inspect errors before handing off; fix and repeat if unexpected.
 ```
 
@@ -74,9 +75,25 @@ the standalone binary. Do not use `check=True`: nonzero codes need distinct acti
 | 130 | `interrupted` | Nothing written; resume only when intended. |
 
 Formula errors such as `#DIV/0!` are computed results, not command failures.
-`errors` entries have `sheet`, `cell`, `error`; `error_cells` is the total.
-`errors_truncated` means locations were omitted; `--max-errors N` changes the
-default 20-location cap, not the count. Branch on fields, not `message` text.
+`errors` entries have `sheet`, `cell`, `error`, `message`; `error_cells` is the
+total. `errors_truncated` means locations were omitted; `--max-errors N` changes
+the default 20-location cap, not the count. Branch on fields, not the top-level
+`message` text.
+
+Read each error's `message` (the engine's reason; null when the cell has none
+of its own, such as an error inherited from a precedent) and decide:
+
+- `Unknown function: NAME`: a function formualizer does not implement, such as
+  an add-in (`_xll.EURO`), a VBA/macro function or a misspelling. The cell is
+  written as `#NAME?`, as Excel shows it without the add-in; formualizer cannot
+  supply its values. Fix misspellings; otherwise report these cells instead of
+  presenting them as computed. `unknown_functions` lists every such function
+  with its cell count, complete even when `errors` is truncated.
+- `Undefined name: NAME`: define the name or fix the formula.
+
+Numeric caches within one unit in the 15th significant digit of the computed
+value are left untouched and are not counted as changes. "Precision as
+displayed" workbooks are computed in full precision.
 
 ## Verify or preserve an input
 

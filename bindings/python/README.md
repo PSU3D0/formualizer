@@ -42,7 +42,7 @@ formualizer recalc book.xlsx --check --json       # after pip install formualize
 python -m formualizer recalc book.xlsx --json     # same CLI through the module
 ```
 
-The CLI updates formula caches in place (or writes `-o other.xlsx`), preserving formula text and the rest of the workbook. Exit codes: 0 done, 1 error, 2 refused (unsupported workbook, nothing written), 3 `--check` found stale caches, 64 usage error, 130 interrupted. See the [CLI reference](https://github.com/psu3d0/formualizer/blob/main/docs/cli.md). The CLI is not available in Pyodide.
+The CLI updates formula caches in place (or writes `-o other.xlsx`), preserving formula text and the rest of the workbook. Exit codes: 0 done, 1 error, 2 refused (unsupported workbook, nothing written), 3 `--check` found stale caches, 64 usage error, 130 interrupted. See the [CLI reference](https://github.com/psu3d0/formualizer/blob/main/docs/cli.md). The CLI is not available in Pyodide; `recalculate_xlsx_bytes` is.
 
 The same recalculation is available in-process:
 
@@ -148,7 +148,7 @@ print(wb.evaluate_cell("Summary", 1, 2))
 out = wb.to_xlsx_bytes()
 ```
 
-Native Python builds use `calamine` by default for both path-based and byte-oriented XLSX loading. Pyodide currently defaults to `umya`, which also remains available explicitly on native builds. XLSX byte export uses `umya` because Calamine is read-only.
+Native Python builds use `calamine` by default for both path-based and byte-oriented XLSX loading. Pyodide defaults to `umya` for byte loading and accepts `backend="calamine"` explicitly; `umya` also remains available explicitly on native builds. XLSX byte export uses `umya` because Calamine is read-only.
 
 ### Recalculate XLSX cached values (writeback)
 
@@ -198,6 +198,26 @@ print(result["clock"], result["seed"])  # what the run used, for replay
 These APIs use the shared cache-only Rust implementation, retaining formula text
 and unrelated package members. Safe core resource limits apply;
 `error_location_limit=` only caps retained error locations.
+
+Calls to functions the engine does not implement (add-ins such as `_xll.EURO`,
+VBA/macro functions) are written as `#NAME?`, not refused. The summary says why:
+
+```python
+name = result["summary"].get("error_summary", {}).get("#NAME?")
+if name:
+    for location, message in zip(name["locations"], name["messages"]):
+        print(location, message)  # Sheet1!C4 Unknown function: _xll.EURO
+print(result["summary"]["unknown_functions"])  # [{"name": "_xll.EURO", "cells": 1}]
+```
+
+`messages` is parallel to `locations` (`None` when a cell has no reason of its
+own, e.g. an inherited `#NAME?`); `unknown_functions` is complete regardless of
+`error_location_limit`. Numeric caches within one unit in the 15th significant
+digit of the computed value are left untouched.
+
+In Pyodide, `recalculate_xlsx_bytes` is available (not `recalculate_xlsx_file`
+or the CLI). Pyodide has no system clock, so workbooks using `TODAY`/`NOW` are
+refused unless `deterministic_timestamp_utc` is passed.
 
 Supported inputs include ordinary/shared scalar formulas, supported calculation
 names, new multi-cell spills from ordinary non-shared formulas, and existing
@@ -481,7 +501,8 @@ wb.evaluate_cell("Sheet1", 1, 2)  # -> 42.0
 
 **Pyodide-specific behavior:**
 - `EvaluationConfig()` and `Workbook()` default `enable_parallel = False` on `sys.platform == "emscripten"` (Pyodide has no threads). You can still opt in, but it falls back to single-threaded execution.
-- Native XLSX byte loading (`Workbook.from_bytes`, `load_workbook_bytes`) defaults to `calamine`; Pyodide defaults to `umya`. XLSX byte export uses `umya` on all platforms.
+- Native XLSX byte loading (`Workbook.from_bytes`, `load_workbook_bytes`) defaults to `calamine`; Pyodide defaults to `umya` and accepts `backend="calamine"`. XLSX byte export uses `umya` on all platforms.
+- Source-preserving recalculation is available as `recalculate_xlsx_bytes` (the CLI and `recalculate_xlsx_file` are not). There is no system clock: workbooks using `TODAY`/`NOW` are refused unless `deterministic_timestamp_utc` is passed, and `result["clock"]["now"]` is `None` otherwise.
 - Python UDFs registered via `Workbook.register_function` work identically to native; single-cell refs arrive as scalars (Excel-native semantics).
 
 ### Building a Pyodide wheel from source

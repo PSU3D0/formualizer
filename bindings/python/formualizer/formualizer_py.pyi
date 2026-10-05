@@ -2125,8 +2125,8 @@ def load_workbook_bytes(data: bytes, strategy: typing.Optional[builtins.str] = N
     Load an XLSX workbook from in-memory bytes.
     
     This is the byte-oriented counterpart to `load_workbook(...)`. Native Python
-    builds default to `calamine`; Pyodide defaults to `umya` because Calamine is
-    not currently compiled into that target.
+    builds default to `calamine`; Pyodide defaults to `umya` (pass
+    `backend="calamine"` to use Calamine there).
     """
 
 def parse(formula: builtins.str, dialect: typing.Optional[FormulaDialect] = None) -> ASTNode:
@@ -2182,8 +2182,13 @@ def recalculate_xlsx_bytes(data: bytes, *, error_location_limit: typing.Optional
     stable run to run). ``deterministic_timestamp_utc`` (an aware ``datetime``
     with a fixed offset) fixes ``TODAY``/``NOW``; ``deterministic_timezone`` (``'utc'``, ``'+02:00'``
     or offset seconds, default UTC) requires it. Without them ``TODAY``/``NOW``
-    use the host's local time. The result's ``clock`` (``now``, ``timezone``,
-    ``fixed``) and ``seed`` replay the run.
+    use the host's local time; in Pyodide, which has no system clock, a
+    workbook using them is refused unless ``deterministic_timestamp_utc`` is
+    given. The result's ``clock`` (``now``, ``timezone``, ``fixed``) and
+    ``seed`` replay the run. ``summary["error_summary"][token]["messages"]``
+    gives the reason for each listed location (``None`` when the cell has none
+    of its own) and ``summary["unknown_functions"]`` lists every unimplemented
+    function called, with its cell count.
     """
 
 def recalculate_xlsx_file(path: builtins.str, output: typing.Optional[builtins.str] = None, *, error_location_limit: typing.Optional[builtins.int] = None, rng_seed: typing.Optional[builtins.int] = None, deterministic_timestamp_utc: typing.Optional[datetime.datetime] = None, deterministic_timezone: typing.Optional[typing.Any] = None) -> typing.Any:

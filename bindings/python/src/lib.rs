@@ -161,8 +161,8 @@ fn load_workbook(
 /// Load an XLSX workbook from in-memory bytes.
 ///
 /// This is the byte-oriented counterpart to `load_workbook(...)`. Native Python
-/// builds default to `calamine`; Pyodide defaults to `umya` because Calamine is
-/// not currently compiled into that target.
+/// builds default to `calamine`; Pyodide defaults to `umya` (pass
+/// `backend="calamine"` to use Calamine there).
 #[cfg_attr(
     not(target_os = "emscripten"),
     gen_stub_pyfunction(module = "formualizer.formualizer_py")
@@ -235,6 +235,7 @@ fn recalculate_file(py: Python<'_>, path: &str, output: Option<&str>) -> PyResul
             let e = pyo3::types::PyDict::new(py);
             e.set_item("count", info.count)?;
             e.set_item("locations", info.locations)?;
+            e.set_item("messages", info.messages)?;
             if info.locations_truncated > 0 {
                 e.set_item("locations_truncated", info.locations_truncated)?;
             }
@@ -242,13 +243,31 @@ fn recalculate_file(py: Python<'_>, path: &str, output: Option<&str>) -> PyResul
         }
         out.set_item("error_summary", errors)?;
     }
+    out.set_item(
+        "unknown_functions",
+        unknown_functions_to_py(py, summary.unknown_functions)?,
+    )?;
 
     Ok(out.into_any().unbind())
 }
 
+/// `[{"name": ..., "cells": ...}]`, as in the CLI's `unknown_functions`.
+fn unknown_functions_to_py(
+    py: Python<'_>,
+    unknown: std::collections::BTreeMap<String, usize>,
+) -> PyResult<Bound<'_, pyo3::types::PyList>> {
+    let list = pyo3::types::PyList::empty(py);
+    for (name, cells) in unknown {
+        let entry = pyo3::types::PyDict::new(py);
+        entry.set_item("name", name)?;
+        entry.set_item("cells", cells)?;
+        list.append(entry)?;
+    }
+    Ok(list)
+}
+
 /// Source-recalc options from the keyword arguments shared with
 /// `SheetPortSession.evaluate_once` (same names, types and defaults).
-#[cfg(not(target_os = "emscripten"))]
 fn xlsx_recalc_options(
     error_location_limit: Option<usize>,
     rng_seed: Option<u64>,
@@ -291,7 +310,6 @@ fn xlsx_recalc_options(
 
 /// `clock` (`now`, `timezone`, `fixed`) and `seed`, as in the CLI's JSON
 /// report, so a result carries what is needed to replay it.
-#[cfg(not(target_os = "emscripten"))]
 fn set_replay_info(
     out: &Bound<'_, pyo3::types::PyDict>,
     options: &formualizer::eval::engine::EvalConfig,
@@ -303,6 +321,13 @@ fn set_replay_info(
     // `now` carries the offset applied to it; for `Local`, the host offset at
     // that instant (as the engine's clock computes it).
     let now = clock_now_utc.map(|now| {
+        // Pyodide has no system clock: `now` is then always the fixed
+        // timestamp, whose zone has a fixed offset.
+        #[cfg(target_os = "emscripten")]
+        let offset = zone
+            .fixed_offset()
+            .unwrap_or(chrono::FixedOffset::east_opt(0).unwrap());
+        #[cfg(not(target_os = "emscripten"))]
         let offset = zone
             .fixed_offset()
             .unwrap_or_else(|| *now.with_timezone(&chrono::Local).offset());
@@ -327,7 +352,6 @@ fn set_replay_info(
     Ok(())
 }
 
-#[cfg(not(target_os = "emscripten"))]
 fn xlsx_result_to_py(
     py: Python<'_>,
     result: formualizer::workbook::XlsxRecalculateResult,
@@ -356,6 +380,7 @@ fn xlsx_result_to_py(
             let error = pyo3::types::PyDict::new(py);
             error.set_item("count", info.count)?;
             error.set_item("locations", info.locations)?;
+            error.set_item("messages", info.messages)?;
             if info.locations_truncated > 0 {
                 error.set_item("locations_truncated", info.locations_truncated)?;
             }
@@ -363,6 +388,10 @@ fn xlsx_result_to_py(
         }
         summary.set_item("error_summary", errors)?;
     }
+    summary.set_item(
+        "unknown_functions",
+        unknown_functions_to_py(py, result.summary.unknown_functions)?,
+    )?;
     out.set_item("summary", summary)?;
     out.set_item("formula_cells", result.formula_cells)?;
     out.set_item("cache_cells_changed", result.cache_cells_changed)?;
@@ -370,15 +399,19 @@ fn xlsx_result_to_py(
     Ok(out.into_any().unbind())
 }
 
-#[cfg(not(target_os = "emscripten"))]
 /// Recalculate XLSX formula caches in memory without rewriting unrelated package parts.
 /// Returns a dictionary with output ``bytes``, a ``summary``, and formula/cache/worksheet counts.
 /// ``rng_seed`` seeds ``RAND``/``RANDBETWEEN`` (the default seed is already
 /// stable run to run). ``deterministic_timestamp_utc`` (an aware ``datetime``
 /// with a fixed offset) fixes ``TODAY``/``NOW``; ``deterministic_timezone`` (``'utc'``, ``'+02:00'``
 /// or offset seconds, default UTC) requires it. Without them ``TODAY``/``NOW``
-/// use the host's local time. The result's ``clock`` (``now``, ``timezone``,
-/// ``fixed``) and ``seed`` replay the run.
+/// use the host's local time; in Pyodide, which has no system clock, a
+/// workbook using them is refused unless ``deterministic_timestamp_utc`` is
+/// given. The result's ``clock`` (``now``, ``timezone``, ``fixed``) and
+/// ``seed`` replay the run. ``summary["error_summary"][token]["messages"]``
+/// gives the reason for each listed location (``None`` when the cell has none
+/// of its own) and ``summary["unknown_functions"]`` lists every unimplemented
+/// function called, with its cell count.
 #[cfg_attr(
     not(target_os = "emscripten"),
     gen_stub_pyfunction(module = "formualizer.formualizer_py")
@@ -483,7 +516,6 @@ fn formualizer_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(load_workbook, m)?)?;
     m.add_function(wrap_pyfunction!(load_workbook_bytes, m)?)?;
     m.add_function(wrap_pyfunction!(recalculate_file, m)?)?;
-    #[cfg(not(target_os = "emscripten"))]
     m.add_function(wrap_pyfunction!(recalculate_xlsx_bytes, m)?)?;
     #[cfg(not(target_os = "emscripten"))]
     m.add_function(wrap_pyfunction!(recalculate_xlsx_file, m)?)?;

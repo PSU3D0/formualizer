@@ -60,6 +60,13 @@ fn build_fixture_xlsx_bytes() -> Vec<u8> {
 }
 
 fn build_named_fixture_xlsx_bytes(sheet_name: &str) -> Vec<u8> {
+    build_fixture_with_c1(
+        sheet_name,
+        r#"<c r="C1" t="str"><f>A1+B1</f><v>stale</v></c>"#,
+    )
+}
+
+fn build_fixture_with_c1(sheet_name: &str, c1: &str) -> Vec<u8> {
     let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
     let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
 
@@ -120,6 +127,8 @@ fn build_named_fixture_xlsx_bytes(sheet_name: &str) -> Vec<u8> {
         zip.start_file(path, options).unwrap();
         let contents = if path == "xl/workbook.xml" {
             contents.replace("name=\"Sheet1\"", &format!("name=\"{sheet_name}\""))
+        } else if path == "xl/worksheets/sheet1.xml" {
+            contents.replace(r#"<c r="C1" t="str"><f>A1+B1</f><v>stale</v></c>"#, c1)
         } else {
             contents.to_owned()
         };
@@ -593,6 +602,30 @@ fn test_recalculate_xlsx_bytes_preserves_prototype_like_sheet_names() {
     let stats: Object = js_get(&sheets, "__proto__").unchecked_into();
     assert_eq!(js_get_f64(&stats, "evaluated"), 1.0);
     assert!(js_get(&Object::get_prototype_of(&sheets), "evaluated").is_undefined());
+}
+
+#[wasm_bindgen_test]
+fn test_recalculate_xlsx_bytes_reports_error_reasons_and_unknown_functions() {
+    let input = build_fixture_with_c1("Sheet1", r#"<c r="C1"><f>_xll.EURO(A1)</f><v>1</v></c>"#);
+    let result: Object =
+        recalculate_xlsx_bytes(Uint8Array::from(input.as_slice()), None, JsValue::UNDEFINED)
+            .unwrap()
+            .dyn_into()
+            .unwrap();
+    let summary: Object = js_get(&result, "summary").dyn_into().unwrap();
+    let errors: Object = js_get(&summary, "error_summary").dyn_into().unwrap();
+    let name: Object = js_get(&errors, "#NAME?").dyn_into().unwrap();
+    let messages: js_sys::Array = js_get(&name, "messages").dyn_into().unwrap();
+    assert_eq!(messages.length(), 1);
+    assert_eq!(
+        messages.get(0).as_string().as_deref(),
+        Some("Unknown function: _xll.EURO")
+    );
+    let unknown: js_sys::Array = js_get(&summary, "unknown_functions").dyn_into().unwrap();
+    assert_eq!(unknown.length(), 1);
+    let entry: Object = unknown.get(0).dyn_into().unwrap();
+    assert_eq!(js_get_string(&entry, "name"), "_xll.EURO");
+    assert_eq!(js_get_f64(&entry, "cells"), 1.0);
 }
 
 #[wasm_bindgen_test]

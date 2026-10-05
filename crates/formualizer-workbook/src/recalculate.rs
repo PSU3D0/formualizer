@@ -6,8 +6,9 @@ use crate::backends::umya::FormulaCacheUpdate;
 use crate::error::col_to_a1;
 #[cfg(feature = "umya")]
 use crate::{SpreadsheetReader, SpreadsheetWriter, UmyaAdapter, workbook::WBResolver};
+use formualizer_common::LiteralValue;
 #[cfg(feature = "umya")]
-use formualizer_common::{LiteralValue, PackedSheetCell};
+use formualizer_common::PackedSheetCell;
 #[cfg(feature = "umya")]
 use formualizer_eval::engine::ingest::EngineLoadStream;
 #[cfg(feature = "umya")]
@@ -43,6 +44,10 @@ pub struct RecalculateSheetSummary {
 pub struct RecalculateErrorSummary {
     pub count: usize,
     pub locations: Vec<String>,
+    /// The engine's reason for each listed location, parallel to
+    /// `locations` (e.g. `Unknown function: SPDVOL`); `None` when the error
+    /// carries no reason.
+    pub messages: Vec<Option<String>>,
     pub locations_truncated: usize,
 }
 
@@ -53,6 +58,10 @@ pub struct RecalculateSummary {
     pub errors: usize,
     pub sheets: BTreeMap<String, RecalculateSheetSummary>,
     pub error_summary: BTreeMap<String, RecalculateErrorSummary>,
+    /// Every function the engine does not implement that a formula cell's
+    /// error names (`Unknown function: NAME`), with the number of error
+    /// cells attributed to it. Complete regardless of the location limit.
+    pub unknown_functions: BTreeMap<String, usize>,
 }
 
 impl Default for RecalculateSummary {
@@ -63,6 +72,7 @@ impl Default for RecalculateSummary {
             errors: 0,
             sheets: BTreeMap::new(),
             error_summary: BTreeMap::new(),
+            unknown_functions: BTreeMap::new(),
         }
     }
 }
@@ -71,6 +81,48 @@ impl RecalculateSummary {
     pub fn has_errors(&self) -> bool {
         self.errors > 0
     }
+
+    /// Count one evaluated formula cell in `sheet` at `location`
+    /// (`Sheet!A1`); errors are recorded with their reason.
+    pub(crate) fn record(
+        &mut self,
+        sheet: &str,
+        location: impl FnOnce() -> String,
+        value: &LiteralValue,
+        limit: usize,
+    ) {
+        let stats = self.sheets.entry(sheet.to_owned()).or_default();
+        stats.evaluated += 1;
+        self.evaluated += 1;
+        let LiteralValue::Error(error) = value else {
+            return;
+        };
+        self.errors += 1;
+        stats.errors += 1;
+        let message = error.message.as_deref().filter(|m| !m.is_empty());
+        if let Some(name) = message.and_then(unknown_function) {
+            *self.unknown_functions.entry(name.to_owned()).or_default() += 1;
+        }
+        let entry = self
+            .error_summary
+            .entry(error.kind.to_string())
+            .or_default();
+        entry.count += 1;
+        if entry.locations.len() < limit {
+            entry.locations.push(location());
+            entry.messages.push(message.map(str::to_owned));
+        } else {
+            entry.locations_truncated += 1;
+        }
+    }
+}
+
+/// The function an engine reason names as unknown, if any.
+fn unknown_function(message: &str) -> Option<&str> {
+    message
+        .strip_prefix("Unknown function: ")
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
 }
 
 /// Recalculate an XLSX file and write formula cached values back through Umya.
@@ -113,26 +165,12 @@ pub fn recalculate_file_with_limit(
             .get_cell_value(&sheet, row, col)
             .unwrap_or(LiteralValue::Empty);
 
-        let sheet_stats = summary.sheets.entry(sheet.clone()).or_default();
-        sheet_stats.evaluated += 1;
-        summary.evaluated += 1;
-
-        if let LiteralValue::Error(err) = &value {
-            summary.errors += 1;
-            sheet_stats.errors += 1;
-
-            let token = err.kind.to_string();
-            let entry = summary.error_summary.entry(token).or_default();
-            entry.count += 1;
-
-            if entry.locations.len() < error_location_limit {
-                entry
-                    .locations
-                    .push(format!("{sheet}!{}{}", col_to_a1(col), row));
-            } else {
-                entry.locations_truncated += 1;
-            }
-        }
+        summary.record(
+            &sheet,
+            || format!("{sheet}!{}{}", col_to_a1(col), row),
+            &value,
+            error_location_limit,
+        );
 
         let should_write = engine
             .sheet_id(&sheet)

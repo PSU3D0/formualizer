@@ -397,7 +397,7 @@ class ReleasePreflightTests(unittest.TestCase):
             ),
             (
                 "bindings/python/Cargo.toml",
-                '[target.\'cfg(target_os = "emscripten")\'.dependencies]\nformualizer = { path = "../../crates/formualizer", default-features = false, features = ["eval", "workbook", "sheetport", "parse", "umya"] }',
+                '[target.\'cfg(target_os = "emscripten")\'.dependencies]\nformualizer = { path = "../../crates/formualizer", default-features = false, features = ["eval", "workbook", "sheetport", "parse", "calamine", "umya", "xlsx-recalc"] }',
                 "",
             ),
         )
@@ -541,8 +541,8 @@ class ReleasePreflightTests(unittest.TestCase):
             r"python-pyodide.*stale opt-out",
             (
                 "bindings/python/Cargo.toml",
-                'features = ["eval", "workbook", "sheetport", "parse", "umya"]',
-                'features = ["eval", "workbook", "sheetport", "parse", "umya", "system-clock"]',
+                'features = ["eval", "workbook", "sheetport", "parse", "calamine", "umya", "xlsx-recalc"] }\n\n#',
+                'features = ["eval", "workbook", "sheetport", "parse", "calamine", "umya", "xlsx-recalc", "system-clock"] }\n\n#',
             ),
         )
 

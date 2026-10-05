@@ -36,6 +36,8 @@ Recalculated, with formula text and untouched package content preserved:
 - Excel tables: structured references, bare table names and calculated columns whose every row carries a worksheet formula.
 - Volatile functions (`TODAY`, `NOW`, `RAND`, `OFFSET`, `INDIRECT`, `SUBTOTAL`, `AGGREGATE`), sampled once per run.
 - Formula errors such as `#DIV/0!`, `#NAME?` or `#SPILL!`. These are calculated results, reported as error cells; they are not refusals.
+- Calls to functions the engine does not implement, such as add-in (`_xll.`) or VBA/macro functions. They evaluate to `#NAME?` and are written, with the reason in the receipt (see [unimplemented functions](#unimplemented-functions)).
+- Workbooks set to "precision as displayed" (`fullPrecision="0"`). They are computed in full precision (see [numeric precision](#numeric-precision)).
 - Blocked spills. A dynamic-array result whose spill range is occupied by a value, another formula or another spill's cells leaves the anchor as `#SPILL!` and recalculation continues: the blocking formula keeps its own value, readers of the anchor see `#SPILL!` and `A1#` readers `#REF!`. The anchor is written with the blocked-anchor encoding (`#SPILL!` cache, `ref` collapsed to the anchor) and the run exits 0. When two spill rectangles collide and neither anchor lies inside the other's rectangle, the anchor first in (sheet, column, row) order spills and the other is `#SPILL!`, whatever the evaluation order. This is engine policy, not an Excel equivalence claim.
 
 Refused as a whole, with nothing written (CLI exit 2):
@@ -61,6 +63,29 @@ Preflight uses namespace-aware XML events and source offsets. Changed worksheet 
 The admitted ZIP32 package is edited surgically. ZIP7 supplies compression/CRC generation for changed and added payloads. Untouched members keep every byte (local header, extra fields, payload, data descriptor and central record); only the central local-offset fields of relocated members change. A changed member is rewritten in one simple form: its name, versions, general-purpose flags (less the data-descriptor bit), compression method, DOS time and attributes are kept, its new CRC-32 and sizes are written in both its local and its central record, and it has no extra fields and no data descriptor. When a dynamic-array metadata part must be added, it is written as one deflated ZIP32 local record before the original central directory with a matching central record after the existing ones. The end record's entry counts, directory size and offset are patched. Duplicate names, entry-count overflow, ZIP64 sizes/offsets and the output/expanded-byte limits are refused, and the resulting package is re-audited before it is returned. The archive comment is preserved. A true cache no-op returns the entire original byte sequence.
 
 Calamine's cached-value decoder is not authority for formula results. If an old formula cache uses a representation it cannot decode faithfully, a bounded transient ingestion view clears that cache only. The original package is still used for comparison/writeback, including exact no-op output. Literal dependency values are never cleared this way.
+
+## Numeric precision
+
+Formulas are computed in IEEE 754 double precision, as Excel does, but the order of floating-point operations can differ (for example, `SUM` over a long range adds in a different order). Results can then differ from Excel's in the last binary digits, beyond anything Excel displays. A numeric cache is therefore treated as current when it agrees with the computed number within one unit in the 15th significant digit (Excel's display precision):
+
+- both are finite numbers and equal, or
+- they have the same sign and `|cached - computed| <= 10^(E - 14)`, where `E = floor(log10(max(|cached|, |computed|)))` is the decimal exponent of the larger magnitude. The bound is the double nearest `10^(E - 14)`, so for subnormal magnitudes it tightens towards exact equality.
+- Exact zero agrees only with exact zero (either sign). A cached `0` against a computed cancellation residue such as `5.55e-17` is stale.
+
+Such a cache keeps its original bytes, including Excel's 17-digit spelling, is not counted in `cache_cells_changed`, and leaves `--check` current when nothing else changed. For example, Excel's `53433.999999999949` against a computed `53433.99999999998`, or `8.8664999999999985` against `8.8665`, stay as they are. A larger difference, a type change (number to text, Boolean or error) and any non-numeric result are written as before. The rule applies to formula cells and dynamic-array anchors; generated spill members are compared byte for byte. Values of dependent formulas are always computed from the engine's own results, never from kept caches.
+
+"Precision as displayed" (`<calcPr fullPrecision="0"/>`) is not refused and not emulated: formulas are computed in full precision. Excel in that mode rounds stored values to their number format, so its results can differ from ours in workbooks that rely on that rounding. The `calcPr` element is left unchanged.
+
+## Unimplemented functions
+
+A formula that calls a function the engine does not implement evaluates to `#NAME?`, as it does in Excel without the providing add-in. This covers add-in functions (`_xll.EURO`, `_xll.BDP`), VBA and XLM macro functions, functions of newer Excel versions and misspelled names. The workbook is not refused: the `#NAME?` result is written like any other formula error. The receipt says why. Each listed error location carries the engine's reason (`Unknown function: NAME`, or `Undefined name: NAME` for a name that is not defined), and the run reports every unknown function with the number of cells calling it, complete even when the location list is truncated:
+
+- CLI: `errors[].message` and `unknown_functions` (see [the JSON schema](cli.md#json)).
+- Python `recalculate_xlsx_file`/`recalculate_xlsx_bytes`: `summary["error_summary"][token]["messages"]` (parallel to `locations`) and `summary["unknown_functions"]`.
+- WASM `recalculateXlsxBytes`: `summary.error_summary[token].messages` and `summary.unknown_functions`.
+- Rust: `RecalculateErrorSummary::messages` and `RecalculateSummary::unknown_functions`.
+
+The reason is recovered from the cell's own formula with the evaluator's lookup rules, because computed values are stored without their messages. A cell that only inherits `#NAME?` from a precedent has no reason of its own (null). Formulas that call functions the engine recognizes but does not implement (`#N/IMPL!`) remain refusals.
 
 ## ZIP containers
 
@@ -195,4 +220,4 @@ Cancellation is cooperative. Preflight, cancellable Calamine reads/row/replay bo
 
 The file wrapper takes a bounded input snapshot, computes privately, writes a same-directory temporary, syncs it and atomically replaces the destination. It preserves existing destination permissions and rejects symlink destinations. Errors and cancellation observed before the commit point leave the destination unchanged; there is no cancellation error reported after publication. This is not source compare-and-swap or a guarantee of directory-entry crash durability. Higher-level session/CAS authority remains the caller's responsibility.
 
-Native CLI defaults explicitly enable `system-clock`; native Python also enables it. WASM/npm's `wasm-js` profile uses the JavaScript Date clock. Portable/Pyodide source builds without `system-clock` refuse `TODAY`/`NOW` in cells or defined names rather than publish the epoch fallback. Rust callers can supply `EvalConfig::deterministic_mode = Enabled` with a fixed instant. The current Python/WASM source facade does not expose a fixed-timestamp option.
+Native CLI defaults explicitly enable `system-clock`; native Python also enables it. WASM/npm's `wasm-js` profile uses the JavaScript Date clock. Portable builds without `system-clock`, including the Pyodide wheel, refuse `TODAY`/`NOW` in cells or defined names rather than publish the epoch fallback. A fixed instant admits them: `EvalConfig::deterministic_mode = Enabled` in Rust, `deterministic_timestamp_utc` in Python (including Pyodide), `deterministicTimestampUtc` in WASM and `--now` in the CLI.

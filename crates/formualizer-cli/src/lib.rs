@@ -78,6 +78,14 @@ struct ErrorCell {
     sheet: String,
     cell: String,
     error: String,
+    /// The engine's reason, e.g. `Unknown function: SPDVOL`.
+    message: Option<String>,
+}
+/// A function the engine does not implement and the error cells naming it.
+#[derive(Serialize)]
+struct UnknownFunction {
+    name: String,
+    cells: usize,
 }
 #[derive(Serialize)]
 struct Refusal {
@@ -109,6 +117,7 @@ struct Report {
     error_cells: Option<usize>,
     errors: Option<Vec<ErrorCell>>,
     errors_truncated: Option<bool>,
+    unknown_functions: Option<Vec<UnknownFunction>>,
     refusal: Option<Refusal>,
     clock: Option<Clock>,
     seed: Option<u64>,
@@ -128,6 +137,7 @@ impl Report {
             error_cells: None,
             errors: None,
             errors_truncated: None,
+            unknown_functions: None,
             refusal: None,
             clock: None,
             seed: None,
@@ -144,20 +154,41 @@ impl Report {
             .error_summary
             .iter()
             .flat_map(|(error, summary)| {
-                summary.locations.iter().filter_map(move |location| {
-                    // Sheet names themselves may contain '!'. The final separator is the cell.
-                    let (sheet, cell) = location.rsplit_once('!')?;
-                    Some(ErrorCell {
-                        sheet: sheet.into(),
-                        cell: cell.into(),
-                        error: error.clone(),
+                let messages = summary
+                    .messages
+                    .iter()
+                    .map(Some)
+                    .chain(std::iter::repeat(None));
+                summary
+                    .locations
+                    .iter()
+                    .zip(messages)
+                    .filter_map(move |(location, message)| {
+                        // Sheet names themselves may contain '!'. The final separator is the cell.
+                        let (sheet, cell) = location.rsplit_once('!')?;
+                        Some(ErrorCell {
+                            sheet: sheet.into(),
+                            cell: cell.into(),
+                            error: error.clone(),
+                            message: message.cloned().flatten(),
+                        })
                     })
-                })
             })
             .take(limit)
             .collect();
         self.errors_truncated = Some(errors.len() < result.summary.errors);
         self.errors = Some(errors);
+        self.unknown_functions = Some(
+            result
+                .summary
+                .unknown_functions
+                .iter()
+                .map(|(name, cells)| UnknownFunction {
+                    name: name.clone(),
+                    cells: *cells,
+                })
+                .collect(),
+        );
     }
 }
 
@@ -412,7 +443,25 @@ where
                 .as_ref()
                 .unwrap()
                 .iter()
-                .map(|e| format!("{}!{} {}", e.sheet, e.cell, e.error))
+                .map(|e| match &e.message {
+                    Some(message) => format!("{}!{} {} ({message})", e.sheet, e.cell, e.error),
+                    None => format!("{}!{} {}", e.sheet, e.cell, e.error),
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            let unknown = report
+                .unknown_functions
+                .as_ref()
+                .unwrap()
+                .iter()
+                .map(|f| {
+                    format!(
+                        "{} ({} cell{})",
+                        f.name,
+                        f.cells,
+                        if f.cells == 1 { "" } else { "s" }
+                    )
+                })
                 .collect::<Vec<_>>()
                 .join(", ");
             report.message = format!(
@@ -428,6 +477,11 @@ where
                 },
                 report.status
             );
+            if !unknown.is_empty() {
+                report.message.push_str(&format!(
+                    "\nunknown functions (cells produce #NAME?): {unknown}"
+                ));
+            }
             code
         }
         Err(error) => {
