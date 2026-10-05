@@ -2,6 +2,12 @@
 
 All notable changes to Formualizer will be documented in this file.
 
+## [Unreleased]
+
+### Changed
+
+- Retargeted the Pyodide wheel from Pyodide 0.29.x to Pyodide 314.0.7 (Python 3.14). The wheel is now tagged `pyemscripten_2026_0_wasm32` and no longer installs in Pyodide 0.29.x. CI and releases build with Rust 1.99.0; the Pyodide wheel builds with Pyodide's Rust 1.93.0.
+
 ## [0.10.1] - 2026-09-30
 
 ### Fixed
