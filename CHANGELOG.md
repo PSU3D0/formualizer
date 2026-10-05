@@ -37,6 +37,7 @@ This release introduces `formualizer recalc`: after openpyxl or another editor s
 
 ### Fixed
 
+- Fixed silently wrong values in recurrences filled down a column that also read a fixed cell in that same column, such as a decay schedule `B9=+B8-(B8*$B$4)` with its rate in `B4`. Once the run was long enough (about 32 rows or more), every row computed as if the fixed cell were blank, so the schedule repeated its starting value instead of 17700, 17405, and so on. The same applied to fixed cells below the run and to an absolute-row reference to the row above the run. Affected 0.10.0 and 0.10.1; 0.9.3 and earlier were not affected.
 - Applied `IF` elementwise to array and range conditions with singleton-axis broadcasting, lazy branch evaluation and per-element errors. Scalar conditions retain short-circuit reference selection.
 - Preserved calculation names during Calamine import, including supported constants, grounded formulas and sheet-local shadowing; refused unsupported or cyclic definitions instead of publishing metadata-loss `#NAME?` results.
 - Lowered bare table names (`SUM(Table1)`, `VLOOKUP(x,Table1,2,FALSE)`) to the table data body in source XLSX recalculation instead of publishing `#NAME?`; a defined name pointing at a bare table name now refuses as unsupported (exit 2) rather than failing as a backend error.
