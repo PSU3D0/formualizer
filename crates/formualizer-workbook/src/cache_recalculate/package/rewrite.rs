@@ -1,16 +1,18 @@
 //! Surgical ZIP32 package edits. ZIP7 supplies compression and CRC generation;
 //! original local/central metadata is retained, not normalized by raw_copy_file.
-//! Admission has rejected ZIP64, descriptors and unknown extra metadata.
+//! Admission has rejected ZIP64, encryption and extra fields outside its
+//! metadata-only allow-list.
 //!
 //! Replaced members keep their local/central records (only CRC/sizes and
-//! relocated offsets change). Added members get a fresh minimal ZIP32 local
+//! relocated offsets change); replacing a member that has extra fields or a
+//! data descriptor is refused. Untouched members keep every byte. Added members get a fresh minimal ZIP32 local
 //! record inserted before the original central directory and a matching
 //! central record appended to it; the end record's counts, directory size
 //! and offset are patched and the archive comment is kept.
 use super::super::{BoundedOutput, Patch, apply_patches};
 use super::{
-    Archive, BTreeMap, IoError, XlsxRecalculateOptions, checkpoint, part_name, u16_at, u32_at,
-    unsupported,
+    Archive, BTreeMap, IoError, XlsxRecalculateOptions, audit_directory, checkpoint, part_name,
+    u16_at, u32_at, unsupported,
 };
 use std::io::{Cursor, Write};
 use zip::{CompressionMethod, ZipArchive, ZipWriter, write::SimpleFileOptions};
@@ -79,6 +81,7 @@ pub(in crate::cache_recalculate) fn rewrite(
     options: &XlsxRecalculateOptions,
 ) -> Result<Vec<u8>, IoError> {
     let replacements = &edits.replace;
+    let directory = audit_directory(bytes, options)?;
     let directory_start = archive.central_directory_start() as usize;
     let mut at = directory_start;
     let mut headers = Vec::new();
@@ -95,6 +98,20 @@ pub(in crate::cache_recalculate) fn rewrite(
         let local = u32_at(bytes, at + 42)?;
         headers.push((at, local));
         if let Some(data) = replacements.get(name) {
+            let member = directory
+                .members
+                .iter()
+                .find(|m| m.central == at)
+                .ok_or_else(|| unsupported("unaudited ZIP member", name))?;
+            if member.end != member.data_end
+                || member.data != member.local + 30 + length
+                || member.central_len != 46 + length
+            {
+                return Err(unsupported(
+                    "rewrite of a ZIP member with extra fields or a data descriptor",
+                    name,
+                ));
+            }
             let source = archive
                 .by_name(name)
                 .map_err(|e| IoError::from_backend("zip", e))?;
@@ -129,7 +146,7 @@ pub(in crate::cache_recalculate) fn rewrite(
         }
         at += 46 + length + u16_at(bytes, at + 30)? + u16_at(bytes, at + 32)?;
     }
-    if changes.len() != replacements.len() {
+    if at != directory.footer || changes.len() != replacements.len() {
         return Err(unsupported("unmatched package replacement", "XLSX output"));
     }
     changes.sort_by_key(|(end, _)| *end);

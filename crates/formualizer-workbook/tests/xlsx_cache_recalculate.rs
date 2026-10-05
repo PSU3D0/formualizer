@@ -700,7 +700,7 @@ fn duplicate_zip_names_are_not_hidden_by_archive_index() {
     assert!(recalculate_xlsx_bytes(&input, Default::default()).is_err());
 }
 #[test]
-fn data_descriptors_and_inconsistent_headers_are_rejected() {
+fn missing_data_descriptors_and_inconsistent_headers_are_rejected() {
     let original = fixture("1+1", "99");
     let (headers, _) = directory(&original);
     let a = headers[0];

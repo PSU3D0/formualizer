@@ -1035,12 +1035,9 @@ fn publish(
         .filter(|d| d.policy == FormulaParsePolicy::CoerceToError)
         .map(|d| (d.sheet.clone(), d.row, d.col))
         .collect();
-    let mut expanded = usize::try_from(
-        archive
-            .decompressed_size()
-            .ok_or_else(|| unsupported("ZIP expanded-size overflow", "workbook"))?,
-    )
-    .map_err(|_| unsupported("ZIP expanded-size overflow", "workbook"))?;
+    // Declared central-directory sizes: ZIP7's decompressed_size() is None
+    // for members with data descriptors, which admission accepts.
+    let mut expanded = package::expanded_size(&mut archive)?;
     let Publication {
         mut summary,
         changed,

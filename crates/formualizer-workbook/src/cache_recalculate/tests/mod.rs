@@ -7,3 +7,4 @@ mod dynamic_publication;
 mod index_scope;
 mod metadata_binding;
 mod zip_additions;
+mod zip_containers;
