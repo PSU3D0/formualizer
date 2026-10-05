@@ -666,8 +666,19 @@ export interface XlsxRecalculateSummary {
   error_summary?: Record<string, {
     count: number;
     locations: string[];
+    /**
+     * The engine's reason for each listed location, parallel to `locations`
+     * (e.g. `'Unknown function: SPDVOL'`); null when the cell has none of its
+     * own (for example a `#NAME?` inherited from a precedent).
+     */
+    messages: (string | null)[];
     locations_truncated?: number;
   }>;
+  /**
+   * Functions the engine does not implement, with the number of `#NAME?`
+   * cells calling each one. Complete regardless of `errorLocationLimit`.
+   */
+  unknown_functions: { name: string; cells: number }[];
 }
 
 /** Output from cache-only XLSX recalculation. */

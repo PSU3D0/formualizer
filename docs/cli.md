@@ -16,7 +16,7 @@ cargo binstall formualizer-cli              # prebuilt release binary
 cargo install formualizer-cli               # build from crates.io
 ```
 
-Every channel installs the same `formualizer` command. Prebuilt binaries cover Linux x64/arm64 (glibc and static musl), macOS x64/arm64 and Windows x64. Each [GitHub release](https://github.com/psu3d0/formualizer/releases) also carries `formualizer-cli-v<version>-<target>.tar.gz` (`.zip` on Windows) archives with a `SHA256SUMS` file. The unscoped `formualizer` npm package is the WebAssembly library and does not contain the CLI. The CLI is not available in Pyodide.
+Every channel installs the same `formualizer` command. Prebuilt binaries cover Linux x64/arm64 (glibc and static musl), macOS x64/arm64 and Windows x64. Each [GitHub release](https://github.com/psu3d0/formualizer/releases) also carries `formualizer-cli-v<version>-<target>.tar.gz` (`.zip` on Windows) archives with a `SHA256SUMS` file. The unscoped `formualizer` npm package is the WebAssembly library and does not contain the CLI. The CLI is not available in Pyodide; the Pyodide wheel exposes the same recalculation as `formualizer.recalculate_xlsx_bytes` (in-memory bytes only, no system clock: see [reproducible runs](#reproducible-runs)).
 
 ## Commands
 
@@ -70,7 +70,7 @@ Without `--json`, success and `--check` lines (exit 0 and 3) go to stdout; error
 - `--tz` defaults to the offset written in `--now`: `--now 2026-03-02T00:30:00+01:00` and `--now 2026-03-01T23:30:00Z --tz +01:00` are the same run, and `TODAY()` is 2026-03-02 in both. Only `UTC` and fixed offsets are accepted; named zones such as `Europe/Paris` are not, because their offset depends on the date.
 - `--tz` without `--now` keeps the host clock but reads it in that zone.
 - Every computed `--json` report echoes the clock and seed it used (see `clock` and `seed` below). `clock.now` carries the offset that was applied, so `--now <clock.now> --seed <seed>` (plus `--tz <clock.timezone>` when it is not `Local`) replays any run exactly. A host-clock sample is taken to the whole second, the resolution of `NOW()`.
-- Builds without a system clock refuse workbooks that use `TODAY`/`NOW` (exit 2) unless `--now` is given.
+- Builds without a system clock refuse workbooks that use `TODAY`/`NOW` (exit 2) unless `--now` is given. The Pyodide wheel is such a build: its `recalculate_xlsx_bytes` refuses them unless `deterministic_timestamp_utc` is passed, and reports `clock.now` as `None` when no timestamp was given.
 
 ```sh
 # Pin the clock and seed; --check then stays current until the inputs change:
@@ -94,13 +94,17 @@ With `--json`, every outcome except help and version, including usage errors, pr
   "formula_cells": 5,
   "cache_cells_changed": 7,
   "worksheet_parts_changed": 1,
-  "error_cells": 1,
-  "errors": [{"sheet": "Sheet1", "cell": "B2", "error": "#DIV/0!"}],
+  "error_cells": 2,
+  "errors": [
+    {"sheet": "Sheet1", "cell": "B2", "error": "#DIV/0!", "message": null},
+    {"sheet": "Sheet1", "cell": "C4", "error": "#NAME?", "message": "Unknown function: _xll.EURO"}
+  ],
   "errors_truncated": false,
+  "unknown_functions": [{"name": "_xll.EURO", "cells": 1}],
   "refusal": null,
   "clock": {"now": "2026-10-04T09:15:02+02:00", "timezone": "Local", "fixed": false},
   "seed": 17361606158148326741,
-  "message": "book.xlsx: recalculated 5 formulas, 7 cached values changed, 1 error cells (Sheet1!B2 #DIV/0!) (written)"
+  "message": "book.xlsx: recalculated 5 formulas, 7 cached values changed, 2 error cells (Sheet1!B2 #DIV/0!, Sheet1!C4 #NAME? (Unknown function: _xll.EURO)) (written)\nunknown functions (cells produce #NAME?): _xll.EURO (1 cell)"
 }
 ```
 
@@ -115,8 +119,10 @@ With `--json`, every outcome except help and version, including usage errors, pr
 | `cache_cells_changed` | integer or null | Physical caches inserted, replaced or cleared; can exceed the formula count. |
 | `worksheet_parts_changed` | integer or null | Changed worksheets (not metadata parts). Nonzero means `stale` under `--check`. |
 | `error_cells` | integer or null | Total formula cells whose result is an Excel error. |
-| `errors` | array or null | Up to `--max-errors` `{sheet, cell, error}` locations, grouped by error token. |
+| `errors` | array or null | Up to `--max-errors` `{sheet, cell, error, message}` locations, grouped by error token. |
+| `errors[].message` | string or null | The engine's reason for that cell's error: `Unknown function: NAME` for a function the engine does not implement (an add-in such as `_xll.EURO`, a VBA/macro function or any other unknown name), `Undefined name: NAME` for a name that is not defined. Null when the cell has no reason of its own, for example a `#NAME?` inherited from a precedent, or an ordinary `#DIV/0!`. |
 | `errors_truncated` | boolean or null | True when `errors` lists fewer locations than `error_cells`. |
+| `unknown_functions` | array or null | Every function the engine does not implement that some formula calls, as `{name, cells}` sorted by name, with the number of error cells that call it. Complete even when `errors` is truncated; empty when there are none. |
 | `refusal` | object or null | `{"feature": ..., "context": ...}` when `status` is `refused`. |
 | `clock` | object or null | The clock `TODAY`/`NOW` used: `now`, `timezone` and `fixed`. See [reproducible runs](#reproducible-runs). |
 | `clock.now` | string or null | RFC 3339 instant, written in the UTC offset that was applied (`Z` for UTC; the host's offset at that instant for `Local`). Null only in builds without a system clock when `--now` is absent. |
@@ -125,18 +131,22 @@ With `--json`, every outcome except help and version, including usage errors, pr
 | `seed` | integer or null | The `RAND`/`RANDBETWEEN` seed, an unsigned 64-bit integer. JavaScript's `JSON.parse` rounds values above 2^53; read it as a big integer to replay. |
 | `message` | string | One-line human diagnostic. Not a stable machine interface. |
 
-Counters, `errors`, `errors_truncated`, `clock` and `seed` are present after a successful computation (exit 0 or 3) and null otherwise. Sheet names containing `!` are split correctly. Attribute-only spill changes may have zero cache changes.
+Counters, `errors`, `errors_truncated`, `unknown_functions`, `clock` and `seed` are present after a successful computation (exit 0 or 3) and null otherwise. Sheet names containing `!` are split correctly. Attribute-only spill changes may have zero cache changes. A numeric cache within one unit in the 15th significant digit of the computed value is current and is not counted in `cache_cells_changed` (see [numeric precision](cache-only-xlsx.md#numeric-precision)).
+
+### Functions the engine does not implement
+
+A formula that calls a function the engine does not implement (an Excel add-in function such as `_xll.EURO`, a VBA or XLM macro function, or a function from a newer Excel version) evaluates to `#NAME?`, as it does in Excel without the add-in. The workbook is not refused: the `#NAME?` result is written like any other formula error and the run exits 0. Each such cell's `message` names the function, and `unknown_functions` counts the cells per function. Cells that depend on them inherit `#NAME?` with a null `message`. Decide from the reason whether the result is acceptable; formualizer cannot supply an add-in's values.
 
 A refusal:
 
 ```json
-{"schema":"formualizer.recalc/1","status":"refused","input":"model.xlsx","output":"model.xlsx","written":false,"formula_cells":null,"cache_cells_changed":null,"worksheet_parts_changed":null,"error_cells":null,"errors":null,"errors_truncated":null,"refusal":{"feature":"data-table formula","context":"worksheet"},"clock":null,"seed":null,"message":"model.xlsx: Unsupported feature: data-table formula in worksheet. Nothing was written."}
+{"schema":"formualizer.recalc/1","status":"refused","input":"model.xlsx","output":"model.xlsx","written":false,"formula_cells":null,"cache_cells_changed":null,"worksheet_parts_changed":null,"error_cells":null,"errors":null,"errors_truncated":null,"unknown_functions":null,"refusal":{"feature":"data-table formula","context":"worksheet"},"clock":null,"seed":null,"message":"model.xlsx: Unsupported feature: data-table formula in worksheet. Nothing was written."}
 ```
 
 A usage error (exit 64):
 
 ```json
-{"schema":"formualizer.recalc/1","status":"error","input":null,"output":null,"written":false,"formula_cells":null,"cache_cells_changed":null,"worksheet_parts_changed":null,"error_cells":null,"errors":null,"errors_truncated":null,"refusal":null,"clock":null,"seed":null,"message":"error: unexpected argument '--bogus' found ..."}
+{"schema":"formualizer.recalc/1","status":"error","input":null,"output":null,"written":false,"formula_cells":null,"cache_cells_changed":null,"worksheet_parts_changed":null,"error_cells":null,"errors":null,"errors_truncated":null,"unknown_functions":null,"refusal":null,"clock":null,"seed":null,"message":"error: unexpected argument '--bogus' found ..."}
 ```
 
 ## Examples

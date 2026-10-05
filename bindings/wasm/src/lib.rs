@@ -103,6 +103,11 @@ fn xlsx_summary_to_js(
                 locations.push(&JsValue::from_str(&location));
             }
             Reflect::set(&error, &JsValue::from_str("locations"), &locations)?;
+            let messages = js_sys::Array::new();
+            for message in info.messages {
+                messages.push(&message.as_deref().map_or(JsValue::NULL, JsValue::from_str));
+            }
+            Reflect::set(&error, &JsValue::from_str("messages"), &messages)?;
             if info.locations_truncated > 0 {
                 Reflect::set(
                     &error,
@@ -114,6 +119,22 @@ fn xlsx_summary_to_js(
         }
         Reflect::set(&out, &JsValue::from_str("error_summary"), &errors)?;
     }
+    let unknown = js_sys::Array::new();
+    for (name, cells) in summary.unknown_functions {
+        let entry = Object::new();
+        Reflect::set(
+            &entry,
+            &JsValue::from_str("name"),
+            &JsValue::from_str(&name),
+        )?;
+        Reflect::set(
+            &entry,
+            &JsValue::from_str("cells"),
+            &JsValue::from_f64(cells as f64),
+        )?;
+        unknown.push(&entry);
+    }
+    Reflect::set(&out, &JsValue::from_str("unknown_functions"), &unknown)?;
     Ok(out.into())
 }
 

@@ -65,7 +65,8 @@ The CI and release smoke paths currently use **Pyodide 314.0.7** (Python 3.14) a
 ## Pyodide-specific behavior
 
 - `EvaluationConfig()` and `Workbook()` default `enable_parallel = False` on `sys.platform == "emscripten"`. Pyodide has no threads; the flag remains available but falls back to single-threaded execution.
-- XLSX byte I/O (`to_xlsx_bytes`, `from_bytes`, `load_workbook_bytes`) uses the `umya` backend on all platforms.
+- XLSX byte loading (`from_bytes`, `load_workbook_bytes`) defaults to the `umya` backend in Pyodide; pass `backend="calamine"` to use Calamine. `to_xlsx_bytes` uses `umya` on all platforms.
+- Source-preserving cache recalculation is available as `fz.recalculate_xlsx_bytes(data)`, with the same result as on native CPython (the `formualizer recalc` CLI and `recalculate_xlsx_file` are not available). Pyodide has no system clock: a workbook using `TODAY` or `NOW` is refused unless you pass `deterministic_timestamp_utc=datetime(..., tzinfo=timezone.utc)`.
 - Everything else — parse, evaluate, spill, custom functions, undo/redo, SheetPort — behaves identically to native CPython.
 
 ## Next

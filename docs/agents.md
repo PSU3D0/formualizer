@@ -18,7 +18,7 @@ cargo binstall formualizer-cli                 # prebuilt release binary
 cargo install formualizer-cli                  # build the formualizer command from crates.io
 ```
 
-Or download the matching `formualizer-cli-v<version>-<target>` archive and `SHA256SUMS` from [GitHub releases](https://github.com/psu3d0/formualizer/releases), verify the checksum, extract it and put `formualizer` on PATH. Prebuilt binaries cover Linux x64/arm64 (glibc or static musl), macOS x64/arm64 and Windows x64. The CLI is not available in Pyodide, and npm has no WASM fallback: the unscoped `formualizer` npm package is the library, not the CLI.
+Or download the matching `formualizer-cli-v<version>-<target>` archive and `SHA256SUMS` from [GitHub releases](https://github.com/psu3d0/formualizer/releases), verify the checksum, extract it and put `formualizer` on PATH. Prebuilt binaries cover Linux x64/arm64 (glibc or static musl), macOS x64/arm64 and Windows x64. The CLI is not available in Pyodide (use `formualizer.recalculate_xlsx_bytes` there; `TODAY`/`NOW` need `deterministic_timestamp_utc`), and npm has no WASM fallback: the unscoped `formualizer` npm package is the library, not the CLI.
 
 ## Python edit/recalc/read loop
 
@@ -55,7 +55,9 @@ if p.returncode != 0:
     raise SystemExit(f"Stop and diagnose: {p.returncode}: {result['message']}")
 assert result["status"] in {"written", "unchanged"}
 for error in result["errors"]:
-    print(error["sheet"], error["cell"], error["error"])
+    print(error["sheet"], error["cell"], error["error"], error["message"])
+for function in result["unknown_functions"]:
+    print("not implemented:", function["name"], function["cells"])
 if result["error_cells"]:
     raise SystemExit("Inspect errors, fix inputs/formulas, save, then recalc again")
 
@@ -76,7 +78,7 @@ rc=0
 result=$(formualizer recalc file.xlsx --json) || rc=$?
 printf '%s\n' "$result"
 case "$rc" in
-  0) printf '%s\n' "$result" | jq '{status, error_cells, errors, errors_truncated}'
+  0) printf '%s\n' "$result" | jq '{status, error_cells, errors, errors_truncated, unknown_functions}'
      # Inspect errors; if unexpected, fix inputs/formulas, save and recalc again.
      ;;
   2) printf '%s\n' "$result" | jq '.refusal'
@@ -114,7 +116,14 @@ Exit 0 / `current` means caches and spill shape are current; exit 3 / `stale` me
 
 ### Read formula errors
 
-`errors` contains `{sheet, cell, error}` locations such as `Sheet1`, `B4`, `#DIV/0!`. These are **formula results, not tool failures**: representable error results can be written successfully with exit 0. Decide whether they are expected; otherwise fix inputs/formulas and repeat the whole edit/save/recalc loop. `error_cells` is the total count; `errors_truncated` means some locations were omitted. Use `--max-errors N` to raise the default 20-location cap (0 lists none); it does not change the total count.
+`errors` contains `{sheet, cell, error, message}` locations such as `Sheet1`, `B4`, `#DIV/0!`. These are **formula results, not tool failures**: representable error results can be written successfully with exit 0. Decide whether they are expected; otherwise fix inputs/formulas and repeat the whole edit/save/recalc loop. `error_cells` is the total count; `errors_truncated` means some locations were omitted. Use `--max-errors N` to raise the default 20-location cap (0 lists none); it does not change the total count.
+
+Read `message` before deciding. It is the engine's reason, or null when the cell has none of its own (an ordinary `#DIV/0!`, or an error inherited from a precedent):
+
+- `Unknown function: NAME`: the formula calls a function formualizer does not implement, typically an Excel add-in (`_xll.EURO`, `_xll.BDP`), a VBA/macro function, or a misspelling. Excel shows `#NAME?` too when the add-in is missing. formualizer cannot supply those values: fix a misspelling, or decide whether the workbook can be handed off with these cells as `#NAME?` and say so. `unknown_functions` lists every such function with its cell count, even when `errors` is truncated.
+- `Undefined name: NAME`: the formula uses a name that is not defined. Define it or fix the formula.
+
+A numeric cache that agrees with the computed value to within one unit in the 15th significant digit is left as it is and does not count as a change (see [numeric precision](cache-only-xlsx.md#numeric-precision)). Workbooks set to "precision as displayed" are computed in full precision.
 
 ## Spills, preservation and safety
 

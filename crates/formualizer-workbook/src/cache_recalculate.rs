@@ -1,6 +1,7 @@
 //! Strict cache-only XLSX recalculation, without a rich document model.
 //! Unsupported package/formula cases fail before any output is published.
 mod dynamic_metadata;
+mod error_reasons;
 mod geometry;
 mod ingest_view;
 mod package;
@@ -218,7 +219,7 @@ impl Cache {
                 .trim()
                 .parse::<f64>()
                 .ok()
-                .is_some_and(|old| old.is_finite() && old == *n),
+                .is_some_and(|old| display_equal(old, *n)),
             (Self::Empty, None | Some("n")) => v.text.is_empty(),
             (Self::Boolean(b), Some("b")) => {
                 matches!((v.text.trim(), b), ("1", true) | ("0", false))
@@ -228,6 +229,39 @@ impl Cache {
             _ => false,
         }
     }
+}
+/// True when a cached number `old` and a computed number `new` agree within
+/// one unit in the 15th significant digit (Excel's display precision): both
+/// finite and equal, or of the same sign with
+/// `|old - new| <= 10^(E - 14)`, `E = floor(log10(max(|old|, |new|)))`.
+/// Exact zero agrees only with exact zero (either sign). `E` is the exact
+/// decimal exponent of the larger magnitude; the bound is the double nearest
+/// `10^(E - 14)`, so for subnormal magnitudes the rule tightens towards
+/// exact equality. Such a cache is current: its bytes are kept.
+pub(crate) fn display_equal(old: f64, new: f64) -> bool {
+    if !(old.is_finite() && new.is_finite()) {
+        return false;
+    }
+    if old == new {
+        return true;
+    }
+    if old == 0.0 || new == 0.0 || old.is_sign_negative() != new.is_sign_negative() {
+        return false;
+    }
+    let larger = old.abs().max(new.abs());
+    // 18 significant digits never round a double below a power of ten up
+    // to it, so this exponent is floor(log10) of the exact value.
+    let scientific = format!("{larger:.17e}");
+    let Some(exponent) = scientific
+        .rsplit_once('e')
+        .and_then(|(_, e)| e.parse::<i32>().ok())
+    else {
+        return false;
+    };
+    let Ok(bound) = format!("1e{}", exponent - 14).parse::<f64>() else {
+        return false;
+    };
+    (old - new).abs() <= bound
 }
 struct Patch {
     span: Range<usize>,
@@ -968,29 +1002,27 @@ fn validated_result(
     Ok(value)
 }
 /// Count one evaluated source formula (anchors included) in the summary.
+/// A `#NAME?` without a message gets the reason its own formula gives.
 fn record_result(
     summary: &mut RecalculateSummary,
+    engine: &Engine<WBResolver>,
     sheet: &str,
-    address: &str,
+    cell: &sheet::Cell,
     value: &LiteralValue,
     limit: usize,
 ) {
-    let stats = summary.sheets.entry(sheet.to_owned()).or_default();
-    stats.evaluated += 1;
-    summary.evaluated += 1;
-    if let LiteralValue::Error(error) = value {
-        summary.errors += 1;
-        stats.errors += 1;
-        let errors = summary
-            .error_summary
-            .entry(error.kind.to_string())
-            .or_default();
-        errors.count += 1;
-        if errors.locations.len() < limit {
-            errors.locations.push(format!("{sheet}!{address}"));
-        } else {
-            errors.locations_truncated += 1;
+    let address = &cell.address;
+    let location = || format!("{sheet}!{address}");
+    match value {
+        LiteralValue::Error(error)
+            if error.kind == formualizer_common::ExcelErrorKind::Name
+                && error.message.is_none() =>
+        {
+            let mut error = error.clone();
+            error.message = error_reasons::name_error_reason(engine, sheet, cell.row, cell.col);
+            summary.record(sheet, location, &LiteralValue::Error(error), limit);
         }
+        _ => summary.record(sheet, location, value, limit),
     }
 }
 /// Package edits produced by a publication path.
@@ -1253,8 +1285,9 @@ fn plan_spill_publication(
                 &mut |value| {
                     record_result(
                         summary,
+                        engine,
                         &sheet.name,
-                        &cell.address,
+                        cell,
                         value,
                         options.error_location_limit,
                     )
@@ -1431,4 +1464,42 @@ pub fn recalculate_xlsx_file(
     checkpoint(&options.cancel)?;
     temp.persist(dest).map_err(|e| IoError::Io(e.error))?;
     Ok(result)
+}
+
+#[cfg(test)]
+mod display_precision_tests {
+    use super::display_equal;
+    // Excel's 17-digit cache spellings are kept verbatim.
+    #[allow(clippy::excessive_precision)]
+    #[test]
+    fn one_unit_in_the_15th_significant_digit() {
+        for (a, b, equal) in [
+            (53433.999999999949, 53433.99999999998, true),
+            (8.8664999999999985, 8.8665, true),
+            (-8.8664999999999985, -8.8665, true),
+            (1.00000000000001, 1.0, true),
+            (1.00000000000002, 1.0, false),
+            (9.99999999999995, 10.0, true),
+            (9.9999999999998, 10.0, false),
+            // 1e23 is not a double: its neighbours straddle the power of ten.
+            (99999999999999991611392.0, 1.0000000000000001e23, true),
+            (0.0, -0.0, true),
+            (0.0, 5.551115123125783e-17, false),
+            (0.0, f64::MIN_POSITIVE, false),
+            (1.0, -1.0, false),
+            (1e-20, -1e-20, false),
+            (f64::MAX, f64::MAX * (1.0 - 1e-15), true),
+            (f64::MAX, f64::MAX * (1.0 - 7e-15), false),
+            (1.2345678901234567e-300, 1.2345678901234561e-300, true),
+            // Subnormal magnitudes: the bound is the double nearest 10^(E-14).
+            (5e-324, 1e-323, false),
+            (1.000000000000001e-310, 1.0e-310, true),
+            (f64::INFINITY, f64::INFINITY, false),
+            (f64::NAN, f64::NAN, false),
+            (f64::NAN, 1.0, false),
+        ] {
+            assert_eq!(display_equal(a, b), equal, "{a:e} vs {b:e}");
+            assert_eq!(display_equal(b, a), equal, "{b:e} vs {a:e}");
+        }
+    }
 }

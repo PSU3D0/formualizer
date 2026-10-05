@@ -22,7 +22,7 @@ pip install formualizer                     # then: formualizer recalc book.xlsx
 python -m formualizer recalc book.xlsx      # same CLI through the module
 ```
 
-Native wheels for Linux (glibc and musl), macOS and Windows on Python 3.10+. The CLI is not available in Pyodide.
+Native wheels for Linux (glibc and musl), macOS and Windows on Python 3.10+. The CLI is not available in Pyodide; there, `formualizer.recalculate_xlsx_bytes` performs the same recalculation on in-memory bytes.
 
 </Tab>
 <Tab value="npm">

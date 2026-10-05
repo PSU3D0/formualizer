@@ -235,3 +235,35 @@ def test_recalculate_xlsx_file_failure_leaves_existing_destination_unchanged(
         fz.recalculate_xlsx_file(str(source), output=str(destination))
 
     assert destination.read_bytes() == b"must remain unchanged"
+
+
+def test_error_reasons_and_unknown_functions_are_reported():
+    openpyxl = pytest.importorskip("openpyxl")
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet["A1"] = "=SPDVOL(1)"
+    sheet["A2"] = "=SPDVOL(2)"
+    sheet["A3"] = "=_xll.EURO(1)"
+    sheet["A4"] = "=NoSuchName"
+    sheet["A5"] = "=A1+1"
+    buffer = BytesIO()
+    workbook.save(buffer)
+    result = fz.recalculate_xlsx_bytes(buffer.getvalue(), error_location_limit=10)
+    summary = result["summary"]
+    name = summary["error_summary"]["#NAME?"]
+    assert dict(zip(name["locations"], name["messages"])) == {
+        "Sheet!A1": "Unknown function: SPDVOL",
+        "Sheet!A2": "Unknown function: SPDVOL",
+        "Sheet!A3": "Unknown function: _xll.EURO",
+        "Sheet!A4": "Undefined name: NoSuchName",
+        "Sheet!A5": None,
+    }
+    assert summary["unknown_functions"] == [
+        {"name": "SPDVOL", "cells": 2},
+        {"name": "_xll.EURO", "cells": 1},
+    ]
+    truncated = fz.recalculate_xlsx_bytes(buffer.getvalue(), error_location_limit=1)
+    assert truncated["summary"]["unknown_functions"] == summary["unknown_functions"]
+    assert truncated["summary"]["error_summary"]["#NAME?"]["messages"] == [
+        "Unknown function: SPDVOL"
+    ]

@@ -229,6 +229,56 @@ fn errors_listed_and_globally_truncated() {
     }
 }
 #[test]
+fn error_reasons_and_unknown_function_summary() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("in.xlsx");
+    std::fs::write(&path, fixture(concat!(
+        "<row r=\"1\"><c r=\"A1\"><f>SPDVOL(1)</f><v>1</v></c><c r=\"B1\"><f>_xll.EURO(2)</f><v>2</v></c></row>",
+        "<row r=\"2\"><c r=\"A2\"><f>SPDVOL(2)</f><v>1</v></c><c r=\"B2\"><f>1/0</f><v>1</v></c></row>",
+    ), "")).unwrap();
+    let unknown =
+        serde_json::json!([{"name": "SPDVOL", "cells": 2}, {"name": "_xll.EURO", "cells": 1}]);
+    for limit in ["20", "1"] {
+        let (code, report) = json(&path, &["--check", "--max-errors", limit]);
+        assert_eq!(code, 3);
+        assert_eq!(report["error_cells"], 4);
+        // Complete even when the list is truncated.
+        assert_eq!(report["unknown_functions"], unknown);
+        let errors = report["errors"].as_array().unwrap();
+        for error in errors {
+            let expected = match error["cell"].as_str().unwrap() {
+                "A1" | "A2" => Value::from("Unknown function: SPDVOL"),
+                "B1" => Value::from("Unknown function: _xll.EURO"),
+                _ => Value::Null,
+            };
+            assert_eq!(error["message"], expected, "{error}");
+        }
+    }
+    let (code, report) = json(&path, &["--check"]);
+    assert_eq!(code, 3);
+    assert_eq!(report["errors"].as_array().unwrap().len(), 4);
+    let (code, out, _) = invoke(&["recalc", path.to_str().unwrap(), "--check"], None);
+    assert_eq!(code, 3);
+    assert!(
+        out.contains("Sheet1!A1 #NAME? (Unknown function: SPDVOL)"),
+        "{out}"
+    );
+    assert!(
+        out.contains("Sheet1!B2 #DIV/0!,") || out.contains("Sheet1!B2 #DIV/0!)"),
+        "{out}"
+    );
+    assert!(
+        out.contains(
+            "unknown functions (cells produce #NAME?): SPDVOL (2 cells), _xll.EURO (1 cell)"
+        ),
+        "{out}"
+    );
+    // Refusals carry no summary.
+    std::fs::write(&path, b"PK\x03\x04 not a zip").unwrap();
+    let (_, report) = json(&path, &["--check"]);
+    assert_eq!(report["unknown_functions"], Value::Null);
+}
+#[test]
 fn dynamic_spill_written_and_then_unchanged() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("in.xlsx");
@@ -347,6 +397,7 @@ fn schema_field_set_pinned_for_success_and_usage() {
             "error_cells",
             "errors",
             "errors_truncated",
+            "unknown_functions",
             "refusal",
             "clock",
             "seed",
