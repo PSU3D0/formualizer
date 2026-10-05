@@ -289,3 +289,74 @@ fn crit_num(c: &LiteralValue) -> f64 {
         _ => 0.0,
     }
 }
+
+/// Criteria text is matched exactly (trailing spaces are significant), and
+/// date text in a criterion (`"=2/1/02"`, `">2/15/02"`, `"2/1/2002"`) is the
+/// date's serial, on the scalar, mask and family paths.
+#[test]
+fn criteria_text_is_exact_and_date_text_is_a_date() {
+    // 37288 = 2002-02-01, 37316 = 2002-03-01.
+    let a = [
+        LiteralValue::Text("ABQ Energy Group, Ltd ".into()),
+        LiteralValue::Text("AEP ".into()),
+        LiteralValue::Text("ABQ Energy Group, Ltd".into()),
+        LiteralValue::Number(37288.0),
+        LiteralValue::Number(37316.0),
+    ];
+    // (criterion, bit sum of the matching rows)
+    let cases: &[(&str, u32)] = &[
+        ("D1", 1),
+        ("\"ABQ Energy Group, Ltd \"", 1),
+        ("\"ABQ Energy Group, Ltd\"", 4),
+        ("\"AEP \"", 2),
+        ("\"=AEP \"", 2),
+        ("\"AEP\"", 0),
+        ("\"ABQ*\"", 1 + 4),
+        ("\"=2/1/02\"", 8),
+        ("\"2/1/2002\"", 8),
+        ("\">2/15/02\"", 16),
+        ("\"<=1-Feb-2002\"", 8),
+        ("\"<>2/1/02\"", 1 + 2 + 4 + 16),
+    ];
+    for family in [false, true] {
+        let mut e = engine(family);
+        for (i, v) in a.iter().enumerate() {
+            let r = i as u32 + 1;
+            e.set_cell_value("Sheet1", r, 1, v.clone()).unwrap();
+            e.set_cell_value("Sheet1", r, 2, LiteralValue::Number((1u32 << i) as f64))
+                .unwrap();
+        }
+        e.set_cell_value(
+            "Sheet1",
+            1,
+            4,
+            LiteralValue::Text("ABQ Energy Group, Ltd ".into()),
+        )
+        .unwrap();
+        let formulas: Vec<String> = cases
+            .iter()
+            .flat_map(|(c, _)| {
+                [
+                    format!("=SUMIF($A$1:$A$5,{c},$B$1:$B$5)"),
+                    format!("=SUMIFS($B$1:$B$5,$A$1:$A$5,{c})"),
+                    format!("=COUNTIF($A$1:$A$5,{c})"),
+                ]
+            })
+            .collect();
+        let got = eval_all(&mut e, &formulas);
+        for (k, (c, bits)) in cases.iter().enumerate() {
+            let want = [
+                LiteralValue::Number(*bits as f64),
+                LiteralValue::Number(*bits as f64),
+                LiteralValue::Number(expected_count(*bits)),
+            ];
+            for j in 0..3 {
+                assert_eq!(
+                    got[k * 3 + j], want[j],
+                    "family={family} criterion {c}: {}",
+                    formulas[k * 3 + j]
+                );
+            }
+        }
+    }
+}

@@ -123,11 +123,14 @@ pub struct ValidationOptions {
 pub fn parse_criteria(v: &LiteralValue) -> Result<CriteriaPredicate, ExcelError> {
     match v {
         LiteralValue::Text(s) => {
-            let s_trim = s.trim();
+            // Leading spaces before an operator are tolerated; the text operand
+            // itself is matched exactly, so trailing spaces are significant
+            // (`"Ltd "` does not match `"Ltd"`).
+            let s_trim = s.trim_start();
 
             let unquote = |t: &str| -> String {
-                let t = t.trim();
-                if let Some(inner) = t.strip_prefix('"').and_then(|x| x.strip_suffix('"')) {
+                let q = t.trim();
+                if let Some(inner) = q.strip_prefix('"').and_then(|x| x.strip_suffix('"')) {
                     inner.replace("\"\"", "\"")
                 } else {
                     t.to_string()
@@ -139,9 +142,11 @@ pub fn parse_criteria(v: &LiteralValue) -> Result<CriteriaPredicate, ExcelError>
             let ops = [">=", "<=", "<>", ">", "<", "="];
             for op in ops.iter() {
                 if let Some(rhs) = s_trim.strip_prefix(op) {
-                    let rhs_trim = rhs.trim();
-                    // Try numeric parse for comparisons
-                    if let Some(n) = parse_criteria_number(rhs_trim) {
+                    // Numbers, then date/time text (`">=2/1/02"`), as Excel
+                    // reads the operand the way it reads typed input.
+                    if let Some(n) = parse_criteria_number(rhs.trim())
+                        .or_else(|| parse_criteria_datetime(rhs.trim()))
+                    {
                         return Ok(match *op {
                             ">=" => CriteriaPredicate::Ge(n),
                             "<=" => CriteriaPredicate::Le(n),
@@ -153,7 +158,7 @@ pub fn parse_criteria(v: &LiteralValue) -> Result<CriteriaPredicate, ExcelError>
                         });
                     }
                     // Fallback: non-numeric operand (support Excel-style quoted strings: ="aa")
-                    let text = unquote(rhs_trim);
+                    let text = unquote(rhs);
                     let boolean = match text.to_ascii_lowercase().as_str() {
                         "true" => Some(true),
                         "false" => Some(false),
@@ -187,7 +192,7 @@ pub fn parse_criteria(v: &LiteralValue) -> Result<CriteriaPredicate, ExcelError>
                 }
             }
 
-            let plain = unquote(s_trim);
+            let plain = unquote(s);
 
             // Wildcards or escaped tilde => TextLike (including literal ~* and ~?).
             if is_pattern(&plain) {
@@ -202,6 +207,12 @@ pub fn parse_criteria(v: &LiteralValue) -> Result<CriteriaPredicate, ExcelError>
                 return Ok(CriteriaPredicate::Eq(LiteralValue::Boolean(true)));
             } else if lower == "false" {
                 return Ok(CriteriaPredicate::Eq(LiteralValue::Boolean(false)));
+            }
+            // Date or time text (`"2/1/2002"`) matches the date's serial.
+            if parse_criteria_number(plain.trim()).is_none()
+                && let Some(serial) = parse_criteria_datetime(plain.trim())
+            {
+                return Ok(CriteriaPredicate::Eq(LiteralValue::Number(serial)));
             }
             // Plain text equality
             Ok(CriteriaPredicate::Eq(LiteralValue::Text(plain)))
@@ -224,6 +235,19 @@ pub fn parse_criteria(v: &LiteralValue) -> Result<CriteriaPredicate, ExcelError>
         }
         other => Ok(CriteriaPredicate::Eq(other.clone())),
     }
+}
+
+/// A date or time operand (`"2/1/02"`, `"1-Feb-2002"`, `"13:30"`) as a 1900-system
+/// serial. Criteria parsing has no workbook context, so 1904-system workbooks
+/// would see the 1900 serial.
+fn parse_criteria_datetime(text: &str) -> Option<f64> {
+    if text.is_empty() || !text.bytes().any(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    formualizer_common::parse_excel_datetime_text_to_serial_for(
+        formualizer_common::DateSystem::Excel1900,
+        text,
+    )
 }
 
 /// A finite number operand of a criteria operator (`">=1e3"`, `"<>-2"`).

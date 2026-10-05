@@ -254,13 +254,12 @@ fn known_comparison_and_criteria_divergences_remain_pinned() {
         Expected::Boolean(false),
     );
 
-    // Formualizer does not date-coerce COUNTIF criteria here; LO returns 1.
-    // The criteria-coercion divergence is tracked separately from #289.
+    // Date text in a criterion is the date's serial, as in Excel (and LO).
     assert_expected(
         DateSystem::Excel1900,
         "=COUNTIF({37622},\"1/1/03\")",
-        "oracle: lo-verified divergence",
-        Expected::Number(0.0),
+        "oracle: lo-verified; Excel corpus caches",
+        Expected::Number(1.0),
     );
 }
 
