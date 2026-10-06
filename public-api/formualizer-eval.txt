@@ -12,9 +12,17 @@ pub formualizer_eval::args::CriteriaPredicate::IsText
 pub formualizer_eval::args::CriteriaPredicate::Le(f64)
 pub formualizer_eval::args::CriteriaPredicate::Lt(f64)
 pub formualizer_eval::args::CriteriaPredicate::Ne(formualizer_common::value::LiteralValue)
+pub formualizer_eval::args::CriteriaPredicate::NotBlank
+pub formualizer_eval::args::CriteriaPredicate::NotTextLike
+pub formualizer_eval::args::CriteriaPredicate::NotTextLike::case_insensitive: bool
+pub formualizer_eval::args::CriteriaPredicate::NotTextLike::pattern: alloc::string::String
+pub formualizer_eval::args::CriteriaPredicate::TextGe(alloc::string::String)
+pub formualizer_eval::args::CriteriaPredicate::TextGt(alloc::string::String)
+pub formualizer_eval::args::CriteriaPredicate::TextLe(alloc::string::String)
 pub formualizer_eval::args::CriteriaPredicate::TextLike
 pub formualizer_eval::args::CriteriaPredicate::TextLike::case_insensitive: bool
 pub formualizer_eval::args::CriteriaPredicate::TextLike::pattern: alloc::string::String
+pub formualizer_eval::args::CriteriaPredicate::TextLt(alloc::string::String)
 impl core::clone::Clone for formualizer_eval::args::CriteriaPredicate
 pub fn formualizer_eval::args::CriteriaPredicate::clone(&self) -> formualizer_eval::args::CriteriaPredicate
 impl core::fmt::Debug for formualizer_eval::args::CriteriaPredicate
@@ -1505,6 +1513,7 @@ pub fn formualizer_eval::engine::eval::Engine<R>::format_class(&self, formualize
 pub fn formualizer_eval::engine::eval::Engine<R>::formula_text_at_cell(&self, formualizer_eval::reference::CellRef) -> core::result::Result<core::option::Option<alloc::string::String>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::inspect_reference(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<core::option::Option<formualizer_eval::traits::ReferenceInfo>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::locale(&self) -> formualizer_eval::locale::Locale
+pub fn formualizer_eval::engine::eval::Engine<R>::nested_subtotal_cells(&self, &formualizer_eval::engine::range_view::RangeView<'_>, bool) -> core::option::Option<alloc::vec::Vec<(usize, usize, usize)>>
 pub fn formualizer_eval::engine::eval::Engine<R>::recalc_epoch(&self) -> u64
 pub fn formualizer_eval::engine::eval::Engine<R>::record_cell_derived_format(&self, &str, u32, u32, core::option::Option<formualizer_eval::format::FormatId>)
 pub fn formualizer_eval::engine::eval::Engine<R>::resolve_cell_format(&self, core::option::Option<&str>, u32, u32, &str) -> core::option::Option<formualizer_eval::format::FormatId>
@@ -3454,6 +3463,7 @@ pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::format_
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::formula_text_at_cell(&self, formualizer_eval::reference::CellRef) -> core::result::Result<core::option::Option<alloc::string::String>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::inspect_reference(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<core::option::Option<formualizer_eval::traits::ReferenceInfo>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::locale(&self) -> formualizer_eval::locale::Locale
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::nested_subtotal_cells(&self, &formualizer_eval::engine::range_view::RangeView<'_>, bool) -> core::option::Option<alloc::vec::Vec<(usize, usize, usize)>>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::recalc_epoch(&self) -> u64
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::record_cell_derived_format(&self, &str, u32, u32, core::option::Option<formualizer_eval::format::FormatId>)
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::resolve_cell_format(&self, core::option::Option<&str>, u32, u32, &str) -> core::option::Option<formualizer_eval::format::FormatId>
@@ -4709,6 +4719,7 @@ pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::forma
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::formula_text_at_cell(&self, formualizer_eval::reference::CellRef) -> core::result::Result<core::option::Option<alloc::string::String>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::inspect_reference(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<core::option::Option<formualizer_eval::traits::ReferenceInfo>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::locale(&self) -> formualizer_eval::locale::Locale
+pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::nested_subtotal_cells(&self, &formualizer_eval::engine::range_view::RangeView<'_>, bool) -> core::option::Option<alloc::vec::Vec<(usize, usize, usize)>>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::recalc_epoch(&self) -> u64
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::record_cell_derived_format(&self, &str, u32, u32, core::option::Option<formualizer_eval::format::FormatId>)
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::resolve_cell_format(&self, core::option::Option<&str>, u32, u32, &str) -> core::option::Option<formualizer_eval::format::FormatId>
@@ -6154,6 +6165,7 @@ pub fn formualizer_eval::engine::eval::Engine<R>::format_class(&self, formualize
 pub fn formualizer_eval::engine::eval::Engine<R>::formula_text_at_cell(&self, formualizer_eval::reference::CellRef) -> core::result::Result<core::option::Option<alloc::string::String>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::inspect_reference(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<core::option::Option<formualizer_eval::traits::ReferenceInfo>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::locale(&self) -> formualizer_eval::locale::Locale
+pub fn formualizer_eval::engine::eval::Engine<R>::nested_subtotal_cells(&self, &formualizer_eval::engine::range_view::RangeView<'_>, bool) -> core::option::Option<alloc::vec::Vec<(usize, usize, usize)>>
 pub fn formualizer_eval::engine::eval::Engine<R>::recalc_epoch(&self) -> u64
 pub fn formualizer_eval::engine::eval::Engine<R>::record_cell_derived_format(&self, &str, u32, u32, core::option::Option<formualizer_eval::format::FormatId>)
 pub fn formualizer_eval::engine::eval::Engine<R>::resolve_cell_format(&self, core::option::Option<&str>, u32, u32, &str) -> core::option::Option<formualizer_eval::format::FormatId>
@@ -8106,6 +8118,7 @@ pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::date_system(&self) 
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::formula_text_at_cell(&self, formualizer_eval::reference::CellRef) -> core::result::Result<core::option::Option<alloc::string::String>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::get_criteria_mask(&self, &formualizer_eval::engine::range_view::RangeView<'_>, usize, &formualizer_eval::args::CriteriaPredicate) -> core::option::Option<alloc::sync::Arc<arrow_array::array::boolean_array::BooleanArray>>
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::get_lookup_index(&self, &formualizer_eval::engine::range_view::RangeView<'_>, formualizer_eval::engine::lookup_index_cache::LookupAxis) -> core::option::Option<alloc::sync::Arc<formualizer_eval::engine::lookup_index_cache::LookupIndex>>
+pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::get_nested_subtotal_cells(&self, &formualizer_eval::engine::range_view::RangeView<'_>, bool) -> core::option::Option<alloc::vec::Vec<(usize, usize, usize)>>
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::get_row_visibility_mask(&self, &formualizer_eval::engine::range_view::RangeView<'_>, formualizer_eval::engine::row_visibility::VisibilityMaskMode) -> core::option::Option<alloc::sync::Arc<arrow_array::array::boolean_array::BooleanArray>>
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::inspect_reference(&self, &formualizer_parse::parser::ReferenceType) -> core::result::Result<core::option::Option<formualizer_eval::traits::ReferenceInfo>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::locale(&self) -> formualizer_eval::locale::Locale
@@ -8165,6 +8178,7 @@ pub fn formualizer_eval::traits::EvaluationContext::format_class(&self, formuali
 pub fn formualizer_eval::traits::EvaluationContext::formula_text_at_cell(&self, formualizer_eval::reference::CellRef) -> core::result::Result<core::option::Option<alloc::string::String>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::traits::EvaluationContext::inspect_reference(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<core::option::Option<formualizer_eval::traits::ReferenceInfo>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::traits::EvaluationContext::locale(&self) -> formualizer_eval::locale::Locale
+pub fn formualizer_eval::traits::EvaluationContext::nested_subtotal_cells(&self, &formualizer_eval::engine::range_view::RangeView<'_>, bool) -> core::option::Option<alloc::vec::Vec<(usize, usize, usize)>>
 pub fn formualizer_eval::traits::EvaluationContext::recalc_epoch(&self) -> u64
 pub fn formualizer_eval::traits::EvaluationContext::record_cell_derived_format(&self, &str, u32, u32, core::option::Option<formualizer_eval::format::FormatId>)
 pub fn formualizer_eval::traits::EvaluationContext::resolve_cell_format(&self, core::option::Option<&str>, u32, u32, &str) -> core::option::Option<formualizer_eval::format::FormatId>
@@ -8195,6 +8209,7 @@ pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::format_
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::formula_text_at_cell(&self, formualizer_eval::reference::CellRef) -> core::result::Result<core::option::Option<alloc::string::String>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::inspect_reference(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<core::option::Option<formualizer_eval::traits::ReferenceInfo>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::locale(&self) -> formualizer_eval::locale::Locale
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::nested_subtotal_cells(&self, &formualizer_eval::engine::range_view::RangeView<'_>, bool) -> core::option::Option<alloc::vec::Vec<(usize, usize, usize)>>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::recalc_epoch(&self) -> u64
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::record_cell_derived_format(&self, &str, u32, u32, core::option::Option<formualizer_eval::format::FormatId>)
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::resolve_cell_format(&self, core::option::Option<&str>, u32, u32, &str) -> core::option::Option<formualizer_eval::format::FormatId>
@@ -8225,6 +8240,7 @@ pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::forma
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::formula_text_at_cell(&self, formualizer_eval::reference::CellRef) -> core::result::Result<core::option::Option<alloc::string::String>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::inspect_reference(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<core::option::Option<formualizer_eval::traits::ReferenceInfo>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::locale(&self) -> formualizer_eval::locale::Locale
+pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::nested_subtotal_cells(&self, &formualizer_eval::engine::range_view::RangeView<'_>, bool) -> core::option::Option<alloc::vec::Vec<(usize, usize, usize)>>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::recalc_epoch(&self) -> u64
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::record_cell_derived_format(&self, &str, u32, u32, core::option::Option<formualizer_eval::format::FormatId>)
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::resolve_cell_format(&self, core::option::Option<&str>, u32, u32, &str) -> core::option::Option<formualizer_eval::format::FormatId>
@@ -8255,6 +8271,7 @@ pub fn formualizer_eval::engine::eval::Engine<R>::format_class(&self, formualize
 pub fn formualizer_eval::engine::eval::Engine<R>::formula_text_at_cell(&self, formualizer_eval::reference::CellRef) -> core::result::Result<core::option::Option<alloc::string::String>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::inspect_reference(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<core::option::Option<formualizer_eval::traits::ReferenceInfo>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::locale(&self) -> formualizer_eval::locale::Locale
+pub fn formualizer_eval::engine::eval::Engine<R>::nested_subtotal_cells(&self, &formualizer_eval::engine::range_view::RangeView<'_>, bool) -> core::option::Option<alloc::vec::Vec<(usize, usize, usize)>>
 pub fn formualizer_eval::engine::eval::Engine<R>::recalc_epoch(&self) -> u64
 pub fn formualizer_eval::engine::eval::Engine<R>::record_cell_derived_format(&self, &str, u32, u32, core::option::Option<formualizer_eval::format::FormatId>)
 pub fn formualizer_eval::engine::eval::Engine<R>::resolve_cell_format(&self, core::option::Option<&str>, u32, u32, &str) -> core::option::Option<formualizer_eval::format::FormatId>
@@ -8299,6 +8316,7 @@ pub fn formualizer_eval::traits::FunctionContext::date_system(&self) -> formuali
 pub fn formualizer_eval::traits::FunctionContext::formula_text_at_cell(&self, formualizer_eval::reference::CellRef) -> core::result::Result<core::option::Option<alloc::string::String>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::traits::FunctionContext::get_criteria_mask(&self, &formualizer_eval::engine::range_view::RangeView<'_>, usize, &formualizer_eval::args::CriteriaPredicate) -> core::option::Option<alloc::sync::Arc<arrow_array::array::boolean_array::BooleanArray>>
 pub fn formualizer_eval::traits::FunctionContext::get_lookup_index(&self, &formualizer_eval::engine::range_view::RangeView<'_>, formualizer_eval::engine::lookup_index_cache::LookupAxis) -> core::option::Option<alloc::sync::Arc<formualizer_eval::engine::lookup_index_cache::LookupIndex>>
+pub fn formualizer_eval::traits::FunctionContext::get_nested_subtotal_cells(&self, &formualizer_eval::engine::range_view::RangeView<'_>, bool) -> core::option::Option<alloc::vec::Vec<(usize, usize, usize)>>
 pub fn formualizer_eval::traits::FunctionContext::get_row_visibility_mask(&self, &formualizer_eval::engine::range_view::RangeView<'_>, formualizer_eval::engine::row_visibility::VisibilityMaskMode) -> core::option::Option<alloc::sync::Arc<arrow_array::array::boolean_array::BooleanArray>>
 pub fn formualizer_eval::traits::FunctionContext::inspect_reference(&self, &formualizer_parse::parser::ReferenceType) -> core::result::Result<core::option::Option<formualizer_eval::traits::ReferenceInfo>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::traits::FunctionContext::locale(&self) -> formualizer_eval::locale::Locale
@@ -8322,6 +8340,7 @@ pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::date_system(&self) 
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::formula_text_at_cell(&self, formualizer_eval::reference::CellRef) -> core::result::Result<core::option::Option<alloc::string::String>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::get_criteria_mask(&self, &formualizer_eval::engine::range_view::RangeView<'_>, usize, &formualizer_eval::args::CriteriaPredicate) -> core::option::Option<alloc::sync::Arc<arrow_array::array::boolean_array::BooleanArray>>
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::get_lookup_index(&self, &formualizer_eval::engine::range_view::RangeView<'_>, formualizer_eval::engine::lookup_index_cache::LookupAxis) -> core::option::Option<alloc::sync::Arc<formualizer_eval::engine::lookup_index_cache::LookupIndex>>
+pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::get_nested_subtotal_cells(&self, &formualizer_eval::engine::range_view::RangeView<'_>, bool) -> core::option::Option<alloc::vec::Vec<(usize, usize, usize)>>
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::get_row_visibility_mask(&self, &formualizer_eval::engine::range_view::RangeView<'_>, formualizer_eval::engine::row_visibility::VisibilityMaskMode) -> core::option::Option<alloc::sync::Arc<arrow_array::array::boolean_array::BooleanArray>>
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::inspect_reference(&self, &formualizer_parse::parser::ReferenceType) -> core::result::Result<core::option::Option<formualizer_eval::traits::ReferenceInfo>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::locale(&self) -> formualizer_eval::locale::Locale
