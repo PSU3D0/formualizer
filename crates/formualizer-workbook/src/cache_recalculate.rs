@@ -4,6 +4,7 @@ mod dynamic_metadata;
 mod error_reasons;
 mod geometry;
 mod ingest_view;
+mod legacy_intersection;
 mod package;
 mod result_projection;
 mod shared_qualifiers;
@@ -734,9 +735,28 @@ fn ingest_source<'a>(
     // and mask/normalize dynamic arrays, in a bounded transient ingestion
     // view; the authoritative package stays intact.
     let has_tables = plans.iter().any(|p| !p.tables.is_empty());
+    // Legacy implicit intersection for formulas Excel calculated (listed in
+    // the calc chain); see `legacy_intersection`.
+    let calc_chain_part = package::calc_chain_part(&mut archive, options);
+    let calc_chain = legacy_intersection::calc_chain(
+        &mut archive,
+        calc_chain_part.as_deref(),
+        &sheets,
+        options,
+    )?;
+    let table_names: Vec<String> = plans
+        .iter()
+        .flat_map(|p| &p.tables)
+        .map(|t| t.name.to_lowercase())
+        .collect();
     let mut view_parts = BTreeMap::new();
-    for (sheet, plan) in sheets.iter().zip(&plans) {
+    for (index, (sheet, plan)) in sheets.iter().zip(&plans).enumerate() {
         let mut patches = ingest_view::patches(plan, &options.cancel)?;
+        if !calc_chain.is_empty() {
+            let (legacy, _) =
+                legacy_intersection::patches(index, plan, &calc_chain, &table_names, options)?;
+            patches.extend(legacy);
+        }
         if has_tables {
             patches.extend(table_lowering::patches(
                 &sheet.name,

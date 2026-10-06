@@ -267,3 +267,62 @@ def test_error_reasons_and_unknown_functions_are_reported():
     assert truncated["summary"]["error_summary"]["#NAME?"]["messages"] == [
         "Unknown function: SPDVOL"
     ]
+
+
+def _add_calc_chain(path: Path, cells: list[str]) -> None:
+    """List `cells` (Sheet1) in a calc chain, as Excel writes for formulas it
+    calculated."""
+    with ZipFile(path) as archive:
+        parts = {name: archive.read(name) for name in archive.namelist()}
+    main = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+    entries = "".join(f'<c r="{cell}" i="1"/>' for cell in cells)
+    parts["xl/calcChain.xml"] = (
+        f'<calcChain xmlns="{main}">{entries}</calcChain>'.encode()
+    )
+    parts["xl/_rels/workbook.xml.rels"] = parts["xl/_rels/workbook.xml.rels"].replace(
+        b"</Relationships>",
+        b'<Relationship Id="rIdChain" Type="http://schemas.openxmlformats.org/'
+        b'officeDocument/2006/relationships/calcChain" Target="calcChain.xml"/>'
+        b"</Relationships>",
+    )
+    parts["[Content_Types].xml"] = parts["[Content_Types].xml"].replace(
+        b"</Types>",
+        b'<Override PartName="/xl/calcChain.xml" ContentType="application/'
+        b'vnd.openxmlformats-officedocument.spreadsheetml.calcChain+xml"/></Types>',
+    )
+    with ZipFile(path, "w", ZIP_DEFLATED) as archive:
+        for name, data in parts.items():
+            archive.writestr(name, data)
+
+
+def test_calc_chain_formulas_keep_legacy_intersection(tmp_path):
+    openpyxl = pytest.importorskip("openpyxl")
+    path = tmp_path / "legacy.xlsx"
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    for row in range(1, 4):
+        sheet[f"A{row}"] = row
+        sheet[f"C{row}"] = row
+        sheet[f"D{row}"] = f"v{row}"
+    sheet["B2"] = "=A1:A3*10"
+    sheet["E3"] = "=VLOOKUP(A1:A3,C1:D3,2,FALSE)"
+    workbook.save(path)
+    agent_written = path.read_bytes()
+
+    # Excel calculated B2 and E3: each intersects its own row.
+    _add_calc_chain(path, ["B2", "E3"])
+    fz.recalculate_xlsx_file(str(path))
+    cached = openpyxl.load_workbook(path, data_only=True).active
+    assert cached["B2"].value == 20
+    assert cached["E3"].value == "v3"
+    assert cached["B3"].value is None
+    before = path.read_bytes()
+    fz.recalculate_xlsx_file(str(path))
+    assert path.read_bytes() == before
+
+    # The same formulas written by openpyxl alone (no calc chain) keep
+    # dynamic-array evaluation: B2 spills.
+    path.write_bytes(agent_written)
+    fz.recalculate_xlsx_file(str(path))
+    cached = openpyxl.load_workbook(path, data_only=True).active
+    assert [cached[f"B{row}"].value for row in (2, 3, 4)] == [10, 20, 30]

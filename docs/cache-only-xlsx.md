@@ -33,6 +33,7 @@ Recalculated, with formula text and untouched package content preserved:
 - Supported defined names: constants, absolute cell/range names and grounded formula names (see [Ownership and writeback](#ownership-and-writeback)).
 - Dynamic arrays: new multi-cell spills from ordinary formulas, and existing dynamic-array anchors that grow, shrink, collapse or become blocked. `A1#` and `_xlfn.ANCHORARRAY(A1)` read the current spill. A spill blocked by existing content publishes `#SPILL!` as a formula result.
 - Legacy fixed-extent (CSE) array formulas, including elementwise `IF` such as `SUM(IF(A1:A3>0,A1:A3))`.
+- Legacy implicit intersection in formulas Excel calculated (listed in `xl/calcChain.xml`); see [Legacy implicit intersection](#legacy-implicit-intersection).
 - Excel tables: structured references, bare table names and calculated columns whose every row carries a worksheet formula.
 - Volatile functions (`TODAY`, `NOW`, `RAND`, `OFFSET`, `INDIRECT`, `SUBTOTAL`, `AGGREGATE`), sampled once per run.
 - Formula errors such as `#DIV/0!`, `#NAME?` or `#SPILL!`. These are calculated results, reported as error cells; they are not refusals.
@@ -148,6 +149,21 @@ When openpyxl re-saves a published dynamic spill, it can discard XLDAPR metadata
 Array-condition `IF`, including `SUM(IF(A1:A3>0,A1:A3))`, selects branches elementwise in both ordinary and CSE formulas. Singleton axes broadcast; incompatible shapes return `#VALUE!` rather than padding with `#N/A`. Each needed branch evaluates once; unused branches are not evaluated. Scalar conditions retain reference selection and short-circuit behavior.
 
 For CSE-containing source recalculation, family execution is disabled for the whole engine run to avoid declaration-insensitive family memoization. Other workbooks retain the caller's configuration. The Rust declaration API requires `family_execution = false`.
+
+## Legacy implicit intersection
+
+Before dynamic arrays, a range in a position that expects one value was reduced by implicit intersection: `=A1:A10*2` in row 5 means `A5*2`, `=VLOOKUP($B$4:$B$2636,…)` in row 900 looks up `$B900`, and `=IF(E2=21:21,…)` compares with row 21 in the formula's column. The file format still carries that meaning. Excel marks formulas that need dynamic-array evaluation with `t="array"` and XLDAPR `cm` metadata, and evaluates every other formula with legacy semantics (Excel 365 shows them with `@`; the stored text never contains it).
+
+Recalculation applies legacy semantics only where the file shows that Excel calculated the formula: the cell is listed in the workbook's calculation chain (`xl/calcChain.xml`, matched by `sheetId`). For a shared formula, every cell of the family must be listed. Array formulas, CSE or dynamic, are never intersected. openpyxl, XlsxWriter and umya-spreadsheet do not write a calc chain, so workbooks they create, and Excel workbooks they re-save, keep dynamic-array evaluation as before. New multi-cell spills are still marked with `cm`. A missing, malformed or foreign calc chain is not evidence and is not a refusal.
+
+Where a listed formula intersects follows Excel's token classes. The formula's result is a value. Operators take values. Each function parameter takes a value, a reference or an array, as Excel's built-in functions up to Excel 2013 declare. Array parameters (`SUMPRODUCT`, `MMULT`, `LOOKUP`'s vectors, `INDEX`'s array, ...) evaluate their argument as an array. Reference parameters (`SUM`, `COUNTIF`/`SUMIF` ranges, `VLOOKUP`'s table, `MATCH`'s array) take the range as is, although an operator inside them still intersects (`SUM(A1:A3*2)` without CSE). In a value position:
+
+- a single-column range picks the formula's row, a single-row range its column, and a 2-D range needs both; otherwise the result is `#VALUE!`. Whole rows and columns, other sheets and defined names behave the same way;
+- a reference returned by `IF`, `CHOOSE`, `IFERROR`, `IFNA`, `INDEX`, `OFFSET` or `INDIRECT` is intersected; an array result (`TRANSPOSE`, `MMULT`, `ROW(A1:A3)`, an array constant) gives its top-left value.
+
+The intersection is applied in the transient ingestion view as explicit `@` operators; the stored formula text and the calc chain are unchanged, so a second recalculation is a no-op. Dependencies cover the whole range. Formulas that this rule does not classify keep dynamic-array evaluation: functions newer than Excel 2013 or user-defined, `LET`/`LAMBDA`, structured references and table names, 3-D references, and a multi-cell range passed where an Analysis ToolPak function or `N`/`T`/`CELL` expects one cell by reference. A formula without any multi-cell value position is not touched. An explicit `@` that Excel stores as `_xlfn.SINGLE(...)` is not supported and evaluates to `#NAME?`.
+
+An Excel workbook re-saved by a tool that drops the calc chain loses this evidence, and its legacy formulas are then evaluated with dynamic-array semantics, which Excel will not share when it reopens the file. A tool that keeps the calc chain and rewrites a listed formula in place gets legacy semantics for it, which matches what Excel does with that file. These are explicit policies; the classification has been checked against Excel-computed caches in real workbooks but not by running Excel.
 
 ## Excel tables
 

@@ -18,6 +18,8 @@ pub(super) struct Relationship {
 pub(super) struct Sheet {
     pub name: String,
     pub part: String,
+    /// `sheet/@sheetId`, the key of `xl/calcChain.xml` entries.
+    pub sheet_id: u32,
     pub tables: BTreeMap<String, String>,
 }
 fn u16_at(bytes: &[u8], offset: usize) -> Result<usize, IoError> {
@@ -738,6 +740,7 @@ pub(super) fn discover(
             sheets.push(Sheet {
                 name: name.to_owned(),
                 part,
+                sheet_id,
                 tables: BTreeMap::new(),
             });
         }
@@ -969,4 +972,22 @@ fn validate_aux(
         }
         Ok(())
     })
+}
+/// The workbook's calculation-chain part, if it has a valid relationship to
+/// an existing part. Evidence only: a missing or odd relationship is `None`.
+pub(super) fn calc_chain_part(
+    archive: &mut Archive<'_>,
+    options: &XlsxRecalculateOptions,
+) -> Option<String> {
+    let kind = format!("{}/calcChain", xml::OFFICE);
+    let relations = relationships(archive, "xl/workbook.xml", options).ok()?;
+    let mut targets = relations
+        .values()
+        .filter(|r| r.kind == kind)
+        .map(|r| r.target.clone());
+    let target = targets.next()??;
+    if targets.next().is_some() || !archive.file_names().any(|n| n == target) {
+        return None;
+    }
+    Some(target)
 }
