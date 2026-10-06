@@ -184,3 +184,76 @@ fn family_run_of_nested_subtotals_is_ignored() {
     assert!(close(&oracle[4], 2.0 * sum2));
     assert!(close(&oracle[5], sum2));
 }
+
+/// Nested-subtotal detection on compressed family runs: each run is
+/// tested once by its template and clipped to the range. Columns are
+/// written one at a time so each becomes a virtual member run; the result
+/// must equal an engine that keeps every member materialized, through a
+/// range that cuts a run, a member edited into a SUBTOTAL, and inserted
+/// rows.
+#[test]
+fn compressed_runs_match_materialized_members() {
+    const N: u32 = 200;
+    let run = |compress: bool| -> (Vec<LiteralValue>, usize) {
+        let mut e = Engine::new(
+            TestWorkbook::new(),
+            EvalConfig {
+                formula_compression: compress,
+                ..arrow_eval_config()
+            },
+        );
+        for r in 1..=N {
+            value(&mut e, r, 1, LiteralValue::Number(r as f64));
+        }
+        // B: plain family (counted). C: SUBTOTAL family (skipped).
+        for r in 1..=N {
+            formula(&mut e, r, 2, &format!("=A{r}*2"));
+        }
+        for r in 1..=N {
+            formula(&mut e, r, 3, &format!("=SUBTOTAL(9,$A$1:A{r})"));
+        }
+        let totals = [
+            "=SUBTOTAL(9,B1:C200)",
+            "=SUBTOTAL(9,B50:C120)",
+            "=SUBTOTAL(9,C150:C160)",
+            "=AGGREGATE(9,0,A1:C200)",
+            "=SUM(B1:C200)",
+        ];
+        let total_row = N + 5;
+        for (i, f) in totals.iter().enumerate() {
+            formula(&mut e, total_row, 5 + i as u32, f);
+        }
+        let read = |e: &Engine<TestWorkbook>, row: u32, out: &mut Vec<LiteralValue>| {
+            out.extend((0..totals.len() as u32).map(|i| get(e, row, 5 + i)));
+        };
+        let mut out = Vec::new();
+        e.evaluate_all().unwrap();
+        let runs = e.graph.virtual_member_counts().1;
+        read(&e, total_row, &mut out);
+        // A member of the plain family becomes a nested subtotal.
+        formula(&mut e, 100, 2, "=SUBTOTAL(9,A100)");
+        e.evaluate_all().unwrap();
+        read(&e, total_row, &mut out);
+        let s1 = e.graph.sheet_id("Sheet1").unwrap();
+        e.edit_with_logger(&mut crate::engine::ChangeLog::new(), |ed| {
+            ed.insert_rows(s1, 60, 3).map(|_| ())
+        })
+        .unwrap()
+        .unwrap();
+        e.evaluate_all().unwrap();
+        read(&e, total_row + 3, &mut out);
+        (out, runs)
+    };
+    let (materialized, _) = run(false);
+    let (compressed, runs) = run(true);
+    assert!(runs > 0, "no virtual member runs formed");
+    assert_eq!(compressed, materialized);
+    let b: f64 = (1..=N).map(|r| 2.0 * r as f64).sum();
+    assert!(close(&materialized[0], b), "{:?}", materialized[0]);
+    let b_mid: f64 = (50..=120).map(|r| 2.0 * r as f64).sum();
+    assert!(close(&materialized[1], b_mid), "{:?}", materialized[1]);
+    assert!(close(&materialized[2], 0.0), "{:?}", materialized[2]);
+    let a: f64 = (1..=N).map(|r| r as f64).sum();
+    assert!(close(&materialized[3], a + b), "{:?}", materialized[3]);
+    assert!(close(&materialized[5], b - 200.0), "{:?}", materialized[5]);
+}

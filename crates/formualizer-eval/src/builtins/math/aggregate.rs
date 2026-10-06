@@ -1507,10 +1507,19 @@ impl AggregateCollector {
                 }
 
                 for col in 0..cols {
-                    if nested_cells
-                        .as_ref()
-                        .is_some_and(|cells| cells.binary_search(&(rel_row, col)).is_ok())
-                    {
+                    if nested_cells.as_ref().is_some_and(|cells| {
+                        cells
+                            .binary_search_by(|&(c, lo, hi)| {
+                                c.cmp(&col).then(if hi < rel_row {
+                                    std::cmp::Ordering::Less
+                                } else if lo > rel_row {
+                                    std::cmp::Ordering::Greater
+                                } else {
+                                    std::cmp::Ordering::Equal
+                                })
+                            })
+                            .is_ok()
+                    }) {
                         continue;
                     }
                     self.consume_range_value(view.get_cell(rel_row, col), op, error_policy)?;

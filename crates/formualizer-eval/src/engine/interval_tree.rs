@@ -154,6 +154,33 @@ impl<T: Clone + Eq + std::hash::Hash> IntervalTree<T> {
         (node_count, value_count)
     }
 
+    /// Like [`Self::point_interval_stats`] but stops once more than `cap`
+    /// entries (point nodes plus values) have been seen: `None` means the
+    /// range holds more than `cap`, at a cost of O(cap) instead of
+    /// O(range).
+    pub(crate) fn point_interval_size_capped(
+        &self,
+        q_low: u32,
+        q_high: u32,
+        cap: usize,
+    ) -> Option<usize> {
+        if q_low > q_high {
+            return Some(0);
+        }
+        let mut seen = 0usize;
+        for (&low, nodes) in self.map.range(q_low..=q_high) {
+            for node in nodes {
+                if node.high == low {
+                    seen = seen.saturating_add(1 + node.values.len());
+                    if seen > cap {
+                        return None;
+                    }
+                }
+            }
+        }
+        Some(seen)
+    }
+
     /// Visits matching values without cloning or materializing the query.
     /// Returning `Break` from the visitor stops traversal immediately.
     pub(crate) fn visit_query(

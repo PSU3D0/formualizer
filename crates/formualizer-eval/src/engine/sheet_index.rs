@@ -254,6 +254,46 @@ impl SheetIndex {
     /// Sheet indexes contain point intervals only, so exact-cell queries use two
     /// direct B-tree lookups. Wider rectangles materialize only the cheaper axis
     /// set and stream the other axis while intersecting it.
+    /// Vertices on the less populated axis of the rectangle: a superset of
+    /// [`Self::vertices_in_rect`] that callers filter by position. Both
+    /// axes are sized with a growing cap, so this costs O(entries on the
+    /// smaller axis) rather than walking both axes; a growing range over a
+    /// sparsely indexed column stays cheap however many rows it spans.
+    pub(crate) fn rect_candidates(
+        &self,
+        start_row: u32,
+        end_row: u32,
+        start_col: u32,
+        end_col: u32,
+    ) -> Vec<VertexId> {
+        if start_row > end_row || start_col > end_col {
+            return Vec::new();
+        }
+        let mut cap = 64usize;
+        let use_rows = loop {
+            let rows = self
+                .row_tree
+                .point_interval_size_capped(start_row, end_row, cap);
+            let cols = self
+                .col_tree
+                .point_interval_size_capped(start_col, end_col, cap);
+            match (rows, cols) {
+                (Some(r), Some(c)) => break r <= c,
+                (Some(_), None) => break true,
+                (None, Some(_)) => break false,
+                (None, None) => cap = cap.saturating_mul(4),
+            }
+        };
+        let (tree, start, end) = if use_rows {
+            (&self.row_tree, start_row, end_row)
+        } else {
+            (&self.col_tree, start_col, end_col)
+        };
+        let mut out = Vec::new();
+        self.visit_axis_range(tree, start, end, |vertex| out.push(vertex));
+        out
+    }
+
     pub fn vertices_in_rect(
         &self,
         start_row: u32,

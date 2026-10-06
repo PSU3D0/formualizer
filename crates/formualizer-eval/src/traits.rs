@@ -2188,15 +2188,16 @@ pub trait EvaluationContext: Resolver + FunctionProvider + SourceResolver {
     }
 
     /// Optional: the cells of a sheet-backed `view` whose formulas call
-    /// SUBTOTAL (and AGGREGATE when `include_aggregate`), as sorted
-    /// (row, column) offsets within the view. SUBTOTAL and AGGREGATE skip
+    /// SUBTOTAL (and AGGREGATE when `include_aggregate`), as sorted,
+    /// disjoint `(column, first_row, last_row)` offset intervals within the
+    /// view (rows inclusive). SUBTOTAL and AGGREGATE skip
     /// these cells (Excel ignores nested subtotals). `None` when the context
     /// does not track formulas.
     fn nested_subtotal_cells(
         &self,
         _view: &RangeView<'_>,
         _include_aggregate: bool,
-    ) -> Option<Vec<(usize, usize)>> {
+    ) -> Option<Vec<(usize, usize, usize)>> {
         None
     }
 }
@@ -2340,7 +2341,7 @@ pub trait FunctionContext<'ctx> {
         &self,
         _view: &RangeView<'_>,
         _include_aggregate: bool,
-    ) -> Option<Vec<(usize, usize)>> {
+    ) -> Option<Vec<(usize, usize, usize)>> {
         None
     }
 }
@@ -2479,7 +2480,7 @@ impl<'a> FunctionContext<'a> for DefaultFunctionContext<'a> {
         &self,
         view: &RangeView<'_>,
         include_aggregate: bool,
-    ) -> Option<Vec<(usize, usize)>> {
+    ) -> Option<Vec<(usize, usize, usize)>> {
         self.base.nested_subtotal_cells(view, include_aggregate)
     }
 }

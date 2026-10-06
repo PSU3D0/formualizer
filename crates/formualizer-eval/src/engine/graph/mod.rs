@@ -2517,6 +2517,53 @@ impl DependencyGraph {
         })
     }
 
+    /// Formula cells of `sheet_id` in the rectangle whose formula template
+    /// satisfies `matches`, as `(col, first_row, last_row)` intervals
+    /// (0-based, inclusive). A virtual member run is tested once by its
+    /// shared template and yields at most one clipped interval, so a long
+    /// filled-down family costs one check instead of one per member;
+    /// materialized vertices come from the sheet index's smaller axis,
+    /// filtered by template and then by position, one single-row interval
+    /// each.
+    pub(crate) fn formula_intervals_in_region(
+        &self,
+        sheet_id: SheetId,
+        start_row0: u32,
+        end_row0: u32,
+        start_col0: u32,
+        end_col0: u32,
+        mut matches: impl FnMut(AstNodeId) -> bool,
+    ) -> Vec<(u32, u32, u32)> {
+        let mut out = Vec::new();
+        if let Some(index) = self.sheet_indexes.get(&sheet_id) {
+            for v in index.rect_candidates(start_row0, end_row0, start_col0, end_col0) {
+                if !self.formula_view(v).is_some_and(|f| matches(f.template)) {
+                    continue;
+                }
+                if let Some(cell) = self.get_cell_ref(v) {
+                    let (row, col) = (cell.coord.row(), cell.coord.col());
+                    if (start_row0..=end_row0).contains(&row)
+                        && (start_col0..=end_col0).contains(&col)
+                    {
+                        out.push((col, row, row));
+                    }
+                }
+            }
+        }
+        for r in self
+            .vertex_formulas
+            .virtual_members()
+            .runs_in_cols(sheet_id, start_col0, end_col0)
+        {
+            let lo = r.row0.max(start_row0);
+            let hi = (r.row0 + r.len - 1).min(end_row0);
+            if lo <= hi && matches(r.template) {
+                out.push((r.col, lo, hi));
+            }
+        }
+        out
+    }
+
     pub(crate) fn vertices_in_region(
         &self,
         sheet_id: SheetId,

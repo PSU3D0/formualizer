@@ -10668,14 +10668,14 @@ where
 
     /// Cells of a sheet-backed `view` whose formula (own or a family
     /// template) calls SUBTOTAL, or AGGREGATE when `include_aggregate`, as
-    /// sorted offsets within the view. Each formula's call bits are
-    /// precomputed in the AST arena, so this is one region query of the
-    /// sheet index plus an O(1) check per vertex.
+    /// sorted, disjoint `(col, first_row, last_row)` offset intervals within
+    /// the view. Each formula's call bits are precomputed in the AST arena;
+    /// a filled-down family is checked once per run, not once per cell.
     fn nested_subtotal_cells_for_view(
         &self,
         view: &RangeView<'_>,
         include_aggregate: bool,
-    ) -> Option<Vec<(usize, usize)>> {
+    ) -> Option<Vec<(usize, usize, usize)>> {
         if !view.is_sheet_backed() {
             return None;
         }
@@ -10691,30 +10691,29 @@ where
             crate::engine::arena::SUBTOTAL_CALL
         };
         let ds = self.graph.data_store();
-        let mut out: Vec<(usize, usize)> = self
+        let mut found: Vec<(usize, usize, usize)> = self
             .graph
-            .vertices_in_region(
+            .formula_intervals_in_region(
                 sheet_id,
                 r0 as u32,
                 (r0 + rows - 1) as u32,
                 c0 as u32,
                 (c0 + cols - 1) as u32,
+                |template| ds.ast_subtotal_calls(template) & mask != 0,
             )
             .into_iter()
-            .filter(|&v| {
-                self.graph
-                    .formula_view(v)
-                    .is_some_and(|f| ds.ast_subtotal_calls(f.template) & mask != 0)
-            })
-            .filter_map(|v| {
-                let cell = self.graph.get_cell_ref(v)?;
-                let (row, col) = (cell.coord.row() as usize, cell.coord.col() as usize);
-                (row >= r0 && row < r0 + rows && col >= c0 && col < c0 + cols)
-                    .then(|| (row - r0, col - c0))
-            })
+            .map(|(col, lo, hi)| (col as usize - c0, lo as usize - r0, hi as usize - r0))
             .collect();
-        out.sort_unstable();
-        out.dedup();
+        found.sort_unstable();
+        // Merge touching or overlapping intervals of a column so a binary
+        // search finds the one covering a cell.
+        let mut out: Vec<(usize, usize, usize)> = Vec::with_capacity(found.len());
+        for (col, lo, hi) in found {
+            match out.last_mut() {
+                Some(last) if last.0 == col && lo <= last.2 + 1 => last.2 = last.2.max(hi),
+                _ => out.push((col, lo, hi)),
+            }
+        }
         Some(out)
     }
 
@@ -19003,7 +19002,7 @@ where
         &self,
         view: &RangeView<'_>,
         include_aggregate: bool,
-    ) -> Option<Vec<(usize, usize)>> {
+    ) -> Option<Vec<(usize, usize, usize)>> {
         self.nested_subtotal_cells_for_view(view, include_aggregate)
     }
 }

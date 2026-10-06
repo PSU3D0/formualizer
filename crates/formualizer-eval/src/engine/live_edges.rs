@@ -617,7 +617,7 @@ impl<'a, R: EvaluationContext, S: ReadSink> EvaluationContext for RecordingConte
         &self,
         view: &RangeView<'_>,
         include_aggregate: bool,
-    ) -> Option<Vec<(usize, usize)>> {
+    ) -> Option<Vec<(usize, usize, usize)>> {
         self.engine.nested_subtotal_cells(view, include_aggregate)
     }
 }
