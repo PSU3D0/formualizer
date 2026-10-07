@@ -9,6 +9,12 @@ name: CLI binaries
 
 on:
   workflow_call:
+    inputs:
+      ref:
+        description: Git ref to build (defaults to the triggering ref)
+        type: string
+        required: false
+        default: ""
   workflow_dispatch:
   pull_request:
     paths:
@@ -71,6 +77,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
+          ref: ${{ inputs.ref }}
           persist-credentials: false
 
       - name: Set up pinned Rust
@@ -130,6 +137,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
+          ref: ${{ inputs.ref }}
           persist-credentials: false
 
       - name: Set up Node.js

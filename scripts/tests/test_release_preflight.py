@@ -762,14 +762,23 @@ class CliReleaseWorkflowTests(unittest.TestCase):
             self.assertNotIn(forbidden, text)
         self.assertIn("permissions:\n  contents: read\n", text)
 
-    def test_cli_publish_jobs_only_run_for_product_tag_pushes(self) -> None:
+    def test_cli_publish_jobs_only_run_for_product_tags(self) -> None:
         text = (self.workflows / "release.yml").read_text(encoding="utf-8")
-        for job in ("build-cli", "publish-npm-cli"):
-            self.assertIn(
-                "if: github.event_name == 'push' && startsWith(github.ref_name, 'v')",
-                self.job_block(text, job),
-            )
-        self.assertIn("--provenance", self.job_block(text, "publish-npm-cli"))
+        push = "github.event_name == 'push' && startsWith(github.ref_name, 'v')"
+        build = self.job_block(text, "build-cli")
+        self.assertIn(push + " && needs.verify-product.result == 'success'", build)
+        self.assertIn(
+            "github.event_name == 'workflow_dispatch' && startsWith(inputs.resume_cli_tag, 'v')",
+            build,
+        )
+        publish = self.job_block(text, "publish-npm-cli")
+        self.assertIn("needs.build-cli.result == 'success'", publish)
+        self.assertIn(push + " && needs.publish-product-crates.result == 'success'", publish)
+        # A resume dispatch never reaches the crate or wheel jobs.
+        for job in ("publish-product-crates", "publish-pypi", "publish-npm", "verify-product"):
+            self.assertNotIn("workflow_dispatch", self.job_block(text, job))
+        self.assertIn('"./npm-tarballs/${file}"', publish)
+        self.assertIn("--provenance", publish)
         self.assertIn("files: cli-dist/*", self.job_block(text, "github-release"))
 
     def test_binstall_metadata_matches_release_archive_names(self) -> None:
