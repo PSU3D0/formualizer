@@ -4,6 +4,10 @@ All notable changes to Formualizer will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed the sheet index keeping cells at their old positions after rows or columns were inserted or deleted, so lookups through it missed moved cells. An enclosing SUBTOTAL or AGGREGATE then counted nested subtotals in the shifted rows.
+
 ## [0.11.0] - 2026-10-06
 
 ### Recalc CLI

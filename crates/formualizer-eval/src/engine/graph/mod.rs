@@ -5828,7 +5828,17 @@ impl DependencyGraph {
         {
             self.forget_declared_dynamic_anchor(id);
         }
+        let old = self.store.grid_addr(id);
         self.store.set_addr(id, VertexAddr::grid(coord));
+        // Keep an indexed vertex at its new position: range and nested
+        // subtotal queries read the index, then check the vertex's address.
+        if let Some(old) = old
+            && old != coord
+            && let Some(index) = self.sheet_indexes.get_mut(&self.store.sheet_id(id))
+            && index.remove_indexed_vertex(old, id)
+        {
+            index.add_vertex(coord, id);
+        }
     }
 
     /// Update edge cache coordinate
