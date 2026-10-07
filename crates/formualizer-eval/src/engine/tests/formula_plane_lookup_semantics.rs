@@ -1536,6 +1536,84 @@ fn offset_indirect_remain_uncacheable() {
 }
 
 #[test]
+fn lookup_cache_mixed_axis_parity_below_and_above_threshold() {
+    let needles = [
+        "0",
+        "2",
+        "\"ALPHA\"",
+        "TRUE",
+        "\"missing\"",
+        "DATE(2024,1,1)",
+    ];
+    for with_error in [false, true] {
+        for calls in [3, 8] {
+            for needle in needles {
+                for expression in [
+                    format!("=VLOOKUP({needle},$D$1:$E$100,2,FALSE)"),
+                    format!("=VLOOKUP({needle},$D$1:$E$100,2,TRUE)"),
+                    format!("=MATCH({needle},$D$1:$D$100,0)"),
+                    format!("=MATCH({needle},$D$1:$D$100,1)"),
+                    format!("=XLOOKUP({needle},$D$1:$D$100,$E$1:$E$100)"),
+                    format!("=HLOOKUP({needle},$A$110:$CV$111,2,FALSE)"),
+                ] {
+                    let mut results = Vec::new();
+                    for max_bytes in [0, EvalConfig::default().lookup_index_cache_max_bytes] {
+                        let mut engine = engine_with_config(EvalConfig {
+                            lookup_index_cache_max_bytes: max_bytes,
+                            ..EvalConfig::default()
+                        });
+                        let values = [
+                            LiteralValue::Empty,
+                            LiteralValue::Number(-0.0),
+                            LiteralValue::Number(0.0),
+                            LiteralValue::Int(2),
+                            LiteralValue::Number(2.0),
+                            LiteralValue::Text("Alpha".into()),
+                            LiteralValue::Text("alpha".into()),
+                            LiteralValue::Boolean(false),
+                            LiteralValue::Boolean(true),
+                            LiteralValue::Date(
+                                chrono::NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(),
+                            ),
+                        ];
+                        for row in 1..=100 {
+                            let candidate = if with_error && row == 50 {
+                                LiteralValue::Error(ExcelError::new(ExcelErrorKind::Ref))
+                            } else {
+                                values[(row as usize - 1) / 10].clone()
+                            };
+                            value(&mut engine, "Sheet1", row, 4, candidate.clone());
+                            number(&mut engine, "Sheet1", row, 5, row as f64);
+                            value(&mut engine, "Sheet1", 110, row, candidate);
+                            number(&mut engine, "Sheet1", 111, row, row as f64);
+                        }
+                        for row in 1..=calls {
+                            formula(&mut engine, "Sheet1", row, 2, &expression);
+                        }
+                        engine.evaluate_all().unwrap();
+                        let report = engine.last_lookup_index_cache_report();
+                        assert_eq!(
+                            report.builds,
+                            usize::from(max_bytes > 0 && calls > 3 && !with_error),
+                            "{expression}: {report:?}"
+                        );
+                        results.push(
+                            (1..=calls)
+                                .map(|row| engine.get_cell_value("Sheet1", row, 2))
+                                .collect::<Vec<_>>(),
+                        );
+                    }
+                    assert_eq!(
+                        results[0], results[1],
+                        "{expression}, calls={calls}, error={with_error}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn lookup_cache_does_not_build_on_first_call() {
     let mut engine = vlookup_engine_with_formula_rows(EvalConfig::default(), 1);
     engine.evaluate_all().unwrap();

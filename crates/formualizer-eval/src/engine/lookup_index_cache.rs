@@ -39,7 +39,14 @@ impl Hash for LookupHashKey {
         match self {
             Self::Number(bits) => {
                 0u8.hash(state);
-                bits.hash(state);
+                // Integer-valued f64s have zero low bits. FxHasher preserves
+                // those bits, sending whole numeric columns to one bucket.
+                // Use the SplitMix64 finalizer to avalanche the bits without
+                // changing key equality or numeric normalization.
+                let mut mixed = *bits;
+                mixed = (mixed ^ (mixed >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+                mixed = (mixed ^ (mixed >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+                (mixed ^ (mixed >> 31)).hash(state);
             }
             Self::Text(text) => {
                 1u8.hash(state);
@@ -601,6 +608,22 @@ mod tests {
             entries: FxHashMap::default(),
             cell_values: Box::new([]),
         }
+    }
+
+    #[test]
+    fn numeric_keys_distribute_across_initial_buckets() {
+        let buckets: std::collections::HashSet<_> = (1..=4096)
+            .map(|i| {
+                let mut hasher = rustc_hash::FxHasher::default();
+                LookupHashKey::Number((i as f64).to_bits()).hash(&mut hasher);
+                hasher.finish() & 8191
+            })
+            .collect();
+        assert!(
+            buckets.len() > 2048,
+            "only {} initial buckets",
+            buckets.len()
+        );
     }
 
     #[test]
