@@ -14,3 +14,9 @@ formualizer\.formualizer_py\.TraceDirection\.(Precedents|Dependents)$
 formualizer\.formualizer_py\.TraceLinkKindType\.(Formula|SpillAnchor|SpillReader|Unknown)$
 formualizer\.formualizer_py\.WorkbookMode\.(Ephemeral|Interactive)$
 formualizer\.formualizer_py\.XlsxPathSource\.(SHARED_FILE|DIRECT_MMAP)$
+# Private native-only CLI bridge (absent from Pyodide, so kept out of the
+# generated stubs); pyo3 lists it in the runtime __all__.
+formualizer(\.formualizer_py)?\.(_CliCancelToken|_run_cli)$
+formualizer(\.formualizer_py)?\.__all__$
+# Running `python -m formualizer` executes the CLI.
+formualizer\.__main__$

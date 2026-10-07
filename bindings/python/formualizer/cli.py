@@ -1,19 +1,29 @@
 """Console entry for the shared Rust CLI (native platforms only)."""
 
 import sys
+from collections.abc import Callable, Sequence
 from threading import Event, Thread
+from typing import Protocol, cast
 
 from . import formualizer_py as _native
 
 
-def _run(argv, cancel):
-    result = []
-    errors = []
+class _CancelToken(Protocol):
+    def cancel(self) -> None: ...
+
+
+# Native-only bridge (absent from the Pyodide build, so not in the stubs).
+_RunCli = Callable[[list[str], _CancelToken], tuple[int, bytes, bytes]]
+
+
+def _run(run_cli: _RunCli, argv: list[str], cancel: _CancelToken) -> int:
+    result: list[tuple[int, bytes, bytes]] = []
+    errors: list[BaseException] = []
     done = Event()
 
-    def work():
+    def work() -> None:
         try:
-            result.append(_native._run_cli(["formualizer", *argv], cancel))
+            result.append(run_cli(["formualizer", *argv], cancel))
         except BaseException as exc:
             errors.append(exc)
         finally:
@@ -38,9 +48,12 @@ def _run(argv, cancel):
     return code
 
 
-def main(argv=None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     """Run recalc, returning the Rust exit status unchanged."""
-    if not hasattr(_native, "_run_cli"):
+    run_cli = getattr(_native, "_run_cli", None)
+    token_type = getattr(_native, "_CliCancelToken", None)
+    if run_cli is None or token_type is None:
         print("CLI not available on this platform", file=sys.stderr)
         return 1
-    return _run(list(sys.argv[1:] if argv is None else argv), _native._CliCancelToken())
+    args = list(sys.argv[1:] if argv is None else argv)
+    return _run(cast(_RunCli, run_cli), args, cast(_CancelToken, token_type()))
