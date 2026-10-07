@@ -4,6 +4,10 @@ All notable changes to Formualizer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-10-07
+
+A patch release with two performance fixes and a set of Excel-compatibility corrections. SUBTOTAL and AGGREGATE no longer make every recalculation re-evaluate them, and repeated lookups over large numeric ranges no longer slow down quadratically. Two changes alter formula results to match Excel: SUBTOTAL 1-11 over filtered rows, and DATEVALUE on day-first dates (see Changed).
+
 ### Changed
 
 - **SUBTOTAL and AGGREGATE are no longer volatile.** They recalculate when a cell in their ranges changes, or when row visibility changes (manual or filter hides, row inserts and deletes, undo and redo of those). A recalculation with no edits, or after an edit outside every SUBTOTAL/AGGREGATE range, no longer re-evaluates them. On a workbook with about 4,000 SUBTOTAL formulas, that was the whole cost of an unrelated single-cell edit. (#513)
@@ -20,6 +24,10 @@ All notable changes to Formualizer will be documented in this file.
 - Fixed `%`, `_` and `\` in criteria text acting as SQL LIKE wildcards: `COUNTIF(A:A,"a%b")` counted `axxxb` and `a_b` as matches. They are literal now, while `*`, `?` and `~` keep their Excel meaning. Affects COUNTIF, SUMIF, AVERAGEIF, the `IFS` variants and MAXIFS/MINIFS. (#295)
 - Fixed the sheet index keeping cells at their old positions after rows or columns were inserted or deleted, so lookups through it missed moved cells. An enclosing SUBTOTAL or AGGREGATE then counted nested subtotals in the shifted rows.
 - The `formualizer-cli` crate now includes the `LICENSE-MIT` and `LICENSE-APACHE` texts. (#443)
+
+### Versions
+
+- The Rust product crates and the Python and npm packages are 0.11.1. `formualizer-common` and `formualizer-parse` stay at 3.2.0 and `sheetport-spec` at 0.3.2; none of them changed.
 
 ## [0.11.0] - 2026-10-06
 
