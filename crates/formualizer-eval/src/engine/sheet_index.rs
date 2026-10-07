@@ -158,15 +158,21 @@ impl SheetIndex {
     /// ## Complexity
     /// O(log n) where n is the number of vertices in the index
     pub fn remove_vertex(&mut self, coord: GridAddr, vertex_id: VertexId) {
+        self.remove_indexed_vertex(coord, vertex_id);
+    }
+
+    /// Remove a vertex indexed at `coord`; returns whether it was indexed.
+    pub(crate) fn remove_indexed_vertex(&mut self, coord: GridAddr, vertex_id: VertexId) -> bool {
         let row = coord.row();
         let col = coord.col();
 
         if !self.memberships.remove(&vertex_id) {
-            return;
+            return false;
         }
 
         self.row_tree.remove(row, row, &vertex_id);
         self.col_tree.remove(col, col, &vertex_id);
+        true
     }
 
     /// Update a vertex's position in the index (move operation).

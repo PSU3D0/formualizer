@@ -52,14 +52,15 @@ Supported now:
 
 - `SUBTOTAL(function_num, ref1, [ref2], ...)` with `function_num` in `1..11` and `101..111`.
 - `AGGREGATE(function_num, options, ref1, [ref2], ...)` with `function_num` in `1..11` and
-  `options` in `0..3`.
+  `options` in `0..7`.
 - Hidden-row behavior is wired to workbook/engine row visibility masks:
-  - `SUBTOTAL(1..11, ...)` includes hidden rows.
+  - `SUBTOTAL(1..11, ...)` excludes filter-hidden rows and includes manually hidden rows.
   - `SUBTOTAL(101..111, ...)` excludes manual + filter hidden rows.
-  - `AGGREGATE` options `1`/`3` exclude manual + filter hidden rows.
-- `AGGREGATE` options `2`/`3` ignore errors in aggregated refs.
+  - `AGGREGATE` odd options (`1`/`3`/`5`/`7`) exclude manual + filter hidden rows.
+- `AGGREGATE` options `2`/`3`/`6`/`7` ignore errors in aggregated refs.
+- Nested aggregates: SUBTOTAL skips cells whose formulas call SUBTOTAL; AGGREGATE options
+  `0..3` skip cells whose formulas call SUBTOTAL or AGGREGATE, options `4..7` count them.
 
-Deferred in phase-1:
+Not yet supported:
 
-- Nested `SUBTOTAL`/`AGGREGATE` exclusion semantics (currently treated as ordinary scalar values).
-- `AGGREGATE` `function_num` `12..19` and `options` `4..7` (return `#N/IMPL!`).
+- `AGGREGATE` `function_num` `12..19` (returns `#N/IMPL!`).

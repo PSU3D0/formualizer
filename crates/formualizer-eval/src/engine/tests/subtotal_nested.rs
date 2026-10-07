@@ -119,7 +119,7 @@ fn aggregate_options_ignore_nested_subtotal_and_aggregate() {
     formula(&mut e, 4, 1, "=SUBTOTAL(9,A1:A3)");
     formula(&mut e, 5, 1, "=AGGREGATE(9,0,A1:A3)");
     formula(&mut e, 6, 1, "=SUM(A1:A3)");
-    for (i, opt) in (0..=3).enumerate() {
+    for (i, opt) in (0..=7).enumerate() {
         formula(
             &mut e,
             10,
@@ -133,6 +133,10 @@ fn aggregate_options_ignore_nested_subtotal_and_aggregate() {
     e.evaluate_all().unwrap();
     for i in 0..4u32 {
         assert_eq!(get(&e, 10, 1 + i), LiteralValue::Number(12.0), "option {i}");
+    }
+    // Options 4-7 count the nested SUBTOTAL (6) and AGGREGATE (6) cells.
+    for i in 4..8u32 {
+        assert_eq!(get(&e, 10, 1 + i), LiteralValue::Number(24.0), "option {i}");
     }
     assert_eq!(get(&e, 11, 1), LiteralValue::Number(18.0));
 }
@@ -234,12 +238,7 @@ fn compressed_runs_match_materialized_members() {
         formula(&mut e, 100, 2, "=SUBTOTAL(9,A100)");
         e.evaluate_all().unwrap();
         read(&e, total_row, &mut out);
-        let s1 = e.graph.sheet_id("Sheet1").unwrap();
-        e.edit_with_logger(&mut crate::engine::ChangeLog::new(), |ed| {
-            ed.insert_rows(s1, 60, 3).map(|_| ())
-        })
-        .unwrap()
-        .unwrap();
+        e.insert_rows("Sheet1", 61, 3).unwrap();
         e.evaluate_all().unwrap();
         read(&e, total_row + 3, &mut out);
         (out, runs)
@@ -253,6 +252,8 @@ fn compressed_runs_match_materialized_members() {
     let b_mid: f64 = (50..=120).map(|r| 2.0 * r as f64).sum();
     assert!(close(&materialized[1], b_mid), "{:?}", materialized[1]);
     assert!(close(&materialized[2], 0.0), "{:?}", materialized[2]);
+    // After the insert the C150:C160 total still covers only nested subtotals.
+    assert!(close(&materialized[12], 0.0), "{:?}", materialized[12]);
     let a: f64 = (1..=N).map(|r| r as f64).sum();
     assert!(close(&materialized[3], a + b), "{:?}", materialized[3]);
     assert!(close(&materialized[5], b - 200.0), "{:?}", materialized[5]);

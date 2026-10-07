@@ -6,6 +6,39 @@ use formualizer_common::LiteralValue;
 mod tests {
     use super::*;
 
+    #[test]
+    fn sql_like_punctuation_is_literal_in_scalar_criteria() {
+        let data = [
+            "a%b", "axxxb", "a_b", "aQb", "1_0", "1x0", "a%xyz", "ab", r"a\b", r"a\xyz", "a*b",
+            "a?b", "a~b", "A%B",
+        ];
+        let cases: &[(&str, &[usize])] = &[
+            ("a%b", &[0, 13]),
+            ("1_0", &[4]),
+            ("a_b", &[2]),
+            ("<>a%b", &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]),
+            ("a%*", &[0, 6, 13]),
+            ("a_?", &[2]),
+            (r"a\b", &[8]),
+            (r"a\*", &[8, 9]),
+            ("a~*b", &[10]),
+            ("a~?b", &[11]),
+            ("a~~b", &[12]),
+            ("a?b", &[0, 2, 3, 8, 10, 11, 12, 13]),
+            ("<>a%*", &[1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12]),
+        ];
+        for &(criterion, matches) in cases {
+            let pred = crate::args::parse_criteria(&LiteralValue::Text(criterion.into())).unwrap();
+            for (index, text) in data.iter().enumerate() {
+                assert_eq!(
+                    criteria_match(&pred, &LiteralValue::Text((*text).into())),
+                    matches.contains(&index),
+                    "{criterion:?} against {text:?}"
+                );
+            }
+        }
+    }
+
     fn create_text_like(pattern: &str) -> CriteriaPredicate {
         CriteriaPredicate::TextLike {
             pattern: pattern.to_string(),

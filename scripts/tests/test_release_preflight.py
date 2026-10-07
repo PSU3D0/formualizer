@@ -876,3 +876,23 @@ class PrereleaseWordingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CrateLicenseFileTests(unittest.TestCase):
+    # Already published without the texts; they are added with its next
+    # version, since a same-version source change fails the drift check.
+    PENDING = {"sheetport-spec"}
+
+    def test_published_crates_carry_the_canonical_license_texts(self) -> None:
+        root = release_preflight.ROOT
+        missing = []
+        for manifest_path in sorted((root / "crates").glob("*/Cargo.toml")):
+            manifest = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
+            package = manifest["package"]
+            if package.get("publish") is False or package["name"] in self.PENDING:
+                continue
+            for name in ("LICENSE-MIT", "LICENSE-APACHE"):
+                copy = manifest_path.parent / name
+                if not copy.is_file() or copy.read_bytes() != (root / name).read_bytes():
+                    missing.append(f"{package['name']}/{name}")
+        self.assertEqual(missing, [])

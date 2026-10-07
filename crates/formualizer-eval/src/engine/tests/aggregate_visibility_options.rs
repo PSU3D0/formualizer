@@ -128,7 +128,7 @@ fn aggregate_phase1_unsupported_paths_surface_expected_errors() {
 
     engine.evaluate_all().unwrap();
 
-    assert_error_kind(engine.get_cell_value("Sheet1", 1, 1), ExcelErrorKind::NImpl);
+    assert_num(engine.get_cell_value("Sheet1", 1, 1), 10.0);
     assert_error_kind(engine.get_cell_value("Sheet1", 1, 2), ExcelErrorKind::NImpl);
     assert_error_kind(engine.get_cell_value("Sheet1", 1, 3), ExcelErrorKind::Value);
 }
@@ -159,7 +159,7 @@ fn aggregate_all_phase1_function_and_option_codes_match_matrix() {
 
     let mut col = 2u32;
     for function_num in 1..=11 {
-        for options in 0..=3 {
+        for options in 0..=7 {
             let formula = format!("=AGGREGATE({function_num},{options},A2:A5)");
             engine
                 .set_cell_formula("Sheet1", 1, col, parse(&formula).unwrap())
@@ -175,8 +175,9 @@ fn aggregate_all_phase1_function_and_option_codes_match_matrix() {
 
     let mut verify_col = 2u32;
     for function_num in 1..=11 {
-        for options in 0..=3 {
-            let values = if options == 1 || options == 3 {
+        for options in 0..=7 {
+            // Odd options skip hidden rows, manual and filtered alike.
+            let values = if options % 2 == 1 {
                 &visible_only[..]
             } else {
                 &include_all[..]

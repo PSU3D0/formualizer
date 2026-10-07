@@ -2574,11 +2574,9 @@ fn compute_criteria_mask(
         }
     }
 
-    // SQL LIKE cannot directly represent spreadsheet tilde escapes or literal
-    // SQL pattern punctuation. Let the bounded chunk fallback use the shared
-    // spreadsheet matcher rather than rewriting these patterns into SQL syntax.
+    // Keep spreadsheet tilde escapes in the shared scalar matcher.
     if matches!(pred, crate::args::CriteriaPredicate::TextLike { pattern, .. }
-        if pattern.contains(['~', '%', '_', '\\']))
+        if pattern.contains('~'))
     {
         return None;
     }
@@ -2617,12 +2615,28 @@ fn compute_criteria_mask(
         };
     }
 
+    // Arrow LIKE uses backslash escapes; SQL punctuation is literal in Excel.
+    let like_pattern = |text: &str, wildcards: bool| {
+        let mut pattern = String::with_capacity(text.len());
+        for ch in text.chars() {
+            match ch {
+                '%' | '_' | '\\' => {
+                    pattern.push('\\');
+                    pattern.push(ch);
+                }
+                '*' if wildcards => pattern.push('%'),
+                '?' if wildcards => pattern.push('_'),
+                _ => pattern.push(ch),
+            }
+        }
+        pattern
+    };
     let (text_kind, text_pat, empty_special) = match pred {
         crate::args::CriteriaPredicate::Eq(formualizer_common::LiteralValue::Text(t)) => {
-            (0u8, t.to_lowercase(), t.is_empty())
+            (0u8, like_pattern(&t.to_lowercase(), false), t.is_empty())
         }
         crate::args::CriteriaPredicate::Ne(formualizer_common::LiteralValue::Text(t)) => {
-            (1u8, t.to_lowercase(), false)
+            (1u8, like_pattern(&t.to_lowercase(), false), false)
         }
         crate::args::CriteriaPredicate::TextLike {
             pattern,
@@ -2633,7 +2647,7 @@ fn compute_criteria_mask(
             } else {
                 pattern.clone()
             };
-            (2u8, p.replace('*', "%").replace('?', "_"), false)
+            (2u8, like_pattern(&p, true), false)
         }
         _ => return None,
     };
@@ -10424,6 +10438,13 @@ where
         }
     }
 
+    /// Hidden rows changed: drop the cached masks and dirty the formulas
+    /// that read row visibility (SUBTOTAL/AGGREGATE).
+    fn row_visibility_changed(&mut self) {
+        self.invalidate_row_visibility_mask_cache();
+        self.graph.mark_row_visibility_readers_dirty();
+    }
+
     fn set_row_hidden_by_sheet_id(
         &mut self,
         sheet_id: SheetId,
@@ -10446,7 +10467,7 @@ where
         }
 
         if changed {
-            self.invalidate_row_visibility_mask_cache();
+            self.row_visibility_changed();
         }
 
         changed
@@ -10475,7 +10496,7 @@ where
         }
 
         if changed {
-            self.invalidate_row_visibility_mask_cache();
+            self.row_visibility_changed();
         }
 
         changed
@@ -10496,7 +10517,7 @@ where
             self.row_visibility.remove(&sheet_id);
         }
         if changed {
-            self.invalidate_row_visibility_mask_cache();
+            self.row_visibility_changed();
         }
     }
 
@@ -10515,7 +10536,7 @@ where
             self.row_visibility.remove(&sheet_id);
         }
         if changed {
-            self.invalidate_row_visibility_mask_cache();
+            self.row_visibility_changed();
         }
     }
 

@@ -60,6 +60,24 @@ use crate::engine::topo::{
 use crate::reference::{CellRef, Coord, SharedRangeRef, SharedRef, SharedSheetLocator};
 use formualizer_common::Coord as AbsCoord;
 use formula_dirty::FormulaDirtyState;
+
+/// Whether a parsed formula calls SUBTOTAL or AGGREGATE anywhere.
+fn ast_calls_subtotal(ast: &ASTNode) -> bool {
+    match &ast.node_type {
+        ASTNodeType::Function { name, args } => {
+            super::arena::ast::subtotal_call_bit(name) != 0 || args.iter().any(ast_calls_subtotal)
+        }
+        ASTNodeType::BinaryOp { left, right, .. } => {
+            ast_calls_subtotal(left) || ast_calls_subtotal(right)
+        }
+        ASTNodeType::UnaryOp { expr, .. } => ast_calls_subtotal(expr),
+        ASTNodeType::Array(rows) => rows.iter().flatten().any(ast_calls_subtotal),
+        ASTNodeType::Call { callee, args } => {
+            ast_calls_subtotal(callee) || args.iter().any(ast_calls_subtotal)
+        }
+        _ => false,
+    }
+}
 // topo::pk wiring will be integrated behind config.use_dynamic_topo in a follow-up step
 
 struct RegistryFunctionProvider;
@@ -481,6 +499,12 @@ pub struct DependencyGraph {
     // and set representation behind this single authority.
     formula_dirty: FormulaDirtyState,
     volatile_vertices: FxHashSet<VertexId>,
+    /// Whether the next row-visibility change must scan for and dirty the
+    /// formulas that read row visibility (see
+    /// [`Self::mark_row_visibility_readers_dirty`]). Cleared by that scan
+    /// and set again whenever a formula vertex is marked clean, so while it
+    /// is clear every such reader is still dirty and later changes skip it.
+    row_visibility_scan_armed: bool,
 
     /// Monotonic count of vertices processed by dirty-propagation BFS loops
     /// (`mark_dirty_many` / `mark_dirty_many_value_cells`). Cheap plain
@@ -703,6 +727,7 @@ impl DependencyGraph {
     pub(crate) fn clear_formula_vertex_dirty(&mut self, vertex_id: VertexId) {
         self.store.set_dirty(vertex_id, false);
         self.formula_dirty.legacy_remove(&vertex_id);
+        self.row_visibility_scan_armed = true;
     }
 
     /// Return read-only baseline counters for FormulaPlane/dispatch benchmarking.
@@ -1896,6 +1921,7 @@ impl DependencyGraph {
             extent_dropped: Vec::new(),
             extent_undone: Vec::new(),
             volatile_vertices: FxHashSet::default(),
+            row_visibility_scan_armed: true,
             ref_error_vertices: FxHashSet::default(),
             #[cfg(any(test, feature = "legacy_oracle"))]
             formula_to_range_deps: FxHashMap::default(),
@@ -3441,6 +3467,9 @@ impl DependencyGraph {
 
     /// Clear dirty flags after successful evaluation
     pub fn clear_dirty_flags(&mut self, vertices: &[VertexId]) {
+        if !vertices.is_empty() {
+            self.row_visibility_scan_armed = true;
+        }
         for &vertex_id in vertices {
             self.store.set_dirty(vertex_id, false);
             self.formula_dirty.legacy_remove(&vertex_id);
@@ -3452,6 +3481,46 @@ impl DependencyGraph {
     /// 🔮 Scalability Hook: Clear volatile vertices after evaluation cycle
     pub fn clear_volatile_flags(&mut self) {
         self.volatile_vertices.clear();
+    }
+
+    /// Dirties every formula that reads row visibility, and its dependents,
+    /// after hidden rows changed. A reader is a formula or named formula that
+    /// calls SUBTOTAL or AGGREGATE; those functions are not volatile, so
+    /// value edits reach them through ordinary dependencies and only
+    /// visibility changes come through here. The scan runs once per change
+    /// burst: until a formula vertex is marked clean again, every reader is
+    /// still dirty and further changes return immediately.
+    pub(crate) fn mark_row_visibility_readers_dirty(&mut self) {
+        if !self.row_visibility_scan_armed {
+            return;
+        }
+        self.row_visibility_scan_armed = false;
+        let ds = &self.data_store;
+        let mut by_template: FxHashMap<AstNodeId, bool> = FxHashMap::default();
+        let mut readers: Vec<VertexId> = self
+            .vertex_formulas
+            .keys()
+            .filter(|&v| {
+                self.formula_view(v).is_some_and(|f| {
+                    *by_template
+                        .entry(f.template)
+                        .or_insert_with(|| ds.ast_subtotal_calls(f.template) != 0)
+                })
+            })
+            .collect();
+        readers.extend(
+            self.named_ranges
+                .values()
+                .chain(self.sheet_named_ranges.values())
+                .filter(|named| match &named.definition {
+                    NamedDefinition::Formula { ast, .. } => ast_calls_subtotal(ast),
+                    _ => false,
+                })
+                .map(|named| named.vertex),
+        );
+        if !readers.is_empty() {
+            self.mark_dirty_many(&readers);
+        }
     }
 
     /// Re-marks all volatile vertices as dirty for the next evaluation cycle.
@@ -5828,7 +5897,17 @@ impl DependencyGraph {
         {
             self.forget_declared_dynamic_anchor(id);
         }
+        let old = self.store.grid_addr(id);
         self.store.set_addr(id, VertexAddr::grid(coord));
+        // Keep an indexed vertex at its new position: range and nested
+        // subtotal queries read the index, then check the vertex's address.
+        if let Some(old) = old
+            && old != coord
+            && let Some(index) = self.sheet_indexes.get_mut(&self.store.sheet_id(id))
+            && index.remove_indexed_vertex(old, id)
+        {
+            index.add_vertex(coord, id);
+        }
     }
 
     /// Update edge cache coordinate
@@ -5865,6 +5944,7 @@ impl DependencyGraph {
             self.formula_dirty.legacy_insert(id);
         } else {
             self.formula_dirty.legacy_remove(&id);
+            self.row_visibility_scan_armed = true;
         }
     }
 
