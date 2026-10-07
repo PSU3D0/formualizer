@@ -160,6 +160,13 @@ fn two_digit_year_window_honors_workbook_date_system_for_every_accepted_format()
 #[test]
 fn invalid_date_time_text_remains_value_error() {
     let cases = [
+        "=DATEVALUE(\"13/1/2003\")",
+        "=DATEVALUE(\"31/12/2003\")",
+        "=DATEVALUE(\"15/01/2003\")",
+        "=DATEVALUE(\"15/01/29\")",
+        "=DATEVALUE(\"15/01/30\")",
+        "=\"13/1/2003\"+0",
+        "=\"31/12/2003\"+0",
         "=\"2/30/03\"+0",
         "=\"abc\"+0",
         "=\"\"+0",
@@ -176,8 +183,28 @@ fn invalid_date_time_text_remains_value_error() {
             assert_expected(
                 system,
                 formula,
-                "oracle: lo-verified",
+                "fixed supported formats and US month-first dates",
                 Expected::Error(ExcelErrorKind::Value),
+            );
+        }
+    }
+}
+
+#[test]
+fn datevalue_accepts_month_first_iso_and_month_name_dates() {
+    for system in [DateSystem::Excel1900, DateSystem::Excel1904] {
+        let expected = LiteralValue::Date(NaiveDate::from_ymd_opt(2003, 1, 13).unwrap());
+        for text in [
+            "1/13/2003",
+            "2003-01-13",
+            "13-Jan-2003",
+            "Jan 13, 2003",
+            "13 January 2003",
+        ] {
+            assert_eq!(
+                eval_formula(system, &format!("=DATEVALUE(\"{text}\")")),
+                expected,
+                "{system:?}: {text}"
             );
         }
     }

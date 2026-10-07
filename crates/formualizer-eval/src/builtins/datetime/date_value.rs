@@ -13,15 +13,12 @@ fn parse_legacy_datevalue_text(input: &str) -> Option<NaiveDate> {
     let text = input.trim();
     let parts: Vec<&str> = text.split('/').collect();
     if parts.len() == 3
+        && parts[0].len() == 4
         && parts
             .iter()
             .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
     {
-        let normalized = if parts[0].len() == 4 {
-            format!("{}-{}-{}", parts[0], parts[1], parts[2])
-        } else {
-            format!("{}/{}/{}", parts[1], parts[0], parts[2])
-        };
+        let normalized = format!("{}-{}-{}", parts[0], parts[1], parts[2]);
         return parse_excel_date_text(&normalized);
     }
 
@@ -370,14 +367,10 @@ mod tests {
     }
 
     #[test]
-    fn datevalue_retains_preexisting_unambiguous_slash_fallbacks() {
-        // oracle: lo-verified divergence. These shipped DATEVALUE-only forms
-        // remain accepted for compatibility; arithmetic rejects both forms.
+    fn datevalue_retains_year_first_slash_and_day_month_name_fallbacks() {
+        // Retain year-first slash and day/month-name forms, not day-first slashes.
         for (formula, expected) in [
-            ("=DATEVALUE(\"15/01/2003\")", 37_636.0),
             ("=DATEVALUE(\"2003/1/1\")", 37_622.0),
-            ("=DATEVALUE(\"15/01/29\")", 47_133.0),
-            ("=DATEVALUE(\"15/01/30\")", 10_973.0),
             ("=DATEVALUE(\"1 January 29\")", 47_119.0),
             ("=DATEVALUE(\"1 January 30\")", 10_959.0),
         ] {
