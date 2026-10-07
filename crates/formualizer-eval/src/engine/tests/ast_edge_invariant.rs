@@ -22,13 +22,14 @@
 //! names, or tables; reversed ranges; and external, three-dimensional, or unsupported references.
 //! It is therefore vacuous for those references, while the phantom-edge direction remains covered.
 //!
-//! Two T2 findings remain pinned as `#[ignore]`d tests asserting the intended invariant and
+//! One T2 finding remains pinned as an `#[ignore]`d test asserting the intended invariant and
 //! failing on the live divergence: `AST_EDGE_UNDO_STRUCTURAL_ADJUSTMENT` (undo of a populated row
-//! insert leaves data shifted and the edge one row above the AST reference) and
-//! `AST_EDGE_UNDO_EMPTY_PLACEHOLDER` (undo and redo of a write to a referenced empty placeholder
-//! drop its edge).
+//! insert leaves data shifted and the edge one row above the AST reference).
 //!
-//! Two are fixed and now run as ordinary regression tests: `AST_EDGE_UNRELATED_DELETE_NAME`
+//! `AST_EDGE_UNDO_EMPTY_PLACEHOLDER` (issue #301 — undo and redo of a write to a referenced empty
+//! cell dropped its edge) is fixed and pinned behaviourally below.
+//!
+//! Two more are fixed and now run as ordinary regression tests: `AST_EDGE_UNRELATED_DELETE_NAME`
 //! (issue #302 — a default-sheet row or column delete dropped a cross-sheet workbook-name edge)
 //! and `AST_EDGE_INSERT_SHIFTS_NAME_VERTEX_ONTO_GRID` (issue #304 — a default-sheet insert
 //! shifted a name vertex onto an addressable cell, so later references to that address bound to
@@ -792,43 +793,54 @@ fn name_target_still_drives_recalculation_after_an_unrelated_default_sheet_delet
     );
 }
 
-// T2 finding AST_EDGE_UNDO_EMPTY_PLACEHOLDER: see the matching entry in the T2 worker report.
-// GitHub issue #301's review extension confirms that redo also fails to rebuild the edge.
+// Regression pin for GitHub issue #301 (finding AST_EDGE_UNDO_EMPTY_PLACEHOLDER).
+//
+// `D4 = C6+1` reads an empty cell. A logged write to `C6` followed by undo, or by undo and redo,
+// must leave `D4` depending on `C6`: a later write to `C6` has to reach `D4`.
 #[test]
-#[ignore = "known T2 divergence: undo and redo of an empty-placeholder write drop its edge"]
 fn undoing_value_write_to_referenced_empty_placeholder_preserves_formula_edge() {
-    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
-    engine
-        .set_cell_formula("Sheet1", 4, 4, parse("=C6+1").unwrap())
-        .unwrap();
-    assert_structural_parity(&engine, 0xc0de_0005, 0);
+    for redo in [false, true] {
+        let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+        engine
+            .set_cell_formula("Sheet1", 4, 4, parse("=C6+1").unwrap())
+            .unwrap();
+        engine.evaluate_all().unwrap();
 
-    let mut log = ChangeLog::new();
-    engine
-        .action_with_logger(&mut log, "write-placeholder", |action| {
-            action.set_cell_value("Sheet1", 6, 3, LiteralValue::Number(7.0))
-        })
-        .unwrap();
-    let mut undo = UndoEngine::new();
-    engine.undo_logged(&mut undo, &mut log).unwrap();
-    let formula = engine.graph.formula_vertices()[0];
-    assert!(engine.graph.get_dependencies(formula).is_empty());
+        let mut log = ChangeLog::new();
+        engine
+            .action_with_logger(&mut log, "write-placeholder", |action| {
+                action.set_cell_value("Sheet1", 6, 3, LiteralValue::Number(7.0))
+            })
+            .unwrap();
+        let mut undo = UndoEngine::new();
+        engine.undo_logged(&mut undo, &mut log).unwrap();
+        engine.evaluate_all().unwrap();
+        assert_eq!(
+            engine.get_cell_value("Sheet1", 4, 4),
+            Some(LiteralValue::Number(1.0)),
+            "redo={redo}: undo restores the empty C6"
+        );
+        if redo {
+            engine.redo_logged(&mut undo, &mut log).unwrap();
+            engine.evaluate_all().unwrap();
+            assert_eq!(
+                engine.get_cell_value("Sheet1", 4, 4),
+                Some(LiteralValue::Number(8.0)),
+                "redo restores C6 = 7"
+            );
+        }
+        assert_structural_parity(&engine, 0xc0de_0005, 1);
 
-    engine.redo_logged(&mut undo, &mut log).unwrap();
-    let dependencies_after_redo = engine.graph.get_dependencies(formula);
-    assert!(dependencies_after_redo.is_empty());
-    let formulas = engine.graph.formula_vertices();
-    engine.graph.clear_dirty_flags(&formulas);
-    engine
-        .set_cell_value("Sheet1", 6, 3, LiteralValue::Number(555.0))
-        .unwrap();
-    assert!(!engine.graph.is_dirty(formula));
-    engine.evaluate_all().unwrap();
-    assert_eq!(engine.get_cell_value("Sheet1", 4, 4), None);
-    assert!(
-        !dependencies_after_redo.is_empty(),
-        "redo must rebuild the C6 edge so a later C6 write dirties and evaluates D4"
-    );
+        engine
+            .set_cell_value("Sheet1", 6, 3, LiteralValue::Number(555.0))
+            .unwrap();
+        engine.evaluate_all().unwrap();
+        assert_eq!(
+            engine.get_cell_value("Sheet1", 4, 4),
+            Some(LiteralValue::Number(556.0)),
+            "redo={redo}: a later C6 write must reach D4"
+        );
+    }
 }
 
 // Regression pin for GitHub issue #304 (finding AST_EDGE_INSERT_SHIFTS_NAME_VERTEX_ONTO_GRID).
