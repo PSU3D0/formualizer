@@ -25,7 +25,7 @@ umya = ["formualizer-workbook/umya_integration"]
 benchmark_internal = []
 
 [dependencies]
-sheetport-spec = { path = "../sheetport-spec", version = "0.3.1" }
+sheetport-spec = { path = "../sheetport-spec", version = "0.3.2" }
 formualizer-workbook = { path = "../formualizer-workbook", version = "0.11.0", default-features = false }
 formualizer-common = { path = "../formualizer-common", version = "3.2.0" }
 formualizer-parse = { path = "../formualizer-parse", version = "3.2.0" }
