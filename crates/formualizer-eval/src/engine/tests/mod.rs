@@ -210,6 +210,7 @@ mod aggregate_visibility_options;
 mod row_visibility_mask;
 mod row_visibility_state;
 mod row_visibility_transactions;
+mod subtotal_invalidation;
 mod subtotal_nested;
 mod subtotal_visibility;
 mod visibility_mask_cache;

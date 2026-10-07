@@ -3,7 +3,9 @@ use super::{AggregateArgument, resolve_aggregate_argument};
 use crate::args::ArgSchema;
 use crate::engine::VisibilityMaskMode;
 use crate::function::Function;
-use crate::function_contract::FunctionDependencyContract;
+use crate::function_contract::{
+    FunctionContextDependence, FunctionDependencyContract, FunctionSemanticContract,
+};
 use crate::traits::{ArgumentHandle, FunctionContext};
 use arrow_array::Array;
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
@@ -1692,6 +1694,21 @@ impl AggregateCollector {
     }
 }
 
+/// SUBTOTAL and AGGREGATE read row visibility and whether referenced cells
+/// hold nested subtotals, besides the referenced values. Value edits reach
+/// them through ordinary dependencies; the engine dirties them when row
+/// visibility changes (`DependencyGraph::mark_row_visibility_readers_dirty`).
+/// The workbook-metadata context keeps them off projected template read
+/// summaries, which model only the referenced cells; their dependencies come
+/// from the per-formula summary.
+fn row_visibility_contract(
+    precision: Option<FunctionDependencyContract>,
+) -> FunctionSemanticContract {
+    let mut contract = FunctionSemanticContract::trusted_builtin_default(precision);
+    contract.context = FunctionContextDependence::WorkbookMetadata;
+    contract
+}
+
 #[derive(Debug)]
 pub struct SubtotalFn;
 
@@ -1703,13 +1720,17 @@ pub struct SubtotalFn;
 /// Variadic: true
 /// Signature: SUBTOTAL(arg1...: number@range)
 /// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
-/// Caps: VOLATILE, REDUCTION, NUMERIC_ONLY, STREAM_OK
+/// Caps: REDUCTION, NUMERIC_ONLY, STREAM_OK
 /// [formualizer-docgen:schema:end]
 impl Function for SubtotalFn {
-    func_caps!(VOLATILE, REDUCTION, NUMERIC_ONLY, STREAM_OK);
+    func_caps!(REDUCTION, NUMERIC_ONLY, STREAM_OK);
 
     fn name(&self) -> &'static str {
         "SUBTOTAL"
+    }
+
+    fn semantic_contract(&self, arity: usize) -> Option<FunctionSemanticContract> {
+        Some(row_visibility_contract(self.dependency_contract(arity)))
     }
 
     fn min_args(&self) -> usize {
@@ -1787,13 +1808,17 @@ pub struct AggregateFn;
 /// Variadic: true
 /// Signature: AGGREGATE(arg1...: number@range)
 /// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
-/// Caps: VOLATILE, REDUCTION, NUMERIC_ONLY, STREAM_OK
+/// Caps: REDUCTION, NUMERIC_ONLY, STREAM_OK
 /// [formualizer-docgen:schema:end]
 impl Function for AggregateFn {
-    func_caps!(VOLATILE, REDUCTION, NUMERIC_ONLY, STREAM_OK);
+    func_caps!(REDUCTION, NUMERIC_ONLY, STREAM_OK);
 
     fn name(&self) -> &'static str {
         "AGGREGATE"
+    }
+
+    fn semantic_contract(&self, arity: usize) -> Option<FunctionSemanticContract> {
+        Some(row_visibility_contract(self.dependency_contract(arity)))
     }
 
     fn min_args(&self) -> usize {

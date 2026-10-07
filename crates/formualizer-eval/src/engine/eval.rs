@@ -10424,6 +10424,13 @@ where
         }
     }
 
+    /// Hidden rows changed: drop the cached masks and dirty the formulas
+    /// that read row visibility (SUBTOTAL/AGGREGATE).
+    fn row_visibility_changed(&mut self) {
+        self.invalidate_row_visibility_mask_cache();
+        self.graph.mark_row_visibility_readers_dirty();
+    }
+
     fn set_row_hidden_by_sheet_id(
         &mut self,
         sheet_id: SheetId,
@@ -10446,7 +10453,7 @@ where
         }
 
         if changed {
-            self.invalidate_row_visibility_mask_cache();
+            self.row_visibility_changed();
         }
 
         changed
@@ -10475,7 +10482,7 @@ where
         }
 
         if changed {
-            self.invalidate_row_visibility_mask_cache();
+            self.row_visibility_changed();
         }
 
         changed
@@ -10496,7 +10503,7 @@ where
             self.row_visibility.remove(&sheet_id);
         }
         if changed {
-            self.invalidate_row_visibility_mask_cache();
+            self.row_visibility_changed();
         }
     }
 
@@ -10515,7 +10522,7 @@ where
             self.row_visibility.remove(&sheet_id);
         }
         if changed {
-            self.invalidate_row_visibility_mask_cache();
+            self.row_visibility_changed();
         }
     }
 

@@ -4,6 +4,10 @@ All notable changes to Formualizer will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **SUBTOTAL and AGGREGATE are no longer volatile.** They recalculate when a cell in their ranges changes, or when row visibility changes (manual or filter hides, row inserts and deletes, undo and redo of those). A recalculation with no edits, or after an edit outside every SUBTOTAL/AGGREGATE range, no longer re-evaluates them. On a workbook with about 4,000 SUBTOTAL formulas, that was the whole cost of an unrelated single-cell edit. (#513)
+
 ### Fixed
 
 - Fixed the sheet index keeping cells at their old positions after rows or columns were inserted or deleted, so lookups through it missed moved cells. An enclosing SUBTOTAL or AGGREGATE then counted nested subtotals in the shifted rows.
