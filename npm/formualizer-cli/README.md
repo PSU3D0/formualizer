@@ -2,8 +2,6 @@
 
 The native `formualizer` command for Node.js projects and agents. After a tool or an agent edits an `.xlsx`, `formualizer recalc` recomputes every supported formula's cached value and writes it back, preserving formula text and the rest of the workbook.
 
-> **Not yet published:** this package goes live with the first release that includes `formualizer recalc`.
-
 ```sh
 npx @formualizer/cli recalc book.xlsx           # one-off, no install
 npm i -g @formualizer/cli                       # then: formualizer recalc book.xlsx

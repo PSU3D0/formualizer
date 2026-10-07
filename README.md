@@ -29,8 +29,6 @@ Calculating a spreadsheet from code usually means automating an office suite: Li
 
 Already editing `.xlsx` files with openpyxl or another tool? Keep that editor, then let `formualizer recalc` fill the formula caches it leaves empty or stale. Formula text, styles and the rest of the package are preserved.
 
-> **Not yet published:** these install channels go live with the first release that includes `formualizer recalc`. Until then, build from source with `cargo run --release -p formualizer-cli -- recalc book.xlsx`.
-
 ```sh
 pip install formualizer        # or: uvx formualizer recalc book.xlsx
 npm i -g @formualizer/cli      # or: npx @formualizer/cli recalc book.xlsx

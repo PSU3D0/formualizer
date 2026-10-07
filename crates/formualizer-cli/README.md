@@ -2,8 +2,6 @@
 
 The `formualizer` command: recalculate the cached formula values in an `.xlsx` after another tool has edited it, preserving formula text, styles and the rest of the package. It is part of [Formualizer](https://github.com/psu3d0/formualizer), a Rust spreadsheet engine.
 
-> **Not yet published:** this crate goes live with the first release that includes `formualizer recalc`.
-
 ## Install
 
 ```sh

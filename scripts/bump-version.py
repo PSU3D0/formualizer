@@ -69,6 +69,7 @@ PRODUCT_INTERNAL_DEPS = [
     ("crates/formualizer/Cargo.toml", "formualizer-sheetport"),
     # product crate cross-dependencies
     ("crates/formualizer-cli/Cargo.toml", "formualizer-workbook"),
+    ("crates/formualizer-cli/Cargo.toml", "formualizer-eval"),
     ("crates/formualizer-workbook/Cargo.toml", "formualizer-eval"),
     ("crates/formualizer-sheetport/Cargo.toml", "formualizer-eval"),
     ("crates/formualizer-sheetport/Cargo.toml", "formualizer-workbook"),

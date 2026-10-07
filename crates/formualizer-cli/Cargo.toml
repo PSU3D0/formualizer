@@ -1,6 +1,6 @@
 [package]
 name = "formualizer-cli"
-version = "0.10.1"
+version = "0.11.0"
 edition = "2024"
 description = "Source-preserving XLSX formula-cache recalculation command"
 readme = "README.md"
@@ -29,9 +29,9 @@ signals = ["dep:ctrlc"]
 
 [dependencies]
 formualizer-common.workspace = true
-formualizer-eval = { path = "../formualizer-eval", version = "0.10.1", default-features = false }
+formualizer-eval = { path = "../formualizer-eval", version = "0.11.0", default-features = false }
 chrono = { workspace = true, features = ["clock"] }
-formualizer-workbook = { path = "../formualizer-workbook", version = "0.10.1", default-features = false, features = ["xlsx-recalc"] }
+formualizer-workbook = { path = "../formualizer-workbook", version = "0.11.0", default-features = false, features = ["xlsx-recalc"] }
 clap = { workspace = true, features = ["derive"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

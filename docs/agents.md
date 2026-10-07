@@ -6,8 +6,6 @@ openpyxl writes formulas but does not calculate them; saving a formula workbook 
 
 ## Install or run
 
-> **Not yet published:** these install channels go live with the first release that includes `formualizer recalc`. Until then, build from a source checkout with `cargo run --release -p formualizer-cli -- recalc file.xlsx --json`.
-
 ```sh
 uvx formualizer recalc file.xlsx --json          # native Python wheel, no install step
 pip install formualizer                        # then: formualizer recalc file.xlsx --json

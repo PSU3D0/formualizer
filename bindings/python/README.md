@@ -34,8 +34,6 @@ Prebuilt stable-ABI (`abi3`) wheels are published for Python 3.10 and newer on L
 
 Native wheels include the `formualizer` command, which recalculates the cached formula values in an `.xlsx` after another tool has edited it:
 
-> **Not yet published:** the CLI goes live with the first release that includes `formualizer recalc`; earlier wheels do not have it.
-
 ```bash
 uvx formualizer recalc book.xlsx                  # run without installing
 formualizer recalc book.xlsx --check --json       # after pip install formualizer

@@ -11,8 +11,6 @@ run recalculation as the last writing step before reading or handing off the fil
 
 ## Get the native CLI
 
-> **Not yet published:** these channels go live with the first release that includes `formualizer recalc`. Until then, use the source build below.
-
 ```sh
 uvx formualizer recalc file.xlsx --json          # Python wheel, no install
 python -m formualizer recalc file.xlsx --json    # after: pip install formualizer

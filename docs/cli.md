@@ -4,8 +4,6 @@ Recompute every supported formula's cached value after editing an `.xlsx`, prese
 
 ## Installation
 
-> **Not yet published:** these install channels go live with the first release that includes `formualizer recalc`. Until then, build from a source checkout with `cargo run --release -p formualizer-cli -- recalc book.xlsx`.
-
 ```sh
 uvx formualizer recalc book.xlsx            # Python native wheel, no install step
 pip install formualizer                     # then: formualizer recalc book.xlsx
