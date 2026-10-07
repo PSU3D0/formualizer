@@ -6,6 +6,15 @@ on:
       - "v*"
       - "parse-v*"
       - "sheetport-spec-v*"
+  # Resume the CLI publication (npm packages and the GitHub release) of an
+  # existing product tag whose tag-push run failed after the crates and wheels
+  # published. Builds from the tag's source; npm trusted publishing is bound
+  # to this workflow file, so the resume has to run here.
+  workflow_dispatch:
+    inputs:
+      resume_cli_tag:
+        description: Existing product tag to resume CLI publication for (e.g. v0.11.0)
+        required: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -689,14 +698,22 @@ jobs:
   # Native CLI binaries, release archives and npm tarballs. The called
   # workflow only builds and assembles; publication happens below.
   build-cli:
-    if: github.event_name == 'push' && startsWith(github.ref_name, 'v')
+    if: >-
+      !cancelled() && (
+        (github.event_name == 'push' && startsWith(github.ref_name, 'v') && needs.verify-product.result == 'success') ||
+        (github.event_name == 'workflow_dispatch' && startsWith(inputs.resume_cli_tag, 'v')))
     needs: verify-product
     permissions:
       contents: read
     uses: ./.github/workflows/cli-build.yml
+    with:
+      ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.resume_cli_tag) || '' }}
 
   publish-npm-cli:
-    if: github.event_name == 'push' && startsWith(github.ref_name, 'v')
+    if: >-
+      !cancelled() && needs.build-cli.result == 'success' && (
+        (github.event_name == 'push' && startsWith(github.ref_name, 'v') && needs.publish-product-crates.result == 'success') ||
+        github.event_name == 'workflow_dispatch')
     needs: [build-cli, publish-product-crates]
     runs-on: ubuntu-latest
     permissions:
@@ -724,9 +741,11 @@ jobs:
           # Optional bootstrap token for the first publish of new packages;
           # empty when unset, leaving trusted publishing (OIDC) in charge.
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          RESUME_TAG: ${{ inputs.resume_cli_tag }}
         run: |
           set -euo pipefail
-          expected="${GITHUB_REF_NAME#v}"
+          tag="${RESUME_TAG:-${GITHUB_REF_NAME}}"
+          expected="${tag#v}"
           while IFS=$'\t' read -r name version file; do
             if [[ "${version}" != "${expected}" ]]; then
               echo "::error::${name} is ${version}, tag is v${expected}"
@@ -740,11 +759,17 @@ jobs:
             if [[ "${version}" == *-* ]]; then
               tag_args=(--tag next)
             fi
-            npm publish "npm-tarballs/${file}" --access public --provenance --ignore-scripts "${tag_args[@]}"
+            # The ./ keeps npm from reading `dir/file.tgz` as a GitHub
+            # `owner/repo` shorthand.
+            npm publish "./npm-tarballs/${file}" --access public --provenance --ignore-scripts "${tag_args[@]}"
           done < npm-tarballs/publish-order.txt
 
   github-release:
-    if: startsWith(github.ref_name, 'v')
+    if: >-
+      !cancelled() && needs.build-cli.result == 'success' && needs.publish-npm-cli.result == 'success' && (
+        (startsWith(github.ref_name, 'v') &&
+          needs.publish-product-crates.result == 'success' && needs.publish-pypi.result == 'success' && needs.publish-npm.result == 'success') ||
+        github.event_name == 'workflow_dispatch')
     needs:
       - publish-product-crates
       - publish-pypi
@@ -757,14 +782,18 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.resume_cli_tag && format('refs/tags/{0}', inputs.resume_cli_tag) || '' }}
 
       - name: Extract release notes
         id: notes
         shell: bash
+        env:
+          RESUME_TAG: ${{ inputs.resume_cli_tag }}
         run: |
           set -euo pipefail
 
-          TAG="${GITHUB_REF_NAME}"
+          TAG="${RESUME_TAG:-${GITHUB_REF_NAME}}"
           VERSION="${TAG#v}"
 
           # Try CHANGELOG.md first; fall back to commit log.
@@ -825,6 +854,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.resume_cli_tag || github.ref_name }}
           files: cli-dist/*
           fail_on_unmatched_files: true
           body_path: ${{ steps.notes.outputs.has_changelog == 'true' && 'release-notes.md' || '' }}
