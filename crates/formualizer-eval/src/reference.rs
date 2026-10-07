@@ -122,7 +122,8 @@ type SheetBounds = (Option<String>, (u32, u32, u32, u32));
 
 /// Combine two references with the range operator ':'
 /// Supports combining Cell:Cell, Cell:Range (and Range:Cell), and Range:Range on the same sheet.
-/// Returns #REF! for cross-sheet combinations or incompatible shapes.
+/// Returns #REF! for cross-sheet combinations or incompatible shapes, and
+/// #N/IMPL! when either endpoint is a name (name endpoints are not resolved yet).
 pub fn combine_references(
     a: &ReferenceType,
     b: &ReferenceType,
@@ -148,6 +149,17 @@ pub fn combine_references(
                 Some((sheet.clone(), (sr, sc, er, ec)))
             }
             _ => None,
+        }
+    }
+
+    // A defined name (or LET local) as an endpoint needs its bounds resolved
+    // first, which is not supported yet. Excel computes the bounding range, so
+    // `#REF!` would be a wrong answer; report the gap instead.
+    for endpoint in [a, b] {
+        if let ReferenceType::NamedRange(name) = endpoint {
+            return Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(format!(
+                "Defined name '{name}' used as a range endpoint (':') is not supported yet"
+            )));
         }
     }
 

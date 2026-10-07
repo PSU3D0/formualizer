@@ -1,0 +1,98 @@
+name: Docs site
+
+# Builds and checks formualizer.dev (docs-site/, Next.js static export).
+# Deployment is not done here: Cloudflare Workers Builds deploys main through
+# its own GitHub integration, so no Cloudflare credential lives in this repo.
+# The Recalc CLI pages include docs/cli.md, docs/agents.md,
+# docs/cache-only-xlsx.md and skills/** at build time, so changes there are
+# checked too. Keep these paths in step with the Workers Builds watch paths.
+
+on:
+  pull_request:
+    paths:
+      - docs-site/**
+      - docs/cli.md
+      - docs/agents.md
+      - docs/cache-only-xlsx.md
+      - skills/**
+      - .github/workflows/docs-site.yml
+  push:
+    branches: [ main ]
+    paths:
+      - docs-site/**
+      - docs/cli.md
+      - docs/agents.md
+      - docs/cache-only-xlsx.md
+      - skills/**
+      - .github/workflows/docs-site.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Pull requests cancel superseded runs; main deploys queue and always finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: docs-site
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          # History for the changed-file lint below.
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      # Corepack installs the pnpm version pinned by docs-site/package.json
+      # (packageManager), matching pnpm-lock.yaml.
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          pnpm --version
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build static export
+        run: pnpm build
+
+      - name: Check export (includes, llms.txt, copied files)
+        run: pnpm check:export
+
+      # The site predates its Biome config and does not pass `pnpm lint` as a
+      # whole yet, so CI holds the line on the files each change touches.
+      - name: Lint changed files
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          case "${EVENT_NAME}" in
+            pull_request) base="${PR_BASE}" ;;
+            push) base="${PUSH_BEFORE}" ;;
+            *) base="" ;;
+          esac
+          if [[ -z "${base}" || "${base}" =~ ^0+$ ]] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            base="$(git merge-base origin/main HEAD)"
+          fi
+          mapfile -t files < <(git diff --name-only --relative --diff-filter=ACMR "${base}" HEAD -- .)
+          if [[ ${#files[@]} -eq 0 ]]; then
+            echo "No docs-site files changed since ${base}."
+            exit 0
+          fi
+          printf 'Linting %s\n' "${files[@]}"
+          pnpm exec biome check --no-errors-on-unmatched --files-ignore-unknown=true "${files[@]}"
+

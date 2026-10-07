@@ -2,8 +2,10 @@
   "name": "formualizer-docs",
   "version": "0.0.0",
   "private": true,
+  "packageManager": "pnpm@11.0.9",
   "scripts": {
     "build": "next build && node scripts/emit-docs-mdx.mjs",
+    "check:export": "node scripts/check-export.mjs",
     "dev": "next dev",
     "start": "next start",
     "deploy": "pnpm run build && wrangler deploy",

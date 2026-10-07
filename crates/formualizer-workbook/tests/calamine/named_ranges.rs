@@ -6,6 +6,71 @@ use formualizer_workbook::traits::{DefinedNameDefinition, DefinedNameScope};
 use formualizer_workbook::{CalamineAdapter, LiteralValue, SpreadsheetReader};
 use std::io::Read;
 
+#[test]
+fn calculation_names_import_literals_formulas_and_rebind_cell_dependencies() {
+    let path = build_workbook(|book| {
+        let sheet = book.get_sheet_by_name_mut("Sheet1").unwrap();
+        sheet.get_cell_mut((1, 1)).set_value_number(3.0);
+        sheet.get_cell_mut((1, 2)).set_formula("=Answer");
+        sheet.get_cell_mut((1, 3)).set_formula("=Rate*2");
+        sheet.get_cell_mut((1, 4)).set_formula("=Flag");
+        for (name, definition) in [
+            ("Answer", "DoubleBase"),
+            ("DoubleBase", "Sheet1!$A$1*2"),
+            ("Rate", "0.07"),
+            ("SignedRate", "-0.07"),
+            ("Flag", "TRUE"),
+        ] {
+            sheet.add_defined_name(name, definition).unwrap();
+        }
+    });
+    let mut backend = CalamineAdapter::open_path(path).unwrap();
+    let names = backend.defined_names().unwrap();
+    assert!(
+        matches!(&names.iter().find(|n| n.name == "Rate").unwrap().definition, DefinedNameDefinition::Literal { value: LiteralValue::Number(n) } if *n == 0.07)
+    );
+    assert!(
+        matches!(&names.iter().find(|n| n.name == "SignedRate").unwrap().definition, DefinedNameDefinition::Literal { value: LiteralValue::Number(n) } if *n == -0.07)
+    );
+    let mut engine = Engine::new(
+        formualizer_eval::test_workbook::TestWorkbook::new(),
+        EvalConfig::default(),
+    );
+    backend.stream_into_engine(&mut engine).unwrap();
+    engine.evaluate_all().unwrap();
+    for (row, expected) in [
+        (2, LiteralValue::Number(6.0)),
+        (3, LiteralValue::Number(0.14)),
+        (4, LiteralValue::Boolean(true)),
+    ] {
+        assert_eq!(engine.get_cell_value("Sheet1", row, 1), Some(expected));
+    }
+    engine
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(5.0))
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 2, 1),
+        Some(LiteralValue::Number(10.0))
+    );
+    engine
+        .update_name(
+            "DoubleBase",
+            formualizer_eval::engine::named_range::NamedDefinition::Formula {
+                ast: formualizer_parse::parser::parse("=Sheet1!$A$1*3").unwrap(),
+                dependencies: Vec::new(),
+                range_deps: Vec::new(),
+            },
+            formualizer_eval::engine::named_range::NameScope::Workbook,
+        )
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 2, 1),
+        Some(LiteralValue::Number(15.0))
+    );
+}
+
 fn defined_name_entity_spacing_fixture() -> Vec<u8> {
     let path = build_workbook(|book| {
         let sheet1 = book.get_sheet_by_name_mut("Sheet1").expect("Sheet1");

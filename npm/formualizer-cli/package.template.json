@@ -1,0 +1,35 @@
+{
+  "name": "@formualizer/cli",
+  "version": "0.0.0-assembled",
+  "description": "Native `formualizer` command: recompute XLSX formula caches in place, preserving the source workbook.",
+  "homepage": "https://github.com/psu3d0/formualizer",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/PSU3D0/formualizer",
+    "directory": "npm/formualizer-cli"
+  },
+  "license": "MIT OR Apache-2.0",
+  "type": "commonjs",
+  "bin": {
+    "formualizer": "bin/formualizer.js"
+  },
+  "files": [
+    "bin/formualizer.js",
+    "platforms.json",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "excel",
+    "xlsx",
+    "formula",
+    "recalculate",
+    "spreadsheet",
+    "cli"
+  ],
+  "optionalDependencies": {}
+}

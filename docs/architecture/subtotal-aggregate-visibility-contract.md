@@ -27,6 +27,7 @@ This document is the normative contract for phase-1 `SUBTOTAL`/`AGGREGATE` visib
 - `SUBTOTAL(1..11, ...)` includes all rows (visible, manually hidden, filter-hidden).
 - `SUBTOTAL(101..111, ...)` excludes both manually hidden rows and filter-hidden rows.
 - Visibility filtering is row-based and applied before aggregation.
+- A cell in a reference argument whose formula calls `SUBTOTAL` anywhere (for example `=SUBTOTAL(9,A1:A2)+8`, or inside an `IF` branch) is skipped, as Excel ignores nested subtotals to avoid double counting. Cells whose formulas call only `AGGREGATE` are counted: the SUBTOTAL documentation names nested subtotals only.
 
 ### 3) AGGREGATE phase-1 scope
 
@@ -41,10 +42,12 @@ This document is the normative contract for phase-1 `SUBTOTAL`/`AGGREGATE` visib
 
 | option | Hidden rows | Errors in aggregated refs | Nested SUBTOTAL/AGGREGATE exclusion |
 |---|---|---|---|
-| 0 | Include hidden rows | Propagate errors | Not excluded in v1 |
-| 1 | Exclude manually hidden + filter-hidden rows | Propagate errors | Not excluded in v1 |
-| 2 | Include hidden rows | Ignore errors | Not excluded in v1 |
-| 3 | Exclude manually hidden + filter-hidden rows | Ignore errors | Not excluded in v1 |
+| 0 | Include hidden rows | Propagate errors | Excluded |
+| 1 | Exclude manually hidden + filter-hidden rows | Propagate errors | Excluded |
+| 2 | Include hidden rows | Ignore errors | Excluded |
+| 3 | Exclude manually hidden + filter-hidden rows | Ignore errors | Excluded |
+
+Nested exclusion skips cells in reference arguments whose formulas call `SUBTOTAL` or `AGGREGATE` anywhere.
 
 ## Error behavior matrix
 
@@ -63,8 +66,6 @@ This document is the normative contract for phase-1 `SUBTOTAL`/`AGGREGATE` visib
 
 ## Deferred (not in v1)
 
-- Nested `SUBTOTAL`/`AGGREGATE` exclusion logic is deferred.
-- In v1, nested results are treated as ordinary scalar inputs, so parent aggregates may double-count nested aggregates.
 - `AGGREGATE` support for `function_num` `12..19` is deferred.
 - `AGGREGATE` support for `options` `4..7` semantics is deferred.
 - `AGGREGATE` array-form and `k`-based variants are deferred.

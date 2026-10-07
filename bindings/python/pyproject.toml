@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "formualizer"
-version = "0.10.1"
+version = "0.11.0"
 description = "Embeddable spreadsheet engine — parse, evaluate & mutate Excel workbooks at native speed"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -29,6 +29,9 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Text Processing :: General",
 ]
+
+[project.scripts]
+formualizer = "formualizer.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/PSU3D0/formualizer"

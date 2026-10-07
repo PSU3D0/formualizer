@@ -81,6 +81,24 @@ pub struct CellSnapshot {
     pub spill: Option<SpillRole>,
 }
 
+/// AST-free result inspection for validated output projection.
+///
+/// `has_formula` includes staged and compressed-family formulas. This does not
+/// certify successful ingestion of a particular source expression: callers must
+/// still reconcile source coordinates and parse-coercion diagnostics. Empty
+/// values retain the same absent/NeverEvaluated semantics as [`CellSnapshot`].
+/// A member's currentness does not certify its anchor; validate that anchor too.
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct CellResultState {
+    pub address: CellAddress,
+    pub has_formula: bool,
+    pub value: Option<LiteralValue>,
+    pub staleness: Staleness,
+    pub spill: Option<SpillRole>,
+}
+
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
@@ -1011,6 +1029,42 @@ impl<R: EvaluationContext> Engine<R> {
             value_included: include_value,
             staleness,
             volatile,
+            spill,
+        })
+    }
+
+    /// Read result presence, currentness and committed spill ownership without
+    /// reconstructing or pretty-printing a formula AST. Does not evaluate,
+    /// prepare dependency state, or materialize compressed formula members.
+    pub fn inspect_cell_result(&self, cell: &CellAddress) -> Result<CellResultState, InspectError> {
+        let (key, address) = self.canonical_cell(cell)?;
+        let staged = self
+            .get_staged_formula_text(&address.sheet, address.row, address.column)
+            .is_some();
+        let source = self.inspect_source();
+        let vertex = self.graph.get_vertex_for_cell(&source.cell_ref(key));
+        let has_formula = staged || vertex.is_some_and(|v| self.graph.has_formula(v));
+        let value = self.read_cell_value(&address.sheet, address.row, address.column);
+        let staleness = if !has_formula {
+            Staleness::Current
+        } else if value.is_none() {
+            Staleness::NeverEvaluated
+        } else if staged || vertex.is_some_and(|v| self.graph.is_dirty(v)) {
+            Staleness::Dirty
+        } else {
+            Staleness::Current
+        };
+        let spill = source.spill_role(key).map(|role| match role {
+            InternalSpillRole::Anchor { extent } => SpillRole::Anchor { extent },
+            InternalSpillRole::Member { anchor } => SpillRole::Member {
+                anchor: self.address_for_key(anchor),
+            },
+        });
+        Ok(CellResultState {
+            address,
+            has_formula,
+            value,
+            staleness,
             spill,
         })
     }

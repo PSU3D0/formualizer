@@ -1,20 +1,50 @@
 use super::{
-    Archive, BTreeMap, IoError, Sheet, XlsxRecalculateOptions, part_name, read_part, unsupported,
-    xml,
+    Archive, BTreeMap, IoError, Sheet, XlsxRecalculateOptions, append_child, part_name, read_part,
+    unsupported, xml,
 };
 
+const PART: &str = "[Content_Types].xml";
+
+/// Add an `Override` for `part` (a validated package part name) to the
+/// content types, unless any declaration already names it: the result is
+/// refused rather than given a duplicate. All other bytes are kept.
+pub(in crate::cache_recalculate) fn add_override(
+    archive: &mut Archive<'_>,
+    part: &str,
+    content_type: &str,
+    options: &XlsxRecalculateOptions,
+) -> Result<Vec<u8>, IoError> {
+    part_name(part)?;
+    let data = read_part(archive, PART, options.limits.max_worksheet_bytes)?;
+    let name = format!("/{part}");
+    xml::walk(&data, options, |_, node| {
+        if node
+            .value("PartName")
+            .is_some_and(|p| p.eq_ignore_ascii_case(&name))
+        {
+            return Err(unsupported("duplicate content-type override", PART));
+        }
+        Ok(())
+    })?;
+    append_child(
+        &data,
+        PART,
+        |prefix| format!("<{prefix}Override PartName=\"{name}\" ContentType=\"{content_type}\"/>"),
+        options,
+    )
+}
+
+/// `metadata` is the relationship-resolved sheet metadata part, if any.
 pub(super) fn validate(
     archive: &mut Archive<'_>,
     sheets: &[Sheet],
+    metadata: Option<&str>,
     options: &XlsxRecalculateOptions,
 ) -> Result<(), IoError> {
+    use super::super::dynamic_metadata::SHEET_METADATA_CONTENT_TYPE;
     const NS: &str = "http://schemas.openxmlformats.org/package/2006/content-types";
     const PREFIX: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.";
-    let data = read_part(
-        archive,
-        "[Content_Types].xml",
-        options.limits.max_worksheet_bytes,
-    )?;
+    let data = read_part(archive, PART, options.limits.max_worksheet_bytes)?;
     let mut defaults = BTreeMap::new();
     let mut overrides = BTreeMap::new();
     xml::walk(&data, options, |path, node| {
@@ -36,10 +66,23 @@ pub(super) fn validate(
             let content = node.required("ContentType")?;
             if content.is_empty()
                 || content.contains("digital-signature")
-                || content.contains("sheetMetadata")
+                || (metadata.is_none() && content.contains("sheetMetadata"))
                 || content.contains("externalLink")
             {
                 return Err(unsupported("unsupported content type", "XLSX package"));
+            }
+            if let Some(metadata) = metadata
+                && content.contains("sheetMetadata")
+            {
+                if e.local != "Override" || content != SHEET_METADATA_CONTENT_TYPE {
+                    return Err(unsupported(
+                        "sheet metadata content-type disagreement",
+                        "XLSX package",
+                    ));
+                }
+                if node.required("PartName")?.strip_prefix('/') != Some(metadata) {
+                    return Err(unsupported("unrelated sheet metadata part", "XLSX package"));
+                }
             }
             if e.local == "Default" {
                 let extension = node.required("Extension")?;
@@ -84,7 +127,22 @@ pub(super) fn validate(
                     .and_then(|(_, e)| defaults.get(&e.to_ascii_lowercase()))
             })
             .ok_or_else(|| unsupported("part without content type", name))?;
-        let expected = if name == "xl/workbook.xml" {
+        if Some(name) == metadata {
+            if content != SHEET_METADATA_CONTENT_TYPE {
+                return Err(unsupported(
+                    "sheet metadata content-type disagreement",
+                    name,
+                ));
+            }
+            continue;
+        }
+        let table = sheets.iter().any(|s| s.tables.values().any(|p| p == name));
+        if !table && (content == &format!("{PREFIX}table+xml") || name.starts_with("xl/tables/")) {
+            return Err(unsupported("orphan table part", name));
+        }
+        let expected = if table {
+            Some(format!("{PREFIX}table+xml"))
+        } else if name == "xl/workbook.xml" {
             Some(format!("{PREFIX}sheet.main+xml"))
         } else if sheets.iter().any(|s| s.part == name) {
             Some(format!("{PREFIX}worksheet+xml"))

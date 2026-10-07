@@ -89,7 +89,6 @@ mod region_lock_tests {
             anchor_vertex,
             &targets,
             values,
-            None,
             |g, cell| unsafe {
                 let sheet_name = g.sheet_name(cell.sheet_id);
                 let asheet = (*store_ptr).sheet(sheet_name)?;

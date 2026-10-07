@@ -1,0 +1,894 @@
+//! Excel-compatibility tests for the statistical builtins, written from the
+//! Microsoft support pages for each function:
+//!
+//! - the Excel 2007 compatibility names (`NORMSDIST`, `TDIST`, `BETADIST`, ...)
+//!   with their own argument lists and domain rules;
+//! - the paired two-array functions (`CORREL`, `SLOPE`, `COVAR`, ...), which
+//!   drop a pair when either side is not a number;
+//! - multiple regression in `LINEST`, `LOGEST`, `TREND` and `GROWTH`.
+use crate::engine::{Engine, EvalConfig};
+use crate::test_workbook::TestWorkbook;
+use formualizer_common::{ExcelErrorKind, LiteralValue};
+use formualizer_parse::parser::parse;
+
+const SHEET: &str = "Sheet1";
+
+fn engine() -> Engine<TestWorkbook> {
+    Engine::new(
+        TestWorkbook::new(),
+        EvalConfig {
+            enable_parallel: false,
+            ..EvalConfig::default()
+        },
+    )
+}
+
+fn set(engine: &mut Engine<TestWorkbook>, a1: &str, value: LiteralValue) {
+    let (row, col) = a1_to_rc(a1);
+    engine.set_cell_value(SHEET, row, col, value).unwrap();
+}
+
+fn num(engine: &mut Engine<TestWorkbook>, a1: &str, n: f64) {
+    set(engine, a1, LiteralValue::Number(n));
+}
+
+fn a1_to_rc(a1: &str) -> (u32, u32) {
+    let letters: String = a1.chars().take_while(|c| c.is_ascii_alphabetic()).collect();
+    let digits = &a1[letters.len()..];
+    let col = letters.chars().fold(0u32, |acc, c| {
+        acc * 26 + (c.to_ascii_uppercase() as u32 - 'A' as u32 + 1)
+    });
+    (digits.parse().unwrap(), col)
+}
+
+/// Evaluate `formula` in a scratch cell far from the data and return the
+/// top-left value.
+fn eval_in(engine: &mut Engine<TestWorkbook>, formula: &str) -> LiteralValue {
+    engine
+        .set_cell_formula(SHEET, 1000, 30, parse(formula).unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    engine
+        .get_cell_value(SHEET, 1000, 30)
+        .unwrap_or(LiteralValue::Empty)
+}
+
+fn eval(formula: &str) -> LiteralValue {
+    eval_in(&mut engine(), formula)
+}
+
+#[track_caller]
+fn assert_close(got: LiteralValue, expected: f64, tol: f64, what: &str) {
+    match got {
+        LiteralValue::Number(n) => assert!(
+            (n - expected).abs() <= tol,
+            "{what}: got {n}, expected {expected} (tol {tol})"
+        ),
+        LiteralValue::Int(i) => assert!(
+            (i as f64 - expected).abs() <= tol,
+            "{what}: got {i}, expected {expected} (tol {tol})"
+        ),
+        other => panic!("{what}: expected {expected}, got {other:?}"),
+    }
+}
+
+#[track_caller]
+fn assert_error(got: LiteralValue, kind: ExcelErrorKind, what: &str) {
+    match got {
+        LiteralValue::Error(e) => assert_eq!(e.kind, kind, "{what}: {e:?}"),
+        other => panic!("{what}: expected {kind:?}, got {other:?}"),
+    }
+}
+
+#[track_caller]
+fn check(formula: &str, expected: f64, tol: f64) {
+    assert_close(eval(formula), expected, tol, formula);
+}
+
+#[track_caller]
+fn check_err(formula: &str, kind: ExcelErrorKind) {
+    assert_error(eval(formula), kind, formula);
+}
+
+/* ───────────────────── legacy (Excel 2007) statistical names ───────────────────── */
+
+// Values are the worked examples on each function's support page
+// (https://support.microsoft.com/en-us/excel/functions/<name>-function), at the
+// precision the page prints.
+
+#[test]
+fn legacy_normal_family_matches_documented_examples() {
+    check("=NORMSDIST(1.333333)", 0.908788726, 1e-9);
+    check("=NORMSDIST(0)", 0.5, 1e-15);
+    check("=NORMSINV(0.9088)", 1.3334, 1e-4);
+    check("=NORMDIST(42,40,1.5,TRUE)", 0.9087888, 1e-7);
+    check("=NORMDIST(42,40,1.5,FALSE)", 0.10934, 1e-5);
+    check("=NORMINV(0.908789,40,1.5)", 42.000002, 1e-6);
+    check("=LOGNORMDIST(4,3.5,1.2)", 0.0390836, 1e-7);
+    check("=LOGINV(0.039084,3.5,1.2)", 4.0000252, 1e-6);
+}
+
+#[test]
+fn legacy_normal_family_domain_errors() {
+    check_err("=NORMSDIST(\"x\")", ExcelErrorKind::Value);
+    check_err("=NORMSINV(0)", ExcelErrorKind::Num);
+    check_err("=NORMSINV(1)", ExcelErrorKind::Num);
+    check_err("=NORMDIST(1,0,0,TRUE)", ExcelErrorKind::Num);
+    check_err("=NORMINV(0.5,0,-1)", ExcelErrorKind::Num);
+    // LOGNORMDIST is the 3-argument cumulative form.
+    check_err("=LOGNORMDIST(0,0,1)", ExcelErrorKind::Num);
+    check_err("=LOGNORMDIST(1,0,0)", ExcelErrorKind::Num);
+    check_err("=LOGINV(1,0,1)", ExcelErrorKind::Num);
+}
+
+#[test]
+fn legacy_tdist_tails_and_domain() {
+    check("=TDIST(1.959999998,60,2)", 0.054644930, 1e-9);
+    check("=TDIST(1.959999998,60,1)", 0.027322465, 1e-9);
+    // Deg_freedom and tails are truncated to integers.
+    check("=TDIST(1,10.9,2)-TDIST(1,10,2)", 0.0, 0.0);
+    check("=TDIST(1,10,1.9)-TDIST(1,10,1)", 0.0, 0.0);
+    check("=TDIST(1,10,2.5)-TDIST(1,10,2)", 0.0, 0.0);
+    check("=TDIST(0,5,2)", 1.0, 1e-15);
+    check_err("=TDIST(-1,10,1)", ExcelErrorKind::Num);
+    check_err("=TDIST(1,0.5,1)", ExcelErrorKind::Num);
+    check_err("=TDIST(1,10,3)", ExcelErrorKind::Num);
+    check_err("=TDIST(1,10,0)", ExcelErrorKind::Num);
+}
+
+#[test]
+fn legacy_tinv_is_two_tailed_with_truncated_df() {
+    check("=TINV(0.05464,60)", 1.96, 1e-4);
+    check("=TINV(0.05,10)", 2.228138851986, 1e-9);
+    check("=TINV(0.05,10.7)-TINV(0.05,10)", 0.0, 0.0);
+    check_err("=TINV(0,10)", ExcelErrorKind::Num);
+    check_err("=TINV(1.1,10)", ExcelErrorKind::Num);
+    check_err("=TINV(0.5,0.9)", ExcelErrorKind::Num);
+}
+
+#[test]
+fn legacy_chi_and_f_are_right_tailed() {
+    check("=CHIDIST(18.307,10)", 0.0500006, 1e-7);
+    check("=CHIINV(0.050001,10)", 18.306973, 1e-5);
+    check("=FDIST(15.20686486,6,4)", 0.01, 1e-8);
+    check("=FINV(0.01,6,4)", 15.206865, 1e-5);
+    // Degrees of freedom are truncated.
+    check("=CHIDIST(3,2.9)-CHIDIST(3,2)", 0.0, 0.0);
+    check("=CHIINV(0.3,4.5)-CHIINV(0.3,4)", 0.0, 0.0);
+    check("=FDIST(2,3.7,5.2)-FDIST(2,3,5)", 0.0, 0.0);
+    check("=FINV(0.2,3.7,5.2)-FINV(0.2,3,5)", 0.0, 0.0);
+    check_err("=CHIDIST(-1,2)", ExcelErrorKind::Num);
+    check_err("=CHIDIST(1,0.5)", ExcelErrorKind::Num);
+    check_err("=CHIDIST(1,1E11)", ExcelErrorKind::Num);
+    check_err("=CHIINV(-0.1,2)", ExcelErrorKind::Num);
+    check_err("=CHIINV(1.1,2)", ExcelErrorKind::Num);
+    check_err("=FDIST(-1,2,3)", ExcelErrorKind::Num);
+    check_err("=FDIST(1,0.5,3)", ExcelErrorKind::Num);
+    check_err("=FDIST(1,3,1E10)", ExcelErrorKind::Num);
+    check_err("=FINV(1.5,2,3)", ExcelErrorKind::Num);
+    check_err("=FINV(0.5,2,1E10)", ExcelErrorKind::Num);
+}
+
+#[test]
+fn legacy_beta_gamma_and_discrete_examples() {
+    check("=BETADIST(2,8,10,1,3)", 0.6854706, 1e-7);
+    check("=BETADIST(0.5,2,2)", 0.5, 1e-12);
+    check("=BETAINV(0.685470581,8,10,1,3)", 2.0, 1e-6);
+    check("=GAMMADIST(10.00001131,9,2,FALSE)", 0.032639, 1e-6);
+    check("=GAMMADIST(10.00001131,9,2,TRUE)", 0.068094, 1e-6);
+    check("=GAMMAINV(0.068094,9,2)", 10.0000112, 1e-4);
+    check("=POISSON(2,5,TRUE)", 0.124652, 1e-6);
+    check("=POISSON(2,5,FALSE)", 0.084224, 1e-6);
+    check("=BINOMDIST(6,10,0.5,FALSE)", 0.2050781, 1e-7);
+    check("=EXPONDIST(0.2,10,TRUE)", 0.86466472, 1e-8);
+    check("=EXPONDIST(0.2,10,FALSE)", 1.35335283, 1e-8);
+    check("=WEIBULL(105,20,100,TRUE)", 0.929581, 1e-6);
+    check("=WEIBULL(105,20,100,FALSE)", 0.035589, 1e-6);
+    check("=HYPGEOMDIST(1,4,8,20)", 0.3633, 1e-4);
+    check("=NEGBINOMDIST(10,5,0.25)", 0.05504866, 1e-8);
+    check("=CRITBINOM(6,0.5,0.75)", 4.0, 0.0);
+}
+
+#[test]
+fn legacy_beta_gamma_and_discrete_domain_errors() {
+    // BETADIST: x outside [A,B] or A = B.
+    check_err("=BETADIST(0.5,0,2)", ExcelErrorKind::Num);
+    check_err("=BETADIST(0.5,2,2,1,3)", ExcelErrorKind::Num);
+    check_err("=BETADIST(4,2,2,1,3)", ExcelErrorKind::Num);
+    check_err("=BETADIST(1,2,2,1,1)", ExcelErrorKind::Num);
+    // BETAINV: probability <= 0 or > 1.
+    check_err("=BETAINV(0,2,3)", ExcelErrorKind::Num);
+    check_err("=BETAINV(1.2,2,3)", ExcelErrorKind::Num);
+    check_err("=GAMMADIST(-1,2,1,TRUE)", ExcelErrorKind::Num);
+    check_err("=POISSON(-1,2,TRUE)", ExcelErrorKind::Num);
+    check_err("=BINOMDIST(3,2,0.5,TRUE)", ExcelErrorKind::Num);
+    check_err("=EXPONDIST(1,0,TRUE)", ExcelErrorKind::Num);
+    check_err("=WEIBULL(1,0,1,TRUE)", ExcelErrorKind::Num);
+    // HYPGEOMDIST: sample_s outside its feasible range is #NUM!, not 0.
+    check_err("=HYPGEOMDIST(5,4,8,20)", ExcelErrorKind::Num);
+    check_err("=HYPGEOMDIST(-1,4,8,20)", ExcelErrorKind::Num);
+    check_err("=HYPGEOMDIST(0,10,15,20)", ExcelErrorKind::Num);
+    check_err("=HYPGEOMDIST(1,0,8,20)", ExcelErrorKind::Num);
+    check_err("=HYPGEOMDIST(1,4,0,20)", ExcelErrorKind::Num);
+    // NEGBINOMDIST: probability outside [0,1], number_f < 0, number_s < 1.
+    check_err("=NEGBINOMDIST(1,2,1.5)", ExcelErrorKind::Num);
+    check_err("=NEGBINOMDIST(-1,2,0.5)", ExcelErrorKind::Num);
+    check_err("=NEGBINOMDIST(1,0.5,0.5)", ExcelErrorKind::Num);
+}
+
+#[test]
+fn legacy_hypgeom_and_negbinom_truncate_arguments() {
+    check(
+        "=HYPGEOMDIST(1.9,4.2,8.7,20.1)-HYPGEOMDIST(1,4,8,20)",
+        0.0,
+        0.0,
+    );
+    check(
+        "=NEGBINOMDIST(10.9,5.5,0.25)-NEGBINOMDIST(10,5,0.25)",
+        0.0,
+        0.0,
+    );
+}
+
+/// Reference values for the legacy tail and inverse functions across shapes
+/// and tails (computed independently with SciPy's `isf`/`ppf`/`sf`).
+#[rustfmt::skip]
+const REFERENCE_GRID: &[(&str, f64)] = &[
+    ("=CHIINV(0.001,1)", 10.827566170662733),
+    ("=CHIINV(0.001,3)", 16.26623619623813),
+    ("=CHIINV(0.001,30)", 59.703064304429944),
+    ("=CHIINV(0.001,200)", 267.5405278227572),
+    ("=CHIINV(0.05,1)", 3.8414588206941285),
+    ("=CHIINV(0.05,3)", 7.814727903251178),
+    ("=CHIINV(0.05,30)", 43.77297182574217),
+    ("=CHIINV(0.05,200)", 233.99426889232492),
+    ("=CHIINV(0.5,1)", 0.4549364231195724),
+    ("=CHIINV(0.5,3)", 2.3659738843753377),
+    ("=CHIINV(0.5,30)", 29.336031516661585),
+    ("=CHIINV(0.5,200)", 199.33372983863097),
+    ("=CHIINV(0.95,1)", 0.003932140000019531),
+    ("=CHIINV(0.95,3)", 0.35184631774927166),
+    ("=CHIINV(0.95,30)", 18.49266098195347),
+    ("=CHIINV(0.95,200)", 168.2785544366284),
+    ("=CHIINV(0.999,1)", 1.570797149262492e-06),
+    ("=CHIINV(0.999,3)", 0.02429758581569275),
+    ("=CHIINV(0.999,30)", 11.587951045645058),
+    ("=CHIINV(0.999,200)", 143.8427949900008),
+    ("=FINV(0.001,1,1)", 405284.0679028482),
+    ("=FINV(0.001,3,40)", 6.594539977661781),
+    ("=FINV(0.001,20,5)", 25.394622094525214),
+    ("=FINV(0.001,100,100)", 1.8674013821322328),
+    ("=FINV(0.05,1,1)", 161.4476387975882),
+    ("=FINV(0.05,3,40)", 2.8387453980206403),
+    ("=FINV(0.05,20,5)", 4.558131497396519),
+    ("=FINV(0.05,100,100)", 1.39171955165522),
+    ("=FINV(0.5,1,1)", 1.0),
+    ("=FINV(0.5,3,40)", 0.8022775178428054),
+    ("=FINV(0.5,20,5)", 1.1106465112961703),
+    ("=FINV(0.5,100,100)", 0.9999999999999994),
+    ("=FINV(0.95,1,1)", 0.006193958657108205),
+    ("=FINV(0.95,3,40)", 0.11635468339965845),
+    ("=FINV(0.95,20,5)", 0.368882566260714),
+    ("=FINV(0.95,100,100)", 0.7185355690452617),
+    ("=BETAINV(0.001,0.5,0.5)", 2.4673990709169446e-06),
+    ("=BETAINV(0.001,9,2)", 0.37627691091117454),
+    ("=BETAINV(0.001,2,30)", 0.0014876861369423936),
+    ("=BETAINV(0.001,50,50)", 0.3487478265970523),
+    ("=BETAINV(0.05,0.5,0.5)", 0.0061558297024311365),
+    ("=BETAINV(0.05,9,2)", 0.6058366975634952),
+    ("=BETAINV(0.05,2,30)", 0.011585315861443594),
+    ("=BETAINV(0.05,50,50)", 0.41810922158826574),
+    ("=BETAINV(0.5,0.5,0.5)", 0.4999999999999999),
+    ("=BETAINV(0.5,9,2)", 0.8377372718047538),
+    ("=BETAINV(0.5,2,30)", 0.05355205211700271),
+    ("=BETAINV(0.5,50,50)", 0.4999999999999999),
+    ("=BETAINV(0.95,0.5,0.5)", 0.9938441702975689),
+    ("=BETAINV(0.95,9,2)", 0.9632285621125349),
+    ("=BETAINV(0.95,2,30)", 0.14409039131834475),
+    ("=BETAINV(0.95,50,50)", 0.5818907784117342),
+    ("=GAMMAINV(0.001,0.3,2)", 1.3945398193566689e-10),
+    ("=GAMMAINV(0.001,1,2)", 0.002001000667167068),
+    ("=GAMMAINV(0.001,9,2)", 4.90484880872755),
+    ("=GAMMAINV(0.001,100,2)", 143.8427949900008),
+    ("=GAMMAINV(0.05,0.3,2)", 6.42206939944593e-05),
+    ("=GAMMAINV(0.05,1,2)", 0.10258658877510106),
+    ("=GAMMAINV(0.05,9,2)", 9.390455080688984),
+    ("=GAMMAINV(0.05,100,2)", 168.27855443662838),
+    ("=GAMMAINV(0.5,0.3,2)", 0.14626227173390396),
+    ("=GAMMAINV(0.5,1,2)", 1.386294361119891),
+    ("=GAMMAINV(0.5,9,2)", 17.33790236874074),
+    ("=GAMMAINV(0.5,100,2)", 199.33372983863097),
+    ("=GAMMAINV(0.95,0.3,2)", 2.744699888201772),
+    ("=GAMMAINV(0.95,1,2)", 5.991464547107979),
+    ("=GAMMAINV(0.95,9,2)", 28.869299430392623),
+    ("=GAMMAINV(0.95,100,2)", 233.99426889232492),
+    ("=GAMMAINV(0.999,0.3,2)", 9.237872085582666),
+    ("=GAMMAINV(0.999,1,2)", 13.815510557964274),
+    ("=GAMMAINV(0.999,9,2)", 42.31239633167996),
+    ("=GAMMAINV(0.999,100,2)", 267.5405278227572),
+    ("=TINV(0.001,1)", 636.6192487687196),
+    ("=TINV(0.001,2)", 31.59905457644362),
+    ("=TINV(0.001,5)", 6.86882662588111),
+    ("=TINV(0.001,60)", 3.4602004691963555),
+    ("=TINV(0.05,1)", 12.706204736174705),
+    ("=TINV(0.05,2)", 4.302652729749464),
+    ("=TINV(0.05,5)", 2.5705818356363155),
+    ("=TINV(0.05,60)", 2.0002978220142604),
+    ("=TINV(0.5,1)", 1.0000000000000002),
+    ("=TINV(0.5,2)", 0.8164965809277261),
+    ("=TINV(0.5,5)", 0.7266868438004226),
+    ("=TINV(0.5,60)", 0.6786007206481355),
+    ("=TINV(0.95,1)", 0.07870170682461851),
+    ("=TINV(0.95,2)", 0.07079923254047893),
+    ("=TINV(0.95,5)", 0.06591485539302447),
+    ("=TINV(0.95,60)", 0.06296962799081811),
+    ("=CHIDIST(0.1,1)", 0.7518296340458492),
+    ("=TDIST(0.1,1,1)", 0.4682744825694465),
+    ("=FDIST(0.1,1,7)", 0.761050537242554),
+    ("=CHIDIST(0.1,4)", 0.9987908957257497),
+    ("=TDIST(0.1,4,1)", 0.4625779204697266),
+    ("=FDIST(0.1,4,7)", 0.9790008602318434),
+    ("=CHIDIST(0.1,30)", 1.0),
+    ("=TDIST(0.1,30,1)", 0.4605048058951356),
+    ("=FDIST(0.1,30,7)", 0.9999978304542261),
+    ("=CHIDIST(2,1)", 0.15729920705028105),
+    ("=TDIST(2,1,1)", 0.14758361765043326),
+    ("=FDIST(2,1,7)", 0.20020007416624017),
+    ("=CHIDIST(2,4)", 0.7357588823428847),
+    ("=TDIST(2,4,1)", 0.05805826175840778),
+    ("=FDIST(2,4,7)", 0.1990219283583713),
+    ("=CHIDIST(2,30)", 0.9999999999997),
+    ("=TDIST(2,30,1)", 0.027312522481491547),
+    ("=FDIST(2,30,7)", 0.1730390416788052),
+    ("=CHIDIST(10,1)", 0.001565402258002549),
+    ("=TDIST(10,1,1)", 0.03172551743055357),
+    ("=FDIST(10,1,7)", 0.01587780383518859),
+    ("=CHIDIST(10,4)", 0.04042768199451279),
+    ("=TDIST(10,4,1)", 0.0002810018113579955),
+    ("=FDIST(10,4,7)", 0.0050727608200323675),
+    ("=CHIDIST(10,30)", 0.9997737463238232),
+    ("=TDIST(10,30,1)", 2.287625704114809e-11),
+    ("=FDIST(10,30,7)", 0.0020624365675693855),
+    ("=CHIDIST(40,1)", 2.5396285894708634e-10),
+    ("=TDIST(40,1,1)", 0.007956089912025812),
+    ("=FDIST(40,1,7)", 0.00039473814862792973),
+    ("=CHIDIST(40,4)", 4.328422607120966e-08),
+    ("=TDIST(40,4,1)", 1.1670081613006339e-06),
+    ("=FDIST(40,4,7)", 6.563771150747113e-05),
+    ("=CHIDIST(40,30)", 0.10486428110798468),
+    ("=TDIST(40,30,1)", 6.863022597203209e-28),
+    ("=FDIST(40,30,7)", 2.060909068255183e-05),
+];
+
+#[test]
+fn legacy_tails_and_inverses_match_reference_grid() {
+    let mut e = engine();
+    let mut failures = Vec::new();
+    for (formula, expected) in REFERENCE_GRID {
+        match eval_in(&mut e, formula) {
+            LiteralValue::Number(got)
+                if (got - expected).abs() <= 1e-8 * expected.abs().max(1e-300) => {}
+            other => failures.push(format!("{formula}: got {other:?}, expected {expected}")),
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn legacy_names_and_xlfn_modern_names_both_resolve() {
+    for (legacy, modern) in [
+        ("=NORMSDIST(0.7)", "=_xlfn.NORM.S.DIST(0.7,TRUE)"),
+        ("=NORMSINV(0.3)", "=_xlfn.NORM.S.INV(0.3)"),
+        ("=NORMDIST(1,0.5,2,TRUE)", "=_xlfn.NORM.DIST(1,0.5,2,TRUE)"),
+        ("=NORMINV(0.3,1,2)", "=_xlfn.NORM.INV(0.3,1,2)"),
+        ("=TDIST(1.3,7,2)", "=_xlfn.T.DIST.2T(1.3,7)"),
+        ("=TDIST(1.3,7,1)", "=_xlfn.T.DIST.RT(1.3,7)"),
+        ("=TINV(0.2,7)", "=_xlfn.T.INV.2T(0.2,7)"),
+        ("=CHIDIST(3,4)", "=_xlfn.CHISQ.DIST.RT(3,4)"),
+        ("=CHIINV(0.3,4)", "=_xlfn.CHISQ.INV.RT(0.3,4)"),
+        ("=FDIST(2,3,5)", "=_xlfn.F.DIST.RT(2,3,5)"),
+        ("=FINV(0.2,3,5)", "=_xlfn.F.INV.RT(0.2,3,5)"),
+        ("=BETADIST(0.3,2,3)", "=_xlfn.BETA.DIST(0.3,2,3,TRUE)"),
+        ("=BETAINV(0.3,2,3)", "=_xlfn.BETA.INV(0.3,2,3)"),
+        ("=GAMMADIST(2,3,1,TRUE)", "=_xlfn.GAMMA.DIST(2,3,1,TRUE)"),
+        ("=GAMMAINV(0.4,3,1)", "=_xlfn.GAMMA.INV(0.4,3,1)"),
+        ("=LOGNORMDIST(2,0.5,1)", "=_xlfn.LOGNORM.DIST(2,0.5,1,TRUE)"),
+        ("=LOGINV(0.4,0.5,1)", "=_xlfn.LOGNORM.INV(0.4,0.5,1)"),
+        ("=POISSON(3,2,TRUE)", "=_xlfn.POISSON.DIST(3,2,TRUE)"),
+        (
+            "=BINOMDIST(3,8,0.4,TRUE)",
+            "=_xlfn.BINOM.DIST(3,8,0.4,TRUE)",
+        ),
+        ("=EXPONDIST(1,2,TRUE)", "=_xlfn.EXPON.DIST(1,2,TRUE)"),
+        ("=WEIBULL(1,2,3,TRUE)", "=_xlfn.WEIBULL.DIST(1,2,3,TRUE)"),
+        (
+            "=HYPGEOMDIST(1,4,8,20)",
+            "=_xlfn.HYPGEOM.DIST(1,4,8,20,FALSE)",
+        ),
+        (
+            "=NEGBINOMDIST(3,2,0.4)",
+            "=_xlfn.NEGBINOM.DIST(3,2,0.4,FALSE)",
+        ),
+        ("=CRITBINOM(6,0.5,0.75)", "=_xlfn.BINOM.INV(6,0.5,0.75)"),
+    ] {
+        let a = eval(legacy);
+        let b = eval(modern);
+        let (LiteralValue::Number(x), LiteralValue::Number(y)) = (&a, &b) else {
+            panic!("{legacy} => {a:?}, {modern} => {b:?}");
+        };
+        assert!(
+            (x - y).abs() <= 1e-12 * y.abs().max(1.0),
+            "{legacy} = {x} but {modern} = {y}"
+        );
+    }
+}
+
+#[test]
+fn legacy_names_are_case_insensitive_and_nest() {
+    // The corpus's Black-Scholes sheet: price = S*N(d1) - K*e^(-rt)*N(d2).
+    check(
+        "=100*normsdist(0.35)-95*EXP(-0.05)*NormSDist(0.15)",
+        100.0 * 0.636_830_651_175_619 - 95.0 * (-0.05f64).exp() * 0.559_617_692_370_242_5,
+        1e-9,
+    );
+}
+
+/* ───────────────────────── paired two-array functions ───────────────────────── */
+
+/// y = A1:A5 = 2, 4, <blank>, 8, 10 and x = B1:B5 = 1, 2, 3, "t", 5:
+/// rows 3 and 4 are dropped, leaving the pairs (1,2), (2,4), (5,10).
+fn paired_fixture() -> Engine<TestWorkbook> {
+    let mut e = engine();
+    num(&mut e, "A1", 2.0);
+    num(&mut e, "A2", 4.0);
+    num(&mut e, "A4", 8.0);
+    num(&mut e, "A5", 10.0);
+    num(&mut e, "B1", 1.0);
+    num(&mut e, "B2", 2.0);
+    num(&mut e, "B3", 3.0);
+    set(&mut e, "B4", LiteralValue::Text("t".into()));
+    num(&mut e, "B5", 5.0);
+    e
+}
+
+#[test]
+fn correl_drops_the_pair_when_one_side_is_blank() {
+    // Repro: A1:A4 = 1..4, B1 blank, B2:B4 = 4, 6, 8. Excel: 1.
+    let mut e = engine();
+    for (i, v) in [1.0, 2.0, 3.0, 4.0].iter().enumerate() {
+        num(&mut e, &format!("A{}", i + 1), *v);
+    }
+    for (i, v) in [4.0, 6.0, 8.0].iter().enumerate() {
+        num(&mut e, &format!("B{}", i + 2), *v);
+    }
+    assert_close(
+        eval_in(&mut e, "=CORREL(A1:A4,B1:B4)"),
+        1.0,
+        1e-12,
+        "CORREL",
+    );
+}
+
+#[test]
+fn paired_functions_drop_pairs_with_blank_text_or_logical() {
+    // Pairs (1,2), (2,4), (5,10): y = 2x exactly.
+    let cases: [(&str, f64); 12] = [
+        ("=CORREL(A1:A5,B1:B5)", 1.0),
+        ("=PEARSON(A1:A5,B1:B5)", 1.0),
+        ("=RSQ(A1:A5,B1:B5)", 1.0),
+        ("=SLOPE(A1:A5,B1:B5)", 2.0),
+        ("=INTERCEPT(A1:A5,B1:B5)", 0.0),
+        ("=STEYX(A1:A5,B1:B5)", 0.0),
+        // mean x = 8/3, sum dx^2 = 78/9, cov(x, 2x) = 2 * 78/9 / n
+        ("=COVAR(A1:A5,B1:B5)", 2.0 * 78.0 / 9.0 / 3.0),
+        ("=COVARIANCE.P(A1:A5,B1:B5)", 2.0 * 78.0 / 9.0 / 3.0),
+        ("=COVARIANCE.S(A1:A5,B1:B5)", 2.0 * 78.0 / 9.0 / 2.0),
+        ("=_xlfn.COVARIANCE.S(A1:A5,B1:B5)", 2.0 * 78.0 / 9.0 / 2.0),
+        ("=FORECAST(6,A1:A5,B1:B5)", 12.0),
+        ("=FORECAST.LINEAR(6,A1:A5,B1:B5)", 12.0),
+    ];
+    for (formula, expected) in cases {
+        let mut e = paired_fixture();
+        assert_close(eval_in(&mut e, formula), expected, 1e-9, formula);
+    }
+}
+
+#[test]
+fn paired_functions_drop_logical_cells_pairwise() {
+    let mut e = engine();
+    for (i, v) in [1.0, 2.0, 3.0, 4.0].iter().enumerate() {
+        num(&mut e, &format!("A{}", i + 1), *v);
+        num(&mut e, &format!("B{}", i + 1), 3.0 * v);
+    }
+    // A logical in y at row 2: the pair is dropped, not the value alone.
+    set(&mut e, "A2", LiteralValue::Boolean(true));
+    num(&mut e, "B2", 100.0);
+    assert_close(eval_in(&mut e, "=SLOPE(B1:B4,A1:A4)"), 3.0, 1e-12, "SLOPE");
+}
+
+#[test]
+fn paired_functions_reject_different_sizes() {
+    for formula in [
+        "=CORREL(A1:A4,B1:B5)",
+        "=PEARSON(A1:A4,B1:B5)",
+        "=RSQ(A1:A4,B1:B5)",
+        "=SLOPE(A1:A4,B1:B5)",
+        "=INTERCEPT(A1:A4,B1:B5)",
+        "=STEYX(A1:A4,B1:B5)",
+        "=COVAR(A1:A4,B1:B5)",
+        "=COVARIANCE.P(A1:A4,B1:B5)",
+        "=COVARIANCE.S(A1:A4,B1:B5)",
+        "=FORECAST(1,A1:A4,B1:B5)",
+    ] {
+        let mut e = paired_fixture();
+        // A 4-cell array against a 5-cell array is #N/A whatever the cells hold.
+        assert_error(eval_in(&mut e, formula), ExcelErrorKind::Na, formula);
+    }
+}
+
+#[test]
+fn correl_pairs_whole_columns_by_row() {
+    // Columns with different used extents still pair row by row.
+    let mut e = engine();
+    for (i, v) in [1.0, 2.0, 3.0, 4.0, 5.0].iter().enumerate() {
+        num(&mut e, &format!("D{}", i + 3), *v);
+    }
+    // E starts one row later and runs two rows past D; the extra rows pair
+    // with blanks in D and are dropped.
+    for (i, v) in [5.0, 7.0, 9.0, 11.0, 50.0, 60.0].iter().enumerate() {
+        num(&mut e, &format!("E{}", i + 4), *v);
+    }
+    // Rows 4..7 pair (2,5), (3,7), (4,9), (5,11): slope 2, correlation 1.
+    assert_close(eval_in(&mut e, "=CORREL(D:D,E:E)"), 1.0, 1e-12, "CORREL");
+    assert_close(eval_in(&mut e, "=SLOPE(E:E,D:D)"), 2.0, 1e-12, "SLOPE");
+    assert_close(
+        eval_in(&mut e, "=INTERCEPT(E:E,D:D)"),
+        1.0,
+        1e-12,
+        "INTERCEPT",
+    );
+}
+
+#[test]
+fn paired_inline_arrays_pair_by_position() {
+    check("=CORREL({1,2,3,4},{\"x\",4,6,8})", 1.0, 1e-12);
+    check("=SLOPE({2,4,6},{1,2,3})", 2.0, 1e-12);
+    check_err("=SLOPE({2,4,6},{1,2})", ExcelErrorKind::Na);
+}
+
+/* ───────────────────────────── multiple regression ───────────────────────────── */
+
+fn array_at(
+    engine: &Engine<TestWorkbook>,
+    row: u32,
+    col: u32,
+    rows: u32,
+    cols: u32,
+) -> Vec<Vec<LiteralValue>> {
+    (0..rows)
+        .map(|r| {
+            (0..cols)
+                .map(|c| {
+                    engine
+                        .get_cell_value(SHEET, row + r, col + c)
+                        .unwrap_or(LiteralValue::Empty)
+                })
+                .collect()
+        })
+        .collect()
+}
+
+fn eval_array(
+    engine: &mut Engine<TestWorkbook>,
+    formula: &str,
+    rows: u32,
+    cols: u32,
+) -> Vec<Vec<LiteralValue>> {
+    engine
+        .set_cell_formula(SHEET, 1000, 30, parse(formula).unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    array_at(engine, 1000, 30, rows, cols)
+}
+
+#[track_caller]
+fn assert_row(row: &[LiteralValue], expected: &[Option<f64>], rel: f64, what: &str) {
+    assert_eq!(row.len(), expected.len(), "{what}");
+    for (i, (got, want)) in row.iter().zip(expected).enumerate() {
+        match want {
+            Some(w) => assert_close(
+                got.clone(),
+                *w,
+                rel * w.abs().max(1.0),
+                &format!("{what}[{i}]"),
+            ),
+            None => assert_error(got.clone(), ExcelErrorKind::Na, &format!("{what}[{i}]")),
+        }
+    }
+}
+
+/// The multiple-regression example on the LINEST support page (Example 3:
+/// floor space, offices, entrances and age against assessed value).
+fn assessed_value_fixture() -> Engine<TestWorkbook> {
+    let data: [[f64; 5]; 11] = [
+        [2310.0, 2.0, 2.0, 20.0, 142000.0],
+        [2333.0, 2.0, 2.0, 12.0, 144000.0],
+        [2356.0, 3.0, 1.5, 33.0, 151000.0],
+        [2379.0, 3.0, 2.0, 43.0, 150000.0],
+        [2402.0, 2.0, 3.0, 53.0, 139000.0],
+        [2425.0, 4.0, 2.0, 23.0, 169000.0],
+        [2448.0, 2.0, 1.5, 99.0, 126000.0],
+        [2471.0, 2.0, 2.0, 34.0, 142900.0],
+        [2494.0, 3.0, 3.0, 23.0, 163000.0],
+        [2517.0, 4.0, 4.0, 55.0, 169000.0],
+        [2540.0, 2.0, 3.0, 22.0, 149000.0],
+    ];
+    let mut e = engine();
+    for (r, row) in data.iter().enumerate() {
+        for (c, v) in row.iter().enumerate() {
+            e.set_cell_value(SHEET, r as u32 + 2, c as u32 + 1, LiteralValue::Number(*v))
+                .unwrap();
+        }
+    }
+    e
+}
+
+#[test]
+fn linest_multiple_regression_matches_documented_example() {
+    let mut e = assessed_value_fixture();
+    let out = eval_array(&mut e, "=LINEST(E2:E12,A2:D12,TRUE,TRUE)", 5, 5);
+    // Coefficients come back in reverse order of the x columns, then b.
+    assert_row(
+        &out[0],
+        &[
+            Some(-234.2371645),
+            Some(2553.21066),
+            Some(12529.76817),
+            Some(27.64138737),
+            Some(52317.83051),
+        ],
+        1e-8,
+        "coefficients",
+    );
+    assert_row(
+        &out[1],
+        &[
+            Some(13.26801148),
+            Some(530.6691519),
+            Some(400.0668382),
+            Some(5.429374042),
+            Some(12237.3616),
+        ],
+        1e-8,
+        "standard errors",
+    );
+    assert_row(
+        &out[2],
+        &[Some(0.996747993), Some(970.5784629), None, None, None],
+        1e-8,
+        "r2/sey",
+    );
+    assert_row(
+        &out[3],
+        &[Some(459.7536742), Some(6.0), None, None, None],
+        1e-8,
+        "F/df",
+    );
+    assert_row(
+        &out[4],
+        &[Some(1732393319.0), Some(5652135.316), None, None, None],
+        1e-8,
+        "ssreg/ssresid",
+    );
+}
+
+#[test]
+fn linest_multiple_predictors_repro() {
+    // y = 2*x1 + 3*x2 + 5 exactly; Excel's first cell is the x2 coefficient.
+    let mut e = engine();
+    let y = [10.0, 12.0, 11.0, 13.0, 21.0];
+    let x1 = [1.0, 2.0, 3.0, 4.0, 5.0];
+    let x2 = [1.0, 1.0, 0.0, 0.0, 2.0];
+    for i in 0..5 {
+        num(&mut e, &format!("A{}", i + 1), y[i]);
+        num(&mut e, &format!("B{}", i + 1), x1[i]);
+        num(&mut e, &format!("C{}", i + 1), x2[i]);
+    }
+    let out = eval_array(&mut e, "=LINEST(A1:A5,B1:C5)", 1, 3);
+    assert_row(
+        &out[0],
+        &[Some(3.0), Some(2.0), Some(5.0)],
+        1e-12,
+        "coefficients",
+    );
+}
+
+#[test]
+fn linest_without_constant_reports_na_for_seb() {
+    let mut e = engine();
+    let y = [10.0, 12.0, 11.0, 13.0, 21.0];
+    let x1 = [1.0, 2.0, 3.0, 4.0, 5.0];
+    let x2 = [1.0, 1.0, 0.0, 0.0, 2.0];
+    for i in 0..5 {
+        num(&mut e, &format!("A{}", i + 1), y[i]);
+        num(&mut e, &format!("B{}", i + 1), x1[i]);
+        num(&mut e, &format!("C{}", i + 1), x2[i]);
+    }
+    // Reference values from an independent normal-equations solve.
+    let out = eval_array(&mut e, "=LINEST(A1:A5,B1:C5,FALSE,TRUE)", 5, 3);
+    assert_row(
+        &out[0],
+        &[Some(3.7763975155279472), Some(3.180124223602484), Some(0.0)],
+        1e-10,
+        "coefficients",
+    );
+    assert_row(
+        &out[1],
+        &[Some(1.5450115483022049), Some(0.5103005194147511), None],
+        1e-10,
+        "standard errors",
+    );
+    assert_row(
+        &out[2],
+        &[Some(0.9784997611084567), Some(2.643402663188405), None],
+        1e-10,
+        "r2/sey",
+    );
+    assert_row(
+        &out[3],
+        &[Some(68.26666666666667), Some(3.0), None],
+        1e-10,
+        "F/df",
+    );
+    assert_row(
+        &out[4],
+        &[Some(954.0372670807453), Some(20.96273291925466), None],
+        1e-10,
+        "ss",
+    );
+}
+
+#[test]
+fn linest_removes_collinear_columns() {
+    // x2 = 2*x1 is redundant: one of the two gets coefficient 0 and se 0,
+    // and df goes up by one (n - k - 1 + 1 = 5 - 2 - 1 + 1 = 3).
+    let mut e = engine();
+    let x1 = [1.0, 2.0, 3.0, 4.0, 5.0];
+    let y = [3.1, 4.9, 7.2, 8.8, 11.1];
+    for i in 0..5 {
+        num(&mut e, &format!("A{}", i + 1), y[i]);
+        num(&mut e, &format!("B{}", i + 1), x1[i]);
+        num(&mut e, &format!("C{}", i + 1), 2.0 * x1[i]);
+    }
+    let out = eval_array(&mut e, "=LINEST(A1:A5,B1:C5,TRUE,TRUE)", 5, 3);
+    let single = eval_array(&mut e, "=LINEST(A1:A5,B1:B5,TRUE,TRUE)", 5, 2);
+    let n = |v: &LiteralValue| match v {
+        LiteralValue::Number(n) => *n,
+        other => panic!("{other:?}"),
+    };
+    let (m2, m1) = (n(&out[0][0]), n(&out[0][1]));
+    let (se2, se1) = (n(&out[1][0]), n(&out[1][1]));
+    let slope = n(&single[0][0]);
+    // Exactly one column is dropped; the other carries the whole slope.
+    assert!(
+        (m2 == 0.0 && se2 == 0.0 && (m1 - slope).abs() < 1e-12)
+            || (m1 == 0.0 && se1 == 0.0 && (2.0 * m2 - slope).abs() < 1e-12),
+        "m2={m2} m1={m1} se2={se2} se1={se1} slope={slope}"
+    );
+    assert_close(out[0][2].clone(), n(&single[0][1]), 1e-12, "intercept");
+    assert_close(out[3][1].clone(), 3.0, 0.0, "df");
+    assert_close(out[2][0].clone(), n(&single[2][0]), 1e-12, "r2");
+}
+
+#[test]
+fn linest_constant_x_is_collinear_not_div0() {
+    // LINEST support page: with y = 0 and x = 1, LINEST returns 0.
+    let out = eval_array(&mut engine(), "=LINEST({0,0,0},{1,1,1})", 1, 2);
+    assert_row(&out[0], &[Some(0.0), Some(0.0)], 0.0, "coefficients");
+}
+
+#[test]
+fn linest_row_oriented_variables() {
+    // known_y's in a row: each row of known_x's is a variable.
+    let out = eval_array(
+        &mut engine(),
+        "=LINEST({10,12,11,13,21},{1,2,3,4,5;1,1,0,0,2})",
+        1,
+        3,
+    );
+    assert_row(
+        &out[0],
+        &[Some(3.0), Some(2.0), Some(5.0)],
+        1e-12,
+        "coefficients",
+    );
+}
+
+#[test]
+fn linest_incompatible_shapes_are_ref_errors() {
+    check_err("=LINEST({1,2,3},{1,2})", ExcelErrorKind::Ref);
+    check_err("=LINEST({1;2;3},{1,2;3,4})", ExcelErrorKind::Ref);
+}
+
+#[test]
+fn trend_and_growth_use_every_predictor() {
+    // y = 2*x1 + 3*x2 + 5; predict at (6, 1) and (7, 0) -> 20, 19.
+    check(
+        "=INDEX(TREND({10;12;11;13;21},{1,1;2,1;3,0;4,0;5,2},{6,1;7,0}),1)",
+        20.0,
+        1e-9,
+    );
+    check(
+        "=INDEX(TREND({10;12;11;13;21},{1,1;2,1;3,0;4,0;5,2},{6,1;7,0}),2)",
+        19.0,
+        1e-9,
+    );
+    // y = 3 * 2^x1 * 5^x2: GROWTH at (4, 1) = 3*16*5 = 240.
+    check(
+        "=GROWTH({6;12;120;48;600},{1,0;2,0;3,1;4,0;3,2},{4,1})",
+        240.0,
+        1e-8,
+    );
+}
+
+#[test]
+fn trend_result_takes_the_shape_of_new_x() {
+    let out = eval_array(&mut engine(), "=TREND({3;5;7},{1;2;3},{4;5})", 2, 1);
+    assert_close(out[0][0].clone(), 9.0, 1e-12, "TREND[0]");
+    assert_close(out[1][0].clone(), 11.0, 1e-12, "TREND[1]");
+}
+
+#[test]
+fn logest_multiple_regression() {
+    // y = 3 * 2^x1 * 5^x2: LOGEST returns {m2, m1, b} = {5, 2, 3}.
+    let out = eval_array(
+        &mut engine(),
+        "=LOGEST({6;12;120;48;600},{1,0;2,0;3,1;4,0;3,2})",
+        1,
+        3,
+    );
+    assert_row(&out[0], &[Some(5.0), Some(2.0), Some(3.0)], 1e-9, "LOGEST");
+}
+
+#[test]
+fn legacy_array_formula_wider_than_linest_pads_na() {
+    // A fixed (Ctrl+Shift+Enter) LINEST over E1:H5 with two predictors:
+    // the result is 3 x 5, so column H is #N/A, as are the unused stats cells.
+    let mut e = Engine::new(
+        TestWorkbook::new(),
+        EvalConfig {
+            enable_parallel: false,
+            family_execution: false,
+            ..EvalConfig::default()
+        },
+    );
+    let y = [2.0, 4.0, 8.0, 10.0];
+    let x1 = [1.0, 2.0, 3.0, 4.0];
+    let x2 = [0.0, 1.0, 0.0, 1.0];
+    for i in 0..4 {
+        num(&mut e, &format!("A{}", i + 2), y[i]);
+        num(&mut e, &format!("B{}", i + 2), x1[i]);
+        num(&mut e, &format!("C{}", i + 2), x2[i]);
+    }
+    e.set_cell_formula(
+        SHEET,
+        1,
+        5,
+        parse("=LINEST(A2:A5,B2:C5,TRUE,TRUE)").unwrap(),
+    )
+    .unwrap();
+    e.build_graph_all().unwrap();
+    e.declare_fixed_array_formula(SHEET, 1, 5, 5, 4).unwrap();
+    e.evaluate_all().unwrap();
+    let out = array_at(&e, 1, 5, 5, 4);
+    // y = 3*x1 - x2 - 1 exactly.
+    assert_row(
+        &out[0],
+        &[Some(-1.0), Some(3.0), Some(-1.0), None],
+        1e-12,
+        "row 1",
+    );
+    assert_close(out[1][1].clone(), 0.0, 1e-12, "se(x1)");
+    assert_error(out[3][2].clone(), ExcelErrorKind::Na, "G4");
+    assert_error(out[3][3].clone(), ExcelErrorKind::Na, "H4");
+}

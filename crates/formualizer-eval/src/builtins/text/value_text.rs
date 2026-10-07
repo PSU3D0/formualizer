@@ -41,7 +41,8 @@ pub struct ValueFn;
 ///
 /// # Remarks
 /// - Parsing uses locale-aware invariant number parsing from the function context.
-/// - Non-numeric text returns `#VALUE!`.
+/// - Date and time text becomes its serial (`VALUE("12/31/00")` is 36891; two-digit years 00-29 are 2000-2029, 30-99 are 1930-1999).
+/// - Other non-numeric text, and `NaN`/`inf` spellings, return `#VALUE!`.
 /// - Booleans and numbers are first coerced to text, then parsed.
 /// - Errors are propagated unchanged.
 ///
@@ -66,7 +67,7 @@ pub struct ValueFn;
 ///   - ISNUMBER
 /// faq:
 ///   - q: "Does VALUE coerce arbitrary text like TRUE/FALSE?"
-///     a: "VALUE parses numeric text only; non-numeric strings return #VALUE!."
+///     a: "VALUE parses numeric, date and time text only; other strings return #VALUE!."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: VALUE
@@ -95,7 +96,11 @@ impl Function for ValueFn {
         ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let s = to_text(&args[0])?;
-        let Some(n) = ctx.locale().parse_number_invariant(&s) else {
+        // Text in a date or time format is a number too (`VALUE("12/31/00")`
+        // is 36891).
+        let Some(n) = ctx.locale().parse_number_invariant(&s).or_else(|| {
+            formualizer_common::parse_excel_datetime_text_to_serial_for(ctx.date_system(), &s)
+        }) else {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new_value(),
             )));
@@ -210,7 +215,7 @@ impl Function for NumberValueFn {
             )));
         }
 
-        let Ok(mut n) = cleaned.parse::<f64>() else {
+        let Some(mut n) = cleaned.parse::<f64>().ok().filter(|n| n.is_finite()) else {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new_value(),
             )));
@@ -228,14 +233,14 @@ impl Function for NumberValueFn {
 pub struct TextFn;
 /// Formats a value as text using a format pattern.
 ///
-/// Number formats are rendered like Excel; date and time support is limited.
+/// Number, date and time formats are rendered like Excel (en-US).
 ///
 /// # Remarks
 /// - Requires exactly two arguments: value and format text.
-/// - Numeric text is parsed before formatting. Text that is *clearly* non-numeric (no
-///   digits) is returned unchanged (e.g. `=TEXT("abc","00")` -> `"abc"`), matching Excel.
-///   Digit-bearing text that is not a plain number (dates, currency, fractions, or
-///   locale-ambiguous values like `"1.234,56"`) still returns `#VALUE!` for now.
+/// - Numeric, date and time text is parsed before formatting. Text that is *clearly*
+///   non-numeric (no digits) is returned unchanged (e.g. `=TEXT("abc","00")` -> `"abc"`),
+///   matching Excel. Other digit-bearing text (currency, fractions, or locale-ambiguous
+///   values like `"1.234,56"`) still returns `#VALUE!` for now.
 /// - Error inputs are propagated unchanged.
 /// - Number formats support `0` and `#` placeholders, the decimal point, thousands
 ///   grouping, trailing-comma scaling, `%`, quoted, escaped or bare literal text, colour
@@ -244,9 +249,14 @@ pub struct TextFn;
 /// - Excel's `#VALUE!` cases are reproduced: a result longer than 255 characters, and a
 ///   date, time or exponent letter (`b d e g h m n s y`) left unquoted beside a digit
 ///   placeholder, such as `=TEXT(5,"0 kg")`.
-/// - Scientific, fraction, `?`, `*`, `_`, conditional and locale codes, the fourth (text)
-///   section and a bare colour tag keep a simplified rendering, and date and time tokens
-///   are limited.
+/// - Date and time codes: `d`, `dd`, `ddd`, `dddd`, `m` to `mmmmm`, `yy`, `yyyy`, `h`,
+///   `hh`, `m`/`mm` as minutes (after `h` or before `s`), `s`, `ss`, `ss.00`, `AM/PM`,
+///   `A/P` and elapsed `[h]`, `[m]`, `[s]`. The value is rounded to the shown seconds
+///   precision before it is split, so `23:59:59.6` is the next day's `00:00:00`;
+///   minutes are not rounded on their own (`h:mm` of `10:29:45` is `10:29`). A negative
+///   value or one past 9999-12-31 is `#VALUE!`.
+/// - Scientific, fraction, `?`, `*`, `_`, conditional codes, era years, the system date
+///   tags, the fourth (text) section and a bare colour tag keep a simplified rendering.
 ///
 /// # Examples
 ///
@@ -262,6 +272,12 @@ pub struct TextFn;
 /// expected: "26%"
 /// ```
 ///
+/// ```yaml,sandbox
+/// title: "Weekday name"
+/// formula: '=TEXT(45306, "dddd")'
+/// expected: "Monday"
+/// ```
+///
 /// ```yaml,docs
 /// related:
 ///   - VALUE
@@ -269,7 +285,7 @@ pub struct TextFn;
 ///   - DOLLAR
 /// faq:
 ///   - q: "How complete is format_text support?"
-///     a: "Number formats built from 0, #, the decimal point, grouping, %, literals and sections follow Excel. Scientific, fraction and conditional codes and most date/time tokens are simplified."
+///     a: "Number formats built from 0, #, the decimal point, grouping, %, literals and sections follow Excel. Date and time codes follow Excel too. Scientific, fraction and conditional codes are simplified."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: TEXT
@@ -322,7 +338,11 @@ impl Function for TextFn {
         let num = match val {
             LiteralValue::Number(f) => f,
             LiteralValue::Int(i) => i as f64,
-            LiteralValue::Text(t) => match ctx.locale().parse_number_invariant(&t) {
+            LiteralValue::Text(t) => match ctx.locale().parse_number_invariant(&t).or_else(|| {
+                // Date and time text is a number to Excel
+                // (`TEXT("4/19/2001","yyyy")` is `2001`).
+                formualizer_common::parse_excel_datetime_text_to_serial_for(ctx.date_system(), &t)
+            }) {
                 Some(n) => n,
                 None => {
                     // Excel returns the text argument unchanged only when it is
@@ -363,8 +383,19 @@ impl Function for TextFn {
                     ExcelError::new_value(),
                 )));
             }
-            // Dates, times and the less common number codes keep the
-            // previous rendering below.
+            Err(super::number_format::Fallback::Unsupported) => {}
+        }
+        match super::date_format::format_datetime(ctx.date_system(), num, &fmt) {
+            Ok(text) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(text)));
+            }
+            Err(super::number_format::Fallback::Invalid) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_value(),
+                )));
+            }
+            // The less common number and date codes keep the previous
+            // rendering below.
             Err(super::number_format::Fallback::Unsupported) => {}
         }
         let out = if fmt.contains('%') {

@@ -517,8 +517,8 @@ fn eval_if_family<'a, 'b>(
                                         if m0.null_count() == 0 {
                                             m0
                                         } else {
-                                            // Fill nulls using per-cell matching so blanks can still match numeric
-                                            // criteria (e.g. blank == 0 in Excel criteria semantics).
+                                            // Fill nulls using per-cell matching so numeric text can still match
+                                            // numeric criteria ("5" == 5); blanks never equal a number.
                                             let view = crit_specs[j].0.as_ref().unwrap();
                                             let mut bb =
                                                 arrow_array::builder::BooleanBuilder::with_capacity(
@@ -539,7 +539,7 @@ fn eval_if_family<'a, 'b>(
                                     } else {
                                         // If the criteria range has no numeric fast-path column (e.g. text column
                                         // or mixed types), fall back to per-cell matching so numeric criteria can
-                                        // still match blanks / numeric text values (Excel semantics).
+                                        // still match numeric text values (Excel semantics).
                                         let mut bb =
                                             arrow_array::builder::BooleanBuilder::with_capacity(
                                                 row_len,
@@ -1692,7 +1692,7 @@ impl Function for CountBlankFn {
                         let (_, _, tag_cols) = tag_res?;
                         let (_, _, text_cols) = text_res?;
 
-                        for (tc, xc) in tag_cols.into_iter().zip(text_cols.into_iter()) {
+                        for (tc, xc) in tag_cols.into_iter().zip(text_cols) {
                             visited_cells += tc.len() as u64;
                             let text_arr = xc
                                 .as_any()
@@ -1933,9 +1933,10 @@ mod tests {
     }
 
     #[test]
-    fn sumif_numeric_zero_matches_blank_in_text_column() {
-        // Regression test: if the criteria range is text-typed (no numeric fast-path column),
-        // numeric criteria should still match blanks (Excel semantics: blank coerces to 0).
+    fn sumif_numeric_zero_skips_blank_in_text_column() {
+        // If the criteria range is text-typed (no numeric fast-path column), the
+        // per-cell fallback applies Excel's rule: a number criterion never matches
+        // a blank cell (COUNTIF(range,0) does not count blanks).
         let wb = TestWorkbook::new().with_function(std::sync::Arc::new(SumIfFn));
         let ctx = interp(&wb);
 
@@ -1960,7 +1961,7 @@ mod tests {
             f.dispatch(&args, &ctx.function_context(None))
                 .unwrap()
                 .into_literal(),
-            LiteralValue::Number(5.0)
+            LiteralValue::Number(0.0)
         );
     }
 

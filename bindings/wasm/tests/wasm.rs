@@ -60,6 +60,13 @@ fn build_fixture_xlsx_bytes() -> Vec<u8> {
 }
 
 fn build_named_fixture_xlsx_bytes(sheet_name: &str) -> Vec<u8> {
+    build_fixture_with_c1(
+        sheet_name,
+        r#"<c r="C1" t="str"><f>A1+B1</f><v>stale</v></c>"#,
+    )
+}
+
+fn build_fixture_with_c1(sheet_name: &str, c1: &str) -> Vec<u8> {
     let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
     let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
 
@@ -120,6 +127,8 @@ fn build_named_fixture_xlsx_bytes(sheet_name: &str) -> Vec<u8> {
         zip.start_file(path, options).unwrap();
         let contents = if path == "xl/workbook.xml" {
             contents.replace("name=\"Sheet1\"", &format!("name=\"{sheet_name}\""))
+        } else if path == "xl/worksheets/sheet1.xml" {
+            contents.replace(r#"<c r="C1" t="str"><f>A1+B1</f><v>stale</v></c>"#, c1)
         } else {
             contents.to_owned()
         };
@@ -529,6 +538,35 @@ fn test_workbook_sheet_eval() {
     assert_eq!(v2.as_f64().unwrap(), 30.0);
 }
 
+/// FORM214: `A1#` and `_xlfn.ANCHORARRAY(A1)` evaluate to the anchor's
+/// current spill range; no current spill is `#REF!`.
+#[wasm_bindgen_test]
+fn spill_references_both_spellings() {
+    let wb = Workbook::new(None).unwrap();
+    let sheet = wb.sheet("S".to_string()).unwrap();
+    sheet.set_formula(1, 1, "=SEQUENCE(2)".to_string()).unwrap();
+    sheet.set_formula(1, 2, "=SUM(A1#)".to_string()).unwrap();
+    sheet
+        .set_formula(1, 3, "=SUM(_xlfn.ANCHORARRAY(A1))".to_string())
+        .unwrap();
+    sheet.set_formula(1, 4, "=ROWS(A1#)".to_string()).unwrap();
+    sheet.set_value(1, 5, JsValue::from_f64(5.0)).unwrap();
+    sheet.set_formula(1, 6, "=SUM(E1#)".to_string()).unwrap();
+    wb.evaluate_all().unwrap();
+    assert_eq!(sheet.get_value(1, 2).unwrap().as_f64(), Some(3.0));
+    assert_eq!(sheet.get_value(1, 3).unwrap().as_f64(), Some(3.0));
+    assert_eq!(sheet.get_value(1, 4).unwrap().as_f64(), Some(2.0));
+    assert_eq!(
+        sheet.get_value(1, 6).unwrap().as_string().as_deref(),
+        Some("#REF!")
+    );
+
+    sheet.set_formula(1, 1, "=SEQUENCE(4)".to_string()).unwrap();
+    wb.evaluate_all().unwrap();
+    assert_eq!(sheet.get_value(1, 2).unwrap().as_f64(), Some(10.0));
+    assert_eq!(sheet.get_value(1, 3).unwrap().as_f64(), Some(10.0));
+}
+
 #[wasm_bindgen_test]
 fn test_workbook_from_xlsx_bytes_evaluates_formula() {
     let bytes = build_fixture_xlsx_bytes();
@@ -552,7 +590,7 @@ fn test_workbook_from_xlsx_bytes_evaluates_formula() {
 #[wasm_bindgen_test]
 fn test_recalculate_xlsx_bytes_preserves_prototype_like_sheet_names() {
     let input = Uint8Array::from(build_named_fixture_xlsx_bytes("__proto__").as_slice());
-    let result: Object = recalculate_xlsx_bytes(input, None)
+    let result: Object = recalculate_xlsx_bytes(input, None, JsValue::UNDEFINED)
         .unwrap()
         .unchecked_into();
     let summary: Object = js_get(&result, "summary").unchecked_into();
@@ -567,9 +605,33 @@ fn test_recalculate_xlsx_bytes_preserves_prototype_like_sheet_names() {
 }
 
 #[wasm_bindgen_test]
+fn test_recalculate_xlsx_bytes_reports_error_reasons_and_unknown_functions() {
+    let input = build_fixture_with_c1("Sheet1", r#"<c r="C1"><f>_xll.EURO(A1)</f><v>1</v></c>"#);
+    let result: Object =
+        recalculate_xlsx_bytes(Uint8Array::from(input.as_slice()), None, JsValue::UNDEFINED)
+            .unwrap()
+            .dyn_into()
+            .unwrap();
+    let summary: Object = js_get(&result, "summary").dyn_into().unwrap();
+    let errors: Object = js_get(&summary, "error_summary").dyn_into().unwrap();
+    let name: Object = js_get(&errors, "#NAME?").dyn_into().unwrap();
+    let messages: js_sys::Array = js_get(&name, "messages").dyn_into().unwrap();
+    assert_eq!(messages.length(), 1);
+    assert_eq!(
+        messages.get(0).as_string().as_deref(),
+        Some("Unknown function: _xll.EURO")
+    );
+    let unknown: js_sys::Array = js_get(&summary, "unknown_functions").dyn_into().unwrap();
+    assert_eq!(unknown.length(), 1);
+    let entry: Object = unknown.get(0).dyn_into().unwrap();
+    assert_eq!(js_get_string(&entry, "name"), "_xll.EURO");
+    assert_eq!(js_get_f64(&entry, "cells"), 1.0);
+}
+
+#[wasm_bindgen_test]
 fn test_recalculate_xlsx_bytes_returns_typed_array_and_counts() {
     let input = Uint8Array::from(build_fixture_xlsx_bytes().as_slice());
-    let result: Object = recalculate_xlsx_bytes(input, None)
+    let result: Object = recalculate_xlsx_bytes(input, None, JsValue::UNDEFINED)
         .unwrap()
         .dyn_into()
         .unwrap();
@@ -588,7 +650,7 @@ fn test_recalculate_xlsx_bytes_returns_typed_array_and_counts() {
         .unwrap();
     assert!(xml.contains("<v>3</v>"));
     assert!(!xml.contains("t=\"str\""));
-    let repeated: Object = recalculate_xlsx_bytes(bytes, None)
+    let repeated: Object = recalculate_xlsx_bytes(bytes, None, JsValue::UNDEFINED)
         .unwrap()
         .unchecked_into();
     let repeated_bytes: Uint8Array = js_get(&repeated, "bytes").dyn_into().unwrap();
@@ -1564,4 +1626,357 @@ fn test_computed_date_native_by_default_and_serial_opt_out() {
 
     wb.set_temporal_egress("serial".to_string()).unwrap();
     assert_eq!(sheet.get_value(1, 1).unwrap().as_f64(), Some(45_627.0));
+}
+
+// Deliberately duplicated in the WASM test: fixed timestamps and stored inputs
+// make native/WASM input drift detectable independently of compression.
+#[wasm_bindgen_test]
+fn test_recalculate_cse_retains_extent_without_metadata() {
+    let input = Uint8Array::from(facade_array_fixture(false, true).as_slice());
+    let result: Object = recalculate_xlsx_bytes(input, None, JsValue::UNDEFINED)
+        .unwrap()
+        .unchecked_into();
+    let bytes: Uint8Array = js_get(&result, "bytes").dyn_into().unwrap();
+    let output = bytes.to_vec();
+    let mut archive = zip::ZipArchive::new(Cursor::new(&output)).unwrap();
+    assert!(archive.by_name("xl/metadata.xml").is_err());
+    let mut xml = String::new();
+    archive
+        .by_name("xl/worksheets/sheet1.xml")
+        .unwrap()
+        .read_to_string(&mut xml)
+        .unwrap();
+    assert!(xml.contains("ref=\"C2:C4\""));
+    assert!(!xml.contains(" cm="));
+    assert!(xml.contains("#REF!"));
+    let repeated: Object = recalculate_xlsx_bytes(bytes, None, JsValue::UNDEFINED)
+        .unwrap()
+        .unchecked_into();
+    let bytes: Uint8Array = js_get(&repeated, "bytes").dyn_into().unwrap();
+    assert_eq!(bytes.to_vec(), output);
+}
+
+fn facade_spill_fixture(grow: bool) -> Vec<u8> {
+    facade_array_fixture(grow, false)
+}
+
+fn facade_array_fixture(grow: bool, cse: bool) -> Vec<u8> {
+    let main = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+    let office = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+    let rels = "http://schemas.openxmlformats.org/package/2006/relationships";
+    let metadata_rel = if grow {
+        format!(
+            "<Relationship Id=\"rId2\" Type=\"{office}/sheetMetadata\" Target=\"metadata.xml\"/>"
+        )
+    } else {
+        String::new()
+    };
+    let metadata_type = if grow {
+        "<Override PartName=\"/xl/metadata.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheetMetadata+xml\"/>"
+    } else {
+        ""
+    };
+    let anchor = if grow { " cm=\"1\"" } else { "" };
+    let array = if grow || cse {
+        " t=\"array\" ref=\"C2:C4\""
+    } else {
+        ""
+    };
+    let children = if grow {
+        "<row r=\"3\"><c r=\"C3\"><v>2</v></c></row><row r=\"4\"><c r=\"C4\"><v>3</v></c></row>"
+    } else {
+        ""
+    };
+    let mut parts = vec![
+        (
+            "[Content_Types].xml",
+            format!(
+                "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/><Override PartName=\"/xl/worksheets/sheet1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>{metadata_type}</Types>"
+            ),
+        ),
+        (
+            "_rels/.rels",
+            format!(
+                "<Relationships xmlns=\"{rels}\"><Relationship Id=\"rId1\" Type=\"{office}/officeDocument\" Target=\"xl/workbook.xml\"/></Relationships>"
+            ),
+        ),
+        (
+            "xl/workbook.xml",
+            format!(
+                "<workbook xmlns=\"{main}\" xmlns:r=\"{office}\"><sheets><sheet name=\"Sheet1\" sheetId=\"1\" r:id=\"rId1\"/></sheets></workbook>"
+            ),
+        ),
+        (
+            "xl/_rels/workbook.xml.rels",
+            format!(
+                "<Relationships xmlns=\"{rels}\"><Relationship Id=\"rId1\" Type=\"{office}/worksheet\" Target=\"worksheets/sheet1.xml\"/>{metadata_rel}</Relationships>"
+            ),
+        ),
+        (
+            "xl/worksheets/sheet1.xml",
+            format!(
+                "<worksheet xmlns=\"{main}\"><dimension ref=\"B1:C10\"/><sheetData><row r=\"1\"><c r=\"B1\"><v>{}</v></c></row><row r=\"2\"><c r=\"C2\"{anchor}><f{array}>_xlfn.SEQUENCE($B$1)</f><v>99</v></c></row>{children}<row r=\"9\"><c r=\"C9\"><f>SUM(C2#)</f><v>99</v></c></row><row r=\"10\"><c r=\"C10\"><f>SUM(_xlfn.ANCHORARRAY(C2))</f><v>99</v></c></row></sheetData></worksheet>",
+                if grow { 5 } else { 3 }
+            ),
+        ),
+    ];
+    if grow {
+        parts.push(("xl/metadata.xml", format!("<metadata xmlns=\"{main}\" xmlns:xda=\"http://schemas.microsoft.com/office/spreadsheetml/2017/dynamicarray\"><metadataTypes count=\"1\"><metadataType name=\"XLDAPR\" minSupportedVersion=\"120000\" cellMeta=\"1\"/></metadataTypes><futureMetadata name=\"XLDAPR\" count=\"1\"><bk><extLst><ext uri=\"{{bdbb8cdc-fa1e-496e-a857-3c3f30c029c3}}\"><xda:dynamicArrayProperties fDynamic=\"1\" fCollapsed=\"0\"/></ext></extLst></bk></futureMetadata><cellMetadata count=\"1\"><bk><rc t=\"1\" v=\"0\"/></bk></cellMetadata></metadata>")));
+    }
+    let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Stored)
+        .last_modified_time(zip::DateTime::from_date_and_time(2020, 1, 2, 3, 4, 6).unwrap());
+    for (name, body) in parts {
+        zip.start_file(name, options).unwrap();
+        std::io::Write::write_all(&mut zip, body.as_bytes()).unwrap();
+    }
+    zip.finish().unwrap().into_inner()
+}
+
+fn facade_digest(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf29ce484222325, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+    })
+}
+
+// The native workbook test pins these same input/output length and FNV digests.
+// This compares package bytes across targets without adding hash dependencies.
+#[wasm_bindgen_test]
+fn test_source_spill_new_and_grow_match_native_bytes() {
+    for (grow, input_len, input_hash, output_len, output_hash) in [
+        (false, 2120, 0x294121765944cf03, 3004, 0xe616d27aa207a8ea),
+        (true, 3140, 0x3ce6d5315a538805, 3217, 0x2ab4247034ff1dcf),
+    ] {
+        let input = facade_spill_fixture(grow);
+        assert_eq!(
+            (input.len(), facade_digest(&input)),
+            (input_len, input_hash)
+        );
+        let result: Object =
+            recalculate_xlsx_bytes(Uint8Array::from(input.as_slice()), None, JsValue::UNDEFINED)
+                .unwrap()
+                .dyn_into()
+                .unwrap();
+        let bytes: Uint8Array = js_get(&result, "bytes").dyn_into().unwrap();
+        let output = bytes.to_vec();
+        assert_eq!(
+            (output.len(), facade_digest(&output)),
+            (output_len, output_hash)
+        );
+        assert_eq!(js_get_f64(&result, "formula_cells"), 3.0);
+        assert_eq!(js_get_f64(&result, "cache_cells_changed"), 5.0);
+        assert_eq!(js_get_f64(&result, "worksheet_parts_changed"), 1.0);
+        let summary: Object = js_get(&result, "summary").dyn_into().unwrap();
+        assert_eq!(js_get_f64(&summary, "evaluated"), 3.0);
+        assert_eq!(js_get_string(&summary, "status"), "success");
+        let repeated: Object = recalculate_xlsx_bytes(bytes, None, JsValue::UNDEFINED)
+            .unwrap()
+            .dyn_into()
+            .unwrap();
+        let repeated_bytes: Uint8Array = js_get(&repeated, "bytes").dyn_into().unwrap();
+        assert_eq!(repeated_bytes.to_vec(), output);
+        assert_eq!(js_get_f64(&repeated, "cache_cells_changed"), 0.0);
+    }
+}
+
+#[wasm_bindgen_test]
+fn test_source_table_hydrates_before_formula_ingestion() {
+    use std::io::{Cursor, Read, Write};
+    let input = facade_spill_fixture(false);
+    let mut archive = zip::ZipArchive::new(Cursor::new(input)).unwrap();
+    let mut parts = std::collections::BTreeMap::new();
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i).unwrap();
+        let mut body = String::new();
+        file.read_to_string(&mut body).unwrap();
+        parts.insert(file.name().to_owned(), body);
+    }
+    let sheet = parts.get_mut("xl/worksheets/sheet1.xml").unwrap();
+    *sheet = sheet.replace("_xlfn.SEQUENCE($B$1)", "SUM(Table1[Qty])")
+        .replace("<row r=\"2\">", "<row r=\"2\"><c r=\"B2\"><v>2</v></c>")
+        .replace("</sheetData>", "</sheetData><tableParts count=\"1\"><tablePart xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" r:id=\"rId1\"/></tableParts>");
+    let types = parts.get_mut("[Content_Types].xml").unwrap();
+    *types = types.replace("</Types>", "<Override PartName=\"/xl/tables/table1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml\"/></Types>");
+    parts.insert("xl/worksheets/_rels/sheet1.xml.rels".into(), "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/table\" Target=\"../tables/table1.xml\"/></Relationships>".into());
+    let table = "<table xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" id=\"1\" name=\"Table1\" displayName=\"Table1\" ref=\"B1:B3\" headerRowCount=\"0\"><tableColumns count=\"1\"><tableColumn id=\"1\" name=\"Qty\"/></tableColumns></table>";
+    parts.insert("xl/tables/table1.xml".into(), table.into());
+    let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for (name, body) in parts {
+        zip.start_file(name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(body.as_bytes()).unwrap();
+    }
+    let input = zip.finish().unwrap().into_inner();
+    let result: Object =
+        recalculate_xlsx_bytes(Uint8Array::from(input.as_slice()), None, JsValue::UNDEFINED)
+            .unwrap()
+            .dyn_into()
+            .unwrap();
+    let bytes: Uint8Array = js_get(&result, "bytes").dyn_into().unwrap();
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes.to_vec())).unwrap();
+    let mut sheet = String::new();
+    archive
+        .by_name("xl/worksheets/sheet1.xml")
+        .unwrap()
+        .read_to_string(&mut sheet)
+        .unwrap();
+    assert!(sheet.contains("SUM(Table1[Qty])</f><v>5</v>"), "{sheet}");
+    let mut preserved = String::new();
+    archive
+        .by_name("xl/tables/table1.xml")
+        .unwrap()
+        .read_to_string(&mut preserved)
+        .unwrap();
+    assert_eq!(preserved, table);
+    let repeated: Object = recalculate_xlsx_bytes(bytes.clone(), None, JsValue::UNDEFINED)
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    let repeated_bytes: Uint8Array = js_get(&repeated, "bytes").dyn_into().unwrap();
+    assert_eq!(repeated_bytes.to_vec(), bytes.to_vec());
+}
+
+/// The default fixture with its worksheet replaced by TODAY/NOW/RAND formulas.
+fn volatile_fixture_xlsx_bytes() -> Vec<u8> {
+    let source = build_fixture_xlsx_bytes();
+    let mut archive = zip::ZipArchive::new(Cursor::new(&source)).unwrap();
+    let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i).unwrap();
+        let name = file.name().to_owned();
+        let mut contents = String::new();
+        file.read_to_string(&mut contents).unwrap();
+        if name == "xl/worksheets/sheet1.xml" {
+            contents = r#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><dimension ref="A1:A3"/><sheetData><row r="1"><c r="A1"><f>TODAY()</f><v>0</v></c></row><row r="2"><c r="A2"><f>NOW()</f><v>0</v></c></row><row r="3"><c r="A3"><f>RAND()</f><v>0</v></c></row></sheetData></worksheet>"#.to_owned();
+        }
+        zip.start_file(name, SimpleFileOptions::default()).unwrap();
+        zip.write_all(contents.as_bytes()).unwrap();
+    }
+    zip.finish().unwrap().into_inner()
+}
+
+fn cached_value(bytes: &Uint8Array, cell: &str) -> f64 {
+    let output = bytes.to_vec();
+    let mut archive = zip::ZipArchive::new(Cursor::new(&output)).unwrap();
+    let mut xml = String::new();
+    archive
+        .by_name("xl/worksheets/sheet1.xml")
+        .unwrap()
+        .read_to_string(&mut xml)
+        .unwrap();
+    let start = xml.find(&format!("<c r=\"{cell}\"")).unwrap();
+    let cell = &xml[start..start + xml[start..].find("</c>").unwrap()];
+    let value = &cell[cell.find("<v>").unwrap() + 3..];
+    value[..value.find("</v>").unwrap()].parse().unwrap()
+}
+
+#[wasm_bindgen_test]
+fn test_recalculate_xlsx_bytes_reproducibility_options_and_echo() {
+    let options = Object::new();
+    Reflect::set(
+        &options,
+        &JsValue::from_str("deterministicTimestampUtc"),
+        &JsValue::from_str("2026-03-01T23:30:00Z"),
+    )
+    .unwrap();
+    Reflect::set(
+        &options,
+        &JsValue::from_str("deterministicTimezone"),
+        &JsValue::from_str("+01:00"),
+    )
+    .unwrap();
+    Reflect::set(
+        &options,
+        &JsValue::from_str("rngSeed"),
+        &JsValue::from_f64(42.0),
+    )
+    .unwrap();
+    let run = |options: &JsValue| -> Object {
+        recalculate_xlsx_bytes(
+            Uint8Array::from(volatile_fixture_xlsx_bytes().as_slice()),
+            None,
+            options.clone(),
+        )
+        .unwrap()
+        .unchecked_into()
+    };
+    let first = run(&options.clone().into());
+    let second = run(&options.clone().into());
+    let bytes = |result: &Object| -> Uint8Array { js_get(result, "bytes").unchecked_into() };
+    assert_eq!(bytes(&first).to_vec(), bytes(&second).to_vec());
+    // 2026-03-02 00:30 at +01:00: serial 46083 + 0.5/24.
+    assert_eq!(cached_value(&bytes(&first), "A1"), 46083.0);
+    assert!((cached_value(&bytes(&first), "A2") - (46083.0 + 0.5 / 24.0)).abs() < 1e-9);
+    let clock: Object = js_get(&first, "clock").unchecked_into();
+    assert_eq!(js_get_string(&clock, "now"), "2026-03-02T00:30:00+01:00");
+    assert_eq!(js_get_string(&clock, "timezone"), "+01:00");
+    assert_eq!(js_get(&clock, "fixed").as_bool(), Some(true));
+    let seed = js_get(&first, "seed");
+    assert!(seed.is_bigint());
+    assert_eq!(js_sys::BigInt::from(seed).to_string(10).unwrap(), "42");
+    // A different seed changes RAND; the echoed default seed (a bigint beyond
+    // Number.MAX_SAFE_INTEGER) reproduces a default run.
+    Reflect::set(
+        &options,
+        &JsValue::from_str("rngSeed"),
+        &JsValue::from_f64(43.0),
+    )
+    .unwrap();
+    let other = run(&options.clone().into());
+    assert_ne!(
+        cached_value(&bytes(&first), "A3"),
+        cached_value(&bytes(&other), "A3")
+    );
+    let default = run(&JsValue::UNDEFINED);
+    let default_clock: Object = js_get(&default, "clock").unchecked_into();
+    assert_eq!(js_get(&default_clock, "fixed").as_bool(), Some(false));
+    assert_eq!(js_get_string(&default_clock, "timezone"), "Local");
+    let now = js_get_string(&default_clock, "now");
+    let replay = Object::new();
+    Reflect::set(
+        &replay,
+        &JsValue::from_str("rngSeed"),
+        &js_get(&default, "seed"),
+    )
+    .unwrap();
+    Reflect::set(
+        &replay,
+        &JsValue::from_str("deterministicTimestampUtc"),
+        &JsValue::from_str(&now),
+    )
+    .unwrap();
+    let offset_seconds = chrono::DateTime::parse_from_rfc3339(&now)
+        .unwrap()
+        .offset()
+        .local_minus_utc();
+    Reflect::set(
+        &replay,
+        &JsValue::from_str("deterministicTimezone"),
+        &JsValue::from_f64(offset_seconds.into()),
+    )
+    .unwrap();
+    let replayed = run(&replay.into());
+    assert_eq!(bytes(&default).to_vec(), bytes(&replayed).to_vec());
+    // Invalid options are rejected before any work.
+    for (key, value) in [
+        ("rngSeed", JsValue::from_f64(-1.0)),
+        ("deterministicTimezone", JsValue::from_str("utc")),
+        (
+            "deterministicTimestampUtc",
+            JsValue::from_str("2026-03-01T23:30:00"),
+        ),
+    ] {
+        let bad = Object::new();
+        Reflect::set(&bad, &JsValue::from_str(key), &value).unwrap();
+        assert!(
+            recalculate_xlsx_bytes(
+                Uint8Array::from(volatile_fixture_xlsx_bytes().as_slice()),
+                None,
+                bad.into(),
+            )
+            .is_err(),
+            "{key}"
+        );
+    }
 }

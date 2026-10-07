@@ -663,14 +663,11 @@ impl Function for VLookupFn {
             match row_idx_opt {
                 Some(i) => {
                     let target_col_idx = (col_index - 1) as usize;
+                    // An empty matched cell stays Empty, as in Excel: an enclosing
+                    // function sees a blank (`ISBLANK` is TRUE, `&""` gives ""), and
+                    // only a formula cell holding the result shows 0 (result
+                    // finalization). Array tables below hold no blanks in Excel.
                     let v = rv.get_cell(i, target_col_idx);
-                    // Excel treats a direct reference to an empty cell as 0.
-                    // VLOOKUP/HLOOKUP return the referenced cell value, so match Excel by
-                    // materializing Empty as numeric 0. (Empty text "" remains Text(""))
-                    let v = match v {
-                        LiteralValue::Empty => LiteralValue::Number(0.0),
-                        other => other,
-                    };
                     Ok(crate::traits::CalcValue::Scalar(v))
                 }
                 None => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
@@ -927,11 +924,8 @@ impl Function for HLookupFn {
             match col_idx_opt {
                 Some(i) => {
                     let target_row_idx = (row_index - 1) as usize;
+                    // Empty stays Empty, as in VLOOKUP.
                     let v = rv.get_cell(target_row_idx, i);
-                    let v = match v {
-                        LiteralValue::Empty => LiteralValue::Number(0.0),
-                        other => other,
-                    };
                     Ok(crate::traits::CalcValue::Scalar(v))
                 }
                 None => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
@@ -1315,9 +1309,10 @@ mod tests {
     }
 
     #[test]
-    fn vlookup_blank_target_cell_returns_zero() {
-        // Excel treats a direct reference to an empty cell as 0.
-        // VLOOKUP should therefore return 0 (not Empty) when the found cell is empty.
+    fn vlookup_blank_target_cell_returns_empty() {
+        // An empty matched cell is passed on as Empty (ISBLANK of the result
+        // is TRUE in Excel); a formula cell holding it shows 0 after
+        // result finalization.
         let wb = TestWorkbook::new()
             .with_function(Arc::new(VLookupFn))
             .with_cell_a1("Sheet1", "A1", LiteralValue::Int(1));
@@ -1344,7 +1339,7 @@ mod tests {
             .dispatch(&args, &ctx.function_context(None))
             .unwrap()
             .into_literal();
-        assert_eq!(v, LiteralValue::Number(0.0));
+        assert_eq!(v, LiteralValue::Empty);
     }
 
     #[test]
@@ -1564,7 +1559,7 @@ mod tests {
     }
 
     #[test]
-    fn hlookup_blank_target_cell_returns_zero() {
+    fn hlookup_blank_target_cell_returns_empty() {
         let wb = TestWorkbook::new()
             .with_function(Arc::new(HLookupFn))
             .with_cell_a1("Sheet1", "A1", LiteralValue::Int(1));
@@ -1591,7 +1586,7 @@ mod tests {
             .dispatch(&args, &ctx.function_context(None))
             .unwrap()
             .into_literal();
-        assert_eq!(v, LiteralValue::Number(0.0));
+        assert_eq!(v, LiteralValue::Empty);
     }
 
     #[test]

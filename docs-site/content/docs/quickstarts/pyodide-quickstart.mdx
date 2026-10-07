@@ -3,7 +3,7 @@ title: Pyodide Quickstart
 description: Run formualizer in the browser via Pyodide — install with micropip and evaluate workbook formulas client-side.
 ---
 
-Formualizer publishes native CPython wheels to PyPI. Pyodide wheels (`*-pyodide_<abi>_wasm32.whl`) are built and smoke-tested in CI and release workflows, then uploaded only as the `wheels-pyodide` Actions artifact; they are not uploaded to PyPI or attached to GitHub Releases. The core Formualizer API is available in Pyodide, subject to the platform-specific defaults and runtime limitations noted below.
+Formualizer publishes native CPython wheels to PyPI. Pyodide wheels (`*-pyemscripten_<abi>_wasm32.whl`) are built and smoke-tested in CI and release workflows, then uploaded only as the `wheels-pyodide` Actions artifact; they are not uploaded to PyPI or attached to GitHub Releases. The core Formualizer API is available in Pyodide, subject to the platform-specific defaults and runtime limitations noted below.
 
 ## 1) Install in a Pyodide runtime
 
@@ -60,12 +60,13 @@ restored.evaluate_cell("Sheet1", 1, 2)
 
 ## Tested Pyodide target
 
-The CI and release smoke paths currently use **Pyodide 0.29.3** and the wheel's derived ABI (currently `pyodide_2025_0`). Rebuild and smoke-test a wheel when targeting another runtime.
+The CI and release smoke paths currently use **Pyodide 314.0.7** (Python 3.14) and the wheel's derived platform tag (currently `pyemscripten_2026_0_wasm32`). The wheel does not install in Pyodide 0.29.x. Rebuild and smoke-test a wheel when targeting another runtime.
 
 ## Pyodide-specific behavior
 
 - `EvaluationConfig()` and `Workbook()` default `enable_parallel = False` on `sys.platform == "emscripten"`. Pyodide has no threads; the flag remains available but falls back to single-threaded execution.
-- XLSX byte I/O (`to_xlsx_bytes`, `from_bytes`, `load_workbook_bytes`) uses the `umya` backend on all platforms.
+- XLSX byte loading (`from_bytes`, `load_workbook_bytes`) defaults to the `umya` backend in Pyodide; pass `backend="calamine"` to use Calamine. `to_xlsx_bytes` uses `umya` on all platforms.
+- Source-preserving cache recalculation is available as `fz.recalculate_xlsx_bytes(data)`, with the same result as on native CPython (the `formualizer recalc` CLI and `recalculate_xlsx_file` are not available). Pyodide has no system clock: a workbook using `TODAY` or `NOW` is refused unless you pass `deterministic_timestamp_utc=datetime(..., tzinfo=timezone.utc)`.
 - Everything else — parse, evaluate, spill, custom functions, undo/redo, SheetPort — behaves identically to native CPython.
 
 ## Next

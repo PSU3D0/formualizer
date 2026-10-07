@@ -332,11 +332,13 @@ pub fn formualizer_parse::parser::BatchParser::parse(&mut self, &str) -> core::r
 pub struct formualizer_parse::parser::BatchParserBuilder
 impl formualizer_parse::parser::BatchParserBuilder
 pub fn formualizer_parse::parser::BatchParserBuilder::build(self) -> formualizer_parse::parser::BatchParser
+pub fn formualizer_parse::parser::BatchParserBuilder::cache_capacity(self, usize, usize) -> Self
 pub fn formualizer_parse::parser::BatchParserBuilder::dialect(self, formualizer_parse::types::FormulaDialect) -> Self
 pub fn formualizer_parse::parser::BatchParserBuilder::include_whitespace(self, bool) -> Self
+pub fn formualizer_parse::parser::BatchParserBuilder::limits(self, formualizer_parse::ParserLimits) -> Self
 pub fn formualizer_parse::parser::BatchParserBuilder::with_volatility_classifier<F>(self, F) -> Self where F: core::ops::function::Fn(&str) -> bool + core::marker::Send + core::marker::Sync + 'static
 impl core::default::Default for formualizer_parse::parser::BatchParserBuilder
-pub fn formualizer_parse::parser::BatchParserBuilder::default() -> formualizer_parse::parser::BatchParserBuilder
+pub fn formualizer_parse::parser::BatchParserBuilder::default() -> Self
 pub struct formualizer_parse::parser::CollectPolicy
 pub formualizer_parse::parser::CollectPolicy::expand_small_ranges: bool
 pub formualizer_parse::parser::CollectPolicy::include_names: bool
@@ -387,6 +389,7 @@ pub struct formualizer_parse::parser::ParserBuilder
 impl formualizer_parse::parser::ParserBuilder
 pub fn formualizer_parse::parser::ParserBuilder::build<T: core::convert::AsRef<str>>(self, T) -> core::result::Result<formualizer_parse::parser::Parser, formualizer_parse::tokenizer::TokenizerError>
 pub fn formualizer_parse::parser::ParserBuilder::dialect(self, formualizer_parse::types::FormulaDialect) -> Self
+pub fn formualizer_parse::parser::ParserBuilder::limits(self, formualizer_parse::ParserLimits) -> Self
 pub fn formualizer_parse::parser::ParserBuilder::parse<T: core::convert::AsRef<str>>(self, T) -> core::result::Result<formualizer_parse::parser::ASTNode, formualizer_parse::parser::ParserError>
 pub fn formualizer_parse::parser::ParserBuilder::with_volatility_classifier<F>(self, F) -> Self where F: core::ops::function::Fn(&str) -> bool + core::marker::Send + core::marker::Sync + 'static
 impl core::default::Default for formualizer_parse::parser::ParserBuilder
@@ -445,6 +448,7 @@ impl core::marker::Copy for formualizer_parse::tokenizer::Associativity
 impl core::marker::StructuralPartialEq for formualizer_parse::tokenizer::Associativity
 #[non_exhaustive] pub enum formualizer_parse::tokenizer::RecoveryAction
 pub formualizer_parse::tokenizer::RecoveryAction::InvalidErrorLiteral
+pub formualizer_parse::tokenizer::RecoveryAction::ResourceLimitExceeded
 pub formualizer_parse::tokenizer::RecoveryAction::SkippedUnmatchedCloser
 pub formualizer_parse::tokenizer::RecoveryAction::UnmatchedBracket
 pub formualizer_parse::tokenizer::RecoveryAction::UnmatchedOpener
@@ -630,6 +634,7 @@ impl<'a> core::marker::StructuralPartialEq for formualizer_parse::tokenizer::Tok
 pub struct formualizer_parse::tokenizer::Tokenizer
 pub formualizer_parse::tokenizer::Tokenizer::items: alloc::vec::Vec<formualizer_parse::tokenizer::Token>
 impl formualizer_parse::tokenizer::Tokenizer
+pub fn formualizer_parse::tokenizer::Tokenizer::admission_error(&self) -> core::option::Option<&formualizer_parse::tokenizer::TokenizerError>
 pub fn formualizer_parse::tokenizer::Tokenizer::dialect(&self) -> formualizer_parse::types::FormulaDialect
 pub fn formualizer_parse::tokenizer::Tokenizer::from_token_stream(&formualizer_parse::tokenizer::TokenStream) -> Self
 pub fn formualizer_parse::tokenizer::Tokenizer::new(&str) -> core::result::Result<Self, formualizer_parse::tokenizer::TokenizerError>
@@ -749,6 +754,7 @@ pub fn formualizer_parse::types::ParsingError::fmt(&self, &mut core::fmt::Format
 impl core::marker::StructuralPartialEq for formualizer_parse::types::ParsingError
 #[non_exhaustive] pub enum formualizer_parse::RecoveryAction
 pub formualizer_parse::RecoveryAction::InvalidErrorLiteral
+pub formualizer_parse::RecoveryAction::ResourceLimitExceeded
 pub formualizer_parse::RecoveryAction::SkippedUnmatchedCloser
 pub formualizer_parse::RecoveryAction::UnmatchedBracket
 pub formualizer_parse::RecoveryAction::UnmatchedOpener
@@ -886,10 +892,34 @@ pub struct formualizer_parse::ParserBuilder
 impl formualizer_parse::parser::ParserBuilder
 pub fn formualizer_parse::parser::ParserBuilder::build<T: core::convert::AsRef<str>>(self, T) -> core::result::Result<formualizer_parse::parser::Parser, formualizer_parse::tokenizer::TokenizerError>
 pub fn formualizer_parse::parser::ParserBuilder::dialect(self, formualizer_parse::types::FormulaDialect) -> Self
+pub fn formualizer_parse::parser::ParserBuilder::limits(self, formualizer_parse::ParserLimits) -> Self
 pub fn formualizer_parse::parser::ParserBuilder::parse<T: core::convert::AsRef<str>>(self, T) -> core::result::Result<formualizer_parse::parser::ASTNode, formualizer_parse::parser::ParserError>
 pub fn formualizer_parse::parser::ParserBuilder::with_volatility_classifier<F>(self, F) -> Self where F: core::ops::function::Fn(&str) -> bool + core::marker::Send + core::marker::Sync + 'static
 impl core::default::Default for formualizer_parse::parser::ParserBuilder
 pub fn formualizer_parse::parser::ParserBuilder::default() -> formualizer_parse::parser::ParserBuilder
+pub struct formualizer_parse::ParserLimits
+impl formualizer_parse::ParserLimits
+pub const fn formualizer_parse::ParserLimits::ast_height(self) -> usize
+pub const fn formualizer_parse::ParserLimits::ast_nodes(self) -> usize
+pub const fn formualizer_parse::ParserLimits::pratt_frames(self) -> usize
+pub const fn formualizer_parse::ParserLimits::source_bytes(self) -> usize
+pub const fn formualizer_parse::ParserLimits::tokens(self) -> usize
+pub const fn formualizer_parse::ParserLimits::with_ast_height(self, usize) -> Self
+pub const fn formualizer_parse::ParserLimits::with_ast_nodes(self, usize) -> Self
+pub const fn formualizer_parse::ParserLimits::with_pratt_frames(self, usize) -> Self
+pub const fn formualizer_parse::ParserLimits::with_source_bytes(self, usize) -> Self
+pub const fn formualizer_parse::ParserLimits::with_tokens(self, usize) -> Self
+impl core::clone::Clone for formualizer_parse::ParserLimits
+pub fn formualizer_parse::ParserLimits::clone(&self) -> formualizer_parse::ParserLimits
+impl core::cmp::Eq for formualizer_parse::ParserLimits
+impl core::cmp::PartialEq for formualizer_parse::ParserLimits
+pub fn formualizer_parse::ParserLimits::eq(&self, &formualizer_parse::ParserLimits) -> bool
+impl core::default::Default for formualizer_parse::ParserLimits
+pub fn formualizer_parse::ParserLimits::default() -> Self
+impl core::fmt::Debug for formualizer_parse::ParserLimits
+pub fn formualizer_parse::ParserLimits::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_parse::ParserLimits
+impl core::marker::StructuralPartialEq for formualizer_parse::ParserLimits
 pub struct formualizer_parse::Token
 pub formualizer_parse::Token::end: usize
 pub formualizer_parse::Token::start: usize
@@ -1000,6 +1030,7 @@ impl<'a> core::marker::StructuralPartialEq for formualizer_parse::tokenizer::Tok
 pub struct formualizer_parse::Tokenizer
 pub formualizer_parse::Tokenizer::items: alloc::vec::Vec<formualizer_parse::tokenizer::Token>
 impl formualizer_parse::tokenizer::Tokenizer
+pub fn formualizer_parse::tokenizer::Tokenizer::admission_error(&self) -> core::option::Option<&formualizer_parse::tokenizer::TokenizerError>
 pub fn formualizer_parse::tokenizer::Tokenizer::dialect(&self) -> formualizer_parse::types::FormulaDialect
 pub fn formualizer_parse::tokenizer::Tokenizer::from_token_stream(&formualizer_parse::tokenizer::TokenStream) -> Self
 pub fn formualizer_parse::tokenizer::Tokenizer::new(&str) -> core::result::Result<Self, formualizer_parse::tokenizer::TokenizerError>

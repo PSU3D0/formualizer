@@ -21,14 +21,19 @@ impl Locale {
     ///
     /// Also supports percent-suffixed numeric text (e.g. "90%" -> 0.9),
     /// matching spreadsheet numeric-coercion behavior in numeric contexts.
+    ///
+    /// Only finite numbers are numbers to Excel: the spellings Rust's float
+    /// parser also accepts (`"NaN"`, `"inf"`, `"-Infinity"`) and text that
+    /// overflows (`"1e400"`) are rejected, so they stay text (`#VALUE!` in
+    /// arithmetic).
     pub fn parse_number_invariant(&self, s: &str) -> Option<f64> {
         let trimmed = s.trim();
-        if let Some(without_pct) = trimmed.strip_suffix('%') {
-            let n = without_pct.trim().parse::<f64>().ok()?;
-            Some(n / 100.0)
+        let n = if let Some(without_pct) = trimmed.strip_suffix('%') {
+            without_pct.trim().parse::<f64>().ok()? / 100.0
         } else {
-            trimmed.parse::<f64>().ok()
-        }
+            trimmed.parse::<f64>().ok()?
+        };
+        n.is_finite().then_some(n)
     }
 
     /// Case folding for comparisons; invariant = ASCII lower.
@@ -47,6 +52,28 @@ mod tests {
         assert_eq!(loc.parse_number_invariant("90%"), Some(0.9));
         assert_eq!(loc.parse_number_invariant(" 90.5% "), Some(0.905));
         assert_eq!(loc.parse_number_invariant("90 %"), Some(0.9));
+    }
+
+    #[test]
+    fn parse_number_invariant_rejects_non_finite_spellings() {
+        let loc = Locale::invariant();
+        for text in [
+            "NaN",
+            "nan",
+            "-NaN",
+            "inf",
+            "+inf",
+            "-inf",
+            "Infinity",
+            "-infinity",
+            "nan%",
+            "1e400",
+            "-1e400",
+        ] {
+            assert_eq!(loc.parse_number_invariant(text), None, "{text}");
+        }
+        assert_eq!(loc.parse_number_invariant("1e5"), Some(100_000.0));
+        assert_eq!(loc.parse_number_invariant("-.5"), Some(-0.5));
     }
 
     #[test]

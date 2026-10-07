@@ -1,6 +1,6 @@
 [package]
 name = "formualizer-wasm"
-version = "0.10.1"
+version = "0.11.0"
 publish = false
 edition = "2024"
 authors = ["Formualizer Contributors"]
@@ -25,7 +25,7 @@ serde-wasm-bindgen = "0.6.5"
 console_error_panic_hook = { version = "0.1", optional = true }
 formualizer = { path = "../../crates/formualizer", default-features = false, features = ["wasm-js", "sheetport"] }
 serde_json = { workspace = true }
-chrono = { workspace = true }
+chrono = { workspace = true, features = ["clock"] }
 
 [dependencies.web-sys]
 workspace = true

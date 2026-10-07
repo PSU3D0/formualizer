@@ -1,0 +1,3 @@
+pub mod formualizer_cli
+pub use formualizer_cli::CancelToken
+pub fn formualizer_cli::run<I, T>(I, &mut dyn std::io::Write, &mut dyn std::io::Write, core::option::Option<formualizer_eval::engine::cancel::CancelToken>) -> i32 where I: core::iter::traits::collect::IntoIterator<Item = T>, T: core::convert::Into<std::ffi::os_str::OsString> + core::clone::Clone

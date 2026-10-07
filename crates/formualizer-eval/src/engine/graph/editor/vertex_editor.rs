@@ -826,6 +826,7 @@ impl<'g> VertexEditor<'g> {
         // Remove all formula/value payloads owned by this vertex.  Tombstoned vertices remain in
         // the SoA store for stable IDs/debugging, but they must not continue to participate in
         // formula evaluation through `vertex_formulas`.
+        self.graph.forget_declared_dynamic_anchor(id);
         self.graph.vertex_formulas.remove(&id);
         self.graph.vertex_values.remove(&id);
         self.graph.clear_formula_vertex_dirty(id);

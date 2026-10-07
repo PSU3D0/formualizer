@@ -15,6 +15,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -33,7 +34,7 @@ ROOT = Path(__file__).resolve().parent.parent
 TARGET = ROOT / "target"
 LOCK_PATH = TARGET / "release-preflight.lock"
 TOOL_VERSION = "0.2.12"
-TOOLCHAIN = "1.93.0"
+TOOLCHAIN = "1.99.0"
 TOOL_ROOT = TARGET / "release-preflight-tools" / f"cargo-local-registry-{TOOL_VERSION}"
 TOOL_BIN = TOOL_ROOT / "bin" / "cargo-local-registry"
 TOOL_CARGO_HOME = TARGET / "release-preflight-cargo-home"
@@ -62,11 +63,12 @@ EVAL = Package("formualizer-eval", "crates/formualizer-eval/Cargo.toml")
 WORKBOOK = Package("formualizer-workbook", "crates/formualizer-workbook/Cargo.toml")
 SHEETPORT = Package("formualizer-sheetport", "crates/formualizer-sheetport/Cargo.toml")
 FORMUALIZER = Package("formualizer", "crates/formualizer/Cargo.toml")
+CLI = Package("formualizer-cli", "crates/formualizer-cli/Cargo.toml")
 
 TRACKS: dict[str, tuple[Package, ...]] = {
     "parse": (COMMON, PARSE),
     "spec": (SPEC,),
-    "product": (COMMON, PARSE, SPEC, MACROS, EVAL, WORKBOOK, SHEETPORT, FORMUALIZER),
+    "product": (COMMON, PARSE, SPEC, MACROS, EVAL, WORKBOOK, SHEETPORT, FORMUALIZER, CLI),
 }
 
 # Binding crates ship through C, PyPI, and npm channels rather than crates.io.
@@ -420,6 +422,55 @@ def validate_binding_value_feature_policy(root: Path = ROOT) -> dict[str, dict[s
             )
             coverage[name][feature] = "enabled" if feature in active else f"opt-out: {rationale}"
     return coverage
+
+
+# Until the first release that ships `formualizer recalc`, its install
+# instructions carry one "Not yet published" notice per file (a Markdown
+# blockquote, or a Callout on the docs site). A product release must remove
+# every notice, so the docs never claim that published channels are missing.
+PRERELEASE_WORDING = re.compile(
+    r"not yet published|publication pending|once published", re.IGNORECASE
+)
+# Text that ships to users: package READMEs, release notes, docs, the agent
+# skill and the docs site content.
+SHIPPED_DOC_GLOBS: tuple[str, ...] = (
+    "README.md",
+    "CHANGELOG.md",
+    "bindings/*/README.md",
+    "crates/*/README.md",
+    "npm/*/README.md",
+    "docs/**/*.md",
+    "skills/**/*.md",
+    "docs-site/content/**/*.md",
+    "docs-site/content/**/*.mdx",
+)
+
+
+def find_prerelease_wording(root: Path = ROOT) -> list[str]:
+    """Return `path:line: text` for each pre-release notice in shipped docs."""
+    paths: set[Path] = set()
+    for pattern in SHIPPED_DOC_GLOBS:
+        paths.update(path for path in root.glob(pattern) if path.is_file())
+    hits: list[str] = []
+    for path in sorted(paths):
+        relative = path.relative_to(root).as_posix()
+        if "node_modules" in path.relative_to(root).parts:
+            continue
+        for number, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), start=1
+        ):
+            if PRERELEASE_WORDING.search(line):
+                hits.append(f"{relative}:{number}: {line.strip()}")
+    return hits
+
+
+def validate_no_prerelease_wording(root: Path = ROOT) -> None:
+    hits = find_prerelease_wording(root)
+    if hits:
+        raise RuntimeError(
+            "pre-release wording remains in shipped docs; remove each notice "
+            "before a product release:\n  " + "\n  ".join(hits)
+        )
 
 
 def validate_parser_track_lockstep(
@@ -908,6 +959,7 @@ def preflight(track: str, allow_dirty: bool) -> None:
     if track == "product":
         coverage = validate_binding_value_feature_policy()
         print(json.dumps({"binding_value_feature_policy": coverage}, indent=2))
+        validate_no_prerelease_wording()
     validate_parser_track_lockstep(track)
     ensure_clean(allow_dirty)
     packages = TRACKS[track]
@@ -946,18 +998,30 @@ def preflight(track: str, allow_dirty: bool) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--track", required=True, choices=sorted(TRACKS))
+    parser.add_argument("--track", choices=sorted(TRACKS))
+    parser.add_argument(
+        "--check-prerelease-wording",
+        action="store_true",
+        help="only check shipped docs for pre-release notices, then exit",
+    )
     parser.add_argument(
         "--allow-dirty",
         action="store_true",
         help="permit uncommitted source for development validation; never use for a release tag",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.track is None and not args.check_prerelease_wording:
+        parser.error("--track is required")
+    return args
 
 
 def main() -> int:
     args = parse_args()
     try:
+        if args.check_prerelease_wording:
+            validate_no_prerelease_wording()
+            print("No pre-release wording in shipped docs.", flush=True)
+            return 0
         preflight(args.track, args.allow_dirty)
     except (
         OSError,

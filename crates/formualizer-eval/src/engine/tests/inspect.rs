@@ -22,6 +22,115 @@ fn set_formula(engine: &mut Engine<TestWorkbook>, row: u32, column: u32, formula
         .unwrap();
 }
 
+fn assert_result_state_parity(engine: &Engine<TestWorkbook>, cell: CellAddress) {
+    let snapshot = engine
+        .inspect_cell(&cell, &SnapshotOptions::default())
+        .unwrap();
+    let state = engine.inspect_cell_result(&cell).unwrap();
+    assert_eq!(state.address, snapshot.cell.address);
+    assert_eq!(state.has_formula, snapshot.cell.formula.is_some());
+    assert_eq!(state.value, snapshot.cell.value);
+    assert_eq!(state.staleness, snapshot.cell.staleness);
+    assert_eq!(state.spill, snapshot.cell.spill);
+    assert_eq!(
+        snapshot.stamp,
+        engine
+            .inspect_cell(&cell, &SnapshotOptions::default())
+            .unwrap()
+            .stamp
+    );
+}
+
+#[test]
+fn result_state_matches_snapshot_for_scalar_empty_staged_and_dirty() {
+    let mut engine = engine();
+    engine
+        .set_cell_value("Model", 1, 1, LiteralValue::Empty)
+        .unwrap();
+    assert_result_state_parity(&engine, address("model", 1, 1));
+    set_formula(&mut engine, 1, 2, "=1+1");
+    assert_result_state_parity(&engine, address("Model", 1, 2));
+    engine.evaluate_all().unwrap();
+    assert_result_state_parity(&engine, address("Model", 1, 2));
+    set_formula(&mut engine, 1, 2, "=3+4");
+    assert_result_state_parity(&engine, address("Model", 1, 2));
+    engine.stage_formula_text("Model", 1, 3, "=1+2".to_string());
+    assert_result_state_parity(&engine, address("Model", 1, 3));
+    assert!(matches!(
+        engine.inspect_cell_result(&address("Missing", 1, 1)),
+        Err(InspectError::SheetNotFound { .. })
+    ));
+}
+
+#[test]
+fn result_state_matches_snapshot_for_spill_anchor_members_and_dirty_extent() {
+    let mut engine = engine();
+    set_formula(&mut engine, 1, 1, "={1,2;3,4}");
+    assert_result_state_parity(&engine, address("Model", 1, 1));
+    engine.evaluate_all().unwrap();
+    for row in 1..=2 {
+        for col in 1..=2 {
+            assert_result_state_parity(&engine, address("Model", row, col));
+        }
+    }
+    set_formula(&mut engine, 1, 1, "=9");
+    for row in 1..=2 {
+        for col in 1..=2 {
+            assert_result_state_parity(&engine, address("Model", row, col));
+        }
+    }
+    engine.evaluate_all().unwrap();
+    assert_result_state_parity(&engine, address("Model", 1, 1));
+}
+
+#[test]
+fn result_state_matches_snapshot_after_parse_coercion() {
+    let mut engine = engine();
+    engine.config.formula_parse_policy = crate::engine::FormulaParsePolicy::CoerceToError;
+    engine.add_sheet("Model").unwrap();
+    engine.stage_formula_text("Model", 1, 1, "=BROKEN(".to_string());
+    engine.build_graph_all().unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(engine.formula_parse_diagnostics().len(), 1);
+    assert_result_state_parity(&engine, address("Model", 1, 1));
+    assert!(matches!(
+        engine
+            .inspect_cell_result(&address("Model", 1, 1))
+            .unwrap()
+            .value,
+        Some(LiteralValue::Error(_))
+    ));
+}
+
+#[test]
+fn result_state_matches_snapshot_for_family_execution() {
+    for parallel in [false, true] {
+        let config = EvalConfig {
+            family_execution: true,
+            enable_parallel: parallel,
+            ..super::common::arrow_eval_config()
+        };
+        let mut engine = Engine::new(TestWorkbook::new(), config);
+        for row in 1..=120 {
+            engine
+                .set_cell_value("Model", row, 1, LiteralValue::Number(f64::from(row)))
+                .unwrap();
+            set_formula(&mut engine, row, 2, &format!("=A{row}*2"));
+        }
+        engine.evaluate_all().unwrap();
+        assert!(engine.family_members_for_test() > 0);
+        for row in 1..=120 {
+            assert_result_state_parity(&engine, address("Model", row, 2));
+        }
+        engine
+            .set_cell_value("Model", 60, 1, LiteralValue::Number(500.0))
+            .unwrap();
+        assert_result_state_parity(&engine, address("Model", 60, 2));
+        engine.evaluate_all().unwrap();
+        assert_result_state_parity(&engine, address("Model", 60, 2));
+    }
+}
+
 #[test]
 fn public_precedents_preserve_source_order_shape_and_first_occurrence() {
     let mut engine = engine();

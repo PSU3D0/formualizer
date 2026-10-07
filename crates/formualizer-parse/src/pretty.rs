@@ -25,7 +25,7 @@ fn infix_info(op: &str) -> (u8, Associativity) {
         ":" => (10, Associativity::Left),
         " " => (9, Associativity::Left),
         "," => (8, Associativity::Left),
-        "^" => (5, Associativity::Right),
+        "^" => (5, Associativity::Left),
         "*" | "/" => (4, Associativity::Left),
         "+" | "-" => (3, Associativity::Left),
         "&" => (2, Associativity::Left),
@@ -78,17 +78,11 @@ fn child_needs_parens(
         }
         Side::Right => {
             if parent_assoc == Associativity::Left {
-                if let ASTNodeType::BinaryOp { op: child_op, .. } = &child.node_type {
-                    if child_op != parent_op {
-                        return true;
-                    }
-
-                    // Even with same op, some operators are not associative.
-                    if parent_op == "-" || parent_op == "/" {
-                        return true;
-                    }
-                }
-                false
+                // A same-precedence right operand of a left-associative
+                // operator only exists because the source grouped it, so the
+                // brackets are part of the tree: `A1*(B1*C1)` is not
+                // `(A1*B1)*C1`, and `1=(2=3)` is not `1=2=3`.
+                matches!(child.node_type, ASTNodeType::BinaryOp { .. })
             } else {
                 // Right-assoc ops: parenthesize if mixing ops at same precedence.
                 if let ASTNodeType::BinaryOp { op: child_op, .. } = &child.node_type {
@@ -117,12 +111,14 @@ fn pretty_child(
     parent_prec: u8,
     parent_assoc: Associativity,
     side: Side,
+    comma_delimited: bool,
 ) -> String {
-    let s = pretty_print_node(child);
     if child_needs_parens(child, parent_op, parent_prec, parent_assoc, side) {
-        format!("({s})")
+        // Explicit grouping shields any union below this child from the
+        // surrounding argument/array separator grammar.
+        format!("({})", pretty_print_node(child))
     } else {
-        s
+        pretty_print_node_in_context(child, comma_delimited)
     }
 }
 
@@ -135,12 +131,21 @@ fn pretty_print_arguments(args: &[ASTNode]) -> String {
                 rendered.push(' ');
             }
         }
-        rendered.push_str(&pretty_print_node(arg));
+        // Union operators need grouping anywhere in the unparenthesized
+        // argument expression, not only at its root: SUM((A1,B1)+1).
+        rendered.push_str(&pretty_print_node_in_context(arg, true));
     }
     rendered
 }
 
 fn pretty_print_node(ast: &ASTNode) -> String {
+    pretty_print_node_in_context(ast, false)
+}
+
+fn pretty_print_node_in_context(ast: &ASTNode, comma_delimited: bool) -> String {
+    if comma_delimited && matches!(&ast.node_type, ASTNodeType::BinaryOp { op, .. } if op == ",") {
+        return format!("({})", pretty_print_node(ast));
+    }
     match &ast.node_type {
         ASTNodeType::Literal(value) => match value {
             // Quote and escape text literals to preserve Excel semantics
@@ -153,11 +158,10 @@ fn pretty_print_node(ast: &ASTNode) -> String {
         ASTNodeType::Omitted => String::new(),
         ASTNodeType::Reference { reference, .. } => reference.normalise(),
         ASTNodeType::UnaryOp { op, expr } => {
-            let inner = pretty_print_node(expr);
             let inner = if unary_operand_needs_parens(op, expr) {
-                format!("({inner})")
+                format!("({})", pretty_print_node(expr))
             } else {
-                inner
+                pretty_print_node_in_context(expr, comma_delimited)
             };
 
             if op == "%" || op == "#" {
@@ -168,8 +172,8 @@ fn pretty_print_node(ast: &ASTNode) -> String {
         }
         ASTNodeType::BinaryOp { op, left, right } => {
             let (prec, assoc) = infix_info(op);
-            let left_s = pretty_child(left, op, prec, assoc, Side::Left);
-            let right_s = pretty_child(right, op, prec, assoc, Side::Right);
+            let left_s = pretty_child(left, op, prec, assoc, Side::Left, comma_delimited);
+            let right_s = pretty_child(right, op, prec, assoc, Side::Right, comma_delimited);
 
             match op.as_str() {
                 // Reference range operator prints tight; intersection is a
@@ -201,7 +205,7 @@ fn pretty_print_node(ast: &ASTNode) -> String {
                 .iter()
                 .map(|row| {
                     row.iter()
-                        .map(pretty_print_node)
+                        .map(|cell| pretty_print_node_in_context(cell, true))
                         .collect::<Vec<String>>()
                         .join(", ")
                 })
@@ -296,6 +300,45 @@ mod tests {
         let formula = "=(a1+b2)*c3";
         let pretty = pretty_parse_render(formula).unwrap();
         assert_eq!(pretty, "=(A1 + B2) * C3");
+    }
+
+    #[test]
+    fn test_pretty_print_keeps_same_precedence_right_grouping() {
+        for (formula, expected) in [
+            ("=A1*(B1*C1)", "=A1 * (B1 * C1)"),
+            ("=A1+(B1+C1)", "=A1 + (B1 + C1)"),
+            ("=1=(2=3)", "=1 = (2 = 3)"),
+            ("=\"a\"&(\"b\"&\"c\")", "=\"a\" & (\"b\" & \"c\")"),
+            ("=A1-(B1+C1)", "=A1 - (B1 + C1)"),
+            // Left grouping is the default and needs no brackets.
+            ("=(A1*B1)*C1", "=A1 * B1 * C1"),
+            ("=(1=2)=3", "=1 = 2 = 3"),
+        ] {
+            let pretty = pretty_parse_render(formula).unwrap();
+            assert_eq!(pretty, expected, "{formula}");
+            assert_eq!(
+                parse(&pretty).unwrap().fingerprint(),
+                parse(formula).unwrap().fingerprint(),
+                "{formula} must re-parse to the same tree"
+            );
+        }
+    }
+
+    #[test]
+    fn test_pretty_print_keeps_union_argument_brackets() {
+        for (formula, expected) in [
+            ("=RANK(A1,(B1,B5))", "=RANK(A1, (B1, B5))"),
+            ("=SUM((A1,B1),C1)", "=SUM((A1, B1), C1)"),
+            ("=SUM((A1,B1,C1))", "=SUM((A1, B1, C1))"),
+        ] {
+            let pretty = pretty_parse_render(formula).unwrap();
+            assert_eq!(pretty, expected, "{formula}");
+            assert_eq!(
+                parse(&pretty).unwrap().fingerprint(),
+                parse(formula).unwrap().fingerprint(),
+                "{formula} must re-parse to the same tree"
+            );
+        }
     }
 
     #[test]

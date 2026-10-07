@@ -19,6 +19,7 @@ This repo publishes multiple artifacts (crates.io, PyPI, npm) from one monorepo.
 - `formualizer-workbook`: workbook abstraction + loaders.
 - `formualizer-sheetport`: SheetPort runtime over a workbook.
 - `formualizer`: roll-up (“product surface”) crate; intended primary interface for bindings and most downstreams.
+- `formualizer-cli`: the `formualizer` command (`formualizer recalc`); `cargo install formualizer-cli`, or `cargo binstall formualizer-cli` from the release archives.
 
 **Spec track**
 - `sheetport-spec`: YAML/JSON schema + validation + CLI.
@@ -27,12 +28,17 @@ This repo publishes multiple artifacts (crates.io, PyPI, npm) from one monorepo.
 
 - `formualizer` (maturin / pyo3 extension): the product surface for Python.
   - Published native wheels: manylinux (x86_64, aarch64), musllinux (x86_64, aarch64), macOS (x86_64, arm64), and Windows (x64) on PyPI.
-  - Pyodide wheels (`pyodide_<abi>_wasm32`) are built and smoke-tested in CI and release workflows, then uploaded only as the `wheels-pyodide` Actions artifact; they are not uploaded to PyPI or attached to GitHub Releases.
+  - Pyodide wheels (`pyemscripten_<abi>_wasm32`) are built and smoke-tested in CI and release workflows, then uploaded only as the `wheels-pyodide` Actions artifact; they are not uploaded to PyPI or attached to GitHub Releases.
   - Native users install with `pip install formualizer`; Pyodide users extract the artifact, host the compatible wheel and install from its downloadable URL.
 
 ### JS/WASM (npm)
 
 - `formualizer` (wasm-pack output + TypeScript wrapper): the product surface for JS.
+- `@formualizer/cli` (launcher, bin `formualizer`) plus seven `@formualizer/cli-<platform>` native binary packages. The unscoped `formualizer` package stays the WASM library and contains no CLI. See [Native CLI pipeline](#native-cli-pipeline).
+
+### GitHub Releases
+
+- `formualizer-cli-v<version>-<rust-target>.tar.gz` (`.zip` for Windows) for the seven CLI targets, plus `SHA256SUMS`.
 
 ## Version Tracks
 
@@ -43,6 +49,7 @@ This repo publishes multiple artifacts (crates.io, PyPI, npm) from one monorepo.
 - `crates/formualizer/Cargo.toml` (`package.version`)
 - `bindings/python/pyproject.toml` (`project.version`)
 - `bindings/wasm/package.json` (`version`)
+- `crates/formualizer-cli/Cargo.toml` (`package.version`), which is also the version of every CLI npm package
 
 This is the public “Formualizer product version”.
 
@@ -63,7 +70,7 @@ Product releases may depend on a `sheetport-spec` version; if the product needs 
 Tags encode *which track* is being released.
 
 - **Product release:** `vX.Y.Z`
-  - publishes: Rust product crates + PyPI + npm
+  - publishes: Rust product crates (including `formualizer-cli`) + PyPI + npm (WASM library and native CLI) + CLI release archives
 - **Parser/SDK release:** `parse-vX.Y.Z`
   - publishes: `formualizer-common`, `formualizer-parse`
 - **Spec release:** `sheetport-spec-vX.Y.Z`
@@ -157,6 +164,7 @@ Publish in dependency order:
 3. `formualizer-workbook`
 4. `formualizer-sheetport`
 5. `formualizer` (roll-up)
+6. `formualizer-cli` (the `formualizer` command)
 
 ## GitHub Actions Release Principles
 
@@ -169,17 +177,60 @@ Release workflows should:
 
 For npm builds, ensure the wasm-pack target matches what we publish (bundler vs web target) and that the generated `pkg/` content matches what `package.json` expects.
 
+## Native CLI pipeline
+
+The `formualizer` command ships as native binaries for speed; there is no WebAssembly fallback. Seven targets match the wheel matrix:
+
+| Rust target | Runner | npm package |
+| --- | --- | --- |
+| `x86_64-unknown-linux-gnu` | `ubuntu-24.04`, cargo-zigbuild, glibc 2.17 | `@formualizer/cli-linux-x64-gnu` |
+| `aarch64-unknown-linux-gnu` | `ubuntu-24.04-arm`, cargo-zigbuild, glibc 2.17 | `@formualizer/cli-linux-arm64-gnu` |
+| `x86_64-unknown-linux-musl` | `ubuntu-24.04`, cargo-zigbuild, static | `@formualizer/cli-linux-x64-musl` |
+| `aarch64-unknown-linux-musl` | `ubuntu-24.04-arm`, cargo-zigbuild, static | `@formualizer/cli-linux-arm64-musl` |
+| `x86_64-apple-darwin` | `macos-latest` (cross) | `@formualizer/cli-darwin-x64` |
+| `aarch64-apple-darwin` | `macos-latest` | `@formualizer/cli-darwin-arm64` |
+| `x86_64-pc-windows-msvc` | `windows-latest`, static CRT | `@formualizer/cli-win32-x64-msvc` |
+
+Pieces:
+
+- `.github/workflows/cli-build.yml` builds `formualizer-cli --release --locked` for every target (stripped via `CARGO_PROFILE_RELEASE_STRIP=symbols`) and smoke-runs `--version` wherever the runner can execute the binary. Its `package` job runs the launcher tests and assembles and validates the npm packages. It checks the executable format, the architecture, that the musl builds are static, and the glibc symbol-version floor. It then packs the tarballs in publish order, smoke-tests the packed launcher (gnu, and the musl fallback), and builds the release archives plus `SHA256SUMS`. Everything leaves the workflow as artifacts (`cli-release-assets`, `cli-npm-tarballs`). The workflow has a read-only token, no secrets, and no publish or release-upload steps.
+- `release.yml` calls it on product tags (`build-cli`, after `verify-product`). `publish-npm-cli` publishes the platform tarballs and then the `@formualizer/cli` meta package with `--provenance`, skipping versions that already exist. `publish-product-crates` publishes the crate after `formualizer`, and `github-release` attaches the archives and `SHA256SUMS`.
+- `npm/formualizer-cli/` holds the launcher (`bin/formualizer.js`), the template `package.template.json`, the README, `platforms.json` and `scripts/assemble.js`. `platforms.json` is the single place for the npm scope and package names: `metaPackage` is `@formualizer/cli` and `platformPackage` is `@formualizer/cli-{platform}`. Assembled package directories drop the `@` and `/` (`formualizer-cli/`, `formualizer-cli-<platform>/`). The launcher and the assembly script both read it.
+- The npm packages carry no committed version. `assemble.js` takes it from `crates/formualizer-cli/Cargo.toml` and rejects a mismatched `--version`. `bump-version.py` and the tag check therefore cover them through that manifest.
+
+Linux glibc builds use cargo-zigbuild's `.2.17` target suffix rather than a manylinux container. The glibc floor is then explicit in the target name, independent of the runner image, and one pinned zig toolchain also links musl statically on both architectures. The pins are `CARGO_ZIGBUILD_VERSION`, `ZIG_VERSION` and `MAX_GLIBC` in `cli-build.yml`; bump them together.
+
+Dry run without publishing: dispatch the **CLI binaries** workflow (Actions → CLI binaries → Run workflow) on any branch. It also runs on pull requests that touch `npm/formualizer-cli/**` or the workflow. Download the artifacts to inspect the tarballs and archives. Locally:
+
+```bash
+node --test npm/formualizer-cli/test/*.test.js
+cargo build --release --locked -p formualizer-cli
+mkdir -p /tmp/cli-bins/x86_64-unknown-linux-gnu && cp target/release/formualizer /tmp/cli-bins/x86_64-unknown-linux-gnu/
+node npm/formualizer-cli/scripts/assemble.js --binaries /tmp/cli-bins --targets x86_64-unknown-linux-gnu --out /tmp/cli-npm
+npm pack /tmp/cli-npm/formualizer-cli-linux-x64-gnu && npm pack /tmp/cli-npm/formualizer-cli
+```
+
+### One-time maintainer setup (before the first CLI release)
+
+1. **npm scope.** The npm organization `formualizer` owns `@formualizer/cli` and the `@formualizer/cli-<platform>` packages; the publishing account must be a member with publish rights.
+2. **npm authentication.** `publish-npm-cli` uses the same OIDC pattern as the WASM package (`id-token: write`, `--provenance`). For each of the eight packages, add a trusted publisher on npmjs.com: repository `PSU3D0/formualizer`, workflow `release.yml`. npm only allows a trusted publisher on a package that already exists. For the first publish, either publish the eight packages once by hand, or add a short-lived granular automation token as repository secret `NPM_TOKEN` (the job passes it as `NODE_AUTH_TOKEN`; it stays empty when unset). Delete the token after trusted publishing is configured.
+3. **crates.io.** `formualizer-cli` is a new crate name. The `CARGO_REGISTRY_TOKEN` used by `publish-product-crates` must be allowed to publish new crates (crates.io scoped tokens need the `publish-new` scope). After the first publish, add the other owners with `cargo owner --add`.
+4. **Runners.** The arm64 Linux builds use the GitHub-hosted `ubuntu-24.04-arm` runners, which are available to public repositories.
+5. Run the dry run once on the release commit, and check the archives and npm tarballs before tagging.
+6. Remove the pre-release install notices (one blockquote or Callout per file: the READMEs, `docs/cli.md`, `docs/agents.md`, the agent skill and the docs site Recalc CLI overview). `python3 scripts/release-preflight.py --check-prerelease-wording` lists any that remain; the product preflight in `release.yml` runs the same check and fails the release until they are gone.
+
 ## Pyodide wheel pipeline
 
 The Pyodide wheel is built by `bindings/python/scripts/build-pyodide-wheel.sh` and tested by `smoke-pyodide-wheel.sh` on every PR (`ci.yml :: build-pyodide-wheel`) and on every product release tag (`release.yml :: build-wheels-pyodide`), then uploaded only as the `wheels-pyodide` Actions artifact. The release workflow excludes it from PyPI and does not attach it to GitHub Releases.
 
 Key pipeline specifics worth knowing before touching this path:
 
-- **Pyodide target has an explicit default.** The build script defaults to xbuildenv Pyodide 0.29.3, then reads `python_version`, `pyodide_abi_version`, `emscripten_version`, `rust_toolchain`, `rustflags`, `cflags`, `cxxflags`, `ldflags`, and `rust_emscripten_target_url` from `pyodide config`; the ABI and toolchain therefore derive from that xbuildenv. `pyodide-cli` and `pyodide-build` are resolved through `uvx` and are not pinned by the script.
-- **Custom Rust sysroot is mandatory.** Stock `rustup target add wasm32-unknown-emscripten` ships a `std` built with JS-trampoline exceptions (`invoke_*`), which Pyodide 0.29+ rejects with a dynamic-linking error at import time. The build script downloads Pyodide's prebuilt wasm-EH sysroot (`rust-emscripten-wasm-eh-sysroot` on GitHub) and extracts it over rustup's stock target. A sentinel file in the target dir makes this idempotent across runs.
-- **Wheel is retagged after build.** The resolved `pyodide-build` may emit `pyemscripten_2025_0_wasm32`, which the `micropip` shipped in Pyodide 0.29.x misparses as an Emscripten version string and rejects. The build script retags to the derived `pyodide_2025_0_wasm32` tag (the tag Pyodide 0.29.x expects), so `micropip.install` accepts the wheel without falling back to zip extraction.
+- **Pyodide target has an explicit default.** The build script defaults to xbuildenv Pyodide 314.0.7 (Python 3.14, Emscripten 5.0.3, Rust 1.93.0), then reads `python_version`, `pyodide_abi_version`, `emscripten_version`, `rust_toolchain`, `rustflags`, `cflags`, `cxxflags`, `ldflags`, and `rust_emscripten_target_url` from `pyodide config`; the ABI and toolchain therefore derive from that xbuildenv. `pyodide-cli` and `pyodide-build` are resolved through `uvx` and are not pinned by the script.
+- **Rust sysroot follows the xbuildenv.** Pyodide 314 builds with stable Rust 1.93.0, whose stock `wasm32-unknown-emscripten` target already uses wasm exception handling, so the script adds that rustup target. Older xbuildenvs (0.29.x) name a nightly and a `rust_emscripten_target_url`; the script then extracts Pyodide's prebuilt wasm-EH sysroot over rustup's stock target (whose JS-trampoline `invoke_*` exceptions fail to import), with a sentinel file making that idempotent.
+- **The Pyodide Rust toolchain is the effective MSRV.** The workspace targets the pinned CI toolchain, but the wheel compiles with the xbuildenv's Rust (1.93.0 for 314.0.7). Do not use std APIs or language features newer than that compiler, and do not add `#![feature]` attributes: stable Rust rejects them.
+- **Wheel tag matches the runtime.** `pyodide-build` emits `pyemscripten_<abi>_wasm32`, which Pyodide 314 expects. For the 0.29.x ABI (`2025_0`) the build script retags to `pyodide_2025_0_wasm32`, because the `micropip` shipped in Pyodide 0.29.x misparses the `pyemscripten` tag and rejects it.
 - **Smoke gate is mandatory.** Both CI and release jobs run `smoke-pyodide-wheel.sh`, which loads the wheel into a real Pyodide runtime and exercises parse, evaluate, byte I/O, and Python UDF paths. A broken wheel fails before the Actions artifact is uploaded.
-- **Tested runtime is explicit.** The build and smoke scripts default to Pyodide 0.29.3; the current derived wheel ABI is `pyodide_2025_0`. Select the build target with `PYODIDE_XBUILDENV_VERSION` and the smoke-test runtime with `PYODIDE_NPM_VERSION`; choose compatible values and smoke-test the rebuilt wheel against the selected runtime before distribution.
+- **Tested runtime is explicit.** The build and smoke scripts default to Pyodide 314.0.7; the current wheel platform tag is `pyemscripten_2026_0_wasm32`, which Pyodide 0.29.x cannot install. Select the build target with `PYODIDE_XBUILDENV_VERSION` and the smoke-test runtime with `PYODIDE_NPM_VERSION`; choose compatible values and smoke-test the rebuilt wheel against the selected runtime before distribution.
 
 ## Version Bump Script
 

@@ -1066,6 +1066,121 @@ impl Function for IndirectFn {
     }
 }
 
+fn arg_anchor_reference() -> Vec<ArgSchema> {
+    vec![ArgSchema {
+        kinds: smallvec::smallvec![ArgKind::Range],
+        required: true,
+        by_ref: true,
+        shape: ShapeKind::Range,
+        coercion: CoercionPolicy::None,
+        max: None,
+        repeating: None,
+        default: None,
+    }]
+}
+
+#[derive(Debug)]
+pub struct AnchorArrayFn;
+
+/// Returns the current spill range of a dynamic-array anchor cell.
+///
+/// `ANCHORARRAY(A1)` is the stored form of the spill-range operator `A1#`
+/// (files written by Excel store `_xlfn.ANCHORARRAY(A1)`). Both evaluate to
+/// the rectangle that the formula in the anchor cell currently spills into,
+/// as a reference, so range consumers such as `SUM`, `ROWS` and `INDEX` read
+/// it like any other range.
+///
+/// # Remarks
+/// - The argument must be written as a single-cell reference (optionally on
+///   another sheet) or a defined name that refers to one cell.
+/// - Formualizer policy: `#REF!` when the argument is anything else, and when
+///   the anchor has no current spill (a value, an empty cell, a scalar
+///   result, or a blocked or oversized spill). A formula whose result is a
+///   single value, including a 1x1 array such as `SEQUENCE(1)`, is stored as a
+///   scalar and has no spill range.
+///
+/// ```yaml,docs
+/// related:
+///   - INDEX
+///   - OFFSET
+///   - SEQUENCE
+/// faq:
+///   - q: "How does ANCHORARRAY relate to the # operator?"
+///     a: "They are the same reference: A1# is written as _xlfn.ANCHORARRAY(A1) in stored files, and both resolve to the anchor's current spill range."
+///   - q: "When does ANCHORARRAY return #REF!?"
+///     a: "When its argument is not a single-cell reference or single-cell name, or when the anchor cell has no current spill."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: ANCHORARRAY
+/// Type: AnchorArrayFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ANCHORARRAY(arg1: range@range)
+/// Arg schema: arg1{kinds=range,required=true,shape=range,by_ref=true,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, RETURNS_REFERENCE
+/// [formualizer-docgen:schema:end]
+impl Function for AnchorArrayFn {
+    fn caps(&self) -> FnCaps {
+        // Not DYNAMIC_DEPENDENCY: the argument's static edge to the anchor
+        // is the whole dependency (any change of the spill recomputes the
+        // anchor first).
+        FnCaps::PURE | FnCaps::RETURNS_REFERENCE
+    }
+    fn name(&self) -> &'static str {
+        "ANCHORARRAY"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(arg_anchor_reference);
+        &SCHEMA
+    }
+
+    fn eval_reference<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Option<Result<ReferenceType, ExcelError>> {
+        if args.len() != 1 {
+            return Some(Err(ExcelError::new(ExcelErrorKind::Value)
+                .with_message("ANCHORARRAY takes exactly one argument")));
+        }
+        Some(args[0].spill_reference())
+    }
+
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let reference = match self.eval_reference(args, ctx) {
+            Some(Ok(reference)) => reference,
+            Some(Err(e)) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
+            None => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new(ExcelErrorKind::Ref),
+                )));
+            }
+        };
+        match ctx.resolve_range_view(&reference, ctx.current_sheet()) {
+            Ok(view) => {
+                let (rows, cols) = view.dims();
+                if rows == 1 && cols == 1 {
+                    Ok(crate::traits::CalcValue::Scalar(
+                        view.as_1x1().unwrap_or(LiteralValue::Empty),
+                    ))
+                } else {
+                    Ok(crate::traits::CalcValue::Range(view))
+                }
+            }
+            Err(e) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct HyperlinkFn;
 
@@ -1183,6 +1298,7 @@ pub fn register_builtins() {
     crate::function_registry::register_builtin(std::sync::Arc::new(OffsetFn));
     crate::function_registry::register_builtin(std::sync::Arc::new(IndirectFn));
     crate::function_registry::register_builtin(std::sync::Arc::new(HyperlinkFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(AnchorArrayFn));
 }
 
 #[cfg(test)]

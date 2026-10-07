@@ -196,6 +196,7 @@ impl DependencyGraph {
             }
 
             self.clear_pending_name_references(vertex_id);
+            self.forget_declared_dynamic_anchor(vertex_id);
             self.vertex_formulas.remove(&vertex_id);
             self.vertex_values.remove(&vertex_id);
 
@@ -440,11 +441,11 @@ impl DependencyGraph {
                 NamedDefinition::Cell(cell_ref) if cell_ref.sheet_id == source_sheet_id => {
                     cell_ref.sheet_id = new_sheet_id;
                 }
-                NamedDefinition::Range(range_ref) => {
-                    if range_ref.start.sheet_id == source_sheet_id {
-                        range_ref.start.sheet_id = new_sheet_id;
-                        range_ref.end.sheet_id = new_sheet_id;
-                    }
+                NamedDefinition::Range(range_ref)
+                    if range_ref.start.sheet_id == source_sheet_id =>
+                {
+                    range_ref.start.sheet_id = new_sheet_id;
+                    range_ref.end.sheet_id = new_sheet_id;
                 }
                 _ => {}
             }

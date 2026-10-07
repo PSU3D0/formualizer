@@ -685,6 +685,7 @@ pub fn formualizer_workbook::cache_recalculate::XlsxRecalculateOptions::fmt(&sel
 pub struct formualizer_workbook::cache_recalculate::XlsxRecalculateResult
 pub formualizer_workbook::cache_recalculate::XlsxRecalculateResult::bytes: alloc::vec::Vec<u8>
 pub formualizer_workbook::cache_recalculate::XlsxRecalculateResult::cache_cells_changed: usize
+pub formualizer_workbook::cache_recalculate::XlsxRecalculateResult::clock_now_utc: core::option::Option<chrono::datetime::DateTime<chrono::offset::utc::Utc>>
 pub formualizer_workbook::cache_recalculate::XlsxRecalculateResult::formula_cells: usize
 pub formualizer_workbook::cache_recalculate::XlsxRecalculateResult::summary: formualizer_workbook::recalculate::RecalculateSummary
 pub formualizer_workbook::cache_recalculate::XlsxRecalculateResult::worksheet_parts_changed: usize
@@ -767,6 +768,7 @@ pub struct formualizer_workbook::recalculate::RecalculateErrorSummary
 pub formualizer_workbook::recalculate::RecalculateErrorSummary::count: usize
 pub formualizer_workbook::recalculate::RecalculateErrorSummary::locations: alloc::vec::Vec<alloc::string::String>
 pub formualizer_workbook::recalculate::RecalculateErrorSummary::locations_truncated: usize
+pub formualizer_workbook::recalculate::RecalculateErrorSummary::messages: alloc::vec::Vec<core::option::Option<alloc::string::String>>
 impl core::clone::Clone for formualizer_workbook::recalculate::RecalculateErrorSummary
 pub fn formualizer_workbook::recalculate::RecalculateErrorSummary::clone(&self) -> formualizer_workbook::recalculate::RecalculateErrorSummary
 impl core::cmp::Eq for formualizer_workbook::recalculate::RecalculateErrorSummary
@@ -796,6 +798,7 @@ pub formualizer_workbook::recalculate::RecalculateSummary::errors: usize
 pub formualizer_workbook::recalculate::RecalculateSummary::evaluated: usize
 pub formualizer_workbook::recalculate::RecalculateSummary::sheets: alloc::collections::btree::map::BTreeMap<alloc::string::String, formualizer_workbook::recalculate::RecalculateSheetSummary>
 pub formualizer_workbook::recalculate::RecalculateSummary::status: formualizer_workbook::recalculate::RecalculateStatus
+pub formualizer_workbook::recalculate::RecalculateSummary::unknown_functions: alloc::collections::btree::map::BTreeMap<alloc::string::String, usize>
 impl formualizer_workbook::recalculate::RecalculateSummary
 pub fn formualizer_workbook::recalculate::RecalculateSummary::has_errors(&self) -> bool
 impl core::clone::Clone for formualizer_workbook::recalculate::RecalculateSummary
@@ -2140,6 +2143,7 @@ pub struct formualizer_workbook::RecalculateErrorSummary
 pub formualizer_workbook::RecalculateErrorSummary::count: usize
 pub formualizer_workbook::RecalculateErrorSummary::locations: alloc::vec::Vec<alloc::string::String>
 pub formualizer_workbook::RecalculateErrorSummary::locations_truncated: usize
+pub formualizer_workbook::RecalculateErrorSummary::messages: alloc::vec::Vec<core::option::Option<alloc::string::String>>
 impl core::clone::Clone for formualizer_workbook::recalculate::RecalculateErrorSummary
 pub fn formualizer_workbook::recalculate::RecalculateErrorSummary::clone(&self) -> formualizer_workbook::recalculate::RecalculateErrorSummary
 impl core::cmp::Eq for formualizer_workbook::recalculate::RecalculateErrorSummary
@@ -2169,6 +2173,7 @@ pub formualizer_workbook::RecalculateSummary::errors: usize
 pub formualizer_workbook::RecalculateSummary::evaluated: usize
 pub formualizer_workbook::RecalculateSummary::sheets: alloc::collections::btree::map::BTreeMap<alloc::string::String, formualizer_workbook::recalculate::RecalculateSheetSummary>
 pub formualizer_workbook::RecalculateSummary::status: formualizer_workbook::recalculate::RecalculateStatus
+pub formualizer_workbook::RecalculateSummary::unknown_functions: alloc::collections::btree::map::BTreeMap<alloc::string::String, usize>
 impl formualizer_workbook::recalculate::RecalculateSummary
 pub fn formualizer_workbook::recalculate::RecalculateSummary::has_errors(&self) -> bool
 impl core::clone::Clone for formualizer_workbook::recalculate::RecalculateSummary
@@ -2612,6 +2617,7 @@ pub fn formualizer_workbook::cache_recalculate::XlsxRecalculateOptions::fmt(&sel
 pub struct formualizer_workbook::XlsxRecalculateResult
 pub formualizer_workbook::XlsxRecalculateResult::bytes: alloc::vec::Vec<u8>
 pub formualizer_workbook::XlsxRecalculateResult::cache_cells_changed: usize
+pub formualizer_workbook::XlsxRecalculateResult::clock_now_utc: core::option::Option<chrono::datetime::DateTime<chrono::offset::utc::Utc>>
 pub formualizer_workbook::XlsxRecalculateResult::formula_cells: usize
 pub formualizer_workbook::XlsxRecalculateResult::summary: formualizer_workbook::recalculate::RecalculateSummary
 pub formualizer_workbook::XlsxRecalculateResult::worksheet_parts_changed: usize

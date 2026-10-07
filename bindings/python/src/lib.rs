@@ -1,6 +1,5 @@
 // See crates/formualizer-common/src/lib.rs for rationale. The nested-if form
-// is kept so the Pyodide-matched Rust nightly (pre let-chain stabilization)
-// still builds this crate.
+// predates let chains on the Pyodide toolchain.
 #![allow(clippy::collapsible_if)]
 
 use pyo3::prelude::*;
@@ -30,6 +29,8 @@ use pyo3_stub_gen::derive::gen_stub_pyfunction;
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 mod ast;
+#[cfg(not(target_arch = "wasm32"))]
+mod cli;
 mod engine;
 mod enums;
 mod errors;
@@ -160,8 +161,8 @@ fn load_workbook(
 /// Load an XLSX workbook from in-memory bytes.
 ///
 /// This is the byte-oriented counterpart to `load_workbook(...)`. Native Python
-/// builds default to `calamine`; Pyodide defaults to `umya` because Calamine is
-/// not currently compiled into that target.
+/// builds default to `calamine`; Pyodide defaults to `umya` (pass
+/// `backend="calamine"` to use Calamine there).
 #[cfg_attr(
     not(target_os = "emscripten"),
     gen_stub_pyfunction(module = "formualizer.formualizer_py")
@@ -234,6 +235,7 @@ fn recalculate_file(py: Python<'_>, path: &str, output: Option<&str>) -> PyResul
             let e = pyo3::types::PyDict::new(py);
             e.set_item("count", info.count)?;
             e.set_item("locations", info.locations)?;
+            e.set_item("messages", info.messages)?;
             if info.locations_truncated > 0 {
                 e.set_item("locations_truncated", info.locations_truncated)?;
             }
@@ -241,16 +243,122 @@ fn recalculate_file(py: Python<'_>, path: &str, output: Option<&str>) -> PyResul
         }
         out.set_item("error_summary", errors)?;
     }
+    out.set_item(
+        "unknown_functions",
+        unknown_functions_to_py(py, summary.unknown_functions)?,
+    )?;
 
     Ok(out.into_any().unbind())
 }
 
-#[cfg(not(target_os = "emscripten"))]
+/// `[{"name": ..., "cells": ...}]`, as in the CLI's `unknown_functions`.
+fn unknown_functions_to_py(
+    py: Python<'_>,
+    unknown: std::collections::BTreeMap<String, usize>,
+) -> PyResult<Bound<'_, pyo3::types::PyList>> {
+    let list = pyo3::types::PyList::empty(py);
+    for (name, cells) in unknown {
+        let entry = pyo3::types::PyDict::new(py);
+        entry.set_item("name", name)?;
+        entry.set_item("cells", cells)?;
+        list.append(entry)?;
+    }
+    Ok(list)
+}
+
+/// Source-recalc options from the keyword arguments shared with
+/// `SheetPortSession.evaluate_once` (same names, types and defaults).
+fn xlsx_recalc_options(
+    error_location_limit: Option<usize>,
+    rng_seed: Option<u64>,
+    deterministic_timestamp_utc: Option<chrono::DateTime<chrono::FixedOffset>>,
+    deterministic_timezone: Option<&Bound<'_, PyAny>>,
+) -> PyResult<formualizer::workbook::XlsxRecalculateOptions> {
+    use formualizer::eval::{engine::DeterministicMode, timezone::TimeZoneSpec};
+    let mut options = formualizer::workbook::XlsxRecalculateOptions::default();
+    if let Some(limit) = error_location_limit {
+        options.error_location_limit = limit;
+    }
+    if let Some(seed) = rng_seed {
+        options.eval_config.workbook_seed = seed;
+    }
+    // Any aware datetime with a fixed offset is an instant (sheetport accepts
+    // only UTC ones); the reported `clock.now` therefore replays directly.
+    if let Some(timestamp_utc) = deterministic_timestamp_utc.map(|t| t.to_utc()) {
+        let timezone = match deterministic_timezone {
+            Some(obj) => sheetport::parse_timezone_spec(obj)?,
+            None => TimeZoneSpec::Utc,
+        };
+        let mode = DeterministicMode::Enabled {
+            timestamp_utc,
+            timezone,
+        };
+        mode.validate().map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "deterministic_timezone: {}",
+                e.message.unwrap_or_default()
+            ))
+        })?;
+        options.eval_config.deterministic_mode = mode;
+    } else if deterministic_timezone.is_some() {
+        return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+            "deterministic_timezone requires deterministic_timestamp_utc",
+        ));
+    }
+    Ok(options)
+}
+
+/// `clock` (`now`, `timezone`, `fixed`) and `seed`, as in the CLI's JSON
+/// report, so a result carries what is needed to replay it.
+fn set_replay_info(
+    out: &Bound<'_, pyo3::types::PyDict>,
+    options: &formualizer::eval::engine::EvalConfig,
+    clock_now_utc: Option<chrono::DateTime<chrono::Utc>>,
+) -> PyResult<()> {
+    use formualizer::eval::timezone::TimeZoneSpec;
+    let zone = options.deterministic_mode.timezone();
+    let clock = pyo3::types::PyDict::new(out.py());
+    // `now` carries the offset applied to it; for `Local`, the host offset at
+    // that instant (as the engine's clock computes it).
+    let now = clock_now_utc.map(|now| {
+        // Pyodide has no system clock: `now` is then always the fixed
+        // timestamp, whose zone has a fixed offset.
+        #[cfg(target_os = "emscripten")]
+        let offset = zone
+            .fixed_offset()
+            .unwrap_or(chrono::FixedOffset::east_opt(0).unwrap());
+        #[cfg(not(target_os = "emscripten"))]
+        let offset = zone
+            .fixed_offset()
+            .unwrap_or_else(|| *now.with_timezone(&chrono::Local).offset());
+        now.with_timezone(&offset)
+    });
+    clock.set_item("now", now)?;
+    clock.set_item(
+        "timezone",
+        match zone {
+            TimeZoneSpec::Local => "Local".to_owned(),
+            TimeZoneSpec::Utc => "UTC".to_owned(),
+            TimeZoneSpec::FixedOffsetSeconds(secs) => {
+                let sign = if *secs < 0 { '-' } else { '+' };
+                let s = secs.unsigned_abs();
+                format!("{sign}{:02}:{:02}", s / 3600, s / 60 % 60)
+            }
+        },
+    )?;
+    clock.set_item("fixed", options.deterministic_mode.is_enabled())?;
+    out.set_item("clock", clock)?;
+    out.set_item("seed", options.workbook_seed)?;
+    Ok(())
+}
+
 fn xlsx_result_to_py(
     py: Python<'_>,
     result: formualizer::workbook::XlsxRecalculateResult,
+    config: &formualizer::eval::engine::EvalConfig,
 ) -> PyResult<Py<PyAny>> {
     let out = pyo3::types::PyDict::new(py);
+    set_replay_info(&out, config, result.clock_now_utc)?;
     out.set_item("bytes", PyBytes::new(py, &result.bytes))?;
     let summary = pyo3::types::PyDict::new(py);
     summary.set_item("status", result.summary.status.as_str())?;
@@ -272,6 +380,7 @@ fn xlsx_result_to_py(
             let error = pyo3::types::PyDict::new(py);
             error.set_item("count", info.count)?;
             error.set_item("locations", info.locations)?;
+            error.set_item("messages", info.messages)?;
             if info.locations_truncated > 0 {
                 error.set_item("locations_truncated", info.locations_truncated)?;
             }
@@ -279,6 +388,10 @@ fn xlsx_result_to_py(
         }
         summary.set_item("error_summary", errors)?;
     }
+    summary.set_item(
+        "unknown_functions",
+        unknown_functions_to_py(py, result.summary.unknown_functions)?,
+    )?;
     out.set_item("summary", summary)?;
     out.set_item("formula_cells", result.formula_cells)?;
     out.set_item("cache_cells_changed", result.cache_cells_changed)?;
@@ -286,24 +399,40 @@ fn xlsx_result_to_py(
     Ok(out.into_any().unbind())
 }
 
-#[cfg(not(target_os = "emscripten"))]
 /// Recalculate XLSX formula caches in memory without rewriting unrelated package parts.
 /// Returns a dictionary with output ``bytes``, a ``summary``, and formula/cache/worksheet counts.
+/// ``rng_seed`` seeds ``RAND``/``RANDBETWEEN`` (the default seed is already
+/// stable run to run). ``deterministic_timestamp_utc`` (an aware ``datetime``
+/// with a fixed offset) fixes ``TODAY``/``NOW``; ``deterministic_timezone`` (``'utc'``, ``'+02:00'``
+/// or offset seconds, default UTC) requires it. Without them ``TODAY``/``NOW``
+/// use the host's local time; in Pyodide, which has no system clock, a
+/// workbook using them is refused unless ``deterministic_timestamp_utc`` is
+/// given. The result's ``clock`` (``now``, ``timezone``, ``fixed``) and
+/// ``seed`` replay the run. ``summary["error_summary"][token]["messages"]``
+/// gives the reason for each listed location (``None`` when the cell has none
+/// of its own) and ``summary["unknown_functions"]`` lists every unimplemented
+/// function called, with its cell count.
 #[cfg_attr(
     not(target_os = "emscripten"),
     gen_stub_pyfunction(module = "formualizer.formualizer_py")
 )]
 #[pyfunction]
-#[pyo3(signature = (data, *, error_location_limit=None))]
+#[pyo3(signature = (data, *, error_location_limit=None, rng_seed=None, deterministic_timestamp_utc=None, deterministic_timezone=None))]
 fn recalculate_xlsx_bytes(
     py: Python<'_>,
     data: &Bound<'_, PyBytes>,
     error_location_limit: Option<usize>,
+    rng_seed: Option<u64>,
+    deterministic_timestamp_utc: Option<chrono::DateTime<chrono::FixedOffset>>,
+    deterministic_timezone: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<Py<PyAny>> {
-    let mut options = formualizer::workbook::XlsxRecalculateOptions::default();
-    if let Some(limit) = error_location_limit {
-        options.error_location_limit = limit;
-    }
+    let options = xlsx_recalc_options(
+        error_location_limit,
+        rng_seed,
+        deterministic_timestamp_utc,
+        deterministic_timezone,
+    )?;
+    let config = options.eval_config.clone();
     // Reject above the core's safe default before copying Python-owned bytes.
     if data.as_bytes().len() > options.limits.max_input_bytes {
         return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -316,27 +445,40 @@ fn recalculate_xlsx_bytes(
         .map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("recalculate XLSX failed: {e}"))
         })?;
-    xlsx_result_to_py(py, result)
+    xlsx_result_to_py(py, result, &config)
 }
 
 #[cfg(not(target_os = "emscripten"))]
 /// Recalculate XLSX formula caches from a path using atomic output replacement.
+/// Returns the same dictionary as ``recalculate_xlsx_bytes``.
+/// ``rng_seed`` seeds ``RAND``/``RANDBETWEEN`` (the default seed is already
+/// stable run to run). ``deterministic_timestamp_utc`` (an aware ``datetime``
+/// with a fixed offset) fixes ``TODAY``/``NOW``; ``deterministic_timezone`` (``'utc'``, ``'+02:00'``
+/// or offset seconds, default UTC) requires it. Without them ``TODAY``/``NOW``
+/// use the host's local time. The result's ``clock`` (``now``, ``timezone``,
+/// ``fixed``) and ``seed`` replay the run.
 #[cfg_attr(
     not(target_os = "emscripten"),
     gen_stub_pyfunction(module = "formualizer.formualizer_py")
 )]
 #[pyfunction]
-#[pyo3(signature = (path, output=None, *, error_location_limit=None))]
+#[pyo3(signature = (path, output=None, *, error_location_limit=None, rng_seed=None, deterministic_timestamp_utc=None, deterministic_timezone=None))]
 fn recalculate_xlsx_file(
     py: Python<'_>,
     path: &str,
     output: Option<&str>,
     error_location_limit: Option<usize>,
+    rng_seed: Option<u64>,
+    deterministic_timestamp_utc: Option<chrono::DateTime<chrono::FixedOffset>>,
+    deterministic_timezone: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<Py<PyAny>> {
-    let mut options = formualizer::workbook::XlsxRecalculateOptions::default();
-    if let Some(limit) = error_location_limit {
-        options.error_location_limit = limit;
-    }
+    let options = xlsx_recalc_options(
+        error_location_limit,
+        rng_seed,
+        deterministic_timestamp_utc,
+        deterministic_timezone,
+    )?;
+    let config = options.eval_config.clone();
     let input = std::path::PathBuf::from(path);
     let output = output.map(std::path::PathBuf::from);
     let result = py
@@ -346,12 +488,14 @@ fn recalculate_xlsx_file(
         .map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("recalculate XLSX failed: {e}"))
         })?;
-    xlsx_result_to_py(py, result)
+    xlsx_result_to_py(py, result, &config)
 }
 
 /// The main formualizer Python module
 #[pymodule]
 fn formualizer_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    #[cfg(not(target_arch = "wasm32"))]
+    cli::register(m)?;
     // Register all submodules
     enums::register(m)?;
     errors::register(m)?;
@@ -372,7 +516,6 @@ fn formualizer_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(load_workbook, m)?)?;
     m.add_function(wrap_pyfunction!(load_workbook_bytes, m)?)?;
     m.add_function(wrap_pyfunction!(recalculate_file, m)?)?;
-    #[cfg(not(target_os = "emscripten"))]
     m.add_function(wrap_pyfunction!(recalculate_xlsx_bytes, m)?)?;
     #[cfg(not(target_os = "emscripten"))]
     m.add_function(wrap_pyfunction!(recalculate_xlsx_file, m)?)?;

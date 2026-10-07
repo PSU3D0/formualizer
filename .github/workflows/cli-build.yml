@@ -1,0 +1,222 @@
+name: CLI binaries
+
+# Builds the native `formualizer` CLI for every release target, then assembles
+# the GitHub release archives (+ SHA256SUMS) and the npm tarballs as workflow
+# artifacts. It never publishes: no secrets, read-only token, and no publish or
+# release-upload steps. release.yml calls it on product tags and publishes the
+# artifacts from its own jobs. Dispatching it (or a PR touching the packaging)
+# is the no-publish dry run.
+
+on:
+  workflow_call:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - npm/formualizer-cli/**
+      - .github/workflows/cli-build.yml
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # Linux builds use cargo-zigbuild so the glibc floor is pinned by the target
+  # suffix (.2.17) independent of the runner image; zig also links musl
+  # statically and needs no cross gcc. Bump these together and keep MAX_GLIBC
+  # in step with the gnu target suffixes below.
+  CARGO_ZIGBUILD_VERSION: "0.23.4"
+  ZIG_VERSION: "0.15.2"
+  MAX_GLIBC: "2.17"
+
+jobs:
+  build:
+    name: build ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+            zig: x86_64-unknown-linux-gnu.2.17
+            smoke: true
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+            zig: aarch64-unknown-linux-gnu.2.17
+            smoke: true
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-24.04
+            zig: x86_64-unknown-linux-musl
+            smoke: true
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+            zig: aarch64-unknown-linux-musl
+            smoke: true
+          - target: x86_64-apple-darwin
+            runner: macos-latest
+            smoke: false
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+            smoke: true
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            rustflags: -C target-feature=+crt-static
+            smoke: true
+    env:
+      TARGET: ${{ matrix.target }}
+      ZIG_TARGET: ${{ matrix.zig }}
+      EXE: ${{ contains(matrix.target, 'windows') && '.exe' || '' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up pinned Rust
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: 1.99.0
+          targets: ${{ matrix.target }}
+
+      - name: Set up Python (zig toolchain)
+        if: matrix.zig
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install pinned cargo-zigbuild and zig
+        if: matrix.zig
+        run: python -m pip install "cargo-zigbuild==${CARGO_ZIGBUILD_VERSION}" "ziglang==${ZIG_VERSION}"
+
+      - name: Build formualizer
+        shell: bash
+        env:
+          CARGO_PROFILE_RELEASE_STRIP: symbols
+          RUSTFLAGS: ${{ matrix.rustflags }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${ZIG_TARGET}" ]]; then
+            cargo zigbuild --release --locked -p formualizer-cli --bin formualizer --target "${ZIG_TARGET}"
+          else
+            cargo build --release --locked -p formualizer-cli --bin formualizer --target "${TARGET}"
+          fi
+          mkdir -p "dist/${TARGET}"
+          cp "target/${TARGET}/release/formualizer${EXE}" "dist/${TARGET}/"
+          ls -l "dist/${TARGET}"
+
+      - name: Smoke-test the binary
+        if: matrix.smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$("dist/${TARGET}/formualizer${EXE}" --version)"
+          echo "${out}"
+          [[ "${out}" == formualizer* ]]
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v6
+        with:
+          name: cli-bin-${{ matrix.target }}
+          path: dist/
+          if-no-files-found: error
+
+  package:
+    name: assemble archives and npm tarballs
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Launcher and assembly tests
+        run: node --test npm/formualizer-cli/test/*.test.js
+
+      - name: Download binaries
+        uses: actions/download-artifact@v7
+        with:
+          pattern: cli-bin-*
+          path: binaries
+          merge-multiple: true
+
+      - name: Assemble npm packages (validates format, arch, static musl, glibc floor)
+        run: node npm/formualizer-cli/scripts/assemble.js --binaries binaries --out npm-dist --max-glibc "${MAX_GLIBC}"
+
+      - name: Pack npm packages in publish order
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir npm-tarballs
+          version="$(node -p 'require("./npm-dist/manifest.json").version')"
+          node -e 'for (const p of require("./npm-dist/manifest.json").packages) console.log(p.name + "\t" + p.dir)' > packages.tsv
+          while IFS=$'\t' read -r name dir; do
+            file="$(npm pack "./npm-dist/${dir}" --ignore-scripts --pack-destination npm-tarballs --json | node -e 'let s="";process.stdin.on("data",(d)=>s+=d).on("end",()=>console.log(JSON.parse(s)[0].filename))')"
+            printf '%s\t%s\t%s\n' "${name}" "${version}" "${file}" >> npm-tarballs/publish-order.txt
+          done < packages.tsv
+          cat npm-tarballs/publish-order.txt
+          ls -l npm-tarballs
+
+      - name: Smoke-test packed launcher (gnu, and musl fallback)
+        shell: bash
+        run: |
+          set -euo pipefail
+          tarball() { awk -F'\t' -v n="$1" '$1 == n { print $3 }' npm-tarballs/publish-order.txt; }
+          install_into() {
+            local root="$1" name="$2"
+            mkdir -p "${root}/node_modules/${name}"
+            tar -xzf "npm-tarballs/$(tarball "${name}")" -C "${root}/node_modules/${name}" --strip-components=1
+          }
+          meta="$(node -p 'require("./npm/formualizer-cli/platforms.json").metaPackage')"
+          pattern="$(node -p 'require("./npm/formualizer-cli/platforms.json").platformPackage')"
+          for platform in linux-x64-gnu linux-x64-musl; do
+            root="$(mktemp -d)"
+            install_into "${root}" "${meta}"
+            install_into "${root}" "${pattern/\{platform\}/${platform}}"
+            out="$(node "${root}/node_modules/${meta}/bin/formualizer.js" --version)"
+            echo "${platform}: ${out}"
+            [[ "${out}" == formualizer* ]]
+          done
+
+      - name: Package release archives and SHA256SUMS
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node -p 'require("./npm-dist/manifest.json").version')"
+          mkdir -p release-assets stage
+          node -e 'for (const p of require("./npm/formualizer-cli/platforms.json").platforms) console.log(p.target + "\t" + (p.exe || ""))' > targets.tsv
+          while IFS=$'\t' read -r target exe; do
+            name="formualizer-cli-v${version}-${target}"
+            mkdir "stage/${name}"
+            cp "binaries/${target}/formualizer${exe}" "stage/${name}/"
+            chmod 0755 "stage/${name}/formualizer${exe}"
+            cp LICENSE-MIT LICENSE-APACHE "stage/${name}/"
+            cp crates/formualizer-cli/README.md "stage/${name}/README.md"
+            if [[ -n "${exe}" ]]; then
+              (cd stage && zip -X -q -r "../release-assets/${name}.zip" "${name}")
+            else
+              tar --sort=name --owner=0 --group=0 --numeric-owner -C stage -czf "release-assets/${name}.tar.gz" "${name}"
+            fi
+          done < targets.tsv
+          (cd release-assets && sha256sum -- *.tar.gz *.zip > SHA256SUMS && cat SHA256SUMS)
+
+      - name: Upload release archives
+        uses: actions/upload-artifact@v6
+        with:
+          name: cli-release-assets
+          path: release-assets/
+          if-no-files-found: error
+
+      - name: Upload npm tarballs
+        uses: actions/upload-artifact@v6
+        with:
+          name: cli-npm-tarballs
+          path: npm-tarballs/
+          if-no-files-found: error

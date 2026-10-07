@@ -20,7 +20,7 @@ Load Excel workbooks, change inputs, recalculate and read results—in-process, 
 - **Built for agents.** Inspect dependencies, track edits with undo/redo, inject a clock and random seed, and expose typed inputs and outputs through SheetPort.
 - **Portable.** Native wheels for Linux, macOS and Windows, plus a separate [Pyodide build](#using-in-pyodide-browser--webassembly). The same engine also ships for [Rust and JavaScript](https://github.com/psu3d0/formualizer#bindings).
 
-Need CLI or MCP tools for an agent rather than an embedded library? Use [agent-spreadsheet](https://github.com/PSU3D0/agent-spreadsheet), built on Formualizer.
+Need broader workbook editing CLI or MCP tools? Use [agent-spreadsheet](https://github.com/PSU3D0/agent-spreadsheet), built on Formualizer.
 
 ## Installation
 
@@ -30,10 +30,65 @@ pip install formualizer
 
 Prebuilt stable-ABI (`abi3`) wheels are published for Python 3.10 and newer on Linux (glibc and musl), macOS, and Windows. No Rust toolchain required.
 
+## Command line
+
+Native wheels include the `formualizer` command, which recalculates the cached formula values in an `.xlsx` after another tool has edited it:
+
+```bash
+uvx formualizer recalc book.xlsx                  # run without installing
+formualizer recalc book.xlsx --check --json       # after pip install formualizer
+python -m formualizer recalc book.xlsx --json     # same CLI through the module
+```
+
+The CLI updates formula caches in place (or writes `-o other.xlsx`), preserving formula text and the rest of the workbook. Exit codes: 0 done, 1 error, 2 refused (unsupported workbook, nothing written), 3 `--check` found stale caches, 64 usage error, 130 interrupted. See the [CLI reference](https://github.com/psu3d0/formualizer/blob/main/docs/cli.md). The CLI is not available in Pyodide; `recalculate_xlsx_bytes` is.
+
+The same recalculation is available in-process:
+
+```python
+import formualizer as fz
+
+result = fz.recalculate_xlsx_file("book.xlsx")  # in place
+result = fz.recalculate_xlsx_file("book.xlsx", output="calculated.xlsx")
+print(result["summary"]["status"], result["cache_cells_changed"])
+```
+
+A refusal raises `RuntimeError("Unsupported feature: ... in ...")` and writes nothing. The CLI's `--json` output carries the same refusal as structured `feature`/`context` fields, which is easier for agents to branch on.
+
+## For agents: edit with openpyxl, then recalc
+
+openpyxl writes formulas but does not calculate them, and saving drops the cached values that `data_only=True` readers (and pandas) see. Recalc after the last save:
+
+```python
+import json, subprocess, sys
+from openpyxl import load_workbook
+
+wb = load_workbook("book.xlsx")
+wb.active["A1"] = 100  # edit inputs or formulas
+wb.save("book.xlsx")
+
+p = subprocess.run(
+    [sys.executable, "-m", "formualizer", "recalc", "book.xlsx", "--json"],
+    capture_output=True,
+    text=True,
+)
+r = json.loads(p.stdout)
+if p.returncode == 2:
+    raise SystemExit(f"refused, do not retry: {r['refusal']}")
+if p.returncode != 0:
+    raise SystemExit(r["message"])
+print(r["status"], r["error_cells"], r["errors"])  # inspect formula errors
+
+# Read the result; do not save again, or the caches are lost.
+print(load_workbook("book.xlsx", data_only=True).active["B1"].value)
+```
+
+If `errors` lists unexpected cells, fix inputs or formulas, save and recalc again. Never save the `data_only=True` view: it would replace formulas with values. See the [agent workflow guide](https://github.com/psu3d0/formualizer/blob/main/docs/agents.md) and [portable skill](https://github.com/psu3d0/formualizer/blob/main/skills/formualizer-recalc/SKILL.md).
+
 ## Documentation
 
 Full documentation at **[formualizer.dev](https://www.formualizer.dev/docs)**:
 
+- [Recalc CLI](https://www.formualizer.dev/docs/recalc-cli) — recalculate `.xlsx` caches after openpyxl edits
 - [Python Quickstart](https://www.formualizer.dev/docs/quickstarts/python-quickstart)
 - [Python API Reference](https://www.formualizer.dev/docs/reference/python-api-map)
 - [Function Reference](https://www.formualizer.dev/docs/reference/functions) — 400+ built-in functions
@@ -91,7 +146,7 @@ print(wb.evaluate_cell("Summary", 1, 2))
 out = wb.to_xlsx_bytes()
 ```
 
-Native Python builds use `calamine` by default for both path-based and byte-oriented XLSX loading. Pyodide currently defaults to `umya`, which also remains available explicitly on native builds. XLSX byte export uses `umya` because Calamine is read-only.
+Native Python builds use `calamine` by default for both path-based and byte-oriented XLSX loading. Pyodide defaults to `umya` for byte loading and accepts `backend="calamine"` explicitly; `umya` also remains available explicitly on native builds. XLSX byte export uses `umya` because Calamine is read-only.
 
 ### Recalculate XLSX cached values (writeback)
 
@@ -120,11 +175,72 @@ print(result["summary"]["status"], result["cache_cells_changed"])
 
 # The file API snapshots input and atomically replaces the destination on success.
 result = fz.recalculate_xlsx_file("model.xlsx", output="model.recalc.xlsx")
+
+# Reproducible TODAY/NOW and RAND, as with the CLI's --now/--tz/--seed:
+from datetime import datetime, timezone
+
+result = fz.recalculate_xlsx_file(
+    "model.xlsx",
+    output="model.recalc.xlsx",
+    rng_seed=7,
+    deterministic_timestamp_utc=datetime(2026, 1, 31, 9, tzinfo=timezone.utc),
+    deterministic_timezone="+01:00",  # default UTC
+)
+print(result["clock"], result["seed"])  # what the run used, for replay
 ```
+
+`RAND` is reproducible by default. Without `deterministic_timestamp_utc`,
+`TODAY`/`NOW` use host local time; `result["clock"]["now"]` is the aware
+`datetime` they saw.
 
 These APIs use the shared cache-only Rust implementation, retaining formula text
 and unrelated package members. Safe core resource limits apply;
 `error_location_limit=` only caps retained error locations.
+
+Calls to functions the engine does not implement (add-ins such as `_xll.EURO`,
+VBA/macro functions) are written as `#NAME?`, not refused. The summary says why:
+
+```python
+name = result["summary"].get("error_summary", {}).get("#NAME?")
+if name:
+    for location, message in zip(name["locations"], name["messages"]):
+        print(location, message)  # Sheet1!C4 Unknown function: _xll.EURO
+print(result["summary"]["unknown_functions"])  # [{"name": "_xll.EURO", "cells": 1}]
+```
+
+`messages` is parallel to `locations` (`None` when a cell has no reason of its
+own, e.g. an inherited `#NAME?`); `unknown_functions` is complete regardless of
+`error_location_limit`. Numeric caches within one unit in the 15th significant
+digit of the computed value are left untouched.
+
+In Pyodide, `recalculate_xlsx_bytes` is available (not `recalculate_xlsx_file`
+or the CLI). Pyodide has no system clock, so workbooks using `TODAY`/`NOW` are
+refused unless `deterministic_timestamp_utc` is passed.
+
+Supported inputs include ordinary/shared scalar formulas, supported calculation
+names, new multi-cell spills from ordinary non-shared formulas, and existing
+XLDAPR dynamic-array anchors with validated `cm`/array-`ref` metadata. Spills can
+grow, shrink, collapse or become blocked; `A1#` and `_xlfn.ANCHORARRAY(A1)` read
+the current spill. Source-declared children are generated caches, not independent
+inputs: even externally edited child values are recalculated while their source
+ownership remains declared. Obsolete caches are cleared, keeping styled shells.
+
+`formula_cells` and `summary["evaluated"]` count source formulas/anchors, not
+children. `cache_cells_changed` counts physical caches inserted, replaced or
+cleared (including children), so it can exceed the formula count.
+`worksheet_parts_changed` counts worksheets only, not metadata/relationships.
+Deterministic unchanged outputs recalculate to byte-identical no-ops.
+
+Legacy fixed-extent (CSE) arrays, elementwise `IF`, Excel tables within a
+validated subset and volatile functions are recalculated too. Data tables,
+external links, rich/unknown or malformed metadata, hidden-row `SUBTOTAL`/`AGGREGATE`
+ranges, circular references, shared-family multi-cell spills and spill
+publication across merges are refused. Configured ZIP/XML/cell/output bounds
+still apply. Fresh unmarked 1x1 results have no spill identity (`A1#` returns
+`#REF!`); this is not a claim of Excel equivalence and no Excel execution oracle
+was used. See [the precise eligibility and publication contract](https://github.com/psu3d0/formualizer/blob/main/docs/cache-only-xlsx.md).
+The file API preserves existing destination permissions and leaves it untouched
+on pre-publication failure; omitted `output` recalculates in place.
 
 ### Parse and analyze formulas
 
@@ -320,8 +436,8 @@ parse(formula: str, dialect: FormulaDialect = None) -> ASTNode
 load_workbook(path: str, strategy: str = None, *, path_source: XlsxPathSource | None = None, span_evaluation: bool | None = None) -> Workbook
 load_workbook_bytes(data: bytes, strategy: str = None, backend: str | None = None, *, span_evaluation: bool | None = None) -> Workbook
 recalculate_file(path: str, output: str | None = None) -> dict
-recalculate_xlsx_bytes(data: bytes, *, error_location_limit: int | None = None) -> dict
-recalculate_xlsx_file(path: str, output: str | None = None, *, error_location_limit: int | None = None) -> dict
+recalculate_xlsx_bytes(data: bytes, *, error_location_limit: int | None = None, rng_seed: int | None = None, deterministic_timestamp_utc: datetime | None = None, deterministic_timezone: str | int | None = None) -> dict
+recalculate_xlsx_file(path: str, output: str | None = None, *, error_location_limit: int | None = None, rng_seed: int | None = None, deterministic_timestamp_utc: datetime | None = None, deterministic_timezone: str | int | None = None) -> dict
 ```
 
 ### Core classes
@@ -350,7 +466,7 @@ Full type stubs are included in the package (`.pyi` files) for IDE autocompletio
 
 ## Building from source
 
-Requires Rust 1.93.0 (the pinned release toolchain; edition 2024) and [maturin](https://github.com/PyO3/maturin):
+Requires Rust 1.99.0 (the pinned release toolchain; edition 2024) and [maturin](https://github.com/PyO3/maturin):
 
 ```bash
 pip install maturin
@@ -379,11 +495,12 @@ wb.set_formula("Sheet1", 1, 2, "=SUM(A1:A2)")
 wb.evaluate_cell("Sheet1", 1, 2)  # -> 42.0
 ```
 
-**Tested Pyodide target:** CI and release smoke tests use Pyodide 0.29.3 and the wheel's derived ABI (currently `pyodide_2025_0`). Rebuild and smoke-test a wheel when targeting another runtime; no persistent public wheel URL is promised.
+**Tested Pyodide target:** CI and release smoke tests use Pyodide 314.0.7 (Python 3.14) and the wheel's derived platform tag (currently `pyemscripten_2026_0_wasm32`). Wheels for this ABI do not install in Pyodide 0.29.x (`pyodide_2025_0`). Rebuild and smoke-test a wheel when targeting another runtime; no persistent public wheel URL is promised.
 
 **Pyodide-specific behavior:**
 - `EvaluationConfig()` and `Workbook()` default `enable_parallel = False` on `sys.platform == "emscripten"` (Pyodide has no threads). You can still opt in, but it falls back to single-threaded execution.
-- Native XLSX byte loading (`Workbook.from_bytes`, `load_workbook_bytes`) defaults to `calamine`; Pyodide defaults to `umya`. XLSX byte export uses `umya` on all platforms.
+- Native XLSX byte loading (`Workbook.from_bytes`, `load_workbook_bytes`) defaults to `calamine`; Pyodide defaults to `umya` and accepts `backend="calamine"`. XLSX byte export uses `umya` on all platforms.
+- Source-preserving recalculation is available as `recalculate_xlsx_bytes` (the CLI and `recalculate_xlsx_file` are not). There is no system clock: workbooks using `TODAY`/`NOW` are refused unless `deterministic_timestamp_utc` is passed, and `result["clock"]["now"]` is `None` otherwise.
 - Python UDFs registered via `Workbook.register_function` work identically to native; single-cell refs arrive as scalars (Excel-native semantics).
 
 ### Building a Pyodide wheel from source
@@ -392,10 +509,10 @@ For local development or targeting a Pyodide version without a retained Actions 
 
 ```bash
 ./scripts/build-pyodide-wheel.sh
-./scripts/smoke-pyodide-wheel.sh dist/pyodide/*-pyodide_*_wasm32.whl
+./scripts/smoke-pyodide-wheel.sh dist/pyodide/*_wasm32.whl
 ```
 
-The build script defaults to xbuildenv Pyodide 0.29.3, derives Python, ABI, Emscripten, and Rust toolchain values from `pyodide config`, installs Pyodide's custom wasm-EH Rust sysroot over the stock rustup target, and retags the output wheel to the platform tag Pyodide's `micropip` expects. `pyodide-cli` and `pyodide-build` are resolved through `uvx` and are not pinned by the script.
+The build script defaults to xbuildenv Pyodide 314.0.7, derives Python, ABI, Emscripten, and Rust toolchain values from `pyodide config`, installs that Rust toolchain's `wasm32-unknown-emscripten` target (or, for an xbuildenv that names one, Pyodide's custom wasm-EH sysroot), and tags the output wheel with the platform tag Pyodide's `micropip` expects. `pyodide-cli` and `pyodide-build` are resolved through `uvx` and are not pinned by the script.
 
 ## Testing
 

@@ -1,0 +1,7 @@
+# pnpm 11 fails installs whose dependency build scripts are neither allowed nor
+# denied. Neither script is needed: esbuild ships its binary as an optional
+# platform package, and sharp is unused because the static export serves
+# unoptimized images.
+allowBuilds:
+  esbuild: false
+  sharp: false

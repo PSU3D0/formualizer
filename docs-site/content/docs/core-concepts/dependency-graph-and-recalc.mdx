@@ -9,7 +9,7 @@ A workbook is more than cells and values; it is also a graph.
 - **Edges** point from a dependent formula cell to its precedents.
 - **Recalc order** is derived from graph topology.
 
-In 0.6, the stable dependency graph remains the default execution path. An experimental opt-in FormulaPlane span runtime can compact some large copied-formula families, but unsupported formulas continue to use the graph path.
+The dependency graph is the only execution path. Copied formulas that share a shape are evaluated together as formula families over Arrow columns, with the same results as per-cell evaluation. The experimental FormulaPlane span runtime was removed in 0.10.0; its switches are accepted and ignored.
 
 ## Practical behavior
 
@@ -39,7 +39,7 @@ Recalc order: B1 then C1
 
 - [Parse -> AST -> Evaluate -> Workbook](/docs/core-concepts/parse-ast-evaluate-workbook)
 - [Workbook Edits and Batching](../guides/workbook-edits-and-batching)
-- [FormulaPlane Span Evaluation](/docs/core-concepts/formula-plane-span-evaluation)
+- [Large Workbook Performance](/docs/guides/large-workbook-performance)
 - [Deterministic Testing](../guides/deterministic-testing)
 
 ## Cycle handling

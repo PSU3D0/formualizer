@@ -22,8 +22,9 @@ type PyObject = pyo3::Py<pyo3::PyAny>;
 #[cfg(not(target_os = "emscripten"))]
 pub(crate) const DEFAULT_XLSX_BYTE_BACKEND: &str = "calamine";
 
-// Pyodide currently excludes Calamine because its Rust sysroot is older than
-// Calamine 0.36's MSRV. Keep the existing Umya byte path as its default.
+// Pyodide builds Calamine (and source recalculation) since Pyodide 314, but
+// keeps Umya as its default byte backend so existing Pyodide callers see the
+// same loader; pass backend='calamine' to choose it.
 #[cfg(target_os = "emscripten")]
 pub(crate) const DEFAULT_XLSX_BYTE_BACKEND: &str = "umya";
 
@@ -380,18 +381,11 @@ impl PyWorkbook {
         match backend {
             "calamine" => {
                 #[cfg(target_os = "emscripten")]
-                {
-                    let _ = (path, cfg);
-                    let message = if path_source == PyXlsxPathSource::DirectMmap {
-                        "XlsxPathSource.DIRECT_MMAP is unavailable in the Pyodide build; use SHARED_FILE or an in-memory XLSX byte API"
-                    } else {
-                        "backend='calamine' is unavailable in the Pyodide build; use backend='umya' with in-memory XLSX bytes"
-                    };
-                    Err(PyErr::new::<pyo3::exceptions::PyNotImplementedError, _>(
-                        message,
-                    ))
+                if path_source == PyXlsxPathSource::DirectMmap {
+                    return Err(PyErr::new::<pyo3::exceptions::PyNotImplementedError, _>(
+                        "XlsxPathSource.DIRECT_MMAP is unavailable in the Pyodide build; use SHARED_FILE or an in-memory XLSX byte API",
+                    ));
                 }
-                #[cfg(not(target_os = "emscripten"))]
                 {
                     use formualizer::workbook::backends::CalamineAdapter;
                     let adapter = CalamineAdapter::open_path_with_source(
@@ -898,8 +892,8 @@ impl PyWorkbook {
     /// on the next recalculation. Takes effect on a live workbook; no
     /// reload is required.
     ///
-    /// `deterministic_timezone` accepts `"utc"`, `"local"`, or a fixed
-    /// offset in seconds — the same spelling as
+    /// `deterministic_timezone` accepts `"utc"`, `"local"`, a fixed offset
+    /// such as `"+02:00"`, or an offset in seconds — the same spelling as
     /// `SheetPortSession.evaluate_once(deterministic_timezone=...)`.
     /// Omitted means UTC.
     #[pyo3(signature = (deterministic_timestamp_utc, deterministic_timezone=None))]
@@ -1528,34 +1522,22 @@ impl PyWorkbook {
                 Ok(Self::from_inner_workbook(wb))
             }
             "calamine" => {
-                #[cfg(target_os = "emscripten")]
-                {
-                    let _ = (data, cfg);
-                    Err(PyErr::new::<pyo3::exceptions::PyNotImplementedError, _>(
-                        "backend='calamine' is unavailable in the Pyodide build; use backend='umya' with in-memory XLSX bytes",
-                    ))
-                }
-                #[cfg(not(target_os = "emscripten"))]
-                {
-                    use formualizer::workbook::backends::CalamineAdapter;
-                    use formualizer::workbook::traits::SpreadsheetReader;
+                use formualizer::workbook::backends::CalamineAdapter;
+                use formualizer::workbook::traits::SpreadsheetReader;
 
-                    let adapter = <CalamineAdapter as SpreadsheetReader>::open_bytes(data)
-                        .map_err(|e| {
-                            PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
-                                "open failed: {e}"
-                            ))
-                        })?;
-                    let wb = formualizer::workbook::Workbook::from_reader(
-                        adapter,
-                        formualizer::workbook::LoadStrategy::EagerAll,
-                        cfg,
-                    )
-                    .map_err(|e| {
-                        PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("load failed: {e}"))
+                let adapter =
+                    <CalamineAdapter as SpreadsheetReader>::open_bytes(data).map_err(|e| {
+                        PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("open failed: {e}"))
                     })?;
-                    Ok(Self::from_inner_workbook(wb))
-                }
+                let wb = formualizer::workbook::Workbook::from_reader(
+                    adapter,
+                    formualizer::workbook::LoadStrategy::EagerAll,
+                    cfg,
+                )
+                .map_err(|e| {
+                    PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("load failed: {e}"))
+                })?;
+                Ok(Self::from_inner_workbook(wb))
             }
             other => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                 "Unsupported backend: {other}"

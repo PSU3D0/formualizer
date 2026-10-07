@@ -17,6 +17,12 @@ use crate::engine::used_extent::{
     ExtentPolicy, OpenRangeBounds, resolve_used_extent_with_fallback,
 };
 
+/// A spill reference whose operand is not a single-cell reference or name.
+fn spill_operand_error() -> ExcelError {
+    ExcelError::new(ExcelErrorKind::Ref)
+        .with_message("Spill reference operand must be a single cell or a name")
+}
+
 /// Postfix calls (`LAMBDA(x,x+1)(B1)`) are parsed and stored but not evaluated;
 /// the parsed tree and its arena copy fail the same way.
 fn call_expression_error() -> ExcelError {
@@ -338,6 +344,7 @@ impl<'a> Interpreter<'a> {
                 let rref = self.evaluate_ast_as_reference(right)?;
                 crate::reference::combine_references(&lref, &rref)
             }
+            ASTNodeType::UnaryOp { op, expr } if op == "#" => self.ast_spill_reference(expr),
             ASTNodeType::Array(_)
             | ASTNodeType::UnaryOp { .. }
             | ASTNodeType::BinaryOp { .. }
@@ -432,8 +439,69 @@ impl<'a> Interpreter<'a> {
                     self.evaluate_arena_ast_as_reference(*right_id, data_store, sheet_registry)?;
                 crate::reference::combine_references(&lref, &rref)
             }
+            AstNodeData::UnaryOp { op_id, expr_id }
+                if data_store.resolve_ast_string(*op_id) == "#" =>
+            {
+                self.arena_spill_reference(*expr_id, data_store, sheet_registry)
+            }
             _ => Err(ExcelError::new(ExcelErrorKind::Ref)
                 .with_message("Expression cannot be used as a reference")),
+        }
+    }
+
+    /// The anchor a spill operand names: a single-cell reference or a name,
+    /// including a LET/LAMBDA local bound to one. Anything else is `#REF!`.
+    fn spill_anchor_operand(&self, reference: &ReferenceType) -> Result<ReferenceType, ExcelError> {
+        let anchor = match reference {
+            ReferenceType::NamedRange(name) if self.resolve_local_name(name).is_some() => self
+                .resolve_local_bound_reference(name)
+                .ok_or_else(spill_operand_error)?,
+            _ => self
+                .reference_for_current_offset(reference)
+                .map_err(|_| spill_operand_error())?,
+        };
+        match anchor {
+            ReferenceType::Cell { .. } | ReferenceType::NamedRange(_) => Ok(anchor),
+            _ => Err(spill_operand_error()),
+        }
+    }
+
+    /// Resolve a spill reference (`A1#`, `ANCHORARRAY(A1)`) whose operand is
+    /// the written `reference`, to the anchor's current spill rectangle.
+    pub(crate) fn resolve_spill_reference(
+        &self,
+        reference: &ReferenceType,
+    ) -> Result<ReferenceType, ExcelError> {
+        let anchor = self.spill_anchor_operand(reference)?;
+        self.context
+            .resolve_spill_reference(&anchor, self.current_sheet)
+    }
+
+    /// The `#` operator on an AST operand: only a written reference qualifies.
+    pub(crate) fn ast_spill_reference(
+        &self,
+        operand: &ASTNode,
+    ) -> Result<ReferenceType, ExcelError> {
+        match &operand.node_type {
+            ASTNodeType::Reference { reference, .. } => self.resolve_spill_reference(reference),
+            _ => Err(spill_operand_error()),
+        }
+    }
+
+    /// The `#` operator on an arena operand: only a written reference qualifies.
+    pub(crate) fn arena_spill_reference(
+        &self,
+        operand: AstNodeId,
+        data_store: &DataStore,
+        sheet_registry: &SheetRegistry,
+    ) -> Result<ReferenceType, ExcelError> {
+        match data_store.get_node(operand) {
+            Some(AstNodeData::Reference { ref_type, .. }) => {
+                let reference =
+                    data_store.reconstruct_reference_type_for_eval(ref_type, sheet_registry);
+                self.resolve_spill_reference(&reference)
+            }
+            _ => Err(spill_operand_error()),
         }
     }
 
@@ -783,24 +851,35 @@ impl<'a> Interpreter<'a> {
                 }
             }
             AstNodeData::UnaryOp { op_id, expr_id } => {
-                let expr = self.evaluate_arena_ast(*expr_id, data_store, sheet_registry)?;
-
                 let op = data_store.resolve_ast_string(*op_id);
+                if op == "#" {
+                    let reference =
+                        self.arena_spill_reference(*expr_id, data_store, sheet_registry)?;
+                    return self.eval_reference_to_calc(&reference);
+                }
                 if op == "@" {
                     // Prefer reference-aware implicit intersection so we don't depend on
                     // RangeView absolute coordinates (important for lightweight test contexts).
+                    // The reference is placed at this cell (a shared family's
+                    // arena reference is in its origin frame), as on the
+                    // plain-reference path above.
                     if let Some(AstNodeData::Reference { ref_type, .. }) =
                         data_store.get_node(*expr_id)
                     {
                         let reference = data_store
                             .reconstruct_reference_type_for_eval(ref_type, sheet_registry);
-                        let v = self.implicit_intersection_from_reference(&reference);
+                        let v = match self.effective_reference(&reference) {
+                            Ok(reference) => self.implicit_intersection_from_reference(&reference),
+                            Err(e) => LiteralValue::Error(e),
+                        };
                         return Ok(crate::traits::CalcValue::Scalar(v));
                     }
 
+                    let expr = self.evaluate_arena_ast(*expr_id, data_store, sheet_registry)?;
                     let v = self.eval_implicit_intersection_calc(expr);
                     return Ok(crate::traits::CalcValue::Scalar(v));
                 }
+                let expr = self.evaluate_arena_ast(*expr_id, data_store, sheet_registry)?;
                 self.apply_unary_op(op, expr)
             }
             AstNodeData::BinaryOp {
@@ -953,6 +1032,9 @@ impl<'a> Interpreter<'a> {
             ASTNodeType::Literal(v) => Ok(crate::traits::CalcValue::Scalar(v.clone())),
             ASTNodeType::Omitted => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(0.0))),
             ASTNodeType::Reference { reference, .. } => self.eval_ast_reference_to_calc(reference),
+            ASTNodeType::UnaryOp { op, expr } if op == "#" => {
+                self.eval_reference_to_calc(&self.ast_spill_reference(expr)?)
+            }
             ASTNodeType::UnaryOp { op, expr } => self
                 .eval_unary(op, expr)
                 .map(crate::traits::CalcValue::Scalar),
@@ -972,6 +1054,9 @@ impl<'a> Interpreter<'a> {
             ASTNodeType::Literal(v) => Ok(crate::traits::CalcValue::Scalar(v.clone())),
             ASTNodeType::Omitted => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(0.0))),
             ASTNodeType::Reference { reference, .. } => self.eval_ast_reference_to_calc(reference),
+            ASTNodeType::UnaryOp { op, expr } if op == "#" => {
+                self.eval_reference_to_calc(&self.ast_spill_reference(expr)?)
+            }
             ASTNodeType::UnaryOp { op, expr } => {
                 // For now, reuse existing unary implementation (which recurses).
                 // In a later phase, we can map plan_node.children[0].
@@ -1231,18 +1316,18 @@ impl<'a> Interpreter<'a> {
             } => {
                 let sheet_name = sheet.as_deref().unwrap_or(self.current_sheet);
 
-                let (sr, sc, er, ec) = match (start_row, start_col, end_row, end_col) {
-                    (Some(sr), Some(sc), Some(er), Some(ec)) => (*sr, *sc, *er, *ec),
-                    _ => {
-                        // For open-ended/infinite ranges, fall back to the RangeView-based path.
-                        // This path may be less precise in minimal test contexts.
-                        let cv = match self.eval_reference_to_calc(reference) {
-                            Ok(cv) => cv,
-                            Err(e) => return LiteralValue::Error(e),
-                        };
-                        return self.eval_implicit_intersection_calc(cv);
-                    }
-                };
+                // Open-ended references (`A:A`, `21:21`, `A5:A`) intersect by
+                // their declared sheet bounds, not by a used-region view: a
+                // whole row's intersection with column G is G on that row even
+                // when the row's used cells end before G.
+                const SHEET_ROWS: u32 = 1_048_576;
+                const SHEET_COLS: u32 = 16_384;
+                let (sr, sc, er, ec) = (
+                    start_row.unwrap_or(1),
+                    start_col.unwrap_or(1),
+                    end_row.unwrap_or(SHEET_ROWS),
+                    end_col.unwrap_or(SHEET_COLS),
+                );
 
                 // Normalize bounds (A10:A1 is legal syntax; treat as swapped).
                 let (mut sr, mut er) = (sr, er);

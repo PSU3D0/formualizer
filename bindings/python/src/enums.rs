@@ -257,7 +257,6 @@ impl PyXlsxPathSource {
     }
 }
 
-#[cfg(not(target_os = "emscripten"))]
 impl From<PyXlsxPathSource> for formualizer::workbook::XlsxPathSource {
     fn from(value: PyXlsxPathSource) -> Self {
         match value {

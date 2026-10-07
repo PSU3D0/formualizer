@@ -720,10 +720,12 @@ type Lifted = Result<(LiteralValue, Option<FormatId>), ExcelError>;
 /// above (`=A1+1` or `=C2+D1` filled down) evaluated member by member in
 /// row order through the compiled template, the member above coming from
 /// the previous result instead of a written cell. Only operators, literals
-/// and cell references; the one reference into the run's own column must
-/// be the cell directly above; a member result that is not a clean number
-/// (no format) stops the chain (the caller takes the per-cell path), so the
-/// carried value is exactly what reading the written cell would give.
+/// and cell references; a relative reference into the run's own column
+/// must be the cell directly above, and a fixed-row one must lie outside
+/// the run (it is read like any other cell); a member result that is not a
+/// clean number (no format) stops the chain (the caller takes the per-cell
+/// path), so the carried value is exactly what reading the written cell
+/// would give.
 impl<R> Engine<R>
 where
     R: EvaluationContext,
@@ -827,6 +829,14 @@ where
                     if !*row_abs {
                         shift_axis(*row, row_delta0 + n as i64 - 1, false).ok()?;
                     }
+                    // Every read outside the run, including a fixed cell in
+                    // the run's own column (`$B$4` above or below the run),
+                    // goes through the sheet's stored values.
+                    let asheet = self
+                        .arrow_sheets
+                        .sheets
+                        .iter()
+                        .position(|s| s.name.as_ref() == sheet_name);
                     if sheet_id == run.sheet && col == run.col + 1 {
                         if !*row_abs && first + 1 == first_row {
                             above = true;
@@ -834,7 +844,7 @@ where
                         } else if *row_abs && !(first_row..=last_row).contains(&first) {
                             Some(Source::Cell {
                                 sheet_id,
-                                asheet: None,
+                                asheet,
                                 row: first,
                                 row_abs: true,
                                 col,
@@ -844,11 +854,6 @@ where
                             return None;
                         }
                     } else {
-                        let asheet = self
-                            .arrow_sheets
-                            .sheets
-                            .iter()
-                            .position(|s| s.name.as_ref() == sheet_name);
                         Some(Source::Cell {
                             sheet_id,
                             asheet,
@@ -1412,18 +1417,19 @@ impl Lane {
                     }
                 }
                 // `YEAR`/`MONTH`/`DAY` of a clean number: the serial's
-                // date in the workbook's system, an integer result (boxed:
-                // the builtin returns `Int`); a serial off the calendar is
-                // left to the walk.
+                // displayed date in the workbook's system (serial 0 is
+                // January 0, 1900; 60 is February 29, 1900), an integer
+                // result (boxed: the builtin returns `Int`); a serial off
+                // the calendar is left to the walk.
                 K::Year | K::Month | K::Day => {
                     if let Some(x) = num(&elems[0])
-                        && let Ok(date) = formualizer_common::try_serial_to_date_for(date_system, x)
+                        && let Ok(date) =
+                            formualizer_common::try_serial_to_display_date_parts_for(date_system, x)
                     {
-                        use chrono::Datelike;
                         let part = match kernel {
-                            K::Year => i64::from(date.year()),
-                            K::Month => i64::from(date.month()),
-                            _ => i64::from(date.day()),
+                            K::Year => i64::from(date.year),
+                            K::Month => i64::from(date.month),
+                            _ => i64::from(date.day),
                         };
                         out.boxed
                             .push((i as u32, Ok((LiteralValue::Int(part), None))));

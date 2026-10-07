@@ -1,0 +1,6 @@
+# Cloudflare static-assets redirects. Copied into out/ by scripts/emit-docs-mdx.mjs
+# (Next.js skips _-prefixed files in public/).
+
+# FormulaPlane span evaluation was removed in 0.10.0.
+/docs/core-concepts/formula-plane-span-evaluation /docs/guides/large-workbook-performance 301
+/docs/core-concepts/formula-plane-span-evaluation.mdx /docs/guides/large-workbook-performance.mdx 301

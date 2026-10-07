@@ -25,6 +25,26 @@ Calculating a spreadsheet from code usually means automating an office suite: Li
 - **No compromise on speed.** Copied formulas compute as families in one pass over Arrow columns, lookups index their table once, and only what changed recalculates. The numbers are [below](#how-fast).
 - **Excel-compatible.** 400+ functions, dynamic arrays, `LET` and `LAMBDA`, with edge cases checked against Excel.
 
+## Recalc CLI: for agents
+
+Already editing `.xlsx` files with openpyxl or another tool? Keep that editor, then let `formualizer recalc` fill the formula caches it leaves empty or stale. Formula text, styles and the rest of the package are preserved.
+
+```sh
+pip install formualizer        # or: uvx formualizer recalc book.xlsx
+npm i -g @formualizer/cli      # or: npx @formualizer/cli recalc book.xlsx
+cargo binstall formualizer-cli # or: cargo install formualizer-cli
+```
+
+Prebuilt archives for Linux, macOS and Windows are attached to each [GitHub release](https://github.com/psu3d0/formualizer/releases).
+
+```sh
+python edit_model.py                      # your editor saves book.xlsx
+formualizer recalc book.xlsx --json       # recalc last; exit 0 ok, 2 refused
+python -c "import openpyxl; print(openpyxl.load_workbook('book.xlsx', data_only=True).active['B1'].value)"
+```
+
+Branch on the exit code, inspect `errors`, fix inputs or formulas and repeat; exit 2 means refused, not recalculated. Recalc must be the last writing step: saving with openpyxl afterwards drops caches again. See the [Recalc CLI docs](https://www.formualizer.dev/docs/recalc-cli), the [CLI reference](docs/cli.md) and the [portable agent skill](skills/formualizer-recalc/SKILL.md).
+
 ## How fast?
 
 Load an `.xlsx` and calculate every formula in it, from a cold start. The comparison is headless LibreOffice Calc 24.2 with threaded calculation, the usual open-source way to do this, on the same 24-core Linux machine, median of 3 runs:

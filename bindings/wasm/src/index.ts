@@ -569,7 +569,8 @@ export interface RegisteredFunctionInfo {
   allowOverrideBuiltin: boolean;
 }
 
-export type DeterministicTimezone = 'utc' | 'local' | number;
+/** `'utc'`, `'local'`, a fixed offset such as `'+02:00'`, or offset seconds. */
+export type DeterministicTimezone = 'utc' | 'local' | `${'+' | '-'}${string}:${string}` | number;
 
 export interface SheetPortEvaluateOptions {
   freezeVolatile?: boolean;
@@ -665,8 +666,19 @@ export interface XlsxRecalculateSummary {
   error_summary?: Record<string, {
     count: number;
     locations: string[];
+    /**
+     * The engine's reason for each listed location, parallel to `locations`
+     * (e.g. `'Unknown function: SPDVOL'`); null when the cell has none of its
+     * own (for example a `#NAME?` inherited from a precedent).
+     */
+    messages: (string | null)[];
     locations_truncated?: number;
   }>;
+  /**
+   * Functions the engine does not implement, with the number of `#NAME?`
+   * cells calling each one. Complete regardless of `errorLocationLimit`.
+   */
+  unknown_functions: { name: string; cells: number }[];
 }
 
 /** Output from cache-only XLSX recalculation. */
@@ -674,9 +686,36 @@ export interface XlsxRecalculateResult {
   /** Recalculated XLSX package bytes. */
   bytes: Uint8Array;
   summary: XlsxRecalculateSummary;
+  /** Source formulas/anchors, excluding generated spill children. */
   formula_cells: number;
+  /** Physical caches inserted, replaced or cleared, including spill children. */
   cache_cells_changed: number;
+  /** Changed worksheets only; metadata/relationships are not counted. */
   worksheet_parts_changed: number;
+  /** The clock this run used; pass it back to replay the run exactly. */
+  clock: {
+    /**
+     * RFC 3339 instant TODAY/NOW observed, in the UTC offset that was applied
+     * (the host offset for `'Local'`). Null only without a clock.
+     */
+    now: string | null;
+    /** `'Local'`, `'UTC'` or `'±HH:MM'`. */
+    timezone: string;
+    /** True when `deterministicTimestampUtc` fixed the instant. */
+    fixed: boolean;
+  };
+  /** RAND/RANDBETWEEN seed (64-bit, so a bigint); accepted back as `rngSeed`. */
+  seed: bigint;
+}
+
+/** Reproducibility options for `recalculateXlsxBytes`, spelled as in `evaluateOnce`. */
+export interface XlsxRecalculateOptions {
+  /** RAND/RANDBETWEEN seed. The default seed is already stable run to run. */
+  rngSeed?: number | bigint;
+  /** Fixed instant for TODAY/NOW. Without it they use the host's local time. */
+  deterministicTimestampUtc?: Date | string;
+  /** Zone for TODAY/NOW (default UTC); requires `deterministicTimestampUtc`. */
+  deterministicTimezone?: DeterministicTimezone;
 }
 
 /**
@@ -685,14 +724,30 @@ export interface XlsxRecalculateResult {
  * The input accepts a typed-array view or `ArrayBuffer`; the output `bytes` is a
  * real `Uint8Array`. `errorLocationLimit` optionally caps locations retained per
  * error token while safe core resource limits remain in effect.
+ *
+ * Supports ordinary/shared scalar formulas, supported calculation names, new
+ * non-shared multi-cell spills and validated XLDAPR dynamic anchors. Source-
+ * declared children are recalculated caches, even if externally edited. Spills
+ * may grow, shrink, collapse or become blocked; A1# and _xlfn.ANCHORARRAY read
+ * the current spill. Fresh unmarked 1x1 results remain scalars (#REF! readers).
+ * Legacy CSE/data tables, table-bearing sheets, external links, rich/unknown
+ * metadata, shared-family multi-cell spills and spills crossing merges are
+ * refused. Deterministic unchanged output is byte-identical on rerun. This is
+ * a supported subset, not an Excel-equivalence claim. See
+ * docs/cache-only-xlsx.md for exact eligibility, ownership and bounds.
+ *
+ * `options` fixes the clock and RAND seed; the result's `clock` and `seed`
+ * replay any run.
  */
 export async function recalculateXlsxBytes(
   bytes: XlsxBytesSource,
   errorLocationLimit?: number,
+  options?: XlsxRecalculateOptions,
 ): Promise<XlsxRecalculateResult> {
   return ensureInitialized(() => wasm.recalculateXlsxBytes(
     bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes),
     errorLocationLimit,
+    options,
   ) as XlsxRecalculateResult);
 }
 

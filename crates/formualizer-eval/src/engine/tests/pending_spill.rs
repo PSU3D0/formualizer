@@ -41,7 +41,6 @@ fn pending_spill_final_commit_rechecks_before_publication_and_releases_reservati
                 vec![LiteralValue::Number(1.0)],
                 vec![LiteralValue::Number(2.0)],
             ]),
-            None,
         )
         .unwrap();
     assert_eq!(engine.spill_mgr.active_locks.len(), 1);

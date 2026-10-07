@@ -2181,6 +2181,51 @@ mod reference_tests {
     }
 
     #[test]
+    fn current_workbook_index_zero_is_a_local_qualifier() {
+        // Excel numbers external workbooks from 1; `[0]` is the workbook the
+        // formula lives in, so `[0]!Name` is the workbook-scoped `Name` and
+        // `[0]Sheet1!A1` is `Sheet1!A1`.
+        assert_eq!(
+            ReferenceType::from_string("[0]!MPRR").unwrap(),
+            ReferenceType::NamedRange("MPRR".to_string())
+        );
+        assert_eq!(
+            ReferenceType::from_string("[0]Sheet1!$A$1").unwrap(),
+            ReferenceType::from_string("Sheet1!$A$1").unwrap()
+        );
+        assert_eq!(
+            ReferenceType::from_string("'[0]My Sheet'!B2:C3").unwrap(),
+            ReferenceType::from_string("'My Sheet'!B2:C3").unwrap()
+        );
+        // A real external index keeps its external meaning.
+        assert_eq!(
+            ReferenceType::from_string("[1]!MPRR").unwrap(),
+            ReferenceType::NamedRange("[1]!MPRR".to_string())
+        );
+        assert!(matches!(
+            ReferenceType::from_string("[10]Sheet1!A1").unwrap(),
+            ReferenceType::External(_)
+        ));
+
+        let ast = Parser::new("=INDEX([0]!MPRR, MATCH(1,[0]Sheet1!A1:A3,))")
+            .unwrap()
+            .parse()
+            .unwrap();
+        let ASTNodeType::Function { args, .. } = &ast.node_type else {
+            panic!("expected INDEX");
+        };
+        let ASTNodeType::Reference {
+            original,
+            reference,
+        } = &args[0].node_type
+        else {
+            panic!("expected a reference");
+        };
+        assert_eq!(original, "[0]!MPRR");
+        assert_eq!(reference, &ReferenceType::NamedRange("MPRR".to_string()));
+    }
+
+    #[test]
     fn test_external_workbook_reference_parsing() {
         let ref_type = ReferenceType::from_string("[33]Sheet1!$B:$B").unwrap();
         assert_eq!(
@@ -3122,6 +3167,20 @@ mod structured_references {
         );
     }
 
+    #[test]
+    fn empty_specifier_is_the_data_body() {
+        // Excel reads `Table1[]` as the table name alone, which is the data
+        // body without headers or totals; it stores `=SUM(Table1[])` as
+        // `=SUM(Table1)`.
+        let t = expect_table("=Table1[]");
+        assert_eq!(t.name, "Table1");
+        assert_eq!(t.specifier, Some(TableSpecifier::Data));
+        assert_eq!(
+            expect_table("=Table1[ ]").specifier,
+            Some(TableSpecifier::Data)
+        );
+    }
+
     // ----------- negative -----------
 
     #[test]
@@ -3287,21 +3346,41 @@ mod semantics_regressions {
     use crate::parser::{ASTNodeType, Parser, ReferenceType};
 
     #[test]
-    fn exponent_is_right_associative() {
+    fn exponent_is_left_associative() {
+        // Excel evaluates `^` left to right: =2^3^2 is (2^3)^2 = 64, not 2^(3^2) = 512.
         let mut p = Parser::new("=2^3^2").unwrap();
         let ast = p.parse().unwrap();
 
         match ast.node_type {
-            ASTNodeType::BinaryOp { op, left: _, right } => {
+            ASTNodeType::BinaryOp { op, left, right } => {
                 assert_eq!(op, "^");
-                // Expected: 2^(3^2)
-                match right.node_type {
+                // Expected: (2^3)^2
+                match left.node_type {
                     ASTNodeType::BinaryOp { op: op2, .. } => assert_eq!(op2, "^"),
-                    other => panic!("expected right child to be exponent, got {other:?}"),
+                    other => panic!("expected left child to be exponent, got {other:?}"),
                 }
+                assert!(
+                    matches!(right.node_type, ASTNodeType::Literal(_)),
+                    "expected right child to be the literal 2, got {:?}",
+                    right.node_type
+                );
             }
             other => panic!("expected BinaryOp, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn exponent_chain_pretty_prints_round_trip() {
+        use crate::pretty::pretty_print;
+        assert_eq!(pretty_print(&crate::parse("=2^3^2").unwrap()), "2 ^ 3 ^ 2");
+        assert_eq!(
+            pretty_print(&crate::parse("=(2^3)^2").unwrap()),
+            "2 ^ 3 ^ 2"
+        );
+        assert_eq!(
+            pretty_print(&crate::parse("=2^(3^2)").unwrap()),
+            "2 ^ (3 ^ 2)"
+        );
     }
 
     #[test]
@@ -3843,19 +3922,59 @@ mod semantics_regressions {
         }
 
         #[test]
-        fn test_sheet_named_with_embedded_colon() {
-            // Excel forbids ':' in sheet names, so a quoted sheet whose name
-            // contains ':' must still parse as a single-sheet reference.
+        fn test_quoted_segment_with_colon_is_3d_span() {
+            // Excel forbids ':' in sheet names, so a colon inside one quoted
+            // segment can only separate the two ends of a 3D span. Excel
+            // writes spans over names that need quoting this way:
+            // `'Jan 24:Mar 24'!B5` is Jan 24, Feb 24 and Mar 24.
             let r = ReferenceType::from_string("'Weird:Name'!A1").unwrap();
             assert_eq!(
                 r,
-                ReferenceType::Cell {
-                    sheet: Some("Weird:Name".to_string()),
+                ReferenceType::Cell3D {
+                    sheet_first: "Weird".to_string(),
+                    sheet_last: "Name".to_string(),
                     row: 1,
                     col: 1,
                     row_abs: false,
                     col_abs: false,
                 }
+            );
+
+            let ast = parse_both("=SUM('Jan 24:Mar 24'!B5)");
+            let ASTNodeType::Function { args, .. } = &ast.node_type else {
+                panic!("expected SUM, got {:?}", ast.node_type);
+            };
+            assert_eq!(
+                extract_reference(&args[0]),
+                &ReferenceType::Cell3D {
+                    sheet_first: "Jan 24".to_string(),
+                    sheet_last: "Mar 24".to_string(),
+                    row: 5,
+                    col: 2,
+                    row_abs: false,
+                    col_abs: false,
+                }
+            );
+
+            let ast = parse_both("='Bob''s:End Sheet'!A1:B2");
+            assert!(
+                matches!(extract_reference(&ast), ReferenceType::Range3D { sheet_first, sheet_last, .. }
+                    if sheet_first == "Bob's" && sheet_last == "End Sheet"),
+                "{:?}",
+                extract_reference(&ast)
+            );
+        }
+
+        #[test]
+        fn test_quoted_book_path_colon_is_not_a_3d_span() {
+            // A drive colon inside an external book path is not a span.
+            let r = ReferenceType::from_string(r"'C:\Data\[Book.xlsx]Sheet1'!A1").unwrap();
+            assert!(
+                !matches!(
+                    r,
+                    ReferenceType::Cell3D { .. } | ReferenceType::Range3D { .. }
+                ),
+                "{r:?}"
             );
         }
 
@@ -3879,8 +3998,9 @@ mod semantics_regressions {
                 "=Sheet1:Sheet3!A1",
                 "=Sheet1:Sheet3!A1:B2",
                 "=Sheet1:Sheet3!$A$1:$B$2",
-                "='Sheet 1':'Sheet 3'!A1",
-                "='Bob''s Sheet':'End Sheet'!A1",
+                "='Sheet 1:Sheet 3'!A1",
+                "='Bob''s Sheet:End Sheet'!A1",
+                "='Jan 24:Mar'!B5:C6",
             ];
             for input in cases {
                 let ast = parse_both(input);
@@ -3892,6 +4012,28 @@ mod semantics_regressions {
                     extract_reference(&reparsed_ast),
                     r,
                     "reparse mismatch for {input}"
+                );
+            }
+        }
+
+        #[test]
+        fn test_3d_two_quoted_segments_display_as_one() {
+            // Excel writes a quoted 3D span as one quoted segment.
+            for (input, expected) in [
+                ("='Sheet 1':'Sheet 3'!A1", "='Sheet 1:Sheet 3'!A1"),
+                (
+                    "='Bob''s Sheet':'End Sheet'!A1",
+                    "='Bob''s Sheet:End Sheet'!A1",
+                ),
+                ("='Sheet 1':Sheet3!A1:B2", "='Sheet 1:Sheet3'!A1:B2"),
+            ] {
+                let ast = parse_both(input);
+                let r = extract_reference(&ast);
+                assert_eq!(format!("={r}"), expected, "display mismatch for {input}");
+                assert_eq!(
+                    extract_reference(&parse_both(expected)),
+                    r,
+                    "reparse of {input}"
                 );
             }
         }
@@ -3913,9 +4055,9 @@ mod string_colon_interaction {
 
     #[test]
     fn test_cross_sheet_range_still_parses() {
-        // Single-quoted sheet continuation must still produce a single Range
-        // reference. Use a single-sheet form that exercises the `:`-glue path
-        // currently supported end-to-end by both parsers.
+        // Single-quoted sheet continuation must still produce a single range
+        // reference. A colon inside the quoted segment is a 3D span, the way
+        // Excel writes one over names that need quoting.
         let formula = "='Sheet 1:Sheet 3'!A1:C10";
 
         let mut parser = Parser::new(formula).unwrap();
@@ -3924,8 +4066,8 @@ mod string_colon_interaction {
             .expect("classic parser should accept formula");
         let reference = extract_reference(&ast);
         assert!(
-            matches!(reference, ReferenceType::Range { .. }),
-            "expected Range reference, got {reference:?}"
+            matches!(reference, ReferenceType::Range3D { .. }),
+            "expected Range3D reference, got {reference:?}"
         );
 
         let span_ast = crate::parser::parse(formula).expect("span parser should accept formula");
@@ -4178,16 +4320,21 @@ mod parser_hardening {
     #[test]
     fn deeply_nested_formula_errors_instead_of_overflowing_stack() {
         for formula in [
-            format!("={}1{}", "(".repeat(5000), ")".repeat(5000)),
-            format!("={}1", "-".repeat(5000)),
-            format!("={}1{}", "SUM(".repeat(5000), ")".repeat(5000)),
-            format!("={}1{}", "1+(".repeat(5000), ")".repeat(5000)),
-            format!("={}1{}", "IF(A1>0,".repeat(5000), ",0)".repeat(5000)),
-            format!("={}1{}", "{".repeat(5000), "}".repeat(5000)),
-            format!("={}1", "1^".repeat(5000)),
+            format!("={}1{}", "(".repeat(1000), ")".repeat(1000)),
+            format!("={}1", "-".repeat(1000)),
+            format!("={}1{}", "SUM(".repeat(1000), ")".repeat(1000)),
+            format!("={}1{}", "1+(".repeat(1000), ")".repeat(1000)),
+            format!("={}1{}", "IF(A1>0,".repeat(1000), ",0)".repeat(1000)),
+            format!("={}1{}", "{".repeat(1000), "}".repeat(1000)),
+            format!("={}1", "1^".repeat(1000)),
+            format!("={}1", "1+".repeat(1000)),
+            format!("=1{}", "%".repeat(1000)),
         ] {
             let error = parse_on_small_stack(formula).expect_err("reject excessive recursion");
-            assert!(error.message.contains("Formula nesting too deep"));
+            assert!(
+                error.message.contains("Formula nesting too deep")
+                    || error.message.contains("AST height")
+            );
         }
     }
 }
@@ -4318,5 +4465,353 @@ mod external_range_tests {
         ] {
             assert_eq!(token_values(formula), tokens, "{formula}");
         }
+    }
+}
+
+/// `B10:INDEX(...)` is the reference `B10`, the range operator, and a call.
+/// No function name contains `:`, so the colon used to be swallowed into a
+/// function called `B10:INDEX`.
+#[cfg(test)]
+mod range_operator_before_call_tests {
+    use crate::parser::{ASTNodeType, ReferenceType, parse};
+    use crate::tokenizer::{TokenStream, TokenType, Tokenizer};
+
+    fn token_values(formula: &str) -> Vec<(String, TokenType)> {
+        let legacy: Vec<(String, TokenType)> = Tokenizer::new(formula)
+            .unwrap()
+            .items
+            .iter()
+            .map(|token| (token.value.clone(), token.token_type))
+            .collect();
+        let spans: Vec<(String, TokenType)> = TokenStream::new(formula)
+            .unwrap()
+            .to_tokens()
+            .into_iter()
+            .map(|token| (token.value, token.token_type))
+            .collect();
+        assert_eq!(legacy, spans, "tokenizers disagree on {formula}");
+        legacy
+    }
+
+    #[test]
+    fn range_colon_before_call_is_an_operator() {
+        let tokens = token_values("=SUM(B10:INDEX(B:B,5))");
+        assert_eq!(tokens[1], ("B10".to_string(), TokenType::Operand));
+        assert_eq!(tokens[2], (":".to_string(), TokenType::OpInfix));
+        assert_eq!(tokens[3], ("INDEX(".to_string(), TokenType::Func));
+
+        let tokens = token_values("=Sheet1!$B$5:OFFSET(A1,3,0)");
+        assert_eq!(tokens[0], ("Sheet1!$B$5".to_string(), TokenType::Operand));
+        assert_eq!(tokens[1], (":".to_string(), TokenType::OpInfix));
+        assert_eq!(tokens[2], ("OFFSET(".to_string(), TokenType::Func));
+    }
+
+    #[test]
+    fn range_colon_before_call_parses_as_range_operator() {
+        for (formula, left_sheet) in [
+            ("=SUM(B10:INDEX(B:B,5))", None),
+            ("=SUM($B$5:INDEX($B:$B,ROW()))", None),
+            ("=SUM(A1:OFFSET(A1,3,0))", None),
+            ("=SUM(Data!B10:INDEX(Data!B:B,5))", Some("Data")),
+        ] {
+            let ast = parse(formula).unwrap_or_else(|e| panic!("{formula}: {e}"));
+            let ASTNodeType::Function { name, args } = &ast.node_type else {
+                panic!("{formula}: expected SUM, got {:?}", ast.node_type);
+            };
+            assert_eq!(name, "SUM", "{formula}");
+            let ASTNodeType::BinaryOp { op, left, right } = &args[0].node_type else {
+                panic!(
+                    "{formula}: expected a range operator, got {:?}",
+                    args[0].node_type
+                );
+            };
+            assert_eq!(op, ":", "{formula}");
+            assert!(
+                matches!(&left.node_type, ASTNodeType::Reference {
+                    reference: ReferenceType::Cell { sheet, .. }, ..
+                } if sheet.as_deref() == left_sheet),
+                "{formula}: left end {:?}",
+                left.node_type
+            );
+            assert!(
+                matches!(&right.node_type, ASTNodeType::Function { name, .. }
+                    if name == "INDEX" || name == "OFFSET"),
+                "{formula}: right end {:?}",
+                right.node_type
+            );
+        }
+    }
+
+    #[test]
+    fn plain_calls_and_ranges_are_unchanged() {
+        assert_eq!(
+            token_values("=INDEX(B:B,5)")[0],
+            ("INDEX(".to_string(), TokenType::Func)
+        );
+        assert_eq!(
+            token_values("=SUM(B10:C20)")[1],
+            ("B10:C20".to_string(), TokenType::Operand)
+        );
+        assert_eq!(
+            token_values("=_xlfn.XLOOKUP(1,A1:A3,B1:B3)")[0],
+            ("_xlfn.XLOOKUP(".to_string(), TokenType::Func)
+        );
+    }
+}
+
+/// A `:` between two operands that cannot both be A1 range ends is the range
+/// operator, as in Excel: `=SUM(D22:Total)` is D22, `:`, and the defined name
+/// `Total`. Such formulas used to fail with "Invalid column".
+#[cfg(test)]
+mod range_operator_with_name_tests {
+    use crate::parser::{ASTNodeType, ReferenceType, parse};
+    use crate::tokenizer::{TokenStream, TokenType, Tokenizer};
+
+    fn token_values(formula: &str) -> Vec<(String, TokenType)> {
+        let legacy: Vec<(String, TokenType)> = Tokenizer::new(formula)
+            .unwrap()
+            .items
+            .iter()
+            .map(|token| (token.value.clone(), token.token_type))
+            .collect();
+        let spans: Vec<(String, TokenType)> = TokenStream::new(formula)
+            .unwrap()
+            .to_tokens()
+            .into_iter()
+            .map(|token| (token.value, token.token_type))
+            .collect();
+        assert_eq!(legacy, spans, "tokenizers disagree on {formula}");
+        legacy
+    }
+
+    fn range_operator_ends(formula: &str) -> (ReferenceType, ReferenceType) {
+        let ast = parse(formula).unwrap_or_else(|e| panic!("{formula}: {e}"));
+        let ASTNodeType::Function { args, .. } = &ast.node_type else {
+            panic!("{formula}: expected a call, got {:?}", ast.node_type);
+        };
+        let ASTNodeType::BinaryOp { op, left, right } = &args[0].node_type else {
+            panic!(
+                "{formula}: expected the range operator, got {:?}",
+                args[0].node_type
+            );
+        };
+        assert_eq!(op, ":", "{formula}");
+        let reference = |node: &crate::parser::ASTNode| match &node.node_type {
+            ASTNodeType::Reference { reference, .. } => reference.clone(),
+            other => panic!("{formula}: expected a reference, got {other:?}"),
+        };
+        (reference(left), reference(right))
+    }
+
+    #[test]
+    fn name_at_either_end_is_the_range_operator() {
+        let name = |n: &str| ReferenceType::NamedRange(n.to_string());
+        let cell = |sheet: Option<&str>, row, col| ReferenceType::Cell {
+            sheet: sheet.map(str::to_string),
+            row,
+            col,
+            row_abs: false,
+            col_abs: false,
+        };
+        assert_eq!(
+            range_operator_ends("=SUM(D22:Total)"),
+            (cell(None, 22, 4), name("Total"))
+        );
+        assert_eq!(
+            range_operator_ends("=SUM(Start:B10)"),
+            (name("Start"), cell(None, 10, 2))
+        );
+        assert_eq!(
+            range_operator_ends("=SUM(Seed_1:Seed_4)"),
+            (name("Seed_1"), name("Seed_4"))
+        );
+        assert_eq!(
+            range_operator_ends("=SUM(Data!A1:Finish)"),
+            (cell(Some("Data"), 1, 1), name("Finish"))
+        );
+
+        let tokens = token_values("=SUM(D22:Total)");
+        assert_eq!(tokens[1], ("D22".to_string(), TokenType::Operand));
+        assert_eq!(tokens[2], (":".to_string(), TokenType::OpInfix));
+        assert_eq!(tokens[3], ("Total".to_string(), TokenType::Operand));
+    }
+
+    #[test]
+    fn a1_ranges_stay_one_reference() {
+        for formula in [
+            "=SUM(A1:B5)",
+            "=SUM($A$1:$B5)",
+            "=SUM(A:C)",
+            "=SUM($1:$3)",
+            "=SUM(A1:XFD1048576)",
+            "=SUM(Sheet1!A1:B2)",
+            "=SUM('My Sheet'!A:A)",
+            "=SUM(Jan:Dec!B5)",
+            "=SUM(A1:A)",
+            "=SUM(A:A10)",
+        ] {
+            let ast = parse(formula).unwrap_or_else(|e| panic!("{formula}: {e}"));
+            let ASTNodeType::Function { args, .. } = &ast.node_type else {
+                panic!("{formula}: {:?}", ast.node_type);
+            };
+            assert!(
+                matches!(args[0].node_type, ASTNodeType::Reference { .. }),
+                "{formula}: {:?}",
+                args[0].node_type
+            );
+        }
+    }
+}
+
+/// A range end that points at deleted cells is stored as `#REF!`:
+/// `=SUM(A1:#REF!)`. The `:` is still the range operator, and the live end
+/// is kept.
+#[cfg(test)]
+mod deleted_range_end_tests {
+    use crate::parser::{ASTNode, ASTNodeType, ReferenceType, parse};
+    use crate::tokenizer::{TokenStream, TokenType, Tokenizer};
+    use formualizer_common::{ExcelErrorKind, LiteralValue};
+
+    fn token_values(formula: &str) -> Vec<(String, TokenType)> {
+        let legacy: Vec<(String, TokenType)> = Tokenizer::new(formula)
+            .unwrap()
+            .items
+            .iter()
+            .map(|token| (token.value.clone(), token.token_type))
+            .collect();
+        let spans: Vec<(String, TokenType)> = TokenStream::new(formula)
+            .unwrap()
+            .to_tokens()
+            .into_iter()
+            .map(|token| (token.value, token.token_type))
+            .collect();
+        assert_eq!(legacy, spans, "tokenizers disagree on {formula}");
+        legacy
+    }
+
+    fn is_ref_error(node: &ASTNode) -> bool {
+        matches!(&node.node_type, ASTNodeType::Literal(LiteralValue::Error(e)) if e.kind == ExcelErrorKind::Ref)
+    }
+
+    fn is_a1(node: &ASTNode) -> bool {
+        matches!(
+            &node.node_type,
+            ASTNodeType::Reference {
+                reference: ReferenceType::Cell { row: 1, col: 1, .. },
+                ..
+            }
+        )
+    }
+
+    #[test]
+    fn deleted_end_is_a_range_operand() {
+        for (formula, live_left) in [
+            ("=A1:#REF!", true),
+            ("=A1:#ref!", true),
+            ("=#REF!:A1", false),
+            ("=Sheet1!#REF!:A1", false),
+        ] {
+            let ast = parse(formula).unwrap_or_else(|e| panic!("{formula}: {e}"));
+            let ASTNodeType::BinaryOp { op, left, right } = &ast.node_type else {
+                panic!(
+                    "{formula}: expected the range operator, got {:?}",
+                    ast.node_type
+                );
+            };
+            assert_eq!(op, ":", "{formula}");
+            let (live, dead) = if live_left {
+                (left, right)
+            } else {
+                (right, left)
+            };
+            assert!(
+                is_a1(live),
+                "{formula}: live end lost: {:?}",
+                live.node_type
+            );
+            assert!(is_ref_error(dead), "{formula}: {:?}", dead.node_type);
+        }
+
+        let ast = parse("=SUM(A1:#REF!)").unwrap();
+        let ASTNodeType::Function { args, .. } = &ast.node_type else {
+            panic!("{:?}", ast.node_type);
+        };
+        assert!(matches!(&args[0].node_type, ASTNodeType::BinaryOp { op, .. } if op == ":"));
+    }
+
+    #[test]
+    fn deleted_end_tokens() {
+        assert_eq!(
+            token_values("=A1:#REF!"),
+            vec![
+                ("A1".to_string(), TokenType::Operand),
+                (":".to_string(), TokenType::OpInfix),
+                ("#REF!".to_string(), TokenType::Operand),
+            ]
+        );
+        assert_eq!(
+            token_values("=#REF!:A1"),
+            vec![
+                ("#REF!".to_string(), TokenType::Operand),
+                (":".to_string(), TokenType::OpInfix),
+                ("A1".to_string(), TokenType::Operand),
+            ]
+        );
+    }
+
+    #[test]
+    fn spill_after_a_range_is_unchanged() {
+        // `#` directly after a reference is still the spill operator.
+        assert!(matches!(
+            parse("=A1#").unwrap().node_type,
+            ASTNodeType::UnaryOp { ref op, .. } if op == "#"
+        ));
+        assert!(parse("=A1:#N/A").is_err());
+    }
+}
+
+/// Excel shows a defined name whose sheet was deleted as `=#REF!#REF!`: a
+/// deleted sheet qualifier and a deleted address. It is one `#REF!` operand.
+#[cfg(test)]
+mod double_ref_error_tests {
+    use crate::parser::{ASTNode, ASTNodeType, Parser, parse};
+    use crate::tokenizer::{TokenStream, Tokenizer};
+    use formualizer_common::{ExcelErrorKind, LiteralValue};
+
+    fn is_ref_error(node: &ASTNode) -> bool {
+        matches!(&node.node_type, ASTNodeType::Literal(LiteralValue::Error(e)) if e.kind == ExcelErrorKind::Ref)
+    }
+
+    #[test]
+    fn double_ref_is_one_error_operand() {
+        for formula in ["=#REF!#REF!", "=#ref!#REF!"] {
+            let span = parse(formula).unwrap_or_else(|e| panic!("{formula}: {e}"));
+            assert!(is_ref_error(&span), "{formula}: {:?}", span.node_type);
+            let classic = Parser::new(formula).unwrap().parse().unwrap();
+            assert_eq!(classic.node_type, span.node_type, "{formula}");
+
+            let legacy = Tokenizer::new(formula).unwrap();
+            assert_eq!(legacy.items.len(), 1, "{formula}: {:?}", legacy.items);
+            assert_eq!(TokenStream::new(formula).unwrap().len(), 1, "{formula}");
+        }
+
+        let ast = parse("=SUM(#REF!#REF!,1)").unwrap();
+        let ASTNodeType::Function { args, .. } = &ast.node_type else {
+            panic!("{:?}", ast.node_type);
+        };
+        assert_eq!(args.len(), 2);
+        assert!(is_ref_error(&args[0]));
+
+        let ast = parse("=#REF!#REF!+1").unwrap();
+        assert!(
+            matches!(&ast.node_type, ASTNodeType::BinaryOp { op, left, .. }
+            if op == "+" && is_ref_error(left))
+        );
+    }
+
+    #[test]
+    fn single_ref_error_is_unchanged() {
+        assert!(is_ref_error(&parse("=#REF!").unwrap()));
+        assert!(parse("=#REF!#N/A").is_err());
     }
 }

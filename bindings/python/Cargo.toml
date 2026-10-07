@@ -1,6 +1,6 @@
 [package]
 name = "formualizer-python"
-version = "0.10.1"
+version = "0.11.0"
 publish = false
 edition = "2024"
 homepage = "https://github.com/PSU3D0/formualizer"
@@ -40,7 +40,12 @@ pyo3 = { workspace = true, features = ["chrono", "abi3-py310", "multiple-pymetho
 chrono = { workspace = true }
 serde_json = { workspace = true }
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+formualizer-cli = { path = "../../crates/formualizer-cli", default-features = false }
+
 [target.'cfg(not(target_os = "emscripten"))'.dependencies]
+# Reports the host's UTC offset for a local-time source recalculation.
+chrono = { workspace = true, features = ["clock"] }
 # `system-clock` is required for TODAY()/NOW() to read the wall clock. Without
 # it the engine falls back to the FixedClock at the UTC epoch and every
 # volatile date/time builtin answers 1970-01-01. The emscripten target below is
@@ -48,11 +53,11 @@ serde_json = { workspace = true }
 formualizer = { path = "../../crates/formualizer", default-features = false, features = ["eval", "workbook", "sheetport", "parse", "calamine", "umya", "xlsx-recalc", "system-clock"] }
 pyo3-stub-gen = "0.23.0"
 
-# Pyodide 0.29's wasm-EH sysroot is pinned to Rust 1.86, while Calamine 0.36
-# requires Rust 1.88. Pyodide retains the Umya byte-oriented XLSX path and
-# reports the unavailable Calamine backend explicitly at runtime.
+# Pyodide 314 builds with Rust 1.93, so Calamine and source recalculation are
+# available there. There is no system clock: TODAY()/NOW() workbooks are
+# refused unless a fixed timestamp is supplied.
 [target.'cfg(target_os = "emscripten")'.dependencies]
-formualizer = { path = "../../crates/formualizer", default-features = false, features = ["eval", "workbook", "sheetport", "parse", "umya"] }
+formualizer = { path = "../../crates/formualizer", default-features = false, features = ["eval", "workbook", "sheetport", "parse", "calamine", "umya", "xlsx-recalc"] }
 
 # Optional jemalloc global allocator (see `allocator-jemalloc` feature).
 # The crate itself builds unconditionally on any platform, but we only

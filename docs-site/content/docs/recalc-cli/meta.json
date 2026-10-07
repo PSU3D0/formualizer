@@ -1,0 +1,10 @@
+{
+  "title": "Recalc CLI",
+  "pages": [
+    "index",
+    "agent-workflow",
+    "cli-reference",
+    "supported-and-refused",
+    "agent-skill"
+  ]
+}

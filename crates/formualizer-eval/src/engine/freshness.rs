@@ -52,6 +52,93 @@ use formualizer_common::{ExcelError, LiteralValue};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Mutex;
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::EvalConfig;
+    use crate::test_workbook::TestWorkbook;
+    use formualizer_parse::parser::parse;
+
+    #[test]
+    fn extent_hints_without_registry_preserve_existing_dependencies() {
+        let mut e = Engine::new(
+            TestWorkbook::new(),
+            EvalConfig {
+                family_execution: false,
+                ..EvalConfig::default()
+            },
+        );
+        e.set_cell_formula("Sheet1", 1, 1, parse("=SEQUENCE(3)").unwrap())
+            .unwrap();
+        e.declare_fixed_array_formula("Sheet1", 1, 1, 1, 1).unwrap();
+        let vertex = e
+            .graph
+            .get_vertex_id_for_address(&e.graph.make_cell_ref("Sheet1", 1, 1))
+            .unwrap();
+        assert!(!e.graph.has_spill_anchors());
+        let mut deps = FxHashMap::default();
+        deps.insert(vertex, vec![vertex]);
+        e.freshness_extent_hints(&[vertex], &mut deps);
+        assert_eq!(deps[&vertex], vec![vertex]);
+    }
+
+    #[test]
+    fn extent_hints_malformed_registry_keeps_conservative_bounds() {
+        let mut e = Engine::new(TestWorkbook::new(), EvalConfig::default());
+        e.set_cell_formula("Sheet1", 1, 1, parse("=1").unwrap())
+            .unwrap();
+        e.set_cell_formula("Sheet1", 1, 5, parse("=SUM(B1:C2)").unwrap())
+            .unwrap();
+        let first = e.graph.make_cell_ref("Sheet1", 1, 1);
+        let last = e.graph.make_cell_ref("Sheet1", 2, 3);
+        let anchor = e.graph.get_vertex_id_for_address(&first).unwrap();
+        let reader = e
+            .graph
+            .get_vertex_id_for_address(&e.graph.make_cell_ref("Sheet1", 1, 5))
+            .unwrap();
+        e.graph
+            .commit_spill_region_atomic_with_fault(anchor, vec![first, last], vec![], None)
+            .unwrap();
+        assert!(e.graph.spill_extent_for_anchor(anchor).is_none());
+        let mut deps = FxHashMap::default();
+        e.freshness_extent_hints(&[anchor, reader], &mut deps);
+        assert_eq!(deps[&reader], vec![anchor]);
+    }
+
+    /// Retain existing dependencies and candidate order, even for duplicate
+    /// candidates and a reader covering many anchors.
+    #[test]
+    fn extent_hints_many_anchors_preserve_order() {
+        let mut e = Engine::new(TestWorkbook::new(), EvalConfig::default());
+        for row in 1..=512 {
+            e.set_cell_formula("Sheet1", row, 2, parse("=SEQUENCE(1,2)").unwrap())
+                .unwrap();
+        }
+        e.set_cell_formula("Sheet1", 1, 5, parse("=SUM(B1:C512)").unwrap())
+            .unwrap();
+        e.evaluate_all().unwrap();
+        let vertex = |row, col| {
+            e.graph
+                .get_vertex_id_for_address(&e.graph.make_cell_ref("Sheet1", row, col))
+                .unwrap()
+        };
+        let reader = vertex(1, 5);
+        let mut anchors: Vec<_> = (1..=512).rev().map(|row| vertex(row, 2)).collect();
+        let existing = anchors[127];
+        let mut deps = FxHashMap::default();
+        deps.insert(reader, vec![existing]);
+        let expected: Vec<_> = std::iter::once(existing)
+            .chain(anchors.iter().copied().filter(|v| *v != existing))
+            .collect();
+        anchors.extend_from_within(..);
+        anchors.push(reader);
+        e.freshness_extent_hints(&anchors, &mut deps);
+        assert_eq!(deps[&reader], expected);
+        e.freshness_extent_hints(&anchors, &mut deps);
+        assert_eq!(deps[&reader], expected);
+    }
+}
+
 /// Per-request freshness state.
 #[derive(Default)]
 pub(crate) struct Freshness {
@@ -121,10 +208,30 @@ impl<R: EvaluationContext> Engine<R> {
     ) {
         use crate::engine::authority::geom::Rect;
         use crate::engine::authority::store::TagFilter;
+        // Ordinary and fixed-1x1-only workloads have no registered extents.
+        // Keep them entirely off the per-candidate spill lookup path.
+        if !self.graph.has_spill_anchors() {
+            return;
+        }
         let anchors: Vec<(VertexId, u16, Rect)> = candidates
             .iter()
             .filter_map(|&v| {
+                // One lookup for non-anchors, even in a workbook with spills.
                 let cells = self.graph.spill_cells_for_anchor(v)?;
+                if let Some((first, last)) = self.graph.spill_extent_for_anchor(v) {
+                    return Some((
+                        v,
+                        first.sheet_id,
+                        Rect::new(
+                            first.coord.row(),
+                            first.coord.col(),
+                            last.coord.row(),
+                            last.coord.col(),
+                        ),
+                    ));
+                }
+                // Undo/replay can restore a malformed registry. Preserve the
+                // conservative legacy bounding box in that exceptional case.
                 let first = cells.first()?;
                 let (mut r0, mut c0, mut r1, mut c1) = (u32::MAX, u32::MAX, 0u32, 0u32);
                 for c in cells {
@@ -143,6 +250,9 @@ impl<R: EvaluationContext> Engine<R> {
             return;
         };
         let wanted: FxHashSet<VertexId> = candidates.iter().copied().collect();
+        // Seed lazily, once per affected reader, preserving existing dependency
+        // order and appending anchors in candidate order without linear probes.
+        let mut seen: FxHashMap<VertexId, FxHashSet<VertexId>> = FxHashMap::default();
         for (anchor, sheet, rect) in anchors {
             let readers = store.direct_grid_dependents(sheet, &rect, TagFilter::All);
             for (s, row, col) in readers.cells() {
@@ -151,7 +261,11 @@ impl<R: EvaluationContext> Engine<R> {
                 };
                 if reader != anchor && wanted.contains(&reader) {
                     let deps = vdeps.entry(reader).or_default();
-                    if !deps.contains(&anchor) {
+                    if seen
+                        .entry(reader)
+                        .or_insert_with(|| deps.iter().copied().collect())
+                        .insert(anchor)
+                    {
                         deps.push(anchor);
                     }
                 }
@@ -468,11 +582,9 @@ impl<R: EvaluationContext> Engine<R> {
                 .map(|cv| {
                     let format = cv.format_id();
                     self.record_derived_format(vertex, format);
-                    crate::engine::result_finalization::finalize_published_calc_result(
-                        cv,
-                        self.config.spill.max_spill_cells,
-                    )
+                    self.materialize_formula_result(vertex, cv)
                 })
+                .or_else(|error| self.fit_formula_error(vertex, error))
         };
         let reads = log.take();
         let dirty = self.freshness_dirty_reads(vertex, &reads);

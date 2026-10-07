@@ -392,7 +392,13 @@ impl DependencyGraph {
         if self.first_load_assume_new {
             return;
         }
+        // Every formula write, whatever the route, is in the touched
+        // journal: a formula that entered a committed spill blocks it.
+        let woken = self.note_spill_intrusions_of_touched();
         self.authority_sync_store();
+        if !woken.is_empty() {
+            self.mark_dirty_many(&woken);
+        }
         if !self.authority.pending_dirty.is_empty()
             || !self.authority.pending_dirty_rects.is_empty()
             || !self.authority.pending_direct_dirty.is_empty()
@@ -521,6 +527,8 @@ impl DependencyGraph {
     }
 
     fn authority_note_structural_inner(&mut self, op: bool) {
+        // Moved formulas may land in a committed spill.
+        self.note_structural_spill_intrusions();
         if self.authority.structural_pending {
             if !op {
                 return;

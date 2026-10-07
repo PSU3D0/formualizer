@@ -20,6 +20,8 @@ Load Excel workbooks, change inputs, recalculate and read results—in the brows
 - **Built for agents.** Inspect dependencies, group edits with undo/redo, and expose deterministic typed inputs and outputs through SheetPort. For ready-made CLI and MCP tools, see [agent-spreadsheet](https://github.com/PSU3D0/agent-spreadsheet).
 - **One engine across languages.** Also available for [Rust and Python](https://github.com/psu3d0/formualizer#bindings). This npm package targets JavaScript hosts; non-JavaScript WASM hosts use the [portable Rust profile](#runtime-profile).
 
+> This package is the WebAssembly library. The `formualizer recalc` command-line tool is the separate native package [`@formualizer/cli`](https://www.npmjs.com/package/@formualizer/cli) (`npx @formualizer/cli recalc book.xlsx`); it is not included here.
+
 ## Installation
 
 ```bash
@@ -84,12 +86,47 @@ const input = new Uint8Array(await (await fetch('/model.xlsx')).arrayBuffer());
 const result = await recalculateXlsxBytes(input);
 console.log(result.summary.status, result.cache_cells_changed);
 // `result.bytes` is a Uint8Array ready for download/upload.
+
+// Reproducible TODAY/NOW and RAND (the CLI's --now/--tz/--seed):
+const fixed = await recalculateXlsxBytes(input, undefined, {
+  deterministicTimestampUtc: '2026-01-31T09:00:00Z',
+  deterministicTimezone: '+01:00', // default 'utc'
+  rngSeed: 7,
+});
+console.log(fixed.clock, fixed.seed); // what the run used; seed is a bigint
 ```
+
+`RAND` is reproducible by default. Without `deterministicTimestampUtc`,
+`TODAY`/`NOW` use the host's local time; `result.clock.now` reports the instant
+they saw.
 
 This delegates to the shared Rust cache-only XLSX recalculator: formula text and
 unrelated package members are retained, while formula cached values are updated.
 Safe core resource limits apply; `errorLocationLimit` only limits stored error
 locations.
+
+Supported inputs include ordinary/shared scalar formulas, supported calculation
+names, new multi-cell spills from ordinary non-shared formulas, and existing
+XLDAPR anchors with validated `cm`/array-`ref` metadata. Growth, shrink, collapse
+and blocked anchors are supported, with readers `A1#` and
+`_xlfn.ANCHORARRAY(A1)`. Source-declared children are generated caches, not
+independent inputs: externally edited child values are recalculated while their
+ownership remains declared. Obsolete caches are cleared while styles remain.
+
+`formula_cells` and `summary.evaluated` count source formulas/anchors, not
+children. `cache_cells_changed` counts physical caches inserted, replaced or
+cleared, including children, and may exceed `formula_cells`.
+`worksheet_parts_changed` counts worksheets only, not metadata/relationships.
+Deterministic unchanged outputs recalculate to byte-identical no-ops.
+
+Legacy fixed-extent (CSE) arrays, elementwise `IF`, Excel tables within a
+validated subset and volatile functions are recalculated too. Data tables,
+external links, rich/unknown or malformed metadata, hidden-row
+`SUBTOTAL`/`AGGREGATE` ranges, circular references, shared-family multi-cell
+spills and spill publication across merges are refused. Safe ZIP/XML/cell/output
+limits remain in effect. Fresh unmarked 1x1 results have no spill identity
+(`A1#` returns `#REF!`). No Excel-equivalence claim is made; no Excel execution
+oracle was used. See [the precise eligibility contract](https://github.com/psu3d0/formualizer/blob/main/docs/cache-only-xlsx.md).
 
 ### Parse formulas
 

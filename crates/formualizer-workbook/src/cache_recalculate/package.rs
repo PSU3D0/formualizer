@@ -2,7 +2,8 @@
 mod content_types;
 mod rewrite;
 use super::{IoError, XlsxRecalculateOptions, checkpoint, unsupported, xml};
-pub(super) use rewrite::rewrite;
+pub(super) use content_types::add_override;
+pub(super) use rewrite::{Edits, rewrite};
 use std::collections::{BTreeMap, HashSet};
 use std::io::{Cursor, Read};
 use zip::ZipArchive;
@@ -17,6 +18,9 @@ pub(super) struct Relationship {
 pub(super) struct Sheet {
     pub name: String,
     pub part: String,
+    /// `sheet/@sheetId`, the key of `xl/calcChain.xml` entries.
+    pub sheet_id: u32,
+    pub tables: BTreeMap<String, String>,
 }
 fn u16_at(bytes: &[u8], offset: usize) -> Result<usize, IoError> {
     let b = bytes
@@ -46,30 +50,189 @@ fn part_name(name: &str) -> Result<(), IoError> {
     }
     Ok(())
 }
-// ZIP7 indexes members by name and can hide duplicate central-directory names.
-// This is a bounded metadata audit, NOT a ZIP writer/decoder. ZIP64, arbitrary
-// entry extras/comments and split archives are explicitly unsupported because
-// the raw-copy API cannot preserve their complete container metadata contract.
-fn audit_directory(
-    bytes: &[u8],
-    archive: &Archive<'_>,
-    options: &XlsxRecalculateOptions,
-) -> Result<(), IoError> {
-    if archive.offset() != 0 {
-        return Err(unsupported("prefixed ZIP archive", "XLSX package"));
+/// One audited ZIP32 member, in central-directory order.
+#[derive(Debug)]
+pub(super) struct Member {
+    /// Offset and length of the central-directory record.
+    pub central: usize,
+    pub central_len: usize,
+    /// Offsets of the local header, the payload, the payload end and the
+    /// member end (after its data descriptor, if any).
+    pub local: usize,
+    pub data: usize,
+    pub data_end: usize,
+    pub end: usize,
+}
+/// The audited directory: its start, its end record and every member.
+#[derive(Debug)]
+pub(super) struct Directory {
+    pub start: usize,
+    pub footer: usize,
+    pub members: Vec<Member>,
+}
+/// General-purpose flags admitted: deflate option bits 1-2, data
+/// descriptor (bit 3) and UTF-8 names (bit 11).
+const ADMITTED_FLAGS: usize = 0x0002 | 0x0004 | 0x0008 | 0x0800;
+/// Encryption (bit 0), strong encryption (bit 6), masked directory (bit 13).
+const ENCRYPTION_FLAGS: usize = 0x0001 | 0x0040 | 0x2000;
+fn le16(bytes: &[u8], offset: usize) -> usize {
+    u16::from_le_bytes([bytes[offset], bytes[offset + 1]]) as usize
+}
+/// Microsoft packaging growth hint (Excel, System.IO.Packaging): signature
+/// 0xA028, the initially requested padding size (any value; Excel writes
+/// the padding length or 0) and zero padding bytes.
+fn growth_hint(data: &[u8]) -> bool {
+    data.len() >= 4 && le16(data, 0) == 0xA028 && data[4..].iter().all(|b| *b == 0)
+}
+/// Info-ZIP extended timestamp: a flag byte (bits 0-2: mtime, atime,
+/// ctime) and one 32-bit time per flag in local headers; central records
+/// carry the modification time only, or every flagged time.
+fn extended_timestamp(data: &[u8], central: bool) -> bool {
+    let Some(&flags) = data.first() else {
+        return false;
+    };
+    let all = 1 + 4 * (flags & 7).count_ones() as usize;
+    flags & !7 == 0
+        && (data.len() == all || (central && data.len() == 1 + 4 * (flags & 1) as usize))
+}
+/// Info-ZIP Unix UID/GID ("ux", version 1): sized UID, sized GID.
+fn unix_owner(data: &[u8]) -> bool {
+    let mut at = 1;
+    if data.first() != Some(&1) {
+        return false;
     }
-    let start = usize::try_from(archive.central_directory_start())
-        .map_err(|_| unsupported("ZIP offset overflow", "XLSX package"))?;
+    for _ in 0..2 {
+        let Some(&size) = data.get(at) else {
+            return false;
+        };
+        if !(1..=8).contains(&size) {
+            return false;
+        }
+        at += 1 + size as usize;
+    }
+    at == data.len()
+}
+/// NTFS times: a zero reserved word and at most one attribute, tag 1 with
+/// three 64-bit times.
+fn ntfs_times(data: &[u8]) -> bool {
+    data.len() >= 4
+        && data[..4] == [0; 4]
+        && (data.len() == 4 || (data.len() == 32 && le16(data, 4) == 1 && le16(data, 6) == 24))
+}
+/// Admit only metadata-only extra fields that do not change how member data
+/// is located or decoded; every block is parsed in full.
+fn extra_fields(block: &[u8], central: bool, name: &str) -> Result<(), IoError> {
+    let mut seen = Vec::new();
+    let mut at = 0;
+    while at < block.len() {
+        let malformed = || unsupported("malformed ZIP extra field", name);
+        let header = block.get(at..at + 4).ok_or_else(malformed)?;
+        let id = le16(header, 0);
+        let data = block
+            .get(at + 4..at + 4 + le16(header, 2))
+            .ok_or_else(malformed)?;
+        if seen.contains(&id) {
+            return Err(unsupported("duplicate ZIP extra field", name));
+        }
+        seen.push(id);
+        let valid = match id {
+            0xA220 => growth_hint(data),
+            0x5455 => extended_timestamp(data, central),
+            0x7875 => unix_owner(data),
+            0x000A => ntfs_times(data),
+            0x0001 => return Err(unsupported("ZIP64 member", name)),
+            0x9901 => return Err(unsupported("encrypted ZIP member", name)),
+            _ => {
+                return Err(unsupported(
+                    format!("unsupported ZIP extra field 0x{id:04X}"),
+                    name,
+                ));
+            }
+        };
+        if !valid {
+            return Err(unsupported(
+                format!("malformed ZIP extra field 0x{id:04X}"),
+                name,
+            ));
+        }
+        at += 4 + data.len();
+    }
+    Ok(())
+}
+/// The single end-of-central-directory record whose comment ends the input.
+fn footer(bytes: &[u8]) -> Result<usize, IoError> {
+    let mut footers = Vec::new();
+    for at in bytes.len().saturating_sub(65_557)..bytes.len().saturating_sub(21) {
+        if bytes.get(at..at + 4) == Some(b"PK\x05\x06")
+            && at + 22 + u16_at(bytes, at + 20)? == bytes.len()
+        {
+            footers.push(at);
+        }
+    }
+    match footers[..] {
+        [at] => Ok(at),
+        _ => Err(unsupported("ambiguous/missing ZIP footer", "XLSX package")),
+    }
+}
+/// Length of the data descriptor after `data_end`: 16 bytes with the
+/// optional signature or 12 without. Its CRC-32 and 32-bit sizes must equal
+/// the central record's; a ZIP64 descriptor never matches.
+fn descriptor(bytes: &[u8], data_end: usize, central: &[u8], name: &str) -> Result<usize, IoError> {
+    let signed = bytes
+        .get(data_end..data_end + 16)
+        .is_some_and(|d| d[..4] == *b"PK\x07\x08" && d[4..] == *central);
+    let unsigned = bytes.get(data_end..data_end + 12) == Some(central);
+    match (signed, unsigned) {
+        (true, false) => Ok(16),
+        (false, true) => Ok(12),
+        (true, true) => Err(unsupported("ambiguous ZIP data descriptor", name)),
+        (false, false) => Err(unsupported("ZIP data descriptor mismatch", name)),
+    }
+}
+// ZIP7 indexes members by name and can hide duplicate central-directory names.
+// This is a bounded metadata audit, NOT a ZIP writer/decoder. It runs before
+// ZIP7 parses the directory. The central directory is authoritative; local
+// headers and data descriptors must agree with it, and members must tile the
+// bytes before the directory. ZIP64, encryption, entry comments, split
+// archives and extra fields outside a metadata-only allow-list are refused.
+pub(super) fn audit_directory(
+    bytes: &[u8],
+    options: &XlsxRecalculateOptions,
+) -> Result<Directory, IoError> {
+    let footer = footer(bytes)?;
+    let count = u16_at(bytes, footer + 10)?;
+    if count > options.limits.max_entries || count == u16::MAX as usize {
+        return Err(unsupported(
+            "ZIP entry count limit or ZIP64",
+            "XLSX package",
+        ));
+    }
+    let start = u32_at(bytes, footer + 16)?;
+    if start.checked_add(u32_at(bytes, footer + 12)?) != Some(footer) {
+        return Err(unsupported(
+            "ZIP64 or inconsistent directory extent",
+            "XLSX package",
+        ));
+    }
+    if u16_at(bytes, footer + 4)? != 0
+        || u16_at(bytes, footer + 6)? != 0
+        || u16_at(bytes, footer + 8)? != count
+    {
+        return Err(unsupported(
+            "inconsistent ZIP directory/footer",
+            "XLSX package",
+        ));
+    }
     let mut at = start;
     let mut names = HashSet::new();
-    let mut ranges = Vec::new();
+    let mut members = Vec::new();
     while bytes.get(at..at + 4) == Some(b"PK\x01\x02") {
         checkpoint(&options.cancel)?;
-        let fixed_end = checked_end(at, 46, bytes.len())?;
+        let fixed_end = checked_end(at, 46, footer)?;
         let name_len = u16_at(bytes, at + 28)?;
         let extra_len = u16_at(bytes, at + 30)?;
         let comment_len = u16_at(bytes, at + 32)?;
-        let end = checked_end(fixed_end, name_len + extra_len + comment_len, bytes.len())?;
+        let end = checked_end(fixed_end, name_len + extra_len + comment_len, footer)?;
         let raw_name = &bytes[fixed_end..fixed_end + name_len];
         let name = std::str::from_utf8(raw_name)
             .map_err(|_| unsupported("non-UTF-8 ZIP name", "XLSX package"))?;
@@ -77,21 +240,27 @@ fn audit_directory(
         if !names.insert(name) {
             return Err(unsupported("duplicate ZIP member", "XLSX package"));
         }
-        if names.len() > options.limits.max_entries {
-            return Err(unsupported("ZIP entry count limit", "XLSX package"));
+        if names.len() > count {
+            return Err(unsupported(
+                "inconsistent ZIP directory/footer",
+                "XLSX package",
+            ));
         }
-        if extra_len != 0 || comment_len != 0 {
-            return Err(unsupported("ZIP entry extra metadata or comment", name));
+        if comment_len != 0 {
+            return Err(unsupported("ZIP entry comment", name));
         }
         if u16_at(bytes, at + 34)? != 0 {
             return Err(unsupported("split ZIP archive", name));
         }
         let flags = u16_at(bytes, at + 8)?;
-        if flags & 1 != 0 {
+        if flags & ENCRYPTION_FLAGS != 0 {
             return Err(unsupported("encrypted ZIP member", name));
         }
-        if flags & 8 != 0 {
-            return Err(unsupported("ZIP data descriptor", name));
+        if flags & !ADMITTED_FLAGS != 0 {
+            return Err(unsupported("unsupported ZIP general-purpose flags", name));
+        }
+        if !matches!(u16_at(bytes, at + 10)?, 0 | 8) {
+            return Err(unsupported("unsupported ZIP compression method", name));
         }
         if !raw_name.is_ascii() && flags & (1 << 11) == 0 {
             return Err(unsupported("ambiguous ZIP name encoding", name));
@@ -102,6 +271,11 @@ fn audit_directory(
         if [compressed, expanded, local].contains(&(u32::MAX as usize)) {
             return Err(unsupported("ZIP64 member", name));
         }
+        extra_fields(
+            &bytes[fixed_end + name_len..fixed_end + name_len + extra_len],
+            true,
+            name,
+        )?;
         checked_end(local, 30, start)?;
         if bytes.get(local..local + 4) != Some(b"PK\x03\x04") {
             return Err(unsupported("invalid ZIP local header", name));
@@ -109,47 +283,100 @@ fn audit_directory(
         let local_name_len = u16_at(bytes, local + 26)?;
         let local_extra = u16_at(bytes, local + 28)?;
         let data = checked_end(local + 30, local_name_len + local_extra, start)?;
-        if local_extra != 0 {
-            return Err(unsupported("ZIP local extra metadata", name));
-        }
         if bytes.get(local + 30..local + 30 + local_name_len) != Some(raw_name)
-            || u16_at(bytes, local + 6)? != flags
-            || u16_at(bytes, local + 8)? != u16_at(bytes, at + 10)?
-            || bytes[local + 14..local + 26] != bytes[at + 16..at + 28]
-            || bytes[local + 10..local + 14] != bytes[at + 12..at + 16]
             || u16_at(bytes, local + 4)? != u16_at(bytes, at + 6)?
+            || u16_at(bytes, local + 6)? != flags
+            || bytes[local + 8..local + 14] != bytes[at + 10..at + 16]
         {
             return Err(unsupported("inconsistent ZIP local/central metadata", name));
         }
-        ranges.push((local, checked_end(data, compressed, start)?));
+        extra_fields(&bytes[data - local_extra..data], false, name)?;
+        let central = &bytes[at + 16..at + 28];
+        let data_end = checked_end(data, compressed, start)?;
+        let member_end = if flags & 8 == 0 {
+            if bytes[local + 14..local + 26] != *central {
+                return Err(unsupported("inconsistent ZIP local/central metadata", name));
+            }
+            data_end
+        } else {
+            // A deferred CRC/size field is zero or already final.
+            if (0..3).any(|i| {
+                let field = &bytes[local + 14 + 4 * i..local + 18 + 4 * i];
+                field != [0; 4] && field != &central[4 * i..4 * i + 4]
+            }) {
+                return Err(unsupported("inconsistent ZIP local/central metadata", name));
+            }
+            let length = descriptor(bytes, data_end, central, name)?;
+            checked_end(data_end, length, start)?
+        };
+        members.push(Member {
+            central: at,
+            central_len: end - at,
+            local,
+            data,
+            data_end,
+            end: member_end,
+        });
         at = end;
     }
-    if bytes.get(at..at + 4) != Some(b"PK\x05\x06") {
-        return Err(unsupported(
-            "ZIP64 or unsupported ZIP footer",
-            "XLSX package",
-        ));
-    }
-    checked_end(at, 22, bytes.len())?;
-    if u16_at(bytes, at + 4)? != 0
-        || u16_at(bytes, at + 6)? != 0
-        || u16_at(bytes, at + 8)? != names.len()
-        || u16_at(bytes, at + 10)? != names.len()
-        || archive.len() != names.len()
-        || u32_at(bytes, at + 12)? != at - start
-        || u32_at(bytes, at + 16)? != start
-        || checked_end(at + 22, u16_at(bytes, at + 20)?, bytes.len())? != bytes.len()
-    {
+    if at != footer || members.len() != count {
         return Err(unsupported(
             "inconsistent ZIP directory/footer",
             "XLSX package",
         ));
     }
+    // Members tile the bytes before the directory: no overlap, no gap.
+    let mut ranges: Vec<_> = members.iter().map(|m| (m.local, m.end)).collect();
     ranges.sort_unstable();
-    if ranges.windows(2).any(|w| w[0].1 > w[1].0) {
-        return Err(unsupported("overlapping ZIP members", "XLSX package"));
+    let mut next = 0;
+    for (local, end) in ranges {
+        if local < next {
+            return Err(unsupported("overlapping ZIP members", "XLSX package"));
+        }
+        if local > next {
+            return Err(unsupported("unaccounted ZIP bytes", "XLSX package"));
+        }
+        next = end;
     }
-    Ok(())
+    if next != start {
+        return Err(unsupported("unaccounted ZIP bytes", "XLSX package"));
+    }
+    Ok(Directory {
+        start,
+        footer,
+        members,
+    })
+}
+/// Parse the audited directory with ZIP7 and confirm it agrees with the audit.
+fn open<'a>(bytes: &'a [u8], directory: &Directory) -> Result<Archive<'a>, IoError> {
+    let archive =
+        ZipArchive::new(Cursor::new(bytes)).map_err(|e| IoError::from_backend("zip", e))?;
+    if archive.offset() != 0
+        || archive.len() != directory.members.len()
+        || usize::try_from(archive.central_directory_start()).ok() != Some(directory.start)
+    {
+        return Err(unsupported(
+            "prefixed or inconsistent ZIP archive",
+            "XLSX package",
+        ));
+    }
+    Ok(archive)
+}
+/// Sum of the members' declared expanded sizes (the audit bounds each to
+/// ZIP32; admission verified them against the decoded bytes).
+pub(super) fn expanded_size(archive: &mut Archive<'_>) -> Result<usize, IoError> {
+    let mut total = 0usize;
+    for i in 0..archive.len() {
+        let size = archive
+            .by_index_raw(i)
+            .map_err(|e| IoError::from_backend("zip", e))?
+            .size();
+        total = usize::try_from(size)
+            .ok()
+            .and_then(|size| total.checked_add(size))
+            .ok_or_else(|| unsupported("ZIP expanded-size overflow", "workbook"))?;
+    }
+    Ok(total)
 }
 pub(super) fn admit<'a>(
     bytes: &'a [u8],
@@ -159,36 +386,10 @@ pub(super) fn admit<'a>(
     if bytes.len() > options.limits.max_input_bytes {
         return Err(unsupported("input byte limit", "XLSX package"));
     }
-    // Bound the declared directory before ZIP7 allocates its member index.
-    let mut footers = Vec::new();
-    for at in bytes.len().saturating_sub(65_557)..bytes.len().saturating_sub(21) {
-        if bytes.get(at..at + 4) == Some(b"PK\x05\x06")
-            && at + 22 + u16_at(bytes, at + 20)? == bytes.len()
-        {
-            footers.push(at);
-        }
-    }
-    if footers.len() != 1 {
-        return Err(unsupported("ambiguous/missing ZIP footer", "XLSX package"));
-    }
-    let footer = footers[0];
-    if u16_at(bytes, footer + 10)? > options.limits.max_entries
-        || u16_at(bytes, footer + 10)? == u16::MAX as usize
-    {
-        return Err(unsupported(
-            "ZIP entry count limit or ZIP64",
-            "XLSX package",
-        ));
-    }
-    if u32_at(bytes, footer + 16)?.checked_add(u32_at(bytes, footer + 12)?) != Some(footer) {
-        return Err(unsupported(
-            "ZIP64 or inconsistent directory extent",
-            "XLSX package",
-        ));
-    }
-    let mut archive =
-        ZipArchive::new(Cursor::new(bytes)).map_err(|e| IoError::from_backend("zip", e))?;
-    audit_directory(bytes, &archive, options)?;
+    // Bound and audit the declared directory before ZIP7 allocates its
+    // member index or parses extra fields.
+    let directory = audit_directory(bytes, options)?;
+    let mut archive = open(bytes, &directory)?;
     let mut total = 0usize;
     let mut buffer = [0u8; 64 * 1024];
     for i in 0..archive.len() {
@@ -201,12 +402,9 @@ pub(super) fn admit<'a>(
         if file.name().starts_with("_xmlsignatures/") || file.name().ends_with("origin.sigs") {
             return Err(unsupported("package digital signature", "XLSX package"));
         }
-        if file.name().starts_with("xl/externalLinks/")
-            || file.name() == "xl/metadata.xml"
-            || file.name().starts_with("xl/richData/")
-        {
+        if file.name().starts_with("xl/externalLinks/") || file.name().starts_with("xl/richData/") {
             return Err(unsupported(
-                "external links or rich/dynamic cell metadata",
+                "external links or rich value data",
                 "XLSX package",
             ));
         }
@@ -304,10 +502,53 @@ pub(super) fn relationships(
     })?;
     Ok(result)
 }
+/// Excel 2013 (x15) SpreadsheetML extension namespace.
+const X15: &str = "http://schemas.microsoft.com/office/spreadsheetml/2010/11/main";
+/// The workbook `ext` URI under which Excel 2013+ writes `x15:workbookPr`.
+const X15_WORKBOOK_PR_EXT: &str = "{140A7094-0E35-4892-8432-C4D2E57EDEB5}";
+/// Excel 2013+ writes `<x15:workbookPr chartTrackingRefBase="1"/>` in the
+/// workbook `extLst`. Calamine matches `workbookPr` by local name and resets
+/// its own 1904 flag from it, but that flag only reaches
+/// `ExcelDateTime::is_1904`, which ingestion never reads: values are taken as
+/// raw serials and the date system comes from the main `workbookPr` here.
+/// Admit exactly Excel's form, once; refuse any other position, extension
+/// URI or attribute (a `date1904` here would make the readers disagree).
+fn x15_workbook_pr(
+    path: &[xml::Element],
+    node: &xml::Node,
+    ext_uri: Option<&str>,
+    seen: &mut bool,
+) -> Result<(), IoError> {
+    let placed = path.len() == 4
+        && xml::path_is(&path[..3], xml::MAIN, &["workbook", "extLst", "ext"])
+        && ext_uri.is_some_and(|u| u.eq_ignore_ascii_case(X15_WORKBOOK_PR_EXT));
+    if !placed || std::mem::replace(seen, true) {
+        return Err(unsupported(
+            "foreign workbook metadata lookalike",
+            "misplaced or duplicate x15:workbookPr",
+        ));
+    }
+    if let xml::Kind::Open { attributes, .. } = &node.kind {
+        for a in attributes {
+            if !(a.ns.is_empty()
+                && a.local == "chartTrackingRefBase"
+                && matches!(a.value.as_str(), "0" | "1" | "false" | "true"))
+            {
+                return Err(unsupported(
+                    "foreign workbook metadata lookalike",
+                    format!("x15:workbookPr attribute {}", a.qualified),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+/// Workbook discovery. Also returns the single relationship-resolved sheet
+/// metadata part, if any.
 pub(super) fn discover(
     archive: &mut Archive<'_>,
     options: &XlsxRecalculateOptions,
-) -> Result<(Vec<Sheet>, formualizer_common::DateSystem), IoError> {
+) -> Result<(Vec<Sheet>, formualizer_common::DateSystem, Option<String>), IoError> {
     let root = relationships(archive, "", options)?;
     if root.values().any(|r| r.kind.contains("digital-signature")) {
         return Err(unsupported(
@@ -342,6 +583,7 @@ pub(super) fn discover(
             }
         }
     }
+    let metadata = sheet_metadata_part(archive, &relations)?;
     let data = read_part(
         archive,
         "xl/workbook.xml",
@@ -352,16 +594,54 @@ pub(super) fn discover(
     let mut targets = HashSet::new();
     let mut epoch = formualizer_common::DateSystem::Excel1900;
     let mut workbook_pr = false;
+    let mut ext_uri: Option<String> = None;
+    let mut x15_seen = false;
     let mut metadata_sections = HashSet::new();
     let mut defined_names = HashSet::new();
     let mut sheet_ids = HashSet::new();
+    #[cfg(not(feature = "system-clock"))]
+    let mut clock_name: Option<(String, String)> = None;
     xml::walk(&data, options, |path, node| {
+        #[cfg(not(feature = "system-clock"))]
+        if xml::path_is(
+            path,
+            xml::MAIN,
+            &["workbook", "definedNames", "definedName"],
+        ) {
+            match &node.kind {
+                xml::Kind::Open { empty: false, .. } => {
+                    clock_name = Some((node.required("name")?.to_owned(), String::new()))
+                }
+                xml::Kind::Text(text) => {
+                    if let Some((_, formula)) = &mut clock_name {
+                        formula.push_str(text);
+                    }
+                }
+                xml::Kind::Close => {
+                    if let Some((name, formula)) = clock_name.take() {
+                        super::wall_clock_guard::validate(
+                            &formula,
+                            &format!("defined name {name}"),
+                            options,
+                        )?;
+                    }
+                }
+                _ => {}
+            }
+        }
         if !matches!(node.kind, xml::Kind::Open { .. }) {
             return Ok(());
         }
         let e = path.last().expect("open XML element");
         if path.len() == 1 && !xml::path_is(path, xml::MAIN, &["workbook"]) {
             return Err(unsupported("workbook XML root/namespace", "XLSX package"));
+        }
+        if xml::path_is(path, xml::MAIN, &["workbook", "extLst", "ext"]) {
+            ext_uri = node.value("uri").map(str::to_owned);
+        }
+        if e.ns == X15 && e.local == "workbookPr" {
+            x15_workbook_pr(path, &node, ext_uri.as_deref(), &mut x15_seen)?;
+            return Ok(());
         }
         if [
             "workbook",
@@ -460,6 +740,8 @@ pub(super) fn discover(
             sheets.push(Sheet {
                 name: name.to_owned(),
                 part,
+                sheet_id,
+                tables: BTreeMap::new(),
             });
         }
         Ok(())
@@ -494,25 +776,164 @@ pub(super) fn discover(
             validate_aux(archive, name, root, options)?;
         }
     }
-    for sheet in &sheets {
+    let mut table_targets = HashSet::new();
+    for sheet in &mut sheets {
         let (parent, name) = sheet.part.rsplit_once('/').unwrap_or(("", &sheet.part));
         let rel_part = format!("{parent}/_rels/{name}.rels");
         if archive.file_names().any(|n| n == rel_part) {
-            for rel in relationships(archive, &sheet.part, options)?.values() {
-                if rel.kind == format!("{}/table", xml::OFFICE) {
-                    // The existing CalamineAdapter does not hydrate the engine
-                    // table registry. Preserving XML alone would silently make
-                    // valid structured references evaluate against missing data.
+            for (id, rel) in relationships(archive, &sheet.part, options)? {
+                if rel.kind == format!("{}/queryTable", xml::OFFICE) {
                     return Err(unsupported(
-                        "table metadata ingestion is not supported",
-                        "cache-only recalculation",
+                        "connection-backed worksheet table",
+                        &sheet.part,
                     ));
+                }
+                if rel.kind == format!("{}/table", xml::OFFICE) {
+                    let target = rel
+                        .target
+                        .ok_or_else(|| unsupported("external table relationship", &sheet.part))?;
+                    if !archive.file_names().any(|n| n == target)
+                        || !table_targets.insert(target.clone())
+                    {
+                        return Err(unsupported("missing/duplicate table target", &sheet.part));
+                    }
+                    sheet.tables.insert(id, target);
                 }
             }
         }
     }
-    content_types::validate(archive, &sheets, options)?;
-    Ok((sheets, epoch))
+    content_types::validate(archive, &sheets, metadata.as_deref(), options)?;
+    Ok((sheets, epoch, metadata))
+}
+/// The workbook relationship part.
+pub(super) const WORKBOOK_RELS: &str = "xl/_rels/workbook.xml.rels";
+/// Append one `Relationship` element to a validated relationship part.
+/// The new `Id` is `rId<n>` with `n` above every existing numeric `rIdN`,
+/// so it collides with no existing ID; all other bytes are kept.
+pub(super) fn add_relationship(
+    archive: &mut Archive<'_>,
+    source: &str,
+    kind: &str,
+    target: &str,
+    options: &XlsxRecalculateOptions,
+) -> Result<Vec<u8>, IoError> {
+    let (parent, name) = source.rsplit_once('/').unwrap_or(("", source));
+    let part = format!("{parent}/_rels/{name}.rels");
+    let resolved = crate::xlsx_path::resolve(source, target)?;
+    let existing = relationships(archive, source, options)?;
+    if existing
+        .values()
+        .any(|r| r.kind == kind || r.target.as_deref() == Some(resolved.as_str()))
+    {
+        return Err(unsupported("duplicate package relationship", &part));
+    }
+    let next = existing
+        .keys()
+        .filter_map(|id| id.strip_prefix("rId")?.parse::<u64>().ok())
+        .max()
+        .unwrap_or(0)
+        .checked_add(1)
+        .ok_or_else(|| unsupported("relationship ID overflow", &part))?;
+    let id = format!("rId{next}");
+    if existing.contains_key(&id) {
+        return Err(unsupported("relationship ID collision", &part));
+    }
+    let data = read_part(archive, &part, options.limits.max_worksheet_bytes)?;
+    let element = |prefix: &str| {
+        format!("<{prefix}Relationship Id=\"{id}\" Type=\"{kind}\" Target=\"{target}\"/>")
+    };
+    append_child(&data, &part, element, options)
+}
+/// Insert one child element at the end of the root element (expanding a
+/// self-closing root), in the root's prefix. Every other byte is kept.
+pub(super) fn append_child(
+    data: &[u8],
+    part: &str,
+    element: impl FnOnce(&str) -> String,
+    options: &XlsxRecalculateOptions,
+) -> Result<Vec<u8>, IoError> {
+    let mut root: Option<(String, std::ops::Range<usize>, bool)> = None;
+    let mut close = None;
+    xml::walk(data, options, |path, node| {
+        match node.kind {
+            xml::Kind::Open { empty, .. } if path.len() == 1 => {
+                root = Some((path[0].qualified.clone(), node.span.clone(), empty));
+            }
+            xml::Kind::Close if path.len() == 1 => close = Some(node.span.start),
+            _ => {}
+        }
+        Ok(())
+    })?;
+    let (qualified, open, empty) = root.ok_or_else(|| unsupported("missing XML root", part))?;
+    let prefix = qualified
+        .rsplit_once(':')
+        .map_or(String::new(), |(p, _)| format!("{p}:"));
+    let child = element(&prefix);
+    let patch = if empty {
+        super::Patch {
+            span: open.end - 2..open.end,
+            replacement: format!(">{child}</{qualified}>").into_bytes(),
+        }
+    } else {
+        let at = close.ok_or_else(|| unsupported("unbalanced XML root", part))?;
+        super::Patch {
+            span: at..at,
+            replacement: child.into_bytes(),
+        }
+    };
+    super::apply_patches(data, vec![patch], options.limits.max_worksheet_bytes)
+}
+/// Re-audit a package that gained members: the bounded ZIP directory audit,
+/// workbook discovery with its relationship/content-type agreement and the
+/// sheet metadata part, read in full (CRC-checked) and parsed.
+pub(super) fn check_output(bytes: &[u8], options: &XlsxRecalculateOptions) -> Result<(), IoError> {
+    let directory = audit_directory(bytes, options)?;
+    let mut archive = open(bytes, &directory)?;
+    let (_, _, metadata) = discover(&mut archive, options)?;
+    let part =
+        metadata.ok_or_else(|| unsupported("unrelated added metadata part", "XLSX output"))?;
+    super::dynamic_metadata::parse(&mut archive, &part, options)?;
+    Ok(())
+}
+/// Exactly zero or one internal sheetMetadata relationship whose target
+/// exists; no metadata member may exist without that relationship.
+fn sheet_metadata_part(
+    archive: &Archive<'_>,
+    relations: &BTreeMap<String, Relationship>,
+) -> Result<Option<String>, IoError> {
+    use super::dynamic_metadata::SHEET_METADATA_RELATIONSHIP;
+    let mut part = None;
+    for rel in relations
+        .values()
+        .filter(|r| r.kind == SHEET_METADATA_RELATIONSHIP)
+    {
+        let target = rel.target.clone().ok_or_else(|| {
+            unsupported(
+                "external sheet metadata relationship",
+                "workbook relationships",
+            )
+        })?;
+        if part.replace(target).is_some() {
+            return Err(unsupported(
+                "duplicate sheet metadata relationship",
+                "workbook relationships",
+            ));
+        }
+    }
+    if let Some(name) = &part
+        && !archive.file_names().any(|n| n == name)
+    {
+        return Err(unsupported("missing sheet metadata part", name));
+    }
+    if archive.file_names().any(|n| n == "xl/metadata.xml")
+        && part.as_deref() != Some("xl/metadata.xml")
+    {
+        return Err(unsupported(
+            "unrelated sheet metadata part",
+            "xl/metadata.xml",
+        ));
+    }
+    Ok(part)
 }
 fn validate_aux(
     archive: &mut Archive<'_>,
@@ -551,4 +972,22 @@ fn validate_aux(
         }
         Ok(())
     })
+}
+/// The workbook's calculation-chain part, if it has a valid relationship to
+/// an existing part. Evidence only: a missing or odd relationship is `None`.
+pub(super) fn calc_chain_part(
+    archive: &mut Archive<'_>,
+    options: &XlsxRecalculateOptions,
+) -> Option<String> {
+    let kind = format!("{}/calcChain", xml::OFFICE);
+    let relations = relationships(archive, "xl/workbook.xml", options).ok()?;
+    let mut targets = relations
+        .values()
+        .filter(|r| r.kind == kind)
+        .map(|r| r.target.clone());
+    let target = targets.next()??;
+    if targets.next().is_some() || !archive.file_names().any(|n| n == target) {
+        return None;
+    }
+    Some(target)
 }

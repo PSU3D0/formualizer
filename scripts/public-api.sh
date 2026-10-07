@@ -26,6 +26,7 @@ readonly -a ALL_CRATES=(
   formualizer-parse
   formualizer-eval
   formualizer-workbook
+  formualizer-cli
   formualizer-sheetport
   sheetport-spec
   formualizer-macros
@@ -57,6 +58,9 @@ feature_profile() {
   case "$1" in
     formualizer)
       printf '%s\n' 'common,parse,eval,workbook,sheetport,calamine,xlsx-recalc,json,csv,umya,umya3,tracing,tracing_chrome,system-clock'
+      ;;
+    formualizer-cli)
+      printf '%s\n' 'signals,system-clock'
       ;;
     formualizer-common)
       printf '%s\n' 'serde'

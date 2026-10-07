@@ -869,6 +869,10 @@ where
         delta_active: bool,
         computed_writes: &mut ComputedWriteBuffer,
     ) -> Result<(Vec<(VertexId, LiteralValue)>, usize), ExcelError> {
+        #[cfg(debug_assertions)]
+        for (v, value) in &results {
+            self.assert_fixed_result_fitted(*v, value);
+        }
         if delta_active
             || !units.iter().any(|u| matches!(u, LayerUnit::Run(_)))
             || results
@@ -979,6 +983,10 @@ where
         delta_active: bool,
         computed_writes: Option<&mut ComputedWriteBuffer>,
     ) -> Result<bool, ExcelError> {
+        #[cfg(debug_assertions)]
+        for (v, value) in values {
+            self.assert_fixed_result_fitted(*v, value);
+        }
         if delta_active
             || !self.blocked_pending_spills.is_empty()
             || values

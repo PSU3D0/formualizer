@@ -35,3 +35,16 @@ Named ranges can be workbook-scoped (visible everywhere) or sheet-scoped (visibl
 
 ## Structured table references
 Structured table references (e.g., `Table1[Column]`, `Table1[@Column]`) are recognized by the parser. The `full-v0` SheetPort profile reserves native table selector support. Currently, layout-based selectors provide equivalent functionality for SheetPort manifests.
+
+## Tables in saved XLSX files
+[`formualizer recalc`](/docs/recalc-cli) recalculates Excel tables (ListObjects) in `.xlsx` files and leaves the table definitions untouched. It supports column and column-span references, `#Data`, `#All`, `#Headers`, `#Totals`, `[@Column]` / `[#This Row]` in the data body, and bare table names such as `SUM(Table1)`, which mean the data body. Calculated columns are recalculated from the formula stored in each row, so when you add rows with openpyxl, write the formula into every new row of the column before recalculating. Workbooks with table features outside the supported subset (for example connection-backed tables, computed `INDIRECT` text or defined names that refer to tables) are refused; see [Supported and refused](/docs/recalc-cli/supported-and-refused#excel-tables).
+
+## Known limitations of in-memory tables
+Tables defined through the in-memory workbook APIs resolve structured references natively, without the XLSX recalc path above, and some forms are not yet handled correctly there:
+
+- Calculated-column and totals formulas that refer to their own table can be reported as circular references.
+- The named this-row form `Table1[[#This Row],[Qty]]` is not resolved; `[@Qty]` is.
+- `INDEX` over a whole table or over `Table1[#Headers]` returns `#REF!`.
+- Selectors that combine a row specifier with columns, such as `Table1[[#Totals],[Qty]]`, are not implemented.
+
+For these cases, use explicit A1 ranges in the in-memory APIs, or recalculate the saved file with `formualizer recalc`.

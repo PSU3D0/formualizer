@@ -500,12 +500,12 @@ fn patch_sheet(xml: &[u8], sheet: &Worksheet, styles: &mut Styles) -> io::Result
                         }
                         rule += 1;
                     }
-                    ["worksheet", "sheetFormatPr"] => {
-                        if sheet.sheet_format_properties().default_row_height() == 0.0 {
-                            // Match the application's existing unspecified-height
-                            // interpretation instead of Umya's new 14.25 fallback.
-                            set_attribute(&mut start, "defaultRowHeight", "15")?;
-                        }
+                    ["worksheet", "sheetFormatPr"]
+                        if sheet.sheet_format_properties().default_row_height() == 0.0 =>
+                    {
+                        // Match the application's existing unspecified-height
+                        // interpretation instead of Umya's new 14.25 fallback.
+                        set_attribute(&mut start, "defaultRowHeight", "15")?;
                     }
                     _ => {}
                 }

@@ -39,6 +39,7 @@ PRODUCT_PACKAGE_VERSION_FILES = [
     ("crates/formualizer-macros/Cargo.toml", "toml", ["package", "version"]),
     ("crates/formualizer-eval/Cargo.toml", "toml", ["package", "version"]),
     ("crates/formualizer-workbook/Cargo.toml", "toml", ["package", "version"]),
+    ("crates/formualizer-cli/Cargo.toml", "toml", ["package", "version"]),
     ("crates/formualizer-sheetport/Cargo.toml", "toml", ["package", "version"]),
     # Python binding package metadata
     ("bindings/python/pyproject.toml", "toml", ["project", "version"]),
@@ -67,6 +68,8 @@ PRODUCT_INTERNAL_DEPS = [
     ("crates/formualizer/Cargo.toml", "formualizer-workbook"),
     ("crates/formualizer/Cargo.toml", "formualizer-sheetport"),
     # product crate cross-dependencies
+    ("crates/formualizer-cli/Cargo.toml", "formualizer-workbook"),
+    ("crates/formualizer-cli/Cargo.toml", "formualizer-eval"),
     ("crates/formualizer-workbook/Cargo.toml", "formualizer-eval"),
     ("crates/formualizer-sheetport/Cargo.toml", "formualizer-eval"),
     ("crates/formualizer-sheetport/Cargo.toml", "formualizer-workbook"),

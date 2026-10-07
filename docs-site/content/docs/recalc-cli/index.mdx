@@ -1,0 +1,93 @@
+---
+title: Recalc CLI
+description: Recalculate the cached formula values in an .xlsx after openpyxl or another tool edits it, from Python, npm, Cargo or a prebuilt binary.
+---
+
+`formualizer recalc` fills in the formula results that other tools leave empty or stale. openpyxl and most workbook libraries write formulas but never calculate them, and saving drops the cached values that readers such as `openpyxl` with `data_only=True`, pandas and file previewers rely on. Run `formualizer recalc` after the last save and those readers see current values.
+
+- **Keep your editor.** It recalculates in place without rebuilding the workbook: formula text, styles, drawings, names and untouched package parts stay byte-for-byte.
+- **Strict, not best-effort.** Workbooks outside the [supported subset](/docs/recalc-cli/supported-and-refused) are refused as a whole (exit 2) instead of published with guessed values.
+- **Made for scripts and agents.** `--json` prints one machine-readable object; exit codes separate success, refusal, stale checks and errors. See the [agent workflow](/docs/recalc-cli/agent-workflow).
+
+## Install
+
+<Tabs items={["Python", "npm", "Cargo", "Binary"]}>
+<Tab value="Python">
+
+```sh
+uvx formualizer recalc book.xlsx            # run without installing
+pip install formualizer                     # then: formualizer recalc book.xlsx
+python -m formualizer recalc book.xlsx      # same CLI through the module
+```
+
+Native wheels for Linux (glibc and musl), macOS and Windows on Python 3.10+. The CLI is not available in Pyodide; there, `formualizer.recalculate_xlsx_bytes` performs the same recalculation on in-memory bytes.
+
+</Tab>
+<Tab value="npm">
+
+```sh
+npx @formualizer/cli recalc book.xlsx       # run without installing
+npm i -g @formualizer/cli                   # then: formualizer recalc book.xlsx
+```
+
+A launcher plus one native binary package per platform: Linux x64/arm64 (glibc and musl), macOS x64/arm64, Windows x64. There is no WebAssembly fallback. The unscoped `formualizer` npm package is the WASM library and does not include the CLI.
+
+</Tab>
+<Tab value="Cargo">
+
+```sh
+cargo binstall formualizer-cli              # prebuilt binary from the GitHub release
+cargo install formualizer-cli               # build from crates.io
+```
+
+Both install a binary named `formualizer`.
+
+</Tab>
+<Tab value="Binary">
+
+Download `formualizer-cli-v<version>-<target>.tar.gz` (`.zip` on Windows) and `SHA256SUMS` from the [GitHub releases](https://github.com/psu3d0/formualizer/releases), check the checksum and put the `formualizer` binary on your `PATH`:
+
+```sh
+sha256sum --check --ignore-missing SHA256SUMS
+tar -xzf formualizer-cli-v<version>-x86_64-unknown-linux-gnu.tar.gz
+```
+
+Targets: `x86_64`/`aarch64-unknown-linux-gnu`, `x86_64`/`aarch64-unknown-linux-musl`, `x86_64`/`aarch64-apple-darwin` and `x86_64-pc-windows-msvc`.
+
+</Tab>
+</Tabs>
+
+## 30-second example
+
+Write a workbook with openpyxl, recalculate it, then read the values:
+
+```python
+from openpyxl import Workbook, load_workbook
+
+wb = Workbook()
+ws = wb.active
+ws.append([10]); ws.append([20]); ws.append([30])
+ws["B1"] = "=SUM(A1:A3)"
+ws["C1"] = "=SEQUENCE(3)"
+wb.save("book.xlsx")
+print(load_workbook("book.xlsx", data_only=True).active["B1"].value)  # None: no cache yet
+```
+
+```sh
+$ formualizer recalc book.xlsx
+book.xlsx: recalculated 2 formulas, 4 cached values changed, 0 error cells (written)
+```
+
+```python
+ws = load_workbook("book.xlsx", data_only=True).active
+print(ws["B1"].value, [ws[f"C{r}"].value for r in (1, 2, 3)])  # 60 [1, 2, 3]
+```
+
+`SEQUENCE(3)` became a dynamic-array spill over `C1:C3`. Running the command again reports `unchanged` and leaves the file untouched; `formualizer recalc book.xlsx --check` exits 3 when caches are stale and never writes.
+
+## Next
+
+- [Agent workflow](/docs/recalc-cli/agent-workflow): the edit, recalc, inspect, fix loop.
+- [CLI reference](/docs/recalc-cli/cli-reference): flags, exit codes and the JSON schema.
+- [Supported and refused](/docs/recalc-cli/supported-and-refused): what is recalculated and what each refusal means.
+- [Agent skill](/docs/recalc-cli/agent-skill): a portable `SKILL.md` that teaches the workflow.

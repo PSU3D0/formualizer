@@ -1,3 +1,4 @@
+use crate::ParserLimits;
 use crate::structured_ref;
 use crate::tokenizer::{
     Associativity, Token, TokenSpan, TokenStream, TokenSubType, TokenType, TokenizerError,
@@ -778,6 +779,21 @@ impl ReferenceType {
     }
 
     fn parse_excel_reference(reference: &str) -> Result<Self, ParsingError> {
+        // Workbook index 0 is the workbook the formula lives in (external
+        // workbooks are numbered from 1), as Excel stores it in OOXML:
+        // `[0]!Name` is the workbook-scoped `Name` and `[0]Sheet1!A1` is
+        // `Sheet1!A1`.
+        if let Some(rest) = reference.strip_prefix("[0]")
+            && rest.contains('!')
+        {
+            return Self::parse_excel_reference(rest.strip_prefix('!').unwrap_or(rest));
+        }
+        if let Some(rest) = reference.strip_prefix("'[0]")
+            && rest.contains('!')
+        {
+            return Self::parse_excel_reference(&format!("'{rest}"));
+        }
+
         // Excel structured reference shorthands that appear as a single bracketed token.
         //
         // We use these forms to avoid ambiguity with cell refs / named ranges:
@@ -1114,19 +1130,16 @@ impl Display for ReferenceType {
     }
 }
 
-/// Render the `Sheet1:SheetN` portion of a 3D reference. Either side may
-/// require quoting independently; quoting one side does not force the other
-/// to be quoted, matching Excel's behaviour.
+/// Render the `Sheet1:SheetN` portion of a 3D reference. When either name
+/// needs quoting, Excel quotes the whole span as one segment
+/// (`'Jan 24:Mar 24'!B5`), never each name on its own.
 fn format_3d_sheet_prefix(first: &str, last: &str) -> String {
-    let format_one = |name: &str| -> String {
-        if sheet_name_needs_quoting(name) {
-            let escaped = name.replace('\'', "''");
-            format!("'{escaped}'")
-        } else {
-            name.to_string()
-        }
-    };
-    format!("{}:{}", format_one(first), format_one(last))
+    if sheet_name_needs_quoting(first) || sheet_name_needs_quoting(last) {
+        let escaped = format!("{first}:{last}").replace('\'', "''");
+        format!("'{escaped}'")
+    } else {
+        format!("{first}:{last}")
+    }
 }
 
 impl TryFrom<&str> for ReferenceType {
@@ -1206,8 +1219,6 @@ impl ReferenceType {
             // `!` separator (e.g. external book tokens such as `[1]Sheet!A1`).
             return Self::extract_sheet_spec_fallback(reference);
         };
-        let _ = first_quoted;
-
         let bytes = reference.as_bytes();
 
         // 3D form: Name1:Name2!...
@@ -1250,6 +1261,23 @@ impl ReferenceType {
         // Single-sheet form: Name!...
         if after_first < bytes.len() && bytes[after_first] == b'!' {
             let ref_part = reference[after_first + 1..].to_string();
+            // Excel forbids ':' in sheet names, so one quoted segment holding
+            // a single ':' is a 3D span written the way Excel writes it:
+            // `'Jan 24:Mar 24'!B5`. A book path (`'C:\x\[Book.xlsx]S'!A1`)
+            // is left alone.
+            if first_quoted && !first_name.contains('[') {
+                if let Some((first, last)) = first_name.split_once(':') {
+                    if !first.is_empty() && !last.is_empty() && !last.contains(':') {
+                        return (
+                            SheetSpec::Range {
+                                first: first.to_string(),
+                                last: last.to_string(),
+                            },
+                            ref_part,
+                        );
+                    }
+                }
+            }
             return (SheetSpec::Single(first_name), ref_part);
         }
 
@@ -2324,21 +2352,40 @@ pub struct Parser {
     /// When > 0, treat a top-level `OpInfix(",")` as a terminator (call-arg
     /// separator) instead of the union/list operator. Used by `parse_call_arguments`.
     in_call_args_depth: usize,
-    /// Current recursion depth of `parse_bp`. Bounded by [`MAX_PARSE_DEPTH`] so a
+    /// Current recursion depth of `parse_bp`. Bounded by the configured Pratt-frame limit so a
     /// deeply nested formula (e.g. `=((((...))))`) returns an error instead of
     /// overflowing the stack.
     depth: usize,
+    limits: ParserLimits,
+    nodes: usize,
+    pending_error: Option<ParserError>,
 }
 
-/// Bound active Pratt-parser frames, not Excel function-nesting levels. Leave
-/// headroom for 64 nested calls or parentheses, including IF conditions: the
-/// top-level expression and infix right-hand sides also consume frames. A
-/// right-nested infix expression with parentheses consumes two per level, so
-/// this is deliberately not an exact implementation of Excel's nesting limit.
-/// The boundary is exercised on a 1 MiB thread stack in debug and release tests.
-/// Flat left-associative AST depth and recursive AST destruction are separate
-/// limits; this guard does not bound total AST size.
-const MAX_PARSE_DEPTH: usize = 72;
+/// Ephemeral construction metadata; public AST nodes retain no height field.
+/// Parent admission uses child heights directly, without traversing subtrees.
+struct BuiltNode {
+    node: ASTNode,
+    height: usize,
+}
+#[derive(Default)]
+struct BuiltArgs {
+    nodes: Vec<ASTNode>,
+    height: usize,
+    volatile: bool,
+}
+impl BuiltArgs {
+    fn push(&mut self, child: BuiltNode) {
+        self.height = self.height.max(child.height);
+        self.volatile |= child.node.contains_volatile;
+        self.nodes.push(child.node);
+    }
+}
+impl std::ops::Deref for BuiltNode {
+    type Target = ASTNode;
+    fn deref(&self) -> &ASTNode {
+        &self.node
+    }
+}
 
 impl Parser {
     /// Tokenize a formula using the default Excel dialect and prepare it for parsing.
@@ -2356,17 +2403,35 @@ impl Parser {
         formula: T,
         dialect: FormulaDialect,
     ) -> Result<Self, TokenizerError> {
-        let source: Arc<str> = Arc::from(formula.as_ref());
-        let spans = crate::tokenizer::tokenize_spans_with_dialect(source.as_ref(), dialect)?;
-        Ok(Self::from_source_and_tokens(
-            source,
-            Arc::from(spans.into_boxed_slice()),
-            dialect,
-        ))
+        Self::new_with_limits(formula.as_ref(), dialect, ParserLimits::default())
     }
 
-    /// Build a parser from an existing source-backed token stream.
+    fn new_with_limits(
+        formula: &str,
+        dialect: FormulaDialect,
+        limits: ParserLimits,
+    ) -> Result<Self, TokenizerError> {
+        limits.check_source(formula)?;
+        let spans = crate::tokenizer::tokenize_spans_with_limits(formula, dialect, limits)?;
+        let mut parser = Self::from_source_and_tokens(
+            Arc::from(formula),
+            Arc::from(spans.into_boxed_slice()),
+            dialect,
+        );
+        parser.limits = limits;
+        Ok(parser)
+    }
+
+    /// External streams are mutable: validate admission and all spans before copying.
     pub fn from_token_stream(stream: &TokenStream) -> Self {
+        let limits = ParserLimits::default();
+        let error = stream.admission_error(limits).map(ParserError::from);
+        if let Some(error) = error {
+            let mut parser =
+                Self::from_source_and_tokens(Arc::from(""), Arc::from([]), stream.dialect());
+            parser.pending_error = Some(error);
+            return parser;
+        }
         Self::from_source_and_tokens(
             Arc::from(stream.source()),
             Arc::from(stream.spans.clone().into_boxed_slice()),
@@ -2387,6 +2452,9 @@ impl Parser {
             dialect,
             in_call_args_depth: 0,
             depth: 0,
+            limits: ParserLimits::default(),
+            nodes: 0,
+            pending_error: None,
         }
     }
 
@@ -2400,6 +2468,63 @@ impl Parser {
         self
     }
 
+    // Keep rich AST temporaries out of every active Pratt frame in debug builds.
+    fn unary(&mut self, expr: BuiltNode, span: TokenSpan) -> Result<BuiltNode, ParserError> {
+        let height = 1 + expr.height;
+        self.admit(height)?;
+        let token = self.span_to_token(&span);
+        let volatile = expr.contains_volatile;
+        Ok(BuiltNode {
+            height,
+            node: ASTNode::new_with_volatile(
+                ASTNodeType::UnaryOp {
+                    op: token.value.clone(),
+                    expr: Box::new(expr.node),
+                },
+                Some(token),
+                volatile,
+            ),
+        })
+    }
+    fn binary(
+        &mut self,
+        left: BuiltNode,
+        right: BuiltNode,
+        span: TokenSpan,
+    ) -> Result<BuiltNode, ParserError> {
+        let height = 1 + left.height.max(right.height);
+        self.admit(height)?;
+        let token = self.span_to_token(&span);
+        let volatile = left.contains_volatile || right.contains_volatile;
+        Ok(BuiltNode {
+            height,
+            node: ASTNode::new_with_volatile(
+                ASTNodeType::BinaryOp {
+                    op: token.value.clone(),
+                    left: Box::new(left.node),
+                    right: Box::new(right.node),
+                },
+                Some(token),
+                volatile,
+            ),
+        })
+    }
+    fn call(&mut self, left: BuiltNode, args: BuiltArgs) -> Result<BuiltNode, ParserError> {
+        let height = 1 + left.height.max(args.height);
+        self.admit(height)?;
+        let volatile = left.contains_volatile || args.volatile;
+        Ok(BuiltNode {
+            height,
+            node: ASTNode::new_with_volatile(
+                ASTNodeType::Call {
+                    callee: Box::new(left.node),
+                    args: args.nodes,
+                },
+                None,
+                volatile,
+            ),
+        })
+    }
     fn skip_whitespace(&mut self) {
         while self.position < self.tokens.len()
             && self.tokens[self.position].token_type == TokenType::Whitespace
@@ -2458,7 +2583,7 @@ impl Parser {
             "," => Some((8, Associativity::Left)),
             "%" => Some((7, Associativity::Left)),
             "u" => Some((6, Associativity::Right)),
-            "^" => Some((5, Associativity::Right)),
+            "^" => Some((5, Associativity::Left)),
             "*" | "/" => Some((4, Associativity::Left)),
             "+" | "-" => Some((3, Associativity::Left)),
             "&" => Some((2, Associativity::Left)),
@@ -2467,7 +2592,38 @@ impl Parser {
         }
     }
 
+    #[cold]
+    fn limit_error(&self, budget: &str, limit: usize) -> ParserError {
+        ParserError {
+            message: format!("Formula {budget} (max {limit})"),
+            position: Some(self.position),
+        }
+    }
+    fn admit(&mut self, height: usize) -> Result<(), ParserError> {
+        if self.nodes >= self.limits.ast_nodes {
+            return Err(self.limit_error("AST node limit exceeded", self.limits.ast_nodes));
+        }
+        if height > self.limits.ast_height {
+            return Err(self.limit_error("AST height limit exceeded", self.limits.ast_height));
+        }
+        self.nodes += 1;
+        Ok(())
+    }
+    fn omitted(&mut self) -> Result<BuiltNode, ParserError> {
+        self.admit(1)?;
+        Ok(BuiltNode {
+            node: ASTNode::new(ASTNodeType::Omitted, None),
+            height: 1,
+        })
+    }
     pub fn parse(&mut self) -> Result<ASTNode, ParserError> {
+        if let Some(error) = &self.pending_error {
+            return Err(ParserError {
+                message: error.message.clone(),
+                position: error.position,
+            });
+        }
+        self.nodes = 0;
         if self.tokens.is_empty() {
             return Err(ParserError {
                 message: "No tokens to parse".to_string(),
@@ -2498,6 +2654,7 @@ impl Parser {
             }
 
             let token = self.span_to_token(&span);
+            self.admit(1)?;
             return Ok(ASTNode::new(
                 ASTNodeType::Literal(LiteralValue::Text(token.value.clone())),
                 Some(token),
@@ -2515,30 +2672,27 @@ impl Parser {
                 position: Some(self.position),
             });
         }
-        Ok(ast)
+        Ok(ast.node)
     }
 
-    fn parse_expression(&mut self) -> Result<ASTNode, ParserError> {
+    fn parse_expression(&mut self) -> Result<BuiltNode, ParserError> {
         self.parse_bp(0)
     }
 
-    fn parse_bp(&mut self, min_precedence: u8) -> Result<ASTNode, ParserError> {
+    fn parse_bp(&mut self, min_precedence: u8) -> Result<BuiltNode, ParserError> {
         // Bound recursion so deeply nested input (e.g. `=((((...))))`) returns
         // an error instead of overflowing the stack.
         self.depth += 1;
-        if self.depth > MAX_PARSE_DEPTH {
+        if self.depth > self.limits.pratt_frames {
             self.depth -= 1;
-            return Err(ParserError {
-                message: format!("Formula nesting too deep (max {MAX_PARSE_DEPTH})"),
-                position: Some(self.position),
-            });
+            return Err(self.limit_error("nesting too deep", self.limits.pratt_frames));
         }
         let result = self.parse_bp_inner(min_precedence);
         self.depth -= 1;
         result
     }
 
-    fn parse_bp_inner(&mut self, min_precedence: u8) -> Result<ASTNode, ParserError> {
+    fn parse_bp_inner(&mut self, min_precedence: u8) -> Result<BuiltNode, ParserError> {
         let mut left = self.parse_prefix()?;
 
         loop {
@@ -2554,16 +2708,7 @@ impl Parser {
             {
                 self.position += 1;
                 let args = self.parse_call_arguments()?;
-                let call_volatile =
-                    left.contains_volatile || args.iter().any(|a| a.contains_volatile);
-                left = ASTNode::new_with_volatile(
-                    ASTNodeType::Call {
-                        callee: Box::new(left),
-                        args,
-                    },
-                    None,
-                    call_volatile,
-                );
+                left = self.call(left, args)?;
                 continue;
             }
 
@@ -2577,16 +2722,7 @@ impl Parser {
 
                 let op_span = self.tokens[self.position];
                 self.position += 1;
-                let op_token = self.span_to_token(&op_span);
-                let contains_volatile = left.contains_volatile;
-                left = ASTNode::new_with_volatile(
-                    ASTNodeType::UnaryOp {
-                        op: op_token.value.clone(),
-                        expr: Box::new(left),
-                    },
-                    Some(op_token),
-                    contains_volatile,
-                );
+                left = self.unary(left, op_span)?;
                 continue;
             }
 
@@ -2618,23 +2754,13 @@ impl Parser {
             };
 
             let right = self.parse_bp(next_min_precedence)?;
-            let op_token = self.span_to_token(&op_span);
-            let contains_volatile = left.contains_volatile || right.contains_volatile;
-            left = ASTNode::new_with_volatile(
-                ASTNodeType::BinaryOp {
-                    op: op_token.value.clone(),
-                    left: Box::new(left),
-                    right: Box::new(right),
-                },
-                Some(op_token),
-                contains_volatile,
-            );
+            left = self.binary(left, right, op_span)?;
         }
 
         Ok(left)
     }
 
-    fn parse_prefix(&mut self) -> Result<ASTNode, ParserError> {
+    fn parse_prefix(&mut self) -> Result<BuiltNode, ParserError> {
         self.skip_whitespace();
         if self.position < self.tokens.len()
             && self.tokens[self.position].token_type == TokenType::OpPrefix
@@ -2647,22 +2773,13 @@ impl Parser {
                 .unwrap_or((0, Associativity::Right));
 
             let expr = self.parse_bp(precedence)?;
-            let op_token = self.span_to_token(&op_span);
-            let contains_volatile = expr.contains_volatile;
-            return Ok(ASTNode::new_with_volatile(
-                ASTNodeType::UnaryOp {
-                    op: op_token.value.clone(),
-                    expr: Box::new(expr),
-                },
-                Some(op_token),
-                contains_volatile,
-            ));
+            return self.unary(expr, op_span);
         }
 
         self.parse_primary()
     }
 
-    fn parse_primary(&mut self) -> Result<ASTNode, ParserError> {
+    fn parse_primary(&mut self) -> Result<BuiltNode, ParserError> {
         self.skip_whitespace();
         if self.position >= self.tokens.len() {
             return Err(ParserError {
@@ -2710,7 +2827,8 @@ impl Parser {
         }
     }
 
-    fn parse_operand(&mut self, span: TokenSpan) -> Result<ASTNode, ParserError> {
+    fn parse_operand(&mut self, span: TokenSpan) -> Result<BuiltNode, ParserError> {
+        self.admit(1)?;
         let value = self.span_value(&span);
         let token = self.span_to_token(&span);
 
@@ -2720,10 +2838,13 @@ impl Parser {
                     message: format!("Invalid number: {value}"),
                     position: Some(self.position),
                 })?;
-                Ok(ASTNode::new(
-                    ASTNodeType::Literal(LiteralValue::Number(value)),
-                    Some(token),
-                ))
+                Ok(BuiltNode {
+                    height: 1,
+                    node: ASTNode::new(
+                        ASTNodeType::Literal(LiteralValue::Number(value)),
+                        Some(token),
+                    ),
+                })
             }
             TokenSubType::Text => {
                 let mut text = value.to_string();
@@ -2731,24 +2852,27 @@ impl Parser {
                     text = text[1..text.len() - 1].to_string();
                     text = text.replace("\"\"", "\"");
                 }
-                Ok(ASTNode::new(
-                    ASTNodeType::Literal(LiteralValue::Text(text)),
-                    Some(token),
-                ))
+                Ok(BuiltNode {
+                    height: 1,
+                    node: ASTNode::new(ASTNodeType::Literal(LiteralValue::Text(text)), Some(token)),
+                })
             }
             TokenSubType::Logical => {
                 let v = value.eq_ignore_ascii_case("TRUE");
-                Ok(ASTNode::new(
-                    ASTNodeType::Literal(LiteralValue::Boolean(v)),
-                    Some(token),
-                ))
+                Ok(BuiltNode {
+                    height: 1,
+                    node: ASTNode::new(ASTNodeType::Literal(LiteralValue::Boolean(v)), Some(token)),
+                })
             }
             TokenSubType::Error => {
                 let error = ExcelError::from_error_string(value);
-                Ok(ASTNode::new(
-                    ASTNodeType::Literal(LiteralValue::Error(error)),
-                    Some(token),
-                ))
+                Ok(BuiltNode {
+                    height: 1,
+                    node: ASTNode::new(
+                        ASTNodeType::Literal(LiteralValue::Error(error)),
+                        Some(token),
+                    ),
+                })
             }
             TokenSubType::Range => {
                 let reference = ReferenceType::from_string_with_dialect(value, self.dialect)
@@ -2756,13 +2880,16 @@ impl Parser {
                         message: format!("Invalid reference '{value}': {e}"),
                         position: Some(self.position),
                     })?;
-                Ok(ASTNode::new(
-                    ASTNodeType::Reference {
-                        original: value.to_string(),
-                        reference,
-                    },
-                    Some(token),
-                ))
+                Ok(BuiltNode {
+                    height: 1,
+                    node: ASTNode::new(
+                        ASTNodeType::Reference {
+                            original: value.to_string(),
+                            reference,
+                        },
+                        Some(token),
+                    ),
+                })
             }
             _ => Err(ParserError {
                 message: format!("Unexpected operand subtype: {:?}", span.subtype),
@@ -2771,9 +2898,9 @@ impl Parser {
         }
     }
 
-    fn parse_function(&mut self, func_span: TokenSpan) -> Result<ASTNode, ParserError> {
+    fn parse_function(&mut self, func_span: TokenSpan) -> Result<BuiltNode, ParserError> {
         let func_value = self.span_value(&func_span);
-        if func_value.is_empty() {
+        if !func_value.ends_with('(') {
             return Err(ParserError {
                 message: "Invalid function token".to_string(),
                 position: Some(self.position),
@@ -2787,22 +2914,30 @@ impl Parser {
             .as_ref()
             .map(|f| f(name.as_str()))
             .unwrap_or(false);
-        let args_volatile = args.iter().any(|a| a.contains_volatile);
+        let args_volatile = args.volatile;
 
+        let height = 1 + args.height;
+        self.admit(height)?;
         let func_token = self.span_to_token(&func_span);
-        Ok(ASTNode::new_with_volatile(
-            ASTNodeType::Function { name, args },
-            Some(func_token),
-            this_is_volatile || args_volatile,
-        ))
+        Ok(BuiltNode {
+            height,
+            node: ASTNode::new_with_volatile(
+                ASTNodeType::Function {
+                    name,
+                    args: args.nodes,
+                },
+                Some(func_token),
+                this_is_volatile || args_volatile,
+            ),
+        })
     }
 
     /// Parse arguments for a postfix call (immediate invocation), where the
     /// opening `(` is a `Paren:Open` and the matching `)` is a `Paren:Close`.
     /// Caller has already consumed the opening paren. See the classic parser
     /// version for details on how top-level `,` is handled.
-    fn parse_call_arguments(&mut self) -> Result<Vec<ASTNode>, ParserError> {
-        let mut args: Vec<ASTNode> = Vec::new();
+    fn parse_call_arguments(&mut self) -> Result<BuiltArgs, ParserError> {
+        let mut args = BuiltArgs::default();
 
         self.skip_whitespace();
         if self.position < self.tokens.len()
@@ -2814,7 +2949,7 @@ impl Parser {
         }
 
         self.in_call_args_depth += 1;
-        let result = (|| -> Result<Vec<ASTNode>, ParserError> {
+        let result = (|| -> Result<BuiltArgs, ParserError> {
             let mut expecting_argument = true;
             let mut saw_argument = false;
             loop {
@@ -2836,13 +2971,13 @@ impl Parser {
                 if expecting_argument {
                     if is_close {
                         if saw_argument {
-                            args.push(ASTNode::new(ASTNodeType::Omitted, None));
+                            args.push(self.omitted()?);
                         }
                         self.position += 1;
                         return Ok(std::mem::take(&mut args));
                     }
                     if is_separator {
-                        args.push(ASTNode::new(ASTNodeType::Omitted, None));
+                        args.push(self.omitted()?);
                         saw_argument = true;
                         self.position += 1;
                     } else {
@@ -2868,8 +3003,8 @@ impl Parser {
         result
     }
 
-    fn parse_function_arguments(&mut self) -> Result<Vec<ASTNode>, ParserError> {
-        let mut args = Vec::new();
+    fn parse_function_arguments(&mut self) -> Result<BuiltArgs, ParserError> {
+        let mut args = BuiltArgs::default();
 
         self.skip_whitespace();
         if self.position < self.tokens.len()
@@ -2900,13 +3035,13 @@ impl Parser {
             if expecting_argument {
                 if is_close {
                     if saw_argument {
-                        args.push(ASTNode::new(ASTNodeType::Omitted, None));
+                        args.push(self.omitted()?);
                     }
                     self.position += 1;
                     return Ok(args);
                 }
                 if is_separator {
-                    args.push(ASTNode::new(ASTNodeType::Omitted, None));
+                    args.push(self.omitted()?);
                     saw_argument = true;
                     self.position += 1;
                 } else {
@@ -2929,9 +3064,35 @@ impl Parser {
         }
     }
 
-    fn parse_array(&mut self) -> Result<ASTNode, ParserError> {
+    fn append_array_item(
+        &mut self,
+        row: &mut Vec<ASTNode>,
+        height: &mut usize,
+        volatile: &mut bool,
+    ) -> Result<(), ParserError> {
+        let child = self.parse_expression()?;
+        *height = (*height).max(1 + child.height);
+        *volatile |= child.contains_volatile;
+        row.push(child.node);
+        Ok(())
+    }
+    fn finish_array(
+        &mut self,
+        rows: Vec<Vec<ASTNode>>,
+        height: usize,
+        volatile: bool,
+    ) -> Result<BuiltNode, ParserError> {
+        self.admit(height)?;
+        Ok(BuiltNode {
+            height,
+            node: ASTNode::new_with_volatile(ASTNodeType::Array(rows), None, volatile),
+        })
+    }
+    fn parse_array(&mut self) -> Result<BuiltNode, ParserError> {
         let mut rows = Vec::new();
         let mut current_row = Vec::new();
+        let mut height = 1;
+        let mut contains_volatile = false;
 
         self.skip_whitespace();
         if self.position < self.tokens.len()
@@ -2939,10 +3100,10 @@ impl Parser {
             && self.tokens[self.position].subtype == TokenSubType::Close
         {
             self.position += 1;
-            return Ok(ASTNode::new(ASTNodeType::Array(rows), None));
+            return self.finish_array(rows, 1, false);
         }
 
-        current_row.push(self.parse_expression()?);
+        self.append_array_item(&mut current_row, &mut height, &mut contains_volatile)?;
 
         while self.position < self.tokens.len() {
             self.skip_whitespace();
@@ -2954,11 +3115,12 @@ impl Parser {
             if token.token_type == TokenType::Sep {
                 if token.subtype == TokenSubType::Arg {
                     self.position += 1;
-                    current_row.push(self.parse_expression()?);
+                    self.append_array_item(&mut current_row, &mut height, &mut contains_volatile)?;
                 } else if token.subtype == TokenSubType::Row {
                     self.position += 1;
                     rows.push(current_row);
-                    current_row = vec![self.parse_expression()?];
+                    current_row = Vec::new();
+                    self.append_array_item(&mut current_row, &mut height, &mut contains_volatile)?;
                 }
             } else if token.token_type == TokenType::Array && token.subtype == TokenSubType::Close {
                 self.position += 1;
@@ -2984,16 +3146,7 @@ impl Parser {
             }
         }
 
-        let contains_volatile = rows
-            .iter()
-            .flat_map(|r| r.iter())
-            .any(|n| n.contains_volatile);
-
-        Ok(ASTNode::new_with_volatile(
-            ASTNodeType::Array(rows),
-            None,
-            contains_volatile,
-        ))
+        self.finish_array(rows, height, contains_volatile)
     }
 }
 
@@ -3053,9 +3206,14 @@ impl Parser {
 pub struct ParserBuilder {
     dialect: FormulaDialect,
     volatility_classifier: Option<VolatilityClassifierArc>,
+    limits: ParserLimits,
 }
 
 impl ParserBuilder {
+    pub fn limits(mut self, limits: ParserLimits) -> Self {
+        self.limits = limits;
+        self
+    }
     pub fn dialect(mut self, dialect: FormulaDialect) -> Self {
         self.dialect = dialect;
         self
@@ -3070,7 +3228,7 @@ impl ParserBuilder {
     }
 
     pub fn build<T: AsRef<str>>(self, formula: T) -> Result<Parser, TokenizerError> {
-        let mut parser = Parser::new_with_dialect(formula, self.dialect)?;
+        let mut parser = Parser::new_with_limits(formula.as_ref(), self.dialect, self.limits)?;
         if let Some(classifier) = self.volatility_classifier {
             parser = parser.with_volatility_classifier(move |name| classifier(name));
         }
@@ -3135,7 +3293,8 @@ where
 pub struct BatchParser {
     include_whitespace: bool,
     volatility_classifier: Option<VolatilityClassifierArc>,
-    token_cache: std::collections::HashMap<String, (Arc<str>, Arc<[TokenSpan]>)>,
+    token_cache: crate::token_cache::TokenCache,
+    limits: ParserLimits,
     dialect: FormulaDialect,
 }
 
@@ -3146,25 +3305,25 @@ impl BatchParser {
 
     /// Parse a formula using the internal cache and configured classifier.
     pub fn parse(&mut self, formula: &str) -> Result<ASTNode, ParserError> {
-        let (source, spans) = if let Some((source, tokens)) = self.token_cache.get(formula) {
-            (Arc::clone(source), Arc::clone(tokens))
+        self.limits.check_source(formula)?;
+        let (source, spans) = if let Some(pair) = self.token_cache.get(formula) {
+            pair
         } else {
-            let source: Arc<str> = Arc::from(formula);
             let mut spans =
-                crate::tokenizer::tokenize_spans_with_dialect(source.as_ref(), self.dialect)?;
+                crate::tokenizer::tokenize_spans_with_limits(formula, self.dialect, self.limits)?;
+            let source: Arc<str> = Arc::from(formula);
             if !self.include_whitespace {
                 spans.retain(|t| t.token_type != TokenType::Whitespace);
             }
 
             let spans: Arc<[TokenSpan]> = Arc::from(spans.into_boxed_slice());
-            self.token_cache.insert(
-                formula.to_string(),
-                (Arc::clone(&source), Arc::clone(&spans)),
-            );
+            self.token_cache
+                .insert(Arc::clone(&source), Arc::clone(&spans));
             (source, spans)
         };
 
         let mut parser = Parser::from_source_and_tokens(source, spans, self.dialect);
+        parser.limits = self.limits;
         if let Some(classifier) = self.volatility_classifier.clone() {
             parser = parser.with_volatility_classifier(move |name| classifier(name));
         }
@@ -3172,14 +3331,38 @@ impl BatchParser {
     }
 }
 
-#[derive(Default)]
 pub struct BatchParserBuilder {
+    limits: ParserLimits,
+    cache_entries: usize,
+    cache_bytes: usize,
     include_whitespace: bool,
     volatility_classifier: Option<VolatilityClassifierArc>,
     dialect: FormulaDialect,
 }
 
+impl Default for BatchParserBuilder {
+    fn default() -> Self {
+        Self {
+            include_whitespace: false,
+            volatility_classifier: None,
+            dialect: FormulaDialect::default(),
+            limits: ParserLimits::default(),
+            cache_entries: 16_384,
+            cache_bytes: 8 * 1024 * 1024,
+        }
+    }
+}
 impl BatchParserBuilder {
+    pub fn limits(mut self, limits: ParserLimits) -> Self {
+        self.limits = limits;
+        self
+    }
+    /// Set FIFO cache payload bounds. Zero entries disables retention.
+    pub fn cache_capacity(mut self, entries: usize, bytes: usize) -> Self {
+        self.cache_entries = entries;
+        self.cache_bytes = bytes;
+        self
+    }
     pub fn include_whitespace(mut self, include: bool) -> Self {
         self.include_whitespace = include;
         self
@@ -3202,7 +3385,8 @@ impl BatchParserBuilder {
         BatchParser {
             include_whitespace: self.include_whitespace,
             volatility_classifier: self.volatility_classifier,
-            token_cache: std::collections::HashMap::new(),
+            token_cache: crate::token_cache::TokenCache::new(self.cache_entries, self.cache_bytes),
+            limits: self.limits,
             dialect: self.dialect,
         }
     }

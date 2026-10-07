@@ -65,7 +65,22 @@ pub enum CriteriaPredicate {
         pattern: String,
         case_insensitive: bool,
     },
+    /// `"<>a*"`: the complement of [`CriteriaPredicate::TextLike`]; numbers,
+    /// booleans, errors and blank cells match.
+    NotTextLike {
+        pattern: String,
+        case_insensitive: bool,
+    },
+    /// `">b"` and friends with a non-numeric operand: compares text cells
+    /// only (case-insensitive); other cells never match.
+    TextGt(String),
+    TextGe(String),
+    TextLt(String),
+    TextLe(String),
+    /// `"="`: a truly blank cell (not empty text).
     IsBlank,
+    /// `"<>"`: any cell that is not truly blank (empty text matches).
+    NotBlank,
     IsNumber,
     IsText,
     IsLogical,
@@ -95,27 +110,43 @@ pub struct ValidationOptions {
 
 // Legacy adapter removed in clean break.
 
+/// Parse a criteria argument (COUNTIF/SUMIF/...IFS, MAXIFS/MINIFS and the
+/// database functions) into a predicate, following Excel's rules:
+/// - a number, boolean or error criterion matches that value;
+/// - a reference to an empty cell is the number 0 (blank cells do not match);
+/// - `""` matches blank cells and empty text, `"="` only blank cells, and
+///   `"<>"` every cell that is not blank;
+/// - `?`, `*` and `~` are wildcards, matched against text cells only, with or
+///   without a leading `=` (`"<>a*"` is the complement);
+/// - `>`, `>=`, `<`, `<=` compare numbers with a numeric operand and text
+///   with a text operand.
 pub fn parse_criteria(v: &LiteralValue) -> Result<CriteriaPredicate, ExcelError> {
     match v {
         LiteralValue::Text(s) => {
-            let s_trim = s.trim();
+            // Leading spaces before an operator are tolerated; the text operand
+            // itself is matched exactly, so trailing spaces are significant
+            // (`"Ltd "` does not match `"Ltd"`).
+            let s_trim = s.trim_start();
 
             let unquote = |t: &str| -> String {
-                let t = t.trim();
-                if let Some(inner) = t.strip_prefix('"').and_then(|x| x.strip_suffix('"')) {
+                let q = t.trim();
+                if let Some(inner) = q.strip_prefix('"').and_then(|x| x.strip_suffix('"')) {
                     inner.replace("\"\"", "\"")
                 } else {
                     t.to_string()
                 }
             };
+            let is_pattern = |t: &str| t.contains('*') || t.contains('?') || t.contains("~~");
 
             // Operators: >=, <=, <>, >, <, =
             let ops = [">=", "<=", "<>", ">", "<", "="];
             for op in ops.iter() {
                 if let Some(rhs) = s_trim.strip_prefix(op) {
-                    let rhs_trim = rhs.trim();
-                    // Try numeric parse for comparisons
-                    if let Ok(n) = rhs_trim.parse::<f64>() {
+                    // Numbers, then date/time text (`">=2/1/02"`), as Excel
+                    // reads the operand the way it reads typed input.
+                    if let Some(n) = parse_criteria_number(rhs.trim())
+                        .or_else(|| parse_criteria_datetime(rhs.trim()))
+                    {
                         return Ok(match *op {
                             ">=" => CriteriaPredicate::Ge(n),
                             "<=" => CriteriaPredicate::Le(n),
@@ -126,24 +157,45 @@ pub fn parse_criteria(v: &LiteralValue) -> Result<CriteriaPredicate, ExcelError>
                             _ => unreachable!(),
                         });
                     }
-                    // Fallback: non-numeric equals/neq text (support Excel-style quoted strings: ="aa")
-                    let lit = LiteralValue::Text(unquote(rhs_trim));
+                    // Fallback: non-numeric operand (support Excel-style quoted strings: ="aa")
+                    let text = unquote(rhs);
+                    let boolean = match text.to_ascii_lowercase().as_str() {
+                        "true" => Some(true),
+                        "false" => Some(false),
+                        _ => None,
+                    };
                     return Ok(match *op {
-                        "=" => CriteriaPredicate::Eq(lit),
-                        "<>" => CriteriaPredicate::Ne(lit),
-                        ">=" | "<=" | ">" | "<" => {
-                            // Non-numeric compare: not fully supported; degrade to equality on full expression
-                            CriteriaPredicate::Eq(LiteralValue::Text(s_trim.to_string()))
-                        }
+                        "=" if text.is_empty() => CriteriaPredicate::IsBlank,
+                        "<>" if text.is_empty() => CriteriaPredicate::NotBlank,
+                        "=" if is_pattern(&text) => CriteriaPredicate::TextLike {
+                            pattern: text,
+                            case_insensitive: true,
+                        },
+                        "<>" if is_pattern(&text) => CriteriaPredicate::NotTextLike {
+                            pattern: text,
+                            case_insensitive: true,
+                        },
+                        "=" => match boolean {
+                            Some(b) => CriteriaPredicate::Eq(LiteralValue::Boolean(b)),
+                            None => CriteriaPredicate::Eq(LiteralValue::Text(text)),
+                        },
+                        "<>" => match boolean {
+                            Some(b) => CriteriaPredicate::Ne(LiteralValue::Boolean(b)),
+                            None => CriteriaPredicate::Ne(LiteralValue::Text(text)),
+                        },
+                        ">=" => CriteriaPredicate::TextGe(text),
+                        "<=" => CriteriaPredicate::TextLe(text),
+                        ">" => CriteriaPredicate::TextGt(text),
+                        "<" => CriteriaPredicate::TextLt(text),
                         _ => unreachable!(),
                     });
                 }
             }
 
-            let plain = unquote(s_trim);
+            let plain = unquote(s);
 
             // Wildcards or escaped tilde => TextLike (including literal ~* and ~?).
-            if plain.contains('*') || plain.contains('?') || plain.contains("~~") {
+            if is_pattern(&plain) {
                 return Ok(CriteriaPredicate::TextLike {
                     pattern: plain,
                     case_insensitive: true,
@@ -156,13 +208,20 @@ pub fn parse_criteria(v: &LiteralValue) -> Result<CriteriaPredicate, ExcelError>
             } else if lower == "false" {
                 return Ok(CriteriaPredicate::Eq(LiteralValue::Boolean(false)));
             }
+            // Date or time text (`"2/1/2002"`) matches the date's serial.
+            if parse_criteria_number(plain.trim()).is_none()
+                && let Some(serial) = parse_criteria_datetime(plain.trim())
+            {
+                return Ok(CriteriaPredicate::Eq(LiteralValue::Number(serial)));
+            }
             // Plain text equality
             Ok(CriteriaPredicate::Eq(LiteralValue::Text(plain)))
         }
-        LiteralValue::Empty => Ok(CriteriaPredicate::IsBlank),
+        // Excel: a criteria argument that references an empty cell is 0.
+        LiteralValue::Empty => Ok(CriteriaPredicate::Eq(LiteralValue::Number(0.0))),
         LiteralValue::Number(n) => Ok(CriteriaPredicate::Eq(LiteralValue::Number(*n))),
         // Normalize integer criteria to Number for Excel-style numeric coercions
-        // (e.g. blank == 0, numeric text == number, etc.)
+        // (numeric text == number, etc.)
         LiteralValue::Int(i) => Ok(CriteriaPredicate::Eq(LiteralValue::Number(*i as f64))),
         LiteralValue::Boolean(b) => Ok(CriteriaPredicate::Eq(LiteralValue::Boolean(*b))),
         LiteralValue::Error(e) => Err(e.clone()),
@@ -176,6 +235,24 @@ pub fn parse_criteria(v: &LiteralValue) -> Result<CriteriaPredicate, ExcelError>
         }
         other => Ok(CriteriaPredicate::Eq(other.clone())),
     }
+}
+
+/// A date or time operand (`"2/1/02"`, `"1-Feb-2002"`, `"13:30"`) as a 1900-system
+/// serial. Criteria parsing has no workbook context, so 1904-system workbooks
+/// would see the 1900 serial.
+fn parse_criteria_datetime(text: &str) -> Option<f64> {
+    if text.is_empty() || !text.bytes().any(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    formualizer_common::parse_excel_datetime_text_to_serial_for(
+        formualizer_common::DateSystem::Excel1900,
+        text,
+    )
+}
+
+/// A finite number operand of a criteria operator (`">=1e3"`, `"<>-2"`).
+fn parse_criteria_number(text: &str) -> Option<f64> {
+    text.parse::<f64>().ok().filter(|n| n.is_finite())
 }
 
 pub fn validate_and_prepare<'a, 'b>(

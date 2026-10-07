@@ -29,6 +29,9 @@ use formualizer_common::{ExcelError, LiteralValue};
 // use std::collections::BTreeMap; // removed unused import
 use formualizer_macros::func_caps;
 
+mod legacy;
+mod regression;
+
 fn scalar_like_value(arg: &ArgumentHandle<'_, '_>) -> Result<LiteralValue, ExcelError> {
     Ok(match arg.value()? {
         crate::traits::CalcValue::Scalar(v) | crate::traits::CalcValue::AnnotatedScalar(v, _) => v,
@@ -2512,19 +2515,150 @@ impl Function for TrimmeanFn {
 /* ─────────────────────────── CORREL ──────────────────────────── */
 
 /// Helper to collect two paired arrays for regression/correlation functions
-fn collect_paired_arrays(args: &[ArgumentHandle]) -> Result<(Vec<f64>, Vec<f64>), ExcelError> {
-    let y_nums = collect_numeric_stats(&args[0..1])?;
-    let x_nums = collect_numeric_stats(&args[1..2])?;
+/// The numeric cells of one array argument of a paired function, keyed by
+/// their row-major position in the argument's full (logical) extent.
+struct PairedSide {
+    /// Number of cells the argument spans, blanks included.
+    len: u64,
+    /// `(position, value)` for each numeric cell, in increasing position.
+    values: Vec<(u64, f64)>,
+}
 
-    // Arrays must have same length
-    if y_nums.len() != x_nums.len() {
-        return Err(ExcelError::new_na());
+/// Logical extent and the view's offset inside it, for an open-ended range
+/// (`A:A`, `3:3`, `A5:A`). Evaluation trims those to the used region of the
+/// sheet, which differs between two columns, so cells must be positioned
+/// against the declared extent rather than against the trimmed view.
+fn open_range_frame(
+    arg: &ArgumentHandle<'_, '_>,
+    view: &crate::engine::range_view::RangeView<'_>,
+) -> Option<(u64, u64, u64, u64)> {
+    use formualizer_parse::parser::ReferenceType;
+    if !view.is_sheet_backed() {
+        return None;
+    }
+    let Ok(ReferenceType::Range {
+        start_row,
+        end_row,
+        start_col,
+        end_col,
+        ..
+    }) = arg.as_reference()
+    else {
+        return None;
+    };
+    if start_row.is_some() && end_row.is_some() && start_col.is_some() && end_col.is_some() {
+        return None;
+    }
+    let (r1, r2) = (start_row.unwrap_or(1), end_row.unwrap_or(1_048_576));
+    let (c1, c2) = (start_col.unwrap_or(1), end_col.unwrap_or(16_384));
+    let rows = u64::from(r1.abs_diff(r2)) + 1;
+    let cols = u64::from(c1.abs_diff(c2)) + 1;
+    let row_off = (view.start_row() as u64 + 1).checked_sub(u64::from(r1.min(r2)))?;
+    let col_off = (view.start_col() as u64 + 1).checked_sub(u64::from(c1.min(c2)))?;
+    Some((rows, cols, row_off, col_off))
+}
+
+fn collect_paired_side(arg: &ArgumentHandle<'_, '_>) -> Result<PairedSide, ExcelError> {
+    let mut values = Vec::new();
+    if let Some(arr) = arg.inline_array_literal()? {
+        let mut pos = 0u64;
+        for row in arr {
+            for cell in row {
+                match cell {
+                    LiteralValue::Error(e) => return Err(e),
+                    other => {
+                        if let Ok(n) = coerce_num(&other) {
+                            values.push((pos, n));
+                        }
+                    }
+                }
+                pos += 1;
+            }
+        }
+        return Ok(PairedSide { len: pos, values });
     }
 
+    if let Ok(view) = arg.range_view() {
+        let (rows, cols) = view.dims();
+        let (len, logical_cols, row_off, col_off) = match open_range_frame(arg, &view) {
+            Some((lr, lc, ro, co)) => (lr * lc, lc, ro, co),
+            None => (rows as u64 * cols as u64, cols as u64, 0, 0),
+        };
+        let date_system = arg.date_system();
+        let (mut r, mut c) = (0u64, 0u64);
+        view.for_each_cell(&mut |v| {
+            let n = match v {
+                LiteralValue::Error(e) => return Err(e.clone()),
+                LiteralValue::Number(n) => Some(*n),
+                LiteralValue::Int(i) => Some(*i as f64),
+                LiteralValue::Date(_)
+                | LiteralValue::DateTime(_)
+                | LiteralValue::Time(_)
+                | LiteralValue::Duration(_) => {
+                    crate::coercion::to_serial_strict(v, date_system).ok()
+                }
+                _ => None,
+            };
+            if let Some(n) = n {
+                values.push(((r + row_off) * logical_cols + c + col_off, n));
+            }
+            c += 1;
+            if c == cols as u64 {
+                c = 0;
+                r += 1;
+            }
+            Ok(())
+        })?;
+        return Ok(PairedSide { len, values });
+    }
+
+    match scalar_like_value(arg)? {
+        LiteralValue::Error(e) => Err(e),
+        other => Ok(PairedSide {
+            len: 1,
+            values: coerce_num(&other).map(|n| vec![(0, n)]).unwrap_or_default(),
+        }),
+    }
+}
+
+/// Pair two array arguments by position, as Excel's two-array statistics do
+/// (CORREL, PEARSON, RSQ, SLOPE, INTERCEPT, STEYX, COVAR, COVARIANCE.*,
+/// FORECAST): a position contributes only when both cells are numbers, so a
+/// blank, text or logical on either side drops the pair. Arrays of different
+/// sizes are `#N/A`. The result may be empty; callers choose that error.
+fn collect_pairs(
+    y_arg: &ArgumentHandle<'_, '_>,
+    x_arg: &ArgumentHandle<'_, '_>,
+) -> Result<(Vec<f64>, Vec<f64>), ExcelError> {
+    let y = collect_paired_side(y_arg)?;
+    let x = collect_paired_side(x_arg)?;
+    if y.len != x.len {
+        return Err(ExcelError::new_na());
+    }
+    let (mut ys, mut xs) = (Vec::new(), Vec::new());
+    let (mut i, mut j) = (0, 0);
+    while i < y.values.len() && j < x.values.len() {
+        let (py, vy) = y.values[i];
+        let (px, vx) = x.values[j];
+        match py.cmp(&px) {
+            std::cmp::Ordering::Less => i += 1,
+            std::cmp::Ordering::Greater => j += 1,
+            std::cmp::Ordering::Equal => {
+                ys.push(vy);
+                xs.push(vx);
+                i += 1;
+                j += 1;
+            }
+        }
+    }
+    Ok((ys, xs))
+}
+
+fn collect_paired_arrays(args: &[ArgumentHandle]) -> Result<(Vec<f64>, Vec<f64>), ExcelError> {
+    let (y_nums, x_nums) = collect_pairs(&args[0], &args[1])?;
     if y_nums.is_empty() {
         return Err(ExcelError::new_div());
     }
-
     Ok((y_nums, x_nums))
 }
 
@@ -3076,6 +3210,7 @@ impl Function for NormSDistFn {
 /// - Returns `#NUM!` when `probability <= 0` or `probability >= 1`.
 /// - Output can be negative, zero, or positive depending on which side of `0.5` you query.
 /// - Invalid numeric coercions propagate as spreadsheet errors.
+/// - Alias `NORMSINV` (the Excel 2007 compatibility name) is supported.
 ///
 /// # Examples
 ///
@@ -3106,6 +3241,9 @@ impl Function for NormSInvFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
         "NORM.S.INV"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["NORMSINV"]
     }
     fn min_args(&self) -> usize {
         1
@@ -3142,6 +3280,7 @@ impl Function for NormSInvFn {
 /// - `standard_dev` must be strictly greater than `0`.
 /// - Returns `#NUM!` when `standard_dev <= 0`.
 /// - Invalid numeric coercions propagate as spreadsheet errors.
+/// - Alias `NORMDIST` (the Excel 2007 compatibility name) is supported.
 ///
 /// # Examples
 ///
@@ -3172,6 +3311,9 @@ impl Function for NormDistFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
         "NORM.DIST"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["NORMDIST"]
     }
     fn min_args(&self) -> usize {
         4
@@ -3226,6 +3368,7 @@ impl Function for NormDistFn {
 /// - `standard_dev` must be strictly greater than `0`.
 /// - Returns `#NUM!` for invalid probability bounds or non-positive standard deviation.
 /// - Invalid numeric coercions propagate as spreadsheet errors.
+/// - Alias `NORMINV` (the Excel 2007 compatibility name) is supported.
 ///
 /// # Examples
 ///
@@ -3256,6 +3399,9 @@ impl Function for NormInvFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
         "NORM.INV"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["NORMINV"]
     }
     fn min_args(&self) -> usize {
         3
@@ -3390,6 +3536,7 @@ impl Function for LognormDistFn {
 /// - `standard_dev` must be strictly greater than `0`.
 /// - Returns `#NUM!` when inputs violate probability or scale constraints.
 /// - Invalid numeric coercions propagate as spreadsheet errors.
+/// - Alias `LOGINV` (the Excel 2007 compatibility name) is supported.
 ///
 /// # Examples
 ///
@@ -3420,6 +3567,9 @@ impl Function for LognormInvFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
         "LOGNORM.INV"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["LOGINV"]
     }
     fn min_args(&self) -> usize {
         3
@@ -3813,35 +3963,73 @@ fn chisq_cdf(x: f64, df: f64) -> f64 {
     gamma_p(df / 2.0, x / 2.0)
 }
 
-/// Helper: Chi-square inverse CDF using Newton-Raphson
+/// Helper: solve `cdf(x) = p` for an increasing CDF with density `pdf`.
+///
+/// Newton steps are kept inside a bracket `[lo, hi]` that tightens on every
+/// iteration, falling back to bisection whenever a step would leave it. Plain
+/// Newton from a fixed starting point diverges in the flat tails (a large
+/// shape parameter, or a probability close to 0 or 1). When `hi` is `None` the
+/// support is unbounded above and the bracket is grown from `start` by doubling.
+fn solve_increasing_cdf(
+    p: f64,
+    cdf: impl Fn(f64) -> f64,
+    pdf: impl Fn(f64) -> f64,
+    lo: f64,
+    hi: Option<f64>,
+    start: f64,
+) -> Option<f64> {
+    let mut lo = lo;
+    let mut hi = match hi {
+        Some(hi) => hi,
+        None => {
+            let mut hi = start.max(1.0);
+            while cdf(hi) < p {
+                lo = hi;
+                hi *= 2.0;
+                if !hi.is_finite() {
+                    return None;
+                }
+            }
+            hi
+        }
+    };
+    let mut x = if start > lo && start < hi {
+        start
+    } else {
+        0.5 * (lo + hi)
+    };
+    for _ in 0..300 {
+        let f = cdf(x) - p;
+        if f == 0.0 {
+            return Some(x);
+        }
+        if f < 0.0 {
+            lo = x;
+        } else {
+            hi = x;
+        }
+        let d = pdf(x);
+        let newton = x - f / d;
+        let next = if d > 0.0 && newton.is_finite() && newton > lo && newton < hi {
+            newton
+        } else {
+            0.5 * (lo + hi)
+        };
+        let scale = next.abs().max(f64::MIN_POSITIVE);
+        if (next - x).abs() <= 4.0 * f64::EPSILON * scale || hi - lo <= 4.0 * f64::EPSILON * scale {
+            return Some(next);
+        }
+        x = next;
+    }
+    Some(x)
+}
+
+/// Helper: Chi-square inverse CDF (safeguarded Newton, see `solve_increasing_cdf`)
 fn chisq_inv(p: f64, df: f64) -> Option<f64> {
     if p <= 0.0 || p >= 1.0 {
         return None;
     }
-
-    // Initial guess
-    let mut x = df.max(1.0);
-    if p < 0.5 {
-        x = x.min(1.0);
-    }
-
-    // Newton-Raphson iteration
-    for _ in 0..100 {
-        let cdf = chisq_cdf(x, df);
-        let pdf = chisq_pdf(x, df);
-        if pdf.abs() < 1e-30 {
-            break;
-        }
-        let delta = (cdf - p) / pdf;
-        let new_x = (x - delta).max(1e-15);
-        if (new_x - x).abs() < 1e-12 * x {
-            x = new_x;
-            break;
-        }
-        x = new_x;
-    }
-
-    Some(x)
+    solve_increasing_cdf(p, |x| chisq_cdf(x, df), |x| chisq_pdf(x, df), 0.0, None, df)
 }
 
 /// Helper: Chi-square PDF
@@ -3862,32 +4050,19 @@ fn f_cdf(f: f64, d1: f64, d2: f64) -> f64 {
     beta_i(x, d1 / 2.0, d2 / 2.0)
 }
 
-/// Helper: F distribution inverse CDF using Newton-Raphson
+/// Helper: F distribution inverse CDF (safeguarded Newton, see `solve_increasing_cdf`)
 fn f_inv(p: f64, d1: f64, d2: f64) -> Option<f64> {
     if p <= 0.0 || p >= 1.0 {
         return None;
     }
-
-    // Initial guess
-    let mut f = 1.0;
-
-    // Newton-Raphson iteration
-    for _ in 0..100 {
-        let cdf = f_cdf(f, d1, d2);
-        let pdf = f_pdf(f, d1, d2);
-        if pdf.abs() < 1e-30 {
-            break;
-        }
-        let delta = (cdf - p) / pdf;
-        let new_f = (f - delta).max(1e-15);
-        if (new_f - f).abs() < 1e-12 * f {
-            f = new_f;
-            break;
-        }
-        f = new_f;
-    }
-
-    Some(f)
+    solve_increasing_cdf(
+        p,
+        |f| f_cdf(f, d1, d2),
+        |f| f_pdf(f, d1, d2),
+        0.0,
+        None,
+        1.0,
+    )
 }
 
 /// Helper: F distribution PDF
@@ -4495,6 +4670,7 @@ fn ln_binom(n: i64, k: i64) -> f64 {
 /// - Requires `0 <= number_s <= trials`, `trials >= 0`, and `0 <= probability_s <= 1`.
 /// - Set `cumulative` to non-zero for CDF mode, or `0` for PMF mode.
 /// - Returns `#NUM!` for invalid count or probability ranges.
+/// - Alias `BINOMDIST` (the Excel 2007 compatibility name) is supported.
 ///
 /// # Examples
 ///
@@ -4525,6 +4701,9 @@ impl Function for BinomDistFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
         "BINOM.DIST"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["BINOMDIST"]
     }
     fn min_args(&self) -> usize {
         4
@@ -4587,6 +4766,7 @@ impl Function for BinomDistFn {
 /// - `mean` must be non-negative.
 /// - Set `cumulative` to non-zero for CDF mode, or `0` for PMF mode.
 /// - Returns `#NUM!` for negative counts or negative mean values.
+/// - Alias `POISSON` (the Excel 2007 compatibility name) is supported.
 ///
 /// # Examples
 ///
@@ -4617,6 +4797,9 @@ impl Function for PoissonDistFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
         "POISSON.DIST"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["POISSON"]
     }
     fn min_args(&self) -> usize {
         3
@@ -4673,6 +4856,7 @@ impl Function for PoissonDistFn {
 /// - Set `cumulative` to non-zero for CDF mode, or `0` for PDF mode.
 /// - Returns `#NUM!` when inputs violate domain requirements.
 /// - Invalid numeric coercions propagate as spreadsheet errors.
+/// - Alias `EXPONDIST` (the Excel 2007 compatibility name) is supported.
 ///
 /// # Examples
 ///
@@ -4703,6 +4887,9 @@ impl Function for ExponDistFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
         "EXPON.DIST"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["EXPONDIST"]
     }
     fn min_args(&self) -> usize {
         3
@@ -4756,6 +4943,7 @@ impl Function for ExponDistFn {
 /// - Set `cumulative` to non-zero for CDF mode, or `0` for PDF mode.
 /// - Returns `#NUM!` when any parameter is outside its valid range.
 /// - Invalid numeric coercions propagate as spreadsheet errors.
+/// - Alias `GAMMADIST` (the Excel 2007 compatibility name) is supported.
 ///
 /// # Examples
 ///
@@ -4786,6 +4974,9 @@ impl Function for GammaDistFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
         "GAMMA.DIST"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["GAMMADIST"]
     }
     fn min_args(&self) -> usize {
         4
@@ -4842,6 +5033,7 @@ impl Function for GammaDistFn {
 /// - Set `cumulative` to non-zero for CDF mode, or `0` for PDF mode.
 /// - Returns `#NUM!` when parameters fall outside valid ranges.
 /// - In PDF mode at `x = 0`, behavior follows the Weibull shape-specific limit.
+/// - Alias `WEIBULL` (the Excel 2007 compatibility name) is supported.
 ///
 /// # Examples
 ///
@@ -4872,6 +5064,9 @@ impl Function for WeibullDistFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
         "WEIBULL.DIST"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["WEIBULL"]
     }
     fn min_args(&self) -> usize {
         4
@@ -6106,15 +6301,10 @@ impl Function for ForecastLinearFn {
             }
         };
 
-        let y_vals = collect_numeric_stats(&args[1..2])?;
-        let x_vals = collect_numeric_stats(&args[2..3])?;
-
-        // Arrays must have same length
-        if y_vals.len() != x_vals.len() {
-            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                ExcelError::new_na(),
-            )));
-        }
+        let (y_vals, x_vals) = match collect_pairs(&args[1], &args[2]) {
+            Ok(v) => v,
+            Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
+        };
 
         if y_vals.is_empty() {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
@@ -6156,14 +6346,20 @@ impl Function for ForecastLinearFn {
 
 /// Returns linear-regression coefficients and optional fit statistics.
 ///
-/// `LINEST` fits a straight line to known y/x pairs and returns either `[slope, intercept]` or a
-/// larger statistics matrix.
+/// `LINEST` fits `y = m1*x1 + ... + mk*xk + b` by least squares and returns either
+/// `{mk, ..., m1, b}` or that row followed by the regression statistics.
 ///
 /// # Remarks
 /// - `known_y` is required; `known_x` defaults to `1..n` when omitted.
-/// - `const` controls whether an intercept is fitted (`TRUE` by default).
-/// - `stats=TRUE` returns a `5x2` result block; otherwise it returns `1x2`.
-/// - Returns spreadsheet errors for mismatched lengths, empty data, or degenerate x-values.
+/// - When `known_y` is a column, each column of `known_x` is a variable; when it is a row, each
+///   row is. With one variable the two ranges only need equal dimensions.
+/// - Coefficients are returned in reverse order of the variables, then `b`.
+/// - `const` controls whether an intercept is fitted (`TRUE` by default); with `FALSE`, `b = 0`.
+/// - `stats=TRUE` returns 5 rows: coefficients, standard errors (`se_b` is `#N/A` without a
+///   constant), `r2`/`sey`, `F`/`df`, and `ssreg`/`ssresid`, padded with `#N/A`.
+/// - A variable that is a linear combination of the others is removed: its coefficient and
+///   standard error are `0` and `df` grows by one.
+/// - Returns `#VALUE!` for non-numeric data and `#REF!` for incompatible shapes.
 ///
 /// # Examples
 ///
@@ -6211,199 +6407,7 @@ impl Function for LinestFn {
         args: &'c [ArgumentHandle<'a, 'b>],
         _ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
-        // args[0] = known_y's (required)
-        // args[1] = known_x's (optional, defaults to {1,2,3,...})
-        // args[2] = const (optional, default TRUE - whether to compute intercept)
-        // args[3] = stats (optional, default FALSE - whether to return additional statistics)
-
-        let y_vals = collect_numeric_stats(&args[0..1])?;
-
-        if y_vals.is_empty() {
-            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                ExcelError::new_na(),
-            )));
-        }
-
-        // Get known_x's or generate default {1, 2, 3, ...}
-        let x_vals = if args.len() >= 2 {
-            collect_numeric_stats(&args[1..2])?
-        } else {
-            (1..=y_vals.len()).map(|i| i as f64).collect()
-        };
-
-        // Arrays must have same length
-        if y_vals.len() != x_vals.len() {
-            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                ExcelError::new_ref(),
-            )));
-        }
-
-        // Parse const argument (default TRUE)
-        let use_const = if args.len() >= 3 {
-            match scalar_like_value(&args[2])? {
-                LiteralValue::Boolean(b) => b,
-                LiteralValue::Number(n) => n != 0.0,
-                LiteralValue::Int(i) => i != 0,
-                _ => true,
-            }
-        } else {
-            true
-        };
-
-        // Parse stats argument (default FALSE)
-        let return_stats = if args.len() >= 4 {
-            match scalar_like_value(&args[3])? {
-                LiteralValue::Boolean(b) => b,
-                LiteralValue::Number(n) => n != 0.0,
-                LiteralValue::Int(i) => i != 0,
-                _ => false,
-            }
-        } else {
-            false
-        };
-
-        let n = x_vals.len() as f64;
-
-        // Calculate regression coefficients
-        let (slope, intercept) = if use_const {
-            // Normal linear regression with intercept
-            let mean_x = x_vals.iter().sum::<f64>() / n;
-            let mean_y = y_vals.iter().sum::<f64>() / n;
-
-            let mut sum_xy = 0.0;
-            let mut sum_x2 = 0.0;
-
-            for i in 0..x_vals.len() {
-                let dx = x_vals[i] - mean_x;
-                let dy = y_vals[i] - mean_y;
-                sum_xy += dx * dy;
-                sum_x2 += dx * dx;
-            }
-
-            if sum_x2 == 0.0 {
-                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                    ExcelError::new_div(),
-                )));
-            }
-
-            let slope = sum_xy / sum_x2;
-            let intercept = mean_y - slope * mean_x;
-            (slope, intercept)
-        } else {
-            // Regression through origin (intercept = 0)
-            let mut sum_xy = 0.0;
-            let mut sum_x2 = 0.0;
-
-            for i in 0..x_vals.len() {
-                sum_xy += x_vals[i] * y_vals[i];
-                sum_x2 += x_vals[i] * x_vals[i];
-            }
-
-            if sum_x2 == 0.0 {
-                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                    ExcelError::new_div(),
-                )));
-            }
-
-            let slope = sum_xy / sum_x2;
-            (slope, 0.0)
-        };
-
-        if !return_stats {
-            // Return just slope and intercept as 1x2 array: [[slope, intercept]]
-            let row = vec![LiteralValue::Number(slope), LiteralValue::Number(intercept)];
-            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Array(vec![
-                row,
-            ])));
-        }
-
-        // Calculate additional statistics for stats=TRUE
-        // Row 1: [slope, intercept]
-        // Row 2: [se_slope, se_intercept]
-        // Row 3: [r_squared, se_y]
-        // Row 4: [F_statistic, df]
-        // Row 5: [ss_reg, ss_resid]
-
-        let mean_y = y_vals.iter().sum::<f64>() / n;
-
-        // Calculate residuals and sums of squares
-        let mut ss_resid = 0.0; // Sum of squared residuals
-        let mut ss_tot = 0.0; // Total sum of squares
-
-        for i in 0..x_vals.len() {
-            let y_pred = slope * x_vals[i] + intercept;
-            let residual = y_vals[i] - y_pred;
-            ss_resid += residual * residual;
-            let dy_tot = y_vals[i] - mean_y;
-            ss_tot += dy_tot * dy_tot;
-        }
-
-        let ss_reg = ss_tot - ss_resid; // Regression sum of squares
-
-        // R-squared
-        let r_squared = if ss_tot == 0.0 {
-            1.0 // Perfect fit or all y values are the same
-        } else {
-            1.0 - (ss_resid / ss_tot)
-        };
-
-        // Degrees of freedom
-        let df = if use_const {
-            (n as i64 - 2).max(1) as f64 // n - k - 1 where k=1 (one predictor)
-        } else {
-            (n as i64 - 1).max(1) as f64 // n - k when no intercept
-        };
-
-        // Standard error of y estimate
-        let se_y = if df > 0.0 {
-            (ss_resid / df).sqrt()
-        } else {
-            0.0
-        };
-
-        // Standard errors of coefficients
-        let mean_x = x_vals.iter().sum::<f64>() / n;
-        let mut sum_x2_centered = 0.0;
-        let mut sum_x2_raw = 0.0;
-        for &xi in &x_vals {
-            sum_x2_centered += (xi - mean_x).powi(2);
-            sum_x2_raw += xi * xi;
-        }
-
-        let se_slope = if sum_x2_centered > 0.0 && df > 0.0 {
-            se_y / sum_x2_centered.sqrt()
-        } else {
-            f64::NAN
-        };
-
-        let se_intercept = if use_const && sum_x2_centered > 0.0 && df > 0.0 {
-            se_y * (sum_x2_raw / (n * sum_x2_centered)).sqrt()
-        } else {
-            f64::NAN
-        };
-
-        // F-statistic
-        let f_stat = if ss_resid > 0.0 && df > 0.0 {
-            (ss_reg / 1.0) / (ss_resid / df) // MSR / MSE
-        } else if ss_resid == 0.0 {
-            f64::INFINITY // Perfect fit
-        } else {
-            f64::NAN
-        };
-
-        // Build 5x2 result array
-        let rows = vec![
-            vec![LiteralValue::Number(slope), LiteralValue::Number(intercept)],
-            vec![
-                LiteralValue::Number(se_slope),
-                LiteralValue::Number(se_intercept),
-            ],
-            vec![LiteralValue::Number(r_squared), LiteralValue::Number(se_y)],
-            vec![LiteralValue::Number(f_stat), LiteralValue::Number(df)],
-            vec![LiteralValue::Number(ss_reg), LiteralValue::Number(ss_resid)],
-        ];
-
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Array(rows)))
+        regression::eval_linest(args, false)
     }
 }
 
@@ -6741,13 +6745,16 @@ impl Function for ZTestFn {
 
 /// Returns fitted y-values along a linear trend derived from known data.
 ///
-/// `TREND` performs simple linear regression and returns predictions for `new_x` (or defaults).
+/// `TREND` fits the same least-squares model as `LINEST` and returns predictions for `new_x`
+/// (or defaults).
 ///
 /// # Remarks
 /// - `known_y` is required; `known_x` defaults to `1..n` when omitted.
-/// - `new_x` defaults to `known_x` when omitted.
+/// - `new_x` defaults to `known_x` when omitted. With one variable the result has the shape of
+///   `new_x`; with several, `new_x` holds one observation per row (or per column when `known_y`
+///   is a row).
 /// - `const` defaults to `TRUE`; set to `FALSE` to force a zero intercept.
-/// - Returns spreadsheet errors for empty data, mismatched lengths, or degenerate x-variance.
+/// - Returns `#VALUE!` for non-numeric data and `#REF!` for incompatible shapes.
 ///
 /// # Examples
 ///
@@ -6795,126 +6802,7 @@ impl Function for TrendFn {
         args: &'c [ArgumentHandle<'a, 'b>],
         _ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
-        // TREND: args[0] = known_y's (required)
-        // args[1] = known_x's (optional, defaults to {1,2,3,...})
-        // args[2] = new_x's (optional, defaults to known_x's)
-        // args[3] = const (optional, default TRUE - whether to compute intercept)
-
-        let y_vals = collect_numeric_stats(&args[0..1])?;
-
-        if y_vals.is_empty() {
-            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                ExcelError::new_na(),
-            )));
-        }
-
-        // Helper to check if argument is empty/omitted
-        // Note: Empty arguments are represented as empty text strings by the parser
-        fn is_arg_empty(arg: &ArgumentHandle) -> bool {
-            match scalar_like_value(arg) {
-                Ok(LiteralValue::Empty) => true,
-                Ok(LiteralValue::Text(s)) if s.is_empty() => true,
-                _ => false,
-            }
-        }
-
-        // Get known_x's or generate default {1, 2, 3, ...}
-        let x_vals = if args.len() >= 2 && !is_arg_empty(&args[1]) {
-            collect_numeric_stats(&args[1..2])?
-        } else {
-            (1..=y_vals.len()).map(|i| i as f64).collect()
-        };
-
-        // Arrays must have same length
-        if y_vals.len() != x_vals.len() {
-            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                ExcelError::new_ref(),
-            )));
-        }
-
-        // Get new_x's or use known_x's - check if argument is empty/omitted
-        let new_x_vals = if args.len() >= 3 && !is_arg_empty(&args[2]) {
-            collect_numeric_stats(&args[2..3])?
-        } else {
-            x_vals.clone()
-        };
-
-        if new_x_vals.is_empty() {
-            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                ExcelError::new_na(),
-            )));
-        }
-
-        // Parse const argument (default TRUE)
-        let use_const = if args.len() >= 4 {
-            match scalar_like_value(&args[3])? {
-                LiteralValue::Boolean(b) => b,
-                LiteralValue::Number(n) => n != 0.0,
-                LiteralValue::Int(i) => i != 0,
-                LiteralValue::Empty => true, // empty defaults to TRUE
-                _ => true,
-            }
-        } else {
-            true
-        };
-
-        let n = x_vals.len() as f64;
-
-        // Calculate regression coefficients
-        let (slope, intercept) = if use_const {
-            // Normal linear regression with intercept
-            let mean_x = x_vals.iter().sum::<f64>() / n;
-            let mean_y = y_vals.iter().sum::<f64>() / n;
-
-            let mut sum_xy = 0.0;
-            let mut sum_x2 = 0.0;
-
-            for i in 0..x_vals.len() {
-                let dx = x_vals[i] - mean_x;
-                let dy = y_vals[i] - mean_y;
-                sum_xy += dx * dy;
-                sum_x2 += dx * dx;
-            }
-
-            if sum_x2 == 0.0 {
-                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                    ExcelError::new_div(),
-                )));
-            }
-
-            let slope = sum_xy / sum_x2;
-            let intercept = mean_y - slope * mean_x;
-            (slope, intercept)
-        } else {
-            // Regression through origin (intercept = 0)
-            let mut sum_xy = 0.0;
-            let mut sum_x2 = 0.0;
-
-            for i in 0..x_vals.len() {
-                sum_xy += x_vals[i] * y_vals[i];
-                sum_x2 += x_vals[i] * x_vals[i];
-            }
-
-            if sum_x2 == 0.0 {
-                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                    ExcelError::new_div(),
-                )));
-            }
-
-            let slope = sum_xy / sum_x2;
-            (slope, 0.0)
-        };
-
-        // Calculate predicted y values for new_x's
-        let predicted: Vec<LiteralValue> = new_x_vals
-            .iter()
-            .map(|&x| LiteralValue::Number(slope * x + intercept))
-            .collect();
-
-        // Return as 1xN array (row vector)
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Array(vec![
-            predicted,
-        ])))
+        regression::eval_trend(args, false)
     }
 }
 
@@ -6926,9 +6814,11 @@ impl Function for TrendFn {
 ///
 /// # Remarks
 /// - All known y-values must be strictly greater than `0`.
-/// - `known_x` defaults to `1..n`; `new_x` defaults to `known_x`.
+/// - `known_x` defaults to `1..n`; `new_x` defaults to `known_x`. Several variables are laid
+///   out as in `TREND`.
 /// - `const` defaults to `TRUE`; set to `FALSE` to force `b = 1`.
-/// - Returns spreadsheet errors for invalid domains, mismatched lengths, or degenerate x-variance.
+/// - Returns `#NUM!` for non-positive y-values, `#VALUE!` for non-numeric data and `#REF!` for
+///   incompatible shapes.
 ///
 /// # Examples
 ///
@@ -6976,143 +6866,7 @@ impl Function for GrowthFn {
         args: &'c [ArgumentHandle<'a, 'b>],
         _ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
-        // GROWTH: args[0] = known_y's (required)
-        // args[1] = known_x's (optional, defaults to {1,2,3,...})
-        // args[2] = new_x's (optional, defaults to known_x's)
-        // args[3] = const (optional, default TRUE - whether to compute intercept)
-
-        let y_vals = collect_numeric_stats(&args[0..1])?;
-
-        if y_vals.is_empty() {
-            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                ExcelError::new_na(),
-            )));
-        }
-
-        // Check that all y values are positive (required for log transformation)
-        for &y in &y_vals {
-            if y <= 0.0 {
-                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                    ExcelError::new_num(),
-                )));
-            }
-        }
-
-        // Helper to check if argument is empty/omitted
-        // Note: Empty arguments are represented as empty text strings by the parser
-        fn is_arg_empty(arg: &ArgumentHandle) -> bool {
-            match scalar_like_value(arg) {
-                Ok(LiteralValue::Empty) => true,
-                Ok(LiteralValue::Text(s)) if s.is_empty() => true,
-                _ => false,
-            }
-        }
-
-        // Get known_x's or generate default {1, 2, 3, ...}
-        let x_vals = if args.len() >= 2 && !is_arg_empty(&args[1]) {
-            collect_numeric_stats(&args[1..2])?
-        } else {
-            (1..=y_vals.len()).map(|i| i as f64).collect()
-        };
-
-        // Arrays must have same length
-        if y_vals.len() != x_vals.len() {
-            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                ExcelError::new_ref(),
-            )));
-        }
-
-        // Get new_x's or use known_x's - check if argument is empty/omitted
-        let new_x_vals = if args.len() >= 3 && !is_arg_empty(&args[2]) {
-            collect_numeric_stats(&args[2..3])?
-        } else {
-            x_vals.clone()
-        };
-
-        if new_x_vals.is_empty() {
-            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                ExcelError::new_na(),
-            )));
-        }
-
-        // Parse const argument (default TRUE)
-        let use_const = if args.len() >= 4 {
-            match scalar_like_value(&args[3])? {
-                LiteralValue::Boolean(b) => b,
-                LiteralValue::Number(n) => n != 0.0,
-                LiteralValue::Int(i) => i != 0,
-                LiteralValue::Empty => true, // empty defaults to TRUE
-                _ => true,
-            }
-        } else {
-            true
-        };
-
-        // Transform to log space: ln(y) = ln(b) + x*ln(m)
-        // This is linear regression on log-transformed y values
-        let ln_y_vals: Vec<f64> = y_vals.iter().map(|&y| y.ln()).collect();
-
-        let n = x_vals.len() as f64;
-
-        // Calculate regression coefficients in log space
-        let (ln_m, ln_b) = if use_const {
-            // Normal linear regression with intercept
-            let mean_x = x_vals.iter().sum::<f64>() / n;
-            let mean_ln_y = ln_y_vals.iter().sum::<f64>() / n;
-
-            let mut sum_xy = 0.0;
-            let mut sum_x2 = 0.0;
-
-            for i in 0..x_vals.len() {
-                let dx = x_vals[i] - mean_x;
-                let dy = ln_y_vals[i] - mean_ln_y;
-                sum_xy += dx * dy;
-                sum_x2 += dx * dx;
-            }
-
-            if sum_x2 == 0.0 {
-                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                    ExcelError::new_div(),
-                )));
-            }
-
-            let ln_m = sum_xy / sum_x2;
-            let ln_b = mean_ln_y - ln_m * mean_x;
-            (ln_m, ln_b)
-        } else {
-            // Regression through origin in log space (ln_b = 0, so b = 1)
-            let mut sum_xy = 0.0;
-            let mut sum_x2 = 0.0;
-
-            for i in 0..x_vals.len() {
-                sum_xy += x_vals[i] * ln_y_vals[i];
-                sum_x2 += x_vals[i] * x_vals[i];
-            }
-
-            if sum_x2 == 0.0 {
-                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                    ExcelError::new_div(),
-                )));
-            }
-
-            let ln_m = sum_xy / sum_x2;
-            (ln_m, 0.0)
-        };
-
-        // Convert back from log space: m = e^ln_m, b = e^ln_b
-        let m = ln_m.exp();
-        let b = ln_b.exp();
-
-        // Calculate predicted y values: y = b * m^x
-        let predicted: Vec<LiteralValue> = new_x_vals
-            .iter()
-            .map(|&x| LiteralValue::Number(b * m.powf(x)))
-            .collect();
-
-        // Return as 1xN array (row vector)
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Array(vec![
-            predicted,
-        ])))
+        regression::eval_trend(args, true)
     }
 }
 
@@ -7124,9 +6878,10 @@ impl Function for GrowthFn {
 ///
 /// # Remarks
 /// - All known y-values must be strictly greater than `0`.
-/// - `known_x` defaults to `1..n` when omitted.
+/// - `known_x` defaults to `1..n` when omitted; several variables are laid out as in `LINEST`
+///   and the bases come back in reverse order of the variables, then `b`.
 /// - `const` controls whether `b` is fitted (`TRUE` by default).
-/// - `stats=TRUE` returns a `5x2` statistics block; otherwise returns `1x2`.
+/// - `stats=TRUE` returns the `LINEST` statistics block of the fit of `ln(y)`.
 ///
 /// # Examples
 ///
@@ -7174,221 +6929,7 @@ impl Function for LogestFn {
         args: &'c [ArgumentHandle<'a, 'b>],
         _ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
-        // args[0] = known_y's (required)
-        // args[1] = known_x's (optional, defaults to {1,2,3,...})
-        // args[2] = const (optional, default TRUE - whether to compute b)
-        // args[3] = stats (optional, default FALSE - whether to return additional statistics)
-
-        let y_vals = collect_numeric_stats(&args[0..1])?;
-
-        if y_vals.is_empty() {
-            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                ExcelError::new_na(),
-            )));
-        }
-
-        // Check that all y values are positive (required for log transformation)
-        for &y in &y_vals {
-            if y <= 0.0 {
-                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                    ExcelError::new_num(),
-                )));
-            }
-        }
-
-        // Get known_x's or generate default {1, 2, 3, ...}
-        let x_vals = if args.len() >= 2 {
-            collect_numeric_stats(&args[1..2])?
-        } else {
-            (1..=y_vals.len()).map(|i| i as f64).collect()
-        };
-
-        // Arrays must have same length
-        if y_vals.len() != x_vals.len() {
-            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                ExcelError::new_ref(),
-            )));
-        }
-
-        // Parse const argument (default TRUE)
-        let use_const = if args.len() >= 3 {
-            match scalar_like_value(&args[2])? {
-                LiteralValue::Boolean(b) => b,
-                LiteralValue::Number(n) => n != 0.0,
-                LiteralValue::Int(i) => i != 0,
-                _ => true,
-            }
-        } else {
-            true
-        };
-
-        // Parse stats argument (default FALSE)
-        let return_stats = if args.len() >= 4 {
-            match scalar_like_value(&args[3])? {
-                LiteralValue::Boolean(b) => b,
-                LiteralValue::Number(n) => n != 0.0,
-                LiteralValue::Int(i) => i != 0,
-                _ => false,
-            }
-        } else {
-            false
-        };
-
-        // Transform to log space: ln(y) = ln(b) + x*ln(m)
-        let ln_y_vals: Vec<f64> = y_vals.iter().map(|&y| y.ln()).collect();
-
-        let n = x_vals.len() as f64;
-
-        // Calculate regression coefficients in log space
-        let (ln_m, ln_b) = if use_const {
-            // Normal linear regression with intercept
-            let mean_x = x_vals.iter().sum::<f64>() / n;
-            let mean_ln_y = ln_y_vals.iter().sum::<f64>() / n;
-
-            let mut sum_xy = 0.0;
-            let mut sum_x2 = 0.0;
-
-            for i in 0..x_vals.len() {
-                let dx = x_vals[i] - mean_x;
-                let dy = ln_y_vals[i] - mean_ln_y;
-                sum_xy += dx * dy;
-                sum_x2 += dx * dx;
-            }
-
-            if sum_x2 == 0.0 {
-                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                    ExcelError::new_div(),
-                )));
-            }
-
-            let ln_m = sum_xy / sum_x2;
-            let ln_b = mean_ln_y - ln_m * mean_x;
-            (ln_m, ln_b)
-        } else {
-            // Regression through origin in log space (ln_b = 0, so b = 1)
-            let mut sum_xy = 0.0;
-            let mut sum_x2 = 0.0;
-
-            for i in 0..x_vals.len() {
-                sum_xy += x_vals[i] * ln_y_vals[i];
-                sum_x2 += x_vals[i] * x_vals[i];
-            }
-
-            if sum_x2 == 0.0 {
-                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                    ExcelError::new_div(),
-                )));
-            }
-
-            let ln_m = sum_xy / sum_x2;
-            (ln_m, 0.0)
-        };
-
-        // Convert from log space to get m and b
-        let m = ln_m.exp();
-        let b = ln_b.exp();
-
-        if !return_stats {
-            // Return just m and b as 1x2 array: [[m, b]]
-            let row = vec![LiteralValue::Number(m), LiteralValue::Number(b)];
-            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Array(vec![
-                row,
-            ])));
-        }
-
-        // Calculate additional statistics for stats=TRUE
-        // Statistics are computed in log space, then converted
-        // Row 1: [m, b]
-        // Row 2: [se_m, se_b] - standard errors (converted from log space)
-        // Row 3: [r_squared, se_y] - R-squared and standard error of y estimate
-        // Row 4: [F_statistic, df] - F-statistic and degrees of freedom
-        // Row 5: [ss_reg, ss_resid] - regression sum of squares and residual sum of squares
-
-        let mean_ln_y = ln_y_vals.iter().sum::<f64>() / n;
-
-        // Calculate residuals and sums of squares in log space
-        let mut ss_resid = 0.0;
-        let mut ss_tot = 0.0;
-
-        for i in 0..x_vals.len() {
-            let ln_y_pred = ln_m * x_vals[i] + ln_b;
-            let residual = ln_y_vals[i] - ln_y_pred;
-            ss_resid += residual * residual;
-            let dy_tot = ln_y_vals[i] - mean_ln_y;
-            ss_tot += dy_tot * dy_tot;
-        }
-
-        let ss_reg = ss_tot - ss_resid;
-
-        // R-squared (same in both spaces for transformed regression)
-        let r_squared = if ss_tot == 0.0 {
-            1.0
-        } else {
-            1.0 - (ss_resid / ss_tot)
-        };
-
-        // Degrees of freedom
-        let df = if use_const {
-            (n as i64 - 2).max(1) as f64
-        } else {
-            (n as i64 - 1).max(1) as f64
-        };
-
-        // Standard error of y estimate (in log space)
-        let se_ln_y = if df > 0.0 {
-            (ss_resid / df).sqrt()
-        } else {
-            0.0
-        };
-
-        // Standard errors of coefficients in log space
-        let mean_x = x_vals.iter().sum::<f64>() / n;
-        let mut sum_x2_centered = 0.0;
-        let mut sum_x2_raw = 0.0;
-        for &xi in &x_vals {
-            sum_x2_centered += (xi - mean_x).powi(2);
-            sum_x2_raw += xi * xi;
-        }
-
-        let se_ln_m = if sum_x2_centered > 0.0 && df > 0.0 {
-            se_ln_y / sum_x2_centered.sqrt()
-        } else {
-            f64::NAN
-        };
-
-        let se_ln_b = if use_const && sum_x2_centered > 0.0 && df > 0.0 {
-            se_ln_y * (sum_x2_raw / (n * sum_x2_centered)).sqrt()
-        } else {
-            f64::NAN
-        };
-
-        // Convert standard errors: se_m = m * se_ln_m (delta method approximation)
-        let se_m = m * se_ln_m;
-        let se_b = b * se_ln_b;
-
-        // Standard error of y estimate - convert from log space
-        // This is an approximation; for exponential models, se_y in original space varies with x
-        let se_y = se_ln_y;
-
-        // F-statistic
-        let f_stat = if ss_resid > 0.0 && df > 0.0 {
-            (ss_reg / 1.0) / (ss_resid / df)
-        } else if ss_resid == 0.0 {
-            f64::INFINITY
-        } else {
-            f64::NAN
-        };
-
-        // Build 5x2 result array
-        let rows = vec![
-            vec![LiteralValue::Number(m), LiteralValue::Number(b)],
-            vec![LiteralValue::Number(se_m), LiteralValue::Number(se_b)],
-            vec![LiteralValue::Number(r_squared), LiteralValue::Number(se_y)],
-            vec![LiteralValue::Number(f_stat), LiteralValue::Number(df)],
-            vec![LiteralValue::Number(ss_reg), LiteralValue::Number(ss_resid)],
-        ];
-
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Array(rows)))
+        regression::eval_linest(args, true)
     }
 }
 
@@ -7885,7 +7426,7 @@ impl Function for TDist2TFn {
 /// - `probability` must satisfy `0 < probability <= 1`.
 /// - `deg_freedom` must be at least `1`.
 /// - Returns `#NUM!` for invalid probability or degree-of-freedom arguments.
-/// - Alias `TINV` is supported.
+/// - The compatibility name `TINV` is a separate function that also truncates `deg_freedom`.
 ///
 /// # Examples
 ///
@@ -7916,9 +7457,6 @@ impl Function for TInv2TFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
         "T.INV.2T"
-    }
-    fn aliases(&self) -> &'static [&'static str] {
-        &["TINV"]
     }
     fn min_args(&self) -> usize {
         2
@@ -8464,7 +8002,7 @@ fn collect_numeric_a(args: &[ArgumentHandle]) -> Result<Vec<f64>, ExcelError> {
 }
 
 /// Helper: inverse of the regularized incomplete beta function.
-/// Given p = I_x(a,b), find x. Uses Newton-Raphson with beta_i / beta PDF.
+/// Given p = I_x(a,b), find x (safeguarded Newton, see `solve_increasing_cdf`).
 fn beta_inv_helper(p: f64, a: f64, b: f64) -> Option<f64> {
     if p <= 0.0 {
         return Some(0.0);
@@ -8475,33 +8013,15 @@ fn beta_inv_helper(p: f64, a: f64, b: f64) -> Option<f64> {
     if a <= 0.0 || b <= 0.0 {
         return None;
     }
-
-    // Initial guess from normal approximation (Abramowitz & Stegun 26.5.22)
-    let mut x = 0.5f64;
-
-    // Newton-Raphson
     let ln_beta_ab = ln_gamma(a) + ln_gamma(b) - ln_gamma(a + b);
-    for _ in 0..100 {
-        let cdf = beta_i(x, a, b);
-        // Beta PDF: x^(a-1) * (1-x)^(b-1) / B(a,b)
-        let pdf = if x > 0.0 && x < 1.0 {
+    let pdf = |x: f64| {
+        if x > 0.0 && x < 1.0 {
             ((a - 1.0) * x.ln() + (b - 1.0) * (1.0 - x).ln() - ln_beta_ab).exp()
         } else {
-            1e-30
-        };
-        if pdf.abs() < 1e-30 {
-            break;
+            0.0
         }
-        let delta = (cdf - p) / pdf;
-        let new_x = (x - delta).clamp(1e-15, 1.0 - 1e-15);
-        if (new_x - x).abs() < 1e-14 {
-            x = new_x;
-            break;
-        }
-        x = new_x;
-    }
-
-    Some(x)
+    };
+    solve_increasing_cdf(p, |x| beta_i(x, a, b), pdf, 0.0, Some(1.0), a / (a + b))
 }
 
 /// Helper: inverse of GAMMA.DIST CDF. Given p = P(alpha, x/beta), find x.
@@ -8515,36 +8035,16 @@ fn gamma_inv_helper(p: f64, alpha: f64, beta: f64) -> Option<f64> {
     if alpha <= 0.0 || beta <= 0.0 {
         return None;
     }
-
-    // Initial guess
-    let mut x = alpha * beta;
-    if p < 0.5 {
-        x = x.min(beta);
-    }
-
-    // Newton-Raphson on the standardized gamma CDF (gamma_p)
-    for _ in 0..100 {
-        let z = x / beta;
-        let cdf = gamma_p(alpha, z);
-        // Gamma PDF: z^(alpha-1) * e^(-z) / Gamma(alpha) / beta
-        let pdf = if z > 0.0 {
-            ((alpha - 1.0) * z.ln() - z - ln_gamma(alpha)).exp() / beta
+    // Solve on the standardized scale z = x / beta.
+    let ln_ga = ln_gamma(alpha);
+    let pdf = |z: f64| {
+        if z > 0.0 {
+            ((alpha - 1.0) * z.ln() - z - ln_ga).exp()
         } else {
-            1e-30
-        };
-        if pdf.abs() < 1e-30 {
-            break;
+            0.0
         }
-        let delta = (cdf - p) / pdf;
-        let new_x = (x - delta).max(1e-15);
-        if (new_x - x).abs() < 1e-12 * x.max(1e-15) {
-            x = new_x;
-            break;
-        }
-        x = new_x;
-    }
-
-    Some(x)
+    };
+    solve_increasing_cdf(p, |z| gamma_p(alpha, z), pdf, 0.0, None, alpha).map(|z| z * beta)
 }
 
 /* ─────────────────────────── AVERAGEA ──────────────────────────── */
@@ -10089,6 +9589,7 @@ impl Function for GammaLnPreciseFn {
 
 pub fn register_builtins() {
     use std::sync::Arc;
+    legacy::register_builtins();
     crate::function_registry::register_builtin(Arc::new(ForecastLinearFn));
     crate::function_registry::register_builtin(Arc::new(LinestFn));
     crate::function_registry::register_builtin(Arc::new(LARGE));

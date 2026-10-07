@@ -20,6 +20,7 @@ fn scalar_text_value(arg: &ArgumentHandle<'_, '_>) -> Result<LiteralValue, Excel
 mod array_text; // TEXTSPLIT, VALUETOTEXT, ARRAYTOTEXT
 mod byte; // FINDB, LEFTB, LENB, MIDB, REPLACEB, RIGHTB, SEARCHB
 mod char_code_rept; // CHAR, CODE, REPT
+mod date_format; // Date and time format rendering for TEXT
 mod extended; // CLEAN, UNICHAR, UNICODE, TEXTBEFORE, TEXTAFTER, DOLLAR, FIXED
 mod find_search_exact; // FIND, SEARCH, EXACT
 mod len_left_right; // LEN, LEFT, RIGHT

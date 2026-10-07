@@ -26,9 +26,9 @@ jobs:
           python-version: '3.12'
 
       - name: Set up pinned preflight Rust
-        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
-          toolchain: 1.93.0
+          toolchain: 1.99.0
 
       - name: Verify product tag versions match manifests
         shell: bash
@@ -60,6 +60,7 @@ jobs:
 
           checks = [
             ("crates/formualizer/Cargo.toml", lambda p: toml_version(p, ["package", "version"])),
+            ("crates/formualizer-cli/Cargo.toml", lambda p: toml_version(p, ["package", "version"])),
             ("bindings/python/pyproject.toml", lambda p: toml_version(p, ["project", "version"])),
             ("bindings/wasm/package.json", json_version),
           ]
@@ -96,9 +97,9 @@ jobs:
           python-version: '3.12'
 
       - name: Set up pinned preflight Rust
-        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
-          toolchain: 1.93.0
+          toolchain: 1.99.0
 
       - name: Verify parse/common tag versions match manifests
         shell: bash
@@ -160,9 +161,9 @@ jobs:
           python-version: '3.12'
 
       - name: Set up pinned preflight Rust
-        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
-          toolchain: 1.93.0
+          toolchain: 1.99.0
 
       - name: Verify spec tag version matches manifest
         shell: bash
@@ -197,14 +198,17 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      # Keep the `-D warnings` default the previous setup-rust-toolchain action set.
+      RUSTFLAGS: -D warnings
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
 
       - name: Set up Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
-          toolchain: 1.93.0
+          toolchain: 1.99.0
 
       - name: Publish parser/common crates
         env:
@@ -269,14 +273,17 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      # Keep the `-D warnings` default the previous setup-rust-toolchain action set.
+      RUSTFLAGS: -D warnings
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
 
       - name: Set up Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
-          toolchain: stable
+          toolchain: 1.99.0
 
       - name: Publish sheetport-spec
         env:
@@ -340,14 +347,17 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      # Keep the `-D warnings` default the previous setup-rust-toolchain action set.
+      RUSTFLAGS: -D warnings
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
 
       - name: Set up Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
-          toolchain: 1.93.0
+          toolchain: 1.99.0
 
       - name: Publish product crates
         env:
@@ -408,6 +418,7 @@ jobs:
           publish_with_retry formualizer-workbook
           publish_with_retry formualizer-sheetport
           publish_with_retry formualizer
+          publish_with_retry formualizer-cli
 
   build-wheels-linux:
     if: startsWith(github.ref_name, 'v')
@@ -430,7 +441,7 @@ jobs:
         with:
           maturin-version: v1.11.5
           target: ${{ matrix.platform.target }}
-          rust-toolchain: 1.93.0
+          rust-toolchain: 1.99.0
           args: --release --out dist --manifest-path bindings/python/Cargo.toml
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: auto
@@ -461,7 +472,7 @@ jobs:
         with:
           maturin-version: v1.11.5
           target: ${{ matrix.platform.target }}
-          rust-toolchain: 1.93.0
+          rust-toolchain: 1.99.0
           args: --release --out dist --manifest-path bindings/python/Cargo.toml
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: musllinux_1_2
@@ -485,7 +496,7 @@ jobs:
         with:
           maturin-version: v1.11.5
           target: x64
-          rust-toolchain: 1.93.0
+          rust-toolchain: 1.99.0
           args: --release --out dist --manifest-path bindings/python/Cargo.toml
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
       - name: Upload wheels
@@ -515,7 +526,7 @@ jobs:
         with:
           maturin-version: v1.11.5
           target: ${{ matrix.platform.target }}
-          rust-toolchain: 1.93.0
+          rust-toolchain: 1.99.0
           args: --release --out dist --manifest-path bindings/python/Cargo.toml
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
       - name: Upload wheels
@@ -534,6 +545,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           maturin-version: v1.11.5
+          rust-toolchain: 1.99.0
           command: sdist
           args: --out dist --manifest-path bindings/python/Cargo.toml
       - name: Upload sdist
@@ -548,16 +560,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      # Host Python must match xbuildenv CPython major.minor (3.13 for Pyodide
-      # 0.29.x). See bindings/python/scripts/build-pyodide-wheel.sh.
+      # Host Python must match xbuildenv CPython major.minor (3.14 for Pyodide
+      # 314.0.x). See bindings/python/scripts/build-pyodide-wheel.sh.
       - uses: actions/setup-python@v6
         with:
-          python-version: '3.13'
+          python-version: '3.14'
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - name: Set up Rust (rustup shim for custom nightly)
-        uses: dtolnay/rust-toolchain@stable
+      # Provides rustup; the wheel itself is compiled with the Rust toolchain
+      # pinned by the Pyodide xbuildenv (see build-pyodide-wheel.sh).
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: 1.99.0
       - name: Set up uv
         uses: astral-sh/setup-uv@v6
       - name: Build Pyodide wheel
@@ -566,9 +582,9 @@ jobs:
       - name: Smoke-test Pyodide wheel
         working-directory: bindings/python
         run: |
-          wheel="$(ls dist/pyodide/*-pyodide_*_wasm32.whl | head -1)"
+          wheel="$(ls dist/pyodide/*_wasm32.whl | head -1)"
           if [[ -z "$wheel" ]]; then
-            echo "No retagged pyodide wheel found in dist/pyodide" >&2
+            echo "No Pyodide wheel found in dist/pyodide" >&2
             exit 1
           fi
           ./scripts/smoke-pyodide-wheel.sh "$wheel"
@@ -576,7 +592,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: wheels-pyodide
-          path: bindings/python/dist/pyodide/*-pyodide_*_wasm32.whl
+          path: bindings/python/dist/pyodide/*_wasm32.whl
           if-no-files-found: error
 
   publish-pypi:
@@ -629,14 +645,17 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    env:
+      # Keep the `-D warnings` default the previous setup-rust-toolchain action set.
+      RUSTFLAGS: -D warnings
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
 
       - name: Set up Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
-          toolchain: 1.93.0
+          toolchain: 1.99.0
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -667,12 +686,71 @@ jobs:
         working-directory: bindings/wasm
         run: npm publish --ignore-scripts --access public --provenance
 
+  # Native CLI binaries, release archives and npm tarballs. The called
+  # workflow only builds and assembles; publication happens below.
+  build-cli:
+    if: github.event_name == 'push' && startsWith(github.ref_name, 'v')
+    needs: verify-product
+    permissions:
+      contents: read
+    uses: ./.github/workflows/cli-build.yml
+
+  publish-npm-cli:
+    if: github.event_name == 'push' && startsWith(github.ref_name, 'v')
+    needs: [build-cli, publish-product-crates]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Download npm tarballs
+        uses: actions/download-artifact@v7
+        with:
+          name: cli-npm-tarballs
+          path: npm-tarballs
+
+      # publish-order.txt lists the platform packages first and the
+      # @formualizer/cli meta package last, so the meta package never points
+      # at unpublished optional dependencies. Reruns skip published versions.
+      - name: Publish platform packages, then @formualizer/cli
+        shell: bash
+        env:
+          # Optional bootstrap token for the first publish of new packages;
+          # empty when unset, leaving trusted publishing (OIDC) in charge.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          expected="${GITHUB_REF_NAME#v}"
+          while IFS=$'\t' read -r name version file; do
+            if [[ "${version}" != "${expected}" ]]; then
+              echo "::error::${name} is ${version}, tag is v${expected}"
+              exit 1
+            fi
+            if npm view "${name}@${version}" version >/dev/null 2>&1; then
+              echo "${name}@${version} already published; skipping"
+              continue
+            fi
+            tag_args=()
+            if [[ "${version}" == *-* ]]; then
+              tag_args=(--tag next)
+            fi
+            npm publish "npm-tarballs/${file}" --access public --provenance --ignore-scripts "${tag_args[@]}"
+          done < npm-tarballs/publish-order.txt
+
   github-release:
     if: startsWith(github.ref_name, 'v')
     needs:
       - publish-product-crates
       - publish-pypi
       - publish-npm
+      - build-cli
+      - publish-npm-cli
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -738,9 +816,17 @@ jobs:
             echo "has_changelog=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Download CLI release archives
+        uses: actions/download-artifact@v7
+        with:
+          name: cli-release-assets
+          path: cli-dist
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          files: cli-dist/*
+          fail_on_unmatched_files: true
           body_path: ${{ steps.notes.outputs.has_changelog == 'true' && 'release-notes.md' || '' }}
           generate_release_notes: ${{ steps.notes.outputs.has_changelog != 'true' }}
           draft: false

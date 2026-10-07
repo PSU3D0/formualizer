@@ -536,6 +536,23 @@ impl<'a, R: EvaluationContext, S: ReadSink> EvaluationContext for RecordingConte
     fn formula_text_at_cell(&self, cell: CellRef) -> Result<Option<String>, ExcelError> {
         self.engine.formula_text_at_cell(cell)
     }
+    fn resolve_spill_reference(
+        &self,
+        anchor: &ReferenceType,
+        current_sheet: &str,
+    ) -> Result<ReferenceType, ExcelError> {
+        // The extent is a read of the anchor: record it even when the anchor
+        // has no current spill (the rectangle itself is recorded when the
+        // caller reads it through `resolve_range_view`).
+        match anchor {
+            ReferenceType::Cell {
+                sheet, row, col, ..
+            } => self.record_cell_1based(sheet.as_deref().unwrap_or(current_sheet), *row, *col),
+            ReferenceType::NamedRange(name) => self.record_name(name),
+            _ => {}
+        }
+        self.engine.resolve_spill_reference(anchor, current_sheet)
+    }
     fn clock(&self) -> &dyn crate::timezone::ClockProvider {
         self.engine.clock()
     }
@@ -595,5 +612,12 @@ impl<'a, R: EvaluationContext, S: ReadSink> EvaluationContext for RecordingConte
         mode: crate::engine::row_visibility::VisibilityMaskMode,
     ) -> Option<std::sync::Arc<arrow_array::BooleanArray>> {
         self.engine.build_row_visibility_mask(view, mode)
+    }
+    fn nested_subtotal_cells(
+        &self,
+        view: &RangeView<'_>,
+        include_aggregate: bool,
+    ) -> Option<Vec<(usize, usize, usize)>> {
+        self.engine.nested_subtotal_cells(view, include_aggregate)
     }
 }
