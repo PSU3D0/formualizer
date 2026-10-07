@@ -7,10 +7,19 @@ All notable changes to Formualizer will be documented in this file.
 ### Changed
 
 - **SUBTOTAL and AGGREGATE are no longer volatile.** They recalculate when a cell in their ranges changes, or when row visibility changes (manual or filter hides, row inserts and deletes, undo and redo of those). A recalculation with no edits, or after an edit outside every SUBTOTAL/AGGREGATE range, no longer re-evaluates them. On a workbook with about 4,000 SUBTOTAL formulas, that was the whole cost of an unrelated single-cell edit. (#513)
+- **SUBTOTAL 1-11 skip rows hidden by a filter, as in Excel.** Only manually hidden rows still count; 101-111 skip both. `=SUBTOTAL(9,...)` over a filtered range changes value. (#515)
+- **`DATEVALUE` no longer swaps day and month.** `DATEVALUE("13/1/2003")` and other day-first slash dates return `#VALUE!`, as Excel does in US locales and as `="13/1/2003"+0` already did, instead of silently reading 13 January. Year-first slash dates and dates with month names are unchanged. (#415)
+
+### Added
+
+- `AGGREGATE` options 4-7 (previously `#N/IMPL!`). They count nested SUBTOTAL and AGGREGATE cells; 5 and 7 skip hidden rows, 6 and 7 skip errors. (#514)
 
 ### Fixed
 
+- Fixed repeated lookups over large numeric ranges slowing down sharply: building the shared lookup index was quadratic in the number of rows (7.4 s for four lookups over 200,000 rows, now under 0.1 s). Affects VLOOKUP, HLOOKUP, MATCH and XLOOKUP once a range is looked up more than three times. (#414)
+- Fixed `%`, `_` and `\` in criteria text acting as SQL LIKE wildcards: `COUNTIF(A:A,"a%b")` counted `axxxb` and `a_b` as matches. They are literal now, while `*`, `?` and `~` keep their Excel meaning. Affects COUNTIF, SUMIF, AVERAGEIF, the `IFS` variants and MAXIFS/MINIFS. (#295)
 - Fixed the sheet index keeping cells at their old positions after rows or columns were inserted or deleted, so lookups through it missed moved cells. An enclosing SUBTOTAL or AGGREGATE then counted nested subtotals in the shifted rows.
+- The `formualizer-cli` crate now includes the `LICENSE-MIT` and `LICENSE-APACHE` texts. (#443)
 
 ## [0.11.0] - 2026-10-06
 
