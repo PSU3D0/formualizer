@@ -24,7 +24,7 @@ This document is the normative contract for phase-1 `SUBTOTAL`/`AGGREGATE` visib
 
 ### 2) SUBTOTAL visibility semantics (frozen v1)
 
-- `SUBTOTAL(1..11, ...)` includes all rows (visible, manually hidden, filter-hidden).
+- `SUBTOTAL(1..11, ...)` excludes filter-hidden rows and includes manually hidden rows (Excel ignores rows not included in a filter result for every function number).
 - `SUBTOTAL(101..111, ...)` excludes both manually hidden rows and filter-hidden rows.
 - Visibility filtering is row-based and applied before aggregation.
 - A cell in a reference argument whose formula calls `SUBTOTAL` anywhere (for example `=SUBTOTAL(9,A1:A2)+8`, or inside an `IF` branch) is skipped, as Excel ignores nested subtotals to avoid double counting. Cells whose formulas call only `AGGREGATE` are counted: the SUBTOTAL documentation names nested subtotals only.
@@ -32,11 +32,9 @@ This document is the normative contract for phase-1 `SUBTOTAL`/`AGGREGATE` visib
 ### 3) AGGREGATE phase-1 scope
 
 - Supported `function_num`: `1..11` only.
-- Supported `options`: `{0,1,2,3}` only.
+- Supported `options`: `0..7`.
 - Supported call shape: `AGGREGATE(function_num, options, ref1, [ref2], ...)`.
-- Unsupported phase-1 options/functions must return `#N/IMPL!`:
-  - `function_num` in `12..19`.
-  - `options` in `4..7`.
+- Unsupported functions return `#N/IMPL!`: `function_num` in `12..19`.
 
 ### 4) AGGREGATE option behavior table (v1)
 
@@ -46,8 +44,12 @@ This document is the normative contract for phase-1 `SUBTOTAL`/`AGGREGATE` visib
 | 1 | Exclude manually hidden + filter-hidden rows | Propagate errors | Excluded |
 | 2 | Include hidden rows | Ignore errors | Excluded |
 | 3 | Exclude manually hidden + filter-hidden rows | Ignore errors | Excluded |
+| 4 | Include hidden rows | Propagate errors | Counted |
+| 5 | Exclude manually hidden + filter-hidden rows | Propagate errors | Counted |
+| 6 | Include hidden rows | Ignore errors | Counted |
+| 7 | Exclude manually hidden + filter-hidden rows | Ignore errors | Counted |
 
-Nested exclusion skips cells in reference arguments whose formulas call `SUBTOTAL` or `AGGREGATE` anywhere.
+Nested exclusion (options 0-3) skips cells in reference arguments whose formulas call `SUBTOTAL` or `AGGREGATE` anywhere.
 
 ## Error behavior matrix
 
@@ -60,7 +62,6 @@ Nested exclusion skips cells in reference arguments whose formulas call `SUBTOTA
 | AGGREGATE | `function_num` in `12..19` | `#N/IMPL!` |
 | AGGREGATE | `function_num` integer outside `1..19` | `#VALUE!` |
 | AGGREGATE | `options` is non-numeric or non-integer | `#VALUE!` |
-| AGGREGATE | `options` in `4..7` | `#N/IMPL!` |
 | AGGREGATE | `options` integer outside `0..7` | `#VALUE!` |
 | AGGREGATE | Fewer than 3 args (`function_num`, `options`, `ref1`) | `#VALUE!` |
 

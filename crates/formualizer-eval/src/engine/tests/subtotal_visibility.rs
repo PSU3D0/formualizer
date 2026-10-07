@@ -82,7 +82,9 @@ fn subtotal_109_respects_manual_and_filter_hidden_rows() {
         .unwrap();
 
     engine.evaluate_all().unwrap();
-    assert_num(engine.get_cell_value("Sheet1", 1, 2), 160.0);
+    // Every function number skips filtered rows; only 109 skips the
+    // manually hidden row as well.
+    assert_num(engine.get_cell_value("Sheet1", 1, 2), 130.0);
     assert_num(engine.get_cell_value("Sheet1", 1, 3), 110.0);
 
     engine
@@ -180,12 +182,14 @@ fn subtotal_all_function_codes_match_expected_matrix() {
 
     engine.evaluate_all().unwrap();
 
-    let include_all = [10.0, 20.0, 30.0, 100.0];
+    // Row 3 is hidden manually, row 4 by a filter: 1-11 skip only the
+    // filtered row, 101-111 skip both.
+    let unfiltered = [10.0, 20.0, 100.0];
     let visible_only = [10.0, 100.0];
 
     let mut verify_col = 2u32;
     for code in 1..=11 {
-        let expected = op_expected(code, &include_all);
+        let expected = op_expected(code, &unfiltered);
         assert_num(engine.get_cell_value("Sheet1", 1, verify_col), expected);
         verify_col += 1;
     }

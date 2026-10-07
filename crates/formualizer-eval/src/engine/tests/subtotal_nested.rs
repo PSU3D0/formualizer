@@ -119,7 +119,7 @@ fn aggregate_options_ignore_nested_subtotal_and_aggregate() {
     formula(&mut e, 4, 1, "=SUBTOTAL(9,A1:A3)");
     formula(&mut e, 5, 1, "=AGGREGATE(9,0,A1:A3)");
     formula(&mut e, 6, 1, "=SUM(A1:A3)");
-    for (i, opt) in (0..=3).enumerate() {
+    for (i, opt) in (0..=7).enumerate() {
         formula(
             &mut e,
             10,
@@ -133,6 +133,10 @@ fn aggregate_options_ignore_nested_subtotal_and_aggregate() {
     e.evaluate_all().unwrap();
     for i in 0..4u32 {
         assert_eq!(get(&e, 10, 1 + i), LiteralValue::Number(12.0), "option {i}");
+    }
+    // Options 4-7 count the nested SUBTOTAL (6) and AGGREGATE (6) cells.
+    for i in 4..8u32 {
+        assert_eq!(get(&e, 10, 1 + i), LiteralValue::Number(24.0), "option {i}");
     }
     assert_eq!(get(&e, 11, 1), LiteralValue::Number(18.0));
 }
