@@ -727,6 +727,7 @@ impl CalamineAdapter {
         sheet: &str,
         position: (u32, u32),
         formula: &str,
+        shared: Option<usize>,
         debug: bool,
         staging: &mut FormulaStaging,
     ) -> Result<(), calamine::Error> {
@@ -756,9 +757,19 @@ impl CalamineAdapter {
                         Some(Arc::<str>::from(normalized.as_str())),
                     )
                 })
+            } else if let Some(record) = engine.stage_relocated_text(
+                &mut staging.grouper,
+                excel_row,
+                excel_col,
+                &normalized,
+                shared.map(|index| index as u64),
+            ) {
+                Some(record)
             } else {
                 staging.grouper.note_parse(normalized.len());
-                let parsed = match formualizer_parse::parser::parse(&normalized) {
+                let parsed = formualizer_parse::parser::parse(&normalized);
+                let parsed_text = parsed.is_ok();
+                let parsed = match parsed {
                     Ok(parsed) => Some(parsed),
                     Err(error) => engine
                         .handle_formula_parse_error(
@@ -781,6 +792,17 @@ impl CalamineAdapter {
                             &ast,
                             None,
                         );
+                        if parsed_text {
+                            engine.note_parsed_text(
+                                &mut staging.grouper,
+                                excel_row,
+                                excel_col,
+                                &normalized,
+                                &ast,
+                                &record,
+                                shared.map(|index| index as u64),
+                            );
+                        }
                         // A member's text is not worth caching: relative
                         // copies do not repeat their text.
                         if record.is_family_member() {
@@ -1295,6 +1317,7 @@ impl CalamineAdapter {
                         sheet,
                         (coord0.row, coord0.col),
                         formula,
+                        shared_index,
                         debug,
                         &mut formula_staging,
                     )

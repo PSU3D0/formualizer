@@ -626,6 +626,7 @@ impl<R: EvaluationContext> Engine<R> {
                 template: ast_id,
                 anchor: (row0, col0),
                 rendered: None,
+                lexical: None,
             },
         );
     }

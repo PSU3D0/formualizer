@@ -77,6 +77,9 @@ pub struct FormulaFamilyGrouper {
     /// Staging counters, folded into the engine's by
     /// `Engine::finish_family_grouper`.
     pub(crate) counters: super::SourceFamilyCounters,
+    /// Shared-formula identity -> the certified family its first parsed
+    /// formula belongs to.
+    pub(crate) shared_roots: rustc_hash::FxHashMap<u64, GroupedFamily>,
 }
 
 impl FormulaFamilyGrouper {
@@ -108,6 +111,26 @@ impl FormulaFamilyGrouper {
         self.counters.parse_cache_hits += 1;
     }
 
+    /// Attach a lexical certificate to the family just noted at
+    /// `(row0, col0)` (the last formula staged).
+    pub(crate) fn attach_lexical(
+        &mut self,
+        row0: u32,
+        col0: u32,
+        lexical: Arc<super::source_family::LexicalTemplate>,
+    ) {
+        if let Some((row, family)) = self.by_col.get_mut(&col0)
+            && *row == row0
+        {
+            family.lexical = Some(Arc::clone(&lexical));
+        }
+        if let Some((row, col, family)) = self.last.as_mut()
+            && (*row, *col) == (row0, col0)
+        {
+            family.lexical = Some(lexical);
+        }
+    }
+
     pub(crate) fn note(&mut self, row0: u32, col0: u32, family: GroupedFamily) {
         self.by_col.insert(col0, (row0, family.clone()));
         self.last = Some((row0, col0, family));
@@ -123,6 +146,9 @@ pub(crate) struct GroupedFamily {
     pub(crate) template: AstNodeId,
     pub(crate) anchor: (u32, u32),
     pub(crate) rendered: Option<Option<Arc<[bool]>>>,
+    /// The template's lexical certificate, when it has one: unparsed
+    /// copies of it can join the family.
+    pub(crate) lexical: Option<Arc<super::source_family::LexicalTemplate>>,
 }
 
 #[derive(Clone, Debug)]

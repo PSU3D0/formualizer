@@ -10269,15 +10269,25 @@ where
                     format!("={txt}")
                 };
                 grouper.note_formula();
+                // A shared-formula family's records name their family.
+                let shared_key = source_proof
+                    .and_then(|(_, family, _)| family)
+                    .map(|family| u64::from(family.source_index));
                 let staged_record = if let Some(cached) = cache.get(&key) {
                     grouper.note_parse_cache_hit();
                     cached.map(|ast_id| {
                         self.note_staged_formula(&mut grouper, row, col, ast_id);
                         FormulaIngestRecord::new(row, col, ast_id, Some(Arc::<str>::from(key)))
                     })
+                } else if let Some(record) =
+                    self.stage_relocated_text(&mut grouper, row, col, &key, shared_key)
+                {
+                    Some(record)
                 } else {
                     grouper.note_parse(key.len());
-                    let parsed = match formualizer_parse::parser::parse(&key) {
+                    let parsed = formualizer_parse::parser::parse(&key);
+                    let parsed_text = parsed.is_ok();
+                    let parsed = match parsed {
                         Ok(parsed) => Some(parsed),
                         Err(error) => self.handle_formula_parse_error(
                             sheet,
@@ -10290,6 +10300,17 @@ where
                     match parsed {
                         Some(ast) => {
                             let record = self.stage_formula_ast(&mut grouper, row, col, &ast, None);
+                            if parsed_text {
+                                self.note_parsed_text(
+                                    &mut grouper,
+                                    row,
+                                    col,
+                                    &key,
+                                    &ast,
+                                    &record,
+                                    shared_key,
+                                );
+                            }
                             if !record.is_family_member() && self.formula_may_fail_planning(&ast) {
                                 may_fail.insert(record.ast_id);
                             }
