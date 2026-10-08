@@ -364,7 +364,7 @@ const XM: &str = "http://schemas.microsoft.com/office/excel/2006/main";
 /// Anything under `sheetData` stays refused: there Calamine's cell reader
 /// matches `row` by local name and treats any element inside a cell as its
 /// payload.
-fn inert_extension(path: &[xml::Element]) -> bool {
+fn inert_extension(path: &[xml::Element<'_>]) -> bool {
     let (element, ancestors) = path.split_last().expect("open XML element");
     if ancestors
         .iter()
@@ -372,12 +372,12 @@ fn inert_extension(path: &[xml::Element]) -> bool {
     {
         return false;
     }
-    match (element.ns.as_str(), element.local.as_str()) {
+    match (&*element.ns, element.local) {
         (XDR, "row") => {
             let n = ancestors.len();
             n >= 3
                 && ancestors[n - 1].ns == xml::MAIN
-                && matches!(ancestors[n - 1].local.as_str(), "from" | "to")
+                && matches!(ancestors[n - 1].local, "from" | "to")
                 && ancestors[n - 2].ns == xml::MAIN
                 && ancestors[n - 2].local == "anchor"
                 && ancestors
@@ -477,19 +477,19 @@ fn scan_inner(
                     "rPr",
                     "dimension",
                 ];
-                if (structural.contains(&element.local.as_str())
-                    || matches!(element.local.as_str(), "mergeCells" | "mergeCell"))
+                if (structural.contains(&element.local)
+                    || matches!(element.local, "mergeCells" | "mergeCell"))
                     && element.ns != xml::MAIN
                 {
                     if inert_extension(path) {
                         return Ok(());
                     }
-                    return Err(unsupported("foreign worksheet lookalike", &element.local));
+                    return Err(unsupported("foreign worksheet lookalike", element.local));
                 }
-                if matches!(element.local.as_str(), "f" | "v" | "is") && !direct {
+                if matches!(element.local, "f" | "v" | "is") && !direct {
                     return Err(unsupported("misplaced cell payload", "worksheet"));
                 }
-                if matches!(element.local.as_str(), "tableParts" | "tablePart") {
+                if matches!(element.local, "tableParts" | "tablePart") {
                     let valid = if element.local == "tableParts" {
                         xml::path_is(path, xml::MAIN, &["worksheet", "tableParts"])
                     } else {
@@ -520,7 +520,7 @@ fn scan_inner(
                                     unsupported("missing table relationship ID", "worksheet")
                                 })?
                                 .value
-                                .clone(),
+                                .to_string(),
                         );
                     }
                 }
@@ -631,7 +631,7 @@ fn scan_inner(
                             span: node.span.clone(),
                             open_end: node.span.end,
                             empty: *empty,
-                            qualified: element.qualified.clone(),
+                            qualified: element.qualified.to_owned(),
                             spans_attr: node.attribute("", "spans").map(|a| a.span.clone()),
                             cells: at..at,
                         });
@@ -699,7 +699,7 @@ fn scan_inner(
                             address: address.to_owned(),
                             span: node.span.clone(),
                             open_end: node.span.end,
-                            qualified: element.qualified.clone(),
+                            qualified: element.qualified.to_owned(),
                             kind,
                             kind_span: node.attribute("", "t").map(|a| a.span.clone()),
                             formula_end: 0,
@@ -748,7 +748,7 @@ fn scan_inner(
                     let cell = current
                         .as_mut()
                         .ok_or_else(|| unsupported("payload without cell", "worksheet"))?;
-                    match element.local.as_str() {
+                    match element.local {
                         "f" => {
                             if cell.has_formula || cell.value.is_some() || cell.inline.is_some() {
                                 return Err(unsupported(
@@ -823,7 +823,7 @@ fn scan_inner(
                                 open_end: node.span.end,
                                 close_start: node.span.end,
                                 empty: *empty,
-                                qualified: element.qualified.clone(),
+                                qualified: element.qualified.to_owned(),
                                 text: String::new(),
                             });
                         }
@@ -839,7 +839,7 @@ fn scan_inner(
                         _ => {}
                     }
                 }
-                if path.len() > 5 && matches!(path[4].local.as_str(), "f" | "v") {
+                if path.len() > 5 && matches!(path[4].local, "f" | "v") {
                     return Err(unsupported("nested formula/cache content", "worksheet"));
                 }
             }
@@ -865,7 +865,7 @@ fn scan_inner(
                     let cell = current
                         .as_mut()
                         .ok_or_else(|| unsupported("unbalanced cell payload", "worksheet"))?;
-                    match element.local.as_str() {
+                    match element.local {
                         "f" => cell.formula_end = node.span.end,
                         "v" => {
                             let v = cell.value.as_mut().expect("opened v");

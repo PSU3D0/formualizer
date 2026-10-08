@@ -56,8 +56,7 @@ pub(super) fn validate(
             return Err(unsupported("content types root/namespace", "XLSX package"));
         }
         if path.len() > 1 {
-            if path.len() != 2 || e.ns != NS || !matches!(e.local.as_str(), "Default" | "Override")
-            {
+            if path.len() != 2 || e.ns != NS || !matches!(e.local, "Default" | "Override") {
                 return Err(unsupported(
                     "unknown content-type declaration",
                     "XLSX package",

@@ -145,7 +145,7 @@ struct Parsed {
 }
 fn section(path: &[xml::Element], node: &xml::Node) -> Section {
     Section {
-        qualified: path.last().expect("open XML element").qualified.clone(),
+        qualified: path.last().expect("open XML element").qualified.to_owned(),
         open: node.span.clone(),
         empty: matches!(node.kind, xml::Kind::Open { empty: true, .. }),
         close_start: None,
@@ -183,20 +183,20 @@ pub(super) fn parse_bytes(
     let limit = options.limits.max_cells;
     let mut p = Parsed::default();
     xml::walk(data, options, |path, node| {
-        let names: Vec<&str> = path.iter().map(|e| e.local.as_str()).collect();
+        let names: Vec<&str> = path.iter().map(|e| e.local).collect();
         match &node.kind {
             xml::Kind::Open { attributes, .. } => {
                 let e = path.last().expect("open XML element");
                 if path.len() == 1 && !xml::path_is(path, xml::MAIN, &["metadata"]) {
                     return Err(unsupported("sheet metadata root/namespace", CONTEXT));
                 }
-                if MAIN_NAMES.contains(&e.local.as_str()) && e.ns != xml::MAIN {
-                    return Err(unsupported("foreign sheet metadata lookalike", &e.local));
+                if MAIN_NAMES.contains(&e.local) && e.ns != xml::MAIN {
+                    return Err(unsupported("foreign sheet metadata lookalike", e.local));
                 }
                 if e.local == "dynamicArrayProperties" && e.ns != DYNAMIC_ARRAY_NS {
                     return Err(unsupported(
                         "foreign dynamic array metadata lookalike",
-                        &e.local,
+                        e.local,
                     ));
                 }
                 match names.as_slice() {
@@ -258,8 +258,7 @@ pub(super) fn parse_bytes(
                         "dynamicArrayProperties",
                     ] => {
                         if attributes.iter().any(|a| {
-                            !a.ns.is_empty()
-                                || !matches!(a.local.as_str(), "fDynamic" | "fCollapsed")
+                            !a.ns.is_empty() || !matches!(a.local, "fDynamic" | "fCollapsed")
                         }) {
                             return Err(unsupported("unknown dynamic array property", CONTEXT));
                         }
@@ -302,7 +301,7 @@ pub(super) fn parse_bytes(
                         }
                     }
                     _ => {
-                        return Err(unsupported("unsupported sheet metadata element", &e.local));
+                        return Err(unsupported("unsupported sheet metadata element", e.local));
                     }
                 }
             }
