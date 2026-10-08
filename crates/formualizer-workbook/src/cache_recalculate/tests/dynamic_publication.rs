@@ -3,8 +3,9 @@
 //! cases run through the public API in
 //! `tests/xlsx_source_recalculate_spills.rs`.
 use super::super::{
-    XlsxRecalculateOptions, admit_source, apply_patches, evaluate, geometry::BindingRequest,
-    ingest_source, plan_spill_publication, publish, recalculate_xlsx_bytes,
+    PhaseClock, XlsxRecalculateOptions, admit_source, apply_patches, evaluate,
+    geometry::BindingRequest, ingest_source, plan_spill_publication, publish,
+    recalculate_xlsx_bytes,
 };
 use super::dynamic_admission::{SHEET, TYPES, WB_RELS, edit, pack, package, producer, refused};
 use crate::IoError;
@@ -52,7 +53,8 @@ fn new_ordinary_spill_plan_binds_the_anchor() {
     let source = pack(&new_vertical());
     let options = XlsxRecalculateOptions::default();
     let admission = admit_source(&source, &options).unwrap();
-    let mut ingested = ingest_source(&source, admission, &options).unwrap();
+    let mut ingested =
+        ingest_source(&source, admission, &options, &mut PhaseClock::from_env()).unwrap();
     evaluate(&mut ingested.engine, &options).unwrap();
     let coerced: HashSet<_> = ingested
         .engine
@@ -110,10 +112,17 @@ fn cancellation_after_evaluation_publishes_nothing() {
     };
     let admission = admit_source(&source, &options).unwrap();
     let count = admission.formula_count;
-    let mut ingested = ingest_source(&source, admission, &options).unwrap();
+    let mut ingested =
+        ingest_source(&source, admission, &options, &mut PhaseClock::from_env()).unwrap();
     evaluate(&mut ingested.engine, &options).unwrap();
     token.cancel();
-    match publish(&source, ingested, count, &options) {
+    match publish(
+        &source,
+        ingested,
+        count,
+        &options,
+        &mut PhaseClock::from_env(),
+    ) {
         Err(IoError::Engine(e)) => assert_eq!(e.kind, ExcelErrorKind::Cancelled),
         Err(other) => panic!("expected cancellation, got {other:?}"),
         Ok(_) => panic!("published after cancellation"),
