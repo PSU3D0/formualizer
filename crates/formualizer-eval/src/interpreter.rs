@@ -1367,7 +1367,49 @@ impl<'a> Interpreter<'a> {
                     Err(e) => LiteralValue::Error(e),
                 }
             }
-            // Named ranges / tables / external: fall back to materializing and intersecting.
+            // A bounded external range intersects by its declared bounds, like
+            // a range on a worksheet; its values come from the source view.
+            ReferenceType::External(ext) => {
+                let formualizer_parse::parser::ExternalRefKind::Range {
+                    start_row: Some(sr),
+                    start_col: Some(sc),
+                    end_row: Some(er),
+                    end_col: Some(ec),
+                    ..
+                } = ext.kind
+                else {
+                    return match self.eval_reference_to_calc(reference) {
+                        Ok(cv) => self.eval_implicit_intersection_calc(cv),
+                        Err(e) => LiteralValue::Error(e),
+                    };
+                };
+                let (sr, er) = (sr.min(er), sr.max(er));
+                let (sc, ec) = (sc.min(ec), sc.max(ec));
+                let (row, col) = if sc == ec {
+                    if cur_r1 < sr || cur_r1 > er {
+                        return LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value));
+                    }
+                    (cur_r1, sc)
+                } else if sr == er {
+                    if cur_c1 < sc || cur_c1 > ec {
+                        return LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value));
+                    }
+                    (sr, cur_c1)
+                } else {
+                    if cur_r1 < sr || cur_r1 > er || cur_c1 < sc || cur_c1 > ec {
+                        return LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value));
+                    }
+                    (cur_r1, cur_c1)
+                };
+                match self.eval_reference_to_calc(reference) {
+                    Ok(crate::traits::CalcValue::Range(rv)) => {
+                        rv.get_cell((row - sr) as usize, (col - sc) as usize)
+                    }
+                    Ok(cv) => self.eval_implicit_intersection_calc(cv),
+                    Err(e) => LiteralValue::Error(e),
+                }
+            }
+            // Named ranges / tables: fall back to materializing and intersecting.
             other => {
                 let cv = match self.eval_reference_to_calc(other) {
                     Ok(cv) => cv,
