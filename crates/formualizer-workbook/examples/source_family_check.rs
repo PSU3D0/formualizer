@@ -13,8 +13,10 @@
 //! must be zero. `snapshot` loads each file with families off and on, eager
 //! and deferred, and compares ordered sheets, names, cell values and formula
 //! text before and after evaluation, after a second evaluation, after a row
-//! insertion and evaluation, and parse diagnostics. It prints one JSON line
-//! per file and mode and exits non-zero on any difference.
+//! insertion and evaluation, and parse diagnostics (deferred formula text
+//! before evaluation on a sample of rows). It prints one JSON line per file
+//! and mode and exits non-zero on any difference. Set
+//! `SOURCE_FAMILY_CHECK_TRACE` for per-step timings on stderr.
 #[cfg(all(feature = "xlsx-recalc", feature = "json", not(target_arch = "wasm32")))]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     imp::main()
@@ -127,7 +129,11 @@ mod imp {
 
     /// Ordered sheets, dimensions, every non-empty cell's value and
     /// formula text, names and parse diagnostics.
-    fn snapshot(wb: &Workbook, out: &mut Vec<String>) {
+    /// With `sample`, formula text is read only on a deterministic sample
+    /// of rows (the first five and about 40 more per sheet): inspecting a
+    /// deferred formula before the graph is built replays the sheet's
+    /// formula spool, so reading every cell would be quadratic.
+    fn snapshot(wb: &Workbook, out: &mut Vec<String>, sample: bool) {
         for sheet in wb.sheet_names() {
             let (rows, cols) = wb.sheet_dimensions(&sheet).unwrap_or((0, 0));
             out.push(format!("sheet {sheet:?} {rows}x{cols}"));
@@ -135,9 +141,15 @@ mod imp {
                 out.push("cells skipped (too large)".into());
                 continue;
             }
+            let stride = (rows / 40).max(1);
             for row in 1..=rows {
+                let read_formula = !sample || row <= 5 || row % stride == 0;
                 for col in 1..=cols {
-                    let formula = wb.get_formula(&sheet, row, col);
+                    let formula = if read_formula {
+                        wb.get_formula(&sheet, row, col)
+                    } else {
+                        None
+                    };
                     let v = wb.get_value(&sheet, row, col);
                     if formula.is_none() && matches!(v, None | Some(LiteralValue::Empty)) {
                         continue;
@@ -161,19 +173,29 @@ mod imp {
 
     fn run(path: &str, deferred: bool, families: &str) -> Vec<String> {
         set_families(families);
+        let t0 = Instant::now();
+        let lap = |what: &str| {
+            if std::env::var_os("SOURCE_FAMILY_CHECK_TRACE").is_some() {
+                eprintln!("{what}: {:.1} ms", t0.elapsed().as_secs_f64() * 1e3);
+            }
+        };
         let mut out = Vec::new();
         let mut wb = match load(path, deferred) {
             Ok(wb) => wb,
             Err(e) => return vec![format!("load error {e}")],
         };
+        lap("load");
         out.push("== before evaluation".into());
-        snapshot(&wb, &mut out);
+        snapshot(&wb, &mut out, deferred);
+        lap("snapshot before evaluation");
         for pass in ["first", "second"] {
             out.push(format!("== {pass} evaluation"));
             if let Err(e) = wb.evaluate_all() {
                 out.push(format!("evaluate error {e}"));
             }
-            snapshot(&wb, &mut out);
+            lap("evaluate");
+            snapshot(&wb, &mut out, false);
+            lap("snapshot");
         }
         if let Some(sheet) = wb.sheet_names().first().cloned() {
             out.push("== after insert_rows(2) and evaluation".into());
@@ -185,7 +207,9 @@ mod imp {
                 }
                 Err(e) => out.push(format!("insert error {e:?}")),
             }
-            snapshot(&wb, &mut out);
+            lap("insert + evaluate");
+            snapshot(&wb, &mut out, false);
+            lap("snapshot");
         }
         out
     }
