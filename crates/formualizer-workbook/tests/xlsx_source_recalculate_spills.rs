@@ -747,14 +747,14 @@ fn unsupported_metadata_and_structures_stay_refused() {
     rich.insert("xl/richData/rdrichvalue.xml".into(), "<rv/>".into());
     refused(
         recalculate_xlsx_bytes(&pack(&rich), Default::default()),
-        "external links or rich",
+        "rich value data",
     );
-    // External links.
+    // A link part the workbook does not reference.
     let mut linked = producer();
     linked.insert("xl/externalLinks/externalLink1.xml".into(), "<x/>".into());
     refused(
         recalculate_xlsx_bytes(&pack(&linked), Default::default()),
-        "external links",
+        "unreferenced external link part",
     );
     // Tables.
     refused(

@@ -252,7 +252,7 @@ fn scalar_cache_readable(kind: Option<&str>, value: Option<CacheText<'_>>, bytes
 }
 /// `[A-Z]{1,3}[1-9][0-9]{0,6}` within the grid, which
 /// `parse_a1_1based` reads as the same relative row and column.
-fn plain_coord(value: &str) -> Option<(u32, u32)> {
+pub(super) fn plain_coord(value: &str) -> Option<(u32, u32)> {
     let bytes = value.as_bytes();
     let letters = bytes.iter().take_while(|b| b.is_ascii_uppercase()).count();
     let digits = &bytes[letters..];
