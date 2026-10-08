@@ -4,6 +4,20 @@ All notable changes to Formualizer will be documented in this file.
 
 ## [Unreleased]
 
+### Performance
+
+- **`formualizer recalc` is about a third faster.** Over a 275-workbook corpus of real Enron spreadsheets, total recalculation time fell from 38.8 s to 25.4 s, and the largest workbooks (65,000 formulas) from about 1.06 s to 0.67 s with lower peak memory. Workbooks saved by openpyxl gain about the same. Outputs are byte-identical to 0.11.1.
+- Loading no longer parses formulas that are provably copies of a formula already parsed: Excel shared-formula copies, and ordinary formulas that are the formula above or to the left with references moved (the form openpyxl writes). Such a copy must match the parsed formula's text, relocated, byte for byte, within a conservative subset (local A1 references, an allowlist of pure functions, no whitespace, sheet qualifiers or array constants); anything else is parsed as before. About 75% of the corpus formulas skip parsing; `Workbook.load_path` plus `evaluate_all` is about 20% faster on formula-heavy workbooks. `FZ_SOURCE_FAMILIES=off` restores parsing every formula.
+- Recalculation's worksheet validation pass reads XML without allocating per element and attribute, about 2.6 times faster, with the same accepted and refused inputs and the same messages.
+- Recalculation checks references to built-in document names (print areas, print titles) only in formulas whose text mentions one, instead of re-parsing every formula of any workbook that has such a name.
+- `FZ_DEBUG_RECALC=1` prints the wall time of each recalculation phase to stderr.
+
+### Fixed
+
+- Fixed defined names on sheets whose names contain a comma (`'Sche 3 (L-Craft, By Trade)'!$1:$3`) being imported as formulas instead of ranges. A whole-sheet print area on such a sheet was evaluated as a million-row array: one workbook took 12.8 s to recalculate instead of 0.14 s.
+- Fixed panics when inserting rows or columns near the edge of the grid. As in Excel, a reference pushed past row 1,048,576 or column XFD becomes `#REF!`, a range ending at the edge stays there (`A2:A1048576` becomes `A3:A1048576`), and an insert that would push values or formulas off the sheet is refused with nothing changed.
+- Fixed a panic ("members instantiate on the grid") when loading filled-down formulas whose relative range end passes their fixed end, such as `SUM(A25:A$24)` below `SUM(A24:A$24)`. Such a formula now loads like the same text entered through the API.
+
 ## [0.11.1] - 2026-10-07
 
 A patch release with two performance fixes and a set of Excel-compatibility corrections. SUBTOTAL and AGGREGATE no longer make every recalculation re-evaluate them, and repeated lookups over large numeric ranges no longer slow down quadratically. Two changes alter formula results to match Excel: SUBTOTAL 1-11 over filtered rows, and DATEVALUE on day-first dates (see Changed).
