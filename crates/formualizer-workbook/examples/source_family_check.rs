@@ -16,7 +16,8 @@
 //! insertion and evaluation, and parse diagnostics (deferred formula text
 //! before evaluation on a sample of rows). It prints one JSON line per file
 //! and mode and exits non-zero on any difference. Set
-//! `SOURCE_FAMILY_CHECK_TRACE` for per-step timings on stderr.
+//! `SOURCE_FAMILY_CHECK_TRACE` for per-step timings on stderr. Loads use a
+//! fixed clock; a panic in the row insertion is recorded and ends that run.
 #[cfg(all(feature = "xlsx-recalc", feature = "json", not(target_arch = "wasm32")))]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     imp::main()
@@ -45,13 +46,25 @@ mod imp {
     }
 
     fn config(deferred: bool) -> WorkbookConfig {
-        if deferred {
+        let mut c = if deferred {
             WorkbookConfig::interactive()
         } else {
             let mut c = WorkbookConfig::ephemeral();
             c.enable_changelog = true;
             c
+        };
+        // A fixed clock, so NOW()/TODAY() agree between the two loads.
+        c.eval.deterministic_mode = formualizer_eval::engine::DeterministicMode::Enabled {
+            timestamp_utc: chrono::DateTime::from_timestamp(1_767_225_600, 0).unwrap(),
+            timezone: formualizer_eval::timezone::TimeZoneSpec::Utc,
+        };
+        // `SOURCE_FAMILY_CHECK_SERIAL`: evaluate on one thread (parallel
+        // evaluation can differ run to run, for example in the sign of a
+        // zero).
+        if std::env::var_os("SOURCE_FAMILY_CHECK_SERIAL").is_some() {
+            c.eval.enable_parallel = false;
         }
+        c
     }
 
     fn load(path: &str, deferred: bool) -> Result<Workbook, String> {
@@ -199,13 +212,21 @@ mod imp {
         }
         if let Some(sheet) = wb.sheet_names().first().cloned() {
             out.push("== after insert_rows(2) and evaluation".into());
-            match wb.engine_mut().insert_rows(&sheet, 2, 1) {
-                Ok(_) => {
+            let inserted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                wb.engine_mut().insert_rows(&sheet, 2, 1).map(|_| ())
+            }));
+            match inserted {
+                Ok(Ok(())) => {
                     if let Err(e) = wb.evaluate_all() {
                         out.push(format!("evaluate error {e}"));
                     }
                 }
-                Err(e) => out.push(format!("insert error {e:?}")),
+                Ok(Err(e)) => out.push(format!("insert error {e:?}")),
+                Err(_) => {
+                    // The workbook may be inconsistent after a panic.
+                    out.push("insert panicked".into());
+                    return out;
+                }
             }
             lap("insert + evaluate");
             snapshot(&wb, &mut out, false);
@@ -218,8 +239,12 @@ mod imp {
         let mut clean = true;
         for path in files {
             for deferred in [false, true] {
+                // `SOURCE_FAMILY_CHECK_NEW=off` compares the old path
+                // with itself (a run-to-run determinism control).
+                let candidate =
+                    std::env::var("SOURCE_FAMILY_CHECK_NEW").unwrap_or_else(|_| "on".into());
                 let old = run(path, deferred, "off");
-                let new = run(path, deferred, "on");
+                let new = run(path, deferred, &candidate);
                 let first = old
                     .iter()
                     .zip(&new)
