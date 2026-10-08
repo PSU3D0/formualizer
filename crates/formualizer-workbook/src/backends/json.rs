@@ -865,6 +865,7 @@ where
                         }
                     }
                 }
+                staging.finish(engine);
                 if !formulas.is_empty() {
                     eager_formula_batches.push(FormulaIngestBatch::new(name.clone(), formulas));
                 }

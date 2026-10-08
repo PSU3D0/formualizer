@@ -74,6 +74,9 @@ pub struct FormulaFamilyGrouper {
     pub(crate) last: Option<(u32, u32, GroupedFamily)>,
     /// Members grouped so far.
     pub(crate) members: u64,
+    /// Staging counters, folded into the engine's by
+    /// `Engine::finish_family_grouper`.
+    pub(crate) counters: super::SourceFamilyCounters,
 }
 
 impl FormulaFamilyGrouper {
@@ -84,6 +87,25 @@ impl FormulaFamilyGrouper {
     /// Number of formulas staged as family members.
     pub fn members(&self) -> u64 {
         self.members
+    }
+
+    /// Count one formula text staged.
+    #[doc(hidden)]
+    pub fn note_formula(&mut self) {
+        self.counters.formulas += 1;
+    }
+
+    /// Count one formula parse of `bytes` bytes.
+    #[doc(hidden)]
+    pub fn note_parse(&mut self, bytes: usize) {
+        self.counters.parse_calls += 1;
+        self.counters.parse_bytes += bytes as u64;
+    }
+
+    /// Count one formula answered by a parse cache.
+    #[doc(hidden)]
+    pub fn note_parse_cache_hit(&mut self) {
+        self.counters.parse_cache_hits += 1;
     }
 
     pub(crate) fn note(&mut self, row0: u32, col0: u32, family: GroupedFamily) {

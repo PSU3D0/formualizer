@@ -1356,6 +1356,7 @@ where
                         formula_cells += 1;
                     }
                 }
+                staging.finish(engine);
                 formula_handed_to_engine += formulas.len();
                 if !formulas.is_empty() {
                     eager_formula_batches.push(FormulaIngestBatch::new(n.clone(), formulas));

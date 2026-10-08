@@ -744,7 +744,9 @@ impl CalamineAdapter {
             engine.stage_formula_text(sheet, excel_row, excel_col, normalized);
             staging.handed_to_engine += 1;
         } else {
+            staging.grouper.note_formula();
             let record = if let Some(cached) = staging.parse_cache.get(&normalized) {
+                staging.grouper.note_parse_cache_hit();
                 cached.map(|ast_id| {
                     engine.note_staged_formula(&mut staging.grouper, excel_row, excel_col, ast_id);
                     FormulaIngestRecord::new(
@@ -755,6 +757,7 @@ impl CalamineAdapter {
                     )
                 })
             } else {
+                staging.grouper.note_parse(normalized.len());
                 let parsed = match formualizer_parse::parser::parse(&normalized) {
                     Ok(parsed) => Some(parsed),
                     Err(error) => engine
@@ -1303,6 +1306,8 @@ impl CalamineAdapter {
                 });
             }
         }
+
+        engine.finish_family_grouper(&mut formula_staging.grouper);
 
         if u64::try_from(value_cells_observed)
             .unwrap_or(u64::MAX)
@@ -2642,6 +2647,10 @@ where
                     total_values,
                     total_formulas,
                     t0.elapsed_millis(),
+                );
+                eprintln!(
+                    "[fz][families] {}",
+                    engine.source_family_counters().debug_line()
                 );
             }
             for n in &names {

@@ -670,6 +670,7 @@ pub fn recalculate_xlsx_bytes(
     clock.lap("evaluate (incl. deferred graph build)");
     // Deferred graph building parses formulas during evaluation.
     refuse_parse_failure(&ingested.engine, ingested.refuse_parse_failures)?;
+    clock.families(&ingested.engine);
     let mut result = publish(bytes, ingested, formula_count, &options, &mut clock)?;
     result.clock_now_utc = clock_now_utc;
     clock.total(formula_count);

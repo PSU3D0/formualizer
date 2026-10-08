@@ -1066,6 +1066,9 @@ pub struct Engine<R> {
     source_cache: Arc<std::sync::RwLock<SourceCache>>,
     /// Identity binding for opaque source-family preparations.
     source_formula_token: Arc<()>,
+    /// Load-time staging of relocated formula copies (see `SourceFamilyMode`).
+    pub(crate) source_family_mode: crate::engine::SourceFamilyMode,
+    pub(crate) source_family_counters: crate::engine::SourceFamilyCounters,
     /// Dedicated identity binding for reusable recalculation plans.
     recalc_plan_token: Arc<()>,
     /// Staged formulas by sheet when `defer_graph_building` is enabled.
@@ -2914,6 +2917,8 @@ where
             lookup_index_cache: LookupIndexCache::new(lookup_cache_max_bytes),
             source_cache: Arc::new(std::sync::RwLock::new(SourceCache::default())),
             source_formula_token: Arc::new(()),
+            source_family_mode: crate::engine::SourceFamilyMode::from_env(),
+            source_family_counters: crate::engine::SourceFamilyCounters::default(),
             recalc_plan_token: Arc::new(()),
             staged_formulas: std::collections::HashMap::new(),
             staged_formula_index: StagedFormulaIndex::default(),
@@ -3079,6 +3084,8 @@ where
             lookup_index_cache: LookupIndexCache::new(lookup_cache_max_bytes),
             source_cache: Arc::new(std::sync::RwLock::new(SourceCache::default())),
             source_formula_token: Arc::new(()),
+            source_family_mode: crate::engine::SourceFamilyMode::from_env(),
+            source_family_counters: crate::engine::SourceFamilyCounters::default(),
             recalc_plan_token: Arc::new(()),
             staged_formulas: std::collections::HashMap::new(),
             staged_formula_index: StagedFormulaIndex::default(),
@@ -10261,12 +10268,15 @@ where
                 } else {
                     format!("={txt}")
                 };
+                grouper.note_formula();
                 let staged_record = if let Some(cached) = cache.get(&key) {
+                    grouper.note_parse_cache_hit();
                     cached.map(|ast_id| {
                         self.note_staged_formula(&mut grouper, row, col, ast_id);
                         FormulaIngestRecord::new(row, col, ast_id, Some(Arc::<str>::from(key)))
                     })
                 } else {
+                    grouper.note_parse(key.len());
                     let parsed = match formualizer_parse::parser::parse(&key) {
                         Ok(parsed) => Some(parsed),
                         Err(error) => self.handle_formula_parse_error(
@@ -10321,6 +10331,7 @@ where
                 }
             }
 
+            self.finish_family_grouper(&mut grouper);
             let batch = FormulaIngestBatch::new(sheet.clone(), formulas);
             if let Some((report, preparation)) = deferred_source {
                 direct.push((batch, report, preparation));
@@ -10335,6 +10346,15 @@ where
             } else if !batch.is_empty() {
                 ordinary.push(batch);
             }
+        }
+        if std::env::var("FZ_DEBUG_LOAD")
+            .ok()
+            .is_some_and(|v| v != "0")
+        {
+            eprintln!(
+                "[fz][families] deferred build: {}",
+                self.source_family_counters.debug_line()
+            );
         }
         Ok((ordinary, compressed, direct, may_fail))
     }

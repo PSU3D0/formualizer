@@ -32,6 +32,20 @@ impl PhaseClock {
         }
     }
 
+    /// Print the load-time formula staging counters (no timing: the
+    /// line is not a phase).
+    pub(super) fn families<R: formualizer_eval::traits::EvaluationContext>(
+        &self,
+        engine: &formualizer_eval::engine::Engine<R>,
+    ) {
+        if self.marks.is_some() {
+            eprintln!(
+                "[fz][families] {}",
+                engine.source_family_counters().debug_line()
+            );
+        }
+    }
+
     /// Print the whole run's time.
     pub(super) fn total(&self, formulas: usize) {
         if let Some((start, _)) = &self.marks {

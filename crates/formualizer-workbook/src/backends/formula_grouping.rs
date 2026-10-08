@@ -37,12 +37,15 @@ impl GroupedFormulaStaging {
         } else {
             format!("={text}")
         };
+        self.grouper.note_formula();
         if let Some(cached) = self.parse_cache.get(&with_eq) {
+            self.grouper.note_parse_cache_hit();
             return Ok(cached.map(|ast_id| {
                 engine.note_staged_formula(&mut self.grouper, row, col, ast_id);
                 FormulaIngestRecord::new(row, col, ast_id, Some(Arc::<str>::from(with_eq)))
             }));
         }
+        self.grouper.note_parse(with_eq.len());
         match formualizer_parse::parser::parse(&with_eq) {
             Ok(parsed) => {
                 let record = engine.stage_formula_ast(&mut self.grouper, row, col, &parsed, None);
@@ -75,5 +78,10 @@ impl GroupedFormulaStaging {
                 }))
             }
         }
+    }
+
+    /// Fold this sheet's staging counters into the engine's.
+    pub(crate) fn finish<R: EvaluationContext>(&mut self, engine: &mut Engine<R>) {
+        engine.finish_family_grouper(&mut self.grouper);
     }
 }
