@@ -507,6 +507,26 @@ fn bad_utf8_and_cancellation_match_the_reference() {
 }
 
 #[test]
+fn many_distinct_namespaces_and_prefixes_match_the_reference() {
+    // Interning is hashed; a linear intern list made these quadratic.
+    let n = 2_000;
+    let ext: String = (0..n)
+        .map(|i| format!("<x:e xmlns:x=\"urn:{i:08}\" x:a=\"1\"/>"))
+        .collect();
+    let rows: String = (1..=n)
+        .map(|r| {
+            format!(
+                "<row r=\"{r}\" xmlns:p{r}=\"{MAIN}\"><p{r}:c r=\"A{r}\"><p{r}:f>1+1</p{r}:f><p{r}:v>0</p{r}:v></p{r}:c></row>"
+            )
+        })
+        .collect();
+    let sheet = format!(
+        "<worksheet xmlns=\"{MAIN}\"><sheetData>{rows}</sheetData><extLst><ext uri=\"{{A}}\">{ext}</ext></extLst></worksheet>"
+    );
+    compare_all(sheet.as_bytes(), &XlsxRecalculateOptions::default());
+}
+
+#[test]
 fn every_truncation_matches_the_reference() {
     for doc in [rich_sheet(), dynamic_sheet()] {
         let bytes = doc.as_bytes();

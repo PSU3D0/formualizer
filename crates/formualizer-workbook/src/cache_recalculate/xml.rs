@@ -14,6 +14,7 @@ use quick_xml::{
     },
     name::{NamespaceResolver, QName, ResolveResult},
 };
+use rustc_hash::FxHashMap;
 use std::borrow::Cow;
 use std::collections::HashSet;
 use std::ops::{Deref, Range};
@@ -176,24 +177,30 @@ fn qualified_name(bytes: &[u8]) -> Result<(), IoError> {
     }
     Ok(())
 }
-/// Per-walk namespace interner.
-struct Namespaces(Vec<Ns>);
+/// Per-walk namespace interner, hashed: a part may bind any number of
+/// distinct namespace names.
+struct Namespaces(FxHashMap<Box<[u8]>, Ns>);
 impl Namespaces {
     fn new() -> Self {
-        Self(vec![Ns::Main, Ns::Static(RELS), Ns::Static(OFFICE)])
+        Self(
+            [Ns::Main, Ns::Static(RELS), Ns::Static(OFFICE)]
+                .into_iter()
+                .map(|ns| (ns.as_bytes().into(), ns))
+                .collect(),
+        )
     }
     fn get(&mut self, value: ResolveResult<'_>) -> Result<Ns, IoError> {
         match value {
             ResolveResult::Bound(ns) => {
                 let ns = ns.as_ref();
-                if let Some(known) = self.0.iter().find(|n| n.as_bytes() == ns) {
+                if let Some(known) = self.0.get(ns) {
                     return Ok(known.clone());
                 }
-                let ns =
+                let text =
                     std::str::from_utf8(ns).map_err(|e| IoError::from_backend("xlsx-xml", e))?;
-                let ns = Ns::Shared(Rc::from(ns));
-                self.0.push(ns.clone());
-                Ok(ns)
+                let interned = Ns::Shared(Rc::from(text));
+                self.0.insert(ns.into(), interned.clone());
+                Ok(interned)
             }
             ResolveResult::Unbound => Ok(Ns::Static("")),
             ResolveResult::Unknown(_) => {
@@ -210,7 +217,7 @@ struct Scopes<'a> {
     /// Per open scope: whether it declared a binding.
     declared: Vec<bool>,
     /// Element prefix (`None` for the default namespace) to namespace.
-    cache: Vec<(Option<&'a [u8]>, Ns)>,
+    cache: FxHashMap<Option<&'a [u8]>, Ns>,
 }
 impl<'a> Scopes<'a> {
     fn new() -> Self {
@@ -218,7 +225,7 @@ impl<'a> Scopes<'a> {
             resolver: NamespaceResolver::default(),
             namespaces: Namespaces::new(),
             declared: Vec::new(),
-            cache: Vec::new(),
+            cache: FxHashMap::default(),
         }
     }
     fn pop(&mut self) {
@@ -233,12 +240,12 @@ impl<'a> Scopes<'a> {
             .iter()
             .position(|b| *b == b':')
             .map(|at| &qualified.as_bytes()[..at]);
-        if let Some((_, ns)) = self.cache.iter().find(|(p, _)| *p == prefix) {
+        if let Some(ns) = self.cache.get(&prefix) {
             return Ok(ns.clone());
         }
         let (ns, _) = self.resolver.resolve_element(QName(qualified.as_bytes()));
         let ns = self.namespaces.get(ns)?;
-        self.cache.push((prefix, ns.clone()));
+        self.cache.insert(prefix, ns.clone());
         Ok(ns)
     }
     fn attribute(&mut self, key: &[u8]) -> Result<Ns, IoError> {

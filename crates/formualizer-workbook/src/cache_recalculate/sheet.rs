@@ -423,16 +423,17 @@ impl<'a> OpenCell<'a> {
         }
     }
 }
-/// Interned element names and cell types of one worksheet.
+/// Interned element names and cell types of one worksheet, hashed: every
+/// formula cell may use its own prefix.
 #[derive(Default)]
-struct Names(Vec<Rc<str>>);
+struct Names(rustc_hash::FxHashSet<Rc<str>>);
 impl Names {
     fn get(&mut self, name: &str) -> Rc<str> {
-        if let Some(known) = self.0.iter().find(|n| ***n == *name) {
+        if let Some(known) = self.0.get(name) {
             return known.clone();
         }
         let name: Rc<str> = Rc::from(name);
-        self.0.push(name.clone());
+        self.0.insert(name.clone());
         name
     }
 }
