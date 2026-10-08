@@ -1819,7 +1819,7 @@ impl CalamineAdapter {
                 definition: DefinedNameDefinition::Literal { value },
             });
         }
-        if trimmed.contains(',') {
+        if super::has_union_comma(trimmed) {
             return None;
         }
         let reference = ReferenceType::from_string(trimmed).ok()?;
