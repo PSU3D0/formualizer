@@ -46,6 +46,12 @@ impl Deref for Ns {
         }
     }
 }
+impl Ns {
+    /// Whether this is the SpreadsheetML main namespace.
+    pub fn is_main(&self) -> bool {
+        matches!(self, Ns::Main)
+    }
+}
 impl PartialEq<str> for Ns {
     fn eq(&self, other: &str) -> bool {
         match self {
@@ -107,7 +113,11 @@ impl<'n, 'a> Node<'n, 'a> {
         self.attribute("", name).map(|a| &*a.value)
     }
     pub fn required(&self, name: &str) -> Result<&'n str, IoError> {
-        self.value(name)
+        self.required_attribute(name).map(|a| &*a.value)
+    }
+    /// The unprefixed attribute `name`, which must be present.
+    pub fn required_attribute(&self, name: &str) -> Result<&'n Attribute<'a>, IoError> {
+        self.attribute("", name)
             .ok_or_else(|| unsupported(format!("missing {name} attribute"), "XLSX XML"))
     }
 }

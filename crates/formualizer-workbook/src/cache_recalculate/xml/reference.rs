@@ -6,6 +6,8 @@ use quick_xml::{NsReader, events::Event, name::ResolveResult};
 use std::collections::HashSet;
 use std::ops::Range;
 
+pub(in crate::cache_recalculate) use super::{MAIN, OFFICE};
+
 #[derive(Debug)]
 pub(in crate::cache_recalculate) struct Element {
     pub ns: String,
@@ -34,6 +36,30 @@ pub(in crate::cache_recalculate) enum Kind {
 pub(in crate::cache_recalculate) struct Node {
     pub kind: Kind,
     pub span: Range<usize>,
+}
+impl Node {
+    pub fn attribute(&self, ns: &str, local: &str) -> Option<&Attribute> {
+        match &self.kind {
+            Kind::Open { attributes, .. } => {
+                attributes.iter().find(|a| a.ns == ns && a.local == local)
+            }
+            _ => None,
+        }
+    }
+    pub fn value(&self, name: &str) -> Option<&str> {
+        self.attribute("", name).map(|a| a.value.as_str())
+    }
+    pub fn required(&self, name: &str) -> Result<&str, IoError> {
+        self.value(name)
+            .ok_or_else(|| unsupported(format!("missing {name} attribute"), "XLSX XML"))
+    }
+}
+pub(in crate::cache_recalculate) fn path_is(path: &[Element], ns: &str, names: &[&str]) -> bool {
+    path.len() == names.len()
+        && path
+            .iter()
+            .zip(names)
+            .all(|(e, n)| e.ns == ns && e.local == *n)
 }
 fn valid_text(text: &str) -> Result<(), IoError> {
     if text.chars().all(|c| matches!(c, '\t'|'\n'|'\r'|' '..='\u{d7ff}'|'\u{e000}'..='\u{fffd}'|'\u{10000}'..='\u{10ffff}')) { Ok(()) }

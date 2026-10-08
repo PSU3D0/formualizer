@@ -1,12 +1,13 @@
-//! Differential oracle for the borrowed XML walker: it must agree with the
-//! owned-string implementation it replaced (`xml::reference`) on every
-//! event, span and error.
+//! Differential oracle for the borrowed XML walker and worksheet scanner:
+//! both must agree with the owned-string implementations they replaced
+//! (`xml::reference`, `sheet::reference`) on every event, span, scan output,
+//! counter and error.
 //!
-//! Every walk made by the crate's unit tests is shadowed by this check; this
-//! module adds a generated malformed-input set, a mutation loop over
-//! worksheets from the committed XLSX fixtures and an ignored check over a
-//! list of XLSX files.
-use super::super::{XlsxRecalculateLimits, XlsxRecalculateOptions, xml};
+//! Every walk and scan made by the crate's unit tests is shadowed by these
+//! checks; this module adds a generated malformed-input set, a mutation loop
+//! over worksheets from the committed XLSX fixtures and an ignored check
+//! over a list of XLSX files.
+use super::super::{IoError, XlsxRecalculateLimits, XlsxRecalculateOptions, sheet, xml};
 use std::cell::Cell;
 use std::io::Read;
 
@@ -100,13 +101,74 @@ fn compare_walk(bytes: &[u8], options: &XlsxRecalculateOptions) {
         );
     }
 }
+fn scan_outcome(
+    f: impl FnOnce(&mut usize, &mut u64) -> Result<sheet::Scanned, IoError>,
+    observed: usize,
+    logical: u64,
+) -> String {
+    let (mut observed, mut logical) = (observed, logical);
+    let result = f(&mut observed, &mut logical);
+    format!("{result:?} observed={observed} logical={logical}")
+}
+fn compare_scan(
+    bytes: &[u8],
+    options: &XlsxRecalculateOptions,
+    mode: sheet::Mode,
+    observed: usize,
+    logical: u64,
+) {
+    let new = scan_outcome(
+        |o, l| sheet::scan_uncounted(bytes, options, mode, o, l),
+        observed,
+        logical,
+    );
+    let old = scan_outcome(
+        |o, l| sheet::reference::scan(bytes, options, mode, o, l),
+        observed,
+        logical,
+    );
+    if new != old {
+        let at = new
+            .bytes()
+            .zip(old.bytes())
+            .position(|(a, b)| a != b)
+            .unwrap_or(new.len().min(old.len()));
+        let from = at.saturating_sub(300);
+        panic!(
+            "worksheet scan ({mode:?}) diverged from the reference at byte {at}\n new: …{}\n old: …{}\ninput: {:?}",
+            &new[from..(at + 300).min(new.len())],
+            &old[from..(at + 300).min(old.len())],
+            String::from_utf8_lossy(&bytes[..bytes.len().min(2000)]),
+        );
+    }
+}
 /// Shadow check made by every `xml::walk` under test.
 pub(in crate::cache_recalculate) fn shadow_walk(bytes: &[u8], options: &XlsxRecalculateOptions) {
     exclusive(|| compare_walk(bytes, options));
 }
-/// Walk `bytes` under `options`.
+/// Shadow check made by every `sheet::scan` under test.
+pub(in crate::cache_recalculate) fn shadow_scan(
+    bytes: &[u8],
+    options: &XlsxRecalculateOptions,
+    mode: sheet::Mode,
+    observed: usize,
+    logical: u64,
+) {
+    exclusive(|| compare_scan(bytes, options, mode, observed, logical));
+}
+const MODES: [sheet::Mode; 3] = [
+    sheet::Mode::Plain,
+    sheet::Mode::TablePlain,
+    sheet::Mode::Indexed,
+];
+/// Walk and scan `bytes` in every mode under `options`.
 fn compare_all(bytes: &[u8], options: &XlsxRecalculateOptions) {
-    exclusive(|| compare_walk(bytes, options));
+    exclusive(|| {
+        compare_walk(bytes, options);
+        for mode in MODES {
+            compare_scan(bytes, options, mode, 0, 0);
+        }
+    });
 }
 /// Default limits and a tight set that trips every count/size bound.
 fn option_sets() -> Vec<XlsxRecalculateOptions> {
@@ -629,18 +691,25 @@ fn committed_fixture_parts_match_the_reference() {
     }
     assert!(parts > 0);
 }
-/// Compare every XML part of one package; returns the number of parts
-/// compared.
+/// Compare every XML part (and, for worksheets, every scan mode) of one
+/// package; returns the number of parts compared.
 fn check_package(bytes: &[u8]) -> usize {
     let options = XlsxRecalculateOptions::default();
     let parts = xml_parts(bytes);
-    for (_, data) in &parts {
-        exclusive(|| compare_walk(data, &options));
+    for (name, data) in &parts {
+        exclusive(|| {
+            compare_walk(data, &options);
+            if name.starts_with("xl/worksheets/") && !name.contains("_rels") {
+                for mode in MODES {
+                    compare_scan(data, &options, mode, 0, 0);
+                }
+            }
+        });
     }
     parts.len()
 }
 
-/// Old and new walk over every XML part of the XLSX files listed (one
+/// Old and new walk/scan over every XML part of the XLSX files listed (one
 /// path per line) in the file named by `FORMUALIZER_SCAN_DIFF_FILES`:
 ///
 /// ```text
