@@ -732,7 +732,7 @@ fn ingest_source<'a>(
         sheets,
         date_system,
         plans,
-        formula_count,
+        formula_count: _,
         metadata,
     } = admission;
     let anchors = plans.iter().any(|p| !p.ownership.anchors.is_empty());
@@ -891,14 +891,20 @@ fn ingest_source<'a>(
             }
         }
     }
-    if adapter.has_document_names() {
+    let unimported = adapter.unimported_document_names();
+    if !unimported.is_empty() {
         // Metadata-only names may be omitted from the engine only if no source
-        // calculation references them. Inspect after shared-formula replay but
-        // before evaluation/publication; avoid this pass for ordinary workbooks.
-        let mut source_formulas = Vec::with_capacity(formula_count);
+        // calculation references them. Only a formula whose source text names
+        // one can; a shared formula's copies name what its anchor names. Inspect
+        // those after shared-formula replay but before evaluation/publication.
+        let mut source_formulas = Vec::new();
         for (sheet, plan) in sheets.iter().zip(&plans) {
             for cell in &plan.cells {
                 checkpoint(&options.cancel)?;
+                let text = cell.formula_text.to_ascii_lowercase();
+                if !unimported.iter().any(|name| text.contains(name.as_str())) {
+                    continue;
+                }
                 let address = CellAddress::new(&sheet.name, cell.row, cell.col)
                     .map_err(|e| IoError::from_backend("xlsx-coordinate", e))?;
                 if let Some(formula) = engine
@@ -912,7 +918,7 @@ fn ingest_source<'a>(
             }
         }
         adapter.validate_calculation_names(&source_formulas)?;
-        clock.lap("defined-name formula pass (inspect every formula)");
+        clock.lap("document-name reference check");
     }
     visibility_guard::validate(&engine, &sheets, &plans, options)?;
     checkpoint(&options.cancel)?;

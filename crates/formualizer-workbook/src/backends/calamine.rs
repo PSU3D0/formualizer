@@ -1609,11 +1609,16 @@ impl CalamineAdapter {
         ground(&mut ast, scope.and_then(|id| sheets.get(id)), sheets).then_some(ast)
     }
 
+    /// Lowercased built-in document names (`_xlnm.*`) that are kept as raw
+    /// metadata, not calculation names. No source formula may reference one.
     #[cfg(feature = "xlsx-recalc")]
-    pub(crate) fn has_document_names(&self) -> bool {
+    pub(crate) fn unimported_document_names(&self) -> Vec<String> {
         self.raw_calculation_names()
             .iter()
-            .any(|(name, _, _)| name.to_ascii_lowercase().starts_with("_xlnm."))
+            .filter(|(name, _, _)| name.to_ascii_lowercase().starts_with("_xlnm."))
+            .filter(|(_, text, scope)| self.grounded_name_ast(text, *scope).is_none())
+            .map(|(name, _, _)| name.to_ascii_lowercase())
+            .collect()
     }
 
     #[cfg(feature = "xlsx-recalc")]
