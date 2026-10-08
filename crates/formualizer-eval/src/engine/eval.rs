@@ -1571,8 +1571,9 @@ where
                 });
             };
 
-            let sheet_id = self.engine.graph.sheet_id_mut(sheet);
             let before0 = before.saturating_sub(1);
+            self.engine.check_insert_room(sheet, before0, count, true)?;
+            let sheet_id = self.engine.graph.sheet_id_mut(sheet);
             let occupancy = self.engine.structural_row_occupancy(sheet, sheet_id);
             let affected_region = Engine::<R>::structural_row_region(sheet_id, before0);
 
@@ -1648,8 +1649,10 @@ where
                 });
             };
 
-            let sheet_id = self.engine.graph.sheet_id_mut(sheet);
             let before0 = before.saturating_sub(1);
+            self.engine
+                .check_insert_room(sheet, before0, count, false)?;
+            let sheet_id = self.engine.graph.sheet_id_mut(sheet);
             let occupancy = self.engine.structural_column_occupancy();
             let affected_region = Engine::<R>::structural_col_region(sheet_id, before0);
 
@@ -10959,6 +10962,49 @@ where
         Ok(())
     }
 
+    /// Refuse an insert of `count` rows (`rows`) or columns at 0-based
+    /// `before0` that would push content off the grid, as Excel does; nothing
+    /// is changed. Content is the Arrow extent (which may include trailing
+    /// empty cells, so this can refuse conservatively) and every formula.
+    fn check_insert_room(
+        &self,
+        sheet: &str,
+        before0: u32,
+        count: u32,
+        rows: bool,
+    ) -> Result<(), crate::engine::EditorError> {
+        let limit = if rows {
+            crate::engine::authority::geom::MAX_ROW
+        } else {
+            crate::engine::authority::geom::MAX_COL
+        } + 1;
+        let arrow = self.arrow_sheets.sheet(sheet).map_or(0, |a| {
+            if rows {
+                a.nrows
+            } else {
+                u32::try_from(a.columns.len()).unwrap_or(u32::MAX)
+            }
+        });
+        let formulas = self.graph.sheet_id(sheet).map_or(0, |id| {
+            self.graph
+                .grid_vertices_in_sheet(id)
+                .map(|(_, at)| if rows { at.row() } else { at.col() } + 1)
+                .max()
+                .unwrap_or(0)
+        });
+        let extent = arrow.max(formulas);
+        let pushed_off = extent > before0 && extent.saturating_add(count) > limit;
+        if count > limit || pushed_off {
+            return Err(crate::engine::EditorError::Excel(
+                ExcelError::new(ExcelErrorKind::Ref).with_message(format!(
+                    "inserting {count} {} would push non-empty cells off the sheet",
+                    if rows { "rows" } else { "columns" }
+                )),
+            ));
+        }
+        Ok(())
+    }
+
     fn structural_row_occupancy(
         &self,
         sheet: &str,
@@ -11001,6 +11047,7 @@ where
         self.materialize_deferred_sheet_before_structural_edit(sheet)?;
         let sheet_id = self.ensure_known_sheet_id(sheet)?;
         let before0 = before.saturating_sub(1);
+        self.check_insert_room(sheet, before0, count, true)?;
         let affected_region = Self::structural_row_region(sheet_id, before0);
         let occupancy = self.structural_row_occupancy(sheet, sheet_id);
         let summary = {
@@ -11080,6 +11127,7 @@ where
             },
         )?;
         let before0 = before.saturating_sub(1);
+        self.check_insert_room(sheet, before0, count, false)?;
         let affected_region = Self::structural_col_region(sheet_id, before0);
         let occupancy = self.structural_column_occupancy();
         let summary = {

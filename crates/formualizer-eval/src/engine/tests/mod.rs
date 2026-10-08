@@ -87,6 +87,7 @@ mod engine_atomic_actions_618;
 
 mod index_unbounded_ranges;
 mod infinite_ranges;
+mod insert_at_grid_edge;
 mod issue_306_structural_delete_dirty;
 mod issue_313_insert_invalidation;
 mod spill_admission_200;
