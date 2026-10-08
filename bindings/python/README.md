@@ -232,8 +232,9 @@ cleared (including children), so it can exceed the formula count.
 Deterministic unchanged outputs recalculate to byte-identical no-ops.
 
 Legacy fixed-extent (CSE) arrays, elementwise `IF`, Excel tables within a
-validated subset and volatile functions are recalculated too. Data tables,
-external links, rich/unknown or malformed metadata, hidden-row `SUBTOTAL`/`AGGREGATE`
+validated subset, volatile functions and external links (read from the values
+cached in the workbook, never refreshed) are recalculated too. Data tables,
+unservable external references, rich/unknown or malformed metadata, hidden-row `SUBTOTAL`/`AGGREGATE`
 ranges, circular references, shared-family multi-cell spills and spill
 publication across merges are refused. Configured ZIP/XML/cell/output bounds
 still apply. Fresh unmarked 1x1 results have no spill identity (`A1#` returns

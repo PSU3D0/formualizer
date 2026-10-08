@@ -104,6 +104,15 @@ struct Clock {
     /// True when the instant came from `--now`.
     fixed: bool,
 }
+/// External link values the calculation read: always the values Excel last
+/// stored in the workbook, never refreshed from the linked files.
+#[derive(Serialize)]
+struct ExternalLinks {
+    /// Links whose cached values a formula or used defined name read.
+    links_used: usize,
+    /// Always false: links are never refreshed.
+    refreshed: bool,
+}
 #[derive(Serialize)]
 struct Report {
     schema: &'static str,
@@ -121,6 +130,9 @@ struct Report {
     refusal: Option<Refusal>,
     clock: Option<Clock>,
     seed: Option<u64>,
+    /// Present only when a computed run read cached external link values.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    external_links: Option<ExternalLinks>,
     message: String,
 }
 impl Report {
@@ -141,6 +153,7 @@ impl Report {
             refusal: None,
             clock: None,
             seed: None,
+            external_links: None,
             message,
         }
     }
@@ -149,6 +162,10 @@ impl Report {
         self.cache_cells_changed = Some(result.cache_cells_changed);
         self.worksheet_parts_changed = Some(result.worksheet_parts_changed);
         self.error_cells = Some(result.summary.errors);
+        self.external_links = (result.external_links_used > 0).then_some(ExternalLinks {
+            links_used: result.external_links_used,
+            refreshed: false,
+        });
         let errors: Vec<_> = result
             .summary
             .error_summary
@@ -480,6 +497,13 @@ where
             if !unknown.is_empty() {
                 report.message.push_str(&format!(
                     "\nunknown functions (cells produce #NAME?): {unknown}"
+                ));
+            }
+            if let Some(links) = &report.external_links {
+                report.message.push_str(&format!(
+                    "\nexternal links: used the values cached in the workbook for {} link{} (not refreshed)",
+                    links.links_used,
+                    if links.links_used == 1 { "" } else { "s" }
                 ));
             }
             code

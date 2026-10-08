@@ -134,7 +134,7 @@ A numeric cache that agrees with the computed value to within one unit in the 15
 - Array-condition `IF` selects elementwise, including inside `SUM` and fixed CSE arrays. Scalar branches and singleton axes broadcast; incompatible shapes return `#VALUE!`.
 - **Don't run concurrent writers on the same file.** Atomic replacement is not compare-and-swap protection against another editor.
 
-See [cache-only XLSX eligibility, refusals and resource bounds](cache-only-xlsx.md) for the supported subset (including fixed-extent array policies and refusals for tables, external links and unsupported names/metadata), and [the authoritative CLI reference](cli.md) for JSON fields, counters and publication details. Limits are bounded by default and have no CLI tuning flags.
+See [cache-only XLSX eligibility, refusals and resource bounds](cache-only-xlsx.md) for the supported subset (including fixed-extent array policies, cached external link values, and refusals for tables, unservable external references and unsupported names/metadata), and [the authoritative CLI reference](cli.md) for JSON fields, counters and publication details. Limits are bounded by default and have no CLI tuning flags.
 
 A copyable [agent skill](../skills/formualizer-recalc/SKILL.md) teaches the same workflow without requiring these docs alongside it.
 

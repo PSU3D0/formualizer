@@ -35,6 +35,7 @@ Recalculated, with formula text and untouched package content preserved:
 - Legacy fixed-extent (CSE) array formulas, including elementwise `IF` such as `SUM(IF(A1:A3>0,A1:A3))`.
 - Legacy implicit intersection in formulas Excel calculated (listed in `xl/calcChain.xml`); see [Legacy implicit intersection](#legacy-implicit-intersection).
 - Excel tables: structured references, bare table names and calculated columns whose every row carries a worksheet formula.
+- External workbook links (`[1]Sheet!A1`, `'[2]My Sheet'!$A$1:$C$9`): formulas read the values Excel cached in the workbook for each linked file. Links are never refreshed; see [External links](#external-links).
 - Volatile functions (`TODAY`, `NOW`, `RAND`, `OFFSET`, `INDIRECT`), sampled once per run.
 - Formula errors such as `#DIV/0!`, `#NAME?` or `#SPILL!`. These are calculated results, reported as error cells; they are not refusals.
 - Calls to functions the engine does not implement, such as add-in (`_xll.`) or VBA/macro functions. They evaluate to `#NAME?` and are written, with the reason in the receipt (see [unimplemented functions](#unimplemented-functions)).
@@ -43,7 +44,8 @@ Recalculated, with formula text and untouched package content preserved:
 
 Refused as a whole, with nothing written (CLI exit 2):
 
-- What-If data tables, external workbook links, rich values, metadata other than dynamic-array metadata, and digitally signed packages.
+- What-If data tables, rich values, metadata other than dynamic-array metadata, and digitally signed packages.
+- External references that cannot be read exactly from the link cache: DDE/OLE links, links or sheets without cached values, whole-row/column external ranges, names defined in the linked workbook (`[1]!Name`), position-dependent functions over external references and `INDIRECT` text that might name another workbook (see [External links](#external-links)).
 - `SUBTOTAL`/`AGGREGATE` ranges over hidden or filtered rows, or whose hidden-row intersection cannot be proved.
 - Multi-cell shared formulas whose sheet qualifiers look like cell references (`'Q1'!`, `'FY2024'!`).
 - Table features outside the validated subset: connection-backed tables, table-managed formulas missing from some row, unknown tables or columns, `[#This Row]` outside the data body, computed `INDIRECT` text in table-bearing workbooks, and defined names that refer to tables.
@@ -57,7 +59,7 @@ The source package is authoritative. A reconstructible evaluator consumes its va
 
 Calamine calculation import supports numeric, Boolean, quoted text and error constants, absolute cell/range names and grounded formula names. Sheet-local definitions retain their scope and shadow workbook definitions. Grounded references must be absolute and identify an existing sheet (an unqualified absolute reference is allowed only for a sheet-local definition). Formula names support arithmetic, name dependencies and the explicit pure-function subset `SUM`, `AVERAGE`, `MIN`, `MAX`, `COUNT`, `COUNTA`, `ABS`, `ROUND`, `ROUNDUP`, `ROUNDDOWN`, `IF`, `AND`, `OR`, `NOT`. Engine name registration owns dependency binding, including formulas loaded before their names.
 
-Strict recalculation conservatively refuses unsupported non-built-in definitions even if unused, and refuses cyclic names before evaluation. Relative, multi-area, external, structured/3D, array-valued and context-dependent/reference-producing definitions are not admitted. Unsupported `_xlnm.*` document metadata (including print/filter definitions) is preserved without calculation import only when no calculation/name expression references it; a reference causes explicit refusal. Supported built-in definitions may be calculated normally. Original error constants remain errors, not metadata-loss signals. All workbook name XML is preserved byte-for-byte. The public range/literal name DTO and JSON schema are unchanged; this does not repair the separate legacy Umya import path.
+Strict recalculation conservatively refuses unsupported non-built-in definitions even if unused, and refuses cyclic names before evaluation. Relative, multi-area, structured/3D, array-valued and context-dependent/reference-producing definitions are not admitted. Absolute external references are admitted when they read cached link values (see [External links](#external-links)); a definition that reads external links and that nothing references is left out of the calculation, like unsupported `_xlnm.*` metadata. Unsupported `_xlnm.*` document metadata (including print/filter definitions) is preserved without calculation import only when no calculation/name expression references it; a reference causes explicit refusal. Supported built-in definitions may be calculated normally. Original error constants remain errors, not metadata-loss signals. All workbook name XML is preserved byte-for-byte. The public range/literal name DTO and JSON schema are unchanged; this does not repair the separate legacy Umya import path.
 
 Preflight uses namespace-aware XML events and source offsets. Changed worksheet XML is assembled once from non-overlapping edits to formula cache types/values. Formula XML, styles, drawings and other untouched content retain their original bytes. Existing dates are evaluated in the source workbook's epoch; serial egress avoids lossy native-date conversion, including Excel-1900 serial 60.
 
@@ -175,6 +177,20 @@ Shared-formula followers are expanded from the master text by Calamine, which of
 
 Multi-cell dynamic results intersecting any table rectangle give `#SPILL!` before publication, even if table cells are blank. A 1x1 result inside a table remains scalar. Source-declared dynamic and legacy CSE footprints intersecting a table are refused. The general mutable workbook loaders and their native table-reference behavior are unchanged; this support is specific to immutable source recalculation.
 
+## External links
+
+A formula such as `[1]Prices!B4` or `VLOOKUP(A2,'[2]Rate Table'!$A$1:$C$40,3,FALSE)` reads another workbook. In the file, `[n]` is the `n`-th `<externalReference>` of `xl/workbook.xml`, whose relationship points at `xl/externalLinks/externalLinkN.xml`. That part holds an `externalBook` with the linked workbook's sheet names and, in `sheetDataSet`, the values Excel last read from it. When links are not refreshed, Excel calculates with these cached values, and so does recalculation: the linked files are never opened or refreshed, and the receipt says so (CLI `external_links`, `XlsxRecalculateResult::external_links_used`). Link parts, their relationships and their content types are kept byte for byte; only worksheet formula caches change.
+
+Each external cell or rectangle a formula or a used defined name reads must map exactly to the cache:
+
+- The link is an `externalBook` with a `sheetDataSet`, and the referenced sheet is listed in `sheetNames` (case-insensitively) with its own `sheetData`.
+- Cached values keep the typing of ordinary cached values: numbers (dates stay serial numbers), `t="str"` text, `t="b"` booleans and the classic error codes. Other cell types, rich-value cells (`vm`) and `_xHHHH_`-looking text are refused.
+- A cell that the cache omits is blank: Excel stores only non-empty cells. On a sheet whose last refresh failed (`refreshError="1"`), Excel reads an omitted cell as `#REF!`, and an external range there that includes an omitted cell is refused. Both rules match the formula results Excel cached in real workbooks with external links.
+- Ranges are bounded rectangles; whole-row or whole-column external ranges are refused. Their summed area is bounded by four times the workbook cell limit.
+- An external range in a value position of a formula Excel calculated intersects the formula's row or column, as on a worksheet. A defined name that is exactly one external reference reads it like the reference; a name that computes an array from an external range, or a name holding an external range in an intersection position, is refused.
+
+Refused, because the result would depend on where the referenced cells live rather than on their cached values, or could read cells the cache does not hold: DDE and OLE links; names defined in the linked workbook (`[1]!Name`, `'[1]Sheet'!Name`); `OFFSET`, `ROW`, `COLUMN`, `CELL`, `ISREF`, `AREAS`, `ISFORMULA`, `FORMULATEXT`, `SHEET`, `SUBTOTAL` and `AGGREGATE` over an external reference; the range, union and intersection operators over one; `SUMIF`/`AVERAGEIF` whose external sum range differs in shape from the criteria range; and, in a workbook with external links, any `INDIRECT` whose argument is not literal text free of `[`.
+
 ## Volatile snapshots
 
 Source recalculation evaluates a throwaway engine using `Engine::evaluate_all_for_snapshot`. Volatile values and their dependents remain Current for result projection; iterative-SCC redirty and every other stale-result check remain in force. The engine samples its clock once per evaluation request and uses the configured RNG policy/seed. `TODAY`, `NOW`, `RAND`, `OFFSET` and `INDIRECT` can therefore publish a consistent single-request result instead of being refused for next-cycle volatile dirtiness.
@@ -185,7 +201,8 @@ Volatile formulas are recomputed on every run. `RAND`/`RANDBETWEEN` depend only 
 
 This is not a fallback for every XLSX package. It rejects unsupported inputs/results instead of silently producing incomplete caches:
 
-- Data-table formulas, rich value metadata (`vm`, `xl/richData/`), metadata other than XLDAPR (value/MDX metadata, other types or extension URIs), dangling or malformed `cm` chains, external workbook links and package signatures.
+- Data-table formulas, rich value metadata (`vm`, `xl/richData/`), metadata other than XLDAPR (value/MDX metadata, other types or extension URIs), dangling or malformed `cm` chains and package signatures.
+- External references outside the [external link](#external-links) subset, and link parts or relationships the workbook does not reference.
 - Non-default spill conflict or bounds policies, when array anchors or spills are involved (including fixed-extent CSE).
 - A spill over a merged range, or from a member of a source shared-formula family. A spill that exceeds the cell or width limits is refused before any member is materialized.
 - Unsupported table metadata, connection/query-backed tables, missing managed worksheet formulas, mismatched headers, table/name/merge/array collisions, unlowerable structured-reference contexts and non-literal `INDIRECT` text in table-bearing workbooks.
@@ -206,7 +223,14 @@ Common refusals:
 | `feature` (`context`) | Meaning |
 | --- | --- |
 | `data-table formula` (`worksheet`) | A What-If data table (`t="dataTable"`). Data tables are never evaluated. |
-| `external links or rich value data` (`XLSX package`) | The package has external workbook links or rich values. External references are not resolved. |
+| `rich value data` (`XLSX package`) | The package has rich values (`xl/richData/`). |
+| `DDE external link`, `OLE external link` (`external link [n]`) | A dynamic data exchange or OLE link has no workbook cache to read. |
+| `external link without cached values`, `external sheet not listed in the link cache`, `external sheet without cached values` (`Sheet1!B2: [1]Data!A1`, or `defined name ...`) | A formula or used defined name reads a link or sheet whose values the workbook did not cache. Open the workbook in Excel with the linked file available and save it, or replace the reference with values. |
+| `whole-row or whole-column external reference`, `external range over uncached cells of a sheet whose link refresh failed`, `unsupported external cached value`, `external range cell limit` (cell and reference) | The reference cannot be mapped exactly to cached cells. |
+| `defined name of a linked workbook` (cell and name) | A formula reads a name defined in the linked workbook (`[1]!Name`). |
+| `OFFSET over an external reference`, `ROW over an external reference`, ..., `reference operator over an external reference`, `SUMIF resizing an external sum range` (cell) | The result depends on the referenced cells' positions, or could read cells outside the cached reference. |
+| `INDIRECT that may reach a linked workbook` (cell) | In a workbook with external links, `INDIRECT` reads text that is not a `[`-free literal. |
+| `defined name computing an array from an external range`, `implicit intersection of a defined name holding an external range` (name or cell) | A defined name whose external range the calculation cannot reduce to the value Excel would use. |
 | `package digital signature` (`XLSX package`) | Rewriting the package would invalidate its signature. |
 | `SUBTOTAL/AGGREGATE references a stored hidden row; source row visibility is not hydrated` (`Sheet1!C1 range Sheet1!1:5`) | The reducer's range includes a hidden, zero-height, collapsed-outline or filtered row, so the result would depend on visibility the recalc does not model. |
 | `cannot prove ... against stored hidden rows` (cell) | A dynamic, range-operator or LET/LAMBDA-bound reducer range whose hidden-row intersection cannot be checked statically. |

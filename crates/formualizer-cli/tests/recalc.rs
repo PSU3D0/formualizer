@@ -499,3 +499,63 @@ fn built_binary_version_help_recalc_and_usage() {
         "written"
     );
 }
+/// A one-sheet workbook whose A1 reads `[1]Data!A1` from one external link
+/// that cached `Data!A1 = 41`.
+fn linked_fixture() -> Vec<u8> {
+    const LINK: &str =
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.externalLink+xml";
+    let parts: BTreeMap<_, _> = [
+        ("[Content_Types].xml", format!("<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/><Override PartName=\"/xl/worksheets/sheet1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/><Override PartName=\"/xl/externalLinks/externalLink1.xml\" ContentType=\"{LINK}\"/></Types>")),
+        ("_rels/.rels", format!("<Relationships xmlns=\"{RELS}\"><Relationship Id=\"rId1\" Type=\"{OFFICE}/officeDocument\" Target=\"xl/workbook.xml\"/></Relationships>")),
+        ("xl/workbook.xml", format!("<workbook xmlns=\"{MAIN}\" xmlns:r=\"{OFFICE}\"><sheets><sheet name=\"Sheet1\" sheetId=\"1\" r:id=\"rId1\"/></sheets><externalReferences><externalReference r:id=\"rId2\"/></externalReferences></workbook>")),
+        ("xl/_rels/workbook.xml.rels", format!("<Relationships xmlns=\"{RELS}\"><Relationship Id=\"rId1\" Type=\"{OFFICE}/worksheet\" Target=\"worksheets/sheet1.xml\"/><Relationship Id=\"rId2\" Type=\"{OFFICE}/externalLink\" Target=\"externalLinks/externalLink1.xml\"/></Relationships>")),
+        ("xl/externalLinks/externalLink1.xml", format!("<externalLink xmlns=\"{MAIN}\"><externalBook xmlns:r=\"{OFFICE}\" r:id=\"rId1\"><sheetNames><sheetName val=\"Data\"/></sheetNames><sheetDataSet><sheetData sheetId=\"0\"><row r=\"1\"><cell r=\"A1\"><v>41</v></cell></row></sheetData></sheetDataSet></externalBook></externalLink>")),
+        ("xl/externalLinks/_rels/externalLink1.xml.rels", format!("<Relationships xmlns=\"{RELS}\"><Relationship Id=\"rId1\" Type=\"{OFFICE}/externalLinkPath\" Target=\"Source.xlsx\" TargetMode=\"External\"/></Relationships>")),
+        ("xl/worksheets/sheet1.xml", format!("<worksheet xmlns=\"{MAIN}\"><sheetData><row r=\"1\"><c r=\"A1\"><f>[1]Data!A1+1</f><v>0</v></c></row></sheetData></worksheet>")),
+    ].into_iter().collect();
+    let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for (name, value) in parts {
+        zip.start_file(name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(value.as_bytes()).unwrap();
+    }
+    zip.finish().unwrap().into_inner()
+}
+#[test]
+fn external_link_cache_use_is_reported() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("linked.xlsx");
+    std::fs::write(&path, linked_fixture()).unwrap();
+    let (code, report) = json(&path, &["--check"]);
+    assert_eq!(code, 3);
+    assert_eq!(report["status"], "stale");
+    assert_eq!(
+        report["external_links"],
+        serde_json::json!({"links_used": 1, "refreshed": false})
+    );
+    let message = report["message"].as_str().unwrap();
+    assert!(
+        message.ends_with(
+            "\nexternal links: used the values cached in the workbook for 1 link (not refreshed)"
+        ),
+        "{message}"
+    );
+    // Without external reads the key is absent (see the pinned field set).
+    let plain = dir.path().join("plain.xlsx");
+    std::fs::write(&plain, simple(2)).unwrap();
+    let (_, report) = json(&plain, &["--check"]);
+    assert!(report.get("external_links").is_none());
+    // Written output: 42, and the link part is untouched.
+    let (code, report) = json(&path, &[]);
+    assert_eq!(code, 0);
+    assert_eq!(report["status"], "written");
+    let output = std::fs::read(&path).unwrap();
+    let mut archive = zip::ZipArchive::new(Cursor::new(&output)).unwrap();
+    let mut xml = String::new();
+    archive
+        .by_name("xl/worksheets/sheet1.xml")
+        .unwrap()
+        .read_to_string(&mut xml)
+        .unwrap();
+    assert!(xml.contains("<v>42</v>"), "{xml}");
+}

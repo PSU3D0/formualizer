@@ -80,7 +80,7 @@ The Python functions `recalculate_xlsx_file`/`recalculate_xlsx_bytes` take the s
 
 ## JSON
 
-With `--json`, every outcome except help and version, including usage errors, produces exactly one JSON object on stdout, followed by a newline. Nothing is written to stderr. The schema id is `formualizer.recalc/1`; additive fields need not bump the id. All keys below are always present.
+With `--json`, every outcome except help and version, including usage errors, produces exactly one JSON object on stdout, followed by a newline. Nothing is written to stderr. The schema id is `formualizer.recalc/1`; additive fields need not bump the id. All keys below are always present, except `external_links`, which appears only when the computation read cached external link values.
 
 ```json
 {
@@ -127,6 +127,7 @@ With `--json`, every outcome except help and version, including usage errors, pr
 | `clock.timezone` | string | `Local`, `UTC` or `±HH:MM`. |
 | `clock.fixed` | boolean | True when `--now` set the instant. |
 | `seed` | integer or null | The `RAND`/`RANDBETWEEN` seed, an unsigned 64-bit integer. JavaScript's `JSON.parse` rounds values above 2^53; read it as a big integer to replay. |
+| `external_links` | object, optional | Present only after a successful computation that read values of external workbook links: `{"links_used": n, "refreshed": false}`. `links_used` counts the links (`xl/externalLinks` parts) whose cached values a formula or used defined name read. Links are never refreshed, so the values are the ones Excel last stored in the workbook, and `refreshed` is always false. The message gains a line `external links: used the values cached in the workbook for n link(s) (not refreshed)`. See [external links](cache-only-xlsx.md#external-links). |
 | `message` | string | One-line human diagnostic. Not a stable machine interface. |
 
 Counters, `errors`, `errors_truncated`, `unknown_functions`, `clock` and `seed` are present after a successful computation (exit 0 or 3) and null otherwise. Sheet names containing `!` are split correctly. Attribute-only spill changes may have zero cache changes. A numeric cache within one unit in the 15th significant digit of the computed value is current and is not counted in `cache_cells_changed` (see [numeric precision](cache-only-xlsx.md#numeric-precision)).
@@ -168,7 +169,7 @@ for file in reports/*.xlsx; do formualizer recalc "$file" --json || break; done
 
 ## Non-goals
 
-No editing, reading/dumping values, engine selection, configuration files, watch mode, directory/batch globbing, limit/thread tuning or legacy fallback. This writer does not claim Excel equivalence for every function or workbook. Data tables, external links and the other strict refusals are listed in [cache-only XLSX](cache-only-xlsx.md#strict-eligibility). Dynamic arrays, fixed-extent CSE arrays and Excel tables within the validated subset are supported; after an openpyxl re-save strips dynamic metadata, the array keeps its fixed extent and its `A1#` readers return `#REF!`.
+No editing, reading/dumping values, engine selection, configuration files, watch mode, directory/batch globbing, limit/thread tuning, link refreshing or legacy fallback. This writer does not claim Excel equivalence for every function or workbook. External links are read from the values cached in the workbook (see [external links](cache-only-xlsx.md#external-links)); data tables and the other strict refusals are listed in [cache-only XLSX](cache-only-xlsx.md#strict-eligibility). Dynamic arrays, fixed-extent CSE arrays and Excel tables within the validated subset are supported; after an openpyxl re-save strips dynamic metadata, the array keeps its fixed extent and its `A1#` readers return `#REF!`.
 
 ## Embedding
 
