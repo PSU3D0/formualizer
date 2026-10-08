@@ -453,3 +453,47 @@ fn oracle_mode_checks_every_proven_member() {
         }
     }
 }
+
+#[test]
+fn copies_whose_range_ends_cross_are_not_family_members() {
+    // B22..B24 = SUM(A{r+2}:A$24): from B23 on the relative start passes the
+    // fixed end. Such a copy has no rectangle; grouping it into B22's family
+    // panicked while building the dependency index. Shared copies of B7
+    // crossing the same way, too.
+    let mut ordinary_cells: Vec<(&str, Cell)> = (1..=30)
+        .map(|r| (addr(1, r), Cell::Num(f64::from(r))))
+        .collect();
+    ordinary_cells
+        .extend((22..=24).map(|r| (addr(2, r), ordinary(&format!("SUM(A{}:A$24)", r + 2)))));
+    let mut shared_cells: Vec<(&str, Cell)> = (1..=30)
+        .map(|r| (addr(1, r), Cell::Num(f64::from(r))))
+        .collect();
+    shared_cells.push(("B7", anchor(1, "B7:B26", "SUM(A9:A$24)")));
+    shared_cells.extend((22..=24).map(|r| (addr(2, r), copy(1))));
+    for cells in [ordinary_cells, shared_cells] {
+        let bytes = xlsx(&[("Sheet1", cells)]);
+        for mode in [SourceFamilyMode::Off, SourceFamilyMode::On] {
+            for deferred in [false, true] {
+                let result = std::panic::catch_unwind(|| {
+                    let config = EvalConfig {
+                        defer_graph_building: deferred,
+                        ..EvalConfig::default()
+                    };
+                    let mut engine = Engine::new(TestWorkbook::new(), config);
+                    engine.set_source_family_mode(mode);
+                    let mut adapter = CalamineAdapter::open_bytes(bytes.clone()).unwrap();
+                    adapter
+                        .stream_into_engine(&mut engine)
+                        .map_err(|e| e.to_string())
+                        .and_then(|()| engine.evaluate_all().map(|_| ()).map_err(|e| e.to_string()))
+                });
+                // The crossed copies are invalid references; whether the
+                // load reports that or a cell holds #REF!, it must not panic.
+                assert!(
+                    result.is_ok(),
+                    "panicked: mode {mode:?}, deferred {deferred}"
+                );
+            }
+        }
+    }
+}

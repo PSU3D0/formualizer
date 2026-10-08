@@ -2637,6 +2637,20 @@ pub(crate) fn parsed_equal_relocated<'a>(
                 if relocate_compact_ref(rb, dr, dc) != Some(ra) {
                     return false;
                 }
+                // A copy whose range ends cross (`A25:A$24`) has no
+                // rectangle to place as a member; it stays a formula of
+                // its own.
+                if let R::Range {
+                    start_row,
+                    start_col,
+                    end_row,
+                    end_col,
+                    ..
+                } = &ra
+                    && (start_row > end_row || start_col > end_col)
+                {
+                    return false;
+                }
                 let own_text = original.as_str();
                 let text_ok = if rerender {
                     match (coords_rendering(rb), coords_rendering(&ra)) {
