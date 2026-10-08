@@ -640,6 +640,45 @@ mod tests {
         }
     }
 
+    /// Every column spelling a relocated reference can take parses as that
+    /// cell, never as a name, function, R1C1 reference or literal (for
+    /// example `RC1`, `LOG10`, `TAX2024`).
+    #[test]
+    fn every_relocated_column_spelling_parses_as_a_cell() {
+        for col in 1..=MAX_COL {
+            for (row, row_abs, col_abs) in [
+                (1, false, false),
+                (10, true, false),
+                (1_048_576, false, true),
+            ] {
+                let p = A1Point {
+                    row,
+                    col,
+                    row_abs,
+                    col_abs,
+                };
+                let text = render(SlotRef::Cell(p), 0, 0).unwrap();
+                let formula = format!("={text}+1");
+                let lex = lex_template(&formula).unwrap_or_else(|| panic!("{formula}"));
+                assert_eq!(lex.slots()[0].reference, SlotRef::Cell(p));
+                let mut refs = Vec::new();
+                reference_leaves(&parse(&formula).unwrap(), &mut refs);
+                assert_eq!(refs.len(), 1, "{formula}");
+                assert_eq!(
+                    refs[0].1,
+                    ReferenceType::Cell {
+                        sheet: None,
+                        row,
+                        col,
+                        row_abs,
+                        col_abs,
+                    },
+                    "{formula}"
+                );
+            }
+        }
+    }
+
     fn reference_leaves(ast: &ASTNode, out: &mut Vec<(String, ReferenceType)>) {
         match &ast.node_type {
             ASTNodeType::Reference {

@@ -262,10 +262,13 @@ impl<R: EvaluationContext> Engine<R> {
 
     /// Stage formula `text` (with its leading `=`) at 1-based `(row, col)`
     /// as a member of a family without parsing it, when it is exactly a
-    /// certified template's text relocated to this cell. The candidate
-    /// template is the root of the formula's shared-formula family
-    /// (`shared`, a sheet-local identity) when one was certified. `None`
-    /// means the caller parses the formula as before.
+    /// certified template's text relocated to this cell. The candidates
+    /// are the family of the formula directly above (else the one directly
+    /// left), as load-time grouping of parsed formulas compares, then the
+    /// root of the formula's shared-formula family (`shared`, a sheet-local
+    /// identity) when one was certified. A member always references its
+    /// family's root template, never a chain of copies. `None` means the
+    /// caller parses the formula as before.
     #[doc(hidden)]
     pub fn stage_relocated_text(
         &mut self,
@@ -279,22 +282,52 @@ impl<R: EvaluationContext> Engine<R> {
             return None;
         }
         let (row0, col0) = (row.saturating_sub(1), col.saturating_sub(1));
-        let family = shared.and_then(|key| grouper.shared_roots.get(&key).cloned())?;
-        match self.match_family(&family, row0, col0, text, &mut grouper.counters) {
-            Ok(()) => {
-                grouper.counters.shared_members += 1;
-                Some(self.stage_lexical_member(grouper, row, col, family))
-            }
-            Err(miss) => {
-                let c = &mut grouper.counters;
-                match miss {
-                    Miss::NoTemplate => c.fallback_no_template += 1,
-                    Miss::Mismatch => c.fallback_mismatch += 1,
-                    Miss::OffGrid => c.fallback_off_grid += 1,
+        let above = row0
+            .checked_sub(1)
+            .and_then(|r| grouper.by_col.get(&col0).filter(|(row, _)| *row == r))
+            .map(|(_, family)| family.clone());
+        let adjacent = above.or_else(|| {
+            col0.checked_sub(1)
+                .and_then(|c| {
+                    grouper
+                        .last
+                        .as_ref()
+                        .filter(|(row, col, _)| *row == row0 && *col == c)
+                })
+                .map(|(_, _, family)| family.clone())
+        });
+        let mut miss = None;
+        if let Some(family) = adjacent {
+            match self.match_family(&family, row0, col0, text, &mut grouper.counters) {
+                Ok(()) => {
+                    grouper.counters.adjacent_members += 1;
+                    return Some(self.stage_lexical_member(grouper, row, col, family));
                 }
-                None
+                Err(m) => miss = Some((m, family.template, family.anchor)),
             }
         }
+        if let Some(family) = shared.and_then(|key| grouper.shared_roots.get(&key).cloned())
+            && miss
+                .as_ref()
+                .is_none_or(|(_, t, a)| (*t, *a) != (family.template, family.anchor))
+        {
+            match self.match_family(&family, row0, col0, text, &mut grouper.counters) {
+                Ok(()) => {
+                    grouper.counters.shared_members += 1;
+                    return Some(self.stage_lexical_member(grouper, row, col, family));
+                }
+                Err(m) => miss = Some((m, family.template, family.anchor)),
+            }
+        }
+        if let Some((miss, _, _)) = miss {
+            let c = &mut grouper.counters;
+            match miss {
+                Miss::NoTemplate => c.fallback_no_template += 1,
+                Miss::Mismatch => c.fallback_mismatch += 1,
+                Miss::OffGrid => c.fallback_off_grid += 1,
+            }
+        }
+        None
     }
 
     fn match_family(

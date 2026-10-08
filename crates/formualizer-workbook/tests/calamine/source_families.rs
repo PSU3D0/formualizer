@@ -226,9 +226,14 @@ fn proven_shared_copies_skip_parsing_and_match_the_parsed_load() {
         assert_eq!(o.parse_calls, o.formulas - o.parse_cache_hits);
         // D (28 copies), E, F (29 each), the horizontal family (3), and
         // G from its first (upper-cased, so certified) copy on (28).
-        assert_eq!(n.shared_members, 28 + 29 + 29 + 3 + 28, "{n:?}");
+        // Most copies are also adjacent to a member of their family.
         assert_eq!(
-            n.parse_calls + n.shared_members + n.parse_cache_hits,
+            n.shared_members + n.adjacent_members,
+            28 + 29 + 29 + 3 + 28,
+            "{n:?}"
+        );
+        assert_eq!(
+            n.parse_calls + n.shared_members + n.adjacent_members + n.parse_cache_hits,
             n.formulas
         );
         // G's lowercase anchor and H's qualified anchor are not templates.
@@ -329,4 +334,122 @@ fn compression_off_parses_every_formula() {
     let mut old = load(&bytes, false, SourceFamilyMode::Off);
     old.evaluate_all().unwrap();
     assert_eq!(snapshot(&engine), snapshot(&old));
+}
+
+/// Ordinary formula text as openpyxl writes it (no shared metadata):
+/// vertical runs, a run broken by a different formula then resumed, a
+/// horizontal run, string literals with reference-like text, and
+/// formulas outside the lexical subset (whitespace, names, qualifiers).
+fn ordinary_xlsx() -> Vec<u8> {
+    let mut main = Vec::new();
+    for row in 1..=ROWS {
+        main.push((addr(1, row), Cell::Num(f64::from(row))));
+        main.push((addr(2, row), Cell::Num(f64::from(row * 3 % 7))));
+        main.push((
+            addr(3, row),
+            Cell::Text(if row % 2 == 0 { "xa" } else { "yb" }),
+        ));
+        main.push((addr(4, row), ordinary(&format!("A{row}+$B$1*B{row}"))));
+        main.push((
+            addr(5, row),
+            ordinary(&format!("IF(LEFT(C{row},1)=\"x\",\"B2\"&A{row},\"A1\")")),
+        ));
+        let f = if row == 12 {
+            "A12*100".to_string()
+        } else {
+            format!("SUM($A$1:A{row})")
+        };
+        main.push((addr(6, row), ordinary(&f)));
+        main.push((addr(7, row), ordinary(&format!("A{row} + 1"))));
+        main.push((addr(8, row), ordinary(&format!("Other!A{row}*2"))));
+        // Correct for rows 1..20, then a copy that is not the relocation.
+        let i = if row > 20 { row - 1 } else { row };
+        main.push((addr(9, row), ordinary(&format!("D{i}-A{row}"))));
+    }
+    for col in 10..=14 {
+        let prev = col_name(col - 1);
+        main.push((
+            addr(col, ROWS + 2),
+            ordinary(&format!("{prev}{}+{prev}$1", ROWS + 1)),
+        ));
+    }
+    let mut other = Vec::new();
+    for row in 1..=ROWS {
+        other.push((addr(1, row), Cell::Num(f64::from(row * 10))));
+    }
+    xlsx(&[("Sheet1", main), ("Other", other)])
+}
+
+#[test]
+fn proven_ordinary_copies_skip_parsing_and_match_the_parsed_load() {
+    let bytes = ordinary_xlsx();
+    for deferred in [false, true] {
+        let mut old = load(&bytes, deferred, SourceFamilyMode::Off);
+        let mut new = load(&bytes, deferred, SourceFamilyMode::On);
+        assert_eq!(snapshot(&new), snapshot(&old), "deferred={deferred}");
+        old.evaluate_all().unwrap();
+        new.evaluate_all().unwrap();
+        assert_eq!(snapshot(&new), snapshot(&old), "deferred={deferred}");
+        let n = counters(&new);
+        assert_eq!(n.shared_members, 0);
+        // D, E: 29 each; F: 10 + 17 (resumed after row 12, whose formula
+        // is not a copy, and row 13 parses as a new root); I: 19, then 9
+        // copies of row 21's (new) root; the horizontal row: 4.
+        assert_eq!(n.adjacent_members, 29 + 29 + 10 + 17 + 19 + 9 + 4, "{n:?}");
+        assert_eq!(
+            n.parse_calls + n.adjacent_members + n.parse_cache_hits,
+            n.formulas
+        );
+        assert!(n.fallback_mismatch >= 1, "{n:?}");
+    }
+}
+
+#[test]
+fn ordinary_families_survive_edits_and_structural_undo() {
+    let bytes = ordinary_xlsx();
+    let mut engines = [
+        load(&bytes, true, SourceFamilyMode::Off),
+        load(&bytes, true, SourceFamilyMode::On),
+    ];
+    let mut snaps: [Vec<_>; 2] = [Vec::new(), Vec::new()];
+    for i in 0..2 {
+        let engine = &mut engines[i];
+        let mut log = ChangeLog::new();
+        let mut undo = UndoEngine::new();
+        engine
+            .set_cell_formula("Sheet1", 5, 4, formualizer_parse::parse("=A5*7").unwrap())
+            .unwrap();
+        engine.evaluate_all().unwrap();
+        snaps[i].push(snapshot(engine));
+        engine
+            .action_with_logger(&mut log, "insert", |a| {
+                a.insert_rows("Sheet1", 6, 3).map(|_| ())
+            })
+            .unwrap();
+        engine.evaluate_all().unwrap();
+        snaps[i].push(snapshot(engine));
+        engine.undo_logged(&mut undo, &mut log).unwrap();
+        engine.evaluate_all().unwrap();
+        snaps[i].push(snapshot(engine));
+        engine.redo_logged(&mut undo, &mut log).unwrap();
+        engine.evaluate_all().unwrap();
+        snaps[i].push(snapshot(engine));
+    }
+    for (step, (old, new)) in snaps[0].iter().zip(&snaps[1]).enumerate() {
+        assert_eq!(new, old, "step={step}");
+    }
+}
+
+#[test]
+fn oracle_mode_checks_every_proven_member() {
+    for bytes in [families_xlsx(), ordinary_xlsx()] {
+        for deferred in [false, true] {
+            let mut engine = load(&bytes, deferred, SourceFamilyMode::Oracle);
+            engine.evaluate_all().unwrap();
+            let c = counters(&engine);
+            assert!(c.oracle_checked > 0);
+            assert_eq!(c.oracle_checked, c.shared_members + c.adjacent_members);
+            assert_eq!(c.oracle_mismatches, 0);
+        }
+    }
 }

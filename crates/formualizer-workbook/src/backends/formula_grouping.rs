@@ -45,10 +45,24 @@ impl GroupedFormulaStaging {
                 FormulaIngestRecord::new(row, col, ast_id, Some(Arc::<str>::from(with_eq)))
             }));
         }
+        if let Some(record) =
+            engine.stage_relocated_text(&mut self.grouper, row, col, &with_eq, None)
+        {
+            return Ok(Some(record));
+        }
         self.grouper.note_parse(with_eq.len());
         match formualizer_parse::parser::parse(&with_eq) {
             Ok(parsed) => {
                 let record = engine.stage_formula_ast(&mut self.grouper, row, col, &parsed, None);
+                engine.note_parsed_text(
+                    &mut self.grouper,
+                    row,
+                    col,
+                    &with_eq,
+                    &parsed,
+                    &record,
+                    None,
+                );
                 // A member's text is not worth caching: relative copies do
                 // not repeat their text.
                 if record.is_family_member() {
