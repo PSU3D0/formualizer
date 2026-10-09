@@ -1983,8 +1983,13 @@ fn test_recalculate_xlsx_bytes_reproducibility_options_and_echo() {
 
 /// `C1 = [1]Prices!B2*2`, with Excel's cached value 21 for the linked cell.
 fn external_link_fixture_xlsx_bytes() -> Vec<u8> {
+    external_link_fixture_with(r#"<c r="C1"><f>[1]Prices!B2*2</f><v>0</v></c>"#)
+}
+
+/// The same linked workbook with `c1` as its C1 cell.
+fn external_link_fixture_with(c1: &str) -> Vec<u8> {
     const OFFICE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
-    let base = build_fixture_with_c1("Sheet1", r#"<c r="C1"><f>[1]Prices!B2*2</f><v>0</v></c>"#);
+    let base = build_fixture_with_c1("Sheet1", c1);
     let mut source = zip::ZipArchive::new(Cursor::new(base)).unwrap();
     let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
     let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
@@ -2042,6 +2047,7 @@ fn test_recalculate_xlsx_bytes_reads_cached_external_link_values() {
     let links: Object = js_get(&result, "external_links").dyn_into().unwrap();
     assert_eq!(js_get_f64(&links, "links_used"), 1.0);
     assert_eq!(js_get(&links, "refreshed"), JsValue::FALSE);
+    assert_eq!(js_get_string(&links, "policy"), "cached");
     let bytes: Uint8Array = js_get(&result, "bytes").dyn_into().unwrap();
     let mut archive = zip::ZipArchive::new(Cursor::new(bytes.to_vec())).unwrap();
     let mut xml = String::new();
@@ -2057,4 +2063,41 @@ fn test_recalculate_xlsx_bytes_reads_cached_external_link_values() {
         .unwrap()
         .unchecked_into();
     assert!(js_get(&plain, "external_links").is_undefined());
+}
+
+#[wasm_bindgen_test]
+fn test_recalculate_xlsx_bytes_external_links_option() {
+    let linked = external_link_fixture_xlsx_bytes();
+    let run = |bytes: &[u8], policy: JsValue| {
+        let options = Object::new();
+        set_prop(&options, "externalLinks", policy);
+        recalculate_xlsx_bytes(Uint8Array::from(bytes), None, options.into())
+    };
+    let message = |error: JsValue| -> String {
+        error
+            .dyn_into::<js_sys::Error>()
+            .unwrap()
+            .message()
+            .as_string()
+            .unwrap()
+    };
+    let cached: Object = run(&linked, JsValue::from_str("cached"))
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    let links: Object = js_get(&cached, "external_links").dyn_into().unwrap();
+    assert_eq!(js_get_string(&links, "policy"), "cached");
+    let refused = message(run(&linked, JsValue::from_str("refuse")).unwrap_err());
+    assert!(refused.contains("external link values"), "{refused}");
+    // Links that nothing reads do not refuse.
+    let unused = external_link_fixture_with(r#"<c r="C1"><f>1+2</f><v>0</v></c>"#);
+    let result: Object = run(&unused, JsValue::from_str("refuse"))
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    assert!(js_get(&result, "external_links").is_undefined());
+    for invalid in [JsValue::from_str("refresh"), JsValue::from_f64(1.0)] {
+        let error = message(run(&linked, invalid).unwrap_err());
+        assert!(error.contains("'cached' or 'refuse'"), "{error}");
+    }
 }

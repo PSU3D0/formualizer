@@ -117,11 +117,19 @@ ownership remains declared. Obsolete caches are cleared while styles remain.
 children. `cache_cells_changed` counts physical caches inserted, replaced or
 cleared, including children, and may exceed `formula_cells`.
 `worksheet_parts_changed` counts worksheets only, not metadata/relationships.
+`external_links` (`{ links_used, refreshed: false, policy: 'cached' }`) is
+present only when formulas read external workbook links; their values come from
+the cache Excel stored in the workbook and are never refreshed. Pass
+`{ externalLinks: 'refuse' }` (default `'cached'`, like the CLI's
+`--external-links`) to reject such workbooks instead; the policy is decided
+after calculation and nothing is returned. Workbooks whose links nothing reads
+still recalculate.
 Deterministic unchanged outputs recalculate to byte-identical no-ops.
 
 Legacy fixed-extent (CSE) arrays, elementwise `IF`, Excel tables within a
-validated subset and volatile functions are recalculated too. Data tables,
-external links, rich/unknown or malformed metadata, hidden-row
+validated subset, volatile functions and external links (read from the values
+cached in the workbook) are recalculated too. Data tables, unservable external
+references, rich/unknown or malformed metadata, hidden-row
 `SUBTOTAL`/`AGGREGATE` ranges, circular references, shared-family multi-cell
 spills and spill publication across merges are refused. Safe ZIP/XML/cell/output
 limits remain in effect. Fresh unmarked 1x1 results have no spill identity

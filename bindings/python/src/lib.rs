@@ -267,15 +267,27 @@ fn unknown_functions_to_py(
 }
 
 /// Source-recalc options from the keyword arguments shared with
-/// `SheetPortSession.evaluate_once` (same names, types and defaults).
+/// `SheetPortSession.evaluate_once` (same names, types and defaults), plus
+/// the recalc-only `external_links` policy.
 fn xlsx_recalc_options(
     error_location_limit: Option<usize>,
     rng_seed: Option<u64>,
     deterministic_timestamp_utc: Option<chrono::DateTime<chrono::FixedOffset>>,
     deterministic_timezone: Option<&Bound<'_, PyAny>>,
+    external_links: &str,
 ) -> PyResult<formualizer::workbook::XlsxRecalculateOptions> {
     use formualizer::eval::{engine::DeterministicMode, timezone::TimeZoneSpec};
+    use formualizer::workbook::ExternalLinkPolicy;
     let mut options = formualizer::workbook::XlsxRecalculateOptions::default();
+    options.external_links = match external_links {
+        "cached" => ExternalLinkPolicy::Cached,
+        "refuse" => ExternalLinkPolicy::Refuse,
+        other => {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "external_links must be 'cached' or 'refuse', got {other:?}"
+            )));
+        }
+    };
     if let Some(limit) = error_location_limit {
         options.error_location_limit = limit;
     }
@@ -400,6 +412,8 @@ fn xlsx_result_to_py(
         let links = pyo3::types::PyDict::new(py);
         links.set_item("links_used", result.external_links_used)?;
         links.set_item("refreshed", false)?;
+        // `refuse` refuses instead of reading link values.
+        links.set_item("policy", "cached")?;
         out.set_item("external_links", links)?;
     }
     Ok(out.into_any().unbind())
@@ -417,13 +431,16 @@ fn xlsx_result_to_py(
 /// ``seed`` replay the run. ``summary["error_summary"][token]["messages"]``
 /// gives the reason for each listed location (``None`` when the cell has none
 /// of its own) and ``summary["unknown_functions"]`` lists every unimplemented
-/// function called, with its cell count.
+/// function called, with its cell count. External links are never refreshed:
+/// with ``external_links="cached"`` (the default) formulas read the values
+/// Excel stored in the workbook and the result's ``external_links`` reports
+/// it; ``"refuse"`` raises ``OSError`` instead when any formula reads one.
 #[cfg_attr(
     not(target_os = "emscripten"),
     gen_stub_pyfunction(module = "formualizer.formualizer_py")
 )]
 #[pyfunction]
-#[pyo3(signature = (data, *, error_location_limit=None, rng_seed=None, deterministic_timestamp_utc=None, deterministic_timezone=None))]
+#[pyo3(signature = (data, *, error_location_limit=None, rng_seed=None, deterministic_timestamp_utc=None, deterministic_timezone=None, external_links="cached"))]
 fn recalculate_xlsx_bytes(
     py: Python<'_>,
     data: &Bound<'_, PyBytes>,
@@ -431,12 +448,14 @@ fn recalculate_xlsx_bytes(
     rng_seed: Option<u64>,
     deterministic_timestamp_utc: Option<chrono::DateTime<chrono::FixedOffset>>,
     deterministic_timezone: Option<&Bound<'_, PyAny>>,
+    external_links: &str,
 ) -> PyResult<Py<PyAny>> {
     let options = xlsx_recalc_options(
         error_location_limit,
         rng_seed,
         deterministic_timestamp_utc,
         deterministic_timezone,
+        external_links,
     )?;
     let config = options.eval_config.clone();
     // Reject above the core's safe default before copying Python-owned bytes.
@@ -462,13 +481,14 @@ fn recalculate_xlsx_bytes(
 /// with a fixed offset) fixes ``TODAY``/``NOW``; ``deterministic_timezone`` (``'utc'``, ``'+02:00'``
 /// or offset seconds, default UTC) requires it. Without them ``TODAY``/``NOW``
 /// use the host's local time. The result's ``clock`` (``now``, ``timezone``,
-/// ``fixed``) and ``seed`` replay the run.
+/// ``fixed``) and ``seed`` replay the run. ``external_links`` is as for
+/// ``recalculate_xlsx_bytes``; a refusal writes nothing.
 #[cfg_attr(
     not(target_os = "emscripten"),
     gen_stub_pyfunction(module = "formualizer.formualizer_py")
 )]
 #[pyfunction]
-#[pyo3(signature = (path, output=None, *, error_location_limit=None, rng_seed=None, deterministic_timestamp_utc=None, deterministic_timezone=None))]
+#[pyo3(signature = (path, output=None, *, error_location_limit=None, rng_seed=None, deterministic_timestamp_utc=None, deterministic_timezone=None, external_links="cached"))]
 fn recalculate_xlsx_file(
     py: Python<'_>,
     path: &str,
@@ -477,12 +497,14 @@ fn recalculate_xlsx_file(
     rng_seed: Option<u64>,
     deterministic_timestamp_utc: Option<chrono::DateTime<chrono::FixedOffset>>,
     deterministic_timezone: Option<&Bound<'_, PyAny>>,
+    external_links: &str,
 ) -> PyResult<Py<PyAny>> {
     let options = xlsx_recalc_options(
         error_location_limit,
         rng_seed,
         deterministic_timestamp_utc,
         deterministic_timezone,
+        external_links,
     )?;
     let config = options.eval_config.clone();
     let input = std::path::PathBuf::from(path);
