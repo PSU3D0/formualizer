@@ -32,14 +32,15 @@ Arguments:
   <INPUT>  Workbook (.xlsx) to recalculate
 
 Options:
-  -o, --output <PATH>    Write the result to PATH instead of replacing INPUT
-      --check            Compute without writing; exit 3 if any cache is stale
-      --json             Print one formualizer.recalc/1 JSON object on stdout
-      --max-errors <N>   List at most N error-cell locations [default: 20]
-      --now <TIMESTAMP>  Fixed TODAY/NOW instant: RFC 3339 with an offset or Z
-      --tz <ZONE>        TODAY/NOW timezone: UTC or ±HH:MM [default: --now offset, else local]
-      --seed <U64>       RAND/RANDBETWEEN seed [default: built-in seed]
-  -h, --help             Print help
+  -o, --output <PATH>            Write the result to PATH instead of replacing INPUT
+      --check                    Compute without writing; exit 3 if any cache is stale
+      --json                     Print one formualizer.recalc/1 JSON object on stdout
+      --max-errors <N>           List at most N error-cell locations [default: 20]
+      --now <TIMESTAMP>          Fixed TODAY/NOW instant: RFC 3339 with an offset or Z
+      --tz <ZONE>                TODAY/NOW timezone: UTC or ±HH:MM [default: --now offset, else local]
+      --seed <U64>               RAND/RANDBETWEEN seed [default: built-in seed]
+      --external-links <POLICY>  Read the external link values cached in the workbook, or refuse (exit 2) [default: cached] [possible values: cached, refuse]
+  -h, --help                     Print help
 
 Writes INPUT in place unless -o or --check is given.
 Run recalc as the last step that writes the workbook: later edits leave its
@@ -47,6 +48,11 @@ caches stale.
 
 RAND/RANDBETWEEN are reproducible run to run. Without --now, TODAY/NOW use
 the host clock (local time unless --tz).
+
+External links are never refreshed. By default formulas read the values
+Excel cached in the workbook for them, and the report says so. With
+--external-links refuse, a workbook whose formulas read any of those values
+is refused (exit 2) after calculation instead; nothing is written.
 
 Exit codes:
   0    written, unchanged or current
