@@ -37,6 +37,7 @@ pub(crate) mod result_finalization;
 pub mod row_visibility;
 pub mod scheduler;
 pub(crate) mod shape_memo;
+mod source_family;
 pub mod spill;
 mod target_preparation;
 #[doc(hidden)]
@@ -100,6 +101,8 @@ pub use formula_source::{
     SourceFamilyMembers, SourceFormulaFamily, SourceFormulaOrder, SourceRect,
 };
 pub use journal::{ActionJournal, ArrowOp, ArrowUndoBatch, GraphUndoBatch};
+#[doc(hidden)]
+pub use source_family::{SourceFamilyCounters, SourceFamilyMode, source_family_process_totals};
 #[allow(deprecated)]
 pub use target_preparation::PrepareTargetsOptions;
 // Use SoA implementation
@@ -570,12 +573,40 @@ impl<R: EvaluationContext> Engine<R> {
         {
             let record = FormulaIngestRecord::member(row, col, family.template, family.anchor);
             grouper.members += 1;
+            grouper.counters.parsed_members += 1;
             grouper.note(row0, col0, family);
             return record;
         }
         let ast_id = self.intern_formula_ast(ast);
         self.note_staged_formula(grouper, row, col, ast_id);
         FormulaIngestRecord::new(row, col, ast_id, formula_text)
+    }
+
+    /// How this engine stages formula text that may be a relocated copy of
+    /// a formula already parsed (see [`SourceFamilyMode`]).
+    #[doc(hidden)]
+    pub fn source_family_mode(&self) -> SourceFamilyMode {
+        self.source_family_mode
+    }
+
+    #[doc(hidden)]
+    pub fn set_source_family_mode(&mut self, mode: SourceFamilyMode) {
+        self.source_family_mode = mode;
+    }
+
+    /// Load-time staging counters accumulated by this engine.
+    #[doc(hidden)]
+    pub fn source_family_counters(&self) -> SourceFamilyCounters {
+        self.source_family_counters
+    }
+
+    /// Fold a finished sheet's staging counters into this engine's (and
+    /// the process') totals, and reset them.
+    #[doc(hidden)]
+    pub fn finish_family_grouper(&mut self, grouper: &mut FormulaFamilyGrouper) {
+        let counters = std::mem::take(&mut grouper.counters);
+        counters.publish();
+        self.source_family_counters.accumulate(&counters);
     }
 
     /// Record a formula interned without [`Self::stage_formula_ast`] (for
@@ -595,6 +626,7 @@ impl<R: EvaluationContext> Engine<R> {
                 template: ast_id,
                 anchor: (row0, col0),
                 rendered: None,
+                lexical: None,
             },
         );
     }

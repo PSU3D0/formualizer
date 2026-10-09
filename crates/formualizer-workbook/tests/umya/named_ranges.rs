@@ -628,3 +628,30 @@ fn umya_named_range_out_of_bounds_is_clamped_for_ingest() {
         other => panic!("expected numeric value 1 for SUM(TooFar), got {other:?}"),
     }
 }
+
+#[test]
+fn umya_comma_in_quoted_sheet_name_is_a_range_not_a_union() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let path = tmp.path().join("comma_sheet.xlsx");
+    let mut book = umya_spreadsheet::new_file();
+    {
+        let sheet = book.get_sheet_by_name_mut("Sheet1").expect("default sheet");
+        sheet.set_name("Sche 3 (L-Craft, By Trade)");
+        sheet
+            .add_defined_name("Titles", "'Sche 3 (L-Craft, By Trade)'!$1:$3")
+            .expect("add name");
+    }
+    umya_spreadsheet::writer::xlsx::write(&book, &path).expect("write workbook");
+
+    let mut adapter = UmyaAdapter::open_path(&path).expect("open workbook");
+    let sheet = adapter
+        .read_sheet("Sche 3 (L-Craft, By Trade)")
+        .expect("read sheet");
+    let titles = sheet
+        .named_ranges
+        .iter()
+        .find(|n| n.name == "Titles")
+        .expect("Titles imported as a range");
+    assert_eq!(titles.address.sheet, "Sche 3 (L-Craft, By Trade)");
+    assert_eq!((titles.address.start_row, titles.address.end_row), (1, 3));
+}

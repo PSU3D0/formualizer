@@ -63,12 +63,11 @@ fn extended_attrs(
     extensions: &[(&str, &str)],
 ) -> Result<(), IoError> {
     if let xml::Kind::Open { attributes, .. } = &node.kind {
-        for a in attributes {
+        for a in attributes.iter() {
             let admitted = if a.ns.is_empty() {
-                allowed.contains(&a.local.as_str())
+                allowed.contains(&a.local)
             } else {
-                extensions.contains(&(a.ns.as_str(), a.local.as_str()))
-                    && (a.ns != MC || prefix_list(&a.value))
+                extensions.contains(&(&*a.ns, a.local)) && (a.ns != MC || prefix_list(&a.value))
             };
             if !admitted {
                 return Err(unsupported(
@@ -211,11 +210,11 @@ pub(super) fn parse(
         if path.get(1).is_some_and(|p| {
             p.ns == xml::MAIN
                 && matches!(
-                    p.local.as_str(),
+                    p.local,
                     "autoFilter" | "sortState" | "tableStyleInfo" | "extLst"
                 )
         }) {
-            if path.len() == 2 && !sections.insert(e.local.clone()) {
+            if path.len() == 2 && !sections.insert(e.local) {
                 return Err(unsupported("duplicate table metadata", part));
             }
             if xml::path_is(path, xml::MAIN, &["table", "autoFilter"]) {
@@ -227,7 +226,7 @@ pub(super) fn parse(
             }
             // Unknown calculation-bearing payloads are not inert.
             if matches!(
-                e.local.as_str(),
+                e.local,
                 "calculatedColumnFormula" | "totalsRowFormula" | "queryTable" | "connection"
             ) {
                 return Err(unsupported("unsupported table extension semantics", part));
@@ -297,14 +296,11 @@ pub(super) fn parse(
                 &["table", "tableColumns", "tableColumn"],
             )
             && e.ns == xml::MAIN
-            && matches!(
-                e.local.as_str(),
-                "calculatedColumnFormula" | "totalsRowFormula"
-            )
+            && matches!(e.local, "calculatedColumnFormula" | "totalsRowFormula")
         {
             attrs(&node, &["array"])?;
             if !matches!(node.value("array"), None | Some("0" | "false"))
-                || !formulas.insert(e.local.clone())
+                || !formulas.insert(e.local)
             {
                 return Err(unsupported("array/duplicate table formula", part));
             }

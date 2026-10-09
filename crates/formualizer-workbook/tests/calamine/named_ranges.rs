@@ -496,3 +496,42 @@ fn calamine_same_local_name_on_multiple_sheets_is_isolated() {
     let data_value = engine.get_cell_value("Data", 1, 2).unwrap();
     assert!(matches!(data_value, LiteralValue::Number(n) if (n - 15.0).abs() < 1e-9));
 }
+
+#[test]
+fn calamine_comma_in_quoted_sheet_name_is_a_range_not_a_union() {
+    // A comma inside a quoted sheet name is not a union separator. Treating
+    // it as one turned this whole-sheet name into a formula name that was
+    // materialized as a 1,048,576-row array on every evaluation.
+    let path = build_workbook(|book| {
+        let sh = book.get_sheet_by_name_mut("Sheet1").unwrap();
+        sh.set_name("Sche 3 (L-Craft, By Trade)");
+        sh.get_cell_mut((1, 1)).set_value_number(2.0);
+        sh.add_defined_name("Whole", "'Sche 3 (L-Craft, By Trade)'!$1:$1048576")
+            .unwrap();
+        sh.add_defined_name("Titles", "'Sche 3 (L-Craft, By Trade)'!$1:$3")
+            .unwrap();
+        sh.add_defined_name(
+            "Union",
+            "'Sche 3 (L-Craft, By Trade)'!$A$1,'Sche 3 (L-Craft, By Trade)'!$B$1",
+        )
+        .unwrap();
+    });
+    let mut backend = CalamineAdapter::open_path(&path).unwrap();
+    let names = backend.defined_names().unwrap();
+    let range = |name: &str| match &names.iter().find(|n| n.name == name).unwrap().definition {
+        DefinedNameDefinition::Range { address } => {
+            assert_eq!(address.sheet, "Sche 3 (L-Craft, By Trade)");
+            (address.start_row, address.end_row, address.end_col)
+        }
+        other => panic!("{name}: expected a range, got {other:?}"),
+    };
+    assert_eq!(range("Whole"), (1, 1_048_576, 16_384));
+    assert_eq!(range("Titles"), (1, 3, 16_384));
+    // A real union is still not imported as a single range.
+    assert!(
+        !names
+            .iter()
+            .any(|n| n.name == "Union"
+                && matches!(n.definition, DefinedNameDefinition::Range { .. }))
+    );
+}

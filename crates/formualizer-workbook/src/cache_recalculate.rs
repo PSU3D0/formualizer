@@ -6,6 +6,7 @@ mod geometry;
 mod ingest_view;
 mod legacy_intersection;
 mod package;
+mod phase_clock;
 mod result_projection;
 mod shared_qualifiers;
 mod sheet;
@@ -29,6 +30,7 @@ use formualizer_eval::engine::{
     CancelToken, Engine, EvalConfig, FormulaParsePolicy, SpillBoundsPolicy, SpillConfig,
     SpillConflictPolicy,
 };
+use phase_clock::PhaseClock;
 use std::collections::{BTreeMap, HashSet};
 #[cfg(not(target_arch = "wasm32"))]
 use std::io::Read;
@@ -643,7 +645,9 @@ pub fn recalculate_xlsx_bytes(
     // The engine would otherwise fall back to the system clock and the run
     // would report an instant it did not use.
     options.eval_config.deterministic_mode.validate()?;
+    let mut clock = PhaseClock::from_env();
     let admission = admit_source(bytes, &options)?;
+    clock.lap("admit (package, worksheet scan, tables)");
     if admission
         .plans
         .iter()
@@ -661,12 +665,15 @@ pub fn recalculate_xlsx_bytes(
         result.clock_now_utc = clock_instant(&options);
         return Ok(result);
     }
-    let mut ingested = ingest_source(bytes, admission, &options)?;
+    let mut ingested = ingest_source(bytes, admission, &options, &mut clock)?;
     let clock_now_utc = evaluate(&mut ingested.engine, &options)?;
+    clock.lap("evaluate (incl. deferred graph build)");
     // Deferred graph building parses formulas during evaluation.
     refuse_parse_failure(&ingested.engine, ingested.refuse_parse_failures)?;
-    let mut result = publish(bytes, ingested, formula_count, &options)?;
+    clock.families(&ingested.engine);
+    let mut result = publish(bytes, ingested, formula_count, &options, &mut clock)?;
     result.clock_now_utc = clock_now_utc;
+    clock.total(formula_count);
     Ok(result)
 }
 /// The instant this run's `NOW()`/`TODAY()` observe: the fixed timestamp in
@@ -719,13 +726,14 @@ fn ingest_source<'a>(
     bytes: &[u8],
     admission: SourceAdmission<'a>,
     options: &XlsxRecalculateOptions,
+    clock: &mut PhaseClock,
 ) -> Result<Ingested<'a>, IoError> {
     let SourceAdmission {
         mut archive,
         sheets,
         date_system,
         plans,
-        formula_count,
+        formula_count: _,
         metadata,
     } = admission;
     let anchors = plans.iter().any(|p| !p.ownership.anchors.is_empty());
@@ -782,6 +790,7 @@ fn ingest_source<'a>(
         };
         package::rewrite(bytes, &mut archive, &edits, options)?
     };
+    clock.lap("ingest view (calc chain, patches, package rewrite)");
     let opened = if let Some(cancel) = options.cancel.clone() {
         CalamineAdapter::open_bytes_cancellable(ingest_bytes, cancel)
     } else {
@@ -850,9 +859,11 @@ fn ingest_source<'a>(
         }
     }
     checkpoint(&options.cancel)?;
+    clock.lap("calamine open, names, tables");
     let ingested = adapter.stream_into_engine(&mut engine);
     checkpoint(&options.cancel)?;
     ingested?;
+    clock.lap("stream into engine");
     refuse_parse_failure(&engine, refuse_parse_failures)?;
     for (sheet, plan) in sheets.iter().zip(&plans) {
         for table in &plan.tables {
@@ -881,14 +892,20 @@ fn ingest_source<'a>(
             }
         }
     }
-    if adapter.has_document_names() {
+    let unimported = adapter.unimported_document_names();
+    if !unimported.is_empty() {
         // Metadata-only names may be omitted from the engine only if no source
-        // calculation references them. Inspect after shared-formula replay but
-        // before evaluation/publication; avoid this pass for ordinary workbooks.
-        let mut source_formulas = Vec::with_capacity(formula_count);
+        // calculation references them. Only a formula whose source text names
+        // one can; a shared formula's copies name what its anchor names. Inspect
+        // those after shared-formula replay but before evaluation/publication.
+        let mut source_formulas = Vec::new();
         for (sheet, plan) in sheets.iter().zip(&plans) {
             for cell in &plan.cells {
                 checkpoint(&options.cancel)?;
+                let text = cell.formula_text.to_ascii_lowercase();
+                if !unimported.iter().any(|name| text.contains(name.as_str())) {
+                    continue;
+                }
                 let address = CellAddress::new(&sheet.name, cell.row, cell.col)
                     .map_err(|e| IoError::from_backend("xlsx-coordinate", e))?;
                 if let Some(formula) = engine
@@ -902,6 +919,7 @@ fn ingest_source<'a>(
             }
         }
         adapter.validate_calculation_names(&source_formulas)?;
+        clock.lap("document-name reference check");
     }
     visibility_guard::validate(&engine, &sheets, &plans, options)?;
     checkpoint(&options.cancel)?;
@@ -910,6 +928,7 @@ fn ingest_source<'a>(
         declare_anchors(&mut engine, &sheets, &plans, options)?;
         refuse_parse_failure(&engine, refuse_parse_failures)?;
     }
+    clock.lap("post-ingest checks (headers, visibility, anchors)");
     Ok(Ingested {
         archive,
         sheets,
@@ -1105,6 +1124,7 @@ fn publish(
     ingested: Ingested<'_>,
     formula_count: usize,
     options: &XlsxRecalculateOptions,
+    clock: &mut PhaseClock,
 ) -> Result<XlsxRecalculateResult, IoError> {
     let Ingested {
         mut archive,
@@ -1138,6 +1158,7 @@ fn publish(
         &mut expanded,
         options,
     )?;
+    clock.lap("publication (validate results, build patches)");
     summary.status = if summary.errors == 0 {
         RecalculateStatus::Success
     } else {
@@ -1151,6 +1172,7 @@ fn publish(
         return Ok(unchanged(bytes, formula_count, summary));
     }
     let output = package::rewrite(bytes, &mut archive, &edits, options)?;
+    clock.lap("package rewrite");
     if !edits.add.is_empty() {
         // An added part must agree with its relationship and content type.
         package::check_output(&output, options)?;

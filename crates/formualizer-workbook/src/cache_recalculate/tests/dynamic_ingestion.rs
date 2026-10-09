@@ -3,8 +3,8 @@
 //! Engine state is checked on the ingested and evaluated engine before
 //! publication; `dynamic_publication` checks the published output.
 use super::super::{
-    Ingested, XlsxRecalculateOptions, admit_source, apply_patches, evaluate, ingest_source,
-    ingest_view, recalculate_xlsx_bytes,
+    Ingested, PhaseClock, XlsxRecalculateOptions, admit_source, apply_patches, evaluate,
+    ingest_source, ingest_view, recalculate_xlsx_bytes,
 };
 use super::dynamic_admission::{
     MAIN, OFFICE, PRODUCER_ROWS, SHEET, TWO_ANCHOR_ROWS, TYPES, WB_RELS, edit, pack, package,
@@ -23,7 +23,8 @@ fn with_ingested<T>(p: &Parts, check: impl FnOnce(&mut Ingested<'_>) -> T) -> T 
     let bytes = pack(p);
     let options = XlsxRecalculateOptions::default();
     let admission = admit_source(&bytes, &options).expect("admitted");
-    let mut ingested = ingest_source(&bytes, admission, &options).expect("ingested");
+    let mut ingested =
+        ingest_source(&bytes, admission, &options, &mut PhaseClock::from_env()).expect("ingested");
     check(&mut ingested)
 }
 /// Admit, ingest and evaluate.
@@ -413,7 +414,8 @@ fn anchors_are_declared_under_deferred_graph_building() {
     let mut options = XlsxRecalculateOptions::default();
     options.eval_config.defer_graph_building = true;
     let admission = admit_source(&bytes, &options).unwrap();
-    let mut ingested = ingest_source(&bytes, admission, &options).unwrap();
+    let mut ingested =
+        ingest_source(&bytes, admission, &options, &mut PhaseClock::from_env()).unwrap();
     assert!(!ingested.engine.has_staged_formulas());
     evaluate(&mut ingested.engine, &options).unwrap();
     assert_eq!(value(&ingested.engine, "C9"), n(1.0), "SUM(C2#)");

@@ -6,5 +6,6 @@ mod dynamic_ingestion;
 mod dynamic_publication;
 mod index_scope;
 mod metadata_binding;
+pub(super) mod scan_differential;
 mod zip_additions;
 mod zip_containers;

@@ -529,10 +529,10 @@ fn x15_workbook_pr(
         ));
     }
     if let xml::Kind::Open { attributes, .. } = &node.kind {
-        for a in attributes {
+        for a in attributes.iter() {
             if !(a.ns.is_empty()
                 && a.local == "chartTrackingRefBase"
-                && matches!(a.value.as_str(), "0" | "1" | "false" | "true"))
+                && matches!(&*a.value, "0" | "1" | "false" | "true"))
             {
                 return Err(unsupported(
                     "foreign workbook metadata lookalike",
@@ -652,14 +652,14 @@ pub(super) fn discover(
             "workbookPr",
             "calcPr",
         ]
-        .contains(&e.local.as_str())
+        .contains(&e.local)
             && e.ns != xml::MAIN
         {
-            return Err(unsupported("foreign workbook metadata lookalike", &e.local));
+            return Err(unsupported("foreign workbook metadata lookalike", e.local));
         }
-        if matches!(e.local.as_str(), "sheets" | "definedNames" | "calcPr")
-            && (!xml::path_is(path, xml::MAIN, &["workbook", e.local.as_str()])
-                || !metadata_sections.insert(e.local.clone()))
+        if matches!(e.local, "sheets" | "definedNames" | "calcPr")
+            && (!xml::path_is(path, xml::MAIN, &["workbook", e.local])
+                || !metadata_sections.insert(e.local))
         {
             return Err(unsupported(
                 "duplicate/misplaced workbook metadata",
@@ -725,7 +725,7 @@ pub(super) fn discover(
                 ));
             }
             let rel = relations
-                .get(&id.value)
+                .get(&*id.value)
                 .ok_or_else(|| unsupported("missing worksheet relationship", "workbook XML"))?;
             if rel.kind != format!("{}/worksheet", xml::OFFICE) {
                 return Err(unsupported("non-worksheet sheet", "workbook XML"));
@@ -857,7 +857,7 @@ pub(super) fn append_child(
     xml::walk(data, options, |path, node| {
         match node.kind {
             xml::Kind::Open { empty, .. } if path.len() == 1 => {
-                root = Some((path[0].qualified.clone(), node.span.clone(), empty));
+                root = Some((path[0].qualified.to_owned(), node.span.clone(), empty));
             }
             xml::Kind::Close if path.len() == 1 => close = Some(node.span.start),
             _ => {}
@@ -958,15 +958,12 @@ fn validate_aux(
                 "tableColumn",
                 "tableColumns",
             ]
-            .contains(&e.local.as_str())
+            .contains(&e.local)
                 && e.ns != xml::MAIN
             {
                 return Err(unsupported("foreign adapter metadata lookalike", part));
             }
-            if matches!(
-                e.local.as_str(),
-                "calculatedColumnFormula" | "totalsRowFormula"
-            ) {
+            if matches!(e.local, "calculatedColumnFormula" | "totalsRowFormula") {
                 return Err(unsupported("table-managed formula metadata", part));
             }
         }

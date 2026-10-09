@@ -727,6 +727,7 @@ impl CalamineAdapter {
         sheet: &str,
         position: (u32, u32),
         formula: &str,
+        shared: Option<usize>,
         debug: bool,
         staging: &mut FormulaStaging,
     ) -> Result<(), calamine::Error> {
@@ -744,7 +745,9 @@ impl CalamineAdapter {
             engine.stage_formula_text(sheet, excel_row, excel_col, normalized);
             staging.handed_to_engine += 1;
         } else {
+            staging.grouper.note_formula();
             let record = if let Some(cached) = staging.parse_cache.get(&normalized) {
+                staging.grouper.note_parse_cache_hit();
                 cached.map(|ast_id| {
                     engine.note_staged_formula(&mut staging.grouper, excel_row, excel_col, ast_id);
                     FormulaIngestRecord::new(
@@ -754,8 +757,19 @@ impl CalamineAdapter {
                         Some(Arc::<str>::from(normalized.as_str())),
                     )
                 })
+            } else if let Some(record) = engine.stage_relocated_text(
+                &mut staging.grouper,
+                excel_row,
+                excel_col,
+                &normalized,
+                shared.map(|index| index as u64),
+            ) {
+                Some(record)
             } else {
-                let parsed = match formualizer_parse::parser::parse(&normalized) {
+                staging.grouper.note_parse(normalized.len());
+                let parsed = formualizer_parse::parser::parse(&normalized);
+                let parsed_text = parsed.is_ok();
+                let parsed = match parsed {
                     Ok(parsed) => Some(parsed),
                     Err(error) => engine
                         .handle_formula_parse_error(
@@ -778,6 +792,17 @@ impl CalamineAdapter {
                             &ast,
                             None,
                         );
+                        if parsed_text {
+                            engine.note_parsed_text(
+                                &mut staging.grouper,
+                                excel_row,
+                                excel_col,
+                                &normalized,
+                                &ast,
+                                &record,
+                                shared.map(|index| index as u64),
+                            );
+                        }
                         // A member's text is not worth caching: relative
                         // copies do not repeat their text.
                         if record.is_family_member() {
@@ -1292,6 +1317,7 @@ impl CalamineAdapter {
                         sheet,
                         (coord0.row, coord0.col),
                         formula,
+                        shared_index,
                         debug,
                         &mut formula_staging,
                     )
@@ -1303,6 +1329,8 @@ impl CalamineAdapter {
                 });
             }
         }
+
+        engine.finish_family_grouper(&mut formula_staging.grouper);
 
         if u64::try_from(value_cells_observed)
             .unwrap_or(u64::MAX)
@@ -1609,11 +1637,16 @@ impl CalamineAdapter {
         ground(&mut ast, scope.and_then(|id| sheets.get(id)), sheets).then_some(ast)
     }
 
+    /// Lowercased built-in document names (`_xlnm.*`) that are kept as raw
+    /// metadata, not calculation names. No source formula may reference one.
     #[cfg(feature = "xlsx-recalc")]
-    pub(crate) fn has_document_names(&self) -> bool {
+    pub(crate) fn unimported_document_names(&self) -> Vec<String> {
         self.raw_calculation_names()
             .iter()
-            .any(|(name, _, _)| name.to_ascii_lowercase().starts_with("_xlnm."))
+            .filter(|(name, _, _)| name.to_ascii_lowercase().starts_with("_xlnm."))
+            .filter(|(_, text, scope)| self.grounded_name_ast(text, *scope).is_none())
+            .map(|(name, _, _)| name.to_ascii_lowercase())
+            .collect()
     }
 
     #[cfg(feature = "xlsx-recalc")]
@@ -1819,7 +1852,7 @@ impl CalamineAdapter {
                 definition: DefinedNameDefinition::Literal { value },
             });
         }
-        if trimmed.contains(',') {
+        if super::has_union_comma(trimmed) {
             return None;
         }
         let reference = ReferenceType::from_string(trimmed).ok()?;
@@ -2637,6 +2670,10 @@ where
                     total_values,
                     total_formulas,
                     t0.elapsed_millis(),
+                );
+                eprintln!(
+                    "[fz][families] {}",
+                    engine.source_family_counters().debug_line()
                 );
             }
             for n in &names {

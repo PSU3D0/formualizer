@@ -246,11 +246,14 @@ fn print_filter_metadata_is_preserved_but_referenced_unsupported_name_refuses() 
     let out = recalculate_xlsx_bytes(&pack(&p), Default::default()).unwrap();
     assert_eq!(data(&out.bytes, 0), Data::Float(2.0));
     assert_eq!(member(&out.bytes, "xl/workbook.xml"), p["xl/workbook.xml"]);
-    let p = with_names(single("SUM(_xlnm.Print_Area)", "<v>99</v>"), names);
-    assert!(matches!(
-        recalculate_xlsx_bytes(&pack(&p), Default::default()),
-        Err(formualizer_workbook::IoError::Unsupported { .. })
-    ));
+    // Names are case-insensitive: any spelling of the reference refuses.
+    for formula in ["SUM(_xlnm.Print_Area)", "SUM(_XLNM.PRINT_AREA)"] {
+        let p = with_names(single(formula, "<v>99</v>"), names);
+        assert!(matches!(
+            recalculate_xlsx_bytes(&pack(&p), Default::default()),
+            Err(formualizer_workbook::IoError::Unsupported { .. })
+        ));
+    }
 }
 
 #[test]

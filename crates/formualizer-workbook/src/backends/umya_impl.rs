@@ -948,7 +948,7 @@ impl UmyaAdapter {
         if let Some(rest) = trimmed.strip_prefix('=') {
             trimmed = rest.trim();
         }
-        if trimmed.is_empty() || trimmed.contains(',') {
+        if trimmed.is_empty() || super::has_union_comma(trimmed) {
             return None;
         }
 
@@ -1069,7 +1069,7 @@ impl UmyaAdapter {
     fn convert_defined_name(defined: &UmyaDefinedName, current_sheet: &str) -> Option<NamedRange> {
         let raw = defined.get_address();
         let trimmed = raw.trim();
-        if trimmed.is_empty() || trimmed.contains(',') {
+        if trimmed.is_empty() || super::has_union_comma(trimmed) {
             return None;
         }
 
@@ -1356,6 +1356,7 @@ where
                         formula_cells += 1;
                     }
                 }
+                staging.finish(engine);
                 formula_handed_to_engine += formulas.len();
                 if !formulas.is_empty() {
                     eager_formula_batches.push(FormulaIngestBatch::new(n.clone(), formulas));

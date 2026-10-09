@@ -10,6 +10,8 @@ pub use limits::ParserLimits;
 pub mod parser;
 pub mod pretty;
 mod structured_ref;
+#[doc(hidden)]
+pub mod template_lex;
 mod tests;
 pub mod tokenizer;
 pub mod types;

@@ -2637,6 +2637,20 @@ pub(crate) fn parsed_equal_relocated<'a>(
                 if relocate_compact_ref(rb, dr, dc) != Some(ra) {
                     return false;
                 }
+                // A copy whose range ends cross (`A25:A$24`) has no
+                // rectangle to place as a member; it stays a formula of
+                // its own.
+                if let R::Range {
+                    start_row,
+                    start_col,
+                    end_row,
+                    end_col,
+                    ..
+                } = &ra
+                    && (start_row > end_row || start_col > end_col)
+                {
+                    return false;
+                }
                 let own_text = original.as_str();
                 let text_ok = if rerender {
                     match (coords_rendering(rb), coords_rendering(&ra)) {
@@ -2735,6 +2749,61 @@ impl DependencyGraph {
             return Some(family.clone());
         }
         None
+    }
+
+    /// Whether `template` (anchored at 0-based `anchor`) certifies as a
+    /// relocation template: no structural rewrite, and every reference
+    /// text is its reference's rendering, so a member re-renders each one.
+    pub(crate) fn template_renders_all_refs(&self, template: AstNodeId) -> bool {
+        !self.data_store.ast_needs_structural_rewrite(template)
+            && template_rendered_refs(&self.data_store, &self.sheet_reg, template)
+                .iter()
+                .all(|r| *r)
+    }
+
+    /// The family oracle: whether the independently parsed `own` formula
+    /// of the cell at 0-based `(row0, col0)` is exactly `template` (valid
+    /// at `anchor`) instantiated there, by the comparator load-time
+    /// grouping uses and by instantiating the member and comparing the
+    /// interned trees.
+    pub(crate) fn relocated_member_oracle(
+        &self,
+        template: AstNodeId,
+        anchor: (u32, u32),
+        row0: u32,
+        col0: u32,
+        own: &formualizer_parse::parser::ASTNode,
+    ) -> bool {
+        if self.data_store.ast_needs_structural_rewrite(template) {
+            return false;
+        }
+        let rendered = template_rendered_refs(&self.data_store, &self.sheet_reg, template);
+        let dr = i64::from(row0) - i64::from(anchor.0);
+        let dc = i64::from(col0) - i64::from(anchor.1);
+        let mut stack = Vec::new();
+        if !parsed_equal_relocated(
+            &self.data_store,
+            &self.sheet_reg,
+            own,
+            template,
+            dr,
+            dc,
+            &rendered,
+            &mut stack,
+        ) {
+            return false;
+        }
+        let Some(tree) = self.data_store.retrieve_ast(template, &self.sheet_reg) else {
+            return false;
+        };
+        let Ok(member) = crate::engine::template::relocate::instantiate_member_ast(&tree, dr, dc)
+        else {
+            return false;
+        };
+        let mut ds = crate::engine::arena::DataStore::new();
+        let own_id = ds.store_ast(own, &self.sheet_reg);
+        let member_id = ds.store_ast(&member, &self.sheet_reg);
+        ds.retrieve_ast(own_id, &self.sheet_reg) == ds.retrieve_ast(member_id, &self.sheet_reg)
     }
 
     fn formula_member_of<'a>(
