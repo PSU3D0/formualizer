@@ -655,6 +655,20 @@ pub fn formualizer_workbook::builtins::load_io_builtins() -> usize
 pub fn formualizer_workbook::builtins::register_function_dynamic(alloc::sync::Arc<dyn formualizer_eval::function::Function>)
 pub fn formualizer_workbook::builtins::try_load_builtins() -> core::result::Result<formualizer_workbook::builtins::BuiltinsGuard, &'static str>
 pub mod formualizer_workbook::cache_recalculate
+pub enum formualizer_workbook::cache_recalculate::ExternalLinkPolicy
+pub formualizer_workbook::cache_recalculate::ExternalLinkPolicy::Cached
+pub formualizer_workbook::cache_recalculate::ExternalLinkPolicy::Refuse
+impl core::clone::Clone for formualizer_workbook::cache_recalculate::ExternalLinkPolicy
+pub fn formualizer_workbook::cache_recalculate::ExternalLinkPolicy::clone(&self) -> formualizer_workbook::cache_recalculate::ExternalLinkPolicy
+impl core::cmp::Eq for formualizer_workbook::cache_recalculate::ExternalLinkPolicy
+impl core::cmp::PartialEq for formualizer_workbook::cache_recalculate::ExternalLinkPolicy
+pub fn formualizer_workbook::cache_recalculate::ExternalLinkPolicy::eq(&self, &formualizer_workbook::cache_recalculate::ExternalLinkPolicy) -> bool
+impl core::default::Default for formualizer_workbook::cache_recalculate::ExternalLinkPolicy
+pub fn formualizer_workbook::cache_recalculate::ExternalLinkPolicy::default() -> formualizer_workbook::cache_recalculate::ExternalLinkPolicy
+impl core::fmt::Debug for formualizer_workbook::cache_recalculate::ExternalLinkPolicy
+pub fn formualizer_workbook::cache_recalculate::ExternalLinkPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_workbook::cache_recalculate::ExternalLinkPolicy
+impl core::marker::StructuralPartialEq for formualizer_workbook::cache_recalculate::ExternalLinkPolicy
 pub struct formualizer_workbook::cache_recalculate::XlsxRecalculateLimits
 pub formualizer_workbook::cache_recalculate::XlsxRecalculateLimits::max_cells: usize
 pub formualizer_workbook::cache_recalculate::XlsxRecalculateLimits::max_columns: u32
@@ -675,6 +689,7 @@ pub struct formualizer_workbook::cache_recalculate::XlsxRecalculateOptions
 pub formualizer_workbook::cache_recalculate::XlsxRecalculateOptions::cancel: core::option::Option<formualizer_eval::engine::cancel::CancelToken>
 pub formualizer_workbook::cache_recalculate::XlsxRecalculateOptions::error_location_limit: usize
 pub formualizer_workbook::cache_recalculate::XlsxRecalculateOptions::eval_config: formualizer_eval::engine::EvalConfig
+pub formualizer_workbook::cache_recalculate::XlsxRecalculateOptions::external_links: formualizer_workbook::cache_recalculate::ExternalLinkPolicy
 pub formualizer_workbook::cache_recalculate::XlsxRecalculateOptions::limits: formualizer_workbook::cache_recalculate::XlsxRecalculateLimits
 impl core::clone::Clone for formualizer_workbook::cache_recalculate::XlsxRecalculateOptions
 pub fn formualizer_workbook::cache_recalculate::XlsxRecalculateOptions::clone(&self) -> formualizer_workbook::cache_recalculate::XlsxRecalculateOptions
@@ -1697,6 +1712,20 @@ impl core::fmt::Debug for formualizer_workbook::backends::csv::CsvArrayPolicy
 pub fn formualizer_workbook::backends::csv::CsvArrayPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for formualizer_workbook::backends::csv::CsvArrayPolicy
 impl core::marker::StructuralPartialEq for formualizer_workbook::backends::csv::CsvArrayPolicy
+pub enum formualizer_workbook::ExternalLinkPolicy
+pub formualizer_workbook::ExternalLinkPolicy::Cached
+pub formualizer_workbook::ExternalLinkPolicy::Refuse
+impl core::clone::Clone for formualizer_workbook::cache_recalculate::ExternalLinkPolicy
+pub fn formualizer_workbook::cache_recalculate::ExternalLinkPolicy::clone(&self) -> formualizer_workbook::cache_recalculate::ExternalLinkPolicy
+impl core::cmp::Eq for formualizer_workbook::cache_recalculate::ExternalLinkPolicy
+impl core::cmp::PartialEq for formualizer_workbook::cache_recalculate::ExternalLinkPolicy
+pub fn formualizer_workbook::cache_recalculate::ExternalLinkPolicy::eq(&self, &formualizer_workbook::cache_recalculate::ExternalLinkPolicy) -> bool
+impl core::default::Default for formualizer_workbook::cache_recalculate::ExternalLinkPolicy
+pub fn formualizer_workbook::cache_recalculate::ExternalLinkPolicy::default() -> formualizer_workbook::cache_recalculate::ExternalLinkPolicy
+impl core::fmt::Debug for formualizer_workbook::cache_recalculate::ExternalLinkPolicy
+pub fn formualizer_workbook::cache_recalculate::ExternalLinkPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_workbook::cache_recalculate::ExternalLinkPolicy
+impl core::marker::StructuralPartialEq for formualizer_workbook::cache_recalculate::ExternalLinkPolicy
 pub enum formualizer_workbook::IoError
 pub formualizer_workbook::IoError::Backend
 pub formualizer_workbook::IoError::Backend::backend: alloc::string::String
@@ -2610,6 +2639,7 @@ pub struct formualizer_workbook::XlsxRecalculateOptions
 pub formualizer_workbook::XlsxRecalculateOptions::cancel: core::option::Option<formualizer_eval::engine::cancel::CancelToken>
 pub formualizer_workbook::XlsxRecalculateOptions::error_location_limit: usize
 pub formualizer_workbook::XlsxRecalculateOptions::eval_config: formualizer_eval::engine::EvalConfig
+pub formualizer_workbook::XlsxRecalculateOptions::external_links: formualizer_workbook::cache_recalculate::ExternalLinkPolicy
 pub formualizer_workbook::XlsxRecalculateOptions::limits: formualizer_workbook::cache_recalculate::XlsxRecalculateLimits
 impl core::clone::Clone for formualizer_workbook::cache_recalculate::XlsxRecalculateOptions
 pub fn formualizer_workbook::cache_recalculate::XlsxRecalculateOptions::clone(&self) -> formualizer_workbook::cache_recalculate::XlsxRecalculateOptions
