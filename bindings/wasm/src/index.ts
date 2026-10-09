@@ -692,6 +692,12 @@ export interface XlsxRecalculateResult {
   cache_cells_changed: number;
   /** Changed worksheets only; metadata/relationships are not counted. */
   worksheet_parts_changed: number;
+  /**
+   * Present only when the computation read values of external workbook
+   * links. Links are never refreshed: the values are the ones Excel last
+   * stored in the workbook.
+   */
+  external_links?: { links_used: number; refreshed: false; policy: 'cached' };
   /** The clock this run used; pass it back to replay the run exactly. */
   clock: {
     /**
@@ -708,7 +714,10 @@ export interface XlsxRecalculateResult {
   seed: bigint;
 }
 
-/** Reproducibility options for `recalculateXlsxBytes`, spelled as in `evaluateOnce`. */
+/**
+ * Options for `recalculateXlsxBytes`: reproducibility, spelled as in
+ * `evaluateOnce`, and the external link policy.
+ */
 export interface XlsxRecalculateOptions {
   /** RAND/RANDBETWEEN seed. The default seed is already stable run to run. */
   rngSeed?: number | bigint;
@@ -716,6 +725,12 @@ export interface XlsxRecalculateOptions {
   deterministicTimestampUtc?: Date | string;
   /** Zone for TODAY/NOW (default UTC); requires `deterministicTimestampUtc`. */
   deterministicTimezone?: DeterministicTimezone;
+  /**
+   * External link values, never refreshed: `'cached'` (default) reads the
+   * values Excel stored in the workbook; `'refuse'` rejects a workbook whose
+   * formulas read any of them (decided after calculation).
+   */
+  externalLinks?: 'cached' | 'refuse';
 }
 
 /**
@@ -730,14 +745,16 @@ export interface XlsxRecalculateOptions {
  * declared children are recalculated caches, even if externally edited. Spills
  * may grow, shrink, collapse or become blocked; A1# and _xlfn.ANCHORARRAY read
  * the current spill. Fresh unmarked 1x1 results remain scalars (#REF! readers).
- * Legacy CSE/data tables, table-bearing sheets, external links, rich/unknown
- * metadata, shared-family multi-cell spills and spills crossing merges are
- * refused. Deterministic unchanged output is byte-identical on rerun. This is
- * a supported subset, not an Excel-equivalence claim. See
- * docs/cache-only-xlsx.md for exact eligibility, ownership and bounds.
+ * Legacy CSE/data tables, table-bearing sheets, unservable external
+ * references, rich/unknown metadata, shared-family multi-cell spills and
+ * spills crossing merges are refused; external links read the values cached
+ * in the workbook (see `externalLinks`). Deterministic unchanged output is
+ * byte-identical on rerun. This is a supported subset, not an
+ * Excel-equivalence claim. See docs/cache-only-xlsx.md for exact eligibility,
+ * ownership and bounds.
  *
  * `options` fixes the clock and RAND seed; the result's `clock` and `seed`
- * replay any run.
+ * replay any run. `options.externalLinks` chooses the external link policy.
  */
 export async function recalculateXlsxBytes(
   bytes: XlsxBytesSource,

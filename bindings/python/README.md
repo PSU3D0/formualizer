@@ -229,11 +229,19 @@ ownership remains declared. Obsolete caches are cleared, keeping styled shells.
 children. `cache_cells_changed` counts physical caches inserted, replaced or
 cleared (including children), so it can exceed the formula count.
 `worksheet_parts_changed` counts worksheets only, not metadata/relationships.
+`external_links` (`{"links_used": n, "refreshed": False, "policy": "cached"}`)
+is present only when formulas read external workbook links; their values come
+from the cache Excel stored in the workbook and are never refreshed. Pass
+`external_links="refuse"` (default `"cached"`, like the CLI's `--external-links`)
+to raise `OSError` instead when any formula reads a link value; the policy is
+decided after calculation and nothing is written. Workbooks whose links nothing
+reads still recalculate. Other values raise `ValueError`.
 Deterministic unchanged outputs recalculate to byte-identical no-ops.
 
 Legacy fixed-extent (CSE) arrays, elementwise `IF`, Excel tables within a
-validated subset and volatile functions are recalculated too. Data tables,
-external links, rich/unknown or malformed metadata, hidden-row `SUBTOTAL`/`AGGREGATE`
+validated subset, volatile functions and external links (read from the values
+cached in the workbook, never refreshed) are recalculated too. Data tables,
+unservable external references, rich/unknown or malformed metadata, hidden-row `SUBTOTAL`/`AGGREGATE`
 ranges, circular references, shared-family multi-cell spills and spill
 publication across merges are refused. Configured ZIP/XML/cell/output bounds
 still apply. Fresh unmarked 1x1 results have no spill identity (`A1#` returns
@@ -436,8 +444,8 @@ parse(formula: str, dialect: FormulaDialect = None) -> ASTNode
 load_workbook(path: str, strategy: str = None, *, path_source: XlsxPathSource | None = None, span_evaluation: bool | None = None) -> Workbook
 load_workbook_bytes(data: bytes, strategy: str = None, backend: str | None = None, *, span_evaluation: bool | None = None) -> Workbook
 recalculate_file(path: str, output: str | None = None) -> dict
-recalculate_xlsx_bytes(data: bytes, *, error_location_limit: int | None = None, rng_seed: int | None = None, deterministic_timestamp_utc: datetime | None = None, deterministic_timezone: str | int | None = None) -> dict
-recalculate_xlsx_file(path: str, output: str | None = None, *, error_location_limit: int | None = None, rng_seed: int | None = None, deterministic_timestamp_utc: datetime | None = None, deterministic_timezone: str | int | None = None) -> dict
+recalculate_xlsx_bytes(data: bytes, *, error_location_limit: int | None = None, rng_seed: int | None = None, deterministic_timestamp_utc: datetime | None = None, deterministic_timezone: str | int | None = None, external_links: str = "cached") -> dict
+recalculate_xlsx_file(path: str, output: str | None = None, *, error_location_limit: int | None = None, rng_seed: int | None = None, deterministic_timestamp_utc: datetime | None = None, deterministic_timezone: str | int | None = None, external_links: str = "cached") -> dict
 ```
 
 ### Core classes

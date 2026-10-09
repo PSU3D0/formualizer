@@ -790,6 +790,9 @@ impl formualizer_eval::function::Function for WorkbookWasmFunction {
 pub struct WBResolver {
     custom_functions: Arc<RwLock<CustomFnRegistry>>,
     custom_function_revision: Arc<std::sync::atomic::AtomicU64>,
+    /// Cached external link values served as engine sources.
+    #[cfg(feature = "xlsx-recalc")]
+    external: Option<Arc<crate::cache_recalculate::external_links::ExternalValues>>,
 }
 
 impl Default for WBResolver {
@@ -797,6 +800,8 @@ impl Default for WBResolver {
         Self {
             custom_functions: Arc::new(RwLock::new(BTreeMap::new())),
             custom_function_revision: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            #[cfg(feature = "xlsx-recalc")]
+            external: None,
         }
     }
 }
@@ -809,6 +814,19 @@ impl WBResolver {
         Self {
             custom_functions,
             custom_function_revision,
+            #[cfg(feature = "xlsx-recalc")]
+            external: None,
+        }
+    }
+
+    /// A resolver that serves cached external link values.
+    #[cfg(feature = "xlsx-recalc")]
+    pub(crate) fn with_external_values(
+        values: Arc<crate::cache_recalculate::external_links::ExternalValues>,
+    ) -> Self {
+        Self {
+            external: Some(values),
+            ..Self::default()
         }
     }
 }
@@ -860,7 +878,38 @@ impl formualizer_eval::traits::TableResolver for WBResolver {
         ))
     }
 }
-impl formualizer_eval::traits::SourceResolver for WBResolver {}
+impl formualizer_eval::traits::SourceResolver for WBResolver {
+    #[cfg(feature = "xlsx-recalc")]
+    fn resolve_source_scalar(&self, name: &str) -> Result<LiteralValue, ExcelError> {
+        self.external
+            .as_ref()
+            .and_then(|values| values.scalar(name))
+            .cloned()
+            .ok_or_else(|| {
+                ExcelError::new(ExcelErrorKind::NImpl)
+                    .with_message(format!("Source scalar not supported: {name}"))
+            })
+    }
+
+    #[cfg(feature = "xlsx-recalc")]
+    fn resolve_source_table(
+        &self,
+        name: &str,
+    ) -> Result<Box<dyn formualizer_eval::traits::Table>, ExcelError> {
+        self.external
+            .as_ref()
+            .and_then(|values| values.range(name))
+            .map(|grid| {
+                Box::new(crate::cache_recalculate::external_links::CachedRange(
+                    grid.clone(),
+                )) as Box<dyn formualizer_eval::traits::Table>
+            })
+            .ok_or_else(|| {
+                ExcelError::new(ExcelErrorKind::NImpl)
+                    .with_message(format!("Source table not supported: {name}"))
+            })
+    }
+}
 impl formualizer_eval::traits::FunctionProvider for WBResolver {
     fn planning_semantic_revision(&self) -> Option<u64> {
         Some(

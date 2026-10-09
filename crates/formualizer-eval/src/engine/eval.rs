@@ -1741,6 +1741,9 @@ impl<'a, R> Drop for ActionDepthGuard<'a, R> {
 struct SourceCache {
     scalars: FxHashMap<(String, Option<u64>), LiteralValue>,
     tables: FxHashMap<(String, Option<u64>), Arc<dyn crate::traits::Table>>,
+    /// Materialized views of external range sources: one build per source
+    /// version, shared by every formula that reads it.
+    external_views: FxHashMap<(String, Option<u64>), RangeView<'static>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -18602,9 +18605,25 @@ where
                         let version = source
                             .version
                             .or_else(|| self.resolver.source_table_version(name));
+                        let key = (name.to_string(), version);
+                        if let Ok(g) = self.source_cache.read()
+                            && let Some(view) = g.external_views.get(&key)
+                        {
+                            return Ok(view.clone());
+                        }
                         let table = self.resolve_source_table_cached(name, version)?;
                         let spec = Some(formualizer_parse::parser::TableSpecifier::Data);
-                        self.source_table_to_range_view(table.as_ref(), &spec)
+                        // Build under the write lock: concurrent readers of one
+                        // source wait for a single materialization.
+                        let Ok(mut g) = self.source_cache.write() else {
+                            return self.source_table_to_range_view(table.as_ref(), &spec);
+                        };
+                        if let Some(view) = g.external_views.get(&key) {
+                            return Ok(view.clone());
+                        }
+                        let view = self.source_table_to_range_view(table.as_ref(), &spec)?;
+                        g.external_views.insert(key, view.clone());
+                        Ok(view)
                     }
                 }
             }
@@ -18842,7 +18861,16 @@ where
                                 self.config.date_system,
                             ));
                         }
-                        NamedDefinition::Formula { .. } => {
+                        NamedDefinition::Formula { ast, .. } => {
+                            // A name that is exactly one external reference
+                            // reads its source like the reference itself.
+                            if let ASTNodeType::Reference {
+                                reference: external @ ReferenceType::External(_),
+                                ..
+                            } = &ast.node_type
+                            {
+                                return self.resolve_range_view(external, current_sheet);
+                            }
                             if let Some(value) = self.graph.get_value(named.vertex) {
                                 return Ok(RangeView::from_owned_rows(
                                     vec![vec![value]],

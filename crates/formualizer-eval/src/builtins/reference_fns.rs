@@ -506,6 +506,11 @@ impl Function for IndexFn {
                 return None;
             }
         };
+        // An external range served from a source has no worksheet position:
+        // index its values. An unbound one keeps the reference path.
+        if matches!(base, ReferenceType::External(_)) && args[0].value().is_ok() {
+            return None;
+        }
         Self::reference_from_base(args, ctx, base)
     }
 

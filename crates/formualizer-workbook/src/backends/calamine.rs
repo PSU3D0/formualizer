@@ -642,6 +642,14 @@ pub struct CalamineAdapter {
     calc_settings: OnceLock<Option<CalcSettings>>,
     load_stats: AdapterLoadStats,
     shadow_relocation_comparator: Option<ShadowRelocationComparator>,
+    /// Cached external link values a recalculation serves: calculation
+    /// names may read exactly these external references.
+    #[cfg(feature = "xlsx-recalc")]
+    external_values: Option<Arc<crate::cache_recalculate::external_links::ExternalValues>>,
+    /// Lowercased names that read external links but that nothing
+    /// references: kept as raw metadata, like unsupported `_xlnm.*` names.
+    #[cfg(feature = "xlsx-recalc")]
+    skipped_external_names: Vec<String>,
     #[cfg(test)]
     lazy_scan_counts: LazyScanCounts,
     #[cfg(test)]
@@ -1433,6 +1441,10 @@ impl CalamineAdapter {
             calc_settings: OnceLock::new(),
             load_stats: AdapterLoadStats::default(),
             shadow_relocation_comparator: None,
+            #[cfg(feature = "xlsx-recalc")]
+            external_values: None,
+            #[cfg(feature = "xlsx-recalc")]
+            skipped_external_names: Vec::new(),
             #[cfg(test)]
             lazy_scan_counts: LazyScanCounts::default(),
             #[cfg(test)]
@@ -1529,13 +1541,49 @@ impl CalamineAdapter {
         })
     }
 
+    /// Serve exactly these cached external references to calculation names.
+    #[cfg(feature = "xlsx-recalc")]
+    pub(crate) fn admit_external_references(
+        &mut self,
+        values: Arc<crate::cache_recalculate::external_links::ExternalValues>,
+    ) {
+        self.external_values = Some(values);
+    }
+
+    /// Leave these unreferenced external-link names out of the calculation.
+    #[cfg(feature = "xlsx-recalc")]
+    pub(crate) fn skip_external_names(&mut self, names: Vec<String>) {
+        self.skipped_external_names = names;
+    }
+
+    /// Whether a name's external reference reads an admitted cached value.
+    fn external_admitted(&self, raw: &str) -> bool {
+        #[cfg(feature = "xlsx-recalc")]
+        {
+            self.external_values
+                .as_ref()
+                .is_some_and(|values| values.contains(raw))
+        }
+        #[cfg(not(feature = "xlsx-recalc"))]
+        {
+            let _ = raw;
+            false
+        }
+    }
+
     fn grounded_name_ast(&self, text: &str, scope: Option<usize>) -> Option<ASTNode> {
         use formualizer_parse::parser::ASTNodeType as N;
         let sheets = self.cached_names.as_deref().unwrap_or_default();
         if scope.is_some_and(|id| id >= sheets.len()) {
             return None;
         }
-        fn ground(ast: &mut ASTNode, base: Option<&String>, sheets: &[String]) -> bool {
+        let external = |raw: &str| self.external_admitted(raw);
+        fn ground(
+            ast: &mut ASTNode,
+            base: Option<&String>,
+            sheets: &[String],
+            external: &dyn Fn(&str) -> bool,
+        ) -> bool {
             match &mut ast.node_type {
                 N::Literal(LiteralValue::Number(n)) => n.is_finite(),
                 N::Literal(_) => true,
@@ -1591,17 +1639,35 @@ impl CalamineAdapter {
                         }) || (start_col.is_none() && end_col.is_none());
                         rows_ok && cols_ok && sheet.as_ref().is_some_and(|s| sheets.contains(s))
                     }
+                    // An absolute reference whose cached value a
+                    // recalculation serves (never on other load paths).
+                    ReferenceType::External(ext) => {
+                        use formualizer_parse::parser::ExternalRefKind as K;
+                        let absolute = match ext.kind {
+                            K::Cell {
+                                row_abs, col_abs, ..
+                            } => row_abs && col_abs,
+                            K::Range {
+                                start_row_abs,
+                                start_col_abs,
+                                end_row_abs,
+                                end_col_abs,
+                                ..
+                            } => start_row_abs && start_col_abs && end_row_abs && end_col_abs,
+                        };
+                        absolute && external(&ext.raw)
+                    }
                     _ => false,
                 },
                 N::UnaryOp { op, expr } => {
-                    matches!(op.as_str(), "+" | "-" | "%") && ground(expr, base, sheets)
+                    matches!(op.as_str(), "+" | "-" | "%") && ground(expr, base, sheets, external)
                 }
                 N::BinaryOp { op, left, right } => {
                     matches!(
                         op.as_str(),
                         "+" | "-" | "*" | "/" | "^" | "&" | "=" | "<>" | "<" | ">" | "<=" | ">="
-                    ) && ground(left, base, sheets)
-                        && ground(right, base, sheets)
+                    ) && ground(left, base, sheets, external)
+                        && ground(right, base, sheets, external)
                 }
                 N::Function { name, args } => {
                     // Context-dependent/reference-producing functions (INDIRECT,
@@ -1623,7 +1689,7 @@ impl CalamineAdapter {
                             | "AND"
                             | "OR"
                             | "NOT"
-                    ) && args.iter_mut().all(|a| ground(a, base, sheets))
+                    ) && args.iter_mut().all(|a| ground(a, base, sheets, external))
                 }
                 // Arrays, generic calls and omitted arguments are outside this packet.
                 _ => false,
@@ -1634,7 +1700,13 @@ impl CalamineAdapter {
             text.trim().strip_prefix('=').unwrap_or(text.trim())
         ))
         .ok()?;
-        ground(&mut ast, scope.and_then(|id| sheets.get(id)), sheets).then_some(ast)
+        ground(
+            &mut ast,
+            scope.and_then(|id| sheets.get(id)),
+            sheets,
+            &external,
+        )
+        .then_some(ast)
     }
 
     /// Lowercased built-in document names (`_xlnm.*`) that are kept as raw
@@ -1643,10 +1715,19 @@ impl CalamineAdapter {
     pub(crate) fn unimported_document_names(&self) -> Vec<String> {
         self.raw_calculation_names()
             .iter()
-            .filter(|(name, _, _)| name.to_ascii_lowercase().starts_with("_xlnm."))
+            .filter(|(name, _, _)| self.skippable(name))
             .filter(|(_, text, scope)| self.grounded_name_ast(text, *scope).is_none())
             .map(|(name, _, _)| name.to_ascii_lowercase())
             .collect()
+    }
+
+    /// A name that may stay out of the calculation when nothing references
+    /// it: built-in document metadata, or a name a recalculation found to
+    /// read external links while unreferenced.
+    #[cfg(feature = "xlsx-recalc")]
+    fn skippable(&self, name: &str) -> bool {
+        let name = name.to_ascii_lowercase();
+        name.starts_with("_xlnm.") || self.skipped_external_names.contains(&name)
     }
 
     #[cfg(feature = "xlsx-recalc")]
@@ -1687,9 +1768,7 @@ impl CalamineAdapter {
             let Some(ast) = self.grounded_name_ast(text, *scope) else {
                 // Built-in print/filter names describe document metadata, not
                 // calculation. Preserve them raw, but never discard a reference.
-                if !name.to_ascii_lowercase().starts_with("_xlnm.")
-                    || used.contains(&name.to_ascii_lowercase())
-                {
+                if !self.skippable(name) || used.contains(&name.to_ascii_lowercase()) {
                     return Err(fail(name));
                 }
                 continue;

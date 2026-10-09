@@ -2174,7 +2174,7 @@ def recalculate_file(path: builtins.str, output: typing.Optional[builtins.str] =
         `umya-spreadsheet` implementation.
     """
 
-def recalculate_xlsx_bytes(data: bytes, *, error_location_limit: typing.Optional[builtins.int] = None, rng_seed: typing.Optional[builtins.int] = None, deterministic_timestamp_utc: typing.Optional[datetime.datetime] = None, deterministic_timezone: typing.Optional[typing.Any] = None) -> typing.Any:
+def recalculate_xlsx_bytes(data: bytes, *, error_location_limit: typing.Optional[builtins.int] = None, rng_seed: typing.Optional[builtins.int] = None, deterministic_timestamp_utc: typing.Optional[datetime.datetime] = None, deterministic_timezone: typing.Optional[typing.Any] = None, external_links: builtins.str = 'cached') -> typing.Any:
     r"""
     Recalculate XLSX formula caches in memory without rewriting unrelated package parts.
     Returns a dictionary with output ``bytes``, a ``summary``, and formula/cache/worksheet counts.
@@ -2188,10 +2188,13 @@ def recalculate_xlsx_bytes(data: bytes, *, error_location_limit: typing.Optional
     ``seed`` replay the run. ``summary["error_summary"][token]["messages"]``
     gives the reason for each listed location (``None`` when the cell has none
     of its own) and ``summary["unknown_functions"]`` lists every unimplemented
-    function called, with its cell count.
+    function called, with its cell count. External links are never refreshed:
+    with ``external_links="cached"`` (the default) formulas read the values
+    Excel stored in the workbook and the result's ``external_links`` reports
+    it; ``"refuse"`` raises ``OSError`` instead when any formula reads one.
     """
 
-def recalculate_xlsx_file(path: builtins.str, output: typing.Optional[builtins.str] = None, *, error_location_limit: typing.Optional[builtins.int] = None, rng_seed: typing.Optional[builtins.int] = None, deterministic_timestamp_utc: typing.Optional[datetime.datetime] = None, deterministic_timezone: typing.Optional[typing.Any] = None) -> typing.Any:
+def recalculate_xlsx_file(path: builtins.str, output: typing.Optional[builtins.str] = None, *, error_location_limit: typing.Optional[builtins.int] = None, rng_seed: typing.Optional[builtins.int] = None, deterministic_timestamp_utc: typing.Optional[datetime.datetime] = None, deterministic_timezone: typing.Optional[typing.Any] = None, external_links: builtins.str = 'cached') -> typing.Any:
     r"""
     Recalculate XLSX formula caches from a path using atomic output replacement.
     Returns the same dictionary as ``recalculate_xlsx_bytes``.
@@ -2200,7 +2203,8 @@ def recalculate_xlsx_file(path: builtins.str, output: typing.Optional[builtins.s
     with a fixed offset) fixes ``TODAY``/``NOW``; ``deterministic_timezone`` (``'utc'``, ``'+02:00'``
     or offset seconds, default UTC) requires it. Without them ``TODAY``/``NOW``
     use the host's local time. The result's ``clock`` (``now``, ``timezone``,
-    ``fixed``) and ``seed`` replay the run.
+    ``fixed``) and ``seed`` replay the run. ``external_links`` is as for
+    ``recalculate_xlsx_bytes``; a refusal writes nothing.
     """
 
 def tokenize(formula: builtins.str, dialect: typing.Optional[FormulaDialect] = None) -> Tokenizer:

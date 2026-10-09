@@ -21,6 +21,7 @@ Every channel installs the same `formualizer` command. Prebuilt binaries cover L
 ```text
 formualizer recalc <INPUT> [-o|--output <PATH>] [--check] [--json] [--max-errors <N>]
                    [--now <TIMESTAMP>] [--tz <ZONE>] [--seed <U64>]
+                   [--external-links <cached|refuse>]
 formualizer --version
 formualizer help [recalc]
 ```
@@ -35,6 +36,7 @@ formualizer help [recalc]
 | `--now <TIMESTAMP>` | Fix the instant `TODAY`/`NOW` see. RFC 3339 with an offset or `Z`, such as `2026-01-31T09:00:00Z`; a timestamp without one is a usage error. See [reproducible runs](#reproducible-runs). |
 | `--tz <ZONE>` | Timezone `TODAY`/`NOW` are read in: `UTC` or `±HH:MM`. Defaults to the offset in `--now`, otherwise the host's local time. |
 | `--seed <U64>` | Seed for `RAND`/`RANDBETWEEN` (0 to 2^64-1). Defaults to a fixed built-in seed. |
+| `--external-links <POLICY>` | `cached` (default): formulas read the values Excel cached in the workbook for external links, and the report says so (`external_links` in the JSON, a message line). `refuse`: a workbook whose formulas or used defined names read any external link value is refused (exit 2, feature `external link values`); the decision is made after calculation and nothing is written. Workbooks whose links nothing reads still recalculate. Links are never refreshed under either policy. See [external links](cache-only-xlsx.md#external-links). |
 | `-h, --help` / `-V, --version` | Print help or `formualizer <version>` and exit 0. |
 
 - The default writes **in place**, atomically. A true no-op leaves bytes and mtime untouched and reports `unchanged`.
@@ -53,7 +55,7 @@ The library reads a bounded snapshot, writes a same-directory temporary file, pr
 | 1 | `error` | I/O failure, missing or non-ZIP input, engine/internal failure or output-stream error |
 | 2 | `refused` | The strict path declined this input: unsupported feature, package structure it will not guess about, resource limit or symlink destination. Nothing written. |
 | 3 | `stale` | `--check` only: caches or spill shape would change. Nothing written. |
-| 64 | `error` | Command-line usage error, including an invalid `--now`, `--tz` or `--seed` value |
+| 64 | `error` | Command-line usage error, including an invalid `--now`, `--tz`, `--seed` or `--external-links` value |
 | 130 | `interrupted` | Cancelled (Ctrl-C/SIGINT) before publication. Nothing written. |
 
 A file without the XLSX ZIP local-header signature is an error (1). Malformed ZIPs that pass that check may be structured strict-path refusals (2). Workbooks saved by Excel (desktop, Mac and Online), LibreOffice, Google Sheets, openpyxl and Info-ZIP `zip` are admitted as containers; ZIP64, encryption, entry comments and unknown ZIP extra fields are refused (see [ZIP containers](cache-only-xlsx.md#zip-containers)). A stored formula the parser cannot read is a refusal (`unparseable formula`, with the sheet, cell and parser message in `context`), not an error. Refusals pass the library's feature/context through verbatim; see [refusal messages](cache-only-xlsx.md#refusal-messages) for their meaning.
@@ -76,11 +78,11 @@ formualizer recalc book.xlsx --now 2026-01-31T09:00:00Z --seed 7
 formualizer recalc book.xlsx --check --now 2026-01-31T09:00:00Z --seed 7
 ```
 
-The Python functions `recalculate_xlsx_file`/`recalculate_xlsx_bytes` take the same options as `rng_seed`, `deterministic_timestamp_utc` (an aware `datetime`) and `deterministic_timezone` (`"utc"`, `"+02:00"` or offset seconds; default UTC; requires the timestamp). The npm `recalculateXlsxBytes(bytes, errorLocationLimit, options)` takes `{rngSeed, deterministicTimestampUtc, deterministicTimezone}` with the same rules. Both return `clock` and `seed`.
+The Python functions `recalculate_xlsx_file`/`recalculate_xlsx_bytes` take the same options as `rng_seed`, `deterministic_timestamp_utc` (an aware `datetime`) and `deterministic_timezone` (`"utc"`, `"+02:00"` or offset seconds; default UTC; requires the timestamp). The npm `recalculateXlsxBytes(bytes, errorLocationLimit, options)` takes `{rngSeed, deterministicTimestampUtc, deterministicTimezone}` with the same rules. Both return `clock` and `seed`. The `--external-links` policy is `external_links="cached"|"refuse"` in Python and `externalLinks: 'cached' | 'refuse'` in the npm options; a refusal raises an error.
 
 ## JSON
 
-With `--json`, every outcome except help and version, including usage errors, produces exactly one JSON object on stdout, followed by a newline. Nothing is written to stderr. The schema id is `formualizer.recalc/1`; additive fields need not bump the id. All keys below are always present.
+With `--json`, every outcome except help and version, including usage errors, produces exactly one JSON object on stdout, followed by a newline. Nothing is written to stderr. The schema id is `formualizer.recalc/1`; additive fields need not bump the id. All keys below are always present, except `external_links`, which appears only when the computation read cached external link values.
 
 ```json
 {
@@ -127,6 +129,7 @@ With `--json`, every outcome except help and version, including usage errors, pr
 | `clock.timezone` | string | `Local`, `UTC` or `±HH:MM`. |
 | `clock.fixed` | boolean | True when `--now` set the instant. |
 | `seed` | integer or null | The `RAND`/`RANDBETWEEN` seed, an unsigned 64-bit integer. JavaScript's `JSON.parse` rounds values above 2^53; read it as a big integer to replay. |
+| `external_links` | object, optional | Present only after a successful computation that read values of external workbook links: `{"links_used": n, "refreshed": false, "policy": "cached"}`. `links_used` counts the links (`xl/externalLinks` parts) whose cached values a formula or used defined name read. Links are never refreshed, so the values are the ones Excel last stored in the workbook, and `refreshed` is always false. `policy` is the `--external-links` policy applied; it is always `cached` here, because under `refuse` such a run is refused instead. The message gains a line `external links: used the values cached in the workbook for n link(s) (not refreshed)`. See [external links](cache-only-xlsx.md#external-links). |
 | `message` | string | One-line human diagnostic. Not a stable machine interface. |
 
 Counters, `errors`, `errors_truncated`, `unknown_functions`, `clock` and `seed` are present after a successful computation (exit 0 or 3) and null otherwise. Sheet names containing `!` are split correctly. Attribute-only spill changes may have zero cache changes. A numeric cache within one unit in the 15th significant digit of the computed value is current and is not counted in `cache_cells_changed` (see [numeric precision](cache-only-xlsx.md#numeric-precision)).
@@ -139,6 +142,12 @@ A refusal:
 
 ```json
 {"schema":"formualizer.recalc/1","status":"refused","input":"model.xlsx","output":"model.xlsx","written":false,"formula_cells":null,"cache_cells_changed":null,"worksheet_parts_changed":null,"error_cells":null,"errors":null,"errors_truncated":null,"unknown_functions":null,"refusal":{"feature":"data-table formula","context":"worksheet"},"clock":null,"seed":null,"message":"model.xlsx: Unsupported feature: data-table formula in worksheet. Nothing was written."}
+```
+
+Under `--external-links refuse`, a workbook whose formulas read link values is refused after calculation; `context` names the first read and the message names the flag that allows it:
+
+```json
+{"schema":"formualizer.recalc/1","status":"refused","input":"linked.xlsx","output":"linked.xlsx","written":false,"formula_cells":null,"cache_cells_changed":null,"worksheet_parts_changed":null,"error_cells":null,"errors":null,"errors_truncated":null,"unknown_functions":null,"refusal":{"feature":"external link values","context":"Sheet1!A1: [1]Data!A1 (recalculating would use the values cached in the workbook for 1 external link; links are never refreshed)"},"clock":null,"seed":null,"message":"linked.xlsx: Unsupported feature: external link values in Sheet1!A1: [1]Data!A1 (recalculating would use the values cached in the workbook for 1 external link; links are never refreshed). Nothing was written. Pass --external-links cached to recalculate with them."}
 ```
 
 A usage error (exit 64):
@@ -162,13 +171,16 @@ formualizer recalc book.xlsx --check --json --max-errors 5
 # Reproducible output for a workbook using TODAY/NOW/RAND:
 formualizer recalc book.xlsx --now 2026-01-31T09:00:00Z --seed 7
 
+# Refuse workbooks whose formulas read external link values:
+formualizer recalc book.xlsx --external-links refuse --json
+
 # Agent loop over explicit paths (no built-in batch mode):
 for file in reports/*.xlsx; do formualizer recalc "$file" --json || break; done
 ```
 
 ## Non-goals
 
-No editing, reading/dumping values, engine selection, configuration files, watch mode, directory/batch globbing, limit/thread tuning or legacy fallback. This writer does not claim Excel equivalence for every function or workbook. Data tables, external links and the other strict refusals are listed in [cache-only XLSX](cache-only-xlsx.md#strict-eligibility). Dynamic arrays, fixed-extent CSE arrays and Excel tables within the validated subset are supported; after an openpyxl re-save strips dynamic metadata, the array keeps its fixed extent and its `A1#` readers return `#REF!`.
+No editing, reading/dumping values, engine selection, configuration files, watch mode, directory/batch globbing, limit/thread tuning, link refreshing or legacy fallback. This writer does not claim Excel equivalence for every function or workbook. External links are read from the values cached in the workbook (see [external links](cache-only-xlsx.md#external-links)); data tables and the other strict refusals are listed in [cache-only XLSX](cache-only-xlsx.md#strict-eligibility). Dynamic arrays, fixed-extent CSE arrays and Excel tables within the validated subset are supported; after an openpyxl re-save strips dynamic metadata, the array keeps its fixed extent and its `A1#` readers return `#REF!`.
 
 ## Embedding
 

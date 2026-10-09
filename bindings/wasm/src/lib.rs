@@ -194,6 +194,29 @@ fn apply_reproducibility_options(
     Ok(())
 }
 
+/// Apply `externalLinks` (`'cached'`, the default, or `'refuse'`).
+fn apply_external_links_option(
+    recalc: &mut formualizer::workbook::XlsxRecalculateOptions,
+    options: &JsValue,
+) -> Result<(), JsValue> {
+    use formualizer::workbook::ExternalLinkPolicy;
+    let Some(obj) = options.dyn_ref::<Object>() else {
+        return Ok(());
+    };
+    if let Some(value) = sheetport::get_optional_value(obj, "externalLinks")? {
+        recalc.external_links = match value.as_string().as_deref() {
+            Some("cached") => ExternalLinkPolicy::Cached,
+            Some("refuse") => ExternalLinkPolicy::Refuse,
+            _ => {
+                return Err(utils::js_error(
+                    "externalLinks must be 'cached' or 'refuse'",
+                ));
+            }
+        };
+    }
+    Ok(())
+}
+
 /// `{ now, timezone, fixed }`, as in the CLI's JSON report: `now` is an
 /// RFC 3339 string in the offset that was applied (for `Local`, the host
 /// offset at that instant), or null without a clock.
@@ -242,7 +265,9 @@ fn clock_to_js(
 /// encoding is used. `error_location_limit` optionally caps locations per error token.
 /// `options` optionally fixes the clock and RAND seed
 /// (`{ rngSeed, deterministicTimestampUtc, deterministicTimezone }`); the
-/// result's `clock` and `seed` replay the run.
+/// result's `clock` and `seed` replay the run. `externalLinks: 'refuse'`
+/// refuses a workbook whose formulas read external link values instead of
+/// using the values cached in it (`'cached'`, the default).
 #[wasm_bindgen(js_name = "recalculateXlsxBytes")]
 pub fn recalculate_xlsx_bytes(
     bytes: Uint8Array,
@@ -254,6 +279,7 @@ pub fn recalculate_xlsx_bytes(
         recalc_options.error_location_limit = limit as usize;
     }
     apply_reproducibility_options(&mut recalc_options.eval_config, &options)?;
+    apply_external_links_option(&mut recalc_options, &options)?;
     let options = recalc_options;
     let config = options.eval_config.clone();
     // This admission check happens before copying the JS typed array into Rust memory.
@@ -288,6 +314,22 @@ pub fn recalculate_xlsx_bytes(
         &JsValue::from_str("worksheet_parts_changed"),
         &JsValue::from_f64(result.worksheet_parts_changed as f64),
     )?;
+    if result.external_links_used > 0 {
+        let links = js_sys::Object::new();
+        Reflect::set(
+            &links,
+            &JsValue::from_str("links_used"),
+            &JsValue::from_f64(result.external_links_used as f64),
+        )?;
+        Reflect::set(&links, &JsValue::from_str("refreshed"), &JsValue::FALSE)?;
+        // `refuse` refuses instead of reading link values.
+        Reflect::set(
+            &links,
+            &JsValue::from_str("policy"),
+            &JsValue::from_str("cached"),
+        )?;
+        Reflect::set(&out, &JsValue::from_str("external_links"), &links)?;
+    }
     Reflect::set(
         &out,
         &JsValue::from_str("clock"),

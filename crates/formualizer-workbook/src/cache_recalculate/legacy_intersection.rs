@@ -562,9 +562,10 @@ impl Walk<'_> {
     }
 }
 
-/// Whether a reference can denote more than one cell. 3-D, external and
-/// structured references are not claimed.
+/// Whether a reference can denote more than one cell. 3-D, whole-row or
+/// whole-column external and structured references are not claimed.
 fn reference_multi(reference: &ReferenceType) -> Result<bool, Skip> {
+    use formualizer_parse::parser::ExternalRefKind;
     match reference {
         ReferenceType::Cell { .. } => Ok(false),
         ReferenceType::Range {
@@ -579,7 +580,17 @@ fn reference_multi(reference: &ReferenceType) -> Result<bool, Skip> {
             && start_col == end_col)),
         ReferenceType::NamedRange(_) => Ok(true),
         ReferenceType::Cell3D { .. } | ReferenceType::Range3D { .. } => Err(Skip("3-D reference")),
-        ReferenceType::External(_) => Err(Skip("external reference")),
+        ReferenceType::External(external) => match external.kind {
+            ExternalRefKind::Cell { .. } => Ok(false),
+            ExternalRefKind::Range {
+                start_row: Some(r1),
+                start_col: Some(c1),
+                end_row: Some(r2),
+                end_col: Some(c2),
+                ..
+            } => Ok(r1 != r2 || c1 != c2),
+            ExternalRefKind::Range { .. } => Err(Skip("unbounded external reference")),
+        },
         ReferenceType::Table(_) => Err(Skip("structured reference")),
     }
 }
@@ -718,12 +729,17 @@ pub(super) struct Stats {
 
 /// Ingestion-view patches that make legacy formulas of one worksheet
 /// intersect. `formula_cells_in_chain` decides evidence per cell; a shared
-/// family is rewritten only when every member is listed.
+/// family is rewritten only when every member is listed. In a workbook with
+/// external links (`external_range_names` present: the lowercased defined
+/// names that hold an external range), formulas whose `[` may come from
+/// external references are classified too; structured references still
+/// skip them.
 pub(super) fn patches(
     sheet_index: usize,
     plan: &SheetPlan,
     chain: &CalcChain,
     table_names: &[String],
+    external_range_names: Option<&HashSet<String>>,
     options: &XlsxRecalculateOptions,
 ) -> Result<(Vec<Patch>, Stats), IoError> {
     let mut stats = Stats::default();
@@ -757,7 +773,9 @@ pub(super) fn patches(
             continue;
         }
         let folded = formula.to_lowercase();
-        if folded.contains('[') || table_names.iter().any(|t| folded.contains(t.as_str())) {
+        if (folded.contains('[') && external_range_names.is_none())
+            || table_names.iter().any(|t| folded.contains(t.as_str()))
+        {
             stats.skipped += 1;
             continue;
         }
@@ -769,6 +787,15 @@ pub(super) fn patches(
             }
             Lowering::Rewritten(text) => text,
         };
+        if let Some(names) = external_range_names
+            && let Some(name) = intersected_name(&text, names)
+        {
+            // Such a name's value has no worksheet position to intersect.
+            return Err(super::unsupported(
+                "implicit intersection of a defined name holding an external range",
+                format!("{}: {name}", cell.address),
+            ));
+        }
         let raw = &plan.data[cell.formula_open.end..cell.formula_end];
         let Some(close) = raw.iter().rposition(|b| *b == b'<') else {
             continue;
@@ -782,6 +809,17 @@ pub(super) fn patches(
         });
     }
     Ok((out, stats))
+}
+
+/// A defined name of `names` (lowercased) that the rewrite wraps whole in
+/// `@(...)`, possibly sheet-qualified.
+fn intersected_name<'t>(text: &'t str, names: &HashSet<String>) -> Option<&'t str> {
+    text.match_indices("@(").find_map(|(at, _)| {
+        let inner = &text[at + 2..];
+        let inner = &inner[..inner.find(')')?];
+        let name = inner.rsplit('!').next().unwrap_or(inner).trim();
+        names.contains(&name.to_ascii_lowercase()).then_some(inner)
+    })
 }
 
 /// Cheap prefilter: a formula can only gain an intersection through a range

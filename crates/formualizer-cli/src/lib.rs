@@ -1,12 +1,12 @@
 //! Shared command implementation. Arguments include the program name.
 //! No signal handlers, TTY assumptions or process exits occur here.
 use chrono::{DateTime, FixedOffset, Local, SecondsFormat, Utc};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use formualizer_eval::{engine::DeterministicMode, timezone::TimeZoneSpec};
 pub use formualizer_workbook::CancelToken;
 use formualizer_workbook::{
-    IoError, XlsxRecalculateOptions, XlsxRecalculateResult, recalculate_xlsx_bytes,
-    recalculate_xlsx_file,
+    ExternalLinkPolicy, IoError, XlsxRecalculateOptions, XlsxRecalculateResult,
+    recalculate_xlsx_bytes, recalculate_xlsx_file,
 };
 use serde::Serialize;
 use std::{
@@ -24,6 +24,11 @@ caches stale.
 
 RAND/RANDBETWEEN are reproducible run to run. Without --now, TODAY/NOW use
 the host clock (local time unless --tz).
+
+External links are never refreshed. By default formulas read the values
+Excel cached in the workbook for them, and the report says so. With
+--external-links refuse, a workbook whose formulas read any of those values
+is refused (exit 2) after calculation instead; nothing is written.
 
 Exit codes:
   0    written, unchanged or current
@@ -71,8 +76,27 @@ enum Command {
         /// RAND/RANDBETWEEN seed [default: built-in seed]
         #[arg(long, value_name = "U64")]
         seed: Option<u64>,
+        /// Read the external link values cached in the workbook, or refuse (exit 2)
+        #[arg(long, value_name = "POLICY", value_enum, default_value_t = LinkPolicyArg::Cached)]
+        external_links: LinkPolicyArg,
     },
 }
+/// `--external-links`: links are never refreshed under either policy.
+#[derive(Clone, Copy, ValueEnum)]
+enum LinkPolicyArg {
+    Cached,
+    Refuse,
+}
+impl LinkPolicyArg {
+    fn policy(self) -> ExternalLinkPolicy {
+        match self {
+            LinkPolicyArg::Cached => ExternalLinkPolicy::Cached,
+            LinkPolicyArg::Refuse => ExternalLinkPolicy::Refuse,
+        }
+    }
+}
+/// The refusal feature `refuse` reports when a formula reads a link value.
+const EXTERNAL_LINK_VALUES: &str = "external link values";
 #[derive(Serialize)]
 struct ErrorCell {
     sheet: String,
@@ -104,6 +128,18 @@ struct Clock {
     /// True when the instant came from `--now`.
     fixed: bool,
 }
+/// External link values the calculation read: always the values Excel last
+/// stored in the workbook, never refreshed from the linked files.
+#[derive(Serialize)]
+struct ExternalLinks {
+    /// Links whose cached values a formula or used defined name read.
+    links_used: usize,
+    /// Always false: links are never refreshed.
+    refreshed: bool,
+    /// The `--external-links` policy applied: always `cached` here, since
+    /// `refuse` refuses instead of reading link values.
+    policy: &'static str,
+}
 #[derive(Serialize)]
 struct Report {
     schema: &'static str,
@@ -121,6 +157,9 @@ struct Report {
     refusal: Option<Refusal>,
     clock: Option<Clock>,
     seed: Option<u64>,
+    /// Present only when a computed run read cached external link values.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    external_links: Option<ExternalLinks>,
     message: String,
 }
 impl Report {
@@ -141,6 +180,7 @@ impl Report {
             refusal: None,
             clock: None,
             seed: None,
+            external_links: None,
             message,
         }
     }
@@ -149,6 +189,11 @@ impl Report {
         self.cache_cells_changed = Some(result.cache_cells_changed);
         self.worksheet_parts_changed = Some(result.worksheet_parts_changed);
         self.error_cells = Some(result.summary.errors);
+        self.external_links = (result.external_links_used > 0).then_some(ExternalLinks {
+            links_used: result.external_links_used,
+            refreshed: false,
+            policy: "cached",
+        });
         let errors: Vec<_> = result
             .summary
             .error_summary
@@ -346,10 +391,12 @@ where
         now,
         tz,
         seed,
+        external_links,
     } = cli.command;
     let mut options = XlsxRecalculateOptions {
         cancel: cancel.clone(),
         error_location_limit: max_errors,
+        external_links: external_links.policy(),
         ..Default::default()
     };
     // No flags leave the default configuration (system clock, local time,
@@ -482,12 +529,26 @@ where
                     "\nunknown functions (cells produce #NAME?): {unknown}"
                 ));
             }
+            if let Some(links) = &report.external_links {
+                report.message.push_str(&format!(
+                    "\nexternal links: used the values cached in the workbook for {} link{} (not refreshed)",
+                    links.links_used,
+                    if links.links_used == 1 { "" } else { "s" }
+                ));
+            }
             code
         }
         Err(error) => {
             let (status, code) = classify(&error);
             report.status = status;
             report.message = format!("{}: {error}. Nothing was written.", input.display());
+            if let IoError::Unsupported { feature, .. } = &error
+                && feature == EXTERNAL_LINK_VALUES
+            {
+                report
+                    .message
+                    .push_str(" Pass --external-links cached to recalculate with them.");
+            }
             if let IoError::Unsupported { feature, context } = error {
                 report.refusal = Some(Refusal { feature, context });
             }

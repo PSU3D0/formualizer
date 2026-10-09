@@ -897,3 +897,134 @@ fn unbound_whole_column_external_range_keeps_legacy_ref_error() {
         }
     }
 }
+
+/// An external range source `[1]Data!A1:B3` (a headerless data body) with
+/// rows `(10, 1)`, `(20, 2)`, `(30, 3)`.
+fn external_range_engine() -> (SourceCtx, Engine<SourceCtx>) {
+    let ctx = SourceCtx::default();
+    let rows: Vec<Vec<LiteralValue>> = (1..=3)
+        .map(|i| {
+            vec![
+                LiteralValue::Number(10.0 * i as f64),
+                LiteralValue::Number(i as f64),
+            ]
+        })
+        .collect();
+    for name in ["[1]Data!A1:B3", "[1]Data!$A$1:$A$3"] {
+        let data: Vec<Vec<LiteralValue>> = if name.contains("$A$3") {
+            (1..=3)
+                .map(|i| vec![LiteralValue::Number(10.0 * i as f64)])
+                .collect()
+        } else {
+            rows.clone()
+        };
+        ctx.set_table(
+            name,
+            Arc::new(MemTable {
+                headers: Vec::new(),
+                data,
+            }),
+        );
+    }
+    let mut engine: Engine<_> = Engine::new(ctx.clone(), EvalConfig::default());
+    engine.add_sheet("Sheet1").unwrap();
+    engine
+        .define_source_table("[1]Data!A1:B3", Some(1))
+        .unwrap();
+    engine
+        .define_source_table("[1]Data!$A$1:$A$3", Some(1))
+        .unwrap();
+    (ctx, engine)
+}
+
+#[test]
+fn index_over_an_external_source_indexes_its_values() {
+    let (_, mut engine) = external_range_engine();
+    for (col, formula) in [
+        (1, "=INDEX([1]Data!A1:B3,2,2)"),
+        (2, "=INDEX([1]Data!A1:B3,3,1)"),
+        (3, "=SUM(INDEX([1]Data!A1:B3,0,2))"),
+    ] {
+        engine
+            .set_cell_formula(
+                "Sheet1",
+                1,
+                col,
+                formualizer_parse::parser::parse(formula).unwrap(),
+            )
+            .unwrap();
+    }
+    engine.evaluate_all().unwrap();
+    let value = |col| engine.get_cell_value("Sheet1", 1, col);
+    assert_eq!(value(1), Some(LiteralValue::Number(2.0)));
+    assert_eq!(value(2), Some(LiteralValue::Number(30.0)));
+    assert_eq!(value(3), Some(LiteralValue::Number(6.0)));
+}
+
+#[test]
+fn implicit_intersection_of_an_external_range_uses_its_bounds() {
+    let (_, mut engine) = external_range_engine();
+    // Rows 1-4 of column E read the formula row of A1:A3; row 4 is outside.
+    for row in 1..=4 {
+        engine
+            .set_cell_formula(
+                "Sheet1",
+                row,
+                5,
+                formualizer_parse::parser::parse("=@[1]Data!$A$1:$A$3").unwrap(),
+            )
+            .unwrap();
+    }
+    engine.evaluate_all().unwrap();
+    for (row, expected) in [(1, 10.0), (2, 20.0), (3, 30.0)] {
+        assert_eq!(
+            engine.get_cell_value("Sheet1", row, 5),
+            Some(LiteralValue::Number(expected))
+        );
+    }
+    match engine.get_cell_value("Sheet1", 4, 5) {
+        Some(LiteralValue::Error(e)) => assert_eq!(e.kind, ExcelErrorKind::Value),
+        other => panic!("expected #VALUE!, got {other:?}"),
+    }
+}
+
+#[test]
+fn name_holding_one_external_range_reads_the_source() {
+    let (_, mut engine) = external_range_engine();
+    engine
+        .define_name(
+            "Tbl",
+            NamedDefinition::Formula {
+                ast: formualizer_parse::parser::parse("=[1]Data!A1:B3").unwrap(),
+                dependencies: Vec::new(),
+                range_deps: Vec::new(),
+            },
+            NameScope::Workbook,
+        )
+        .unwrap();
+    engine
+        .set_cell_formula(
+            "Sheet1",
+            1,
+            1,
+            formualizer_parse::parser::parse("=VLOOKUP(20,Tbl,2,FALSE)").unwrap(),
+        )
+        .unwrap();
+    engine
+        .set_cell_formula(
+            "Sheet1",
+            1,
+            2,
+            formualizer_parse::parser::parse("=SUM(Tbl)").unwrap(),
+        )
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(2.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 2),
+        Some(LiteralValue::Number(66.0))
+    );
+}

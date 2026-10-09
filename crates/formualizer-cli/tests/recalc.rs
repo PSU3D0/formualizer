@@ -499,3 +499,137 @@ fn built_binary_version_help_recalc_and_usage() {
         "written"
     );
 }
+/// A one-sheet workbook whose A1 reads `[1]Data!A1` from one external link
+/// that cached `Data!A1 = 41`.
+fn linked_fixture() -> Vec<u8> {
+    linked_fixture_with("[1]Data!A1+1")
+}
+/// The same linked workbook with `formula` in A1.
+fn linked_fixture_with(formula: &str) -> Vec<u8> {
+    const LINK: &str =
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.externalLink+xml";
+    let parts: BTreeMap<_, _> = [
+        ("[Content_Types].xml", format!("<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/><Override PartName=\"/xl/worksheets/sheet1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/><Override PartName=\"/xl/externalLinks/externalLink1.xml\" ContentType=\"{LINK}\"/></Types>")),
+        ("_rels/.rels", format!("<Relationships xmlns=\"{RELS}\"><Relationship Id=\"rId1\" Type=\"{OFFICE}/officeDocument\" Target=\"xl/workbook.xml\"/></Relationships>")),
+        ("xl/workbook.xml", format!("<workbook xmlns=\"{MAIN}\" xmlns:r=\"{OFFICE}\"><sheets><sheet name=\"Sheet1\" sheetId=\"1\" r:id=\"rId1\"/></sheets><externalReferences><externalReference r:id=\"rId2\"/></externalReferences></workbook>")),
+        ("xl/_rels/workbook.xml.rels", format!("<Relationships xmlns=\"{RELS}\"><Relationship Id=\"rId1\" Type=\"{OFFICE}/worksheet\" Target=\"worksheets/sheet1.xml\"/><Relationship Id=\"rId2\" Type=\"{OFFICE}/externalLink\" Target=\"externalLinks/externalLink1.xml\"/></Relationships>")),
+        ("xl/externalLinks/externalLink1.xml", format!("<externalLink xmlns=\"{MAIN}\"><externalBook xmlns:r=\"{OFFICE}\" r:id=\"rId1\"><sheetNames><sheetName val=\"Data\"/></sheetNames><sheetDataSet><sheetData sheetId=\"0\"><row r=\"1\"><cell r=\"A1\"><v>41</v></cell></row></sheetData></sheetDataSet></externalBook></externalLink>")),
+        ("xl/externalLinks/_rels/externalLink1.xml.rels", format!("<Relationships xmlns=\"{RELS}\"><Relationship Id=\"rId1\" Type=\"{OFFICE}/externalLinkPath\" Target=\"Source.xlsx\" TargetMode=\"External\"/></Relationships>")),
+        ("xl/worksheets/sheet1.xml", format!("<worksheet xmlns=\"{MAIN}\"><sheetData><row r=\"1\"><c r=\"A1\"><f>{formula}</f><v>0</v></c></row></sheetData></worksheet>")),
+    ].into_iter().collect();
+    let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for (name, value) in parts {
+        zip.start_file(name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(value.as_bytes()).unwrap();
+    }
+    zip.finish().unwrap().into_inner()
+}
+#[test]
+fn external_link_cache_use_is_reported() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("linked.xlsx");
+    std::fs::write(&path, linked_fixture()).unwrap();
+    let (code, report) = json(&path, &["--check"]);
+    assert_eq!(code, 3);
+    assert_eq!(report["status"], "stale");
+    assert_eq!(
+        report["external_links"],
+        serde_json::json!({"links_used": 1, "refreshed": false, "policy": "cached"})
+    );
+    let message = report["message"].as_str().unwrap();
+    assert!(
+        message.ends_with(
+            "\nexternal links: used the values cached in the workbook for 1 link (not refreshed)"
+        ),
+        "{message}"
+    );
+    // Without external reads the key is absent (see the pinned field set).
+    let plain = dir.path().join("plain.xlsx");
+    std::fs::write(&plain, simple(2)).unwrap();
+    let (_, report) = json(&plain, &["--check"]);
+    assert!(report.get("external_links").is_none());
+    // Written output: 42, and the link part is untouched.
+    let (code, report) = json(&path, &[]);
+    assert_eq!(code, 0);
+    assert_eq!(report["status"], "written");
+    let output = std::fs::read(&path).unwrap();
+    let mut archive = zip::ZipArchive::new(Cursor::new(&output)).unwrap();
+    let mut xml = String::new();
+    archive
+        .by_name("xl/worksheets/sheet1.xml")
+        .unwrap()
+        .read_to_string(&mut xml)
+        .unwrap();
+    assert!(xml.contains("<v>42</v>"), "{xml}");
+}
+#[test]
+fn external_links_policy_flag() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("linked.xlsx");
+    let bytes = linked_fixture();
+    std::fs::write(&path, &bytes).unwrap();
+    // `cached` is the default and reports the policy it applied.
+    let (code, report) = json(&path, &["--check", "--external-links", "cached"]);
+    assert_eq!(code, 3);
+    assert_eq!(report["external_links"]["policy"], "cached");
+    // `refuse`: exit 2, a structured refusal, nothing written.
+    for extra in [vec![], vec!["--check"]] {
+        let mut args = extra.clone();
+        args.extend(["--external-links", "refuse"]);
+        let (code, report) = json(&path, &args);
+        assert_eq!(code, 2, "{report}");
+        assert_eq!(report["status"], "refused");
+        assert_eq!(report["refusal"]["feature"], "external link values");
+        let context = report["refusal"]["context"].as_str().unwrap();
+        assert!(context.starts_with("Sheet1!A1: [1]Data!A1 ("), "{context}");
+        assert!(report.get("external_links").is_none());
+        assert_eq!(report["written"], false);
+        let message = report["message"].as_str().unwrap();
+        assert!(
+            message.ends_with(
+                "Nothing was written. Pass --external-links cached to recalculate with them."
+            ),
+            "{message}"
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    }
+    let path_arg = path.to_str().unwrap();
+    let (code, out, err) = invoke(&["recalc", path_arg, "--external-links", "refuse"], None);
+    assert_eq!(code, 2);
+    assert!(out.is_empty());
+    assert!(err.contains("external link values"), "{err}");
+    assert!(err.contains("--external-links cached"), "{err}");
+    // The human message names the cached values on every computed path.
+    let (code, out, _) = invoke(&["recalc", path_arg], None);
+    assert_eq!(code, 0);
+    assert!(
+        out.contains(
+            "\nexternal links: used the values cached in the workbook for 1 link (not refreshed)"
+        ),
+        "{out}"
+    );
+    // Links that nothing reads do not refuse.
+    let unused = dir.path().join("unused.xlsx");
+    std::fs::write(&unused, linked_fixture_with("1+1")).unwrap();
+    let (code, report) = json(&unused, &["--external-links", "refuse"]);
+    assert_eq!(code, 0, "{report}");
+    assert_eq!(report["status"], "written");
+    assert!(report.get("external_links").is_none());
+    // Invalid values are usage errors.
+    let (code, out, _) = invoke(
+        &["recalc", path_arg, "--external-links", "refresh", "--json"],
+        None,
+    );
+    assert_eq!(code, 64);
+    let report: Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(report["status"], "error");
+    let message = report["message"].as_str().unwrap();
+    assert!(
+        message.contains("cached") && message.contains("refuse"),
+        "{message}"
+    );
+    let (code, out, _) = invoke(&["recalc", "--help"], None);
+    assert_eq!(code, 0);
+    assert!(out.contains("--external-links <POLICY>"), "{out}");
+}
