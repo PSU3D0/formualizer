@@ -69,6 +69,21 @@ impl Default for XlsxRecalculateLimits {
         }
     }
 }
+/// What recalculation does when formulas read external workbook links.
+/// Links are never refreshed under either policy.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ExternalLinkPolicy {
+    /// Read the values Excel last stored in the workbook for each link
+    /// (reported in [`XlsxRecalculateResult::external_links_used`]).
+    #[default]
+    Cached,
+    /// Refuse (`IoError::Unsupported`, feature `external link values`) a
+    /// workbook whose calculation reads any external link value; workbooks
+    /// whose links nothing reads still recalculate. Decided after
+    /// calculation, so other refusals keep their reasons; nothing is
+    /// published.
+    Refuse,
+}
 /// The source date system is authoritative; other evaluation policies come from `eval_config`.
 #[derive(Debug, Clone)]
 pub struct XlsxRecalculateOptions {
@@ -76,6 +91,8 @@ pub struct XlsxRecalculateOptions {
     pub cancel: Option<CancelToken>,
     pub limits: XlsxRecalculateLimits,
     pub error_location_limit: usize,
+    /// See [`ExternalLinkPolicy`]; defaults to reading cached values.
+    pub external_links: ExternalLinkPolicy,
 }
 impl Default for XlsxRecalculateOptions {
     fn default() -> Self {
@@ -84,6 +101,7 @@ impl Default for XlsxRecalculateOptions {
             cancel: None,
             limits: XlsxRecalculateLimits::default(),
             error_location_limit: DEFAULT_ERROR_LOCATION_LIMIT,
+            external_links: ExternalLinkPolicy::default(),
         }
     }
 }
@@ -698,7 +716,21 @@ pub fn recalculate_xlsx_bytes(
     // Deferred graph building parses formulas during evaluation.
     refuse_parse_failure(&ingested.engine, ingested.refuse_parse_failures)?;
     clock.families(&ingested.engine);
+    let first_read = ingested.external_first_read.take();
     let mut result = publish(bytes, ingested, formula_count, &options, &mut clock)?;
+    // Decided last, so every other refusal keeps its reason and a refusal
+    // here means the run succeeds with cached values.
+    if options.external_links == ExternalLinkPolicy::Refuse && result.external_links_used > 0 {
+        let n = result.external_links_used;
+        return Err(unsupported(
+            "external link values",
+            format!(
+                "{} (recalculating would use the values cached in the workbook for {n} external link{}; links are never refreshed)",
+                first_read.unwrap_or_else(|| "workbook".into()),
+                if n == 1 { "" } else { "s" }
+            ),
+        ));
+    }
     result.clock_now_utc = clock_now_utc;
     clock.total(formula_count);
     Ok(result)
@@ -731,6 +763,8 @@ struct Ingested<'a> {
     refuse_parse_failures: bool,
     /// See [`XlsxRecalculateResult::external_links_used`].
     external_links_used: usize,
+    /// The first external read, when any.
+    external_first_read: Option<String>,
 }
 /// Under the default strict policy, a stored formula the parser cannot read
 /// is an unsupported feature of this input, not an engine failure. Ingestion
@@ -861,12 +895,16 @@ fn ingest_source<'a>(
     config.temporal_egress = formualizer_eval::engine::TemporalEgress::Serial;
     // External references read the link caches through engine sources named
     // by their reference text, defined before any formula is staged.
-    let (external_values, external_links_used) = match external {
+    let (external_values, external_links_used, external_first_read) = match external {
         Some(plan) => {
             adapter.skip_external_names(plan.skipped_names);
-            (Some(std::sync::Arc::new(plan.values)), plan.links_used)
+            (
+                Some(std::sync::Arc::new(plan.values)),
+                plan.links_used,
+                plan.first_read,
+            )
         }
-        None => (None, 0),
+        None => (None, 0, None),
     };
     let resolver = external_values
         .clone()
@@ -996,6 +1034,7 @@ fn ingest_source<'a>(
         metadata,
         refuse_parse_failures,
         external_links_used,
+        external_first_read,
     })
 }
 /// Give every admitted anchor its source spill identity, so a current
@@ -1195,6 +1234,7 @@ fn publish(
         metadata,
         refuse_parse_failures: _,
         external_links_used,
+        external_first_read: _,
     } = ingested;
     let coerced: HashSet<_> = engine
         .formula_parse_diagnostics()

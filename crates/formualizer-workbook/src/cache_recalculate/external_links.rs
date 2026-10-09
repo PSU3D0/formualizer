@@ -171,6 +171,9 @@ pub(super) struct Plan {
     pub values: ExternalValues,
     /// Distinct links whose cached values a formula or used name reads.
     pub links_used: usize,
+    /// The first read (`Sheet1!A1: [1]Data!B2`), for a refusal under
+    /// [`ExternalLinkPolicy::Refuse`](super::ExternalLinkPolicy::Refuse).
+    pub first_read: Option<String>,
     /// Lowercased defined names that read external links but that no
     /// formula or name references: left out of the calculation.
     pub skipped_names: Vec<String>,
@@ -813,6 +816,7 @@ pub(super) fn plan(
 
     let mut values = ExternalValues::default();
     let mut used_links = BTreeSet::new();
+    let mut first_read = None;
     let mut area = 0usize;
     let mut serve = |ext: &formualizer_parse::parser::ExternalReference,
                      context: &str,
@@ -824,6 +828,7 @@ pub(super) fn plan(
         let context = format!("{context}: {}", ext.raw);
         let (index, served) = links.serve(ext, &context, &mut area, options)?;
         used_links.insert(index);
+        first_read.get_or_insert(context);
         match served {
             Served::Scalar(v) => {
                 values.scalars.insert(ext.raw.clone(), v);
@@ -903,6 +908,7 @@ pub(super) fn plan(
     Ok(Plan {
         values,
         links_used: used_links.len(),
+        first_read,
         skipped_names,
         range_names,
     })

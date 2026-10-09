@@ -6,7 +6,9 @@
 mod support {
     pub mod source_xlsx;
 }
-use formualizer_workbook::{IoError, XlsxRecalculateOptions, recalculate_xlsx_bytes};
+use formualizer_workbook::{
+    ExternalLinkPolicy, IoError, XlsxRecalculateOptions, recalculate_xlsx_bytes,
+};
 use support::source_xlsx::*;
 
 const LINK_REL: &str =
@@ -557,5 +559,109 @@ fn external_range_area_is_bounded() {
             assert_eq!(feature, "external range cell limit")
         }
         other => panic!("expected the area bound, got {other:?}"),
+    }
+}
+
+fn with_policy(policy: ExternalLinkPolicy) -> XlsxRecalculateOptions {
+    XlsxRecalculateOptions {
+        external_links: policy,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn default_policy_reads_cached_link_values() {
+    assert_eq!(ExternalLinkPolicy::default(), ExternalLinkPolicy::Cached);
+    assert_eq!(
+        XlsxRecalculateOptions::default().external_links,
+        ExternalLinkPolicy::Cached
+    );
+    let bytes = workbook(vec![formula("A1", "[1]Data!B2*2")], "");
+    let default = recalculate_xlsx_bytes(&bytes, XlsxRecalculateOptions::default()).unwrap();
+    let cached = recalculate_xlsx_bytes(&bytes, with_policy(ExternalLinkPolicy::Cached)).unwrap();
+    assert_eq!(cached.bytes, default.bytes);
+    assert_eq!(cached.external_links_used, 1);
+    assert_eq!(value_at(&cached.bytes, 1, "A1").as_deref(), Some("42"));
+}
+
+#[test]
+fn refuse_policy_refuses_when_a_formula_reads_a_link_value() {
+    let refused =
+        |bytes: &[u8]| match recalculate_xlsx_bytes(bytes, with_policy(ExternalLinkPolicy::Refuse))
+        {
+            Err(IoError::Unsupported { feature, context }) => {
+                assert_eq!(feature, "external link values");
+                context
+            }
+            other => panic!("expected a refusal, got {other:?}"),
+        };
+    let context = refused(&workbook(
+        vec![formula("A1", "1+1"), formula("A2", "[1]Data!B2*2")],
+        "",
+    ));
+    assert_eq!(
+        context,
+        "Sheet1!A2: [1]Data!B2 (recalculating would use the values cached in the workbook for 1 external link; links are never refreshed)"
+    );
+    // Through a defined name a formula uses, counting every link read.
+    let two_links = with_links(
+        &book(
+            &[Ws::new("Sheet1", vec![formula("A1", "Rate+[2]Data!B1")])],
+            "<definedName name=\"Rate\">[1]Data!$B$2</definedName>",
+        ),
+        &[data_link(), data_link()],
+    );
+    let context = refused(&two_links);
+    assert!(
+        context.ends_with("for 2 external links; links are never refreshed)"),
+        "{context}"
+    );
+}
+
+#[test]
+fn refuse_policy_recalculates_when_nothing_reads_a_link() {
+    for bytes in [
+        workbook(vec![formula("A1", "1+1")], ""),
+        // Names of an uncached link that no formula uses.
+        with_links(
+            &book(
+                &[Ws::new("Sheet1", vec![formula("A1", "1+1")])],
+                "<definedName name=\"Old\">[1]Gone!$A$1</definedName>",
+            ),
+            &[book_link(&["Gone"], None)],
+        ),
+    ] {
+        let refuse =
+            recalculate_xlsx_bytes(&bytes, with_policy(ExternalLinkPolicy::Refuse)).unwrap();
+        let cached =
+            recalculate_xlsx_bytes(&bytes, with_policy(ExternalLinkPolicy::Cached)).unwrap();
+        assert_eq!(refuse.external_links_used, 0);
+        assert_eq!(refuse.bytes, cached.bytes);
+        assert_eq!(value_at(&refuse.bytes, 1, "A1").as_deref(), Some("2"));
+    }
+}
+
+#[test]
+fn refuse_policy_keeps_other_link_refusals() {
+    // A read of a usable link before an unservable one: the unservable
+    // reference is still the reason, under either policy.
+    let bytes = with_links(
+        &book(
+            &[Ws::new(
+                "Sheet1",
+                vec![formula("A1", "[1]Data!B1"), formula("A2", "[2]Data!A1")],
+            )],
+            "",
+        ),
+        &[data_link(), book_link(&["Data"], None)],
+    );
+    for policy in [ExternalLinkPolicy::Cached, ExternalLinkPolicy::Refuse] {
+        match recalculate_xlsx_bytes(&bytes, with_policy(policy)) {
+            Err(IoError::Unsupported { feature, context }) => {
+                assert_eq!(feature, "external link without cached values");
+                assert_eq!(context, "Sheet1!A2: [2]Data!A1");
+            }
+            other => panic!("{policy:?}: expected a refusal, got {other:?}"),
+        }
     }
 }
