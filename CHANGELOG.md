@@ -4,6 +4,14 @@ All notable changes to Formualizer will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **`formualizer recalc` now recalculates workbooks with external links**, using the values Excel cached in the workbook for each link. Before, it refused every such workbook: 2,786 of 15,871 real Enron spreadsheets, of which 1,638 now recalculate. Over the cells that read linked values, 99.3% match the result Excel stored; the rest trace to existing function gaps, not to the linked values. Links are never refreshed, and link parts, their relationships and content types are kept byte for byte.
+  - A cell the cache omits reads as blank, as Excel computes it; on a linked sheet whose last refresh failed it reads as `#REF!`, and a range over such cells is refused.
+  - Still refused, each with its own reason: DDE and OLE links, links or sheets without a cache, names defined in the linked workbook (`[1]!Name`), whole-row or whole-column external ranges, `OFFSET`/`ROW`/`CELL`-style functions over external references, and `INDIRECT` text that could name another workbook. Rich value data (`xl/richData/`) keeps its refusal, now reported as `rich value data`.
+  - The `formualizer.recalc/1` report gains an optional `external_links` object (`{"links_used": n, "refreshed": false}`) and a message line when cached external values were used. The Python and wasm `recalculate_xlsx_bytes`/`recalculate_xlsx_file` results gain the same `external_links` key, and the Rust `XlsxRecalculateResult` gains `external_links_used` (a breaking change for code that constructs that struct).
+- `INDEX` over an external range source, implicit intersection of a bounded external range, and defined names that are exactly one external reference now read the source. Each external range source is built once per evaluation.
+
 ### Performance
 
 - **`formualizer recalc` is about a third faster.** Over a 275-workbook corpus of real Enron spreadsheets, total recalculation time fell from 38.8 s to 25.4 s, and the largest workbooks (65,000 formulas) from about 1.06 s to 0.67 s with lower peak memory. Workbooks saved by openpyxl gain about the same. Outputs are byte-identical to 0.11.1.
