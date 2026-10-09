@@ -113,8 +113,13 @@ untouched unless the output is that same path. Symlink destinations are refused.
 
 - Only the strict supported XLSX subset is recalculated; no fallback engine.
   Data tables, connection-backed tables, missing table-managed cell formulas,
-  external links, circular references and unsupported names/metadata are
-  refused, as are unsupported package structures/results and resource bounds.
+  external references the link cache cannot serve, circular references and
+  unsupported names/metadata are refused, as are unsupported package
+  structures/results and resource bounds.
+- External links are never refreshed: formulas read the values Excel cached in
+  the workbook, and the report then has `external_links`. Tell the user those
+  values may be stale, or pass `--external-links refuse` to refuse such
+  workbooks (exit 2) instead.
 - New multi-cell spills and validated existing XLDAPR anchors are supported,
   including `A1#`. Fresh ordinary 1×1 results stay scalar (`A1#` is `#REF!`);
   existing anchors retain identity after collapse. Do not infer from function names.

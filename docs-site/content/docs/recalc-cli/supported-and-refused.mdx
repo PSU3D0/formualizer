@@ -1,6 +1,6 @@
 ---
 title: Supported and Refused
-description: What formualizer recalc recalculates (dynamic spills, CSE arrays, legacy implicit intersection, tables, volatile functions) and what it refuses (data tables, external links, hidden-row SUBTOTAL, shifted-sheet shared formulas, ...), with the meaning of each refusal message.
+description: What formualizer recalc recalculates (dynamic spills, CSE arrays, legacy implicit intersection, tables, volatile functions, external links from cached values) and what it refuses (data tables, unservable external references, hidden-row SUBTOTAL, shifted-sheet shared formulas, ...), with the meaning of each refusal message.
 ---
 
 `formualizer recalc` uses a strict source-preserving path. It recalculates a defined subset of XLSX and refuses everything else as a whole: a refused workbook exits 2, nothing is written, and its caches must not be reported as recalculated. There is no fallback engine. Formula errors such as `#DIV/0!` or `#SPILL!` are different: they are calculated results, reported in `errors` with exit 0.
@@ -24,6 +24,8 @@ The rest of this page is included at build time from the repository's [eligibili
 <include>../../../../docs/cache-only-xlsx.md#legacy-implicit-intersection</include>
 
 <include>../../../../docs/cache-only-xlsx.md#excel-tables</include>
+
+<include>../../../../docs/cache-only-xlsx.md#external-links</include>
 
 <include>../../../../docs/cache-only-xlsx.md#volatile-snapshots</include>
 

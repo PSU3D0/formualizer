@@ -35,7 +35,7 @@ $ formualizer recalc book.xlsx -o calculated.xlsx --json
 - `--max-errors N`: list at most N error-cell locations (default 20).
 - `--now TIMESTAMP` (RFC 3339 with an offset or `Z`), `--tz UTC|±HH:MM`, `--seed U64`: fix the `TODAY`/`NOW` clock and the `RAND` seed. `RAND` is reproducible by default; without `--now`, `TODAY`/`NOW` use host local time. With `--now`, reruns are byte-identical and `--check` is meaningful for volatile workbooks. JSON reports echo the `clock` and `seed` used, so any run can be replayed.
 
-Formula results such as `#DIV/0!` are calculations, not command failures. External workbook links read the values Excel cached in the workbook and are never refreshed; the JSON report then carries `external_links`. Workbooks outside the supported subset (data tables, external references the link cache cannot serve, hidden-row `SUBTOTAL`, circular references and others) are refused as a whole and nothing is written.
+Formula results such as `#DIV/0!` are calculations, not command failures. External workbook links read the values Excel cached in the workbook and are never refreshed; the JSON report then carries `external_links` and the message says so. `--external-links refuse` refuses such workbooks instead (exit 2); the default is `--external-links cached`. Workbooks outside the supported subset (data tables, external references the link cache cannot serve, hidden-row `SUBTOTAL`, circular references and others) are refused as a whole and nothing is written.
 
 ## Exit codes
 
