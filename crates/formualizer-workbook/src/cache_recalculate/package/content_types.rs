@@ -157,8 +157,8 @@ pub(super) fn validate(
             Some(format!("{PREFIX}table+xml"))
         } else if name == "xl/workbook.xml" {
             Some(format!("{PREFIX}sheet.main+xml"))
-        } else if sheets.iter().any(|s| s.part == name) {
-            Some(format!("{PREFIX}worksheet+xml"))
+        } else if let Some(sheet) = sheets.iter().find(|s| s.part == name) {
+            Some(format!("{PREFIX}{}+xml", sheet.kind))
         } else if name == "xl/styles.xml" {
             Some(format!("{PREFIX}styles+xml"))
         } else if name == "xl/sharedStrings.xml" {

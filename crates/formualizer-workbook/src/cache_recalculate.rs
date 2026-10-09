@@ -4,6 +4,7 @@ mod dynamic_metadata;
 mod error_reasons;
 pub(crate) mod external_links;
 mod geometry;
+mod inert_sheets;
 mod ingest_view;
 mod legacy_intersection;
 mod package;
@@ -484,11 +485,15 @@ fn admit_source<'a>(
     let mut table_names = HashSet::new();
     for sheet in &sheets {
         checkpoint(&options.cancel)?;
-        let data = package::read_part(
-            &mut archive,
-            &sheet.part,
-            options.limits.max_worksheet_bytes,
-        )?;
+        let data = if sheet.inert {
+            inert_sheets::EMPTY.as_bytes().to_vec()
+        } else {
+            package::read_part(
+                &mut archive,
+                &sheet.part,
+                options.limits.max_worksheet_bytes,
+            )?
+        };
         let counted = (observed, logical_cells);
         let mut scanned = sheet::scan(
             &data,
@@ -851,14 +856,15 @@ fn ingest_source<'a>(
             );
         }
     }
-    let ingest_bytes = if view_parts.is_empty() {
+    let mut view_edits = package::Edits {
+        replace: view_parts,
+        add: BTreeMap::new(),
+    };
+    inert_sheets::project(&mut archive, &sheets, &mut view_edits, options)?;
+    let ingest_bytes = if view_edits.replace.is_empty() && view_edits.add.is_empty() {
         bytes.to_vec()
     } else {
-        let edits = package::Edits {
-            replace: view_parts,
-            add: BTreeMap::new(),
-        };
-        package::rewrite(bytes, &mut archive, &edits, options)?
+        package::rewrite(bytes, &mut archive, &view_edits, options)?
     };
     clock.lap("ingest view (calc chain, patches, package rewrite)");
     let opened = if let Some(cancel) = options.cancel.clone() {
@@ -933,7 +939,8 @@ fn ingest_source<'a>(
         }
         adapter.admit_external_references(values.clone());
     }
-    adapter.validate_calculation_names(&[])?;
+    adapter.validate_calculation_names(&[], sheets.iter().any(|s| s.inert))?;
+    inert_sheets::validate(&sheets, &plans, &adapter, options)?;
     if plans.iter().any(|p| !p.tables.is_empty()) {
         use formualizer_eval::reference::{CellRef, Coord, RangeRef};
         engine.adopt_file_sheets(sheets.iter().map(|s| s.name.as_str()))?;
@@ -990,6 +997,7 @@ fn ingest_source<'a>(
         }
     }
     let unimported = adapter.unimported_document_names();
+    let guard_indirect = adapter.has_new_unimported_names();
     if !unimported.is_empty() {
         // Metadata-only names may be omitted from the engine only if no source
         // calculation references them. Only a formula whose source text names
@@ -1000,7 +1008,15 @@ fn ingest_source<'a>(
             for cell in &plan.cells {
                 checkpoint(&options.cancel)?;
                 let text = cell.formula_text.to_ascii_lowercase();
-                if !unimported.iter().any(|name| text.contains(name.as_str())) {
+                let unicode_text = (guard_indirect && !cell.formula_text.is_ascii())
+                    .then(|| cell.formula_text.to_lowercase());
+                if !unimported.iter().any(|name| {
+                    text.contains(name.as_str())
+                        || unicode_text
+                            .as_ref()
+                            .is_some_and(|text| text.contains(name.as_str()))
+                }) && !(guard_indirect && text.contains("indirect"))
+                {
                     continue;
                 }
                 let address = CellAddress::new(&sheet.name, cell.row, cell.col)
@@ -1011,11 +1027,11 @@ fn ingest_source<'a>(
                     .cell
                     .formula
                 {
-                    source_formulas.push(formula);
+                    source_formulas.push((sheet.name.clone(), formula));
                 }
             }
         }
-        adapter.validate_calculation_names(&source_formulas)?;
+        adapter.validate_calculation_names(&source_formulas, sheets.iter().any(|s| s.inert))?;
         clock.lap("document-name reference check");
     }
     visibility_guard::validate(&engine, &sheets, &plans, options)?;

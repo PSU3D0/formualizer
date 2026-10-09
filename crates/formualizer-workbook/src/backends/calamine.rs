@@ -31,6 +31,7 @@ use zip::ZipArchive;
 
 mod compressed_evidence;
 mod formula_replay;
+pub(crate) mod name_references;
 
 use compressed_evidence::{EvidenceRecord, MonotonicFormulaEvidence};
 use formula_replay::{
@@ -638,6 +639,8 @@ pub struct CalamineAdapter {
     calamine_defined_names: Vec<(String, String)>,
     defined_names: OnceLock<Vec<DefinedName>>,
     calculation_names: OnceLock<Vec<(String, String, Option<usize>)>>,
+    referenced_only_names: bool,
+    unregistrable_names: HashSet<String>,
     external_link_targets: OnceLock<BTreeMap<u32, String>>,
     calc_settings: OnceLock<Option<CalcSettings>>,
     load_stats: AdapterLoadStats,
@@ -1437,6 +1440,8 @@ impl CalamineAdapter {
             calamine_defined_names,
             defined_names: OnceLock::new(),
             calculation_names: OnceLock::new(),
+            referenced_only_names: false,
+            unregistrable_names: HashSet::new(),
             external_link_targets: OnceLock::new(),
             calc_settings: OnceLock::new(),
             load_stats: AdapterLoadStats::default(),
@@ -1571,8 +1576,14 @@ impl CalamineAdapter {
         }
     }
 
-    fn grounded_name_ast(&self, text: &str, scope: Option<usize>) -> Option<ASTNode> {
+    fn grounded_name_ast(&self, name: &str, text: &str, scope: Option<usize>) -> Option<ASTNode> {
         use formualizer_parse::parser::ASTNodeType as N;
+        if self.referenced_only_names
+            && !self.legacy_calculation_name(name)
+            && self.unregistrable_names.contains(&name.to_lowercase())
+        {
+            return None;
+        }
         let sheets = self.cached_names.as_deref().unwrap_or_default();
         if scope.is_some_and(|id| id >= sheets.len()) {
             return None;
@@ -1700,114 +1711,346 @@ impl CalamineAdapter {
             text.trim().strip_prefix('=').unwrap_or(text.trim())
         ))
         .ok()?;
-        ground(
-            &mut ast,
-            scope.and_then(|id| sheets.get(id)),
-            sheets,
-            &external,
-        )
+        let mut names_exist = true;
+        ast.visit_refs(|r| {
+            if let formualizer_parse::parser::RefView::NamedRange { name } = r {
+                names_exist &= self.calculation_name_index(name, scope).is_some();
+            }
+        });
+        ((!self.referenced_only_names || self.legacy_calculation_name(name) || names_exist)
+            && ground(
+                &mut ast,
+                scope.and_then(|id| sheets.get(id)),
+                sheets,
+                &external,
+            ))
         .then_some(ast)
     }
 
-    /// Lowercased built-in document names (`_xlnm.*`) that are kept as raw
-    /// metadata, not calculation names. No source formula may reference one.
+    /// Lowercased unevaluable names kept as raw metadata. No source
+    /// calculation may reference one.
     #[cfg(feature = "xlsx-recalc")]
     pub(crate) fn unimported_document_names(&self) -> Vec<String> {
+        let cyclic = self.cyclic_calculation_names();
         self.raw_calculation_names()
             .iter()
-            .filter(|(name, _, _)| self.skippable(name))
-            .filter(|(_, text, scope)| self.grounded_name_ast(text, *scope).is_none())
-            .map(|(name, _, _)| name.to_ascii_lowercase())
+            .enumerate()
+            .filter(|(i, (name, text, scope))| {
+                cyclic.contains(i) || self.grounded_name_ast(name, text, *scope).is_none()
+            })
+            .map(|(_, (name, _, _))| {
+                if self.legacy_calculation_name(name) {
+                    name.to_ascii_lowercase()
+                } else {
+                    name.to_lowercase()
+                }
+            })
             .collect()
     }
 
-    /// A name that may stay out of the calculation when nothing references
-    /// it: built-in document metadata, or a name a recalculation found to
-    /// read external links while unreferenced.
-    #[cfg(feature = "xlsx-recalc")]
-    fn skippable(&self, name: &str) -> bool {
+    fn calculation_name_dependencies(&self) -> Vec<Vec<usize>> {
+        let raw = self.raw_calculation_names();
+        raw.iter()
+            .map(|(name, text, scope)| {
+                let mut deps = HashSet::new();
+                let referenced_only =
+                    self.referenced_only_names && !self.legacy_calculation_name(name);
+                let ast = if referenced_only {
+                    formualizer_parse::parser::parse(format!(
+                        "={}",
+                        text.trim().trim_start_matches('=')
+                    ))
+                    .ok()
+                } else {
+                    self.grounded_name_ast(name, text, *scope)
+                };
+                if let Some(ast) = ast {
+                    let mut reader = |name: &str| {
+                        let index = if referenced_only {
+                            self.calculation_name_index(name, *scope)
+                        } else {
+                            self.legacy_name_index(name, *scope)
+                        };
+                        if let Some(j) = index {
+                            deps.insert(j);
+                        }
+                    };
+                    if referenced_only {
+                        name_references::visit(&ast, |name, _| reader(name));
+                    } else {
+                        ast.visit_refs(|r| {
+                            if let formualizer_parse::parser::RefView::NamedRange { name } = r {
+                                reader(name);
+                            }
+                        });
+                    }
+                }
+                deps.into_iter().collect()
+            })
+            .collect()
+    }
+
+    fn calculation_name_index(&self, name: &str, scope: Option<usize>) -> Option<usize> {
+        if !self.referenced_only_names {
+            return self.legacy_name_index(name, scope);
+        }
+        let (name, scope) = if let Some((sheet, name)) = name.rsplit_once('!') {
+            let sheet = sheet
+                .strip_prefix('\'')
+                .and_then(|s| s.strip_suffix('\''))
+                .unwrap_or(sheet)
+                .replace("''", "'");
+            let scope = self
+                .cached_names
+                .as_deref()
+                .unwrap_or_default()
+                .iter()
+                .position(|s| s.to_lowercase() == sheet.to_lowercase())?;
+            (name, Some(scope))
+        } else {
+            (name, scope)
+        };
+        let raw = self.raw_calculation_names();
+        let key = name.to_lowercase();
+        let matches = |n: &str| {
+            if self.legacy_calculation_name(n) {
+                n.eq_ignore_ascii_case(name)
+            } else {
+                n.to_lowercase() == key
+            }
+        };
+        raw.iter()
+            .position(|(n, _, s)| scope.is_some() && *s == scope && matches(n))
+            .or_else(|| raw.iter().position(|(n, _, s)| s.is_none() && matches(n)))
+    }
+
+    fn legacy_name_index(&self, name: &str, scope: Option<usize>) -> Option<usize> {
+        let raw = self.raw_calculation_names();
+        raw.iter()
+            .rposition(|(n, _, s)| *s == scope && n.eq_ignore_ascii_case(name))
+            .or_else(|| {
+                raw.iter()
+                    .rposition(|(n, _, s)| s.is_none() && n.eq_ignore_ascii_case(name))
+            })
+    }
+
+    fn legacy_calculation_name(&self, name: &str) -> bool {
         let name = name.to_ascii_lowercase();
-        name.starts_with("_xlnm.") || self.skipped_external_names.contains(&name)
+        let legacy = name.starts_with("_xlnm.");
+        #[cfg(feature = "xlsx-recalc")]
+        let legacy = legacy || self.skipped_external_names.contains(&name);
+        legacy
+    }
+
+    fn skippable_name_registration_error(&self, name: &str, error: &ExcelError) -> bool {
+        self.referenced_only_names
+            && !self.legacy_calculation_name(name)
+            && error.kind == ExcelErrorKind::Name
+            && error
+                .message
+                .as_deref()
+                .is_some_and(|m| m.starts_with("Invalid name: "))
+    }
+
+    fn reads_unregistrable_name(&self, ast: &ASTNode, scope: Option<usize>) -> bool {
+        let mut reads = false;
+        ast.visit_refs(|r| {
+            if let formualizer_parse::parser::RefView::NamedRange { name } = r
+                && let Some(i) = self.calculation_name_index(name, scope)
+            {
+                reads |= self
+                    .unregistrable_names
+                    .contains(&self.raw_calculation_names()[i].0.to_lowercase());
+            }
+        });
+        reads
+    }
+
+    fn cyclic_calculation_names(&self) -> HashSet<usize> {
+        let deps = self.calculation_name_dependencies();
+        (0..deps.len())
+            .filter(|&root| {
+                let mut seen = HashSet::new();
+                let mut pending = deps[root].clone();
+                while let Some(i) = pending.pop() {
+                    if i == root {
+                        return true;
+                    }
+                    if seen.insert(i) {
+                        pending.extend(&deps[i]);
+                    }
+                }
+                false
+            })
+            .collect()
     }
 
     #[cfg(feature = "xlsx-recalc")]
     pub(crate) fn validate_calculation_names(
-        &self,
-        formulas: &[String],
+        &mut self,
+        formulas: &[(String, String)],
+        admitted_inert_sheets: bool,
     ) -> Result<(), crate::IoError> {
-        fn references(ast: &ASTNode, out: &mut HashSet<String>) {
-            ast.visit_refs(|r| {
-                if let formualizer_parse::parser::RefView::NamedRange { name } = r {
-                    out.insert(name.rsplit('!').next().unwrap_or(name).to_ascii_lowercase());
+        self.referenced_only_names = true;
+        let references = |ast: &ASTNode, scope: Option<usize>, out: &mut HashSet<usize>| {
+            name_references::visit(ast, |name, indirect| {
+                if let Some(i) = self.calculation_name_index(name, scope) {
+                    let name = self.raw_calculation_names()[i].0.to_ascii_lowercase();
+                    // Retain the existing document/external-name policy.
+                    if !indirect
+                        || (!name.starts_with("_xlnm.")
+                            && !self.skipped_external_names.contains(&name))
+                    {
+                        out.insert(i);
+                    }
                 }
-            });
-        }
+            })
+        };
         let fail = |name: &str| crate::IoError::Unsupported {
             feature: "unsupported or cyclic calculation name".into(),
             context: name.into(),
         };
         let raw = self.raw_calculation_names();
         let mut used = HashSet::new();
-        for f in formulas
-            .iter()
-            .map(String::as_str)
-            .chain(raw.iter().map(|(_, f, _)| f.as_str()))
-        {
+        let mut legacy_used = HashSet::new();
+        let legacy_references = |ast: &ASTNode, out: &mut HashSet<String>| {
+            ast.visit_refs(|r| {
+                if let formualizer_parse::parser::RefView::NamedRange { name } = r {
+                    out.insert(name.rsplit('!').next().unwrap_or(name).to_ascii_lowercase());
+                }
+            });
+        };
+        let cyclic = self.cyclic_calculation_names();
+        let newly_admitted = admitted_inert_sheets
+            || raw.iter().enumerate().any(|(i, (name, text, scope))| {
+                !self.legacy_calculation_name(name)
+                    && (cyclic.contains(&i) || self.grounded_name_ast(name, text, *scope).is_none())
+            });
+        let mut nonliteral = false;
+        for (sheet, f) in formulas {
             Self::cancellation_checkpoint(self.cancel.as_ref())
                 .map_err(crate::IoError::Calamine)?;
             if let Ok(ast) = formualizer_parse::parser::parse(format!(
                 "={}",
                 f.trim().strip_prefix('=').unwrap_or(f.trim())
             )) {
-                references(&ast, &mut used);
+                let scope = self
+                    .cached_names
+                    .as_deref()
+                    .unwrap_or_default()
+                    .iter()
+                    .position(|s| s.eq_ignore_ascii_case(sheet));
+                nonliteral |= references(&ast, scope, &mut used);
+                legacy_references(&ast, &mut legacy_used);
             }
         }
-        for (name, text, scope) in raw {
+        if raw
+            .iter()
+            .any(|(name, _, _)| self.legacy_calculation_name(name))
+        {
+            for (_, text, _) in raw {
+                Self::cancellation_checkpoint(self.cancel.as_ref())
+                    .map_err(crate::IoError::Calamine)?;
+                if let Ok(ast) = formualizer_parse::parser::parse(format!(
+                    "={}",
+                    text.trim().trim_start_matches('=')
+                )) {
+                    legacy_references(&ast, &mut legacy_used);
+                }
+            }
+        }
+        for (i, (name, text, scope)) in raw.iter().enumerate() {
+            if !cyclic.contains(&i)
+                && let Some(ast) = self.grounded_name_ast(name, text, *scope)
+            {
+                references(&ast, *scope, &mut used);
+            }
+        }
+        for (i, (name, text, scope)) in raw.iter().enumerate() {
             Self::cancellation_checkpoint(self.cancel.as_ref())
                 .map_err(crate::IoError::Calamine)?;
-            let Some(ast) = self.grounded_name_ast(text, *scope) else {
-                // Built-in print/filter names describe document metadata, not
-                // calculation. Preserve them raw, but never discard a reference.
-                if !self.skippable(name) || used.contains(&name.to_ascii_lowercase()) {
+            let grounded = self.grounded_name_ast(name, text, *scope).is_some();
+            let legacy = self.legacy_calculation_name(name);
+            if newly_admitted
+                && legacy
+                && let Some(ast) = self.grounded_name_ast(name, text, *scope)
+            {
+                let mut unresolved = false;
+                ast.visit_refs(|r| {
+                    if let formualizer_parse::parser::RefView::NamedRange { name } = r {
+                        unresolved |= self.calculation_name_index(name, *scope).is_none();
+                    }
+                });
+                // Keep a previously masked legacy name failure a refusal.
+                // Legacy-only workbooks still use the original import path.
+                if unresolved {
                     return Err(fail(name));
                 }
-                continue;
-            };
-            references(&ast, &mut used);
+            }
+            if legacy && !grounded && legacy_used.contains(&name.to_ascii_lowercase()) {
+                return Err(fail(name));
+            }
+            if used.contains(&i) || (legacy && grounded && cyclic.contains(&i)) {
+                if cyclic.contains(&i) {
+                    return Err(crate::IoError::Unsupported {
+                        feature: "cyclic calculation name".into(),
+                        context: name.clone(),
+                    });
+                }
+                if !grounded {
+                    return Err(fail(name));
+                }
+            }
+        }
+        if nonliteral && self.has_new_unimported_names() {
+            return Err(crate::IoError::Unsupported {
+                feature: "nonliteral INDIRECT in a workbook with unevaluable names".into(),
+                context: "calculation formula".into(),
+            });
         }
         self.calculation_name_order().map(|_| ())
     }
 
-    fn calculation_name_order(&self) -> Result<Vec<usize>, crate::IoError> {
-        use std::collections::{HashMap, VecDeque};
-        let raw = self.raw_calculation_names();
-        let index: HashMap<_, _> = raw
+    #[cfg(feature = "xlsx-recalc")]
+    pub(crate) fn has_new_unimported_names(&self) -> bool {
+        self.unimported_document_names()
             .iter()
-            .enumerate()
-            .map(|(i, (n, _, s))| ((*s, n.to_ascii_lowercase()), i))
-            .collect();
+            .any(|name| !name.starts_with("_xlnm.") && !self.skipped_external_names.contains(name))
+    }
+
+    #[cfg(feature = "xlsx-recalc")]
+    pub(crate) fn calculation_name_asts(&self) -> Result<Vec<ASTNode>, crate::IoError> {
+        Ok(self
+            .calculation_name_order()?
+            .into_iter()
+            .filter_map(|i| {
+                let (name, text, scope) = &self.raw_calculation_names()[i];
+                self.grounded_name_ast(name, text, *scope)
+            })
+            .collect())
+    }
+
+    fn calculation_name_order(&self) -> Result<Vec<usize>, crate::IoError> {
+        use std::collections::VecDeque;
+        let raw = self.raw_calculation_names();
+        let cyclic = self.cyclic_calculation_names();
+        let dependencies = self.calculation_name_dependencies();
         let mut pending = vec![0usize; raw.len()];
         let mut readers = vec![Vec::new(); raw.len()];
-        for (i, (_, text, scope)) in raw.iter().enumerate() {
+        for (i, (name, text, scope)) in raw.iter().enumerate() {
             Self::cancellation_checkpoint(self.cancel.as_ref())
                 .map_err(crate::IoError::Calamine)?;
-            let Some(ast) = self.grounded_name_ast(text, *scope) else {
-                continue;
-            };
-            let mut deps = HashSet::new();
-            ast.visit_refs(|r| {
-                if let formualizer_parse::parser::RefView::NamedRange { name } = r {
-                    let key = name.to_ascii_lowercase();
-                    if let Some(&j) = index
-                        .get(&(*scope, key.clone()))
-                        .or_else(|| index.get(&(None, key)))
-                    {
-                        deps.insert(j);
-                    }
+            if (self.referenced_only_names && cyclic.contains(&i))
+                || self.grounded_name_ast(name, text, *scope).is_none()
+            {
+                if self.referenced_only_names {
+                    pending[i] = usize::MAX;
                 }
-            });
+                continue;
+            }
+            let deps = &dependencies[i];
             pending[i] = deps.len();
-            for j in deps {
+            for &j in deps {
                 readers[j].push(i);
             }
         }
@@ -1828,7 +2071,7 @@ impl CalamineAdapter {
                 }
             }
         }
-        if order.len() != raw.len() {
+        if !self.referenced_only_names && order.len() != raw.len() {
             return Err(crate::IoError::Unsupported {
                 feature: "cyclic calculation name".into(),
                 context: raw[pending.iter().position(|n| *n != 0).unwrap()].0.clone(),
@@ -2640,7 +2883,27 @@ where
                 use rustc_hash::FxHashSet;
 
                 Self::cancellation_checkpoint(cancel.as_ref())?;
-                let defined = self.defined_names()?;
+                let mut defined: Vec<_> = if !self.referenced_only_names {
+                    self.defined_names()?
+                } else {
+                    self.calculation_name_order()
+                        .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?
+                        .into_iter()
+                        .filter_map(|i| {
+                            let (name, text, scope) = &self.raw_calculation_names()[i];
+                            Self::convert_defined_name(name, text, *scope, &names)
+                        })
+                        .collect()
+                };
+                if self.referenced_only_names {
+                    // Keep legacy document-name range/literal import unchanged,
+                    // including malformed ranges that create a missing sheet.
+                    defined.extend(
+                        self.defined_names()?
+                            .into_iter()
+                            .filter(|dn| dn.name.to_ascii_lowercase().starts_with("_xlnm.")),
+                    );
+                }
                 let mut seen: FxHashSet<(DefinedNameScope, Option<String>, String)> =
                     FxHashSet::default();
 
@@ -2701,9 +2964,15 @@ where
                         DefinedNameDefinition::Literal { value } => NamedDefinition::Literal(value),
                     };
 
-                    engine
-                        .define_name(&dn.name, definition, scope)
-                        .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?;
+                    if let Err(error) = engine.define_name(&dn.name, definition, scope) {
+                        if self.skippable_name_registration_error(&dn.name, &error) {
+                            self.unregistrable_names.insert(dn.name.to_lowercase());
+                        } else {
+                            return Err(calamine::Error::Io(std::io::Error::other(
+                                error.to_string(),
+                            )));
+                        }
+                    }
                 }
             }
 
@@ -2719,9 +2988,14 @@ where
                 if Self::convert_defined_name(name, text, *local, &names).is_some() {
                     continue;
                 }
-                let Some(ast) = self.grounded_name_ast(text, *local) else {
+                let Some(ast) = self.grounded_name_ast(name, text, *local) else {
                     continue;
                 };
+                if self.referenced_only_names && self.reads_unregistrable_name(&ast, *local) {
+                    // Leave the evaluated reader for the post-ingest name guard,
+                    // rather than surfacing a masked name failure as an I/O error.
+                    continue;
+                }
                 let scope = match local {
                     Some(id) => {
                         NameScope::Sheet(engine.sheet_id(&names[*id]).ok_or_else(|| {
@@ -2730,17 +3004,24 @@ where
                     }
                     None => NameScope::Workbook,
                 };
-                engine
-                    .define_name(
-                        name,
-                        NamedDefinition::Formula {
-                            ast,
-                            dependencies: Vec::new(),
-                            range_deps: Vec::new(),
-                        },
-                        scope,
-                    )
-                    .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?;
+                if let Err(error) = engine.define_name(
+                    name,
+                    NamedDefinition::Formula {
+                        ast,
+                        dependencies: Vec::new(),
+                        range_deps: Vec::new(),
+                    },
+                    scope,
+                ) {
+                    if self.skippable_name_registration_error(name, &error) {
+                        let name = name.to_lowercase();
+                        self.unregistrable_names.insert(name);
+                    } else {
+                        return Err(calamine::Error::Io(std::io::Error::other(
+                            error.to_string(),
+                        )));
+                    }
+                }
             }
 
             if debug {

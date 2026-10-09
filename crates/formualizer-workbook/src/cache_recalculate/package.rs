@@ -18,6 +18,8 @@ pub(super) struct Relationship {
 pub(super) struct Sheet {
     pub name: String,
     pub part: String,
+    pub inert: bool,
+    pub kind: &'static str,
     /// `sheet/@sheetId`, the key of `xl/calcChain.xml` entries.
     pub sheet_id: u32,
     pub tables: BTreeMap<String, String>,
@@ -788,22 +790,47 @@ pub(super) fn discover(
                     "workbook XML",
                 ));
             }
-            let rel = relations
-                .get(&*id.value)
-                .ok_or_else(|| unsupported("missing worksheet relationship", "workbook XML"))?;
-            if rel.kind != format!("{}/worksheet", xml::OFFICE) {
+            let rel = relations.get(&*id.value);
+            if id.value.is_empty() && rel.is_none() {
+                sheets.push(Sheet {
+                    name: name.to_owned(),
+                    part: String::new(),
+                    inert: true,
+                    kind: "",
+                    sheet_id,
+                    tables: BTreeMap::new(),
+                });
+                return Ok(());
+            }
+            let rel =
+                rel.ok_or_else(|| unsupported("missing worksheet relationship", "workbook XML"))?;
+            let inert = rel.kind == format!("{}/chartsheet", xml::OFFICE)
+                || rel.kind == format!("{}/dialogsheet", xml::OFFICE);
+            let kind = if rel.kind == format!("{}/chartsheet", xml::OFFICE) {
+                "chartsheet"
+            } else if rel.kind == format!("{}/dialogsheet", xml::OFFICE) {
+                "dialogsheet"
+            } else {
+                "worksheet"
+            };
+            if !inert && rel.kind != format!("{}/worksheet", xml::OFFICE) {
                 return Err(unsupported("non-worksheet sheet", "workbook XML"));
             }
             let part = rel
                 .target
                 .clone()
                 .ok_or_else(|| unsupported("external worksheet", "workbook XML"))?;
+            if inert && !archive.file_names().any(|name| name == part) {
+                return Err(unsupported("missing non-worksheet part", "workbook XML"));
+            }
             if !targets.insert(part.clone()) {
                 return Err(unsupported("duplicate worksheet target", "workbook XML"));
             }
             sheets.push(Sheet {
                 name: name.to_owned(),
                 part,
+                inert,
+                kind,
                 sheet_id,
                 tables: BTreeMap::new(),
             });
@@ -842,6 +869,9 @@ pub(super) fn discover(
     }
     let mut table_targets = HashSet::new();
     for sheet in &mut sheets {
+        if sheet.inert {
+            continue;
+        }
         let (parent, name) = sheet.part.rsplit_once('/').unwrap_or(("", &sheet.part));
         let rel_part = format!("{parent}/_rels/{name}.rels");
         if archive.file_names().any(|n| n == rel_part) {
