@@ -218,7 +218,7 @@ Computed representable Excel errors, including scalar `#SPILL!` and `#CALC!`, pr
 
 ## Refusal messages
 
-A refusal is `IoError::Unsupported { feature, context }`. The CLI reports it as exit 2 with `"status": "refused"` and `"refusal": {"feature": ..., "context": ...}`; Python raises `RuntimeError("Unsupported feature: <feature> in <context>")`. `feature` names what was declined and `context` says where (a sheet and cell, a table, a package part or `XLSX package`). Both are diagnostics for people, not a stable enumeration: branch on the exit code or status, not on the text. A refusal means the workbook is outside the supported subset, so retrying the same file gives the same answer; change the workbook or use another tool, and never report its caches as recalculated.
+A refusal is `IoError::Unsupported { feature, context }`. The CLI reports it as exit 2 with `"status": "refused"` and `"refusal": {"feature": ..., "context": ...}`; Python raises `OSError` whose message reads `recalculate XLSX failed: Unsupported feature: <feature> in <context>`. `feature` names what was declined and `context` says where (a sheet and cell, a table, a package part or `XLSX package`). Both are diagnostics for people, not a stable enumeration: branch on the exit code or status, not on the text. A refusal means the workbook is outside the supported subset, so retrying the same file gives the same answer; change the workbook or use another tool, and never report its caches as recalculated.
 
 Common refusals:
 
