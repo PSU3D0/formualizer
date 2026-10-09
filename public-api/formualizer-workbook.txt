@@ -686,6 +686,7 @@ pub struct formualizer_workbook::cache_recalculate::XlsxRecalculateResult
 pub formualizer_workbook::cache_recalculate::XlsxRecalculateResult::bytes: alloc::vec::Vec<u8>
 pub formualizer_workbook::cache_recalculate::XlsxRecalculateResult::cache_cells_changed: usize
 pub formualizer_workbook::cache_recalculate::XlsxRecalculateResult::clock_now_utc: core::option::Option<chrono::datetime::DateTime<chrono::offset::utc::Utc>>
+pub formualizer_workbook::cache_recalculate::XlsxRecalculateResult::external_links_used: usize
 pub formualizer_workbook::cache_recalculate::XlsxRecalculateResult::formula_cells: usize
 pub formualizer_workbook::cache_recalculate::XlsxRecalculateResult::summary: formualizer_workbook::recalculate::RecalculateSummary
 pub formualizer_workbook::cache_recalculate::XlsxRecalculateResult::worksheet_parts_changed: usize
@@ -1364,6 +1365,8 @@ impl formualizer_eval::traits::ReferenceResolver for formualizer_workbook::workb
 pub fn formualizer_workbook::workbook::WBResolver::resolve_cell_reference(&self, core::option::Option<&str>, u32, u32) -> core::result::Result<formualizer_common::value::LiteralValue, formualizer_common::error::ExcelError>
 impl formualizer_eval::traits::Resolver for formualizer_workbook::workbook::WBResolver
 impl formualizer_eval::traits::SourceResolver for formualizer_workbook::workbook::WBResolver
+pub fn formualizer_workbook::workbook::WBResolver::resolve_source_scalar(&self, &str) -> core::result::Result<formualizer_common::value::LiteralValue, formualizer_common::error::ExcelError>
+pub fn formualizer_workbook::workbook::WBResolver::resolve_source_table(&self, &str) -> core::result::Result<alloc::boxed::Box<dyn formualizer_eval::traits::Table>, formualizer_common::error::ExcelError>
 impl formualizer_eval::traits::TableResolver for formualizer_workbook::workbook::WBResolver
 pub fn formualizer_workbook::workbook::WBResolver::resolve_table_reference(&self, &formualizer_parse::parser::TableReference) -> core::result::Result<alloc::boxed::Box<dyn formualizer_eval::traits::Table>, formualizer_common::error::ExcelError>
 pub struct formualizer_workbook::workbook::WasmFunctionSpec
@@ -2618,6 +2621,7 @@ pub struct formualizer_workbook::XlsxRecalculateResult
 pub formualizer_workbook::XlsxRecalculateResult::bytes: alloc::vec::Vec<u8>
 pub formualizer_workbook::XlsxRecalculateResult::cache_cells_changed: usize
 pub formualizer_workbook::XlsxRecalculateResult::clock_now_utc: core::option::Option<chrono::datetime::DateTime<chrono::offset::utc::Utc>>
+pub formualizer_workbook::XlsxRecalculateResult::external_links_used: usize
 pub formualizer_workbook::XlsxRecalculateResult::formula_cells: usize
 pub formualizer_workbook::XlsxRecalculateResult::summary: formualizer_workbook::recalculate::RecalculateSummary
 pub formualizer_workbook::XlsxRecalculateResult::worksheet_parts_changed: usize
