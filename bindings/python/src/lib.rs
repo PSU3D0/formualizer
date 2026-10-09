@@ -278,8 +278,7 @@ fn xlsx_recalc_options(
 ) -> PyResult<formualizer::workbook::XlsxRecalculateOptions> {
     use formualizer::eval::{engine::DeterministicMode, timezone::TimeZoneSpec};
     use formualizer::workbook::ExternalLinkPolicy;
-    let mut options = formualizer::workbook::XlsxRecalculateOptions::default();
-    options.external_links = match external_links {
+    let external_links = match external_links {
         "cached" => ExternalLinkPolicy::Cached,
         "refuse" => ExternalLinkPolicy::Refuse,
         other => {
@@ -287,6 +286,10 @@ fn xlsx_recalc_options(
                 "external_links must be 'cached' or 'refuse', got {other:?}"
             )));
         }
+    };
+    let mut options = formualizer::workbook::XlsxRecalculateOptions {
+        external_links,
+        ..Default::default()
     };
     if let Some(limit) = error_location_limit {
         options.error_location_limit = limit;
@@ -489,6 +492,7 @@ fn recalculate_xlsx_bytes(
 )]
 #[pyfunction]
 #[pyo3(signature = (path, output=None, *, error_location_limit=None, rng_seed=None, deterministic_timestamp_utc=None, deterministic_timezone=None, external_links="cached"))]
+#[allow(clippy::too_many_arguments)]
 fn recalculate_xlsx_file(
     py: Python<'_>,
     path: &str,
