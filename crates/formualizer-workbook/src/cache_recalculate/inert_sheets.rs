@@ -108,7 +108,7 @@ fn check_indirect(ast: &ASTNode, sheets: &[package::Sheet]) -> Result<(), IoErro
                                 .replace("''", "'");
                             inert_scope |= sheets
                                 .iter()
-                                .any(|s| s.inert && s.name.eq_ignore_ascii_case(&sheet));
+                                .any(|s| s.inert && s.name.to_lowercase() == sheet.to_lowercase());
                         }
                     });
                     if inert_scope {
@@ -148,7 +148,7 @@ fn check(ast: &ASTNode, sheets: &[package::Sheet]) -> Result<(), IoError> {
     let position = |name: &str| {
         sheets
             .iter()
-            .position(|s| s.name.eq_ignore_ascii_case(name))
+            .position(|s| s.name.to_lowercase() == name.to_lowercase())
     };
     let mut bad = false;
     ast.visit_refs(|r| {

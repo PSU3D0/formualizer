@@ -348,6 +348,32 @@ fn inert_sheet_direct_and_three_dimensional_references_refuse() {
 }
 
 #[test]
+fn inert_sheet_unicode_case_references_refuse() {
+    for (kind, name, folded) in [
+        ("chartsheet", "Ärger", "ärger"),
+        ("empty", "MÓDULO", "módulo"),
+    ] {
+        for formula in [
+            format!("'{folded}'!A1"),
+            format!("SUM(Sheet1:'{folded}'!A1)"),
+            format!("INDIRECT(&quot;'{folded}'!A1&quot;)"),
+            format!("INDIRECT(&quot;'{folded}'!Missing&quot;)"),
+            format!("SUM('{folded}'!A:A)"),
+        ] {
+            let mut p = inert_fixture(kind, false, &formula);
+            let workbook = p.get_mut("xl/workbook.xml").unwrap();
+            *workbook = workbook.replace("name=\"Inert\"", &format!("name=\"{name}\""));
+            assert!(
+                matches!(recalculate_xlsx_bytes(&pack(&p), Default::default()),
+                Err(formualizer_workbook::IoError::Unsupported { feature, .. })
+                if feature == "reference to a non-worksheet sheet"),
+                "{kind}: {formula}"
+            );
+        }
+    }
+}
+
+#[test]
 fn inert_sheet_indirect_references_are_guarded() {
     for formula in [
         "INDIRECT(&quot;Inert!A1&quot;)",

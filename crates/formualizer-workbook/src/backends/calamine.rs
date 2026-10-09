@@ -5,7 +5,7 @@ use crate::traits::{
 };
 use formualizer_common::{DateSystem, ExcelError, ExcelErrorKind, LiteralValue};
 use parking_lot::RwLock;
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
@@ -617,6 +617,25 @@ impl DebugTimer {
 
 type ShadowRelocationComparator = Arc<dyn Fn(&ASTNode, &ASTNode) -> bool + Send + Sync>;
 
+#[derive(Default)]
+struct CalculationNameAnalysis {
+    dependencies: Vec<Vec<usize>>,
+    cyclic: HashSet<usize>,
+}
+
+#[derive(Default)]
+struct CalculationNameCandidates {
+    ordinary_first: Option<usize>,
+    legacy_first: Option<usize>,
+    legacy_last: Option<usize>,
+}
+
+#[derive(Default)]
+struct CalculationNameIndex {
+    names: HashMap<(Option<usize>, String), CalculationNameCandidates>,
+    sheets: HashMap<String, usize>,
+}
+
 /// Read-only XLSX adapter backed by one shared source acquisition.
 ///
 /// [`SpreadsheetReader::open_path`] retains one opened file and uses serialized
@@ -639,6 +658,9 @@ pub struct CalamineAdapter {
     calamine_defined_names: Vec<(String, String)>,
     defined_names: OnceLock<Vec<DefinedName>>,
     calculation_names: OnceLock<Vec<(String, String, Option<usize>)>>,
+    name_index: OnceLock<CalculationNameIndex>,
+    name_analysis: OnceLock<CalculationNameAnalysis>,
+    grounded_names: OnceLock<Vec<Option<ASTNode>>>,
     referenced_only_names: bool,
     unregistrable_names: HashSet<String>,
     external_link_targets: OnceLock<BTreeMap<u32, String>>,
@@ -1440,6 +1462,9 @@ impl CalamineAdapter {
             calamine_defined_names,
             defined_names: OnceLock::new(),
             calculation_names: OnceLock::new(),
+            name_index: OnceLock::new(),
+            name_analysis: OnceLock::new(),
+            grounded_names: OnceLock::new(),
             referenced_only_names: false,
             unregistrable_names: HashSet::new(),
             external_link_targets: OnceLock::new(),
@@ -1553,12 +1578,17 @@ impl CalamineAdapter {
         values: Arc<crate::cache_recalculate::external_links::ExternalValues>,
     ) {
         self.external_values = Some(values);
+        self.name_analysis.take();
+        self.grounded_names.take();
     }
 
     /// Leave these unreferenced external-link names out of the calculation.
     #[cfg(feature = "xlsx-recalc")]
     pub(crate) fn skip_external_names(&mut self, names: Vec<String>) {
         self.skipped_external_names = names;
+        self.name_index.take();
+        self.name_analysis.take();
+        self.grounded_names.take();
     }
 
     /// Whether a name's external reference reads an admitted cached value.
@@ -1576,12 +1606,29 @@ impl CalamineAdapter {
         }
     }
 
-    fn grounded_name_ast(&self, name: &str, text: &str, scope: Option<usize>) -> Option<ASTNode> {
-        use formualizer_parse::parser::ASTNodeType as N;
+    fn grounded_calculation_name(&self, i: usize) -> Option<ASTNode> {
+        let name = &self.raw_calculation_names()[i].0;
         if self.referenced_only_names
             && !self.legacy_calculation_name(name)
             && self.unregistrable_names.contains(&name.to_lowercase())
         {
+            return None;
+        }
+        self.grounded_names
+            .get_or_init(|| {
+                self.raw_calculation_names()
+                    .iter()
+                    .map(|(name, text, scope)| self.grounded_name_ast(name, text, *scope))
+                    .collect()
+            })
+            .get(i)
+            .cloned()
+            .flatten()
+    }
+
+    fn grounded_name_ast(&self, name: &str, text: &str, scope: Option<usize>) -> Option<ASTNode> {
+        use formualizer_parse::parser::ASTNodeType as N;
+        if Self::cancellation_checkpoint(self.cancel.as_ref()).is_err() {
             return None;
         }
         let sheets = self.cached_names.as_deref().unwrap_or_default();
@@ -1732,26 +1779,30 @@ impl CalamineAdapter {
     #[cfg(feature = "xlsx-recalc")]
     pub(crate) fn unimported_document_names(&self) -> Vec<String> {
         let cyclic = self.cyclic_calculation_names();
-        self.raw_calculation_names()
-            .iter()
-            .enumerate()
-            .filter(|(i, (name, text, scope))| {
-                cyclic.contains(i) || self.grounded_name_ast(name, text, *scope).is_none()
-            })
-            .map(|(_, (name, _, _))| {
-                if self.legacy_calculation_name(name) {
+        let mut names = Vec::new();
+        for (i, (name, _, _)) in self.raw_calculation_names().iter().enumerate() {
+            if Self::cancellation_checkpoint(self.cancel.as_ref()).is_err() {
+                return Vec::new();
+            }
+            if cyclic.contains(&i) || self.grounded_calculation_name(i).is_none() {
+                names.push(if self.legacy_calculation_name(name) {
                     name.to_ascii_lowercase()
                 } else {
                     name.to_lowercase()
-                }
-            })
-            .collect()
+                });
+            }
+        }
+        names
     }
 
     fn calculation_name_dependencies(&self) -> Vec<Vec<usize>> {
         let raw = self.raw_calculation_names();
         raw.iter()
-            .map(|(name, text, scope)| {
+            .enumerate()
+            .map(|(i, (name, text, scope))| {
+                if Self::cancellation_checkpoint(self.cancel.as_ref()).is_err() {
+                    return Vec::new();
+                }
                 let mut deps = HashSet::new();
                 let referenced_only =
                     self.referenced_only_names && !self.legacy_calculation_name(name);
@@ -1762,7 +1813,7 @@ impl CalamineAdapter {
                     ))
                     .ok()
                 } else {
-                    self.grounded_name_ast(name, text, *scope)
+                    self.grounded_calculation_name(i)
                 };
                 if let Some(ast) = ast {
                     let mut reader = |name: &str| {
@@ -1800,38 +1851,78 @@ impl CalamineAdapter {
                 .and_then(|s| s.strip_suffix('\''))
                 .unwrap_or(sheet)
                 .replace("''", "'");
-            let scope = self
-                .cached_names
-                .as_deref()
-                .unwrap_or_default()
-                .iter()
-                .position(|s| s.to_lowercase() == sheet.to_lowercase())?;
+            let scope = *self
+                .calculation_name_index_map()
+                .sheets
+                .get(&sheet.to_lowercase())?;
             (name, Some(scope))
         } else {
             (name, scope)
         };
-        let raw = self.raw_calculation_names();
+        let index = self.calculation_name_index_map();
         let key = name.to_lowercase();
-        let matches = |n: &str| {
-            if self.legacy_calculation_name(n) {
-                n.eq_ignore_ascii_case(name)
-            } else {
-                n.to_lowercase() == key
-            }
+        let lookup = |scope| {
+            let ordinary = index
+                .names
+                .get(&(scope, key.clone()))
+                .and_then(|n| n.ordinary_first);
+            let legacy = index
+                .names
+                .get(&(scope, name.to_ascii_lowercase()))
+                .and_then(|n| n.legacy_first);
+            ordinary.into_iter().chain(legacy).min()
         };
-        raw.iter()
-            .position(|(n, _, s)| scope.is_some() && *s == scope && matches(n))
-            .or_else(|| raw.iter().position(|(n, _, s)| s.is_none() && matches(n)))
+        scope.and_then(|s| lookup(Some(s))).or_else(|| lookup(None))
+    }
+
+    fn calculation_name_index_map(&self) -> &CalculationNameIndex {
+        self.name_index.get_or_init(|| {
+            let mut index = CalculationNameIndex::default();
+            for (i, (name, _, scope)) in self.raw_calculation_names().iter().enumerate() {
+                if Self::cancellation_checkpoint(self.cancel.as_ref()).is_err() {
+                    return index;
+                }
+                let ascii = index
+                    .names
+                    .entry((*scope, name.to_ascii_lowercase()))
+                    .or_default();
+                // Generic import chooses the last ASCII match; strict import
+                // chooses the first match with Unicode folding for ordinary names.
+                ascii.legacy_last = Some(i);
+                if self.legacy_calculation_name(name) {
+                    ascii.legacy_first.get_or_insert(i);
+                } else {
+                    index
+                        .names
+                        .entry((*scope, name.to_lowercase()))
+                        .or_default()
+                        .ordinary_first
+                        .get_or_insert(i);
+                }
+            }
+            for (i, sheet) in self
+                .cached_names
+                .as_deref()
+                .unwrap_or_default()
+                .iter()
+                .enumerate()
+            {
+                if Self::cancellation_checkpoint(self.cancel.as_ref()).is_err() {
+                    return index;
+                }
+                index.sheets.entry(sheet.to_lowercase()).or_insert(i);
+            }
+            index
+        })
     }
 
     fn legacy_name_index(&self, name: &str, scope: Option<usize>) -> Option<usize> {
-        let raw = self.raw_calculation_names();
-        raw.iter()
-            .rposition(|(n, _, s)| *s == scope && n.eq_ignore_ascii_case(name))
-            .or_else(|| {
-                raw.iter()
-                    .rposition(|(n, _, s)| s.is_none() && n.eq_ignore_ascii_case(name))
-            })
+        let index = &self.calculation_name_index_map().names;
+        let key = name.to_ascii_lowercase();
+        index
+            .get(&(scope, key.clone()))
+            .and_then(|n| n.legacy_last)
+            .or_else(|| index.get(&(None, key)).and_then(|n| n.legacy_last))
     }
 
     fn legacy_calculation_name(&self, name: &str) -> bool {
@@ -1866,23 +1957,79 @@ impl CalamineAdapter {
         reads
     }
 
-    fn cyclic_calculation_names(&self) -> HashSet<usize> {
-        let deps = self.calculation_name_dependencies();
-        (0..deps.len())
-            .filter(|&root| {
-                let mut seen = HashSet::new();
-                let mut pending = deps[root].clone();
-                while let Some(i) = pending.pop() {
-                    if i == root {
-                        return true;
+    fn calculation_name_analysis(&self) -> &CalculationNameAnalysis {
+        self.name_analysis.get_or_init(|| {
+            let dependencies = self.calculation_name_dependencies();
+            let mut reverse = vec![Vec::new(); dependencies.len()];
+            let mut seen = vec![false; dependencies.len()];
+            let mut finish = Vec::with_capacity(dependencies.len());
+            // Iterative postorder and reverse traversal identify exactly the
+            // strongly connected components, not names downstream of cycles.
+            for (root, deps) in dependencies.iter().enumerate() {
+                if Self::cancellation_checkpoint(self.cancel.as_ref()).is_err() {
+                    return CalculationNameAnalysis::default();
+                }
+                for &j in deps {
+                    reverse[j].push(root);
+                }
+                if seen[root] {
+                    continue;
+                }
+                seen[root] = true;
+                let mut stack = vec![(root, 0)];
+                while let Some((i, next)) = stack.last_mut() {
+                    if Self::cancellation_checkpoint(self.cancel.as_ref()).is_err() {
+                        return CalculationNameAnalysis::default();
                     }
-                    if seen.insert(i) {
-                        pending.extend(&deps[i]);
+                    if let Some(&j) = dependencies[*i].get(*next) {
+                        *next += 1;
+                        if !seen[j] {
+                            seen[j] = true;
+                            stack.push((j, 0));
+                        }
+                    } else {
+                        finish.push(*i);
+                        stack.pop();
                     }
                 }
-                false
-            })
-            .collect()
+            }
+            seen.fill(false);
+            let mut cyclic = HashSet::new();
+            for root in finish.into_iter().rev() {
+                if Self::cancellation_checkpoint(self.cancel.as_ref()).is_err() {
+                    return CalculationNameAnalysis::default();
+                }
+                if seen[root] {
+                    continue;
+                }
+                seen[root] = true;
+                let mut component = Vec::new();
+                let mut stack = vec![root];
+                while let Some(i) = stack.pop() {
+                    if Self::cancellation_checkpoint(self.cancel.as_ref()).is_err() {
+                        return CalculationNameAnalysis::default();
+                    }
+                    component.push(i);
+                    for &j in &reverse[i] {
+                        if !seen[j] {
+                            seen[j] = true;
+                            stack.push(j);
+                        }
+                    }
+                }
+                if component.len() > 1 || dependencies[root].contains(&root) {
+                    cyclic.extend(component);
+                }
+            }
+            CalculationNameAnalysis {
+                dependencies,
+                cyclic,
+            }
+        })
+    }
+
+    fn cyclic_calculation_names(&self) -> &HashSet<usize> {
+        &self.calculation_name_analysis().cyclic
     }
 
     #[cfg(feature = "xlsx-recalc")]
@@ -1891,7 +2038,11 @@ impl CalamineAdapter {
         formulas: &[(String, String)],
         admitted_inert_sheets: bool,
     ) -> Result<(), crate::IoError> {
-        self.referenced_only_names = true;
+        if !self.referenced_only_names {
+            self.name_analysis.take();
+            self.grounded_names.take();
+            self.referenced_only_names = true;
+        }
         let references = |ast: &ASTNode, scope: Option<usize>, out: &mut HashSet<usize>| {
             name_references::visit(ast, |name, indirect| {
                 if let Some(i) = self.calculation_name_index(name, scope) {
@@ -1922,9 +2073,9 @@ impl CalamineAdapter {
         };
         let cyclic = self.cyclic_calculation_names();
         let newly_admitted = admitted_inert_sheets
-            || raw.iter().enumerate().any(|(i, (name, text, scope))| {
+            || raw.iter().enumerate().any(|(i, (name, _, _))| {
                 !self.legacy_calculation_name(name)
-                    && (cyclic.contains(&i) || self.grounded_name_ast(name, text, *scope).is_none())
+                    && (cyclic.contains(&i) || self.grounded_calculation_name(i).is_none())
             });
         let mut nonliteral = false;
         for (sheet, f) in formulas {
@@ -1939,7 +2090,7 @@ impl CalamineAdapter {
                     .as_deref()
                     .unwrap_or_default()
                     .iter()
-                    .position(|s| s.eq_ignore_ascii_case(sheet));
+                    .position(|s| s.to_lowercase() == sheet.to_lowercase());
                 nonliteral |= references(&ast, scope, &mut used);
                 legacy_references(&ast, &mut legacy_used);
             }
@@ -1959,21 +2110,23 @@ impl CalamineAdapter {
                 }
             }
         }
-        for (i, (name, text, scope)) in raw.iter().enumerate() {
+        for (i, (_, _, scope)) in raw.iter().enumerate() {
+            Self::cancellation_checkpoint(self.cancel.as_ref())
+                .map_err(crate::IoError::Calamine)?;
             if !cyclic.contains(&i)
-                && let Some(ast) = self.grounded_name_ast(name, text, *scope)
+                && let Some(ast) = self.grounded_calculation_name(i)
             {
                 references(&ast, *scope, &mut used);
             }
         }
-        for (i, (name, text, scope)) in raw.iter().enumerate() {
+        for (i, (name, _, scope)) in raw.iter().enumerate() {
             Self::cancellation_checkpoint(self.cancel.as_ref())
                 .map_err(crate::IoError::Calamine)?;
-            let grounded = self.grounded_name_ast(name, text, *scope).is_some();
+            let grounded = self.grounded_calculation_name(i).is_some();
             let legacy = self.legacy_calculation_name(name);
             if newly_admitted
                 && legacy
-                && let Some(ast) = self.grounded_name_ast(name, text, *scope)
+                && let Some(ast) = self.grounded_calculation_name(i)
             {
                 let mut unresolved = false;
                 ast.visit_refs(|r| {
@@ -2023,10 +2176,7 @@ impl CalamineAdapter {
         Ok(self
             .calculation_name_order()?
             .into_iter()
-            .filter_map(|i| {
-                let (name, text, scope) = &self.raw_calculation_names()[i];
-                self.grounded_name_ast(name, text, *scope)
-            })
+            .filter_map(|i| self.grounded_calculation_name(i))
             .collect())
     }
 
@@ -2034,14 +2184,14 @@ impl CalamineAdapter {
         use std::collections::VecDeque;
         let raw = self.raw_calculation_names();
         let cyclic = self.cyclic_calculation_names();
-        let dependencies = self.calculation_name_dependencies();
+        let dependencies = &self.calculation_name_analysis().dependencies;
         let mut pending = vec![0usize; raw.len()];
         let mut readers = vec![Vec::new(); raw.len()];
-        for (i, (name, text, scope)) in raw.iter().enumerate() {
+        for (i, _) in raw.iter().enumerate() {
             Self::cancellation_checkpoint(self.cancel.as_ref())
                 .map_err(crate::IoError::Calamine)?;
             if (self.referenced_only_names && cyclic.contains(&i))
-                || self.grounded_name_ast(name, text, *scope).is_none()
+                || self.grounded_calculation_name(i).is_none()
             {
                 if self.referenced_only_names {
                     pending[i] = usize::MAX;
@@ -2988,7 +3138,7 @@ where
                 if Self::convert_defined_name(name, text, *local, &names).is_some() {
                     continue;
                 }
-                let Some(ast) = self.grounded_name_ast(name, text, *local) else {
+                let Some(ast) = self.grounded_calculation_name(index) else {
                     continue;
                 };
                 if self.referenced_only_names && self.reads_unregistrable_name(&ast, *local) {
@@ -3213,6 +3363,92 @@ mod tests {
             CalamineAdapter::open_path_with_source(file.path(), XlsxPathSource::DirectMmap)
                 .unwrap();
         assert!(matches!(adapter.source, SharedXlsxReader::Mapped { .. }));
+    }
+
+    fn name_analysis_adapter(names: Vec<(String, String, Option<usize>)>) -> CalamineAdapter {
+        let mut adapter = CalamineAdapter::open_bytes(metadata_fixture()).unwrap();
+        adapter.calculation_names = OnceLock::from(names);
+        adapter.referenced_only_names = true;
+        adapter
+    }
+
+    #[test]
+    fn name_analysis_cycles_scopes_and_stable_order() {
+        let mut adapter = name_analysis_adapter(vec![
+            ("First".into(), "Second+1".into(), None),
+            ("Second".into(), "Root+1".into(), None),
+            ("Root".into(), "1".into(), None),
+            ("SelfCycle".into(), "SelfCycle".into(), None),
+            ("CycleA".into(), "CycleB".into(), None),
+            ("CycleB".into(), "CycleA".into(), None),
+            ("Downstream".into(), "CycleA".into(), None),
+            ("Ñame.x\\y".into(), "2".into(), None),
+            ("Ñame.x\\y".into(), "3".into(), Some(0)),
+        ]);
+        adapter.cached_names = Some(vec!["Dáta".into()]);
+        assert_eq!(
+            adapter.calculation_name_index("ñame.x\\y", Some(0)),
+            Some(8)
+        );
+        assert_eq!(
+            adapter.calculation_name_index("'dáta'!ñame.x\\y", None),
+            Some(8)
+        );
+        assert_eq!(adapter.calculation_name_index("ñame.x\\y", None), Some(7));
+        assert_eq!(
+            adapter.cyclic_calculation_names(),
+            &HashSet::from([3, 4, 5])
+        );
+        assert_eq!(
+            adapter.calculation_name_order().unwrap(),
+            vec![2, 7, 8, 1, 0]
+        );
+        let analysis = adapter.calculation_name_analysis() as *const _;
+        assert_eq!(analysis, adapter.calculation_name_analysis() as *const _);
+    }
+
+    #[test]
+    fn name_analysis_preserves_legacy_lookup_and_registration_filtering() {
+        let mut adapter = name_analysis_adapter(vec![
+            ("Root".into(), "1".into(), None),
+            ("ROOT".into(), "2".into(), None),
+            ("Root".into(), "3".into(), Some(0)),
+            ("Root".into(), "4".into(), Some(0)),
+            ("_xlnm.Ñame".into(), "5".into(), None),
+        ]);
+        assert_eq!(adapter.calculation_name_index("root", None), Some(0));
+        assert_eq!(adapter.calculation_name_index("root", Some(0)), Some(2));
+        assert_eq!(adapter.calculation_name_index("_xlnm.ñame", None), None);
+        let analysis = adapter.calculation_name_analysis() as *const _;
+        adapter.unregistrable_names.insert("root".into());
+        assert!(adapter.grounded_calculation_name(0).is_none());
+        assert_eq!(analysis, adapter.calculation_name_analysis() as *const _);
+        adapter.referenced_only_names = false;
+        adapter.grounded_names.take();
+        adapter.name_analysis.take();
+        assert_eq!(adapter.calculation_name_index("root", None), Some(1));
+        assert_eq!(adapter.calculation_name_index("root", Some(0)), Some(3));
+        assert_eq!(
+            adapter.calculation_name_order().unwrap(),
+            vec![0, 1, 2, 3, 4]
+        );
+    }
+
+    #[test]
+    fn calculation_name_chain_analysis_scales_linearly() {
+        let count = 5_000;
+        let mut names: Vec<_> = (0..count - 1)
+            .map(|i| (format!("nm_{i}"), format!("nm_{}+1", i + 1), None))
+            .collect();
+        names.push((format!("nm_{}", count - 1), "1".into(), None));
+        let adapter = name_analysis_adapter(names);
+        let started = std::time::Instant::now();
+        assert!(adapter.cyclic_calculation_names().is_empty());
+        assert_eq!(
+            adapter.calculation_name_order().unwrap(),
+            (0..count).rev().collect::<Vec<_>>()
+        );
+        assert!(started.elapsed() < std::time::Duration::from_secs(3));
     }
 
     #[test]
