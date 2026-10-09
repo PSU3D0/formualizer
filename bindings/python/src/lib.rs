@@ -396,6 +396,12 @@ fn xlsx_result_to_py(
     out.set_item("formula_cells", result.formula_cells)?;
     out.set_item("cache_cells_changed", result.cache_cells_changed)?;
     out.set_item("worksheet_parts_changed", result.worksheet_parts_changed)?;
+    if result.external_links_used > 0 {
+        let links = pyo3::types::PyDict::new(py);
+        links.set_item("links_used", result.external_links_used)?;
+        links.set_item("refreshed", false)?;
+        out.set_item("external_links", links)?;
+    }
     Ok(out.into_any().unbind())
 }
 

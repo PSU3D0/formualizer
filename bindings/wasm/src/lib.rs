@@ -288,6 +288,16 @@ pub fn recalculate_xlsx_bytes(
         &JsValue::from_str("worksheet_parts_changed"),
         &JsValue::from_f64(result.worksheet_parts_changed as f64),
     )?;
+    if result.external_links_used > 0 {
+        let links = js_sys::Object::new();
+        Reflect::set(
+            &links,
+            &JsValue::from_str("links_used"),
+            &JsValue::from_f64(result.external_links_used as f64),
+        )?;
+        Reflect::set(&links, &JsValue::from_str("refreshed"), &JsValue::FALSE)?;
+        Reflect::set(&out, &JsValue::from_str("external_links"), &links)?;
+    }
     Reflect::set(
         &out,
         &JsValue::from_str("clock"),

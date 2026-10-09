@@ -229,6 +229,9 @@ ownership remains declared. Obsolete caches are cleared, keeping styled shells.
 children. `cache_cells_changed` counts physical caches inserted, replaced or
 cleared (including children), so it can exceed the formula count.
 `worksheet_parts_changed` counts worksheets only, not metadata/relationships.
+`external_links` (`{"links_used": n, "refreshed": False}`) is present only when
+formulas read external workbook links; their values come from the cache Excel
+stored in the workbook and are never refreshed.
 Deterministic unchanged outputs recalculate to byte-identical no-ops.
 
 Legacy fixed-extent (CSE) arrays, elementwise `IF`, Excel tables within a

@@ -692,6 +692,12 @@ export interface XlsxRecalculateResult {
   cache_cells_changed: number;
   /** Changed worksheets only; metadata/relationships are not counted. */
   worksheet_parts_changed: number;
+  /**
+   * Present only when the computation read values of external workbook
+   * links. Links are never refreshed: the values are the ones Excel last
+   * stored in the workbook.
+   */
+  external_links?: { links_used: number; refreshed: false };
   /** The clock this run used; pass it back to replay the run exactly. */
   clock: {
     /**
