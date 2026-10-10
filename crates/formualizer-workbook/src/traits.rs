@@ -284,6 +284,13 @@ pub struct NameImportDiagnostic {
     pub message: String,
 }
 
+/// A non-calculating sheet omitted by a spreadsheet reader.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SheetImportDiagnostic {
+    pub name: String,
+    pub kind: String,
+}
+
 pub trait SpreadsheetReader: Send + Sync {
     type Error: std::error::Error + Send + Sync + 'static;
 
@@ -293,6 +300,11 @@ pub trait SpreadsheetReader: Send + Sync {
 
     fn load_stats(&self) -> Option<AdapterLoadStats> {
         None
+    }
+
+    /// Non-calculating sheets omitted during loading.
+    fn sheet_import_diagnostics(&self) -> Vec<SheetImportDiagnostic> {
+        Vec::new()
     }
 
     /// Non-fatal names omitted from calculation import.

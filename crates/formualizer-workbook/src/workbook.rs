@@ -965,6 +965,7 @@ pub struct Workbook {
     /// `None` when the workbook was not loaded from an XLSX with a `<calcPr>`.
     calc_settings: Option<crate::traits::CalcSettings>,
     name_import_diagnostics: Vec<crate::traits::NameImportDiagnostic>,
+    sheet_import_diagnostics: Vec<crate::traits::SheetImportDiagnostic>,
 }
 
 trait WorkbookActionOps {
@@ -1186,6 +1187,7 @@ impl Workbook {
             undo: formualizer_eval::engine::graph::editor::undo_engine::UndoEngine::new(),
             calc_settings: None,
             name_import_diagnostics: Vec::new(),
+            sheet_import_diagnostics: Vec::new(),
         }
     }
     pub fn new_with_mode(mode: WorkbookMode) -> Self {
@@ -2135,6 +2137,11 @@ impl Workbook {
                 ch.overlay.set(in_off, ov);
             }
         }
+    }
+
+    /// Non-calculating sheets omitted during loading, in no guaranteed order.
+    pub fn sheet_import_diagnostics(&self) -> &[crate::traits::SheetImportDiagnostic] {
+        &self.sheet_import_diagnostics
     }
 
     /// Non-fatal defined-name omissions recorded during load.
@@ -3533,6 +3540,7 @@ impl Workbook {
             .stream_into_engine(&mut wb.engine)
             .map_err(IoError::from)?;
         wb.name_import_diagnostics = backend.name_import_diagnostics();
+        wb.sheet_import_diagnostics = backend.sheet_import_diagnostics();
         let stats = backend.load_stats();
         Ok((wb, stats))
     }

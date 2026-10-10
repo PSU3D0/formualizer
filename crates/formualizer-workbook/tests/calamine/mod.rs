@@ -22,6 +22,7 @@ mod family_grouping;
 mod format_channel;
 #[cfg(feature = "calamine")]
 mod formulas;
+mod inert_sheets;
 #[cfg(feature = "calamine")]
 mod issue162_unbounded_index;
 #[cfg(feature = "calamine")]

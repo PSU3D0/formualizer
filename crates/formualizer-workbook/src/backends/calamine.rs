@@ -31,6 +31,7 @@ use zip::ZipArchive;
 
 mod compressed_evidence;
 mod formula_replay;
+mod inert_sheets;
 pub(crate) mod name_references;
 
 use compressed_evidence::{EvidenceRecord, MonotonicFormulaEvidence};
@@ -650,6 +651,7 @@ pub struct CalamineAdapter {
     cancel: Option<CancelToken>,
     loaded_sheets: HashSet<String>,
     cached_names: Option<Vec<String>>,
+    sheet_import_diagnostics: Vec<crate::traits::SheetImportDiagnostic>,
     /// Calamine's already-parsed `(name, formula)` pairs, captured at open time.
     ///
     /// Held outside `workbook` on purpose: [`Self::lazy_defined_names`] must not
@@ -1450,9 +1452,29 @@ impl CalamineAdapter {
         source: SharedXlsxReader,
         cancel: Option<CancelToken>,
     ) -> Result<Self, calamine::Error> {
+        let (projection, original_names, mut sheet_import_diagnostics) =
+            inert_sheets::omit_modules(&source, cancel.clone())?;
+        let source = projection
+            .map(SharedXlsxReader::from_bytes)
+            .unwrap_or(source);
         let workbook: Xlsx<CancellableReader> =
             open_workbook_from_rs(CancellableReader::new(source.reader(), cancel.clone()))?;
-        let sheet_names = workbook.sheet_names().to_vec();
+        for sheet in workbook.sheets_metadata() {
+            let kind = match sheet.typ {
+                calamine::SheetType::ChartSheet => "chartsheet",
+                calamine::SheetType::DialogSheet => "dialogsheet",
+                _ => continue,
+            };
+            sheet_import_diagnostics.push(crate::traits::SheetImportDiagnostic {
+                name: sheet.name.clone(),
+                kind: kind.into(),
+            });
+        }
+        let sheet_names = if original_names.is_empty() {
+            workbook.sheet_names().to_vec()
+        } else {
+            original_names
+        };
         let calamine_defined_names = workbook.defined_names().to_vec();
 
         Ok(Self {
@@ -1461,6 +1483,7 @@ impl CalamineAdapter {
             cancel,
             loaded_sheets: HashSet::new(),
             cached_names: Some(sheet_names),
+            sheet_import_diagnostics,
             calamine_defined_names,
             defined_names: OnceLock::new(),
             calculation_names: OnceLock::new(),
@@ -1484,6 +1507,18 @@ impl CalamineAdapter {
             #[cfg(test)]
             stream_row_checkpoint_hook: None,
         })
+    }
+
+    fn is_inert_sheet(&self, name: &str) -> bool {
+        self.sheet_import_diagnostics
+            .iter()
+            .any(|s| s.name.to_lowercase() == name.to_lowercase())
+    }
+
+    fn inert_scope(&self, scope: Option<usize>) -> bool {
+        scope
+            .and_then(|i| self.cached_names.as_ref()?.get(i))
+            .is_some_and(|s| self.is_inert_sheet(s))
     }
 
     fn cancellable_reader(&self) -> CancellableReader {
@@ -1611,6 +1646,9 @@ impl CalamineAdapter {
     }
 
     fn grounded_calculation_name(&self, i: usize) -> Option<ASTNode> {
+        if self.inert_scope(self.raw_calculation_names()[i].2) {
+            return None;
+        }
         let name = &self.raw_calculation_names()[i].0;
         if self.referenced_only_names
             && !self.legacy_calculation_name(name)
@@ -2712,11 +2750,21 @@ impl SpreadsheetReader for CalamineAdapter {
     }
 
     fn sheet_names(&self) -> Result<Vec<String>, Self::Error> {
-        Ok(self.cached_names.clone().unwrap_or_default())
+        Ok(self
+            .cached_names
+            .clone()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|name| !self.is_inert_sheet(name))
+            .collect())
     }
 
     fn load_stats(&self) -> Option<AdapterLoadStats> {
         Some(self.load_stats.clone())
+    }
+
+    fn sheet_import_diagnostics(&self) -> Vec<crate::traits::SheetImportDiagnostic> {
+        self.sheet_import_diagnostics.clone()
     }
 
     fn name_import_diagnostics(&self) -> Vec<crate::traits::NameImportDiagnostic> {
@@ -2839,6 +2887,7 @@ where
             .is_some_and(|v| v != "0");
         let t0 = DebugTimer::start();
         let names = self.sheet_names()?;
+        let scope_names = self.cached_names.clone().unwrap_or_default();
         let ordinary_name_import = !self.strict_calculation_names;
         if ordinary_name_import && !self.referenced_only_names {
             self.name_analysis.take();
@@ -3056,7 +3105,7 @@ where
                         .into_iter()
                         .filter_map(|i| {
                             let (name, text, scope) = &self.raw_calculation_names()[i];
-                            Self::convert_defined_name(name, text, *scope, &names)
+                            Self::convert_defined_name(name, text, *scope, &scope_names)
                         })
                         .collect()
                 };
@@ -3073,6 +3122,18 @@ where
                     FxHashSet::default();
 
                 for dn in defined {
+                    if dn
+                        .scope_sheet
+                        .as_deref()
+                        .is_some_and(|s| self.is_inert_sheet(s))
+                    {
+                        continue;
+                    }
+                    if let DefinedNameDefinition::Range { address } = &dn.definition
+                        && self.is_inert_sheet(&address.sheet)
+                    {
+                        continue;
+                    }
                     Self::cancellation_checkpoint(cancel.as_ref())?;
                     let key = (dn.scope.clone(), dn.scope_sheet.clone(), dn.name.clone());
                     if !seen.insert(key) {
@@ -3150,7 +3211,7 @@ where
             {
                 let (name, text, local) = &self.raw_calculation_names()[index];
                 Self::cancellation_checkpoint(cancel.as_ref())?;
-                if Self::convert_defined_name(name, text, *local, &names).is_some() {
+                if Self::convert_defined_name(name, text, *local, &scope_names).is_some() {
                     continue;
                 }
                 let Some(ast) = self.grounded_calculation_name(index) else {
@@ -3163,7 +3224,7 @@ where
                 }
                 let scope = match local {
                     Some(id) => {
-                        NameScope::Sheet(engine.sheet_id(&names[*id]).ok_or_else(|| {
+                        NameScope::Sheet(engine.sheet_id(&scope_names[*id]).ok_or_else(|| {
                             calamine::Error::Io(std::io::Error::other("name scope sheet missing"))
                         })?)
                     }
@@ -3200,16 +3261,20 @@ where
                     .iter()
                     .enumerate()
                     .filter(|(i, (name, _, _))| {
-                        !self.legacy_calculation_name(name) && !imported.contains(i)
+                        self.inert_scope(self.raw_calculation_names()[*i].2)
+                            || (!self.legacy_calculation_name(name) && !imported.contains(i))
                     })
                     .map(
                         |(_, (name, text, local))| crate::traits::NameImportDiagnostic {
                             name: name.clone(),
                             definition: text.clone(),
-                            scope_sheet: local.and_then(|i| names.get(i).cloned()),
+                            scope_sheet: local.and_then(|i| scope_names.get(i).cloned()),
                             local_sheet_id: *local,
-                            message: "Unevaluable or cyclic defined name omitted from calculation"
-                                .into(),
+                            message: if self.inert_scope(*local) {
+                                "Defined name scoped to an omitted non-worksheet sheet".into()
+                            } else {
+                                "Unevaluable or cyclic defined name omitted from calculation".into()
+                            },
                         },
                     )
                     .collect();

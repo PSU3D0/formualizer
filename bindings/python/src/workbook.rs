@@ -579,6 +579,21 @@ impl PyWorkbook {
         Ok(out)
     }
 
+    /// Non-calculating sheets omitted by the loader.
+    #[getter]
+    pub fn sheet_import_diagnostics(&self, py: Python<'_>) -> PyResult<Vec<Py<PyAny>>> {
+        let wb = self.read_inner()?;
+        wb.sheet_import_diagnostics()
+            .iter()
+            .map(|diagnostic| {
+                let dict = PyDict::new(py);
+                dict.set_item("name", &diagnostic.name)?;
+                dict.set_item("kind", &diagnostic.kind)?;
+                Ok(dict.into())
+            })
+            .collect()
+    }
+
     /// Non-fatal defined-name import diagnostics from the loader.
     #[getter]
     pub fn name_import_diagnostics(&self, py: Python<'_>) -> PyResult<Vec<Py<PyAny>>> {

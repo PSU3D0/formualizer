@@ -1545,6 +1545,9 @@ class Workbook:
     ```
     """
     @property
+    def sheet_import_diagnostics(self) -> builtins.list[builtins.dict[builtins.str, typing.Any]]:
+        """Non-calculating sheets omitted by the loader."""
+    @property
     def name_import_diagnostics(self) -> builtins.list[builtins.dict[builtins.str, typing.Any]]:
         """Non-fatal defined-name omissions recorded during load."""
     @property
