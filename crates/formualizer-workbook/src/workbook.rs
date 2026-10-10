@@ -2202,6 +2202,18 @@ impl Workbook {
         col: u32,
         value: LiteralValue,
     ) -> Result<(), IoError> {
+        if sheet
+            .strip_prefix('[')
+            .and_then(|s| s.split_once(']'))
+            .is_some_and(|(index, _)| {
+                !index.is_empty() && index.bytes().all(|c| c.is_ascii_digit())
+            })
+        {
+            return Err(IoError::Engine(
+                ExcelError::new(ExcelErrorKind::Ref)
+                    .with_message("Cached external workbook values are read-only"),
+            ));
+        }
         self.ensure_arrow_sheet_capacity(sheet, row as usize, col as usize);
         let staged_before = self
             .enable_changelog
