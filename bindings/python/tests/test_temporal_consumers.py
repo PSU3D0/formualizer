@@ -1,7 +1,8 @@
 import datetime as dt
 
-import formualizer as fz
 import pytest
+
+import formualizer as fz
 
 
 def assert_consumers(workbook):
@@ -47,11 +48,14 @@ def values():
     return [
         (1, 1, dt.date(2001, 1, 16)),
         (2, 1, dt.date(2001, 1, 16)),
-        (1, 2, 10), (2, 2, 10),
+        (1, 2, 10),
+        (2, 2, 10),
         (3, 1, dt.datetime(2001, 1, 16, 12)),
         (4, 1, dt.time(12)),
-        (5, 1, dt.date(2002, 1, 16)), (5, 2, 110),
-        (6, 1, dt.date(2001, 1, 16)), (6, 2, -100),
+        (5, 1, dt.date(2002, 1, 16)),
+        (5, 2, 110),
+        (6, 1, dt.date(2001, 1, 16)),
+        (6, 2, -100),
         (7, 1, dt.date(2001, 5, 1)),
     ]
 
