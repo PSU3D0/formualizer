@@ -4,6 +4,7 @@ mod dynamic_metadata;
 mod error_reasons;
 pub(crate) mod external_links;
 mod geometry;
+mod inert_sheets;
 mod ingest_view;
 mod legacy_intersection;
 mod package;
@@ -484,11 +485,15 @@ fn admit_source<'a>(
     let mut table_names = HashSet::new();
     for sheet in &sheets {
         checkpoint(&options.cancel)?;
-        let data = package::read_part(
-            &mut archive,
-            &sheet.part,
-            options.limits.max_worksheet_bytes,
-        )?;
+        let data = if sheet.inert {
+            inert_sheets::EMPTY.as_bytes().to_vec()
+        } else {
+            package::read_part(
+                &mut archive,
+                &sheet.part,
+                options.limits.max_worksheet_bytes,
+            )?
+        };
         let counted = (observed, logical_cells);
         let mut scanned = sheet::scan(
             &data,
@@ -782,6 +787,94 @@ fn refuse_parse_failure(engine: &Engine<WBResolver>, refuse: bool) -> Result<(),
         _ => Ok(()),
     }
 }
+// This is only a prefilter for the AST-based refusal check. Retain string
+// mentions conservatively, including literal INDIRECT targets and odd names.
+fn formula_mentions_unimported_name(
+    formula: &str,
+    names: &std::collections::HashSet<String>,
+    unicode: bool,
+) -> bool {
+    let contains = |token: &str| {
+        names.contains(&token.to_ascii_lowercase())
+            || (unicode && !token.is_ascii() && names.contains(&token.to_lowercase()))
+    };
+    let token_matches = |token: &str| {
+        let folded = token.to_ascii_lowercase();
+        let mut bare = folded.as_str();
+        while let Some(rest) = ["_xlfn.", "_xlws.", "_xlpm.", "_xll."]
+            .iter()
+            .find_map(|prefix| bare.strip_prefix(prefix))
+        {
+            bare = rest;
+        }
+        contains(token) || (bare.len() != token.len() && contains(bare))
+    };
+    let normalized = format!("={}", formula.trim_start_matches('='));
+    let Ok(tokens) = formualizer_parse::TokenStream::new(&normalized) else {
+        // Never exclude a formula whose tokenization needs recovery.
+        return true;
+    };
+    for i in 0..tokens.len() {
+        let Some(token) = tokens.get(i) else { continue };
+        let text = token.value.trim_end_matches('(');
+        let text = text
+            .strip_prefix('"')
+            .and_then(|s| s.strip_suffix('"'))
+            .unwrap_or(text);
+        if token_matches(text) || token_matches(text.rsplit('!').next().unwrap_or(text)) {
+            return true;
+        }
+    }
+    false
+}
+
+#[cfg(test)]
+mod name_prefilter_tests {
+    use super::formula_mentions_unimported_name;
+    use std::collections::HashSet;
+
+    #[test]
+    fn qualified_prefixed_and_literal_name_tokens_are_retained() {
+        let names: HashSet<_> = ["bad", "a.b", "a\\b", "ñame", "a b", ".x", "abc?", "1abc"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        for formula in [
+            "BAD+1",
+            "Sheet2!BAD",
+            "'My Sheet'!BAD",
+            "_xlfn._xlws._xlpm.BAD",
+            "a.b+1",
+            "a\\b+1",
+            "ÑAME+1",
+            ".x+1",
+            "abc?+1",
+            "Sheet2!abc?",
+            "1abc+1",
+            "INDIRECT(\"a b\")",
+            "INDIRECT(\"'My Sheet'!BAD\")",
+            "\"BAD\"&\"x\"",
+        ] {
+            assert!(
+                formula_mentions_unimported_name(formula, &names, true),
+                "{formula}"
+            );
+        }
+        assert!(!formula_mentions_unimported_name("BADLY+A1", &names, true));
+        assert!(!formula_mentions_unimported_name("ÑAME+1", &names, false));
+    }
+
+    #[test]
+    fn unused_name_prefilter_scales_with_formula_tokens() {
+        let names = (0..8_000).map(|i| format!("nm_{i}")).collect();
+        let started = std::time::Instant::now();
+        for _ in 0..20_000 {
+            assert!(!formula_mentions_unimported_name("A1+123", &names, true));
+        }
+        assert!(started.elapsed() < std::time::Duration::from_secs(3));
+    }
+}
+
 /// Build the transient ingestion view, replay it through Calamine into a new
 /// engine, validate calculation names and declare every
 /// admitted dynamic-array anchor. Nothing is evaluated or published.
@@ -851,14 +944,15 @@ fn ingest_source<'a>(
             );
         }
     }
-    let ingest_bytes = if view_parts.is_empty() {
+    let mut view_edits = package::Edits {
+        replace: view_parts,
+        add: BTreeMap::new(),
+    };
+    inert_sheets::project(&mut archive, &sheets, &mut view_edits, options)?;
+    let ingest_bytes = if view_edits.replace.is_empty() && view_edits.add.is_empty() {
         bytes.to_vec()
     } else {
-        let edits = package::Edits {
-            replace: view_parts,
-            add: BTreeMap::new(),
-        };
-        package::rewrite(bytes, &mut archive, &edits, options)?
+        package::rewrite(bytes, &mut archive, &view_edits, options)?
     };
     clock.lap("ingest view (calc chain, patches, package rewrite)");
     let opened = if let Some(cancel) = options.cancel.clone() {
@@ -933,7 +1027,8 @@ fn ingest_source<'a>(
         }
         adapter.admit_external_references(values.clone());
     }
-    adapter.validate_calculation_names(&[])?;
+    adapter.validate_calculation_names(&[], sheets.iter().any(|s| s.inert))?;
+    inert_sheets::validate(&sheets, &plans, &adapter, options)?;
     if plans.iter().any(|p| !p.tables.is_empty()) {
         use formualizer_eval::reference::{CellRef, Coord, RangeRef};
         engine.adopt_file_sheets(sheets.iter().map(|s| s.name.as_str()))?;
@@ -989,7 +1084,9 @@ fn ingest_source<'a>(
             }
         }
     }
-    let unimported = adapter.unimported_document_names();
+    let unimported: std::collections::HashSet<_> =
+        adapter.unimported_document_names().into_iter().collect();
+    let guard_indirect = adapter.has_new_unimported_names();
     if !unimported.is_empty() {
         // Metadata-only names may be omitted from the engine only if no source
         // calculation references them. Only a formula whose source text names
@@ -1000,7 +1097,12 @@ fn ingest_source<'a>(
             for cell in &plan.cells {
                 checkpoint(&options.cancel)?;
                 let text = cell.formula_text.to_ascii_lowercase();
-                if !unimported.iter().any(|name| text.contains(name.as_str())) {
+                if !formula_mentions_unimported_name(
+                    &cell.formula_text,
+                    &unimported,
+                    guard_indirect,
+                ) && !(guard_indirect && text.contains("indirect"))
+                {
                     continue;
                 }
                 let address = CellAddress::new(&sheet.name, cell.row, cell.col)
@@ -1011,11 +1113,11 @@ fn ingest_source<'a>(
                     .cell
                     .formula
                 {
-                    source_formulas.push(formula);
+                    source_formulas.push((sheet.name.clone(), formula));
                 }
             }
         }
-        adapter.validate_calculation_names(&source_formulas)?;
+        adapter.validate_calculation_names(&source_formulas, sheets.iter().any(|s| s.inert))?;
         clock.lap("document-name reference check");
     }
     visibility_guard::validate(&engine, &sheets, &plans, options)?;

@@ -6,6 +6,7 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Added
 
+- Added recalculation of workbooks containing inert chart/dialog/empty-module sheets or unused unevaluable defined names, preserving their source content unchanged.
 - **`formualizer recalc` now recalculates workbooks with external links**, using the values Excel cached in the workbook for each link. Before, it refused every such workbook: 2,786 of 15,871 real Enron spreadsheets, of which 1,638 now recalculate. Over the cells that read linked values, 99.3% match the result Excel stored; the rest trace to existing function gaps, not to the linked values. Links are never refreshed, and link parts, their relationships and content types are kept byte for byte.
   - A cell the cache omits reads as blank, as Excel computes it; on a linked sheet whose last refresh failed it reads as `#REF!`, and a range over such cells is refused.
   - Still refused, each with its own reason: DDE and OLE links, links or sheets without a cache, names defined in the linked workbook (`[1]!Name`), whole-row or whole-column external ranges, `OFFSET`/`ROW`/`CELL`-style functions over external references, and `INDIRECT` text that could name another workbook. Rich value data (`xl/richData/`) keeps its refusal, now reported as `rich value data`.
