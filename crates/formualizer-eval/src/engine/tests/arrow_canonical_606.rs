@@ -39,7 +39,7 @@ fn numeric_normalization_int_to_number_on_storage_and_read() {
 }
 
 #[test]
-fn temporal_tags_preserved_across_computed_overlay_compaction() {
+fn temporal_formats_preserved_across_numeric_computed_overlay_compaction() {
     let mut cfg = arrow_eval_config();
     // Force compaction on the first mirrored computed-overlay entry.
     cfg.max_overlay_memory_bytes = Some(0);
@@ -78,7 +78,7 @@ fn temporal_tags_preserved_across_computed_overlay_compaction() {
             cols[0].value(0)
         })
         .collect();
-    assert_eq!(tags_dt, vec![crate::arrow_store::TypeTag::DateTime as u8]);
+    assert_eq!(tags_dt, vec![crate::arrow_store::TypeTag::Number as u8]);
 
     let tags_dur: Vec<u8> = rv_dur
         .type_tags_slices()
@@ -87,7 +87,17 @@ fn temporal_tags_preserved_across_computed_overlay_compaction() {
             cols[0].value(0)
         })
         .collect();
-    assert_eq!(tags_dur, vec![crate::arrow_store::TypeTag::Duration as u8]);
+    assert_eq!(tags_dur, vec![crate::arrow_store::TypeTag::Number as u8]);
+
+    // Formulas store numeric serials; the format channel preserves native egress.
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        engine.get_cell_value("Sheet1", 1, 2)
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 2, 1),
+        engine.get_cell_value("Sheet1", 2, 2)
+    );
 
     // Numeric serial remains in numeric lane.
     // Compute the expected serial from canonical reads of the source cells to avoid

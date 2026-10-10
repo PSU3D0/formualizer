@@ -98,6 +98,11 @@ path = "tests/fp8_ingest_pipeline_parity.rs"
 required-features = ["test-support"]
 
 [[test]]
+name = "temporal_consumers"
+path = "tests/temporal_consumers.rs"
+required-features = ["test-support"]
+
+[[test]]
 name = "builtin_numeric_overflow"
 path = "tests/builtin_numeric_overflow.rs"
 required-features = ["test-support"]

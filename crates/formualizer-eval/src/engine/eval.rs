@@ -3766,7 +3766,7 @@ where
             }
             if let Some(cell) = self.graph.get_cell_ref(vertex) {
                 let sheet_name = self.graph.sheet_name(cell.sheet_id);
-                match self.get_cell_value(sheet_name, cell.coord.row() + 1, cell.coord.col() + 1) {
+                match self.read_cell_value(sheet_name, cell.coord.row() + 1, cell.coord.col() + 1) {
                     Some(value) if !matches!(value, LiteralValue::Empty) => {
                         self.iterative_state_values.insert(vertex, value);
                     }
@@ -13660,6 +13660,11 @@ where
             return value;
         };
         match class {
+            Some(FormatClass::Date) if serial.fract() != 0.0 => {
+                formualizer_common::try_serial_to_datetime_for(date_system, serial)
+                    .map(LiteralValue::DateTime)
+                    .unwrap_or(LiteralValue::Number(serial))
+            }
             Some(FormatClass::Date) => {
                 formualizer_common::try_serial_to_date_for(date_system, serial)
                     .map(LiteralValue::Date)
@@ -13670,13 +13675,17 @@ where
                     .map(LiteralValue::DateTime)
                     .unwrap_or(LiteralValue::Number(serial))
             }
-            Some(FormatClass::Time) => {
-                let seconds = (serial.rem_euclid(1.0) * 86_400.0).round() as u32 % 86_400;
-                chrono::NaiveTime::from_num_seconds_from_midnight_opt(seconds, 0)
-                    .map(LiteralValue::Time)
-                    .unwrap_or(LiteralValue::Number(serial))
+            Some(FormatClass::Time) if (0.0..1.0).contains(&serial) => {
+                let nanos = (serial * 86_400_000_000_000.0).round() as u64;
+                let nanos = nanos.min(86_400_000_000_000 - 1);
+                chrono::NaiveTime::from_num_seconds_from_midnight_opt(
+                    (nanos / 1_000_000_000) as u32,
+                    (nanos % 1_000_000_000) as u32,
+                )
+                .map(LiteralValue::Time)
+                .unwrap_or(LiteralValue::Number(serial))
             }
-            Some(FormatClass::Duration) => {
+            Some(FormatClass::Time | FormatClass::Duration) => {
                 let nanos = (serial * 86_400.0 * 1_000_000_000.0).round();
                 if nanos.is_finite() && nanos >= i64::MIN as f64 && nanos <= i64::MAX as f64 {
                     LiteralValue::Duration(chrono::Duration::nanoseconds(nanos as i64))
@@ -14331,7 +14340,7 @@ where
                                 for cell in spill_cells.iter() {
                                     let sheet_name = self.graph.sheet_name(cell.sheet_id);
                                     let old = self
-                                        .get_cell_value(
+                                        .read_cell_value(
                                             sheet_name,
                                             cell.coord.row() + 1,
                                             cell.coord.col() + 1,
@@ -14413,7 +14422,7 @@ where
                         for cell in spill_cells.iter() {
                             let sheet_name = self.graph.sheet_name(cell.sheet_id);
                             let old = self
-                                .get_cell_value(
+                                .read_cell_value(
                                     sheet_name,
                                     cell.coord.row() + 1,
                                     cell.coord.col() + 1,
@@ -14500,7 +14509,7 @@ where
                     Ok(value)
                 } else {
                     let value = self
-                        .get_cell_value(sheet_name, row, col)
+                        .read_cell_value(sheet_name, row, col)
                         .unwrap_or(LiteralValue::Empty);
                     self.graph.update_vertex_value_ref(vertex_id, &value);
                     Ok(value)
@@ -14592,7 +14601,7 @@ where
                     let mut row = Vec::with_capacity(w);
                     for c0 in sc0..=ec0 {
                         let v = self
-                            .get_cell_value(sheet_name, r0 + 1, c0 + 1)
+                            .read_cell_value(sheet_name, r0 + 1, c0 + 1)
                             .unwrap_or(LiteralValue::Empty);
                         row.push(v);
                     }
@@ -14605,7 +14614,7 @@ where
                 let row = cell_ref.coord.row() + 1;
                 let col = cell_ref.coord.col() + 1;
                 let v = self
-                    .get_cell_value(sheet_name, row, col)
+                    .read_cell_value(sheet_name, row, col)
                     .unwrap_or(LiteralValue::Empty);
                 LiteralValue::Array(vec![vec![v]])
             }
@@ -17304,7 +17313,7 @@ where
                     NamedDefinition::Cell(cell_ref) => {
                         let sheet_name = self.graph.sheet_name(cell_ref.sheet_id);
                         Ok(self
-                            .get_cell_value(
+                            .read_cell_value(
                                 sheet_name,
                                 cell_ref.coord.row() + 1,
                                 cell_ref.coord.col() + 1,
@@ -17360,8 +17369,7 @@ where
                             ));
                         }
 
-                        // `get_cell_value` per cell, with the sheet resolved
-                        // once (`read_cell_formatted_in` is its body).
+                        // Read numeric serials, resolving the sheet once.
                         let sheet_id = range_ref.start.sheet_id;
                         let asheet = self.arrow_sheets.sheet(sheet_name);
                         let mut rows = Vec::with_capacity(h);
@@ -17382,7 +17390,7 @@ where
                         let row = cell_ref.coord.row() + 1;
                         let col = cell_ref.coord.col() + 1;
                         let v = self
-                            .get_cell_value(sheet_name, row, col)
+                            .read_cell_value(sheet_name, row, col)
                             .unwrap_or(LiteralValue::Empty);
                         Ok(LiteralValue::Array(vec![vec![v]]))
                     }
@@ -17982,7 +17990,7 @@ where
         };
         // Prefer engine's unified accessor which consults Arrow store for base values
         // and falls back to graph for formulas and stored values.
-        if let Some(v) = self.get_cell_value(sheet_name, row, col) {
+        if let Some(v) = self.read_cell_value(sheet_name, row, col) {
             Ok(v)
         } else {
             // Excel semantics: empty cell coerces to 0 in numeric contexts
@@ -18719,7 +18727,7 @@ where
                             let mut rowv: Vec<LiteralValue> = Vec::with_capacity(w as usize);
                             for c in sc..=ec {
                                 rowv.push(
-                                    self.get_cell_value(sheet_name, r, c)
+                                    self.read_cell_value(sheet_name, r, c)
                                         .unwrap_or(LiteralValue::Empty),
                                 );
                             }
@@ -18761,7 +18769,7 @@ where
 
                 if self.force_materialize_range_views {
                     let v = self
-                        .get_cell_value(sheet_name, row, col)
+                        .read_cell_value(sheet_name, row, col)
                         .unwrap_or(LiteralValue::Empty);
                     return Ok(RangeView::from_owned_rows(
                         vec![vec![v]],
@@ -18776,7 +18784,7 @@ where
                     Ok(rv)
                 } else {
                     let v = self
-                        .get_cell_value(sheet_name, row, col)
+                        .read_cell_value(sheet_name, row, col)
                         .unwrap_or(LiteralValue::Empty);
                     Ok(RangeView::from_owned_rows(
                         vec![vec![v]],
@@ -18793,7 +18801,7 @@ where
                             let sheet_name = self.graph.sheet_name(cell_ref.sheet_id);
                             if self.force_materialize_range_views {
                                 let v = self
-                                    .get_cell_value(
+                                    .read_cell_value(
                                         sheet_name,
                                         cell_ref.coord.row() + 1,
                                         cell_ref.coord.col() + 1,
@@ -18832,7 +18840,7 @@ where
                                             Vec::with_capacity(w as usize);
                                         for c in sc..=ec {
                                             rowv.push(
-                                                self.get_cell_value(sheet_name, r, c)
+                                                self.read_cell_value(sheet_name, r, c)
                                                     .unwrap_or(LiteralValue::Empty),
                                             );
                                         }
@@ -19087,7 +19095,7 @@ where
             return Err(ExcelError::new(ExcelErrorKind::Ref));
         }
         Ok(self
-            .get_cell_value(sheet_name, row, col)
+            .read_cell_value(sheet_name, row, col)
             .unwrap_or(LiteralValue::Empty))
     }
 
@@ -19166,7 +19174,7 @@ where
             for cell in spill_cells.iter() {
                 let sheet_name = self.graph.sheet_name(cell.sheet_id);
                 let old = self
-                    .get_cell_value(sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
+                    .read_cell_value(sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
                     .unwrap_or(LiteralValue::Empty);
                 if old != empty {
                     delta.record_cell(cell.sheet_id, cell.coord.row(), cell.coord.col());
@@ -19425,7 +19433,7 @@ where
                     let persisted = self.iterative_state_values.get(&m.vertex)?;
                     let sheet_name = self.graph.sheet_name(cell.sheet_id);
                     let overlay = self
-                        .get_cell_value(sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
+                        .read_cell_value(sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
                         .unwrap_or(LiteralValue::Empty);
                     if matches!(overlay, LiteralValue::Empty) {
                         Some((m.vertex, persisted.clone()))
@@ -19446,7 +19454,7 @@ where
             .map(|m| match m.cell {
                 Some(cell) => {
                     let sheet_name = self.graph.sheet_name(cell.sheet_id);
-                    self.get_cell_value(sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
+                    self.read_cell_value(sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
                         .unwrap_or(LiteralValue::Empty)
                 }
                 None => self
@@ -20216,7 +20224,7 @@ where
                 }
                 let sheet_name = self.graph.sheet_name(cell.sheet_id);
                 let old = self
-                    .get_cell_value(sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
+                    .read_cell_value(sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
                     .unwrap_or(LiteralValue::Empty);
                 if old != empty {
                     delta.record_cell(cell.sheet_id, cell.coord.row(), cell.coord.col());
@@ -20236,7 +20244,7 @@ where
                         .unwrap_or(LiteralValue::Empty);
                     let sheet_name = self.graph.sheet_name(cell.sheet_id);
                     let old = self
-                        .get_cell_value(sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
+                        .read_cell_value(sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
                         .unwrap_or(LiteralValue::Empty);
                     if old != new {
                         delta.record_cell(cell.sheet_id, cell.coord.row(), cell.coord.col());
@@ -20247,7 +20255,7 @@ where
                 for cell in targets.iter() {
                     let sheet_name = self.graph.sheet_name(cell.sheet_id);
                     let old = self
-                        .get_cell_value(sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
+                        .read_cell_value(sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
                         .unwrap_or(LiteralValue::Empty);
                     if !matches!(old, LiteralValue::Empty) {
                         delta.record_cell(cell.sheet_id, cell.coord.row(), cell.coord.col());
@@ -20804,7 +20812,7 @@ where
             for cell in spill_cells.iter() {
                 let sheet_name = self.graph.sheet_name(cell.sheet_id);
                 let old = self
-                    .get_cell_value(sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
+                    .read_cell_value(sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
                     .unwrap_or(LiteralValue::Empty);
                 if old != empty {
                     d.record_cell(cell.sheet_id, cell.coord.row(), cell.coord.col());
@@ -20913,7 +20921,7 @@ where
             max_row = max_row.max(cell.coord.row());
             max_col = max_col.max(cell.coord.col());
             let v = self
-                .get_cell_value(&sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
+                .read_cell_value(&sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
                 .unwrap_or(LiteralValue::Empty);
             by_coord.insert((cell.coord.row(), cell.coord.col()), v);
         }
@@ -21194,7 +21202,7 @@ where
                         )
                     })
                     .expect("chain member cell");
-                let written = self.get_cell_value(&sheet, row, col);
+                let written = self.read_cell_value(&sheet, row, col);
                 let oracle = self
                     .evaluate_vertex_immutable(v)
                     .unwrap_or_else(LiteralValue::Error);

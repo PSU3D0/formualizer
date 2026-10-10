@@ -274,6 +274,52 @@ pub struct CalcSettings {
     pub full_calc_on_load: Option<bool>,
 }
 
+/// A non-fatal defined-name import problem recorded while loading a workbook.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct NameImportDiagnostic {
+    pub name: String,
+    pub definition: String,
+    pub scope_sheet: Option<String>,
+    pub local_sheet_id: Option<usize>,
+    pub message: String,
+}
+
+impl NameImportDiagnostic {
+    pub fn new(
+        name: impl Into<String>,
+        definition: impl Into<String>,
+        scope_sheet: Option<String>,
+        local_sheet_id: Option<usize>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            definition: definition.into(),
+            scope_sheet,
+            local_sheet_id,
+            message: message.into(),
+        }
+    }
+}
+
+/// A non-calculating sheet omitted by a spreadsheet reader.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct SheetImportDiagnostic {
+    pub name: String,
+    pub kind: String,
+}
+
+impl SheetImportDiagnostic {
+    pub fn new(name: impl Into<String>, kind: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            kind: kind.into(),
+        }
+    }
+}
+
 pub trait SpreadsheetReader: Send + Sync {
     type Error: std::error::Error + Send + Sync + 'static;
 
@@ -282,6 +328,25 @@ pub trait SpreadsheetReader: Send + Sync {
     fn sheet_names(&self) -> Result<Vec<String>, Self::Error>;
 
     fn load_stats(&self) -> Option<AdapterLoadStats> {
+        None
+    }
+
+    /// Non-calculating sheets omitted during loading.
+    fn sheet_import_diagnostics(&self) -> Vec<SheetImportDiagnostic> {
+        Vec::new()
+    }
+
+    /// Non-fatal names omitted from calculation import.
+    fn name_import_diagnostics(&self) -> Vec<NameImportDiagnostic> {
+        Vec::new()
+    }
+
+    /// Read-only external workbook values cached in the source package.
+    /// The default supplies no cached links and never opens linked files.
+    #[cfg(feature = "calamine")]
+    fn cached_external_link_values(
+        &mut self,
+    ) -> Option<std::sync::Arc<crate::CachedExternalLinkValues>> {
         None
     }
 

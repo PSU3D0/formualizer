@@ -579,6 +579,45 @@ impl PyWorkbook {
         Ok(out)
     }
 
+    /// Non-calculating sheets omitted by the loader.
+    #[getter]
+    pub fn sheet_import_diagnostics(&self, py: Python<'_>) -> PyResult<Vec<Py<PyAny>>> {
+        let wb = self.read_inner()?;
+        wb.sheet_import_diagnostics()
+            .iter()
+            .map(|diagnostic| {
+                let dict = PyDict::new(py);
+                dict.set_item("name", &diagnostic.name)?;
+                dict.set_item("kind", &diagnostic.kind)?;
+                Ok(dict.into())
+            })
+            .collect()
+    }
+
+    /// Non-fatal defined-name import diagnostics from the loader.
+    #[getter]
+    pub fn name_import_diagnostics(&self, py: Python<'_>) -> PyResult<Vec<Py<PyAny>>> {
+        let wb = self.read_inner()?;
+        wb.name_import_diagnostics()
+            .iter()
+            .map(|diagnostic| {
+                let dict = PyDict::new(py);
+                dict.set_item("name", &diagnostic.name)?;
+                dict.set_item("definition", &diagnostic.definition)?;
+                dict.set_item("scope_sheet", &diagnostic.scope_sheet)?;
+                dict.set_item("local_sheet_id", diagnostic.local_sheet_id)?;
+                dict.set_item("message", &diagnostic.message)?;
+                Ok(dict.into())
+            })
+            .collect()
+    }
+
+    /// Linked workbook indices whose cached values were loaded, never refreshed.
+    #[getter]
+    pub fn cached_external_link_indices(&self) -> PyResult<Vec<usize>> {
+        Ok(self.read_inner()?.cached_external_link_indices().to_vec())
+    }
+
     #[getter]
     pub fn sheet_names(&self) -> PyResult<Vec<String>> {
         let wb = self.read_inner()?;
@@ -719,6 +758,29 @@ impl PyWorkbook {
 
         let out = PyList::empty(py);
         for entry in entries {
+            if let formualizer::eval::engine::named_range::NamedDefinition::Literal(
+                LiteralValue::Error(error),
+            ) = &entry.definition
+            {
+                let scope_sheet = match entry.scope {
+                    formualizer::eval::engine::named_range::NameScope::Workbook => None,
+                    formualizer::eval::engine::named_range::NameScope::Sheet(id) => {
+                        Some(engine.sheet_name(id))
+                    }
+                };
+                if error.message.as_deref()
+                    == Some(&format!(
+                        "Defined name `{}` could not be evaluated",
+                        entry.name
+                    ))
+                    && wb
+                        .name_import_diagnostics()
+                        .iter()
+                        .any(|d| d.name == entry.name && d.scope_sheet.as_deref() == scope_sheet)
+                {
+                    continue;
+                }
+            }
             let row = PyDict::new(py);
             row.set_item("name", entry.name)?;
 

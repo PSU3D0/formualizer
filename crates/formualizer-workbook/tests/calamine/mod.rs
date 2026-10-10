@@ -3,6 +3,9 @@
 mod common;
 
 #[cfg(feature = "calamine")]
+mod external_links;
+
+#[cfg(feature = "calamine")]
 mod calcpr;
 #[cfg(feature = "calamine")]
 mod criteria_ingest_blank;
@@ -22,6 +25,7 @@ mod family_grouping;
 mod format_channel;
 #[cfg(feature = "calamine")]
 mod formulas;
+mod inert_sheets;
 #[cfg(feature = "calamine")]
 mod issue162_unbounded_index;
 #[cfg(feature = "calamine")]
@@ -34,6 +38,8 @@ mod iterative_cycle_order;
 mod large;
 #[cfg(feature = "calamine")]
 mod load_fast_batches;
+#[cfg(feature = "calamine")]
+mod name_omissions;
 #[cfg(feature = "calamine")]
 mod named_ranges;
 #[cfg(feature = "calamine")]
@@ -48,6 +54,8 @@ mod shared_formulas;
 mod sheet_load;
 #[cfg(feature = "calamine")]
 mod source_families;
+#[cfg(feature = "calamine")]
+mod temporal_consumers;
 #[cfg(feature = "umya")]
 mod temporal_roundtrip;
 

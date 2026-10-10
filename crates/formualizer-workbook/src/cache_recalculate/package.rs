@@ -8,14 +8,14 @@ use std::collections::{BTreeMap, HashSet};
 use std::io::{Cursor, Read};
 use zip::ZipArchive;
 
-pub(super) type Archive<'a> = ZipArchive<Cursor<&'a [u8]>>;
+pub(crate) type Archive<'a> = ZipArchive<Cursor<&'a [u8]>>;
 #[derive(Debug)]
 pub(super) struct Relationship {
     pub kind: String,
     pub target: Option<String>,
 }
 #[derive(Debug)]
-pub(super) struct Sheet {
+pub(crate) struct Sheet {
     pub name: String,
     pub part: String,
     pub inert: bool,
@@ -428,7 +428,7 @@ pub(super) fn admit<'a>(
     }
     Ok(archive)
 }
-pub(super) fn read_part(
+pub(crate) fn read_part(
     archive: &mut Archive<'_>,
     name: &str,
     limit: usize,
