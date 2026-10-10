@@ -12,17 +12,25 @@
 //! stores only non-empty cells. On a sheet whose last refresh failed
 //! (`refreshError`), Excel reads an omitted cell as `#REF!`; a range there
 //! that contains an omitted cell is refused.
-use super::{IoError, SheetPlan, XlsxRecalculateOptions, checkpoint, package, unsupported, xml};
+use crate::IoError;
+#[cfg(feature = "xlsx-recalc")]
+use crate::cache_recalculate::{SheetPlan, XlsxRecalculateOptions, package};
+use crate::xlsx_cache_options::{CacheOptions, checkpoint, unsupported};
+use crate::xlsx_xml as xml;
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ExternalRefKind, ReferenceType};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
+mod ordinary;
+pub use ordinary::CachedExternalLinkValues;
+pub(crate) use ordinary::{has_links, load};
 
 /// Workbook relationship type of an external link part.
-pub(super) const LINK_RELATIONSHIP: &str =
+pub(crate) const LINK_RELATIONSHIP: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/externalLink";
 /// Content type of an external link part.
-pub(super) const LINK_CONTENT_TYPE: &str =
+#[cfg(feature = "xlsx-recalc")]
+pub(crate) const LINK_CONTENT_TYPE: &str =
     "application/vnd.openxmlformats-officedocument.spreadsheetml.externalLink+xml";
 
 /// Bound on the summed area of distinct external ranges, as a multiple of
@@ -46,9 +54,10 @@ const REFERENCE_FUNCTIONS: &[&str] = &[
 ];
 
 /// The cached values of every external link, in `[n]` order.
-pub(super) struct Links {
+pub(crate) struct Links {
     links: Vec<Link>,
 }
+#[cfg_attr(not(feature = "xlsx-recalc"), allow(dead_code))]
 enum Link {
     Book(Book),
     /// A DDE or OLE link: refused.
@@ -84,10 +93,10 @@ impl ExternalValues {
     pub(crate) fn range(&self, name: &str) -> Option<&Arc<CachedGrid>> {
         self.ranges.get(name)
     }
-    pub(super) fn scalar_names(&self) -> impl Iterator<Item = &str> {
+    pub(crate) fn scalar_names(&self) -> impl Iterator<Item = &str> {
         self.scalars.keys().map(String::as_str)
     }
-    pub(super) fn range_names(&self) -> impl Iterator<Item = &str> {
+    pub(crate) fn range_names(&self) -> impl Iterator<Item = &str> {
         self.ranges.keys().map(String::as_str)
     }
     pub(crate) fn contains(&self, name: &str) -> bool {
@@ -167,12 +176,13 @@ impl formualizer_eval::traits::Table for CachedRange {
 }
 
 /// The external sources a recalculation defines.
-pub(super) struct Plan {
+#[cfg(feature = "xlsx-recalc")]
+pub(crate) struct Plan {
     pub values: ExternalValues,
     /// Distinct links whose cached values a formula or used name reads.
     pub links_used: usize,
     /// The first read (`Sheet1!A1: [1]Data!B2`), for a refusal under
-    /// [`ExternalLinkPolicy::Refuse`](super::ExternalLinkPolicy::Refuse).
+    /// [`ExternalLinkPolicy::Refuse`](crate::cache_recalculate::ExternalLinkPolicy::Refuse).
     pub first_read: Option<String>,
     /// Lowercased defined names that read external links but that no
     /// formula or name references: left out of the calculation.
@@ -187,7 +197,8 @@ fn malformed(part: &str) -> IoError {
 }
 
 /// Read every link part, in workbook `externalReference` order.
-pub(super) fn parse(
+#[cfg(feature = "xlsx-recalc")]
+pub(crate) fn parse(
     archive: &mut package::Archive<'_>,
     parts: &[String],
     options: &XlsxRecalculateOptions,
@@ -197,7 +208,7 @@ pub(super) fn parse(
     for part in parts {
         checkpoint(&options.cancel)?;
         let data = package::read_part(archive, part, options.limits.max_worksheet_bytes)?;
-        links.push(parse_part(&data, part, options, &mut cells)?);
+        links.push(parse_part(&data, part, &options.into(), &mut cells)?);
     }
     Ok(Links { links })
 }
@@ -205,7 +216,7 @@ pub(super) fn parse(
 fn parse_part(
     data: &[u8],
     part: &str,
-    options: &XlsxRecalculateOptions,
+    options: &CacheOptions,
     counted: &mut usize,
 ) -> Result<Link, IoError> {
     let mut kind: Option<&'static str> = None;
@@ -272,7 +283,7 @@ fn parse_part(
                     sheet = Some(id);
                 } else if at(path, &["sheetDataSet", "sheetData", "row", "cell"]) {
                     let r = node.required("r")?;
-                    let coord = super::sheet::plain_coord(r).ok_or_else(|| malformed(part))?;
+                    let coord = crate::xlsx_xml::plain_coord(r).ok_or_else(|| malformed(part))?;
                     *counted += 1;
                     if *counted > options.limits.max_cells {
                         return Err(unsupported("external link cache cell limit", part));
@@ -390,7 +401,8 @@ fn cached_value(raw: &RawCell, context: &str) -> Result<LiteralValue, IoError> {
 
 impl Links {
     /// Refuse DDE/OLE links, which have no workbook cache.
-    pub(super) fn check_kinds(&self) -> Result<(), IoError> {
+    #[cfg(feature = "xlsx-recalc")]
+    pub(crate) fn check_kinds(&self) -> Result<(), IoError> {
         for (i, link) in self.links.iter().enumerate() {
             if let Link::Other(kind) = link {
                 return Err(unsupported(
@@ -452,7 +464,7 @@ impl Links {
         ext: &formualizer_parse::parser::ExternalReference,
         context: &str,
         area: &mut usize,
-        options: &XlsxRecalculateOptions,
+        options: &CacheOptions,
     ) -> Result<(usize, Served), IoError> {
         let (index, sheet) = self.sheet(ext, context)?;
         let value = |row: u32, col: u32| -> Result<LiteralValue, IoError> {
@@ -730,9 +742,16 @@ fn reference_dims(ast: &ASTNode) -> Option<(u32, u32)> {
 
 /// One source formula as the ingestion replays it: its text, with shared
 /// followers expanded from their anchor exactly as Calamine does.
+#[cfg(feature = "xlsx-recalc")]
 fn formula_texts<'p>(
     plan: &'p SheetPlan,
-) -> Result<Vec<(&'p super::sheet::Cell, std::borrow::Cow<'p, str>)>, IoError> {
+) -> Result<
+    Vec<(
+        &'p crate::cache_recalculate::sheet::Cell,
+        std::borrow::Cow<'p, str>,
+    )>,
+    IoError,
+> {
     let mut anchors = HashMap::new();
     for cell in &plan.cells {
         if let Some(si) = cell.shared_id
@@ -770,7 +789,8 @@ fn formula_texts<'p>(
 
 /// Every external reference that formulas and used defined names read,
 /// served from the link caches, or the first refusal.
-pub(super) fn plan(
+#[cfg(feature = "xlsx-recalc")]
+pub(crate) fn plan(
     links: &Links,
     sheets: &[package::Sheet],
     plans: &[SheetPlan],
@@ -826,7 +846,7 @@ pub(super) fn plan(
             return Ok(());
         }
         let context = format!("{context}: {}", ext.raw);
-        let (index, served) = links.serve(ext, &context, &mut area, options)?;
+        let (index, served) = links.serve(ext, &context, &mut area, &options.into())?;
         used_links.insert(index);
         first_read.get_or_insert(context);
         match served {

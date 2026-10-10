@@ -434,6 +434,7 @@ struct WorkbookSpoolUsage {
 }
 
 struct StreamWorksheetOptions {
+    refused_external_formulas: HashSet<(u32, u32)>,
     chunk_rows: usize,
     debug: bool,
     workbook_spool_usage: WorkbookSpoolUsage,
@@ -669,12 +670,14 @@ pub struct CalamineAdapter {
     shadow_relocation_comparator: Option<ShadowRelocationComparator>,
     /// Cached external link values a recalculation serves: calculation
     /// names may read exactly these external references.
-    #[cfg(feature = "xlsx-recalc")]
-    external_values: Option<Arc<crate::cache_recalculate::external_links::ExternalValues>>,
+    #[cfg(feature = "calamine")]
+    external_values: Option<Arc<crate::cached_external_links::ExternalValues>>,
     /// Lowercased names that read external links but that nothing
     /// references: kept as raw metadata, like unsupported `_xlnm.*` names.
-    #[cfg(feature = "xlsx-recalc")]
+    #[cfg(feature = "calamine")]
     skipped_external_names: Vec<String>,
+    refused_external_names: HashSet<String>,
+    refused_external_formulas: HashMap<String, HashSet<(u32, u32)>>,
     #[cfg(test)]
     lazy_scan_counts: LazyScanCounts,
     #[cfg(test)]
@@ -882,6 +885,7 @@ impl CalamineAdapter {
         Self::cancellation_checkpoint(cancel)?;
         let timer = DebugTimer::start();
         let StreamWorksheetOptions {
+            refused_external_formulas,
             chunk_rows,
             debug,
             workbook_spool_usage,
@@ -1349,7 +1353,11 @@ impl CalamineAdapter {
                         engine,
                         sheet,
                         (coord0.row, coord0.col),
-                        formula,
+                        if refused_external_formulas.contains(&(coord0.row, coord0.col)) {
+                            "#REF!"
+                        } else {
+                            formula
+                        },
                         shared_index,
                         debug,
                         &mut formula_staging,
@@ -1471,10 +1479,12 @@ impl CalamineAdapter {
             calc_settings: OnceLock::new(),
             load_stats: AdapterLoadStats::default(),
             shadow_relocation_comparator: None,
-            #[cfg(feature = "xlsx-recalc")]
+            #[cfg(feature = "calamine")]
             external_values: None,
-            #[cfg(feature = "xlsx-recalc")]
+            #[cfg(feature = "calamine")]
             skipped_external_names: Vec::new(),
+            refused_external_names: HashSet::new(),
+            refused_external_formulas: HashMap::new(),
             #[cfg(test)]
             lazy_scan_counts: LazyScanCounts::default(),
             #[cfg(test)]
@@ -1572,10 +1582,10 @@ impl CalamineAdapter {
     }
 
     /// Serve exactly these cached external references to calculation names.
-    #[cfg(feature = "xlsx-recalc")]
+    #[cfg(feature = "calamine")]
     pub(crate) fn admit_external_references(
         &mut self,
-        values: Arc<crate::cache_recalculate::external_links::ExternalValues>,
+        values: Arc<crate::cached_external_links::ExternalValues>,
     ) {
         self.external_values = Some(values);
         self.name_analysis.take();
@@ -1583,7 +1593,7 @@ impl CalamineAdapter {
     }
 
     /// Leave these unreferenced external-link names out of the calculation.
-    #[cfg(feature = "xlsx-recalc")]
+    #[cfg(feature = "calamine")]
     pub(crate) fn skip_external_names(&mut self, names: Vec<String>) {
         self.skipped_external_names = names;
         self.name_index.take();
@@ -1593,13 +1603,13 @@ impl CalamineAdapter {
 
     /// Whether a name's external reference reads an admitted cached value.
     fn external_admitted(&self, raw: &str) -> bool {
-        #[cfg(feature = "xlsx-recalc")]
+        #[cfg(feature = "calamine")]
         {
             self.external_values
                 .as_ref()
                 .is_some_and(|values| values.contains(raw))
         }
-        #[cfg(not(feature = "xlsx-recalc"))]
+        #[cfg(not(feature = "calamine"))]
         {
             let _ = raw;
             false
@@ -1627,6 +1637,12 @@ impl CalamineAdapter {
     }
 
     fn grounded_name_ast(&self, name: &str, text: &str, scope: Option<usize>) -> Option<ASTNode> {
+        if self
+            .refused_external_names
+            .contains(&name.to_ascii_lowercase())
+        {
+            return formualizer_parse::parser::parse("=#REF!").ok();
+        }
         use formualizer_parse::parser::ASTNodeType as N;
         if Self::cancellation_checkpoint(self.cancel.as_ref()).is_err() {
             return None;
@@ -1928,7 +1944,7 @@ impl CalamineAdapter {
     fn legacy_calculation_name(&self, name: &str) -> bool {
         let name = name.to_ascii_lowercase();
         let legacy = name.starts_with("_xlnm.");
-        #[cfg(feature = "xlsx-recalc")]
+        #[cfg(feature = "calamine")]
         let legacy = legacy || self.skipped_external_names.contains(&name);
         legacy
     }
@@ -2710,6 +2726,46 @@ impl SpreadsheetReader for CalamineAdapter {
         Ok(self.cached_names.clone().unwrap_or_default())
     }
 
+    fn cached_external_link_values(&mut self) -> Option<Arc<crate::CachedExternalLinkValues>> {
+        if !crate::cached_external_links::has_links(self.cancellable_reader()) {
+            return None;
+        }
+        let mut formulas = Vec::new();
+        for sheet in self.cached_names.as_deref().unwrap_or_default() {
+            if let Ok(range) = self.workbook.write().worksheet_formula(sheet) {
+                for (row, col, text) in range.used_cells() {
+                    let start = range.start().unwrap_or((0, 0));
+                    formulas.push((
+                        sheet.clone(),
+                        row as u32 + start.0 + 1,
+                        col as u32 + start.1 + 1,
+                        text.clone(),
+                    ));
+                }
+            }
+        }
+        let options = crate::xlsx_cache_options::CacheOptions {
+            cancel: self.cancel.clone(),
+            ..Default::default()
+        };
+        let snapshot = Arc::new(crate::cached_external_links::load(
+            self.cancellable_reader(),
+            &formulas,
+            self.raw_calculation_names(),
+            &options,
+        ));
+        self.admit_external_references(snapshot.values.clone());
+        self.skip_external_names(snapshot.skipped_names.clone());
+        self.refused_external_names = snapshot.refused_names.clone();
+        for (sheet, row, col) in snapshot.refused_formulas.keys() {
+            self.refused_external_formulas
+                .entry(sheet.clone())
+                .or_default()
+                .insert((row - 1, col - 1));
+        }
+        Some(snapshot)
+    }
+
     fn load_stats(&self) -> Option<AdapterLoadStats> {
         Some(self.load_stats.clone())
     }
@@ -2894,6 +2950,11 @@ where
                         engine,
                         sheet_instance as u32,
                         StreamWorksheetOptions {
+                            refused_external_formulas: self
+                                .refused_external_formulas
+                                .get(n)
+                                .cloned()
+                                .unwrap_or_default(),
                             chunk_rows,
                             debug,
                             workbook_spool_usage: WorkbookSpoolUsage {
