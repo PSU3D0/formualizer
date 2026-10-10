@@ -233,6 +233,18 @@ fn cached_links_invalid_metadata_is_a_ref_error() {
 }
 
 #[test]
+fn cached_links_missing_parts_are_ref_errors() {
+    let bytes = linked_book(&["[1]Data!A1"], false, "");
+    let mut parts = unpack(&bytes);
+    parts.retain(|part, _| !part.starts_with("xl/externalLinks/"));
+    let mut workbook = load(pack(&parts), WorkbookConfig::ephemeral());
+    workbook.evaluate_all().unwrap();
+    assert!(
+        matches!(workbook.get_value("Sheet1", 1, 1), Some(LiteralValue::Error(e)) if e.kind == ExcelErrorKind::Ref)
+    );
+}
+
+#[test]
 fn cached_links_unservable_parts_are_ref_errors() {
     let bytes = linked_book(&["[1]Data!A1"], false, "");
     for part in [

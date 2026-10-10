@@ -74,11 +74,32 @@ pub struct CachedExternalLinkValues {
 }
 
 pub(crate) fn has_links(reader: impl Read + Seek) -> bool {
-    ZipArchive::new(reader).is_ok_and(|archive| {
-        archive
-            .file_names()
-            .any(|p| p.starts_with("xl/externalLinks/"))
-    })
+    let Ok(mut archive) = ZipArchive::new(reader) else {
+        return false;
+    };
+    if archive
+        .file_names()
+        .any(|p| p.starts_with("xl/externalLinks/"))
+    {
+        return true;
+    }
+    let options = CacheOptions::default();
+    let Ok(workbook) = read_part(&mut archive, "xl/workbook.xml", &options) else {
+        return false;
+    };
+    let mut found = false;
+    let _ = xml::walk(&workbook, &options, |path, node| {
+        if xml::path_is(
+            path,
+            xml::MAIN,
+            &["workbook", "externalReferences", "externalReference"],
+        ) && matches!(node.kind, xml::Kind::Open { .. })
+        {
+            found = true;
+        }
+        Ok(())
+    });
+    found
 }
 
 fn read_part<R: Read + Seek>(
