@@ -54,6 +54,8 @@ mod shared_formulas;
 mod sheet_load;
 #[cfg(feature = "calamine")]
 mod source_families;
+#[cfg(feature = "calamine")]
+mod temporal_consumers;
 #[cfg(feature = "umya")]
 mod temporal_roundtrip;
 
