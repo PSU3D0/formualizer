@@ -3,6 +3,9 @@
 mod common;
 
 #[cfg(feature = "calamine")]
+mod external_links;
+
+#[cfg(feature = "calamine")]
 mod calcpr;
 #[cfg(feature = "calamine")]
 mod criteria_ingest_blank;

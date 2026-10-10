@@ -2,16 +2,16 @@
 //! Unsupported package/formula cases fail before any output is published.
 mod dynamic_metadata;
 mod error_reasons;
-pub(crate) mod external_links;
+pub(crate) use crate::cached_external_links as external_links;
 mod geometry;
 mod inert_sheets;
 mod ingest_view;
 mod legacy_intersection;
-mod package;
+pub(crate) mod package;
 mod phase_clock;
 mod result_projection;
 mod shared_qualifiers;
-mod sheet;
+pub(crate) mod sheet;
 mod table_lowering;
 mod tables;
 #[cfg(test)]
@@ -426,14 +426,14 @@ impl Seek for BoundedOutput {
 /// Worksheet source, formula cells and prior-footprint dynamic-array
 /// ownership. The per-cell source index exists only for worksheets with
 /// admitted anchors; a sheet with a new spill builds it after evaluation.
-struct SheetPlan {
+pub(crate) struct SheetPlan {
     tables: Vec<tables::Table>,
     hidden_rows: Vec<u32>,
     /// `sheetFormatPr/@zeroHeight`: row visibility is not provable.
     rows_hidden_by_default: bool,
     active_filters: Vec<sheet::SourceRect>,
     data: Vec<u8>,
-    cells: Vec<sheet::Cell>,
+    pub(crate) cells: Vec<sheet::Cell>,
     index: Option<sheet::SourceIndex>,
     ownership: dynamic_metadata::SheetOwnership,
     /// Serialized `<c>` elements, counted toward the generated-cell bound.

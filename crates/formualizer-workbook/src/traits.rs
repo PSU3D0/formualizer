@@ -312,6 +312,15 @@ pub trait SpreadsheetReader: Send + Sync {
         Vec::new()
     }
 
+    /// Read-only external workbook values cached in the source package.
+    /// The default supplies no cached links and never opens linked files.
+    #[cfg(feature = "calamine")]
+    fn cached_external_link_values(
+        &mut self,
+    ) -> Option<std::sync::Arc<crate::CachedExternalLinkValues>> {
+        None
+    }
+
     /// Workbook-level defined names (workbook scoped or sheet scoped).
     ///
     /// Default: no defined names.
