@@ -1545,6 +1545,9 @@ class Workbook:
     ```
     """
     @property
+    def cached_external_link_indices(self) -> builtins.list[builtins.int]:
+        """Linked workbook indices whose cached values were loaded, never refreshed."""
+    @property
     def sheet_names(self) -> builtins.list[builtins.str]: ...
     def inspect_cell(self, address: builtins.str, *, include_values: builtins.bool = True) -> CellSnapshotReport:
         r"""

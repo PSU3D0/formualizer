@@ -579,6 +579,12 @@ impl PyWorkbook {
         Ok(out)
     }
 
+    /// Linked workbook indices whose cached values were loaded, never refreshed.
+    #[getter]
+    pub fn cached_external_link_indices(&self) -> PyResult<Vec<usize>> {
+        Ok(self.read_inner()?.cached_external_link_indices().to_vec())
+    }
+
     #[getter]
     pub fn sheet_names(&self) -> PyResult<Vec<String>> {
         let wb = self.read_inner()?;
