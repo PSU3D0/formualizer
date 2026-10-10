@@ -276,6 +276,7 @@ pub struct CalcSettings {
 
 /// A non-fatal defined-name import problem recorded while loading a workbook.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct NameImportDiagnostic {
     pub name: String,
     pub definition: String,
@@ -284,11 +285,39 @@ pub struct NameImportDiagnostic {
     pub message: String,
 }
 
+impl NameImportDiagnostic {
+    pub fn new(
+        name: impl Into<String>,
+        definition: impl Into<String>,
+        scope_sheet: Option<String>,
+        local_sheet_id: Option<usize>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            definition: definition.into(),
+            scope_sheet,
+            local_sheet_id,
+            message: message.into(),
+        }
+    }
+}
+
 /// A non-calculating sheet omitted by a spreadsheet reader.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct SheetImportDiagnostic {
     pub name: String,
     pub kind: String,
+}
+
+impl SheetImportDiagnostic {
+    pub fn new(name: impl Into<String>, kind: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            kind: kind.into(),
+        }
+    }
 }
 
 pub trait SpreadsheetReader: Send + Sync {
