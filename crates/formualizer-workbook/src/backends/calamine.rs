@@ -2908,6 +2908,15 @@ where
         let prev_range_limit = engine.config.range_expansion_limit;
         engine.config.range_expansion_limit = 0;
         let prev_first_load = engine.first_load_assume_new();
+        let prev_deferred = engine.config.defer_graph_building;
+        let prev_formula_plane = engine.config.formula_plane_mode;
+        if self.external_values.is_some() {
+            // Cached sources need the per-cell dependency ingestion path.
+            engine.config.formula_plane_mode = formualizer_eval::engine::FormulaPlaneMode::Off;
+        }
+        if !self.refused_external_formulas.is_empty() {
+            engine.config.defer_graph_building = false;
+        }
         engine.set_first_load_assume_new(true);
         engine.reset_ensure_touched();
 
@@ -3267,6 +3276,8 @@ where
         engine.reset_ensure_touched();
         engine.set_sheet_index_mode(prev_index_mode);
         engine.config.range_expansion_limit = prev_range_limit;
+        engine.config.defer_graph_building = prev_deferred;
+        engine.config.formula_plane_mode = prev_formula_plane;
         load_result
     }
 }

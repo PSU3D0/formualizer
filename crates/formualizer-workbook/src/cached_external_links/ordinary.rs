@@ -2,6 +2,67 @@ use super::*;
 use std::io::{Read, Seek};
 use zip::ZipArchive;
 
+#[cfg(all(test, feature = "xlsx-recalc"))]
+#[path = "../../tests/support/source_xlsx.rs"]
+mod source_xlsx;
+
+#[cfg(all(test, feature = "xlsx-recalc"))]
+#[test]
+fn direct_compressed_request_falls_back_for_cached_sources() {
+    use crate::{CalamineAdapter, SpreadsheetReader};
+    use formualizer_eval::engine::ingest::EngineLoadStream;
+    use formualizer_eval::engine::{Engine, EvalConfig, FormulaPlaneMode};
+    use source_xlsx::*;
+    let bytes = book(&[Ws::new("Sheet1", vec![formula("A1", "[1]Data!A1")])], "");
+    let mut parts = unpack(&bytes);
+    parts.insert("xl/externalLinks/externalLink1.xml".into(), format!("<externalLink xmlns=\"{MAIN}\"><externalBook xmlns:r=\"{OFFICE}\" r:id=\"rId1\"><sheetNames><sheetName val=\"Data\"/></sheetNames><sheetDataSet><sheetData sheetId=\"0\"><row r=\"1\"><cell r=\"A1\"><v>7</v></cell></row></sheetData></sheetDataSet></externalBook></externalLink>"));
+    let parts = edit(
+        parts,
+        "xl/workbook.xml",
+        "</sheets>",
+        "</sheets><externalReferences><externalReference r:id=\"rIdLink\"/></externalReferences>",
+    );
+    let parts = edit(
+        parts,
+        WB_RELS,
+        "</Relationships>",
+        &format!(
+            "<Relationship Id=\"rIdLink\" Type=\"{OFFICE}/externalLink\" Target=\"externalLinks/externalLink1.xml\"/></Relationships>"
+        ),
+    );
+    let parts = edit(
+        parts,
+        TYPES,
+        "</Types>",
+        &format!(
+            "<Override PartName=\"/xl/externalLinks/externalLink1.xml\" ContentType=\"{LINK_CONTENT_TYPE}\"/></Types>"
+        ),
+    );
+    let mut adapter = CalamineAdapter::open_bytes(pack(&parts)).unwrap();
+    let snapshot = adapter.cached_external_link_values().unwrap();
+    let mut engine = Engine::new(
+        crate::workbook::WBResolver::with_external_values(snapshot.values.clone()),
+        EvalConfig {
+            arrow_storage_enabled: true,
+            delta_overlay_enabled: true,
+            write_formula_overlay_enabled: true,
+            ..Default::default()
+        },
+    );
+    for name in snapshot.values.scalar_names() {
+        engine.define_source_scalar(name, Some(0)).unwrap();
+    }
+    // Construction normalizes this legacy knob; set it afterwards to exercise
+    // the adapter's cached-source fallback for an explicit direct request.
+    engine.config.formula_plane_mode = FormulaPlaneMode::AuthoritativeExperimental;
+    adapter.stream_into_engine(&mut engine).unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(7.0))
+    );
+}
+
 /// Read-only values cached in an XLSX package for linked workbooks.
 /// Constructed only by workbook readers; linked files are never opened.
 pub struct CachedExternalLinkValues {
@@ -118,12 +179,50 @@ fn read_links(reader: impl Read + Seek, options: &CacheOptions) -> Result<Links,
         }
         Ok(())
     })?;
+    let content_types = read_part(&mut archive, "[Content_Types].xml", options)?;
+    let mut overrides = HashMap::new();
+    let mut defaults = HashMap::new();
+    const TYPES: &str = "http://schemas.openxmlformats.org/package/2006/content-types";
+    xml::walk(&content_types, options, |path, node| {
+        if matches!(node.kind, xml::Kind::Open { .. }) {
+            if xml::path_is(path, TYPES, &["Types", "Override"]) {
+                let part = node
+                    .required("PartName")?
+                    .trim_start_matches('/')
+                    .to_string();
+                let content = node.required("ContentType")?.to_string();
+                if overrides.insert(part, content).is_some() {
+                    return Err(malformed("content types"));
+                }
+            } else if xml::path_is(path, TYPES, &["Types", "Default"]) {
+                let extension = node.required("Extension")?.to_ascii_lowercase();
+                let content = node.required("ContentType")?.to_string();
+                if defaults.insert(extension, content).is_some() {
+                    return Err(malformed("content types"));
+                }
+            }
+        }
+        Ok(())
+    })?;
+    let mut counts = HashMap::new();
+    for part in parts.iter().flatten() {
+        *counts.entry(part.clone()).or_insert(0usize) += 1;
+    }
     let mut counted = 0;
-    let mut seen = HashSet::new();
     let links = parts
         .into_iter()
         .map(|part| {
-            part.filter(|p| seen.insert(p.clone()))
+            part.filter(|p| counts.get(p) == Some(&1))
+                .filter(|p| {
+                    overrides
+                        .get(p)
+                        .or_else(|| {
+                            p.rsplit_once('.').and_then(|(_, extension)| {
+                                defaults.get(&extension.to_ascii_lowercase())
+                            })
+                        })
+                        .is_some_and(|t| t == LINK_CONTENT_TYPE)
+                })
                 .and_then(|p| {
                     read_part(&mut archive, &p, options)
                         .ok()

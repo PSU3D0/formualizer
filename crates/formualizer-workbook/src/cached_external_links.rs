@@ -29,7 +29,6 @@ pub(crate) use ordinary::{has_links, load};
 pub(crate) const LINK_RELATIONSHIP: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/externalLink";
 /// Content type of an external link part.
-#[cfg(feature = "xlsx-recalc")]
 pub(crate) const LINK_CONTENT_TYPE: &str =
     "application/vnd.openxmlformats-officedocument.spreadsheetml.externalLink+xml";
 

@@ -71,6 +71,30 @@ fn load(bytes: Vec<u8>, config: WorkbookConfig) -> Workbook {
 }
 
 fn check_mode(config: WorkbookConfig) {
+    let mut supported = load(
+        linked_book(
+            &["[1]Data!A1", "SUM([1]Data!A1:A2)", "INDEX([1]Data!A1:A2,2)"],
+            false,
+            "",
+        ),
+        config.clone(),
+    );
+    assert_eq!(
+        supported.engine().config.defer_graph_building,
+        config.eval.defer_graph_building
+    );
+    // Engine construction treats the historical FormulaPlane modes as Off.
+    assert_eq!(
+        supported.engine().config.formula_plane_mode,
+        FormulaPlaneMode::Off
+    );
+    supported.evaluate_all().unwrap();
+    for (row, number) in [(1, 7.0), (2, 18.0), (3, 11.0)] {
+        assert_eq!(
+            supported.get_value("Sheet1", row, 1),
+            Some(LiteralValue::Number(number))
+        );
+    }
     let formulas = [
         "[1]Data!A1",
         "SUM([1]Data!A1:A2)",
@@ -188,6 +212,43 @@ fn cached_links_failed_refresh_and_refusals_are_cell_errors() {
         assert_eq!(
             workbook.get_formula("Sheet1", row, 1),
             Some(format!("={}", formulas[row as usize - 1]))
+        );
+    }
+}
+
+#[test]
+fn cached_links_invalid_metadata_is_a_ref_error() {
+    let bytes = linked_book(&["[1]Data!A1"], false, "");
+    let parts = edit(
+        unpack(&bytes),
+        TYPES,
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.externalLink+xml",
+        "application/xml",
+    );
+    let mut workbook = load(pack(&parts), WorkbookConfig::ephemeral());
+    workbook.evaluate_all().unwrap();
+    assert!(
+        matches!(workbook.get_value("Sheet1", 1, 1), Some(LiteralValue::Error(e)) if e.kind == ExcelErrorKind::Ref)
+    );
+}
+
+#[test]
+fn cached_links_unservable_parts_are_ref_errors() {
+    let bytes = linked_book(&["[1]Data!A1"], false, "");
+    for part in [
+        format!("<externalLink xmlns=\"{MAIN}\"><ddeLink/></externalLink>"),
+        format!("<externalLink xmlns=\"{MAIN}\"><oleLink/></externalLink>"),
+        format!(
+            "<externalLink xmlns=\"{MAIN}\"><externalBook xmlns:r=\"{OFFICE}\" r:id=\"rId1\"><sheetNames><sheetName val=\"Data\"/></sheetNames></externalBook></externalLink>"
+        ),
+        "<malformed".to_string(),
+    ] {
+        let mut parts = unpack(&bytes);
+        parts.insert("xl/externalLinks/externalLink7.xml".into(), part);
+        let mut workbook = load(pack(&parts), WorkbookConfig::ephemeral());
+        workbook.evaluate_all().unwrap();
+        assert!(
+            matches!(workbook.get_value("Sheet1", 1, 1), Some(LiteralValue::Error(e)) if e.kind == ExcelErrorKind::Ref)
         );
     }
 }
