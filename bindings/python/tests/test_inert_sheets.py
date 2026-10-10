@@ -1,9 +1,25 @@
+from importlib.util import module_from_spec, spec_from_file_location
 from io import BytesIO
+from pathlib import Path
 from zipfile import ZipFile
 
 import pytest
+
 import formualizer as fz
-from test_xlsx_cache_recalculate import calculation_name_fixture
+
+
+def _recalc_fixtures():
+    # Loaded by path so the helper works under every pytest import mode.
+    spec = spec_from_file_location(
+        "_xlsx_cache_recalculate_fixtures",
+        Path(__file__).with_name("test_xlsx_cache_recalculate.py"),
+    )
+    module = module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+calculation_name_fixture = _recalc_fixtures().calculation_name_fixture
 
 
 def inert_fixture(kind, formula):
@@ -18,7 +34,9 @@ def inert_fixture(kind, formula):
         f'<sheet name="Chart1" sheetId="2" r:id="{rid}"/></sheets>'.encode(),
     )
     if kind != "module":
-        parts["xl/_rels/workbook.xml.rels"] = parts["xl/_rels/workbook.xml.rels"].replace(
+        parts["xl/_rels/workbook.xml.rels"] = parts[
+            "xl/_rels/workbook.xml.rels"
+        ].replace(
             b"</Relationships>",
             f'<Relationship Id="rIdInert" Type="{office}/{kind}" Target="{kind}s/sheet2.xml"/></Relationships>'.encode(),
         )
@@ -31,7 +49,9 @@ def inert_fixture(kind, formula):
 
 
 @pytest.mark.parametrize("kind", ["chartsheet", "dialogsheet", "module"])
-@pytest.mark.parametrize("formula", ["Chart1!A1", "SUM(Chart1!A1:B3)", 'INDIRECT("Chart1!A1")'])
+@pytest.mark.parametrize(
+    "formula", ["Chart1!A1", "SUM(Chart1!A1:B3)", 'INDIRECT("Chart1!A1")']
+)
 def test_inert_sheet_is_unknown_on_load_and_after_edit(tmp_path, kind, formula):
     payload = inert_fixture(kind, formula.replace('"', "&quot;"))
     path = tmp_path / "inert.xlsx"
