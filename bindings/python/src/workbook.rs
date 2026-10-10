@@ -579,6 +579,24 @@ impl PyWorkbook {
         Ok(out)
     }
 
+    /// Non-fatal defined-name import diagnostics from the loader.
+    #[getter]
+    pub fn name_import_diagnostics(&self, py: Python<'_>) -> PyResult<Vec<Py<PyAny>>> {
+        let wb = self.read_inner()?;
+        wb.name_import_diagnostics()
+            .iter()
+            .map(|diagnostic| {
+                let dict = PyDict::new(py);
+                dict.set_item("name", &diagnostic.name)?;
+                dict.set_item("definition", &diagnostic.definition)?;
+                dict.set_item("scope_sheet", &diagnostic.scope_sheet)?;
+                dict.set_item("local_sheet_id", diagnostic.local_sheet_id)?;
+                dict.set_item("message", &diagnostic.message)?;
+                Ok(dict.into())
+            })
+            .collect()
+    }
+
     #[getter]
     pub fn sheet_names(&self) -> PyResult<Vec<String>> {
         let wb = self.read_inner()?;
@@ -719,6 +737,29 @@ impl PyWorkbook {
 
         let out = PyList::empty(py);
         for entry in entries {
+            if let formualizer::eval::engine::named_range::NamedDefinition::Literal(
+                LiteralValue::Error(error),
+            ) = &entry.definition
+            {
+                let scope_sheet = match entry.scope {
+                    formualizer::eval::engine::named_range::NameScope::Workbook => None,
+                    formualizer::eval::engine::named_range::NameScope::Sheet(id) => {
+                        Some(engine.sheet_name(id))
+                    }
+                };
+                if error.message.as_deref()
+                    == Some(&format!(
+                        "Defined name `{}` could not be evaluated",
+                        entry.name
+                    ))
+                    && wb
+                        .name_import_diagnostics()
+                        .iter()
+                        .any(|d| d.name == entry.name && d.scope_sheet.as_deref() == scope_sheet)
+                {
+                    continue;
+                }
+            }
             let row = PyDict::new(py);
             row.set_item("name", entry.name)?;
 

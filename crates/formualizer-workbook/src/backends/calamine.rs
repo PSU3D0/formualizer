@@ -662,6 +662,8 @@ pub struct CalamineAdapter {
     name_analysis: OnceLock<CalculationNameAnalysis>,
     grounded_names: OnceLock<Vec<Option<ASTNode>>>,
     referenced_only_names: bool,
+    strict_calculation_names: bool,
+    name_import_diagnostics: Vec<crate::traits::NameImportDiagnostic>,
     unregistrable_names: HashSet<String>,
     external_link_targets: OnceLock<BTreeMap<u32, String>>,
     calc_settings: OnceLock<Option<CalcSettings>>,
@@ -1466,6 +1468,8 @@ impl CalamineAdapter {
             name_analysis: OnceLock::new(),
             grounded_names: OnceLock::new(),
             referenced_only_names: false,
+            strict_calculation_names: false,
+            name_import_diagnostics: Vec::new(),
             unregistrable_names: HashSet::new(),
             external_link_targets: OnceLock::new(),
             calc_settings: OnceLock::new(),
@@ -2038,6 +2042,7 @@ impl CalamineAdapter {
         formulas: &[(String, String)],
         admitted_inert_sheets: bool,
     ) -> Result<(), crate::IoError> {
+        self.strict_calculation_names = true;
         if !self.referenced_only_names {
             self.name_analysis.take();
             self.grounded_names.take();
@@ -2714,6 +2719,10 @@ impl SpreadsheetReader for CalamineAdapter {
         Some(self.load_stats.clone())
     }
 
+    fn name_import_diagnostics(&self) -> Vec<crate::traits::NameImportDiagnostic> {
+        self.name_import_diagnostics.clone()
+    }
+
     fn defined_names(&mut self) -> Result<Vec<DefinedName>, Self::Error> {
         Ok(self.lazy_defined_names().clone())
     }
@@ -2830,6 +2839,12 @@ where
             .is_some_and(|v| v != "0");
         let t0 = DebugTimer::start();
         let names = self.sheet_names()?;
+        let ordinary_name_import = !self.strict_calculation_names;
+        if ordinary_name_import && !self.referenced_only_names {
+            self.name_analysis.take();
+            self.grounded_names.take();
+            self.referenced_only_names = true;
+        }
         if debug {
             eprintln!("[fz][load] calamine: {} sheets", names.len());
         }
@@ -3167,6 +3182,66 @@ where
                         let name = name.to_lowercase();
                         self.unregistrable_names.insert(name);
                     } else {
+                        return Err(calamine::Error::Io(std::io::Error::other(
+                            error.to_string(),
+                        )));
+                    }
+                }
+            }
+
+            if ordinary_name_import {
+                let imported: HashSet<_> = self
+                    .calculation_name_order()
+                    .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?
+                    .into_iter()
+                    .collect();
+                self.name_import_diagnostics = self
+                    .raw_calculation_names()
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, (name, _, _))| {
+                        !self.legacy_calculation_name(name) && !imported.contains(i)
+                    })
+                    .map(
+                        |(_, (name, text, local))| crate::traits::NameImportDiagnostic {
+                            name: name.clone(),
+                            definition: text.clone(),
+                            scope_sheet: local.and_then(|i| names.get(i).cloned()),
+                            local_sheet_id: *local,
+                            message: "Unevaluable or cyclic defined name omitted from calculation"
+                                .into(),
+                        },
+                    )
+                    .collect();
+                for diagnostic in &self.name_import_diagnostics {
+                    if diagnostic.local_sheet_id.is_some() && diagnostic.scope_sheet.is_none() {
+                        continue;
+                    }
+                    let scope = match diagnostic.scope_sheet.as_deref() {
+                        Some(sheet) => {
+                            let Some(id) = engine.sheet_id(sheet) else {
+                                continue;
+                            };
+                            NameScope::Sheet(id)
+                        }
+                        None => NameScope::Workbook,
+                    };
+                    let error = formualizer_common::ExcelError::new(
+                        formualizer_common::ExcelErrorKind::Name,
+                    )
+                    .with_message(format!(
+                        "Defined name `{}` could not be evaluated",
+                        diagnostic.name
+                    ));
+                    // Retain only the failed key/scope, not the rejected definition.
+                    // Otherwise an omitted local name could fall back to a global
+                    // definition after an edit or an INDIRECT lookup.
+                    if let Err(error) = engine.define_name(
+                        &diagnostic.name,
+                        NamedDefinition::Literal(LiteralValue::Error(error)),
+                        scope,
+                    ) && !self.skippable_name_registration_error(&diagnostic.name, &error)
+                    {
                         return Err(calamine::Error::Io(std::io::Error::other(
                             error.to_string(),
                         )));

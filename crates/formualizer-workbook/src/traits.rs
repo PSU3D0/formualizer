@@ -274,6 +274,16 @@ pub struct CalcSettings {
     pub full_calc_on_load: Option<bool>,
 }
 
+/// A non-fatal defined-name import problem recorded while loading a workbook.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NameImportDiagnostic {
+    pub name: String,
+    pub definition: String,
+    pub scope_sheet: Option<String>,
+    pub local_sheet_id: Option<usize>,
+    pub message: String,
+}
+
 pub trait SpreadsheetReader: Send + Sync {
     type Error: std::error::Error + Send + Sync + 'static;
 
@@ -283,6 +293,11 @@ pub trait SpreadsheetReader: Send + Sync {
 
     fn load_stats(&self) -> Option<AdapterLoadStats> {
         None
+    }
+
+    /// Non-fatal names omitted from calculation import.
+    fn name_import_diagnostics(&self) -> Vec<NameImportDiagnostic> {
+        Vec::new()
     }
 
     /// Workbook-level defined names (workbook scoped or sheet scoped).

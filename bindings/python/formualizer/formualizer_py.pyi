@@ -1545,6 +1545,9 @@ class Workbook:
     ```
     """
     @property
+    def name_import_diagnostics(self) -> builtins.list[builtins.dict[builtins.str, typing.Any]]:
+        """Non-fatal defined-name omissions recorded during load."""
+    @property
     def sheet_names(self) -> builtins.list[builtins.str]: ...
     def inspect_cell(self, address: builtins.str, *, include_values: builtins.bool = True) -> CellSnapshotReport:
         r"""
