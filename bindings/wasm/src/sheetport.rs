@@ -21,6 +21,16 @@ pub struct SheetPortSession {
 
 #[wasm_bindgen]
 impl SheetPortSession {
+    #[wasm_bindgen(js_name = "fromManifest")]
+    pub fn from_manifest_value(
+        value: JsValue,
+        workbook: &Workbook,
+    ) -> Result<SheetPortSession, JsValue> {
+        let manifest: Manifest = serde_wasm_bindgen::from_value(value)
+            .map_err(|err| js_error(format!("manifest parse failed: {err}")))?;
+        Self::from_manifest(manifest, workbook)
+    }
+
     #[wasm_bindgen(js_name = "fromManifestYaml")]
     pub fn from_manifest_yaml(
         manifest_yaml: String,

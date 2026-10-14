@@ -779,7 +779,11 @@ export interface SheetPortSessionApi extends wasm.SheetPortSession {
   evaluateOnce(options?: SheetPortEvaluateOptions): Record<string, unknown>;
 }
 
+export { defineManifest } from './manifest.js';
+export type * from './manifest.js';
+
 export type SheetPortSessionConstructor = {
+  fromManifest(manifest: import('./manifest.js').FioManifest, workbook: WorkbookApi): SheetPortSessionApi;
   fromManifestYaml(yaml: string, workbook: WorkbookApi): SheetPortSessionApi;
   prototype: SheetPortSessionApi;
 };
