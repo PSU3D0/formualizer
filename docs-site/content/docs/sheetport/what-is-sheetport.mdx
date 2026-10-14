@@ -5,11 +5,11 @@ description: Understand the core concepts of the SheetPort I/O layer.
 
 SheetPort is a powerful I/O abstraction layer for Formualizer. It treats any spreadsheet as a deterministic, typed function, allowing you to build reliable applications on top of spreadsheet logic.
 
-The core idea is to decouple your code from the spreadsheet's internal layout using a YAML manifest.
+The core idea is to decouple your code from the spreadsheet's internal layout using a manifest, built in code or loaded from a YAML file.
 
 ## The Formualizer I/O (FIO) Manifest
 
-The FIO manifest is the heart of SheetPort. It's a structured YAML file that declares:
+The FIO manifest is the heart of SheetPort. It declares, in code or as a YAML file:
 
 - **Manifest Metadata**: ID, name, description, and workbook requirements.
 - **Ports**: A set of typed inputs and outputs that map to specific workbook locations.

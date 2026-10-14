@@ -144,6 +144,13 @@ impl OutputSnapshot {
     }
 }
 
+impl From<LiteralValue> for PortValue {
+    /// A scalar port value.
+    fn from(value: LiteralValue) -> Self {
+        PortValue::Scalar(value)
+    }
+}
+
 /// Set of inputs to apply (partial updates allowed).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct InputUpdate(pub BTreeMap<String, PortValue>);
@@ -163,5 +170,16 @@ impl InputUpdate {
 
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
+    }
+}
+
+impl<K: Into<String>, V: Into<PortValue>> FromIterator<(K, V)> for InputUpdate {
+    /// Builds an update from `(port id, value)` pairs; a later pair for the same port wins.
+    fn from_iter<I: IntoIterator<Item = (K, V)>>(iter: I) -> Self {
+        Self(
+            iter.into_iter()
+                .map(|(id, value)| (id.into(), value.into()))
+                .collect(),
+        )
     }
 }

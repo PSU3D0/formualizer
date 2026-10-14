@@ -1,31 +1,163 @@
 ---
 title: SheetPort Quickstart
-description: End-to-end example of using SheetPort in Rust, Python, and JS/WASM.
+description: Turn a loan calculator into a typed function in Python, JavaScript and Rust, with the manifest built in code or loaded from YAML.
 ---
 
-This quickstart shows how to use SheetPort to turn a simple loan calculator spreadsheet into a typed function using Rust, Python, and JavaScript/WASM.
+This quickstart turns a small loan calculator into a typed function. The workbook computes a monthly payment in `Calculator!B4` from a principal, an annual rate and a term in `B1:B3`. The manifest declares those four cells as ports; the session writes the inputs, recalculates and returns the payment.
 
-## 1. The Manifest
+## 1. Build the manifest in code
 
-We'll start with a manifest (`manifest.fio.yaml`) that defines two scalar inputs (principal and interest rate) and one scalar output (monthly payment).
+Each language has helpers that fill in the parts of the manifest that rarely change: the spec version, each port's shape, and `{ a1: ... }` around a plain cell address. The result is the same structure a YAML manifest describes, so the two forms are interchangeable.
 
+<Tabs items={["Python", "JavaScript", "Rust"]}>
+<Tab value="Python">
+
+{/* example: bindings/python/examples/sheetport_quickstart.py#readme */}
+```python
+import formualizer as fz
+from formualizer.sheetport import Input, Manifest, Output
+
+# The model: B4 computes the monthly payment from B1:B3.
+wb = fz.Workbook()  # or fz.load_workbook("loan.xlsx")
+wb.add_sheet("Calculator")
+wb.set_formula("Calculator", 4, 2, "=PMT(B2/12, B3, -B1)")
+
+manifest = Manifest(
+    "loan-calculator",
+    name="Loan calculator",
+    ports=[
+        Input("principal", "Calculator!B1", type="number", constraints={"min": 0}),
+        Input("rate", "Calculator!B2", type="number"),
+        Input("term_months", "Calculator!B3", type="integer"),
+        Output("monthly_payment", "Calculator!B4", type="number"),
+    ],
+)
+
+session = fz.SheetPortSession(wb, manifest)
+session.write_inputs({"principal": 250_000, "rate": 0.045, "term_months": 360})
+outputs = session.evaluate_once(freeze_volatile=True)
+print(outputs["monthly_payment"])  # 1266.71...
+```
+
+`Input` and `Output` take the port id and a location; `type=` declares a single cell. A plain `dict` with the canonical structure works anywhere a `Manifest` does.
+
+</Tab>
+<Tab value="JavaScript">
+
+{/* example: bindings/wasm/examples/sheetport-quickstart.mjs#readme */}
+```typescript
+import init, { Workbook, SheetPortSession, defineManifest } from 'formualizer';
+await init();
+
+// The model: B4 computes the monthly payment from B1:B3.
+const wb = new Workbook();
+wb.addSheet('Calculator');
+wb.setFormula('Calculator', 4, 2, '=PMT(B2/12, B3, -B1)');
+
+const manifest = defineManifest({
+  id: 'loan-calculator',
+  name: 'Loan calculator',
+  ports: [
+    { id: 'principal', dir: 'in', location: 'Calculator!B1', type: 'number', constraints: { min: 0 } },
+    { id: 'rate', dir: 'in', location: 'Calculator!B2', type: 'number' },
+    { id: 'term_months', dir: 'in', location: 'Calculator!B3', type: 'integer' },
+    { id: 'monthly_payment', dir: 'out', location: 'Calculator!B4', type: 'number' },
+  ],
+});
+
+const session = SheetPortSession.fromManifest(manifest, wb);
+session.writeInputs({ principal: 250000, rate: 0.045, term_months: 360 });
+const outputs = session.evaluateOnce({ freezeVolatile: true });
+console.log(outputs.monthly_payment); // 1266.71...
+```
+
+`defineManifest` returns the canonical object, typed as `FioManifest`. `fromManifest` accepts any canonical object, including one written out by hand.
+
+</Tab>
+<Tab value="Rust">
+
+{/* example: crates/formualizer/examples/sheetport_quickstart.rs#readme */}
+```rust
+use formualizer::sheetport::{EvalOptions, InputUpdate, PortValue, SheetPortSession};
+use formualizer::sheetport_spec::{Constraints, Manifest, Port, ValueType};
+use formualizer::{LiteralValue, Workbook};
+
+// The model: B4 computes the monthly payment from B1:B3.
+let mut wb = Workbook::new(); // or load one from an .xlsx
+wb.add_sheet("Calculator")?;
+wb.set_formula("Calculator", 4, 2, "=PMT(B2/12, B3, -B1)")?;
+
+let manifest = Manifest::new("loan-calculator")
+    .with_name("Loan calculator")
+    .port(
+        Port::input("principal", "Calculator!B1", ValueType::Number).with_constraints(
+            Constraints {
+                min: Some(0.0),
+                ..Default::default()
+            },
+        ),
+    )
+    .port(Port::input("rate", "Calculator!B2", ValueType::Number))
+    .port(Port::input(
+        "term_months",
+        "Calculator!B3",
+        ValueType::Integer,
+    ))
+    .port(Port::output(
+        "monthly_payment",
+        "Calculator!B4",
+        ValueType::Number,
+    ));
+
+let mut session = SheetPortSession::new(wb, manifest)?;
+session.write_inputs(InputUpdate::from_iter([
+    ("principal", LiteralValue::Number(250_000.0)),
+    ("rate", LiteralValue::Number(0.045)),
+    ("term_months", LiteralValue::Int(360)),
+]))?;
+let outputs = session.evaluate_once(EvalOptions {
+    freeze_volatile: true,
+    ..Default::default()
+})?;
+let payment = outputs
+    .get("monthly_payment")
+    .and_then(PortValue::as_scalar);
+println!("{payment:?}"); // Some(Number(1266.71...))
+```
+
+`Port::input` and `Port::output` take an id, a location (a string is an A1 reference) and a schema (a `ValueType` for a single cell). `InputUpdate` collects `(port, value)` pairs.
+
+</Tab>
+</Tabs>
+
+## 2. Or load it from YAML
+
+The same manifest as a file, `loan-calculator.fio.yaml`:
+
+{/* example: examples/sheetport/loan-calculator.fio.yaml */}
 ```yaml
 spec: fio
 spec_version: "0.3.0"
 manifest:
   id: loan-calculator
-  name: Loan Calculator
+  name: Loan calculator
 ports:
   - id: principal
     dir: in
     shape: scalar
     location: { a1: "Calculator!B1" }
     schema: { type: number }
+    constraints: { min: 0 }
   - id: rate
     dir: in
     shape: scalar
     location: { a1: "Calculator!B2" }
     schema: { type: number }
+  - id: term_months
+    dir: in
+    shape: scalar
+    location: { a1: "Calculator!B3" }
+    schema: { type: integer }
   - id: monthly_payment
     dir: out
     shape: scalar
@@ -33,71 +165,36 @@ ports:
     schema: { type: number }
 ```
 
-## 2. Implementation
+Load it in place of the code-built manifest:
 
-<CodeTabs
-  title="SheetPort: write inputs → evaluate → read outputs"
-  rust={`use formualizer::Workbook;
-use formualizer::sheetport::{SheetPortSession, EvalOptions, InputUpdate};
-use formualizer::sheetport_spec::Manifest;
-use formualizer::common::LiteralValue;
+<Tabs items={["Python", "JavaScript", "Rust"]}>
+<Tab value="Python">
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let yaml = std::fs::read_to_string("manifest.fio.yaml")?;
-    let manifest = Manifest::from_yaml_str(&yaml)?;
-    manifest.validate()?;
+{/* example: bindings/python/examples/sheetport_quickstart.py#yaml */}
+```python
+session = fz.SheetPortSession.from_manifest_yaml(yaml_text, wb)
+```
 
-    let wb = Workbook::from_path("model.xlsx")?;
-    let mut session = SheetPortSession::new(wb, manifest)?;
+`SheetPortSession.from_manifest_path(manifest_path, workbook_path)` opens both files. `Manifest.to_yaml()` writes a code-built manifest out as YAML.
 
-    // Write inputs
-    let mut update = InputUpdate::default();
-    update.set_scalar("principal", LiteralValue::Number(250000.0));
-    update.set_scalar("rate", LiteralValue::Number(0.065));
-    session.write_inputs(update)?;
+</Tab>
+<Tab value="JavaScript">
 
-    // Evaluate and read outputs
-    let outputs = session.evaluate_once(EvalOptions::default())?;
-    println!("Monthly payment: {:?}", outputs.get("monthly_payment"));
+Pass the file's text to `SheetPortSession.fromManifestYaml(yaml, wb)`.
 
-    Ok(())
-}`}
-  python={`import formualizer as fz
+</Tab>
+<Tab value="Rust">
 
-# Load workbook and manifest
-wb = fz.Workbook.load_path("model.xlsx")
-session = fz.SheetPortSession.from_manifest_path("manifest.fio.yaml", wb)
+`Manifest::from_yaml_str(&yaml)` parses the file's text; `Manifest::to_yaml` writes a code-built manifest out.
 
-# Write inputs (accepts a dict for convenience)
-session.write_inputs({
-    "principal": 250000.0,
-    "rate": 0.065
-})
+</Tab>
+</Tabs>
 
-# Evaluate and get outputs
-outputs = session.evaluate_once()
-print("Monthly payment:", outputs["monthly_payment"])`}
-  ts={`import init, { Workbook, SheetPortSession } from 'formualizer';
+## 3. Constraints
 
-await init();
+The `principal` port has `constraints: { min: 0 }`. An update that breaks a constraint is rejected as a whole, so `write_inputs({"rate": 0.05, "principal": -1})` writes neither value. Python raises `SheetPortConstraintError`, JavaScript throws an error whose `violations` name each failing port, and Rust returns `SheetPortError::ConstraintViolation`.
 
-const wb = Workbook.fromBytes(new Uint8Array(modelBuffer));
-const session = SheetPortSession.fromManifestYaml(manifestYaml, wb);
-
-// Write inputs
-session.writeInputs({
-    principal: 250000,
-    rate: 0.065
-});
-
-// Evaluate and read outputs
-const outputs = session.evaluateOnce();
-console.log('Monthly payment:', outputs.monthly_payment);`}
-  runnable={false}
-  tsLabel="JS / WASM"
-/>
-
-> The JS/WASM tab requires a workbook file, so it isn't runnable in-browser here. For self-contained runnable examples, see the [JS/WASM Quickstart](/docs/quickstarts/js-wasm-quickstart).
+The [manifest format](/docs/sheetport/manifest-format) lists every constraint, shape and location, including ranges, records and tables located by defined name or by the rows under a header.
 
 ## Related Links
 

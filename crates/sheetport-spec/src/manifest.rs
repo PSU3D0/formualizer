@@ -358,7 +358,7 @@ pub struct ManifestMeta {
 }
 
 /// Optional workbook descriptors. These fields are advisory hints for runtimes and may be ignored unless a runtime explicitly documents support.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]
 pub struct WorkbookMeta {
     #[serde(default)]
@@ -667,7 +667,7 @@ pub enum ValueType {
 }
 
 /// Constraints applied to a port or field.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]
 pub struct Constraints {
     #[serde(default)]
@@ -688,7 +688,7 @@ pub struct Constraints {
 }
 
 /// Units metadata (extensible).
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]
 pub struct Units {
     #[serde(default)]

@@ -2,6 +2,10 @@
 
 This changelog tracks spec and reference implementation changes.
 
+## Unreleased
+
+- Add builders for constructing manifests in code (`Manifest::new`, `Port::input` / `Port::output`, selector and schema constructors) and `Manifest::from_json_value`; derive `Default` for `Constraints`, `Units` and `WorkbookMeta`. The manifest protocol stays at fio 0.3.0.
+
 ## 0.3.1
 
 - Reject layout `header_row` values outside Excel's 1–1,048,576 row bounds.

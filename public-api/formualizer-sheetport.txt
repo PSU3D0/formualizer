@@ -60,6 +60,8 @@ impl core::clone::Clone for formualizer_sheetport::PortValue
 pub fn formualizer_sheetport::PortValue::clone(&self) -> formualizer_sheetport::PortValue
 impl core::cmp::PartialEq for formualizer_sheetport::PortValue
 pub fn formualizer_sheetport::PortValue::eq(&self, &formualizer_sheetport::PortValue) -> bool
+impl core::convert::From<formualizer_common::value::LiteralValue> for formualizer_sheetport::PortValue
+pub fn formualizer_sheetport::PortValue::from(formualizer_common::value::LiteralValue) -> Self
 impl core::fmt::Debug for formualizer_sheetport::PortValue
 pub fn formualizer_sheetport::PortValue::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for formualizer_sheetport::PortValue
@@ -227,6 +229,8 @@ pub fn formualizer_sheetport::InputUpdate::default() -> formualizer_sheetport::I
 impl core::fmt::Debug for formualizer_sheetport::InputUpdate
 pub fn formualizer_sheetport::InputUpdate::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for formualizer_sheetport::InputUpdate
+impl<K: core::convert::Into<alloc::string::String>, V: core::convert::Into<formualizer_sheetport::PortValue>> core::iter::traits::collect::FromIterator<(K, V)> for formualizer_sheetport::InputUpdate
+pub fn formualizer_sheetport::InputUpdate::from_iter<I: core::iter::traits::collect::IntoIterator<Item = (K, V)>>(I) -> Self
 pub struct formualizer_sheetport::ManifestBindings
 impl formualizer_sheetport::ManifestBindings
 pub fn formualizer_sheetport::ManifestBindings::bindings(&self) -> &[formualizer_sheetport::PortBinding]

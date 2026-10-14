@@ -54,9 +54,10 @@ The `Workbook` type in `formualizer-workbook` is the central coordinator.
 ### SheetPort Runtime
 `SheetPort` and `SheetPortSession` in `formualizer-sheetport` provide structured I/O.
 
-- `SheetPortSession::new(manifest, workbook)`: Initialize a session.
-- `session.write_inputs(map)`: Update multiple inputs at once.
-- `session.read_outputs()`: Extract computed results based on the manifest.
+- `SheetPortSession::new(workbook, manifest)`: Bind a manifest to a workbook the session owns; `SheetPort::new(&mut workbook, manifest)` borrows it instead.
+- `session.write_inputs(update)`: Validate and write an `InputUpdate` (`InputUpdate::from_iter([("rate", LiteralValue::Number(0.05))])`).
+- `session.evaluate_once(options)` / `session.read_outputs()`: Recalculate and read the output ports.
+- `sheetport_spec::Manifest::new(id).port(Port::input(id, location, schema))`: Build a manifest in code; `Manifest::from_yaml_str` and `to_yaml` convert to and from YAML.
 
 ## See Also
 

@@ -1,0 +1,27 @@
+spec: fio
+spec_version: "0.3.0"
+manifest:
+  id: loan-calculator
+  name: Loan calculator
+ports:
+  - id: principal
+    dir: in
+    shape: scalar
+    location: { a1: "Calculator!B1" }
+    schema: { type: number }
+    constraints: { min: 0 }
+  - id: rate
+    dir: in
+    shape: scalar
+    location: { a1: "Calculator!B2" }
+    schema: { type: number }
+  - id: term_months
+    dir: in
+    shape: scalar
+    location: { a1: "Calculator!B3" }
+    schema: { type: integer }
+  - id: monthly_payment
+    dir: out
+    shape: scalar
+    location: { a1: "Calculator!B4" }
+    schema: { type: number }

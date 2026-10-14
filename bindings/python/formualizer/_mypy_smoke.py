@@ -23,6 +23,26 @@ from . import (
     Workbook,
 )
 from .formualizer_py import Workbook as NativeWorkbook
+from .sheetport import Input, Manifest, Output, column, range_of, table_of
+
+
+def _builder_smoke(wb: Workbook) -> SheetPortSession:
+    manifest = Manifest(
+        "typed-example",
+        ports=[
+            Input("x", "Sheet1!A1", type="number"),
+            Output("y", "Sheet1!A2", type="number"),
+            Input("range", "Sheet1!B1:B2", schema=range_of("number")),
+            Input(
+                "table",
+                "Sheet1!C1:D2",
+                schema=table_of(columns=[column("sku", "string")]),
+            ),
+        ],
+    )
+    SheetPortSession(wb, manifest.to_dict())
+    return SheetPortSession(wb, manifest)
+
 
 _EXCEPTION_TYPES: tuple[type[Exception], ...] = (
     TokenizerError,

@@ -140,8 +140,15 @@ pub sheetport_spec::Schema::Range(sheetport_spec::RangeSchema)
 pub sheetport_spec::Schema::Record(sheetport_spec::RecordSchema)
 pub sheetport_spec::Schema::Scalar(sheetport_spec::ScalarSchema)
 pub sheetport_spec::Schema::Table(sheetport_spec::TableSchema)
+impl sheetport_spec::Schema
+pub fn sheetport_spec::Schema::range(sheetport_spec::ValueType) -> Self
+pub fn sheetport_spec::Schema::record(impl core::iter::traits::collect::IntoIterator<Item = (alloc::string::String, sheetport_spec::RecordField)>) -> Self
+pub fn sheetport_spec::Schema::table(impl core::iter::traits::collect::IntoIterator<Item = sheetport_spec::TableColumn>) -> Self
+pub fn sheetport_spec::Schema::with_keys(self, impl core::iter::traits::collect::IntoIterator<Item = alloc::string::String>) -> Self
 impl core::clone::Clone for sheetport_spec::Schema
 pub fn sheetport_spec::Schema::clone(&self) -> sheetport_spec::Schema
+impl core::convert::From<sheetport_spec::ValueType> for sheetport_spec::Schema
+pub fn sheetport_spec::Schema::from(sheetport_spec::ValueType) -> Self
 impl core::fmt::Debug for sheetport_spec::Schema
 pub fn sheetport_spec::Schema::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl schemars::JsonSchema for sheetport_spec::Schema
@@ -159,8 +166,19 @@ pub sheetport_spec::Selector::Layout(sheetport_spec::SelectorLayout)
 pub sheetport_spec::Selector::Name(sheetport_spec::SelectorName)
 pub sheetport_spec::Selector::StructRef(sheetport_spec::SelectorStructRef)
 pub sheetport_spec::Selector::Table(sheetport_spec::SelectorTable)
+impl sheetport_spec::Selector
+pub fn sheetport_spec::Selector::a1(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn sheetport_spec::Selector::layout(sheetport_spec::LayoutDescriptor) -> Self
+pub fn sheetport_spec::Selector::name(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn sheetport_spec::Selector::struct_ref(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn sheetport_spec::Selector::table(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn sheetport_spec::Selector::with_area(self, sheetport_spec::TableArea) -> Self
 impl core::clone::Clone for sheetport_spec::Selector
 pub fn sheetport_spec::Selector::clone(&self) -> sheetport_spec::Selector
+impl core::convert::From<&str> for sheetport_spec::Selector
+pub fn sheetport_spec::Selector::from(&str) -> Self
+impl core::convert::From<alloc::string::String> for sheetport_spec::Selector
+pub fn sheetport_spec::Selector::from(alloc::string::String) -> Self
 impl core::fmt::Debug for sheetport_spec::Selector
 pub fn sheetport_spec::Selector::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl schemars::JsonSchema for sheetport_spec::Selector
@@ -240,6 +258,8 @@ pub sheetport_spec::ValueType::Number
 pub sheetport_spec::ValueType::String
 impl core::clone::Clone for sheetport_spec::ValueType
 pub fn sheetport_spec::ValueType::clone(&self) -> sheetport_spec::ValueType
+impl core::convert::From<sheetport_spec::ValueType> for sheetport_spec::Schema
+pub fn sheetport_spec::Schema::from(sheetport_spec::ValueType) -> Self
 impl core::fmt::Debug for sheetport_spec::ValueType
 pub fn sheetport_spec::ValueType::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for sheetport_spec::ValueType
@@ -278,6 +298,8 @@ pub sheetport_spec::Constraints::nullable: core::option::Option<bool>
 pub sheetport_spec::Constraints::pattern: core::option::Option<alloc::string::String>
 impl core::clone::Clone for sheetport_spec::Constraints
 pub fn sheetport_spec::Constraints::clone(&self) -> sheetport_spec::Constraints
+impl core::default::Default for sheetport_spec::Constraints
+pub fn sheetport_spec::Constraints::default() -> sheetport_spec::Constraints
 impl core::fmt::Debug for sheetport_spec::Constraints
 pub fn sheetport_spec::Constraints::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl schemars::JsonSchema for sheetport_spec::Constraints
@@ -323,6 +345,15 @@ pub fn sheetport_spec::Manifest::normalize(&mut self)
 pub fn sheetport_spec::Manifest::normalized(self) -> Self
 pub fn sheetport_spec::Manifest::to_yaml(&self) -> core::result::Result<alloc::string::String, serde_yaml::error::Error>
 pub fn sheetport_spec::Manifest::validate(&self) -> core::result::Result<(), sheetport_spec::ValidationError>
+impl sheetport_spec::Manifest
+pub fn sheetport_spec::Manifest::from_json_value(serde_json::value::Value) -> core::result::Result<Self, serde_json::error::Error>
+pub fn sheetport_spec::Manifest::new(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn sheetport_spec::Manifest::port(self, sheetport_spec::Port) -> Self
+pub fn sheetport_spec::Manifest::ports(self, impl core::iter::traits::collect::IntoIterator<Item = sheetport_spec::Port>) -> Self
+pub fn sheetport_spec::Manifest::with_description(self, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn sheetport_spec::Manifest::with_name(self, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn sheetport_spec::Manifest::with_tags(self, impl core::iter::traits::collect::IntoIterator<Item = alloc::string::String>) -> Self
+pub fn sheetport_spec::Manifest::with_workbook(self, sheetport_spec::WorkbookMeta) -> Self
 impl core::clone::Clone for sheetport_spec::Manifest
 pub fn sheetport_spec::Manifest::clone(&self) -> sheetport_spec::Manifest
 impl core::fmt::Debug for sheetport_spec::Manifest
@@ -390,6 +421,14 @@ pub sheetport_spec::Port::required: bool
 pub sheetport_spec::Port::schema: sheetport_spec::Schema
 pub sheetport_spec::Port::shape: sheetport_spec::Shape
 pub sheetport_spec::Port::units: core::option::Option<sheetport_spec::Units>
+impl sheetport_spec::Port
+pub fn sheetport_spec::Port::input(impl core::convert::Into<alloc::string::String>, impl core::convert::Into<sheetport_spec::Selector>, impl core::convert::Into<sheetport_spec::Schema>) -> Self
+pub fn sheetport_spec::Port::optional(self) -> Self
+pub fn sheetport_spec::Port::output(impl core::convert::Into<alloc::string::String>, impl core::convert::Into<sheetport_spec::Selector>, impl core::convert::Into<sheetport_spec::Schema>) -> Self
+pub fn sheetport_spec::Port::with_constraints(self, sheetport_spec::Constraints) -> Self
+pub fn sheetport_spec::Port::with_default(self, serde_json::value::Value) -> Self
+pub fn sheetport_spec::Port::with_description(self, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn sheetport_spec::Port::with_units(self, sheetport_spec::Units) -> Self
 impl core::clone::Clone for sheetport_spec::Port
 pub fn sheetport_spec::Port::clone(&self) -> sheetport_spec::Port
 impl core::fmt::Debug for sheetport_spec::Port
@@ -425,6 +464,8 @@ pub sheetport_spec::RecordField::constraints: core::option::Option<sheetport_spe
 pub sheetport_spec::RecordField::location: sheetport_spec::FieldSelector
 pub sheetport_spec::RecordField::units: core::option::Option<sheetport_spec::Units>
 pub sheetport_spec::RecordField::value_type: sheetport_spec::ValueType
+impl sheetport_spec::RecordField
+pub fn sheetport_spec::RecordField::new(sheetport_spec::ValueType, sheetport_spec::FieldSelector) -> Self
 impl core::clone::Clone for sheetport_spec::RecordField
 pub fn sheetport_spec::RecordField::clone(&self) -> sheetport_spec::RecordField
 impl core::fmt::Debug for sheetport_spec::RecordField
@@ -573,6 +614,8 @@ pub sheetport_spec::TableColumn::format: core::option::Option<alloc::string::Str
 pub sheetport_spec::TableColumn::name: alloc::string::String
 pub sheetport_spec::TableColumn::units: core::option::Option<sheetport_spec::Units>
 pub sheetport_spec::TableColumn::value_type: sheetport_spec::ValueType
+impl sheetport_spec::TableColumn
+pub fn sheetport_spec::TableColumn::new(impl core::convert::Into<alloc::string::String>, sheetport_spec::ValueType) -> Self
 impl core::clone::Clone for sheetport_spec::TableColumn
 pub fn sheetport_spec::TableColumn::clone(&self) -> sheetport_spec::TableColumn
 impl core::fmt::Debug for sheetport_spec::TableColumn
@@ -623,6 +666,8 @@ pub struct sheetport_spec::Units
 pub sheetport_spec::Units::currency: core::option::Option<alloc::string::String>
 impl core::clone::Clone for sheetport_spec::Units
 pub fn sheetport_spec::Units::clone(&self) -> sheetport_spec::Units
+impl core::default::Default for sheetport_spec::Units
+pub fn sheetport_spec::Units::default() -> sheetport_spec::Units
 impl core::fmt::Debug for sheetport_spec::Units
 pub fn sheetport_spec::Units::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl schemars::JsonSchema for sheetport_spec::Units
@@ -650,6 +695,8 @@ pub sheetport_spec::WorkbookMeta::timezone: core::option::Option<alloc::string::
 pub sheetport_spec::WorkbookMeta::uri: core::option::Option<alloc::string::String>
 impl core::clone::Clone for sheetport_spec::WorkbookMeta
 pub fn sheetport_spec::WorkbookMeta::clone(&self) -> sheetport_spec::WorkbookMeta
+impl core::default::Default for sheetport_spec::WorkbookMeta
+pub fn sheetport_spec::WorkbookMeta::default() -> sheetport_spec::WorkbookMeta
 impl core::fmt::Debug for sheetport_spec::WorkbookMeta
 pub fn sheetport_spec::WorkbookMeta::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl schemars::JsonSchema for sheetport_spec::WorkbookMeta

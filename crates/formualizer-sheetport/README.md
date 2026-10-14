@@ -6,7 +6,7 @@
 
 **SheetPort runtime — treat any spreadsheet as a typed, deterministic function.**
 
-`formualizer-sheetport` binds SheetPort YAML manifests to workbooks, resolves selectors, enforces schemas, and provides deterministic read/write/evaluate primitives. A workbook plus manifest behaves like a pure function: write typed inputs, recalculate, read typed outputs.
+`formualizer-sheetport` binds SheetPort manifests (built in code or loaded from YAML) to workbooks, resolves selectors, enforces schemas, and provides deterministic read/write/evaluate primitives. A workbook plus manifest behaves like a pure function: write typed inputs, recalculate, read typed outputs.
 
 ## When to use this crate
 
@@ -16,9 +16,64 @@ Use `formualizer-sheetport` when you want to:
 - Give AI agents safe, typed access to spreadsheet logic
 - Enforce constraints and defaults on spreadsheet inputs/outputs
 
+## Example
+
+Through the [`formualizer`](https://crates.io/crates/formualizer) crate, which re-exports this crate as `formualizer::sheetport` and the manifest types as `formualizer::sheetport_spec`:
+
+<!-- example: crates/formualizer/examples/sheetport_quickstart.rs#readme -->
+```rust
+use formualizer::sheetport::{EvalOptions, InputUpdate, PortValue, SheetPortSession};
+use formualizer::sheetport_spec::{Constraints, Manifest, Port, ValueType};
+use formualizer::{LiteralValue, Workbook};
+
+// The model: B4 computes the monthly payment from B1:B3.
+let mut wb = Workbook::new(); // or load one from an .xlsx
+wb.add_sheet("Calculator")?;
+wb.set_formula("Calculator", 4, 2, "=PMT(B2/12, B3, -B1)")?;
+
+let manifest = Manifest::new("loan-calculator")
+    .with_name("Loan calculator")
+    .port(
+        Port::input("principal", "Calculator!B1", ValueType::Number).with_constraints(
+            Constraints {
+                min: Some(0.0),
+                ..Default::default()
+            },
+        ),
+    )
+    .port(Port::input("rate", "Calculator!B2", ValueType::Number))
+    .port(Port::input(
+        "term_months",
+        "Calculator!B3",
+        ValueType::Integer,
+    ))
+    .port(Port::output(
+        "monthly_payment",
+        "Calculator!B4",
+        ValueType::Number,
+    ));
+
+let mut session = SheetPortSession::new(wb, manifest)?;
+session.write_inputs(InputUpdate::from_iter([
+    ("principal", LiteralValue::Number(250_000.0)),
+    ("rate", LiteralValue::Number(0.045)),
+    ("term_months", LiteralValue::Int(360)),
+]))?;
+let outputs = session.evaluate_once(EvalOptions {
+    freeze_volatile: true,
+    ..Default::default()
+})?;
+let payment = outputs
+    .get("monthly_payment")
+    .and_then(PortValue::as_scalar);
+println!("{payment:?}"); // Some(Number(1266.71...))
+```
+
+`Port::input` and `Port::output` take an id, a location (a string is an A1 reference; `Selector::name` and `Selector::layout` select a defined name or the rows under a header) and a schema (a `ValueType` for a single cell, or `Schema::range`, `Schema::record` and `Schema::table`). The same manifest can be loaded from YAML with `Manifest::from_yaml_str` and written with `Manifest::to_yaml`.
+
 ## How it works
 
-1. **Define a manifest** (YAML) that declares typed input and output ports with locations and schemas.
+1. **Define a manifest**, in code or as YAML, that declares typed input and output ports with locations and schemas.
 2. **Bind** the manifest to a workbook — selectors (`a1`, named ranges, header-based layouts) are resolved to workbook coordinates.
 3. **Write inputs** — values are validated against the manifest schema, with defaults and constraints enforced.
 4. **Evaluate** — the workbook is recalculated deterministically.

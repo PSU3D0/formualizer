@@ -88,6 +88,48 @@ pub struct PySheetPortSession {
 #[cfg_attr(not(target_os = "emscripten"), gen_stub_pymethods)]
 #[pymethods]
 impl PySheetPortSession {
+    #[new]
+    pub fn new(
+        py: Python<'_>,
+        workbook: PyWorkbook,
+        manifest: &Bound<'_, PyAny>,
+    ) -> PyResult<Self> {
+        let value = if manifest.hasattr("to_dict")? {
+            manifest.call_method0("to_dict")?
+        } else {
+            py.import("builtins")?.getattr("dict")?.call1((manifest,))?
+        };
+        let json = py
+            .import("json")?
+            .call_method1("dumps", (value,))?
+            .extract::<String>()?;
+        let manifest = serde_json::from_str(&json)
+            .map_err(|err| SheetPortManifestError::new_err(format!("{err}")))?;
+        Self::from_components(py, workbook, manifest)
+    }
+
+    #[staticmethod]
+    pub fn manifest_to_yaml(py: Python<'_>, manifest: &Bound<'_, PyAny>) -> PyResult<String> {
+        let json = py
+            .import("json")?
+            .call_method1("dumps", (manifest,))?
+            .extract::<String>()?;
+        let manifest: Manifest = serde_json::from_str(&json)
+            .map_err(|err| SheetPortManifestError::new_err(format!("{err}")))?;
+        manifest
+            .to_yaml()
+            .map_err(|err| SheetPortManifestError::new_err(format!("{err}")))
+    }
+
+    #[staticmethod]
+    pub fn manifest_from_yaml(py: Python<'_>, yaml: &str) -> PyResult<PyObject> {
+        let manifest = Manifest::from_yaml_str(yaml)
+            .map_err(|err| SheetPortManifestError::new_err(format!("{err}")))?;
+        let value = serde_json::to_value(manifest)
+            .map_err(|err| SheetPortManifestError::new_err(format!("{err}")))?;
+        json_to_py(py, &value)
+    }
+
     #[classmethod]
     #[pyo3(signature = (manifest_path, workbook_path, backend=None))]
     pub fn from_manifest_path(
