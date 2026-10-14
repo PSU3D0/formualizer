@@ -5,6 +5,7 @@ import builtins
 import datetime
 import enum
 import typing
+from .sheetport import Manifest as SheetPortManifest
 __all__ = [
     "ASTNode",
     "Cell",
@@ -1131,6 +1132,11 @@ class Sheet:
 
 @typing.final
 class SheetPortSession:
+    def __init__(self, workbook: Workbook, manifest: typing.Mapping[builtins.str, typing.Any] | SheetPortManifest) -> None: ...
+    @staticmethod
+    def manifest_to_yaml(manifest: typing.Mapping[builtins.str, typing.Any]) -> builtins.str: ...
+    @staticmethod
+    def manifest_from_yaml(yaml: builtins.str) -> builtins.dict[builtins.str, typing.Any]: ...
     r"""
     Bind a SheetPort manifest to a workbook and evaluate it like a typed function.
     
