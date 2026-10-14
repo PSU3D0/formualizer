@@ -2,7 +2,11 @@ pub mod backends;
 pub mod builtins;
 #[cfg(feature = "xlsx-recalc")]
 pub mod cache_recalculate;
+#[cfg(feature = "calamine")]
+mod cached_external_links;
 pub mod calc_pr;
+#[cfg(feature = "calamine")]
+pub use cached_external_links::CachedExternalLinkValues;
 pub mod error;
 #[cfg(any(
     feature = "calamine",
@@ -21,8 +25,12 @@ pub mod transaction;
 mod wasm_runtime_wasmtime;
 pub mod workbook;
 pub mod worksheet;
+#[cfg(feature = "calamine")]
+mod xlsx_cache_options;
 #[cfg(any(feature = "umya3", feature = "xlsx-recalc"))]
 pub(crate) mod xlsx_path;
+#[cfg(feature = "calamine")]
+mod xlsx_xml;
 
 #[cfg(feature = "csv")]
 pub use backends::CsvAdapter;

@@ -370,6 +370,28 @@ def external_link_fixture(formula: str = "[1]Prices!B2*2") -> bytes:
     return out.getvalue()
 
 
+def test_ordinary_loader_reads_cached_external_links(tmp_path):
+    source = external_link_fixture()
+    path = tmp_path / "links.xlsx"
+    path.write_bytes(source)
+    for wb in (fz.load_workbook_bytes(source), fz.load_workbook(str(path))):
+        wb.evaluate_all()
+        assert wb.evaluate_cell("Sheet1", 1, 3) == 42.0
+        assert wb.cached_external_link_indices == [1]
+        with pytest.raises(AttributeError):
+            wb.cached_external_link_indices = []
+        with pytest.raises(Exception, match="read-only"):
+            wb.set_value("[1]Prices", 2, 2, 99)
+        assert "[1]Prices" not in wb.sheet_names
+
+
+def test_ordinary_loader_external_shape_error_keeps_formula():
+    wb = fz.load_workbook_bytes(external_link_fixture("ROW([1]Prices!B2)"))
+    wb.evaluate_all()
+    assert wb.evaluate_cell("Sheet1", 1, 3) == {"type": "Error", "kind": "Ref"}
+    assert wb.get_formula("Sheet1", 1, 3) == "=ROW([1]Prices!B2)"
+
+
 def test_recalculate_xlsx_bytes_reads_cached_external_link_values():
     source = external_link_fixture()
     result = fz.recalculate_xlsx_bytes(source)

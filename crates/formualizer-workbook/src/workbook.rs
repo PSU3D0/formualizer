@@ -8,6 +8,8 @@ use formualizer_eval::engine::RowVisibilitySource;
 use formualizer_eval::engine::eval::EvalPlan;
 use formualizer_eval::engine::named_range::{NameScope, NamedDefinition};
 use parking_lot::RwLock;
+#[cfg(feature = "calamine")]
+use std::collections::HashMap;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -791,8 +793,8 @@ pub struct WBResolver {
     custom_functions: Arc<RwLock<CustomFnRegistry>>,
     custom_function_revision: Arc<std::sync::atomic::AtomicU64>,
     /// Cached external link values served as engine sources.
-    #[cfg(feature = "xlsx-recalc")]
-    external: Option<Arc<crate::cache_recalculate::external_links::ExternalValues>>,
+    #[cfg(feature = "calamine")]
+    external: Option<Arc<crate::cached_external_links::ExternalValues>>,
 }
 
 impl Default for WBResolver {
@@ -800,7 +802,7 @@ impl Default for WBResolver {
         Self {
             custom_functions: Arc::new(RwLock::new(BTreeMap::new())),
             custom_function_revision: Arc::new(std::sync::atomic::AtomicU64::new(0)),
-            #[cfg(feature = "xlsx-recalc")]
+            #[cfg(feature = "calamine")]
             external: None,
         }
     }
@@ -814,7 +816,7 @@ impl WBResolver {
         Self {
             custom_functions,
             custom_function_revision,
-            #[cfg(feature = "xlsx-recalc")]
+            #[cfg(feature = "calamine")]
             external: None,
         }
     }
@@ -822,7 +824,7 @@ impl WBResolver {
     /// A resolver that serves cached external link values.
     #[cfg(feature = "xlsx-recalc")]
     pub(crate) fn with_external_values(
-        values: Arc<crate::cache_recalculate::external_links::ExternalValues>,
+        values: Arc<crate::cached_external_links::ExternalValues>,
     ) -> Self {
         Self {
             external: Some(values),
@@ -879,7 +881,7 @@ impl formualizer_eval::traits::TableResolver for WBResolver {
     }
 }
 impl formualizer_eval::traits::SourceResolver for WBResolver {
-    #[cfg(feature = "xlsx-recalc")]
+    #[cfg(feature = "calamine")]
     fn resolve_source_scalar(&self, name: &str) -> Result<LiteralValue, ExcelError> {
         self.external
             .as_ref()
@@ -891,7 +893,7 @@ impl formualizer_eval::traits::SourceResolver for WBResolver {
             })
     }
 
-    #[cfg(feature = "xlsx-recalc")]
+    #[cfg(feature = "calamine")]
     fn resolve_source_table(
         &self,
         name: &str,
@@ -900,9 +902,8 @@ impl formualizer_eval::traits::SourceResolver for WBResolver {
             .as_ref()
             .and_then(|values| values.range(name))
             .map(|grid| {
-                Box::new(crate::cache_recalculate::external_links::CachedRange(
-                    grid.clone(),
-                )) as Box<dyn formualizer_eval::traits::Table>
+                Box::new(crate::cached_external_links::CachedRange(grid.clone()))
+                    as Box<dyn formualizer_eval::traits::Table>
             })
             .ok_or_else(|| {
                 ExcelError::new(ExcelErrorKind::NImpl)
@@ -964,6 +965,12 @@ pub struct Workbook {
     /// we stash them here so the XLSX write path can re-emit them untouched.
     /// `None` when the workbook was not loaded from an XLSX with a `<calcPr>`.
     calc_settings: Option<crate::traits::CalcSettings>,
+    name_import_diagnostics: Vec<crate::traits::NameImportDiagnostic>,
+    sheet_import_diagnostics: Vec<crate::traits::SheetImportDiagnostic>,
+    #[cfg(feature = "calamine")]
+    cached_external_link_indices: Vec<usize>,
+    #[cfg(feature = "calamine")]
+    refused_external_formulas: HashMap<(String, u32, u32), String>,
 }
 
 trait WorkbookActionOps {
@@ -1184,6 +1191,12 @@ impl Workbook {
             log,
             undo: formualizer_eval::engine::graph::editor::undo_engine::UndoEngine::new(),
             calc_settings: None,
+            name_import_diagnostics: Vec::new(),
+            sheet_import_diagnostics: Vec::new(),
+            #[cfg(feature = "calamine")]
+            cached_external_link_indices: Vec::new(),
+            #[cfg(feature = "calamine")]
+            refused_external_formulas: HashMap::new(),
         }
     }
     pub fn new_with_mode(mode: WorkbookMode) -> Self {
@@ -2135,6 +2148,16 @@ impl Workbook {
         }
     }
 
+    /// Non-calculating sheets omitted during loading, in no guaranteed order.
+    pub fn sheet_import_diagnostics(&self) -> &[crate::traits::SheetImportDiagnostic] {
+        &self.sheet_import_diagnostics
+    }
+
+    /// Non-fatal defined-name omissions recorded during load.
+    pub fn name_import_diagnostics(&self) -> &[crate::traits::NameImportDiagnostic] {
+        &self.name_import_diagnostics
+    }
+
     // Sheets
     /// Calculation settings (`<calcPr>`) parsed from the loaded XLSX, if any.
     /// After construction the live engine config is the source of truth for
@@ -2202,6 +2225,21 @@ impl Workbook {
         col: u32,
         value: LiteralValue,
     ) -> Result<(), IoError> {
+        if sheet
+            .strip_prefix('[')
+            .and_then(|s| s.split_once(']'))
+            .is_some_and(|(index, _)| {
+                !index.is_empty() && index.bytes().all(|c| c.is_ascii_digit())
+            })
+        {
+            return Err(IoError::Engine(
+                ExcelError::new(ExcelErrorKind::Ref)
+                    .with_message("Cached external workbook values are read-only"),
+            ));
+        }
+        #[cfg(feature = "calamine")]
+        self.refused_external_formulas
+            .remove(&(sheet.to_string(), row, col));
         self.ensure_arrow_sheet_capacity(sheet, row as usize, col as usize);
         let staged_before = self
             .enable_changelog
@@ -2259,6 +2297,9 @@ impl Workbook {
         col: u32,
         formula: &str,
     ) -> Result<(), IoError> {
+        #[cfg(feature = "calamine")]
+        self.refused_external_formulas
+            .remove(&(sheet.to_string(), row, col));
         self.ensure_arrow_sheet_capacity(sheet, row as usize, col as usize);
         let staged_before = self
             .enable_changelog
@@ -2394,7 +2435,20 @@ impl Workbook {
     pub fn get_value(&self, sheet: &str, row: u32, col: u32) -> Option<LiteralValue> {
         self.engine.get_cell_value(sheet, row, col)
     }
+    /// Linked workbook indices whose cached values were loaded (never refreshed).
+    #[cfg(feature = "calamine")]
+    pub fn cached_external_link_indices(&self) -> &[usize] {
+        &self.cached_external_link_indices
+    }
+
     pub fn get_formula(&self, sheet: &str, row: u32, col: u32) -> Option<String> {
+        #[cfg(feature = "calamine")]
+        if let Some(text) = self
+            .refused_external_formulas
+            .get(&(sheet.to_string(), row, col))
+        {
+            return Some(format!("={}", text.trim_start_matches('=')));
+        }
         if let Some(s) = self.engine.get_staged_formula_text(sheet, row, col) {
             return Some(s);
         }
@@ -3517,7 +3571,40 @@ impl Workbook {
                 crate::calc_pr::apply_calc_settings_to_cycle(settings, config.eval.cycle);
         }
 
+        #[cfg(feature = "calamine")]
+        let external_links = backend.cached_external_link_values();
+        #[cfg(feature = "calamine")]
+        if external_links
+            .as_ref()
+            .is_some_and(|s| !s.refused_formulas.is_empty())
+        {
+            // Unsupported external formulas need per-cell calculation errors.
+            // Use eager ingestion so compressed/deferred replay cannot reinstall them.
+            config.eval.defer_graph_building = false;
+            config.eval.formula_plane_mode = formualizer_eval::engine::FormulaPlaneMode::Off;
+        }
         let mut wb = Self::new_with_config(config);
+        #[cfg(feature = "calamine")]
+        if let Some(snapshot) = external_links.as_ref() {
+            let resolver = WBResolver {
+                external: Some(snapshot.values.clone()),
+                ..WBResolver::new(
+                    wb.custom_functions.clone(),
+                    wb.custom_function_revision.clone(),
+                )
+            };
+            let limits = wb.engine.workbook_load_limits().clone();
+            wb.engine = formualizer_eval::engine::Engine::new(resolver, wb.engine.config.clone());
+            wb.engine.set_workbook_load_limits(limits);
+            for name in snapshot.values.scalar_names() {
+                wb.engine.define_source_scalar(name, Some(0))?;
+            }
+            for name in snapshot.values.range_names() {
+                wb.engine.define_source_table(name, Some(0))?;
+            }
+            wb.cached_external_link_indices = snapshot.indices.clone();
+            wb.refused_external_formulas = snapshot.refused_formulas.clone();
+        }
         // Retain round-trip-only calcPr attributes (calcMode/fullCalcOnLoad) so
         // the XLSX write path can re-emit them; iterate* are sourced from the
         // live engine config at save time.
@@ -3525,6 +3612,18 @@ impl Workbook {
         backend
             .stream_into_engine(&mut wb.engine)
             .map_err(IoError::from)?;
+        wb.name_import_diagnostics = backend.name_import_diagnostics();
+        wb.sheet_import_diagnostics = backend.sheet_import_diagnostics();
+        #[cfg(feature = "calamine")]
+        for (sheet, row, col) in wb.refused_external_formulas.keys() {
+            wb.engine.clear_staged_formula_text(sheet, *row, *col);
+            wb.engine.set_cell_formula(
+                sheet,
+                *row,
+                *col,
+                formualizer_parse::parser::parse("=#REF!").expect("error literal"),
+            )?;
+        }
         let stats = backend.load_stats();
         Ok((wb, stats))
     }

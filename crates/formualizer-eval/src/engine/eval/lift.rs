@@ -456,19 +456,9 @@ where
         let raw = asheet
             .map(|a| a.get_cell_value(r0, c0))
             .filter(|v| !matches!(v, LiteralValue::Empty));
-        let value = match raw {
-            None => LiteralValue::Empty,
-            Some(raw) => {
-                let class = format.and_then(|id| self.format_registry.class(id));
-                Self::normalize_public_cell_read(Self::materialize_temporal_egress(
-                    raw,
-                    class,
-                    self.config.temporal_egress,
-                    self.config.date_system,
-                ))
-                .unwrap_or(LiteralValue::Empty)
-            }
-        };
+        // Formula evaluation consumes numeric serials plus a separate format
+        // annotation. Native temporal materialization belongs only at public egress.
+        let value = raw.unwrap_or(LiteralValue::Empty);
         (value, format)
     }
 

@@ -12,7 +12,7 @@ pub(super) mod reference;
 /// Inclusive source rectangle in one-based worksheet coordinates (row 1 is
 /// the first row, column 1 is `A`), matching `Cell::row`/`Cell::col`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct SourceRect {
+pub(crate) struct SourceRect {
     pub first_row: u32,
     pub first_col: u32,
     pub last_row: u32,
@@ -49,7 +49,7 @@ impl SourceRect {
 }
 
 #[derive(Debug)]
-pub(super) struct ValueNode {
+pub(crate) struct ValueNode {
     pub span: Range<usize>,
     pub open_end: usize,
     pub close_start: usize,
@@ -58,7 +58,7 @@ pub(super) struct ValueNode {
     pub text: String,
 }
 #[derive(Debug)]
-pub(super) struct Cell {
+pub(crate) struct Cell {
     pub row: u32,
     pub col: u32,
     pub address: String,
@@ -252,25 +252,7 @@ fn scalar_cache_readable(kind: Option<&str>, value: Option<CacheText<'_>>, bytes
 }
 /// `[A-Z]{1,3}[1-9][0-9]{0,6}` within the grid, which
 /// `parse_a1_1based` reads as the same relative row and column.
-pub(super) fn plain_coord(value: &str) -> Option<(u32, u32)> {
-    let bytes = value.as_bytes();
-    let letters = bytes.iter().take_while(|b| b.is_ascii_uppercase()).count();
-    let digits = &bytes[letters..];
-    if !(1..=3).contains(&letters)
-        || !(1..=7).contains(&digits.len())
-        || digits[0] == b'0'
-        || !digits.iter().all(u8::is_ascii_digit)
-    {
-        return None;
-    }
-    let col = bytes[..letters]
-        .iter()
-        .fold(0u32, |n, b| n * 26 + u32::from(b - b'A') + 1);
-    let row = digits
-        .iter()
-        .fold(0u32, |n, b| n * 10 + u32::from(b - b'0'));
-    (row <= 1_048_576 && col <= 16_384).then_some((row, col))
-}
+pub(super) use crate::xlsx_xml::plain_coord;
 fn coord(value: &str) -> Result<(u32, u32), IoError> {
     if let Some(coord) = plain_coord(value) {
         return Ok(coord);

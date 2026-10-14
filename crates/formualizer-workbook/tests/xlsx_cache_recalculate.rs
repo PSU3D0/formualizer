@@ -554,7 +554,7 @@ fn malformed_document_range_keeps_legacy_phantom_sheet_import() {
 }
 
 #[test]
-fn generic_calamine_load_keeps_unused_cycle_refusal() {
+fn generic_calamine_load_omits_unused_cycle() {
     use formualizer_eval::engine::ingest::EngineLoadStream;
     use formualizer_workbook::SpreadsheetReader;
     let p = with_names(
@@ -566,11 +566,13 @@ fn generic_calamine_load_keeps_unused_cycle_refusal() {
         formualizer_workbook::workbook::WBResolver::default(),
         Default::default(),
     );
-    let error = adapter.stream_into_engine(&mut engine).unwrap_err();
-    assert!(
-        error.to_string().contains("cyclic calculation name"),
-        "{error}"
+    adapter.stream_into_engine(&mut engine).unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(formualizer_common::LiteralValue::Number(2.0))
     );
+    assert_eq!(adapter.name_import_diagnostics().len(), 2);
 }
 
 #[test]
