@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
-from typing import Any
+from typing import Any, cast
 
 from . import SheetPortSession
 
@@ -68,7 +68,7 @@ class Manifest(_Object):
     def to_dict(self) -> dict[str, Any]:
         # Let the canonical serde model supply optional defaults rather than
         # duplicating them here. This also makes YAML round trips exactly equal.
-        return SheetPortSession.manifest_from_yaml(self.to_yaml())
+        return cast(dict[str, Any], SheetPortSession.manifest_from_yaml(self.to_yaml()))
 
     def to_yaml(self) -> str:
         return SheetPortSession.manifest_to_yaml(super().to_dict())
