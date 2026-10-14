@@ -8,6 +8,7 @@
 //! validation helpers for authoring manifests that treat spreadsheets as pure
 //! input/output functions.
 
+mod builders;
 mod manifest;
 mod validation;
 
