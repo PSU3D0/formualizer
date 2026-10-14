@@ -18,6 +18,17 @@ try {
   const { defineManifest } = await import(pathToFileURL(path.join(tmp, 'manifest.js')));
   loanExample(wasm, defineManifest);
   tableExample(wasm, defineManifest);
+  // Run the README quickstart as written, resolving `formualizer` to the Node build.
+  const shim = path.join(tmp, 'formualizer-shim.mjs');
+  fs.writeFileSync(shim, `export default async function init() {}\nexport * from ${JSON.stringify(pathToFileURL(path.join(pkg, 'formualizer_wasm.js')).href)};\nexport { defineManifest } from ${JSON.stringify(pathToFileURL(path.join(tmp, 'manifest.js')).href)};\n`);
+  const quickstart = path.join(root, 'examples/sheetport-quickstart.mjs');
+  const rewritten = fs.readFileSync(quickstart, 'utf8')
+    .replace("from 'formualizer';", `from ${JSON.stringify(pathToFileURL(shim).href)};`)
+    .replace("new URL('../../../examples/", `new URL(${JSON.stringify(pathToFileURL(path.resolve(root, '../../examples')).href + '/')} + '`);
+  assert.notEqual(rewritten, fs.readFileSync(quickstart, 'utf8'));
+  const runnable = path.join(tmp, 'sheetport-quickstart.mjs');
+  fs.writeFileSync(runnable, rewritten);
+  await import(pathToFileURL(runnable).href);
   const fixtures = path.resolve(root, '../../crates/sheetport-spec/tests/fixtures');
   const literals = [];
   for (const file of fs.readdirSync(fixtures).filter(f => f.endsWith('.yaml'))) {
