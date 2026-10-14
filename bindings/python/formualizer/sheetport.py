@@ -10,12 +10,18 @@ from . import SheetPortSession
 
 
 def _dict(value: Any) -> Any:
-    return value.to_dict() if hasattr(value, "to_dict") else deepcopy(value)
+    if hasattr(value, "to_dict"):
+        return value.to_dict()
+    if isinstance(value, Mapping):
+        return {key: _dict(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_dict(item) for item in value]
+    return deepcopy(value)
 
 
 class _Object:
     def __init__(self, value: Mapping[str, Any]) -> None:
-        self._value = deepcopy(dict(value))
+        self._value: dict[str, Any] = _dict(value)
 
     def to_dict(self) -> dict[str, Any]:
         return deepcopy(self._value)
@@ -59,8 +65,13 @@ class Manifest(_Object):
     def from_yaml(cls, yaml: str) -> Manifest:
         return cls.from_dict(SheetPortSession.manifest_from_yaml(yaml))
 
+    def to_dict(self) -> dict[str, Any]:
+        # Let the canonical serde model supply optional defaults rather than
+        # duplicating them here. This also makes YAML round trips exactly equal.
+        return SheetPortSession.manifest_from_yaml(self.to_yaml())
+
     def to_yaml(self) -> str:
-        return SheetPortSession.manifest_to_yaml(self.to_dict())
+        return SheetPortSession.manifest_to_yaml(super().to_dict())
 
 
 class _Port(_Object):
