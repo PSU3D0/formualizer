@@ -19,6 +19,12 @@ All notable changes to Formualizer will be documented in this file.
   - Defined names that cannot be evaluated or form a cycle no longer fail the load. Each is replaced by a `#NAME?` error under its own scope (so a local name never falls back to a global one of the same spelling) and listed in `name_import_diagnostics`; `get_named_ranges` leaves them out.
   - New public items: `SpreadsheetReader::cached_external_link_values`, `sheet_import_diagnostics` and `name_import_diagnostics` (provided methods; existing implementations are unaffected), the opaque `CachedExternalLinkValues`, and the `#[non_exhaustive]` `SheetImportDiagnostic` and `NameImportDiagnostic` with `new` constructors.
 
+- **SheetPort manifests can be built in code**, in every language, as well as loaded from YAML. The helpers fill in the spec version, port shapes and `{ a1: ... }` locations and produce the same structure the YAML describes:
+  - Python: `formualizer.sheetport` (`Manifest`, `Input`, `Output`, and location and schema helpers) and a `SheetPortSession(workbook, manifest)` constructor that also accepts a plain `dict`. `Manifest.to_yaml()` / `from_yaml()` convert between forms.
+  - JavaScript: `defineManifest(...)`, `SheetPortSession.fromManifest(manifest, wb)`, and `FioManifest` and related TypeScript types for the canonical structure.
+  - Rust: `Manifest::new(id).port(Port::input(id, location, schema))` with selector and schema constructors, `Manifest::from_json_value`, `Default` on `Constraints`, `Units` and `WorkbookMeta`, `From<LiteralValue> for PortValue`, and `InputUpdate` built from `(port, value)` pairs.
+- The SheetPort examples in the READMEs and the docs quickstart are now complete programs, run by the test suites and checked against the documentation (`scripts/check-doc-examples.py`). The previous quickstart called functions that do not exist (`Workbook::from_path`, `InputUpdate::set_scalar`) and passed a workbook where Python's `from_manifest_path` takes a path; the Rust and Python API maps had wrong signatures.
+
 ### Performance
 
 - **`formualizer recalc` is about a third faster.** Over a 275-workbook corpus of real Enron spreadsheets, total recalculation time fell from 38.8 s to 25.4 s, and the largest workbooks (65,000 formulas) from about 1.06 s to 0.67 s with lower peak memory. Workbooks saved by openpyxl gain about the same. Outputs are byte-identical to 0.11.1.
