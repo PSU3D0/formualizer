@@ -22,6 +22,19 @@ class DocExamplesTest(unittest.TestCase):
                 self.assertTrue(module.main())
                 readme.write_text("<!-- example: missing.py -->\n```python\npass\n```\n")
                 self.assertTrue(module.main())
+                readme.write_text("<!-- example: example.py#demo -->\n\nNo fence follows.\n")
+                self.assertTrue(module.main())
+                (root / "nested.py").write_text("def f():\n    # region body\n    x = 1\n    # endregion\n")
+                readme.write_text("<!-- example: nested.py#body -->\n```python\nx = 1\n```\n")
+                self.assertFalse(module.main())
+                readme.unlink()
+                docs = root / "docs-site/content/docs"
+                docs.mkdir(parents=True)
+                page = docs / "page.mdx"
+                page.write_text("{/* example: example.py#demo */}\n```python\nprint('hello')\n```\n")
+                self.assertFalse(module.main())
+                page.write_text("{/* example: example.py#demo */}\n```python\nprint('wrong')\n```\n")
+                self.assertTrue(module.main())
 
 
 if __name__ == "__main__":

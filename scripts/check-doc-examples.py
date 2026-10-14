@@ -3,6 +3,7 @@
 from pathlib import Path
 import re
 import sys
+import textwrap
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -14,7 +15,8 @@ def source(reference):
         lines = text.splitlines(keepends=True)
         start = next(i for i, line in enumerate(lines) if re.search(r"\bregion\s+" + re.escape(region) + r"\s*$", line))
         end = next(i for i in range(start + 1, len(lines)) if re.search(r"\bendregion\b", lines[i]))
-        text = "".join(lines[start + 1:end])
+        # Regions inside a function body are shown dedented.
+        text = textwrap.dedent("".join(lines[start + 1:end]))
     return text.rstrip("\n")
 
 
@@ -24,16 +26,23 @@ def main():
         paths.extend(ROOT.glob(pattern))
     errors = []
     count = 0
-    pattern = re.compile(r"<!--\s*example:\s*(\S+)\s*-->\s*```[^\n]*\n(.*?)\n```", re.S)
-    for path in paths:
-        for match in pattern.finditer(path.read_text()):
+    # Markdown uses `<!-- example: ref -->`; MDX, which rejects HTML comments, uses `{/* example: ref */}`.
+    marker = r"(?:<!--\s*example:\s*(\S+)\s*-->|\{/\*\s*example:\s*(\S+)\s*\*/\})"
+    pattern = re.compile(marker + r"[ \t]*\n[ \t]*\n?```[^\n]*\n(.*?)\n```", re.S)
+    for path in (p for p in paths if p.is_file()):
+        text = path.read_text()
+        markers = len(re.findall(marker, text))
+        matches = list(pattern.finditer(text))
+        if markers != len(matches):
+            errors.append(f"{path.relative_to(ROOT)}: example marker not followed by a code fence")
+        for match in matches:
+            ref, body = match[1] or match[2], match[3]
             count += 1
             try:
-                expected = source(match[1])
-                if match[2] != expected:
-                    errors.append(f"{path.relative_to(ROOT)}: example {match[1]} differs")
+                if body != source(ref):
+                    errors.append(f"{path.relative_to(ROOT)}: example {ref} differs")
             except (OSError, StopIteration) as exc:
-                errors.append(f"{path.relative_to(ROOT)}: {match[1]}: {exc}")
+                errors.append(f"{path.relative_to(ROOT)}: {ref}: {exc}")
     print(f"Checked {count} documentation examples")
     for error in errors:
         print(error, file=sys.stderr)
