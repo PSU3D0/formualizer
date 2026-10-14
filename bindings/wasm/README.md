@@ -136,6 +136,39 @@ limits remain in effect. Fresh unmarked 1x1 results have no spill identity
 (`A1#` returns `#REF!`). No Excel-equivalence claim is made; no Excel execution
 oracle was used. See [the precise eligibility contract](https://github.com/psu3d0/formualizer/blob/main/docs/cache-only-xlsx.md).
 
+### SheetPort: a workbook as a typed function
+
+A manifest names the input and output cells with their types and constraints; the session validates inputs, recalculates and returns typed outputs. `defineManifest` fills in the boilerplate (spec version, shapes, `{ a1: ... }` locations) and returns the canonical manifest object, typed as `FioManifest`; `fromManifest` also accepts a hand-written canonical object.
+
+<!-- example: bindings/wasm/examples/sheetport-quickstart.mjs#readme -->
+```typescript
+import init, { Workbook, SheetPortSession, defineManifest } from 'formualizer';
+await init();
+
+// The model: B4 computes the monthly payment from B1:B3.
+const wb = new Workbook();
+wb.addSheet('Calculator');
+wb.setFormula('Calculator', 4, 2, '=PMT(B2/12, B3, -B1)');
+
+const manifest = defineManifest({
+  id: 'loan-calculator',
+  name: 'Loan calculator',
+  ports: [
+    { id: 'principal', dir: 'in', location: 'Calculator!B1', type: 'number', constraints: { min: 0 } },
+    { id: 'rate', dir: 'in', location: 'Calculator!B2', type: 'number' },
+    { id: 'term_months', dir: 'in', location: 'Calculator!B3', type: 'integer' },
+    { id: 'monthly_payment', dir: 'out', location: 'Calculator!B4', type: 'number' },
+  ],
+});
+
+const session = SheetPortSession.fromManifest(manifest, wb);
+session.writeInputs({ principal: 250000, rate: 0.045, term_months: 360 });
+const outputs = session.evaluateOnce({ freezeVolatile: true });
+console.log(outputs.monthly_payment); // 1266.71...
+```
+
+A rejected update throws an error whose `violations` name each failing port, and writes nothing. A port's `location` can also be a defined name (`{ name: 'Rate' }`) or the rows under a header (`{ layout: ... }`), and its `schema` a range, record or table instead of `type`. To ship the manifest as a file, load it with `SheetPortSession.fromManifestYaml(yaml, wb)`. See the [manifest format](https://www.formualizer.dev/docs/sheetport/manifest-format).
+
 ### Parse formulas
 
 ```typescript
@@ -279,7 +312,8 @@ parse(formula: string, dialect?: FormulaDialect): Promise<ASTNodeData>
 
 | Method | Description |
 |---|---|
-| `static fromManifestYaml(yaml, workbook)` | Create session from YAML manifest |
+| `static fromManifest(manifest, workbook)` | Create a session from a manifest object (see `defineManifest`) |
+| `static fromManifestYaml(yaml, workbook)` | Create a session from a YAML manifest |
 | `manifest()` | Get the parsed manifest |
 | `describePorts()` | List all port definitions |
 | `readInputs()` | Read current input values |

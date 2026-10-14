@@ -1,15 +1,19 @@
 ---
 title: Manifest Format (FIO Spec)
-description: Complete reference for the SheetPort YAML manifest format.
+description: Complete reference for the SheetPort manifest format, in YAML or built in code.
 ---
 
-The SheetPort manifest (FIO) is a YAML-based specification that defines the I/O interface for a workbook. It allows you to map structured data to spreadsheet cells and ranges with strong typing and validation.
+The SheetPort manifest (FIO) defines the I/O interface of a workbook: which cells and ranges are inputs and outputs, their types, and their constraints. This page shows it as YAML; the same structure can be built in code.
+
+## Building manifests in code
+
+Python (`formualizer.sheetport`), JavaScript (`defineManifest`) and Rust (`Manifest::new`, `Port::input`) build the structure on this page directly. The helpers fill in `spec`, `spec_version`, `manifest.name` (from the id), each port's `shape` (from its schema), `{ a1: ... }` around a plain cell address, and `{ type: ... }` for a single cell. Everything else uses the field names below: `constraints={"min": 0}` in Python, `constraints: { min: 0 }` in JavaScript, `Constraints { min: Some(0.0), .. }` in Rust. A plain Python `dict` or JavaScript object with the full structure is also accepted, and `to_yaml()` (Python and Rust) writes a code-built manifest out. The [quickstart](/docs/sheetport/quickstart) has the same manifest in every form.
 
 ## Top-Level Fields
 
 - `spec`: Must be set to `fio`.
 - `spec_version`: Currently `0.3.0`.
-- `capabilities`: An array of required engine features (e.g., `core-v0`).
+- `capabilities`: Optional. `profile` is `core-v0` (the default: `a1`, `name` and `layout` locations) or `full-v0` (reserved for `struct_ref` and Excel `table` locations); `features` lists optional features.
 - `manifest`: Metadata about the manifest itself.
   - `id`: A unique identifier for the manifest.
   - `name`: Human-readable name.

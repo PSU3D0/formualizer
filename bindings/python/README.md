@@ -277,7 +277,7 @@ print(collect_function_names(ast))  # ['SUMIFS']
 | **Batch operations** | `set_values_batch` / `set_formulas_batch` for efficient bulk updates |
 | **Undo / redo** | Optional changelog with automatic action grouping — single edits are individually undoable |
 | **Evaluation planning** | Inspect the dependency graph and evaluation schedule before computing |
-| **SheetPort** | Treat spreadsheets as typed functions with YAML manifests, schema validation, and batch scenarios |
+| **SheetPort** | Treat spreadsheets as typed functions: manifests built in code or YAML, schema validation, and batch scenarios |
 | **Deterministic mode** | Inject clock, timezone, and RNG seed for reproducible evaluation |
 | **Visitor utilities** | `walk_ast`, `collect_references`, `collect_function_names` for ergonomic tree traversal |
 | **Rich errors** | Typed `TokenizerError` / `ParserError` / `ExcelEvaluationError` with position info |
@@ -393,44 +393,88 @@ wb.get_eval_plan([("Sheet1", 1, 2)], build_graph_if_needed=False)
 
 ## SheetPort: spreadsheets as typed APIs
 
-Define a YAML manifest to treat a spreadsheet as a typed function with validated inputs/outputs:
+SheetPort turns a workbook into a function. A manifest names its input and output cells with their types and constraints; a session writes validated inputs, recalculates and returns typed outputs. Build the manifest with `formualizer.sheetport`, pass a plain `dict` with the same structure, or load it from YAML.
 
+<!-- example: bindings/python/examples/sheetport_quickstart.py#readme -->
 ```python
-from formualizer import SheetPortSession, Workbook
+import formualizer as fz
+from formualizer.sheetport import Input, Manifest, Output
 
-manifest_yaml = """
-spec: fio
-spec_version: "0.3.0"
-manifest:
-  id: pricing-model
-  name: Pricing Model
-  workbook:
-    uri: memory://pricing.xlsx
-    locale: en-US
-    date_system: 1900
-ports:
-  - id: base_price
-    dir: in
-    shape: scalar
-    location: { a1: Inputs!A1 }
-    schema: { type: number }
-  - id: final_price
-    dir: out
-    shape: scalar
-    location: { a1: Outputs!A1 }
-    schema: { type: number }
-"""
+# The model: B4 computes the monthly payment from B1:B3.
+wb = fz.Workbook()  # or fz.load_workbook("loan.xlsx")
+wb.add_sheet("Calculator")
+wb.set_formula("Calculator", 4, 2, "=PMT(B2/12, B3, -B1)")
 
-wb = Workbook()
-wb.add_sheet("Inputs")
-wb.add_sheet("Outputs")
-wb.set_formula("Outputs", 1, 1, "=Inputs!A1*1.2")
+manifest = Manifest(
+    "loan-calculator",
+    name="Loan calculator",
+    ports=[
+        Input("principal", "Calculator!B1", type="number", constraints={"min": 0}),
+        Input("rate", "Calculator!B2", type="number"),
+        Input("term_months", "Calculator!B3", type="integer"),
+        Output("monthly_payment", "Calculator!B4", type="number"),
+    ],
+)
 
-session = SheetPortSession.from_manifest_yaml(manifest_yaml, wb)
-session.write_inputs({"base_price": 100.0})
-result = session.evaluate_once(freeze_volatile=True)
-print(result["final_price"])  # 120.0
+session = fz.SheetPortSession(wb, manifest)
+session.write_inputs({"principal": 250_000, "rate": 0.045, "term_months": 360})
+outputs = session.evaluate_once(freeze_volatile=True)
+print(outputs["monthly_payment"])  # 1266.71...
 ```
+
+A rejected update raises `SheetPortConstraintError` and writes nothing. `Input` and `Output` take the port id and a location: a string is an A1 reference, `name("Rate")` selects a defined name and `layout(...)` the rows under a header. `type=` declares a single cell; `schema=range_of(...)`, `record_of(...)` or `table_of(...)` declares a larger shape.
+
+A table port reads and writes a list of rows:
+
+<!-- example: bindings/python/examples/sheetport_orders.py#readme -->
+```python
+import formualizer as fz
+from formualizer.sheetport import Input, Manifest, Output, column, layout, table_of
+
+wb = fz.Workbook()
+wb.add_sheet("Orders")
+for col, header in enumerate(["sku", "quantity", "unit_price"], start=1):
+    wb.set_value("Orders", 1, col, header)
+wb.set_formula("Orders", 1, 6, "=SUMPRODUCT(B2:B1000, C2:C1000)")  # F1: order total
+
+manifest = Manifest(
+    "order-total",
+    ports=[
+        Input(
+            "lines",
+            # Rows below the header in A1, until the first blank row.
+            layout(
+                sheet="Orders",
+                header_row=1,
+                anchor_col="A",
+                terminate="first_blank_row",
+            ),
+            schema=table_of(
+                columns=[
+                    column("sku", "string"),
+                    column("quantity", "integer"),
+                    column("unit_price", "number"),
+                ],
+                keys=["sku"],
+            ),
+        ),
+        Output("total", "Orders!F1", type="number"),
+    ],
+)
+
+session = fz.SheetPortSession(wb, manifest)
+session.write_inputs(
+    {
+        "lines": [
+            {"sku": "A-100", "quantity": 3, "unit_price": 12.5},
+            {"sku": "B-200", "quantity": 1, "unit_price": 40.0},
+        ]
+    }
+)
+print(session.evaluate_once()["total"])  # 77.5
+```
+
+To ship the manifest as a file instead, write it once with `manifest.to_yaml()` and load it with `SheetPortSession.from_manifest_yaml(text, wb)`, or `SheetPortSession.from_manifest_path(manifest_path, workbook_path)` to open both files. The [manifest format](https://www.formualizer.dev/docs/sheetport/manifest-format) documents every field.
 
 ---
 
@@ -456,7 +500,8 @@ recalculate_xlsx_file(path: str, output: str | None = None, *, error_location_li
 - **`Tokenizer`** — iterable token sequence with `.render()` and `.tokens`.
 - **`ASTNode`** — `.pretty()`, `.to_formula()`, `.fingerprint()`, `.children()`, `.walk_refs()`.
 - **`CellRef` / `RangeRef` / `TableRef` / `NamedRangeRef`** — typed references.
-- **`SheetPortSession`** — bind manifests to workbooks, read/write typed ports, evaluate.
+- **`SheetPortSession`** — `SheetPortSession(workbook, manifest)` binds a manifest to a workbook; read/write typed ports, evaluate. Also `from_manifest_yaml` and `from_manifest_path`.
+- **`formualizer.sheetport`** — `Manifest`, `Input`, `Output` and location/schema helpers for building manifests in code.
 - **`EvaluationConfig`** — tune parallel evaluation, warmup, range limits, date systems.
 
 ### Visitor helpers (`formualizer.visitor`)

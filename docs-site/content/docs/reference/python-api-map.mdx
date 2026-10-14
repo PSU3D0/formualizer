@@ -40,14 +40,17 @@ The `Workbook` class is the primary entry point for managing spreadsheet state a
 
 `SheetPortSession` manages high-level data exchange using a manifest to define input/output mappings.
 
-- `from_manifest_path(path: str, wb: Workbook)`: Create a session from a manifest file.
-- `from_manifest_yaml(yaml: str, wb: Workbook)`: Create a session from a YAML string.
+- `SheetPortSession(workbook: Workbook, manifest)`: Create a session from a `formualizer.sheetport.Manifest` or a canonical manifest `dict`.
+- `from_manifest_yaml(yaml: str, workbook: Workbook)`: Create a session from a YAML string.
+- `from_manifest_path(manifest_path: str, workbook_path: str, backend: str | None = None)`: Open a manifest file and a workbook file.
 - `read_inputs() -> dict`: Read current values of all defined input ports.
 - `read_outputs() -> dict`: Read current values of all defined output ports.
 - `write_inputs(data: dict)`: Update workbook values via input ports.
-- `evaluate_once(options: dict = None)`: Perform a single evaluation pass.
-- `manifest() -> dict`: Get the parsed manifest structure.
+- `evaluate_once(*, freeze_volatile=False, rng_seed=None, deterministic_timestamp_utc=None, deterministic_timezone=None) -> dict`: Recalculate and return the output values.
+- `manifest -> dict`: The bound manifest (property).
 - `describe_ports() -> dict`: Get metadata about defined ports.
+
+`formualizer.sheetport` builds manifests in code: `Manifest(id, *, ports, name=None, ...)`, `Input` / `Output(id, location, *, type=None, schema=None, ...)`, locations `name()` and `layout()`, schemas `range_of()`, `record_of()` and `table_of()` with `column()`. `Manifest.to_dict()`, `to_yaml()`, `from_dict()` and `from_yaml()` convert between forms.
 
 ## Parser and Tokenizer
 

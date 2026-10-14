@@ -5,7 +5,7 @@ description: Treat spreadsheets as deterministic, typed functions.
 
 SheetPort is the I/O layer of Formualizer. It allows you to treat any spreadsheet (Excel, CSV, or internal representation) as a typed function by mapping its cells and ranges to a structured manifest.
 
-By defining inputs and outputs in a YAML manifest, you can decouple your application logic from the workbook layout. This enables:
+By declaring inputs and outputs in a manifest, built in code or loaded from YAML, you can decouple your application logic from the workbook layout. This enables:
 
 - **Type Safety**: Enforce schemas and constraints on spreadsheet I/O.
 - **Portability**: Run the same logic against different workbook versions or formats.
@@ -15,6 +15,6 @@ By defining inputs and outputs in a YAML manifest, you can decouple your applica
 ## Section Contents
 
 - [What Is SheetPort?](/docs/sheetport/what-is-sheetport): Core concepts, the evaluation cycle, and use cases.
-- [Manifest Format (FIO Spec)](/docs/sheetport/manifest-format): A complete reference for the YAML manifest format.
-- [Quickstart](/docs/sheetport/quickstart): Get up and running with SheetPort in Rust, Python, and JS/WASM.
+- [Manifest Format (FIO Spec)](/docs/sheetport/manifest-format): A complete reference for the manifest format, in YAML and in code.
+- [Quickstart](/docs/sheetport/quickstart): Build or load a manifest and run it in Python, JavaScript and Rust.
 - [Sessions and Evaluation](/docs/sheetport/sessions-and-evaluation): Managing state, evaluation options, and batch execution.

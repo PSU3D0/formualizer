@@ -67,7 +67,9 @@ Extend the engine with your own logic:
 
 `SheetPortSession` provides a high-level API for interacting with workbooks via defined inputs and outputs (ports).
 
+- `fromManifest(manifest: FioManifest, workbook: Workbook)`: Create a session from a manifest object.
 - `fromManifestYaml(yaml: string, workbook: Workbook)`: Create a session from a YAML manifest.
+- `defineManifest(input)`: Build a `FioManifest` from the short port form (`location` as an A1 string, `type` for a single cell); the `Fio*` types describe the canonical manifest.
 - `readInputs()`: Get current values for all input ports.
 - `readOutputs()`: Get current values for all output ports.
 - `writeInputs(update: object)`: Update input port values.

@@ -8,16 +8,16 @@ The `SheetPortSession` is the primary interface for interacting with a workbook 
 ## Session Lifecycle
 
 ### Creation
-A session is created by binding a `Manifest` to a `Workbook`. During creation, the session validates that the workbook satisfies the requirements of the manifest (e.g., sheets and cells referenced in the manifest exist).
+A session is created by binding a manifest to a workbook. The manifest can be built in code or loaded from YAML; see the [quickstart](/docs/sheetport/quickstart). During creation, the session validates the manifest and checks that the workbook satisfies it (for example, that the sheets and cells it references exist).
 
 ### State Management
-A session is stateful. When you write inputs, those values are buffered and then committed to the underlying workbook before evaluation. You can reuse the same session object for multiple evaluations, which is more efficient than recreating it for every run.
+A session is stateful: inputs you write stay in the workbook until you overwrite them. Reuse the same session for many evaluations; it is cheaper than creating a new one for every run.
 
 ## Reading and Writing
 
 ### Writing Inputs
 Use `write_inputs()` to provide new data for input ports.
-- **Validation**: Values are validated against the manifest's schema and constraints (e.g., `min`, `max`, `pattern`) before being written.
+- **Validation**: The whole update is validated against the manifest's schema and constraints (for example `min`, `max`, `pattern`) before anything is written. If any port fails, nothing is written.
 - **Partial Updates**: You can update a subset of inputs; values from previous writes persist until overwritten.
 
 ### Reading Current State
@@ -43,11 +43,12 @@ For high-throughput scenarios, the `BatchExecutor` (available in some bindings) 
 
 SheetPort uses structured error types to help you diagnose issues:
 
-- **`InvalidManifest`**: The YAML manifest is syntactically incorrect or violates the FIO spec.
-- **`BindingError`**: The manifest references sheets, cells, or ranges that do not exist in the provided workbook.
-- **`ConstraintViolation`**: Data provided in `write_inputs()` failed a schema constraint (e.g., out of range, regex mismatch).
-- **`InvariantViolation`**: An internal consistency check failed during evaluation.
-- **`EvaluationError`**: A formula evaluation resulted in a spreadsheet error (e.g., `#DIV/0!`, `#REF!`) that was not handled.
+- **`InvalidManifest`**: The manifest violates the FIO spec; each issue has a path such as `ports[0].location`. Python raises `SheetPortManifestError`; in JavaScript the error has an `issues` list.
+- **`MissingSheet`**, **`InvalidReference`**, **`UnsupportedSelector`**: The manifest does not fit the workbook, for example a sheet it names does not exist.
+- **`ConstraintViolation`**: An update passed to `write_inputs()` failed a schema constraint. Python raises `SheetPortConstraintError`; in JavaScript the error has a `violations` list naming each port.
+- **`LayoutExhausted`**, **`SelectorSafety`**: A header layout could not be resolved safely, for example no terminating blank row or marker was found within the scan limit.
+- **`InvariantViolation`**: An update names an unknown port or an output port, or a value or location does not fit its port (for example a scalar port whose defined name covers several cells).
+- **`Engine`**, **`Workbook`**: The calculation engine or the workbook reported an error.
 
 ## Related Links
 

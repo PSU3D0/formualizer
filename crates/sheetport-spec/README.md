@@ -47,6 +47,8 @@ let manifest: Manifest = Manifest::from_yaml_str(&yaml)?;
 manifest.validate()?;
 ```
 
+Manifests can also be built in code: `Manifest::new("loan-calculator").port(Port::input("principal", "Calculator!B1", ValueType::Number))` fills in `spec`, `spec_version`, the name and each port's shape, and produces the same `Manifest` as the YAML. The [`formualizer-sheetport` README](https://crates.io/crates/formualizer-sheetport) has a complete example.
+
 CLI (from workspace root):
 
 ```bash
