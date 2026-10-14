@@ -1545,14 +1545,20 @@ class Workbook:
     ```
     """
     @property
-    def sheet_import_diagnostics(self) -> builtins.list[builtins.dict[builtins.str, typing.Any]]:
-        """Non-calculating sheets omitted by the loader."""
+    def sheet_import_diagnostics(self) -> builtins.list[dict]:
+        r"""
+        Non-calculating sheets omitted by the loader.
+        """
     @property
-    def name_import_diagnostics(self) -> builtins.list[builtins.dict[builtins.str, typing.Any]]:
-        """Non-fatal defined-name omissions recorded during load."""
+    def name_import_diagnostics(self) -> builtins.list[dict]:
+        r"""
+        Non-fatal defined-name import diagnostics from the loader.
+        """
     @property
     def cached_external_link_indices(self) -> builtins.list[builtins.int]:
-        """Linked workbook indices whose cached values were loaded, never refreshed."""
+        r"""
+        Linked workbook indices whose cached values were loaded, never refreshed.
+        """
     @property
     def sheet_names(self) -> builtins.list[builtins.str]: ...
     def inspect_cell(self, address: builtins.str, *, include_values: builtins.bool = True) -> CellSnapshotReport:
