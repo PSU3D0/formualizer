@@ -25,6 +25,9 @@
 //! collinearity the documentation describes without forming `X'X`.
 
 use super::scalar_like_value;
+use crate::engine::eval::exact::{
+    CompensatedSum, compensated_dot, compensated_mean, compensated_sum,
+};
 use crate::traits::{ArgumentHandle, CalcValue};
 use formualizer_common::{ExcelError, LiteralValue};
 
@@ -218,7 +221,7 @@ fn fit(y: &[f64], vars: &[Vec<f64>], use_const: bool) -> Fit {
     let n = y.len();
     let k = vars.len();
     let nf = n as f64;
-    let mean = |v: &[f64]| v.iter().sum::<f64>() / nf;
+    let mean = |v: &[f64]| compensated_mean(v);
     let y_mean = if use_const { mean(y) } else { 0.0 };
     let x_means: Vec<f64> = vars
         .iter()
@@ -240,13 +243,14 @@ fn fit(y: &[f64], vars: &[Vec<f64>], use_const: bool) -> Fit {
     let mut r_cols: Vec<Vec<f64>> = Vec::new(); // R column for each kept variable
     let mut kept_vars: Vec<usize> = Vec::new();
     for j in 0..k {
-        let raw_norm = vars[j].iter().map(|x| x * x).sum::<f64>().sqrt();
+        let raw_norm = compensated_dot(vars[j].iter().copied(), vars[j].iter().copied()).sqrt();
         let col = &mut a[j];
         for (start, v, beta) in &reflectors {
             apply_reflector(col, *start, v, *beta);
         }
         let rank = reflectors.len();
-        let tail_norm = col[rank..].iter().map(|x| x * x).sum::<f64>().sqrt();
+        let tail_norm =
+            compensated_dot(col[rank..].iter().copied(), col[rank..].iter().copied()).sqrt();
         if rank >= n || tail_norm <= COLLINEAR_TOLERANCE * raw_norm || tail_norm == 0.0 {
             continue;
         }
@@ -313,17 +317,19 @@ fn fit(y: &[f64], vars: &[Vec<f64>], use_const: bool) -> Fit {
         0.0
     };
 
-    let ss_resid: f64 = (0..n)
-        .map(|i| {
+    let ss_resid: f64 = {
+        let mut acc = CompensatedSum::default();
+        for i in 0..n {
             let pred = intercept + (0..k).map(|j| coef[j] * vars[j][i]).sum::<f64>();
             let e = y[i] - pred;
-            e * e
-        })
-        .sum();
+            acc.add_product(e, e);
+        }
+        acc.total()
+    };
     let ss_total: f64 = if use_const {
-        y.iter().map(|v| (v - y_mean) * (v - y_mean)).sum()
+        compensated_sum(y.iter().map(|v| (v - y_mean) * (v - y_mean)))
     } else {
-        y.iter().map(|v| v * v).sum()
+        compensated_sum(y.iter().map(|v| v * v))
     };
     let ss_reg = ss_total - ss_resid;
     let df = n as f64 - rank as f64 - if use_const { 1.0 } else { 0.0 };
@@ -367,7 +373,7 @@ fn fit(y: &[f64], vars: &[Vec<f64>], use_const: bool) -> Fit {
             let s: f64 = (0..c).map(|i| r(i, c) * w[i]).sum();
             w[c] = (x_means[kept_vars[c]] - s) / r(c, c);
         }
-        sey * (1.0 / nf + w.iter().map(|v| v * v).sum::<f64>()).sqrt()
+        sey * (1.0 / nf + compensated_sum(w.iter().map(|v| v * v))).sqrt()
     });
 
     Fit {
@@ -404,18 +410,18 @@ fn compensated_residual(target: f64, terms: impl Iterator<Item = (f64, f64)>) ->
 /// Householder vector for `x`: returns `(v, beta, alpha)` with
 /// `(I - beta v v') x = alpha e1`.
 fn householder(x: &[f64]) -> (Vec<f64>, f64, f64) {
-    let norm = x.iter().map(|v| v * v).sum::<f64>().sqrt();
+    let norm = compensated_dot(x.iter().copied(), x.iter().copied()).sqrt();
     let alpha = if x[0] > 0.0 { -norm } else { norm };
     let mut v = x.to_vec();
     v[0] -= alpha;
-    let vv: f64 = v.iter().map(|t| t * t).sum();
+    let vv: f64 = compensated_dot(v.iter().copied(), v.iter().copied());
     let beta = if vv == 0.0 { 0.0 } else { 2.0 / vv };
     (v, beta, alpha)
 }
 
 fn apply_reflector(col: &mut [f64], start: usize, v: &[f64], beta: f64) {
     let tail = &mut col[start..start + v.len()];
-    let dot: f64 = tail.iter().zip(v).map(|(a, b)| a * b).sum();
+    let dot = compensated_dot(tail.iter().copied(), v.iter().copied());
     let s = beta * dot;
     for (t, vi) in tail.iter_mut().zip(v) {
         *t -= s * vi;

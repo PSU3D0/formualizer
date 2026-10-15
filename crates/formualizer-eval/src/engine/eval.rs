@@ -1,7 +1,7 @@
 use crate::SheetId;
 
 mod criteria;
-mod exact;
+pub(crate) mod exact;
 mod family;
 mod kernels;
 mod lift;

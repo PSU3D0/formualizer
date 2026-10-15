@@ -26,6 +26,9 @@
 
 use super::utils::{ARG_ANY_ONE, coerce_num, criteria_match};
 use crate::args::{ArgSchema, CriteriaPredicate, parse_criteria};
+use crate::engine::eval::exact::{
+    compensated_mean, compensated_product, compensated_sum, compensated_sum_sq_dev,
+};
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, CalcValue, FunctionContext};
 use formualizer_common::{ExcelError, LiteralValue};
@@ -316,17 +319,12 @@ fn eval_d_function<'a, 'b>(
 
     // Compute aggregate result
     let result = match agg_type {
-        DAggregate::Sum => {
-            // `Iterator::sum` of no f64 values is -0.0; Excel has no negative zero.
-            let sum = values.iter().fold(0.0, |acc, v| acc + v);
-            LiteralValue::Number(sum)
-        }
+        DAggregate::Sum => LiteralValue::Number(compensated_sum(values.iter().copied())),
         DAggregate::Average => {
             if values.is_empty() {
                 LiteralValue::Error(ExcelError::new_div())
             } else {
-                let sum: f64 = values.iter().sum();
-                LiteralValue::Number(sum / values.len() as f64)
+                LiteralValue::Number(compensated_mean(&values))
             }
         }
         DAggregate::Count => {
@@ -353,7 +351,7 @@ fn eval_d_function<'a, 'b>(
             if values.is_empty() {
                 LiteralValue::Number(0.0)
             } else {
-                let product: f64 = values.iter().product();
+                let product = compensated_product(values.iter().copied());
                 LiteralValue::Number(product)
             }
         }
@@ -450,8 +448,8 @@ fn eval_d_stat_function<'a, 'b>(
                 LiteralValue::Error(ExcelError::new_div())
             } else {
                 let n = values.len() as f64;
-                let mean = values.iter().sum::<f64>() / n;
-                let variance = values.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1.0);
+                let mean = compensated_mean(&values);
+                let variance = compensated_sum_sq_dev(&values, mean) / (n - 1.0);
                 if matches!(stat_op, DStatOp::VarSample) {
                     LiteralValue::Number(variance)
                 } else {
@@ -465,8 +463,8 @@ fn eval_d_stat_function<'a, 'b>(
                 LiteralValue::Error(ExcelError::new_div())
             } else {
                 let n = values.len() as f64;
-                let mean = values.iter().sum::<f64>() / n;
-                let variance = values.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / n;
+                let mean = compensated_mean(&values);
+                let variance = compensated_sum_sq_dev(&values, mean) / n;
                 if matches!(stat_op, DStatOp::VarPop) {
                     LiteralValue::Number(variance)
                 } else {
