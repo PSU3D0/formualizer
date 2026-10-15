@@ -1,4 +1,8 @@
 #[cfg(test)]
+#[expect(
+    clippy::string_slice,
+    reason = "tests slice formulas at spans the tokenizer produced"
+)]
 mod tests {
     use crate::FormulaDialect;
     use crate::tokenizer::{

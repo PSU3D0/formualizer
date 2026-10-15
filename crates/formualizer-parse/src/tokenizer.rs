@@ -894,20 +894,19 @@ impl<'a> SpanTokenizer<'a> {
         reason = "cursor bounded by slice length: current_byte() returned Some, so offset < len"
     )]
     fn check_scientific_notation(&mut self) -> bool {
-        if let Some(curr_byte) = self.current_byte() {
-            if (curr_byte == b'+' || curr_byte == b'-')
-                && self.has_token()
-                && self.is_scientific_notation_base()
-                && self
-                    .formula
-                    .as_bytes()
-                    .get(self.offset + 1)
-                    .is_some_and(|b| b.is_ascii_digit())
-            {
-                self.offset += 1;
-                self.extend_token();
-                return true;
-            }
+        if let Some(curr_byte) = self.current_byte()
+            && (curr_byte == b'+' || curr_byte == b'-')
+            && self.has_token()
+            && self.is_scientific_notation_base()
+            && self
+                .formula
+                .as_bytes()
+                .get(self.offset + 1)
+                .is_some_and(|b| b.is_ascii_digit())
+        {
+            self.offset += 1;
+            self.extend_token();
+            return true;
         }
         false
     }

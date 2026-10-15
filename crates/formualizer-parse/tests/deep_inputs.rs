@@ -2,6 +2,8 @@
 //! thread with a small stack so a recursion regression shows up in both
 //! debug and release builds.
 
+#![cfg(test)]
+
 use formualizer_parse::parser::ReferenceType;
 use formualizer_parse::{ASTNodeType, parse};
 

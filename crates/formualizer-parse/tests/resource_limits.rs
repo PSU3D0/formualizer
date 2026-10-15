@@ -247,7 +247,7 @@ fn resource_stack_subprocess() {
                     drop(cloned);
                     drop(ast);
                     assert!(
-                        parse(format!("=({})%", &source[1..]))
+                        parse(format!("=({})%", source.strip_prefix('=').unwrap()))
                             .unwrap_err()
                             .message
                             .contains("AST height")

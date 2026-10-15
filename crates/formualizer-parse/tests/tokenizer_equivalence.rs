@@ -6,6 +6,8 @@
 //! `tests/data/tokenizer_golden.txt`; regenerate it with
 //! `UPDATE_TOKENIZER_GOLDEN=1 cargo test -p formualizer-parse --test tokenizer_equivalence`.
 
+#![cfg(test)]
+
 use std::fmt::Write as _;
 
 use formualizer_parse::{FormulaDialect, Token, TokenStream, Tokenizer, TokenizerError};
@@ -61,7 +63,7 @@ fn render_tokens(out: &mut String, items: &[Token]) {
     // Long generated formulas: count plus the last three tokens.
     let shown = if items.len() > 64 {
         writeln!(out, "  {} tokens, ending", items.len()).unwrap();
-        &items[items.len() - 3..]
+        &items[items.len().saturating_sub(3)..]
     } else {
         items
     };
@@ -84,7 +86,8 @@ fn render_result(out: &mut String, result: Result<Vec<Token>, TokenizerError>) {
 
 fn header(formula: &str) -> String {
     if formula.len() > 200 {
-        format!("{:?}... ({} bytes)", &formula[..40], formula.len())
+        let head: String = formula.chars().take(40).collect();
+        format!("{head:?}... ({} bytes)", formula.len())
     } else {
         format!("{formula:?}")
     }
