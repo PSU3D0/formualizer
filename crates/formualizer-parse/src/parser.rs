@@ -1984,10 +1984,13 @@ impl ASTNode {
                     if let (Some(sr), Some(sc), Some(er), Some(ec)) =
                         (start_row, start_col, end_row, end_col)
                     {
-                        let rows = er.saturating_sub(sr) + 1;
-                        let cols = ec.saturating_sub(sc) + 1;
+                        // Widened to u64: a full-height or full-width u32
+                        // span plus one does not fit in u32.
+                        let rows = u64::from(er.saturating_sub(sr)) + 1;
+                        let cols = u64::from(ec.saturating_sub(sc)) + 1;
                         let area = rows.saturating_mul(cols);
-                        if area as usize <= policy.range_expansion_limit {
+                        let limit = u64::try_from(policy.range_expansion_limit).unwrap_or(u64::MAX);
+                        if area <= limit {
                             let row_abs = start_row_abs && end_row_abs;
                             let col_abs = start_col_abs && end_col_abs;
                             for r in sr..=er {

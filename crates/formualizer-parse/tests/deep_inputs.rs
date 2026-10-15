@@ -78,3 +78,29 @@ fn mixed_workbook_zero_prefix_forms() {
         );
     }
 }
+
+#[test]
+fn collect_references_full_height_hand_built_range_is_not_expanded() {
+    use formualizer_parse::ASTNode;
+    use formualizer_parse::parser::CollectPolicy;
+
+    let policy = CollectPolicy {
+        expand_small_ranges: true,
+        range_expansion_limit: 16,
+        include_names: true,
+    };
+    for reference in [
+        ReferenceType::range(None, Some(0), Some(1), Some(u32::MAX), Some(1)),
+        ReferenceType::range(None, Some(1), Some(0), Some(1), Some(u32::MAX)),
+    ] {
+        let ast = ASTNode::new(
+            ASTNodeType::Reference {
+                original: "x".into(),
+                reference: reference.clone(),
+            },
+            None,
+        );
+        let refs = ast.collect_references(&policy);
+        assert_eq!(refs.as_slice(), &[reference]);
+    }
+}
