@@ -18,6 +18,7 @@ use formualizer_common::{
 };
 use once_cell::sync::Lazy;
 use smallvec::SmallVec;
+use std::borrow::Cow;
 use std::error::Error;
 use std::fmt::{self, Display};
 use std::hash::{Hash, Hasher};
@@ -778,21 +779,57 @@ impl ReferenceType {
         }
     }
 
+    /// Strip every leading workbook-index-0 qualifier.
+    ///
+    /// Workbook index 0 is the workbook the formula lives in (external
+    /// workbooks are numbered from 1), as Excel stores it in OOXML:
+    /// `[0]!Name` is the workbook-scoped `Name`, `[0]Sheet1!A1` is
+    /// `Sheet1!A1` and `'[0]Sheet 1'!A1` is `'Sheet 1'!A1`. A prefix is
+    /// stripped only while a `!` follows it. This is a loop rather than
+    /// recursion so the number of prefixes cannot exhaust the stack, and the
+    /// quoted form allocates its result once.
+    fn strip_workbook_zero_prefixes(reference: &str) -> Cow<'_, str> {
+        // `tail` is always a suffix of `reference`, so it contains a `!`
+        // exactly when it is longer than the text after the last `!`.
+        let Some(after_last_bang) = reference.rsplit_once('!').map(|(_, after)| after.len()) else {
+            return Cow::Borrowed(reference);
+        };
+        let has_bang = |tail: &str| tail.len() > after_last_bang;
+
+        let mut tail = reference;
+        // Whether a leading `'` was taken off `tail` (the quoted form).
+        let mut quoted = false;
+        loop {
+            if !quoted
+                && let Some(rest) = tail.strip_prefix("[0]")
+                && has_bang(rest)
+            {
+                tail = rest.strip_prefix('!').unwrap_or(rest);
+            } else if !quoted
+                && let Some(rest) = tail.strip_prefix("'[0]")
+                && has_bang(rest)
+            {
+                quoted = true;
+                tail = rest;
+            } else if quoted
+                && let Some(rest) = tail.strip_prefix("[0]")
+                && has_bang(rest)
+            {
+                tail = rest;
+            } else {
+                break;
+            }
+        }
+        if quoted {
+            Cow::Owned(format!("'{tail}"))
+        } else {
+            Cow::Borrowed(tail)
+        }
+    }
+
     fn parse_excel_reference(reference: &str) -> Result<Self, ParsingError> {
-        // Workbook index 0 is the workbook the formula lives in (external
-        // workbooks are numbered from 1), as Excel stores it in OOXML:
-        // `[0]!Name` is the workbook-scoped `Name` and `[0]Sheet1!A1` is
-        // `Sheet1!A1`.
-        if let Some(rest) = reference.strip_prefix("[0]")
-            && rest.contains('!')
-        {
-            return Self::parse_excel_reference(rest.strip_prefix('!').unwrap_or(rest));
-        }
-        if let Some(rest) = reference.strip_prefix("'[0]")
-            && rest.contains('!')
-        {
-            return Self::parse_excel_reference(&format!("'{rest}"));
-        }
+        let reference = Self::strip_workbook_zero_prefixes(reference);
+        let reference = reference.as_ref();
 
         // Excel structured reference shorthands that appear as a single bracketed token.
         //
