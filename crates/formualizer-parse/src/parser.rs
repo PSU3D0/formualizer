@@ -787,7 +787,19 @@ impl ReferenceType {
     /// stripped only while a `!` follows it. This is a loop rather than
     /// recursion so the number of prefixes cannot exhaust the stack, and the
     /// quoted form allocates its result once.
+    #[inline]
     fn strip_workbook_zero_prefixes(reference: &str) -> Cow<'_, str> {
+        // Almost no reference starts with a workbook-0 qualifier; test the
+        // prefix before scanning for `!`.
+        if !reference.starts_with("[0]") && !reference.starts_with("'[0]") {
+            return Cow::Borrowed(reference);
+        }
+        Self::strip_workbook_zero_prefixes_slow(reference)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn strip_workbook_zero_prefixes_slow(reference: &str) -> Cow<'_, str> {
         // `tail` is always a suffix of `reference`, so it contains a `!`
         // exactly when it is longer than the text after the last `!`.
         let Some(after_last_bang) = reference.rsplit_once('!').map(|(_, after)| after.len()) else {
