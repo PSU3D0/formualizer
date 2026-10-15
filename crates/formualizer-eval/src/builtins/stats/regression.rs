@@ -273,11 +273,9 @@ fn fit(y: &[f64], vars: &[Vec<f64>], use_const: bool) -> Fit {
     let back_substitute = |rhs: &[f64]| {
         let mut out = vec![0.0; rank];
         for i in (0..rank).rev() {
-            let s: f64 = rhs[i]
-                - (i + 1..rank)
-                    .zip(&out[i + 1..])
-                    .map(|(c, oc)| r(i, c) * oc)
-                    .sum::<f64>();
+            let tail = (i + 1..rank).zip(&out[i + 1..]).map(|(c, oc)| r(i, c) * oc);
+            // bounded-sum: over the kept coefficients (≤ variable count).
+            let s: f64 = rhs[i] - tail.sum::<f64>();
             out[i] = s / r(i, i);
         }
         out
@@ -312,6 +310,7 @@ fn fit(y: &[f64], vars: &[Vec<f64>], use_const: bool) -> Fit {
         coef[j] = b[c];
     }
     let intercept = if use_const {
+        // bounded-sum: over the coefficients.
         y_mean - coef.iter().zip(&x_means).map(|(c, m)| c * m).sum::<f64>()
     } else {
         0.0
@@ -320,6 +319,7 @@ fn fit(y: &[f64], vars: &[Vec<f64>], use_const: bool) -> Fit {
     let ss_resid: f64 = {
         let mut acc = CompensatedSum::default();
         for i in 0..n {
+            // bounded-sum: over the coefficients; the row sum below is compensated.
             let pred = intercept + (0..k).map(|j| coef[j] * vars[j][i]).sum::<f64>();
             let e = y[i] - pred;
             acc.add_product(e, e);
@@ -356,6 +356,7 @@ fn fit(y: &[f64], vars: &[Vec<f64>], use_const: bool) -> Fit {
         let mut col = vec![0.0; rank];
         col[c] = 1.0 / r(c, c);
         for i in (0..c).rev() {
+            // bounded-sum: over the R columns (≤ variable count).
             let s: f64 = (i + 1..=c).map(|m| r(i, m) * col[m]).sum();
             col[i] = -s / r(i, i);
         }
@@ -363,6 +364,7 @@ fn fit(y: &[f64], vars: &[Vec<f64>], use_const: bool) -> Fit {
     }
     let mut se = vec![0.0; k];
     for (c, &j) in kept_vars.iter().enumerate() {
+        // bounded-sum: over the R columns (≤ variable count).
         let row_norm2: f64 = inv_cols[c..].iter().map(|col| col[c] * col[c]).sum();
         se[j] = sey * row_norm2.sqrt();
     }
@@ -370,6 +372,7 @@ fn fit(y: &[f64], vars: &[Vec<f64>], use_const: bool) -> Fit {
         // Var(b) = sey^2 (1/n + xbar' (Xc'Xc)^-1 xbar) = sey^2 (1/n + ||R^-T xbar||^2).
         let mut w = vec![0.0; rank];
         for c in 0..rank {
+            // bounded-sum: over the R columns (≤ variable count).
             let s: f64 = (0..c).map(|i| r(i, c) * w[i]).sum();
             w[c] = (x_means[kept_vars[c]] - s) / r(c, c);
         }
@@ -526,6 +529,7 @@ pub(super) fn eval_trend<'b>(
         };
         let fit = fit(&problem.y, &problem.vars, use_const);
         let predict = |point: &[f64]| {
+            // bounded-sum: over the coefficients.
             let v = fit.intercept + point.iter().zip(&fit.coef).map(|(x, c)| x * c).sum::<f64>();
             number_or_num_error(if exponential { v.exp() } else { v })
         };

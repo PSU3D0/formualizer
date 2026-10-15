@@ -82,6 +82,19 @@ npm install
 npm test
 ```
 
+### Floating-point reductions
+
+Every sum, mean, dot product or product over cell data must go through
+`formualizer_eval::engine::eval::exact` (`CompensatedSum`,
+`CompensatedProduct`, `compensated_sum`, `compensated_mean`,
+`compensated_dot`, `compensated_sum_sq_dev`, `compensated_product`). A plain
+`Iterator::sum`/`product` over `f64`, or Arrow's `sum` kernel, loses about an
+ulp per element and drifts with the row count (`SUM` of 500 × 19.99 reads
+9994.99999999998; Excel reads 9995). `engine::tests::compensated_summation_guard`
+fails on such a site in `src/builtins` or `src/engine/eval`; if the term
+count is genuinely bounded (a sum over regression coefficients, not rows),
+put a `// bounded-sum: <why>` comment on or directly above the line.
+
 ## Pull request guidelines
 
 - Keep PRs focused and reviewable.

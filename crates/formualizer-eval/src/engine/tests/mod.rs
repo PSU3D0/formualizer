@@ -8,6 +8,7 @@ mod changelog_replay;
 mod clock_snapshot;
 mod common;
 mod compensated_summation;
+mod compensated_summation_guard;
 mod cross_sheet_named_range_first_cell;
 mod cycle_detection;
 mod database_blank_semantics;
