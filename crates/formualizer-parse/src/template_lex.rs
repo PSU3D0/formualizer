@@ -232,7 +232,7 @@ pub fn lex_template(formula: &str) -> Option<TemplateLexeme> {
     // Open brackets: true for a function call, false for a parenthesis.
     let mut open: Vec<bool> = Vec::new();
     for span in &spans {
-        let text = &formula[span.start..span.end];
+        let text = formula.get(span.start..span.end)?;
         match (span.token_type, span.subtype) {
             (TokenType::Operand, TokenSubType::Number) => {
                 if !text.bytes().all(|b| b.is_ascii_digit() || b == b'.') {
@@ -312,6 +312,10 @@ fn canonical_reference(text: &str) -> Option<SlotRef> {
     }
 }
 
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "cursor bounded by slice length; at most 3 letters and 7 digits are accumulated (col <= 18_278, row <= 9_999_999), each checked uppercase or digit before its offset is subtracted"
+)]
 fn canonical_point(text: &str) -> Option<A1Point> {
     let bytes = text.as_bytes();
     let mut i = 0;
@@ -321,11 +325,13 @@ fn canonical_point(text: &str) -> Option<A1Point> {
     }
     let letters = i;
     let mut col: u32 = 0;
-    while i < bytes.len() && bytes[i].is_ascii_uppercase() {
+    while let Some(&b) = bytes.get(i)
+        && b.is_ascii_uppercase()
+    {
         if i - letters == 3 {
             return None;
         }
-        col = col * 26 + u32::from(bytes[i] - b'A' + 1);
+        col = col * 26 + u32::from(b - b'A' + 1);
         i += 1;
     }
     if i == letters || col > MAX_COL {
@@ -340,11 +346,13 @@ fn canonical_point(text: &str) -> Option<A1Point> {
         return None;
     }
     let mut row: u32 = 0;
-    while i < bytes.len() && bytes[i].is_ascii_digit() {
+    while let Some(&b) = bytes.get(i)
+        && b.is_ascii_digit()
+    {
         if i - digits == 7 {
             return None;
         }
-        row = row * 10 + u32::from(bytes[i] - b'0');
+        row = row * 10 + u32::from(b - b'0');
         i += 1;
     }
     (i == bytes.len() && row <= MAX_ROW).then_some(A1Point {
@@ -375,6 +383,11 @@ fn relocate_point(p: A1Point, dr: i64, dc: i64) -> Option<A1Point> {
 
 /// Write the canonical spelling of `reference` relocated by `(dr, dc)`;
 /// `None` when it leaves the grid or a range's ends cross.
+#[expect(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    reason = "slots are built only by lex_template with 1 <= col <= 16_384 and 1 <= row <= 1_048_576, and relocate_point keeps that range: at most 3 letters, 7 digits and 25 bytes are written into the 32-byte buffer"
+)]
 fn render_relocated(reference: SlotRef, dr: i64, dc: i64, buf: &mut [u8; 32]) -> Option<usize> {
     match reference {
         SlotRef::Cell(p) => Some(render_point(relocate_point(p, dr, dc)?, buf, 0)),
@@ -391,6 +404,11 @@ fn render_relocated(reference: SlotRef, dr: i64, dc: i64, buf: &mut [u8; 32]) ->
     }
 }
 
+#[expect(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    reason = "slots are built only by lex_template with 1 <= col <= 16_384 and 1 <= row <= 1_048_576, and relocate_point keeps that range: at most 3 letters, 7 digits and 25 bytes are written into the 32-byte buffer"
+)]
 fn render_point(p: A1Point, buf: &mut [u8; 32], mut at: usize) -> usize {
     if p.col_abs {
         buf[at] = b'$';
@@ -429,6 +447,10 @@ fn render_point(p: A1Point, buf: &mut [u8; 32], mut at: usize) -> usize {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::string_slice,
+    reason = "tests slice formulas at slot offsets produced by lex_template"
+)]
 mod tests {
     use super::*;
     use crate::parser::{ASTNode, ASTNodeType, ReferenceType, parse};
