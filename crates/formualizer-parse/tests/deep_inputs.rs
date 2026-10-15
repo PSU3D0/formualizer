@@ -104,3 +104,26 @@ fn collect_references_full_height_hand_built_range_is_not_expanded() {
         assert_eq!(refs.as_slice(), &[reference]);
     }
 }
+
+#[test]
+fn array_with_unknown_separator_subtype_is_an_error() {
+    use formualizer_parse::{Parser, TokenStream, TokenSubType, TokenType};
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut stream = TokenStream::new("={1,2}").expect("tokenize");
+        let sep = stream
+            .spans
+            .iter_mut()
+            .find(|span| span.token_type == TokenType::Sep)
+            .expect("separator span");
+        sep.subtype = TokenSubType::None;
+        let _ = tx.send(Parser::from_token_stream(&stream).parse().is_err());
+    });
+    let is_err = rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("parser did not return within 10 s");
+    assert!(is_err);
+}

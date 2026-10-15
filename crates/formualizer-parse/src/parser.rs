@@ -3152,25 +3152,31 @@ impl Parser {
             }
             let token = &self.tokens[self.position];
 
-            if token.token_type == TokenType::Sep {
-                if token.subtype == TokenSubType::Arg {
+            // Every arm advances `position` or leaves the loop. A separator
+            // with another subtype (possible in an external TokenStream) is an
+            // unexpected token, not a no-op that would loop forever.
+            match (token.token_type, token.subtype) {
+                (TokenType::Sep, TokenSubType::Arg) => {
                     self.position += 1;
                     self.append_array_item(&mut current_row, &mut height, &mut contains_volatile)?;
-                } else if token.subtype == TokenSubType::Row {
+                }
+                (TokenType::Sep, TokenSubType::Row) => {
                     self.position += 1;
                     rows.push(current_row);
                     current_row = Vec::new();
                     self.append_array_item(&mut current_row, &mut height, &mut contains_volatile)?;
                 }
-            } else if token.token_type == TokenType::Array && token.subtype == TokenSubType::Close {
-                self.position += 1;
-                rows.push(current_row);
-                break;
-            } else {
-                return Err(ParserError {
-                    message: format!("Unexpected token in array: {token:?}"),
-                    position: Some(self.position),
-                });
+                (TokenType::Array, TokenSubType::Close) => {
+                    self.position += 1;
+                    rows.push(current_row);
+                    break;
+                }
+                _ => {
+                    return Err(ParserError {
+                        message: format!("Unexpected token in array: {token:?}"),
+                        position: Some(self.position),
+                    });
+                }
             }
         }
 
