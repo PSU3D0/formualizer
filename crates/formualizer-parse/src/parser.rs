@@ -1757,6 +1757,21 @@ impl Display for ASTNodeType {
 }
 
 /// An AST node represents a parsed formula element
+///
+/// # Depth
+///
+/// Hashing ([`Self::fingerprint`], [`Self::calculate_hash`], `Hash`),
+/// pretty-printing, `Display` and the derived `Clone`, `PartialEq`, `Debug`,
+/// serde and drop glue recurse once per tree level. Trees within the default
+/// [`ParserLimits::ast_height`](crate::ParserLimits::ast_height) limit (256)
+/// are supported, which includes every tree the parser returns under default
+/// limits. A taller tree, hand-built or parsed under a raised limit, needs the
+/// caller to provide the stack (see
+/// [`ParserLimits::with_ast_height`](crate::ParserLimits::with_ast_height)).
+/// Reference walks ([`Self::visit_refs`], [`Self::refs`],
+/// [`Self::get_dependencies`], [`Self::collect_references`],
+/// [`Self::update_sheet_references`]) use an explicit stack and have no
+/// depth limit.
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct ASTNode {
@@ -1796,11 +1811,31 @@ impl ASTNode {
         self.contains_volatile
     }
 
+    /// Structural fingerprint of this tree; the same value as
+    /// [`Self::calculate_hash`].
+    ///
+    /// # Depth
+    ///
+    /// Recursive in the tree height. Trees within the default
+    /// [`ParserLimits::ast_height`](crate::ParserLimits::ast_height) limit (256)
+    /// are supported, which includes every tree the parser returns under default
+    /// limits. A taller tree, hand-built or parsed under a raised limit, needs the
+    /// caller to provide the stack (see
+    /// [`ParserLimits::with_ast_height`](crate::ParserLimits::with_ast_height)).
     pub fn fingerprint(&self) -> u64 {
         self.calculate_hash()
     }
 
     /// Calculate a hash for this ASTNode
+    ///
+    /// # Depth
+    ///
+    /// Recursive in the tree height. Trees within the default
+    /// [`ParserLimits::ast_height`](crate::ParserLimits::ast_height) limit (256)
+    /// are supported, which includes every tree the parser returns under default
+    /// limits. A taller tree, hand-built or parsed under a raised limit, needs the
+    /// caller to provide the stack (see
+    /// [`ParserLimits::with_ast_height`](crate::ParserLimits::with_ast_height)).
     pub fn calculate_hash(&self) -> u64 {
         let mut hasher = FormulaHasher::new();
         self.hash_node(&mut hasher);
