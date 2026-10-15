@@ -114,6 +114,8 @@ pub struct RefSlot {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TemplateLexeme {
     slots: Box<[RefSlot]>,
+    /// Byte length of the text the lexeme was built from.
+    template_len: usize,
 }
 
 /// The verdict of [`TemplateLexeme::match_relocated`].
@@ -136,6 +138,11 @@ impl TemplateLexeme {
     /// Whether `candidate` is exactly `template` (the text this lexeme was
     /// built from) with every reference relocated by `(dr, dc)`: relative
     /// axes move, absolute axes stay, every other byte is identical.
+    ///
+    /// A `template` of a different byte length than the build text is a
+    /// [`RelocatedMatch::Mismatch`]. A different text of the same length is
+    /// outside this contract: the result then compares `candidate` against
+    /// that text's bytes around the build text's slots, without panicking.
     pub fn match_relocated(
         &self,
         template: &str,
@@ -143,28 +150,36 @@ impl TemplateLexeme {
         dr: i64,
         dc: i64,
     ) -> RelocatedMatch {
+        if template.len() != self.template_len {
+            return RelocatedMatch::Mismatch;
+        }
         let template = template.as_bytes();
-        let candidate = candidate.as_bytes();
+        let mut rest = candidate.as_bytes();
         let mut buf = [0u8; 32];
         let mut fixed = 0usize;
-        let mut at = 0usize;
         for slot in self.slots.iter() {
             let (start, end) = (slot.start as usize, slot.end as usize);
             let Some(len) = render_relocated(slot.reference, dr, dc, &mut buf) else {
                 return RelocatedMatch::OffGrid;
             };
-            let lead = &template[fixed..start];
-            if candidate.get(at..at + lead.len()) != Some(lead) {
+            let Some(lead) = template.get(fixed..start) else {
                 return RelocatedMatch::Mismatch;
-            }
-            at += lead.len();
-            if candidate.get(at..at + len) != Some(&buf[..len]) {
+            };
+            let Some(after_lead) = rest.strip_prefix(lead) else {
                 return RelocatedMatch::Mismatch;
-            }
-            at += len;
+            };
+            #[expect(
+                clippy::indexing_slicing,
+                reason = "render_relocated writes at most 25 bytes (`$XFD$1048576:$XFD$1048576`) into the 32-byte buffer"
+            )]
+            let rendered = &buf[..len];
+            let Some(after_slot) = after_lead.strip_prefix(rendered) else {
+                return RelocatedMatch::Mismatch;
+            };
+            rest = after_slot;
             fixed = end;
         }
-        if candidate.get(at..) == Some(&template[fixed..]) {
+        if template.get(fixed..) == Some(rest) {
             RelocatedMatch::Match
         } else {
             RelocatedMatch::Mismatch
@@ -281,6 +296,7 @@ pub fn lex_template(formula: &str) -> Option<TemplateLexeme> {
     }
     Some(TemplateLexeme {
         slots: slots.into_boxed_slice(),
+        template_len: formula.len(),
     })
 }
 
@@ -551,6 +567,21 @@ mod tests {
         );
         assert_eq!(
             lex.match_relocated(t, "=A1+$A1+A$1+$A$1+SUM(B2:C3", 0, 0),
+            RelocatedMatch::Mismatch
+        );
+    }
+
+    #[test]
+    fn match_relocated_with_unrelated_template_is_mismatch() {
+        let lex = lex_template("=A1+B1").unwrap();
+        assert_eq!(
+            lex.match_relocated("=1", "=A2+B2", 1, 0),
+            RelocatedMatch::Mismatch
+        );
+        assert_eq!(lex.match_relocated("", "", 0, 0), RelocatedMatch::Mismatch);
+        // A longer template text is not the one the lexeme was built from.
+        assert_eq!(
+            lex.match_relocated("=A1+B1+1", "=A2+B2+1", 1, 0),
             RelocatedMatch::Mismatch
         );
     }
