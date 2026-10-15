@@ -246,22 +246,6 @@ impl Token {
         }
     }
 
-    fn from_slice(
-        source: &str,
-        token_type: TokenType,
-        subtype: TokenSubType,
-        start: usize,
-        end: usize,
-    ) -> Self {
-        Token {
-            value: source[start..end].to_string(),
-            token_type,
-            subtype,
-            start,
-            end,
-        }
-    }
-
     pub fn is_operator(&self) -> bool {
         matches!(
             self.token_type,
@@ -335,23 +319,6 @@ impl Token {
         Token::new_with_span(value, TokenType::Operand, subtype, start, end)
     }
 
-    fn make_operand_from_slice(source: &str, start: usize, end: usize) -> Self {
-        let value_str = &source[start..end];
-        let subtype = if value_str.starts_with('"') {
-            TokenSubType::Text
-        } else if value_str.starts_with('#') {
-            TokenSubType::Error
-        } else if value_str.eq_ignore_ascii_case("TRUE") || value_str.eq_ignore_ascii_case("FALSE")
-        {
-            TokenSubType::Logical
-        } else if value_str.parse::<f64>().is_ok() {
-            TokenSubType::Number
-        } else {
-            TokenSubType::Range
-        };
-        Token::from_slice(source, TokenType::Operand, subtype, start, end)
-    }
-
     /// Create a subexpression token.
     ///
     /// `value` must end with one of '{', '}', '(' or ')'. If `func` is true,
@@ -395,26 +362,6 @@ impl Token {
             TokenSubType::Open
         };
         Token::new_with_span(value.to_string(), token_type, subtype, start, end)
-    }
-
-    fn make_subexp_from_slice(source: &str, func: bool, start: usize, end: usize) -> Self {
-        let value_str = &source[start..end];
-        let last_char = value_str.chars().last().expect("Empty token value");
-        let token_type = if func {
-            TokenType::Func
-        } else if "{}".contains(last_char) {
-            TokenType::Array
-        } else if "()".contains(last_char) {
-            TokenType::Paren
-        } else {
-            TokenType::Func
-        };
-        let subtype = if ")}".contains(last_char) {
-            TokenSubType::Close
-        } else {
-            TokenSubType::Open
-        };
-        Token::from_slice(source, token_type, subtype, start, end)
     }
 
     /// Given an opener token, return its corresponding closer token.
@@ -639,20 +586,7 @@ impl TokenStream {
     }
 
     pub fn to_tokens(&self) -> Vec<Token> {
-        self.spans
-            .iter()
-            .map(|s| {
-                let value = if is_whitespace_intersection_span(&self.source, s) {
-                    " ".to_string()
-                } else {
-                    self.source
-                        .get(s.start..s.end)
-                        .unwrap_or_default()
-                        .to_string()
-                };
-                Token::new_with_span(value, s.token_type, s.subtype, s.start, s.end)
-            })
-            .collect()
+        tokens_from_spans(&self.source, &self.spans)
     }
 
     /// Reconstruct the tokenized payload from spans.
@@ -677,6 +611,22 @@ impl TokenStream {
             self.render()
         }
     }
+}
+
+/// Owned tokens for `spans` over `source`. A whitespace run that is the
+/// intersection operator gets the value `" "`.
+fn tokens_from_spans(source: &str, spans: &[TokenSpan]) -> Vec<Token> {
+    spans
+        .iter()
+        .map(|s| {
+            let value = if is_whitespace_intersection_span(source, s) {
+                " ".to_string()
+            } else {
+                source.get(s.start..s.end).unwrap_or_default().to_string()
+            };
+            Token::new_with_span(value, s.token_type, s.subtype, s.start, s.end)
+        })
+        .collect()
 }
 
 pub(crate) fn tokenize_spans_with_dialect(
@@ -1776,15 +1726,12 @@ impl<'a> SpanTokenizer<'a> {
 }
 
 /// A tokenizer for Excel worksheet formulas.
+///
+/// An owned form of [`TokenStream`]: the same tokens, each with its text
+/// copied into [`Token::value`], in [`Self::items`].
 pub struct Tokenizer {
-    exceeded: bool,
-    admission_error: Option<TokenizerError>,
-    formula: String, // The formula string
     pub items: Vec<Token>,
-    token_stack: Vec<Token>,
-    offset: usize,      // Byte offset in formula
-    token_start: usize, // Start of current token
-    token_end: usize,   // End of current token
+    admission_error: Option<TokenizerError>,
     dialect: FormulaDialect,
 }
 
@@ -1812,50 +1759,24 @@ impl Tokenizer {
         formula: &str,
         dialect: FormulaDialect,
     ) -> Result<Self, TokenizerError> {
-        crate::ParserLimits::default().check_source(formula)?;
-        let mut tokenizer = Tokenizer {
-            exceeded: false,
+        let spans = tokenize_spans_with_dialect(formula, dialect)?;
+        Ok(Tokenizer {
+            items: tokens_from_spans(formula, &spans),
             admission_error: None,
-            formula: formula.to_string(),
-            items: Vec::with_capacity(
-                (formula.len() / 2).min(crate::ParserLimits::default().tokens()),
-            ), // Reasonable estimate
-            token_stack: Vec::with_capacity(16),
-            offset: 0,
-            token_start: 0,
-            token_end: 0,
             dialect,
-        };
-        let result = tokenizer.parse();
-        if tokenizer.exceeded {
-            return Err(TokenizerError {
-                message: format!(
-                    "Formula token limit exceeded (max {})",
-                    crate::ParserLimits::default().tokens()
-                ),
-                pos: tokenizer.offset,
-            });
-        }
-        result?;
-        Ok(tokenizer)
+        })
     }
 
     pub fn from_token_stream(stream: &TokenStream) -> Self {
         let admission_error = stream.admission_error(crate::ParserLimits::default());
-        let (formula, items) = if admission_error.is_some() {
-            (String::new(), Vec::new())
+        let items = if admission_error.is_some() {
+            Vec::new()
         } else {
-            (stream.source.to_string(), stream.to_tokens())
+            stream.to_tokens()
         };
         Tokenizer {
-            exceeded: false,
-            admission_error,
-            formula,
             items,
-            token_stack: Vec::with_capacity(16),
-            offset: 0,
-            token_start: 0,
-            token_end: 0,
+            admission_error,
             dialect: stream.dialect,
         }
     }
@@ -1865,760 +1786,18 @@ impl Tokenizer {
         self.admission_error.as_ref()
     }
 
-    fn emit(&mut self, token: Token) {
-        if self.items.len() >= crate::ParserLimits::default().tokens() {
-            self.exceeded = true;
-            return;
-        }
-        self.items.push(token);
-    }
-    /// Get byte at current offset
-    #[inline]
-    fn current_byte(&self) -> Option<u8> {
-        self.formula.as_bytes().get(self.offset).copied()
-    }
-
-    /// Check if we have a token accumulated
-    #[inline]
-    fn has_token(&self) -> bool {
-        self.token_end > self.token_start
-    }
-
-    /// Start a new token at current position
-    #[inline]
-    fn start_token(&mut self) {
-        self.token_start = self.offset;
-        self.token_end = self.offset;
-    }
-
-    /// Extend current token to current position
-    #[inline]
-    fn extend_token(&mut self) {
-        self.token_end = self.offset;
-    }
-
-    /// Parse the formula into tokens.
-    fn parse(&mut self) -> Result<(), TokenizerError> {
-        if self.formula.is_empty() {
-            return Ok(());
-        }
-
-        // Check for literal formula (doesn't start with '=')
-        if self.formula.as_bytes()[0] != b'=' {
-            self.emit(Token::new_with_span(
-                self.formula.clone(),
-                TokenType::Literal,
-                TokenSubType::None,
-                0,
-                self.formula.len(),
-            ));
-            return Ok(());
-        }
-
-        // Skip the '=' character
-        self.offset = 1;
-        self.start_token();
-
-        while self.offset < self.formula.len() {
-            if self.exceeded {
-                break;
-            }
-            if self.check_scientific_notation()? {
-                continue;
-            }
-
-            let curr_byte = self.formula.as_bytes()[self.offset];
-
-            // Check if this ends a token
-            if is_token_ender(curr_byte) && self.has_token() {
-                self.save_token();
-                self.start_token();
-            }
-
-            // Dispatch based on the current character
-            match curr_byte {
-                b'"' | b'\'' => self.parse_string()?,
-                b'[' => self.parse_brackets()?,
-                b'#' => {
-                    if self.should_emit_hash_postfix() {
-                        self.emit_hash_postfix();
-                    } else {
-                        self.parse_error()?
-                    }
-                }
-                b' ' | b'\t' | b'\r' | b'\n' => self.parse_whitespace()?,
-                b':' => {
-                    if self.should_emit_colon_infix() {
-                        self.emit_infix_operator(self.offset, self.offset + 1);
-                    } else {
-                        if !self.has_token() {
-                            self.start_token();
-                        }
-                        self.offset += 1;
-                        self.extend_token();
-                    }
-                }
-                // operator characters
-                b'+' | b'-' | b'*' | b'/' | b'^' | b'&' | b'=' | b'>' | b'<' | b'%' | b'@' => {
-                    self.parse_operator()?
-                }
-                b'{' | b'(' => self.parse_opener()?,
-                b')' | b'}' => self.parse_closer()?,
-                b';' | b',' => self.parse_separator()?,
-                _ => {
-                    // Accumulate into current token
-                    if !self.has_token() {
-                        self.start_token();
-                    }
-                    self.offset += 1;
-                    self.extend_token();
-                }
-            }
-        }
-
-        // Save any remaining token
-        if self.has_token() {
-            self.save_token();
-        }
-
-        // Check for unmatched opening parentheses/brackets
-        if !self.token_stack.is_empty() {
-            return Err(TokenizerError {
-                message: "Unmatched opening parenthesis or bracket".to_string(),
-                pos: self.offset,
-            });
-        }
-
-        Ok(())
-    }
-
-    /// If the current token looks like a number in scientific notation,
-    /// consume the '+' or '-' as part of the number.
-    ///
-    /// The `+`/`-` is only consumed when the next byte is an ASCII digit.
-    /// Without that one-byte lookahead, inputs like `=1e+` and `=1E-A1`
-    /// would be silently absorbed into a single (invalid) numeric token
-    /// and surface later as a `NamedRange`. See issue #78.
-    fn check_scientific_notation(&mut self) -> Result<bool, TokenizerError> {
-        if let Some(curr_byte) = self.current_byte() {
-            if (curr_byte == b'+' || curr_byte == b'-')
-                && self.has_token()
-                && self.is_scientific_notation_base()
-                && self
-                    .formula
-                    .as_bytes()
-                    .get(self.offset + 1)
-                    .is_some_and(|b| b.is_ascii_digit())
-            {
-                self.offset += 1;
-                self.extend_token();
-                return Ok(true);
-            }
-        }
-        Ok(false)
-    }
-
-    /// Helper: Determine if the current accumulated token is the base of a
-    /// scientific notation number (e.g., "1.23E" or "9e").
-    fn is_scientific_notation_base(&self) -> bool {
-        if !self.has_token() {
-            return false;
-        }
-
-        let token_slice = &self.formula.as_bytes()[self.token_start..self.token_end];
-        if token_slice.len() < 2 {
-            return false;
-        }
-
-        let last = token_slice[token_slice.len() - 1];
-        if !(last == b'E' || last == b'e') {
-            return false;
-        }
-
-        let first = token_slice[0];
-        if !first.is_ascii_digit() {
-            return false;
-        }
-
-        let mut dot_seen = false;
-        // Check middle characters
-        for &ch in &token_slice[1..token_slice.len() - 1] {
-            match ch {
-                b'0'..=b'9' => {}
-                b'.' if !dot_seen => dot_seen = true,
-                _ => return false,
-            }
-        }
-        true
-    }
-
-    /// If there is an accumulated token, convert it to an operand token and add it to the list.
-    fn save_token(&mut self) {
-        if self.has_token() {
-            if let Some(colon) =
-                range_operator_colon(&self.formula[self.token_start..self.token_end])
-            {
-                let colon = self.token_start + colon;
-                self.emit(Token::make_operand_from_slice(
-                    &self.formula,
-                    self.token_start,
-                    colon,
-                ));
-                self.emit(Token::from_slice(
-                    &self.formula,
-                    TokenType::OpInfix,
-                    TokenSubType::None,
-                    colon,
-                    colon + 1,
-                ));
-                self.token_start = colon + 1;
-            }
-            let token =
-                Token::make_operand_from_slice(&self.formula, self.token_start, self.token_end);
-            self.emit(token);
-        }
-    }
-
-    /// Parse a string (or link) literal.
-    fn parse_string(&mut self) -> Result<(), TokenizerError> {
-        let delim = self.formula.as_bytes()[self.offset];
-        assert!(delim == b'"' || delim == b'\'');
-
-        // Check for dollar reference special case
-        let is_dollar_ref = delim == b'\''
-            && self.has_token()
-            && self.token_end - self.token_start == 1
-            && self.formula.as_bytes()[self.token_start] == b'$';
-
-        // Issue #79: only the single-quote path should keep accumulating
-        // onto a `:`-terminated token (e.g. `A1:'Other Sheet'!B2`). For
-        // double-quoted string literals, always flush the pending token so
-        // that the prefix (e.g. `A1:`) is not silently discarded.
-        let glue_to_token = delim == b'\''
-            && self.has_token()
-            && self.token_end > 0
-            && self.formula.as_bytes()[self.token_end - 1] == b':';
-
-        if !is_dollar_ref && !glue_to_token && self.has_token() {
-            self.save_token();
-            self.start_token();
-        }
-
-        let string_start = if is_dollar_ref {
-            self.token_start
-        } else {
-            self.offset
-        };
-        self.offset += 1; // Skip opening delimiter
-
-        while self.offset < self.formula.len() {
-            if self.formula.as_bytes()[self.offset] == delim {
-                self.offset += 1;
-                // Check for escaped quote
-                if self.offset < self.formula.len() && self.formula.as_bytes()[self.offset] == delim
-                {
-                    self.offset += 1; // Skip escaped quote
-                } else {
-                    // End of string
-                    if delim == b'"' {
-                        let token = Token::make_operand_from_slice(
-                            &self.formula,
-                            string_start,
-                            self.offset,
-                        );
-                        self.emit(token);
-                        self.start_token();
-                    } else {
-                        // Single-quoted string becomes part of current token
-                        self.token_end = self.offset;
-                    }
-                    return Ok(());
-                }
-            } else {
-                self.offset += 1;
-            }
-        }
-
-        Err(TokenizerError {
-            message: "Reached end of formula while parsing string".to_string(),
-            pos: self.offset,
-        })
-    }
-
-    /// Parse the text between matching square brackets.
-    fn parse_brackets(&mut self) -> Result<(), TokenizerError> {
-        assert_eq!(self.formula.as_bytes()[self.offset], b'[');
-
-        if !self.has_token() {
-            self.start_token();
-        }
-
-        let mut open_count = 1;
-        self.offset += 1;
-
-        while self.offset < self.formula.len() {
-            match self.formula.as_bytes()[self.offset] {
-                // OOXML structured-reference escape: a single apostrophe makes
-                // the next byte literal (used to embed `[`, `]`, `'`, or `#`
-                // inside a column name). Skip the following byte without
-                // updating nesting depth.
-                b'\'' => {
-                    if self.offset + 1 < self.formula.len() {
-                        self.offset += 2;
-                        continue;
-                    }
-                    self.offset += 1;
-                    continue;
-                }
-                b'[' => open_count += 1,
-                b']' => {
-                    open_count -= 1;
-                    if open_count == 0 {
-                        self.offset += 1;
-                        self.extend_token();
-                        return Ok(());
-                    }
-                }
-                _ => {}
-            }
-            self.offset += 1;
-        }
-
-        Err(TokenizerError {
-            message: "Encountered unmatched '['".to_string(),
-            pos: self.offset,
-        })
-    }
-
-    /// See `SpanTokenizer::should_emit_hash_postfix` for rationale.
-    fn should_emit_hash_postfix(&self) -> bool {
-        if self.has_token() {
-            if self.formula.as_bytes()[self.token_end - 1] == b'!' {
-                return false;
-            }
-            let value = &self.formula[self.token_start..self.token_end];
-            // Mirror `make_operand_from_slice` subtype detection: the
-            // accumulated token forms a Range operand iff it isn't a quoted
-            // string, error literal, boolean, or number.
-            let is_range = !value.starts_with('"')
-                && !value.starts_with('#')
-                && value != "TRUE"
-                && value != "FALSE"
-                && value.parse::<f64>().is_err();
-            return is_range;
-        }
-        let prev = self
-            .items
-            .iter()
-            .rev()
-            .find(|t| t.token_type != TokenType::Whitespace);
-        match prev {
-            Some(p) => match p.token_type {
-                TokenType::OpPostfix => true,
-                TokenType::Paren | TokenType::Func | TokenType::Array
-                    if p.subtype == TokenSubType::Close =>
-                {
-                    true
-                }
-                TokenType::Operand if p.subtype == TokenSubType::Range => true,
-                _ => false,
-            },
-            None => false,
-        }
-    }
-
-    fn emit_hash_postfix(&mut self) {
-        self.save_token();
-        self.start_token();
-        self.emit(Token::from_slice(
-            &self.formula,
-            TokenType::OpPostfix,
-            TokenSubType::None,
-            self.offset,
-            self.offset + 1,
-        ));
-        self.offset += 1;
-        self.start_token();
-    }
-
-    /// Parse an error literal that starts with '#'.
-    fn parse_error(&mut self) -> Result<(), TokenizerError> {
-        // OOXML serializes broken sheet-qualified references as `Sheet1!#REF!`.
-        // When an accumulated token ends with `!`, treat the prefix as a sheet
-        // qualifier and discard it: the resulting AST is identical to the bare
-        // error literal `=#REF!`, preserving the error kind via `ERROR_CODES`.
-        let has_sheet_prefix = self.has_token()
-            && self.token_end > 0
-            && self.formula.as_bytes()[self.token_end - 1] == b'!';
-        if has_sheet_prefix {
-            if self.token_end - self.token_start <= 1 {
-                return Err(TokenizerError {
-                    message: format!(
-                        "Empty sheet qualifier before error literal at position {}",
-                        self.offset
-                    ),
-                    pos: self.offset,
-                });
-            }
-            // Discard the sheet prefix; the error kind is what matters.
-            self.start_token();
-        } else if self.has_token() {
-            self.save_token();
-            self.start_token();
-        }
-
-        // `#REF!#REF!`: see `SpanTokenizer::parse_error`.
-        if ref_error_starts_at(&self.formula, self.offset)
-            && ref_error_starts_at(&self.formula, self.offset + 5)
-        {
-            self.offset += 5;
-        }
-
-        let error_start = self.offset;
-
-        // Try to match error codes
-        for &err_code in ERROR_CODES {
-            let err_bytes = err_code.as_bytes();
-            if self.offset + err_bytes.len() <= self.formula.len() {
-                let slice = &self.formula.as_bytes()[self.offset..self.offset + err_bytes.len()];
-                if slice.eq_ignore_ascii_case(err_bytes) {
-                    let token = Token::make_operand_from_slice(
-                        &self.formula,
-                        error_start,
-                        self.offset + err_bytes.len(),
-                    );
-                    self.emit(token);
-                    self.offset += err_bytes.len();
-                    self.start_token();
-                    return Ok(());
-                }
-            }
-        }
-
-        Err(TokenizerError {
-            message: format!("Invalid error code at position {}", self.offset),
-            pos: self.offset,
-        })
-    }
-
-    /// Parse a sequence of whitespace characters.
-    fn parse_whitespace(&mut self) -> Result<(), TokenizerError> {
-        self.save_token();
-
-        let ws_start = self.offset;
-        let mut contains_intersection_space = false;
-        while self.offset < self.formula.len() {
-            match self.formula.as_bytes()[self.offset] {
-                b' ' => {
-                    contains_intersection_space = true;
-                    self.offset += 1;
-                }
-                b'\t' | b'\r' | b'\n' => self.offset += 1,
-                _ => break,
-            }
-        }
-
-        // Excel accepts TAB/CR/LF as lexical whitespace, but only an ASCII
-        // space in the run can spell the range-intersection operator.
-        let token_type = if contains_intersection_space
-            && self.prev_is_reference_producing()
-            && next_starts_reference_expression(&self.formula, self.offset)
-        {
-            TokenType::OpInfix
-        } else {
-            TokenType::Whitespace
-        };
-
-        let token = if token_type == TokenType::OpInfix {
-            Token::new_with_span(
-                " ".to_string(),
-                token_type,
-                TokenSubType::None,
-                ws_start,
-                self.offset,
-            )
-        } else {
-            Token::from_slice(
-                &self.formula,
-                token_type,
-                TokenSubType::None,
-                ws_start,
-                self.offset,
-            )
-        };
-        self.emit(token);
-        self.start_token();
-        Ok(())
-    }
-
-    fn prev_non_whitespace(&self) -> Option<&Token> {
-        self.items
-            .iter()
-            .rev()
-            .find(|t| t.token_type != TokenType::Whitespace)
-    }
-
-    fn prev_is_reference_producing(&self) -> bool {
-        match self.prev_non_whitespace() {
-            Some(prev) => match prev.token_type {
-                TokenType::OpPostfix => true,
-                TokenType::Paren | TokenType::Func | TokenType::Array
-                    if prev.subtype == TokenSubType::Close =>
-                {
-                    true
-                }
-                TokenType::Operand if prev.subtype == TokenSubType::Range => {
-                    is_reference_operand_value(&prev.value)
-                }
-                _ => false,
-            },
-            None => false,
-        }
-    }
-
-    fn should_emit_colon_infix(&self) -> bool {
-        if self.has_token() {
-            let value = &self.formula[self.token_start..self.token_end];
-            if value.ends_with('!') {
-                return false;
-            }
-            return reference_value_contains_range_colon(value)
-                || value_has_structured_reference_bracket(value)
-                // A range end pointing at deleted cells is stored as `#REF!`
-                // (`A1:#REF!`); the `:` next to it is still the range operator.
-                || ref_error_starts_at(&self.formula, self.offset + 1)
-                || (value.contains('!')
-                    && next_reference_has_sheet_qualifier(&self.formula, self.offset + 1));
-        }
-        self.prev_is_reference_producing()
-            || self.prev_non_whitespace().is_some_and(|prev| {
-                prev.subtype == TokenSubType::Error && prev.value.eq_ignore_ascii_case("#REF!")
-            })
-    }
-
-    fn emit_infix_operator(&mut self, start: usize, end: usize) {
-        self.save_token();
-        self.start_token();
-        self.emit(Token::from_slice(
-            &self.formula,
-            TokenType::OpInfix,
-            TokenSubType::None,
-            start,
-            end,
-        ));
-        self.offset = end;
-        self.start_token();
-    }
-
-    /// Parse an operator token.
-    fn parse_operator(&mut self) -> Result<(), TokenizerError> {
-        self.save_token();
-
-        // Check for two-character operators
-        if self.offset + 1 < self.formula.len() {
-            let two_char = &self.formula.as_bytes()[self.offset..self.offset + 2];
-            if two_char == b">=" || two_char == b"<=" || two_char == b"<>" {
-                self.emit(Token::from_slice(
-                    &self.formula,
-                    TokenType::OpInfix,
-                    TokenSubType::None,
-                    self.offset,
-                    self.offset + 2,
-                ));
-                self.offset += 2;
-                self.start_token();
-                return Ok(());
-            }
-        }
-
-        let curr_byte = self.formula.as_bytes()[self.offset];
-        let token_type = match curr_byte {
-            b'@' => TokenType::OpPrefix,
-            b'%' => TokenType::OpPostfix,
-            b'+' | b'-' => {
-                // Determine if prefix or infix
-                if self.items.is_empty() {
-                    TokenType::OpPrefix
-                } else {
-                    let prev = self
-                        .items
-                        .iter()
-                        .rev()
-                        .find(|t| t.token_type != TokenType::Whitespace);
-                    if let Some(p) = prev {
-                        if p.subtype == TokenSubType::Close
-                            || p.token_type == TokenType::OpPostfix
-                            || p.token_type == TokenType::Operand
-                        {
-                            TokenType::OpInfix
-                        } else {
-                            TokenType::OpPrefix
-                        }
-                    } else {
-                        TokenType::OpPrefix
-                    }
-                }
-            }
-            _ => TokenType::OpInfix,
-        };
-
-        self.emit(Token::from_slice(
-            &self.formula,
-            token_type,
-            TokenSubType::None,
-            self.offset,
-            self.offset + 1,
-        ));
-        self.offset += 1;
-        self.start_token();
-        Ok(())
-    }
-
-    /// Parse an opener token – either '(' or '{'.
-    fn parse_opener(&mut self) -> Result<(), TokenizerError> {
-        let curr_byte = self.formula.as_bytes()[self.offset];
-        assert!(curr_byte == b'(' || curr_byte == b'{');
-
-        let token = if curr_byte == b'{' {
-            self.save_token();
-            Token::make_subexp_from_slice(&self.formula, false, self.offset, self.offset + 1)
-        } else if self.has_token() {
-            if let Some(colon) =
-                range_colon_before_call(&self.formula[self.token_start..self.token_end])
-            {
-                let colon = self.token_start + colon;
-                self.emit(Token::make_operand_from_slice(
-                    &self.formula,
-                    self.token_start,
-                    colon,
-                ));
-                self.emit(Token::from_slice(
-                    &self.formula,
-                    TokenType::OpInfix,
-                    TokenSubType::None,
-                    colon,
-                    colon + 1,
-                ));
-                self.token_start = colon + 1;
-            }
-            // Function call
-            let token = Token::make_subexp_from_slice(
-                &self.formula,
-                true,
-                self.token_start,
-                self.offset + 1,
-            );
-            self.token_start = self.offset + 1;
-            self.token_end = self.offset + 1;
-            token
-        } else {
-            Token::make_subexp_from_slice(&self.formula, false, self.offset, self.offset + 1)
-        };
-
-        self.emit(token.clone());
-        self.token_stack.push(token);
-        self.offset += 1;
-        self.start_token();
-        Ok(())
-    }
-
-    /// Parse a closer token – either ')' or '}'.
-    fn parse_closer(&mut self) -> Result<(), TokenizerError> {
-        self.save_token();
-
-        let curr_byte = self.formula.as_bytes()[self.offset];
-        assert!(curr_byte == b')' || curr_byte == b'}');
-
-        if let Some(open_token) = self.token_stack.pop() {
-            let closer = open_token.get_closer()?;
-            if (curr_byte == b'}' && closer.value != "}")
-                || (curr_byte == b')' && closer.value != ")")
-            {
-                return Err(TokenizerError {
-                    message: "Mismatched ( and { pair".to_string(),
-                    pos: self.offset,
-                });
-            }
-
-            self.emit(Token::from_slice(
-                &self.formula,
-                closer.token_type,
-                TokenSubType::Close,
-                self.offset,
-                self.offset + 1,
-            ));
-        } else {
-            return Err(TokenizerError {
-                message: format!("No matching opener for closer at position {}", self.offset),
-                pos: self.offset,
-            });
-        }
-
-        self.offset += 1;
-        self.start_token();
-        Ok(())
-    }
-
-    /// Parse a separator token – either ',' or ';'.
-    fn parse_separator(&mut self) -> Result<(), TokenizerError> {
-        self.save_token();
-
-        let curr_byte = self.formula.as_bytes()[self.offset];
-        assert!(curr_byte == b';' || curr_byte == b',');
-
-        let top_token = self.token_stack.last();
-        let in_function_or_array = matches!(
-            top_token.map(|t| t.token_type),
-            Some(TokenType::Func | TokenType::Array)
-        );
-        let in_array = matches!(top_token.map(|t| t.token_type), Some(TokenType::Array));
-
-        let (token_type, subtype) = match curr_byte {
-            b',' => {
-                if in_function_or_array {
-                    (TokenType::Sep, TokenSubType::Arg)
-                } else {
-                    (TokenType::OpInfix, TokenSubType::None)
-                }
-            }
-            b';' => {
-                if in_array {
-                    // Array row separator for both dialects
-                    (TokenType::Sep, TokenSubType::Row)
-                } else if self.dialect == FormulaDialect::OpenFormula && in_function_or_array {
-                    // OpenFormula uses ';' for argument separators inside functions
-                    (TokenType::Sep, TokenSubType::Arg)
-                } else if self.dialect == FormulaDialect::OpenFormula {
-                    (TokenType::OpInfix, TokenSubType::None)
-                } else {
-                    (TokenType::Sep, TokenSubType::Row)
-                }
-            }
-            _ => (TokenType::OpInfix, TokenSubType::None),
-        };
-
-        self.emit(Token::from_slice(
-            &self.formula,
-            token_type,
-            subtype,
-            self.offset,
-            self.offset + 1,
-        ));
-
-        self.offset += 1;
-        self.start_token();
-        Ok(())
-    }
-
     /// Reconstruct the formula from the parsed tokens.
     pub fn render(&self) -> String {
-        if self.items.is_empty() {
-            "".to_string()
-        } else if self.items[0].token_type == TokenType::Literal {
-            self.items[0].value.clone()
-        } else {
-            let concatenated: String = self.items.iter().map(|t| t.value.clone()).collect();
-            format!("={concatenated}")
+        match self.items.first() {
+            None => String::new(),
+            Some(first) if first.token_type == TokenType::Literal => first.value.clone(),
+            Some(_) => {
+                let mut out = String::from("=");
+                for token in &self.items {
+                    out.push_str(&token.value);
+                }
+                out
+            }
         }
     }
 

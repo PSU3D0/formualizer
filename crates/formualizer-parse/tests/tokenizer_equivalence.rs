@@ -131,43 +131,16 @@ fn stream_output(formula: &str) -> String {
     out
 }
 
-/// Known difference while both state machines exist: when an opener exceeds
-/// the token budget, the legacy machine reports the offset after the opener
-/// and the span machine the opener's own offset.
-fn without_limit_positions(output: &str) -> String {
-    output
-        .lines()
-        .map(
-            |line| match line.split_once("Formula token limit exceeded") {
-                Some((head, tail)) => match tail.rsplit_once(" at ") {
-                    Some((msg, _)) => format!("{head}Formula token limit exceeded{msg} at _"),
-                    None => line.to_string(),
-                },
-                None => line.to_string(),
-            },
-        )
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 #[test]
 fn tokenizer_matches_token_stream_on_corpus() {
     let mut differences = Vec::new();
-    let mut limit_position_differences = 0;
     for formula in corpus() {
         let a = tokenizer_output(&formula);
         let b = stream_output(&formula);
         if a != b {
-            if without_limit_positions(&a) == without_limit_positions(&b) {
-                limit_position_differences += 1;
-                continue;
-            }
             differences.push(format!("Tokenizer:\n{a}TokenStream:\n{b}"));
         }
     }
-    eprintln!(
-        "formulas differing only in a token-limit error position: {limit_position_differences}"
-    );
     assert!(
         differences.is_empty(),
         "{} formulas differ; first:\n{}",
@@ -199,5 +172,21 @@ fn tokenizer_matches_golden_output() {
             actual.lines().nth(line),
             expected.lines().nth(line)
         );
+    }
+}
+
+/// `#` after a logical literal is not the spill operator in either case
+/// (`TRUE` is not a reference), so both spellings are invalid error literals.
+#[test]
+fn spill_after_logical_literal_is_rejected_in_any_case() {
+    for formula in ["=true#", "=TRUE#", "=False#"] {
+        let err = Tokenizer::new(formula).err().expect(formula);
+        let hash = formula.len() - 1;
+        assert_eq!(
+            err.message,
+            format!("Invalid error code at position {hash}")
+        );
+        assert_eq!(err.pos, hash, "{formula}");
+        assert!(TokenStream::new(formula).is_err(), "{formula}");
     }
 }
