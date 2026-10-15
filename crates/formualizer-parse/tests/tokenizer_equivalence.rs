@@ -190,3 +190,27 @@ fn spill_after_logical_literal_is_rejected_in_any_case() {
         assert!(TokenStream::new(formula).is_err(), "{formula}");
     }
 }
+
+#[test]
+fn get_closer_matches_each_opener() {
+    use formualizer_parse::{TokenSubType, TokenType};
+    let tokens = Tokenizer::new("=SUM((1),{2})").unwrap().items;
+    let closers: Vec<(String, TokenType, TokenSubType)> = tokens
+        .iter()
+        .filter(|t| t.subtype == TokenSubType::Open)
+        .map(|t| {
+            let c = t.get_closer().unwrap();
+            (c.value, c.token_type, c.subtype)
+        })
+        .collect();
+    assert_eq!(
+        closers,
+        [
+            (")".to_string(), TokenType::Func, TokenSubType::Close),
+            (")".to_string(), TokenType::Paren, TokenSubType::Close),
+            ("}".to_string(), TokenType::Array, TokenSubType::Close),
+        ]
+    );
+    let not_opener = &tokens[tokens.len() - 1];
+    assert!(not_opener.get_closer().is_err());
+}

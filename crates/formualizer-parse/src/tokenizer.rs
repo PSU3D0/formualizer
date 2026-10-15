@@ -319,51 +319,6 @@ impl Token {
         Token::new_with_span(value, TokenType::Operand, subtype, start, end)
     }
 
-    /// Create a subexpression token.
-    ///
-    /// `value` must end with one of '{', '}', '(' or ')'. If `func` is true,
-    /// the token's type is forced to be Func.
-    pub fn make_subexp(value: &str, func: bool) -> Self {
-        let last_char = value.chars().last().expect("Empty token value");
-        assert!(matches!(last_char, '{' | '}' | '(' | ')'));
-        let token_type = if func {
-            TokenType::Func
-        } else if "{}".contains(last_char) {
-            TokenType::Array
-        } else if "()".contains(last_char) {
-            TokenType::Paren
-        } else {
-            TokenType::Func
-        };
-        let subtype = if ")}".contains(last_char) {
-            TokenSubType::Close
-        } else {
-            TokenSubType::Open
-        };
-        Token::new(value.to_string(), token_type, subtype)
-    }
-
-    /// Create a subexpression token with byte position span.
-    pub fn make_subexp_with_span(value: &str, func: bool, start: usize, end: usize) -> Self {
-        let last_char = value.chars().last().expect("Empty token value");
-        assert!(matches!(last_char, '{' | '}' | '(' | ')'));
-        let token_type = if func {
-            TokenType::Func
-        } else if "{}".contains(last_char) {
-            TokenType::Array
-        } else if "()".contains(last_char) {
-            TokenType::Paren
-        } else {
-            TokenType::Func
-        };
-        let subtype = if ")}".contains(last_char) {
-            TokenSubType::Close
-        } else {
-            TokenSubType::Open
-        };
-        Token::new_with_span(value.to_string(), token_type, subtype, start, end)
-    }
-
     /// Given an opener token, return its corresponding closer token.
     pub fn get_closer(&self) -> Result<Token, TokenizerError> {
         if self.subtype != TokenSubType::Open {
@@ -372,37 +327,16 @@ impl Token {
                 pos: 0,
             });
         }
-        let closer_value = if self.token_type == TokenType::Array {
-            "}"
-        } else {
-            ")"
+        let (value, token_type) = match self.token_type {
+            TokenType::Func => (")", TokenType::Func),
+            TokenType::Array => ("}", TokenType::Array),
+            _ => (")", TokenType::Paren),
         };
-        Ok(Token::make_subexp(
-            closer_value,
-            self.token_type == TokenType::Func,
+        Ok(Token::new(
+            value.to_string(),
+            token_type,
+            TokenSubType::Close,
         ))
-    }
-
-    /// Create a separator token.
-    pub fn make_separator(value: &str) -> Self {
-        assert!(value == "," || value == ";");
-        let subtype = if value == "," {
-            TokenSubType::Arg
-        } else {
-            TokenSubType::Row
-        };
-        Token::new(value.to_string(), TokenType::Sep, subtype)
-    }
-
-    /// Create a separator token with byte position span.
-    pub fn make_separator_with_span(value: &str, start: usize, end: usize) -> Self {
-        assert!(value == "," || value == ";");
-        let subtype = if value == "," {
-            TokenSubType::Arg
-        } else {
-            TokenSubType::Row
-        };
-        Token::new_with_span(value.to_string(), TokenType::Sep, subtype, start, end)
     }
 }
 
