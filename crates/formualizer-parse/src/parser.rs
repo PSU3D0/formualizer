@@ -1873,37 +1873,31 @@ impl ASTNode {
             .collect()
     }
 
+    /// Pre-order walk with an explicit stack, so a deep hand-built tree
+    /// cannot exhaust the call stack. Children are pushed in reverse so they
+    /// are visited in source order.
     fn collect_dependencies<'a>(&'a self, dependencies: &mut Vec<&'a ReferenceType>) {
-        match &self.node_type {
-            ASTNodeType::Reference { reference, .. } => {
-                dependencies.push(reference);
-            }
-            ASTNodeType::UnaryOp { expr, .. } => {
-                expr.collect_dependencies(dependencies);
-            }
-            ASTNodeType::BinaryOp { left, right, .. } => {
-                left.collect_dependencies(dependencies);
-                right.collect_dependencies(dependencies);
-            }
-            ASTNodeType::Function { args, .. } => {
-                for arg in args {
-                    arg.collect_dependencies(dependencies);
+        let mut stack: Vec<&'a ASTNode> = vec![self];
+        while let Some(node) = stack.pop() {
+            match &node.node_type {
+                ASTNodeType::Reference { reference, .. } => dependencies.push(reference),
+                ASTNodeType::UnaryOp { expr, .. } => stack.push(expr),
+                ASTNodeType::BinaryOp { left, right, .. } => {
+                    stack.push(right);
+                    stack.push(left);
                 }
-            }
-            ASTNodeType::Call { callee, args } => {
-                callee.collect_dependencies(dependencies);
-                for arg in args {
-                    arg.collect_dependencies(dependencies);
+                ASTNodeType::Function { args, .. } => stack.extend(args.iter().rev()),
+                ASTNodeType::Call { callee, args } => {
+                    stack.extend(args.iter().rev());
+                    stack.push(callee);
                 }
-            }
-            ASTNodeType::Array(rows) => {
-                for row in rows {
-                    for item in row {
-                        item.collect_dependencies(dependencies);
+                ASTNodeType::Array(rows) => {
+                    for row in rows.iter().rev() {
+                        stack.extend(row.iter().rev());
                     }
                 }
+                ASTNodeType::Literal(_) | ASTNodeType::Omitted => {}
             }
-            _ => {}
         }
     }
 
@@ -2081,70 +2075,67 @@ impl ASTNode {
         });
         out
     }
-    /// Recursively updates sheet references within the AST.
+    /// Updates sheet references within the AST.
     ///
     /// If `target_name` is provided, only references matching that sheet name are updated.
     /// This is used for "healing" specific broken references (Tombstone rescue).
     /// If `target_name` is None, it acts as a global rename (standard sheet rename).
+    ///
+    /// The walk uses an explicit stack, so tree depth is not limited by the
+    /// call stack.
     pub fn update_sheet_references(&mut self, target_name: Option<&str>, new_name: &str) {
-        match &mut self.node_type {
-            ASTNodeType::Reference {
-                reference: ReferenceType::Cell { sheet, .. } | ReferenceType::Range { sheet, .. },
-                ..
-            } => {
-                if let Some(current_sheet) = sheet
-                    && (target_name.is_none() || target_name == Some(current_sheet.as_str()))
-                {
-                    *sheet = Some(new_name.to_string());
-                }
-            }
-            ASTNodeType::Reference {
-                reference:
-                    ReferenceType::Cell3D {
-                        sheet_first,
-                        sheet_last,
-                        ..
-                    }
-                    | ReferenceType::Range3D {
-                        sheet_first,
-                        sheet_last,
-                        ..
-                    },
-                ..
-            } => {
-                if target_name.is_none() || target_name == Some(sheet_first.as_str()) {
-                    *sheet_first = new_name.to_string();
-                }
-                if target_name.is_none() || target_name == Some(sheet_last.as_str()) {
-                    *sheet_last = new_name.to_string();
-                }
-            }
-            ASTNodeType::UnaryOp { expr, .. } => {
-                expr.update_sheet_references(target_name, new_name);
-            }
-            ASTNodeType::BinaryOp { left, right, .. } => {
-                left.update_sheet_references(target_name, new_name);
-                right.update_sheet_references(target_name, new_name);
-            }
-            ASTNodeType::Function { args, .. } => {
-                for arg in args {
-                    arg.update_sheet_references(target_name, new_name);
-                }
-            }
-            ASTNodeType::Call { callee, args } => {
-                callee.update_sheet_references(target_name, new_name);
-                for arg in args {
-                    arg.update_sheet_references(target_name, new_name);
-                }
-            }
-            ASTNodeType::Array(rows) => {
-                for row in rows {
-                    for cell in row {
-                        cell.update_sheet_references(target_name, new_name);
+        let mut stack: Vec<&mut ASTNode> = vec![self];
+        while let Some(node) = stack.pop() {
+            match &mut node.node_type {
+                ASTNodeType::Reference {
+                    reference:
+                        ReferenceType::Cell { sheet, .. } | ReferenceType::Range { sheet, .. },
+                    ..
+                } => {
+                    if let Some(current_sheet) = sheet
+                        && (target_name.is_none() || target_name == Some(current_sheet.as_str()))
+                    {
+                        *sheet = Some(new_name.to_string());
                     }
                 }
+                ASTNodeType::Reference {
+                    reference:
+                        ReferenceType::Cell3D {
+                            sheet_first,
+                            sheet_last,
+                            ..
+                        }
+                        | ReferenceType::Range3D {
+                            sheet_first,
+                            sheet_last,
+                            ..
+                        },
+                    ..
+                } => {
+                    if target_name.is_none() || target_name == Some(sheet_first.as_str()) {
+                        *sheet_first = new_name.to_string();
+                    }
+                    if target_name.is_none() || target_name == Some(sheet_last.as_str()) {
+                        *sheet_last = new_name.to_string();
+                    }
+                }
+                ASTNodeType::UnaryOp { expr, .. } => stack.push(expr),
+                ASTNodeType::BinaryOp { left, right, .. } => {
+                    stack.push(right);
+                    stack.push(left);
+                }
+                ASTNodeType::Function { args, .. } => stack.extend(args.iter_mut().rev()),
+                ASTNodeType::Call { callee, args } => {
+                    stack.extend(args.iter_mut().rev());
+                    stack.push(callee);
+                }
+                ASTNodeType::Array(rows) => {
+                    for row in rows.iter_mut().rev() {
+                        stack.extend(row.iter_mut().rev());
+                    }
+                }
+                ASTNodeType::Reference { .. } | ASTNodeType::Literal(_) | ASTNodeType::Omitted => {}
             }
-            _ => {}
         }
     }
 }

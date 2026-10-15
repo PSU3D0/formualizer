@@ -127,3 +127,89 @@ fn array_with_unknown_separator_subtype_is_an_error() {
         .expect("parser did not return within 10 s");
     assert!(is_err);
 }
+
+/// `=((Sheet1!A1 + Sheet1!B1) + 1) + 1 ...` with `depth` left-nested levels,
+/// built by hand (the parser's `ast_height` limit would reject it). Left
+/// nesting keeps a recursive walk from becoming a tail call in release.
+fn deep_hand_built_tree(depth: usize) -> formualizer_parse::ASTNode {
+    use formualizer_parse::ASTNode;
+    let leaf = |col: u32| {
+        ASTNode::new(
+            ASTNodeType::Reference {
+                original: String::new(),
+                reference: ReferenceType::cell(Some("Sheet1".into()), 1, col),
+            },
+            None,
+        )
+    };
+    let mut node = ASTNode::new(
+        ASTNodeType::BinaryOp {
+            op: "+".into(),
+            left: Box::new(leaf(1)),
+            right: Box::new(leaf(2)),
+        },
+        None,
+    );
+    for _ in 0..depth {
+        node = ASTNode::new(
+            ASTNodeType::BinaryOp {
+                op: "+".into(),
+                left: Box::new(node),
+                right: Box::new(ASTNode::new(
+                    ASTNodeType::Literal(formualizer_parse::LiteralValue::Number(1.0)),
+                    None,
+                )),
+            },
+            None,
+        );
+    }
+    node
+}
+
+#[test]
+fn dependency_walks_do_not_recurse_on_deep_hand_built_trees() {
+    on_small_stack(|| {
+        let mut tree = deep_hand_built_tree(200_000);
+        let deps: Vec<String> = tree.get_dependency_strings();
+        assert_eq!(deps, ["Sheet1!A1", "Sheet1!B1"]);
+        tree.update_sheet_references(Some("Sheet1"), "Renamed");
+        assert_eq!(tree.get_dependency_strings(), ["Renamed!A1", "Renamed!B1"]);
+        // Dropping the tree recurses (derived Drop); that is outside this
+        // test's scope.
+        std::mem::forget(tree);
+    });
+}
+
+#[test]
+fn dependency_walks_visit_in_source_order() {
+    let mut ast =
+        parse("=SUM(A1,B1:C2)+LAMBDA(x,x+D1)(E1,{1,2;3,4})-(-Sheet2!F1)*Sheet2:Sheet3!G1")
+            .expect("parse");
+    assert_eq!(
+        ast.get_dependency_strings(),
+        [
+            "A1",
+            "B1:C2",
+            "x",
+            "x",
+            "D1",
+            "E1",
+            "Sheet2!F1",
+            "Sheet2:Sheet3!G1"
+        ]
+    );
+    ast.update_sheet_references(Some("Sheet2"), "Renamed");
+    assert_eq!(
+        ast.get_dependency_strings(),
+        [
+            "A1",
+            "B1:C2",
+            "x",
+            "x",
+            "D1",
+            "E1",
+            "Renamed!F1",
+            "Renamed:Sheet3!G1"
+        ]
+    );
+}
