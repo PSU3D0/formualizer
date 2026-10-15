@@ -4,6 +4,11 @@ All notable changes to Formualizer will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **`formualizer-parse` 4.0.0 (breaking).** `Tokenizer` is now a thin owned wrapper over the span tokenizer that `Parser` and the engine already used; the separate older tokenizer is gone. Its public surface (`new`, `new_with_dialect`, `new_best_effort*`, `from_token_stream`, `admission_error`, `items`, `render`, `dialect`, `TryFrom`) is unchanged, so the Python and JavaScript `Tokenizer`/`tokenize` keep working. On 320,789 real-world formulas both tokenizers produced identical tokens and errors; `Tokenizer::new` is about 15% faster. Two observable differences: `=true#` is now rejected like `=TRUE#` (a spill operator after a logical literal), and when an opening bracket is the token that exceeds the 16,384-token limit, the error position is that bracket rather than one past it.
+- Removed `Token::make_subexp`, `make_subexp_with_span`, `make_separator` and `make_separator_with_span`, which panicked on unexpected arguments.
+
 ### Added
 
 - Added recalculation of workbooks containing inert chart/dialog/empty-module sheets or unused unevaluable defined names, preserving their source content unchanged.
@@ -35,6 +40,9 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Fixed
 
+- **Fixed a crash on formulas with many `[0]` workbook prefixes.** A reference such as `='[0][0]...[0]Sheet1'!A1` was parsed recursively, once per prefix, outside the parser's nesting limits: about 6 KB of such text overflowed a 1 MiB stack (the WebAssembly default) and about 45 KB the main thread, aborting the process (Python exited with a segmentation fault). The prefixes are now stripped in a loop.
+- Fixed three more ways the parser could panic, abort or hang on unexpected input: `TemplateLexeme::match_relocated` given a different template now reports a mismatch instead of panicking; `collect_references` on a hand-built range whose end row is near `u32::MAX` computed its size in 32 bits, which wrapped in release builds and then tried to allocate several gigabytes; and an array literal in a hand-built `TokenStream` with an unexpected separator kind made `Parser::parse` loop forever.
+- `formualizer-parse` library code no longer uses `unwrap`, `expect`, `panic!`, `unreachable!` or release `assert!`. Clippy lints now deny them, along with unchecked indexing, string slicing and integer arithmetic, outside tests. `get_dependencies` and `update_sheet_references` walk the AST iteratively; hashing and pretty-printing document the tree depth they support.
 - **Fixed date and time cells giving wrong results inside formulas** in workbooks loaded with `load_workbook`/`Workbook.load_path` or edited with `set_value` (recalc was not affected). `TEXT(A1,"mm/dd/yyyy")` on a date returned `01/00/1900`, `COUNTIF`/`SUMIF`/`MATCH`/`VLOOKUP` did not find date keys, and date plus a fractional number dropped the fraction (`DATE(2001,5,1)+243.5` gave a whole day), which also changed `XIRR` and other dependents. Formulas now read the stored serial number; typed values appear only where a value is returned to the caller.
 - `get_value` and range reads now return a date with a time of day as `datetime` (Rust `DateTime`) instead of a truncated `date`, and a time-formatted value outside one day (`[h]:mm` such as 25:30, or a negative elapsed time) as `timedelta` (Rust `Duration`) instead of a wrapped time of day. Times keep fractions of a second.
 - Fixed defined names on sheets whose names contain a comma (`'Sche 3 (L-Craft, By Trade)'!$1:$3`) being imported as formulas instead of ranges. A whole-sheet print area on such a sheet was evaluated as a million-row array: one workbook took 12.8 s to recalculate instead of 0.14 s.
