@@ -34,6 +34,10 @@ impl TokenCache {
             .get_key_value(source)
             .map(|(s, t)| (Arc::clone(s), Arc::clone(t)))
     }
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "bytes <= max_bytes is checked on entry; self.bytes is the sum of the payloads of the entries present and stays <= max_bytes - bytes after eviction"
+    )]
     pub(crate) fn insert(&mut self, source: Arc<str>, tokens: Arc<[TokenSpan]>) {
         let bytes = Self::payload(&source, &tokens);
         if self.max_entries == 0

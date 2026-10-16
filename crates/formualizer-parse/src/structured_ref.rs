@@ -22,6 +22,10 @@ use crate::types::ParsingError;
 
 /// Top-level entry point: parse a complete bracketed specifier and reject
 /// trailing garbage.
+#[expect(
+    clippy::string_slice,
+    reason = "byte offset from ASCII delimiter search: pos is one past the closing `]`"
+)]
 pub(crate) fn parse_full_specifier(input: &str) -> Result<Option<TableSpecifier>, ParsingError> {
     if input.is_empty() {
         return Ok(None);
@@ -57,6 +61,10 @@ impl<'a> SpecifierParser<'a> {
         self.bytes.get(self.pos).copied()
     }
 
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "cursor bounded by slice length"
+    )]
     fn bump(&mut self, expected: u8) -> Result<(), ParsingError> {
         match self.peek() {
             Some(b) if b == expected => {
@@ -75,13 +83,19 @@ impl<'a> SpecifierParser<'a> {
     }
 
     /// Parse the outermost `[ content ]` block.
+    #[expect(
+        clippy::arithmetic_side_effects,
+        clippy::string_slice,
+        reason = "byte offset from ASCII delimiter search: inner_start is one past the opening `[` and close is the index of the matching `]`"
+    )]
     fn parse_specifier(&mut self) -> Result<TableSpecifier, ParsingError> {
+        let open = self.pos;
         self.bump(b'[')?;
         let inner_start = self.pos;
         // Find the matching `]` that terminates this specifier (respecting
         // nesting and `'`-escapes). The substring [inner_start..close) is
         // the "content".
-        let close = self.find_matching_close(inner_start - 1)?;
+        let close = self.find_matching_close(open)?;
         let content = &self.src[inner_start..close];
         // Advance past the closing bracket so callers see what comes next.
         self.pos = close + 1;
@@ -90,12 +104,16 @@ impl<'a> SpecifierParser<'a> {
 
     /// Given the position of an opening `[`, return the byte index of the
     /// matching `]`.
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "cursor bounded by slice length; depth counts unclosed `[` and is decremented only while positive"
+    )]
     fn find_matching_close(&self, open_pos: usize) -> Result<usize, ParsingError> {
-        debug_assert_eq!(self.bytes[open_pos], b'[');
-        let mut depth: u32 = 1;
+        debug_assert_eq!(self.bytes.get(open_pos), Some(&b'['));
+        let mut depth: usize = 1;
         let mut i = open_pos + 1;
-        while i < self.bytes.len() {
-            match self.bytes[i] {
+        while let Some(&b) = self.bytes.get(i) {
+            match b {
                 b'\'' => {
                     // Per-character escape; skip the next byte unconditionally.
                     if i + 1 < self.bytes.len() {
@@ -161,9 +179,13 @@ fn parse_content(content: &str) -> Result<TableSpecifier, ParsingError> {
     }
 
     if let Some(colon_idx) = scan.top_level_colon {
-        let start = trimmed[..colon_idx].trim();
-        let end = trimmed[colon_idx + 1..].trim();
-        return build_column_range(start, end);
+        #[expect(
+            clippy::string_slice,
+            clippy::arithmetic_side_effects,
+            reason = "byte offset from ASCII delimiter search: colon_idx is the index of a `:`"
+        )]
+        let (start, end) = (&trimmed[..colon_idx], &trimmed[colon_idx + 1..]);
+        return build_column_range(start.trim(), end.trim());
     }
 
     if trimmed.starts_with('#') {
@@ -181,15 +203,19 @@ struct TopLevelScan {
 
 /// Walk `s` once, ignoring escaped bytes and bracket-enclosed regions, and
 /// report top-level structural punctuation.
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "cursor bounded by slice length; depth counts unclosed `[` and is decremented only while positive"
+)]
 fn scan_top_level(s: &str) -> Result<TopLevelScan, ParsingError> {
     let bytes = s.as_bytes();
-    let mut depth: u32 = 0;
+    let mut depth: usize = 0;
     let mut top_bracket = false;
     let mut top_comma = false;
     let mut top_colon: Option<usize> = None;
     let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
+    while let Some(&b) = bytes.get(i) {
+        match b {
             b'\'' => {
                 if i + 1 < bytes.len() {
                     i += 2;
@@ -259,12 +285,11 @@ fn parse_combination_or_item(content: &str) -> Result<TableSpecifier, ParsingErr
         )));
     }
 
-    if items.len() == 1 {
-        Ok(items.pop().unwrap())
-    } else {
-        Ok(TableSpecifier::Combination(
+    match <[TableSpecifier; 1]>::try_from(items) {
+        Ok([only]) => Ok(only),
+        Err(items) => Ok(TableSpecifier::Combination(
             items.into_iter().map(Box::new).collect(),
-        ))
+        )),
     }
 }
 
@@ -288,9 +313,17 @@ impl<'a> ItemParser<'a> {
     fn peek(&self) -> Option<u8> {
         self.bytes.get(self.pos).copied()
     }
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "cursor bounded by slice length: callers advance past a byte returned by peek"
+    )]
     fn advance(&mut self, n: usize) {
         self.pos += n;
     }
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "cursor bounded by slice length"
+    )]
     fn skip_ws(&mut self) {
         while let Some(b) = self.peek() {
             if b == b' ' || b == b'\t' || b == b'\n' {
@@ -333,14 +366,19 @@ impl<'a> ItemParser<'a> {
         bracketed_token_to_specifier(first)
     }
 
+    #[expect(
+        clippy::arithmetic_side_effects,
+        clippy::string_slice,
+        reason = "cursor bounded by slice length; depth counts unclosed `[` and is decremented only while positive; the slice runs from one past a `[` to a `]`"
+    )]
     fn parse_bracketed_token(&mut self) -> Result<BracketedToken, ParsingError> {
         debug_assert_eq!(self.peek(), Some(b'['));
         let open = self.pos;
         self.pos += 1;
         let inner_start = self.pos;
-        let mut depth: u32 = 1;
-        while !self.eof() {
-            match self.bytes[self.pos] {
+        let mut depth: usize = 1;
+        while let Some(b) = self.peek() {
+            match b {
                 b'\'' => {
                     if self.pos + 1 < self.bytes.len() {
                         self.pos += 2;
@@ -501,18 +539,20 @@ fn parse_at_shorthand(rest: &str) -> Result<TableSpecifier, ParsingError> {
     ]))
 }
 
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "cursor bounded by slice length; depth counts unclosed `[` and is decremented only while positive"
+)]
 fn strip_outer_brackets(s: &str) -> Option<String> {
-    let bytes = s.as_bytes();
-    if bytes.len() < 2 || bytes[0] != b'[' || bytes[bytes.len() - 1] != b']' {
-        return None;
-    }
+    let inner = s.strip_prefix('[')?.strip_suffix(']')?;
     // Validate balanced (with `'`-escape) and that the matching close is the
     // final byte; if the first `[` matches an interior `]` then this isn't
     // a single outer-bracketed token.
-    let mut depth: u32 = 1;
-    let mut i = 1;
-    while i < bytes.len() - 1 {
-        match bytes[i] {
+    let bytes = inner.as_bytes();
+    let mut depth: usize = 1;
+    let mut i = 0;
+    while let Some(&b) = bytes.get(i) {
+        match b {
             b'\'' => {
                 i += 2;
                 continue;
@@ -531,7 +571,7 @@ fn strip_outer_brackets(s: &str) -> Option<String> {
     if depth != 1 {
         return None;
     }
-    Some(s[1..s.len() - 1].to_string())
+    Some(inner.to_string())
 }
 
 /// Apply the OOXML `'X` per-character escape: a single apostrophe makes the

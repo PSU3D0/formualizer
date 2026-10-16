@@ -4287,13 +4287,16 @@ mod r1c1_disambiguation {
 
 #[cfg(test)]
 mod parser_hardening {
+    #[expect(
+        clippy::unwrap_in_result,
+        reason = "test helper: a failed spawn or a stack overflow fails the test"
+    )]
     fn parse_on_small_stack(formula: String) -> Result<(), crate::parser::ParserError> {
-        std::thread::Builder::new()
+        let thread = std::thread::Builder::new()
             .stack_size(1024 * 1024)
             .spawn(move || crate::parser::parse(&formula).map(|_| ()))
-            .expect("spawn parse thread")
-            .join()
-            .expect("parser must not overflow the stack")
+            .expect("spawn parse thread");
+        thread.join().expect("parser must not overflow the stack")
     }
 
     #[test]
@@ -4440,7 +4443,11 @@ mod external_range_tests {
             assert_eq!(token_values(formula).len(), 1, "{formula}");
             match single_reference(formula) {
                 ReferenceType::External(ext) => {
-                    assert_eq!(ext.raw, &formula[1..], "{formula}");
+                    assert_eq!(
+                        Some(ext.raw.as_str()),
+                        formula.strip_prefix('='),
+                        "{formula}"
+                    );
                     assert_eq!(ext.sheet, sheet, "{formula}");
                     assert_eq!(ext.kind, kind, "{formula}");
                 }

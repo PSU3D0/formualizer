@@ -1,8 +1,3 @@
-// See formualizer-common/lib.rs for rationale: nested
-// `if let ... { if cond { ... } }` predates let chains on the Pyodide
-// toolchain; silence clippy's collapse suggestion crate-wide.
-#![allow(clippy::collapsible_if)]
-
 mod hasher;
 mod limits;
 mod token_cache;

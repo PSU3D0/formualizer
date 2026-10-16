@@ -10,6 +10,15 @@ use crate::tokenizer::Associativity;
 /// - No superfluous parentheses (keeps semantics)
 /// - References printed via .normalise()
 /// - Array literals: {1, 2; 3, 4}
+///
+/// # Depth
+///
+/// Recursive in the tree height. Trees within the default
+/// [`ParserLimits::ast_height`](crate::ParserLimits::ast_height) limit (256)
+/// are supported, which includes every tree the parser returns under default
+/// limits. A taller tree, hand-built or parsed under a raised limit, needs the
+/// caller to provide the stack (see
+/// [`ParserLimits::with_ast_height`](crate::ParserLimits::with_ast_height)).
 pub fn pretty_print(ast: &ASTNode) -> String {
     pretty_print_node(ast)
 }
@@ -221,6 +230,15 @@ fn pretty_print_node_in_context(ast: &ASTNode, comma_delimited: bool) -> String 
 ///
 /// This is the single entry-point that UI layers should use when displaying
 /// a formula reconstructed from an AST.
+///
+/// # Depth
+///
+/// Recursive in the tree height. Trees within the default
+/// [`ParserLimits::ast_height`](crate::ParserLimits::ast_height) limit (256)
+/// are supported, which includes every tree the parser returns under default
+/// limits. A taller tree, hand-built or parsed under a raised limit, needs the
+/// caller to provide the stack (see
+/// [`ParserLimits::with_ast_height`](crate::ParserLimits::with_ast_height)).
 pub fn canonical_formula(ast: &ASTNode) -> String {
     format!("={}", pretty_print(ast))
 }

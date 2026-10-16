@@ -114,6 +114,8 @@ pub struct RefSlot {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TemplateLexeme {
     slots: Box<[RefSlot]>,
+    /// Byte length of the text the lexeme was built from.
+    template_len: usize,
 }
 
 /// The verdict of [`TemplateLexeme::match_relocated`].
@@ -136,6 +138,11 @@ impl TemplateLexeme {
     /// Whether `candidate` is exactly `template` (the text this lexeme was
     /// built from) with every reference relocated by `(dr, dc)`: relative
     /// axes move, absolute axes stay, every other byte is identical.
+    ///
+    /// A `template` of a different byte length than the build text is a
+    /// [`RelocatedMatch::Mismatch`]. A different text of the same length is
+    /// outside this contract: the result then compares `candidate` against
+    /// that text's bytes around the build text's slots, without panicking.
     pub fn match_relocated(
         &self,
         template: &str,
@@ -143,28 +150,36 @@ impl TemplateLexeme {
         dr: i64,
         dc: i64,
     ) -> RelocatedMatch {
+        if template.len() != self.template_len {
+            return RelocatedMatch::Mismatch;
+        }
         let template = template.as_bytes();
-        let candidate = candidate.as_bytes();
+        let mut rest = candidate.as_bytes();
         let mut buf = [0u8; 32];
         let mut fixed = 0usize;
-        let mut at = 0usize;
         for slot in self.slots.iter() {
             let (start, end) = (slot.start as usize, slot.end as usize);
             let Some(len) = render_relocated(slot.reference, dr, dc, &mut buf) else {
                 return RelocatedMatch::OffGrid;
             };
-            let lead = &template[fixed..start];
-            if candidate.get(at..at + lead.len()) != Some(lead) {
+            let Some(lead) = template.get(fixed..start) else {
                 return RelocatedMatch::Mismatch;
-            }
-            at += lead.len();
-            if candidate.get(at..at + len) != Some(&buf[..len]) {
+            };
+            let Some(after_lead) = rest.strip_prefix(lead) else {
                 return RelocatedMatch::Mismatch;
-            }
-            at += len;
+            };
+            #[expect(
+                clippy::indexing_slicing,
+                reason = "render_relocated writes at most 25 bytes (`$XFD$1048576:$XFD$1048576`) into the 32-byte buffer"
+            )]
+            let rendered = &buf[..len];
+            let Some(after_slot) = after_lead.strip_prefix(rendered) else {
+                return RelocatedMatch::Mismatch;
+            };
+            rest = after_slot;
             fixed = end;
         }
-        if candidate.get(at..) == Some(&template[fixed..]) {
+        if template.get(fixed..) == Some(rest) {
             RelocatedMatch::Match
         } else {
             RelocatedMatch::Mismatch
@@ -217,7 +232,7 @@ pub fn lex_template(formula: &str) -> Option<TemplateLexeme> {
     // Open brackets: true for a function call, false for a parenthesis.
     let mut open: Vec<bool> = Vec::new();
     for span in &spans {
-        let text = &formula[span.start..span.end];
+        let text = formula.get(span.start..span.end)?;
         match (span.token_type, span.subtype) {
             (TokenType::Operand, TokenSubType::Number) => {
                 if !text.bytes().all(|b| b.is_ascii_digit() || b == b'.') {
@@ -281,6 +296,7 @@ pub fn lex_template(formula: &str) -> Option<TemplateLexeme> {
     }
     Some(TemplateLexeme {
         slots: slots.into_boxed_slice(),
+        template_len: formula.len(),
     })
 }
 
@@ -296,6 +312,10 @@ fn canonical_reference(text: &str) -> Option<SlotRef> {
     }
 }
 
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "cursor bounded by slice length; at most 3 letters and 7 digits are accumulated (col <= 18_278, row <= 9_999_999), each checked uppercase or digit before its offset is subtracted"
+)]
 fn canonical_point(text: &str) -> Option<A1Point> {
     let bytes = text.as_bytes();
     let mut i = 0;
@@ -305,11 +325,13 @@ fn canonical_point(text: &str) -> Option<A1Point> {
     }
     let letters = i;
     let mut col: u32 = 0;
-    while i < bytes.len() && bytes[i].is_ascii_uppercase() {
+    while let Some(&b) = bytes.get(i)
+        && b.is_ascii_uppercase()
+    {
         if i - letters == 3 {
             return None;
         }
-        col = col * 26 + u32::from(bytes[i] - b'A' + 1);
+        col = col * 26 + u32::from(b - b'A' + 1);
         i += 1;
     }
     if i == letters || col > MAX_COL {
@@ -324,11 +346,13 @@ fn canonical_point(text: &str) -> Option<A1Point> {
         return None;
     }
     let mut row: u32 = 0;
-    while i < bytes.len() && bytes[i].is_ascii_digit() {
+    while let Some(&b) = bytes.get(i)
+        && b.is_ascii_digit()
+    {
         if i - digits == 7 {
             return None;
         }
-        row = row * 10 + u32::from(bytes[i] - b'0');
+        row = row * 10 + u32::from(b - b'0');
         i += 1;
     }
     (i == bytes.len() && row <= MAX_ROW).then_some(A1Point {
@@ -359,6 +383,11 @@ fn relocate_point(p: A1Point, dr: i64, dc: i64) -> Option<A1Point> {
 
 /// Write the canonical spelling of `reference` relocated by `(dr, dc)`;
 /// `None` when it leaves the grid or a range's ends cross.
+#[expect(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    reason = "slots are built only by lex_template with 1 <= col <= 16_384 and 1 <= row <= 1_048_576, and relocate_point keeps that range: at most 3 letters, 7 digits and 25 bytes are written into the 32-byte buffer"
+)]
 fn render_relocated(reference: SlotRef, dr: i64, dc: i64, buf: &mut [u8; 32]) -> Option<usize> {
     match reference {
         SlotRef::Cell(p) => Some(render_point(relocate_point(p, dr, dc)?, buf, 0)),
@@ -375,6 +404,11 @@ fn render_relocated(reference: SlotRef, dr: i64, dc: i64, buf: &mut [u8; 32]) ->
     }
 }
 
+#[expect(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    reason = "slots are built only by lex_template with 1 <= col <= 16_384 and 1 <= row <= 1_048_576, and relocate_point keeps that range: at most 3 letters, 7 digits and 25 bytes are written into the 32-byte buffer"
+)]
 fn render_point(p: A1Point, buf: &mut [u8; 32], mut at: usize) -> usize {
     if p.col_abs {
         buf[at] = b'$';
@@ -413,6 +447,10 @@ fn render_point(p: A1Point, buf: &mut [u8; 32], mut at: usize) -> usize {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::string_slice,
+    reason = "tests slice formulas at slot offsets produced by lex_template"
+)]
 mod tests {
     use super::*;
     use crate::parser::{ASTNode, ASTNodeType, ReferenceType, parse};
@@ -551,6 +589,21 @@ mod tests {
         );
         assert_eq!(
             lex.match_relocated(t, "=A1+$A1+A$1+$A$1+SUM(B2:C3", 0, 0),
+            RelocatedMatch::Mismatch
+        );
+    }
+
+    #[test]
+    fn match_relocated_with_unrelated_template_is_mismatch() {
+        let lex = lex_template("=A1+B1").unwrap();
+        assert_eq!(
+            lex.match_relocated("=1", "=A2+B2", 1, 0),
+            RelocatedMatch::Mismatch
+        );
+        assert_eq!(lex.match_relocated("", "", 0, 0), RelocatedMatch::Mismatch);
+        // A longer template text is not the one the lexeme was built from.
+        assert_eq!(
+            lex.match_relocated("=A1+B1+1", "=A2+B2+1", 1, 0),
             RelocatedMatch::Mismatch
         );
     }

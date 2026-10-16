@@ -536,10 +536,6 @@ pub fn formualizer_parse::tokenizer::Token::get_precedence(&self) -> core::optio
 pub fn formualizer_parse::tokenizer::Token::is_operator(&self) -> bool
 pub fn formualizer_parse::tokenizer::Token::make_operand(alloc::string::String) -> Self
 pub fn formualizer_parse::tokenizer::Token::make_operand_with_span(alloc::string::String, usize, usize) -> Self
-pub fn formualizer_parse::tokenizer::Token::make_separator(&str) -> Self
-pub fn formualizer_parse::tokenizer::Token::make_separator_with_span(&str, usize, usize) -> Self
-pub fn formualizer_parse::tokenizer::Token::make_subexp(&str, bool) -> Self
-pub fn formualizer_parse::tokenizer::Token::make_subexp_with_span(&str, bool, usize, usize) -> Self
 pub fn formualizer_parse::tokenizer::Token::new(alloc::string::String, formualizer_parse::tokenizer::TokenType, formualizer_parse::tokenizer::TokenSubType) -> Self
 pub fn formualizer_parse::tokenizer::Token::new_with_span(alloc::string::String, formualizer_parse::tokenizer::TokenType, formualizer_parse::tokenizer::TokenSubType, usize, usize) -> Self
 impl core::clone::Clone for formualizer_parse::tokenizer::Token
@@ -932,10 +928,6 @@ pub fn formualizer_parse::tokenizer::Token::get_precedence(&self) -> core::optio
 pub fn formualizer_parse::tokenizer::Token::is_operator(&self) -> bool
 pub fn formualizer_parse::tokenizer::Token::make_operand(alloc::string::String) -> Self
 pub fn formualizer_parse::tokenizer::Token::make_operand_with_span(alloc::string::String, usize, usize) -> Self
-pub fn formualizer_parse::tokenizer::Token::make_separator(&str) -> Self
-pub fn formualizer_parse::tokenizer::Token::make_separator_with_span(&str, usize, usize) -> Self
-pub fn formualizer_parse::tokenizer::Token::make_subexp(&str, bool) -> Self
-pub fn formualizer_parse::tokenizer::Token::make_subexp_with_span(&str, bool, usize, usize) -> Self
 pub fn formualizer_parse::tokenizer::Token::new(alloc::string::String, formualizer_parse::tokenizer::TokenType, formualizer_parse::tokenizer::TokenSubType) -> Self
 pub fn formualizer_parse::tokenizer::Token::new_with_span(alloc::string::String, formualizer_parse::tokenizer::TokenType, formualizer_parse::tokenizer::TokenSubType, usize, usize) -> Self
 impl core::clone::Clone for formualizer_parse::tokenizer::Token

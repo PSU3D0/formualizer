@@ -1,12 +1,23 @@
 //! Release parser+drop throughput; preparation and semantic checks are untimed.
 //! Each invocation emits CSV; run independent processes, keep every sample.
+#![expect(
+    clippy::unwrap_used,
+    clippy::panic,
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    reason = "benchmark harness: bad arguments or a parse failure abort the run"
+)]
+
 use formualizer_parse::{ASTNode, parse, parser::BatchParser};
 use std::{hint::black_box, time::Instant};
 
 // The old baseline builder has no capacity method; its cache is unbounded.
 // An inherent method in the guarded builder takes precedence over this fallback.
 // This lets the identical harness isolate cache policy via an untimed override.
-#[allow(dead_code)]
+#[expect(
+    dead_code,
+    reason = "fallback for the baseline builder; the guarded builder's inherent method shadows it"
+)]
 trait BaselineCacheCapacity: Sized {
     fn cache_capacity(self, _entries: usize, _bytes: usize) -> Self {
         self
