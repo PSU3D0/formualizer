@@ -2,11 +2,10 @@ use super::super::utils::{ARG_ANY_ONE, coerce_num, criteria_match};
 use super::{AggregateArgument, resolve_aggregate_argument};
 use crate::args::ArgSchema;
 use crate::compute_prelude::{boolean, cmp, filter_array};
+use crate::engine::eval::exact::CompensatedSum;
 use crate::function::Function;
 use crate::function_contract::{CriteriaValueRange, FunctionArityRule, FunctionDependencyContract};
 use crate::traits::{ArgumentHandle, FunctionContext};
-use arrow::compute::kernels::aggregate::sum_array;
-use arrow_array::types::Float64Type;
 use arrow_array::{Array as _, BooleanArray, Float64Array};
 use formualizer_common::{ExcelError, LiteralValue};
 use formualizer_macros::func_caps;
@@ -356,7 +355,7 @@ fn eval_if_family<'a, 'b>(
     // SUMIFS rules: all ranges must have same dims.
     // Our implementation will use dims as the iteration space and broadcast/pad.
 
-    let mut total_sum = 0.0f64;
+    let mut total_sum = CompensatedSum::default();
     let mut total_count = 0i64;
 
     // Use a driver view for chunked iteration. Prefer sum_view, else first criteria range.
@@ -764,9 +763,7 @@ fn eval_if_family<'a, 'b>(
                                 let filtered = filter_array(tc.as_ref(), &mask).unwrap();
                                 let f64_arr =
                                     filtered.as_any().downcast_ref::<Float64Array>().unwrap();
-                                if let Some(s) = sum_array::<Float64Type, _>(f64_arr) {
-                                    total_sum += s;
-                                }
+                                total_sum.add_array(f64_arr);
                                 total_count += f64_arr.len() as i64 - f64_arr.null_count() as i64;
                             } else if let Some(ref s) = sum_scalar
                                 && let Ok(n) = coerce_num(s)
@@ -774,7 +771,7 @@ fn eval_if_family<'a, 'b>(
                                 let count = (0..mask.len())
                                     .filter(|&i| mask.is_valid(i) && mask.value(i))
                                     .count() as i64;
-                                total_sum += n * count as f64;
+                                total_sum.add(n * count as f64);
                                 total_count += count;
                             }
                         }
@@ -788,14 +785,12 @@ fn eval_if_family<'a, 'b>(
                                 .as_ref()
                                 .and_then(|cols| cols.get(c).and_then(|a| a.as_ref()));
                             if let Some(tc) = target_col {
-                                if let Some(s) = sum_array::<Float64Type, _>(tc.as_ref()) {
-                                    total_sum += s;
-                                }
+                                total_sum.add_array(tc.as_ref());
                                 total_count += tc.len() as i64 - tc.null_count() as i64;
                             } else if let Some(ref s) = sum_scalar
                                 && let Ok(n) = coerce_num(s)
                             {
-                                total_sum += n * row_len as f64;
+                                total_sum.add(n * row_len as f64);
                                 total_count += row_len as i64;
                             }
                         }
@@ -829,7 +824,7 @@ fn eval_if_family<'a, 'b>(
             } else if let Some(ref s) = sum_scalar
                 && let Ok(n) = coerce_num(s)
             {
-                total_sum = n * (dims.0 * dims.1) as f64;
+                total_sum.add(n * (dims.0 * dims.1) as f64);
                 total_count = (dims.0 * dims.1) as i64;
             }
         }
@@ -837,7 +832,7 @@ fn eval_if_family<'a, 'b>(
 
     match agg_type {
         AggregationType::Sum => Ok(crate::traits::CalcValue::Scalar(
-            super::super::utils::aggregate_result(total_sum),
+            super::super::utils::aggregate_result(total_sum.total()),
         )),
         // Counts cannot overflow to non-finite; keep them branch-free.
         AggregationType::Count => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
@@ -850,7 +845,7 @@ fn eval_if_family<'a, 'b>(
                 )))
             } else {
                 Ok(crate::traits::CalcValue::Scalar(
-                    super::super::utils::aggregate_result(total_sum / total_count as f64),
+                    super::super::utils::aggregate_result(total_sum.total() / total_count as f64),
                 ))
             }
         }

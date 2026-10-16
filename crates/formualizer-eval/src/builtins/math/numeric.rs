@@ -3,6 +3,7 @@ use super::super::utils::{
 };
 use super::{AggregateArgument, resolve_aggregate_argument};
 use crate::args::ArgSchema;
+use crate::engine::eval::exact::{CompensatedSum, compensated_dot};
 use crate::function::Function;
 use crate::function_contract::FunctionDependencyContract;
 use crate::traits::{ArgumentHandle, FunctionContext};
@@ -2422,32 +2423,32 @@ impl Function for SumsqFn {
         ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let date_system = ctx.date_system();
-        let mut total = 0.0;
+        let mut total = CompensatedSum::default();
         for arg in args {
             match resolve_aggregate_argument(arg, ctx)? {
                 AggregateArgument::Range(view) => view.for_each_cell(&mut |cell| {
                     match cell {
                         LiteralValue::Error(e) => return Err(e.clone()),
-                        LiteralValue::Number(n) => total += n * n,
+                        LiteralValue::Number(n) => total.add_product(*n, *n),
                         LiteralValue::Int(i) => {
                             let n = *i as f64;
-                            total += n * n;
+                            total.add_product(n, n);
                         }
                         LiteralValue::Date(d) => {
                             let n = formualizer_common::date_to_serial_for(date_system, d);
-                            total += n * n;
+                            total.add_product(n, n);
                         }
                         LiteralValue::DateTime(dt) => {
                             let n = formualizer_common::datetime_to_serial_for(date_system, dt);
-                            total += n * n;
+                            total.add_product(n, n);
                         }
                         LiteralValue::Time(t) => {
                             let n = formualizer_common::time_to_fraction(t);
-                            total += n * n;
+                            total.add_product(n, n);
                         }
                         LiteralValue::Duration(d) => {
                             let n = d.num_seconds() as f64 / 86_400.0;
-                            total += n * n;
+                            total.add_product(n, n);
                         }
                         _ => {}
                     }
@@ -2462,14 +2463,14 @@ impl Function for SumsqFn {
                     }
                     other => {
                         let n = coerce_num(&other)?;
-                        total += n * n;
+                        total.add_product(n, n);
                     }
                 },
             }
         }
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
-            total,
-        )))
+        Ok(crate::traits::CalcValue::Scalar(
+            super::super::utils::aggregate_result(total.total()),
+        ))
     }
 }
 
@@ -3446,7 +3447,8 @@ impl Function for SumX2MY2Fn {
                 ExcelError::new_na(),
             )));
         }
-        let total: f64 = xs.iter().zip(ys.iter()).map(|(x, y)| x * x - y * y).sum();
+        let total = compensated_dot(xs.iter().copied(), xs.iter().copied())
+            - compensated_dot(ys.iter().copied(), ys.iter().copied());
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
             total,
         )))
@@ -3516,7 +3518,8 @@ impl Function for SumX2PY2Fn {
                 ExcelError::new_na(),
             )));
         }
-        let total: f64 = xs.iter().zip(ys.iter()).map(|(x, y)| x * x + y * y).sum();
+        let total = compensated_dot(xs.iter().copied(), xs.iter().copied())
+            + compensated_dot(ys.iter().copied(), ys.iter().copied());
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
             total,
         )))
@@ -3586,7 +3589,8 @@ impl Function for SumXMY2Fn {
                 ExcelError::new_na(),
             )));
         }
-        let total: f64 = xs.iter().zip(ys.iter()).map(|(x, y)| (x - y).powi(2)).sum();
+        let diffs: Vec<f64> = xs.iter().zip(ys.iter()).map(|(x, y)| x - y).collect();
+        let total = compensated_dot(diffs.iter().copied(), diffs.iter().copied());
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
             total,
         )))
