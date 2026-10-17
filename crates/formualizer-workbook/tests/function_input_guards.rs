@@ -237,25 +237,31 @@ fn debug_overflow_sites_agree_with_release() {
 
 #[test]
 fn groupby_integer_options_saturate_like_numbers() {
-    let run = |code: LiteralValue| {
+    // SEQUENCE yields an Int; the same value typed in is a Number. As the
+    // sort_order argument both must sort ascending (saturated), where the Int
+    // used to wrap to 0 (unsorted).
+    let run = |code: &str| {
         let mut wb = Workbook::new();
         wb.add_sheet("S").unwrap();
-        for (r, (k, v)) in [("a", 1.0), ("b", 2.0), ("a", 3.0)].into_iter().enumerate() {
+        for (r, (k, v)) in [("b", 1.0), ("a", 2.0), ("b", 3.0)].into_iter().enumerate() {
             let r = r as u32 + 1;
             wb.set_value("S", r, 1, LiteralValue::Text(k.into()))
                 .unwrap();
             wb.set_value("S", r, 2, LiteralValue::Number(v)).unwrap();
         }
-        wb.set_value("S", 1, 3, code).unwrap();
-        wb.set_formula("S", 1, 5, r#"=GROUPBY(A1:A3,B1:B3,"SUM",C1)"#)
-            .unwrap();
+        wb.set_formula(
+            "S",
+            1,
+            5,
+            &format!(r#"=GROUPBY(A1:A3,B1:B3,"SUM",0,0,{code})"#),
+        )
+        .unwrap();
         wb.evaluate_all().unwrap();
-        (1..=4)
+        (1..=2)
             .map(|r| (5..=6).map(|c| wb.get_value("S", r, c)).collect::<Vec<_>>())
             .collect::<Vec<_>>()
     };
-    assert_eq!(
-        run(LiteralValue::Int(4_294_967_296)),
-        run(LiteralValue::Number(4_294_967_296.0))
-    );
+    let sorted = run("4294967296");
+    assert_eq!(sorted[0][0], Some(LiteralValue::Text("a".into())));
+    assert_eq!(run("SEQUENCE(1,1,4294967296)"), sorted);
 }
