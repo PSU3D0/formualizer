@@ -222,6 +222,11 @@ fn debug_overflow_sites_agree_with_release() {
     assert_error("=BITRSHIFT(1,-1E300)", ExcelErrorKind::Num);
     assert_error("=BESSELI(1,1E9)", ExcelErrorKind::Num);
     not_a_crash("=DB(1000,100,1E300,1)");
+    // A saturated life used to wrap to #NUM!; the schedule past 2^20 periods
+    // is now closed-form instead of 2^31 loop iterations.
+    assert_eq!(number("=DB(1000,100,1E300,1E300)"), 0.0);
+    assert_eq!(number("=DB(1000,100,2000000,2000000)"), 0.0);
+    assert!((number("=DB(1000,100,6,2)") - 217.239).abs() < 1e-9);
     not_a_crash("=RANDBETWEEN(-1,1E300)");
     assert_error("=NEGBINOMDIST(1E300,1E300,0.5)", ExcelErrorKind::Num);
     assert_error(

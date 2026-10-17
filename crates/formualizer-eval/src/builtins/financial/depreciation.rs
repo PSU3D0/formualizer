@@ -307,6 +307,23 @@ impl Function for DbFn {
         let mut total_depreciation = 0.0;
         let value = cost;
 
+        // A period past 2^20 would loop once per period (up to 2^31 times for
+        // a saturated life). After the first period the remaining value only
+        // shrinks by (1 - rate) per period, so compute it in closed form there;
+        // shorter schedules keep the exact loop below.
+        if period_int > DB_LOOP_PERIODS {
+            let first = value * rate * month / 12.0;
+            let after_first = value - first;
+            let remaining_before = |p: i32| after_first * (1.0 - rate).powi(p - 2);
+            let depreciation = if i64::from(period_int) == last_period {
+                let remaining = remaining_before(period_int);
+                (remaining - salvage).max(0.0).min(remaining)
+            } else {
+                remaining_before(period_int) * rate
+            };
+            return Ok(CalcValue::Scalar(LiteralValue::Number(depreciation)));
+        }
+
         for p in 1..=period_int {
             let depreciation = if p == 1 {
                 // First period: prorated
@@ -330,6 +347,9 @@ impl Function for DbFn {
         Ok(CalcValue::Scalar(LiteralValue::Number(0.0)))
     }
 }
+
+/// DB periods computed by iterating; later periods use the closed form.
+const DB_LOOP_PERIODS: i32 = 1 << 20;
 
 /// Returns declining-balance depreciation for a period using a configurable acceleration factor.
 ///
