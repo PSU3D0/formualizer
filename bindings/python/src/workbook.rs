@@ -1764,10 +1764,7 @@ mod tests {
     use super::{DEFAULT_XLSX_BYTE_BACKEND, PyWorkbook, PyWorkbookConfig, resolve_workbook_config};
 
     /// Poisons `lock` by panicking on another thread while holding it.
-    fn poison<T: Send + Sync>(lock: &std::sync::Arc<std::sync::RwLock<T>>)
-    where
-        T: 'static,
-    {
+    fn poison<T: Send + Sync + 'static>(lock: &std::sync::Arc<std::sync::RwLock<T>>) {
         let lock = std::sync::Arc::clone(lock);
         let _ = std::thread::spawn(move || {
             let _guard = lock.write().unwrap();

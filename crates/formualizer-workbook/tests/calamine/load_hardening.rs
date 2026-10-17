@@ -2,13 +2,11 @@
 //! defined names past the grid, one cell at the far corner of the grid, and
 //! non-finite numbers in `<v>`.
 
+use super::external_links::source_xlsx::*;
 use formualizer_common::{ExcelErrorKind, LiteralValue};
 use formualizer_workbook::{
     CalamineAdapter, LoadStrategy, SpreadsheetReader, Workbook, WorkbookConfig,
 };
-#[path = "../support/source_xlsx.rs"]
-mod source_xlsx;
-use source_xlsx::*;
 
 fn load(bytes: Vec<u8>) -> Workbook {
     Workbook::from_reader(
