@@ -865,12 +865,7 @@ impl PyWorkbook {
 
         // NaN and infinities are stored as #NUM! (as `Workbook::set_value`
         // does), so the compatibility cache below holds the same value.
-        let literal = match py_to_literal(value)? {
-            LiteralValue::Number(n) if !n.is_finite() => LiteralValue::Error(
-                formualizer::common::ExcelError::new(formualizer::common::ExcelErrorKind::Num),
-            ),
-            other => other,
-        };
+        let literal = py_to_literal(value)?.finite_or_num_error();
         let mut wb = self.write_inner()?;
         wb.set_value(sheet, row, col, literal.clone())
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
@@ -1252,7 +1247,9 @@ impl PyWorkbook {
             let list: &Bound<'_, pyo3::types::PyList> = row.cast()?;
             let mut row_vals: Vec<LiteralValue> = Vec::with_capacity(list.len());
             for v in list.iter() {
-                row_vals.push(py_to_literal(&v)?);
+                // Stored as `Workbook::set_values` stores it (NaN is #NUM!),
+                // so the compatibility cache below matches.
+                row_vals.push(py_to_literal(&v)?.finite_or_num_error());
             }
             rows_vec.push(row_vals);
         }

@@ -50,7 +50,11 @@ def xlsx(sheet_data: str, defined_names: str = "") -> bytes:
 
 
 def is_num_error(value) -> bool:
-    return isinstance(value, dict) and value.get("type") == "Error" and value.get("kind") == "Num"
+    return (
+        isinstance(value, dict)
+        and value.get("type") == "Error"
+        and value.get("kind") == "Num"
+    )
 
 
 def test_out_of_range_duration_dict_is_a_value_error():
@@ -102,3 +106,14 @@ def test_print_area_past_the_last_row_loads():
     wb = fz.Workbook.from_bytes(data)
     wb.evaluate_all()
     assert wb.get_value("Sheet1", 1, 2) == 4
+
+
+@pytest.mark.parametrize("bad", [math.nan, math.inf, -math.inf])
+def test_non_finite_set_values_batch_is_stored_as_num_error(bad):
+    wb = fz.Workbook()
+    wb.add_sheet("Sheet1")
+    wb.set_values_batch("Sheet1", 1, 1, [[1.0], [bad], [3.0]])
+    wb.set_formula("Sheet1", 1, 2, "=MEDIAN(A1:A3)")
+    wb.evaluate_all()
+    assert is_num_error(wb.get_value("Sheet1", 2, 1))
+    assert is_num_error(wb.get_value("Sheet1", 1, 2))

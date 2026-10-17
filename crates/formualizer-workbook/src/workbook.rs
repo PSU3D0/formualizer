@@ -1016,6 +1016,36 @@ trait WorkbookActionOps {
     ) -> Result<(), IoError>;
 }
 
+/// `rows` as the cells will store them: a borrow when every number is finite
+/// (one `is_finite` per number), otherwise a copy with non-finite numbers as
+/// `#NUM!` (see `LiteralValue::finite_or_num_error`).
+fn finite_rows(rows: &[Vec<LiteralValue>]) -> std::borrow::Cow<'_, [Vec<LiteralValue>]> {
+    let non_finite = |v: &LiteralValue| matches!(v, LiteralValue::Number(n) if !n.is_finite());
+    if rows.iter().flatten().any(non_finite) {
+        std::borrow::Cow::Owned(
+            rows.iter()
+                .map(|row| {
+                    row.iter()
+                        .cloned()
+                        .map(LiteralValue::finite_or_num_error)
+                        .collect()
+                })
+                .collect(),
+        )
+    } else {
+        std::borrow::Cow::Borrowed(rows)
+    }
+}
+
+/// Stores non-finite numbers in a `write_range` batch as `#NUM!`.
+fn finite_cell_values(cells: &mut BTreeMap<(u32, u32), crate::traits::CellData>) {
+    for cell in cells.values_mut() {
+        if let Some(value) = cell.value.take() {
+            cell.value = Some(value.finite_or_num_error());
+        }
+    }
+}
+
 /// Transactional edit surface for `Workbook::action`.
 ///
 /// This wrapper exists to avoid aliasing `&mut Workbook` while an Engine transaction is active.
@@ -1033,7 +1063,8 @@ impl WorkbookAction<'_> {
         col: u32,
         value: LiteralValue,
     ) -> Result<(), IoError> {
-        self.ops.set_value(sheet, row, col, value)
+        self.ops
+            .set_value(sheet, row, col, value.finite_or_num_error())
     }
 
     #[inline]
@@ -1055,7 +1086,8 @@ impl WorkbookAction<'_> {
         start_col: u32,
         rows: &[Vec<LiteralValue>],
     ) -> Result<(), IoError> {
-        self.ops.set_values(sheet, start_row, start_col, rows)
+        let rows = finite_rows(rows);
+        self.ops.set_values(sheet, start_row, start_col, &rows)
     }
 
     #[inline]
@@ -1063,8 +1095,9 @@ impl WorkbookAction<'_> {
         &mut self,
         sheet: &str,
         start: (u32, u32),
-        cells: BTreeMap<(u32, u32), crate::traits::CellData>,
+        mut cells: BTreeMap<(u32, u32), crate::traits::CellData>,
     ) -> Result<(), IoError> {
+        finite_cell_values(&mut cells);
         self.ops.write_range(sheet, start, cells)
     }
 
@@ -2227,12 +2260,7 @@ impl Workbook {
     ) -> Result<(), IoError> {
         // No cell holds NaN or an infinity: store them as #NUM!, as the
         // loaders do.
-        let value = match value {
-            LiteralValue::Number(n) if !n.is_finite() => {
-                LiteralValue::Error(ExcelError::new(ExcelErrorKind::Num))
-            }
-            other => other,
-        };
+        let value = value.finite_or_num_error();
         if sheet
             .strip_prefix('[')
             .and_then(|s| s.split_once(']'))
@@ -2479,8 +2507,9 @@ impl Workbook {
         &mut self,
         sheet: &str,
         _start: (u32, u32),
-        cells: BTreeMap<(u32, u32), crate::traits::CellData>,
+        mut cells: BTreeMap<(u32, u32), crate::traits::CellData>,
     ) -> Result<(), IoError> {
+        finite_cell_values(&mut cells);
         // Deferred-dirty scope: one multi-source propagation for the whole
         // batch instead of a full BFS per cell (see Engine::begin_deferred_dirty).
         // The unconditional end_deferred_dirty below flushes on every exit
@@ -2717,7 +2746,15 @@ impl Workbook {
                     let old_value = self.engine.get_cell_value(sheet, r, c);
                     let old_formula = self.engine.get_cell(sheet, r, c).and_then(|(ast, _)| ast);
                     let staged_before = self.staged_formula_cell(sheet, r, c);
-                    items.push((r, c, v.clone(), cell, old_value, old_formula, staged_before));
+                    items.push((
+                        r,
+                        c,
+                        v.clone().finite_or_num_error(),
+                        cell,
+                        old_value,
+                        old_formula,
+                        staged_before,
+                    ));
                 }
             }
 
@@ -2752,7 +2789,7 @@ impl Workbook {
                 for (ci, v) in rvals.iter().enumerate() {
                     let c = start_col + ci as u32;
                     self.engine
-                        .set_cell_value(sheet, r, c, v.clone())
+                        .set_cell_value(sheet, r, c, v.clone().finite_or_num_error())
                         .map_err(IoError::Engine)?;
                     self.engine.clear_staged_formula_text(sheet, r, c);
                 }

@@ -248,10 +248,7 @@ impl UmyaAdapter {
         match raw {
             // A non-finite number (`<v>NaN</v>`) is #NUM!, as in the other
             // loaders.
-            CellRawValue::Numeric(n) if !n.is_finite() => {
-                Some(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Num)))
-            }
-            CellRawValue::Numeric(n) => Some(LiteralValue::Number(*n)),
+            CellRawValue::Numeric(n) => Some(LiteralValue::Number(*n).finite_or_num_error()),
             CellRawValue::Bool(b) => Some(LiteralValue::Boolean(*b)),
             CellRawValue::String(s) => Some(LiteralValue::Text(s.to_string())),
             CellRawValue::RichText(rt) => Some(LiteralValue::Text(rt.get_text().to_string())),
@@ -259,11 +256,7 @@ impl UmyaAdapter {
                 // attempt parse
                 let txt = s.as_ref();
                 if let Ok(n) = txt.parse::<f64>() {
-                    Some(if n.is_finite() {
-                        LiteralValue::Number(n)
-                    } else {
-                        LiteralValue::Error(ExcelError::new(ExcelErrorKind::Num))
-                    })
+                    Some(LiteralValue::Number(n).finite_or_num_error())
                 } else if txt.eq_ignore_ascii_case("TRUE") {
                     Some(LiteralValue::Boolean(true))
                 } else if txt.eq_ignore_ascii_case("FALSE") {

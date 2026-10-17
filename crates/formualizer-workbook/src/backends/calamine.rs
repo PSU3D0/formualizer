@@ -548,16 +548,7 @@ struct StreamedSheet {
 /// loader rejects them. One `is_finite` per numeric cell.
 #[inline]
 fn number_literal(n: f64) -> LiteralValue {
-    if n.is_finite() {
-        LiteralValue::Number(n)
-    } else {
-        non_finite_number()
-    }
-}
-
-#[cold]
-fn non_finite_number() -> LiteralValue {
-    LiteralValue::Error(ExcelError::new(ExcelErrorKind::Num))
+    LiteralValue::Number(n).finite_or_num_error()
 }
 
 /// [`number_literal`] for the sparse overlay.
