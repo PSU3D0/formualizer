@@ -4669,6 +4669,19 @@ fn factorial(n: i64) -> f64 {
     result
 }
 
+/// Most terms a cumulative binomial / hypergeometric sum adds up (2^20). The
+/// counts are user numbers up to i64::MAX; past this the result is #NUM!
+/// instead of a loop that cannot finish. Every sum within the cap is computed
+/// exactly as before.
+const MAX_DISCRETE_SUM_TERMS: i64 = 1 << 20;
+
+#[cold]
+fn discrete_sum_too_long<'b>() -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+    Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+        ExcelError::new_num().with_message("too many terms in a cumulative distribution"),
+    )))
+}
+
 /// Helper: Log of binomial coefficient (n choose k)
 fn ln_binom(n: i64, k: i64) -> f64 {
     if k < 0 || k > n {
@@ -4758,6 +4771,13 @@ impl Function for BinomDistFn {
 
         let result = if cumulative {
             // CDF: sum from i=0 to k of P(X=i)
+            if k >= MAX_DISCRETE_SUM_TERMS {
+                if k == n {
+                    // Every outcome: exactly 1, without the sum.
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(1.0)));
+                }
+                return discrete_sum_too_long();
+            }
             let mut sum = 0.0;
             for i in 0..=k {
                 let ln_prob =
@@ -5466,6 +5486,10 @@ impl Function for HypgeomDistFn {
 
         let result = if cumulative {
             // CDF: sum from i=min_successes to sample_s of P(X=i)
+            // min_successes <= sample_s (checked above).
+            if sample_s - min_successes >= MAX_DISCRETE_SUM_TERMS {
+                return discrete_sum_too_long();
+            }
             let mut sum = 0.0;
             for i in min_successes..=sample_s {
                 sum += hypgeom_pmf(i, number_sample, population_s, number_pop);
@@ -9211,6 +9235,10 @@ impl Function for BinomDistRangeFn {
             )));
         }
 
+        // s <= s2 (checked above), so the difference cannot overflow.
+        if s2 - s >= MAX_DISCRETE_SUM_TERMS {
+            return discrete_sum_too_long();
+        }
         let mut sum = 0.0;
         for k in s..=s2 {
             let ln_prob = ln_binom(n, k) + (k as f64) * p.ln() + ((n - k) as f64) * (1.0 - p).ln();
@@ -9297,6 +9325,9 @@ impl Function for BinomInvFn {
         // Find smallest k such that BINOM.DIST(k, n, p, TRUE) >= alpha
         let mut cum = 0.0;
         for k in 0..=n {
+            if k >= MAX_DISCRETE_SUM_TERMS {
+                return discrete_sum_too_long();
+            }
             let ln_prob = ln_binom(n, k) + (k as f64) * p.ln() + ((n - k) as f64) * (1.0 - p).ln();
             cum += ln_prob.exp();
             if cum >= alpha {

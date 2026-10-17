@@ -2971,7 +2971,9 @@ impl Function for BaseFn {
         } else {
             0
         };
-        if !(2..=36).contains(&radix) || number < 0 {
+        // Excel caps min_length at 255 (#NUM! beyond), which also bounds the
+        // padding below.
+        if !(2..=36).contains(&radix) || number < 0 || min_len > 255 {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new_num(),
             )));
