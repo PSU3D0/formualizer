@@ -3848,11 +3848,19 @@ fn beta_i(x: f64, a: f64, b: f64) -> f64 {
         return f64::NAN;
     }
 
-    // Use symmetry for better convergence: I_x(a,b) = 1 - I_{1-x}(b,a)
+    // Use symmetry for better convergence: I_x(a,b) = 1 - I_{1-x}(b,a).
+    // The flip happens at most once. Near the threshold both argument orders
+    // can satisfy the test after rounding, so re-testing after the flip would
+    // recurse without end; the continued fraction converges either way.
     if x > (a + 1.0) / (a + b + 2.0) {
-        return 1.0 - beta_i(1.0 - x, b, a);
+        return 1.0 - beta_i_continued_fraction(1.0 - x, b, a);
     }
+    beta_i_continued_fraction(x, a, b)
+}
 
+/// Continued-fraction evaluation of `I_x(a, b)` for `0 < x < 1`, `a, b > 0`,
+/// without the symmetry flip (see `beta_i`).
+fn beta_i_continued_fraction(x: f64, a: f64, b: f64) -> f64 {
     // Compute the prefactor: x^a * (1-x)^b / (a * B(a,b))
     let ln_beta = ln_gamma(a) + ln_gamma(b) - ln_gamma(a + b);
     let ln_prefactor = a * x.ln() + b * (1.0 - x).ln() - ln_beta - a.ln();
