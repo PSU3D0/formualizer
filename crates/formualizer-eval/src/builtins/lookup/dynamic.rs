@@ -20,7 +20,7 @@
 //! - PERFORMANCE: streaming FILTER without full materialization; UNIQUE using smallvec for tiny sets.
 
 use super::super::utils::collapse_if_scalar;
-use super::lookup_utils::{PreparedLookupMatcher, cmp_for_lookup, value_to_f64_lenient};
+use super::lookup_utils::{PreparedLookupMatcher, SortKey, cmp_for_lookup, value_to_f64_lenient};
 use crate::args::{ArgSchema, CoercionPolicy, ShapeKind};
 use crate::engine::lookup_index_cache::LookupAxis;
 use crate::function::Function; // FnCaps imported via macro
@@ -1054,17 +1054,18 @@ impl Function for SortFn {
                 columns.push((c, col_vals));
             }
 
-            // Sort columns by the value in sort_row_idx
-            columns.sort_by(|a, b| {
-                let val_a = &a.1[sort_row_idx];
-                let val_b = &b.1[sort_row_idx];
-                let cmp = cmp_for_lookup(val_a, val_b, _ctx.date_system()).unwrap_or(0);
-                if ascending { cmp.cmp(&0) } else { 0.cmp(&cmp) }
-            });
+            // Sort columns by the value in sort_row_idx (Excel's total order;
+            // `sort_by` is stable, so ties keep their input order).
+            let date_system = _ctx.date_system();
+            let mut keyed: Vec<(SortKey, Vec<LiteralValue>)> = columns
+                .into_iter()
+                .map(|(_, col_vals)| (SortKey::new(&col_vals[sort_row_idx], date_system), col_vals))
+                .collect();
+            keyed.sort_by(|a, b| a.0.cmp_directed(&b.0, ascending));
 
             // Reconstruct the array with sorted columns
             let mut out: Vec<Vec<LiteralValue>> = vec![Vec::with_capacity(cols); rows];
-            for (_orig_idx, col_vals) in columns {
+            for (_key, col_vals) in keyed {
                 for (r, val) in col_vals.into_iter().enumerate() {
                     out[r].push(val);
                 }
@@ -1090,13 +1091,15 @@ impl Function for SortFn {
                 row_data.push(row_vals);
             }
 
-            // Sort rows by the value in sort_col_idx
-            row_data.sort_by(|a, b| {
-                let val_a = &a[sort_col_idx];
-                let val_b = &b[sort_col_idx];
-                let cmp = cmp_for_lookup(val_a, val_b, _ctx.date_system()).unwrap_or(0);
-                if ascending { cmp.cmp(&0) } else { 0.cmp(&cmp) }
-            });
+            // Sort rows by the value in sort_col_idx (Excel's total order;
+            // `sort_by` is stable, so ties keep their input order).
+            let date_system = _ctx.date_system();
+            let mut keyed: Vec<(SortKey, Vec<LiteralValue>)> = row_data
+                .into_iter()
+                .map(|row| (SortKey::new(&row[sort_col_idx], date_system), row))
+                .collect();
+            keyed.sort_by(|a, b| a.0.cmp_directed(&b.0, ascending));
+            let row_data: Vec<Vec<LiteralValue>> = keyed.into_iter().map(|(_, row)| row).collect();
 
             Ok(collapse_if_scalar(row_data, _ctx.date_system()))
         }
@@ -1321,14 +1324,26 @@ impl Function for SortByFn {
             indexed_rows.push((r, row_vals));
         }
 
-        // Sort using all criteria
+        // Sort using all criteria, in Excel's total order (`sort_by` is
+        // stable, so rows tied on every criterion keep their input order).
+        let date_system = _ctx.date_system();
+        let sort_keys: Vec<(Vec<SortKey>, bool)> = sort_criteria
+            .iter()
+            .map(|(by_values, ascending)| {
+                (
+                    by_values
+                        .iter()
+                        .map(|v| SortKey::new(v, date_system))
+                        .collect(),
+                    *ascending,
+                )
+            })
+            .collect();
         indexed_rows.sort_by(|a, b| {
-            for (by_values, ascending) in &sort_criteria {
-                let val_a = &by_values[a.0];
-                let val_b = &by_values[b.0];
-                let cmp = cmp_for_lookup(val_a, val_b, _ctx.date_system()).unwrap_or(0);
-                if cmp != 0 {
-                    return if *ascending { cmp.cmp(&0) } else { 0.cmp(&cmp) };
+            for (keys, ascending) in &sort_keys {
+                let ord = keys[a.0].cmp_directed(&keys[b.0], *ascending);
+                if ord != std::cmp::Ordering::Equal {
+                    return ord;
                 }
             }
             std::cmp::Ordering::Equal
