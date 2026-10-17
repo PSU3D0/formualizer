@@ -792,6 +792,7 @@ impl formualizer_common::LiteralValue
 pub fn formualizer_common::LiteralValue::as_serial_number(&self) -> core::option::Option<f64>
 pub fn formualizer_common::LiteralValue::as_serial_number_for(&self, formualizer_common::DateSystem) -> core::option::Option<f64>
 pub fn formualizer_common::LiteralValue::coerce_to_single_value(&self) -> core::result::Result<formualizer_common::LiteralValue, formualizer_common::ValueError>
+pub fn formualizer_common::LiteralValue::finite_or_num_error(self) -> Self
 pub fn formualizer_common::LiteralValue::from_serial_number(f64) -> Self
 pub fn formualizer_common::LiteralValue::is_truthy(&self) -> bool
 pub fn formualizer_common::LiteralValue::try_from_serial_number(f64) -> core::result::Result<Self, formualizer_common::ExcelError>
@@ -1025,6 +1026,7 @@ impl formualizer_common::LiteralValue
 pub fn formualizer_common::LiteralValue::as_serial_number(&self) -> core::option::Option<f64>
 pub fn formualizer_common::LiteralValue::as_serial_number_for(&self, formualizer_common::DateSystem) -> core::option::Option<f64>
 pub fn formualizer_common::LiteralValue::coerce_to_single_value(&self) -> core::result::Result<formualizer_common::LiteralValue, formualizer_common::ValueError>
+pub fn formualizer_common::LiteralValue::finite_or_num_error(self) -> Self
 pub fn formualizer_common::LiteralValue::from_serial_number(f64) -> Self
 pub fn formualizer_common::LiteralValue::is_truthy(&self) -> bool
 pub fn formualizer_common::LiteralValue::try_from_serial_number(f64) -> core::result::Result<Self, formualizer_common::ExcelError>
