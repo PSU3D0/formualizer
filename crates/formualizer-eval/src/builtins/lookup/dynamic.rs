@@ -1037,7 +1037,10 @@ impl Function for SortFn {
 
         if by_col {
             // Sort columns by the specified row
-            let sort_row_idx = (sort_index - 1).max(0) as usize;
+            // i64::MIN (a saturated -1E300) maps past the end: #VALUE! below.
+            let sort_row_idx = sort_index
+                .checked_sub(1)
+                .map_or(usize::MAX, |i| i.max(0) as usize);
             if sort_row_idx >= rows {
                 return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                     ExcelError::new(ExcelErrorKind::Value),
@@ -1074,7 +1077,10 @@ impl Function for SortFn {
             Ok(collapse_if_scalar(out, _ctx.date_system()))
         } else {
             // Sort rows by the specified column
-            let sort_col_idx = (sort_index - 1).max(0) as usize;
+            // i64::MIN (a saturated -1E300) maps past the end: #VALUE! below.
+            let sort_col_idx = sort_index
+                .checked_sub(1)
+                .map_or(usize::MAX, |i| i.max(0) as usize);
             if sort_col_idx >= cols {
                 return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                     ExcelError::new(ExcelErrorKind::Value),
@@ -1104,6 +1110,12 @@ impl Function for SortFn {
             Ok(collapse_if_scalar(row_data, _ctx.date_system()))
         }
     }
+}
+
+/// Integer option argument (GROUPBY / PIVOTBY codes) narrowed like a number
+/// argument is: saturating, so 4294967296 does not wrap to 0.
+fn saturating_i32(i: i64) -> i32 {
+    i.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
 }
 
 /* ───────────────────────── SORTBY() ───────────────────────── */
@@ -1589,7 +1601,7 @@ impl GroupAggregation {
     fn from_literal(val: &LiteralValue) -> Option<Self> {
         match val {
             LiteralValue::Text(s) => Self::from_str(s),
-            LiteralValue::Int(n) => Self::from_num(*n as i32),
+            LiteralValue::Int(n) => Self::from_num(saturating_i32(*n)),
             LiteralValue::Number(n) => Self::from_num(*n as i32),
             _ => None,
         }
@@ -1908,7 +1920,7 @@ impl Function for GroupByFn {
         // Parse optional parameters
         let field_headers = if args.len() >= 4 {
             match args[3].value()?.into_literal() {
-                LiteralValue::Int(i) => i as i32,
+                LiteralValue::Int(i) => saturating_i32(i),
                 LiteralValue::Number(n) => n as i32,
                 _ => 1,
             }
@@ -1918,7 +1930,7 @@ impl Function for GroupByFn {
 
         let total_depth = if args.len() >= 5 {
             match args[4].value()?.into_literal() {
-                LiteralValue::Int(i) => i as i32,
+                LiteralValue::Int(i) => saturating_i32(i),
                 LiteralValue::Number(n) => n as i32,
                 _ => 0,
             }
@@ -1928,7 +1940,7 @@ impl Function for GroupByFn {
 
         let sort_order = if args.len() >= 6 {
             match args[5].value()?.into_literal() {
-                LiteralValue::Int(i) => i as i32,
+                LiteralValue::Int(i) => saturating_i32(i),
                 LiteralValue::Number(n) => n as i32,
                 _ => 0,
             }
@@ -2319,7 +2331,7 @@ impl Function for PivotByFn {
         // Parse optional parameters
         let field_headers = if args.len() >= 5 {
             match args[4].value()?.into_literal() {
-                LiteralValue::Int(i) => i as i32,
+                LiteralValue::Int(i) => saturating_i32(i),
                 LiteralValue::Number(n) => n as i32,
                 _ => 1,
             }
@@ -2329,7 +2341,7 @@ impl Function for PivotByFn {
 
         let row_total_depth = if args.len() >= 6 {
             match args[5].value()?.into_literal() {
-                LiteralValue::Int(i) => i as i32,
+                LiteralValue::Int(i) => saturating_i32(i),
                 LiteralValue::Number(n) => n as i32,
                 _ => 0,
             }
@@ -2339,7 +2351,7 @@ impl Function for PivotByFn {
 
         let row_sort_order = if args.len() >= 7 {
             match args[6].value()?.into_literal() {
-                LiteralValue::Int(i) => i as i32,
+                LiteralValue::Int(i) => saturating_i32(i),
                 LiteralValue::Number(n) => n as i32,
                 _ => 0,
             }
@@ -2349,7 +2361,7 @@ impl Function for PivotByFn {
 
         let col_total_depth = if args.len() >= 8 {
             match args[7].value()?.into_literal() {
-                LiteralValue::Int(i) => i as i32,
+                LiteralValue::Int(i) => saturating_i32(i),
                 LiteralValue::Number(n) => n as i32,
                 _ => 0,
             }
@@ -2359,7 +2371,7 @@ impl Function for PivotByFn {
 
         let col_sort_order = if args.len() >= 9 {
             match args[8].value()?.into_literal() {
-                LiteralValue::Int(i) => i as i32,
+                LiteralValue::Int(i) => saturating_i32(i),
                 LiteralValue::Number(n) => n as i32,
                 _ => 0,
             }
@@ -3355,7 +3367,7 @@ impl Function for TakeFn {
             None
         };
 
-        if take_rows.abs() > height {
+        if take_rows.unsigned_abs() > height.unsigned_abs() {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new(ExcelErrorKind::Value),
             )));
@@ -3368,7 +3380,7 @@ impl Function for TakeFn {
         };
 
         let (col_start, col_end) = if let Some(tc) = take_cols {
-            if tc.abs() > width {
+            if tc.unsigned_abs() > width.unsigned_abs() {
                 return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                     ExcelError::new(ExcelErrorKind::Value),
                 )));

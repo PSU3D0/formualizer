@@ -94,7 +94,9 @@ impl Function for MidFn {
                 String::new(),
             )));
         }
-        let end = ((start - 1) + count) as usize;
+        // start >= 1 and count >= 0, so a saturating add only clamps a sum past
+        // i64::MAX, which `min(.., len)` clamps anyway.
+        let end = (start - 1).saturating_add(count) as usize;
         let end = min(end, chars.len());
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(
             chars[(start as usize - 1)..end].iter().collect(),
@@ -291,7 +293,10 @@ impl Function for ReplaceFn {
         if start_idx > len {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(text)));
         }
-        let end_idx = (start_idx + num as usize).min(len);
+        // `num as usize` can truncate on 32-bit targets; saturate the sum.
+        let end_idx = start_idx
+            .saturating_add(usize::try_from(num).unwrap_or(usize::MAX))
+            .min(len);
         chars.splice(start_idx..end_idx, new.chars());
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(
             chars.into_iter().collect(),

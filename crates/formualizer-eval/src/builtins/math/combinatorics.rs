@@ -213,6 +213,9 @@ impl Function for GcdFn {
 
 #[derive(Debug)]
 pub struct LcmFn;
+
+/// Excel returns #NUM! when the least common multiple reaches 2^53.
+const MAX_LCM_EXCLUSIVE: u64 = 1 << 53;
 /// Returns the least common multiple of one or more integers.
 ///
 /// `LCM` truncates fractional arguments toward zero and combines values iteratively.
@@ -286,11 +289,14 @@ impl Function for LcmFn {
         fn gcd(a: u64, b: u64) -> u64 {
             if b == 0 { a } else { gcd(b, a % b) }
         }
-        fn lcm(a: u64, b: u64) -> u64 {
+        // Each argument is below 1e10, but the running LCM is not bounded;
+        // Excel returns #NUM! once it reaches 2^53 (checked below), so a
+        // u64 overflow is #NUM! as well.
+        fn lcm(a: u64, b: u64) -> Option<u64> {
             if a == 0 || b == 0 {
-                0
+                Some(0)
             } else {
-                (a / gcd(a, b)) * b
+                (a / gcd(a, b)).checked_mul(b)
             }
         }
 
@@ -313,7 +319,14 @@ impl Function for LcmFn {
 
             result = Some(match result {
                 None => n,
-                Some(r) => lcm(r, n),
+                Some(r) => match lcm(r, n) {
+                    Some(l) if l < MAX_LCM_EXCLUSIVE => l,
+                    _ => {
+                        return Ok(CalcValue::Scalar(
+                            LiteralValue::Error(ExcelError::new_num()),
+                        ));
+                    }
+                },
             });
         }
 

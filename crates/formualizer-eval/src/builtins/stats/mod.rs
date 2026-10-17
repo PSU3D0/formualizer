@@ -4660,7 +4660,8 @@ fn factorial(n: i64) -> f64 {
     }
     // For large n, use gamma function: n! = Gamma(n+1)
     if n > 20 {
-        return ln_gamma((n + 1) as f64).exp();
+        // `+ 1.0` in f64: n may be a saturated cast of a user number.
+        return ln_gamma(n as f64 + 1.0).exp();
     }
     let mut result = 1.0;
     for i in 2..=n {
@@ -4690,7 +4691,9 @@ fn ln_binom(n: i64, k: i64) -> f64 {
     if k == 0 || k == n {
         return 0.0;
     }
-    ln_gamma((n + 1) as f64) - ln_gamma((k + 1) as f64) - ln_gamma((n - k + 1) as f64)
+    // `+ 1.0` in f64: n may be a saturated cast of a user number. 0 < k < n,
+    // so `n - k` cannot overflow.
+    ln_gamma(n as f64 + 1.0) - ln_gamma(k as f64 + 1.0) - ln_gamma((n - k) as f64 + 1.0)
 }
 
 /// Returns the binomial probability for a count of successes across independent trials.
@@ -4873,11 +4876,11 @@ impl Function for PoissonDistFn {
         let result = if cumulative {
             // CDF: sum from i=0 to k of P(X=i) = 1 - Q(k+1, lambda)
             // Using the regularized incomplete gamma function
-            1.0 - gamma_p((k + 1) as f64, lambda)
+            1.0 - gamma_p(k as f64 + 1.0, lambda)
         } else {
             // PMF: P(X=k) = lambda^k * e^(-lambda) / k!
             // Use log to avoid overflow
-            let ln_prob = (k as f64) * lambda.ln() - lambda - ln_gamma((k + 1) as f64);
+            let ln_prob = (k as f64) * lambda.ln() - lambda - ln_gamma(k as f64 + 1.0);
             ln_prob.exp()
         };
 
@@ -5370,11 +5373,17 @@ impl Function for NegbinomDistFn {
         let result = if cumulative {
             // CDF: sum from i=0 to number_f of P(X=i)
             // This is equivalent to I_{prob_s}(number_s, number_f + 1) using regularized beta
-            beta_i(prob_s, number_s as f64, (number_f + 1) as f64)
+            beta_i(prob_s, number_s as f64, number_f as f64 + 1.0)
         } else {
             // PMF: C(number_f + number_s - 1, number_s - 1) * prob_s^number_s * (1-prob_s)^number_f
             // = C(k + r - 1, r - 1) * p^r * (1-p)^k where k = number_f, r = number_s
-            let ln_prob = ln_binom(number_f + number_s - 1, number_s - 1)
+            // Both counts are saturated casts of user numbers: past i64 is #NUM!.
+            let Some(trials) = number_f.checked_add(number_s - 1) else {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_num(),
+                )));
+            };
+            let ln_prob = ln_binom(trials, number_s - 1)
                 + (number_s as f64) * prob_s.ln()
                 + (number_f as f64) * (1.0 - prob_s).ln();
             ln_prob.exp()
