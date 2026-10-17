@@ -11,7 +11,7 @@ use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use calamine::{Data, DataRef, Range, Reader, Xlsx, XlsxFormulaMetadata, open_workbook_from_rs};
+use calamine::{Data, DataRef, Reader, Xlsx, XlsxFormulaMetadata, open_workbook_from_rs};
 use formualizer_common::RangeAddress;
 use formualizer_eval::arrow_store::{IngestBuilder, OverlayValue, map_error_code};
 use formualizer_eval::engine::ingest::EngineLoadStream;
@@ -356,13 +356,65 @@ impl Seek for CancellableReader {
 
 struct CalamineWorkbook(Xlsx<CancellableReader>);
 
+/// Cells of one worksheet as `((row0, col0), value)` in file order: memory in
+/// proportion to the cells present. Calamine's `worksheet_range` /
+/// `worksheet_formula` build a dense rectangle from the first to the last used
+/// cell, so one cell at XFD1048576 asks for hundreds of gigabytes.
+type SparseCells<T> = Vec<((u32, u32), T)>;
+
 impl CalamineWorkbook {
-    fn worksheet_range(&mut self, sheet: &str) -> Result<Range<Data>, calamine::Error> {
-        self.0.worksheet_range(sheet).map_err(Into::into)
+    /// Non-empty cell values, as `worksheet_range` would hold them.
+    fn worksheet_cells(&mut self, sheet: &str) -> Result<SparseCells<Data>, calamine::Error> {
+        let mut reader = match self.0.worksheet_cells_reader(sheet) {
+            Ok(reader) => reader,
+            Err(calamine::XlsxError::NotAWorksheet(_)) => return Ok(Vec::new()),
+            Err(e) => return Err(e.into()),
+        };
+        let mut cells = Vec::new();
+        while let Some(cell) = reader.next_cell()? {
+            if !matches!(cell.get_value(), DataRef::Empty) {
+                let pos = cell.get_position();
+                cells.push((pos, Data::from(cell.get_value().clone())));
+            }
+        }
+        Ok(cells)
     }
 
-    fn worksheet_formula(&mut self, sheet: &str) -> Result<Range<String>, calamine::Error> {
-        self.0.worksheet_formula(sheet).map_err(Into::into)
+    /// Non-empty formula texts, as `worksheet_formula` would hold them.
+    fn worksheet_formulas(&mut self, sheet: &str) -> Result<SparseCells<String>, calamine::Error> {
+        let mut reader = match self.0.worksheet_cells_reader(sheet) {
+            Ok(reader) => reader,
+            Err(calamine::XlsxError::NotAWorksheet(_)) => return Ok(Vec::new()),
+            Err(e) => return Err(e.into()),
+        };
+        let mut formulas = Vec::new();
+        while let Some(cell) = reader.next_formula()? {
+            if !cell.get_value().is_empty() {
+                let pos = cell.get_position();
+                formulas.push((pos, cell.get_value().clone()));
+            }
+        }
+        Ok(formulas)
+    }
+}
+
+/// `(height, width)` of the rectangle from the first to the last used cell,
+/// what calamine's `Range::height` / `width` report; `(0, 0)` with no cells.
+fn sparse_extent<T>(cells: &[((u32, u32), T)]) -> (u32, u32) {
+    let mut rows: Option<(u32, u32)> = None;
+    let mut cols: Option<(u32, u32)> = None;
+    for &((r, c), _) in cells {
+        rows = Some(rows.map_or((r, r), |(lo, hi)| (lo.min(r), hi.max(r))));
+        cols = Some(cols.map_or((c, c), |(lo, hi)| (lo.min(c), hi.max(c))));
+    }
+    match (rows, cols) {
+        // 0-based positions below 2^32, so the widened span fits u64 and the
+        // grid bound keeps it in u32 for any real sheet.
+        (Some((r0, r1)), Some((c0, c1))) => (
+            u32::try_from(u64::from(r1 - r0) + 1).unwrap_or(u32::MAX),
+            u32::try_from(u64::from(c1 - c0) + 1).unwrap_or(u32::MAX),
+        ),
+        _ => (0, 0),
     }
 }
 
@@ -2645,23 +2697,16 @@ impl CalamineAdapter {
     }
 
     fn range_to_cells(
-        range: &Range<Data>,
-        formulas: Option<&Range<String>>,
+        values: &[((u32, u32), Data)],
+        formulas: Option<&[((u32, u32), String)]>,
         date_system: DateSystem,
     ) -> BTreeMap<(u32, u32), CellData> {
         let mut cells = BTreeMap::new();
 
-        // We use the cells() iterator which gives us actual positions
-
-        // Process values using actual positions
-
-        let start_row = range.start().unwrap_or_default().0 as usize;
-        let start_col = range.start().unwrap_or_default().1 as usize;
-
-        for (row, col, val) in range.used_cells() {
-            // Calamine uses 0-based indexing, convert to 1-based for Excel
-            let excel_row = (row + start_row + 1) as u32;
-            let excel_col = (col + start_col + 1) as u32;
+        for ((row, col), val) in values {
+            // Calamine uses 0-based indexing, convert to 1-based for Excel.
+            let excel_row = row.saturating_add(1);
+            let excel_col = col.saturating_add(1);
 
             // Convert value (skip empty cells and empty strings)
             let value = match val {
@@ -2704,15 +2749,12 @@ impl CalamineAdapter {
         }
 
         // Process formulas using their actual positions
-        if let Some(frm_range) = formulas {
-            let start_row = frm_range.start().unwrap_or_default().0 as usize;
-            let start_col = frm_range.start().unwrap_or_default().1 as usize;
-
-            for (row, col, formula) in frm_range.used_cells() {
+        if let Some(formulas) = formulas {
+            for ((row, col), formula) in formulas {
                 if !formula.is_empty() {
                     // Convert to 1-based Excel coordinates
-                    let excel_row = (row + start_row + 1) as u32;
-                    let excel_col = (col + start_col + 1) as u32;
+                    let excel_row = row.saturating_add(1);
+                    let excel_col = col.saturating_add(1);
 
                     // Ensure formula starts with '=' for proper parsing
                     let formula_with_eq = if formula.starts_with('=') {
@@ -2781,14 +2823,13 @@ impl SpreadsheetReader for CalamineAdapter {
         }
         let mut formulas = Vec::new();
         for sheet in self.cached_names.as_deref().unwrap_or_default() {
-            if let Ok(range) = self.workbook.write().worksheet_formula(sheet) {
-                for (row, col, text) in range.used_cells() {
-                    let start = range.start().unwrap_or((0, 0));
+            if let Ok(cells) = self.workbook.write().worksheet_formulas(sheet) {
+                for ((row, col), text) in cells {
                     formulas.push((
                         sheet.clone(),
-                        row as u32 + start.0 + 1,
-                        col as u32 + start.1 + 1,
-                        text.clone(),
+                        row.saturating_add(1),
+                        col.saturating_add(1),
+                        text,
                     ));
                 }
             }
@@ -2876,15 +2917,14 @@ impl SpreadsheetReader for CalamineAdapter {
     fn read_sheet(&mut self, sheet: &str) -> Result<SheetData, Self::Error> {
         // Values
         let mut wb = self.workbook.write();
-        let range = wb.worksheet_range(sheet)?;
-        // Formulas (same dims as range, may be empty strings)
-        let formulas = wb.worksheet_formula(sheet).ok();
+        let values = wb.worksheet_cells(sheet)?;
+        let formulas = wb.worksheet_formulas(sheet).ok();
 
-        let dims = (range.height() as u32, range.width() as u32);
+        let dims = sparse_extent(&values);
         // Calamine's ordinary reader API does not currently expose the
         // workbook date system at this boundary. Keep that policy explicit so
         // future metadata support only changes this selection point.
-        let cells = Self::range_to_cells(&range, formulas.as_ref(), DateSystem::Excel1900);
+        let cells = Self::range_to_cells(&values, formulas.as_deref(), DateSystem::Excel1900);
 
         self.loaded_sheets.insert(sheet.to_string());
 
@@ -2905,9 +2945,9 @@ impl SpreadsheetReader for CalamineAdapter {
 
     fn sheet_bounds(&self, sheet: &str) -> Option<(u32, u32)> {
         let mut wb = self.workbook.write();
-        wb.worksheet_range(sheet)
+        wb.worksheet_cells(sheet)
             .ok()
-            .map(|r| (r.height() as u32, r.width() as u32))
+            .map(|cells| sparse_extent(&cells))
     }
 
     fn is_loaded(&self, sheet: &str, _row: Option<u32>, _col: Option<u32>) -> bool {
