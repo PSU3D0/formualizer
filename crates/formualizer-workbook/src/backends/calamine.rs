@@ -1539,6 +1539,18 @@ impl CalamineAdapter {
         source: SharedXlsxReader,
         cancel: Option<CancelToken>,
     ) -> Result<Self, calamine::Error> {
+        // calamine parses the workbook parts here; a panic in it is an I/O
+        // error of the open (see `panic_guard`).
+        crate::panic_guard::catch_load_panic(
+            || Self::from_shared_source_unguarded(source, cancel),
+            |message| calamine::Error::Io(std::io::Error::other(message)),
+        )
+    }
+
+    fn from_shared_source_unguarded(
+        source: SharedXlsxReader,
+        cancel: Option<CancelToken>,
+    ) -> Result<Self, calamine::Error> {
         let (projection, original_names, mut sheet_import_diagnostics) =
             inert_sheets::omit_modules(&source, cancel.clone())?;
         let source = projection

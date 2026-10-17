@@ -3564,6 +3564,27 @@ impl Workbook {
     }
 
     pub fn from_reader_with_adapter_stats<B>(
+        backend: B,
+        strategy: LoadStrategy,
+        config: WorkbookConfig,
+    ) -> Result<(Self, Option<AdapterLoadStats>), IoError>
+    where
+        B: SpreadsheetReader + formualizer_eval::engine::ingest::EngineLoadStream<WBResolver>,
+        IoError: From<<B as formualizer_eval::engine::ingest::EngineLoadStream<WBResolver>>::Error>,
+    {
+        // The reader (umya, calamine) streams the file into the engine here;
+        // a panic in it is a load error instead of an unwind into the caller
+        // (see `panic_guard`; not on wasm, which aborts on panic).
+        crate::panic_guard::catch_load_panic(
+            || Self::from_reader_with_adapter_stats_unguarded(backend, strategy, config),
+            |message| IoError::Backend {
+                backend: "reader".to_string(),
+                message,
+            },
+        )
+    }
+
+    fn from_reader_with_adapter_stats_unguarded<B>(
         mut backend: B,
         _strategy: LoadStrategy,
         mut config: WorkbookConfig,
