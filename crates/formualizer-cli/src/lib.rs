@@ -13,16 +13,27 @@ use std::{
     ffi::OsString,
     io::{Read, Write},
     path::PathBuf,
-    sync::{Mutex, Once, PoisonError},
+    sync::Once,
 };
 
-/// Location and message of the most recent panic, recorded by the hook that
-/// [`catch_internal_panic`] installs (the panic payload carries no location).
-static LAST_PANIC: Mutex<Option<String>> = Mutex::new(None);
+thread_local! {
+    /// Location of the latest panic on this thread, recorded by the hook that
+    /// [`catch_internal_panic`] installs (the panic payload carries no
+    /// location). Per thread, so a panic elsewhere in the process (another
+    /// Python thread calling `run`, a rayon worker) cannot overwrite it.
+    static LAST_PANIC: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
 static PANIC_HOOK: Once = Once::new();
 
 /// Runs `f`, turning a panic into the CLI's internal-error result
 /// (`status: "error"`, exit 1) with a message that names the panic location.
+///
+/// The location is the one the hook recorded on this thread. A panic on a
+/// worker thread (a rayon task) is recorded on that worker; rayon re-raises
+/// its payload on this thread with `resume_unwind`, which does not run the
+/// hook, so the message then carries the payload and says the location was
+/// on another thread. The previous hook still runs (and prints) for every
+/// panic.
 /// A last resort: the panics themselves are bugs to fix. It needs
 /// `panic = "unwind"`, which the release profile keeps (Cargo's default); on
 /// a `panic = "abort"` build the process still aborts.
@@ -33,10 +44,18 @@ fn catch_internal_panic<T>(f: impl FnOnce() -> Result<T, IoError>) -> Result<T, 
             let location = info
                 .location()
                 .map_or_else(|| "unknown location".to_owned(), ToString::to_string);
-            *LAST_PANIC.lock().unwrap_or_else(PoisonError::into_inner) = Some(location);
+            // `try_with`: a panic during thread teardown has no slot left.
+            let _ = LAST_PANIC.try_with(|last| {
+                if let Ok(mut last) = last.try_borrow_mut() {
+                    *last = Some(location);
+                }
+            });
             previous(info);
         }));
     });
+    // A location left by an earlier, already handled panic on this thread
+    // must not be reported for this one.
+    LAST_PANIC.with(|last| last.borrow_mut().take());
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).unwrap_or_else(|payload| {
         let message = payload
             .downcast_ref::<&str>()
@@ -44,10 +63,8 @@ fn catch_internal_panic<T>(f: impl FnOnce() -> Result<T, IoError>) -> Result<T, 
             .or_else(|| payload.downcast_ref::<String>().cloned())
             .unwrap_or_else(|| "non-string panic payload".to_owned());
         let location = LAST_PANIC
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take()
-            .unwrap_or_else(|| "unknown location".to_owned());
+            .with(|last| last.borrow_mut().take())
+            .unwrap_or_else(|| "a location on another thread".to_owned());
         Err(IoError::Backend {
             backend: "formualizer".to_owned(),
             message: format!("internal error: panicked at {location}: {message}"),
@@ -625,6 +642,37 @@ mod tests {
             String::from_utf8(out).unwrap(),
             String::from_utf8(err).unwrap(),
         )
+    }
+
+    /// A panic on a worker thread, re-raised on the caller with its payload
+    /// the way rayon does: the message keeps the payload, does not borrow a
+    /// location from another thread, and the worker's own record is its own.
+    #[test]
+    fn a_worker_panic_reraised_on_the_caller_reports_its_payload() {
+        // An unrelated panic on another thread first: it must not leak in.
+        let _ = std::thread::spawn(|| {
+            let _ = catch_internal_panic::<()>(|| panic!("unrelated"));
+        })
+        .join();
+        let result = catch_internal_panic::<()>(|| {
+            let payload = std::thread::spawn(|| panic!("worker failed"))
+                .join()
+                .unwrap_err();
+            std::panic::resume_unwind(payload)
+        });
+        let message = result.unwrap_err().to_string();
+        assert!(message.contains("worker failed"), "{message}");
+        assert!(
+            message.contains("a location on another thread"),
+            "{message}"
+        );
+        assert!(!message.contains("unrelated"), "{message}");
+
+        // On the calling thread itself the location is recorded.
+        let message = catch_internal_panic::<()>(|| panic!("here"))
+            .unwrap_err()
+            .to_string();
+        assert!(message.contains(file!()), "{message}");
     }
 
     #[test]
