@@ -543,13 +543,40 @@ struct StreamedSheet {
 /// empty text (Excel counts it with `COUNTA` and `ISBLANK` is FALSE), not a
 /// blank cell. A date-formatted number keeps its exact serial; the date
 /// format travels separately through [`data_ref_format`].
+/// A numeric cell. `<v>NaN</v>` and `<v>inf</v>` parse as non-finite floats,
+/// which no spreadsheet value can hold: they are stored as `#NUM!`, as the CSV
+/// loader rejects them. One `is_finite` per numeric cell.
+#[inline]
+fn number_literal(n: f64) -> LiteralValue {
+    if n.is_finite() {
+        LiteralValue::Number(n)
+    } else {
+        non_finite_number()
+    }
+}
+
+#[cold]
+fn non_finite_number() -> LiteralValue {
+    LiteralValue::Error(ExcelError::new(ExcelErrorKind::Num))
+}
+
+/// [`number_literal`] for the sparse overlay.
+#[inline]
+fn number_overlay(n: f64) -> OverlayValue {
+    if n.is_finite() {
+        OverlayValue::Number(n)
+    } else {
+        OverlayValue::Error(map_error_code(ExcelErrorKind::Num))
+    }
+}
+
 #[inline]
 fn data_ref_to_literal(value: &DataRef<'_>) -> Option<LiteralValue> {
     match value {
         DataRef::Empty => None,
         DataRef::String(s) => Some(LiteralValue::Text(s.clone())),
         DataRef::SharedString(s) => Some(LiteralValue::Text((*s).to_string())),
-        DataRef::Float(f) => Some(LiteralValue::Number(*f)),
+        DataRef::Float(f) => Some(number_literal(*f)),
         DataRef::Int(i) => Some(LiteralValue::Number(*i as f64)),
         DataRef::Bool(b) => Some(LiteralValue::Boolean(*b)),
         DataRef::Error(e) => Some(LiteralValue::Error(ExcelError::new(
@@ -564,7 +591,7 @@ fn data_ref_to_literal(value: &DataRef<'_>) -> Option<LiteralValue> {
                 _ => ExcelErrorKind::Error,
             },
         ))),
-        DataRef::DateTime(dt) => Some(LiteralValue::Number(dt.as_f64())),
+        DataRef::DateTime(dt) => Some(number_literal(dt.as_f64())),
         DataRef::DateTimeIso(s) => Some(LiteralValue::Text(s.clone())),
         DataRef::DurationIso(s) => Some(LiteralValue::Text(s.clone())),
     }
@@ -623,11 +650,11 @@ fn data_ref_to_overlay(value: &DataRef<'_>) -> Option<OverlayValue> {
         DataRef::Empty => None,
         DataRef::String(s) => Some(OverlayValue::Text(Arc::from(s.as_str()))),
         DataRef::SharedString(s) => Some(OverlayValue::Text(Arc::from(*s))),
-        DataRef::Float(f) => Some(OverlayValue::Number(*f)),
+        DataRef::Float(f) => Some(number_overlay(*f)),
         DataRef::Int(i) => Some(OverlayValue::Number(*i as f64)),
         DataRef::Bool(b) => Some(OverlayValue::Boolean(*b)),
         DataRef::Error(e) => Some(OverlayValue::Error(CalamineAdapter::calamine_error_code(e))),
-        DataRef::DateTime(dt) => Some(OverlayValue::Number(dt.as_f64())),
+        DataRef::DateTime(dt) => Some(number_overlay(dt.as_f64())),
         DataRef::DateTimeIso(s) => Some(OverlayValue::Text(Arc::from(s.as_str()))),
         DataRef::DurationIso(s) => Some(OverlayValue::Text(Arc::from(s.as_str()))),
     }
@@ -2712,7 +2739,7 @@ impl CalamineAdapter {
             let value = match val {
                 Data::Empty => None,
                 Data::String(s) => Some(LiteralValue::Text(s.clone())),
-                Data::Float(f) => Some(LiteralValue::Number(*f)),
+                Data::Float(f) => Some(number_literal(*f)),
                 Data::Int(i) => Some(LiteralValue::Int(*i)),
                 Data::Bool(b) => Some(LiteralValue::Boolean(*b)),
                 Data::Error(e) => {

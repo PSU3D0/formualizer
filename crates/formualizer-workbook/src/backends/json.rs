@@ -616,6 +616,11 @@ fn json_to_literal(
     use formualizer_common::LiteralValue as L;
     Ok(match v {
         JsonValue::Int(i) => L::Int(*i),
+        // JSON text has no NaN or infinity, but a deserializer that admits
+        // them gets #NUM!, as the other loaders store them.
+        JsonValue::Number(n) if !n.is_finite() => L::Error(formualizer_common::ExcelError::new(
+            formualizer_common::ExcelErrorKind::Num,
+        )),
         JsonValue::Number(n) => L::Number(*n),
         JsonValue::Text(s) => L::Text(s.clone()),
         JsonValue::Boolean(b) => L::Boolean(*b),

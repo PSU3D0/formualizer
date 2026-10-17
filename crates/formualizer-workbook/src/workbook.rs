@@ -2225,6 +2225,14 @@ impl Workbook {
         col: u32,
         value: LiteralValue,
     ) -> Result<(), IoError> {
+        // No cell holds NaN or an infinity: store them as #NUM!, as the
+        // loaders do.
+        let value = match value {
+            LiteralValue::Number(n) if !n.is_finite() => {
+                LiteralValue::Error(ExcelError::new(ExcelErrorKind::Num))
+            }
+            other => other,
+        };
         if sheet
             .strip_prefix('[')
             .and_then(|s| s.split_once(']'))

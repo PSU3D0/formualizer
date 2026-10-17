@@ -863,7 +863,14 @@ impl PyWorkbook {
     ) -> PyResult<()> {
         validate_cell_coords(row, col)?;
 
-        let literal = py_to_literal(value)?;
+        // NaN and infinities are stored as #NUM! (as `Workbook::set_value`
+        // does), so the compatibility cache below holds the same value.
+        let literal = match py_to_literal(value)? {
+            LiteralValue::Number(n) if !n.is_finite() => LiteralValue::Error(
+                formualizer::common::ExcelError::new(formualizer::common::ExcelErrorKind::Num),
+            ),
+            other => other,
+        };
         let mut wb = self.write_inner()?;
         wb.set_value(sheet, row, col, literal.clone())
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
