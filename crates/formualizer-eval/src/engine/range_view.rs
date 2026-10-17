@@ -1,6 +1,7 @@
 use crate::arrow_store;
 use crate::arrow_store::IngestBuilder;
 use crate::engine::CancelToken;
+use crate::engine::resource_ledger::{DEFAULT_MATERIALIZED_ARRAY_CELLS, materialized_cells_exceed};
 use crate::stripes::NumericChunk;
 use arrow_array::Array;
 use arrow_schema::DataType;
@@ -69,6 +70,10 @@ pub struct RangeView<'a> {
     rows: usize,
     cols: usize,
     cancel_token: Option<CancelToken>,
+    /// Most cells this view may be materialised into as a dense array
+    /// (`ScratchResourceBudget::materialized_array_cells`). Views resolved
+    /// through an evaluation context carry the configured value.
+    cell_budget: u64,
 }
 
 impl<'a> core::fmt::Debug for RangeView<'a> {
@@ -301,6 +306,7 @@ impl<'a> RangeView<'a> {
             rows,
             cols,
             cancel_token: None,
+            cell_budget: DEFAULT_MATERIALIZED_ARRAY_CELLS,
         }
     }
 
@@ -313,6 +319,31 @@ impl<'a> RangeView<'a> {
     pub fn with_cancel_token(mut self, token: Option<CancelToken>) -> Self {
         self.cancel_token = token;
         self
+    }
+
+    /// Attaches the materialisation cell budget of the evaluation context.
+    #[must_use]
+    pub(crate) fn with_cell_budget(mut self, cells: u64) -> Self {
+        self.cell_budget = cells;
+        self
+    }
+
+    /// `#NUM!` when this view has more cells than its materialisation budget
+    /// allows. Call once before copying the view into a dense array.
+    #[inline]
+    pub(crate) fn materialization_error(&self) -> Option<ExcelError> {
+        materialized_cells_exceed(self.rows, self.cols, self.cell_budget)
+    }
+
+    /// `#NUM!` when a `rows x cols` array built from this view (its shape or a
+    /// derived one) exceeds the view's materialisation budget.
+    #[inline]
+    pub(crate) fn shape_materialization_error(
+        &self,
+        rows: usize,
+        cols: usize,
+    ) -> Option<ExcelError> {
+        materialized_cells_exceed(rows, cols, self.cell_budget)
     }
 
     #[inline]
@@ -364,6 +395,7 @@ impl<'a> RangeView<'a> {
                 rows: 0,
                 cols: 0,
                 cancel_token,
+                cell_budget: DEFAULT_MATERIALIZED_ARRAY_CELLS,
             });
         }
 
@@ -376,6 +408,7 @@ impl<'a> RangeView<'a> {
             rows: nrows,
             cols: ncols,
             cancel_token,
+            cell_budget: DEFAULT_MATERIALIZED_ARRAY_CELLS,
         })
     }
 
@@ -398,6 +431,7 @@ impl<'a> RangeView<'a> {
             rows,
             cols,
             cancel_token: self.cancel_token.clone(),
+            cell_budget: self.cell_budget,
         }
     }
 
@@ -418,6 +452,7 @@ impl<'a> RangeView<'a> {
             rows,
             cols,
             cancel_token: self.cancel_token.clone(),
+            cell_budget: self.cell_budget,
         }
     }
 

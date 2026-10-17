@@ -1016,6 +1016,36 @@ trait WorkbookActionOps {
     ) -> Result<(), IoError>;
 }
 
+/// `rows` as the cells will store them: a borrow when every number is finite
+/// (one `is_finite` per number), otherwise a copy with non-finite numbers as
+/// `#NUM!` (see `LiteralValue::finite_or_num_error`).
+fn finite_rows(rows: &[Vec<LiteralValue>]) -> std::borrow::Cow<'_, [Vec<LiteralValue>]> {
+    let non_finite = |v: &LiteralValue| matches!(v, LiteralValue::Number(n) if !n.is_finite());
+    if rows.iter().flatten().any(non_finite) {
+        std::borrow::Cow::Owned(
+            rows.iter()
+                .map(|row| {
+                    row.iter()
+                        .cloned()
+                        .map(LiteralValue::finite_or_num_error)
+                        .collect()
+                })
+                .collect(),
+        )
+    } else {
+        std::borrow::Cow::Borrowed(rows)
+    }
+}
+
+/// Stores non-finite numbers in a `write_range` batch as `#NUM!`.
+fn finite_cell_values(cells: &mut BTreeMap<(u32, u32), crate::traits::CellData>) {
+    for cell in cells.values_mut() {
+        if let Some(value) = cell.value.take() {
+            cell.value = Some(value.finite_or_num_error());
+        }
+    }
+}
+
 /// Transactional edit surface for `Workbook::action`.
 ///
 /// This wrapper exists to avoid aliasing `&mut Workbook` while an Engine transaction is active.
@@ -1033,7 +1063,8 @@ impl WorkbookAction<'_> {
         col: u32,
         value: LiteralValue,
     ) -> Result<(), IoError> {
-        self.ops.set_value(sheet, row, col, value)
+        self.ops
+            .set_value(sheet, row, col, value.finite_or_num_error())
     }
 
     #[inline]
@@ -1055,7 +1086,8 @@ impl WorkbookAction<'_> {
         start_col: u32,
         rows: &[Vec<LiteralValue>],
     ) -> Result<(), IoError> {
-        self.ops.set_values(sheet, start_row, start_col, rows)
+        let rows = finite_rows(rows);
+        self.ops.set_values(sheet, start_row, start_col, &rows)
     }
 
     #[inline]
@@ -1063,8 +1095,9 @@ impl WorkbookAction<'_> {
         &mut self,
         sheet: &str,
         start: (u32, u32),
-        cells: BTreeMap<(u32, u32), crate::traits::CellData>,
+        mut cells: BTreeMap<(u32, u32), crate::traits::CellData>,
     ) -> Result<(), IoError> {
+        finite_cell_values(&mut cells);
         self.ops.write_range(sheet, start, cells)
     }
 
@@ -2225,6 +2258,9 @@ impl Workbook {
         col: u32,
         value: LiteralValue,
     ) -> Result<(), IoError> {
+        // No cell holds NaN or an infinity: store them as #NUM!, as the
+        // loaders do.
+        let value = value.finite_or_num_error();
         if sheet
             .strip_prefix('[')
             .and_then(|s| s.split_once(']'))
@@ -2471,8 +2507,9 @@ impl Workbook {
         &mut self,
         sheet: &str,
         _start: (u32, u32),
-        cells: BTreeMap<(u32, u32), crate::traits::CellData>,
+        mut cells: BTreeMap<(u32, u32), crate::traits::CellData>,
     ) -> Result<(), IoError> {
+        finite_cell_values(&mut cells);
         // Deferred-dirty scope: one multi-source propagation for the whole
         // batch instead of a full BFS per cell (see Engine::begin_deferred_dirty).
         // The unconditional end_deferred_dirty below flushes on every exit
@@ -2709,7 +2746,15 @@ impl Workbook {
                     let old_value = self.engine.get_cell_value(sheet, r, c);
                     let old_formula = self.engine.get_cell(sheet, r, c).and_then(|(ast, _)| ast);
                     let staged_before = self.staged_formula_cell(sheet, r, c);
-                    items.push((r, c, v.clone(), cell, old_value, old_formula, staged_before));
+                    items.push((
+                        r,
+                        c,
+                        v.clone().finite_or_num_error(),
+                        cell,
+                        old_value,
+                        old_formula,
+                        staged_before,
+                    ));
                 }
             }
 
@@ -2744,7 +2789,7 @@ impl Workbook {
                 for (ci, v) in rvals.iter().enumerate() {
                     let c = start_col + ci as u32;
                     self.engine
-                        .set_cell_value(sheet, r, c, v.clone())
+                        .set_cell_value(sheet, r, c, v.clone().finite_or_num_error())
                         .map_err(IoError::Engine)?;
                     self.engine.clear_staged_formula_text(sheet, r, c);
                 }
@@ -3354,14 +3399,19 @@ impl Workbook {
             ));
         }
 
-        let start = formualizer_eval::reference::CellRef::new(
-            sheet_id,
-            formualizer_eval::reference::Coord::new(first_row - 1, first_col - 1, true, true),
-        );
-        let end = formualizer_eval::reference::CellRef::new(
-            sheet_id,
-            formualizer_eval::reference::Coord::new(last_row - 1, last_col - 1, true, true),
-        );
+        // Rows and columns are >= 1 (checked above); the grid bound is the
+        // other half of a valid range.
+        let (Ok(start), Ok(end)) = (
+            formualizer_eval::reference::Coord::try_new(first_row - 1, first_col - 1, true, true),
+            formualizer_eval::reference::Coord::try_new(last_row - 1, last_col - 1, true, true),
+        ) else {
+            return invalid(format!(
+                "table range ({first_row},{first_col},{last_row},{last_col}) is outside the \
+                 sheet grid (1,048,576 rows by 16,384 columns)"
+            ));
+        };
+        let start = formualizer_eval::reference::CellRef::new(sheet_id, start);
+        let end = formualizer_eval::reference::CellRef::new(sheet_id, end);
         self.engine.define_table(
             name,
             formualizer_eval::reference::RangeRef::new(start, end),
@@ -3551,6 +3601,27 @@ impl Workbook {
     }
 
     pub fn from_reader_with_adapter_stats<B>(
+        backend: B,
+        strategy: LoadStrategy,
+        config: WorkbookConfig,
+    ) -> Result<(Self, Option<AdapterLoadStats>), IoError>
+    where
+        B: SpreadsheetReader + formualizer_eval::engine::ingest::EngineLoadStream<WBResolver>,
+        IoError: From<<B as formualizer_eval::engine::ingest::EngineLoadStream<WBResolver>>::Error>,
+    {
+        // The reader (umya, calamine) streams the file into the engine here;
+        // a panic in it is a load error instead of an unwind into the caller
+        // (see `panic_guard`; not on wasm, which aborts on panic).
+        crate::panic_guard::catch_load_panic(
+            || Self::from_reader_with_adapter_stats_unguarded(backend, strategy, config),
+            |message| IoError::Backend {
+                backend: "reader".to_string(),
+                message,
+            },
+        )
+    }
+
+    fn from_reader_with_adapter_stats_unguarded<B>(
         mut backend: B,
         _strategy: LoadStrategy,
         mut config: WorkbookConfig,

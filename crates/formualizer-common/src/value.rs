@@ -93,6 +93,23 @@ pub enum ValueError {
 }
 
 impl LiteralValue {
+    /// The value a cell can store: a NaN or infinite `Number` becomes `#NUM!`
+    /// (no spreadsheet value is non-finite), anything else is unchanged. Every
+    /// write and load path uses this, so the check costs one `is_finite` per
+    /// number.
+    #[inline]
+    pub fn finite_or_num_error(self) -> Self {
+        match self {
+            LiteralValue::Number(n) if !n.is_finite() => Self::non_finite_number(),
+            other => other,
+        }
+    }
+
+    #[cold]
+    fn non_finite_number() -> Self {
+        LiteralValue::Error(ExcelError::new(crate::error::ExcelErrorKind::Num))
+    }
+
     /// Coerce
     pub fn coerce_to_single_value(&self) -> Result<LiteralValue, ValueError> {
         match self {

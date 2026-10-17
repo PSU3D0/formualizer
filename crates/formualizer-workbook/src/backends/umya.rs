@@ -26,7 +26,12 @@ fn read_input(mut reader: impl std::io::Read) -> Result<Vec<u8>, umya_spreadshee
 }
 
 fn read_document(bytes: &[u8]) -> Result<Spreadsheet, umya_spreadsheet::XlsxError> {
-    umya_spreadsheet::reader::xlsx::read_reader(std::io::Cursor::new(bytes), true)
+    // The umya reader panics on many malformed parts: report those as an
+    // I/O error of the load (see `panic_guard`).
+    crate::panic_guard::catch_load_panic(
+        || umya_spreadsheet::reader::xlsx::read_reader(std::io::Cursor::new(bytes), true),
+        |message| umya_spreadsheet::XlsxError::Io(std::io::Error::other(message)),
+    )
 }
 
 fn write_document_path(

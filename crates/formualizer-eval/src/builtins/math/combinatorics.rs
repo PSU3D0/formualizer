@@ -213,6 +213,9 @@ impl Function for GcdFn {
 
 #[derive(Debug)]
 pub struct LcmFn;
+
+/// Excel returns #NUM! when the least common multiple reaches 2^53.
+const MAX_LCM_EXCLUSIVE: u64 = 1 << 53;
 /// Returns the least common multiple of one or more integers.
 ///
 /// `LCM` truncates fractional arguments toward zero and combines values iteratively.
@@ -286,11 +289,14 @@ impl Function for LcmFn {
         fn gcd(a: u64, b: u64) -> u64 {
             if b == 0 { a } else { gcd(b, a % b) }
         }
-        fn lcm(a: u64, b: u64) -> u64 {
+        // Each argument is below 1e10, but the running LCM is not bounded;
+        // Excel returns #NUM! once it reaches 2^53 (checked below), so a
+        // u64 overflow is #NUM! as well.
+        fn lcm(a: u64, b: u64) -> Option<u64> {
             if a == 0 || b == 0 {
-                0
+                Some(0)
             } else {
-                (a / gcd(a, b)) * b
+                (a / gcd(a, b)).checked_mul(b)
             }
         }
 
@@ -313,7 +319,14 @@ impl Function for LcmFn {
 
             result = Some(match result {
                 None => n,
-                Some(r) => lcm(r, n),
+                Some(r) => match lcm(r, n) {
+                    Some(l) if l < MAX_LCM_EXCLUSIVE => l,
+                    _ => {
+                        return Ok(CalcValue::Scalar(
+                            LiteralValue::Error(ExcelError::new_num()),
+                        ));
+                    }
+                },
             });
         }
 
@@ -425,9 +438,16 @@ impl Function for CombinFn {
         let k = k.min(n - k) as u64; // Use symmetry for efficiency
         let n = n as u64;
 
+        // After step i the product is C(n, i + 1) >= 2^(i + 1) (k <= n / 2),
+        // so it leaves the f64 range within about 1,025 steps: stop there.
         let mut result = 1.0_f64;
         for i in 0..k {
             result = result * (n - i) as f64 / (i + 1) as f64;
+            if !result.is_finite() {
+                return Ok(CalcValue::Scalar(
+                    LiteralValue::Error(ExcelError::new_num()),
+                ));
+            }
         }
 
         Ok(CalcValue::Scalar(LiteralValue::Number(result.round())))
@@ -532,9 +552,16 @@ impl Function for PermutFn {
         }
 
         // P(n, k) = n! / (n-k)! = n * (n-1) * ... * (n-k+1)
+        // The product of k distinct positive integers is at least k!, so it
+        // leaves the f64 range within 171 steps: stop there.
         let mut result = 1.0_f64;
         for i in 0..k {
             result *= (n - i) as f64;
+            if !result.is_finite() {
+                return Ok(CalcValue::Scalar(
+                    LiteralValue::Error(ExcelError::new_num()),
+                ));
+            }
         }
 
         Ok(CalcValue::Scalar(LiteralValue::Number(result)))
@@ -608,8 +635,14 @@ impl Function for FactDoubleFn {
         }
         let mut result = 1.0_f64;
         let mut i = n;
+        // The product grows past f64::MAX within about 300 steps: stop there.
         while i > 0 {
             result *= i as f64;
+            if !result.is_finite() {
+                return Ok(CalcValue::Scalar(
+                    LiteralValue::Error(ExcelError::new_num()),
+                ));
+            }
             i -= 2;
         }
         Ok(CalcValue::Scalar(LiteralValue::Number(result)))
@@ -691,13 +724,24 @@ impl Function for CombinaFn {
         if k == 0 {
             return Ok(CalcValue::Scalar(LiteralValue::Number(1.0)));
         }
-        // COMBINA(n,k) = C(n+k-1, k)
-        let nn = n + k - 1;
-        let kk = k.min(nn - k) as u64;
-        let nn = nn as u64;
+        // COMBINA(n,k) = C(n+k-1, k), which is 0 for n = 0 (k >= 1 here).
+        if n == 0 {
+            return Ok(CalcValue::Scalar(LiteralValue::Number(0.0)));
+        }
+        // n, k in 1..=i64::MAX, so n + k - 1 fits in u64 and nn - k = n - 1.
+        let (n, k) = (n as u64, k as u64);
+        let nn = n + (k - 1);
+        let kk = k.min(n - 1);
+        // As in COMBIN, the running product is C(nn, i + 1) >= 2^(i + 1):
+        // it leaves the f64 range within about 1,025 steps.
         let mut result = 1.0_f64;
         for i in 0..kk {
             result = result * (nn - i) as f64 / (i + 1) as f64;
+            if !result.is_finite() {
+                return Ok(CalcValue::Scalar(
+                    LiteralValue::Error(ExcelError::new_num()),
+                ));
+            }
         }
         Ok(CalcValue::Scalar(LiteralValue::Number(result.round())))
     }

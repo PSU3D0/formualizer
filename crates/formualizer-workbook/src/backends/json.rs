@@ -576,6 +576,16 @@ impl SpreadsheetWriter for JsonAdapter {
     }
 }
 
+/// A table or defined-name range past the last row (1,048,576) or column
+/// (16,384) of the grid.
+#[cold]
+fn out_of_grid_error(kind: &str, name: &str) -> IoError {
+    IoError::Backend {
+        backend: "json".to_string(),
+        message: format!("{kind} `{name}` has a range outside the sheet grid"),
+    }
+}
+
 fn literal_to_json(v: &formualizer_common::LiteralValue) -> JsonValue {
     use formualizer_common::LiteralValue as L;
     match v {
@@ -606,7 +616,9 @@ fn json_to_literal(
     use formualizer_common::LiteralValue as L;
     Ok(match v {
         JsonValue::Int(i) => L::Int(*i),
-        JsonValue::Number(n) => L::Number(*n),
+        // JSON text has no NaN or infinity, but a deserializer that admits
+        // them gets #NUM!, as the other loaders store them.
+        JsonValue::Number(n) => L::Number(*n).finite_or_num_error(),
         JsonValue::Text(s) => L::Text(s.clone()),
         JsonValue::Boolean(b) => L::Boolean(*b),
         JsonValue::Empty => L::Empty,
@@ -820,14 +832,14 @@ where
                     let sc0 = sc.saturating_sub(1);
                     let er0 = er.saturating_sub(1);
                     let ec0 = ec.saturating_sub(1);
-                    let start_ref = formualizer_eval::reference::CellRef::new(
-                        sheet_id,
-                        formualizer_eval::reference::Coord::new(sr0, sc0, true, true),
-                    );
-                    let end_ref = formualizer_eval::reference::CellRef::new(
-                        sheet_id,
-                        formualizer_eval::reference::Coord::new(er0, ec0, true, true),
-                    );
+                    let (Ok(start), Ok(end)) = (
+                        formualizer_eval::reference::Coord::try_new(sr0, sc0, true, true),
+                        formualizer_eval::reference::Coord::try_new(er0, ec0, true, true),
+                    ) else {
+                        return Err(out_of_grid_error("table", &table.name));
+                    };
+                    let start_ref = formualizer_eval::reference::CellRef::new(sheet_id, start);
+                    let end_ref = formualizer_eval::reference::CellRef::new(sheet_id, end);
                     let range_ref = formualizer_eval::reference::RangeRef::new(start_ref, end_ref);
                     engine.define_table(
                         &table.name,
@@ -953,11 +965,17 @@ where
                         let er0 = address.end_row.saturating_sub(1);
                         let ec0 = address.end_col.saturating_sub(1);
 
-                        let start_ref = CellRef::new(sheet_id, Coord::new(sr0, sc0, true, true));
+                        let (Ok(start), Ok(end)) = (
+                            Coord::try_new(sr0, sc0, true, true),
+                            Coord::try_new(er0, ec0, true, true),
+                        ) else {
+                            return Err(out_of_grid_error("defined name", &dn.name));
+                        };
+                        let start_ref = CellRef::new(sheet_id, start);
                         if sr0 == er0 && sc0 == ec0 {
                             NamedDefinition::Cell(start_ref)
                         } else {
-                            let end_ref = CellRef::new(sheet_id, Coord::new(er0, ec0, true, true));
+                            let end_ref = CellRef::new(sheet_id, end);
                             let range_ref =
                                 formualizer_eval::reference::RangeRef::new(start_ref, end_ref);
                             NamedDefinition::Range(range_ref)

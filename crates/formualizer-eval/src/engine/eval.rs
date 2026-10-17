@@ -1812,24 +1812,30 @@ impl SpillBlockerWaiters {
     fn take_affected(&mut self, scope: StructuralScope) -> Vec<VertexId> {
         let cells: Vec<CellRef> = match scope {
             StructuralScope::Cell { sheet, row, col } => {
-                let cell = CellRef::new(sheet, Coord::new(row, col, true, true));
-                if self.by_cell.contains_key(&cell) {
-                    vec![cell]
-                } else {
-                    Vec::new()
+                match Coord::try_new(row, col, true, true) {
+                    Ok(coord) if self.by_cell.contains_key(&CellRef::new(sheet, coord)) => {
+                        vec![CellRef::new(sheet, coord)]
+                    }
+                    _ => Vec::new(),
                 }
             }
             StructuralScope::Region(region) => {
                 let (rows, cols) = region.axis_ranges();
                 let (r0, r1) = rows.query_bounds();
                 let (c0, c1) = cols.query_bounds();
-                let area = u64::from(r1.saturating_sub(r0) + 1)
-                    .saturating_mul(u64::from(c1.saturating_sub(c0) + 1));
+                // Widen before `+ 1`: an unbounded axis (every structural edit
+                // records `rows_from` / `cols_from`) spans 0..=u32::MAX, and
+                // the u32 sum wrapped to an area of 0.
+                let area = (u64::from(r1.saturating_sub(r0)) + 1)
+                    .saturating_mul(u64::from(c1.saturating_sub(c0)) + 1);
                 if area <= Self::REGION_PROBE_CELLS {
                     let sheet = region.sheet_id();
+                    // A small region can still lie past the grid; no waiter
+                    // is registered there, so those points are skipped.
                     (r0..=r1)
                         .flat_map(|r| (c0..=c1).map(move |c| (r, c)))
-                        .map(|(r, c)| CellRef::new(sheet, Coord::new(r, c, true, true)))
+                        .filter_map(|(r, c)| Coord::try_new(r, c, true, true).ok())
+                        .map(|coord| CellRef::new(sheet, coord))
                         .filter(|cell| self.by_cell.contains_key(cell))
                         .collect()
                 } else {
@@ -18156,6 +18162,14 @@ where
         let hint =
             (self.config.stripe_height as usize).saturating_mul(self.config.stripe_width as usize);
         Some(hint.clamp(1024, 1 << 20)) // clamp between 1K and ~1M
+    }
+
+    fn materialized_array_cells(&self) -> u64 {
+        self.config
+            .evaluation_budgets
+            .scratch
+            .materialized_array_cells
+            .unwrap_or(crate::engine::resource_ledger::DEFAULT_MATERIALIZED_ARRAY_CELLS)
     }
 
     fn volatile_level(&self) -> crate::traits::VolatileLevel {

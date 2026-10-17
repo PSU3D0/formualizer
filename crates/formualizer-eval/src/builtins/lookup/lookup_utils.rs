@@ -64,6 +64,82 @@ pub fn cmp_for_lookup(a: &LiteralValue, b: &LiteralValue, date_system: DateSyste
     }
 }
 
+/// Precomputed key for SORT / SORTBY ordering.
+///
+/// Excel's sort order is a total order over value classes: numbers (including
+/// dates and times, by serial) < text (case-insensitive) < FALSE < TRUE <
+/// errors, with blanks last in both directions. Keys are built once per sorted
+/// element, so a comparison never allocates: text is folded with the same
+/// `to_lowercase` the lookup comparison uses.
+///
+/// Ties: two keys are equal when they are in the same class and have the same
+/// number (`-0` equals `0`), the same folded text or the same boolean; all
+/// errors are equal to each other. Callers sort stably, so tied elements keep
+/// their input order.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum SortKey {
+    Number(f64),
+    Text(String),
+    Boolean(bool),
+    Error,
+    Blank,
+}
+
+impl SortKey {
+    pub(crate) fn new(v: &LiteralValue, date_system: DateSystem) -> Self {
+        let number = match v {
+            LiteralValue::Number(n) => Some(*n),
+            LiteralValue::Int(i) => Some(*i as f64),
+            LiteralValue::Date(_)
+            | LiteralValue::DateTime(_)
+            | LiteralValue::Time(_)
+            | LiteralValue::Duration(_) => v.as_serial_number_for(date_system),
+            LiteralValue::Text(s) => return SortKey::Text(s.to_lowercase()),
+            LiteralValue::Boolean(b) => return SortKey::Boolean(*b),
+            LiteralValue::Empty => return SortKey::Blank,
+            LiteralValue::Error(_) | LiteralValue::Array(_) | LiteralValue::Pending => None,
+        };
+        match number {
+            // `+ 0.0` turns -0 into +0, so `total_cmp` treats them as equal.
+            Some(n) => SortKey::Number(n + 0.0),
+            None => SortKey::Error,
+        }
+    }
+
+    fn class(&self) -> u8 {
+        match self {
+            SortKey::Number(_) => 0,
+            SortKey::Text(_) => 1,
+            SortKey::Boolean(_) => 2,
+            SortKey::Error => 3,
+            SortKey::Blank => 4,
+        }
+    }
+
+    /// Ascending order of two keys (blanks last).
+    fn cmp_ascending(&self, other: &Self) -> std::cmp::Ordering {
+        match (self, other) {
+            (SortKey::Number(a), SortKey::Number(b)) => a.total_cmp(b),
+            (SortKey::Text(a), SortKey::Text(b)) => a.cmp(b),
+            (SortKey::Boolean(a), SortKey::Boolean(b)) => a.cmp(b),
+            _ => self.class().cmp(&other.class()),
+        }
+    }
+
+    /// Order for a sort in the given direction. Descending reverses the
+    /// ascending order, except that blanks stay last, as in Excel.
+    pub(crate) fn cmp_directed(&self, other: &Self, ascending: bool) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+        match (self, other) {
+            (SortKey::Blank, SortKey::Blank) => Ordering::Equal,
+            (SortKey::Blank, _) => Ordering::Greater,
+            (_, SortKey::Blank) => Ordering::Less,
+            _ if ascending => self.cmp_ascending(other),
+            _ => other.cmp_ascending(self),
+        }
+    }
+}
+
 enum PreparedTextMatcher {
     Exact { folded_needle: String },
     Wildcard { compiled: CompiledWildcardPattern },
@@ -1177,5 +1253,134 @@ mod tests {
             opt_wildcard,
             raw_wildcard.as_secs_f64() / opt_wildcard.as_secs_f64()
         );
+    }
+}
+
+#[cfg(test)]
+mod sort_key_tests {
+    use super::*;
+
+    /// The comparator SORT and SORTBY used before `SortKey`.
+    fn old_cmp(a: &LiteralValue, b: &LiteralValue, ascending: bool) -> std::cmp::Ordering {
+        let cmp = cmp_for_lookup(a, b, DateSystem::Excel1900).unwrap_or(0);
+        if ascending { cmp.cmp(&0) } else { 0.cmp(&cmp) }
+    }
+
+    struct XorShift(u64);
+    impl XorShift {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+        fn below(&mut self, n: u64) -> u64 {
+            self.next() % n
+        }
+    }
+
+    /// One random single-class array: the old comparator is a consistent
+    /// order on it and agrees with Excel's order (no near-ties, no numeric
+    /// text, no cross-class pairs).
+    fn random_array(rng: &mut XorShift) -> Vec<LiteralValue> {
+        let len = rng.below(101) as usize;
+        let class = rng.below(3);
+        (0..len)
+            .map(|_| match class {
+                0 => {
+                    // A grid of values (spacing >= 0.25) with duplicates, both
+                    // zero signs and Int/Number mixes of the same value.
+                    let v = (rng.below(41) as f64 - 20.0) * 0.25;
+                    match rng.below(4) {
+                        0 if v.fract() == 0.0 => LiteralValue::Int(v as i64),
+                        1 if v == 0.0 => LiteralValue::Number(-0.0),
+                        2 => LiteralValue::Number(v * 1e6),
+                        _ => LiteralValue::Number(v),
+                    }
+                }
+                1 => {
+                    // Letters that never parse as a number ("nan", "inf").
+                    const LETTERS: &[u8] = b"abcdxyzABCDXYZ";
+                    let n = 1 + rng.below(3) as usize;
+                    let s: String = (0..n)
+                        .map(|_| LETTERS[rng.below(LETTERS.len() as u64) as usize] as char)
+                        .collect();
+                    LiteralValue::Text(s)
+                }
+                _ => LiteralValue::Boolean(rng.below(2) == 1),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn sort_key_matches_old_comparator_where_it_agreed_with_excel() {
+        let mut rng = XorShift(0x9E37_79B9_7F4A_7C15);
+        let mut compared = 0usize;
+        let mut long = 0usize;
+        for _ in 0..20_000 {
+            let values = random_array(&mut rng);
+            for ascending in [true, false] {
+                let mut old: Vec<usize> = (0..values.len()).collect();
+                old.sort_by(|&a, &b| old_cmp(&values[a], &values[b], ascending));
+                let keys: Vec<SortKey> = values
+                    .iter()
+                    .map(|v| SortKey::new(v, DateSystem::Excel1900))
+                    .collect();
+                let mut new: Vec<usize> = (0..values.len()).collect();
+                new.sort_by(|&a, &b| keys[a].cmp_directed(&keys[b], ascending));
+                assert_eq!(old, new, "{values:?} ascending={ascending}");
+                compared += 1;
+                if values.len() >= 20 {
+                    long += 1;
+                }
+            }
+        }
+        assert_eq!(compared, 40_000);
+        assert!(long > 30_000, "{long}");
+    }
+
+    #[test]
+    fn sort_key_is_excel_order() {
+        let ds = DateSystem::Excel1900;
+        let ordered = [
+            LiteralValue::Number(-1.0),
+            LiteralValue::Int(2),
+            LiteralValue::Text("10".into()),
+            LiteralValue::Text("a".into()),
+            LiteralValue::Text("B".into()),
+            LiteralValue::Boolean(false),
+            LiteralValue::Boolean(true),
+            LiteralValue::Error(ExcelError::new_na()),
+            LiteralValue::Empty,
+        ];
+        for (i, a) in ordered.iter().enumerate() {
+            for (j, b) in ordered.iter().enumerate() {
+                let (ka, kb) = (SortKey::new(a, ds), SortKey::new(b, ds));
+                assert_eq!(ka.cmp_directed(&kb, true), i.cmp(&j), "{a:?} {b:?}");
+                let desc = if i == ordered.len() - 1 || j == ordered.len() - 1 {
+                    i.cmp(&j)
+                } else {
+                    j.cmp(&i)
+                };
+                assert_eq!(ka.cmp_directed(&kb, false), desc, "{a:?} {b:?}");
+            }
+        }
+        let ties = [
+            (LiteralValue::Number(0.0), LiteralValue::Number(-0.0)),
+            (LiteralValue::Int(3), LiteralValue::Number(3.0)),
+            (
+                LiteralValue::Text("Ab".into()),
+                LiteralValue::Text("aB".into()),
+            ),
+            (
+                LiteralValue::Error(ExcelError::new_na()),
+                LiteralValue::Error(ExcelError::new_num()),
+            ),
+        ];
+        for (a, b) in ties {
+            let (ka, kb) = (SortKey::new(&a, ds), SortKey::new(&b, ds));
+            assert_eq!(ka.cmp_directed(&kb, true), std::cmp::Ordering::Equal);
+            assert_eq!(ka.cmp_directed(&kb, false), std::cmp::Ordering::Equal);
+        }
     }
 }

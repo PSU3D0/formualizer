@@ -15,6 +15,7 @@ pub mod error;
     feature = "umya3"
 ))]
 pub(crate) mod load_limits;
+mod panic_guard;
 #[cfg(any(feature = "umya", feature = "xlsx-recalc"))]
 pub mod recalculate;
 pub mod resolver;

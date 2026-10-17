@@ -93,7 +93,7 @@ pub(crate) fn bessel_i1(x: f64) -> f64 {
 }
 
 pub(crate) fn bessel_i(n: i32, x: f64) -> f64 {
-    let accuracy = 40;
+    let accuracy: i32 = 40;
     let large_number = 1e10;
     let small_number = 1e-10;
 
@@ -120,7 +120,17 @@ pub(crate) fn bessel_i(n: i32, x: f64) -> f64 {
     let mut bip = 0.0;
     let mut bi = 1.0;
     let mut result = 0.0;
-    let m = 2 * (((accuracy * n) as f64).sqrt().trunc() as i32 + n);
+    // The start index of the downward recurrence. In i64 it cannot overflow;
+    // where the old i32 arithmetic would have overflowed (n above about 5.4e7)
+    // the result is #NUM! (NaN here), which also bounds the loop below.
+    let scaled = i64::from(accuracy) * i64::from(n);
+    if scaled > i64::from(i32::MAX) {
+        return f64::NAN;
+    }
+    let m = 2 * ((scaled as f64).sqrt().trunc() as i64 + i64::from(n));
+    let Ok(m) = i32::try_from(m) else {
+        return f64::NAN;
+    };
 
     for j in (1..=m).rev() {
         (bip, bi) = (bi, bip + (j as f64) * tox * bi);

@@ -846,7 +846,11 @@ impl Function for NegbinomDistLegacyFn {
             } else {
                 failures * (1.0 - p).ln()
             };
-            Ok((ln_binom(f + s - 1, s - 1) + successes * ln_p + ln_q_term).exp())
+            // f and s are saturated casts of user numbers: past i64 is #NUM!.
+            let Some(trials) = f.checked_add(s - 1) else {
+                return num_error();
+            };
+            Ok((ln_binom(trials, s - 1) + successes * ln_p + ln_q_term).exp())
         })())
     }
 }

@@ -691,6 +691,9 @@ impl Function for ArrayToTextFn {
 
         // Try to get array from argument
         let rows: Vec<Vec<LiteralValue>> = if let Ok(rv) = args[0].range_view() {
+            if let Some(e) = rv.materialization_error() {
+                return Ok(CalcValue::Scalar(LiteralValue::Error(e)));
+            }
             let (num_rows, num_cols) = rv.dims();
             let mut result = Vec::with_capacity(num_rows);
             for r in 0..num_rows {

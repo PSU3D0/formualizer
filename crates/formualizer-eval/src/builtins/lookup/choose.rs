@@ -215,6 +215,9 @@ fn materialize_rows_2d<'b>(
         let mut rows: Vec<Vec<LiteralValue>> = Vec::new();
         let sheet = ctx.current_sheet();
         let rv = ctx.resolve_range_view(&r, sheet)?;
+        if let Some(error) = rv.materialization_error() {
+            return Err(error);
+        }
         rv.for_each_row(&mut |row| {
             rows.push(row.to_vec());
             Ok(())

@@ -664,7 +664,9 @@ fn eval_array_if<'b>(
     let condition = grid(condition);
     let condition_shape = condition.shape();
     poll.advance(0)?;
-    if let Some(error) = materialized_shape_too_large(condition_shape) {
+    if let Some(error) =
+        materialized_shape_too_large(condition_shape, ctx.materialized_array_cells())
+    {
         return Ok(CalcValue::Scalar(LiteralValue::Error(error)));
     }
     // Scan without allocating a mask. Invalid conditions select neither arm.
@@ -707,7 +709,7 @@ fn eval_array_if<'b>(
         Ok(shape) => shape,
         Err(error) => return Ok(CalcValue::Scalar(LiteralValue::Error(error))),
     };
-    if let Some(error) = materialized_shape_too_large(shape) {
+    if let Some(error) = materialized_shape_too_large(shape, ctx.materialized_array_cells()) {
         return Ok(CalcValue::Scalar(LiteralValue::Error(error)));
     }
     let mut output = Vec::with_capacity(shape.0);

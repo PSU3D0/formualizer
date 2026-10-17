@@ -121,14 +121,25 @@ impl Coord {
 
     const RESERVED_MASK: u64 = RESERVED_HIGH_MASK | RESERVED_LOW_MASK;
 
-    /// Construct a coordinate, panicking if values exceed the supported limits.
+    /// Construct a 0-based coordinate.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `row` exceeds 1,048,575 (20 bits) or `col` exceeds 16,383
+    /// (14 bits). Use [`Coord::try_new`] for values that come from a file, a
+    /// formula or an API caller.
     pub fn new(row: u32, col: u32) -> Self {
         assert!(row <= ROW_MAX, "Row {row} exceeds 20 bits");
         assert!(col <= COL_MAX, "Col {col} exceeds 14 bits");
         Self(((row as u64) << ROW_SHIFT) | ((col as u64) << COL_SHIFT))
     }
 
-    /// Construct from Excel 1-based coordinates.
+    /// Construct from Excel 1-based coordinates (0 saturates to 1).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `row` exceeds 1,048,576 or `col` exceeds 16,384, as
+    /// [`Coord::new`] does.
     #[inline(always)]
     pub fn from_excel(row: u32, col: u32) -> Self {
         let row0 = row.saturating_sub(1);
@@ -249,6 +260,13 @@ pub struct RelativeCoord(u64);
 impl RelativeCoord {
     const RESERVED_MASK: u64 = RESERVED_HIGH_MASK | RELATIVE_RESERVED_LOW_MASK;
 
+    /// Construct a 0-based coordinate with absolute-row/column flags.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `row` exceeds 1,048,575 (20 bits) or `col` exceeds 16,383
+    /// (14 bits). Use [`RelativeCoord::try_new`] for values that come from a
+    /// file, a formula or an API caller.
     pub fn new(row: u32, col: u32, row_abs: bool, col_abs: bool) -> Self {
         assert!(row <= ROW_MAX, "Row {row} exceeds 20 bits");
         assert!(col <= COL_MAX, "Col {col} exceeds 14 bits");
@@ -262,6 +280,7 @@ impl RelativeCoord {
         Self(raw)
     }
 
+    /// Fallible constructor that reports overflow rather than panicking.
     pub fn try_new(row: u32, col: u32, row_abs: bool, col_abs: bool) -> Result<Self, CoordError> {
         if row > ROW_MAX {
             return Err(CoordError::RowOverflow(row as i64));

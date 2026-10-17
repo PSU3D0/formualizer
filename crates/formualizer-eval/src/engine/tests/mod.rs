@@ -251,5 +251,6 @@ mod temporal_lookup_semantics;
 mod xlookup_declared_length;
 mod xlookup_excel_parity;
 
+mod blocked_spill_structural_edit;
 mod snapshot_evaluation;
 mod stats_excel_compat;

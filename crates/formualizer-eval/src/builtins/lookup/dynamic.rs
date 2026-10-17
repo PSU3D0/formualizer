@@ -20,7 +20,7 @@
 //! - PERFORMANCE: streaming FILTER without full materialization; UNIQUE using smallvec for tiny sets.
 
 use super::super::utils::collapse_if_scalar;
-use super::lookup_utils::{PreparedLookupMatcher, cmp_for_lookup, value_to_f64_lenient};
+use super::lookup_utils::{PreparedLookupMatcher, SortKey, cmp_for_lookup, value_to_f64_lenient};
 use crate::args::{ArgSchema, CoercionPolicy, ShapeKind};
 use crate::engine::lookup_index_cache::LookupAxis;
 use crate::function::Function; // FnCaps imported via macro
@@ -1001,6 +1001,9 @@ impl Function for SortFn {
             Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         };
         let (rows, cols) = view.dims();
+        if let Some(e) = view.materialization_error() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+        }
         if rows == 0 || cols == 0 {
             return Ok(crate::traits::CalcValue::Range(
                 crate::engine::range_view::RangeView::from_owned_rows(vec![], _ctx.date_system()),
@@ -1037,7 +1040,10 @@ impl Function for SortFn {
 
         if by_col {
             // Sort columns by the specified row
-            let sort_row_idx = (sort_index - 1).max(0) as usize;
+            // i64::MIN (a saturated -1E300) maps past the end: #VALUE! below.
+            let sort_row_idx = sort_index
+                .checked_sub(1)
+                .map_or(usize::MAX, |i| i.max(0) as usize);
             if sort_row_idx >= rows {
                 return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                     ExcelError::new(ExcelErrorKind::Value),
@@ -1054,17 +1060,18 @@ impl Function for SortFn {
                 columns.push((c, col_vals));
             }
 
-            // Sort columns by the value in sort_row_idx
-            columns.sort_by(|a, b| {
-                let val_a = &a.1[sort_row_idx];
-                let val_b = &b.1[sort_row_idx];
-                let cmp = cmp_for_lookup(val_a, val_b, _ctx.date_system()).unwrap_or(0);
-                if ascending { cmp.cmp(&0) } else { 0.cmp(&cmp) }
-            });
+            // Sort columns by the value in sort_row_idx (Excel's total order;
+            // `sort_by` is stable, so ties keep their input order).
+            let date_system = _ctx.date_system();
+            let mut keyed: Vec<(SortKey, Vec<LiteralValue>)> = columns
+                .into_iter()
+                .map(|(_, col_vals)| (SortKey::new(&col_vals[sort_row_idx], date_system), col_vals))
+                .collect();
+            keyed.sort_by(|a, b| a.0.cmp_directed(&b.0, ascending));
 
             // Reconstruct the array with sorted columns
             let mut out: Vec<Vec<LiteralValue>> = vec![Vec::with_capacity(cols); rows];
-            for (_orig_idx, col_vals) in columns {
+            for (_key, col_vals) in keyed {
                 for (r, val) in col_vals.into_iter().enumerate() {
                     out[r].push(val);
                 }
@@ -1073,7 +1080,10 @@ impl Function for SortFn {
             Ok(collapse_if_scalar(out, _ctx.date_system()))
         } else {
             // Sort rows by the specified column
-            let sort_col_idx = (sort_index - 1).max(0) as usize;
+            // i64::MIN (a saturated -1E300) maps past the end: #VALUE! below.
+            let sort_col_idx = sort_index
+                .checked_sub(1)
+                .map_or(usize::MAX, |i| i.max(0) as usize);
             if sort_col_idx >= cols {
                 return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                     ExcelError::new(ExcelErrorKind::Value),
@@ -1090,17 +1100,25 @@ impl Function for SortFn {
                 row_data.push(row_vals);
             }
 
-            // Sort rows by the value in sort_col_idx
-            row_data.sort_by(|a, b| {
-                let val_a = &a[sort_col_idx];
-                let val_b = &b[sort_col_idx];
-                let cmp = cmp_for_lookup(val_a, val_b, _ctx.date_system()).unwrap_or(0);
-                if ascending { cmp.cmp(&0) } else { 0.cmp(&cmp) }
-            });
+            // Sort rows by the value in sort_col_idx (Excel's total order;
+            // `sort_by` is stable, so ties keep their input order).
+            let date_system = _ctx.date_system();
+            let mut keyed: Vec<(SortKey, Vec<LiteralValue>)> = row_data
+                .into_iter()
+                .map(|row| (SortKey::new(&row[sort_col_idx], date_system), row))
+                .collect();
+            keyed.sort_by(|a, b| a.0.cmp_directed(&b.0, ascending));
+            let row_data: Vec<Vec<LiteralValue>> = keyed.into_iter().map(|(_, row)| row).collect();
 
             Ok(collapse_if_scalar(row_data, _ctx.date_system()))
         }
     }
+}
+
+/// Integer option argument (GROUPBY / PIVOTBY codes) narrowed like a number
+/// argument is: saturating, so 4294967296 does not wrap to 0.
+fn saturating_i32(i: i64) -> i32 {
+    i.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
 }
 
 /* ───────────────────────── SORTBY() ───────────────────────── */
@@ -1235,6 +1253,9 @@ impl Function for SortByFn {
             Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         };
         let (rows, cols) = view.dims();
+        if let Some(e) = view.materialization_error() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+        }
         if rows == 0 || cols == 0 {
             return Ok(crate::traits::CalcValue::Range(
                 crate::engine::range_view::RangeView::from_owned_rows(vec![], _ctx.date_system()),
@@ -1253,6 +1274,9 @@ impl Function for SortByFn {
                 Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
             };
             let (by_rows, by_cols) = by_view.dims();
+            if let Some(e) = by_view.materialization_error() {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+            }
 
             // The by_array should be 1-D and match the number of rows in the main array
             let by_values: Vec<LiteralValue> = if by_cols == 1 {
@@ -1321,14 +1345,26 @@ impl Function for SortByFn {
             indexed_rows.push((r, row_vals));
         }
 
-        // Sort using all criteria
+        // Sort using all criteria, in Excel's total order (`sort_by` is
+        // stable, so rows tied on every criterion keep their input order).
+        let date_system = _ctx.date_system();
+        let sort_keys: Vec<(Vec<SortKey>, bool)> = sort_criteria
+            .iter()
+            .map(|(by_values, ascending)| {
+                (
+                    by_values
+                        .iter()
+                        .map(|v| SortKey::new(v, date_system))
+                        .collect(),
+                    *ascending,
+                )
+            })
+            .collect();
         indexed_rows.sort_by(|a, b| {
-            for (by_values, ascending) in &sort_criteria {
-                let val_a = &by_values[a.0];
-                let val_b = &by_values[b.0];
-                let cmp = cmp_for_lookup(val_a, val_b, _ctx.date_system()).unwrap_or(0);
-                if cmp != 0 {
-                    return if *ascending { cmp.cmp(&0) } else { 0.cmp(&cmp) };
+            for (keys, ascending) in &sort_keys {
+                let ord = keys[a.0].cmp_directed(&keys[b.0], *ascending);
+                if ord != std::cmp::Ordering::Equal {
+                    return ord;
                 }
             }
             std::cmp::Ordering::Equal
@@ -1516,7 +1552,7 @@ impl Function for RandArrayFn {
             )));
         }
 
-        if let Some(e) = generated_array_too_large(rows, cols) {
+        if let Some(e) = generated_array_too_large(rows, cols, ctx.materialized_array_cells()) {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
         }
 
@@ -1574,7 +1610,7 @@ impl GroupAggregation {
     fn from_literal(val: &LiteralValue) -> Option<Self> {
         match val {
             LiteralValue::Text(s) => Self::from_str(s),
-            LiteralValue::Int(n) => Self::from_num(*n as i32),
+            LiteralValue::Int(n) => Self::from_num(saturating_i32(*n)),
             LiteralValue::Number(n) => Self::from_num(*n as i32),
             _ => None,
         }
@@ -1662,7 +1698,10 @@ impl GroupAggregation {
             }
             Self::Median => {
                 let mut sorted = values.to_vec();
-                sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                sorted.sort_by(|a, b| {
+                    a.partial_cmp(b)
+                        .unwrap_or_else(|| a.is_nan().cmp(&b.is_nan()))
+                });
                 let mid = sorted.len() / 2;
                 if sorted.len().is_multiple_of(2) {
                     (sorted[mid - 1] + sorted[mid]) / 2.0
@@ -1890,7 +1929,7 @@ impl Function for GroupByFn {
         // Parse optional parameters
         let field_headers = if args.len() >= 4 {
             match args[3].value()?.into_literal() {
-                LiteralValue::Int(i) => i as i32,
+                LiteralValue::Int(i) => saturating_i32(i),
                 LiteralValue::Number(n) => n as i32,
                 _ => 1,
             }
@@ -1900,7 +1939,7 @@ impl Function for GroupByFn {
 
         let total_depth = if args.len() >= 5 {
             match args[4].value()?.into_literal() {
-                LiteralValue::Int(i) => i as i32,
+                LiteralValue::Int(i) => saturating_i32(i),
                 LiteralValue::Number(n) => n as i32,
                 _ => 0,
             }
@@ -1910,7 +1949,7 @@ impl Function for GroupByFn {
 
         let sort_order = if args.len() >= 6 {
             match args[5].value()?.into_literal() {
-                LiteralValue::Int(i) => i as i32,
+                LiteralValue::Int(i) => saturating_i32(i),
                 LiteralValue::Number(n) => n as i32,
                 _ => 0,
             }
@@ -2301,7 +2340,7 @@ impl Function for PivotByFn {
         // Parse optional parameters
         let field_headers = if args.len() >= 5 {
             match args[4].value()?.into_literal() {
-                LiteralValue::Int(i) => i as i32,
+                LiteralValue::Int(i) => saturating_i32(i),
                 LiteralValue::Number(n) => n as i32,
                 _ => 1,
             }
@@ -2311,7 +2350,7 @@ impl Function for PivotByFn {
 
         let row_total_depth = if args.len() >= 6 {
             match args[5].value()?.into_literal() {
-                LiteralValue::Int(i) => i as i32,
+                LiteralValue::Int(i) => saturating_i32(i),
                 LiteralValue::Number(n) => n as i32,
                 _ => 0,
             }
@@ -2321,7 +2360,7 @@ impl Function for PivotByFn {
 
         let row_sort_order = if args.len() >= 7 {
             match args[6].value()?.into_literal() {
-                LiteralValue::Int(i) => i as i32,
+                LiteralValue::Int(i) => saturating_i32(i),
                 LiteralValue::Number(n) => n as i32,
                 _ => 0,
             }
@@ -2331,7 +2370,7 @@ impl Function for PivotByFn {
 
         let col_total_depth = if args.len() >= 8 {
             match args[7].value()?.into_literal() {
-                LiteralValue::Int(i) => i as i32,
+                LiteralValue::Int(i) => saturating_i32(i),
                 LiteralValue::Number(n) => n as i32,
                 _ => 0,
             }
@@ -2341,7 +2380,7 @@ impl Function for PivotByFn {
 
         let col_sort_order = if args.len() >= 9 {
             match args[8].value()?.into_literal() {
-                LiteralValue::Int(i) => i as i32,
+                LiteralValue::Int(i) => saturating_i32(i),
                 LiteralValue::Number(n) => n as i32,
                 _ => 0,
             }
@@ -2684,6 +2723,9 @@ impl Function for FilterFn {
         let include_view = args[1].range_view_or_scalar()?;
 
         let (array_rows, array_cols) = array_view.dims();
+        if let Some(e) = array_view.materialization_error() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+        }
         if array_rows == 0 || array_cols == 0 {
             return Ok(crate::traits::CalcValue::Range(
                 crate::engine::range_view::RangeView::from_owned_rows(vec![], _ctx.date_system()),
@@ -2691,6 +2733,9 @@ impl Function for FilterFn {
         }
 
         let (include_rows, include_cols) = include_view.dims();
+        if let Some(e) = include_view.materialization_error() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+        }
         if include_rows != array_rows && include_rows != 1 {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new(ExcelErrorKind::Value),
@@ -2850,6 +2895,9 @@ impl Function for UniqueFn {
             Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         };
         let (rows, cols) = view.dims();
+        if let Some(e) = view.materialization_error() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+        }
         if rows == 0 || cols == 0 {
             return Ok(crate::traits::CalcValue::Range(
                 crate::engine::range_view::RangeView::from_owned_rows(vec![], _ctx.date_system()),
@@ -3036,7 +3084,7 @@ impl Function for SequenceFn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         // Extract numbers (allow float but coerce to i64 for dimensions)
         let num = |a: &ArgumentHandle| -> Result<f64, ExcelError> {
@@ -3064,7 +3112,7 @@ impl Function for SequenceFn {
                 ExcelError::new(ExcelErrorKind::Value),
             )));
         }
-        if let Some(e) = generated_array_too_large(rows, cols) {
+        if let Some(e) = generated_array_too_large(rows, cols, ctx.materialized_array_cells()) {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
         }
         let mut out: Vec<Vec<LiteralValue>> = Vec::with_capacity(rows as usize);
@@ -3083,7 +3131,7 @@ impl Function for SequenceFn {
             out.push(row_vec);
         }
 
-        Ok(collapse_if_scalar(out, _ctx.date_system()))
+        Ok(collapse_if_scalar(out, ctx.date_system()))
     }
 }
 
@@ -3180,6 +3228,9 @@ impl Function for TransposeFn {
             Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         };
         let (rows, cols) = view.dims();
+        if let Some(e) = view.materialization_error() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+        }
         if rows == 0 || cols == 0 {
             return Ok(crate::traits::CalcValue::Range(
                 crate::engine::range_view::RangeView::from_owned_rows(vec![], _ctx.date_system()),
@@ -3337,7 +3388,7 @@ impl Function for TakeFn {
             None
         };
 
-        if take_rows.abs() > height {
+        if take_rows.unsigned_abs() > height.unsigned_abs() {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new(ExcelErrorKind::Value),
             )));
@@ -3350,7 +3401,7 @@ impl Function for TakeFn {
         };
 
         let (col_start, col_end) = if let Some(tc) = take_cols {
-            if tc.abs() > width {
+            if tc.unsigned_abs() > width.unsigned_abs() {
                 return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                     ExcelError::new(ExcelErrorKind::Value),
                 )));
@@ -3370,6 +3421,10 @@ impl Function for TakeFn {
             ));
         }
 
+        if let Some(e) = view.shape_materialization_error(row_end - row_start, col_end - col_start)
+        {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+        }
         let mut out: Vec<Vec<LiteralValue>> = Vec::with_capacity(row_end - row_start);
         for r in row_start..row_end {
             let mut row_out: Vec<LiteralValue> = Vec::with_capacity(col_end - col_start);
@@ -3543,6 +3598,10 @@ impl Function for DropFn {
             ));
         }
 
+        if let Some(e) = view.shape_materialization_error(row_end - row_start, col_end - col_start)
+        {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+        }
         let mut out: Vec<Vec<LiteralValue>> = Vec::with_capacity(row_end - row_start);
         for r in row_start..row_end {
             let mut row_out: Vec<LiteralValue> = Vec::with_capacity(col_end - col_start);
@@ -4275,16 +4334,57 @@ mod tests {
     #[test]
     fn generated_array_guard_boundaries() {
         // Exactly at the total-cells cap: allowed (4096 * 4096 == 2^24).
-        assert!(generated_array_too_large(4096, 4096).is_none());
+        assert!(
+            generated_array_too_large(
+                4096,
+                4096,
+                crate::builtins::utils::GENERATED_ARRAY_MAX_CELLS
+            )
+            .is_none()
+        );
         // One past the cap: #NUM!.
-        assert!(generated_array_too_large(4096, 4097).is_some());
+        assert!(
+            generated_array_too_large(
+                4096,
+                4097,
+                crate::builtins::utils::GENERATED_ARRAY_MAX_CELLS
+            )
+            .is_some()
+        );
         // Per-dimension Excel sheet limits.
-        assert!(generated_array_too_large(1_048_576, 1).is_none());
-        assert!(generated_array_too_large(1_048_577, 1).is_some());
-        assert!(generated_array_too_large(1, 16_384).is_none());
-        assert!(generated_array_too_large(1, 16_385).is_some());
+        assert!(
+            generated_array_too_large(
+                1_048_576,
+                1,
+                crate::builtins::utils::GENERATED_ARRAY_MAX_CELLS
+            )
+            .is_none()
+        );
+        assert!(
+            generated_array_too_large(
+                1_048_577,
+                1,
+                crate::builtins::utils::GENERATED_ARRAY_MAX_CELLS
+            )
+            .is_some()
+        );
+        assert!(
+            generated_array_too_large(1, 16_384, crate::builtins::utils::GENERATED_ARRAY_MAX_CELLS)
+                .is_none()
+        );
+        assert!(
+            generated_array_too_large(1, 16_385, crate::builtins::utils::GENERATED_ARRAY_MAX_CELLS)
+                .is_some()
+        );
         // checked_mul overflow path fails closed.
-        assert!(generated_array_too_large(i64::MAX, i64::MAX).is_some());
+        assert!(
+            generated_array_too_large(
+                i64::MAX,
+                i64::MAX,
+                crate::builtins::utils::GENERATED_ARRAY_MAX_CELLS
+            )
+            .is_some()
+        );
     }
 
     #[test]

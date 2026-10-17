@@ -4,7 +4,7 @@ use formualizer_workbook::{
     CalamineAdapter, LoadStrategy, SpreadsheetReader, Workbook, WorkbookConfig,
 };
 #[path = "../support/source_xlsx.rs"]
-mod source_xlsx;
+pub(super) mod source_xlsx;
 use source_xlsx::*;
 
 #[test]
