@@ -145,11 +145,10 @@ impl PyLiteralValue {
 
     /// Create a Duration value
     #[staticmethod]
-    pub fn duration(seconds: i64) -> Self {
-        use chrono::Duration;
-        PyLiteralValue {
-            inner: LiteralValue::Duration(Duration::seconds(seconds)),
-        }
+    pub fn duration(seconds: i64) -> PyResult<Self> {
+        Ok(PyLiteralValue {
+            inner: LiteralValue::Duration(duration_from_parts(seconds, 0)?),
+        })
     }
 
     /// Create an Array value from a 2D list
@@ -523,6 +522,15 @@ pub(crate) fn literal_to_py(py: Python<'_>, value: &LiteralValue) -> PyResult<Py
     }
 }
 
+/// `seconds + microseconds` as a duration, or `ValueError` when it is past
+/// chrono's range (about +/-2.9e8 years); `Duration::seconds` and `+` panic
+/// there.
+fn duration_from_parts(seconds: i64, microseconds: i64) -> PyResult<chrono::Duration> {
+    chrono::Duration::try_seconds(seconds)
+        .and_then(|d| d.checked_add(&chrono::Duration::microseconds(microseconds)))
+        .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("Duration is out of range"))
+}
+
 pub(crate) fn py_to_literal(value: &Bound<'_, PyAny>) -> PyResult<LiteralValue> {
     if let Ok(py_literal) = value.extract::<PyRef<'_, PyLiteralValue>>() {
         return Ok(py_literal.inner.clone());
@@ -583,10 +591,13 @@ pub(crate) fn py_to_literal(value: &Bound<'_, PyAny>) -> PyResult<LiteralValue> 
         let seconds: i64 = py_delta.getattr("seconds")?.extract()?;
         let microseconds: i64 = py_delta.getattr("microseconds")?.extract()?;
 
+        // A timedelta spans at most 999,999,999 days, so this fits i64; the
+        // checked helper keeps one code path for every duration input.
         let secs = days * 86_400 + seconds;
-        let duration =
-            chrono::Duration::seconds(secs) + chrono::Duration::microseconds(microseconds);
-        return Ok(LiteralValue::Duration(duration));
+        return Ok(LiteralValue::Duration(duration_from_parts(
+            secs,
+            microseconds,
+        )?));
     }
     if let Ok(dict) = value.cast::<PyDict>() {
         if let Some(kind_obj) = dict.get_item("type")? {
@@ -826,9 +837,10 @@ pub(crate) fn py_to_literal(value: &Bound<'_, PyAny>) -> PyResult<LiteralValue> 
                         .map(|v| v.extract::<i64>())
                         .transpose()?
                         .unwrap_or(0);
-                    let duration = chrono::Duration::seconds(seconds)
-                        + chrono::Duration::microseconds(microseconds);
-                    return Ok(LiteralValue::Duration(duration));
+                    return Ok(LiteralValue::Duration(duration_from_parts(
+                        seconds,
+                        microseconds,
+                    )?));
                 }
                 "pending" => return Ok(LiteralValue::Pending),
                 "empty" => return Ok(LiteralValue::Empty),
