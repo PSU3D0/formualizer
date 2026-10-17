@@ -1118,8 +1118,15 @@ impl<'a> SheetPort<'a> {
                 match layout.terminate {
                     sheetport_spec::LayoutTermination::FirstBlankRow
                     | sheetport_spec::LayoutTermination::UntilMarker => {
+                        // Data that ends on the last grid row needs no
+                        // terminator (and there is no row to write it to).
                         let blank_row = bounds.start_row + height;
-                        for &col in &bounds.columns {
+                        let blank_cols: &[u32] = if blank_row <= EXCEL_MAX_ROWS {
+                            &bounds.columns
+                        } else {
+                            &[]
+                        };
+                        for &col in blank_cols {
                             writes.push(PreparedWrite::new(
                                 bounds.sheet.clone(),
                                 blank_row,
@@ -1192,6 +1199,7 @@ impl<'a> SheetPort<'a> {
                 message: "range update height mismatch".to_string(),
             });
         }
+        check_write_fits_grid(port_id, start_row, height, start_col, width)?;
         for (row_offset, row) in grid.into_iter().enumerate() {
             if row.len() as u32 != width {
                 return Err(SheetPortError::InvariantViolation {
@@ -1250,6 +1258,8 @@ impl<'a> SheetPort<'a> {
                 };
                 let rows = value.rows;
                 let new_row_count = rows.len() as u32;
+                // One column write per row; the columns come from the layout.
+                check_write_fits_grid(&binding.id, bounds.data_start_row, new_row_count, 1, 1)?;
 
                 for (row_offset, row) in rows.into_iter().enumerate() {
                     let row_idx = bounds.data_start_row + row_offset as u32;
@@ -1286,8 +1296,15 @@ impl<'a> SheetPort<'a> {
                 match layout.terminate {
                     sheetport_spec::LayoutTermination::FirstBlankRow
                     | sheetport_spec::LayoutTermination::UntilMarker => {
+                        // Data that ends on the last grid row needs no
+                        // terminator (and there is no row to write it to).
                         let blank_row = bounds.data_start_row + new_row_count;
-                        for &col_index in &bounds.column_indices {
+                        let blank_cols: &[u32] = if blank_row <= EXCEL_MAX_ROWS {
+                            &bounds.column_indices
+                        } else {
+                            &[]
+                        };
+                        for &col_index in blank_cols {
                             writes.push(PreparedWrite::new(
                                 bounds.sheet.clone(),
                                 blank_row,
@@ -1510,4 +1527,28 @@ impl<'a> SheetPort<'a> {
                 .set_evaluation_resource_budgets(restore.budgets);
         }
     }
+}
+
+/// A write of `rows x cols` cells starting at (`start_row`, `start_col`),
+/// 1-based, must end inside the grid; the input size comes from the caller,
+/// not the manifest, so the manifest's own bound does not cover it.
+fn check_write_fits_grid(
+    port: &str,
+    start_row: u32,
+    rows: u32,
+    start_col: u32,
+    cols: u32,
+) -> Result<(), SheetPortError> {
+    let last_row = u64::from(start_row) + u64::from(rows.max(1)) - 1;
+    let last_col = u64::from(start_col) + u64::from(cols.max(1)) - 1;
+    if last_row > u64::from(EXCEL_MAX_ROWS) || last_col > u64::from(EXCEL_MAX_COLUMNS) {
+        return Err(SheetPortError::InvariantViolation {
+            port: port.to_string(),
+            message: format!(
+                "update of {rows} row(s) x {cols} column(s) at row {start_row}, column \
+                 {start_col} extends past the sheet grid"
+            ),
+        });
+    }
+    Ok(())
 }

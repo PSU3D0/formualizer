@@ -784,3 +784,42 @@ ports:
             .all(|value| matches!(value, LiteralValue::Date(_)))
     );
 }
+
+fn inventory_rows(n: usize) -> PortValue {
+    use formualizer_sheetport::{TableRow, TableValue};
+    use std::collections::BTreeMap;
+    let rows = (0..n)
+        .map(|i| {
+            let mut m = BTreeMap::new();
+            m.insert("sku".to_string(), LiteralValue::Text(format!("S{i}")));
+            m.insert("description".to_string(), LiteralValue::Text("d".into()));
+            m.insert("on_hand".to_string(), LiteralValue::Int(1));
+            m.insert("safety_stock".to_string(), LiteralValue::Int(1));
+            m.insert("lead_time_days".to_string(), LiteralValue::Int(1));
+            TableRow::new(m)
+        })
+        .collect();
+    PortValue::Table(TableValue::new(rows))
+}
+
+/// A table layout near the bottom of the grid: the manifest bound holds, but
+/// the input rows run past row 1,048,576.
+#[test]
+fn table_input_past_the_last_grid_row_is_an_error() {
+    let yaml = include_str!("../../sheetport-spec/tests/fixtures/supply_planning.yaml")
+        .replace("header_row: 1\n", "header_row: 1048570\n");
+    let manifest = Manifest::from_yaml_str(&yaml).expect("fixture parses");
+    let mut workbook = make_test_workbook();
+    let mut sheetport = SheetPort::new(&mut workbook, manifest).expect("binds");
+
+    let mut update = InputUpdate::new();
+    update.insert("sku_inventory", inventory_rows(10));
+    let err = sheetport.write_inputs(update).expect_err("past the grid");
+    assert!(err.to_string().contains("past the sheet grid"), "{err}");
+
+    // Six rows end on the last grid row, which leaves no row for the blank
+    // terminator; the write still succeeds.
+    let mut update = InputUpdate::new();
+    update.insert("sku_inventory", inventory_rows(6));
+    sheetport.write_inputs(update).expect("fits");
+}
