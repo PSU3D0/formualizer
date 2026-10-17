@@ -3354,14 +3354,19 @@ impl Workbook {
             ));
         }
 
-        let start = formualizer_eval::reference::CellRef::new(
-            sheet_id,
-            formualizer_eval::reference::Coord::new(first_row - 1, first_col - 1, true, true),
-        );
-        let end = formualizer_eval::reference::CellRef::new(
-            sheet_id,
-            formualizer_eval::reference::Coord::new(last_row - 1, last_col - 1, true, true),
-        );
+        // Rows and columns are >= 1 (checked above); the grid bound is the
+        // other half of a valid range.
+        let (Ok(start), Ok(end)) = (
+            formualizer_eval::reference::Coord::try_new(first_row - 1, first_col - 1, true, true),
+            formualizer_eval::reference::Coord::try_new(last_row - 1, last_col - 1, true, true),
+        ) else {
+            return invalid(format!(
+                "table range ({first_row},{first_col},{last_row},{last_col}) is outside the \
+                 sheet grid (1,048,576 rows by 16,384 columns)"
+            ));
+        };
+        let start = formualizer_eval::reference::CellRef::new(sheet_id, start);
+        let end = formualizer_eval::reference::CellRef::new(sheet_id, end);
         self.engine.define_table(
             name,
             formualizer_eval::reference::RangeRef::new(start, end),

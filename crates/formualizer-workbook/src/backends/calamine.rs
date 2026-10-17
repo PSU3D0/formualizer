@@ -3245,13 +3245,21 @@ where
                             let er0 = address.end_row.saturating_sub(1);
                             let ec0 = address.end_col.saturating_sub(1);
 
-                            let start_ref =
-                                CellRef::new(sheet_id, Coord::new(sr0, sc0, true, true));
+                            // A range past the grid (a built-in `_xlnm.Print_Area`
+                            // ending at row 1048577, say) is left undefined, as an
+                            // ordinary name with such a range is: references to it
+                            // are #NAME?.
+                            let (Ok(start), Ok(end)) = (
+                                Coord::try_new(sr0, sc0, true, true),
+                                Coord::try_new(er0, ec0, true, true),
+                            ) else {
+                                continue;
+                            };
+                            let start_ref = CellRef::new(sheet_id, start);
                             if sr0 == er0 && sc0 == ec0 {
                                 NamedDefinition::Cell(start_ref)
                             } else {
-                                let end_ref =
-                                    CellRef::new(sheet_id, Coord::new(er0, ec0, true, true));
+                                let end_ref = CellRef::new(sheet_id, end);
                                 let range_ref =
                                     formualizer_eval::reference::RangeRef::new(start_ref, end_ref);
                                 NamedDefinition::Range(range_ref)
