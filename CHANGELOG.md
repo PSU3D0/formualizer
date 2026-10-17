@@ -6,10 +6,18 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Changed
 
+- **SORT and SORTBY now use Excel's sort order** for mixed values: numbers, then text (case-insensitive), then FALSE, TRUE, errors and blanks. The previous comparison treated numeric text as numbers, TRUE/FALSE as 1/0 and a number and non-numeric text as equal, which gave non-Excel results (`SORT({"10";"9"})` returned 9, 10; Excel gives "10", "9") and panicked on mixed columns of 21 or more values. Single-type columns sort as before.
+- `EVEN` on very large inputs returned a wrapped integer (`EVEN(1E300)` gave -9.2e18); it now returns the correct value.
+- Several functions now return Excel's error instead of an overflowed or wrapped value: `LCM` at 2^53 and above, `TIME` with a component of 32768 or more, `COMBIN`/`PERMUT`/`COMBINA`/`FACTDOUBLE` when the result exceeds the double range (previously infinity), and `FIXED`/`DOLLAR` with more than 127 decimals (previously the text "NaN" or a panic).
+- Non-finite numbers (NaN, infinity) are stored as `#NUM!` on every load and write path: XLSX through Calamine and umya, JSON, `Workbook::set_value`/`set_values`/`write_range`, workbook actions, SheetPort writes, and the Python, JavaScript and C bindings. The CSV loader already rejected them.
+
 - **`formualizer-parse` 4.0.0 (breaking).** `Tokenizer` is now a thin owned wrapper over the span tokenizer that `Parser` and the engine already used; the separate older tokenizer is gone. Its public surface (`new`, `new_with_dialect`, `new_best_effort*`, `from_token_stream`, `admission_error`, `items`, `render`, `dialect`, `TryFrom`) is unchanged, so the Python and JavaScript `Tokenizer`/`tokenize` keep working. On 320,789 real-world formulas both tokenizers produced identical tokens and errors; `Tokenizer::new` is about 15% faster. Two observable differences: `=true#` is now rejected like `=TRUE#` (a spill operator after a logical literal), and when an opening bracket is the token that exceeds the 16,384-token limit, the error position is that bracket rather than one past it.
 - Removed `Token::make_subexp`, `make_subexp_with_span`, `make_separator` and `make_separator_with_span`, which panicked on unexpected arguments.
 
 ### Added
+
+- `evaluation_budgets.scratch.materialized_array_cells` caps the number of cells any single range or array value may expand to (default 16,777,216, the limit generated arrays already used). Exceeding it returns `#NUM!` instead of allocating. Ranges are counted after trimming to the used area, so whole-column references over ordinary data are unaffected.
+- `Coord::try_new` in `formualizer-eval` and `LiteralValue::finite_or_num_error` in `formualizer-common`.
 
 - Added recalculation of workbooks containing inert chart/dialog/empty-module sheets or unused unevaluable defined names, preserving their source content unchanged.
 - **`formualizer recalc` now recalculates workbooks with external links**, using the values Excel cached in the workbook for each link. Before, it refused every such workbook: 2,786 of 15,871 real Enron spreadsheets, of which 1,638 now recalculate. Over the cells that read linked values, 99.3% match the result Excel stored; the rest trace to existing function gaps, not to the linked values. Links are never refreshed, and link parts, their relationships and content types are kept byte for byte.
@@ -39,6 +47,20 @@ All notable changes to Formualizer will be documented in this file.
 - `FZ_DEBUG_RECALC=1` prints the wall time of each recalculation phase to stderr.
 
 ### Fixed
+
+- **Fixed crashes, aborts and hangs reachable from formula text:**
+  - `BETA.DIST`, `BETA.INV`, `BETADIST` and `BETAINV` could recurse until the stack overflowed for some arguments.
+  - Formulas over very large ranges, such as `=LINEST(A11:XFD1048576)`, `=SUM(A11:XFD1048576*2)`, `TRANSPOSE` or `SORT` of a whole sheet, tried to allocate tens or hundreds of gigabytes and aborted.
+  - `COMBINA(0,1)`, and `COMBIN`, `PERMUT`, `FACTDOUBLE` and the `BINOM` family with large counts, could loop for a very long time; `BASE` accepted an unbounded minimum length.
+  - About twenty functions (including `MID`, `TAKE`, `DATE`, `BITLSHIFT` and `DB`) overflowed integer arithmetic on extreme arguments, panicking in debug builds and wrapping in release.
+- **Fixed crashes from workbook content:**
+  - A built-in defined name (`_xlnm.Print_Area`, `_FilterDatabase`, `Print_Titles`) or a JSON name or table extending past the last row panicked the loader and `formualizer recalc`.
+  - A cell at the last column and row (`XFD1048576`) made the Calamine reader allocate the full sheet rectangle (hundreds of gigabytes) and abort; sheets are now read cell by cell.
+  - A NaN cell value panicked statistical functions such as `MEDIAN`, `SMALL`, `LARGE`, `RANK`, `PERCENTILE` and `FREQUENCY`.
+- Fixed a panic when inserting or deleting rows or columns next to a spilled array whose spill was blocked.
+- Fixed SheetPort input writes to a table anchored near the bottom of the grid, and Python `duration` values beyond the supported date range (now `ValueError`).
+- `formualizer recalc` reports an unexpected internal panic as its normal error result (`status: "error"`, exit 1, JSON still printed with `--json`) instead of exiting with code 101. Panics inside the umya and Calamine readers during a load are returned as load errors. These are safety nets; the panics found are fixed above.
+- In Python, a panic no longer leaves the workbook's value cache unusable for later calls.
 
 - **Fixed a crash on formulas with many `[0]` workbook prefixes.** A reference such as `='[0][0]...[0]Sheet1'!A1` was parsed recursively, once per prefix, outside the parser's nesting limits: about 6 KB of such text overflowed a 1 MiB stack (the WebAssembly default) and about 45 KB the main thread, aborting the process (Python exited with a segmentation fault). The prefixes are now stripped in a loop.
 - Fixed three more ways the parser could panic, abort or hang on unexpected input: `TemplateLexeme::match_relocated` given a different template now reports a mismatch instead of panicking; `collect_references` on a hand-built range whose end row is near `u32::MAX` computed its size in 32 bits, which wrapped in release builds and then tried to allocate several gigabytes; and an array literal in a hand-built `TokenStream` with an unexpected separator kind made `Parser::parse` loop forever.
