@@ -274,6 +274,9 @@ fn materialise_range<'a, 'b>(
     if let Ok(r) = arg.as_reference_or_eval() {
         let current_sheet = ctx.current_sheet();
         let rv = ctx.resolve_range_view(&r, current_sheet)?;
+        if let Some(error) = rv.materialization_error() {
+            return Err(error);
+        }
         let (rows, cols) = rv.dims();
         let mut data = Vec::with_capacity(rows);
         rv.for_each_row(&mut |row| {

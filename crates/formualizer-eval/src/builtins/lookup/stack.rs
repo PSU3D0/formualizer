@@ -178,6 +178,13 @@ impl Function for HStackFn {
         }
 
         let row_count = target_rows.unwrap();
+        if let Some(error) = crate::engine::resource_ledger::materialized_cells_exceed(
+            row_count,
+            total_cols,
+            ctx.materialized_array_cells(),
+        ) {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(error)));
+        }
         let mut result: Vec<Vec<LiteralValue>> = Vec::with_capacity(row_count);
         for _ in 0..row_count {
             result.push(Vec::with_capacity(total_cols));
@@ -338,6 +345,13 @@ impl Function for VStackFn {
             ));
         }
 
+        if let Some(error) = crate::engine::resource_ledger::materialized_cells_exceed(
+            total_rows,
+            target_width.unwrap_or(1),
+            ctx.materialized_array_cells(),
+        ) {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(error)));
+        }
         let mut result: Vec<Vec<LiteralValue>> = Vec::with_capacity(total_rows);
         for entry in entries {
             match entry {

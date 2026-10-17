@@ -18158,6 +18158,14 @@ where
         Some(hint.clamp(1024, 1 << 20)) // clamp between 1K and ~1M
     }
 
+    fn materialized_array_cells(&self) -> u64 {
+        self.config
+            .evaluation_budgets
+            .scratch
+            .materialized_array_cells
+            .unwrap_or(crate::engine::resource_ledger::DEFAULT_MATERIALIZED_ARRAY_CELLS)
+    }
+
     fn volatile_level(&self) -> crate::traits::VolatileLevel {
         self.config.volatile_level
     }

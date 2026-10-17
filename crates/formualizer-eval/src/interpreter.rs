@@ -306,7 +306,9 @@ impl<'a> Interpreter<'a> {
         reference: &ReferenceType,
         current_sheet: &str,
     ) -> Result<crate::engine::range_view::RangeView<'c>, ExcelError> {
-        self.context.resolve_range_view(reference, current_sheet)
+        self.context
+            .resolve_range_view(reference, current_sheet)
+            .map(|view| view.with_cell_budget(self.context.materialized_array_cells()))
     }
 
     /// Evaluate an AST node in a reference context and return a ReferenceType.
@@ -1166,7 +1168,8 @@ impl<'a> Interpreter<'a> {
         let view = self
             .context
             .resolve_range_view(reference, self.current_sheet)?
-            .with_cancel_token(self.context.cancellation_token());
+            .with_cancel_token(self.context.cancellation_token())
+            .with_cell_budget(self.context.materialized_array_cells());
         Ok(crate::traits::CalcValue::Range(view))
     }
 
@@ -1659,6 +1662,15 @@ impl<'a> Interpreter<'a> {
             Ok(s) => s,
             Err(e) => return Ok(LiteralValue::Error(e)),
         };
+        // A column and a row broadcast to their product: check it before
+        // allocating (the inputs were checked when they were materialised).
+        if let Some(e) = crate::engine::resource_ledger::materialized_cells_exceed(
+            target.0,
+            target.1,
+            self.context.materialized_array_cells(),
+        ) {
+            return Ok(LiteralValue::Error(e));
+        }
 
         let mut out = Vec::with_capacity(target.0);
         for i in 0..target.0 {

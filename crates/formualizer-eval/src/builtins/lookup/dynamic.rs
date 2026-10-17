@@ -1001,6 +1001,9 @@ impl Function for SortFn {
             Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         };
         let (rows, cols) = view.dims();
+        if let Some(e) = view.materialization_error() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+        }
         if rows == 0 || cols == 0 {
             return Ok(crate::traits::CalcValue::Range(
                 crate::engine::range_view::RangeView::from_owned_rows(vec![], _ctx.date_system()),
@@ -1250,6 +1253,9 @@ impl Function for SortByFn {
             Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         };
         let (rows, cols) = view.dims();
+        if let Some(e) = view.materialization_error() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+        }
         if rows == 0 || cols == 0 {
             return Ok(crate::traits::CalcValue::Range(
                 crate::engine::range_view::RangeView::from_owned_rows(vec![], _ctx.date_system()),
@@ -1268,6 +1274,9 @@ impl Function for SortByFn {
                 Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
             };
             let (by_rows, by_cols) = by_view.dims();
+            if let Some(e) = by_view.materialization_error() {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+            }
 
             // The by_array should be 1-D and match the number of rows in the main array
             let by_values: Vec<LiteralValue> = if by_cols == 1 {
@@ -1543,7 +1552,7 @@ impl Function for RandArrayFn {
             )));
         }
 
-        if let Some(e) = generated_array_too_large(rows, cols) {
+        if let Some(e) = generated_array_too_large(rows, cols, ctx.materialized_array_cells()) {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
         }
 
@@ -2714,6 +2723,9 @@ impl Function for FilterFn {
         let include_view = args[1].range_view_or_scalar()?;
 
         let (array_rows, array_cols) = array_view.dims();
+        if let Some(e) = array_view.materialization_error() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+        }
         if array_rows == 0 || array_cols == 0 {
             return Ok(crate::traits::CalcValue::Range(
                 crate::engine::range_view::RangeView::from_owned_rows(vec![], _ctx.date_system()),
@@ -2721,6 +2733,9 @@ impl Function for FilterFn {
         }
 
         let (include_rows, include_cols) = include_view.dims();
+        if let Some(e) = include_view.materialization_error() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+        }
         if include_rows != array_rows && include_rows != 1 {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new(ExcelErrorKind::Value),
@@ -2880,6 +2895,9 @@ impl Function for UniqueFn {
             Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         };
         let (rows, cols) = view.dims();
+        if let Some(e) = view.materialization_error() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+        }
         if rows == 0 || cols == 0 {
             return Ok(crate::traits::CalcValue::Range(
                 crate::engine::range_view::RangeView::from_owned_rows(vec![], _ctx.date_system()),
@@ -3066,7 +3084,7 @@ impl Function for SequenceFn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         // Extract numbers (allow float but coerce to i64 for dimensions)
         let num = |a: &ArgumentHandle| -> Result<f64, ExcelError> {
@@ -3094,7 +3112,7 @@ impl Function for SequenceFn {
                 ExcelError::new(ExcelErrorKind::Value),
             )));
         }
-        if let Some(e) = generated_array_too_large(rows, cols) {
+        if let Some(e) = generated_array_too_large(rows, cols, ctx.materialized_array_cells()) {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
         }
         let mut out: Vec<Vec<LiteralValue>> = Vec::with_capacity(rows as usize);
@@ -3113,7 +3131,7 @@ impl Function for SequenceFn {
             out.push(row_vec);
         }
 
-        Ok(collapse_if_scalar(out, _ctx.date_system()))
+        Ok(collapse_if_scalar(out, ctx.date_system()))
     }
 }
 
@@ -3210,6 +3228,9 @@ impl Function for TransposeFn {
             Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         };
         let (rows, cols) = view.dims();
+        if let Some(e) = view.materialization_error() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+        }
         if rows == 0 || cols == 0 {
             return Ok(crate::traits::CalcValue::Range(
                 crate::engine::range_view::RangeView::from_owned_rows(vec![], _ctx.date_system()),
@@ -3400,6 +3421,10 @@ impl Function for TakeFn {
             ));
         }
 
+        if let Some(e) = view.shape_materialization_error(row_end - row_start, col_end - col_start)
+        {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+        }
         let mut out: Vec<Vec<LiteralValue>> = Vec::with_capacity(row_end - row_start);
         for r in row_start..row_end {
             let mut row_out: Vec<LiteralValue> = Vec::with_capacity(col_end - col_start);
@@ -3573,6 +3598,10 @@ impl Function for DropFn {
             ));
         }
 
+        if let Some(e) = view.shape_materialization_error(row_end - row_start, col_end - col_start)
+        {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+        }
         let mut out: Vec<Vec<LiteralValue>> = Vec::with_capacity(row_end - row_start);
         for r in row_start..row_end {
             let mut row_out: Vec<LiteralValue> = Vec::with_capacity(col_end - col_start);
@@ -4305,16 +4334,57 @@ mod tests {
     #[test]
     fn generated_array_guard_boundaries() {
         // Exactly at the total-cells cap: allowed (4096 * 4096 == 2^24).
-        assert!(generated_array_too_large(4096, 4096).is_none());
+        assert!(
+            generated_array_too_large(
+                4096,
+                4096,
+                crate::builtins::utils::GENERATED_ARRAY_MAX_CELLS
+            )
+            .is_none()
+        );
         // One past the cap: #NUM!.
-        assert!(generated_array_too_large(4096, 4097).is_some());
+        assert!(
+            generated_array_too_large(
+                4096,
+                4097,
+                crate::builtins::utils::GENERATED_ARRAY_MAX_CELLS
+            )
+            .is_some()
+        );
         // Per-dimension Excel sheet limits.
-        assert!(generated_array_too_large(1_048_576, 1).is_none());
-        assert!(generated_array_too_large(1_048_577, 1).is_some());
-        assert!(generated_array_too_large(1, 16_384).is_none());
-        assert!(generated_array_too_large(1, 16_385).is_some());
+        assert!(
+            generated_array_too_large(
+                1_048_576,
+                1,
+                crate::builtins::utils::GENERATED_ARRAY_MAX_CELLS
+            )
+            .is_none()
+        );
+        assert!(
+            generated_array_too_large(
+                1_048_577,
+                1,
+                crate::builtins::utils::GENERATED_ARRAY_MAX_CELLS
+            )
+            .is_some()
+        );
+        assert!(
+            generated_array_too_large(1, 16_384, crate::builtins::utils::GENERATED_ARRAY_MAX_CELLS)
+                .is_none()
+        );
+        assert!(
+            generated_array_too_large(1, 16_385, crate::builtins::utils::GENERATED_ARRAY_MAX_CELLS)
+                .is_some()
+        );
         // checked_mul overflow path fails closed.
-        assert!(generated_array_too_large(i64::MAX, i64::MAX).is_some());
+        assert!(
+            generated_array_too_large(
+                i64::MAX,
+                i64::MAX,
+                crate::builtins::utils::GENERATED_ARRAY_MAX_CELLS
+            )
+            .is_some()
+        );
     }
 
     #[test]

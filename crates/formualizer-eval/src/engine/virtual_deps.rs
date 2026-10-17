@@ -220,6 +220,10 @@ impl<'a, R: EvaluationContext> EvaluationContext for DynamicRefCollector<'a, R> 
         self.engine.cancellation_token()
     }
 
+    fn materialized_array_cells(&self) -> u64 {
+        self.engine.materialized_array_cells()
+    }
+
     fn resolve_cell_format(
         &self,
         sheet: Option<&str>,

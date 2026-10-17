@@ -500,6 +500,9 @@ impl Function for SumProductFn {
         let to_array = |ah: &ArgumentHandle<'_, 'b>| -> Result<Vec<Vec<LiteralValue>>, ExcelError> {
             match resolve_aggregate_argument(ah, ctx)? {
                 AggregateArgument::Range(rv) => {
+                    if let Some(error) = rv.materialization_error() {
+                        return Err(error);
+                    }
                     let mut rows: Vec<Vec<LiteralValue>> = Vec::new();
                     rv.for_each_row(&mut |row| {
                         rows.push(row.to_vec());
@@ -534,6 +537,16 @@ impl Function for SumProductFn {
                 )));
             }
         };
+
+        // SUMPRODUCT does not allocate the broadcast shape, but a column and a
+        // row broadcast to their product: bound the walk like a dense array.
+        if let Some(error) = crate::engine::resource_ledger::materialized_cells_exceed(
+            target.0,
+            target.1,
+            ctx.materialized_array_cells(),
+        ) {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(error)));
+        }
 
         // Iterate target shape, multiply coerced values across args, sum total
         let mut total = 0.0f64;
