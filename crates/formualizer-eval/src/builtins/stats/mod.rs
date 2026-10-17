@@ -114,17 +114,29 @@ fn collect_numeric_stats(args: &[ArgumentHandle]) -> Result<Vec<f64>, ExcelError
  * adjacent order statistics, so a full O(n log n) sort is wasted work;
  * `select_nth_unstable_by` (quickselect) finds them in expected O(n).
  *
- * The comparator is byte-for-byte the one used by the full sorts it
- * replaces (`partial_cmp().unwrap()`): `collect_numeric_stats` only yields
- * coerced finite numerics, and a NaN would have panicked the old sort the
- * same way. Ties are exact duplicates for f64s compared `Equal` (modulo
- * the ±0.0 sign bit), so the selected element is bit-identical to the
- * sorted element at the same index.
+ * The comparator (`cmp_f64_nan_last`) agrees with the one used by the full
+ * sorts it replaces (`partial_cmp().unwrap()`) on every non-NaN input, and
+ * orders a NaN last instead of panicking. Ties are exact duplicates for
+ * f64s compared `Equal` (modulo the ±0.0 sign bit), so the selected element
+ * is bit-identical to the sorted element at the same index.
  */
+
+/// Ascending order for the numeric collectors: `partial_cmp` on non-NaN
+/// values (so finite data orders exactly as before, `-0 == 0`), with every NaN
+/// after every number. This is a total order, so the sorts and `select_nth`
+/// cannot panic if a NaN reaches them; loaders store non-finite cells as
+/// `#NUM!`, so the NaN arm is cold.
+#[inline]
+fn cmp_f64_nan_last(a: &f64, b: &f64) -> std::cmp::Ordering {
+    match a.partial_cmp(b) {
+        Some(ord) => ord,
+        None => a.is_nan().cmp(&b.is_nan()),
+    }
+}
 
 /// k-th order statistic (0-based, ascending). Reorders `nums` in place.
 fn nth_smallest(nums: &mut [f64], k: usize) -> f64 {
-    let (_, kth, _) = nums.select_nth_unstable_by(k, |a, b| a.partial_cmp(b).unwrap());
+    let (_, kth, _) = nums.select_nth_unstable_by(k, cmp_f64_nan_last);
     *kth
 }
 
@@ -132,7 +144,7 @@ fn nth_smallest(nums: &mut [f64], k: usize) -> f64 {
 /// then the (k+1)-th is the minimum of the right partition.
 /// Requires `k + 1 < nums.len()`.
 fn adjacent_smallest(nums: &mut [f64], k: usize) -> (f64, f64) {
-    let (_, kth, right) = nums.select_nth_unstable_by(k, |a, b| a.partial_cmp(b).unwrap());
+    let (_, kth, right) = nums.select_nth_unstable_by(k, cmp_f64_nan_last);
     let kth = *kth;
     let mut next = right[0];
     for &v in &right[1..] {
@@ -299,10 +311,10 @@ impl Function for RankEqFn {
         let mut sorted = nums; // copy
         if order.abs() < 1e-12 {
             // descending
-            sorted.sort_by(|a, b| b.partial_cmp(a).unwrap());
+            sorted.sort_by(|a, b| cmp_f64_nan_last(b, a));
         } else {
             // ascending
-            sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            sorted.sort_by(cmp_f64_nan_last);
         }
         for (i, &v) in sorted.iter().enumerate() {
             if (v - target).abs() < 1e-12 {
@@ -415,9 +427,9 @@ impl Function for RankAvgFn {
         }
         let mut sorted = nums;
         if order.abs() < 1e-12 {
-            sorted.sort_by(|a, b| b.partial_cmp(a).unwrap());
+            sorted.sort_by(|a, b| cmp_f64_nan_last(b, a));
         } else {
-            sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            sorted.sort_by(cmp_f64_nan_last);
         }
         let mut positions = Vec::new();
         for (i, &v) in sorted.iter().enumerate() {
@@ -1160,7 +1172,7 @@ impl Function for ModeSingleFn {
                 ExcelError::new_na(),
             )));
         }
-        nums.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        nums.sort_by(cmp_f64_nan_last);
         let mut best_val = nums[0];
         let mut best_cnt = 1usize;
         let mut cur_val = nums[0];
@@ -1270,7 +1282,7 @@ impl Function for ModeMultiFn {
                 ExcelError::new_na(),
             )));
         }
-        nums.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        nums.sort_by(cmp_f64_nan_last);
         let mut runs: Vec<(f64, usize)> = Vec::new();
         let mut cur_val = nums[0];
         let mut cur_cnt = 1usize;
@@ -2492,7 +2504,7 @@ impl Function for TrimmeanFn {
             )));
         }
 
-        nums.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        nums.sort_by(cmp_f64_nan_last);
 
         let n = nums.len();
         // Number of values to exclude from each end
@@ -7041,7 +7053,7 @@ impl Function for PercentRankIncFn {
                 ExcelError::new_num(),
             )));
         }
-        nums.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        nums.sort_by(cmp_f64_nan_last);
 
         let n = nums.len();
 
@@ -7183,7 +7195,7 @@ impl Function for PercentRankExcFn {
                 ExcelError::new_num(),
             )));
         }
-        nums.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        nums.sort_by(cmp_f64_nan_last);
 
         let n = nums.len();
 
@@ -7306,7 +7318,7 @@ impl Function for FrequencyFn {
         }
 
         // Sort bins
-        bins.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        bins.sort_by(cmp_f64_nan_last);
 
         // Calculate frequencies
         // Result has bins.len() + 1 elements
