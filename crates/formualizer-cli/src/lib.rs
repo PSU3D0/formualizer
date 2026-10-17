@@ -13,7 +13,53 @@ use std::{
     ffi::OsString,
     io::{Read, Write},
     path::PathBuf,
+    sync::{Mutex, Once, PoisonError},
 };
+
+/// Location and message of the most recent panic, recorded by the hook that
+/// [`catch_internal_panic`] installs (the panic payload carries no location).
+static LAST_PANIC: Mutex<Option<String>> = Mutex::new(None);
+static PANIC_HOOK: Once = Once::new();
+
+/// Runs `f`, turning a panic into the CLI's internal-error result
+/// (`status: "error"`, exit 1) with a message that names the panic location.
+/// A last resort: the panics themselves are bugs to fix. It needs
+/// `panic = "unwind"`, which the release profile keeps (Cargo's default); on
+/// a `panic = "abort"` build the process still aborts.
+fn catch_internal_panic<T>(f: impl FnOnce() -> Result<T, IoError>) -> Result<T, IoError> {
+    PANIC_HOOK.call_once(|| {
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            let location = info
+                .location()
+                .map_or_else(|| "unknown location".to_owned(), ToString::to_string);
+            *LAST_PANIC.lock().unwrap_or_else(PoisonError::into_inner) = Some(location);
+            previous(info);
+        }));
+    });
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).unwrap_or_else(|payload| {
+        let message = payload
+            .downcast_ref::<&str>()
+            .map(|s| (*s).to_owned())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "non-string panic payload".to_owned());
+        let location = LAST_PANIC
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+            .unwrap_or_else(|| "unknown location".to_owned());
+        Err(IoError::Backend {
+            backend: "formualizer".to_owned(),
+            message: format!("internal error: panicked at {location}: {message}"),
+        })
+    })
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Makes the next `run` panic inside the guarded region (tests only).
+    static INJECT_PANIC: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
 
 const SCHEMA: &str = "formualizer.recalc/1";
 const DEFAULT_MAX_ERRORS: usize = 20;
@@ -421,7 +467,11 @@ where
     let zone = options.eval_config.deterministic_mode.timezone().clone();
     let zone = &zone;
     let seed = options.eval_config.workbook_seed;
-    let result = (|| -> Result<XlsxRecalculateResult, IoError> {
+    let result = catch_internal_panic(|| -> Result<XlsxRecalculateResult, IoError> {
+        #[cfg(test)]
+        if INJECT_PANIC.with(|inject| inject.replace(false)) {
+            panic!("injected test panic");
+        }
         if cancel.as_ref().is_some_and(CancelToken::is_cancelled) {
             return Err(IoError::Engine(formualizer_common::ExcelError::new(
                 formualizer_common::ExcelErrorKind::Cancelled,
@@ -447,7 +497,7 @@ where
         } else {
             recalculate_xlsx_file(&input, output.as_deref(), options)
         }
-    })();
+    });
     let mut report = Report::new("error", String::new());
     report.input = Some(input.to_string_lossy().into_owned());
     report.output = if check {
@@ -561,6 +611,40 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn run_with_injected_panic(json: bool) -> (i32, String, String) {
+        INJECT_PANIC.with(|inject| inject.set(true));
+        let mut args = vec!["formualizer", "recalc", "in.xlsx"];
+        if json {
+            args.push("--json");
+        }
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        let code = run(args, &mut out, &mut err, None);
+        (
+            code,
+            String::from_utf8(out).unwrap(),
+            String::from_utf8(err).unwrap(),
+        )
+    }
+
+    #[test]
+    fn a_panic_is_the_internal_error_result_with_its_location() {
+        let (code, out, _) = run_with_injected_panic(true);
+        assert_eq!(code, 1);
+        let report: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+        assert_eq!(report["schema"], "formualizer.recalc/1");
+        assert_eq!(report["status"], "error");
+        assert_eq!(report["written"], false);
+        let message = report["message"].as_str().unwrap();
+        assert!(message.contains("internal error: panicked at"), "{message}");
+        assert!(message.contains(file!()), "{message}");
+        assert!(message.contains("injected test panic"), "{message}");
+
+        let (code, out, err) = run_with_injected_panic(false);
+        assert_eq!(code, 1);
+        assert!(out.is_empty());
+        assert!(err.contains("internal error: panicked at"), "{err}");
+    }
     #[test]
     fn structured_error_classification() {
         use formualizer_common::{ExcelError, ExcelErrorKind};
