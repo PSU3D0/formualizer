@@ -10,6 +10,9 @@ use crate::traits::{ArgumentHandle, CalcValue, FunctionContext};
 use formualizer_common::{ArgKind, CoercionPolicy, ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_macros::func_caps;
 
+/// Largest number of decimals FIXED and DOLLAR accept (either sign), as in Excel.
+const MAX_FORMAT_DECIMALS: i32 = 127;
+
 fn scalar_like_value(arg: &ArgumentHandle<'_, '_>) -> Result<LiteralValue, ExcelError> {
     Ok(match arg.value()? {
         CalcValue::Scalar(v) | CalcValue::AnnotatedScalar(v, _) => v,
@@ -683,6 +686,13 @@ impl Function for DollarFn {
         } else {
             2
         };
+        // Excel accepts at most 127 decimals; beyond that it returns #VALUE!.
+        // This also keeps the `format!` precision below its u16 limit.
+        if !(-MAX_FORMAT_DECIMALS..=MAX_FORMAT_DECIMALS).contains(&decimals) {
+            return Ok(CalcValue::Scalar(LiteralValue::Error(ExcelError::new(
+                ExcelErrorKind::Value,
+            ))));
+        }
 
         // Round to specified decimals
         let factor = 10f64.powi(decimals);
@@ -849,6 +859,13 @@ impl Function for FixedFn {
         } else {
             2
         };
+        // Excel accepts at most 127 decimals; beyond that it returns #VALUE!.
+        // This also keeps the `format!` precision below its u16 limit.
+        if !(-MAX_FORMAT_DECIMALS..=MAX_FORMAT_DECIMALS).contains(&decimals) {
+            return Ok(CalcValue::Scalar(LiteralValue::Error(ExcelError::new(
+                ExcelErrorKind::Value,
+            ))));
+        }
 
         let no_commas = if args.len() >= 3 {
             match scalar_like_value(&args[2])? {
