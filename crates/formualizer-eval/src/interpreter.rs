@@ -214,6 +214,27 @@ impl ResolvedFunctions {
         self.revision = Some(revision);
     }
 
+    /// Whether the table describes `store` and `provider` as they are now:
+    /// same registry epoch, a known and unchanged provider revision, same
+    /// arena reset revision, and every function name in the arena resolved.
+    /// Callers outside an evaluation request (which refreshes the table) use
+    /// this to decide between the table and live provider lookups.
+    pub(crate) fn is_current(
+        &self,
+        store: &DataStore,
+        provider: &dyn crate::traits::FunctionProvider,
+    ) -> bool {
+        let Some((epoch, Some(provider_revision), arena_revision)) = self.revision else {
+            return false;
+        };
+        epoch == crate::function_registry::semantic_epoch_lock_free()
+            && provider.planning_semantic_revision() == Some(provider_revision)
+            && store.resolution_revision() == arena_revision
+            && store
+                .function_names()
+                .all(|id| self.slots.contains_key(&id))
+    }
+
     pub(crate) fn refresh_ast_functions<'n>(
         &mut self,
         store: &DataStore,

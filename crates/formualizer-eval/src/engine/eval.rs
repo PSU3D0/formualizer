@@ -3725,6 +3725,16 @@ where
     /// Begin a new evaluation request: reset per-recalc cycle telemetry and
     /// take the per-recalc volatile clock sample. Called at the start of
     /// every evaluation request that walks schedule units.
+    /// The per-request function table when it describes the current registry,
+    /// provider and arena; `None` outside a request when it may be stale.
+    pub(crate) fn current_resolved_functions(
+        &self,
+    ) -> Option<&crate::interpreter::ResolvedFunctions> {
+        self.resolved_functions
+            .is_current(self.graph.data_store(), &self.resolver)
+            .then_some(&self.resolved_functions)
+    }
+
     fn refresh_resolution_snapshots(&mut self) {
         self.resolved_functions
             .refresh(self.graph.data_store(), &self.resolver);
