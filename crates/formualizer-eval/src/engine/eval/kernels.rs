@@ -6,8 +6,8 @@
 //! per member, merges the overlays of the run's union rows once per column
 //! chunk (decision 20.3), and reduces each member's slice in the scalar
 //! builtin's exact order: per argument, errors first (segment by chunk,
-//! then column, then row), then `total += sum(slice)` per segment per
-//! column with Arrow's reduction replicated bit for bit (`exact::sum_f64`;
+//! then column, then row), then the segment's values per column into the
+//! same compensated accumulator the builtin uses (`exact::CompensatedSum`;
 //! no reassociation, no prefix sums, decision 20.2).
 //!
 //! Anything else declines (the tier-1 path evaluates it): open ranges,
@@ -15,7 +15,7 @@
 //! the grid, reversed rectangles, forced materialization, or a function
 //! that is not the built-in (an override keeps `family_kernel() == None`).
 
-use super::exact::{LaneSlice, lane_slice, sum_f64};
+use super::exact::{CompensatedSum, LaneSlice, lane_slice};
 use super::*;
 use crate::arrow_store::{ArrowSheet, OverlayCascade};
 use crate::engine::arena::{AstNodeData, CompactRefType, DataStore, SheetKey};
@@ -173,7 +173,12 @@ enum Step {
 impl ArgLanes<'_> {
     /// One argument of one member: the first error, else the sum and count
     /// accumulated into `total`/`count` in the builtin's order.
-    fn reduce(&self, rect: (u32, u32, u32, u32), total: &mut f64, count: &mut i64) -> Step {
+    fn reduce(
+        &self,
+        rect: (u32, u32, u32, u32),
+        total: &mut CompensatedSum,
+        count: &mut i64,
+    ) -> Step {
         let (r0, c0, r1, c1) = (
             rect.0 as usize,
             rect.1 as usize,
@@ -199,17 +204,12 @@ impl ArgLanes<'_> {
         for &(ci, lo, hi) in &segs {
             for col in c0..=c1 {
                 let seg = self.lane(col, ci);
-                match seg.and_then(|s| s.numbers.as_ref()) {
-                    Some(numbers) => {
-                        let seg = seg.expect("lane");
-                        let slice: LaneSlice<'_, f64> =
-                            lane_slice(numbers.as_ref(), lo - seg.row, hi - lo + 1);
-                        *total += sum_f64(slice).unwrap_or(0.0);
-                        *count += (slice.len() - slice.null_count()) as i64;
-                    }
-                    None => {
-                        *total += 0.0;
-                    }
+                if let Some(numbers) = seg.and_then(|s| s.numbers.as_ref()) {
+                    let seg = seg.expect("lane");
+                    let slice: LaneSlice<'_, f64> =
+                        lane_slice(numbers.as_ref(), lo - seg.row, hi - lo + 1);
+                    total.add_slice(slice);
+                    *count += (slice.len() - slice.null_count()) as i64;
                 }
             }
         }
@@ -430,7 +430,7 @@ impl AggregateKernel {
         let mut out = Vec::with_capacity(len);
         for i in 0..len {
             let row_delta = first + i as i64;
-            let mut total = 0.0f64;
+            let mut total = CompensatedSum::default();
             let mut count = 0i64;
             let mut error = None;
             let mut extremum: Option<f64> = None;
@@ -457,12 +457,14 @@ impl AggregateKernel {
                 }
                 (None, FamilyKernel::Count) => LiteralValue::Number(count as f64),
                 (Some(kind), _) => LiteralValue::Error(ExcelError::new(kind)),
-                (None, FamilyKernel::Sum) => crate::builtins::utils::aggregate_result(total),
+                (None, FamilyKernel::Sum) => {
+                    crate::builtins::utils::aggregate_result(total.total())
+                }
                 (None, FamilyKernel::Average) => {
                     if count == 0 {
                         LiteralValue::Error(ExcelError::new_div())
                     } else {
-                        crate::builtins::utils::aggregate_result(total / (count as f64))
+                        crate::builtins::utils::aggregate_result(total.total() / (count as f64))
                     }
                 }
                 (None, _) => unreachable!("planned kernels are windowed aggregates"),

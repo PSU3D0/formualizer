@@ -22,6 +22,9 @@
 use super::super::utils::collapse_if_scalar;
 use super::lookup_utils::{PreparedLookupMatcher, SortKey, cmp_for_lookup, value_to_f64_lenient};
 use crate::args::{ArgSchema, CoercionPolicy, ShapeKind};
+use crate::engine::eval::exact::{
+    compensated_mean, compensated_product, compensated_sum, compensated_sum_sq_dev,
+};
 use crate::engine::lookup_index_cache::LookupAxis;
 use crate::function::Function; // FnCaps imported via macro
 use crate::traits::{ArgumentHandle, FunctionContext};
@@ -1664,37 +1667,35 @@ impl GroupAggregation {
         }
 
         match self {
-            Self::Sum => values.iter().sum(),
-            Self::Average => values.iter().sum::<f64>() / values.len() as f64,
+            Self::Sum => compensated_sum(values.iter().copied()),
+            Self::Average => compensated_mean(values),
             Self::Count | Self::CountA => values.len() as f64,
             Self::Max => values.iter().copied().fold(f64::NEG_INFINITY, f64::max),
             Self::Min => values.iter().copied().fold(f64::INFINITY, f64::min),
-            Self::Product => values.iter().product(),
+            Self::Product => compensated_product(values.iter().copied()),
             Self::StDev => {
                 if values.len() < 2 {
                     return f64::NAN;
                 }
-                let mean = values.iter().sum::<f64>() / values.len() as f64;
-                let variance = values.iter().map(|v| (v - mean).powi(2)).sum::<f64>()
-                    / (values.len() - 1) as f64;
+                let mean = compensated_mean(values);
+                let variance = compensated_sum_sq_dev(values, mean) / (values.len() - 1) as f64;
                 variance.sqrt()
             }
             Self::StDevP => {
-                let mean = values.iter().sum::<f64>() / values.len() as f64;
-                let variance =
-                    values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / values.len() as f64;
+                let mean = compensated_mean(values);
+                let variance = compensated_sum_sq_dev(values, mean) / values.len() as f64;
                 variance.sqrt()
             }
             Self::Var => {
                 if values.len() < 2 {
                     return f64::NAN;
                 }
-                let mean = values.iter().sum::<f64>() / values.len() as f64;
-                values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / (values.len() - 1) as f64
+                let mean = compensated_mean(values);
+                compensated_sum_sq_dev(values, mean) / (values.len() - 1) as f64
             }
             Self::VarP => {
-                let mean = values.iter().sum::<f64>() / values.len() as f64;
-                values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / values.len() as f64
+                let mean = compensated_mean(values);
+                compensated_sum_sq_dev(values, mean) / values.len() as f64
             }
             Self::Median => {
                 let mut sorted = values.to_vec();

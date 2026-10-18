@@ -2,6 +2,9 @@ use super::super::utils::{ARG_RANGE_NUM_LENIENT_ONE, coerce_num};
 use super::{AggregateArgument, resolve_aggregate_argument};
 use crate::args::ArgSchema;
 use crate::engine::VisibilityMaskMode;
+use crate::engine::eval::exact::{
+    CompensatedSum, compensated_mean, compensated_product, compensated_sum,
+};
 use crate::function::Function;
 use crate::function_contract::{
     FunctionContextDependence, FunctionDependencyContract, FunctionSemanticContract,
@@ -94,7 +97,7 @@ impl Function for SumFn {
         args: &'c [ArgumentHandle<'a, 'b>],
         ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
-        let mut total = 0.0;
+        let mut total = CompensatedSum::default();
         for arg in args {
             match resolve_aggregate_argument(arg, ctx)? {
                 AggregateArgument::Range(view) => {
@@ -119,8 +122,7 @@ impl Function for SumFn {
                     for res in view.numbers_slices() {
                         let (_, _, num_cols) = res?;
                         for col in num_cols {
-                            total += arrow::compute::kernels::aggregate::sum(col.as_ref())
-                                .unwrap_or(0.0);
+                            total.add_array(col.as_ref());
                         }
                     }
                 }
@@ -131,12 +133,12 @@ impl Function for SumFn {
                     LiteralValue::Error(e) => {
                         return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
                     }
-                    v => total += coerce_num(&v)?,
+                    v => total.add(coerce_num(&v)?),
                 },
             }
         }
         Ok(crate::traits::CalcValue::Scalar(
-            super::super::utils::aggregate_result(total),
+            super::super::utils::aggregate_result(total.total()),
         ))
     }
 }
@@ -344,7 +346,7 @@ impl Function for AverageFn {
         args: &'c [ArgumentHandle<'a, 'b>],
         ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
-        let mut sum = 0.0f64;
+        let mut sum = CompensatedSum::default();
         let mut cnt: i64 = 0;
         for arg in args {
             match resolve_aggregate_argument(arg, ctx)? {
@@ -370,8 +372,7 @@ impl Function for AverageFn {
                     for res in view.numbers_slices() {
                         let (_, _, num_cols) = res?;
                         for col in num_cols {
-                            sum += arrow::compute::kernels::aggregate::sum(col.as_ref())
-                                .unwrap_or(0.0);
+                            sum.add_array(col.as_ref());
                             cnt += (col.len() - col.null_count()) as i64;
                         }
                     }
@@ -385,7 +386,7 @@ impl Function for AverageFn {
                     }
                     if let Ok(n) = crate::coercion::to_number_lenient_with_locale(&v, &ctx.locale())
                     {
-                        sum += n;
+                        sum.add(n);
                         cnt += 1;
                     }
                 }
@@ -397,7 +398,7 @@ impl Function for AverageFn {
             )));
         }
         Ok(crate::traits::CalcValue::Scalar(
-            super::super::utils::aggregate_result(sum / (cnt as f64)),
+            super::super::utils::aggregate_result(sum.total() / (cnt as f64)),
         ))
     }
 }
@@ -549,10 +550,11 @@ impl Function for SumProductFn {
         }
 
         // Iterate target shape, multiply coerced values across args, sum total
-        let mut total = 0.0f64;
+        let mut total = CompensatedSum::default();
         for r in 0..target.0 {
             for c in 0..target.1 {
                 let mut prod = 1.0f64;
+                let mut last_factor = 1.0f64;
                 for (arr, &shape) in arrays.iter().zip(shapes.iter()) {
                     let (rr, cc) = project_index((r, c), shape);
                     let lv = arr
@@ -566,20 +568,24 @@ impl Function for SumProductFn {
                         }
                         _ => match super::super::utils::coerce_num(&lv) {
                             Ok(n) => {
-                                prod *= n;
+                                prod *= last_factor;
+                                last_factor = n;
                             }
                             Err(_) => {
                                 // Non-numeric -> treated as 0 in SUMPRODUCT
-                                prod *= 0.0;
+                                prod *= last_factor;
+                                last_factor = 0.0;
                             }
                         },
                     }
                 }
-                total += prod;
+                // The final multiplication is folded in error-free; with two
+                // arguments (the common case) that is the whole product.
+                total.add_product(prod, last_factor);
             }
         }
         Ok(crate::traits::CalcValue::Scalar(
-            super::super::utils::aggregate_result(total),
+            super::super::utils::aggregate_result(total.total()),
         ))
     }
 }
@@ -1646,12 +1652,13 @@ impl AggregateCollector {
             return Err(ExcelError::new_div());
         }
 
-        let mean = values.iter().copied().sum::<f64>() / (n as f64);
-        let mut ss = 0.0;
+        let mean = compensated_mean(values);
+        let mut ss = CompensatedSum::default();
         for value in values {
             let d = *value - mean;
-            ss += d * d;
+            ss.add_product(d, d);
         }
+        let ss = ss.total();
 
         if sample {
             Ok(ss / ((n - 1) as f64))
@@ -1667,8 +1674,9 @@ impl AggregateCollector {
                 if self.numeric_values.is_empty() {
                     LiteralValue::Error(ExcelError::new_div())
                 } else {
-                    let sum = self.numeric_values.iter().copied().sum::<f64>();
-                    aggregate_result(sum / (self.numeric_values.len() as f64))
+                    let mut sum = CompensatedSum::default();
+                    self.numeric_values.iter().for_each(|&v| sum.add(v));
+                    aggregate_result(sum.total() / (self.numeric_values.len() as f64))
                 }
             }
             // Counts cannot overflow to non-finite; keep them branch-free.
@@ -1692,7 +1700,7 @@ impl AggregateCollector {
                 if self.numeric_values.is_empty() {
                     LiteralValue::Number(0.0)
                 } else {
-                    aggregate_result(self.numeric_values.iter().copied().product::<f64>())
+                    aggregate_result(compensated_product(self.numeric_values.iter().copied()))
                 }
             }
             AggregateOp::StdevSample => match Self::variance(&self.numeric_values, true) {
@@ -1703,7 +1711,9 @@ impl AggregateCollector {
                 Ok(v) => aggregate_result(v.sqrt()),
                 Err(e) => LiteralValue::Error(e),
             },
-            AggregateOp::Sum => aggregate_result(self.numeric_values.iter().copied().sum()),
+            AggregateOp::Sum => {
+                aggregate_result(compensated_sum(self.numeric_values.iter().copied()))
+            }
             AggregateOp::VarSample => match Self::variance(&self.numeric_values, true) {
                 Ok(v) => aggregate_result(v),
                 Err(e) => LiteralValue::Error(e),

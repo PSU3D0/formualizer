@@ -96,6 +96,7 @@ fn actual_actual_year_length(start: NaiveDate, end: NaiveDate) -> f64 {
         }
     } else {
         let years = f64::from(ey - sy + 1);
+        // bounded-sum: whole years in the span; integers, exact.
         let days: f64 = (sy..=ey).map(days_in_year).sum();
         days / years
     }

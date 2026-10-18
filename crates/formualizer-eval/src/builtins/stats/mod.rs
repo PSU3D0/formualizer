@@ -22,6 +22,9 @@
 use super::super::builtins::engineering::{erf_approx, erfcx, exp_neg_scaled_square};
 use super::super::builtins::utils::{ARG_RANGE_NUM_LENIENT_ONE, coerce_num};
 use crate::args::ArgSchema;
+use crate::engine::eval::exact::{
+    CompensatedSum, compensated_mean, compensated_product, compensated_sum, compensated_sum_sq_dev,
+};
 use crate::function::Function;
 use crate::function_contract::FunctionDependencyContract;
 use crate::traits::{ArgumentHandle, FunctionContext};
@@ -814,12 +817,13 @@ impl Function for StdevSample {
                 ExcelError::from_error_string("#DIV/0!"),
             )));
         }
-        let mean = nums.iter().sum::<f64>() / (n as f64);
-        let mut ss = 0.0;
+        let mean = compensated_mean(&nums);
+        let mut ss = CompensatedSum::default();
         for &v in &nums {
             let d = v - mean;
-            ss += d * d;
+            ss.add_product(d, d);
         }
+        let ss = ss.total();
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
             (ss / ((n - 1) as f64)).sqrt(),
         )))
@@ -903,12 +907,13 @@ impl Function for StdevPop {
                 ExcelError::from_error_string("#DIV/0!"),
             )));
         }
-        let mean = nums.iter().sum::<f64>() / (n as f64);
-        let mut ss = 0.0;
+        let mean = compensated_mean(&nums);
+        let mut ss = CompensatedSum::default();
         for &v in &nums {
             let d = v - mean;
-            ss += d * d;
+            ss.add_product(d, d);
         }
+        let ss = ss.total();
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
             (ss / (n as f64)).sqrt(),
         )))
@@ -992,12 +997,13 @@ impl Function for VarSample {
                 ExcelError::from_error_string("#DIV/0!"),
             )));
         }
-        let mean = nums.iter().sum::<f64>() / (n as f64);
-        let mut ss = 0.0;
+        let mean = compensated_mean(&nums);
+        let mut ss = CompensatedSum::default();
         for &v in &nums {
             let d = v - mean;
-            ss += d * d;
+            ss.add_product(d, d);
         }
+        let ss = ss.total();
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
             ss / ((n - 1) as f64),
         )))
@@ -1081,12 +1087,13 @@ impl Function for VarPop {
                 ExcelError::from_error_string("#DIV/0!"),
             )));
         }
-        let mean = nums.iter().sum::<f64>() / (n as f64);
-        let mut ss = 0.0;
+        let mean = compensated_mean(&nums);
+        let mut ss = CompensatedSum::default();
         for &v in &nums {
             let d = v - mean;
-            ss += d * d;
+            ss.add_product(d, d);
         }
+        let ss = ss.total();
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
             ss / (n as f64),
         )))
@@ -1820,7 +1827,7 @@ impl Function for ProductFn {
         if nums.is_empty() {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(0.0)));
         }
-        let result = nums.iter().product::<f64>();
+        let result = compensated_product(nums.iter().copied());
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
             result,
         )))
@@ -1908,7 +1915,7 @@ impl Function for GeomeanFn {
         }
         // Geometric mean = (x1 * x2 * ... * xn)^(1/n)
         // Use log to avoid overflow: exp(mean(ln(x)))
-        let log_sum: f64 = nums.iter().map(|x| x.ln()).sum();
+        let log_sum: f64 = compensated_sum(nums.iter().map(|x| x.ln()));
         let result = (log_sum / nums.len() as f64).exp();
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
             result,
@@ -1996,7 +2003,7 @@ impl Function for HarmeanFn {
             )));
         }
         // Harmonic mean = n / sum(1/x)
-        let sum_reciprocals: f64 = nums.iter().map(|x| 1.0 / x).sum();
+        let sum_reciprocals: f64 = compensated_sum(nums.iter().map(|x| 1.0 / x));
         let result = nums.len() as f64 / sum_reciprocals;
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
             result,
@@ -2079,8 +2086,8 @@ impl Function for AvedevFn {
                 ExcelError::new_num(),
             )));
         }
-        let mean = nums.iter().sum::<f64>() / nums.len() as f64;
-        let avedev = nums.iter().map(|x| (x - mean).abs()).sum::<f64>() / nums.len() as f64;
+        let mean = compensated_mean(&nums);
+        let avedev = compensated_sum(nums.iter().map(|x| (x - mean).abs())) / nums.len() as f64;
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
             avedev,
         )))
@@ -2517,7 +2524,7 @@ impl Function for TrimmeanFn {
         }
 
         let trimmed = &nums[exclude..n - exclude];
-        let sum: f64 = trimmed.iter().sum();
+        let sum: f64 = compensated_sum(trimmed.iter().copied());
         let mean = sum / trimmed.len() as f64;
 
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(mean)))
@@ -2738,20 +2745,23 @@ impl Function for CorrelFn {
         };
 
         let n = x.len() as f64;
-        let mean_x = x.iter().sum::<f64>() / n;
-        let mean_y = y.iter().sum::<f64>() / n;
+        let mean_x = compensated_mean(&x);
+        let mean_y = compensated_mean(&y);
 
-        let mut sum_xy = 0.0;
-        let mut sum_x2 = 0.0;
-        let mut sum_y2 = 0.0;
+        let mut sum_xy = CompensatedSum::default();
+        let mut sum_x2 = CompensatedSum::default();
+        let mut sum_y2 = CompensatedSum::default();
 
         for i in 0..x.len() {
             let dx = x[i] - mean_x;
             let dy = y[i] - mean_y;
-            sum_xy += dx * dy;
-            sum_x2 += dx * dx;
-            sum_y2 += dy * dy;
+            sum_xy.add_product(dx, dy);
+            sum_x2.add_product(dx, dx);
+            sum_y2.add_product(dy, dy);
         }
+        let sum_xy = sum_xy.total();
+        let sum_x2 = sum_x2.total();
+        let sum_y2 = sum_y2.total();
 
         let denom = (sum_x2 * sum_y2).sqrt();
         if denom == 0.0 {
@@ -2832,18 +2842,20 @@ impl Function for SlopeFn {
         };
 
         let n = x.len() as f64;
-        let mean_x = x.iter().sum::<f64>() / n;
-        let mean_y = y.iter().sum::<f64>() / n;
+        let mean_x = compensated_mean(&x);
+        let mean_y = compensated_mean(&y);
 
-        let mut sum_xy = 0.0;
-        let mut sum_x2 = 0.0;
+        let mut sum_xy = CompensatedSum::default();
+        let mut sum_x2 = CompensatedSum::default();
 
         for i in 0..x.len() {
             let dx = x[i] - mean_x;
             let dy = y[i] - mean_y;
-            sum_xy += dx * dy;
-            sum_x2 += dx * dx;
+            sum_xy.add_product(dx, dy);
+            sum_x2.add_product(dx, dx);
         }
+        let sum_xy = sum_xy.total();
+        let sum_x2 = sum_x2.total();
 
         if sum_x2 == 0.0 {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
@@ -2923,18 +2935,20 @@ impl Function for InterceptFn {
         };
 
         let n = x.len() as f64;
-        let mean_x = x.iter().sum::<f64>() / n;
-        let mean_y = y.iter().sum::<f64>() / n;
+        let mean_x = compensated_mean(&x);
+        let mean_y = compensated_mean(&y);
 
-        let mut sum_xy = 0.0;
-        let mut sum_x2 = 0.0;
+        let mut sum_xy = CompensatedSum::default();
+        let mut sum_x2 = CompensatedSum::default();
 
         for i in 0..x.len() {
             let dx = x[i] - mean_x;
             let dy = y[i] - mean_y;
-            sum_xy += dx * dy;
-            sum_x2 += dx * dx;
+            sum_xy.add_product(dx, dy);
+            sum_x2.add_product(dx, dx);
         }
+        let sum_xy = sum_xy.total();
+        let sum_x2 = sum_x2.total();
 
         if sum_x2 == 0.0 {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
@@ -2985,8 +2999,8 @@ impl Function for DevsqFn {
                 ExcelError::new_num(),
             )));
         }
-        let mean = nums.iter().sum::<f64>() / nums.len() as f64;
-        let devsq = nums.iter().map(|x| (x - mean).powi(2)).sum::<f64>();
+        let mean = compensated_mean(&nums);
+        let devsq = compensated_sum_sq_dev(&nums, mean);
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
             devsq,
         )))
@@ -5587,15 +5601,16 @@ impl Function for CovariancePFn {
         };
 
         let n = x.len() as f64;
-        let mean_x = x.iter().sum::<f64>() / n;
-        let mean_y = y.iter().sum::<f64>() / n;
+        let mean_x = compensated_mean(&x);
+        let mean_y = compensated_mean(&y);
 
-        let mut sum_xy = 0.0;
+        let mut sum_xy = CompensatedSum::default();
         for i in 0..x.len() {
             let dx = x[i] - mean_x;
             let dy = y[i] - mean_y;
-            sum_xy += dx * dy;
+            sum_xy.add_product(dx, dy);
         }
+        let sum_xy = sum_xy.total();
 
         // Population covariance divides by n
         let covar = sum_xy / n;
@@ -5668,15 +5683,16 @@ impl Function for CovarianceSFn {
             )));
         }
 
-        let mean_x = x.iter().sum::<f64>() / n as f64;
-        let mean_y = y.iter().sum::<f64>() / n as f64;
+        let mean_x = compensated_mean(&x);
+        let mean_y = compensated_mean(&y);
 
-        let mut sum_xy = 0.0;
+        let mut sum_xy = CompensatedSum::default();
         for i in 0..n {
             let dx = x[i] - mean_x;
             let dy = y[i] - mean_y;
-            sum_xy += dx * dy;
+            sum_xy.add_product(dx, dy);
         }
+        let sum_xy = sum_xy.total();
 
         // Sample covariance divides by (n - 1)
         let covar = sum_xy / (n - 1) as f64;
@@ -5743,20 +5759,23 @@ impl Function for PearsonFn {
         };
 
         let n = x.len() as f64;
-        let mean_x = x.iter().sum::<f64>() / n;
-        let mean_y = y.iter().sum::<f64>() / n;
+        let mean_x = compensated_mean(&x);
+        let mean_y = compensated_mean(&y);
 
-        let mut sum_xy = 0.0;
-        let mut sum_x2 = 0.0;
-        let mut sum_y2 = 0.0;
+        let mut sum_xy = CompensatedSum::default();
+        let mut sum_x2 = CompensatedSum::default();
+        let mut sum_y2 = CompensatedSum::default();
 
         for i in 0..x.len() {
             let dx = x[i] - mean_x;
             let dy = y[i] - mean_y;
-            sum_xy += dx * dy;
-            sum_x2 += dx * dx;
-            sum_y2 += dy * dy;
+            sum_xy.add_product(dx, dy);
+            sum_x2.add_product(dx, dx);
+            sum_y2.add_product(dy, dy);
         }
+        let sum_xy = sum_xy.total();
+        let sum_x2 = sum_x2.total();
+        let sum_y2 = sum_y2.total();
 
         let denom = (sum_x2 * sum_y2).sqrt();
         if denom == 0.0 {
@@ -5829,20 +5848,23 @@ impl Function for RsqFn {
         };
 
         let n = x.len() as f64;
-        let mean_x = x.iter().sum::<f64>() / n;
-        let mean_y = y.iter().sum::<f64>() / n;
+        let mean_x = compensated_mean(&x);
+        let mean_y = compensated_mean(&y);
 
-        let mut sum_xy = 0.0;
-        let mut sum_x2 = 0.0;
-        let mut sum_y2 = 0.0;
+        let mut sum_xy = CompensatedSum::default();
+        let mut sum_x2 = CompensatedSum::default();
+        let mut sum_y2 = CompensatedSum::default();
 
         for i in 0..x.len() {
             let dx = x[i] - mean_x;
             let dy = y[i] - mean_y;
-            sum_xy += dx * dy;
-            sum_x2 += dx * dx;
-            sum_y2 += dy * dy;
+            sum_xy.add_product(dx, dy);
+            sum_x2.add_product(dx, dx);
+            sum_y2.add_product(dy, dy);
         }
+        let sum_xy = sum_xy.total();
+        let sum_x2 = sum_x2.total();
+        let sum_y2 = sum_y2.total();
 
         let denom = sum_x2 * sum_y2;
         if denom == 0.0 {
@@ -5921,20 +5943,23 @@ impl Function for SteyxFn {
         }
 
         let n_f = n as f64;
-        let mean_x = x.iter().sum::<f64>() / n_f;
-        let mean_y = y.iter().sum::<f64>() / n_f;
+        let mean_x = compensated_mean(&x);
+        let mean_y = compensated_mean(&y);
 
-        let mut sum_xy = 0.0;
-        let mut sum_x2 = 0.0;
-        let mut sum_y2 = 0.0;
+        let mut sum_xy = CompensatedSum::default();
+        let mut sum_x2 = CompensatedSum::default();
+        let mut sum_y2 = CompensatedSum::default();
 
         for i in 0..n {
             let dx = x[i] - mean_x;
             let dy = y[i] - mean_y;
-            sum_xy += dx * dy;
-            sum_x2 += dx * dx;
-            sum_y2 += dy * dy;
+            sum_xy.add_product(dx, dy);
+            sum_x2.add_product(dx, dx);
+            sum_y2.add_product(dy, dy);
         }
+        let sum_xy = sum_xy.total();
+        let sum_x2 = sum_x2.total();
+        let sum_y2 = sum_y2.total();
 
         if sum_x2 == 0.0 {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
@@ -6023,14 +6048,15 @@ impl Function for SkewFn {
         }
 
         let n_f = n as f64;
-        let mean = nums.iter().sum::<f64>() / n_f;
+        let mean = compensated_mean(&nums);
 
         // Calculate sample standard deviation
-        let mut sum_sq = 0.0;
+        let mut sum_sq = CompensatedSum::default();
         for &v in &nums {
             let d = v - mean;
-            sum_sq += d * d;
+            sum_sq.add_product(d, d);
         }
+        let sum_sq = sum_sq.total();
         let stdev = (sum_sq / (n_f - 1.0)).sqrt();
 
         if stdev == 0.0 {
@@ -6120,14 +6146,15 @@ impl Function for KurtFn {
         }
 
         let n_f = n as f64;
-        let mean = nums.iter().sum::<f64>() / n_f;
+        let mean = compensated_mean(&nums);
 
         // Calculate sample standard deviation
-        let mut sum_sq = 0.0;
+        let mut sum_sq = CompensatedSum::default();
         for &v in &nums {
             let d = v - mean;
-            sum_sq += d * d;
+            sum_sq.add_product(d, d);
         }
+        let sum_sq = sum_sq.total();
         let stdev = (sum_sq / (n_f - 1.0)).sqrt();
 
         if stdev == 0.0 {
@@ -6366,18 +6393,20 @@ impl Function for ForecastLinearFn {
         }
 
         let n = x_vals.len() as f64;
-        let mean_x = x_vals.iter().sum::<f64>() / n;
-        let mean_y = y_vals.iter().sum::<f64>() / n;
+        let mean_x = compensated_mean(&x_vals);
+        let mean_y = compensated_mean(&y_vals);
 
-        let mut sum_xy = 0.0;
-        let mut sum_x2 = 0.0;
+        let mut sum_xy = CompensatedSum::default();
+        let mut sum_x2 = CompensatedSum::default();
 
         for i in 0..x_vals.len() {
             let dx = x_vals[i] - mean_x;
             let dy = y_vals[i] - mean_y;
-            sum_xy += dx * dy;
-            sum_x2 += dx * dx;
+            sum_xy.add_product(dx, dy);
+            sum_x2.add_product(dx, dx);
         }
+        let sum_xy = sum_xy.total();
+        let sum_x2 = sum_x2.total();
 
         if sum_x2 == 0.0 {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
@@ -6754,7 +6783,7 @@ impl Function for ZTestFn {
         let x = coerce_num(&scalar_like_value(&args[1])?)?;
 
         let n = data.len() as f64;
-        let mean: f64 = data.iter().sum::<f64>() / n;
+        let mean: f64 = compensated_mean(&data);
 
         // Calculate sigma: use provided value or, like Excel, the sample std dev
         let sigma = if args.len() > 2 {
@@ -6772,7 +6801,7 @@ impl Function for ZTestFn {
                     ExcelError::new_div(),
                 )));
             }
-            let variance: f64 = data.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / (n - 1.0);
+            let variance: f64 = compensated_sum_sq_dev(&data, mean) / (n - 1.0);
             let std_dev = variance.sqrt();
             if std_dev == 0.0 {
                 return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
@@ -7667,9 +7696,8 @@ impl Function for TTestFn {
                     .zip(array2.iter())
                     .map(|(a, b)| a - b)
                     .collect();
-                let mean_diff = diffs.iter().sum::<f64>() / n;
-                let var_diff =
-                    diffs.iter().map(|d| (d - mean_diff).powi(2)).sum::<f64>() / (n - 1.0);
+                let mean_diff = compensated_mean(&diffs);
+                let var_diff = compensated_sum_sq_dev(&diffs, mean_diff) / (n - 1.0);
                 if var_diff == 0.0 {
                     return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                         ExcelError::new_div(),
@@ -7682,10 +7710,10 @@ impl Function for TTestFn {
                 // Two-sample equal variance (pooled)
                 let n1f = n1 as f64;
                 let n2f = n2 as f64;
-                let mean1 = array1.iter().sum::<f64>() / n1f;
-                let mean2 = array2.iter().sum::<f64>() / n2f;
-                let var1 = array1.iter().map(|x| (x - mean1).powi(2)).sum::<f64>() / (n1f - 1.0);
-                let var2 = array2.iter().map(|x| (x - mean2).powi(2)).sum::<f64>() / (n2f - 1.0);
+                let mean1 = compensated_mean(&array1);
+                let mean2 = compensated_mean(&array2);
+                let var1 = compensated_sum_sq_dev(&array1, mean1) / (n1f - 1.0);
+                let var2 = compensated_sum_sq_dev(&array2, mean2) / (n2f - 1.0);
 
                 // Pooled variance
                 let sp2 = ((n1f - 1.0) * var1 + (n2f - 1.0) * var2) / (n1f + n2f - 2.0);
@@ -7701,10 +7729,10 @@ impl Function for TTestFn {
                 // Welch's t-test (unequal variance)
                 let n1f = n1 as f64;
                 let n2f = n2 as f64;
-                let mean1 = array1.iter().sum::<f64>() / n1f;
-                let mean2 = array2.iter().sum::<f64>() / n2f;
-                let var1 = array1.iter().map(|x| (x - mean1).powi(2)).sum::<f64>() / (n1f - 1.0);
-                let var2 = array2.iter().map(|x| (x - mean2).powi(2)).sum::<f64>() / (n2f - 1.0);
+                let mean1 = compensated_mean(&array1);
+                let mean2 = compensated_mean(&array2);
+                let var1 = compensated_sum_sq_dev(&array1, mean1) / (n1f - 1.0);
+                let var2 = compensated_sum_sq_dev(&array2, mean2) / (n2f - 1.0);
 
                 let s1_n = var1 / n1f;
                 let s2_n = var2 / n2f;
@@ -7829,11 +7857,11 @@ impl Function for FTestFn {
         let n1f = n1 as f64;
         let n2f = n2 as f64;
 
-        let mean1 = array1.iter().sum::<f64>() / n1f;
-        let mean2 = array2.iter().sum::<f64>() / n2f;
+        let mean1 = compensated_mean(&array1);
+        let mean2 = compensated_mean(&array2);
 
-        let var1 = array1.iter().map(|x| (x - mean1).powi(2)).sum::<f64>() / (n1f - 1.0);
-        let var2 = array2.iter().map(|x| (x - mean2).powi(2)).sum::<f64>() / (n2f - 1.0);
+        let var1 = compensated_sum_sq_dev(&array1, mean1) / (n1f - 1.0);
+        let var2 = compensated_sum_sq_dev(&array2, mean2) / (n2f - 1.0);
 
         // Handle zero variance
         if var1 == 0.0 || var2 == 0.0 {
@@ -8162,7 +8190,7 @@ impl Function for AverageAFn {
                 ExcelError::new_div(),
             )));
         }
-        let avg = nums.iter().sum::<f64>() / nums.len() as f64;
+        let avg = compensated_mean(&nums);
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(avg)))
     }
 }
@@ -8360,8 +8388,8 @@ impl Function for StdevAFn {
                 ExcelError::new_div(),
             )));
         }
-        let mean = nums.iter().sum::<f64>() / n as f64;
-        let ss: f64 = nums.iter().map(|v| (v - mean).powi(2)).sum();
+        let mean = compensated_mean(&nums);
+        let ss: f64 = compensated_sum_sq_dev(&nums, mean);
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
             (ss / (n - 1) as f64).sqrt(),
         )))
@@ -8431,8 +8459,8 @@ impl Function for StdevPAFn {
                 ExcelError::new_div(),
             )));
         }
-        let mean = nums.iter().sum::<f64>() / n as f64;
-        let ss: f64 = nums.iter().map(|v| (v - mean).powi(2)).sum();
+        let mean = compensated_mean(&nums);
+        let ss: f64 = compensated_sum_sq_dev(&nums, mean);
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
             (ss / n as f64).sqrt(),
         )))
@@ -8502,8 +8530,8 @@ impl Function for VarAFn {
                 ExcelError::new_div(),
             )));
         }
-        let mean = nums.iter().sum::<f64>() / n as f64;
-        let ss: f64 = nums.iter().map(|v| (v - mean).powi(2)).sum();
+        let mean = compensated_mean(&nums);
+        let ss: f64 = compensated_sum_sq_dev(&nums, mean);
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
             ss / (n - 1) as f64,
         )))
@@ -8573,8 +8601,8 @@ impl Function for VarPAFn {
                 ExcelError::new_div(),
             )));
         }
-        let mean = nums.iter().sum::<f64>() / n as f64;
-        let ss: f64 = nums.iter().map(|v| (v - mean).powi(2)).sum();
+        let mean = compensated_mean(&nums);
+        let ss: f64 = compensated_sum_sq_dev(&nums, mean);
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
             ss / n as f64,
         )))
@@ -8645,11 +8673,8 @@ impl Function for SkewPFn {
             )));
         }
         let n_f = n as f64;
-        let mean = nums.iter().sum::<f64>() / n_f;
-        let mut sum_sq = 0.0;
-        for &v in &nums {
-            sum_sq += (v - mean).powi(2);
-        }
+        let mean = compensated_mean(&nums);
+        let sum_sq = compensated_sum_sq_dev(&nums, mean);
         let stdev_pop = (sum_sq / n_f).sqrt();
         if stdev_pop == 0.0 {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
