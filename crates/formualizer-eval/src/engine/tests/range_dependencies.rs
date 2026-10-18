@@ -189,7 +189,7 @@ fn test_duplicate_range_refs_in_formula() {
     // B1 = SUM(A1:A100) + COUNT(A1:A100)
     let formula = ASTNode {
         node_type: ASTNodeType::BinaryOp {
-            op: "+".to_string(),
+            op: formualizer_parse::BinaryOperator::Add,
             left: Box::new(sum_ast(1, 1, 100, 1)),
             right: Box::new(ASTNode {
                 node_type: ASTNodeType::Function {

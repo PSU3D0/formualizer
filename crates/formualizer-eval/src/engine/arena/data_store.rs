@@ -428,13 +428,13 @@ impl DataStore {
 
             ASTNodeType::UnaryOp { op, expr } => {
                 let expr_id = self.convert_ast_node(expr, sheet_registry);
-                self.asts.insert_unary_op(op, expr_id)
+                self.asts.insert_unary_op(*op, expr_id)
             }
 
             ASTNodeType::BinaryOp { op, left, right } => {
                 let left_id = self.convert_ast_node(left, sheet_registry);
                 let right_id = self.convert_ast_node(right, sheet_registry);
-                self.asts.insert_binary_op(op, left_id, right_id)
+                self.asts.insert_binary_op(*op, left_id, right_id)
             }
 
             ASTNodeType::Function { name, args } => {
@@ -647,18 +647,18 @@ impl DataStore {
                 }
             }
 
-            AstNodeData::UnaryOp { op_id, expr_id } => {
-                let op = self.asts.resolve_string(*op_id).to_string();
+            AstNodeData::UnaryOp { operator, expr_id } => {
+                let op = *operator;
                 let expr = Box::new(self.reconstruct_ast_node(*expr_id, sheet_registry)?);
                 ASTNodeType::UnaryOp { op, expr }
             }
 
             AstNodeData::BinaryOp {
-                op_id,
+                operator,
                 left_id,
                 right_id,
             } => {
-                let op = self.asts.resolve_string(*op_id).to_string();
+                let op = *operator;
                 let left = Box::new(self.reconstruct_ast_node(*left_id, sheet_registry)?);
                 let right = Box::new(self.reconstruct_ast_node(*right_id, sheet_registry)?);
                 ASTNodeType::BinaryOp { op, left, right }
@@ -1077,7 +1077,7 @@ mod tests {
 
         let ast = ASTNode {
             node_type: ASTNodeType::BinaryOp {
-                op: "+".to_string(),
+                op: formualizer_parse::BinaryOperator::Add,
                 left: Box::new(ASTNode {
                     node_type: ASTNodeType::Literal(LiteralValue::Number(1.0)),
                     source_token: None,
@@ -1098,7 +1098,7 @@ mod tests {
 
         match retrieved.node_type {
             ASTNodeType::BinaryOp { op, left, right } => {
-                assert_eq!(op, "+");
+                assert_eq!(op.as_str(), "+");
                 match left.node_type {
                     ASTNodeType::Literal(lit) => assert_eq!(lit, LiteralValue::Number(1.0)),
                     _ => panic!("Expected literal"),

@@ -93,7 +93,7 @@ fn test_dependency_extraction_multiple_references() {
     // Create a binary operation A1 + B1
     let ast_binary = ASTNode {
         node_type: ASTNodeType::BinaryOp {
-            op: "+".to_string(),
+            op: formualizer_parse::BinaryOperator::Add,
             left: Box::new(ASTNode {
                 node_type: ASTNodeType::Reference {
                     original: "A1".to_string(),

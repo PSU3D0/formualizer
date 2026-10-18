@@ -941,7 +941,7 @@ mod computed_array_tests {
         let wb = workbook();
         let colon = ASTNode::new(
             ASTNodeType::BinaryOp {
-                op: ":".to_string(),
+                op: formualizer_parse::BinaryOperator::Range,
                 left: Box::new(formualizer_parse::parser::parse("=A1").unwrap()),
                 right: Box::new(formualizer_parse::parser::parse("=A3").unwrap()),
             },

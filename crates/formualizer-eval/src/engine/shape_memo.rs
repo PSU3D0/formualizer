@@ -652,18 +652,18 @@ fn walk(
             }
             refs.push(ref_type);
         }
-        AstNodeData::UnaryOp { op_id, expr_id } => {
-            if !emit(tokens, [T_UNARY, u64::from(op_id.as_u32())]) {
+        AstNodeData::UnaryOp { operator, expr_id } => {
+            if !emit(tokens, [T_UNARY, u64::from(operator as u32)]) {
                 return false;
             }
             return walk(data_store, expr_id, anchor_row, anchor_col, tokens, refs);
         }
         AstNodeData::BinaryOp {
-            op_id,
+            operator,
             left_id,
             right_id,
         } => {
-            if !emit(tokens, [T_BINARY, u64::from(op_id.as_u32())]) {
+            if !emit(tokens, [T_BINARY, u64::from(operator as u32)]) {
                 return false;
             }
             return walk(data_store, left_id, anchor_row, anchor_col, tokens, refs)

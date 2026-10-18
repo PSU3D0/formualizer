@@ -215,10 +215,10 @@ impl SummaryAnalyzer {
                 self.analyze_reference(reference, context, in_function_arg)
             }
             CanonicalExpr::Unary { op, expr } => {
-                self.analyze_unary(op, expr, context, in_function_arg)
+                self.analyze_unary(op.as_str(), expr, context, in_function_arg)
             }
             CanonicalExpr::Binary { op, left, right } => {
-                self.analyze_binary(op, left, right, context, in_function_arg)
+                self.analyze_binary(op.as_str(), left, right, context, in_function_arg)
             }
             CanonicalExpr::Function { id, args } => {
                 let mut all_args_supported = true;

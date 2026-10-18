@@ -478,7 +478,7 @@ fn interpreter_broadcasts_numeric_binary() {
     let rnode = ASTNode::new(ASTNodeType::Literal(right), None);
     let plus = ASTNode::new(
         ASTNodeType::BinaryOp {
-            op: "+".into(),
+            op: formualizer_parse::BinaryOperator::Add,
             left: Box::new(lnode),
             right: Box::new(rnode),
         },
@@ -512,7 +512,7 @@ fn interpreter_broadcast_scalar_over_array() {
     let rnode = ASTNode::new(ASTNodeType::Literal(right), None);
     let node = ASTNode::new(
         ASTNodeType::BinaryOp {
-            op: "*".into(),
+            op: formualizer_parse::BinaryOperator::Multiply,
             left: Box::new(lnode),
             right: Box::new(rnode),
         },
@@ -550,7 +550,7 @@ fn interpreter_incompatible_broadcast_is_value_error() {
     let rnode = ASTNode::new(ASTNodeType::Literal(r), None);
     let n = ASTNode::new(
         ASTNodeType::BinaryOp {
-            op: "+".into(),
+            op: formualizer_parse::BinaryOperator::Add,
             left: Box::new(lnode),
             right: Box::new(rnode),
         },

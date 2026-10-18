@@ -2159,7 +2159,7 @@ mod tests {
             let ast = parse(formula).expect("intersection parse");
             assert!(matches!(
                 ast.node_type,
-                ASTNodeType::BinaryOp { ref op, .. } if op == " "
+                ASTNodeType::BinaryOp { ref op, .. } if op.as_str() == " "
             ));
         }
 

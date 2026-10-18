@@ -12,8 +12,9 @@ pub mod tokenizer;
 pub mod types;
 
 pub use parser::{
-    ASTNode, ASTNodeType, Parser, ParserBuilder, parse, parse_with_dialect,
-    parse_with_dialect_and_volatility_classifier, parse_with_volatility_classifier,
+    ASTNode, ASTNodeType, BinaryOperator, Parser, ParserBuilder, UnaryOperator, parse,
+    parse_with_dialect, parse_with_dialect_and_volatility_classifier,
+    parse_with_volatility_classifier,
 };
 pub use pretty::{canonical_formula, pretty_parse_render, pretty_print};
 pub use tokenizer::{

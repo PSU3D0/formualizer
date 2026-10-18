@@ -106,9 +106,9 @@ pub(crate) fn compute_node_metadata(
             mix_reference(&mut hasher, &mut labels, *ref_type, data_store_strings);
             admission = reference_admission(*ref_type, labels.rejects == 0);
         }
-        AstNodeData::UnaryOp { op_id, .. } => {
+        AstNodeData::UnaryOp { operator, .. } => {
             hasher.mix_u8(KIND_UNARY);
-            let op = data_store_strings.get(*op_id).unwrap_or("");
+            let op = operator.as_str();
             mix_string(&mut hasher, op);
             match op {
                 "#" => labels.rejects |= CanonicalLabels::REJECT_SPILL_RESULT_REGION_OPERATOR,
@@ -123,9 +123,9 @@ pub(crate) fn compute_node_metadata(
             );
             mix_children(&mut hasher, children);
         }
-        AstNodeData::BinaryOp { op_id, .. } => {
+        AstNodeData::BinaryOp { operator, .. } => {
             hasher.mix_u8(KIND_BINARY);
-            let op = data_store_strings.get(*op_id).unwrap_or("");
+            let op = operator.as_str();
             mix_string(&mut hasher, op);
             let supported = matches!(
                 op,
@@ -906,7 +906,7 @@ mod tests {
     #[test]
     fn relative_references_with_same_normalized_deltas_hash_the_same() {
         let mut strings = StringInterner::new();
-        let plus_id = strings.intern("+");
+
         let a1_id = strings.intern("A1");
         let b1_id = strings.intern("B1");
         let a2_id = strings.intern("A2");
@@ -961,12 +961,12 @@ mod tests {
         assert_eq!(b1_meta.canonical_hash, b2_meta.canonical_hash);
 
         let first_sum = AstNodeData::BinaryOp {
-            op_id: plus_id,
+            operator: formualizer_parse::BinaryOperator::Add,
             left_id: super::super::ast::AstNodeId::from_u32(0),
             right_id: super::super::ast::AstNodeId::from_u32(1),
         };
         let second_sum = AstNodeData::BinaryOp {
-            op_id: plus_id,
+            operator: formualizer_parse::BinaryOperator::Add,
             left_id: super::super::ast::AstNodeId::from_u32(2),
             right_id: super::super::ast::AstNodeId::from_u32(3),
         };

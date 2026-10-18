@@ -16,7 +16,7 @@ fn lit(value: f64) -> ASTNode {
 fn sum_formula(row1: u32, col1: u32, row2: u32, col2: u32) -> ASTNode {
     ASTNode {
         node_type: ASTNodeType::BinaryOp {
-            op: "+".to_string(),
+            op: formualizer_parse::BinaryOperator::Add,
             left: Box::new(ASTNode {
                 node_type: ASTNodeType::Reference {
                     original: format!("A{row1}"),

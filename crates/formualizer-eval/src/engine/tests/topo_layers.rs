@@ -20,7 +20,7 @@ fn ref_ast(row: u32, col: u32) -> ASTNode {
 fn op_ast(left: ASTNode, right: ASTNode) -> ASTNode {
     ASTNode {
         node_type: ASTNodeType::BinaryOp {
-            op: "+".to_string(),
+            op: formualizer_parse::BinaryOperator::Add,
             left: Box::new(left),
             right: Box::new(right),
         },

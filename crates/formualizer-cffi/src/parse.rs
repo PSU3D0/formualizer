@@ -149,13 +149,13 @@ impl CffiASTNode {
                 span,
             },
             ASTNodeType::BinaryOp { op, left, right } => CffiASTNode::BinaryOp {
-                op: op.clone(),
+                op: op.to_string(),
                 left: Box::new(Self::from_core(left, include_spans)),
                 right: Box::new(Self::from_core(right, include_spans)),
                 span,
             },
             ASTNodeType::UnaryOp { op, expr } => CffiASTNode::UnaryOp {
-                op: op.clone(),
+                op: op.to_string(),
                 operand: Box::new(Self::from_core(expr, include_spans)),
                 span,
             },

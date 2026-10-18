@@ -16,7 +16,8 @@ use std::sync::Arc;
 
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::{
-    ASTNode, ASTNodeType, ReferenceType, SpecialItem, TableRowSpecifier, TableSpecifier,
+    ASTNode, ASTNodeType, BinaryOperator, ReferenceType, SpecialItem, TableRowSpecifier,
+    TableSpecifier, UnaryOperator,
 };
 
 use crate::function::FnCaps;
@@ -95,11 +96,11 @@ pub(crate) enum CanonicalExpr {
         reference: CanonicalReference,
     },
     Unary {
-        op: String,
+        op: UnaryOperator,
         expr: Box<CanonicalExpr>,
     },
     Binary {
-        op: String,
+        op: BinaryOperator,
         left: Box<CanonicalExpr>,
         right: Box<CanonicalExpr>,
     },
@@ -703,20 +704,20 @@ impl Canonicalizer<'_> {
                 reference: self.canonicalize_reference(original, reference),
             },
             ASTNodeType::UnaryOp { op, expr } => {
-                self.classify_unary_operator(op);
+                self.classify_unary_operator(op.as_str());
                 CanonicalExpr::Unary {
-                    op: op.clone(),
+                    op: *op,
                     expr: Box::new(self.canonicalize_expr(expr, CanonicalReferenceContext::Value)),
                 }
             }
             ASTNodeType::BinaryOp { op, left, right } => {
-                let child_context = if op == ":" {
+                let child_context = if op.as_str() == ":" {
                     CanonicalReferenceContext::Reference
                 } else {
                     CanonicalReferenceContext::Value
                 };
                 CanonicalExpr::Binary {
-                    op: op.clone(),
+                    op: *op,
                     left: Box::new(self.canonicalize_expr(left, child_context.clone())),
                     right: Box::new(self.canonicalize_expr(right, child_context)),
                 }
@@ -1307,14 +1308,14 @@ fn write_parameterized_expr_key_inner(
         }
         CanonicalExpr::Unary { op, expr } => {
             out.push_str("unary(");
-            write_string_key(op, out);
+            write_string_key(op.as_str(), out);
             out.push(';');
             write_parameterized_expr_key_inner(expr, out, next_slot, parameterize_literals);
             out.push(')');
         }
         CanonicalExpr::Binary { op, left, right } => {
             out.push_str("binary(");
-            write_string_key(op, out);
+            write_string_key(op.as_str(), out);
             out.push(';');
             write_parameterized_expr_key_inner(left, out, next_slot, parameterize_literals);
             out.push(';');
@@ -1380,14 +1381,14 @@ fn write_expr_key(expr: &CanonicalExpr, out: &mut String) {
         }
         CanonicalExpr::Unary { op, expr } => {
             out.push_str("unary(");
-            write_string_key(op, out);
+            write_string_key(op.as_str(), out);
             out.push(';');
             write_expr_key(expr, out);
             out.push(')');
         }
         CanonicalExpr::Binary { op, left, right } => {
             out.push_str("binary(");
-            write_string_key(op, out);
+            write_string_key(op.as_str(), out);
             out.push(';');
             write_expr_key(left, out);
             out.push(';');
@@ -2039,7 +2040,7 @@ mod tests {
         assert!(!template.labels.is_authority_supported());
         match &template.expr {
             CanonicalExpr::Unary { op, expr } => {
-                assert_eq!(op, "#");
+                assert_eq!(op, &UnaryOperator::Spill);
                 assert!(matches!(expr.as_ref(), CanonicalExpr::Reference { .. }));
             }
             other => panic!("expected spill unary expression, got {other:?}"),
@@ -2058,7 +2059,7 @@ mod tests {
         assert!(!template.labels.is_authority_supported());
         match &template.expr {
             CanonicalExpr::Unary { op, expr } => {
-                assert_eq!(op, "@");
+                assert_eq!(op, &UnaryOperator::ImplicitIntersection);
                 assert!(matches!(expr.as_ref(), CanonicalExpr::Reference { .. }));
             }
             other => panic!("expected implicit-intersection unary expression, got {other:?}"),
@@ -2082,10 +2083,10 @@ mod tests {
         assert!(!template.labels.is_authority_supported());
         match &template.expr {
             CanonicalExpr::Unary { op, expr } => {
-                assert_eq!(op, "@");
+                assert_eq!(op, &UnaryOperator::ImplicitIntersection);
                 match expr.as_ref() {
                     CanonicalExpr::Unary { op, expr } => {
-                        assert_eq!(op, "#");
+                        assert_eq!(op, &UnaryOperator::Spill);
                         assert!(matches!(expr.as_ref(), CanonicalExpr::Reference { .. }));
                     }
                     other => {

@@ -123,7 +123,7 @@ fn test_mark_dirty_diamond_dependency() {
     // A4 = A2 + A3
     let ast_sum = ASTNode {
         node_type: ASTNodeType::BinaryOp {
-            op: "+".to_string(),
+            op: formualizer_parse::BinaryOperator::Add,
             left: Box::new(ASTNode {
                 node_type: ASTNodeType::Reference {
                     original: "A2".to_string(),

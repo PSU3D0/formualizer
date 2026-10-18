@@ -115,7 +115,7 @@ fn test_remove_all_edges() {
 
     let b1_formula = ASTNode {
         node_type: ASTNodeType::BinaryOp {
-            op: "*".to_string(),
+            op: formualizer_parse::BinaryOperator::Multiply,
             left: Box::new(simple_formula(1, 1)),
             right: Box::new(ASTNode {
                 node_type: ASTNodeType::Literal(LiteralValue::Number(2.0)),
@@ -131,7 +131,7 @@ fn test_remove_all_edges() {
 
     let c1_formula = ASTNode {
         node_type: ASTNodeType::BinaryOp {
-            op: "+".to_string(),
+            op: formualizer_parse::BinaryOperator::Add,
             left: Box::new(simple_formula(1, 2)),  // B1
             right: Box::new(simple_formula(1, 1)), // A1
         },
@@ -177,7 +177,7 @@ fn test_mark_dependents_dirty() {
     // B1 = A1 * 2
     let b1_formula = ASTNode {
         node_type: ASTNodeType::BinaryOp {
-            op: "*".to_string(),
+            op: formualizer_parse::BinaryOperator::Multiply,
             left: Box::new(simple_formula(1, 1)),
             right: Box::new(ASTNode {
                 node_type: ASTNodeType::Literal(LiteralValue::Number(2.0)),
@@ -194,7 +194,7 @@ fn test_mark_dependents_dirty() {
     // C1 = B1 + 1
     let c1_formula = ASTNode {
         node_type: ASTNodeType::BinaryOp {
-            op: "+".to_string(),
+            op: formualizer_parse::BinaryOperator::Add,
             left: Box::new(simple_formula(1, 2)),
             right: Box::new(ASTNode {
                 node_type: ASTNodeType::Literal(LiteralValue::Number(1.0)),
@@ -246,7 +246,7 @@ fn test_snapshot_preserves_all_state() {
     // Create a complex vertex with all properties
     let formula = ASTNode {
         node_type: ASTNodeType::BinaryOp {
-            op: "+".to_string(),
+            op: formualizer_parse::BinaryOperator::Add,
             left: Box::new(simple_formula(1, 1)),
             right: Box::new(simple_formula(2, 1)),
         },
