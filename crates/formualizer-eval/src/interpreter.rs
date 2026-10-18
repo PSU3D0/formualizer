@@ -151,6 +151,14 @@ pub(crate) type InvariantValues =
 
 /// Internal fast path; recording contexts deliberately retain their read hooks.
 pub(crate) trait ArenaCellResolver {
+    fn resolve_arena_range(
+        &self,
+        reference: &CompactRefType,
+        current: crate::SheetId,
+        row_delta: i64,
+        col_delta: i64,
+    ) -> Result<crate::engine::range_view::RangeView<'_>, ExcelError>;
+
     fn resolve_arena_cell(
         &self,
         sheet: Option<SheetKey>,
@@ -673,6 +681,7 @@ impl<'a> Interpreter<'a> {
 
         match node {
             AstNodeData::Reference { ref_type, .. } => {
+                let ref_type = data_store.compact_ref(*ref_type);
                 let reference =
                     data_store.reconstruct_reference_type_for_eval(ref_type, sheet_registry);
                 self.reference_for_current_offset(&reference)
@@ -780,6 +789,7 @@ impl<'a> Interpreter<'a> {
     ) -> Result<ReferenceType, ExcelError> {
         match data_store.get_node(operand) {
             Some(AstNodeData::Reference { ref_type, .. }) => {
+                let ref_type = data_store.compact_ref(*ref_type);
                 let reference =
                     data_store.reconstruct_reference_type_for_eval(ref_type, sheet_registry);
                 self.resolve_spill_reference(&reference)
@@ -1115,6 +1125,19 @@ impl<'a> Interpreter<'a> {
             }
             AstNodeData::Omitted => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(0.0))),
             AstNodeData::Reference { ref_type, .. } => {
+                let ref_type = data_store.compact_ref(*ref_type);
+                if self.local_env.is_empty()
+                    && matches!(ref_type, CompactRefType::Range { .. })
+                    && let (Some(resolver), Some(cell)) = (self.arena_cells, self.current_cell)
+                {
+                    let view = resolver.resolve_arena_range(
+                        ref_type,
+                        cell.sheet_id,
+                        self.reference_row_delta,
+                        self.reference_col_delta,
+                    )?;
+                    return Ok(crate::traits::CalcValue::Range(view));
+                }
                 if self.local_env.is_empty()
                     && let CompactRefType::Cell {
                         sheet,
@@ -1173,8 +1196,10 @@ impl<'a> Interpreter<'a> {
                     if let Some(AstNodeData::Reference { ref_type, .. }) =
                         data_store.get_node(*expr_id)
                     {
-                        let reference = data_store
-                            .reconstruct_reference_type_for_eval(ref_type, sheet_registry);
+                        let reference = data_store.reconstruct_reference_type_for_eval(
+                            data_store.compact_ref(*ref_type),
+                            sheet_registry,
+                        );
                         let v = match self.effective_reference(&reference) {
                             Ok(reference) => self.implicit_intersection_from_reference(&reference),
                             Err(e) => LiteralValue::Error(e),
@@ -2324,6 +2349,89 @@ fn unsupported_reference_relocation_error() -> ExcelError {
 #[cfg(test)]
 mod format_algebra_tests {
     use super::*;
+
+    #[test]
+    fn compact_ranges_match_owned_resolution_after_relocation() -> Result<(), ExcelError> {
+        let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+        let sheet_id = engine.add_sheet("Other")?;
+        engine.set_cell_value("Other", 2, 2, LiteralValue::Number(17.0))?;
+        engine.set_cell_value("Other", 4, 3, LiteralValue::Text("end".into()))?;
+        for qualified in [false, true] {
+            for open_rows in [false, true] {
+                for open_cols in [false, true] {
+                    for absolute in [false, true] {
+                        for delta in [-2, 0, 2] {
+                            let compact = CompactRefType::Range {
+                                sheet: qualified.then_some(SheetKey::Id(sheet_id)),
+                                start_row: if open_rows { 0 } else { 1 },
+                                start_col: if open_cols { 0 } else { 1 },
+                                end_row: if open_rows { 0 } else { 3 },
+                                end_col: if open_cols { 0 } else { 3 },
+                                start_row_abs: absolute,
+                                start_col_abs: absolute,
+                                end_row_abs: absolute,
+                                end_col_abs: absolute,
+                            };
+                            let owned = ReferenceType::Range {
+                                sheet: qualified.then(|| "Other".to_string()),
+                                start_row: (!open_rows).then_some(1),
+                                start_col: (!open_cols).then_some(1),
+                                end_row: (!open_rows).then_some(3),
+                                end_col: (!open_cols).then_some(3),
+                                start_row_abs: absolute,
+                                start_col_abs: absolute,
+                                end_row_abs: absolute,
+                                end_col_abs: absolute,
+                            };
+                            let expected = relocate_reference_for_offset(&owned, delta, delta)
+                                .and_then(|r| {
+                                    crate::traits::EvaluationContext::resolve_range_view(
+                                        &engine, &r, "Other",
+                                    )
+                                });
+                            let actual =
+                                engine.resolve_arena_range(&compact, sheet_id, delta, delta);
+                            match (actual, expected) {
+                                (Ok(a), Ok(b)) => {
+                                    assert_eq!(a.dims(), b.dims());
+                                    assert_eq!(
+                                        (a.start_row(), a.start_col()),
+                                        (b.start_row(), b.start_col())
+                                    );
+                                    let (rows, cols) = a.dims();
+                                    for row in 0..rows.min(8) {
+                                        for col in 0..cols.min(8) {
+                                            assert_eq!(a.get_cell(row, col), b.get_cell(row, col));
+                                        }
+                                    }
+                                }
+                                (Err(a), Err(b)) => assert_eq!(a.kind, b.kind),
+                                (a, b) => assert_eq!(format!("{a:?}"), format!("{b:?}")),
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        engine.rename_sheet(sheet_id, "Renamed")?;
+        assert!(
+            engine
+                .arrow_sheet_by_id(sheet_id)
+                .is_some_and(|s| s.name.as_ref() == "Renamed")
+        );
+        assert!(engine.arrow_sheet_by_id_mut(sheet_id).is_some());
+        let other = engine.add_sheet("Third")?;
+        engine.sheet_store_mut().sheets.reverse();
+        assert!(
+            engine
+                .arrow_sheet_by_id(sheet_id)
+                .is_some_and(|s| s.name.as_ref() == "Renamed")
+        );
+        engine.remove_sheet(other)?;
+        assert!(engine.arrow_sheet_by_id(sheet_id).is_some());
+        Ok(())
+    }
+
     use crate::engine::{EvalConfig, eval::Engine};
     use crate::format::FormatId;
     use crate::test_workbook::TestWorkbook;

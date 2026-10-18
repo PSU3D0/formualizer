@@ -268,7 +268,7 @@ impl LiftProgram {
             Some(AstNodeData::Literal(vref)) => {
                 !matches!(ds.retrieve_value(*vref), LiteralValue::Array(_))
             }
-            Some(AstNodeData::Reference { ref_type, .. }) => match ref_type {
+            Some(AstNodeData::Reference { ref_type, .. }) => match ds.compact_ref(*ref_type) {
                 CompactRefType::Cell { row_abs, row, .. } => *row_abs && *row > 0,
                 CompactRefType::Range {
                     start_row,
@@ -314,7 +314,7 @@ impl LiftProgram {
         if self.nodes.len() >= MAX_LIFT_NODES {
             return None;
         }
-        let node = match ds.get_node(id)? {
+        let node = match &ds.expanded_node(id)? {
             AstNodeData::Literal(vref) => {
                 let value = ds.retrieve_value(*vref);
                 if matches!(value, LiteralValue::Array(_)) {

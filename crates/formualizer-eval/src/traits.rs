@@ -501,6 +501,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
             },
             ArgumentExpr::Arena { id, data_store, .. } => match data_store.get_node(*id) {
                 Some(crate::engine::arena::AstNodeData::Reference { ref_type, .. }) => {
+                    let ref_type = data_store.compact_ref(*ref_type);
                     match ref_type {
                         // Same rule as the AST branch above.
                         crate::engine::arena::CompactRefType::NamedRange(name_id)
@@ -680,6 +681,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                 sheet_registry,
             } => match data_store.get_node(*id) {
                 Some(crate::engine::arena::AstNodeData::Reference { ref_type, .. }) => {
+                    let ref_type = data_store.compact_ref(*ref_type);
                     if let crate::engine::arena::CompactRefType::NamedRange(name_id) = ref_type
                         && let Some(binding) = env.lookup(data_store.resolve_ast_string(*name_id))
                     {
@@ -813,6 +815,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                 })?;
                 match node {
                     crate::engine::arena::AstNodeData::Reference { ref_type, .. } => {
+                        let ref_type = data_store.compact_ref(*ref_type);
                         // Same local-shadowing rule as the AST branch above.
                         if let crate::engine::arena::CompactRefType::NamedRange(name_id) = ref_type
                             && let Some(local) =
@@ -981,6 +984,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                 };
                 match node {
                     crate::engine::arena::AstNodeData::Reference { ref_type, .. } => {
+                        let ref_type = data_store.compact_ref(*ref_type);
                         // Same local-shadowing rule as the AST branch above.
                         if let crate::engine::arena::CompactRefType::NamedRange(name_id) = ref_type
                         {

@@ -353,7 +353,15 @@ impl DataStore {
         self.asts.node_count()
     }
 
-    pub fn get_node(&self, id: AstNodeId) -> Option<&super::ast::AstNodeData> {
+    pub(crate) fn expanded_node(&self, id: AstNodeId) -> Option<super::ast::AstNodeData> {
+        self.asts.get(id).map(|node| self.asts.expand_node(node))
+    }
+
+    pub fn compact_ref(&self, id: super::ast::RefId) -> &CompactRefType {
+        self.asts.compact_ref(id)
+    }
+
+    pub fn get_node(&self, id: AstNodeId) -> Option<&super::ast::AstNodeData<super::ast::RefId>> {
         self.asts.get(id)
     }
 
@@ -379,6 +387,7 @@ impl DataStore {
             };
             match node {
                 super::ast::AstNodeData::Reference { ref_type, .. } => {
+                    let ref_type = self.compact_ref(*ref_type);
                     if let CompactRefType::Table { name_id, .. } = ref_type
                         && self.resolve_ast_string(*name_id).is_empty()
                     {
@@ -640,7 +649,8 @@ impl DataStore {
                 ref_type,
             } => {
                 let original = self.asts.resolve_string(*original_id).to_string();
-                let reference = self.reconstruct_reference_type(ref_type, sheet_registry);
+                let reference =
+                    self.reconstruct_reference_type(self.compact_ref(*ref_type), sheet_registry);
                 ASTNodeType::Reference {
                     original,
                     reference,

@@ -85,7 +85,7 @@ pub fn template_facts(ds: &DataStore, ast: AstNodeId, row: u32, col: u32) -> Tem
                 f.literals.push(v);
             }
             AstNodeData::Omitted => f.tokens.push(T_OMIT),
-            AstNodeData::Reference { ref_type, .. } => match ref_type {
+            AstNodeData::Reference { ref_type, .. } => match *ds.compact_ref(ref_type) {
                 CompactRefType::Cell {
                     sheet,
                     row: r,

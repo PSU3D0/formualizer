@@ -15,7 +15,7 @@ pub use array::{ArrayArena, ArrayRef};
 pub(crate) use ast::{
     AGGREGATE_CALL, AstNodeEntry, AstNodeMetadata, CanonicalLabels, SUBTOTAL_CALL,
 };
-pub use ast::{AstArena, AstNodeData, AstNodeId, CompactRefType, SheetKey};
+pub use ast::{AstArena, AstNodeData, AstNodeId, CompactRefType, RefId, SheetKey};
 pub use data_store::{DataStore, DataStoreStats};
 pub use error_arena::{ErrorArena, ErrorRef};
 pub use scalar::{ScalarArena, ScalarRef};

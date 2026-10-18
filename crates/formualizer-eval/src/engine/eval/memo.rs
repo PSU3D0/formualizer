@@ -38,7 +38,7 @@ impl MemoPlan {
         let mut key_args = smallvec::SmallVec::new();
         for &arg in ds.get_args(template)? {
             match ds.get_node(arg)? {
-                AstNodeData::Reference { ref_type, .. } => match ref_type {
+                AstNodeData::Reference { ref_type, .. } => match ds.compact_ref(*ref_type) {
                     CompactRefType::Cell {
                         row_abs, col_abs, ..
                     } if *row_abs && *col_abs => {}
@@ -96,7 +96,7 @@ impl MemoPlan {
                         return None;
                     }
                 }
-                AstNodeData::Reference { ref_type, .. } => match ref_type {
+                AstNodeData::Reference { ref_type, .. } => match ds.compact_ref(*ref_type) {
                     CompactRefType::Cell {
                         row_abs: true, row, ..
                     } if *row > 0 => {}
