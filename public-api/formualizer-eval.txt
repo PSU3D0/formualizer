@@ -450,7 +450,7 @@ pub formualizer_eval::engine::arena::ast::AstNodeData::Array::elements_offset: u
 pub formualizer_eval::engine::arena::ast::AstNodeData::Array::rows: u16
 pub formualizer_eval::engine::arena::ast::AstNodeData::BinaryOp
 pub formualizer_eval::engine::arena::ast::AstNodeData::BinaryOp::left_id: formualizer_eval::engine::arena::ast::AstNodeId
-pub formualizer_eval::engine::arena::ast::AstNodeData::BinaryOp::op_id: formualizer_eval::engine::arena::string_interner::StringId
+pub formualizer_eval::engine::arena::ast::AstNodeData::BinaryOp::operator: formualizer_parse::parser::BinaryOperator
 pub formualizer_eval::engine::arena::ast::AstNodeData::BinaryOp::right_id: formualizer_eval::engine::arena::ast::AstNodeId
 pub formualizer_eval::engine::arena::ast::AstNodeData::Function
 pub formualizer_eval::engine::arena::ast::AstNodeData::Function::args_count: u16
@@ -463,7 +463,7 @@ pub formualizer_eval::engine::arena::ast::AstNodeData::Reference::original_id: f
 pub formualizer_eval::engine::arena::ast::AstNodeData::Reference::ref_type: formualizer_eval::engine::arena::ast::CompactRefType
 pub formualizer_eval::engine::arena::ast::AstNodeData::UnaryOp
 pub formualizer_eval::engine::arena::ast::AstNodeData::UnaryOp::expr_id: formualizer_eval::engine::arena::ast::AstNodeId
-pub formualizer_eval::engine::arena::ast::AstNodeData::UnaryOp::op_id: formualizer_eval::engine::arena::string_interner::StringId
+pub formualizer_eval::engine::arena::ast::AstNodeData::UnaryOp::operator: formualizer_parse::parser::UnaryOperator
 impl core::clone::Clone for formualizer_eval::engine::arena::ast::AstNodeData
 pub fn formualizer_eval::engine::arena::ast::AstNodeData::clone(&self) -> formualizer_eval::engine::arena::ast::AstNodeData
 impl core::cmp::Eq for formualizer_eval::engine::arena::ast::AstNodeData
@@ -552,11 +552,11 @@ pub fn formualizer_eval::engine::arena::ast::AstArena::get_array_elements_info(&
 pub fn formualizer_eval::engine::arena::ast::AstArena::get_function_args(&self, formualizer_eval::engine::arena::ast::AstNodeId) -> core::option::Option<&[formualizer_eval::engine::arena::ast::AstNodeId]>
 pub fn formualizer_eval::engine::arena::ast::AstArena::insert(&mut self, formualizer_eval::engine::arena::ast::AstNodeData) -> formualizer_eval::engine::arena::ast::AstNodeId
 pub fn formualizer_eval::engine::arena::ast::AstArena::insert_array(&mut self, u16, u16, alloc::vec::Vec<formualizer_eval::engine::arena::ast::AstNodeId>) -> formualizer_eval::engine::arena::ast::AstNodeId
-pub fn formualizer_eval::engine::arena::ast::AstArena::insert_binary_op(&mut self, &str, formualizer_eval::engine::arena::ast::AstNodeId, formualizer_eval::engine::arena::ast::AstNodeId) -> formualizer_eval::engine::arena::ast::AstNodeId
+pub fn formualizer_eval::engine::arena::ast::AstArena::insert_binary_op(&mut self, formualizer_parse::parser::BinaryOperator, formualizer_eval::engine::arena::ast::AstNodeId, formualizer_eval::engine::arena::ast::AstNodeId) -> formualizer_eval::engine::arena::ast::AstNodeId
 pub fn formualizer_eval::engine::arena::ast::AstArena::insert_function(&mut self, &str, alloc::vec::Vec<formualizer_eval::engine::arena::ast::AstNodeId>) -> formualizer_eval::engine::arena::ast::AstNodeId
 pub fn formualizer_eval::engine::arena::ast::AstArena::insert_literal(&mut self, formualizer_eval::engine::arena::value_ref::ValueRef) -> formualizer_eval::engine::arena::ast::AstNodeId
 pub fn formualizer_eval::engine::arena::ast::AstArena::insert_reference(&mut self, &str, formualizer_eval::engine::arena::ast::CompactRefType) -> formualizer_eval::engine::arena::ast::AstNodeId
-pub fn formualizer_eval::engine::arena::ast::AstArena::insert_unary_op(&mut self, &str, formualizer_eval::engine::arena::ast::AstNodeId) -> formualizer_eval::engine::arena::ast::AstNodeId
+pub fn formualizer_eval::engine::arena::ast::AstArena::insert_unary_op(&mut self, formualizer_parse::parser::UnaryOperator, formualizer_eval::engine::arena::ast::AstNodeId) -> formualizer_eval::engine::arena::ast::AstNodeId
 pub fn formualizer_eval::engine::arena::ast::AstArena::intern_table_specifier(&mut self, &formualizer_parse::parser::TableSpecifier) -> formualizer_eval::engine::arena::ast::TableSpecId
 pub fn formualizer_eval::engine::arena::ast::AstArena::memory_usage(&self) -> usize
 pub fn formualizer_eval::engine::arena::ast::AstArena::new() -> Self
@@ -838,7 +838,7 @@ pub formualizer_eval::engine::arena::AstNodeData::Array::elements_offset: u32
 pub formualizer_eval::engine::arena::AstNodeData::Array::rows: u16
 pub formualizer_eval::engine::arena::AstNodeData::BinaryOp
 pub formualizer_eval::engine::arena::AstNodeData::BinaryOp::left_id: formualizer_eval::engine::arena::ast::AstNodeId
-pub formualizer_eval::engine::arena::AstNodeData::BinaryOp::op_id: formualizer_eval::engine::arena::string_interner::StringId
+pub formualizer_eval::engine::arena::AstNodeData::BinaryOp::operator: formualizer_parse::parser::BinaryOperator
 pub formualizer_eval::engine::arena::AstNodeData::BinaryOp::right_id: formualizer_eval::engine::arena::ast::AstNodeId
 pub formualizer_eval::engine::arena::AstNodeData::Function
 pub formualizer_eval::engine::arena::AstNodeData::Function::args_count: u16
@@ -851,7 +851,7 @@ pub formualizer_eval::engine::arena::AstNodeData::Reference::original_id: formua
 pub formualizer_eval::engine::arena::AstNodeData::Reference::ref_type: formualizer_eval::engine::arena::ast::CompactRefType
 pub formualizer_eval::engine::arena::AstNodeData::UnaryOp
 pub formualizer_eval::engine::arena::AstNodeData::UnaryOp::expr_id: formualizer_eval::engine::arena::ast::AstNodeId
-pub formualizer_eval::engine::arena::AstNodeData::UnaryOp::op_id: formualizer_eval::engine::arena::string_interner::StringId
+pub formualizer_eval::engine::arena::AstNodeData::UnaryOp::operator: formualizer_parse::parser::UnaryOperator
 impl core::clone::Clone for formualizer_eval::engine::arena::ast::AstNodeData
 pub fn formualizer_eval::engine::arena::ast::AstNodeData::clone(&self) -> formualizer_eval::engine::arena::ast::AstNodeData
 impl core::cmp::Eq for formualizer_eval::engine::arena::ast::AstNodeData
@@ -999,11 +999,11 @@ pub fn formualizer_eval::engine::arena::ast::AstArena::get_array_elements_info(&
 pub fn formualizer_eval::engine::arena::ast::AstArena::get_function_args(&self, formualizer_eval::engine::arena::ast::AstNodeId) -> core::option::Option<&[formualizer_eval::engine::arena::ast::AstNodeId]>
 pub fn formualizer_eval::engine::arena::ast::AstArena::insert(&mut self, formualizer_eval::engine::arena::ast::AstNodeData) -> formualizer_eval::engine::arena::ast::AstNodeId
 pub fn formualizer_eval::engine::arena::ast::AstArena::insert_array(&mut self, u16, u16, alloc::vec::Vec<formualizer_eval::engine::arena::ast::AstNodeId>) -> formualizer_eval::engine::arena::ast::AstNodeId
-pub fn formualizer_eval::engine::arena::ast::AstArena::insert_binary_op(&mut self, &str, formualizer_eval::engine::arena::ast::AstNodeId, formualizer_eval::engine::arena::ast::AstNodeId) -> formualizer_eval::engine::arena::ast::AstNodeId
+pub fn formualizer_eval::engine::arena::ast::AstArena::insert_binary_op(&mut self, formualizer_parse::parser::BinaryOperator, formualizer_eval::engine::arena::ast::AstNodeId, formualizer_eval::engine::arena::ast::AstNodeId) -> formualizer_eval::engine::arena::ast::AstNodeId
 pub fn formualizer_eval::engine::arena::ast::AstArena::insert_function(&mut self, &str, alloc::vec::Vec<formualizer_eval::engine::arena::ast::AstNodeId>) -> formualizer_eval::engine::arena::ast::AstNodeId
 pub fn formualizer_eval::engine::arena::ast::AstArena::insert_literal(&mut self, formualizer_eval::engine::arena::value_ref::ValueRef) -> formualizer_eval::engine::arena::ast::AstNodeId
 pub fn formualizer_eval::engine::arena::ast::AstArena::insert_reference(&mut self, &str, formualizer_eval::engine::arena::ast::CompactRefType) -> formualizer_eval::engine::arena::ast::AstNodeId
-pub fn formualizer_eval::engine::arena::ast::AstArena::insert_unary_op(&mut self, &str, formualizer_eval::engine::arena::ast::AstNodeId) -> formualizer_eval::engine::arena::ast::AstNodeId
+pub fn formualizer_eval::engine::arena::ast::AstArena::insert_unary_op(&mut self, formualizer_parse::parser::UnaryOperator, formualizer_eval::engine::arena::ast::AstNodeId) -> formualizer_eval::engine::arena::ast::AstNodeId
 pub fn formualizer_eval::engine::arena::ast::AstArena::intern_table_specifier(&mut self, &formualizer_parse::parser::TableSpecifier) -> formualizer_eval::engine::arena::ast::TableSpecId
 pub fn formualizer_eval::engine::arena::ast::AstArena::memory_usage(&self) -> usize
 pub fn formualizer_eval::engine::arena::ast::AstArena::new() -> Self

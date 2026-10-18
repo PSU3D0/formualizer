@@ -202,13 +202,13 @@ impl ReferenceAdjuster {
                     return None;
                 }
                 ASTNodeType::BinaryOp {
-                    op: bin_op.clone(),
+                    op: *bin_op,
                     left: Box::new(adjusted_left.unwrap_or_else(|| (**left).clone())),
                     right: Box::new(adjusted_right.unwrap_or_else(|| (**right).clone())),
                 }
             }
             ASTNodeType::UnaryOp { op: un_op, expr } => ASTNodeType::UnaryOp {
-                op: un_op.clone(),
+                op: *un_op,
                 expr: Box::new(self.adjust_ast_if_changed_inner(expr, op, policy, context)?),
             },
             ASTNodeType::Function { name, args } => {
@@ -674,7 +674,7 @@ impl RelativeReferenceAdjuster {
             }
             ASTNodeType::BinaryOp { op, left, right } => ASTNode {
                 node_type: ASTNodeType::BinaryOp {
-                    op: op.clone(),
+                    op: *op,
                     left: Box::new(self.adjust_formula(left)),
                     right: Box::new(self.adjust_formula(right)),
                 },
@@ -683,7 +683,7 @@ impl RelativeReferenceAdjuster {
             },
             ASTNodeType::UnaryOp { op, expr } => ASTNode {
                 node_type: ASTNodeType::UnaryOp {
-                    op: op.clone(),
+                    op: *op,
                     expr: Box::new(self.adjust_formula(expr)),
                 },
                 source_token: ast.source_token.clone(),
@@ -859,7 +859,7 @@ impl MoveReferenceAdjuster {
                 (
                     ASTNode {
                         node_type: ASTNodeType::BinaryOp {
-                            op: op.clone(),
+                            op: *op,
                             left: Box::new(l_adj),
                             right: Box::new(r_adj),
                         },
@@ -877,7 +877,7 @@ impl MoveReferenceAdjuster {
                 (
                     ASTNode {
                         node_type: ASTNodeType::UnaryOp {
-                            op: op.clone(),
+                            op: *op,
                             expr: Box::new(e_adj),
                         },
                         source_token: ast.source_token.clone(),

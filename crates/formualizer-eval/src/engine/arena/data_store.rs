@@ -1065,7 +1065,7 @@ mod tests {
 
         let ast = ASTNode {
             node_type: ASTNodeType::BinaryOp {
-                op: "+".try_into().unwrap(),
+                op: formualizer_parse::BinaryOperator::Add,
                 left: Box::new(ASTNode {
                     node_type: ASTNodeType::Literal(LiteralValue::Number(1.0)),
                     source_token: None,

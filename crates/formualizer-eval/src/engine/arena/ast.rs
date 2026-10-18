@@ -900,7 +900,7 @@ mod tests {
 
         let left = arena.insert_literal(ValueRef::small_int(1).unwrap());
         let right = arena.insert_literal(ValueRef::small_int(2).unwrap());
-        let add = arena.insert_binary_op(BinaryOperator::try_from("+").unwrap(), left, right);
+        let add = arena.insert_binary_op(BinaryOperator::Add, left, right);
 
         match arena.get(add) {
             Some(AstNodeData::BinaryOp {
@@ -960,7 +960,7 @@ mod tests {
 
         // Create "A1 + 1"
         let one = arena.insert_literal(ValueRef::small_int(1).unwrap());
-        let expr1 = arena.insert_binary_op(BinaryOperator::try_from("+").unwrap(), a1_ref, one);
+        let expr1 = arena.insert_binary_op(BinaryOperator::Add, a1_ref, one);
 
         // Create "A1 * 2"
         let two = arena.insert_literal(ValueRef::small_int(2).unwrap());
@@ -1077,8 +1077,7 @@ mod tests {
         let if_expr = arena.insert_function("IF", vec![condition, c1, d1]);
 
         // Final: SUM(...) + IF(...)
-        let final_expr =
-            arena.insert_binary_op(BinaryOperator::try_from("+").unwrap(), sum, if_expr);
+        let final_expr = arena.insert_binary_op(BinaryOperator::Add, sum, if_expr);
 
         // Verify structure
         assert!(arena.get(final_expr).is_some());
@@ -1097,9 +1096,9 @@ mod tests {
         let two = arena.insert_literal(ValueRef::small_int(2).unwrap());
         let three = arena.insert_literal(ValueRef::small_int(3).unwrap());
 
-        let add1 = arena.insert_binary_op(BinaryOperator::try_from("+").unwrap(), one, two);
-        let add2 = arena.insert_binary_op(BinaryOperator::try_from("+").unwrap(), two, three);
-        let add3 = arena.insert_binary_op(BinaryOperator::try_from("+").unwrap(), one, three);
+        let add1 = arena.insert_binary_op(BinaryOperator::Add, one, two);
+        let add2 = arena.insert_binary_op(BinaryOperator::Add, two, three);
+        let add3 = arena.insert_binary_op(BinaryOperator::Add, one, three);
 
         // Operators are stored directly, not interned as strings.
         assert_eq!(arena.strings().len(), 0);
@@ -1113,7 +1112,7 @@ mod tests {
         arena.insert_literal(ValueRef::small_int(2).unwrap());
         let left = arena.insert_literal(ValueRef::small_int(3).unwrap());
         let right = arena.insert_literal(ValueRef::small_int(4).unwrap());
-        arena.insert_binary_op(BinaryOperator::try_from("+").unwrap(), left, right);
+        arena.insert_binary_op(BinaryOperator::Add, left, right);
 
         assert_eq!(arena.stats().node_count, 5);
 

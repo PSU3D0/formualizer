@@ -1733,19 +1733,32 @@ impl ReferenceType {
 }
 
 /// A supported unary formula operator.
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+///
+/// `Debug` prints the quoted spelling to preserve the former string-based
+/// AST's debug output, also embedded in AST display text.
+#[non_exhaustive]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum UnaryOperator {
-    #[cfg_attr(feature = "serde", serde(rename = "+"))]
     Plus,
-    #[cfg_attr(feature = "serde", serde(rename = "-"))]
     Minus,
-    #[cfg_attr(feature = "serde", serde(rename = "%"))]
     Percent,
-    #[cfg_attr(feature = "serde", serde(rename = "#"))]
     Spill,
-    #[cfg_attr(feature = "serde", serde(rename = "@"))]
     ImplicitIntersection,
+}
+// Serialize as a string even in non-human-readable serde formats. A
+// renamed unit enum would still use a variant index in binary serializers.
+#[cfg(feature = "serde")]
+impl Serialize for UnaryOperator {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+#[cfg(feature = "serde")]
+impl<'de> Deserialize<'de> for UnaryOperator {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        Self::try_from(value.as_str()).map_err(serde::de::Error::custom)
+    }
 }
 impl UnaryOperator {
     /// The operator spelling used in formulas and serialized ASTs.
@@ -1791,39 +1804,42 @@ impl std::hash::Hash for UnaryOperator {
 }
 
 /// A supported binary formula operator.
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+///
+/// `Debug` prints the quoted spelling to preserve the former string-based
+/// AST's debug output, also embedded in AST display text.
+#[non_exhaustive]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum BinaryOperator {
-    #[cfg_attr(feature = "serde", serde(rename = "+"))]
     Add,
-    #[cfg_attr(feature = "serde", serde(rename = "-"))]
     Subtract,
-    #[cfg_attr(feature = "serde", serde(rename = "*"))]
     Multiply,
-    #[cfg_attr(feature = "serde", serde(rename = "/"))]
     Divide,
-    #[cfg_attr(feature = "serde", serde(rename = "^"))]
     Power,
-    #[cfg_attr(feature = "serde", serde(rename = "&"))]
     Concat,
-    #[cfg_attr(feature = "serde", serde(rename = "="))]
     Equal,
-    #[cfg_attr(feature = "serde", serde(rename = "<>"))]
     NotEqual,
-    #[cfg_attr(feature = "serde", serde(rename = "<"))]
     Less,
-    #[cfg_attr(feature = "serde", serde(rename = ">"))]
     Greater,
-    #[cfg_attr(feature = "serde", serde(rename = "<="))]
     LessEqual,
-    #[cfg_attr(feature = "serde", serde(rename = ">="))]
     GreaterEqual,
-    #[cfg_attr(feature = "serde", serde(rename = ":"))]
     Range,
-    #[cfg_attr(feature = "serde", serde(rename = ","))]
     Union,
-    #[cfg_attr(feature = "serde", serde(rename = " "))]
     Intersection,
+}
+// Serialize as a string even in non-human-readable serde formats. A
+// renamed unit enum would still use a variant index in binary serializers.
+#[cfg(feature = "serde")]
+impl Serialize for BinaryOperator {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+#[cfg(feature = "serde")]
+impl<'de> Deserialize<'de> for BinaryOperator {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        Self::try_from(value.as_str()).map_err(serde::de::Error::custom)
+    }
 }
 impl BinaryOperator {
     /// The operator spelling used in formulas and serialized ASTs.
@@ -2765,7 +2781,11 @@ impl Parser {
                 ASTNodeType::BinaryOp {
                     op: BinaryOperator::try_from(token.value.as_str()).map_err(|message| {
                         ParserError {
-                            message: message.to_string(),
+                            message: if token.value == ";" {
+                                "';' is an argument separator, not an operator in this position; OpenFormula union uses '~'".to_string()
+                            } else {
+                                message.to_string()
+                            },
                             position: Some(span.start),
                         }
                     })?,

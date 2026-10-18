@@ -8,7 +8,7 @@ pub enum formualizer_parse::parser::ASTNodeType
 pub formualizer_parse::parser::ASTNodeType::Array(alloc::vec::Vec<alloc::vec::Vec<formualizer_parse::parser::ASTNode>>)
 pub formualizer_parse::parser::ASTNodeType::BinaryOp
 pub formualizer_parse::parser::ASTNodeType::BinaryOp::left: alloc::boxed::Box<formualizer_parse::parser::ASTNode>
-pub formualizer_parse::parser::ASTNodeType::BinaryOp::op: alloc::string::String
+pub formualizer_parse::parser::ASTNodeType::BinaryOp::op: formualizer_parse::parser::BinaryOperator
 pub formualizer_parse::parser::ASTNodeType::BinaryOp::right: alloc::boxed::Box<formualizer_parse::parser::ASTNode>
 pub formualizer_parse::parser::ASTNodeType::Call
 pub formualizer_parse::parser::ASTNodeType::Call::args: alloc::vec::Vec<formualizer_parse::parser::ASTNode>
@@ -23,7 +23,7 @@ pub formualizer_parse::parser::ASTNodeType::Reference::original: alloc::string::
 pub formualizer_parse::parser::ASTNodeType::Reference::reference: formualizer_parse::parser::ReferenceType
 pub formualizer_parse::parser::ASTNodeType::UnaryOp
 pub formualizer_parse::parser::ASTNodeType::UnaryOp::expr: alloc::boxed::Box<formualizer_parse::parser::ASTNode>
-pub formualizer_parse::parser::ASTNodeType::UnaryOp::op: alloc::string::String
+pub formualizer_parse::parser::ASTNodeType::UnaryOp::op: formualizer_parse::parser::UnaryOperator
 impl core::clone::Clone for formualizer_parse::parser::ASTNodeType
 pub fn formualizer_parse::parser::ASTNodeType::clone(&self) -> formualizer_parse::parser::ASTNodeType
 impl core::cmp::PartialEq for formualizer_parse::parser::ASTNodeType
@@ -39,6 +39,44 @@ impl serde_core::ser::Serialize for formualizer_parse::parser::ASTNodeType
 pub fn formualizer_parse::parser::ASTNodeType::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl<'de> serde_core::de::Deserialize<'de> for formualizer_parse::parser::ASTNodeType
 pub fn formualizer_parse::parser::ASTNodeType::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+#[non_exhaustive] pub enum formualizer_parse::parser::BinaryOperator
+pub formualizer_parse::parser::BinaryOperator::Add
+pub formualizer_parse::parser::BinaryOperator::Concat
+pub formualizer_parse::parser::BinaryOperator::Divide
+pub formualizer_parse::parser::BinaryOperator::Equal
+pub formualizer_parse::parser::BinaryOperator::Greater
+pub formualizer_parse::parser::BinaryOperator::GreaterEqual
+pub formualizer_parse::parser::BinaryOperator::Intersection
+pub formualizer_parse::parser::BinaryOperator::Less
+pub formualizer_parse::parser::BinaryOperator::LessEqual
+pub formualizer_parse::parser::BinaryOperator::Multiply
+pub formualizer_parse::parser::BinaryOperator::NotEqual
+pub formualizer_parse::parser::BinaryOperator::Power
+pub formualizer_parse::parser::BinaryOperator::Range
+pub formualizer_parse::parser::BinaryOperator::Subtract
+pub formualizer_parse::parser::BinaryOperator::Union
+impl formualizer_parse::parser::BinaryOperator
+pub const fn formualizer_parse::parser::BinaryOperator::as_str(self) -> &'static str
+impl core::clone::Clone for formualizer_parse::parser::BinaryOperator
+pub fn formualizer_parse::parser::BinaryOperator::clone(&self) -> formualizer_parse::parser::BinaryOperator
+impl core::cmp::Eq for formualizer_parse::parser::BinaryOperator
+impl core::cmp::PartialEq for formualizer_parse::parser::BinaryOperator
+pub fn formualizer_parse::parser::BinaryOperator::eq(&self, &formualizer_parse::parser::BinaryOperator) -> bool
+impl core::convert::TryFrom<&str> for formualizer_parse::parser::BinaryOperator
+pub type formualizer_parse::parser::BinaryOperator::Error = &'static str
+pub fn formualizer_parse::parser::BinaryOperator::try_from(&str) -> core::result::Result<Self, Self::Error>
+impl core::fmt::Debug for formualizer_parse::parser::BinaryOperator
+pub fn formualizer_parse::parser::BinaryOperator::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_parse::parser::BinaryOperator
+pub fn formualizer_parse::parser::BinaryOperator::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_parse::parser::BinaryOperator
+pub fn formualizer_parse::parser::BinaryOperator::hash<H: core::hash::Hasher>(&self, &mut H)
+impl core::marker::Copy for formualizer_parse::parser::BinaryOperator
+impl core::marker::StructuralPartialEq for formualizer_parse::parser::BinaryOperator
+impl serde_core::ser::Serialize for formualizer_parse::parser::BinaryOperator
+pub fn formualizer_parse::parser::BinaryOperator::serialize<S: serde_core::ser::Serializer>(&self, S) -> core::result::Result<<S as serde_core::ser::Serializer>::Ok, <S as serde_core::ser::Serializer>::Error>
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_parse::parser::BinaryOperator
+pub fn formualizer_parse::parser::BinaryOperator::deserialize<D: serde_core::de::Deserializer<'de>>(D) -> core::result::Result<Self, <D as serde_core::de::Deserializer>::Error>
 pub enum formualizer_parse::parser::ExternalBookRef
 pub formualizer_parse::parser::ExternalBookRef::Token(alloc::string::String)
 impl formualizer_parse::parser::ExternalBookRef
@@ -285,6 +323,34 @@ impl serde_core::ser::Serialize for formualizer_parse::parser::TableSpecifier
 pub fn formualizer_parse::parser::TableSpecifier::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl<'de> serde_core::de::Deserialize<'de> for formualizer_parse::parser::TableSpecifier
 pub fn formualizer_parse::parser::TableSpecifier::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+#[non_exhaustive] pub enum formualizer_parse::parser::UnaryOperator
+pub formualizer_parse::parser::UnaryOperator::ImplicitIntersection
+pub formualizer_parse::parser::UnaryOperator::Minus
+pub formualizer_parse::parser::UnaryOperator::Percent
+pub formualizer_parse::parser::UnaryOperator::Plus
+pub formualizer_parse::parser::UnaryOperator::Spill
+impl formualizer_parse::parser::UnaryOperator
+pub const fn formualizer_parse::parser::UnaryOperator::as_str(self) -> &'static str
+impl core::clone::Clone for formualizer_parse::parser::UnaryOperator
+pub fn formualizer_parse::parser::UnaryOperator::clone(&self) -> formualizer_parse::parser::UnaryOperator
+impl core::cmp::Eq for formualizer_parse::parser::UnaryOperator
+impl core::cmp::PartialEq for formualizer_parse::parser::UnaryOperator
+pub fn formualizer_parse::parser::UnaryOperator::eq(&self, &formualizer_parse::parser::UnaryOperator) -> bool
+impl core::convert::TryFrom<&str> for formualizer_parse::parser::UnaryOperator
+pub type formualizer_parse::parser::UnaryOperator::Error = &'static str
+pub fn formualizer_parse::parser::UnaryOperator::try_from(&str) -> core::result::Result<Self, Self::Error>
+impl core::fmt::Debug for formualizer_parse::parser::UnaryOperator
+pub fn formualizer_parse::parser::UnaryOperator::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_parse::parser::UnaryOperator
+pub fn formualizer_parse::parser::UnaryOperator::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_parse::parser::UnaryOperator
+pub fn formualizer_parse::parser::UnaryOperator::hash<H: core::hash::Hasher>(&self, &mut H)
+impl core::marker::Copy for formualizer_parse::parser::UnaryOperator
+impl core::marker::StructuralPartialEq for formualizer_parse::parser::UnaryOperator
+impl serde_core::ser::Serialize for formualizer_parse::parser::UnaryOperator
+pub fn formualizer_parse::parser::UnaryOperator::serialize<S: serde_core::ser::Serializer>(&self, S) -> core::result::Result<<S as serde_core::ser::Serializer>::Ok, <S as serde_core::ser::Serializer>::Error>
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_parse::parser::UnaryOperator
+pub fn formualizer_parse::parser::UnaryOperator::deserialize<D: serde_core::de::Deserializer<'de>>(D) -> core::result::Result<Self, <D as serde_core::de::Deserializer>::Error>
 pub struct formualizer_parse::parser::ASTNode
 pub formualizer_parse::parser::ASTNode::contains_volatile: bool
 pub formualizer_parse::parser::ASTNode::node_type: formualizer_parse::parser::ASTNodeType
@@ -688,7 +754,7 @@ pub enum formualizer_parse::ASTNodeType
 pub formualizer_parse::ASTNodeType::Array(alloc::vec::Vec<alloc::vec::Vec<formualizer_parse::parser::ASTNode>>)
 pub formualizer_parse::ASTNodeType::BinaryOp
 pub formualizer_parse::ASTNodeType::BinaryOp::left: alloc::boxed::Box<formualizer_parse::parser::ASTNode>
-pub formualizer_parse::ASTNodeType::BinaryOp::op: alloc::string::String
+pub formualizer_parse::ASTNodeType::BinaryOp::op: formualizer_parse::parser::BinaryOperator
 pub formualizer_parse::ASTNodeType::BinaryOp::right: alloc::boxed::Box<formualizer_parse::parser::ASTNode>
 pub formualizer_parse::ASTNodeType::Call
 pub formualizer_parse::ASTNodeType::Call::args: alloc::vec::Vec<formualizer_parse::parser::ASTNode>
@@ -703,7 +769,7 @@ pub formualizer_parse::ASTNodeType::Reference::original: alloc::string::String
 pub formualizer_parse::ASTNodeType::Reference::reference: formualizer_parse::parser::ReferenceType
 pub formualizer_parse::ASTNodeType::UnaryOp
 pub formualizer_parse::ASTNodeType::UnaryOp::expr: alloc::boxed::Box<formualizer_parse::parser::ASTNode>
-pub formualizer_parse::ASTNodeType::UnaryOp::op: alloc::string::String
+pub formualizer_parse::ASTNodeType::UnaryOp::op: formualizer_parse::parser::UnaryOperator
 impl core::clone::Clone for formualizer_parse::parser::ASTNodeType
 pub fn formualizer_parse::parser::ASTNodeType::clone(&self) -> formualizer_parse::parser::ASTNodeType
 impl core::cmp::PartialEq for formualizer_parse::parser::ASTNodeType
@@ -719,6 +785,44 @@ impl serde_core::ser::Serialize for formualizer_parse::parser::ASTNodeType
 pub fn formualizer_parse::parser::ASTNodeType::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl<'de> serde_core::de::Deserialize<'de> for formualizer_parse::parser::ASTNodeType
 pub fn formualizer_parse::parser::ASTNodeType::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+#[non_exhaustive] pub enum formualizer_parse::BinaryOperator
+pub formualizer_parse::BinaryOperator::Add
+pub formualizer_parse::BinaryOperator::Concat
+pub formualizer_parse::BinaryOperator::Divide
+pub formualizer_parse::BinaryOperator::Equal
+pub formualizer_parse::BinaryOperator::Greater
+pub formualizer_parse::BinaryOperator::GreaterEqual
+pub formualizer_parse::BinaryOperator::Intersection
+pub formualizer_parse::BinaryOperator::Less
+pub formualizer_parse::BinaryOperator::LessEqual
+pub formualizer_parse::BinaryOperator::Multiply
+pub formualizer_parse::BinaryOperator::NotEqual
+pub formualizer_parse::BinaryOperator::Power
+pub formualizer_parse::BinaryOperator::Range
+pub formualizer_parse::BinaryOperator::Subtract
+pub formualizer_parse::BinaryOperator::Union
+impl formualizer_parse::parser::BinaryOperator
+pub const fn formualizer_parse::parser::BinaryOperator::as_str(self) -> &'static str
+impl core::clone::Clone for formualizer_parse::parser::BinaryOperator
+pub fn formualizer_parse::parser::BinaryOperator::clone(&self) -> formualizer_parse::parser::BinaryOperator
+impl core::cmp::Eq for formualizer_parse::parser::BinaryOperator
+impl core::cmp::PartialEq for formualizer_parse::parser::BinaryOperator
+pub fn formualizer_parse::parser::BinaryOperator::eq(&self, &formualizer_parse::parser::BinaryOperator) -> bool
+impl core::convert::TryFrom<&str> for formualizer_parse::parser::BinaryOperator
+pub type formualizer_parse::parser::BinaryOperator::Error = &'static str
+pub fn formualizer_parse::parser::BinaryOperator::try_from(&str) -> core::result::Result<Self, Self::Error>
+impl core::fmt::Debug for formualizer_parse::parser::BinaryOperator
+pub fn formualizer_parse::parser::BinaryOperator::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_parse::parser::BinaryOperator
+pub fn formualizer_parse::parser::BinaryOperator::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_parse::parser::BinaryOperator
+pub fn formualizer_parse::parser::BinaryOperator::hash<H: core::hash::Hasher>(&self, &mut H)
+impl core::marker::Copy for formualizer_parse::parser::BinaryOperator
+impl core::marker::StructuralPartialEq for formualizer_parse::parser::BinaryOperator
+impl serde_core::ser::Serialize for formualizer_parse::parser::BinaryOperator
+pub fn formualizer_parse::parser::BinaryOperator::serialize<S: serde_core::ser::Serializer>(&self, S) -> core::result::Result<<S as serde_core::ser::Serializer>::Ok, <S as serde_core::ser::Serializer>::Error>
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_parse::parser::BinaryOperator
+pub fn formualizer_parse::parser::BinaryOperator::deserialize<D: serde_core::de::Deserializer<'de>>(D) -> core::result::Result<Self, <D as serde_core::de::Deserializer>::Error>
 pub enum formualizer_parse::FormulaDialect
 pub formualizer_parse::FormulaDialect::Excel
 pub formualizer_parse::FormulaDialect::OpenFormula
@@ -826,6 +930,34 @@ impl serde_core::ser::Serialize for formualizer_parse::tokenizer::TokenType
 pub fn formualizer_parse::tokenizer::TokenType::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl<'de> serde_core::de::Deserialize<'de> for formualizer_parse::tokenizer::TokenType
 pub fn formualizer_parse::tokenizer::TokenType::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+#[non_exhaustive] pub enum formualizer_parse::UnaryOperator
+pub formualizer_parse::UnaryOperator::ImplicitIntersection
+pub formualizer_parse::UnaryOperator::Minus
+pub formualizer_parse::UnaryOperator::Percent
+pub formualizer_parse::UnaryOperator::Plus
+pub formualizer_parse::UnaryOperator::Spill
+impl formualizer_parse::parser::UnaryOperator
+pub const fn formualizer_parse::parser::UnaryOperator::as_str(self) -> &'static str
+impl core::clone::Clone for formualizer_parse::parser::UnaryOperator
+pub fn formualizer_parse::parser::UnaryOperator::clone(&self) -> formualizer_parse::parser::UnaryOperator
+impl core::cmp::Eq for formualizer_parse::parser::UnaryOperator
+impl core::cmp::PartialEq for formualizer_parse::parser::UnaryOperator
+pub fn formualizer_parse::parser::UnaryOperator::eq(&self, &formualizer_parse::parser::UnaryOperator) -> bool
+impl core::convert::TryFrom<&str> for formualizer_parse::parser::UnaryOperator
+pub type formualizer_parse::parser::UnaryOperator::Error = &'static str
+pub fn formualizer_parse::parser::UnaryOperator::try_from(&str) -> core::result::Result<Self, Self::Error>
+impl core::fmt::Debug for formualizer_parse::parser::UnaryOperator
+pub fn formualizer_parse::parser::UnaryOperator::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_parse::parser::UnaryOperator
+pub fn formualizer_parse::parser::UnaryOperator::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_parse::parser::UnaryOperator
+pub fn formualizer_parse::parser::UnaryOperator::hash<H: core::hash::Hasher>(&self, &mut H)
+impl core::marker::Copy for formualizer_parse::parser::UnaryOperator
+impl core::marker::StructuralPartialEq for formualizer_parse::parser::UnaryOperator
+impl serde_core::ser::Serialize for formualizer_parse::parser::UnaryOperator
+pub fn formualizer_parse::parser::UnaryOperator::serialize<S: serde_core::ser::Serializer>(&self, S) -> core::result::Result<<S as serde_core::ser::Serializer>::Ok, <S as serde_core::ser::Serializer>::Error>
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_parse::parser::UnaryOperator
+pub fn formualizer_parse::parser::UnaryOperator::deserialize<D: serde_core::de::Deserializer<'de>>(D) -> core::result::Result<Self, <D as serde_core::de::Deserializer>::Error>
 pub struct formualizer_parse::ASTNode
 pub formualizer_parse::ASTNode::contains_volatile: bool
 pub formualizer_parse::ASTNode::node_type: formualizer_parse::parser::ASTNodeType

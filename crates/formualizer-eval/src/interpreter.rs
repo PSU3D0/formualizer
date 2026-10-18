@@ -769,18 +769,25 @@ impl<'a> Interpreter<'a> {
         }
 
         match op {
-            BinaryOperator::Add => self.numeric_binary(left, right, b'+').map(|value| {
-                self.annotate_numeric_result(
-                    value,
-                    self.binary_format('+', left_format, right_format),
-                )
-            }),
-            BinaryOperator::Subtract => self.numeric_binary(left, right, b'-').map(|value| {
-                self.annotate_numeric_result(
-                    value,
-                    self.binary_format('-', left_format, right_format),
-                )
-            }),
+            BinaryOperator::Add | BinaryOperator::Subtract => {
+                let byte = if op == BinaryOperator::Add {
+                    b'+'
+                } else {
+                    b'-'
+                };
+                let value = self.numeric_binary(left, right, byte)?;
+                if left_format.is_none() && right_format.is_none() {
+                    // The closed temporal-format algebra cannot produce an
+                    // annotation from two unformatted operands. Avoid both its
+                    // classification/matching and the numeric annotation pass.
+                    Ok(crate::traits::CalcValue::Scalar(value))
+                } else {
+                    Ok(self.annotate_numeric_result(
+                        value,
+                        self.binary_format(char::from(byte), left_format, right_format),
+                    ))
+                }
+            }
             BinaryOperator::Multiply => self
                 .numeric_binary(left, right, b'*')
                 .map(crate::traits::CalcValue::Scalar),
@@ -1463,59 +1470,16 @@ impl<'a> Interpreter<'a> {
         let right_calc = self.evaluate_ast(right_node)?;
         let right_format = right_calc.format_id();
         let right = right_calc.into_literal();
-        if matches!(
-            op,
-            BinaryOperator::Equal
-                | BinaryOperator::NotEqual
-                | BinaryOperator::Greater
-                | BinaryOperator::Less
-                | BinaryOperator::GreaterEqual
-                | BinaryOperator::LessEqual
-        ) {
-            return self
-                .compare(op, left, right)
-                .map(crate::traits::CalcValue::Scalar);
+        if op == BinaryOperator::Range {
+            let left_ref = self.evaluate_ast_as_reference(left_node)?;
+            let right_ref = self.evaluate_ast_as_reference(right_node)?;
+            return match crate::reference::combine_references(&left_ref, &right_ref) {
+                Ok(_) => Err(ExcelError::new(ExcelErrorKind::Ref)
+                    .with_message("Reference produced by ':' cannot be used directly as a value")),
+                Err(error) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(error))),
+            };
         }
-        match op {
-            BinaryOperator::Add => self.numeric_binary(left, right, b'+').map(|value| {
-                self.annotate_numeric_result(
-                    value,
-                    self.binary_format('+', left_format, right_format),
-                )
-            }),
-            BinaryOperator::Subtract => self.numeric_binary(left, right, b'-').map(|value| {
-                self.annotate_numeric_result(
-                    value,
-                    self.binary_format('-', left_format, right_format),
-                )
-            }),
-            BinaryOperator::Multiply => self
-                .numeric_binary(left, right, b'*')
-                .map(crate::traits::CalcValue::Scalar),
-            BinaryOperator::Divide => self
-                .numeric_binary(left, right, b'/')
-                .map(crate::traits::CalcValue::Scalar),
-            BinaryOperator::Power => self
-                .numeric_binary(left, right, b'^')
-                .map(crate::traits::CalcValue::Scalar),
-            BinaryOperator::Concat => self
-                .concat_values(left, right)
-                .map(crate::traits::CalcValue::Scalar),
-            BinaryOperator::Range => {
-                let left_ref = self.evaluate_ast_as_reference(left_node)?;
-                let right_ref = self.evaluate_ast_as_reference(right_node)?;
-                match crate::reference::combine_references(&left_ref, &right_ref) {
-                    Ok(_) => Err(ExcelError::new(ExcelErrorKind::Ref).with_message(
-                        "Reference produced by ':' cannot be used directly as a value",
-                    )),
-                    Err(error) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(error))),
-                }
-            }
-            _ => {
-                Err(ExcelError::new(ExcelErrorKind::NImpl)
-                    .with_message(format!("Binary op '{op}'")))
-            }
-        }
+        self.apply_binary_op(op, left, left_format, right, right_format)
     }
 
     /* ===================  function calls  =================== */
@@ -2073,6 +2037,68 @@ mod format_algebra_tests {
     use crate::engine::{EvalConfig, eval::Engine};
     use crate::format::FormatId;
     use crate::test_workbook::TestWorkbook;
+
+    #[test]
+    fn binary_fastpath_preserves_values_and_format_annotations() {
+        let engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+        let interpreter = Interpreter::new(&engine, "Sheet1");
+        let values = [
+            LiteralValue::Number(2.5),
+            LiteralValue::Int(2),
+            LiteralValue::Text("3".into()),
+            LiteralValue::Text("not numeric".into()),
+            LiteralValue::Boolean(true),
+            LiteralValue::Empty,
+            LiteralValue::Error(ExcelError::new(ExcelErrorKind::Na)),
+            LiteralValue::Array(vec![vec![LiteralValue::Number(1.0)]]),
+        ];
+        let formats = [
+            None,
+            Some(FormatId::DATE),
+            Some(FormatId::TIME),
+            Some(FormatId(49)),
+        ];
+        for (op, byte) in [
+            (BinaryOperator::Add, b'+'),
+            (BinaryOperator::Subtract, b'-'),
+        ] {
+            for left in &values {
+                for right in &values {
+                    for left_format in formats {
+                        for right_format in formats {
+                            let expected = interpreter
+                                .numeric_binary(left.clone(), right.clone(), byte)
+                                .map(|value| {
+                                    interpreter.annotate_numeric_result(
+                                        value,
+                                        interpreter.binary_format(
+                                            char::from(byte),
+                                            left_format,
+                                            right_format,
+                                        ),
+                                    )
+                                });
+                            let actual = interpreter.apply_binary_op(
+                                op,
+                                left.clone(),
+                                left_format,
+                                right.clone(),
+                                right_format,
+                            );
+                            match (actual, expected) {
+                                (Ok(actual), Ok(expected)) => {
+                                    assert_eq!(actual.format_id(), expected.format_id());
+                                    assert_eq!(actual.into_literal(), expected.into_literal());
+                                }
+                                (Err(actual), Err(expected)) => assert_eq!(actual, expected),
+                                _ => panic!("operator result kind changed"),
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn temporal_binary_format_algebra_pins_positive_and_negative_cases() {

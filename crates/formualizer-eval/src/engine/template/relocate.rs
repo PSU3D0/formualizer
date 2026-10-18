@@ -35,13 +35,13 @@ pub fn relocate_ast_for_template_placement(
             reference: relocate_reference_for_offset(reference, row_delta, col_delta)?,
         },
         ASTNodeType::UnaryOp { op, expr } => ASTNodeType::UnaryOp {
-            op: op.clone(),
+            op: *op,
             expr: Box::new(relocate_ast_for_template_placement(
                 expr, row_delta, col_delta,
             )?),
         },
         ASTNodeType::BinaryOp { op, left, right } => ASTNodeType::BinaryOp {
-            op: op.clone(),
+            op: *op,
             left: Box::new(relocate_ast_for_template_placement(
                 left, row_delta, col_delta,
             )?),

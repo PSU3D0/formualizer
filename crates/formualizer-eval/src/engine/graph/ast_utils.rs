@@ -69,7 +69,7 @@ pub(super) fn update_sheet_references_in_ast(
         }
         ASTNodeType::BinaryOp { op, left, right } => ASTNode {
             node_type: ASTNodeType::BinaryOp {
-                op: op.clone(),
+                op: *op,
                 left: Box::new(update_sheet_references_in_ast(left, old_name, new_name)),
                 right: Box::new(update_sheet_references_in_ast(right, old_name, new_name)),
             },
@@ -78,7 +78,7 @@ pub(super) fn update_sheet_references_in_ast(
         },
         ASTNodeType::UnaryOp { op, expr } => ASTNode {
             node_type: ASTNodeType::UnaryOp {
-                op: op.clone(),
+                op: *op,
                 expr: Box::new(update_sheet_references_in_ast(expr, old_name, new_name)),
             },
             source_token: None,
@@ -185,7 +185,7 @@ pub(super) fn update_internal_sheet_references(
         }
         ASTNodeType::BinaryOp { op, left, right } => ASTNode {
             node_type: ASTNodeType::BinaryOp {
-                op: op.clone(),
+                op: *op,
                 left: Box::new(update_internal_sheet_references(
                     left,
                     source_name,
@@ -206,7 +206,7 @@ pub(super) fn update_internal_sheet_references(
         },
         ASTNodeType::UnaryOp { op, expr } => ASTNode {
             node_type: ASTNodeType::UnaryOp {
-                op: op.clone(),
+                op: *op,
                 expr: Box::new(update_internal_sheet_references(
                     expr,
                     source_name,
