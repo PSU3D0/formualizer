@@ -246,6 +246,11 @@ pub struct ColumnChunk {
 }
 
 impl ColumnChunk {
+    /// Value generations for exact derived products; includes same-layer writes.
+    pub(crate) fn criteria_overlay_epochs(&self) -> (u64, u64) {
+        (self.overlay.epoch, self.computed_overlay.epoch)
+    }
+
     #[inline]
     pub fn len(&self) -> usize {
         self.type_tag.len()
