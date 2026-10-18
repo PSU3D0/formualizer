@@ -271,6 +271,36 @@ impl ExcelError {
         kind.into()
     }
 
+    /// Human-readable explanation, if supplied.
+    pub fn message(&self) -> Option<&str> {
+        self.message.as_deref()
+    }
+
+    /// Generic location metadata, if supplied.
+    pub fn context(&self) -> Option<&ErrorContext> {
+        self.context.as_ref()
+    }
+
+    /// Kind-specific data.
+    pub fn extra(&self) -> &ExcelErrorExtra {
+        &self.extra
+    }
+
+    /// Replace or clear the explanation, retaining any other metadata.
+    pub fn set_message(&mut self, message: Option<String>) {
+        self.message = message;
+    }
+
+    /// Replace or clear the location, retaining any other metadata.
+    pub fn set_context(&mut self, context: Option<ErrorContext>) {
+        self.context = context;
+    }
+
+    /// Replace or clear the kind-specific data, retaining any other metadata.
+    pub fn set_extra(&mut self, extra: ExcelErrorExtra) {
+        self.extra = extra;
+    }
+
     /// Attach a human-readable explanation.
     pub fn with_message<S: Into<String>>(mut self, msg: S) -> Self {
         self.message = Some(msg.into());
