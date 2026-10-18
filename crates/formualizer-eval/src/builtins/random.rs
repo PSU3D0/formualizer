@@ -112,7 +112,7 @@ mod tests {
 
         let f = ctx.context.get_function("", "RAND").unwrap();
         let fctx = ctx.function_context(None);
-        let args: Vec<ArgumentHandle<'_, '_>> = Vec::new();
+        let args: smallvec::SmallVec<[ArgumentHandle<'_, '_>; 4]> = smallvec::SmallVec::new();
         let result = f.dispatch(&args, &fctx).unwrap().into_literal();
         match result {
             LiteralValue::Number(n) => assert!((0.0..1.0).contains(&n)),

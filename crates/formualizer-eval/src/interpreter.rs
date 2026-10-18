@@ -323,7 +323,7 @@ impl<'a> Interpreter<'a> {
             ASTNodeType::Function { name, args } => {
                 if let Some(fun) = self.context.get_function("", name) {
                     // Build handles; allow function to decide reference semantics
-                    let handles: Vec<ArgumentHandle> =
+                    let handles: smallvec::SmallVec<[ArgumentHandle; 4]> =
                         args.iter().map(|n| ArgumentHandle::new(n, self)).collect();
                     let fctx = DefaultFunctionContext::new_with_sheet(
                         self.context,
@@ -371,7 +371,7 @@ impl<'a> Interpreter<'a> {
                     .with_message(format!("Unknown function: {name}"))));
             }
         };
-        let handles: Vec<ArgumentHandle> = args
+        let handles: smallvec::SmallVec<[ArgumentHandle; 4]> = args
             .iter()
             .map(|arg| ArgumentHandle::new(arg, self))
             .collect();
@@ -409,7 +409,7 @@ impl<'a> Interpreter<'a> {
                     ExcelError::new(ExcelErrorKind::Value).with_message("Missing function args")
                 })?;
 
-                let handles: Vec<ArgumentHandle> = args
+                let handles: smallvec::SmallVec<[ArgumentHandle; 4]> = args
                     .iter()
                     .copied()
                     .map(|arg_id| {
@@ -543,7 +543,7 @@ impl<'a> Interpreter<'a> {
                 ));
             }
         };
-        let handles: Vec<ArgumentHandle> = args
+        let handles: smallvec::SmallVec<[ArgumentHandle; 4]> = args
             .iter()
             .copied()
             .map(|arg_id| ArgumentHandle::new_arena(arg_id, self, data_store, sheet_registry))
@@ -962,7 +962,7 @@ impl<'a> Interpreter<'a> {
                 })?;
 
                 if let Some(fun) = self.context.get_function("", name) {
-                    let handles: Vec<ArgumentHandle> = args
+                    let handles: smallvec::SmallVec<[ArgumentHandle; 4]> = args
                         .iter()
                         .copied()
                         .map(|arg_id| {
@@ -1504,7 +1504,7 @@ impl<'a> Interpreter<'a> {
         args: &[ASTNode],
     ) -> Result<crate::traits::CalcValue<'a>, ExcelError> {
         if let Some(fun) = self.context.get_function("", name) {
-            let handles: Vec<ArgumentHandle> =
+            let handles: smallvec::SmallVec<[ArgumentHandle; 4]> =
                 args.iter().map(|n| ArgumentHandle::new(n, self)).collect();
             // Use the function's built-in dispatch method with a narrow FunctionContext
             let fctx = DefaultFunctionContext::new_with_sheet(
