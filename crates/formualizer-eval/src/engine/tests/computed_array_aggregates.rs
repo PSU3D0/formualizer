@@ -78,6 +78,6 @@ fn arena_computed_array_aggregates_match_off_and_authoritative_modes() {
             panic!("expected an error value at B{row}");
         };
         assert_eq!(error.kind, kind, "error kind at B{row}");
-        assert_eq!(error.message, None, "error message at B{row}");
+        assert_eq!(error.message(), None, "error message at B{row}");
     }
 }

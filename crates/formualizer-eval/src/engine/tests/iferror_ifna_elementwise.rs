@@ -483,7 +483,7 @@ fn value_resource_failure_propagates_instead_of_selecting_fallback() {
         let h = Harness::new();
         let e = h.eval(formula).expect_err(formula);
         assert!(
-            matches!(e.extra, ExcelErrorExtra::Resource { .. }),
+            matches!(e.extra(), ExcelErrorExtra::Resource { .. }),
             "{formula}: {e:?}"
         );
         assert_eq!(h.calls("COUNTING"), 0, "{formula}");
@@ -515,7 +515,7 @@ fn fallback_live_failures_propagate() {
         let h = Harness::new();
         let e = h.eval(formula).expect_err(formula);
         assert!(
-            matches!(e.extra, ExcelErrorExtra::Resource { .. }),
+            matches!(e.extra(), ExcelErrorExtra::Resource { .. }),
             "{formula}: {e:?}"
         );
     }

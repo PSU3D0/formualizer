@@ -116,7 +116,7 @@ fn guards_do_not_turn_preparation_admission_failure_into_a_value() {
     let error = wb.evaluate_all().unwrap_err();
     assert!(matches!(
         error,
-        IoError::Engine(error) if matches!(error.extra, ExcelErrorExtra::Resource { .. })
+        IoError::Engine(error) if matches!(error.extra(), ExcelErrorExtra::Resource { .. })
     ));
 }
 

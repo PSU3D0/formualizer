@@ -392,7 +392,7 @@ fn register_wasm_module_requires_feature_by_default() {
         .expect_err("default build should gate wasm module registration");
 
     assert_eq!(err.kind, ExcelErrorKind::NImpl);
-    assert!(err.message.unwrap_or_default().contains("wasm_plugins"));
+    assert!(err.message().unwrap_or_default().contains("wasm_plugins"));
 }
 
 #[cfg(feature = "wasm_plugins")]
@@ -508,7 +508,7 @@ fn duplicate_module_id_is_rejected() {
 
     assert_eq!(err.kind, ExcelErrorKind::Name);
     assert!(
-        err.message
+        err.message()
             .unwrap_or_default()
             .contains("already registered")
     );
@@ -526,7 +526,7 @@ fn invalid_manifest_is_rejected() {
 
     assert_eq!(err.kind, ExcelErrorKind::Value);
     assert!(
-        err.message
+        err.message()
             .unwrap_or_default()
             .contains("Unsupported WASM manifest schema")
     );
@@ -544,7 +544,7 @@ fn requested_module_id_must_match_manifest() {
 
     assert_eq!(err.kind, ExcelErrorKind::Value);
     assert!(
-        err.message
+        err.message()
             .unwrap_or_default()
             .contains("module id mismatch")
     );
@@ -607,7 +607,7 @@ fn register_wasm_function_validates_module_and_export_before_binding() {
     assert_eq!(codec_mismatch.kind, ExcelErrorKind::NImpl);
     assert!(
         codec_mismatch
-            .message
+            .message()
             .unwrap_or_default()
             .contains("codec mismatch")
     );
@@ -636,7 +636,7 @@ fn register_wasm_function_with_pending_runtime_returns_nimpl() {
     assert_eq!(pending_runtime.kind, ExcelErrorKind::NImpl);
     assert!(
         pending_runtime
-            .message
+            .message()
             .unwrap_or_default()
             .contains("runtime integration is pending")
     );

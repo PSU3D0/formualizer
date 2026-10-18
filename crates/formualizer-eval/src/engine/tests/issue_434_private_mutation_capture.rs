@@ -167,7 +167,7 @@ fn direct_formula_capture_is_complete_for_every_audit_policy() {
         assert_eq!(engine.topology_epoch_for_test(), epoch.wrapping_add(1));
         let error = engine.evaluate_recalc_plan(&plan).unwrap_err();
         assert!(matches!(
-            error.extra,
+            error.extra(),
             ExcelErrorExtra::PlanStale {
                 reason: PlanStaleReason::Graph
             }

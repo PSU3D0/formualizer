@@ -75,7 +75,7 @@ fn spill_basic_and_block() {
             if let formualizer_common::ExcelErrorExtra::Spill {
                 expected_rows,
                 expected_cols,
-            } = &e.extra
+            } = e.extra()
             {
                 assert_eq!((*expected_rows, *expected_cols), (2, 1));
             }

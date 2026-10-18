@@ -61,7 +61,7 @@ fn concat_and_textjoin_expand_ranges_and_computed_arrays_in_formulas() {
     for (row, kind) in [(8, ExcelErrorKind::Ref), (9, ExcelErrorKind::Name)] {
         assert!(matches!(
             engine.get_cell_value("Sheet1", row, 4),
-            Some(LiteralValue::Error(error)) if error.kind == kind && error.message.is_none()
+            Some(LiteralValue::Error(error)) if error.kind == kind && error.message().is_none()
         ));
     }
 }

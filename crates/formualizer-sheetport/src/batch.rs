@@ -209,13 +209,13 @@ ports:
     fn is_plan_stale_for_test(error: &SheetPortError) -> bool {
         match error {
             SheetPortError::Engine { source } => matches!(
-                source.extra,
+                source.extra(),
                 formualizer_common::ExcelErrorExtra::PlanStale { .. }
             ),
             SheetPortError::Workbook {
                 source: formualizer_workbook::error::IoError::Engine(source),
             } => matches!(
-                source.extra,
+                source.extra(),
                 formualizer_common::ExcelErrorExtra::PlanStale { .. }
             ),
             _ => false,
@@ -276,7 +276,7 @@ impl<'a> BatchExecutor<'a> {
             } => Some(source),
             _ => None,
         };
-        excel.is_some_and(|error| matches!(error.extra, ExcelErrorExtra::PlanStale { .. }))
+        excel.is_some_and(|error| matches!(error.extra(), ExcelErrorExtra::PlanStale { .. }))
     }
 
     fn evaluate_current(&mut self, allow_rebuild: bool) -> Result<OutputSnapshot, SheetPortError> {

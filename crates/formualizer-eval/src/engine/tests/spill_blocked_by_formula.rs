@@ -114,9 +114,9 @@ fn assert_blocked(mode: Mode, value: Option<LiteralValue>, rows: u32, ctx: &str)
             if let ExcelErrorExtra::Spill {
                 expected_rows,
                 expected_cols,
-            } = e.extra
+            } = e.extra()
             {
-                assert_eq!((expected_rows, expected_cols), (rows, 1), "{ctx}");
+                assert_eq!((*expected_rows, *expected_cols), (rows, 1), "{ctx}");
             }
         }
         other => panic!("{ctx}: expected #SPILL!, got {other:?}"),

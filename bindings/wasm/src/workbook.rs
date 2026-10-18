@@ -465,7 +465,7 @@ pub(crate) fn binding_value(value: &formualizer::LiteralValue) -> BindingValue {
         formualizer::LiteralValue::Error(error) => BindingValue::Error {
             display: error.to_string(),
             code: error.kind.to_string(),
-            message: error.message.clone(),
+            message: error.message().map(str::to_owned),
         },
     }
 }

@@ -311,7 +311,7 @@ fn xlsx_recalc_options(
         mode.validate().map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                 "deterministic_timezone: {}",
-                e.message.unwrap_or_default()
+                e.message().unwrap_or_default()
             ))
         })?;
         options.eval_config.deterministic_mode = mode;

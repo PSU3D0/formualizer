@@ -489,11 +489,8 @@ fn test_cancellation_message_differentiation() {
     let result = engine.evaluate_all_cancellable(cancel);
 
     match result {
-        Err(ExcelError {
-            kind: ExcelErrorKind::Cancelled,
-            message: Some(msg),
-            ..
-        }) => {
+        Err(error) if error.kind == ExcelErrorKind::Cancelled && error.message().is_some() => {
+            let msg = error.message().unwrap();
             // Should contain context about where cancellation occurred.
             // Immediate cancellation can now happen before scheduling.
             assert!(

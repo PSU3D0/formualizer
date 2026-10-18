@@ -956,7 +956,7 @@ fn cancellation_is_honored_between_iteration_passes() {
         .unwrap_err();
     assert_eq!(err.kind, ExcelErrorKind::Cancelled);
     assert!(
-        err.message.as_deref().unwrap_or("").contains("SCC"),
+        err.message().unwrap_or("").contains("SCC"),
         "cancellation must come from the SCC pass boundary, got {err:?}"
     );
 }

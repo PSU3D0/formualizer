@@ -20,7 +20,7 @@ fn cell(sheet: &str, row: u32, col: u32) -> EvaluationTarget {
 }
 
 fn assert_replan_exhaustion(error: &ExcelError) {
-    let ExcelErrorExtra::Resource { detail } = &error.extra else {
+    let ExcelErrorExtra::Resource { detail } = error.extra() else {
         panic!("expected typed resource exhaustion, got {error:?}");
     };
     assert_eq!(detail.reason, ResourceExhaustionReason::WorkUnits);

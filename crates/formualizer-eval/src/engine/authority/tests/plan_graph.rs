@@ -310,7 +310,7 @@ fn graph_control_charges_actual_engine_work_ledger() {
                 let GraphError::Runtime(error) = result.unwrap_err() else {
                     panic!("wrong error")
                 };
-                let ExcelErrorExtra::Resource { detail } = error.extra else {
+                let ExcelErrorExtra::Resource { detail } = error.extra() else {
                     panic!("missing resource detail")
                 };
                 assert_eq!(detail.reason, ResourceExhaustionReason::WorkUnits);

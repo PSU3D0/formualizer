@@ -280,7 +280,7 @@ fn real_deferred_source_families_use_actual_graph_admission_in_every_mode() {
         let expected = run(mode, EvaluationBudgets::default()).unwrap();
         let error = run(mode, observational.clone()).unwrap_err();
         assert!(matches!(
-            error.extra,
+            error.extra(),
             formualizer_common::ExcelErrorExtra::Resource { .. }
         ));
         assert_eq!(

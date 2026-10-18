@@ -82,15 +82,14 @@ pub(crate) fn excel_error_to_pyerr(error: RustExcelError) -> PyErr {
         let kind = format!("{:?}", error.kind);
         let _ = value.setattr("kind", &kind);
         let _ = value.setattr("excel_kind", kind);
-        let _ = value.setattr("message", error.message.clone());
-        let _ = value.setattr("excel_message", error.message.clone());
+        let _ = value.setattr("message", error.message().map(str::to_owned));
+        let _ = value.setattr("excel_message", error.message().map(str::to_owned));
 
         let context = error
-            .context
-            .as_ref()
+            .context()
             .map(|context| error_context_to_py(py, context));
         let _ = value.setattr("context", context);
-        if let Some(context) = &error.context {
+        if let Some(context) = error.context() {
             let _ = value.setattr("row", context.row);
             let _ = value.setattr("col", context.col);
             let _ = value.setattr("origin_row", context.origin_row);
@@ -98,18 +97,18 @@ pub(crate) fn excel_error_to_pyerr(error: RustExcelError) -> PyErr {
             let _ = value.setattr("origin_sheet", &context.origin_sheet);
         }
 
-        let extra = error_extra_to_py(py, &error.extra);
+        let extra = error_extra_to_py(py, error.extra());
         let _ = value.setattr("extra", extra.as_ref().map(|extra| extra.bind(py)));
-        if let ExcelErrorExtra::Resource { detail } = &error.extra {
+        if let ExcelErrorExtra::Resource { detail } = error.extra() {
             let _ = value.setattr("resource_reason", detail.reason.as_str());
             let _ = value.setattr("limit", detail.limit);
             let _ = value.setattr("observed", detail.observed);
             let _ = value.setattr("request_id", detail.request_id);
         }
-        if let ExcelErrorExtra::PreparationStale { reason } = &error.extra {
+        if let ExcelErrorExtra::PreparationStale { reason } = error.extra() {
             let _ = value.setattr("preparation_stale_reason", reason.as_str());
         }
-        if let ExcelErrorExtra::PlanStale { reason } = &error.extra {
+        if let ExcelErrorExtra::PlanStale { reason } = error.extra() {
             let _ = value.setattr("plan_stale_reason", reason.as_str());
         }
     });
@@ -291,14 +290,10 @@ impl PyExcelError {
             ExcelErrorExtra::None
         };
 
-        Ok(PyExcelError {
-            inner: RustExcelError {
-                kind: error_kind,
-                message,
-                context,
-                extra,
-            },
-        })
+        let mut inner = RustExcelError::new(error_kind).with_extra(extra);
+        inner.set_message(message);
+        inner.set_context(context);
+        Ok(PyExcelError { inner })
     }
 
     /// Get the error kind
@@ -310,25 +305,25 @@ impl PyExcelError {
     /// Get the error message
     #[getter]
     pub fn message(&self) -> Option<String> {
-        self.inner.message.clone()
+        self.inner.message().map(str::to_owned)
     }
 
     /// Get error row (if set)
     #[getter]
     pub fn row(&self) -> Option<u32> {
-        self.inner.context.as_ref().and_then(|c| c.row)
+        self.inner.context().and_then(|c| c.row)
     }
 
     /// Get error column (if set)
     #[getter]
     pub fn col(&self) -> Option<u32> {
-        self.inner.context.as_ref().and_then(|c| c.col)
+        self.inner.context().and_then(|c| c.col)
     }
 
     /// Get extra error data
     #[getter]
     pub fn extra(&self, py: Python) -> Option<PyObject> {
-        error_extra_to_py(py, &self.inner.extra)
+        error_extra_to_py(py, self.inner.extra())
     }
 
     /// Check if this is a #DIV/0! error
@@ -410,7 +405,7 @@ impl PyExcelError {
     }
 
     fn __repr__(&self) -> String {
-        if let Some(msg) = &self.inner.message {
+        if let Some(msg) = self.inner.message() {
             format!("ExcelError({:?}, {:?})", self.inner.kind, msg)
         } else {
             format!("ExcelError({:?})", self.inner.kind)

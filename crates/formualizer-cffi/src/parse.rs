@@ -105,7 +105,7 @@ impl CffiASTNode {
                 LiteralValue::Empty => CffiASTNode::Empty { span },
                 LiteralValue::Error(e) => CffiASTNode::Error {
                     kind: format!("{:?}", e.kind),
-                    message: e.message.clone(),
+                    message: e.message().map(str::to_owned),
                     span,
                 },
                 LiteralValue::Array(arr) => CffiASTNode::Array {
@@ -202,7 +202,7 @@ impl CffiASTNode {
             LiteralValue::Empty => CffiASTNode::Empty { span: None },
             LiteralValue::Error(e) => CffiASTNode::Error {
                 kind: format!("{:?}", e.kind),
-                message: e.message.clone(),
+                message: e.message().map(str::to_owned),
                 span: None,
             },
             LiteralValue::Array(arr) => CffiASTNode::Array {

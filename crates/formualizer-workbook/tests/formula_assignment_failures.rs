@@ -134,7 +134,7 @@ fn logged_assignment_propagates_resource_admission_rejection() {
     let error = wb.set_formula("S", 1, 1, "=Z99").unwrap_err();
     assert!(
         matches!(error, formualizer_workbook::IoError::Engine(ref error)
-        if matches!(error.extra, formualizer_common::ExcelErrorExtra::Resource { .. }))
+        if matches!(error.extra(), formualizer_common::ExcelErrorExtra::Resource { .. }))
     );
     assert_eq!(wb.get_value("S", 1, 1), Some(LiteralValue::Number(7.0)));
     assert_eq!(wb.get_formula("S", 1, 1), None);

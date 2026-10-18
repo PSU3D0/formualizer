@@ -51,7 +51,7 @@ fn register_wasm_function_requires_feature_by_default() {
         .expect_err("default build should gate wasm plugin registration");
 
     assert_eq!(err.kind, ExcelErrorKind::NImpl);
-    let message = err.message.unwrap_or_default();
+    let message = err.message().unwrap_or_default();
     assert!(message.contains("wasm_plugins"));
 }
 
@@ -69,6 +69,6 @@ fn register_wasm_function_requires_registered_module() {
         .expect_err("module registration is required before binding wasm functions");
 
     assert_eq!(err.kind, ExcelErrorKind::Name);
-    let message = err.message.unwrap_or_default();
+    let message = err.message().unwrap_or_default();
     assert!(message.contains("not registered"));
 }

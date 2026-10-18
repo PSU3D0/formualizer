@@ -2078,8 +2078,7 @@ impl CalamineAdapter {
             && !self.legacy_calculation_name(name)
             && error.kind == ExcelErrorKind::Name
             && error
-                .message
-                .as_deref()
+                .message()
                 .is_some_and(|m| m.starts_with("Invalid name: "))
     }
 

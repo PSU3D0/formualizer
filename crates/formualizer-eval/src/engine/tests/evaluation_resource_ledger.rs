@@ -29,7 +29,7 @@ fn formula_engine(mode: FormulaPlaneMode, budgets: EvaluationBudgets) -> Engine<
 }
 
 fn resource_reason(error: &formualizer_common::ExcelError) -> Option<ResourceExhaustionReason> {
-    match &error.extra {
+    match error.extra() {
         ExcelErrorExtra::Resource { detail } => Some(detail.reason),
         _ => None,
     }

@@ -1090,7 +1090,7 @@ mod computed_array_tests {
             panic!("expected an error value");
         };
         assert_eq!(error.kind, kind);
-        assert_eq!(error.message.as_deref(), message);
+        assert_eq!(error.message(), message);
     }
 
     #[test]
@@ -1128,10 +1128,7 @@ mod computed_array_tests {
 
         let computed = evaluate(&wb, "=SUM(COMPUTED_FAILURE())").unwrap_err();
         assert_eq!(computed.kind, ExcelErrorKind::Num);
-        assert_eq!(
-            computed.message.as_deref(),
-            Some("computed failure sentinel")
-        );
+        assert_eq!(computed.message(), Some("computed failure sentinel"));
         assert_eq!(failure_calls.load(Ordering::SeqCst), 1);
 
         assert_exact_error_value(
@@ -1162,7 +1159,7 @@ mod computed_array_tests {
 
         let error = evaluate(&wb, "=SUM(PRETOKENIZED_RANGE())").unwrap_err();
         assert_eq!(error.kind, ExcelErrorKind::Cancelled);
-        assert_eq!(error.message, None);
+        assert_eq!(error.message(), None);
     }
 
     #[test]
@@ -1176,7 +1173,7 @@ mod computed_array_tests {
 
         let error = evaluate(&wb, "=SUM(COUNTED_ARRAY())").unwrap_err();
         assert_eq!(error.kind, ExcelErrorKind::Cancelled);
-        assert_eq!(error.message, None);
+        assert_eq!(error.message(), None);
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 }

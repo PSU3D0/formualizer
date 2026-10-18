@@ -517,7 +517,7 @@ mod tests {
 
         assert_eq!(err.kind, ExcelErrorKind::Value);
         assert!(
-            err.message
+            err.message()
                 .unwrap_or_default()
                 .contains("request exceeds sandbox limit")
         );

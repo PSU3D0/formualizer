@@ -414,7 +414,7 @@ fn formula_plane_commit_preflight_failure_preserves_stale_side_band_and_egress()
     engine.fail_evaluation_commit_preflight_once_for_test();
 
     let error = engine.evaluate_all().unwrap_err();
-    let ExcelErrorExtra::Resource { detail } = &error.extra else {
+    let ExcelErrorExtra::Resource { detail } = error.extra() else {
         panic!("expected typed resource failure, got {error:?}");
     };
 

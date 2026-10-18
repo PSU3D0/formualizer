@@ -2940,7 +2940,7 @@ impl Workbook {
     pub fn prepare_graph_all(&mut self) -> Result<(), IoError> {
         self.engine.build_graph_all().map_err(|error| {
             if matches!(
-                &error.extra,
+                error.extra(),
                 formualizer_common::ExcelErrorExtra::Resource { .. }
             ) {
                 IoError::Engine(error)
@@ -2955,7 +2955,7 @@ impl Workbook {
     ) -> Result<(), IoError> {
         self.engine.build_graph_for_sheets(sheets).map_err(|error| {
             if matches!(
-                &error.extra,
+                error.extra(),
                 formualizer_common::ExcelErrorExtra::Resource { .. }
             ) {
                 IoError::Engine(error)

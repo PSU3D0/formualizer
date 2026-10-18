@@ -768,7 +768,7 @@ impl PyWorkbook {
                         Some(engine.sheet_name(id))
                     }
                 };
-                if error.message.as_deref()
+                if error.message()
                     == Some(&format!(
                         "Defined name `{}` could not be evaluated",
                         entry.name

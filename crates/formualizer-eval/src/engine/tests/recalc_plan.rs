@@ -120,7 +120,7 @@ fn plan_rejects_cross_engine_and_graph_changes_with_typed_reasons() -> Result<()
     let mut second = make_engine();
     let error = second.evaluate_recalc_plan(&plan).unwrap_err();
     assert!(matches!(
-        error.extra,
+        error.extra(),
         formualizer_common::ExcelErrorExtra::PlanStale {
             reason: formualizer_common::PlanStaleReason::Engine
         }
@@ -129,7 +129,7 @@ fn plan_rejects_cross_engine_and_graph_changes_with_typed_reasons() -> Result<()
     first.set_cell_formula("Sheet1", 1, 1, create_cell_ref_ast(None, 1, 3))?;
     let error = first.evaluate_recalc_plan(&plan).unwrap_err();
     assert!(matches!(
-        error.extra,
+        error.extra(),
         formualizer_common::ExcelErrorExtra::PlanStale {
             reason: formualizer_common::PlanStaleReason::Graph
         }
@@ -164,9 +164,9 @@ fn plan_stale_reason_matrix_and_precedence_are_deterministic() -> Result<(), Exc
         plan.force_stale_reasons_for_test(&[reason]);
         let error = engine.evaluate_recalc_plan(&plan).unwrap_err();
         assert!(matches!(
-            error.extra,
+            error.extra(),
             formualizer_common::ExcelErrorExtra::PlanStale { reason: actual }
-                if actual == reason
+                if *actual == reason
         ));
     }
 
@@ -175,7 +175,7 @@ fn plan_stale_reason_matrix_and_precedence_are_deterministic() -> Result<(), Exc
     plan.force_stale_reasons_for_test(&reasons.iter().copied().rev().collect::<Vec<_>>());
     let error = engine.evaluate_recalc_plan(&plan).unwrap_err();
     assert!(matches!(
-        error.extra,
+        error.extra(),
         formualizer_common::ExcelErrorExtra::PlanStale {
             reason: PlanStaleReason::Provider
         }
@@ -198,7 +198,7 @@ fn source_versions_do_not_stale_plans_but_source_bindings_do() -> Result<(), Exc
     engine.define_source_scalar("Other", Some(1))?;
     let error = engine.evaluate_recalc_plan(&plan).unwrap_err();
     assert!(matches!(
-        error.extra,
+        error.extra(),
         formualizer_common::ExcelErrorExtra::PlanStale {
             reason: PlanStaleReason::Symbols
         }
@@ -340,8 +340,8 @@ fn cancelled_or_expired_plan_acknowledges_nothing_and_retry_converges() -> Resul
         )
         .unwrap_err();
     assert!(matches!(
-        error.extra,
-        formualizer_common::ExcelErrorExtra::Resource { ref detail }
+        error.extra(),
+        formualizer_common::ExcelErrorExtra::Resource { detail }
             if detail.reason == formualizer_common::ResourceExhaustionReason::Deadline
     ));
     assert_eq!(engine.baseline_stats().dirty_vertex_count, dirty_before);

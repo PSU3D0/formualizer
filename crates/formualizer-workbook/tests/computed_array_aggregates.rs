@@ -61,6 +61,6 @@ fn workbook_computed_array_aggregates_preserve_reference_errors_and_mode_parity(
             panic!("expected an error value at B{row}");
         };
         assert_eq!(error.kind, kind, "error kind at B{row}");
-        assert_eq!(error.message, None, "error message at B{row}");
+        assert_eq!(error.message(), None, "error message at B{row}");
     }
 }

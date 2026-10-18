@@ -182,7 +182,7 @@ fn apply_reproducibility_options(
         mode.validate().map_err(|e| {
             utils::js_error(format!(
                 "`deterministicTimezone`: {}",
-                e.message.unwrap_or_default()
+                e.message().unwrap_or_default()
             ))
         })?;
         config.deterministic_mode = mode;

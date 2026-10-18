@@ -355,8 +355,7 @@ fn spill_feeding_back_into_its_anchor_terminates() {
             // resource error rather than iterating until stable.
             let err = res.expect_err("spill cycle cannot converge");
             assert!(
-                err.message
-                    .as_deref()
+                err.message()
                     .is_some_and(|m| m.contains("did not converge")),
                 "parallel={parallel} {entry:?}: {err:?}"
             );

@@ -389,12 +389,12 @@ impl fmt::Display for ExcelError {
         write!(f, "{}", self.kind)?;
 
         // Optional human message.
-        if let Some(ref msg) = self.message {
+        if let Some(msg) = self.message() {
             write!(f, ": {msg}")?;
         }
 
         // Optional row/col context.
-        if let Some(ref ctx) = self.context {
+        if let Some(ctx) = self.context() {
             if let (Some(r), Some(c)) = (ctx.row, ctx.col) {
                 write!(f, " (row {r}, col {c})")?;
             }
@@ -412,7 +412,7 @@ impl fmt::Display for ExcelError {
         }
 
         // Optional kind-specific payload - keep it terse for logs.
-        match &self.extra {
+        match self.extra() {
             ExcelErrorExtra::None => {}
             ExcelErrorExtra::Spill {
                 expected_rows,
@@ -486,7 +486,7 @@ mod tests {
         assert_eq!(ExcelErrorKind::parse("#BOGUS!"), ExcelErrorKind::Error);
         let err = ExcelError::from_error_string("#BOGUS!");
         assert_eq!(err.kind, ExcelErrorKind::Error);
-        assert!(err.message.unwrap_or_default().contains("#BOGUS!"));
+        assert!(err.message().unwrap_or_default().contains("#BOGUS!"));
     }
 
     #[test]

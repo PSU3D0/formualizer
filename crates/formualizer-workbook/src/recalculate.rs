@@ -99,7 +99,7 @@ impl RecalculateSummary {
         };
         self.errors += 1;
         stats.errors += 1;
-        let message = error.message.as_deref().filter(|m| !m.is_empty());
+        let message = error.message().filter(|m| !m.is_empty());
         if let Some(name) = message.and_then(unknown_function) {
             *self.unknown_functions.entry(name.to_owned()).or_default() += 1;
         }
