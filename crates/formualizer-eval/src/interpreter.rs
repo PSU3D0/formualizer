@@ -1130,12 +1130,15 @@ impl<'a> Interpreter<'a> {
                     && matches!(ref_type, CompactRefType::Range { .. })
                     && let (Some(resolver), Some(cell)) = (self.arena_cells, self.current_cell)
                 {
-                    let view = resolver.resolve_arena_range(
-                        ref_type,
-                        cell.sheet_id,
-                        self.reference_row_delta,
-                        self.reference_col_delta,
-                    )?;
+                    let view = resolver
+                        .resolve_arena_range(
+                            ref_type,
+                            cell.sheet_id,
+                            self.reference_row_delta,
+                            self.reference_col_delta,
+                        )?
+                        .with_cancel_token(self.context.cancellation_token())
+                        .with_cell_budget(self.context.materialized_array_cells());
                     return Ok(crate::traits::CalcValue::Range(view));
                 }
                 if self.local_env.is_empty()
