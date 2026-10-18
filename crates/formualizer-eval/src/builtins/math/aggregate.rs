@@ -11,6 +11,35 @@ use arrow_array::Array;
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_macros::func_caps;
 
+/// Add one row chunk in reading order, retaining the caller's accumulator.
+/// Null selection adds +0 (the accumulator starts at +0 and cannot become -0).
+pub(crate) fn add_number_columns(
+    total: &mut f64,
+    columns: &[std::sync::Arc<arrow_array::Float64Array>],
+) {
+    if let [column] = columns {
+        if column.null_count() == 0 {
+            for &value in column.values() {
+                *total += value;
+            }
+        } else {
+            for value in column.iter() {
+                *total += value.unwrap_or(0.0);
+            }
+        }
+    } else if let Some(first) = columns.first() {
+        for row in 0..first.len() {
+            for column in columns {
+                *total += if column.is_valid(row) {
+                    column.value(row)
+                } else {
+                    0.0
+                };
+            }
+        }
+    }
+}
+
 /* ─────────────────────────── SUM() ──────────────────────────── */
 
 #[derive(Debug)]
@@ -118,10 +147,7 @@ impl Function for SumFn {
 
                     for res in view.numbers_slices() {
                         let (_, _, num_cols) = res?;
-                        for col in num_cols {
-                            total += arrow::compute::kernels::aggregate::sum(col.as_ref())
-                                .unwrap_or(0.0);
-                        }
+                        add_number_columns(&mut total, &num_cols);
                     }
                 }
                 AggregateArgument::ReferenceError(e) => {
@@ -369,9 +395,8 @@ impl Function for AverageFn {
 
                     for res in view.numbers_slices() {
                         let (_, _, num_cols) = res?;
+                        add_number_columns(&mut sum, &num_cols);
                         for col in num_cols {
-                            sum += arrow::compute::kernels::aggregate::sum(col.as_ref())
-                                .unwrap_or(0.0);
                             cnt += (col.len() - col.null_count()) as i64;
                         }
                     }
@@ -867,6 +892,33 @@ mod computed_array_tests {
         wb.interpreter()
             .evaluate_ast(&formualizer_parse::parser::parse(formula).unwrap())
             .map(CalcValue::into_literal)
+    }
+
+    #[test]
+    fn sequential_sum_regressions() {
+        let wb = workbook()
+            .with_cell_a1("Sheet1", "D1", LiteralValue::Number(1e16))
+            .with_cell_a1("Sheet1", "E1", LiteralValue::Number(1.0))
+            .with_cell_a1("Sheet1", "D2", LiteralValue::Number(-1e16))
+            .with_cell_a1("Sheet1", "E2", LiteralValue::Number(1.0));
+        for (formula, expected) in [
+            ("=SUM({10000000000000000;1;-10000000000000000;1})", 1.0),
+            ("=SUM(D1:E2)", 1.0),
+            ("=SUM(D1,E1:E2,D2)", 0.0),
+            ("=SUM(D1,D2:E2)", 1.0),
+            ("=SUM(D1,E1:E3,D2)", 0.0),
+            ("=AVERAGE(D1:E2)", 0.25),
+            ("=SUMIF(D1:E2,\"<>\")", 1.0),
+            ("=SUMIFS(D1:E2,D1:E2,\"<>\")", 1.0),
+            ("=AVERAGEIF(D1:E2,\"<>\")", 0.25),
+            ("=AVERAGEIFS(D1:E2,D1:E2,\"<>\")", 0.25),
+        ] {
+            assert_eq!(
+                evaluate(&wb, formula).unwrap(),
+                LiteralValue::Number(expected),
+                "{formula}"
+            );
+        }
     }
 
     #[test]
