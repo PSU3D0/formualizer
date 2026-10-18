@@ -148,6 +148,17 @@ pub(crate) struct InterpreterParameterBindings<'a> {
 pub(crate) type InvariantValues =
     FxHashMap<AstNodeId, (LiteralValue, Option<crate::format::FormatId>)>;
 
+/// Internal fast path; recording contexts deliberately retain their read hooks.
+pub(crate) trait ArenaCellResolver {
+    fn resolve_arena_cell(
+        &self,
+        sheet: Option<SheetKey>,
+        current: crate::SheetId,
+        row: u32,
+        col: u32,
+    ) -> Result<(LiteralValue, Option<crate::format::FormatId>), ExcelError>;
+}
+
 type ResolvedCallable = (
     Option<std::sync::Arc<dyn crate::function::Function>>,
     Option<crate::function::FnCaps>,
@@ -298,6 +309,7 @@ impl std::ops::Deref for ResolvedFunction<'_> {
 pub struct Interpreter<'a> {
     pub context: &'a dyn EvaluationContext,
     resolved_functions: Option<&'a ResolvedFunctions>,
+    arena_cells: Option<&'a dyn ArenaCellResolver>,
     current_sheet: &'a str,
     current_cell: Option<crate::CellRef>,
     local_env: LocalEnv,
@@ -312,6 +324,7 @@ impl<'a> Interpreter<'a> {
         Self {
             context,
             resolved_functions: None,
+            arena_cells: None,
             current_sheet,
             current_cell: None,
             local_env: LocalEnv::default(),
@@ -330,6 +343,7 @@ impl<'a> Interpreter<'a> {
         Self {
             context,
             resolved_functions: None,
+            arena_cells: None,
             current_sheet,
             current_cell: Some(cell),
             local_env: LocalEnv::default(),
@@ -338,6 +352,11 @@ impl<'a> Interpreter<'a> {
             disable_ast_planner: false,
             parameter_bindings: None,
         }
+    }
+
+    pub(crate) fn with_arena_cells(mut self, resolver: &'a dyn ArenaCellResolver) -> Self {
+        self.arena_cells = Some(resolver);
+        self
     }
 
     pub(crate) fn with_resolved_functions(mut self, table: &'a ResolvedFunctions) -> Self {
@@ -426,6 +445,7 @@ impl<'a> Interpreter<'a> {
         Self {
             context: self.context,
             resolved_functions: self.resolved_functions,
+            arena_cells: self.arena_cells,
             current_sheet: self.current_sheet,
             current_cell: Some(cell),
             local_env: self.local_env.clone(),
@@ -440,6 +460,7 @@ impl<'a> Interpreter<'a> {
         Self {
             context: self.context,
             resolved_functions: self.resolved_functions,
+            arena_cells: self.arena_cells,
             current_sheet: self.current_sheet,
             current_cell: self.current_cell,
             local_env: env,
@@ -457,6 +478,7 @@ impl<'a> Interpreter<'a> {
         Self {
             context: self.context,
             resolved_functions: self.resolved_functions,
+            arena_cells: self.arena_cells,
             current_sheet: self.current_sheet,
             current_cell: self.current_cell,
             local_env: self.local_env.clone(),
@@ -794,6 +816,7 @@ impl<'a> Interpreter<'a> {
         let offset = Self {
             context: self.context,
             resolved_functions: self.resolved_functions,
+            arena_cells: self.arena_cells,
             current_sheet: self.current_sheet,
             current_cell: self.current_cell,
             local_env: self.local_env.clone(),
@@ -845,6 +868,7 @@ impl<'a> Interpreter<'a> {
         let offset = Self {
             context: self.context,
             resolved_functions: self.resolved_functions,
+            arena_cells: self.arena_cells,
             current_sheet: self.current_sheet,
             current_cell: self.current_cell,
             local_env: self.local_env.clone(),
@@ -1058,6 +1082,11 @@ impl<'a> Interpreter<'a> {
                 {
                     let row = shift_axis_for_offset(*row, self.reference_row_delta, *row_abs)?;
                     let col = shift_axis_for_offset(*col, self.reference_col_delta, *col_abs)?;
+                    if let (Some(resolver), Some(cell)) = (self.arena_cells, self.current_cell) {
+                        let (value, format) =
+                            resolver.resolve_arena_cell(*sheet, cell.sheet_id, row, col)?;
+                        return Ok(Self::annotated(value, format));
+                    }
                     let sheet_name = match sheet {
                         Some(SheetKey::Id(id)) => Some(sheet_registry.name(*id)),
                         Some(SheetKey::Name(name_id)) => {
