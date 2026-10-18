@@ -1,5 +1,6 @@
 use super::*;
 use crate::test_workbook::TestWorkbook;
+use formualizer_common::DateSystem;
 
 fn engine() -> Engine<TestWorkbook> {
     let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
@@ -87,6 +88,20 @@ fn scalar_spill_clear_and_pending_commits_match_unbuffered() {
                     direct.graph.spill_registry_counts(),
                     buffered.graph.spill_registry_counts()
                 );
+                for row0 in 0..3 {
+                    let entry = |engine: &Engine<TestWorkbook>| {
+                        let sheet = engine
+                            .arrow_sheet_by_id(engine.graph.sheet_id("S").unwrap())
+                            .unwrap();
+                        let chunk = sheet.columns.first().unwrap().chunk(0).unwrap();
+                        format!(
+                            "{:?}/{:?}",
+                            chunk.computed_overlay.get_scalar(row0),
+                            chunk.computed_overlay.get_format(row0)
+                        )
+                    };
+                    assert_eq!(entry(&direct), entry(&buffered));
+                }
                 for row in 1..=3 {
                     assert_eq!(
                         direct.read_cell_value("S", row, 1),
@@ -113,5 +128,44 @@ fn scalar_spill_clear_and_pending_commits_match_unbuffered() {
             }
             assert!(buffered.blocked_pending_spills.is_empty());
         }
+    }
+}
+
+#[test]
+fn buffered_dates_use_sheet_date_system_and_preserve_format() {
+    for date_system in [DateSystem::Excel1900, DateSystem::Excel1904] {
+        let mut direct = engine();
+        let mut buffered = engine();
+        let cell = direct.graph.make_cell_ref("S", 1, 1);
+        let vertex = direct.graph.get_vertex_id_for_address(&cell).unwrap();
+        let format = Some(crate::format::FormatId(14));
+        for engine in [&mut direct, &mut buffered] {
+            engine.ensure_arrow_sheet("S");
+            engine
+                .arrow_sheet_by_id_mut(cell.sheet_id)
+                .unwrap()
+                .date_system = date_system;
+            engine.derived_formats.set(cell, format);
+        }
+        let value = LiteralValue::Date(chrono::NaiveDate::from_ymd_opt(2020, 1, 2).unwrap());
+        direct
+            .record_vertex_value_to_overlay(vertex, &value, None)
+            .unwrap();
+        let mut buffer = ComputedWriteBuffer::default();
+        buffered
+            .record_vertex_value_to_overlay(vertex, &value, Some(&mut buffer))
+            .unwrap();
+        buffered.flush_computed_write_buffer(&mut buffer).unwrap();
+        let entry = |engine: &Engine<TestWorkbook>| {
+            let sheet = engine.arrow_sheet_by_id(cell.sheet_id).unwrap();
+            let chunk = sheet.columns.first().unwrap().chunk(0).unwrap();
+            assert_eq!(chunk.computed_overlay.get_format(0), format);
+            format!("{:?}", chunk.computed_overlay.get_scalar(0))
+        };
+        assert_eq!(entry(&direct), entry(&buffered));
+        assert_eq!(
+            direct.read_cell_value("S", 1, 1),
+            buffered.read_cell_value("S", 1, 1)
+        );
     }
 }

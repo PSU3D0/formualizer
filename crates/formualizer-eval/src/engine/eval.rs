@@ -20627,7 +20627,6 @@ where
 mod authority_schedule_execution;
 
 #[cfg(test)]
-#[expect(clippy::unwrap_used, reason = "test setup and assertions")]
 #[path = "tests/scalar_commit.rs"]
 mod scalar_commit_tests;
 
