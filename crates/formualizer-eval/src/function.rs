@@ -333,10 +333,6 @@ pub trait Function: Send + Sync + 'static {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test formulas and evaluation must succeed"
-)]
 mod argument_preparation_tests {
     use super::*;
     use crate::{test_workbook::TestWorkbook, traits::CalcValue};
@@ -362,16 +358,16 @@ mod argument_preparation_tests {
     }
 
     #[test]
-    fn nested_validation_memo_is_linear() {
+    fn nested_validation_memo_is_linear() -> Result<(), Box<dyn std::error::Error>> {
         crate::builtins::load_builtins();
         let calls = Arc::new(AtomicUsize::new(0));
         let wb = TestWorkbook::new().with_function(Arc::new(Count(Arc::clone(&calls))));
         let interp = wb.interpreter();
         let formula = format!("={}ARGCOUNT(){}", "ABS(".repeat(12), ")".repeat(12));
-        let ast = formualizer_parse::parser::parse(&formula).expect("valid nested formula");
+        let ast = formualizer_parse::parser::parse(&formula)?;
         for expected in 1..=2 {
             assert_eq!(
-                interp.evaluate_ast(&ast).expect("evaluates").into_literal(),
+                interp.evaluate_ast(&ast)?.into_literal(),
                 LiteralValue::Number(7.0)
             );
             assert_eq!(
@@ -380,10 +376,12 @@ mod argument_preparation_tests {
                 "one leaf evaluation per recalc, not 2^depth"
             );
         }
+        Ok(())
     }
 
     #[test]
-    fn lazy_omitted_and_validation_errors_are_preserved() {
+    fn lazy_omitted_and_validation_errors_are_preserved() -> Result<(), Box<dyn std::error::Error>>
+    {
         crate::builtins::load_builtins();
         let calls = Arc::new(AtomicUsize::new(0));
         let wb = TestWorkbook::new().with_function(Arc::new(Count(Arc::clone(&calls))));
@@ -400,9 +398,9 @@ mod argument_preparation_tests {
             ("=IF(TRUE,,ARGCOUNT())", LiteralValue::Number(0.0)),
             ("=CHOOSE(2,ARGCOUNT(),)", LiteralValue::Number(0.0)),
         ] {
-            let ast = formualizer_parse::parser::parse(formula).expect("valid formula");
+            let ast = formualizer_parse::parser::parse(formula)?;
             assert_eq!(
-                interp.evaluate_ast(&ast).expect("evaluates").into_literal(),
+                interp.evaluate_ast(&ast)?.into_literal(),
                 expected,
                 "{formula}"
             );
@@ -418,11 +416,8 @@ mod argument_preparation_tests {
             ("=ROUND(NA())", ExcelErrorKind::Value),
             ("=ABS(\"not a number\")", ExcelErrorKind::Value),
         ] {
-            let ast = formualizer_parse::parser::parse(formula).expect("valid error formula");
-            let result = interp
-                .evaluate_ast(&ast)
-                .expect("error is a value")
-                .into_literal();
+            let ast = formualizer_parse::parser::parse(formula)?;
+            let result = interp.evaluate_ast(&ast)?.into_literal();
             assert!(
                 matches!(result, LiteralValue::Error(ref e) if e.kind == kind),
                 "{formula}: {result:?}"
@@ -433,5 +428,6 @@ mod argument_preparation_tests {
             0,
             "validation stops at the first error"
         );
+        Ok(())
     }
 }
