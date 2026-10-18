@@ -529,12 +529,12 @@ pub fn formualizer_common::ErrorContext::serialize<__S>(&self, __S) -> core::res
 impl<'de> serde_core::de::Deserialize<'de> for formualizer_common::ErrorContext
 pub fn formualizer_common::ErrorContext::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
 pub struct formualizer_common::error::ExcelError
-pub formualizer_common::error::ExcelError::context: core::option::Option<formualizer_common::ErrorContext>
-pub formualizer_common::error::ExcelError::extra: formualizer_common::ExcelErrorExtra
 pub formualizer_common::error::ExcelError::kind: formualizer_common::ExcelErrorKind
-pub formualizer_common::error::ExcelError::message: core::option::Option<alloc::string::String>
 impl formualizer_common::ExcelError
+pub fn formualizer_common::ExcelError::context(&self) -> core::option::Option<&formualizer_common::ErrorContext>
+pub fn formualizer_common::ExcelError::extra(&self) -> &formualizer_common::ExcelErrorExtra
 pub fn formualizer_common::ExcelError::from_error_string(&str) -> Self
+pub fn formualizer_common::ExcelError::message(&self) -> core::option::Option<&str>
 pub fn formualizer_common::ExcelError::new(formualizer_common::ExcelErrorKind) -> Self
 pub fn formualizer_common::ExcelError::new_circ() -> Self
 pub fn formualizer_common::ExcelError::new_div() -> Self
@@ -543,6 +543,9 @@ pub fn formualizer_common::ExcelError::new_name() -> Self
 pub fn formualizer_common::ExcelError::new_num() -> Self
 pub fn formualizer_common::ExcelError::new_ref() -> Self
 pub fn formualizer_common::ExcelError::new_value() -> Self
+pub fn formualizer_common::ExcelError::set_context(&mut self, core::option::Option<formualizer_common::ErrorContext>)
+pub fn formualizer_common::ExcelError::set_extra(&mut self, formualizer_common::ExcelErrorExtra)
+pub fn formualizer_common::ExcelError::set_message(&mut self, core::option::Option<alloc::string::String>)
 pub fn formualizer_common::ExcelError::with_extra(self, formualizer_common::ExcelErrorExtra) -> Self
 pub fn formualizer_common::ExcelError::with_location(self, u32, u32) -> Self
 pub fn formualizer_common::ExcelError::with_message<S: core::convert::Into<alloc::string::String>>(self, S) -> Self
@@ -568,12 +571,12 @@ pub fn formualizer_common::ExcelError::fmt(&self, &mut core::fmt::Formatter<'_>)
 impl core::fmt::Display for formualizer_common::ExcelError
 pub fn formualizer_common::ExcelError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::hash::Hash for formualizer_common::ExcelError
-pub fn formualizer_common::ExcelError::hash<__H: core::hash::Hasher>(&self, &mut __H)
+pub fn formualizer_common::ExcelError::hash<H: core::hash::Hasher>(&self, &mut H)
 impl core::marker::StructuralPartialEq for formualizer_common::ExcelError
 impl serde_core::ser::Serialize for formualizer_common::ExcelError
-pub fn formualizer_common::ExcelError::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+pub fn formualizer_common::ExcelError::serialize<S: serde_core::ser::Serializer>(&self, S) -> core::result::Result<<S as serde_core::ser::Serializer>::Ok, <S as serde_core::ser::Serializer>::Error>
 impl<'de> serde_core::de::Deserialize<'de> for formualizer_common::ExcelError
-pub fn formualizer_common::ExcelError::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub fn formualizer_common::ExcelError::deserialize<D: serde_core::de::Deserializer<'de>>(D) -> core::result::Result<Self, <D as serde_core::de::Deserializer>::Error>
 pub struct formualizer_common::error::ResourceExhaustionDetail
 pub formualizer_common::error::ResourceExhaustionDetail::limit: u64
 pub formualizer_common::error::ResourceExhaustionDetail::observed: u64
@@ -1359,12 +1362,12 @@ pub fn formualizer_common::ExcelDateParts::fmt(&self, &mut core::fmt::Formatter<
 impl core::marker::Copy for formualizer_common::ExcelDateParts
 impl core::marker::StructuralPartialEq for formualizer_common::ExcelDateParts
 pub struct formualizer_common::ExcelError
-pub formualizer_common::ExcelError::context: core::option::Option<formualizer_common::ErrorContext>
-pub formualizer_common::ExcelError::extra: formualizer_common::ExcelErrorExtra
 pub formualizer_common::ExcelError::kind: formualizer_common::ExcelErrorKind
-pub formualizer_common::ExcelError::message: core::option::Option<alloc::string::String>
 impl formualizer_common::ExcelError
+pub fn formualizer_common::ExcelError::context(&self) -> core::option::Option<&formualizer_common::ErrorContext>
+pub fn formualizer_common::ExcelError::extra(&self) -> &formualizer_common::ExcelErrorExtra
 pub fn formualizer_common::ExcelError::from_error_string(&str) -> Self
+pub fn formualizer_common::ExcelError::message(&self) -> core::option::Option<&str>
 pub fn formualizer_common::ExcelError::new(formualizer_common::ExcelErrorKind) -> Self
 pub fn formualizer_common::ExcelError::new_circ() -> Self
 pub fn formualizer_common::ExcelError::new_div() -> Self
@@ -1373,6 +1376,9 @@ pub fn formualizer_common::ExcelError::new_name() -> Self
 pub fn formualizer_common::ExcelError::new_num() -> Self
 pub fn formualizer_common::ExcelError::new_ref() -> Self
 pub fn formualizer_common::ExcelError::new_value() -> Self
+pub fn formualizer_common::ExcelError::set_context(&mut self, core::option::Option<formualizer_common::ErrorContext>)
+pub fn formualizer_common::ExcelError::set_extra(&mut self, formualizer_common::ExcelErrorExtra)
+pub fn formualizer_common::ExcelError::set_message(&mut self, core::option::Option<alloc::string::String>)
 pub fn formualizer_common::ExcelError::with_extra(self, formualizer_common::ExcelErrorExtra) -> Self
 pub fn formualizer_common::ExcelError::with_location(self, u32, u32) -> Self
 pub fn formualizer_common::ExcelError::with_message<S: core::convert::Into<alloc::string::String>>(self, S) -> Self
@@ -1398,12 +1404,12 @@ pub fn formualizer_common::ExcelError::fmt(&self, &mut core::fmt::Formatter<'_>)
 impl core::fmt::Display for formualizer_common::ExcelError
 pub fn formualizer_common::ExcelError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::hash::Hash for formualizer_common::ExcelError
-pub fn formualizer_common::ExcelError::hash<__H: core::hash::Hasher>(&self, &mut __H)
+pub fn formualizer_common::ExcelError::hash<H: core::hash::Hasher>(&self, &mut H)
 impl core::marker::StructuralPartialEq for formualizer_common::ExcelError
 impl serde_core::ser::Serialize for formualizer_common::ExcelError
-pub fn formualizer_common::ExcelError::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+pub fn formualizer_common::ExcelError::serialize<S: serde_core::ser::Serializer>(&self, S) -> core::result::Result<<S as serde_core::ser::Serializer>::Ok, <S as serde_core::ser::Serializer>::Error>
 impl<'de> serde_core::de::Deserialize<'de> for formualizer_common::ExcelError
-pub fn formualizer_common::ExcelError::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub fn formualizer_common::ExcelError::deserialize<D: serde_core::de::Deserializer<'de>>(D) -> core::result::Result<Self, <D as serde_core::de::Deserializer>::Error>
 pub struct formualizer_common::NumberFormat
 impl formualizer_common::NumberFormat
 pub fn formualizer_common::NumberFormat::builtin(u16) -> core::option::Option<&'static formualizer_common::NumberFormat>
