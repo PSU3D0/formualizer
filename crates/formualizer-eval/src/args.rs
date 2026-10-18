@@ -98,6 +98,10 @@ pub struct PreparedArgs<'a> {
     pub items: Vec<PreparedArg<'a>>,
 }
 
+pub(crate) struct InlinePreparedArgs<'a> {
+    pub items: SmallVec<[PreparedArg<'a>; 4]>,
+}
+
 #[derive(Default)]
 pub struct ValidationOptions {
     pub warn_only: bool,
@@ -260,11 +264,25 @@ pub fn validate_and_prepare<'a, 'b>(
     schema: &[ArgSchema],
     options: ValidationOptions,
 ) -> Result<PreparedArgs<'a>, ExcelError> {
+    validate_and_prepare_inline(args, schema, options).map(|prepared| PreparedArgs {
+        items: prepared.items.into_vec(),
+    })
+}
+
+/// Dispatch keeps up to four prepared arguments on the stack. The public
+/// adapter retains its Vec-based API for consumers that need the prepared data.
+pub(crate) fn validate_and_prepare_inline<'a, 'b>(
+    args: &'a [ArgumentHandle<'a, 'b>],
+    schema: &[ArgSchema],
+    options: ValidationOptions,
+) -> Result<InlinePreparedArgs<'a>, ExcelError> {
     // Minimum arity — reject too-few arguments before per-arg validation so
     // that individual `eval` implementations cannot panic on indexing.
     if options.min_args > 0 && args.len() < options.min_args {
         if options.warn_only {
-            return Ok(PreparedArgs { items: Vec::new() });
+            return Ok(InlinePreparedArgs {
+                items: SmallVec::new(),
+            });
         }
         return Err(ExcelError::new(ExcelErrorKind::Value).with_message(format!(
             "Too few arguments: expected at least {}, got {}",
@@ -275,10 +293,12 @@ pub fn validate_and_prepare<'a, 'b>(
 
     // Arity: simple rule – if schema.len() == 1, allow variadic repetition; else match up to schema.len()
     if schema.is_empty() {
-        return Ok(PreparedArgs { items: Vec::new() });
+        return Ok(InlinePreparedArgs {
+            items: SmallVec::new(),
+        });
     }
 
-    let mut items: Vec<PreparedArg<'a>> = Vec::with_capacity(args.len());
+    let mut items: SmallVec<[PreparedArg<'a>; 4]> = SmallVec::with_capacity(args.len());
     for (idx, arg) in args.iter().enumerate() {
         let spec = if schema.len() == 1 {
             &schema[0]
@@ -434,5 +454,5 @@ pub fn validate_and_prepare<'a, 'b>(
         }
     }
 
-    Ok(PreparedArgs { items })
+    Ok(InlinePreparedArgs { items })
 }
