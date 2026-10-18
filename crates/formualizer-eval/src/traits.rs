@@ -933,8 +933,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                 ASTNodeType::Function { name, .. }
                     if self
                         .interp
-                        .context
-                        .function_capabilities("", name)
+                        .ast_function_capabilities(name)
                         .is_some_and(|caps| {
                             caps.contains(crate::function::FnCaps::RETURNS_REFERENCE)
                         }) =>
@@ -989,11 +988,9 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                         ))
                     }
                     crate::engine::arena::AstNodeData::Function { name_id, .. } => {
-                        let name = data_store.resolve_ast_string(*name_id);
                         if self
                             .interp
-                            .context
-                            .function_capabilities("", name)
+                            .arena_function_capabilities(*name_id, data_store)
                             .is_some_and(|caps| {
                                 caps.contains(crate::function::FnCaps::RETURNS_REFERENCE)
                             })
