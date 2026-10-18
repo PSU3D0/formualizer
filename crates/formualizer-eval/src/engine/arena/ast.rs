@@ -200,11 +200,8 @@ pub enum CompactRefType {
     },
 }
 
-/// Arena entry containing structural node data plus canonical metadata.
-///
-/// Phase 1 keeps metadata at its default value for existing raw interning
-/// paths. Future canonical interning paths populate `meta` via the arena
-/// canonicalization helpers.
+/// Hot arena entry. Reference payloads and optional canonical metadata live
+/// in side tables, while subtotal call bits remain local to the node.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct AstNodeEntry {
     pub(crate) data: AstNodeData<RefId>,
@@ -1105,8 +1102,8 @@ mod tests {
     #[test]
     fn arena_entry_layout_without_inline_metadata() {
         assert_eq!(std::mem::size_of::<AstNodeData>(), 52);
-        assert_eq!(std::mem::size_of::<AstNodeData<RefId>>(), 16);
-        assert_eq!(std::mem::size_of::<AstNodeEntry>(), 20);
+        assert_eq!(std::mem::size_of::<AstNodeData<RefId>>(), 12);
+        assert_eq!(std::mem::size_of::<AstNodeEntry>(), 16);
     }
 
     #[test]

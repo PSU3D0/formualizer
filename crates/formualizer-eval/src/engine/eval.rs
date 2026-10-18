@@ -18287,17 +18287,17 @@ impl<R: EvaluationContext> crate::interpreter::ArenaCellResolver for Engine<R> {
         if self.graph.sheet_reg().name(sheet_id).is_empty() {
             return Err(ExcelError::new(ExcelErrorKind::Ref));
         }
-        let axis = |value, delta, absolute| {
-            if value == 0 {
+        let axis = |value, sentinel, delta, absolute| {
+            if value == sentinel {
                 Ok(None)
             } else {
                 crate::interpreter::shift_axis_for_offset(value, delta, absolute).map(Some)
             }
         };
-        let sr = axis(*start_row, row_delta, *start_row_abs)?;
-        let sc = axis(*start_col, col_delta, *start_col_abs)?;
-        let er = axis(*end_row, row_delta, *end_row_abs)?;
-        let ec = axis(*end_col, col_delta, *end_col_abs)?;
+        let sr = axis(*start_row, 0, row_delta, *start_row_abs)?;
+        let sc = axis(*start_col, 0, col_delta, *start_col_abs)?;
+        let er = axis(*end_row, u32::MAX, row_delta, *end_row_abs)?;
+        let ec = axis(*end_col, u32::MAX, col_delta, *end_col_abs)?;
         if sr.zip(er).is_some_and(|(s, e)| s > e) || sc.zip(ec).is_some_and(|(s, e)| s > e) {
             return Err(ExcelError::new(ExcelErrorKind::Ref));
         }
