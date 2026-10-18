@@ -12479,22 +12479,14 @@ where
         {
             return;
         }
-        let sheet = self.graph.sheet_name(cell.sheet_id);
-        let index = match self
-            .arrow_sheets
-            .sheets
-            .iter()
-            .position(|s| s.name.as_ref() == sheet)
-        {
-            Some(index) => index,
-            None => {
-                let sheet = sheet.to_string();
-                self.ensure_arrow_sheet(&sheet);
-                self.arrow_sheets.sheets.len() - 1
-            }
-        };
+        if self.arrow_sheet_by_id(cell.sheet_id).is_none() {
+            let sheet = self.graph.sheet_name(cell.sheet_id).to_string();
+            self.ensure_arrow_sheet(&sheet);
+        }
         let (row0, col0) = (cell.coord.row() as usize, cell.coord.col() as usize);
-        let asheet = &mut self.arrow_sheets.sheets[index];
+        let Some(asheet) = self.arrow_sheet_by_id_mut(cell.sheet_id) else {
+            return;
+        };
         let ov = Self::literal_to_overlay_value(value, asheet.date_system);
         let cur_cols = asheet.columns.len();
         if col0 >= cur_cols {
@@ -13258,8 +13250,10 @@ where
             self.write_computed_cell_0based(cell, value, format_id);
             return Ok(());
         };
-        let sheet_name = self.graph.sheet_name(cell.sheet_id).to_string();
-        let date_system = self.arrow_sheet_date_system(&sheet_name);
+        let date_system = self
+            .arrow_sheet_by_id(cell.sheet_id)
+            .map(|sheet| sheet.date_system)
+            .unwrap_or(self.config.date_system);
         let ov = Self::literal_to_overlay_value(value, date_system);
         {
             let format_id = self.derived_formats.get(&cell);
@@ -20633,6 +20627,11 @@ where
 mod authority_schedule_execution;
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "test setup and assertions")]
+#[path = "tests/scalar_commit.rs"]
+mod scalar_commit_tests;
+
+#[cfg(test)]
 #[path = "tests/pending_spill.rs"]
 mod pending_spill_tests;
 
@@ -20645,6 +20644,9 @@ mod spill_batch_abort_192;
 // Compute → Plan → Apply separation for evaluation side-effects.
 
 use crate::engine::effects::Effect;
+
+// Scalar writes and spill clears stay inline; larger spill plans grow normally.
+type PlannedEffects = smallvec::SmallVec<[Effect; 2]>;
 use crate::engine::graph::editor::change_log::{ChangeEvent, ChangeLog, SpillSnapshot};
 
 impl<R> Engine<R>
@@ -20661,12 +20663,12 @@ where
         &mut self,
         vertex_id: VertexId,
         computed_value: LiteralValue,
-    ) -> Result<Vec<Effect>, ExcelError> {
+    ) -> Result<PlannedEffects, ExcelError> {
         // FR3: a stale dynamic reader publishes nothing; FR2: anything else
         // leaves the dirty set at its commit (design §8.2).
         if self.freshness_armed() {
             if self.freshness_drop_stale(vertex_id) {
-                return Ok(Vec::new());
+                return Ok(PlannedEffects::new());
             }
             let effects = self.plan_vertex_effects_unrecorded(vertex_id, computed_value)?;
             self.freshness_mark_committed(vertex_id);
@@ -20679,7 +20681,7 @@ where
         &mut self,
         vertex_id: VertexId,
         computed_value: LiteralValue,
-    ) -> Result<Vec<Effect>, ExcelError> {
+    ) -> Result<PlannedEffects, ExcelError> {
         let kind = self.graph.get_vertex_kind(vertex_id);
         let is_formula = matches!(kind, VertexKind::FormulaScalar | VertexKind::FormulaArray);
 
@@ -20691,10 +20693,10 @@ where
                 && let Some(owner) = self.graph.spill_registry_anchor_for_cell(cell)
                 && owner != vertex_id
             {
-                return Ok(Vec::new());
+                return Ok(PlannedEffects::new());
             }
             // Non-formula vertices: store value as-is (arrays remain arrays; no spill).
-            return Ok(vec![Effect::WriteCell {
+            return Ok(smallvec::smallvec![Effect::WriteCell {
                 vertex_id,
                 value: computed_value,
             }]);
@@ -20711,7 +20713,7 @@ where
         &mut self,
         vertex_id: VertexId,
         value: LiteralValue,
-    ) -> Result<Vec<Effect>, ExcelError> {
+    ) -> Result<PlannedEffects, ExcelError> {
         // Range admission substitutes the same cap error before allocating rows.
         // Preserve the owned-array rejection's kind, release and clear effects.
         if let LiteralValue::Error(error) = &value
@@ -20742,7 +20744,7 @@ where
             .spill_cells_for_anchor(vertex_id)
             .is_some_and(|c| !c.is_empty());
 
-        let mut effects = Vec::new();
+        let mut effects = PlannedEffects::new();
         if has_spill {
             effects.push(Effect::SpillClear {
                 anchor_vertex: vertex_id,
@@ -20757,7 +20759,7 @@ where
         &mut self,
         vertex_id: VertexId,
         rows: Vec<Vec<LiteralValue>>,
-    ) -> Result<Vec<Effect>, ExcelError> {
+    ) -> Result<PlannedEffects, ExcelError> {
         // Lightweight mutation needed for correct spill-blocking checks.
         self.graph.set_kind(vertex_id, VertexKind::FormulaArray);
 
@@ -20836,7 +20838,7 @@ where
         ) {
             Ok(()) => {
                 // Validate spill region is available.
-                let mut yield_effects = Vec::new();
+                let mut yield_effects = PlannedEffects::new();
                 if let Err((e, blocker)) = self
                     .graph
                     .plan_spill_region_with_blocker(vertex_id, &targets)
@@ -20979,11 +20981,11 @@ where
         message: &str,
         expected_rows: u32,
         expected_cols: u32,
-    ) -> Result<Vec<Effect>, ExcelError> {
+    ) -> Result<PlannedEffects, ExcelError> {
         self.spill_mgr.release_owner(vertex_id);
         let spill_val = Self::spill_error_value(message, expected_rows, expected_cols);
 
-        let effects = vec![
+        let effects = smallvec::smallvec![
             Effect::SpillClear {
                 anchor_vertex: vertex_id,
             },
@@ -21251,7 +21253,7 @@ where
         vertex_id: VertexId,
         computed_value: LiteralValue,
         computed_writes: &mut ComputedWriteBuffer,
-    ) -> Result<Vec<Effect>, ExcelError> {
+    ) -> Result<PlannedEffects, ExcelError> {
         if matches!(&computed_value, LiteralValue::Array(_)) {
             self.flush_computed_write_buffer(computed_writes)?;
         }

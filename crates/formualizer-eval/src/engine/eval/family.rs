@@ -959,8 +959,10 @@ where
         {
             return Ok(true);
         }
-        let sheet_name = self.graph.sheet_name(run.sheet).to_string();
-        let date_system = self.arrow_sheet_date_system(&sheet_name);
+        let date_system = self
+            .arrow_sheet_by_id(run.sheet)
+            .map(|sheet| sheet.date_system)
+            .unwrap_or(self.config.date_system);
         let overlay =
             |x: f64| Self::literal_to_overlay_value(&LiteralValue::Number(x), date_system);
         match computed_writes {
@@ -974,6 +976,7 @@ where
                 }
             }
             None => {
+                let sheet_name = self.graph.sheet_name(run.sheet).to_string();
                 for (i, &x) in values.iter().enumerate() {
                     let row = run.row0 + i as u32;
                     self.write_computed_overlay_value_0based(&sheet_name, row, run.col, overlay(x));
@@ -1018,8 +1021,10 @@ where
         {
             return Ok(true);
         }
-        let sheet_name = self.graph.sheet_name(run.sheet).to_string();
-        let date_system = self.arrow_sheet_date_system(&sheet_name);
+        let date_system = self
+            .arrow_sheet_by_id(run.sheet)
+            .map(|sheet| sheet.date_system)
+            .unwrap_or(self.config.date_system);
         match computed_writes {
             Some(buffer) => {
                 // One block write (the plan groups it per chunk segment, not
@@ -1045,6 +1050,7 @@ where
                 }
             }
             None => {
+                let sheet_name = self.graph.sheet_name(run.sheet).to_string();
                 // The format lane follows the values (as on the buffered path).
                 let formats: Vec<Option<crate::format::FormatId>> = (0..values.len() as u32)
                     .map(|i| {
