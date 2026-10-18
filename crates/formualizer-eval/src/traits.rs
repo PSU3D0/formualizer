@@ -193,6 +193,8 @@ impl<'a> CalcValue<'a> {
                 RANGE_MATERIALIZED_CELLS.with(|count| count.set(count.get() + rows * cols));
                 if rows == 1 && cols == 1 {
                     rv.get_cell(0, 0)
+                } else if let Some(error) = rv.materialization_error() {
+                    LiteralValue::Error(error)
                 } else {
                     let mut data = Vec::with_capacity(rows);
                     for row_idx in 0..rows {
@@ -1039,7 +1041,9 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
             .clone()
     }
 
+    /// Attaches the context's cancellation token and materialisation budget.
     pub(crate) fn with_context_cancel_token(&self, view: RangeView<'b>) -> RangeView<'b> {
+        let view = view.with_cell_budget(self.interp.context.materialized_array_cells());
         match self.interp.context.cancellation_token() {
             Some(token) => view.with_cancel_token(Some(token)),
             None => view,
@@ -1088,6 +1092,19 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
         }
     }
 
+    /// `#NUM!` when a `rows x cols` copy exceeds the context's materialisation
+    /// budget.
+    fn check_materialized_cells(&self, rows: usize, cols: usize) -> Result<(), ExcelError> {
+        match crate::engine::resource_ledger::materialized_cells_exceed(
+            rows,
+            cols,
+            self.interp.context.materialized_array_cells(),
+        ) {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    }
+
     pub fn range(&self) -> Result<Box<dyn Range>, ExcelError> {
         match &self.expr {
             ArgumentExpr::Ast(node) => match &node.node_type {
@@ -1099,6 +1116,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                         .context
                         .resolve_range_view(&reference, self.interp.current_sheet())?;
                     let (rows, cols) = view.dims();
+                    self.check_materialized_cells(rows, cols)?;
                     let mut out: Vec<Vec<LiteralValue>> = Vec::with_capacity(rows);
                     view.for_each_row(&mut |row| {
                         let row_data: Vec<LiteralValue> = (0..cols)
@@ -1116,6 +1134,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                         .context
                         .resolve_range_view(&reference, self.interp.current_sheet())?;
                     let (rows, cols) = view.dims();
+                    self.check_materialized_cells(rows, cols)?;
                     let mut out: Vec<Vec<LiteralValue>> = Vec::with_capacity(rows);
                     view.for_each_row(&mut |row| {
                         let row_data: Vec<LiteralValue> = (0..cols)
@@ -1155,6 +1174,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                             .context
                             .resolve_range_view(&reference, self.interp.current_sheet())?;
                         let (rows, cols) = view.dims();
+                        self.check_materialized_cells(rows, cols)?;
                         let mut out: Vec<Vec<LiteralValue>> = Vec::with_capacity(rows);
                         view.for_each_row(&mut |row| {
                             let row_data: Vec<LiteralValue> = (0..cols)
@@ -1921,6 +1941,13 @@ pub trait EvaluationContext: Resolver + FunctionProvider + SourceResolver {
         None
     }
 
+    /// Most cells a range or array value may have when it is materialised as
+    /// a dense array (`evaluation_budgets.scratch.materialized_array_cells`);
+    /// larger arrays evaluate to `#NUM!`. The default is 2^24 cells.
+    fn materialized_array_cells(&self) -> u64 {
+        crate::engine::resource_ledger::DEFAULT_MATERIALIZED_ARRAY_CELLS
+    }
+
     /// Resolve a reference into a `RangeView` with clear bounds.
     /// Implementations should resolve un/partially bounded references using used-region.
     fn resolve_range_view<'c>(
@@ -2243,6 +2270,13 @@ pub trait FunctionContext<'ctx> {
     fn cancellation_token(&self) -> Option<crate::engine::CancelToken>;
     fn chunk_hint(&self) -> Option<usize>;
 
+    /// Most cells a range or array value may have when it is materialised as
+    /// a dense array; larger arrays evaluate to `#NUM!`. See
+    /// [`EvaluationContext::materialized_array_cells`].
+    fn materialized_array_cells(&self) -> u64 {
+        crate::engine::resource_ledger::DEFAULT_MATERIALIZED_ARRAY_CELLS
+    }
+
     /// Current formula sheet name.
     fn current_sheet(&self) -> &str;
 
@@ -2423,6 +2457,9 @@ impl<'a> FunctionContext<'a> for DefaultFunctionContext<'a> {
     fn chunk_hint(&self) -> Option<usize> {
         self.base.chunk_hint()
     }
+    fn materialized_array_cells(&self) -> u64 {
+        self.base.materialized_array_cells()
+    }
 
     fn volatile_level(&self) -> VolatileLevel {
         self.base.volatile_level()
@@ -2442,7 +2479,9 @@ impl<'a> FunctionContext<'a> for DefaultFunctionContext<'a> {
         reference: &ReferenceType,
         current_sheet: &str,
     ) -> Result<RangeView<'a>, ExcelError> {
-        self.base.resolve_range_view(reference, current_sheet)
+        self.base
+            .resolve_range_view(reference, current_sheet)
+            .map(|view| view.with_cell_budget(self.base.materialized_array_cells()))
     }
 
     // Flats removed

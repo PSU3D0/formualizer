@@ -88,38 +88,45 @@ fn calc_from_literal<'b>(
  *   same values as `EvalConfig::default().max_sheet_rows/max_sheet_cols`).
  *   A generated array larger than a sheet can never spill successfully
  *   (`SpillBoundsPolicy::Strict`), so it is `#NUM!` unconditionally.
- * - Total cells: 2^24 (16,777,216). `LiteralValue` is ≥32 bytes, so this
- *   already bounds the transient allocation near ~0.5 GiB — three orders
- *   of magnitude above the engine's default spill cap
- *   (`SpillConfig::max_spill_cells` = 10,000) which would reject the
- *   result downstream anyway. Anything larger risks OOM before that
- *   downstream guard can run.
+ * - Total cells: the materialisation cell budget
+ *   (`evaluation_budgets.scratch.materialized_array_cells`, default 2^24 =
+ *   16,777,216). `LiteralValue` is ≥32 bytes, so the default bounds the
+ *   transient allocation near ~0.5 GiB — three orders of magnitude above
+ *   the engine's default spill cap (`SpillConfig::max_spill_cells` = 10,000)
+ *   which would reject the result downstream anyway. Anything larger risks
+ *   OOM before that downstream guard can run. The same budget bounds every
+ *   range or array copied into a dense array (`CalcValue::into_literal`,
+ *   array operators, functions that copy their input).
  *
- * This is a fixed per-array bound, not configured resource accounting: it
- * does not charge the evaluation ledger or observe `EvaluationBudgets`.
+ * This is a per-array bound, not resource accounting: it does not charge
+ * the evaluation ledger.
  */
 pub(crate) const GENERATED_ARRAY_MAX_ROWS: i64 = 1_048_576;
 pub(crate) const GENERATED_ARRAY_MAX_COLS: i64 = 16_384;
-pub(crate) const GENERATED_ARRAY_MAX_CELLS: i64 = 1 << 24;
+pub(crate) const GENERATED_ARRAY_MAX_CELLS: u64 =
+    crate::engine::resource_ledger::DEFAULT_MATERIALIZED_ARRAY_CELLS;
 
 /// Returns `Some(#NUM!)` when a `rows x cols` generated array exceeds the
-/// allocation guard; uses checked arithmetic so overflowing products fail
-/// closed. Callers have already rejected `rows <= 0 || cols <= 0`.
-pub(crate) fn generated_array_too_large(rows: i64, cols: i64) -> Option<ExcelError> {
+/// grid or the materialisation cell budget (`cells`, from
+/// `FunctionContext::materialized_array_cells`, default
+/// [`GENERATED_ARRAY_MAX_CELLS`]); the cell count is the shared check in
+/// `resource_ledger`. Callers have already rejected `rows <= 0 || cols <= 0`.
+pub(crate) fn generated_array_too_large(rows: i64, cols: i64, cells: u64) -> Option<ExcelError> {
     if rows > GENERATED_ARRAY_MAX_ROWS || cols > GENERATED_ARRAY_MAX_COLS {
         return Some(ExcelError::new(formualizer_common::ExcelErrorKind::Num));
     }
-    match rows.checked_mul(cols) {
-        Some(total) if total <= GENERATED_ARRAY_MAX_CELLS => None,
-        _ => Some(ExcelError::new(formualizer_common::ExcelErrorKind::Num)),
-    }
+    // 1 <= rows, cols within the grid here, so both fit usize.
+    crate::engine::resource_ledger::materialized_cells_exceed(rows as usize, cols as usize, cells)
 }
 
 /// [`generated_array_too_large`] for an already-computed output shape.
 /// Dimensions that do not fit `i64` fail closed.
-pub(crate) fn materialized_shape_too_large(shape: (usize, usize)) -> Option<ExcelError> {
+pub(crate) fn materialized_shape_too_large(
+    shape: (usize, usize),
+    cells: u64,
+) -> Option<ExcelError> {
     match (i64::try_from(shape.0), i64::try_from(shape.1)) {
-        (Ok(rows), Ok(cols)) => generated_array_too_large(rows, cols),
+        (Ok(rows), Ok(cols)) => generated_array_too_large(rows, cols, cells),
         _ => Some(ExcelError::new(formualizer_common::ExcelErrorKind::Num)),
     }
 }
@@ -217,6 +224,13 @@ where
     };
 
     if shape != (1, 1) {
+        if let Some(error) = crate::engine::resource_ledger::materialized_cells_exceed(
+            shape.0,
+            shape.1,
+            ctx.materialized_array_cells(),
+        ) {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(error)));
+        }
         let mut out: Vec<Vec<LiteralValue>> = Vec::with_capacity(shape.0);
         if let Ok(view) = args[0].range_view() {
             view.for_each_row(&mut |row| {
@@ -313,6 +327,13 @@ where
     let target = broadcast_shape(&[s0, s1])?;
 
     if target != (1, 1) {
+        if let Some(error) = crate::engine::resource_ledger::materialized_cells_exceed(
+            target.0,
+            target.1,
+            ctx.materialized_array_cells(),
+        ) {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(error)));
+        }
         let mut out: Vec<Vec<LiteralValue>> = Vec::with_capacity(target.0);
         for r in 0..target.0 {
             let mut out_row = Vec::with_capacity(target.1);

@@ -1972,13 +1972,15 @@ impl Function for EvenFn {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(0.0)));
         }
 
+        // In f64: exact for every integer below 2^53, and every f64 at or
+        // above 2^53 is already even, so no integer cast can saturate.
         let sign = number.signum();
-        let mut v = number.abs().ceil() as i64;
-        if v % 2 != 0 {
-            v += 1;
+        let mut v = number.abs().ceil();
+        if v % 2.0 != 0.0 {
+            v += 1.0;
         }
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
-            sign * v as f64,
+            sign * v,
         )))
     }
 }
@@ -2047,13 +2049,15 @@ impl Function for OddFn {
             other => coerce_num(&other)?,
         };
 
+        // In f64, as in EVEN: exact below 2^53; at or above it `v + 1.0`
+        // rounds back to `v`, as the old i64 path did up to 2^63.
         let sign = if number < 0.0 { -1.0 } else { 1.0 };
-        let mut v = number.abs().ceil() as i64;
-        if v % 2 == 0 {
-            v += 1;
+        let mut v = number.abs().ceil();
+        if v % 2.0 == 0.0 {
+            v += 1.0;
         }
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
-            sign * v as f64,
+            sign * v,
         )))
     }
 }
@@ -2210,8 +2214,10 @@ impl Function for MultinomialFn {
             }
         }
 
-        let sum: i64 = values.iter().sum();
-        let num = match factorial_checked(sum) {
+        // Values are saturated casts of user numbers: a sum past i64 is #NUM!
+        // like any sum past 170.
+        let sum = values.iter().try_fold(0i64, |acc, &v| acc.checked_add(v));
+        let num = match sum.and_then(factorial_checked) {
             Some(v) => v,
             None => {
                 return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
@@ -2971,7 +2977,9 @@ impl Function for BaseFn {
         } else {
             0
         };
-        if !(2..=36).contains(&radix) || number < 0 {
+        // Excel caps min_length at 255 (#NUM! beyond), which also bounds the
+        // padding below.
+        if !(2..=36).contains(&radix) || number < 0 || min_len > 255 {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new_num(),
             )));

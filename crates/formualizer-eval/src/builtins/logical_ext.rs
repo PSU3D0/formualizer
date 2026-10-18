@@ -518,6 +518,7 @@ fn error_guard<'a, 'b, 'c>(
         &fallback_grid,
         guard,
         &mut CancelPoll::new(&is_cancelled),
+        ctx.materialized_array_cells(),
     )? {
         Ok(rows) => Ok(CalcValue::Scalar(LiteralValue::Array(rows))),
         Err(error) => Ok(CalcValue::Scalar(LiteralValue::Error(error))),
@@ -580,6 +581,7 @@ fn select_elementwise(
     fallback: &Grid<'_>,
     guard: ErrorGuard,
     poll: &mut CancelPoll<'_>,
+    cell_budget: u64,
 ) -> Result<Result<Vec<Vec<LiteralValue>>, ExcelError>, ExcelError> {
     let value_shape = value.shape();
     let fallback_shape = fallback.shape();
@@ -587,7 +589,7 @@ fn select_elementwise(
         Ok(shape) => shape,
         Err(error) => return Ok(Err(error)),
     };
-    if let Some(error) = materialized_shape_too_large(shape) {
+    if let Some(error) = materialized_shape_too_large(shape, cell_budget) {
         return Ok(Err(error));
     }
     poll.advance(0)?;
@@ -1403,14 +1405,21 @@ mod error_guard_tests {
         LiteralValue::Error(ExcelError::new(kind))
     }
 
+    fn materialized_shape_too_large_default(shape: (usize, usize)) -> Option<ExcelError> {
+        materialized_shape_too_large(
+            shape,
+            crate::engine::resource_ledger::DEFAULT_MATERIALIZED_ARRAY_CELLS,
+        )
+    }
+
     #[test]
     fn shared_cap_applies_to_output_shape() {
-        assert!(materialized_shape_too_large((4096, 4096)).is_none());
-        assert!(materialized_shape_too_large((4096, 4097)).is_some());
-        assert!(materialized_shape_too_large((1_048_576, 1)).is_none());
-        assert!(materialized_shape_too_large((1_048_577, 1)).is_some());
-        assert!(materialized_shape_too_large((1, 16_385)).is_some());
-        assert!(materialized_shape_too_large((usize::MAX, usize::MAX)).is_some());
+        assert!(materialized_shape_too_large_default((4096, 4096)).is_none());
+        assert!(materialized_shape_too_large_default((4096, 4097)).is_some());
+        assert!(materialized_shape_too_large_default((1_048_576, 1)).is_none());
+        assert!(materialized_shape_too_large_default((1_048_577, 1)).is_some());
+        assert!(materialized_shape_too_large_default((1, 16_385)).is_some());
+        assert!(materialized_shape_too_large_default((usize::MAX, usize::MAX)).is_some());
     }
 
     #[test]
@@ -1429,6 +1438,7 @@ mod error_guard_tests {
             &fallback,
             ErrorGuard::AnyError,
             &mut CancelPoll::new(&is_cancelled),
+            crate::engine::resource_ledger::DEFAULT_MATERIALIZED_ARRAY_CELLS,
         )
         .unwrap();
         assert_eq!(result.unwrap_err().kind, ExcelErrorKind::Num);
@@ -1445,6 +1455,7 @@ mod error_guard_tests {
             &fallback,
             ErrorGuard::NaOnly,
             &mut CancelPoll::new(&is_cancelled),
+            crate::engine::resource_ledger::DEFAULT_MATERIALIZED_ARRAY_CELLS,
         )
         .unwrap();
         assert_eq!(result.unwrap_err().kind, ExcelErrorKind::Value);
@@ -1467,6 +1478,7 @@ mod error_guard_tests {
             &Grid::Scalar(num(0.0)),
             ErrorGuard::AnyError,
             &mut CancelPoll::new(&is_cancelled),
+            crate::engine::resource_ledger::DEFAULT_MATERIALIZED_ARRAY_CELLS,
         );
         assert_eq!(result.unwrap_err().kind, ExcelErrorKind::Cancelled);
         assert_eq!(polls.get(), 3);

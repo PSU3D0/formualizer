@@ -1431,6 +1431,10 @@ impl Function for IrrFn {
                 other => cashflows.push(to_serial_strict(&other, date_system)?),
             },
             CalcValue::Range(range) => {
+                // The values are collected into a Vec: bound it by the budget.
+                if let Some(e) = range.materialization_error() {
+                    return Ok(CalcValue::Scalar(LiteralValue::Error(e)));
+                }
                 let (rows, cols) = range.dims();
                 for r in 0..rows {
                     for c in 0..cols {
@@ -1556,6 +1560,10 @@ impl Function for MirrFn {
                 other => cashflows.push(to_serial_strict(&other, date_system)?),
             },
             CalcValue::Range(range) => {
+                // The values are collected into a Vec: bound it by the budget.
+                if let Some(e) = range.materialization_error() {
+                    return Ok(CalcValue::Scalar(LiteralValue::Error(e)));
+                }
                 let (rows, cols) = range.dims();
                 for r in 0..rows {
                     for c in 0..cols {
@@ -1933,6 +1941,10 @@ impl Function for XnpvFn {
                 other => values.push(to_serial_strict(&other, date_system)?),
             },
             CalcValue::Range(range) => {
+                // The values are collected into a Vec: bound it by the budget.
+                if let Some(e) = range.materialization_error() {
+                    return Ok(CalcValue::Scalar(LiteralValue::Error(e)));
+                }
                 let (rows, cols) = range.dims();
                 for r in 0..rows {
                     for c in 0..cols {
@@ -1969,6 +1981,10 @@ impl Function for XnpvFn {
                 other => dates.push(to_serial_strict(&other, date_system)?),
             },
             CalcValue::Range(range) => {
+                // The values are collected into a Vec: bound it by the budget.
+                if let Some(e) = range.materialization_error() {
+                    return Ok(CalcValue::Scalar(LiteralValue::Error(e)));
+                }
                 let (rows, cols) = range.dims();
                 for r in 0..rows {
                     for c in 0..cols {
@@ -2128,6 +2144,10 @@ impl Function for XirrFn {
                 other => values.push(to_serial_strict(&other, date_system)?),
             },
             CalcValue::Range(range) => {
+                // The values are collected into a Vec: bound it by the budget.
+                if let Some(e) = range.materialization_error() {
+                    return Ok(CalcValue::Scalar(LiteralValue::Error(e)));
+                }
                 let (rows, cols) = range.dims();
                 for r in 0..rows {
                     for c in 0..cols {
@@ -2164,6 +2184,10 @@ impl Function for XirrFn {
                 other => dates.push(to_serial_strict(&other, date_system)?),
             },
             CalcValue::Range(range) => {
+                // The values are collected into a Vec: bound it by the budget.
+                if let Some(e) = range.materialization_error() {
+                    return Ok(CalcValue::Scalar(LiteralValue::Error(e)));
+                }
                 let (rows, cols) = range.dims();
                 for r in 0..rows {
                     for c in 0..cols {

@@ -124,12 +124,14 @@ pub fn time_to_fraction(time: &NaiveTime) -> f64 {
 
 /// Create a date using the normalization behavior released in 0.7.1.
 pub fn create_date_normalized(year: i32, month: i32, day: i32) -> Result<NaiveDate, ExcelError> {
-    let total_months = (year * 12) + month - 1;
-    let normalized_year = total_months / 12;
+    // In i64 the month arithmetic cannot overflow for any i32 inputs; a year
+    // outside i32 is out of chrono's range anyway (#NUM!).
+    let total_months = i64::from(year) * 12 + i64::from(month) - 1;
+    let normalized_year = i32::try_from(total_months / 12).map_err(|_| ExcelError::new_num())?;
     let normalized_month = (total_months % 12) + 1;
     let first_of_month = NaiveDate::from_ymd_opt(normalized_year, normalized_month as u32, 1)
         .ok_or_else(ExcelError::new_num)?;
     first_of_month
-        .checked_add_signed(chrono::TimeDelta::days((day - 1) as i64))
+        .checked_add_signed(chrono::TimeDelta::days(i64::from(day) - 1))
         .ok_or_else(ExcelError::new_num)
 }

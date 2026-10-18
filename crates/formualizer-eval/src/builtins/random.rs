@@ -239,7 +239,9 @@ impl Function for RandBetweenFn {
                 .with_message("RANDBETWEEN: hi < lo".to_string()));
         }
         let mut rng = ctx.rng_for_current(self.function_salt());
-        let n = if (hi - lo) as u64 == u64::MAX {
+        // `hi >= lo`, so the difference as u64 is exact (wrapping only reinterprets
+        // the sign bit); it is `u64::MAX` only for the full i64 range.
+        let n = if hi.wrapping_sub(lo) as u64 == u64::MAX {
             lo
         } else {
             rng.gen_range(lo..=hi)

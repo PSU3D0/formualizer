@@ -169,6 +169,39 @@ pub struct ScratchResourceBudget {
     pub spill_overlay_bytes: Option<u64>,
     /// Request scratch backing policy. Declarative until disk-backed scratch is activated.
     pub disk_scratch_policy: Option<DiskScratchPolicy>,
+    /// Most cells one range or array value may have when it is materialised
+    /// as a dense array (a range turned into an array value, an array
+    /// operator's result, a function that copies its input). Exceeding it
+    /// gives `#NUM!` before anything is allocated. Cells are counted after
+    /// whole-row and whole-column references are trimmed to the used region.
+    /// `None` means the default, 2^24 (16,777,216) cells, the bound the
+    /// generated-array functions (SEQUENCE, RANDARRAY, MAKEARRAY, ...) use.
+    pub materialized_array_cells: Option<u64>,
+}
+
+/// Default for [`ScratchResourceBudget::materialized_array_cells`].
+pub(crate) const DEFAULT_MATERIALIZED_ARRAY_CELLS: u64 = 1 << 24;
+
+/// `#NUM!` when a `rows x cols` dense array would exceed `budget` cells.
+/// Overflowing products fail closed. One multiply and one compare: call it
+/// once per materialisation, before allocating, never per cell.
+#[inline]
+pub(crate) fn materialized_cells_exceed(
+    rows: usize,
+    cols: usize,
+    budget: u64,
+) -> Option<ExcelError> {
+    match (rows as u64).checked_mul(cols as u64) {
+        Some(cells) if cells <= budget => None,
+        _ => Some(materialization_budget_error()),
+    }
+}
+
+#[cold]
+#[inline(never)]
+pub(crate) fn materialization_budget_error() -> ExcelError {
+    // The same bare #NUM! the generated-array guard has always returned.
+    ExcelError::new(ExcelErrorKind::Num)
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -253,6 +286,7 @@ impl ResourceEnvelope {
                 graph_source_bytes: Some(graph_source),
                 spill_overlay_bytes: Some(spill_overlay),
                 disk_scratch_policy: Some(self.disk_scratch),
+                materialized_array_cells: None,
             },
             work: WorkResourceBudget {
                 max_work_units: Some(self.max_work_units),

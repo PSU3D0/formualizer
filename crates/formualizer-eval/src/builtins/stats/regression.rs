@@ -115,7 +115,11 @@ fn read_matrix(arg: &ArgumentHandle<'_, '_>) -> Result<Matrix, ExcelError> {
         });
     }
     if let Ok(view) = arg.range_view() {
+        if let Some(error) = view.materialization_error() {
+            return Err(error);
+        }
         let (rows, cols) = view.dims();
+        // rows * cols is within the materialisation budget (checked above).
         let mut data = Vec::with_capacity(rows * cols);
         view.for_each_cell(&mut |v| {
             data.push(cell_number(v, date_system)?);

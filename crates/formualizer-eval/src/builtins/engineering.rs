@@ -365,7 +365,7 @@ impl Function for BitLShiftFn {
             }
             shifted
         } else {
-            let rshift = (-shift) as u32;
+            let rshift = shift.unsigned_abs();
             if rshift >= 48 { 0 } else { n >> rshift }
         };
 
@@ -455,7 +455,7 @@ impl Function for BitRShiftFn {
         let result = if shift >= 0 {
             if shift >= 48 { 0 } else { n >> shift }
         } else {
-            let lshift = (-shift) as u32;
+            let lshift = shift.unsigned_abs();
             if lshift >= 48 {
                 return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                     ExcelError::new_num(),

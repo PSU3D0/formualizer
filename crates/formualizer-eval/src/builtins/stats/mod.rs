@@ -114,17 +114,29 @@ fn collect_numeric_stats(args: &[ArgumentHandle]) -> Result<Vec<f64>, ExcelError
  * adjacent order statistics, so a full O(n log n) sort is wasted work;
  * `select_nth_unstable_by` (quickselect) finds them in expected O(n).
  *
- * The comparator is byte-for-byte the one used by the full sorts it
- * replaces (`partial_cmp().unwrap()`): `collect_numeric_stats` only yields
- * coerced finite numerics, and a NaN would have panicked the old sort the
- * same way. Ties are exact duplicates for f64s compared `Equal` (modulo
- * the ±0.0 sign bit), so the selected element is bit-identical to the
- * sorted element at the same index.
+ * The comparator (`cmp_f64_nan_last`) agrees with the one used by the full
+ * sorts it replaces (`partial_cmp().unwrap()`) on every non-NaN input, and
+ * orders a NaN last instead of panicking. Ties are exact duplicates for
+ * f64s compared `Equal` (modulo the ±0.0 sign bit), so the selected element
+ * is bit-identical to the sorted element at the same index.
  */
+
+/// Ascending order for the numeric collectors: `partial_cmp` on non-NaN
+/// values (so finite data orders exactly as before, `-0 == 0`), with every NaN
+/// after every number. This is a total order, so the sorts and `select_nth`
+/// cannot panic if a NaN reaches them; loaders store non-finite cells as
+/// `#NUM!`, so the NaN arm is cold.
+#[inline]
+fn cmp_f64_nan_last(a: &f64, b: &f64) -> std::cmp::Ordering {
+    match a.partial_cmp(b) {
+        Some(ord) => ord,
+        None => a.is_nan().cmp(&b.is_nan()),
+    }
+}
 
 /// k-th order statistic (0-based, ascending). Reorders `nums` in place.
 fn nth_smallest(nums: &mut [f64], k: usize) -> f64 {
-    let (_, kth, _) = nums.select_nth_unstable_by(k, |a, b| a.partial_cmp(b).unwrap());
+    let (_, kth, _) = nums.select_nth_unstable_by(k, cmp_f64_nan_last);
     *kth
 }
 
@@ -132,7 +144,7 @@ fn nth_smallest(nums: &mut [f64], k: usize) -> f64 {
 /// then the (k+1)-th is the minimum of the right partition.
 /// Requires `k + 1 < nums.len()`.
 fn adjacent_smallest(nums: &mut [f64], k: usize) -> (f64, f64) {
-    let (_, kth, right) = nums.select_nth_unstable_by(k, |a, b| a.partial_cmp(b).unwrap());
+    let (_, kth, right) = nums.select_nth_unstable_by(k, cmp_f64_nan_last);
     let kth = *kth;
     let mut next = right[0];
     for &v in &right[1..] {
@@ -299,10 +311,10 @@ impl Function for RankEqFn {
         let mut sorted = nums; // copy
         if order.abs() < 1e-12 {
             // descending
-            sorted.sort_by(|a, b| b.partial_cmp(a).unwrap());
+            sorted.sort_by(|a, b| cmp_f64_nan_last(b, a));
         } else {
             // ascending
-            sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            sorted.sort_by(cmp_f64_nan_last);
         }
         for (i, &v) in sorted.iter().enumerate() {
             if (v - target).abs() < 1e-12 {
@@ -415,9 +427,9 @@ impl Function for RankAvgFn {
         }
         let mut sorted = nums;
         if order.abs() < 1e-12 {
-            sorted.sort_by(|a, b| b.partial_cmp(a).unwrap());
+            sorted.sort_by(|a, b| cmp_f64_nan_last(b, a));
         } else {
-            sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            sorted.sort_by(cmp_f64_nan_last);
         }
         let mut positions = Vec::new();
         for (i, &v) in sorted.iter().enumerate() {
@@ -1160,7 +1172,7 @@ impl Function for ModeSingleFn {
                 ExcelError::new_na(),
             )));
         }
-        nums.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        nums.sort_by(cmp_f64_nan_last);
         let mut best_val = nums[0];
         let mut best_cnt = 1usize;
         let mut cur_val = nums[0];
@@ -1270,7 +1282,7 @@ impl Function for ModeMultiFn {
                 ExcelError::new_na(),
             )));
         }
-        nums.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        nums.sort_by(cmp_f64_nan_last);
         let mut runs: Vec<(f64, usize)> = Vec::new();
         let mut cur_val = nums[0];
         let mut cur_cnt = 1usize;
@@ -2492,7 +2504,7 @@ impl Function for TrimmeanFn {
             )));
         }
 
-        nums.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        nums.sort_by(cmp_f64_nan_last);
 
         let n = nums.len();
         // Number of values to exclude from each end
@@ -3848,11 +3860,19 @@ fn beta_i(x: f64, a: f64, b: f64) -> f64 {
         return f64::NAN;
     }
 
-    // Use symmetry for better convergence: I_x(a,b) = 1 - I_{1-x}(b,a)
+    // Use symmetry for better convergence: I_x(a,b) = 1 - I_{1-x}(b,a).
+    // The flip happens at most once. Near the threshold both argument orders
+    // can satisfy the test after rounding, so re-testing after the flip would
+    // recurse without end; the continued fraction converges either way.
     if x > (a + 1.0) / (a + b + 2.0) {
-        return 1.0 - beta_i(1.0 - x, b, a);
+        return 1.0 - beta_i_continued_fraction(1.0 - x, b, a);
     }
+    beta_i_continued_fraction(x, a, b)
+}
 
+/// Continued-fraction evaluation of `I_x(a, b)` for `0 < x < 1`, `a, b > 0`,
+/// without the symmetry flip (see `beta_i`).
+fn beta_i_continued_fraction(x: f64, a: f64, b: f64) -> f64 {
     // Compute the prefactor: x^a * (1-x)^b / (a * B(a,b))
     let ln_beta = ln_gamma(a) + ln_gamma(b) - ln_gamma(a + b);
     let ln_prefactor = a * x.ln() + b * (1.0 - x).ln() - ln_beta - a.ln();
@@ -4640,13 +4660,27 @@ fn factorial(n: i64) -> f64 {
     }
     // For large n, use gamma function: n! = Gamma(n+1)
     if n > 20 {
-        return ln_gamma((n + 1) as f64).exp();
+        // `+ 1.0` in f64: n may be a saturated cast of a user number.
+        return ln_gamma(n as f64 + 1.0).exp();
     }
     let mut result = 1.0;
     for i in 2..=n {
         result *= i as f64;
     }
     result
+}
+
+/// Most terms a cumulative binomial / hypergeometric sum adds up (2^20). The
+/// counts are user numbers up to i64::MAX; past this the result is #NUM!
+/// instead of a loop that cannot finish. Every sum within the cap is computed
+/// exactly as before.
+const MAX_DISCRETE_SUM_TERMS: i64 = 1 << 20;
+
+#[cold]
+fn discrete_sum_too_long<'b>() -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+    Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+        ExcelError::new_num().with_message("too many terms in a cumulative distribution"),
+    )))
 }
 
 /// Helper: Log of binomial coefficient (n choose k)
@@ -4657,7 +4691,9 @@ fn ln_binom(n: i64, k: i64) -> f64 {
     if k == 0 || k == n {
         return 0.0;
     }
-    ln_gamma((n + 1) as f64) - ln_gamma((k + 1) as f64) - ln_gamma((n - k + 1) as f64)
+    // `+ 1.0` in f64: n may be a saturated cast of a user number. 0 < k < n,
+    // so `n - k` cannot overflow.
+    ln_gamma(n as f64 + 1.0) - ln_gamma(k as f64 + 1.0) - ln_gamma((n - k) as f64 + 1.0)
 }
 
 /// Returns the binomial probability for a count of successes across independent trials.
@@ -4738,6 +4774,13 @@ impl Function for BinomDistFn {
 
         let result = if cumulative {
             // CDF: sum from i=0 to k of P(X=i)
+            if k >= MAX_DISCRETE_SUM_TERMS {
+                if k == n {
+                    // Every outcome: exactly 1, without the sum.
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(1.0)));
+                }
+                return discrete_sum_too_long();
+            }
             let mut sum = 0.0;
             for i in 0..=k {
                 let ln_prob =
@@ -4833,11 +4876,11 @@ impl Function for PoissonDistFn {
         let result = if cumulative {
             // CDF: sum from i=0 to k of P(X=i) = 1 - Q(k+1, lambda)
             // Using the regularized incomplete gamma function
-            1.0 - gamma_p((k + 1) as f64, lambda)
+            1.0 - gamma_p(k as f64 + 1.0, lambda)
         } else {
             // PMF: P(X=k) = lambda^k * e^(-lambda) / k!
             // Use log to avoid overflow
-            let ln_prob = (k as f64) * lambda.ln() - lambda - ln_gamma((k + 1) as f64);
+            let ln_prob = (k as f64) * lambda.ln() - lambda - ln_gamma(k as f64 + 1.0);
             ln_prob.exp()
         };
 
@@ -5330,11 +5373,17 @@ impl Function for NegbinomDistFn {
         let result = if cumulative {
             // CDF: sum from i=0 to number_f of P(X=i)
             // This is equivalent to I_{prob_s}(number_s, number_f + 1) using regularized beta
-            beta_i(prob_s, number_s as f64, (number_f + 1) as f64)
+            beta_i(prob_s, number_s as f64, number_f as f64 + 1.0)
         } else {
             // PMF: C(number_f + number_s - 1, number_s - 1) * prob_s^number_s * (1-prob_s)^number_f
             // = C(k + r - 1, r - 1) * p^r * (1-p)^k where k = number_f, r = number_s
-            let ln_prob = ln_binom(number_f + number_s - 1, number_s - 1)
+            // Both counts are saturated casts of user numbers: past i64 is #NUM!.
+            let Some(trials) = number_f.checked_add(number_s - 1) else {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_num(),
+                )));
+            };
+            let ln_prob = ln_binom(trials, number_s - 1)
                 + (number_s as f64) * prob_s.ln()
                 + (number_f as f64) * (1.0 - prob_s).ln();
             ln_prob.exp()
@@ -5446,6 +5495,10 @@ impl Function for HypgeomDistFn {
 
         let result = if cumulative {
             // CDF: sum from i=min_successes to sample_s of P(X=i)
+            // min_successes <= sample_s (checked above).
+            if sample_s - min_successes >= MAX_DISCRETE_SUM_TERMS {
+                return discrete_sum_too_long();
+            }
             let mut sum = 0.0;
             for i in min_successes..=sample_s {
                 sum += hypgeom_pmf(i, number_sample, population_s, number_pop);
@@ -7033,7 +7086,7 @@ impl Function for PercentRankIncFn {
                 ExcelError::new_num(),
             )));
         }
-        nums.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        nums.sort_by(cmp_f64_nan_last);
 
         let n = nums.len();
 
@@ -7175,7 +7228,7 @@ impl Function for PercentRankExcFn {
                 ExcelError::new_num(),
             )));
         }
-        nums.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        nums.sort_by(cmp_f64_nan_last);
 
         let n = nums.len();
 
@@ -7298,7 +7351,7 @@ impl Function for FrequencyFn {
         }
 
         // Sort bins
-        bins.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        bins.sort_by(cmp_f64_nan_last);
 
         // Calculate frequencies
         // Result has bins.len() + 1 elements
@@ -9191,6 +9244,10 @@ impl Function for BinomDistRangeFn {
             )));
         }
 
+        // s <= s2 (checked above), so the difference cannot overflow.
+        if s2 - s >= MAX_DISCRETE_SUM_TERMS {
+            return discrete_sum_too_long();
+        }
         let mut sum = 0.0;
         for k in s..=s2 {
             let ln_prob = ln_binom(n, k) + (k as f64) * p.ln() + ((n - k) as f64) * (1.0 - p).ln();
@@ -9277,6 +9334,9 @@ impl Function for BinomInvFn {
         // Find smallest k such that BINOM.DIST(k, n, p, TRUE) >= alpha
         let mut cum = 0.0;
         for k in 0..=n {
+            if k >= MAX_DISCRETE_SUM_TERMS {
+                return discrete_sum_too_long();
+            }
             let ln_prob = ln_binom(n, k) + (k as f64) * p.ln() + ((n - k) as f64) * (1.0 - p).ln();
             cum += ln_prob.exp();
             if cum >= alpha {

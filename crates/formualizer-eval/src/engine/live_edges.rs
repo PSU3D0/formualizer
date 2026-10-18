@@ -514,6 +514,9 @@ impl<'a, R: EvaluationContext, S: ReadSink> EvaluationContext for RecordingConte
     fn chunk_hint(&self) -> Option<usize> {
         self.engine.chunk_hint()
     }
+    fn materialized_array_cells(&self) -> u64 {
+        self.engine.materialized_array_cells()
+    }
     fn locale(&self) -> crate::locale::Locale {
         self.engine.locale()
     }

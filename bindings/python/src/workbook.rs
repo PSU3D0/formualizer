@@ -510,7 +510,7 @@ impl PyWorkbook {
         let mut wb = self.write_inner()?;
         wb.add_sheet(name)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-        let mut sheets = self.sheets.write().unwrap();
+        let mut sheets = self.sheets_write();
         sheets.entry(name.to_string()).or_default();
         Ok(())
     }
@@ -863,12 +863,14 @@ impl PyWorkbook {
     ) -> PyResult<()> {
         validate_cell_coords(row, col)?;
 
-        let literal = py_to_literal(value)?;
+        // NaN and infinities are stored as #NUM! (as `Workbook::set_value`
+        // does), so the compatibility cache below holds the same value.
+        let literal = py_to_literal(value)?.finite_or_num_error();
         let mut wb = self.write_inner()?;
         wb.set_value(sheet, row, col, literal.clone())
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
         // Update compatibility cache
-        let mut sheets = self.sheets.write().unwrap();
+        let mut sheets = self.sheets_write();
         let sheet_map = sheets.entry(sheet.to_string()).or_default();
         sheet_map.insert(
             (row, col),
@@ -903,7 +905,7 @@ impl PyWorkbook {
         wb.set_formula(sheet, row, col, formula)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
         // Update compatibility cache
-        let mut sheets = self.sheets.write().unwrap();
+        let mut sheets = self.sheets_write();
         let sheet_map = sheets.entry(sheet.to_string()).or_default();
         sheet_map.insert(
             (row, col),
@@ -1111,7 +1113,7 @@ impl PyWorkbook {
             }
         };
         self.write_inner()?.engine_mut().set_temporal_egress(policy);
-        self.sheets.write().unwrap().clear();
+        self.sheets_write().clear();
         Ok(())
     }
 
@@ -1125,7 +1127,7 @@ impl PyWorkbook {
         validate_cell_coords(row, col)?;
 
         if let Some(cached) = {
-            let sheets = self.sheets.read().unwrap();
+            let sheets = self.sheets_read();
             sheets.get(sheet).and_then(|m| m.get(&(row, col)).cloned())
         } {
             if let Some(value) = cached.value {
@@ -1211,10 +1213,7 @@ impl PyWorkbook {
     pub fn undo(&self) -> PyResult<()> {
         let mut wb = self.write_inner()?;
         {
-            let mut sheets = self.sheets.write().map_err(|e| {
-                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}"))
-            })?;
-            sheets.clear();
+            self.sheets_write().clear();
         }
         wb.undo()
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
@@ -1225,10 +1224,7 @@ impl PyWorkbook {
     pub fn redo(&self) -> PyResult<()> {
         let mut wb = self.write_inner()?;
         {
-            let mut sheets = self.sheets.write().map_err(|e| {
-                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}"))
-            })?;
-            sheets.clear();
+            self.sheets_write().clear();
         }
         wb.redo()
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
@@ -1251,7 +1247,9 @@ impl PyWorkbook {
             let list: &Bound<'_, pyo3::types::PyList> = row.cast()?;
             let mut row_vals: Vec<LiteralValue> = Vec::with_capacity(list.len());
             for v in list.iter() {
-                row_vals.push(py_to_literal(&v)?);
+                // Stored as `Workbook::set_values` stores it (NaN is #NUM!),
+                // so the compatibility cache below matches.
+                row_vals.push(py_to_literal(&v)?.finite_or_num_error());
             }
             rows_vec.push(row_vals);
         }
@@ -1265,7 +1263,7 @@ impl PyWorkbook {
         res?;
         // Update compatibility cache
         {
-            let mut sheets = self.sheets.write().unwrap();
+            let mut sheets = self.sheets_write();
             let sheet_map = sheets.entry(sheet.to_string()).or_default();
             for (r_off, row_vals) in rows_vec.into_iter().enumerate() {
                 for (c_off, v) in row_vals.into_iter().enumerate() {
@@ -1312,7 +1310,7 @@ impl PyWorkbook {
         res?;
         // Update compatibility cache
         {
-            let mut sheets = self.sheets.write().unwrap();
+            let mut sheets = self.sheets_write();
             let sheet_map = sheets.entry(sheet.to_string()).or_default();
             for (r_off, row_vals) in rows_vec.into_iter().enumerate() {
                 for (c_off, s) in row_vals.into_iter().enumerate() {
@@ -1611,9 +1609,7 @@ impl PyWorkbook {
     /// internal helpers (e.g. SheetPort) bypass it, so it must be invalidated
     /// for `get_value()` to stay correct.
     pub(crate) fn clear_sheet_cache(&self) {
-        if let Ok(mut sheets) = self.sheets.write() {
-            sheets.clear();
-        }
+        self.sheets_write().clear();
     }
 
     /// Stable identity for this workbook, shared by every clone of the handle
@@ -1642,6 +1638,28 @@ impl PyWorkbook {
         self.inner
             .read()
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))
+    }
+
+    /// The compatibility cache, recovering it if a panic poisoned its lock.
+    ///
+    /// Each entry is a cell value or formula copied after the workbook write it
+    /// mirrors succeeded, so an unwind cannot leave an entry half-written; at
+    /// worst the cache misses entries, and readers fall back to the workbook.
+    /// The workbook lock (`inner`) is not recovered: a panic during a mutation
+    /// can leave the engine half-updated (an open deferred-dirty scope, a
+    /// swapped cancellation flag, a partly shifted structural edit), so later
+    /// calls keep reporting the poisoned lock instead of reading that state.
+    pub(crate) fn sheets_write(&self) -> std::sync::RwLockWriteGuard<'_, SheetCache> {
+        self.sheets
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Shared access to the compatibility cache; see [`Self::sheets_write`].
+    pub(crate) fn sheets_read(&self) -> std::sync::RwLockReadGuard<'_, SheetCache> {
+        self.sheets
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// Exclusive access to the engine state, re-entrancy checked.
@@ -1679,7 +1697,7 @@ impl PyWorkbook {
     {
         // Mutations performed through internal helpers (e.g. SheetPort) bypass the
         // legacy `sheets` cache; invalidate it so `get_value()` stays correct.
-        self.sheets.write().unwrap().clear();
+        self.sheets_write().clear();
 
         let mut wb = self.write_inner()?;
         f(&mut wb)
@@ -1740,7 +1758,34 @@ fn resolve_workbook_config(
 
 #[cfg(test)]
 mod tests {
-    use super::{DEFAULT_XLSX_BYTE_BACKEND, PyWorkbookConfig, resolve_workbook_config};
+    use super::{DEFAULT_XLSX_BYTE_BACKEND, PyWorkbook, PyWorkbookConfig, resolve_workbook_config};
+
+    /// Poisons `lock` by panicking on another thread while holding it.
+    fn poison<T: Send + Sync + 'static>(lock: &std::sync::Arc<std::sync::RwLock<T>>) {
+        let lock = std::sync::Arc::clone(lock);
+        let _ = std::thread::spawn(move || {
+            let _guard = lock.write().unwrap();
+            panic!("poison the lock");
+        })
+        .join();
+    }
+
+    #[test]
+    fn a_poisoned_cache_lock_is_recovered_and_the_workbook_lock_is_not() {
+        let wb = PyWorkbook::from_inner_workbook(formualizer::workbook::Workbook::new());
+        poison(&wb.sheets);
+        assert!(wb.sheets.is_poisoned());
+        wb.sheets_write()
+            .insert("S".to_string(), Default::default());
+        assert!(wb.sheets_read().contains_key("S"));
+        wb.clear_sheet_cache();
+        assert!(wb.sheets_read().is_empty());
+
+        assert!(wb.read_inner().is_ok());
+        poison(&wb.inner);
+        assert!(wb.write_inner().is_err());
+        assert!(wb.read_inner().is_err());
+    }
     use crate::enums::PyWorkbookMode;
     use formualizer::eval::engine::{EvalConfig, FormulaPlaneMode};
 

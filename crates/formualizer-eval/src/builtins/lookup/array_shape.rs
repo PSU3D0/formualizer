@@ -114,6 +114,9 @@ fn schema() -> &'static [ArgSchema] {
 
 fn materialize_arg<'b>(arg: &ArgumentHandle<'_, 'b>) -> Result<Vec<Vec<LiteralValue>>, ExcelError> {
     if let Ok(view) = arg.range_view() {
+        if let Some(error) = view.materialization_error() {
+            return Err(error);
+        }
         let mut rows = Vec::new();
         view.for_each_row(&mut |row| {
             rows.push(row.to_vec());

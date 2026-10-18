@@ -52,11 +52,35 @@ pub type SharedRef<'a> = CommonSheetRef<'a>;
 pub struct Coord(RelativeCoord);
 
 impl Coord {
+    /// Construct a 0-based coordinate.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `row` exceeds 1,048,575 or `col` exceeds 16,383. Use
+    /// [`Coord::try_new`] for values that come from a file, a formula or an
+    /// API caller.
     #[inline]
     pub fn new(row: u32, col: u32, row_abs: bool, col_abs: bool) -> Self {
         Self(RelativeCoord::new(row, col, row_abs, col_abs))
     }
 
+    /// Fallible [`Coord::new`]: an error instead of a panic for a row past
+    /// 1,048,575 or a column past 16,383.
+    #[inline]
+    pub fn try_new(
+        row: u32,
+        col: u32,
+        row_abs: bool,
+        col_abs: bool,
+    ) -> Result<Self, formualizer_common::CoordError> {
+        RelativeCoord::try_new(row, col, row_abs, col_abs).map(Self)
+    }
+
+    /// Construct from Excel 1-based coordinates (0 saturates to 1).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `row` exceeds 1,048,576 or `col` exceeds 16,384.
     #[inline]
     pub fn from_excel(row: u32, col: u32, row_abs: bool, col_abs: bool) -> Self {
         let row0 = row.saturating_sub(1);
