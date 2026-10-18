@@ -65,14 +65,14 @@ enum LiftNode {
 /// A function of `INVARIANT_FUNCTIONS` whose registered implementation is
 /// not volatile, dynamic, environment-binding or spilling.
 pub(super) fn pure_listed_function(
-    functions: &dyn crate::traits::FunctionProvider,
+    functions: &crate::interpreter::ResolvedFunctions,
     name: &str,
 ) -> bool {
     use crate::function::FnCaps;
     INVARIANT_FUNCTIONS
         .iter()
         .any(|f| f.eq_ignore_ascii_case(name))
-        && functions.get_function("", name).is_some_and(|fun| {
+        && functions.get_named(name).is_some_and(|fun| {
             !fun.caps().intersects(
                 FnCaps::VOLATILE
                     | FnCaps::DYNAMIC_DEPENDENCY
@@ -177,7 +177,7 @@ impl LiftProgram {
     /// the run (its second argument: the name is a call's direct argument,
     /// where a range is not intersected with the member).
     pub(super) fn compile(
-        functions: &dyn crate::traits::FunctionProvider,
+        functions: &crate::interpreter::ResolvedFunctions,
         ds: &DataStore,
         template: AstNodeId,
         names: &dyn Fn(&str, bool) -> bool,
@@ -204,13 +204,13 @@ impl LiftProgram {
     /// The maximal run-invariant calls strictly inside `root` (their value
     /// is one for the whole run; the walk can compute them once).
     pub(super) fn invariant_subtrees(
-        functions: &dyn crate::traits::FunctionProvider,
+        functions: &crate::interpreter::ResolvedFunctions,
         ds: &DataStore,
         root: AstNodeId,
         names: &dyn Fn(&str, bool) -> bool,
     ) -> Vec<AstNodeId> {
         fn visit(
-            functions: &dyn crate::traits::FunctionProvider,
+            functions: &crate::interpreter::ResolvedFunctions,
             ds: &DataStore,
             id: AstNodeId,
             is_root: bool,
@@ -246,7 +246,7 @@ impl LiftProgram {
 
     /// Whether `id` is a run-invariant expression (see `LiftNode::Invariant`).
     pub(super) fn invariant(
-        functions: &dyn crate::traits::FunctionProvider,
+        functions: &crate::interpreter::ResolvedFunctions,
         ds: &DataStore,
         id: AstNodeId,
         names: &dyn Fn(&str, bool) -> bool,
@@ -258,7 +258,7 @@ impl LiftProgram {
     /// an operator's operand it is implicitly intersected with the member's
     /// row or column.
     fn invariant_in(
-        functions: &dyn crate::traits::FunctionProvider,
+        functions: &crate::interpreter::ResolvedFunctions,
         ds: &DataStore,
         id: AstNodeId,
         as_arg: bool,
@@ -306,7 +306,7 @@ impl LiftProgram {
 
     fn compile_node(
         &mut self,
-        functions: &dyn crate::traits::FunctionProvider,
+        functions: &crate::interpreter::ResolvedFunctions,
         ds: &DataStore,
         id: AstNodeId,
         names: &dyn Fn(&str, bool) -> bool,
@@ -368,7 +368,7 @@ impl LiftProgram {
             AstNodeData::Function { name_id, .. } => {
                 // Only the built-in IF (an override keeps `family_kernel`
                 // `None`), with the arities its `eval` accepts.
-                let fun = functions.get_function("", ds.resolve_ast_string(*name_id))?;
+                let fun = functions.get(*name_id)?;
                 use crate::function::FamilyKernel as K;
                 let kernel = fun.family_kernel()?;
                 let args = ds.get_args(id)?;
@@ -477,7 +477,8 @@ where
         let first =
             crate::reference::CellRef::new(run.sheet, Coord::new(run.row0, run.col, true, true));
         let interpreter =
-            crate::interpreter::Interpreter::new_with_cell(self, current_sheet, first);
+            crate::interpreter::Interpreter::new_with_cell(self, current_sheet, first)
+                .with_resolved_functions(&self.resolved_functions);
         // Each node is used once (the program is a tree): children's columns
         // are moved into their parent, and constants stay one value.
         let mut columns: Vec<Column> = Vec::with_capacity(program.nodes.len());
@@ -864,7 +865,8 @@ where
         let first =
             crate::reference::CellRef::new(run.sheet, Coord::new(run.row0, run.col, true, true));
         let interpreter =
-            crate::interpreter::Interpreter::new_with_cell(self, current_sheet, first);
+            crate::interpreter::Interpreter::new_with_cell(self, current_sheet, first)
+                .with_resolved_functions(&self.resolved_functions);
         let read = |sheet_id: SheetId, asheet: Option<usize>, row: u32, col: u32| -> Lifted {
             let asheet = asheet.and_then(|i| self.arrow_sheets.sheets.get(i));
             Ok(self.read_cell_formatted_in(sheet_id, asheet, row, col))

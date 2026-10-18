@@ -47,6 +47,9 @@ use crate::engine::{
 };
 use crate::function::FnCaps;
 use crate::interpreter::Interpreter;
+
+#[cfg(test)]
+mod fn_snapshot_tests;
 use crate::reference::{CellRef, Coord, RangeRef};
 use crate::traits::FunctionProvider;
 use crate::traits::{EvaluationContext, ReferenceInfo, Resolver};
@@ -990,7 +993,7 @@ struct TraceEvaluationCounters {
 pub struct Engine<R> {
     pub(crate) graph: DependencyGraph,
     resolver: R,
-    resolved_functions: crate::interpreter::ResolvedFunctions,
+    pub(super) resolved_functions: crate::interpreter::ResolvedFunctions,
     resolved_sheet_names:
         FxHashMap<crate::engine::arena::StringId, (crate::SheetId, Option<usize>)>,
     resolution_sheet_revision: Option<(u64, u64, usize)>,

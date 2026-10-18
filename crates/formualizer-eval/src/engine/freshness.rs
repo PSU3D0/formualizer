@@ -576,7 +576,8 @@ impl<R: EvaluationContext> Engine<R> {
         let log = ReadLog::default();
         let result = {
             let ctx = RecordingContext::new(self, &log);
-            let interpreter = Interpreter::new_with_cell(&ctx, sheet_name, cell_ref);
+            let interpreter = Interpreter::new_with_cell(&ctx, sheet_name, cell_ref)
+                .with_resolved_functions(&self.resolved_functions);
             interpreter
                 .evaluate_formula_view(view, self.graph.data_store(), self.graph.sheet_reg())
                 .map(|cv| {

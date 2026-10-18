@@ -514,7 +514,8 @@ impl DynamicRefVirtualDepProvider {
             .graph
             .get_cell_ref(v)
             .unwrap_or_else(|| engine.graph.make_cell_ref(sheet_name, 0, 0));
-        let interpreter = Interpreter::new_with_cell(&collector, sheet_name, cell_ref);
+        let interpreter = Interpreter::new_with_cell(&collector, sheet_name, cell_ref)
+            .with_resolved_functions(&engine.resolved_functions);
         let _ = interpreter.evaluate_formula_view(
             view,
             engine.graph.data_store(),

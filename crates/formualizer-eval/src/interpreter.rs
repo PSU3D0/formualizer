@@ -286,7 +286,16 @@ impl ResolvedFunctions {
         self.ast_revision = Some(revision);
     }
 
-    fn get(&self, id: crate::engine::arena::StringId) -> Option<&dyn crate::function::Function> {
+    /// Runtime snapshot lookup for run planners; intentionally not the provider's
+    /// potentially distinct `get_function_for_planning` contract.
+    pub(crate) fn get_named(&self, name: &str) -> Option<&dyn crate::function::Function> {
+        self.ast_functions.get(name)?.0.as_deref()
+    }
+
+    pub(crate) fn get(
+        &self,
+        id: crate::engine::arena::StringId,
+    ) -> Option<&dyn crate::function::Function> {
         self.functions
             .get(*self.slots.get(&id)?)
             .and_then(|f| f.as_deref())
