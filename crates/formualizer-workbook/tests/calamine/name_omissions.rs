@@ -89,7 +89,7 @@ fn omitted_local_name_keeps_shadowing_a_global_name_after_edits() {
     let entries = workbook.engine().named_ranges_snapshot_for_sheet(sheet_id);
     assert!(entries.iter().any(|entry| entry.name == "Rate" && matches!(&entry.definition,
         formualizer_eval::engine::named_range::NamedDefinition::Literal(LiteralValue::Error(e))
-        if e.kind == ExcelErrorKind::Name && e.message.as_deref() == Some("Defined name `Rate` could not be evaluated"))));
+        if e.kind == ExcelErrorKind::Name && e.message() == Some("Defined name `Rate` could not be evaluated"))));
     workbook.set_formula("Sheet1", 2, 1, "=Rate").unwrap();
     workbook
         .set_formula("Sheet1", 3, 1, "=INDIRECT(\"Rate\")")

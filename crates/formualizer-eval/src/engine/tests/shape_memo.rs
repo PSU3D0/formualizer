@@ -97,8 +97,8 @@ fn differential_once(engine: &mut Engine<TestWorkbook>, cells: &Cells) -> MemoCo
                 }
             }
             (Err(a), Err(b)) => assert_eq!(
-                (a.kind, &a.message),
-                (b.kind, &b.message),
+                (a.kind, &a.message()),
+                (b.kind, &b.message()),
                 "{sheet}!R{row}C{col} `{text}`: errors differ"
             ),
             (a, b) => panic!(

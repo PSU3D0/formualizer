@@ -1262,10 +1262,12 @@ fn record_result(
     match value {
         LiteralValue::Error(error)
             if error.kind == formualizer_common::ExcelErrorKind::Name
-                && error.message.is_none() =>
+                && error.message().is_none() =>
         {
             let mut error = error.clone();
-            error.message = error_reasons::name_error_reason(engine, sheet, cell.row, cell.col);
+            error.set_message(error_reasons::name_error_reason(
+                engine, sheet, cell.row, cell.col,
+            ));
             summary.record(sheet, location, &LiteralValue::Error(error), limit);
         }
         _ => summary.record(sheet, location, value, limit),

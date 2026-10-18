@@ -22,7 +22,7 @@ fn invalid_schema_fixture_fails_validation() {
     let err = parse_wasm_manifest_json(INVALID_SCHEMA_MANIFEST.as_bytes()).unwrap_err();
     assert_eq!(err.kind, ExcelErrorKind::Value);
     assert!(
-        err.message
+        err.message()
             .unwrap_or_default()
             .contains("Unsupported WASM manifest schema")
     );
@@ -33,7 +33,7 @@ fn duplicate_alias_fixture_fails_validation() {
     let err = parse_wasm_manifest_json(INVALID_DUPLICATE_ALIAS_MANIFEST.as_bytes()).unwrap_err();
     assert_eq!(err.kind, ExcelErrorKind::Value);
     assert!(
-        err.message
+        err.message()
             .unwrap_or_default()
             .contains("Duplicate WASM function name or alias")
     );
@@ -44,7 +44,7 @@ fn invalid_arity_fixture_fails_validation() {
     let err = parse_wasm_manifest_json(INVALID_ARITY_MANIFEST.as_bytes()).unwrap_err();
     assert_eq!(err.kind, ExcelErrorKind::Value);
     assert!(
-        err.message
+        err.message()
             .unwrap_or_default()
             .contains("Invalid WASM function arity")
     );

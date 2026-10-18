@@ -1015,7 +1015,7 @@ fn indexed_ordinary_cross_sheet_names_and_resource_failures_preserve_closure() {
             },
         )
         .unwrap_err();
-    assert!(matches!(error.extra, ExcelErrorExtra::Resource { .. }));
+    assert!(matches!(error.extra(), ExcelErrorExtra::Resource { .. }));
     assert_eq!(engine.staged_formula_count(), 4);
     let cancel = crate::engine::CancelToken::new();
     cancel.cancel();
@@ -1688,8 +1688,8 @@ fn direct_heavy_package_honors_target_work_budget_and_remains_staged() {
         )
         .unwrap_err();
     assert!(matches!(
-        error.extra,
-        ExcelErrorExtra::Resource { ref detail }
+        error.extra(),
+        ExcelErrorExtra::Resource { detail }
             if detail.reason == ResourceExhaustionReason::WorkUnits
     ));
     assert!(engine.has_staged_formulas());
@@ -1855,7 +1855,7 @@ fn provider_revision_change_at_final_validation_is_stale_and_atomic() {
             .unwrap_err();
         assert!(
             matches!(
-                error.extra,
+                error.extra(),
                 ExcelErrorExtra::PreparationStale {
                     reason: formualizer_common::PreparationStaleReason::Provider
                 }
@@ -2019,7 +2019,7 @@ fn cancellation_and_all_injected_precommit_seams_preserve_semantic_state() {
             },
         )
         .unwrap_err();
-    assert!(matches!(error.extra, ExcelErrorExtra::Resource { .. }));
+    assert!(matches!(error.extra(), ExcelErrorExtra::Resource { .. }));
     assert_eq!(expired.staged_formula_count(), 1);
 }
 
@@ -2114,8 +2114,8 @@ fn target_admission_boundaries_accept_cap_and_reject_cap_plus_one() {
         )
         .unwrap_err();
     assert!(matches!(
-        error.extra,
-        ExcelErrorExtra::Resource { ref detail }
+        error.extra(),
+        ExcelErrorExtra::Resource { detail }
             if detail.reason == ResourceExhaustionReason::GraphEdges
     ));
     assert_eq!(over_edge.staged_formula_count(), 1);
@@ -2169,8 +2169,8 @@ fn graph_source_scratch_zero_cap_and_success_release_to_checkpoint() {
     let (zero, result, ledger) = run(Some(0));
     let error = result.unwrap_err();
     assert!(matches!(
-        error.extra,
-        ExcelErrorExtra::Resource { ref detail }
+        error.extra(),
+        ExcelErrorExtra::Resource { detail }
             if detail.reason == ResourceExhaustionReason::ScratchMemory
     ));
     assert_eq!(ledger.scratch_current, 0);
@@ -2263,7 +2263,7 @@ fn common_admission_direct_bulk_replacement_and_staged_seams_are_atomic() {
             formualizer_parse::parser::parse("=1").unwrap(),
         )
         .unwrap_err();
-    assert!(matches!(error.extra, ExcelErrorExtra::Resource { .. }));
+    assert!(matches!(error.extra(), ExcelErrorExtra::Resource { .. }));
     assert_eq!(
         direct.baseline_stats().graph_vertex_count,
         before.graph_vertex_count
@@ -2356,7 +2356,7 @@ fn c2_admission_caps_are_typed_and_atomic_for_target_preparation() {
                 },
             )
             .unwrap_err();
-        match error.extra {
+        match error.extra() {
             ExcelErrorExtra::Resource { detail } => {
                 assert_eq!(detail.reason, ResourceExhaustionReason::GraphVertices)
             }
@@ -2489,8 +2489,8 @@ fn widened_staged_lease_scan_charges_and_checkpoints_each_lease() {
         )
         .unwrap_err();
     assert!(matches!(
-        error.extra,
-        ExcelErrorExtra::Resource { ref detail }
+        error.extra(),
+        ExcelErrorExtra::Resource { detail }
             if detail.reason == ResourceExhaustionReason::WorkUnits
     ));
     assert_eq!(engine.staged_formula_count(), 101);
@@ -2552,8 +2552,7 @@ fn staged_replacement_rejects_active_spill_anchor_and_child_without_mutation() {
             .unwrap_err();
         assert!(
             error
-                .message
-                .as_deref()
+                .message()
                 .is_some_and(|message| message.contains("active spill"))
         );
         assert_eq!(engine.graph.spill_registry_counts(), counts);
@@ -2621,7 +2620,7 @@ fn mid_discovery_provider_mismatch_returns_typed_stale() {
         .prepare_graph_for_targets(&[cell("Outputs", 1, 1)], Default::default())
         .unwrap_err();
     assert!(matches!(
-        error.extra,
+        error.extra(),
         ExcelErrorExtra::PreparationStale {
             reason: formualizer_common::PreparationStaleReason::Provider
         }
@@ -2652,7 +2651,7 @@ fn package_fallback_checks_each_planning_snapshot_against_request_assumptions() 
         .prepare_graph_for_targets(&[cell("Outputs", 1, 1)], Default::default())
         .unwrap_err();
     assert!(matches!(
-        error.extra,
+        error.extra(),
         ExcelErrorExtra::PreparationStale {
             reason: formualizer_common::PreparationStaleReason::Provider
         }
@@ -2718,8 +2717,8 @@ fn evaluation_spill_placeholder_creation_obeys_common_admission_atomically() {
     let before = engine.baseline_stats();
     let error = engine.evaluate_cell("Outputs", 1, 1).unwrap_err();
     assert!(matches!(
-        error.extra,
-        ExcelErrorExtra::Resource { ref detail }
+        error.extra(),
+        ExcelErrorExtra::Resource { detail }
             if detail.reason == ResourceExhaustionReason::GraphVertices
     ));
     assert_eq!(

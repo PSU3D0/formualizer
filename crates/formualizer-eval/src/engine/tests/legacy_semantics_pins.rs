@@ -197,7 +197,7 @@ fn oq_1_missing_target_kinds_and_phases_on_set_cell_formula() {
         let (_, result) = set(formula);
         let error = result.expect_err(formula);
         assert_eq!(error.kind, kind, "{formula}");
-        assert_eq!(error.message.as_deref(), Some(message), "{formula}");
+        assert_eq!(error.message(), Some(message), "{formula}");
     }
     for (formula, kind) in [
         ("=MissingName", ExcelErrorKind::Name),

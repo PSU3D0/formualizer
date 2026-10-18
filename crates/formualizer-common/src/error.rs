@@ -243,13 +243,72 @@ pub enum ExcelErrorExtra {
 ///
 /// † If you *never* need row/col you can build the value with
 ///   `ExcelError::from(kind)`, which sets `context = None`.
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ExcelError {
     pub kind: ExcelErrorKind,
-    pub message: Option<String>,
-    pub context: Option<ErrorContext>,
-    pub extra: ExcelErrorExtra,
+    // Empty metadata is always represented by None, keeping derived equality logical.
+    payload: Option<Box<ExcelErrorPayload>>,
+}
+
+#[derive(Clone, PartialEq, Eq, Default)]
+struct ExcelErrorPayload {
+    message: Option<String>,
+    context: Option<ErrorContext>,
+    extra: ExcelErrorExtra,
+}
+
+// Keep the logical fields (rather than the storage representation) observable.
+impl fmt::Debug for ExcelError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ExcelError")
+            .field("kind", &self.kind)
+            .field("message", &self.message())
+            .field("context", &self.context())
+            .field("extra", self.extra())
+            .finish()
+    }
+}
+
+impl std::hash::Hash for ExcelError {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.kind.hash(state);
+        self.message().hash(state);
+        self.context().hash(state);
+        self.extra().hash(state);
+    }
+}
+
+#[cfg(feature = "serde")]
+impl Serialize for ExcelError {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut fields = serializer.serialize_struct("ExcelError", 4)?;
+        fields.serialize_field("kind", &self.kind)?;
+        fields.serialize_field("message", &self.message())?;
+        fields.serialize_field("context", &self.context())?;
+        fields.serialize_field("extra", self.extra())?;
+        fields.end()
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> Deserialize<'de> for ExcelError {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(rename = "ExcelError")]
+        struct Fields {
+            kind: ExcelErrorKind,
+            message: Option<String>,
+            context: Option<ErrorContext>,
+            extra: ExcelErrorExtra,
+        }
+        let fields = Fields::deserialize(deserializer)?;
+        let mut error = ExcelError::new(fields.kind);
+        error.set_message(fields.message);
+        error.set_context(fields.context);
+        error.set_extra(fields.extra);
+        Ok(error)
+    }
 }
 
 /* ───────────────────── Constructors & helpers ─────────────────────── */
@@ -258,9 +317,7 @@ impl From<ExcelErrorKind> for ExcelError {
     fn from(kind: ExcelErrorKind) -> Self {
         Self {
             kind,
-            message: None,
-            context: None,
-            extra: ExcelErrorExtra::None,
+            payload: None,
         }
     }
 }
@@ -271,45 +328,95 @@ impl ExcelError {
         kind.into()
     }
 
+    /// Human-readable explanation, if supplied.
+    pub fn message(&self) -> Option<&str> {
+        self.payload
+            .as_ref()
+            .and_then(|payload| payload.message.as_deref())
+    }
+
+    /// Generic location metadata, if supplied.
+    pub fn context(&self) -> Option<&ErrorContext> {
+        self.payload
+            .as_ref()
+            .and_then(|payload| payload.context.as_ref())
+    }
+
+    /// Kind-specific data; payload-free errors return `ExcelErrorExtra::None`.
+    pub fn extra(&self) -> &ExcelErrorExtra {
+        self.payload
+            .as_ref()
+            .map_or(&ExcelErrorExtra::None, |payload| &payload.extra)
+    }
+
+    fn payload_mut(&mut self) -> &mut ExcelErrorPayload {
+        self.payload.get_or_insert_default()
+    }
+
+    fn discard_empty_payload(&mut self) {
+        if self.payload.as_ref().is_some_and(|payload| {
+            payload.message.is_none()
+                && payload.context.is_none()
+                && payload.extra == ExcelErrorExtra::None
+        }) {
+            self.payload = None;
+        }
+    }
+
+    /// Replace or clear the explanation, retaining any other metadata.
+    pub fn set_message(&mut self, message: Option<String>) {
+        if message.is_some() || self.payload.is_some() {
+            self.payload_mut().message = message;
+            self.discard_empty_payload();
+        }
+    }
+
+    /// Replace or clear the location, retaining any other metadata.
+    pub fn set_context(&mut self, context: Option<ErrorContext>) {
+        if context.is_some() || self.payload.is_some() {
+            self.payload_mut().context = context;
+            self.discard_empty_payload();
+        }
+    }
+
+    /// Replace or clear the kind-specific data, retaining any other metadata.
+    pub fn set_extra(&mut self, extra: ExcelErrorExtra) {
+        if extra != ExcelErrorExtra::None || self.payload.is_some() {
+            self.payload_mut().extra = extra;
+            self.discard_empty_payload();
+        }
+    }
+
     /// Attach a human-readable explanation.
     pub fn with_message<S: Into<String>>(mut self, msg: S) -> Self {
-        self.message = Some(msg.into());
+        self.set_message(Some(msg.into()));
         self
     }
 
     /// Attach generic row/column coordinates.
     pub fn with_location(mut self, row: u32, col: u32) -> Self {
-        self.context = Some(ErrorContext {
+        self.set_context(Some(ErrorContext {
             row: Some(row),
             col: Some(col),
             origin_row: None,
             origin_col: None,
             origin_sheet: None,
-        });
+        }));
         self
     }
 
     /// Attach origin location where the error first occurred.
     pub fn with_origin(mut self, sheet: Option<String>, row: u32, col: u32) -> Self {
-        if let Some(ref mut ctx) = self.context {
-            ctx.origin_sheet = sheet;
-            ctx.origin_row = Some(row);
-            ctx.origin_col = Some(col);
-        } else {
-            self.context = Some(ErrorContext {
-                row: None,
-                col: None,
-                origin_row: Some(row),
-                origin_col: Some(col),
-                origin_sheet: sheet,
-            });
-        }
+        let ctx = self.payload_mut().context.get_or_insert_default();
+        ctx.origin_sheet = sheet;
+        ctx.origin_row = Some(row);
+        ctx.origin_col = Some(col);
         self
     }
 
     /// Attach kind-specific extra data.
     pub fn with_extra(mut self, extra: ExcelErrorExtra) -> Self {
-        self.extra = extra;
+        self.set_extra(extra);
         self
     }
 
@@ -359,12 +466,12 @@ impl fmt::Display for ExcelError {
         write!(f, "{}", self.kind)?;
 
         // Optional human message.
-        if let Some(ref msg) = self.message {
+        if let Some(msg) = self.message() {
             write!(f, ": {msg}")?;
         }
 
         // Optional row/col context.
-        if let Some(ref ctx) = self.context {
+        if let Some(ctx) = self.context() {
             if let (Some(r), Some(c)) = (ctx.row, ctx.col) {
                 write!(f, " (row {r}, col {c})")?;
             }
@@ -382,7 +489,7 @@ impl fmt::Display for ExcelError {
         }
 
         // Optional kind-specific payload - keep it terse for logs.
-        match &self.extra {
+        match self.extra() {
             ExcelErrorExtra::None => {}
             ExcelErrorExtra::Spill {
                 expected_rows,
@@ -456,7 +563,7 @@ mod tests {
         assert_eq!(ExcelErrorKind::parse("#BOGUS!"), ExcelErrorKind::Error);
         let err = ExcelError::from_error_string("#BOGUS!");
         assert_eq!(err.kind, ExcelErrorKind::Error);
-        assert!(err.message.unwrap_or_default().contains("#BOGUS!"));
+        assert!(err.message().unwrap_or_default().contains("#BOGUS!"));
     }
 
     #[test]
@@ -480,5 +587,92 @@ mod tests {
         assert_eq!(PlanStaleReason::Authority.as_str(), "authority");
         assert_eq!(PlanStaleReason::SpanGeneration.as_str(), "span_generation");
         assert_eq!(PlanStaleReason::Graph.as_str(), "graph");
+    }
+}
+
+#[cfg(test)]
+mod compact_tests {
+    use super::*;
+    use std::hash::{Hash, Hasher};
+
+    #[test]
+    fn compact_layouts() {
+        assert!(size_of::<ExcelError>() <= 16);
+        assert!(size_of::<LiteralValue>() <= 32);
+        assert!(size_of::<Result<LiteralValue, ExcelError>>() <= 40);
+    }
+
+    #[test]
+    fn empty_errors_do_not_have_a_payload() {
+        let mut error = ExcelError::new_value().with_extra(ExcelErrorExtra::None);
+        error.set_message(None);
+        error.set_context(None);
+        assert!(error.payload.is_none());
+        error.set_message(Some(String::new()));
+        assert!(error.payload.is_some());
+        error.set_context(Some(ErrorContext::default()));
+        error.set_extra(ExcelErrorExtra::Spill {
+            expected_rows: 2,
+            expected_cols: 3,
+        });
+        error.set_message(None);
+        error.set_context(None);
+        assert!(error.payload.is_some());
+        error.set_extra(ExcelErrorExtra::None);
+        assert!(error.payload.is_none());
+        assert_eq!(error, ExcelError::new_value());
+    }
+
+    #[test]
+    fn logical_debug_hash_equality_and_display_are_unchanged() {
+        #[derive(Debug, Hash)]
+        struct ExcelError {
+            kind: ExcelErrorKind,
+            message: Option<String>,
+            context: Option<ErrorContext>,
+            extra: ExcelErrorExtra,
+        }
+        fn hash(value: &impl Hash) -> u64 {
+            let mut state = std::collections::hash_map::DefaultHasher::new();
+            value.hash(&mut state);
+            state.finish()
+        }
+        for error in [
+            super::ExcelError::new_div(),
+            super::ExcelError::new_value().with_message("explanation"),
+            super::ExcelError::new(ExcelErrorKind::Spill)
+                .with_message("blocked")
+                .with_location(2, 3)
+                .with_origin(Some("Sheet1".into()), 4, 5)
+                .with_extra(ExcelErrorExtra::Spill {
+                    expected_rows: 6,
+                    expected_cols: 7,
+                }),
+        ] {
+            let old = ExcelError {
+                kind: error.kind,
+                message: error.message().map(str::to_owned),
+                context: error.context().cloned(),
+                extra: error.extra().clone(),
+            };
+            assert_eq!(format!("{error:?}"), format!("{old:?}"));
+            assert_eq!(hash(&error), hash(&old));
+            assert_eq!(error, error.clone());
+        }
+        let error = super::ExcelError::new(ExcelErrorKind::Spill)
+            .with_message("blocked")
+            .with_location(2, 3)
+            .with_origin(Some("Sheet1".into()), 4, 5)
+            .with_extra(ExcelErrorExtra::Spill {
+                expected_rows: 6,
+                expected_cols: 7,
+            });
+        assert_eq!(
+            error.to_string(),
+            "#SPILL!: blocked (row 2, col 3) [origin: Sheet1!R4C5] [spill 6×7]"
+        );
+        assert_ne!(error, error.clone().with_message("different"));
+        assert_ne!(error, error.clone().with_location(1, 1));
+        assert_ne!(error, error.clone().with_extra(ExcelErrorExtra::None));
     }
 }

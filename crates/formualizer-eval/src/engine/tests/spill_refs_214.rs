@@ -685,7 +685,7 @@ fn spill_batch_abort_then_retry_converges() {
         e.fail_evaluation_commit_preflight_once_for_test();
         let err = e.evaluate_all_cancellable(CancelToken::new()).unwrap_err();
         assert!(
-            matches!(err.extra, ExcelErrorExtra::Resource { .. }),
+            matches!(err.extra(), ExcelErrorExtra::Resource { .. }),
             "expected injected preflight failure, got {err:?}"
         );
         if retry_targeted {

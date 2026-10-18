@@ -62,7 +62,7 @@ fn setup_empty_precedent() -> TestEngine {
 fn assert_graph_plan_stale(engine: &mut TestEngine, plan: &crate::engine::RecalcPlan) {
     let error = engine.evaluate_recalc_plan(plan).unwrap_err();
     assert!(matches!(
-        error.extra,
+        error.extra(),
         ExcelErrorExtra::PlanStale {
             reason: PlanStaleReason::Graph
         }
@@ -251,7 +251,7 @@ fn failed_action_rollback_invalidates_retained_plan_conservatively() {
     assert!(log.is_empty());
     let error = engine.evaluate_recalc_plan(&plan).unwrap_err();
     assert!(matches!(
-        error.extra,
+        error.extra(),
         ExcelErrorExtra::PlanStale {
             reason: PlanStaleReason::Graph
         }
@@ -381,7 +381,7 @@ fn retained_plan_rejects_direct_logged_topology_edit() {
     reverse_with_direct_logger(&mut engine, &mut ChangeLog::new());
     let error = engine.evaluate_recalc_plan(&plan).unwrap_err();
     assert!(matches!(
-        error.extra,
+        error.extra(),
         ExcelErrorExtra::PlanStale {
             reason: PlanStaleReason::Graph
         }

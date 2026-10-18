@@ -57,7 +57,7 @@ impl ErrorArena {
     /// Store an error and return a reference
     pub fn insert(&mut self, error: &ExcelError) -> ErrorRef {
         // Intern the message if present
-        let message_id = error.message.as_ref().map(|msg| self.strings.intern(msg));
+        let message_id = error.message().map(|msg| self.strings.intern(msg));
 
         // Check deduplication cache
         let cache_key = (error.kind, message_id);
@@ -141,7 +141,7 @@ mod tests {
         let retrieved = arena.get(error_ref).unwrap();
 
         assert_eq!(retrieved.kind, ExcelErrorKind::Div);
-        assert_eq!(retrieved.message, Some("Cannot divide by zero".to_string()));
+        assert_eq!(retrieved.message(), Some("Cannot divide by zero"));
     }
 
     #[test]
@@ -181,6 +181,6 @@ mod tests {
         let retrieved = arena.get(error_ref).unwrap();
 
         assert_eq!(retrieved.kind, ExcelErrorKind::Na);
-        assert_eq!(retrieved.message, None);
+        assert_eq!(retrieved.message(), None);
     }
 }

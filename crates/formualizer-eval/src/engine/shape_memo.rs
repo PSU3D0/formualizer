@@ -151,7 +151,7 @@ impl Specialization {
             .iter()
             .map(|value| match value {
                 LiteralValue::Text(text) => text.len(),
-                LiteralValue::Error(error) => error.message.as_ref().map_or(0, String::len) + 64,
+                LiteralValue::Error(error) => error.message().map_or(0, str::len) + 64,
                 _ => 0,
             })
             .sum();

@@ -30,7 +30,7 @@ fn spill_exceeds_sheet_bounds() {
             if let formualizer_common::ExcelErrorExtra::Spill {
                 expected_rows,
                 expected_cols,
-            } = &e.extra
+            } = e.extra()
             {
                 assert_eq!((*expected_rows, *expected_cols), (1, 2));
             }

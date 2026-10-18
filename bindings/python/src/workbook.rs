@@ -768,7 +768,7 @@ impl PyWorkbook {
                         Some(engine.sheet_name(id))
                     }
                 };
-                if error.message.as_deref()
+                if error.message()
                     == Some(&format!(
                         "Defined name `{}` could not be evaluated",
                         entry.name
@@ -1760,14 +1760,13 @@ fn resolve_workbook_config(
 mod tests {
     use super::{DEFAULT_XLSX_BYTE_BACKEND, PyWorkbook, PyWorkbookConfig, resolve_workbook_config};
 
-    /// Poisons `lock` by panicking on another thread while holding it.
-    fn poison<T: Send + Sync + 'static>(lock: &std::sync::Arc<std::sync::RwLock<T>>) {
-        let lock = std::sync::Arc::clone(lock);
-        let _ = std::thread::spawn(move || {
+    /// Poisons `lock` by panicking while holding its write guard.
+    fn poison<T>(lock: &std::sync::RwLock<T>) {
+        let _ = std::panic::catch_unwind(|| {
             let _guard = lock.write().unwrap();
             panic!("poison the lock");
-        })
-        .join();
+        });
+        assert!(lock.is_poisoned());
     }
 
     #[test]

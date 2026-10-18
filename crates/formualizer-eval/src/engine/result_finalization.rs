@@ -250,10 +250,10 @@ mod tests {
             panic!("expected cap rejection");
         };
         assert_eq!(error.kind, ExcelErrorKind::Spill);
-        assert_eq!(error.message.as_deref(), Some("SpillTooLarge"));
+        assert_eq!(error.message(), Some("SpillTooLarge"));
         assert_eq!(
-            error.extra,
-            ExcelErrorExtra::Spill {
+            error.extra(),
+            &ExcelErrorExtra::Spill {
                 expected_rows: 3,
                 expected_cols: 2
             }

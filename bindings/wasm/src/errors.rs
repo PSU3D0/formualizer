@@ -106,14 +106,14 @@ pub(crate) fn excel_error_to_js(error: ExcelError) -> JsValue {
     let object = js_error.unchecked_ref::<js_sys::Object>();
     set_string(object, "kind", &error.kind.to_string());
     set_string(object, "excel_kind", &error.kind.to_string());
-    if let Some(message) = &error.message {
+    if let Some(message) = error.message() {
         let _ = js_sys::Reflect::set(
             object,
             &JsValue::from_str("excel_message"),
             &JsValue::from_str(message),
         );
     }
-    match &error.extra {
+    match error.extra() {
         ExcelErrorExtra::None | ExcelErrorExtra::Spill { .. } => {}
         ExcelErrorExtra::Resource { detail } => {
             set_string(object, "resource_reason", detail.reason.as_str());

@@ -392,7 +392,7 @@ mod tests {
         let error = over_cap
             .finish_with_policy(EvalDeltaCompatibilityPolicy::CellLimit(100))
             .unwrap_err();
-        assert!(matches!(error.extra, ExcelErrorExtra::Resource { .. }));
+        assert!(matches!(error.extra(), ExcelErrorExtra::Resource { .. }));
     }
 
     #[test]
@@ -408,6 +408,6 @@ mod tests {
             }],
         };
         let error = delta.compatibility_cells(100).unwrap_err();
-        assert!(matches!(error.extra, ExcelErrorExtra::Resource { .. }));
+        assert!(matches!(error.extra(), ExcelErrorExtra::Resource { .. }));
     }
 }

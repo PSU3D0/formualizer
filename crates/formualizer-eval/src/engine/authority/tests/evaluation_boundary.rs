@@ -30,7 +30,7 @@ fn unsupported_structural_state_rejects_all_evaluation_routes() {
     let check = |error: ExcelError| {
         assert_eq!(error.kind, ExcelErrorKind::NImpl);
         assert_eq!(
-            error.message.as_deref(),
+            error.message(),
             Some("unified_authority: Unsupported { operation: \"insert_rows\" }")
         );
     };

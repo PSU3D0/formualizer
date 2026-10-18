@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use chrono::{Duration, NaiveDate, NaiveTime};
-use formualizer_common::{ErrorContext, ExcelError, ExcelErrorExtra, ExcelErrorKind, LiteralValue};
+use formualizer_common::{ExcelError, ExcelErrorExtra, ExcelErrorKind, LiteralValue};
 use formualizer_parse::parser::{ASTNode, ASTNodeType, parse};
 
 use crate::engine::template::canonical::{CanonicalRejectKind, SlotContext, canonicalize_template};
@@ -278,21 +278,14 @@ fn formula_plane_parameter_key_dates_and_durations_are_typed() {
 
 #[test]
 fn formula_plane_parameter_key_error_includes_message_and_context() {
-    let err_a = ExcelError {
-        kind: ExcelErrorKind::Value,
-        message: Some("a".into()),
-        context: Some(ErrorContext {
-            row: Some(1),
-            col: Some(2),
-            origin_row: Some(3),
-            origin_col: Some(4),
-            origin_sheet: Some("S".into()),
-        }),
-        extra: ExcelErrorExtra::Spill {
+    let err_a = ExcelError::new(ExcelErrorKind::Value)
+        .with_message("a")
+        .with_location(1, 2)
+        .with_origin(Some("S".into()), 3, 4)
+        .with_extra(ExcelErrorExtra::Spill {
             expected_rows: 2,
             expected_cols: 3,
-        },
-    };
+        });
 }
 
 #[test]

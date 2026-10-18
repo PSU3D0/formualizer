@@ -798,7 +798,7 @@ fn stale_reason(error: &IoError) -> Option<&'static str> {
     let IoError::Engine(excel) = error else {
         return None;
     };
-    let ExcelErrorExtra::PlanStale { reason } = excel.extra else {
+    let ExcelErrorExtra::PlanStale { reason } = excel.extra() else {
         return None;
     };
     Some(reason.as_str())

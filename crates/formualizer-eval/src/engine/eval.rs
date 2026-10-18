@@ -9519,7 +9519,7 @@ where
             .materialized_graph_bytes()
             .map_err(crate::engine::ResourceLedgerError::into_excel_error)?;
         if let Err(error) = self.preflight_graph_admission(admission) {
-            if let formualizer_common::ExcelErrorExtra::Resource { detail } = &error.extra {
+            if let formualizer_common::ExcelErrorExtra::Resource { detail } = error.extra() {
                 self.observe_target_admission_failure(detail.reason);
             }
             return Err(error);
@@ -14378,9 +14378,7 @@ where
                                     delta.as_deref_mut(),
                                 );
                                 let spill_err = ExcelError::new(ExcelErrorKind::Spill)
-                                    .with_message(
-                                        e.message.unwrap_or_else(|| "Spill blocked".to_string()),
-                                    )
+                                    .with_message(e.message().unwrap_or("Spill blocked"))
                                     .with_extra(formualizer_common::ExcelErrorExtra::Spill {
                                         expected_rows: h,
                                         expected_cols: w,
@@ -14774,7 +14772,7 @@ where
 
     fn transient_target_preparation_stale(error: &ExcelError) -> bool {
         matches!(
-            &error.extra,
+            error.extra(),
             formualizer_common::ExcelErrorExtra::PreparationStale {
                 reason: formualizer_common::PreparationStaleReason::Semantic
                     | formualizer_common::PreparationStaleReason::Provider
@@ -20599,20 +20597,20 @@ where
         // Preserve the owned-array rejection's kind, release and clear effects.
         if let LiteralValue::Error(error) = &value
             && error.kind == ExcelErrorKind::Spill
-            && error.message.as_deref() == Some("SpillTooLarge")
+            && error.message() == Some("SpillTooLarge")
             && let formualizer_common::ExcelErrorExtra::Spill {
                 expected_rows,
                 expected_cols,
-            } = error.extra
-            && u64::from(expected_rows).saturating_mul(u64::from(expected_cols))
+            } = error.extra()
+            && u64::from(*expected_rows).saturating_mul(u64::from(*expected_cols))
                 > u64::from(self.config.spill.max_spill_cells)
         {
             self.graph.set_kind(vertex_id, VertexKind::FormulaArray);
             return self.plan_spill_error_effects(
                 vertex_id,
                 "SpillTooLarge",
-                expected_rows,
-                expected_cols,
+                *expected_rows,
+                *expected_cols,
             );
         }
         if !matches!(&value, LiteralValue::Error(e) if e.kind == ExcelErrorKind::Spill) {
@@ -20724,7 +20722,7 @@ where
                     .graph
                     .plan_spill_region_with_blocker(vertex_id, &targets)
                 {
-                    let yielding = if e.message.as_deref() == Some("BlockedBySpill") {
+                    let yielding = if e.message() == Some("BlockedBySpill") {
                         self.graph.spills_yielding_to(vertex_id, &targets)
                     } else {
                         None
@@ -20757,10 +20755,7 @@ where
                         // A formula or spill blocker can go away without this
                         // anchor recomputing: remember the attempted region so
                         // an edit inside it wakes the anchor.
-                        if matches!(
-                            e.message.as_deref(),
-                            Some("BlockedByFormula" | "BlockedBySpill")
-                        ) {
+                        if matches!(e.message(), Some("BlockedByFormula" | "BlockedBySpill")) {
                             self.spill_blocker_waiters.wait(vertex_id, blocker);
                         }
                         return self.plan_spill_error_effects(vertex_id, "Spill blocked", h, w);
@@ -20840,8 +20835,8 @@ where
                 Ok(effects)
             }
             Err(e) => {
-                let msg = e.message.unwrap_or_else(|| "Spill blocked".to_string());
-                self.plan_spill_error_effects(vertex_id, &msg, h, w)
+                let msg = e.message().unwrap_or("Spill blocked");
+                self.plan_spill_error_effects(vertex_id, msg, h, w)
             }
         }
     }

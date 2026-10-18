@@ -39,8 +39,8 @@ fn run(e: &mut Engine<TestWorkbook>, mode: usize) {
             let vertex = e.graph.get_vertex_for_cell(&cell).unwrap();
             let result = e.evaluate_vertex(vertex).unwrap();
             if let LiteralValue::Error(error) = result {
-                assert_eq!(error.message.as_deref(), Some("SpillTooLarge"));
-                assert!(matches!(error.extra, ExcelErrorExtra::Spill { .. }));
+                assert_eq!(error.message(), Some("SpillTooLarge"));
+                assert!(matches!(error.extra(), ExcelErrorExtra::Spill { .. }));
             }
         }
         7 => {
@@ -73,11 +73,11 @@ fn assert_cap(e: &Engine<TestWorkbook>, h: u32, w: u32) {
     assert_eq!(err.kind, ExcelErrorKind::Spill);
     // Arrow's public error lane retains the kind, not diagnostic payloads.
     // The publication helper's unit test pins the complete pre-storage error.
-    if err.extra != ExcelErrorExtra::None {
-        assert_eq!(err.message.as_deref(), Some("SpillTooLarge"));
+    if err.extra() != &ExcelErrorExtra::None {
+        assert_eq!(err.message(), Some("SpillTooLarge"));
         assert_eq!(
-            err.extra,
-            ExcelErrorExtra::Spill {
+            err.extra(),
+            &ExcelErrorExtra::Spill {
                 expected_rows: h,
                 expected_cols: w
             }

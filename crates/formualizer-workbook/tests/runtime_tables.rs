@@ -126,12 +126,9 @@ fn invalid_table_definitions_are_rejected_with_actionable_messages() {
         .define_table("T", "S", (1, 1, 4, 2), vec!["only-one".into()], true, false)
         .expect_err("header count must match the column span");
     assert!(
-        err.message
-            .as_deref()
-            .unwrap_or_default()
-            .contains("2 column"),
+        err.message().unwrap_or_default().contains("2 column"),
         "message should state the span, got {:?}",
-        err.message
+        err.message()
     );
 
     let err = wb
@@ -144,12 +141,7 @@ fn invalid_table_definitions_are_rejected_with_actionable_messages() {
             false,
         )
         .expect_err("unknown sheet");
-    assert!(
-        err.message
-            .as_deref()
-            .unwrap_or_default()
-            .contains("Missing")
-    );
+    assert!(err.message().unwrap_or_default().contains("Missing"));
 
     let err = wb
         .define_table(
@@ -161,12 +153,7 @@ fn invalid_table_definitions_are_rejected_with_actionable_messages() {
             false,
         )
         .expect_err("rows are 1-based");
-    assert!(
-        err.message
-            .as_deref()
-            .unwrap_or_default()
-            .contains("1-based")
-    );
+    assert!(err.message().unwrap_or_default().contains("1-based"));
 
     let err = wb
         .define_table(
@@ -178,12 +165,7 @@ fn invalid_table_definitions_are_rejected_with_actionable_messages() {
             false,
         )
         .expect_err("inverted range");
-    assert!(
-        err.message
-            .as_deref()
-            .unwrap_or_default()
-            .contains("inverted")
-    );
+    assert!(err.message().unwrap_or_default().contains("inverted"));
 
     let err = wb
         .define_table(
@@ -195,12 +177,7 @@ fn invalid_table_definitions_are_rejected_with_actionable_messages() {
             false,
         )
         .expect_err("header row with no data rows");
-    assert!(
-        err.message
-            .as_deref()
-            .unwrap_or_default()
-            .contains("no data rows")
-    );
+    assert!(err.message().unwrap_or_default().contains("no data rows"));
 
     assert!(wb.tables().is_empty(), "no partial definition may survive");
 }

@@ -227,7 +227,7 @@ fn guarded_group_preflight_failure_is_retryable_end_to_end() {
         );
         e.fail_evaluation_commit_preflight_once_for_test();
         let err = e.evaluate_all_cancellable(CancelToken::new()).unwrap_err();
-        let ExcelErrorExtra::Resource { detail } = &err.extra else {
+        let ExcelErrorExtra::Resource { detail } = err.extra() else {
             panic!("expected injected preflight failure, got {err:?}");
         };
         assert_eq!(detail.reason, ResourceExhaustionReason::Deadline);

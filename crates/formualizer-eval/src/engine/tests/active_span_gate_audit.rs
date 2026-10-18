@@ -176,7 +176,7 @@ fn off_transition_deadline_failure_is_precommit_and_retry_clears_retired_dirty_p
 
     let error = engine.evaluate_all().unwrap_err();
 
-    let ExcelErrorExtra::Resource { detail } = &error.extra else {
+    let ExcelErrorExtra::Resource { detail } = error.extra() else {
         panic!("expected typed deadline failure, got {error:?}");
     };
     assert_eq!(detail.reason, ResourceExhaustionReason::Deadline);

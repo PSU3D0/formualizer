@@ -200,14 +200,10 @@ impl PyLiteralValue {
             }
         };
 
-        use formualizer::common::error::ExcelErrorExtra;
+        let mut error = ExcelError::new(error_kind);
+        error.set_message(message);
         Ok(PyLiteralValue {
-            inner: LiteralValue::Error(ExcelError {
-                kind: error_kind,
-                message,
-                context: None,
-                extra: ExcelErrorExtra::None,
-            }),
+            inner: LiteralValue::Error(error),
         })
     }
 
@@ -352,7 +348,7 @@ impl PyLiteralValue {
                 )
             }
             LiteralValue::Error(e) => {
-                if let Some(msg) = &e.message {
+                if let Some(msg) = e.message() {
                     format!("LiteralValue.error({:?}, {:?})", e.kind, msg)
                 } else {
                     format!("LiteralValue.error({:?})", e.kind)
@@ -374,7 +370,7 @@ impl PyLiteralValue {
             LiteralValue::DateTime(dt) => dt.format("%Y-%m-%d %H:%M:%S").to_string(),
             LiteralValue::Duration(d) => format!("{}s", d.num_seconds()),
             LiteralValue::Array(_) => "[Array]".to_string(),
-            LiteralValue::Error(e) => match &e.message {
+            LiteralValue::Error(e) => match e.message() {
                 Some(m) if !m.is_empty() => format!("{}: {}", e.kind, m),
                 _ => format!("{}", e.kind),
             },
@@ -395,7 +391,7 @@ impl PyLiteralValue {
     #[getter]
     pub fn error_message(&self) -> Option<String> {
         match &self.inner {
-            LiteralValue::Error(e) => e.message.clone(),
+            LiteralValue::Error(e) => e.message().map(str::to_owned),
             _ => None,
         }
     }
@@ -404,7 +400,7 @@ impl PyLiteralValue {
     #[getter]
     pub fn error_location(&self) -> Option<(u32, u32)> {
         match &self.inner {
-            LiteralValue::Error(e) => e.context.as_ref().and_then(|c| Some((c.row?, c.col?))),
+            LiteralValue::Error(e) => e.context().and_then(|c| Some((c.row?, c.col?))),
             _ => None,
         }
     }
@@ -414,8 +410,7 @@ impl PyLiteralValue {
     pub fn error_origin(&self) -> Option<(Option<String>, u32, u32)> {
         match &self.inner {
             LiteralValue::Error(e) => e
-                .context
-                .as_ref()
+                .context()
                 .and_then(|c| Some((c.origin_sheet.clone(), c.origin_row?, c.origin_col?))),
             _ => None,
         }
@@ -496,10 +491,10 @@ pub(crate) fn literal_to_py(py: Python<'_>, value: &LiteralValue) -> PyResult<Py
             let dict = PyDict::new(py);
             dict.set_item("type", "Error")?;
             dict.set_item("kind", format!("{:?}", err.kind))?;
-            if let Some(msg) = &err.message {
+            if let Some(msg) = err.message() {
                 dict.set_item("message", msg)?;
             }
-            if let Some(ctx) = &err.context {
+            if let Some(ctx) = err.context() {
                 if let Some(r) = ctx.row {
                     dict.set_item("row", r)?;
                 }
@@ -684,13 +679,13 @@ pub(crate) fn py_to_literal(value: &Bound<'_, PyAny>) -> PyResult<LiteralValue> 
                         || origin_col.is_some()
                         || origin_sheet.is_some()
                     {
-                        error.context = Some(ErrorContext {
+                        error.set_context(Some(ErrorContext {
                             row,
                             col,
                             origin_row,
                             origin_col,
                             origin_sheet,
-                        });
+                        }));
                     }
                     return Ok(LiteralValue::Error(error));
                 }

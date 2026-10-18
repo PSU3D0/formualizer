@@ -882,7 +882,7 @@ fn cancellation_is_honored_at_settle_pass_boundaries() {
         .unwrap_err();
     assert_eq!(err.kind, ExcelErrorKind::Cancelled);
     assert!(
-        err.message.as_deref().unwrap_or("").contains("SCC"),
+        err.message().unwrap_or("").contains("SCC"),
         "cancellation must come from the SCC pass boundary, got {err:?}"
     );
 }
@@ -961,7 +961,7 @@ fn recalc_plan_skips_clean_cycles_and_evaluates_dirty_ones_whole() {
     set_formula(&mut engine, "Sheet1", 1, 5, "=2+2");
     let stale = engine.evaluate_recalc_plan(&plan).unwrap_err();
     assert!(matches!(
-        stale.extra,
+        stale.extra(),
         formualizer_common::ExcelErrorExtra::PlanStale {
             reason: formualizer_common::PlanStaleReason::Graph
         }

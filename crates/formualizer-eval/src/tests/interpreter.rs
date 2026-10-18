@@ -1111,8 +1111,7 @@ mod tests {
         if let LiteralValue::Error(ref e) = result {
             // expected should mention "at most 3"
             assert!(
-                e.message
-                    .clone()
+                e.message()
                     .unwrap()
                     .contains("expects 2 or 3 arguments, got 5")
             );
