@@ -546,10 +546,10 @@ impl core::marker::StructuralPartialEq for formualizer_eval::engine::arena::ast:
 pub struct formualizer_eval::engine::arena::ast::AstArena
 impl formualizer_eval::engine::arena::ast::AstArena
 pub fn formualizer_eval::engine::arena::ast::AstArena::clear(&mut self)
-pub fn formualizer_eval::engine::arena::ast::AstArena::compact_ref(&self, formualizer_eval::engine::arena::ast::RefId) -> &formualizer_eval::engine::arena::ast::CompactRefType
 pub fn formualizer_eval::engine::arena::ast::AstArena::get(&self, formualizer_eval::engine::arena::ast::AstNodeId) -> core::option::Option<&formualizer_eval::engine::arena::ast::AstNodeData<formualizer_eval::engine::arena::ast::RefId>>
 pub fn formualizer_eval::engine::arena::ast::AstArena::get_array_elements(&self, formualizer_eval::engine::arena::ast::AstNodeId) -> core::option::Option<&[formualizer_eval::engine::arena::ast::AstNodeId]>
 pub fn formualizer_eval::engine::arena::ast::AstArena::get_array_elements_info(&self, formualizer_eval::engine::arena::ast::AstNodeId) -> core::option::Option<(u16, u16, &[formualizer_eval::engine::arena::ast::AstNodeId])>
+pub fn formualizer_eval::engine::arena::ast::AstArena::get_compact_ref(&self, formualizer_eval::engine::arena::ast::RefId) -> core::option::Option<&formualizer_eval::engine::arena::ast::CompactRefType>
 pub fn formualizer_eval::engine::arena::ast::AstArena::get_function_args(&self, formualizer_eval::engine::arena::ast::AstNodeId) -> core::option::Option<&[formualizer_eval::engine::arena::ast::AstNodeId]>
 pub fn formualizer_eval::engine::arena::ast::AstArena::insert(&mut self, formualizer_eval::engine::arena::ast::AstNodeData) -> formualizer_eval::engine::arena::ast::AstNodeId
 pub fn formualizer_eval::engine::arena::ast::AstArena::insert_array(&mut self, u16, u16, alloc::vec::Vec<formualizer_eval::engine::arena::ast::AstNodeId>) -> formualizer_eval::engine::arena::ast::AstNodeId
@@ -629,9 +629,9 @@ pub struct formualizer_eval::engine::arena::data_store::DataStore
 impl formualizer_eval::engine::arena::data_store::DataStore
 pub fn formualizer_eval::engine::arena::data_store::DataStore::ast_needs_structural_rewrite(&self, formualizer_eval::engine::arena::ast::AstNodeId) -> bool
 pub fn formualizer_eval::engine::arena::data_store::DataStore::clear(&mut self)
-pub fn formualizer_eval::engine::arena::data_store::DataStore::compact_ref(&self, formualizer_eval::engine::arena::ast::RefId) -> &formualizer_eval::engine::arena::ast::CompactRefType
 pub fn formualizer_eval::engine::arena::data_store::DataStore::get_args(&self, formualizer_eval::engine::arena::ast::AstNodeId) -> core::option::Option<&[formualizer_eval::engine::arena::ast::AstNodeId]>
 pub fn formualizer_eval::engine::arena::data_store::DataStore::get_array_elems(&self, formualizer_eval::engine::arena::ast::AstNodeId) -> core::option::Option<(u16, u16, &[formualizer_eval::engine::arena::ast::AstNodeId])>
+pub fn formualizer_eval::engine::arena::data_store::DataStore::get_compact_ref(&self, formualizer_eval::engine::arena::ast::RefId) -> core::option::Option<&formualizer_eval::engine::arena::ast::CompactRefType>
 pub fn formualizer_eval::engine::arena::data_store::DataStore::get_node(&self, formualizer_eval::engine::arena::ast::AstNodeId) -> core::option::Option<&formualizer_eval::engine::arena::ast::AstNodeData<formualizer_eval::engine::arena::ast::RefId>>
 pub fn formualizer_eval::engine::arena::data_store::DataStore::memory_usage(&self) -> formualizer_eval::engine::arena::data_store::DataStoreStats
 pub fn formualizer_eval::engine::arena::data_store::DataStore::new() -> Self
@@ -1007,10 +1007,10 @@ impl core::marker::StructuralPartialEq for formualizer_eval::engine::arena::arra
 pub struct formualizer_eval::engine::arena::AstArena
 impl formualizer_eval::engine::arena::ast::AstArena
 pub fn formualizer_eval::engine::arena::ast::AstArena::clear(&mut self)
-pub fn formualizer_eval::engine::arena::ast::AstArena::compact_ref(&self, formualizer_eval::engine::arena::ast::RefId) -> &formualizer_eval::engine::arena::ast::CompactRefType
 pub fn formualizer_eval::engine::arena::ast::AstArena::get(&self, formualizer_eval::engine::arena::ast::AstNodeId) -> core::option::Option<&formualizer_eval::engine::arena::ast::AstNodeData<formualizer_eval::engine::arena::ast::RefId>>
 pub fn formualizer_eval::engine::arena::ast::AstArena::get_array_elements(&self, formualizer_eval::engine::arena::ast::AstNodeId) -> core::option::Option<&[formualizer_eval::engine::arena::ast::AstNodeId]>
 pub fn formualizer_eval::engine::arena::ast::AstArena::get_array_elements_info(&self, formualizer_eval::engine::arena::ast::AstNodeId) -> core::option::Option<(u16, u16, &[formualizer_eval::engine::arena::ast::AstNodeId])>
+pub fn formualizer_eval::engine::arena::ast::AstArena::get_compact_ref(&self, formualizer_eval::engine::arena::ast::RefId) -> core::option::Option<&formualizer_eval::engine::arena::ast::CompactRefType>
 pub fn formualizer_eval::engine::arena::ast::AstArena::get_function_args(&self, formualizer_eval::engine::arena::ast::AstNodeId) -> core::option::Option<&[formualizer_eval::engine::arena::ast::AstNodeId]>
 pub fn formualizer_eval::engine::arena::ast::AstArena::insert(&mut self, formualizer_eval::engine::arena::ast::AstNodeData) -> formualizer_eval::engine::arena::ast::AstNodeId
 pub fn formualizer_eval::engine::arena::ast::AstArena::insert_array(&mut self, u16, u16, alloc::vec::Vec<formualizer_eval::engine::arena::ast::AstNodeId>) -> formualizer_eval::engine::arena::ast::AstNodeId
@@ -1052,9 +1052,9 @@ pub struct formualizer_eval::engine::arena::DataStore
 impl formualizer_eval::engine::arena::data_store::DataStore
 pub fn formualizer_eval::engine::arena::data_store::DataStore::ast_needs_structural_rewrite(&self, formualizer_eval::engine::arena::ast::AstNodeId) -> bool
 pub fn formualizer_eval::engine::arena::data_store::DataStore::clear(&mut self)
-pub fn formualizer_eval::engine::arena::data_store::DataStore::compact_ref(&self, formualizer_eval::engine::arena::ast::RefId) -> &formualizer_eval::engine::arena::ast::CompactRefType
 pub fn formualizer_eval::engine::arena::data_store::DataStore::get_args(&self, formualizer_eval::engine::arena::ast::AstNodeId) -> core::option::Option<&[formualizer_eval::engine::arena::ast::AstNodeId]>
 pub fn formualizer_eval::engine::arena::data_store::DataStore::get_array_elems(&self, formualizer_eval::engine::arena::ast::AstNodeId) -> core::option::Option<(u16, u16, &[formualizer_eval::engine::arena::ast::AstNodeId])>
+pub fn formualizer_eval::engine::arena::data_store::DataStore::get_compact_ref(&self, formualizer_eval::engine::arena::ast::RefId) -> core::option::Option<&formualizer_eval::engine::arena::ast::CompactRefType>
 pub fn formualizer_eval::engine::arena::data_store::DataStore::get_node(&self, formualizer_eval::engine::arena::ast::AstNodeId) -> core::option::Option<&formualizer_eval::engine::arena::ast::AstNodeData<formualizer_eval::engine::arena::ast::RefId>>
 pub fn formualizer_eval::engine::arena::data_store::DataStore::memory_usage(&self) -> formualizer_eval::engine::arena::data_store::DataStoreStats
 pub fn formualizer_eval::engine::arena::data_store::DataStore::new() -> Self

@@ -691,13 +691,19 @@ impl AstArena {
         self.table_specs.get(id.0 as usize)
     }
 
-    /// Compute hash for a node
-    /// Resolve a reference identity produced by this arena.
+    /// The reference payload behind `id`, or `None` when `id` does not come
+    /// from this arena's current contents (another arena, or one held across
+    /// `clear`/`compact`).
+    pub fn get_compact_ref(&self, id: RefId) -> Option<&CompactRefType> {
+        self.references.get(id.0 as usize)
+    }
+
+    /// Resolve a reference identity read from one of this arena's nodes.
     #[expect(
         clippy::indexing_slicing,
-        reason = "RefId is constructed only when its payload is appended to this arena"
+        reason = "engine callers take RefIds only from nodes of this arena's current contents, which clear and compact replace together with the payloads"
     )]
-    pub fn compact_ref(&self, id: RefId) -> &CompactRefType {
+    pub(crate) fn compact_ref(&self, id: RefId) -> &CompactRefType {
         &self.references[id.0 as usize]
     }
 
@@ -1031,6 +1037,19 @@ pub struct AstArenaStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compact_ref_lookup_rejects_stale_ids() {
+        let mut arena = AstArena::new();
+        let name = arena.strings_mut().intern("N");
+        let node = arena.insert_reference("N", CompactRefType::NamedRange(name));
+        let Some(AstNodeData::Reference { ref_type, .. }) = arena.get(node).cloned() else {
+            panic!("reference node");
+        };
+        assert!(arena.get_compact_ref(ref_type).is_some());
+        arena.clear();
+        assert!(arena.get_compact_ref(ref_type).is_none());
+    }
 
     #[test]
     fn sparse_metadata_survives_compaction_and_clear() {

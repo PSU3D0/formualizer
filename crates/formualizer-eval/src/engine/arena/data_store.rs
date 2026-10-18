@@ -357,7 +357,12 @@ impl DataStore {
         self.asts.get(id).map(|node| self.asts.expand_node(node))
     }
 
-    pub fn compact_ref(&self, id: super::ast::RefId) -> &CompactRefType {
+    /// See [`super::ast::AstArena::get_compact_ref`].
+    pub fn get_compact_ref(&self, id: super::ast::RefId) -> Option<&CompactRefType> {
+        self.asts.get_compact_ref(id)
+    }
+
+    pub(crate) fn compact_ref(&self, id: super::ast::RefId) -> &CompactRefType {
         self.asts.compact_ref(id)
     }
 
