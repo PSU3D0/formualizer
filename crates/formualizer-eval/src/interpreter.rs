@@ -148,8 +148,168 @@ pub(crate) struct InterpreterParameterBindings<'a> {
 pub(crate) type InvariantValues =
     FxHashMap<AstNodeId, (LiteralValue, Option<crate::format::FormatId>)>;
 
+/// Internal fast path; recording contexts deliberately retain their read hooks.
+pub(crate) trait ArenaCellResolver {
+    fn resolve_arena_cell(
+        &self,
+        sheet: Option<SheetKey>,
+        current: crate::SheetId,
+        row: u32,
+        col: u32,
+    ) -> Result<(LiteralValue, Option<crate::format::FormatId>), ExcelError>;
+}
+
+type ResolvedCallable = (
+    Option<std::sync::Arc<dyn crate::function::Function>>,
+    Option<crate::function::FnCaps>,
+);
+
+/// Immutable function snapshot shared by every interpreter in one evaluation request.
+#[derive(Default)]
+pub(crate) struct ResolvedFunctions {
+    functions: Vec<Option<std::sync::Arc<dyn crate::function::Function>>>,
+    slots: rustc_hash::FxHashMap<crate::engine::arena::StringId, usize>,
+    revision: Option<(u64, Option<u64>, u64)>,
+    ast_revision: Option<(u64, Option<u64>, u64, usize, u64)>,
+    ast_functions: rustc_hash::FxHashMap<Box<str>, ResolvedCallable>,
+    capabilities: Vec<Option<crate::function::FnCaps>>,
+}
+
+impl ResolvedFunctions {
+    pub(crate) fn refresh(
+        &mut self,
+        store: &DataStore,
+        provider: &dyn crate::traits::FunctionProvider,
+    ) {
+        let revision = (
+            crate::function_registry::semantic_epoch_lock_free(),
+            provider.planning_semantic_revision(),
+            store.resolution_revision(),
+        );
+        if self.revision != Some(revision) || revision.1.is_none() {
+            self.functions.clear();
+            self.capabilities.clear();
+            self.slots.clear();
+            self.ast_revision = None;
+        }
+        // New names append without invalidating existing slots. Non-function
+        // edits do not change the reset revision or allocate here.
+        for id in store.function_names() {
+            if self.slots.contains_key(&id) {
+                continue;
+            }
+            let name = store.resolve_ast_string(id);
+            let function = if name == CALL_NODE_NAME {
+                None
+            } else {
+                provider.get_function("", name)
+            };
+            let caps = function.as_ref().map(|function| function.caps());
+            self.slots.insert(id, self.functions.len());
+            self.functions.push(function);
+            self.capabilities.push(caps);
+        }
+        // Capture before resolving so racing registration invalidates next pass.
+        self.revision = Some(revision);
+    }
+
+    pub(crate) fn refresh_ast_functions<'n>(
+        &mut self,
+        store: &DataStore,
+        provider: &dyn crate::traits::FunctionProvider,
+        named: impl Iterator<Item = &'n ASTNode>,
+        symbol_revision: u64,
+    ) {
+        let Some((epoch, provider_revision, arena_revision)) = self.revision else {
+            return;
+        };
+        let revision = (
+            epoch,
+            provider_revision,
+            arena_revision,
+            self.functions.len(),
+            symbol_revision,
+        );
+        if self.ast_revision == Some(revision) {
+            return;
+        }
+        fn collect(node: &ASTNode, names: &mut std::collections::BTreeSet<String>) {
+            match &node.node_type {
+                ASTNodeType::Function { name, args } => {
+                    names.insert(name.clone());
+                    for arg in args {
+                        collect(arg, names);
+                    }
+                }
+                ASTNodeType::UnaryOp { expr, .. } => collect(expr, names),
+                ASTNodeType::BinaryOp { left, right, .. } => {
+                    collect(left, names);
+                    collect(right, names);
+                }
+                ASTNodeType::Array(rows) => {
+                    for node in rows.iter().flatten() {
+                        collect(node, names);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut names = std::collections::BTreeSet::new();
+        let definitions_changed = self
+            .ast_revision
+            .is_none_or(|previous| previous.4 != symbol_revision);
+        if definitions_changed {
+            for node in named {
+                collect(node, &mut names);
+            }
+            self.ast_functions.clear();
+        }
+        for (id, slot) in &self.slots {
+            let name = store.resolve_ast_string(*id);
+            if self.ast_functions.contains_key(name) {
+                continue;
+            }
+            let function = self.functions.get(*slot).cloned().flatten();
+            let caps = self.capabilities.get(*slot).copied().flatten();
+            self.ast_functions.insert(name.into(), (function, caps));
+        }
+        for name in names {
+            self.ast_functions
+                .entry(name.into_boxed_str())
+                .or_insert_with_key(|name| {
+                    let function = provider.get_function("", name);
+                    let caps = function.as_ref().map(|function| function.caps());
+                    (function, caps)
+                });
+        }
+        self.ast_revision = Some(revision);
+    }
+
+    fn get(&self, id: crate::engine::arena::StringId) -> Option<&dyn crate::function::Function> {
+        self.functions
+            .get(*self.slots.get(&id)?)
+            .and_then(|f| f.as_deref())
+    }
+}
+
+enum ResolvedFunction<'a> {
+    Borrowed(&'a dyn crate::function::Function),
+    Owned(std::sync::Arc<dyn crate::function::Function>),
+}
+impl std::ops::Deref for ResolvedFunction<'_> {
+    type Target = dyn crate::function::Function;
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Borrowed(f) => *f,
+            Self::Owned(f) => f.as_ref(),
+        }
+    }
+}
+
 pub struct Interpreter<'a> {
     pub context: &'a dyn EvaluationContext,
+    resolved_functions: Option<&'a ResolvedFunctions>,
+    arena_cells: Option<&'a dyn ArenaCellResolver>,
     current_sheet: &'a str,
     current_cell: Option<crate::CellRef>,
     local_env: LocalEnv,
@@ -163,6 +323,8 @@ impl<'a> Interpreter<'a> {
     pub fn new(context: &'a dyn EvaluationContext, current_sheet: &'a str) -> Self {
         Self {
             context,
+            resolved_functions: None,
+            arena_cells: None,
             current_sheet,
             current_cell: None,
             local_env: LocalEnv::default(),
@@ -180,6 +342,8 @@ impl<'a> Interpreter<'a> {
     ) -> Self {
         Self {
             context,
+            resolved_functions: None,
+            arena_cells: None,
             current_sheet,
             current_cell: Some(cell),
             local_env: LocalEnv::default(),
@@ -187,6 +351,85 @@ impl<'a> Interpreter<'a> {
             reference_col_delta: 0,
             disable_ast_planner: false,
             parameter_bindings: None,
+        }
+    }
+
+    pub(crate) fn with_arena_cells(mut self, resolver: &'a dyn ArenaCellResolver) -> Self {
+        self.arena_cells = Some(resolver);
+        self
+    }
+
+    pub(crate) fn with_resolved_functions(mut self, table: &'a ResolvedFunctions) -> Self {
+        self.resolved_functions = Some(table);
+        self
+    }
+
+    fn ast_function(&self, name: &str) -> Option<ResolvedFunction<'_>> {
+        if let Some(table) = self.resolved_functions
+            && let Some(function) = table.ast_functions.get(name)
+        {
+            return function.0.as_deref().map(ResolvedFunction::Borrowed);
+        }
+        self.context
+            .get_function("", name)
+            .map(ResolvedFunction::Owned)
+    }
+
+    pub(crate) fn ast_function_capabilities(&self, name: &str) -> Option<crate::function::FnCaps> {
+        if let Some(table) = self.resolved_functions
+            && let Some(caps) = table.ast_functions.get(name)
+        {
+            return caps.1;
+        }
+        self.context.function_capabilities("", name)
+    }
+
+    fn ast_function_arc(
+        &self,
+        ns: &str,
+        name: &str,
+    ) -> Option<std::sync::Arc<dyn crate::function::Function>> {
+        if ns.is_empty()
+            && let Some(table) = self.resolved_functions
+            && let Some(function) = table.ast_functions.get(name)
+        {
+            return function.0.clone();
+        }
+        self.context.get_function(ns, name)
+    }
+
+    fn arena_function(
+        &self,
+        id: crate::engine::arena::StringId,
+        store: &DataStore,
+    ) -> Option<ResolvedFunction<'_>> {
+        if let Some(table) = self.resolved_functions {
+            table.get(id).map(ResolvedFunction::Borrowed)
+        } else {
+            let name = store.resolve_ast_string(id);
+            if name == CALL_NODE_NAME {
+                return None;
+            }
+            self.context
+                .get_function("", name)
+                .map(ResolvedFunction::Owned)
+        }
+    }
+
+    pub(crate) fn arena_function_capabilities(
+        &self,
+        id: crate::engine::arena::StringId,
+        store: &DataStore,
+    ) -> Option<crate::function::FnCaps> {
+        if let Some(table) = self.resolved_functions {
+            table
+                .capabilities
+                .get(*table.slots.get(&id)?)
+                .copied()
+                .flatten()
+        } else {
+            self.context
+                .function_capabilities("", store.resolve_ast_string(id))
         }
     }
 
@@ -201,6 +444,8 @@ impl<'a> Interpreter<'a> {
     pub(crate) fn with_current_cell(&self, cell: crate::CellRef) -> Self {
         Self {
             context: self.context,
+            resolved_functions: self.resolved_functions,
+            arena_cells: self.arena_cells,
             current_sheet: self.current_sheet,
             current_cell: Some(cell),
             local_env: self.local_env.clone(),
@@ -214,6 +459,8 @@ impl<'a> Interpreter<'a> {
     pub fn with_local_env(&self, env: LocalEnv) -> Self {
         Self {
             context: self.context,
+            resolved_functions: self.resolved_functions,
+            arena_cells: self.arena_cells,
             current_sheet: self.current_sheet,
             current_cell: self.current_cell,
             local_env: env,
@@ -230,6 +477,8 @@ impl<'a> Interpreter<'a> {
     ) -> Self {
         Self {
             context: self.context,
+            resolved_functions: self.resolved_functions,
+            arena_cells: self.arena_cells,
             current_sheet: self.current_sheet,
             current_cell: self.current_cell,
             local_env: self.local_env.clone(),
@@ -321,9 +570,9 @@ impl<'a> Interpreter<'a> {
                 self.reference_for_current_offset(reference)
             }
             ASTNodeType::Function { name, args } => {
-                if let Some(fun) = self.context.get_function("", name) {
+                if let Some(fun) = self.ast_function(name) {
                     // Build handles; allow function to decide reference semantics
-                    let handles: Vec<ArgumentHandle> =
+                    let handles: smallvec::SmallVec<[ArgumentHandle; 4]> =
                         args.iter().map(|n| ArgumentHandle::new(n, self)).collect();
                     let fctx = DefaultFunctionContext::new_with_sheet(
                         self.context,
@@ -364,14 +613,14 @@ impl<'a> Interpreter<'a> {
         let ASTNodeType::Function { name, args } = &node.node_type else {
             return Some(self.evaluate_ast_as_reference(node));
         };
-        let fun = match self.context.get_function("", name) {
+        let fun = match self.ast_function(name) {
             Some(fun) => fun,
             None => {
                 return Some(Err(ExcelError::new(ExcelErrorKind::Name)
                     .with_message(format!("Unknown function: {name}"))));
             }
         };
-        let handles: Vec<ArgumentHandle> = args
+        let handles: smallvec::SmallVec<[ArgumentHandle; 4]> = args
             .iter()
             .map(|arg| ArgumentHandle::new(arg, self))
             .collect();
@@ -396,20 +645,21 @@ impl<'a> Interpreter<'a> {
                 self.reference_for_current_offset(&reference)
             }
             AstNodeData::Function { name_id, .. } => {
-                let name = data_store.resolve_ast_string(*name_id);
-                if name == CALL_NODE_NAME {
-                    return Err(call_expression_error());
-                }
-                let fun = self.context.get_function("", name).ok_or_else(|| {
-                    ExcelError::new(ExcelErrorKind::Name)
-                        .with_message(format!("Unknown function: {name}"))
+                let fun = self.arena_function(*name_id, data_store).ok_or_else(|| {
+                    let name = data_store.resolve_ast_string(*name_id);
+                    if name == CALL_NODE_NAME {
+                        call_expression_error()
+                    } else {
+                        ExcelError::new(ExcelErrorKind::Name)
+                            .with_message(format!("Unknown function: {name}"))
+                    }
                 })?;
 
                 let args = data_store.get_args(node_id).ok_or_else(|| {
                     ExcelError::new(ExcelErrorKind::Value).with_message("Missing function args")
                 })?;
 
-                let handles: Vec<ArgumentHandle> = args
+                let handles: smallvec::SmallVec<[ArgumentHandle; 4]> = args
                     .iter()
                     .copied()
                     .map(|arg_id| {
@@ -524,13 +774,13 @@ impl<'a> Interpreter<'a> {
         let AstNodeData::Function { name_id, .. } = node else {
             return Some(self.evaluate_arena_ast_as_reference(node_id, data_store, sheet_registry));
         };
-        let name = data_store.resolve_ast_string(*name_id);
-        if name == CALL_NODE_NAME {
-            return Some(Err(call_expression_error()));
-        }
-        let fun = match self.context.get_function("", name) {
+        let fun = match self.arena_function(*name_id, data_store) {
             Some(fun) => fun,
             None => {
+                let name = data_store.resolve_ast_string(*name_id);
+                if name == CALL_NODE_NAME {
+                    return Some(Err(call_expression_error()));
+                }
                 return Some(Err(ExcelError::new(ExcelErrorKind::Name)
                     .with_message(format!("Unknown function: {name}"))));
             }
@@ -543,7 +793,7 @@ impl<'a> Interpreter<'a> {
                 ));
             }
         };
-        let handles: Vec<ArgumentHandle> = args
+        let handles: smallvec::SmallVec<[ArgumentHandle; 4]> = args
             .iter()
             .copied()
             .map(|arg_id| ArgumentHandle::new_arena(arg_id, self, data_store, sheet_registry))
@@ -565,6 +815,8 @@ impl<'a> Interpreter<'a> {
     ) -> Result<crate::traits::CalcValue<'a>, ExcelError> {
         let offset = Self {
             context: self.context,
+            resolved_functions: self.resolved_functions,
+            arena_cells: self.arena_cells,
             current_sheet: self.current_sheet,
             current_cell: self.current_cell,
             local_env: self.local_env.clone(),
@@ -615,6 +867,8 @@ impl<'a> Interpreter<'a> {
     ) -> Result<crate::traits::CalcValue<'a>, ExcelError> {
         let offset = Self {
             context: self.context,
+            resolved_functions: self.resolved_functions,
+            arena_cells: self.arena_cells,
             current_sheet: self.current_sheet,
             current_cell: self.current_cell,
             local_env: self.local_env.clone(),
@@ -826,6 +1080,13 @@ impl<'a> Interpreter<'a> {
                     && *row > 0
                     && *col > 0
                 {
+                    let row = shift_axis_for_offset(*row, self.reference_row_delta, *row_abs)?;
+                    let col = shift_axis_for_offset(*col, self.reference_col_delta, *col_abs)?;
+                    if let (Some(resolver), Some(cell)) = (self.arena_cells, self.current_cell) {
+                        let (value, format) =
+                            resolver.resolve_arena_cell(*sheet, cell.sheet_id, row, col)?;
+                        return Ok(Self::annotated(value, format));
+                    }
                     let sheet_name = match sheet {
                         Some(SheetKey::Id(id)) => Some(sheet_registry.name(*id)),
                         Some(SheetKey::Name(name_id)) => {
@@ -833,8 +1094,6 @@ impl<'a> Interpreter<'a> {
                         }
                         None => None,
                     };
-                    let row = shift_axis_for_offset(*row, self.reference_row_delta, *row_abs)?;
-                    let col = shift_axis_for_offset(*col, self.reference_col_delta, *col_abs)?;
                     let (value, format) = self.context.resolve_cell_reference_value_formatted(
                         sheet_name,
                         row,
@@ -953,16 +1212,16 @@ impl<'a> Interpreter<'a> {
                 {
                     return Ok(Self::annotated(value.clone(), *format));
                 }
-                let name = data_store.resolve_ast_string(*name_id);
-                if name == CALL_NODE_NAME {
+                let function = self.arena_function(*name_id, data_store);
+                if function.is_none() && data_store.resolve_ast_string(*name_id) == CALL_NODE_NAME {
                     return Err(call_expression_error());
                 }
                 let args = data_store.get_args(node_id).ok_or_else(|| {
                     ExcelError::new(ExcelErrorKind::Value).with_message("Missing function args")
                 })?;
 
-                if let Some(fun) = self.context.get_function("", name) {
-                    let handles: Vec<ArgumentHandle> = args
+                if let Some(fun) = function {
+                    let handles: smallvec::SmallVec<[ArgumentHandle; 4]> = args
                         .iter()
                         .copied()
                         .map(|arg_id| {
@@ -979,6 +1238,7 @@ impl<'a> Interpreter<'a> {
                     return fun.dispatch(&handles, &fctx);
                 }
 
+                let name = data_store.resolve_ast_string(*name_id);
                 if let Some(callable) = self.resolve_local_callable(name) {
                     let mut eval_args = Vec::with_capacity(args.len());
                     let mut arg_references = Vec::with_capacity(args.len());
@@ -1017,7 +1277,7 @@ impl<'a> Interpreter<'a> {
         let range_probe = |reference: &ReferenceType| {
             probe_range_dimensions(self.context, &current_sheet, reference)
         };
-        let fn_lookup = |ns: &str, name: &str| self.context.get_function(ns, name);
+        let fn_lookup = |ns: &str, name: &str| self.ast_function_arc(ns, name);
 
         let mut planner = crate::planner::Planner::new(crate::planner::PlanConfig::default())
             .with_range_probe(&range_probe)
@@ -1068,7 +1328,7 @@ impl<'a> Interpreter<'a> {
             ASTNodeType::BinaryOp { op, left, right } => self.eval_binary(op, left, right),
             ASTNodeType::Function { name, args } => {
                 let strategy = plan_node.strategy;
-                if let Some(fun) = self.context.get_function("", name) {
+                if let Some(fun) = self.ast_function(name) {
                     use crate::function::FnCaps;
                     use crate::planner::ExecStrategy;
                     let caps = fun.caps();
@@ -1503,8 +1763,8 @@ impl<'a> Interpreter<'a> {
         name: &str,
         args: &[ASTNode],
     ) -> Result<crate::traits::CalcValue<'a>, ExcelError> {
-        if let Some(fun) = self.context.get_function("", name) {
-            let handles: Vec<ArgumentHandle> =
+        if let Some(fun) = self.ast_function(name) {
+            let handles: smallvec::SmallVec<[ArgumentHandle; 4]> =
                 args.iter().map(|n| ArgumentHandle::new(n, self)).collect();
             // Use the function's built-in dispatch method with a narrow FunctionContext
             let fctx = DefaultFunctionContext::new_with_sheet(
@@ -2100,5 +2360,205 @@ mod format_algebra_tests {
                 None
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod resolved_function_tests {
+    use super::*;
+    use crate::function::Function;
+    use crate::traits::FunctionProvider;
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+    use std::sync::{Arc, RwLock};
+
+    struct TestFunction;
+    impl Function for TestFunction {
+        fn name(&self) -> &'static str {
+            "FN_TABLE_GLOBAL_REFRESH_TEST"
+        }
+        fn eval<'a, 'b, 'c>(
+            &self,
+            _: &'c [ArgumentHandle<'a, 'b>],
+            _: &dyn crate::traits::FunctionContext<'b>,
+        ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+            Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(1.0)))
+        }
+    }
+    #[derive(Default)]
+    struct Provider {
+        generation: AtomicU64,
+        calls: AtomicUsize,
+        function: RwLock<Option<Arc<dyn Function>>>,
+    }
+    impl FunctionProvider for Provider {
+        fn planning_semantic_revision(&self) -> Option<u64> {
+            Some(self.generation.load(Ordering::Acquire))
+        }
+        fn function_capabilities(&self, _: &str, _: &str) -> Option<crate::function::FnCaps> {
+            self.function.read().unwrap().as_ref().map(|f| f.caps())
+        }
+        fn get_function(&self, _: &str, _: &str) -> Option<Arc<dyn Function>> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            self.function.read().unwrap().clone()
+        }
+    }
+    fn arena(name: &str) -> (DataStore, crate::engine::arena::StringId) {
+        let mut store = DataStore::new();
+        let registry = SheetRegistry::new();
+        let ast = ASTNode::new(
+            ASTNodeType::Function {
+                name: name.into(),
+                args: vec![],
+            },
+            None,
+        );
+        let node = store.store_ast(&ast, &registry);
+        let Some(AstNodeData::Function { name_id, .. }) = store.get_node(node) else {
+            panic!("function node")
+        };
+        let id = *name_id;
+        (store, id)
+    }
+    #[test]
+    fn function_table_tracks_distinct_names_not_interner_size() {
+        let mut store = DataStore::new();
+        let registry = SheetRegistry::new();
+        for row in 1..=200_000 {
+            store.store_ast(
+                &formualizer_parse::parser::parse(format!("=A{row}+1")).unwrap(),
+                &registry,
+            );
+        }
+        store.store_ast(
+            &formualizer_parse::parser::parse("=ABS(1)").unwrap(),
+            &registry,
+        );
+        let mut table = ResolvedFunctions::default();
+        table.refresh(&store, &Provider::default());
+        assert_eq!(table.functions.len(), 1);
+        assert_eq!(table.capabilities.len(), 1);
+        assert_eq!(table.slots.len(), 1);
+    }
+
+    #[test]
+    fn formula_edits_preserve_existing_function_slots() {
+        let provider = Provider::default();
+        let (mut store, id) = arena("EXISTING");
+        let mut table = ResolvedFunctions::default();
+        table.refresh(&store, &provider);
+        let slot = table.slots[&id];
+        let revision = table.revision;
+        store.store_ast(
+            &formualizer_parse::parser::parse("=EXISTING()+1").unwrap(),
+            &SheetRegistry::new(),
+        );
+        table.refresh(&store, &provider);
+        // Unrelated registry tests may advance the global epoch concurrently.
+        // Slot reuse is guaranteed only while that semantic revision is stable.
+        if table.revision == revision {
+            assert_eq!(provider.calls.load(Ordering::Relaxed), 1);
+        }
+        let previous_calls = provider.calls.load(Ordering::Relaxed);
+        let previous_revision = table.revision;
+        store.store_ast(
+            &formualizer_parse::parser::parse("=NEW_NAME()").unwrap(),
+            &SheetRegistry::new(),
+        );
+        table.refresh(&store, &provider);
+        if table.revision == previous_revision {
+            assert_eq!(provider.calls.load(Ordering::Relaxed), previous_calls + 1);
+        }
+        if table.revision == revision {
+            assert_eq!(table.slots[&id], slot);
+        }
+        assert_eq!(table.functions.len(), 2);
+    }
+
+    #[test]
+    fn unversioned_provider_is_resolved_fresh_each_request() {
+        struct Unversioned(Provider);
+        impl FunctionProvider for Unversioned {
+            fn get_function(&self, ns: &str, name: &str) -> Option<Arc<dyn Function>> {
+                self.0.get_function(ns, name)
+            }
+        }
+        let provider = Unversioned(Provider::default());
+        let (store, id) = arena("CHANGING");
+        let mut table = ResolvedFunctions::default();
+        table.refresh(&store, &provider);
+        assert!(table.get(id).is_none());
+        *provider.0.function.write().unwrap() = Some(Arc::new(TestFunction));
+        table.refresh(&store, &provider);
+        assert!(table.get(id).is_some());
+        let previous = table.functions[0].clone().unwrap();
+        *provider.0.function.write().unwrap() = Some(Arc::new(TestFunction));
+        table.refresh(&store, &provider);
+        assert!(!Arc::ptr_eq(
+            &previous,
+            table.functions[0].as_ref().unwrap()
+        ));
+    }
+
+    #[test]
+    fn hits_and_misses_are_read_only_and_local_generations_refresh() {
+        let provider = Provider::default();
+        let (store, id) = arena("MISSING_THEN_REGISTERED");
+        let mut table = ResolvedFunctions::default();
+        table.refresh(&store, &provider);
+        for _ in 0..10 {
+            assert!(table.get(id).is_none());
+        }
+        assert_eq!(provider.calls.load(Ordering::Relaxed), 1);
+        *provider.function.write().unwrap() = Some(Arc::new(TestFunction));
+        provider.generation.fetch_add(1, Ordering::Release);
+        // Registration during a pass cannot mutate the published snapshot.
+        assert!(table.get(id).is_none());
+        table.refresh(&store, &provider);
+        assert!(table.get(id).is_some());
+        let calls = provider.calls.load(Ordering::Relaxed);
+        for _ in 0..10 {
+            assert!(table.get(id).is_some());
+        }
+        assert_eq!(provider.calls.load(Ordering::Relaxed), calls);
+        *provider.function.write().unwrap() = None;
+        provider.generation.fetch_add(1, Ordering::Release);
+        assert!(table.get(id).is_some());
+        table.refresh(&store, &provider);
+        assert!(table.get(id).is_none());
+    }
+    #[test]
+    fn global_epoch_and_excel_prefix_aliases_refresh() {
+        struct Global;
+        impl FunctionProvider for Global {
+            fn get_function(&self, ns: &str, name: &str) -> Option<Arc<dyn Function>> {
+                crate::function_registry::get(ns, name)
+            }
+        }
+        let (store, id) = arena("_xlfn.FN_TABLE_GLOBAL_REFRESH_TEST");
+        let mut table = ResolvedFunctions::default();
+        table.refresh(&store, &Global);
+        assert!(table.get(id).is_none());
+        crate::function_registry::register_function(Arc::new(TestFunction));
+        table.refresh(&store, &Global);
+        assert_eq!(
+            table.get(id).unwrap().name(),
+            "FN_TABLE_GLOBAL_REFRESH_TEST"
+        );
+        let previous = table
+            .functions
+            .get(*table.slots.get(&id).unwrap())
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .clone();
+        crate::function_registry::register_function(Arc::new(TestFunction));
+        table.refresh(&store, &Global);
+        let replacement = table
+            .functions
+            .get(*table.slots.get(&id).unwrap())
+            .unwrap()
+            .as_ref()
+            .unwrap();
+        assert!(!Arc::ptr_eq(&previous, replacement));
     }
 }

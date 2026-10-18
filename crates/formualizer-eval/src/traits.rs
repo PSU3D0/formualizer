@@ -326,6 +326,11 @@ enum ArgumentExpr<'a> {
 pub struct ArgumentHandle<'a, 'b> {
     expr: ArgumentExpr<'a>,
     interp: &'a Interpreter<'b>,
+    caches: std::cell::OnceCell<Box<ArgumentCaches<'b>>>,
+}
+
+#[derive(Default)]
+struct ArgumentCaches<'b> {
     cached_ast: std::cell::OnceCell<ASTNode>,
     cached_ref: std::cell::OnceCell<ReferenceType>,
     cached_reference_or_value:
@@ -343,15 +348,16 @@ pub struct ArgumentHandle<'a, 'b> {
 }
 
 impl<'a, 'b> ArgumentHandle<'a, 'b> {
+    fn caches(&self) -> &ArgumentCaches<'b> {
+        self.caches
+            .get_or_init(|| Box::new(ArgumentCaches::default()))
+    }
+
     pub(crate) fn new(node: &'a ASTNode, interp: &'a Interpreter<'b>) -> Self {
         Self {
             expr: ArgumentExpr::Ast(node),
             interp,
-            cached_ast: std::cell::OnceCell::new(),
-            cached_ref: std::cell::OnceCell::new(),
-            cached_reference_or_value: std::cell::OnceCell::new(),
-            cached_resolved: std::cell::OnceCell::new(),
-            cached_value: std::cell::OnceCell::new(),
+            caches: std::cell::OnceCell::new(),
         }
     }
 
@@ -368,11 +374,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                 sheet_registry,
             },
             interp,
-            cached_ast: std::cell::OnceCell::new(),
-            cached_ref: std::cell::OnceCell::new(),
-            cached_reference_or_value: std::cell::OnceCell::new(),
-            cached_resolved: std::cell::OnceCell::new(),
-            cached_value: std::cell::OnceCell::new(),
+            caches: std::cell::OnceCell::new(),
         }
     }
 
@@ -470,8 +472,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                 ASTNodeType::UnaryOp { op, .. } => op == "#",
                 ASTNodeType::Function { name, .. } => self
                     .interp
-                    .context
-                    .function_capabilities("", name)
+                    .ast_function_capabilities(name)
                     .is_some_and(|caps| caps.contains(crate::function::FnCaps::RETURNS_REFERENCE)),
                 _ => false,
             },
@@ -502,8 +503,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                 }
                 Some(crate::engine::arena::AstNodeData::Function { name_id, .. }) => self
                     .interp
-                    .context
-                    .function_capabilities("", data_store.resolve_ast_string(*name_id))
+                    .arena_function_capabilities(*name_id, data_store)
                     .is_some_and(|caps| caps.contains(crate::function::FnCaps::RETURNS_REFERENCE)),
                 _ => false,
             },
@@ -511,7 +511,8 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
     }
 
     pub fn value(&self) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
-        self.cached_value
+        self.caches()
+            .cached_value
             .get_or_init(|| self.compute_value())
             .clone()
     }
@@ -818,8 +819,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                 };
                 if !self
                     .interp
-                    .context
-                    .function_capabilities("", name)
+                    .ast_function_capabilities(name)
                     .is_some_and(|caps| caps.contains(crate::function::FnCaps::RETURNS_REFERENCE))
                 {
                     return None;
@@ -861,8 +861,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                 let name = data_store.resolve_ast_string(*name_id);
                 if !self
                     .interp
-                    .context
-                    .function_capabilities("", name)
+                    .ast_function_capabilities(name)
                     .is_some_and(|caps| caps.contains(crate::function::FnCaps::RETURNS_REFERENCE))
                 {
                     return None;
@@ -1006,11 +1005,12 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
         &self,
     ) -> Result<crate::function::FunctionResolution<'b>, ExcelError> {
         let resolved = self
+            .caches()
             .cached_reference_or_value
             .get_or_init(|| self.compute_reference_or_value())
             .clone();
         if let Ok(crate::function::FunctionResolution::Value(value)) = &resolved {
-            let _ = self.cached_value.set(Ok(value.clone()));
+            let _ = self.caches().cached_value.set(Ok(value.clone()));
         }
         resolved
     }
@@ -1036,7 +1036,8 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
     /// with `RETURNS_REFERENCE` first attempt reference evaluation, but fall back
     /// to their cached value when `eval_reference` returns `None`.
     pub(crate) fn resolve_once(&self) -> Result<ResolvedArgument<'b>, ExcelError> {
-        self.cached_resolved
+        self.caches()
+            .cached_resolved
             .get_or_init(|| self.compute_resolved_argument())
             .clone()
     }
@@ -1470,7 +1471,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                 id,
                 data_store,
                 sheet_registry,
-            } => self.cached_ast.get_or_init(|| {
+            } => self.caches().cached_ast.get_or_init(|| {
                 data_store
                     .retrieve_ast(*id, sheet_registry)
                     .unwrap_or_else(|| ASTNode {
@@ -1496,7 +1497,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                         && let Some(local) = self.local_named_reference(name)
                     {
                         let bound = local?;
-                        return Ok(self.cached_ref.get_or_init(|| bound));
+                        return Ok(self.caches().cached_ref.get_or_init(|| bound));
                     }
                     Ok(reference)
                 }
@@ -1505,7 +1506,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
             },
             ArgumentExpr::Arena { .. } => {
                 let reference = self.reference_for_eval()?;
-                Ok(self.cached_ref.get_or_init(|| reference))
+                Ok(self.caches().cached_ref.get_or_init(|| reference))
             }
         }
     }
@@ -2521,5 +2522,36 @@ impl<'a> FunctionContext<'a> for DefaultFunctionContext<'a> {
         include_aggregate: bool,
     ) -> Option<Vec<(usize, usize, usize)>> {
         self.base.nested_subtotal_cells(view, include_aggregate)
+    }
+}
+
+#[cfg(test)]
+mod argument_handle_size_tests {
+    use super::*;
+    #[expect(dead_code, reason = "layout-only regression fixture")]
+    struct LegacyArgumentHandle<'a, 'b> {
+        expr: ArgumentExpr<'a>,
+        interp: &'a Interpreter<'b>,
+        cached_ast: std::cell::OnceCell<ASTNode>,
+        cached_ref: std::cell::OnceCell<ReferenceType>,
+        cached_reference_or_value:
+            std::cell::OnceCell<Result<crate::function::FunctionResolution<'b>, ExcelError>>,
+        cached_resolved: std::cell::OnceCell<Result<ResolvedArgument<'b>, ExcelError>>,
+        /// Memoized result of [`Self::value`]. `Function::dispatch` evaluates
+        /// every argument once during schema validation and the function's `eval`
+        /// evaluates it again — without this cache that re-entry compounds to
+        /// 2^depth evaluations of the innermost node for nested non-short-circuit
+        /// calls (measured: depth 12 ⇒ 4096 evaluations). The handle is created
+        /// per call site and per evaluation, so the memo can never go stale
+        /// across recalcs. `value_with_env` is intentionally NOT memoized (the
+        /// local env changes the result).
+        cached_value: std::cell::OnceCell<Result<crate::traits::CalcValue<'b>, ExcelError>>,
+    }
+
+    #[test]
+    fn argument_handle_fits_inline_call_storage() {
+        let before = std::mem::size_of::<LegacyArgumentHandle<'_, '_>>();
+        let after = std::mem::size_of::<ArgumentHandle<'_, '_>>();
+        assert!(after <= 48, "ArgumentHandle is {after} bytes");
     }
 }

@@ -8,6 +8,7 @@ use rustc_hash::FxHashMap;
 
 #[derive(Default, Debug)]
 pub struct SheetRegistry {
+    revision: u64,
     id_by_name: HashMap<String, SheetId>,
     name_by_id: Vec<String>,
     /// Live display names (original casing) to id: the allocation-free
@@ -17,6 +18,9 @@ pub struct SheetRegistry {
 }
 
 impl SheetRegistry {
+    pub(crate) fn revision(&self) -> u64 {
+        self.revision
+    }
     pub fn new() -> Self {
         SheetRegistry::default()
     }
@@ -29,6 +33,7 @@ impl SheetRegistry {
             return id;
         }
 
+        self.revision = self.revision.wrapping_add(1);
         let id = self.name_by_id.len() as SheetId;
         self.name_by_id.push(name.to_string());
         self.id_by_name.insert(key, id);
@@ -146,6 +151,7 @@ impl SheetRegistry {
             return Ok(());
         }
 
+        self.revision = self.revision.wrapping_add(1);
         // Remove from id_by_name mapping (case-insensitive key)
         self.id_by_name.remove(&name.to_lowercase());
         self.by_display.remove(name.as_str());
@@ -182,6 +188,7 @@ impl SheetRegistry {
                 .with_message(format!("Sheet name '{new_name}' already exists")));
         }
 
+        self.revision = self.revision.wrapping_add(1);
         // Remove old name mapping
         self.id_by_name.remove(&old_name.to_lowercase());
         self.by_display.remove(old_name.as_str());

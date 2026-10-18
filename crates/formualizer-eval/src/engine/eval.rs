@@ -990,6 +990,12 @@ struct TraceEvaluationCounters {
 pub struct Engine<R> {
     pub(crate) graph: DependencyGraph,
     resolver: R,
+    resolved_functions: crate::interpreter::ResolvedFunctions,
+    resolved_sheet_names:
+        FxHashMap<crate::engine::arena::StringId, (crate::SheetId, Option<usize>)>,
+    resolution_sheet_revision: Option<(u64, u64, usize)>,
+    resolution_arrow_sheet_names: Vec<Arc<str>>,
+    resolved_arrow_sheets: Vec<Option<usize>>,
     pub config: EvalConfig,
     workbook_load_limits: crate::engine::WorkbookLoadLimits,
     /// Clock for volatile date/time builtins, wrapped in a per-recalc
@@ -2878,6 +2884,11 @@ where
         let mut engine = Self {
             graph: DependencyGraph::new_with_config(config.clone()),
             resolver,
+            resolved_functions: Default::default(),
+            resolved_sheet_names: FxHashMap::default(),
+            resolution_sheet_revision: None,
+            resolution_arrow_sheet_names: Vec::new(),
+            resolved_arrow_sheets: Vec::new(),
             config,
             workbook_load_limits: crate::engine::WorkbookLoadLimits::default(),
             clock: crate::timezone::SnapshotClock::new(clock),
@@ -3045,6 +3056,11 @@ where
         let mut engine = Self {
             graph: DependencyGraph::new_with_config(config.clone()),
             resolver,
+            resolved_functions: Default::default(),
+            resolved_sheet_names: FxHashMap::default(),
+            resolution_sheet_revision: None,
+            resolution_arrow_sheet_names: Vec::new(),
+            resolved_arrow_sheets: Vec::new(),
             config,
             workbook_load_limits: crate::engine::WorkbookLoadLimits::default(),
             clock: crate::timezone::SnapshotClock::new(clock),
@@ -3706,7 +3722,84 @@ where
     /// Begin a new evaluation request: reset per-recalc cycle telemetry and
     /// take the per-recalc volatile clock sample. Called at the start of
     /// every evaluation request that walks schedule units.
+    fn refresh_resolution_snapshots(&mut self) {
+        self.resolved_functions
+            .refresh(self.graph.data_store(), &self.resolver);
+        let named_asts = self
+            .graph
+            .named_ranges_iter()
+            .map(|(_, named)| named)
+            .chain(self.graph.sheet_named_ranges_iter().map(|(_, named)| named))
+            .filter_map(|named| match &named.definition {
+                NamedDefinition::Formula { ast, .. } => Some(ast),
+                _ => None,
+            });
+        self.resolved_functions.refresh_ast_functions(
+            self.graph.data_store(),
+            &self.resolver,
+            named_asts,
+            self.graph.symbol_revision(),
+        );
+        // Arrow sheet storage is publicly mutable. Compare names and order
+        // exactly (including same-length replacements) without allocating on
+        // unchanged requests; a fingerprint alone could silently collide.
+        let revision = (
+            self.graph.sheet_reg().revision(),
+            self.graph.data_store().resolution_revision(),
+            self.graph.data_store().sheet_names().count(),
+        );
+        let arrow_names_unchanged = self
+            .resolution_arrow_sheet_names
+            .iter()
+            .map(|name| name.as_ref())
+            .eq(self
+                .arrow_sheets
+                .sheets
+                .iter()
+                .map(|sheet| sheet.name.as_ref()));
+        if self.resolution_sheet_revision == Some(revision) && arrow_names_unchanged {
+            return;
+        }
+        self.resolution_arrow_sheet_names.clear();
+        self.resolution_arrow_sheet_names.extend(
+            self.arrow_sheets
+                .sheets
+                .iter()
+                .map(|sheet| Arc::clone(&sheet.name)),
+        );
+        self.resolved_sheet_names.clear();
+        for id in self.graph.data_store().sheet_names() {
+            let name = self.graph.data_store().resolve_ast_string(id);
+            if let Some(sheet_id) = self.graph.sheet_id(name) {
+                self.resolved_sheet_names.insert(
+                    id,
+                    (
+                        sheet_id,
+                        self.arrow_sheets
+                            .sheets
+                            .iter()
+                            .position(|sheet| sheet.name.as_ref() == name),
+                    ),
+                );
+            }
+        }
+        self.resolved_arrow_sheets.clear();
+        for (index, sheet) in self.arrow_sheets.sheets.iter().enumerate() {
+            if let Some(id) = self.graph.sheet_id(&sheet.name) {
+                let len = usize::from(id).saturating_add(1);
+                if self.resolved_arrow_sheets.len() < len {
+                    self.resolved_arrow_sheets.resize(len, None);
+                }
+                if let Some(slot) = self.resolved_arrow_sheets.get_mut(usize::from(id)) {
+                    *slot = Some(index);
+                }
+            }
+        }
+        self.resolution_sheet_revision = Some(revision);
+    }
+
     fn begin_evaluation_request(&mut self) {
+        self.refresh_resolution_snapshots();
         self.freshness_begin_request();
         #[cfg(test)]
         {
@@ -7737,7 +7830,7 @@ where
     fn opaque_reason_in_ast(
         &self,
         ast: &ASTNode,
-        provider: &dyn crate::traits::FunctionProvider,
+        provider: &crate::function_registry::RegistryPlanningSnapshot,
     ) -> Option<crate::engine::OpaqueReason> {
         match &ast.node_type {
             ASTNodeType::Function { name, args } => {
@@ -7745,10 +7838,9 @@ where
                 if canonical == "INDIRECT" {
                     return Some(crate::engine::OpaqueReason::RuntimeTextReference);
                 }
-                let Some(function) = provider.get_function_for_planning("", name) else {
+                let Some(caps) = provider.function_capabilities("", name) else {
                     return Some(crate::engine::OpaqueReason::UnknownFunction);
                 };
-                let caps = function.caps();
                 if caps.contains(FnCaps::DYNAMIC_DEPENDENCY)
                     || caps.contains(FnCaps::RETURNS_REFERENCE)
                 {
@@ -7893,15 +7985,17 @@ where
 
     fn ast_has_proven_sheet_local_dynamic(
         ast: &ASTNode,
-        provider: &dyn crate::traits::FunctionProvider,
+        provider: &crate::function_registry::RegistryPlanningSnapshot,
     ) -> bool {
-        fn classify(ast: &ASTNode, provider: &dyn crate::traits::FunctionProvider) -> (bool, bool) {
+        fn classify(
+            ast: &ASTNode,
+            provider: &crate::function_registry::RegistryPlanningSnapshot,
+        ) -> (bool, bool) {
             match &ast.node_type {
                 ASTNodeType::Function { name, args } => {
-                    let Some(function) = provider.get_function_for_planning("", name) else {
+                    let Some(caps) = provider.function_capabilities("", name) else {
                         return (false, false);
                     };
-                    let caps = function.caps();
                     let dynamic = caps.contains(FnCaps::DYNAMIC_DEPENDENCY)
                         || caps.contains(FnCaps::RETURNS_REFERENCE);
                     let canonical = name.rsplit('.').next().unwrap_or(name);
@@ -13944,6 +14038,9 @@ where
                 )];
                 engine.evaluate_legacy_target_roots(&roots, None)?;
             }
+            if !is_formula {
+                engine.refresh_resolution_snapshots();
+            }
             engine.evaluate_vertex_impl(vertex_id, None)
         })
     }
@@ -14069,7 +14166,9 @@ where
             .graph
             .get_cell_ref(vertex_id)
             .expect("cell ref for vertex");
-        let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref);
+        let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref)
+            .with_resolved_functions(&self.resolved_functions)
+            .with_arena_cells(self);
 
         let result = interpreter.evaluate_formula_view(
             view,
@@ -14536,7 +14635,9 @@ where
                     .graph
                     .get_cell_ref(vertex_id)
                     .unwrap_or_else(|| self.graph.make_cell_ref(sheet_name, 0, 0));
-                let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref);
+                let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref)
+                    .with_resolved_functions(&self.resolved_functions)
+                    .with_arena_cells(self);
                 match interpreter.evaluate_ast(ast) {
                     Ok(cv) => {
                         let value = cv.into_literal();
@@ -14635,7 +14736,9 @@ where
                     .graph
                     .get_cell_ref(vertex_id)
                     .unwrap_or_else(|| self.graph.make_cell_ref(sheet_name, 0, 0));
-                let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref);
+                let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref)
+                    .with_resolved_functions(&self.resolved_functions)
+                    .with_arena_cells(self);
                 match interpreter.evaluate_ast(ast) {
                     Ok(cv) => {
                         let v = cv.into_literal();
@@ -17337,7 +17440,9 @@ where
                             .graph
                             .get_cell_ref(vertex_id)
                             .unwrap_or_else(|| self.graph.make_cell_ref(sheet_name, 0, 0));
-                        let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref);
+                        let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref)
+                            .with_resolved_functions(&self.resolved_functions)
+                            .with_arena_cells(self);
                         interpreter.evaluate_ast(ast).map(|cv| cv.into_literal())
                     }
                     NamedDefinition::Range(_) => Err(ExcelError::new(ExcelErrorKind::Value)
@@ -17411,7 +17516,9 @@ where
                             .graph
                             .get_cell_ref(vertex_id)
                             .unwrap_or_else(|| self.graph.make_cell_ref(sheet_name, 0, 0));
-                        let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref);
+                        let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref)
+                            .with_resolved_functions(&self.resolved_functions)
+                            .with_arena_cells(self);
                         match interpreter.evaluate_ast(ast) {
                             Ok(cv) => {
                                 let v = cv.into_literal();
@@ -17445,7 +17552,9 @@ where
         {
             return result;
         }
-        let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref);
+        let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref)
+            .with_resolved_functions(&self.resolved_functions)
+            .with_arena_cells(self);
 
         interpreter
             .evaluate_formula_view(view, self.graph.data_store(), self.graph.sheet_reg())
@@ -18075,6 +18184,54 @@ where
 impl<R> crate::traits::Resolver for Engine<R> where R: EvaluationContext {}
 
 // The Engine provides functions by delegating to its internal resolver.
+impl<R: EvaluationContext> crate::interpreter::ArenaCellResolver for Engine<R> {
+    fn resolve_arena_cell(
+        &self,
+        sheet: Option<crate::engine::arena::SheetKey>,
+        current: crate::SheetId,
+        row: u32,
+        col: u32,
+    ) -> Result<(LiteralValue, Option<crate::format::FormatId>), ExcelError> {
+        use crate::engine::arena::SheetKey;
+        let (sheet_id, named_arrow) = match sheet {
+            None => (current, None),
+            Some(SheetKey::Id(id)) => {
+                if self.graph.sheet_reg().name(id).is_empty() {
+                    return Err(ExcelError::new(ExcelErrorKind::Ref));
+                }
+                (id, None)
+            }
+            Some(SheetKey::Name(id)) => {
+                let (sheet_id, arrow) = self
+                    .resolved_sheet_names
+                    .get(&id)
+                    .copied()
+                    .ok_or_else(|| ExcelError::new(ExcelErrorKind::Ref))?;
+                (sheet_id, Some(arrow))
+            }
+        };
+        let arrow = named_arrow.unwrap_or_else(|| {
+            self.resolved_arrow_sheets
+                .get(usize::from(sheet_id))
+                .copied()
+                .flatten()
+        });
+        let asheet = arrow
+            .and_then(|index| self.arrow_sheets.sheets.get(index))
+            .or_else(|| {
+                // Graph-only sheets can acquire Arrow storage when an earlier layer
+                // commits its first formula result. The pass snapshot cannot hold an
+                // index for that storage yet; retain the original lookup in this case.
+                let name = match sheet {
+                    Some(SheetKey::Name(id)) => self.graph.data_store().resolve_ast_string(id),
+                    _ => self.graph.sheet_name(sheet_id),
+                };
+                self.arrow_sheets.sheet(name)
+            });
+        Ok(self.read_cell_formatted_in(sheet_id, asheet, row, col))
+    }
+}
+
 impl<R> crate::traits::FunctionProvider for Engine<R>
 where
     R: EvaluationContext,
@@ -19993,7 +20150,8 @@ where
                     .graph
                     .get_cell_ref(vertex_id)
                     .expect("cell ref for vertex");
-                let interpreter = Interpreter::new_with_cell(ctx, sheet_name, cell_ref);
+                let interpreter = Interpreter::new_with_cell(ctx, sheet_name, cell_ref)
+                    .with_resolved_functions(&self.resolved_functions);
                 interpreter
                     .evaluate_formula_view(view, self.graph.data_store(), self.graph.sheet_reg())
                     .map(|cv| {
@@ -20020,7 +20178,8 @@ where
                             .graph
                             .get_cell_ref(vertex_id)
                             .unwrap_or_else(|| self.graph.make_cell_ref(sheet_name, 0, 0));
-                        let interpreter = Interpreter::new_with_cell(ctx, sheet_name, cell_ref);
+                        let interpreter = Interpreter::new_with_cell(ctx, sheet_name, cell_ref)
+                            .with_resolved_functions(&self.resolved_functions);
                         if kind == VertexKind::NamedScalar {
                             interpreter.evaluate_ast(ast).map(|cv| cv.into_literal())
                         } else {
