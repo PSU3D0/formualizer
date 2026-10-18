@@ -6,6 +6,7 @@ use crate::{
 };
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
+use formualizer_parse::{BinaryOperator, UnaryOperator};
 use rustc_hash::FxHashMap;
 use std::{borrow::Cow, sync::Arc};
 
@@ -341,12 +342,14 @@ impl<'a> Interpreter<'a> {
                         .with_message(format!("Unknown function: {name}")))
                 }
             }
-            ASTNodeType::BinaryOp { op, left, right } if op == ":" => {
+            ASTNodeType::BinaryOp { op, left, right } if *op == BinaryOperator::Range => {
                 let lref = self.evaluate_ast_as_reference(left)?;
                 let rref = self.evaluate_ast_as_reference(right)?;
                 crate::reference::combine_references(&lref, &rref)
             }
-            ASTNodeType::UnaryOp { op, expr } if op == "#" => self.ast_spill_reference(expr),
+            ASTNodeType::UnaryOp { op, expr } if *op == UnaryOperator::Spill => {
+                self.ast_spill_reference(expr)
+            }
             ASTNodeType::Array(_)
             | ASTNodeType::UnaryOp { .. }
             | ASTNodeType::BinaryOp { .. }
@@ -426,12 +429,12 @@ impl<'a> Interpreter<'a> {
                 })?
             }
             AstNodeData::BinaryOp {
-                op_id,
+                operator,
                 left_id,
                 right_id,
             } => {
-                let op = data_store.resolve_ast_string(*op_id);
-                if op != ":" {
+                let op = *operator;
+                if op != BinaryOperator::Range {
                     return Err(ExcelError::new(ExcelErrorKind::Ref)
                         .with_message("Expression cannot be used as a reference"));
                 }
@@ -441,9 +444,7 @@ impl<'a> Interpreter<'a> {
                     self.evaluate_arena_ast_as_reference(*right_id, data_store, sheet_registry)?;
                 crate::reference::combine_references(&lref, &rref)
             }
-            AstNodeData::UnaryOp { op_id, expr_id }
-                if data_store.resolve_ast_string(*op_id) == "#" =>
-            {
+            AstNodeData::UnaryOp { operator, expr_id } if *operator == UnaryOperator::Spill => {
                 self.arena_spill_reference(*expr_id, data_store, sheet_registry)
             }
             _ => Err(ExcelError::new(ExcelErrorKind::Ref)
@@ -728,7 +729,7 @@ impl<'a> Interpreter<'a> {
     /// the AST walk and the elementwise lift).
     pub(crate) fn apply_unary_op(
         &self,
-        op: &str,
+        op: UnaryOperator,
         expr: crate::traits::CalcValue<'a>,
     ) -> Result<crate::traits::CalcValue<'a>, ExcelError> {
         // For now, materialize for operators. Future: virtual range ops.
@@ -747,41 +748,49 @@ impl<'a> Interpreter<'a> {
     /// format annotations (shared by the AST walk and the elementwise lift).
     pub(crate) fn apply_binary_op(
         &self,
-        op: &str,
+        op: BinaryOperator,
         left: LiteralValue,
         left_format: Option<crate::format::FormatId>,
         right: LiteralValue,
         right_format: Option<crate::format::FormatId>,
     ) -> Result<crate::traits::CalcValue<'a>, ExcelError> {
-        if matches!(op, "=" | "<>" | ">" | "<" | ">=" | "<=") {
+        if matches!(
+            op,
+            BinaryOperator::Equal
+                | BinaryOperator::NotEqual
+                | BinaryOperator::Greater
+                | BinaryOperator::Less
+                | BinaryOperator::GreaterEqual
+                | BinaryOperator::LessEqual
+        ) {
             return self
                 .compare(op, left, right)
                 .map(crate::traits::CalcValue::Scalar);
         }
 
         match op {
-            "+" => self.numeric_binary(left, right, b'+').map(|value| {
+            BinaryOperator::Add => self.numeric_binary(left, right, b'+').map(|value| {
                 self.annotate_numeric_result(
                     value,
                     self.binary_format('+', left_format, right_format),
                 )
             }),
-            "-" => self.numeric_binary(left, right, b'-').map(|value| {
+            BinaryOperator::Subtract => self.numeric_binary(left, right, b'-').map(|value| {
                 self.annotate_numeric_result(
                     value,
                     self.binary_format('-', left_format, right_format),
                 )
             }),
-            "*" => self
+            BinaryOperator::Multiply => self
                 .numeric_binary(left, right, b'*')
                 .map(crate::traits::CalcValue::Scalar),
-            "/" => self
+            BinaryOperator::Divide => self
                 .numeric_binary(left, right, b'/')
                 .map(crate::traits::CalcValue::Scalar),
-            "^" => self
+            BinaryOperator::Power => self
                 .numeric_binary(left, right, b'^')
                 .map(crate::traits::CalcValue::Scalar),
-            "&" => self
+            BinaryOperator::Concat => self
                 .concat_values(left, right)
                 .map(crate::traits::CalcValue::Scalar),
             _ => {
@@ -852,14 +861,14 @@ impl<'a> Interpreter<'a> {
                     self.eval_reference_to_calc(&reference)
                 }
             }
-            AstNodeData::UnaryOp { op_id, expr_id } => {
-                let op = data_store.resolve_ast_string(*op_id);
-                if op == "#" {
+            AstNodeData::UnaryOp { operator, expr_id } => {
+                let op = *operator;
+                if op == UnaryOperator::Spill {
                     let reference =
                         self.arena_spill_reference(*expr_id, data_store, sheet_registry)?;
                     return self.eval_reference_to_calc(&reference);
                 }
-                if op == "@" {
+                if op == UnaryOperator::ImplicitIntersection {
                     // Prefer reference-aware implicit intersection so we don't depend on
                     // RangeView absolute coordinates (important for lightweight test contexts).
                     // The reference is placed at this cell (a shared family's
@@ -885,12 +894,12 @@ impl<'a> Interpreter<'a> {
                 self.apply_unary_op(op, expr)
             }
             AstNodeData::BinaryOp {
-                op_id,
+                operator,
                 left_id,
                 right_id,
             } => {
-                let op = data_store.resolve_ast_string(*op_id);
-                if op == ":" {
+                let op = *operator;
+                if op == BinaryOperator::Range {
                     let lref =
                         self.evaluate_arena_ast_as_reference(*left_id, data_store, sheet_registry)?;
                     let rref = self.evaluate_arena_ast_as_reference(
@@ -1034,13 +1043,13 @@ impl<'a> Interpreter<'a> {
             ASTNodeType::Literal(v) => Ok(crate::traits::CalcValue::Scalar(v.clone())),
             ASTNodeType::Omitted => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(0.0))),
             ASTNodeType::Reference { reference, .. } => self.eval_ast_reference_to_calc(reference),
-            ASTNodeType::UnaryOp { op, expr } if op == "#" => {
+            ASTNodeType::UnaryOp { op, expr } if *op == UnaryOperator::Spill => {
                 self.eval_reference_to_calc(&self.ast_spill_reference(expr)?)
             }
             ASTNodeType::UnaryOp { op, expr } => self
-                .eval_unary(op, expr)
+                .eval_unary(*op, expr)
                 .map(crate::traits::CalcValue::Scalar),
-            ASTNodeType::BinaryOp { op, left, right } => self.eval_binary(op, left, right),
+            ASTNodeType::BinaryOp { op, left, right } => self.eval_binary(*op, left, right),
             ASTNodeType::Function { name, args } => self.eval_function_to_calc(name, args),
             ASTNodeType::Call { .. } => Err(call_expression_error()),
             ASTNodeType::Array(rows) => self.eval_array_literal_to_calc(rows),
@@ -1056,16 +1065,16 @@ impl<'a> Interpreter<'a> {
             ASTNodeType::Literal(v) => Ok(crate::traits::CalcValue::Scalar(v.clone())),
             ASTNodeType::Omitted => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(0.0))),
             ASTNodeType::Reference { reference, .. } => self.eval_ast_reference_to_calc(reference),
-            ASTNodeType::UnaryOp { op, expr } if op == "#" => {
+            ASTNodeType::UnaryOp { op, expr } if *op == UnaryOperator::Spill => {
                 self.eval_reference_to_calc(&self.ast_spill_reference(expr)?)
             }
             ASTNodeType::UnaryOp { op, expr } => {
                 // For now, reuse existing unary implementation (which recurses).
                 // In a later phase, we can map plan_node.children[0].
-                self.eval_unary(op, expr)
+                self.eval_unary(*op, expr)
                     .map(crate::traits::CalcValue::Scalar)
             }
-            ASTNodeType::BinaryOp { op, left, right } => self.eval_binary(op, left, right),
+            ASTNodeType::BinaryOp { op, left, right } => self.eval_binary(*op, left, right),
             ASTNodeType::Function { name, args } => {
                 let strategy = plan_node.strategy;
                 if let Some(fun) = self.context.get_function("", name) {
@@ -1179,8 +1188,8 @@ impl<'a> Interpreter<'a> {
     }
 
     /* ===================  unary ops  =================== */
-    fn eval_unary(&self, op: &str, expr: &ASTNode) -> Result<LiteralValue, ExcelError> {
-        if op == "@" {
+    fn eval_unary(&self, op: UnaryOperator, expr: &ASTNode) -> Result<LiteralValue, ExcelError> {
+        if op == UnaryOperator::ImplicitIntersection {
             if let ASTNodeType::Reference { reference, .. } = &expr.node_type {
                 let reference = self.effective_reference(reference)?;
                 return Ok(self.implicit_intersection_from_reference(&reference));
@@ -1199,15 +1208,19 @@ impl<'a> Interpreter<'a> {
         }
     }
 
-    fn eval_unary_scalar(&self, op: &str, v: LiteralValue) -> Result<LiteralValue, ExcelError> {
+    fn eval_unary_scalar(
+        &self,
+        op: UnaryOperator,
+        v: LiteralValue,
+    ) -> Result<LiteralValue, ExcelError> {
         match op {
             // Excel/LibreOffice treat unary `+` as a pass-through (identity) operator,
             // not as a numeric coercion. `=+"2014F"` returns the text "2014F"; only the
             // unary `-` form coerces operands to numbers. The `=+A1` idiom is common in
             // finance models (Lotus 1-2-3 carry-over) and must preserve text labels.
-            "+" => Ok(v),
-            "-" => self.apply_number_unary(v, b'-'),
-            "%" => self.apply_number_unary(v, b'%'),
+            UnaryOperator::Plus => Ok(v),
+            UnaryOperator::Minus => self.apply_number_unary(v, b'-'),
+            UnaryOperator::Percent => self.apply_number_unary(v, b'%'),
             _ => {
                 Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(format!("Unary op '{op}'")))
             }
@@ -1440,7 +1453,7 @@ impl<'a> Interpreter<'a> {
     /* ===================  binary ops  =================== */
     fn eval_binary(
         &self,
-        op: &str,
+        op: BinaryOperator,
         left_node: &ASTNode,
         right_node: &ASTNode,
     ) -> Result<crate::traits::CalcValue<'a>, ExcelError> {
@@ -1450,37 +1463,45 @@ impl<'a> Interpreter<'a> {
         let right_calc = self.evaluate_ast(right_node)?;
         let right_format = right_calc.format_id();
         let right = right_calc.into_literal();
-        if matches!(op, "=" | "<>" | ">" | "<" | ">=" | "<=") {
+        if matches!(
+            op,
+            BinaryOperator::Equal
+                | BinaryOperator::NotEqual
+                | BinaryOperator::Greater
+                | BinaryOperator::Less
+                | BinaryOperator::GreaterEqual
+                | BinaryOperator::LessEqual
+        ) {
             return self
                 .compare(op, left, right)
                 .map(crate::traits::CalcValue::Scalar);
         }
         match op {
-            "+" => self.numeric_binary(left, right, b'+').map(|value| {
+            BinaryOperator::Add => self.numeric_binary(left, right, b'+').map(|value| {
                 self.annotate_numeric_result(
                     value,
                     self.binary_format('+', left_format, right_format),
                 )
             }),
-            "-" => self.numeric_binary(left, right, b'-').map(|value| {
+            BinaryOperator::Subtract => self.numeric_binary(left, right, b'-').map(|value| {
                 self.annotate_numeric_result(
                     value,
                     self.binary_format('-', left_format, right_format),
                 )
             }),
-            "*" => self
+            BinaryOperator::Multiply => self
                 .numeric_binary(left, right, b'*')
                 .map(crate::traits::CalcValue::Scalar),
-            "/" => self
+            BinaryOperator::Divide => self
                 .numeric_binary(left, right, b'/')
                 .map(crate::traits::CalcValue::Scalar),
-            "^" => self
+            BinaryOperator::Power => self
                 .numeric_binary(left, right, b'^')
                 .map(crate::traits::CalcValue::Scalar),
-            "&" => self
+            BinaryOperator::Concat => self
                 .concat_values(left, right)
                 .map(crate::traits::CalcValue::Scalar),
-            ":" => {
+            BinaryOperator::Range => {
                 let left_ref = self.evaluate_ast_as_reference(left_node)?;
                 let right_ref = self.evaluate_ast_as_reference(right_node)?;
                 match crate::reference::combine_references(&left_ref, &right_ref) {
@@ -1778,7 +1799,7 @@ impl<'a> Interpreter<'a> {
     /* ---------- comparison ---------- */
     fn compare(
         &self,
-        op: &str,
+        op: BinaryOperator,
         left: LiteralValue,
         right: LiteralValue,
     ) -> Result<LiteralValue, ExcelError> {
@@ -1829,7 +1850,7 @@ impl<'a> Interpreter<'a> {
     /// `"TRUE"=TRUE` is FALSE, and `"Z"<FALSE` is TRUE.
     ///
     /// Errors never reach here: `compare` short-circuits them above.
-    fn cmp_ranked(&self, l: LiteralValue, r: LiteralValue, op: &str) -> bool {
+    fn cmp_ranked(&self, l: LiteralValue, r: LiteralValue, op: BinaryOperator) -> bool {
         use LiteralValue::*;
 
         // A never-written cell is polymorphic rather than ranked: it adopts the
@@ -1876,39 +1897,27 @@ impl<'a> Interpreter<'a> {
         }
     }
 
-    fn cmp_f64(&self, a: f64, b: f64, op: &str) -> bool {
+    fn cmp_f64(&self, a: f64, b: f64, op: BinaryOperator) -> bool {
         cmp_f64(a, b, op)
     }
-    fn cmp_text(&self, a: &str, b: &str, op: &str) -> bool {
+    fn cmp_text(&self, a: &str, b: &str, op: BinaryOperator) -> bool {
         let loc = self.context.locale();
         let (a, b) = (loc.fold_case_invariant(a), loc.fold_case_invariant(b));
-        self.cmp_f64(
-            a.cmp(&b) as i32 as f64,
-            0.0,
-            match op {
-                "=" => "=",
-                "<>" => "<>",
-                ">" => ">",
-                "<" => "<",
-                ">=" => ">=",
-                "<=" => "<=",
-                _ => unreachable!(),
-            },
-        )
+        self.cmp_f64(a.cmp(&b) as i32 as f64, 0.0, op)
     }
 }
 
 /// A numeric comparison operator on two numbers (shared by the walk and
 /// the typed lift).
 #[inline]
-pub(crate) fn cmp_f64(a: f64, b: f64, op: &str) -> bool {
+pub(crate) fn cmp_f64(a: f64, b: f64, op: BinaryOperator) -> bool {
     match op {
-        "=" => a == b,
-        "<>" => a != b,
-        ">" => a > b,
-        "<" => a < b,
-        ">=" => a >= b,
-        "<=" => a <= b,
+        BinaryOperator::Equal => a == b,
+        BinaryOperator::NotEqual => a != b,
+        BinaryOperator::Greater => a > b,
+        BinaryOperator::Less => a < b,
+        BinaryOperator::GreaterEqual => a >= b,
+        BinaryOperator::LessEqual => a <= b,
         _ => unreachable!(),
     }
 }

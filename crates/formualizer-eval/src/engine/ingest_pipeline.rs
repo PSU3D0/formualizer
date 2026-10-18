@@ -1858,7 +1858,7 @@ fn compute_tree_metadata(
             ),
             ASTNodeType::UnaryOp { op, expr } => (
                 AstNodeData::UnaryOp {
-                    op_id: ast_string_id(data_store, op),
+                    operator: *op,
                     expr_id: AstNodeId::from_u32(0),
                 },
                 vec![visit(
@@ -1871,7 +1871,7 @@ fn compute_tree_metadata(
             ),
             ASTNodeType::BinaryOp { op, left, right } => (
                 AstNodeData::BinaryOp {
-                    op_id: ast_string_id(data_store, op),
+                    operator: *op,
                     left_id: AstNodeId::from_u32(0),
                     right_id: AstNodeId::from_u32(0),
                 },

@@ -1,8 +1,9 @@
-/// AST arena with structural sharing and deduplication
-/// Stores formula AST nodes efficiently with content-addressable storage
 use super::string_interner::{StringId, StringInterner};
 use super::value_ref::ValueRef;
 use formualizer_parse::parser::{ExternalRefKind, TableSpecifier};
+/// AST arena with structural sharing and deduplication
+/// Stores formula AST nodes efficiently with content-addressable storage
+use formualizer_parse::{BinaryOperator, UnaryOperator};
 use rustc_hash::FxHashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::fmt;
@@ -61,11 +62,14 @@ pub enum AstNodeData {
     },
 
     /// Unary operation
-    UnaryOp { op_id: StringId, expr_id: AstNodeId },
+    UnaryOp {
+        operator: UnaryOperator,
+        expr_id: AstNodeId,
+    },
 
     /// Binary operation
     BinaryOp {
-        op_id: StringId,
+        operator: BinaryOperator,
         left_id: AstNodeId,
         right_id: AstNodeId,
     },
@@ -390,19 +394,24 @@ impl AstArena {
     }
 
     /// Insert a unary operation node
-    pub fn insert_unary_op(&mut self, op: &str, expr: AstNodeId) -> AstNodeId {
-        let op_id = self.strings.intern(op);
+    pub fn insert_unary_op(&mut self, op: UnaryOperator, expr: AstNodeId) -> AstNodeId {
+        let operator = op;
         self.insert(AstNodeData::UnaryOp {
-            op_id,
+            operator,
             expr_id: expr,
         })
     }
 
     /// Insert a binary operation node
-    pub fn insert_binary_op(&mut self, op: &str, left: AstNodeId, right: AstNodeId) -> AstNodeId {
-        let op_id = self.strings.intern(op);
+    pub fn insert_binary_op(
+        &mut self,
+        op: BinaryOperator,
+        left: AstNodeId,
+        right: AstNodeId,
+    ) -> AstNodeId {
+        let operator = op;
         self.insert(AstNodeData::BinaryOp {
-            op_id,
+            operator,
             left_id: left,
             right_id: right,
         })
@@ -661,16 +670,16 @@ impl AstArena {
                 }
                 let m = |c: AstNodeId| AstNodeId(remap[c.0 as usize]);
                 let data = match &entry.data {
-                    AstNodeData::UnaryOp { op_id, expr_id } => AstNodeData::UnaryOp {
-                        op_id: *op_id,
+                    AstNodeData::UnaryOp { operator, expr_id } => AstNodeData::UnaryOp {
+                        operator: *operator,
                         expr_id: m(*expr_id),
                     },
                     AstNodeData::BinaryOp {
-                        op_id,
+                        operator,
                         left_id,
                         right_id,
                     } => AstNodeData::BinaryOp {
-                        op_id: *op_id,
+                        operator: *operator,
                         left_id: m(*left_id),
                         right_id: m(*right_id),
                     },
@@ -767,9 +776,7 @@ impl AstArena {
                         }
                     }
                 }
-                AstNodeData::UnaryOp { op_id, .. } | AstNodeData::BinaryOp { op_id, .. } => {
-                    mark(*op_id)
-                }
+                AstNodeData::UnaryOp { .. } | AstNodeData::BinaryOp { .. } => {}
                 AstNodeData::Function { name_id, .. } => mark(*name_id),
                 AstNodeData::Literal(_) | AstNodeData::Omitted | AstNodeData::Array { .. } => {}
             }
@@ -893,15 +900,15 @@ mod tests {
 
         let left = arena.insert_literal(ValueRef::small_int(1).unwrap());
         let right = arena.insert_literal(ValueRef::small_int(2).unwrap());
-        let add = arena.insert_binary_op("+", left, right);
+        let add = arena.insert_binary_op(BinaryOperator::try_from("+").unwrap(), left, right);
 
         match arena.get(add) {
             Some(AstNodeData::BinaryOp {
-                op_id,
+                operator,
                 left_id,
                 right_id,
             }) => {
-                assert_eq!(arena.resolve_string(*op_id), "+");
+                assert_eq!(*operator, BinaryOperator::Add);
                 assert_eq!(*left_id, left);
                 assert_eq!(*right_id, right);
             }
@@ -953,11 +960,11 @@ mod tests {
 
         // Create "A1 + 1"
         let one = arena.insert_literal(ValueRef::small_int(1).unwrap());
-        let expr1 = arena.insert_binary_op("+", a1_ref, one);
+        let expr1 = arena.insert_binary_op(BinaryOperator::try_from("+").unwrap(), a1_ref, one);
 
         // Create "A1 * 2"
         let two = arena.insert_literal(ValueRef::small_int(2).unwrap());
-        let expr2 = arena.insert_binary_op("*", a1_ref, two);
+        let expr2 = arena.insert_binary_op(BinaryOperator::try_from("*").unwrap(), a1_ref, two);
 
         // A1 reference should be shared
         assert_eq!(arena.stats().node_count, 5); // A1, 1, +expr, 2, *expr
@@ -1042,7 +1049,7 @@ mod tests {
         let zero = arena.insert_literal(ValueRef::small_int(0).unwrap());
 
         // B1 > 0
-        let condition = arena.insert_binary_op(">", b1, zero);
+        let condition = arena.insert_binary_op(BinaryOperator::try_from(">").unwrap(), b1, zero);
 
         // C1 and D1 references
         let c1 = arena.insert_reference(
@@ -1070,7 +1077,8 @@ mod tests {
         let if_expr = arena.insert_function("IF", vec![condition, c1, d1]);
 
         // Final: SUM(...) + IF(...)
-        let final_expr = arena.insert_binary_op("+", sum, if_expr);
+        let final_expr =
+            arena.insert_binary_op(BinaryOperator::try_from("+").unwrap(), sum, if_expr);
 
         // Verify structure
         assert!(arena.get(final_expr).is_some());
@@ -1089,12 +1097,12 @@ mod tests {
         let two = arena.insert_literal(ValueRef::small_int(2).unwrap());
         let three = arena.insert_literal(ValueRef::small_int(3).unwrap());
 
-        let add1 = arena.insert_binary_op("+", one, two);
-        let add2 = arena.insert_binary_op("+", two, three);
-        let add3 = arena.insert_binary_op("+", one, three);
+        let add1 = arena.insert_binary_op(BinaryOperator::try_from("+").unwrap(), one, two);
+        let add2 = arena.insert_binary_op(BinaryOperator::try_from("+").unwrap(), two, three);
+        let add3 = arena.insert_binary_op(BinaryOperator::try_from("+").unwrap(), one, three);
 
-        // "+" should be interned only once
-        assert_eq!(arena.strings().len(), 1);
+        // Operators are stored directly, not interned as strings.
+        assert_eq!(arena.strings().len(), 0);
     }
 
     #[test]
@@ -1105,7 +1113,7 @@ mod tests {
         arena.insert_literal(ValueRef::small_int(2).unwrap());
         let left = arena.insert_literal(ValueRef::small_int(3).unwrap());
         let right = arena.insert_literal(ValueRef::small_int(4).unwrap());
-        arena.insert_binary_op("+", left, right);
+        arena.insert_binary_op(BinaryOperator::try_from("+").unwrap(), left, right);
 
         assert_eq!(arena.stats().node_count, 5);
 

@@ -2373,11 +2373,11 @@ fn ast_equal_relocated(
             }
             (
                 N::UnaryOp {
-                    op_id: oa,
+                    operator: oa,
                     expr_id: ea,
                 },
                 N::UnaryOp {
-                    op_id: ob,
+                    operator: ob,
                     expr_id: eb,
                 },
             ) => {
@@ -2388,12 +2388,12 @@ fn ast_equal_relocated(
             }
             (
                 N::BinaryOp {
-                    op_id: oa,
+                    operator: oa,
                     left_id: la,
                     right_id: ra,
                 },
                 N::BinaryOp {
-                    op_id: ob,
+                    operator: ob,
                     left_id: lb,
                     right_id: rb,
                 },
@@ -2672,8 +2672,8 @@ pub(crate) fn parsed_equal_relocated<'a>(
                     return false;
                 }
             }
-            (P::UnaryOp { op, expr }, N::UnaryOp { op_id, expr_id }) => {
-                if op.as_str() != ds.resolve_ast_string(*op_id) {
+            (P::UnaryOp { op, expr }, N::UnaryOp { operator, expr_id }) => {
+                if op != operator {
                     return false;
                 }
                 stack.push((expr, *expr_id));
@@ -2681,12 +2681,12 @@ pub(crate) fn parsed_equal_relocated<'a>(
             (
                 P::BinaryOp { op, left, right },
                 N::BinaryOp {
-                    op_id,
+                    operator,
                     left_id,
                     right_id,
                 },
             ) => {
-                if op.as_str() != ds.resolve_ast_string(*op_id) {
+                if op != operator {
                     return false;
                 }
                 stack.push((left, *left_id));

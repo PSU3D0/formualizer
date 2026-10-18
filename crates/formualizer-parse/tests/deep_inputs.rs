@@ -146,7 +146,7 @@ fn deep_hand_built_tree(depth: usize) -> formualizer_parse::ASTNode {
     };
     let mut node = ASTNode::new(
         ASTNodeType::BinaryOp {
-            op: "+".into(),
+            op: "+".try_into().unwrap(),
             left: Box::new(leaf(1)),
             right: Box::new(leaf(2)),
         },
@@ -155,7 +155,7 @@ fn deep_hand_built_tree(depth: usize) -> formualizer_parse::ASTNode {
     for _ in 0..depth {
         node = ASTNode::new(
             ASTNodeType::BinaryOp {
-                op: "+".into(),
+                op: "+".try_into().unwrap(),
                 left: Box::new(node),
                 right: Box::new(ASTNode::new(
                     ASTNodeType::Literal(formualizer_parse::LiteralValue::Number(1.0)),

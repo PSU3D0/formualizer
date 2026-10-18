@@ -255,7 +255,9 @@ fn literal_text(ast: &ASTNode) -> Option<String> {
         ASTNodeType::Literal(LiteralValue::Text(s)) => Some(s.clone()),
         ASTNodeType::Literal(LiteralValue::Number(n)) => Some(n.to_string()),
         ASTNodeType::Literal(LiteralValue::Int(n)) => Some(n.to_string()),
-        ASTNodeType::BinaryOp { op, left, right } if op == "&" => {
+        ASTNodeType::BinaryOp { op, left, right }
+            if *op == formualizer_parse::BinaryOperator::Concat =>
+        {
             Some(literal_text(left)? + &literal_text(right)?)
         }
         _ => None,

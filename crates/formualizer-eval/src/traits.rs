@@ -466,8 +466,8 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                     }
                     _ => true,
                 },
-                ASTNodeType::BinaryOp { op, .. } => op == ":",
-                ASTNodeType::UnaryOp { op, .. } => op == "#",
+                ASTNodeType::BinaryOp { op, .. } => *op == formualizer_parse::BinaryOperator::Range,
+                ASTNodeType::UnaryOp { op, .. } => *op == formualizer_parse::UnaryOperator::Spill,
                 ASTNodeType::Function { name, .. } => self
                     .interp
                     .context
@@ -494,11 +494,11 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                         _ => true,
                     }
                 }
-                Some(crate::engine::arena::AstNodeData::BinaryOp { op_id, .. }) => {
-                    data_store.resolve_ast_string(*op_id) == ":"
+                Some(crate::engine::arena::AstNodeData::BinaryOp { operator, .. }) => {
+                    *operator == formualizer_parse::BinaryOperator::Range
                 }
-                Some(crate::engine::arena::AstNodeData::UnaryOp { op_id, .. }) => {
-                    data_store.resolve_ast_string(*op_id) == "#"
+                Some(crate::engine::arena::AstNodeData::UnaryOp { operator, .. }) => {
+                    *operator == formualizer_parse::UnaryOperator::Spill
                 }
                 Some(crate::engine::arena::AstNodeData::Function { name_id, .. }) => self
                     .interp
@@ -631,16 +631,22 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                     }
                     self.interp.reference_for_current_offset(reference).ok()
                 }
-                ASTNodeType::BinaryOp { op, .. } if op == ":" => self
-                    .interp
-                    .with_local_env(env.clone())
-                    .evaluate_ast_as_reference(node)
-                    .ok(),
-                ASTNodeType::UnaryOp { op, expr } if op == "#" => self
-                    .interp
-                    .with_local_env(env.clone())
-                    .ast_spill_reference(expr)
-                    .ok(),
+                ASTNodeType::BinaryOp { op, .. }
+                    if *op == formualizer_parse::BinaryOperator::Range =>
+                {
+                    self.interp
+                        .with_local_env(env.clone())
+                        .evaluate_ast_as_reference(node)
+                        .ok()
+                }
+                ASTNodeType::UnaryOp { op, expr }
+                    if *op == formualizer_parse::UnaryOperator::Spill =>
+                {
+                    self.interp
+                        .with_local_env(env.clone())
+                        .ast_spill_reference(expr)
+                        .ok()
+                }
                 _ => None,
             },
             ArgumentExpr::Arena {
@@ -664,16 +670,16 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                         data_store.reconstruct_reference_type_for_eval(ref_type, sheet_registry);
                     self.interp.reference_for_current_offset(&reference).ok()
                 }
-                Some(crate::engine::arena::AstNodeData::BinaryOp { op_id, .. })
-                    if data_store.resolve_ast_string(*op_id) == ":" =>
+                Some(crate::engine::arena::AstNodeData::BinaryOp { operator, .. })
+                    if *operator == formualizer_parse::BinaryOperator::Range =>
                 {
                     self.interp
                         .with_local_env(env.clone())
                         .evaluate_arena_ast_as_reference(*id, data_store, sheet_registry)
                         .ok()
                 }
-                Some(crate::engine::arena::AstNodeData::UnaryOp { op_id, expr_id })
-                    if data_store.resolve_ast_string(*op_id) == "#" =>
+                Some(crate::engine::arena::AstNodeData::UnaryOp { operator, expr_id })
+                    if *operator == formualizer_parse::UnaryOperator::Spill =>
                 {
                     self.interp
                         .with_local_env(env.clone())
@@ -764,7 +770,9 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                 ASTNodeType::Function { .. } | ASTNodeType::BinaryOp { .. } => {
                     self.interp.evaluate_ast_as_reference(node)
                 }
-                ASTNodeType::UnaryOp { op, expr } if op == "#" => {
+                ASTNodeType::UnaryOp { op, expr }
+                    if *op == formualizer_parse::UnaryOperator::Spill =>
+                {
                     self.interp.ast_spill_reference(expr)
                 }
                 _ => Err(ExcelError::new(ExcelErrorKind::Ref)
@@ -795,8 +803,8 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                     | crate::engine::arena::AstNodeData::BinaryOp { .. } => self
                         .interp
                         .evaluate_arena_ast_as_reference(*id, data_store, sheet_registry),
-                    crate::engine::arena::AstNodeData::UnaryOp { op_id, expr_id }
-                        if data_store.resolve_ast_string(*op_id) == "#" =>
+                    crate::engine::arena::AstNodeData::UnaryOp { operator, expr_id }
+                        if *operator == formualizer_parse::UnaryOperator::Spill =>
                     {
                         self.interp
                             .arena_spill_reference(*expr_id, data_store, sheet_registry)
@@ -913,10 +921,14 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                     }
                     Some(self.interp.reference_for_current_offset(reference))
                 }
-                ASTNodeType::BinaryOp { op, .. } if op == ":" => {
+                ASTNodeType::BinaryOp { op, .. }
+                    if *op == formualizer_parse::BinaryOperator::Range =>
+                {
                     Some(self.interp.evaluate_ast_as_reference(node))
                 }
-                ASTNodeType::UnaryOp { op, expr } if op == "#" => {
+                ASTNodeType::UnaryOp { op, expr }
+                    if *op == formualizer_parse::UnaryOperator::Spill =>
+                {
                     Some(self.interp.ast_spill_reference(expr))
                 }
                 ASTNodeType::Function { name, .. }
@@ -959,8 +971,8 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                             .reconstruct_reference_type_for_eval(ref_type, sheet_registry);
                         Some(self.interp.reference_for_current_offset(&reference))
                     }
-                    crate::engine::arena::AstNodeData::BinaryOp { op_id, .. }
-                        if data_store.resolve_ast_string(*op_id) == ":" =>
+                    crate::engine::arena::AstNodeData::BinaryOp { operator, .. }
+                        if *operator == formualizer_parse::BinaryOperator::Range =>
                     {
                         Some(self.interp.evaluate_arena_ast_as_reference(
                             *id,
@@ -968,8 +980,8 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                             sheet_registry,
                         ))
                     }
-                    crate::engine::arena::AstNodeData::UnaryOp { op_id, expr_id }
-                        if data_store.resolve_ast_string(*op_id) == "#" =>
+                    crate::engine::arena::AstNodeData::UnaryOp { operator, expr_id }
+                        if *operator == formualizer_parse::UnaryOperator::Spill =>
                     {
                         Some(self.interp.arena_spill_reference(
                             *expr_id,
@@ -1527,7 +1539,9 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                 ASTNodeType::Function { .. } | ASTNodeType::BinaryOp { .. } => {
                     self.interp.evaluate_ast_as_reference(node)
                 }
-                ASTNodeType::UnaryOp { op, expr } if op == "#" => {
+                ASTNodeType::UnaryOp { op, expr }
+                    if *op == formualizer_parse::UnaryOperator::Spill =>
+                {
                     self.interp.ast_spill_reference(expr)
                 }
                 _ => Err(ExcelError::new(ExcelErrorKind::Ref)
@@ -1550,8 +1564,8 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                     | crate::engine::arena::AstNodeData::BinaryOp { .. } => self
                         .interp
                         .evaluate_arena_ast_as_reference(*id, data_store, sheet_registry),
-                    crate::engine::arena::AstNodeData::UnaryOp { op_id, expr_id }
-                        if data_store.resolve_ast_string(*op_id) == "#" =>
+                    crate::engine::arena::AstNodeData::UnaryOp { operator, expr_id }
+                        if *operator == formualizer_parse::UnaryOperator::Spill =>
                     {
                         self.interp
                             .arena_spill_reference(*expr_id, data_store, sheet_registry)

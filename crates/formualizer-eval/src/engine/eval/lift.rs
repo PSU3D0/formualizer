@@ -17,6 +17,7 @@ use crate::format::FormatId;
 use crate::interpreter::shift_axis_for_offset as shift_axis;
 use crate::traits::CalcValue;
 use arrow_array::Array as _;
+use formualizer_parse::{BinaryOperator, UnaryOperator};
 
 /// Nodes of a compiled template (children precede parents).
 enum LiftNode {
@@ -29,11 +30,11 @@ enum LiftNode {
         col_abs: bool,
     },
     Unary {
-        op: &'static str,
+        op: UnaryOperator,
         child: usize,
     },
     Binary {
-        op: &'static str,
+        op: BinaryOperator,
         left: usize,
         right: usize,
     },
@@ -146,31 +147,28 @@ pub(super) struct LiftProgram {
 /// Programs larger than this are left to the walk (bounded compile work).
 const MAX_LIFT_NODES: usize = 256;
 
-fn static_binary(op: &str) -> Option<&'static str> {
-    Some(match op {
-        "+" => "+",
-        "-" => "-",
-        "*" => "*",
-        "/" => "/",
-        "^" => "^",
-        "&" => "&",
-        "=" => "=",
-        "<>" => "<>",
-        ">" => ">",
-        "<" => "<",
-        ">=" => ">=",
-        "<=" => "<=",
-        _ => return None,
-    })
+fn arithmetic_byte(op: BinaryOperator) -> Option<u8> {
+    match op {
+        BinaryOperator::Add => Some(b'+'),
+        BinaryOperator::Subtract => Some(b'-'),
+        BinaryOperator::Multiply => Some(b'*'),
+        BinaryOperator::Divide => Some(b'/'),
+        BinaryOperator::Power => Some(b'^'),
+        _ => None,
+    }
 }
 
-fn static_unary(op: &str) -> Option<&'static str> {
-    Some(match op {
-        "+" => "+",
-        "-" => "-",
-        "%" => "%",
-        _ => return None,
-    })
+fn static_binary(op: BinaryOperator) -> Option<BinaryOperator> {
+    match op {
+        BinaryOperator::Range | BinaryOperator::Union | BinaryOperator::Intersection => None,
+        _ => Some(op),
+    }
+}
+fn static_unary(op: UnaryOperator) -> Option<UnaryOperator> {
+    match op {
+        UnaryOperator::Plus | UnaryOperator::Minus | UnaryOperator::Percent => Some(op),
+        _ => None,
+    }
 }
 
 impl LiftProgram {
@@ -342,18 +340,18 @@ impl LiftProgram {
                 row_abs: *row_abs,
                 col_abs: *col_abs,
             },
-            AstNodeData::UnaryOp { op_id, expr_id } => {
-                let op = static_unary(ds.resolve_ast_string(*op_id))?;
+            AstNodeData::UnaryOp { operator, expr_id } => {
+                let op = static_unary(*operator)?;
                 let expr_id = *expr_id;
                 let child = self.compile_node(functions, ds, expr_id, names)?;
                 LiftNode::Unary { op, child }
             }
             AstNodeData::BinaryOp {
-                op_id,
+                operator,
                 left_id,
                 right_id,
             } => {
-                let op = static_binary(ds.resolve_ast_string(*op_id))?;
+                let op = static_binary(*operator)?;
                 let (left_id, right_id) = (*left_id, *right_id);
                 let left = self.compile_node(functions, ds, left_id, names)?;
                 let right = self.compile_node(functions, ds, right_id, names)?;
@@ -525,24 +523,24 @@ where
                     let apply = |operand: Lifted| {
                         let (value, format) = operand?;
                         interpreter
-                            .apply_unary_op(op, calc(value, format))
+                            .apply_unary_op(*op, calc(value, format))
                             .map(split)
                     };
                     match take(&mut columns, *child) {
                         Column::Const(v) => Column::Const(apply(v)),
-                        Column::Lane(lane) => Column::Lane(lane.unary(op, n, apply)),
+                        Column::Lane(lane) => Column::Lane(lane.unary(*op, n, apply)),
                     }
                 }
                 LiftNode::Binary { op, left, right } => {
                     let apply = |l: Lifted, r: Lifted| {
                         let (lv, lf) = l?;
                         let (rv, rf) = r?;
-                        interpreter.apply_binary_op(op, lv, lf, rv, rf).map(split)
+                        interpreter.apply_binary_op(*op, lv, lf, rv, rf).map(split)
                     };
                     let (l, r) = (take(&mut columns, *left), take(&mut columns, *right));
                     match (l, r) {
                         (Column::Const(l), Column::Const(r)) => Column::Const(apply(l, r)),
-                        (l, r) => Column::Lane(Lane::binary(op, l, r, n, apply)),
+                        (l, r) => Column::Lane(Lane::binary(*op, l, r, n, apply)),
                     }
                 }
                 // `IfFn::eval` through `dispatch` (SHORT_CIRCUIT: arity was
@@ -930,31 +928,38 @@ where
                     }
                     (LiftNode::Unary { op, child }, None) => {
                         let operand = std::mem::replace(&mut values[*child], V::Num(0.0));
-                        match (operand, op.as_bytes()) {
-                            (V::Num(x), [b @ (b'-' | b'%')]) => {
-                                match crate::interpreter::unary_f64(*b, x) {
+                        match (operand, *op) {
+                            (V::Num(x), op @ (UnaryOperator::Minus | UnaryOperator::Percent)) => {
+                                match crate::interpreter::unary_f64(
+                                    if op == UnaryOperator::Minus {
+                                        b'-'
+                                    } else {
+                                        b'%'
+                                    },
+                                    x,
+                                ) {
                                     Ok(v) => V::Num(v),
                                     Err(e) => V::Boxed(Err(e)),
                                 }
                             }
                             (operand, _) => typed(boxed(operand).and_then(|(v, f)| {
-                                interpreter.apply_unary_op(op, calc(v, f)).map(split)
+                                interpreter.apply_unary_op(*op, calc(v, f)).map(split)
                             })),
                         }
                     }
                     (LiftNode::Binary { op, left, right }, None) => {
                         let l = std::mem::replace(&mut values[*left], V::Num(0.0));
                         let r = std::mem::replace(&mut values[*right], V::Num(0.0));
-                        match (l, r, op.as_bytes()) {
-                            (V::Num(a), V::Num(b), [o @ (b'+' | b'-' | b'*' | b'/' | b'^')]) => {
-                                match crate::interpreter::arith_f64(*o, a, b) {
+                        match (l, r, arithmetic_byte(*op)) {
+                            (V::Num(a), V::Num(b), Some(o)) => {
+                                match crate::interpreter::arith_f64(o, a, b) {
                                     Ok(v) => V::Num(v),
                                     Err(e) => V::Boxed(Err(e)),
                                 }
                             }
                             (l, r, _) => typed(match (boxed(l), boxed(r)) {
                                 (Ok((lv, lf)), Ok((rv, rf))) => {
-                                    interpreter.apply_binary_op(op, lv, lf, rv, rf).map(split)
+                                    interpreter.apply_binary_op(*op, lv, lf, rv, rf).map(split)
                                 }
                                 (Err(e), _) | (_, Err(e)) => Err(e),
                             }),
@@ -1097,7 +1102,7 @@ impl Lane {
         }
     }
 
-    fn unary(self, op: &'static str, n: usize, apply: impl Fn(Lifted) -> Lifted) -> Lane {
+    fn unary(self, op: UnaryOperator, n: usize, apply: impl Fn(Lifted) -> Lifted) -> Lane {
         let column = Column::Lane(self);
         let mut out = Lane::with_len(LaneKind::Num, n);
         let mut cur = Cursor::new(&column);
@@ -1105,15 +1110,19 @@ impl Lane {
             match (cur.get(i), op) {
                 // `+` is a pass-through; `-` and `%` coerce (a number is
                 // itself) and sanitize, as `eval_unary_scalar`.
-                (Elem::Num(x), "+") => out.vals[i] = x,
-                (Elem::Num(x), "-") => match crate::interpreter::unary_f64(b'-', x) {
-                    Ok(v) => out.vals[i] = v,
-                    Err(e) => out.put(i, Ok((LiteralValue::Error(e), None))),
-                },
-                (Elem::Num(x), "%") => match crate::interpreter::unary_f64(b'%', x) {
-                    Ok(v) => out.vals[i] = v,
-                    Err(e) => out.put(i, Ok((LiteralValue::Error(e), None))),
-                },
+                (Elem::Num(x), UnaryOperator::Plus) => out.vals[i] = x,
+                (Elem::Num(x), UnaryOperator::Minus) => {
+                    match crate::interpreter::unary_f64(b'-', x) {
+                        Ok(v) => out.vals[i] = v,
+                        Err(e) => out.put(i, Ok((LiteralValue::Error(e), None))),
+                    }
+                }
+                (Elem::Num(x), UnaryOperator::Percent) => {
+                    match crate::interpreter::unary_f64(b'%', x) {
+                        Ok(v) => out.vals[i] = v,
+                        Err(e) => out.put(i, Ok((LiteralValue::Error(e), None))),
+                    }
+                }
                 (Elem::Walk, _) => out.walk.push(i as u32),
                 (e, _) => out.put(i, apply(e.lifted())),
             }
@@ -1125,21 +1134,29 @@ impl Lane {
     /// (`arith_f64`, `cmp_f64`, the scalar path's own functions); anything
     /// else goes through `apply` (the scalar operator).
     fn binary(
-        op: &'static str,
+        op: BinaryOperator,
         l: Column,
         r: Column,
         n: usize,
         apply: impl Fn(Lifted, Lifted) -> Lifted,
     ) -> Lane {
         let arith = match op {
-            "+" => Some(b'+'),
-            "-" => Some(b'-'),
-            "*" => Some(b'*'),
-            "/" => Some(b'/'),
-            "^" => Some(b'^'),
+            BinaryOperator::Add => Some(b'+'),
+            BinaryOperator::Subtract => Some(b'-'),
+            BinaryOperator::Multiply => Some(b'*'),
+            BinaryOperator::Divide => Some(b'/'),
+            BinaryOperator::Power => Some(b'^'),
             _ => None,
         };
-        let compare = matches!(op, "=" | "<>" | ">" | "<" | ">=" | "<=");
+        let compare = matches!(
+            op,
+            BinaryOperator::Equal
+                | BinaryOperator::NotEqual
+                | BinaryOperator::Greater
+                | BinaryOperator::Less
+                | BinaryOperator::GreaterEqual
+                | BinaryOperator::LessEqual
+        );
         let kind = if compare {
             LaneKind::Bool
         } else {

@@ -1732,6 +1732,162 @@ impl ReferenceType {
     }
 }
 
+/// A supported unary formula operator.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum UnaryOperator {
+    #[cfg_attr(feature = "serde", serde(rename = "+"))]
+    Plus,
+    #[cfg_attr(feature = "serde", serde(rename = "-"))]
+    Minus,
+    #[cfg_attr(feature = "serde", serde(rename = "%"))]
+    Percent,
+    #[cfg_attr(feature = "serde", serde(rename = "#"))]
+    Spill,
+    #[cfg_attr(feature = "serde", serde(rename = "@"))]
+    ImplicitIntersection,
+}
+impl UnaryOperator {
+    /// The operator spelling used in formulas and serialized ASTs.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Plus => "+",
+            Self::Minus => "-",
+            Self::Percent => "%",
+            Self::Spill => "#",
+            Self::ImplicitIntersection => "@",
+        }
+    }
+}
+// ASTNodeType's Display embeds Debug for function arguments and arrays.
+// Preserve the former String representation there as well.
+impl fmt::Debug for UnaryOperator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(self.as_str(), f)
+    }
+}
+impl Display for UnaryOperator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+impl TryFrom<&str> for UnaryOperator {
+    type Error = &'static str;
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "+" => Ok(Self::Plus),
+            "-" => Ok(Self::Minus),
+            "%" => Ok(Self::Percent),
+            "#" => Ok(Self::Spill),
+            "@" => Ok(Self::ImplicitIntersection),
+            _ => Err("unsupported formula operator"),
+        }
+    }
+}
+impl std::hash::Hash for UnaryOperator {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.as_str().hash(state);
+    }
+}
+
+/// A supported binary formula operator.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum BinaryOperator {
+    #[cfg_attr(feature = "serde", serde(rename = "+"))]
+    Add,
+    #[cfg_attr(feature = "serde", serde(rename = "-"))]
+    Subtract,
+    #[cfg_attr(feature = "serde", serde(rename = "*"))]
+    Multiply,
+    #[cfg_attr(feature = "serde", serde(rename = "/"))]
+    Divide,
+    #[cfg_attr(feature = "serde", serde(rename = "^"))]
+    Power,
+    #[cfg_attr(feature = "serde", serde(rename = "&"))]
+    Concat,
+    #[cfg_attr(feature = "serde", serde(rename = "="))]
+    Equal,
+    #[cfg_attr(feature = "serde", serde(rename = "<>"))]
+    NotEqual,
+    #[cfg_attr(feature = "serde", serde(rename = "<"))]
+    Less,
+    #[cfg_attr(feature = "serde", serde(rename = ">"))]
+    Greater,
+    #[cfg_attr(feature = "serde", serde(rename = "<="))]
+    LessEqual,
+    #[cfg_attr(feature = "serde", serde(rename = ">="))]
+    GreaterEqual,
+    #[cfg_attr(feature = "serde", serde(rename = ":"))]
+    Range,
+    #[cfg_attr(feature = "serde", serde(rename = ","))]
+    Union,
+    #[cfg_attr(feature = "serde", serde(rename = " "))]
+    Intersection,
+}
+impl BinaryOperator {
+    /// The operator spelling used in formulas and serialized ASTs.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Add => "+",
+            Self::Subtract => "-",
+            Self::Multiply => "*",
+            Self::Divide => "/",
+            Self::Power => "^",
+            Self::Concat => "&",
+            Self::Equal => "=",
+            Self::NotEqual => "<>",
+            Self::Less => "<",
+            Self::Greater => ">",
+            Self::LessEqual => "<=",
+            Self::GreaterEqual => ">=",
+            Self::Range => ":",
+            Self::Union => ",",
+            Self::Intersection => " ",
+        }
+    }
+}
+// ASTNodeType's Display embeds Debug for function arguments and arrays.
+// Preserve the former String representation there as well.
+impl fmt::Debug for BinaryOperator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(self.as_str(), f)
+    }
+}
+impl Display for BinaryOperator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+impl TryFrom<&str> for BinaryOperator {
+    type Error = &'static str;
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "+" => Ok(Self::Add),
+            "-" => Ok(Self::Subtract),
+            "*" => Ok(Self::Multiply),
+            "/" => Ok(Self::Divide),
+            "^" => Ok(Self::Power),
+            "&" => Ok(Self::Concat),
+            "=" => Ok(Self::Equal),
+            "<>" => Ok(Self::NotEqual),
+            "<" => Ok(Self::Less),
+            ">" => Ok(Self::Greater),
+            "<=" => Ok(Self::LessEqual),
+            ">=" => Ok(Self::GreaterEqual),
+            ":" => Ok(Self::Range),
+            "," => Ok(Self::Union),
+            " " => Ok(Self::Intersection),
+            _ => Err("unsupported formula operator"),
+        }
+    }
+}
+impl std::hash::Hash for BinaryOperator {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.as_str().hash(state);
+    }
+}
+
 /// The different types of AST nodes.
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, PartialEq, Hash)]
@@ -1747,11 +1903,11 @@ pub enum ASTNodeType {
         reference: ReferenceType, // Parsed reference
     },
     UnaryOp {
-        op: String,
+        op: UnaryOperator,
         expr: Box<ASTNode>,
     },
     BinaryOp {
-        op: String,
+        op: BinaryOperator,
         left: Box<ASTNode>,
         right: Box<ASTNode>,
     },
@@ -1884,12 +2040,12 @@ impl ASTNode {
             }
             ASTNodeType::UnaryOp { op, expr } => {
                 hasher.write(&[3]); // Discriminant for UnaryOp
-                hasher.write(op.as_bytes());
+                hasher.write(op.as_str().as_bytes());
                 expr.hash_node(hasher);
             }
             ASTNodeType::BinaryOp { op, left, right } => {
                 hasher.write(&[4]); // Discriminant for BinaryOp
-                hasher.write(op.as_bytes());
+                hasher.write(op.as_str().as_bytes());
                 left.hash_node(hasher);
                 right.hash_node(hasher);
             }
@@ -2576,7 +2732,12 @@ impl Parser {
             height,
             node: ASTNode::new_with_volatile(
                 ASTNodeType::UnaryOp {
-                    op: token.value.clone(),
+                    op: UnaryOperator::try_from(token.value.as_str()).map_err(|message| {
+                        ParserError {
+                            message: message.to_string(),
+                            position: Some(span.start),
+                        }
+                    })?,
                     expr: Box::new(expr.node),
                 },
                 Some(token),
@@ -2602,7 +2763,12 @@ impl Parser {
             height,
             node: ASTNode::new_with_volatile(
                 ASTNodeType::BinaryOp {
-                    op: token.value.clone(),
+                    op: BinaryOperator::try_from(token.value.as_str()).map_err(|message| {
+                        ParserError {
+                            message: message.to_string(),
+                            position: Some(span.start),
+                        }
+                    })?,
                     left: Box::new(left.node),
                     right: Box::new(right.node),
                 },

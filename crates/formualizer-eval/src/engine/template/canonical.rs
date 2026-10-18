@@ -703,20 +703,20 @@ impl Canonicalizer<'_> {
                 reference: self.canonicalize_reference(original, reference),
             },
             ASTNodeType::UnaryOp { op, expr } => {
-                self.classify_unary_operator(op);
+                self.classify_unary_operator(op.as_str());
                 CanonicalExpr::Unary {
-                    op: op.clone(),
+                    op: op.to_string(),
                     expr: Box::new(self.canonicalize_expr(expr, CanonicalReferenceContext::Value)),
                 }
             }
             ASTNodeType::BinaryOp { op, left, right } => {
-                let child_context = if op == ":" {
+                let child_context = if op.as_str() == ":" {
                     CanonicalReferenceContext::Reference
                 } else {
                     CanonicalReferenceContext::Value
                 };
                 CanonicalExpr::Binary {
-                    op: op.clone(),
+                    op: op.to_string(),
                     left: Box::new(self.canonicalize_expr(left, child_context.clone())),
                     right: Box::new(self.canonicalize_expr(right, child_context)),
                 }

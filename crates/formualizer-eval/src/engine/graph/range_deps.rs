@@ -440,8 +440,10 @@ impl DependencyGraph {
                 ASTNodeType::Literal(LiteralValue::Number(value)) if value.is_finite() => {
                     Some(*value as i64)
                 }
-                ASTNodeType::UnaryOp { op, expr } if op == "+" => static_index(expr),
-                ASTNodeType::UnaryOp { op, expr } if op == "-" => static_index(expr)?.checked_neg(),
+                ASTNodeType::UnaryOp { op, expr } if op.as_str() == "+" => static_index(expr),
+                ASTNodeType::UnaryOp { op, expr } if op.as_str() == "-" => {
+                    static_index(expr)?.checked_neg()
+                }
                 _ => None,
             }
         }

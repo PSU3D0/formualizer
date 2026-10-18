@@ -232,13 +232,13 @@ impl ASTNodeData {
                 source,
             },
             ASTNodeType::BinaryOp { op, left, right } => ASTNodeData::BinaryOp {
-                op: op.clone(),
+                op: op.to_string(),
                 left: Box::new(Self::from_core(left)),
                 right: Box::new(Self::from_core(right)),
                 source,
             },
             ASTNodeType::UnaryOp { op, expr } => ASTNodeData::UnaryOp {
-                op: op.clone(),
+                op: op.to_string(),
                 operand: Box::new(Self::from_core(expr)),
                 source,
             },

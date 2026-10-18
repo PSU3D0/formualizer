@@ -465,7 +465,7 @@ mod tests {
         for _ in 1..terms {
             ast = formualizer_parse::ASTNode::new(
                 formualizer_parse::ASTNodeType::BinaryOp {
-                    op: "+".into(),
+                    op: "+".try_into().unwrap(),
                     left: Box::new(ast),
                     right: Box::new(leaf.clone()),
                 },

@@ -389,7 +389,7 @@ mod tests {
         let ast = parse_formula("=A1+B2").unwrap();
 
         if let ASTNodeType::BinaryOp { op, left, right } = ast.node_type {
-            assert_eq!(op, "+");
+            assert_eq!(op.as_str(), "+");
 
             if let ASTNodeType::Reference { reference, .. } = left.node_type {
                 assert_eq!(reference, ReferenceType::cell(None, 1, 1));
@@ -445,7 +445,7 @@ mod tests {
             right: right1,
         } = ast.node_type
         {
-            assert_eq!(op1, "+");
+            assert_eq!(op1.as_str(), "+");
 
             if let ASTNodeType::Reference { reference, .. } = left1.node_type {
                 assert_eq!(reference, ReferenceType::cell(None, 1, 1));
@@ -459,7 +459,7 @@ mod tests {
                 right: right2,
             } = right1.node_type
             {
-                assert_eq!(op2, "*");
+                assert_eq!(op2.as_str(), "*");
 
                 if let ASTNodeType::Reference { reference, .. } = left2.node_type {
                     assert_eq!(reference, ReferenceType::cell(None, 2, 2));
@@ -485,10 +485,10 @@ mod tests {
         let ast = parse_formula("=(A1+B2)*C3").unwrap();
 
         if let ASTNodeType::BinaryOp { op, left, right } = ast.node_type {
-            assert_eq!(op, "*");
+            assert_eq!(op.as_str(), "*");
 
             if let ASTNodeType::BinaryOp { op: inner_op, .. } = left.node_type {
-                assert_eq!(inner_op, "+");
+                assert_eq!(inner_op.as_str(), "+");
             } else {
                 panic!("Expected BinaryOp node for left operand");
             }
@@ -515,7 +515,7 @@ mod tests {
 
             // Check first argument (condition)
             if let ASTNodeType::BinaryOp { op, .. } = &args[0].node_type {
-                assert_eq!(op, ">");
+                assert_eq!(op.as_str(), ">");
             } else {
                 panic!("Expected BinaryOp node for first argument");
             }
@@ -665,7 +665,7 @@ mod tests {
 
             // Check first argument (SUM(...) > 100)
             if let ASTNodeType::BinaryOp { op, left, .. } = &args[0].node_type {
-                assert_eq!(op, ">");
+                assert_eq!(op.as_str(), ">");
 
                 if let ASTNodeType::Function {
                     name: inner_name, ..
@@ -705,7 +705,7 @@ mod tests {
         let ast = parse_formula("=-A1").unwrap();
 
         if let ASTNodeType::UnaryOp { op, expr } = ast.node_type {
-            assert_eq!(op, "-");
+            assert_eq!(op.as_str(), "-");
 
             if let ASTNodeType::Reference { reference, .. } = expr.node_type {
                 assert_eq!(reference, ReferenceType::cell(None, 1, 1));
@@ -722,7 +722,7 @@ mod tests {
         let ast = parse_formula("=--A1").unwrap();
 
         if let ASTNodeType::UnaryOp { op, expr: _ } = ast.node_type {
-            assert_eq!(op, "-");
+            assert_eq!(op.as_str(), "-");
         }
     }
 
@@ -734,7 +734,7 @@ mod tests {
         let ast = parse_formula("=@A1:A3").unwrap();
         match ast.node_type {
             ASTNodeType::UnaryOp { op, expr } => {
-                assert_eq!(op, "@");
+                assert_eq!(op.as_str(), "@");
                 match expr.node_type {
                     ASTNodeType::Reference { reference, .. } => {
                         assert_eq!(
@@ -752,7 +752,7 @@ mod tests {
         let ast = parse_formula("=@Table1[Col]").unwrap();
         match ast.node_type {
             ASTNodeType::UnaryOp { op, expr } => {
-                assert_eq!(op, "@");
+                assert_eq!(op.as_str(), "@");
                 match expr.node_type {
                     ASTNodeType::Reference { reference, .. } => {
                         assert_eq!(
@@ -773,7 +773,7 @@ mod tests {
         let ast = parse_formula("=@SEQUENCE(3,1)").unwrap();
         match ast.node_type {
             ASTNodeType::UnaryOp { op, expr } => {
-                assert_eq!(op, "@");
+                assert_eq!(op.as_str(), "@");
                 match expr.node_type {
                     ASTNodeType::Function { name, args } => {
                         assert_eq!(name, "SEQUENCE");
@@ -958,7 +958,7 @@ mod tests {
 
             // Check second argument (SUM(...)/COUNT(...))
             if let ASTNodeType::BinaryOp { op, .. } = &args[1].node_type {
-                assert_eq!(op, "/");
+                assert_eq!(op.as_str(), "/");
             } else {
                 panic!("Expected BinaryOp node for second argument");
             }
@@ -988,7 +988,7 @@ mod tests {
         let ast = parse_formula("= A1 + B2 ").unwrap();
 
         if let ASTNodeType::BinaryOp { op, left, right } = ast.node_type {
-            assert_eq!(op, "+");
+            assert_eq!(op.as_str(), "+");
 
             if let ASTNodeType::Reference { reference, .. } = left.node_type {
                 assert_eq!(reference, ReferenceType::cell(None, 1, 1));
@@ -1102,7 +1102,7 @@ mod tests {
             let ASTNodeType::BinaryOp { op, left, right } = ast.node_type else {
                 panic!("expected BinaryOp node");
             };
-            assert_eq!(op, "+");
+            assert_eq!(op.as_str(), "+");
             match &left.node_type {
                 ASTNodeType::Reference { .. } => {}
                 other => panic!("expected Reference on lhs, got {other:?}"),
@@ -1226,7 +1226,7 @@ mod tests {
             let ast = parse_both("=#CALC! + 1");
             match ast.node_type {
                 ASTNodeType::BinaryOp { op, left, right } => {
-                    assert_eq!(op, "+");
+                    assert_eq!(op.as_str(), "+");
                     expect_error_kind(&left, ExcelErrorKind::Calc);
                     match right.node_type {
                         ASTNodeType::Literal(LiteralValue::Int(n)) => assert_eq!(n, 1),
@@ -1266,7 +1266,7 @@ mod tests {
         fn assert_unary_ref(ast: crate::parser::ASTNode, op: &str, expected: ReferenceType) {
             match ast.node_type {
                 ASTNodeType::UnaryOp { op: o, expr } => {
-                    assert_eq!(o, op);
+                    assert_eq!(o.as_str(), op);
                     match expr.node_type {
                         ASTNodeType::Reference { reference, .. } => {
                             assert_eq!(reference, expected);
@@ -1297,10 +1297,10 @@ mod tests {
             ] {
                 match ast.node_type {
                     ASTNodeType::BinaryOp { op, left, right } => {
-                        assert_eq!(op, "+");
+                        assert_eq!(op.as_str(), "+");
                         match left.node_type {
                             ASTNodeType::UnaryOp { op: o, expr } => {
-                                assert_eq!(o, "#");
+                                assert_eq!(o.as_str(), "#");
                                 assert!(matches!(expr.node_type, ASTNodeType::Reference { .. }));
                             }
                             other => panic!("expected UnaryOp on left, got {other:?}"),
@@ -1327,7 +1327,7 @@ mod tests {
                         assert_eq!(args.len(), 1);
                         match &args[0].node_type {
                             ASTNodeType::UnaryOp { op, expr } => {
-                                assert_eq!(op, "#");
+                                assert_eq!(op.as_str(), "#");
                                 assert!(matches!(expr.node_type, ASTNodeType::Reference { .. }));
                             }
                             other => panic!("expected UnaryOp arg, got {other:?}"),
@@ -1347,13 +1347,13 @@ mod tests {
             ] {
                 match ast.node_type {
                     ASTNodeType::UnaryOp { op, expr } => {
-                        assert_eq!(op, "@");
+                        assert_eq!(op.as_str(), "@");
                         match expr.node_type {
                             ASTNodeType::UnaryOp {
                                 op: inner_op,
                                 expr: inner,
                             } => {
-                                assert_eq!(inner_op, "#");
+                                assert_eq!(inner_op.as_str(), "#");
                                 assert!(matches!(inner.node_type, ASTNodeType::Reference { .. }));
                             }
                             other => panic!("expected UnaryOp(#) under @, got {other:?}"),
@@ -1432,10 +1432,10 @@ mod tests {
             ] {
                 match ast.node_type {
                     ASTNodeType::UnaryOp { op, expr } => {
-                        assert_eq!(op, "#");
+                        assert_eq!(op.as_str(), "#");
                         match expr.node_type {
                             ASTNodeType::UnaryOp { op: inner_op, .. } => {
-                                assert_eq!(inner_op, "#");
+                                assert_eq!(inner_op.as_str(), "#");
                             }
                             other => panic!("expected nested UnaryOp(#), got {other:?}"),
                         }
@@ -1527,7 +1527,7 @@ mod tests {
             for ast in parse_both("=A1:A3 B1:B3") {
                 match ast.node_type {
                     ASTNodeType::BinaryOp { op, left, right } => {
-                        assert_eq!(op, " ");
+                        assert_eq!(op.as_str(), " ");
                         assert_range_ref(&left, "A1:A3");
                         assert_range_ref(&right, "B1:B3");
                     }
@@ -1545,7 +1545,7 @@ mod tests {
                         assert_eq!(args.len(), 1);
                         match &args[0].node_type {
                             ASTNodeType::BinaryOp { op, left, right } => {
-                                assert_eq!(op, " ");
+                                assert_eq!(op.as_str(), " ");
                                 assert_range_ref(left, "A1:A3");
                                 assert_range_ref(right, "A2:C2");
                             }
@@ -1562,7 +1562,7 @@ mod tests {
             for ast in parse_both("=OFFSET(A1,1,1):B10") {
                 match ast.node_type {
                     ASTNodeType::BinaryOp { op, left, right } => {
-                        assert_eq!(op, ":");
+                        assert_eq!(op.as_str(), ":");
                         match &left.node_type {
                             ASTNodeType::Function { name, .. } => {
                                 assert_eq!(name, "OFFSET");
@@ -1581,7 +1581,7 @@ mod tests {
             for ast in parse_both("=INDEX(A:A,1):B10") {
                 match ast.node_type {
                     ASTNodeType::BinaryOp { op, left, right } => {
-                        assert_eq!(op, ":");
+                        assert_eq!(op.as_str(), ":");
                         match &left.node_type {
                             ASTNodeType::Function { name, .. } => {
                                 assert_eq!(name, "INDEX");
@@ -1600,7 +1600,7 @@ mod tests {
             for ast in parse_both("=(A1:A3):A5") {
                 match ast.node_type {
                     ASTNodeType::BinaryOp { op, left, right } => {
-                        assert_eq!(op, ":");
+                        assert_eq!(op.as_str(), ":");
                         assert_range_ref(&left, "A1:A3");
                         assert_cell_ref(&right, "A5");
                     }
@@ -1616,7 +1616,7 @@ mod tests {
             for ast in parse_both("='Sheet1'!A1:'Sheet2'!B1") {
                 match ast.node_type {
                     ASTNodeType::BinaryOp { op, left, right } => {
-                        assert_eq!(op, ":");
+                        assert_eq!(op.as_str(), ":");
                         match &left.node_type {
                             ASTNodeType::Reference { reference, .. } => match reference {
                                 ReferenceType::Cell { sheet, .. } => {
@@ -1648,7 +1648,7 @@ mod tests {
             for ast in parse_both("=A1:A3:A5") {
                 match ast.node_type {
                     ASTNodeType::BinaryOp { op, left, right } => {
-                        assert_eq!(op, ":");
+                        assert_eq!(op.as_str(), ":");
                         assert_range_ref(&left, "A1:A3");
                         assert_cell_ref(&right, "A5");
                     }
@@ -1664,7 +1664,7 @@ mod tests {
             for ast in parse_both("=A1:B2 C1:D2") {
                 match ast.node_type {
                     ASTNodeType::BinaryOp { op, left, right } => {
-                        assert_eq!(op, " ");
+                        assert_eq!(op.as_str(), " ");
                         assert_range_ref(&left, "A1:B2");
                         assert_range_ref(&right, "C1:D2");
                     }
@@ -1681,9 +1681,9 @@ mod tests {
             for ast in parse_both("=(@A1):A3") {
                 match ast.node_type {
                     ASTNodeType::BinaryOp { op, left, right: _ } => {
-                        assert_eq!(op, ":");
+                        assert_eq!(op.as_str(), ":");
                         match &left.node_type {
-                            ASTNodeType::UnaryOp { op, .. } => assert_eq!(op, "@"),
+                            ASTNodeType::UnaryOp { op, .. } => assert_eq!(op.as_str(), "@"),
                             other => panic!("expected UnaryOp(@, ...) on left, got {other:?}"),
                         }
                     }
@@ -3353,10 +3353,10 @@ mod semantics_regressions {
 
         match ast.node_type {
             ASTNodeType::BinaryOp { op, left, right } => {
-                assert_eq!(op, "^");
+                assert_eq!(op.as_str(), "^");
                 // Expected: (2^3)^2
                 match left.node_type {
-                    ASTNodeType::BinaryOp { op: op2, .. } => assert_eq!(op2, "^"),
+                    ASTNodeType::BinaryOp { op: op2, .. } => assert_eq!(op2.as_str(), "^"),
                     other => panic!("expected left child to be exponent, got {other:?}"),
                 }
                 assert!(
@@ -3391,9 +3391,9 @@ mod semantics_regressions {
         // Excel: =-2^2 means (-2)^2 = 4
         match ast.node_type {
             ASTNodeType::BinaryOp { op, left, .. } => {
-                assert_eq!(op, "^");
+                assert_eq!(op.as_str(), "^");
                 match left.node_type {
-                    ASTNodeType::UnaryOp { op: op2, .. } => assert_eq!(op2, "-"),
+                    ASTNodeType::UnaryOp { op: op2, .. } => assert_eq!(op2.as_str(), "-"),
                     other => panic!("expected unary under exponent, got {other:?}"),
                 }
             }
@@ -3438,7 +3438,7 @@ mod semantics_regressions {
             let ast = parse_formula("=1E-A1").unwrap();
             match ast.node_type {
                 ASTNodeType::BinaryOp { op, left, right } => {
-                    assert_eq!(op, "-");
+                    assert_eq!(op.as_str(), "-");
                     match left.node_type {
                         ASTNodeType::Reference { reference, .. } => match reference {
                             ReferenceType::NamedRange(name) => assert_eq!(name, "1E"),
@@ -3463,7 +3463,7 @@ mod semantics_regressions {
             let ast = parse_formula("=1E+A1").unwrap();
             match ast.node_type {
                 ASTNodeType::BinaryOp { op, left, right } => {
-                    assert_eq!(op, "+");
+                    assert_eq!(op.as_str(), "+");
                     match left.node_type {
                         ASTNodeType::Reference { reference, .. } => match reference {
                             ReferenceType::NamedRange(name) => assert_eq!(name, "1E"),
@@ -3571,7 +3571,7 @@ mod semantics_regressions {
                     assert_eq!(fn_args.len(), 2);
                     // First arg is the parameter name 'x' (parsed as a NamedRange ref).
                     match &fn_args[1].node_type {
-                        ASTNodeType::BinaryOp { op, .. } => assert_eq!(op, "+"),
+                        ASTNodeType::BinaryOp { op, .. } => assert_eq!(op.as_str(), "+"),
                         other => panic!("expected binary op body, got {other:?}"),
                     }
                 }
@@ -3700,7 +3700,7 @@ mod semantics_regressions {
                 ASTNodeType::Call { callee, args } => {
                     assert_eq!(args.len(), 1);
                     match callee.node_type {
-                        ASTNodeType::BinaryOp { op, .. } => assert_eq!(op, "+"),
+                        ASTNodeType::BinaryOp { op, .. } => assert_eq!(op.as_str(), "+"),
                         other => panic!("expected BinaryOp callee, got {other:?}"),
                     }
                 }
@@ -4532,7 +4532,7 @@ mod range_operator_before_call_tests {
                     args[0].node_type
                 );
             };
-            assert_eq!(op, ":", "{formula}");
+            assert_eq!(op.as_str(), ":", "{formula}");
             assert!(
                 matches!(&left.node_type, ASTNodeType::Reference {
                     reference: ReferenceType::Cell { sheet, .. }, ..
@@ -4602,7 +4602,7 @@ mod range_operator_with_name_tests {
                 args[0].node_type
             );
         };
-        assert_eq!(op, ":", "{formula}");
+        assert_eq!(op.as_str(), ":", "{formula}");
         let reference = |node: &crate::parser::ASTNode| match &node.node_type {
             ASTNodeType::Reference { reference, .. } => reference.clone(),
             other => panic!("{formula}: expected a reference, got {other:?}"),
@@ -4725,7 +4725,7 @@ mod deleted_range_end_tests {
                     ast.node_type
                 );
             };
-            assert_eq!(op, ":", "{formula}");
+            assert_eq!(op.as_str(), ":", "{formula}");
             let (live, dead) = if live_left {
                 (left, right)
             } else {
@@ -4743,7 +4743,9 @@ mod deleted_range_end_tests {
         let ASTNodeType::Function { args, .. } = &ast.node_type else {
             panic!("{:?}", ast.node_type);
         };
-        assert!(matches!(&args[0].node_type, ASTNodeType::BinaryOp { op, .. } if op == ":"));
+        assert!(
+            matches!(&args[0].node_type, ASTNodeType::BinaryOp { op, .. } if op.as_str() == ":")
+        );
     }
 
     #[test]
@@ -4771,7 +4773,7 @@ mod deleted_range_end_tests {
         // `#` directly after a reference is still the spill operator.
         assert!(matches!(
             parse("=A1#").unwrap().node_type,
-            ASTNodeType::UnaryOp { ref op, .. } if op == "#"
+            ASTNodeType::UnaryOp { ref op, .. } if op.as_str() == "#"
         ));
         assert!(parse("=A1:#N/A").is_err());
     }
@@ -4812,7 +4814,7 @@ mod double_ref_error_tests {
         let ast = parse("=#REF!#REF!+1").unwrap();
         assert!(
             matches!(&ast.node_type, ASTNodeType::BinaryOp { op, left, .. }
-            if op == "+" && is_ref_error(left))
+            if op.as_str() == "+" && is_ref_error(left))
         );
     }
 

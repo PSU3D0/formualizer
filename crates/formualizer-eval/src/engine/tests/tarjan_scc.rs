@@ -32,7 +32,7 @@ fn create_binary_op_ast(left_ref: &str, right_ref: &str, op: &str) -> ASTNode {
 
     ASTNode {
         node_type: ASTNodeType::BinaryOp {
-            op: op.to_string(),
+            op: op.try_into().unwrap(),
             left: Box::new(create_cell_ref_ast(None, left_row, left_col, left_ref)),
             right: Box::new(right_node),
         },

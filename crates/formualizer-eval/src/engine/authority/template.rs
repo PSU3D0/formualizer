@@ -136,16 +136,16 @@ pub fn template_facts(ds: &DataStore, ast: AstNodeId, row: u32, col: u32) -> Tem
                     f.relocatable = false;
                 }
             },
-            AstNodeData::UnaryOp { op_id, expr_id } => {
-                f.tokens.extend([T_UNARY, u64::from(op_id.as_u32())]);
+            AstNodeData::UnaryOp { operator, expr_id } => {
+                f.tokens.extend([T_UNARY, u64::from(operator as u32)]);
                 stack.push(expr_id);
             }
             AstNodeData::BinaryOp {
-                op_id,
+                operator,
                 left_id,
                 right_id,
             } => {
-                f.tokens.extend([T_BINARY, u64::from(op_id.as_u32())]);
+                f.tokens.extend([T_BINARY, u64::from(operator as u32)]);
                 stack.push(right_id);
                 stack.push(left_id);
             }

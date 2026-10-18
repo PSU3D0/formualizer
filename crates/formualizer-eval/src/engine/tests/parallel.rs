@@ -22,7 +22,7 @@ fn ref_ast(row: u32, col: u32) -> ASTNode {
 fn op_ast(left: ASTNode, right: ASTNode, op: &str) -> ASTNode {
     ASTNode {
         node_type: ASTNodeType::BinaryOp {
-            op: op.to_string(),
+            op: op.try_into().unwrap(),
             left: Box::new(left),
             right: Box::new(right),
         },

@@ -35,7 +35,7 @@ fn sum_refs_ast(refs: &[(u32, u32)]) -> ASTNode {
     for &(r, c) in iter {
         ast = ASTNode {
             node_type: ASTNodeType::BinaryOp {
-                op: "+".to_string(),
+                op: "+".try_into().unwrap(),
                 left: Box::new(ast),
                 right: Box::new(ref_ast(r, c)),
             },

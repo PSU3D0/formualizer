@@ -53,8 +53,8 @@ fn unary_precedence(op: &str) -> u8 {
 
 fn node_precedence(ast: &ASTNode) -> u8 {
     match &ast.node_type {
-        ASTNodeType::BinaryOp { op, .. } => infix_info(op).0,
-        ASTNodeType::UnaryOp { op, .. } => unary_precedence(op),
+        ASTNodeType::BinaryOp { op, .. } => infix_info(op.as_str()).0,
+        ASTNodeType::UnaryOp { op, .. } => unary_precedence(op.as_str()),
         // Treat everything else as an atom.
         _ => 10,
     }
@@ -95,7 +95,7 @@ fn child_needs_parens(
             } else {
                 // Right-assoc ops: parenthesize if mixing ops at same precedence.
                 if let ASTNodeType::BinaryOp { op: child_op, .. } = &child.node_type {
-                    return child_op != parent_op;
+                    return child_op.as_str() != parent_op;
                 }
                 false
             }
@@ -152,7 +152,9 @@ fn pretty_print_node(ast: &ASTNode) -> String {
 }
 
 fn pretty_print_node_in_context(ast: &ASTNode, comma_delimited: bool) -> String {
-    if comma_delimited && matches!(&ast.node_type, ASTNodeType::BinaryOp { op, .. } if op == ",") {
+    if comma_delimited
+        && matches!(&ast.node_type, ASTNodeType::BinaryOp { op, .. } if op.as_str() == ",")
+    {
         return format!("({})", pretty_print_node(ast));
     }
     match &ast.node_type {
@@ -167,22 +169,29 @@ fn pretty_print_node_in_context(ast: &ASTNode, comma_delimited: bool) -> String 
         ASTNodeType::Omitted => String::new(),
         ASTNodeType::Reference { reference, .. } => reference.normalise(),
         ASTNodeType::UnaryOp { op, expr } => {
-            let inner = if unary_operand_needs_parens(op, expr) {
+            let inner = if unary_operand_needs_parens(op.as_str(), expr) {
                 format!("({})", pretty_print_node(expr))
             } else {
                 pretty_print_node_in_context(expr, comma_delimited)
             };
 
-            if op == "%" || op == "#" {
+            if op.as_str() == "%" || op.as_str() == "#" {
                 format!("{inner}{op}")
             } else {
                 format!("{op}{inner}")
             }
         }
         ASTNodeType::BinaryOp { op, left, right } => {
-            let (prec, assoc) = infix_info(op);
-            let left_s = pretty_child(left, op, prec, assoc, Side::Left, comma_delimited);
-            let right_s = pretty_child(right, op, prec, assoc, Side::Right, comma_delimited);
+            let (prec, assoc) = infix_info(op.as_str());
+            let left_s = pretty_child(left, op.as_str(), prec, assoc, Side::Left, comma_delimited);
+            let right_s = pretty_child(
+                right,
+                op.as_str(),
+                prec,
+                assoc,
+                Side::Right,
+                comma_delimited,
+            );
 
             match op.as_str() {
                 // Reference range operator prints tight; intersection is a

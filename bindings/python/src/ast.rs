@@ -144,7 +144,8 @@ impl PyASTNode {
     /// Get the operator for unary/binary operation nodes
     fn get_operator(&self) -> Option<String> {
         match &self.inner.node_type {
-            ASTNodeType::UnaryOp { op, .. } | ASTNodeType::BinaryOp { op, .. } => Some(op.clone()),
+            ASTNodeType::UnaryOp { op, .. } => Some(op.to_string()),
+            ASTNodeType::BinaryOp { op, .. } => Some(op.to_string()),
             _ => None,
         }
     }
@@ -313,11 +314,11 @@ impl PyASTNode {
                 dict.set_item("reference", original)?;
             }
             ASTNodeType::UnaryOp { op, expr } => {
-                dict.set_item("operator", op)?;
+                dict.set_item("operator", op.as_str())?;
                 dict.set_item("operand", PyASTNode::new((**expr).clone()).to_dict(py)?)?;
             }
             ASTNodeType::BinaryOp { op, left, right } => {
-                dict.set_item("operator", op)?;
+                dict.set_item("operator", op.as_str())?;
                 dict.set_item("left", PyASTNode::new((**left).clone()).to_dict(py)?)?;
                 dict.set_item("right", PyASTNode::new((**right).clone()).to_dict(py)?)?;
             }
