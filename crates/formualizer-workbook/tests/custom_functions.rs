@@ -328,3 +328,33 @@ fn volatile_custom_function_recalculates_each_pass() {
 
     assert_ne!(first, second);
 }
+
+#[test]
+fn evaluation_snapshot_refreshes_on_register_and_unregister() {
+    let mut wb = workbook();
+    wb.set_formula("Sheet1", 1, 1, "=PASS_SNAPSHOT_TEST() + A2")
+        .unwrap();
+    wb.set_value("Sheet1", 2, 1, LiteralValue::Number(0.0))
+        .unwrap();
+    let missing = wb.evaluate_cell("Sheet1", 1, 1);
+    assert!(matches!(missing, Ok(LiteralValue::Error(ref e)) if e.kind == ExcelErrorKind::Name));
+    wb.register_custom_function(
+        "PASS_SNAPSHOT_TEST",
+        CustomFnOptions::default(),
+        Arc::new(|_: &[LiteralValue]| Ok(LiteralValue::Number(42.0))),
+    )
+    .unwrap();
+    assert_eq!(wb.engine().planning_semantic_revision(), Some(1));
+    wb.set_value("Sheet1", 2, 1, LiteralValue::Number(1.0))
+        .unwrap();
+    assert_eq!(
+        wb.evaluate_cell("Sheet1", 1, 1).unwrap(),
+        LiteralValue::Number(43.0)
+    );
+    wb.unregister_custom_function("PASS_SNAPSHOT_TEST").unwrap();
+    assert_eq!(wb.engine().planning_semantic_revision(), Some(2));
+    wb.set_value("Sheet1", 2, 1, LiteralValue::Number(2.0))
+        .unwrap();
+    let missing = wb.evaluate_cell("Sheet1", 1, 1);
+    assert!(matches!(missing, Ok(LiteralValue::Error(ref e)) if e.kind == ExcelErrorKind::Name));
+}

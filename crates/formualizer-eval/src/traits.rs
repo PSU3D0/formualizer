@@ -472,8 +472,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                 ASTNodeType::UnaryOp { op, .. } => op == "#",
                 ASTNodeType::Function { name, .. } => self
                     .interp
-                    .context
-                    .function_capabilities("", name)
+                    .ast_function_capabilities(name)
                     .is_some_and(|caps| caps.contains(crate::function::FnCaps::RETURNS_REFERENCE)),
                 _ => false,
             },
@@ -504,8 +503,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                 }
                 Some(crate::engine::arena::AstNodeData::Function { name_id, .. }) => self
                     .interp
-                    .context
-                    .function_capabilities("", data_store.resolve_ast_string(*name_id))
+                    .arena_function_capabilities(*name_id, data_store)
                     .is_some_and(|caps| caps.contains(crate::function::FnCaps::RETURNS_REFERENCE)),
                 _ => false,
             },
@@ -821,8 +819,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                 };
                 if !self
                     .interp
-                    .context
-                    .function_capabilities("", name)
+                    .ast_function_capabilities(name)
                     .is_some_and(|caps| caps.contains(crate::function::FnCaps::RETURNS_REFERENCE))
                 {
                     return None;
@@ -864,8 +861,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                 let name = data_store.resolve_ast_string(*name_id);
                 if !self
                     .interp
-                    .context
-                    .function_capabilities("", name)
+                    .ast_function_capabilities(name)
                     .is_some_and(|caps| caps.contains(crate::function::FnCaps::RETURNS_REFERENCE))
                 {
                     return None;

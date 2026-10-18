@@ -990,6 +990,7 @@ struct TraceEvaluationCounters {
 pub struct Engine<R> {
     pub(crate) graph: DependencyGraph,
     resolver: R,
+    resolved_functions: crate::interpreter::ResolvedFunctions,
     pub config: EvalConfig,
     workbook_load_limits: crate::engine::WorkbookLoadLimits,
     /// Clock for volatile date/time builtins, wrapped in a per-recalc
@@ -2878,6 +2879,7 @@ where
         let mut engine = Self {
             graph: DependencyGraph::new_with_config(config.clone()),
             resolver,
+            resolved_functions: Default::default(),
             config,
             workbook_load_limits: crate::engine::WorkbookLoadLimits::default(),
             clock: crate::timezone::SnapshotClock::new(clock),
@@ -3045,6 +3047,7 @@ where
         let mut engine = Self {
             graph: DependencyGraph::new_with_config(config.clone()),
             resolver,
+            resolved_functions: Default::default(),
             config,
             workbook_load_limits: crate::engine::WorkbookLoadLimits::default(),
             clock: crate::timezone::SnapshotClock::new(clock),
@@ -3706,7 +3709,28 @@ where
     /// Begin a new evaluation request: reset per-recalc cycle telemetry and
     /// take the per-recalc volatile clock sample. Called at the start of
     /// every evaluation request that walks schedule units.
+    fn refresh_resolution_snapshots(&mut self) {
+        self.resolved_functions
+            .refresh(self.graph.data_store(), &self.resolver);
+        let named_asts = self
+            .graph
+            .named_ranges_iter()
+            .map(|(_, named)| named)
+            .chain(self.graph.sheet_named_ranges_iter().map(|(_, named)| named))
+            .filter_map(|named| match &named.definition {
+                NamedDefinition::Formula { ast, .. } => Some(ast),
+                _ => None,
+            });
+        self.resolved_functions.refresh_ast_functions(
+            self.graph.data_store(),
+            &self.resolver,
+            named_asts,
+            self.graph.symbol_revision(),
+        );
+    }
+
     fn begin_evaluation_request(&mut self) {
+        self.refresh_resolution_snapshots();
         self.freshness_begin_request();
         #[cfg(test)]
         {
@@ -13945,6 +13969,9 @@ where
                 )];
                 engine.evaluate_legacy_target_roots(&roots, None)?;
             }
+            if !is_formula {
+                engine.refresh_resolution_snapshots();
+            }
             engine.evaluate_vertex_impl(vertex_id, None)
         })
     }
@@ -14070,7 +14097,8 @@ where
             .graph
             .get_cell_ref(vertex_id)
             .expect("cell ref for vertex");
-        let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref);
+        let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref)
+            .with_resolved_functions(&self.resolved_functions);
 
         let result = interpreter.evaluate_formula_view(
             view,
@@ -14537,7 +14565,8 @@ where
                     .graph
                     .get_cell_ref(vertex_id)
                     .unwrap_or_else(|| self.graph.make_cell_ref(sheet_name, 0, 0));
-                let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref);
+                let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref)
+                    .with_resolved_functions(&self.resolved_functions);
                 match interpreter.evaluate_ast(ast) {
                     Ok(cv) => {
                         let value = cv.into_literal();
@@ -14636,7 +14665,8 @@ where
                     .graph
                     .get_cell_ref(vertex_id)
                     .unwrap_or_else(|| self.graph.make_cell_ref(sheet_name, 0, 0));
-                let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref);
+                let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref)
+                    .with_resolved_functions(&self.resolved_functions);
                 match interpreter.evaluate_ast(ast) {
                     Ok(cv) => {
                         let v = cv.into_literal();
@@ -17338,7 +17368,8 @@ where
                             .graph
                             .get_cell_ref(vertex_id)
                             .unwrap_or_else(|| self.graph.make_cell_ref(sheet_name, 0, 0));
-                        let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref);
+                        let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref)
+                            .with_resolved_functions(&self.resolved_functions);
                         interpreter.evaluate_ast(ast).map(|cv| cv.into_literal())
                     }
                     NamedDefinition::Range(_) => Err(ExcelError::new(ExcelErrorKind::Value)
@@ -17412,7 +17443,8 @@ where
                             .graph
                             .get_cell_ref(vertex_id)
                             .unwrap_or_else(|| self.graph.make_cell_ref(sheet_name, 0, 0));
-                        let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref);
+                        let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref)
+                            .with_resolved_functions(&self.resolved_functions);
                         match interpreter.evaluate_ast(ast) {
                             Ok(cv) => {
                                 let v = cv.into_literal();
@@ -17446,7 +17478,8 @@ where
         {
             return result;
         }
-        let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref);
+        let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref)
+            .with_resolved_functions(&self.resolved_functions);
 
         interpreter
             .evaluate_formula_view(view, self.graph.data_store(), self.graph.sheet_reg())
@@ -19994,7 +20027,8 @@ where
                     .graph
                     .get_cell_ref(vertex_id)
                     .expect("cell ref for vertex");
-                let interpreter = Interpreter::new_with_cell(ctx, sheet_name, cell_ref);
+                let interpreter = Interpreter::new_with_cell(ctx, sheet_name, cell_ref)
+                    .with_resolved_functions(&self.resolved_functions);
                 interpreter
                     .evaluate_formula_view(view, self.graph.data_store(), self.graph.sheet_reg())
                     .map(|cv| {
@@ -20021,7 +20055,8 @@ where
                             .graph
                             .get_cell_ref(vertex_id)
                             .unwrap_or_else(|| self.graph.make_cell_ref(sheet_name, 0, 0));
-                        let interpreter = Interpreter::new_with_cell(ctx, sheet_name, cell_ref);
+                        let interpreter = Interpreter::new_with_cell(ctx, sheet_name, cell_ref)
+                            .with_resolved_functions(&self.resolved_functions);
                         if kind == VertexKind::NamedScalar {
                             interpreter.evaluate_ast(ast).map(|cv| cv.into_literal())
                         } else {

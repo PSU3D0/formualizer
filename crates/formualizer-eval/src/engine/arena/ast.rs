@@ -272,6 +272,9 @@ impl CanonicalLabels {
 
 /// Arena for storing AST nodes with deduplication
 pub struct AstArena {
+    function_names: rustc_hash::FxHashSet<StringId>,
+    sheet_names: rustc_hash::FxHashSet<StringId>,
+    revision: u64,
     /// Node storage
     nodes: Vec<AstNodeEntry>,
 
@@ -306,6 +309,9 @@ impl AstArena {
             table_specs: Vec::new(),
             table_spec_dedup: FxHashMap::default(),
             dedup_hits: 0,
+            function_names: Default::default(),
+            sheet_names: Default::default(),
+            revision: 0,
         }
     }
 
@@ -319,6 +325,9 @@ impl AstArena {
             table_specs: Vec::new(),
             table_spec_dedup: FxHashMap::default(),
             dedup_hits: 0,
+            function_names: Default::default(),
+            sheet_names: Default::default(),
+            revision: 0,
         }
     }
 
@@ -346,6 +355,24 @@ impl AstArena {
     }
 
     fn insert_entry(&mut self, node: AstNodeData, meta: AstNodeMetadata) -> AstNodeId {
+        if let AstNodeData::Function { name_id, .. } = &node {
+            self.function_names.insert(*name_id);
+        }
+        if let AstNodeData::Reference {
+            ref_type:
+                CompactRefType::Cell {
+                    sheet: Some(SheetKey::Name(id)),
+                    ..
+                }
+                | CompactRefType::Range {
+                    sheet: Some(SheetKey::Name(id)),
+                    ..
+                },
+            ..
+        } = &node
+        {
+            self.sheet_names.insert(*id);
+        }
         // Compute structural hash. Metadata is deliberately excluded.
         let hash = self.hash_node(&node);
 
@@ -548,6 +575,18 @@ impl AstArena {
     }
 
     /// Get the string interner (for external use)
+    pub(crate) fn sheet_names(&self) -> impl Iterator<Item = StringId> + '_ {
+        self.sheet_names.iter().copied()
+    }
+
+    pub(crate) fn function_names(&self) -> impl Iterator<Item = StringId> + '_ {
+        self.function_names.iter().copied()
+    }
+
+    pub(crate) fn resolution_revision(&self) -> u64 {
+        self.revision
+    }
+
     pub fn strings(&self) -> &StringInterner {
         &self.strings
     }
@@ -779,6 +818,32 @@ impl AstArena {
         function_args.shrink_to_fit();
         array_elements.shrink_to_fit();
         dedup_map.shrink_to_fit();
+        self.function_names = nodes
+            .iter()
+            .filter_map(|entry| match &entry.data {
+                AstNodeData::Function { name_id, .. } => Some(*name_id),
+                _ => None,
+            })
+            .collect();
+        self.sheet_names = nodes
+            .iter()
+            .filter_map(|entry| match &entry.data {
+                AstNodeData::Reference {
+                    ref_type:
+                        CompactRefType::Cell {
+                            sheet: Some(SheetKey::Name(id)),
+                            ..
+                        }
+                        | CompactRefType::Range {
+                            sheet: Some(SheetKey::Name(id)),
+                            ..
+                        },
+                    ..
+                } => Some(*id),
+                _ => None,
+            })
+            .collect();
+        self.revision = self.revision.wrapping_add(1);
         self.nodes = nodes;
         self.dedup_map = dedup_map;
         self.function_args = function_args;
@@ -816,6 +881,9 @@ impl AstArena {
 
     /// Clear all nodes from the arena
     pub fn clear(&mut self) {
+        self.function_names.clear();
+        self.sheet_names.clear();
+        self.revision = self.revision.wrapping_add(1);
         self.nodes.clear();
         self.dedup_map.clear();
         self.function_args.clear();

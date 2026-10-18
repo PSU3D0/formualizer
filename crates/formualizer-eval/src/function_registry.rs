@@ -780,7 +780,16 @@ fn resolve_entry(ns: &str, name: &str) -> Option<(RegistryKey, RegistryEntry)> {
     let mut state = REGISTRY
         .write()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some(entry) = resolve_registered(&state, &key) {
+    resolve_entry_in_state(&mut state, ns, normalized_name, key)
+}
+
+fn resolve_entry_in_state(
+    state: &mut RegistryState,
+    ns: String,
+    normalized_name: String,
+    key: RegistryKey,
+) -> Option<(RegistryKey, RegistryEntry)> {
+    if let Some(entry) = resolve_registered(state, &key) {
         return Some(entry);
     }
     let mut candidate = normalized_name.as_str();
@@ -791,7 +800,7 @@ fn resolve_entry(ns: &str, name: &str) -> Option<(RegistryKey, RegistryEntry)> {
                 candidate = rest;
                 stripped_any = true;
                 let stripped_key = (ns.clone(), candidate.to_string());
-                if let Some((canonical, entry)) = resolve_registered(&state, &stripped_key) {
+                if let Some((canonical, entry)) = resolve_registered(state, &stripped_key) {
                     state.aliases.insert(
                         key.clone(),
                         AliasEntry {
@@ -2281,6 +2290,25 @@ pub(crate) mod tests {
         receive
             .recv_timeout(std::time::Duration::from_secs(10))
             .expect("parallel registry planning timed out (possible lock inversion)");
+    }
+
+    #[test]
+    fn prefix_alias_publishing_does_not_bump_epoch() {
+        let ns = "__PREFIX_EPOCH__";
+        register_function(Arc::new(TestFn {
+            ns,
+            name: "TARGET",
+            aliases: &[],
+        }));
+        let mut state = REGISTRY
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let before = state.semantic_epoch;
+        let name = "_XLFN.TARGET".to_string();
+        let key = (ns.to_string(), name.clone());
+        assert!(resolve_entry_in_state(&mut state, ns.to_string(), name, key.clone()).is_some());
+        assert!(state.aliases.contains_key(&key));
+        assert_eq!(state.semantic_epoch, before);
     }
 
     #[test]

@@ -317,6 +317,18 @@ impl DataStore {
         self.asts.resolve_string(id)
     }
 
+    pub(crate) fn sheet_names(&self) -> impl Iterator<Item = StringId> + '_ {
+        self.asts.sheet_names()
+    }
+
+    pub(crate) fn function_names(&self) -> impl Iterator<Item = StringId> + '_ {
+        self.asts.function_names()
+    }
+
+    pub(crate) fn resolution_revision(&self) -> u64 {
+        self.asts.resolution_revision()
+    }
+
     pub(crate) fn ast_strings(&self) -> &StringInterner {
         self.asts.strings()
     }
