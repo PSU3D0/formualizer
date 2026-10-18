@@ -1089,6 +1089,17 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
     }
 
     fn compute_resolved_argument(&self) -> Result<ResolvedArgument<'b>, ExcelError> {
+        if let ArgumentExpr::Arena { id, data_store, .. } = &self.expr
+            && let Some(result) = self.interp.resolve_arena_argument_range(*id, data_store)
+        {
+            return match result {
+                Ok(view) => Ok(ResolvedArgument::Range(
+                    self.with_context_cancel_token(view),
+                )),
+                Err(error) if error.kind == ExcelErrorKind::Cancelled => Err(error),
+                Err(error) => Ok(ResolvedArgument::ReferenceError(error)),
+            };
+        }
         let value = match self.resolve_reference_or_value()? {
             crate::function::FunctionResolution::Reference(reference) => {
                 return match self

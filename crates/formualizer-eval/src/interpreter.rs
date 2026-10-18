@@ -1101,6 +1101,33 @@ impl<'a> Interpreter<'a> {
         }
     }
 
+    /// Resolve only a direct compact range, retaining local/recording fallbacks.
+    /// The argument caller attaches its context's cancellation and cell budget.
+    pub(crate) fn resolve_arena_argument_range(
+        &self,
+        node_id: AstNodeId,
+        data_store: &DataStore,
+    ) -> Option<Result<crate::engine::range_view::RangeView<'a>, ExcelError>> {
+        let resolver = self.arena_cells?;
+        let cell = self.current_cell?;
+        if !self.local_env.is_empty() {
+            return None;
+        }
+        let AstNodeData::Reference { ref_type, .. } = data_store.get_node(node_id)? else {
+            return None;
+        };
+        let reference = data_store.compact_ref(*ref_type);
+        if !matches!(reference, CompactRefType::Range { .. }) {
+            return None;
+        }
+        Some(resolver.resolve_arena_range(
+            reference,
+            cell.sheet_id,
+            self.reference_row_delta,
+            self.reference_col_delta,
+        ))
+    }
+
     pub(crate) fn evaluate_arena_ast(
         &self,
         node_id: AstNodeId,
@@ -2352,6 +2379,91 @@ fn unsupported_reference_relocation_error() -> ExcelError {
 #[cfg(test)]
 mod format_algebra_tests {
     use super::*;
+
+    #[test]
+    fn compact_argument_ranges_match_owned_resolution() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::traits::ResolvedArgument;
+        let mut config = EvalConfig::default();
+        config.evaluation_budgets.scratch.materialized_array_cells = Some(4);
+        let mut engine = Engine::new(TestWorkbook::new(), config);
+        let sheet_id = engine.add_sheet("Other")?;
+        engine.set_cell_value("Other", 2, 2, LiteralValue::Number(17.0))?;
+        engine.set_cell_value("Other", 4, 3, LiteralValue::Text("end".into()))?;
+        let template = formualizer_parse::parser::parse("=A1:C3")?;
+        let cell = crate::CellRef::new(
+            sheet_id,
+            crate::reference::Coord::from_excel(1, 1, true, true),
+        );
+        for qualified in [false, true] {
+            for open_rows in [false, true] {
+                for open_cols in [false, true] {
+                    for absolute in [false, true] {
+                        for delta in [-2, 0, 2] {
+                            let reference = ReferenceType::Range {
+                                sheet: qualified.then(|| "Other".to_string()),
+                                start_row: (!open_rows).then_some(1),
+                                start_col: (!open_cols).then_some(1),
+                                end_row: (!open_rows).then_some(3),
+                                end_col: (!open_cols).then_some(3),
+                                start_row_abs: absolute,
+                                start_col_abs: absolute,
+                                end_row_abs: absolute,
+                                end_col_abs: absolute,
+                            };
+                            let mut ast = template.clone();
+                            ast.node_type = ASTNodeType::Reference {
+                                original: reference.to_string(),
+                                reference,
+                            };
+                            let mut store = DataStore::new();
+                            let registry = engine.graph.sheet_reg();
+                            let id = store.store_ast(&ast, registry);
+                            let mut slow =
+                                Interpreter::new(&engine, "Other").with_current_cell(cell);
+                            slow.reference_row_delta = delta;
+                            slow.reference_col_delta = delta;
+                            let fast = slow.with_current_cell(cell).with_arena_cells(&engine);
+                            assert!(fast.resolve_arena_argument_range(id, &store).is_some());
+                            assert!(slow.resolve_arena_argument_range(id, &store).is_none());
+                            let a = ArgumentHandle::new_arena(id, &fast, &store, registry)
+                                .resolve_once();
+                            let b = ArgumentHandle::new_arena(id, &slow, &store, registry)
+                                .resolve_once();
+                            match (a, b) {
+                                (
+                                    Ok(ResolvedArgument::Range(a)),
+                                    Ok(ResolvedArgument::Range(b)),
+                                ) => {
+                                    assert_eq!(a.dims(), b.dims());
+                                    assert_eq!(
+                                        (a.start_row(), a.start_col()),
+                                        (b.start_row(), b.start_col())
+                                    );
+                                    assert_eq!(
+                                        a.materialization_error().map(|e| e.kind),
+                                        b.materialization_error().map(|e| e.kind)
+                                    );
+                                    let (rows, cols) = a.dims();
+                                    for row in 0..rows.min(8) {
+                                        for col in 0..cols.min(8) {
+                                            assert_eq!(a.get_cell(row, col), b.get_cell(row, col));
+                                        }
+                                    }
+                                }
+                                (
+                                    Ok(ResolvedArgument::ReferenceError(a)),
+                                    Ok(ResolvedArgument::ReferenceError(b)),
+                                ) => assert_eq!(a, b),
+                                (Err(a), Err(b)) => assert_eq!(a, b),
+                                (a, b) => assert_eq!(format!("{a:?}"), format!("{b:?}")),
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
 
     #[test]
     fn compact_ranges_match_owned_resolution_after_relocation() -> Result<(), ExcelError> {
