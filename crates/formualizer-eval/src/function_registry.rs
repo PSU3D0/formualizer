@@ -894,6 +894,8 @@ struct PlanningRegistration {
     trusted_builtin: bool,
 }
 
+type RawCapabilities = HashMap<String, HashMap<String, Option<FnCaps>>>;
+
 /// Immutable registry view used by one formula-planning operation.
 ///
 /// Function metadata is inspected before publication of the snapshot. Resolution
@@ -905,6 +907,7 @@ pub(crate) struct RegistryPlanningSnapshot {
     requests: Arc<Vec<(String, String, usize)>>,
     functions: Arc<HashMap<RegistryKey, Arc<dyn Function>>>,
     capabilities: Arc<HashMap<RegistryKey, FnCaps>>,
+    raw_capabilities: Option<Arc<RawCapabilities>>,
     identities: Arc<HashMap<(String, String, usize), FunctionSemanticIdentity>>,
 }
 
@@ -948,14 +951,17 @@ impl RegistryPlanningSnapshot {
                 .read()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .semantic_epoch;
-            let runtime_functions: HashMap<_, _> = requests
-                .iter()
-                .filter_map(|(namespace, name, _)| {
-                    runtime_provider
-                        .get_function_for_planning(namespace, name)
-                        .map(|function| ((norm(namespace), norm(name)), function))
-                })
-                .collect();
+            let mut runtime_functions = HashMap::new();
+            let mut resolved_names = std::collections::HashSet::new();
+            for (namespace, name, _) in requests {
+                let key = (norm(namespace), norm(name));
+                if resolved_names.insert(key.clone())
+                    && let Some(function) =
+                        runtime_provider.get_function_for_planning(namespace, name)
+                {
+                    runtime_functions.insert(key, function);
+                }
+            }
             let (epoch, registrations) = {
                 let state = REGISTRY
                     .read()
@@ -1062,12 +1068,26 @@ impl RegistryPlanningSnapshot {
             };
             let unchanged = requests_unchanged && provider_unchanged;
             if unchanged {
+                // AST planning has no interned name id. Retain exact requested
+                // spellings so repeated capability reads neither normalize nor
+                // clone function Arcs. Missing functions are cached as well.
+                let mut raw_capabilities: HashMap<String, HashMap<String, Option<FnCaps>>> =
+                    HashMap::new();
+                for (namespace, name, _) in requests {
+                    let caps = capabilities.get(&(norm(namespace), norm(name))).copied();
+                    raw_capabilities
+                        .entry(namespace.clone())
+                        .or_default()
+                        .insert(name.clone(), caps);
+                }
                 return Ok(Self {
                     epoch,
                     provider_revision,
                     requests: Arc::new(requests.to_vec()),
                     functions: Arc::new(runtime_functions),
                     capabilities: Arc::new(capabilities),
+                    raw_capabilities: (!raw_capabilities.is_empty())
+                        .then(|| Arc::new(raw_capabilities)),
                     identities: Arc::new(identities),
                 });
             }
@@ -1152,6 +1172,14 @@ impl crate::traits::FunctionProvider for RegistryPlanningSnapshot {
     }
 
     fn function_capabilities(&self, ns: &str, name: &str) -> Option<FnCaps> {
+        if let Some(caps) = self
+            .raw_capabilities
+            .as_deref()
+            .and_then(|namespaces| namespaces.get(ns))
+            .and_then(|names| names.get(name))
+        {
+            return *caps;
+        }
         self.capabilities.get(&(norm(ns), norm(name))).copied()
     }
 
@@ -2253,6 +2281,16 @@ pub(crate) mod tests {
         receive
             .recv_timeout(std::time::Duration::from_secs(10))
             .expect("parallel registry planning timed out (possible lock inversion)");
+    }
+
+    #[test]
+    fn empty_planning_snapshot_has_no_raw_capability_allocation() {
+        let snapshot = RegistryPlanningSnapshot::capture_for_requests(
+            &GlobalRegistryFunctionProvider,
+            std::iter::empty::<(String, String, usize)>(),
+        )
+        .unwrap();
+        assert!(snapshot.raw_capabilities.is_none());
     }
 
     #[test]

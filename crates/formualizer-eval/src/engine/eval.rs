@@ -7737,7 +7737,7 @@ where
     fn opaque_reason_in_ast(
         &self,
         ast: &ASTNode,
-        provider: &dyn crate::traits::FunctionProvider,
+        provider: &crate::function_registry::RegistryPlanningSnapshot,
     ) -> Option<crate::engine::OpaqueReason> {
         match &ast.node_type {
             ASTNodeType::Function { name, args } => {
@@ -7745,10 +7745,9 @@ where
                 if canonical == "INDIRECT" {
                     return Some(crate::engine::OpaqueReason::RuntimeTextReference);
                 }
-                let Some(function) = provider.get_function_for_planning("", name) else {
+                let Some(caps) = provider.function_capabilities("", name) else {
                     return Some(crate::engine::OpaqueReason::UnknownFunction);
                 };
-                let caps = function.caps();
                 if caps.contains(FnCaps::DYNAMIC_DEPENDENCY)
                     || caps.contains(FnCaps::RETURNS_REFERENCE)
                 {
@@ -7893,15 +7892,17 @@ where
 
     fn ast_has_proven_sheet_local_dynamic(
         ast: &ASTNode,
-        provider: &dyn crate::traits::FunctionProvider,
+        provider: &crate::function_registry::RegistryPlanningSnapshot,
     ) -> bool {
-        fn classify(ast: &ASTNode, provider: &dyn crate::traits::FunctionProvider) -> (bool, bool) {
+        fn classify(
+            ast: &ASTNode,
+            provider: &crate::function_registry::RegistryPlanningSnapshot,
+        ) -> (bool, bool) {
             match &ast.node_type {
                 ASTNodeType::Function { name, args } => {
-                    let Some(function) = provider.get_function_for_planning("", name) else {
+                    let Some(caps) = provider.function_capabilities("", name) else {
                         return (false, false);
                     };
-                    let caps = function.caps();
                     let dynamic = caps.contains(FnCaps::DYNAMIC_DEPENDENCY)
                         || caps.contains(FnCaps::RETURNS_REFERENCE);
                     let canonical = name.rsplit('.').next().unwrap_or(name);
