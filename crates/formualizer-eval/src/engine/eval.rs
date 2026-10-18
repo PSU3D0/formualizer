@@ -4390,12 +4390,12 @@ where
     }
 
     /// Indexed Arrow storage lookup by stable registry identity.
-    pub fn arrow_sheet_by_id(&self, id: SheetId) -> Option<&crate::arrow_store::ArrowSheet> {
+    pub(crate) fn arrow_sheet_by_id(&self, id: SheetId) -> Option<&crate::arrow_store::ArrowSheet> {
         self.arrow_sheets.sheets.get(self.arrow_sheet_position(id)?)
     }
 
     /// Mutable counterpart of [`Self::arrow_sheet_by_id`].
-    pub fn arrow_sheet_by_id_mut(
+    pub(crate) fn arrow_sheet_by_id_mut(
         &mut self,
         id: SheetId,
     ) -> Option<&mut crate::arrow_store::ArrowSheet> {
