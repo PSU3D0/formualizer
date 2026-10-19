@@ -67,7 +67,8 @@ pub(crate) fn lane_slice<P: arrow_array::ArrowPrimitiveType>(
     }
 }
 
-/// Sequentially add valid values, without resetting at chunk boundaries.
+/// Sequentially add valid values, without resetting at chunk boundaries
+/// ([`crate::engine::NumericProfile::ExcelCompatible`] order).
 /// Starting at +0, the running sum cannot become -0 under round-to-nearest;
 /// selecting +0 for a null is therefore equivalent to skipping it.
 pub(crate) fn add_f64(total: &mut f64, slice: LaneSlice<'_, f64>) {

@@ -846,6 +846,28 @@ pub enum PreparationPolicy {
     BestEffort,
 }
 
+/// How the engine combines floating-point numbers where the order of
+/// operations changes the result: the reductions behind `SUM`, `AVERAGE` and
+/// the criteria sums, and Excel's own numeric adjustments.
+///
+/// Every other behaviour is the same under every profile, and results under a
+/// profile are the same on every platform, CPU and thread count.
+///
+/// Only [`NumericProfile::ExcelCompatible`] exists today. The enum is
+/// `#[non_exhaustive]` so that a faster profile can be added without a breaking
+/// change: one that sums in a fixed, documented block order that can be split
+/// across cores and vector lanes, and therefore differs from Excel in the last
+/// bits of some results. Each such difference will be listed on that variant.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum NumericProfile {
+    /// Excel's results, bit for bit where Excel's order is known: sums add
+    /// one value at a time into one running total, arguments left to right
+    /// and each range row by row. A single reduction runs on one core.
+    #[default]
+    ExcelCompatible,
+}
+
 /// Configuration for the evaluation engine
 #[derive(Debug, Clone)]
 pub struct EvalConfig {
@@ -1013,6 +1035,9 @@ pub struct EvalConfig {
     /// the formula arena drops the unreachable trees. Formulas read back
     /// identically either way.
     pub formula_compression: bool,
+
+    /// How floating-point reductions are ordered (see [`NumericProfile`]).
+    pub numeric_profile: NumericProfile,
 }
 
 impl Default for EvalConfig {
@@ -1078,6 +1103,7 @@ impl Default for EvalConfig {
             family_kernels: true,
             family_lift: true,
             formula_compression: true,
+            numeric_profile: NumericProfile::ExcelCompatible,
         }
     }
 }

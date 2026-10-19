@@ -20,6 +20,7 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Added
 
+- `EvalConfig::numeric_profile` selects how floating-point reductions are ordered. The only profile, and the default, is `NumericProfile::ExcelCompatible` (Excel's results, a single reduction on one core). The enum is non-exhaustive: a faster profile that sums in a fixed block order across cores and vector lanes, and lists where its results differ from Excel's, can be added later without a breaking change.
 - `evaluation_budgets.scratch.materialized_array_cells` caps the number of cells any single range or array value may expand to (default 16,777,216, the limit generated arrays already used). Exceeding it returns `#NUM!` instead of allocating. Ranges are counted after trimming to the used area, so whole-column references over ordinary data are unaffected.
 - `Coord::try_new` in `formualizer-eval` and `LiteralValue::finite_or_num_error` in `formualizer-common`.
 

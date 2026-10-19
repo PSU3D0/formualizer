@@ -12,6 +12,8 @@ use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_macros::func_caps;
 
 /// Add one row chunk in reading order, retaining the caller's accumulator.
+/// This order is [`crate::engine::NumericProfile::ExcelCompatible`]; another
+/// profile would choose its order here.
 /// Null selection adds +0 (the accumulator starts at +0 and cannot become -0).
 pub(crate) fn add_number_columns(
     total: &mut f64,
