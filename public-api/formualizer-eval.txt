@@ -443,7 +443,7 @@ pub fn formualizer_eval::engine::arena::array::ArrayRef::hash<__H: core::hash::H
 impl core::marker::Copy for formualizer_eval::engine::arena::array::ArrayRef
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::arena::array::ArrayRef
 pub mod formualizer_eval::engine::arena::ast
-pub enum formualizer_eval::engine::arena::ast::AstNodeData
+pub enum formualizer_eval::engine::arena::ast::AstNodeData<R>
 pub formualizer_eval::engine::arena::ast::AstNodeData::Array
 pub formualizer_eval::engine::arena::ast::AstNodeData::Array::cols: u16
 pub formualizer_eval::engine::arena::ast::AstNodeData::Array::elements_offset: u32
@@ -460,20 +460,20 @@ pub formualizer_eval::engine::arena::ast::AstNodeData::Literal(formualizer_eval:
 pub formualizer_eval::engine::arena::ast::AstNodeData::Omitted
 pub formualizer_eval::engine::arena::ast::AstNodeData::Reference
 pub formualizer_eval::engine::arena::ast::AstNodeData::Reference::original_id: formualizer_eval::engine::arena::string_interner::StringId
-pub formualizer_eval::engine::arena::ast::AstNodeData::Reference::ref_type: formualizer_eval::engine::arena::ast::CompactRefType
+pub formualizer_eval::engine::arena::ast::AstNodeData::Reference::ref_type: R
 pub formualizer_eval::engine::arena::ast::AstNodeData::UnaryOp
 pub formualizer_eval::engine::arena::ast::AstNodeData::UnaryOp::expr_id: formualizer_eval::engine::arena::ast::AstNodeId
 pub formualizer_eval::engine::arena::ast::AstNodeData::UnaryOp::operator: formualizer_parse::parser::UnaryOperator
-impl core::clone::Clone for formualizer_eval::engine::arena::ast::AstNodeData
-pub fn formualizer_eval::engine::arena::ast::AstNodeData::clone(&self) -> formualizer_eval::engine::arena::ast::AstNodeData
-impl core::cmp::Eq for formualizer_eval::engine::arena::ast::AstNodeData
-impl core::cmp::PartialEq for formualizer_eval::engine::arena::ast::AstNodeData
-pub fn formualizer_eval::engine::arena::ast::AstNodeData::eq(&self, &formualizer_eval::engine::arena::ast::AstNodeData) -> bool
-impl core::fmt::Debug for formualizer_eval::engine::arena::ast::AstNodeData
-pub fn formualizer_eval::engine::arena::ast::AstNodeData::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::hash::Hash for formualizer_eval::engine::arena::ast::AstNodeData
-pub fn formualizer_eval::engine::arena::ast::AstNodeData::hash<__H: core::hash::Hasher>(&self, &mut __H)
-impl core::marker::StructuralPartialEq for formualizer_eval::engine::arena::ast::AstNodeData
+impl<R: core::clone::Clone> core::clone::Clone for formualizer_eval::engine::arena::ast::AstNodeData<R>
+pub fn formualizer_eval::engine::arena::ast::AstNodeData<R>::clone(&self) -> formualizer_eval::engine::arena::ast::AstNodeData<R>
+impl<R: core::cmp::Eq> core::cmp::Eq for formualizer_eval::engine::arena::ast::AstNodeData<R>
+impl<R: core::cmp::PartialEq> core::cmp::PartialEq for formualizer_eval::engine::arena::ast::AstNodeData<R>
+pub fn formualizer_eval::engine::arena::ast::AstNodeData<R>::eq(&self, &formualizer_eval::engine::arena::ast::AstNodeData<R>) -> bool
+impl<R: core::fmt::Debug> core::fmt::Debug for formualizer_eval::engine::arena::ast::AstNodeData<R>
+pub fn formualizer_eval::engine::arena::ast::AstNodeData<R>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<R: core::hash::Hash> core::hash::Hash for formualizer_eval::engine::arena::ast::AstNodeData<R>
+pub fn formualizer_eval::engine::arena::ast::AstNodeData<R>::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl<R> core::marker::StructuralPartialEq for formualizer_eval::engine::arena::ast::AstNodeData<R>
 pub enum formualizer_eval::engine::arena::ast::CompactRefType
 pub formualizer_eval::engine::arena::ast::CompactRefType::Cell
 pub formualizer_eval::engine::arena::ast::CompactRefType::Cell::col: u32
@@ -546,9 +546,10 @@ impl core::marker::StructuralPartialEq for formualizer_eval::engine::arena::ast:
 pub struct formualizer_eval::engine::arena::ast::AstArena
 impl formualizer_eval::engine::arena::ast::AstArena
 pub fn formualizer_eval::engine::arena::ast::AstArena::clear(&mut self)
-pub fn formualizer_eval::engine::arena::ast::AstArena::get(&self, formualizer_eval::engine::arena::ast::AstNodeId) -> core::option::Option<&formualizer_eval::engine::arena::ast::AstNodeData>
+pub fn formualizer_eval::engine::arena::ast::AstArena::get(&self, formualizer_eval::engine::arena::ast::AstNodeId) -> core::option::Option<&formualizer_eval::engine::arena::ast::AstNodeData<formualizer_eval::engine::arena::ast::RefId>>
 pub fn formualizer_eval::engine::arena::ast::AstArena::get_array_elements(&self, formualizer_eval::engine::arena::ast::AstNodeId) -> core::option::Option<&[formualizer_eval::engine::arena::ast::AstNodeId]>
 pub fn formualizer_eval::engine::arena::ast::AstArena::get_array_elements_info(&self, formualizer_eval::engine::arena::ast::AstNodeId) -> core::option::Option<(u16, u16, &[formualizer_eval::engine::arena::ast::AstNodeId])>
+pub fn formualizer_eval::engine::arena::ast::AstArena::get_compact_ref(&self, formualizer_eval::engine::arena::ast::RefId) -> core::option::Option<&formualizer_eval::engine::arena::ast::CompactRefType>
 pub fn formualizer_eval::engine::arena::ast::AstArena::get_function_args(&self, formualizer_eval::engine::arena::ast::AstNodeId) -> core::option::Option<&[formualizer_eval::engine::arena::ast::AstNodeId]>
 pub fn formualizer_eval::engine::arena::ast::AstArena::insert(&mut self, formualizer_eval::engine::arena::ast::AstNodeData) -> formualizer_eval::engine::arena::ast::AstNodeId
 pub fn formualizer_eval::engine::arena::ast::AstArena::insert_array(&mut self, u16, u16, alloc::vec::Vec<formualizer_eval::engine::arena::ast::AstNodeId>) -> formualizer_eval::engine::arena::ast::AstNodeId
@@ -597,6 +598,18 @@ impl core::hash::Hash for formualizer_eval::engine::arena::ast::AstNodeId
 pub fn formualizer_eval::engine::arena::ast::AstNodeId::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for formualizer_eval::engine::arena::ast::AstNodeId
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::arena::ast::AstNodeId
+pub struct formualizer_eval::engine::arena::ast::RefId(_)
+impl core::clone::Clone for formualizer_eval::engine::arena::ast::RefId
+pub fn formualizer_eval::engine::arena::ast::RefId::clone(&self) -> formualizer_eval::engine::arena::ast::RefId
+impl core::cmp::Eq for formualizer_eval::engine::arena::ast::RefId
+impl core::cmp::PartialEq for formualizer_eval::engine::arena::ast::RefId
+pub fn formualizer_eval::engine::arena::ast::RefId::eq(&self, &formualizer_eval::engine::arena::ast::RefId) -> bool
+impl core::fmt::Debug for formualizer_eval::engine::arena::ast::RefId
+pub fn formualizer_eval::engine::arena::ast::RefId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_eval::engine::arena::ast::RefId
+pub fn formualizer_eval::engine::arena::ast::RefId::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for formualizer_eval::engine::arena::ast::RefId
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::arena::ast::RefId
 pub struct formualizer_eval::engine::arena::ast::TableSpecId(_)
 impl formualizer_eval::engine::arena::ast::TableSpecId
 pub fn formualizer_eval::engine::arena::ast::TableSpecId::as_u32(self) -> u32
@@ -618,7 +631,8 @@ pub fn formualizer_eval::engine::arena::data_store::DataStore::ast_needs_structu
 pub fn formualizer_eval::engine::arena::data_store::DataStore::clear(&mut self)
 pub fn formualizer_eval::engine::arena::data_store::DataStore::get_args(&self, formualizer_eval::engine::arena::ast::AstNodeId) -> core::option::Option<&[formualizer_eval::engine::arena::ast::AstNodeId]>
 pub fn formualizer_eval::engine::arena::data_store::DataStore::get_array_elems(&self, formualizer_eval::engine::arena::ast::AstNodeId) -> core::option::Option<(u16, u16, &[formualizer_eval::engine::arena::ast::AstNodeId])>
-pub fn formualizer_eval::engine::arena::data_store::DataStore::get_node(&self, formualizer_eval::engine::arena::ast::AstNodeId) -> core::option::Option<&formualizer_eval::engine::arena::ast::AstNodeData>
+pub fn formualizer_eval::engine::arena::data_store::DataStore::get_compact_ref(&self, formualizer_eval::engine::arena::ast::RefId) -> core::option::Option<&formualizer_eval::engine::arena::ast::CompactRefType>
+pub fn formualizer_eval::engine::arena::data_store::DataStore::get_node(&self, formualizer_eval::engine::arena::ast::AstNodeId) -> core::option::Option<&formualizer_eval::engine::arena::ast::AstNodeData<formualizer_eval::engine::arena::ast::RefId>>
 pub fn formualizer_eval::engine::arena::data_store::DataStore::memory_usage(&self) -> formualizer_eval::engine::arena::data_store::DataStoreStats
 pub fn formualizer_eval::engine::arena::data_store::DataStore::new() -> Self
 pub fn formualizer_eval::engine::arena::data_store::DataStore::reconstruct_reference_type_for_eval(&self, &formualizer_eval::engine::arena::ast::CompactRefType, &formualizer_eval::engine::sheet_registry::SheetRegistry) -> formualizer_parse::parser::ReferenceType
@@ -831,7 +845,7 @@ impl core::hash::Hash for formualizer_eval::engine::arena::value_ref::ValueRef
 pub fn formualizer_eval::engine::arena::value_ref::ValueRef::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for formualizer_eval::engine::arena::value_ref::ValueRef
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::arena::value_ref::ValueRef
-pub enum formualizer_eval::engine::arena::AstNodeData
+pub enum formualizer_eval::engine::arena::AstNodeData<R>
 pub formualizer_eval::engine::arena::AstNodeData::Array
 pub formualizer_eval::engine::arena::AstNodeData::Array::cols: u16
 pub formualizer_eval::engine::arena::AstNodeData::Array::elements_offset: u32
@@ -848,20 +862,20 @@ pub formualizer_eval::engine::arena::AstNodeData::Literal(formualizer_eval::engi
 pub formualizer_eval::engine::arena::AstNodeData::Omitted
 pub formualizer_eval::engine::arena::AstNodeData::Reference
 pub formualizer_eval::engine::arena::AstNodeData::Reference::original_id: formualizer_eval::engine::arena::string_interner::StringId
-pub formualizer_eval::engine::arena::AstNodeData::Reference::ref_type: formualizer_eval::engine::arena::ast::CompactRefType
+pub formualizer_eval::engine::arena::AstNodeData::Reference::ref_type: R
 pub formualizer_eval::engine::arena::AstNodeData::UnaryOp
 pub formualizer_eval::engine::arena::AstNodeData::UnaryOp::expr_id: formualizer_eval::engine::arena::ast::AstNodeId
 pub formualizer_eval::engine::arena::AstNodeData::UnaryOp::operator: formualizer_parse::parser::UnaryOperator
-impl core::clone::Clone for formualizer_eval::engine::arena::ast::AstNodeData
-pub fn formualizer_eval::engine::arena::ast::AstNodeData::clone(&self) -> formualizer_eval::engine::arena::ast::AstNodeData
-impl core::cmp::Eq for formualizer_eval::engine::arena::ast::AstNodeData
-impl core::cmp::PartialEq for formualizer_eval::engine::arena::ast::AstNodeData
-pub fn formualizer_eval::engine::arena::ast::AstNodeData::eq(&self, &formualizer_eval::engine::arena::ast::AstNodeData) -> bool
-impl core::fmt::Debug for formualizer_eval::engine::arena::ast::AstNodeData
-pub fn formualizer_eval::engine::arena::ast::AstNodeData::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::hash::Hash for formualizer_eval::engine::arena::ast::AstNodeData
-pub fn formualizer_eval::engine::arena::ast::AstNodeData::hash<__H: core::hash::Hasher>(&self, &mut __H)
-impl core::marker::StructuralPartialEq for formualizer_eval::engine::arena::ast::AstNodeData
+impl<R: core::clone::Clone> core::clone::Clone for formualizer_eval::engine::arena::ast::AstNodeData<R>
+pub fn formualizer_eval::engine::arena::ast::AstNodeData<R>::clone(&self) -> formualizer_eval::engine::arena::ast::AstNodeData<R>
+impl<R: core::cmp::Eq> core::cmp::Eq for formualizer_eval::engine::arena::ast::AstNodeData<R>
+impl<R: core::cmp::PartialEq> core::cmp::PartialEq for formualizer_eval::engine::arena::ast::AstNodeData<R>
+pub fn formualizer_eval::engine::arena::ast::AstNodeData<R>::eq(&self, &formualizer_eval::engine::arena::ast::AstNodeData<R>) -> bool
+impl<R: core::fmt::Debug> core::fmt::Debug for formualizer_eval::engine::arena::ast::AstNodeData<R>
+pub fn formualizer_eval::engine::arena::ast::AstNodeData<R>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<R: core::hash::Hash> core::hash::Hash for formualizer_eval::engine::arena::ast::AstNodeData<R>
+pub fn formualizer_eval::engine::arena::ast::AstNodeData<R>::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl<R> core::marker::StructuralPartialEq for formualizer_eval::engine::arena::ast::AstNodeData<R>
 pub enum formualizer_eval::engine::arena::CompactRefType
 pub formualizer_eval::engine::arena::CompactRefType::Cell
 pub formualizer_eval::engine::arena::CompactRefType::Cell::col: u32
@@ -993,9 +1007,10 @@ impl core::marker::StructuralPartialEq for formualizer_eval::engine::arena::arra
 pub struct formualizer_eval::engine::arena::AstArena
 impl formualizer_eval::engine::arena::ast::AstArena
 pub fn formualizer_eval::engine::arena::ast::AstArena::clear(&mut self)
-pub fn formualizer_eval::engine::arena::ast::AstArena::get(&self, formualizer_eval::engine::arena::ast::AstNodeId) -> core::option::Option<&formualizer_eval::engine::arena::ast::AstNodeData>
+pub fn formualizer_eval::engine::arena::ast::AstArena::get(&self, formualizer_eval::engine::arena::ast::AstNodeId) -> core::option::Option<&formualizer_eval::engine::arena::ast::AstNodeData<formualizer_eval::engine::arena::ast::RefId>>
 pub fn formualizer_eval::engine::arena::ast::AstArena::get_array_elements(&self, formualizer_eval::engine::arena::ast::AstNodeId) -> core::option::Option<&[formualizer_eval::engine::arena::ast::AstNodeId]>
 pub fn formualizer_eval::engine::arena::ast::AstArena::get_array_elements_info(&self, formualizer_eval::engine::arena::ast::AstNodeId) -> core::option::Option<(u16, u16, &[formualizer_eval::engine::arena::ast::AstNodeId])>
+pub fn formualizer_eval::engine::arena::ast::AstArena::get_compact_ref(&self, formualizer_eval::engine::arena::ast::RefId) -> core::option::Option<&formualizer_eval::engine::arena::ast::CompactRefType>
 pub fn formualizer_eval::engine::arena::ast::AstArena::get_function_args(&self, formualizer_eval::engine::arena::ast::AstNodeId) -> core::option::Option<&[formualizer_eval::engine::arena::ast::AstNodeId]>
 pub fn formualizer_eval::engine::arena::ast::AstArena::insert(&mut self, formualizer_eval::engine::arena::ast::AstNodeData) -> formualizer_eval::engine::arena::ast::AstNodeId
 pub fn formualizer_eval::engine::arena::ast::AstArena::insert_array(&mut self, u16, u16, alloc::vec::Vec<formualizer_eval::engine::arena::ast::AstNodeId>) -> formualizer_eval::engine::arena::ast::AstNodeId
@@ -1039,7 +1054,8 @@ pub fn formualizer_eval::engine::arena::data_store::DataStore::ast_needs_structu
 pub fn formualizer_eval::engine::arena::data_store::DataStore::clear(&mut self)
 pub fn formualizer_eval::engine::arena::data_store::DataStore::get_args(&self, formualizer_eval::engine::arena::ast::AstNodeId) -> core::option::Option<&[formualizer_eval::engine::arena::ast::AstNodeId]>
 pub fn formualizer_eval::engine::arena::data_store::DataStore::get_array_elems(&self, formualizer_eval::engine::arena::ast::AstNodeId) -> core::option::Option<(u16, u16, &[formualizer_eval::engine::arena::ast::AstNodeId])>
-pub fn formualizer_eval::engine::arena::data_store::DataStore::get_node(&self, formualizer_eval::engine::arena::ast::AstNodeId) -> core::option::Option<&formualizer_eval::engine::arena::ast::AstNodeData>
+pub fn formualizer_eval::engine::arena::data_store::DataStore::get_compact_ref(&self, formualizer_eval::engine::arena::ast::RefId) -> core::option::Option<&formualizer_eval::engine::arena::ast::CompactRefType>
+pub fn formualizer_eval::engine::arena::data_store::DataStore::get_node(&self, formualizer_eval::engine::arena::ast::AstNodeId) -> core::option::Option<&formualizer_eval::engine::arena::ast::AstNodeData<formualizer_eval::engine::arena::ast::RefId>>
 pub fn formualizer_eval::engine::arena::data_store::DataStore::memory_usage(&self) -> formualizer_eval::engine::arena::data_store::DataStoreStats
 pub fn formualizer_eval::engine::arena::data_store::DataStore::new() -> Self
 pub fn formualizer_eval::engine::arena::data_store::DataStore::reconstruct_reference_type_for_eval(&self, &formualizer_eval::engine::arena::ast::CompactRefType, &formualizer_eval::engine::sheet_registry::SheetRegistry) -> formualizer_parse::parser::ReferenceType
@@ -1101,6 +1117,18 @@ impl core::hash::Hash for formualizer_eval::engine::arena::error_arena::ErrorRef
 pub fn formualizer_eval::engine::arena::error_arena::ErrorRef::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for formualizer_eval::engine::arena::error_arena::ErrorRef
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::arena::error_arena::ErrorRef
+pub struct formualizer_eval::engine::arena::RefId(_)
+impl core::clone::Clone for formualizer_eval::engine::arena::ast::RefId
+pub fn formualizer_eval::engine::arena::ast::RefId::clone(&self) -> formualizer_eval::engine::arena::ast::RefId
+impl core::cmp::Eq for formualizer_eval::engine::arena::ast::RefId
+impl core::cmp::PartialEq for formualizer_eval::engine::arena::ast::RefId
+pub fn formualizer_eval::engine::arena::ast::RefId::eq(&self, &formualizer_eval::engine::arena::ast::RefId) -> bool
+impl core::fmt::Debug for formualizer_eval::engine::arena::ast::RefId
+pub fn formualizer_eval::engine::arena::ast::RefId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_eval::engine::arena::ast::RefId
+pub fn formualizer_eval::engine::arena::ast::RefId::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for formualizer_eval::engine::arena::ast::RefId
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::arena::ast::RefId
 pub struct formualizer_eval::engine::arena::ScalarArena
 impl formualizer_eval::engine::arena::scalar::ScalarArena
 pub fn formualizer_eval::engine::arena::scalar::ScalarArena::clear(&mut self)
@@ -2620,8 +2648,8 @@ pub fn formualizer_eval::engine::graph::DependencyGraph::get_evaluation_vertices
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_formula(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<formualizer_parse::parser::ASTNode>
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_formula_id(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<formualizer_eval::engine::arena::ast::AstNodeId>
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_formula_id_and_volatile(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<(formualizer_eval::engine::arena::ast::AstNodeId, bool)>
-pub fn formualizer_eval::engine::graph::DependencyGraph::get_formula_node(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<&formualizer_eval::engine::arena::ast::AstNodeData>
-pub fn formualizer_eval::engine::graph::DependencyGraph::get_formula_node_and_volatile(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<(&formualizer_eval::engine::arena::ast::AstNodeData, bool)>
+pub fn formualizer_eval::engine::graph::DependencyGraph::get_formula_node(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<&formualizer_eval::engine::arena::ast::AstNodeData<formualizer_eval::engine::arena::ast::RefId>>
+pub fn formualizer_eval::engine::graph::DependencyGraph::get_formula_node_and_volatile(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<(&formualizer_eval::engine::arena::ast::AstNodeData<formualizer_eval::engine::arena::ast::RefId>, bool)>
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_grid_addr(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<formualizer_eval::engine::addr::GridAddr>
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_sheet_id(&self, formualizer_eval::engine::vertex::VertexId) -> formualizer_eval::reference::SheetId
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_value(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<formualizer_common::value::LiteralValue>
@@ -5931,8 +5959,8 @@ pub fn formualizer_eval::engine::graph::DependencyGraph::get_evaluation_vertices
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_formula(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<formualizer_parse::parser::ASTNode>
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_formula_id(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<formualizer_eval::engine::arena::ast::AstNodeId>
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_formula_id_and_volatile(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<(formualizer_eval::engine::arena::ast::AstNodeId, bool)>
-pub fn formualizer_eval::engine::graph::DependencyGraph::get_formula_node(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<&formualizer_eval::engine::arena::ast::AstNodeData>
-pub fn formualizer_eval::engine::graph::DependencyGraph::get_formula_node_and_volatile(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<(&formualizer_eval::engine::arena::ast::AstNodeData, bool)>
+pub fn formualizer_eval::engine::graph::DependencyGraph::get_formula_node(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<&formualizer_eval::engine::arena::ast::AstNodeData<formualizer_eval::engine::arena::ast::RefId>>
+pub fn formualizer_eval::engine::graph::DependencyGraph::get_formula_node_and_volatile(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<(&formualizer_eval::engine::arena::ast::AstNodeData<formualizer_eval::engine::arena::ast::RefId>, bool)>
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_grid_addr(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<formualizer_eval::engine::addr::GridAddr>
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_sheet_id(&self, formualizer_eval::engine::vertex::VertexId) -> formualizer_eval::reference::SheetId
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_value(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<formualizer_common::value::LiteralValue>

@@ -999,6 +999,8 @@ pub struct Engine<R> {
     resolution_sheet_revision: Option<(u64, u64, usize)>,
     resolution_arrow_sheet_names: Vec<Arc<str>>,
     resolved_arrow_sheets: Vec<Option<usize>>,
+    /// Stable-ID index, invalidated before exposing arbitrary mutable storage.
+    arrow_sheet_index: std::sync::OnceLock<Vec<Option<usize>>>,
     pub config: EvalConfig,
     workbook_load_limits: crate::engine::WorkbookLoadLimits,
     /// Clock for volatile date/time builtins, wrapped in a per-recalc
@@ -2892,6 +2894,7 @@ where
             resolution_sheet_revision: None,
             resolution_arrow_sheet_names: Vec::new(),
             resolved_arrow_sheets: Vec::new(),
+            arrow_sheet_index: std::sync::OnceLock::new(),
             config,
             workbook_load_limits: crate::engine::WorkbookLoadLimits::default(),
             clock: crate::timezone::SnapshotClock::new(clock),
@@ -3064,6 +3067,7 @@ where
             resolution_sheet_revision: None,
             resolution_arrow_sheet_names: Vec::new(),
             resolved_arrow_sheets: Vec::new(),
+            arrow_sheet_index: std::sync::OnceLock::new(),
             config,
             workbook_load_limits: crate::engine::WorkbookLoadLimits::default(),
             clock: crate::timezone::SnapshotClock::new(clock),
@@ -4366,6 +4370,55 @@ where
         self.graph.sheet_name(id)
     }
 
+    fn arrow_sheet_position(&self, id: SheetId) -> Option<usize> {
+        let index = self.arrow_sheet_index.get_or_init(|| {
+            let mut index = Vec::new();
+            for (position, sheet) in self.arrow_sheets.sheets.iter().enumerate() {
+                if let Some(id) = self.graph.sheet_id(&sheet.name) {
+                    let needed = usize::from(id).saturating_add(1);
+                    if index.len() < needed {
+                        index.resize(needed, None);
+                    }
+                    if let Some(slot) = index.get_mut(usize::from(id)) {
+                        *slot = Some(position);
+                    }
+                }
+            }
+            index
+        });
+        index.get(usize::from(id)).copied().flatten()
+    }
+
+    /// Indexed Arrow storage lookup by stable registry identity.
+    pub(crate) fn arrow_sheet_by_id(&self, id: SheetId) -> Option<&crate::arrow_store::ArrowSheet> {
+        self.arrow_sheets.sheets.get(self.arrow_sheet_position(id)?)
+    }
+
+    /// Mutable counterpart of [`Self::arrow_sheet_by_id`].
+    pub(crate) fn arrow_sheet_by_id_mut(
+        &mut self,
+        id: SheetId,
+    ) -> Option<&mut crate::arrow_store::ArrowSheet> {
+        let position = self.arrow_sheet_position(id)?;
+        self.arrow_sheets.sheets.get_mut(position)
+    }
+
+    fn rebuild_arrow_sheet_index(&mut self) {
+        self.arrow_sheet_index.take();
+        self.resolved_arrow_sheets.clear();
+        for (index, sheet) in self.arrow_sheets.sheets.iter().enumerate() {
+            if let Some(id) = self.graph.sheet_id(&sheet.name) {
+                let len = usize::from(id).saturating_add(1);
+                if self.resolved_arrow_sheets.len() < len {
+                    self.resolved_arrow_sheets.resize(len, None);
+                }
+                if let Some(slot) = self.resolved_arrow_sheets.get_mut(usize::from(id)) {
+                    *slot = Some(index);
+                }
+            }
+        }
+    }
+
     pub fn add_sheet(&mut self, name: &str) -> Result<SheetId, ExcelError> {
         let id = self.graph.add_sheet(name)?;
         self.ensure_arrow_sheet(name);
@@ -4390,6 +4443,7 @@ where
             let mut copied_sheet = source_sheet;
             copied_sheet.name = Arc::<str>::from(new_name);
             self.arrow_sheets.sheets.push(copied_sheet);
+            self.rebuild_arrow_sheet_index();
         } else {
             self.ensure_arrow_sheet(new_name);
         }
@@ -4423,6 +4477,7 @@ where
                 chunk_starts: Vec::new(),
                 chunk_rows: 32 * 1024,
             });
+        self.rebuild_arrow_sheet_index();
     }
 
     pub fn remove_sheet(&mut self, sheet_id: SheetId) -> Result<(), ExcelError> {
@@ -4430,6 +4485,7 @@ where
         self.purge_derived_formats_for_sheet(sheet_id);
         self.graph.remove_sheet(sheet_id)?;
         self.arrow_sheets.sheets.retain(|s| s.name.as_ref() != name);
+        self.rebuild_arrow_sheet_index();
         // Sheet removal can change cross-sheet refs, names, and default-sheet
         // resolution. Until those domains have a complete exact dependency
         // proof, retain the documented graph-owned global invalidation.
@@ -5978,6 +6034,7 @@ where
 
     /// Mark a topology-changing edit: bump snapshot + topology epoch and invalidate cached schedules.
     pub fn mark_topology_edited(&mut self) {
+        self.arrow_sheet_index.take();
         self.lookup_index_cache.clear();
         self.snapshot_id
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -6026,6 +6083,7 @@ where
 
     /// Access Arrow sheet store (mutable)
     pub fn sheet_store_mut(&mut self) -> &mut SheetStore {
+        self.arrow_sheet_index.take();
         &mut self.arrow_sheets
     }
 
@@ -18196,6 +18254,56 @@ impl<R> crate::traits::Resolver for Engine<R> where R: EvaluationContext {}
 
 // The Engine provides functions by delegating to its internal resolver.
 impl<R: EvaluationContext> crate::interpreter::ArenaCellResolver for Engine<R> {
+    fn resolve_arena_range(
+        &self,
+        reference: &crate::engine::arena::CompactRefType,
+        current: SheetId,
+        row_delta: i64,
+        col_delta: i64,
+    ) -> Result<RangeView<'_>, ExcelError> {
+        use crate::engine::arena::{CompactRefType, SheetKey};
+        let CompactRefType::Range {
+            sheet,
+            start_row,
+            start_col,
+            end_row,
+            end_col,
+            start_row_abs,
+            start_col_abs,
+            end_row_abs,
+            end_col_abs,
+        } = reference
+        else {
+            return Err(ExcelError::new(ExcelErrorKind::Ref));
+        };
+        let sheet_id = match sheet {
+            None => current,
+            Some(SheetKey::Id(id)) => *id,
+            Some(SheetKey::Name(id)) => self
+                .graph
+                .sheet_id(self.graph.data_store().resolve_ast_string(*id))
+                .ok_or_else(|| ExcelError::new(ExcelErrorKind::Ref))?,
+        };
+        if self.graph.sheet_reg().name(sheet_id).is_empty() {
+            return Err(ExcelError::new(ExcelErrorKind::Ref));
+        }
+        let axis = |value, sentinel, delta, absolute| {
+            if value == sentinel {
+                Ok(None)
+            } else {
+                crate::interpreter::shift_axis_for_offset(value, delta, absolute).map(Some)
+            }
+        };
+        let sr = axis(*start_row, 0, row_delta, *start_row_abs)?;
+        let sc = axis(*start_col, 0, col_delta, *start_col_abs)?;
+        let er = axis(*end_row, u32::MAX, row_delta, *end_row_abs)?;
+        let ec = axis(*end_col, u32::MAX, col_delta, *end_col_abs)?;
+        if sr.zip(er).is_some_and(|(s, e)| s > e) || sc.zip(ec).is_some_and(|(s, e)| s > e) {
+            return Err(ExcelError::new(ExcelErrorKind::Ref));
+        }
+        self.resolve_range_coordinates(sheet_id, sr, sc, er, ec)
+    }
+
     fn resolve_arena_cell(
         &self,
         sheet: Option<crate::engine::arena::SheetKey>,
@@ -18272,6 +18380,82 @@ impl<R> Engine<R>
 where
     R: EvaluationContext,
 {
+    fn resolve_range_coordinates(
+        &self,
+        sheet_id: SheetId,
+        sr: Option<u32>,
+        sc: Option<u32>,
+        er: Option<u32>,
+        ec: Option<u32>,
+    ) -> Result<RangeView<'_>, ExcelError> {
+        let sheet_name = self.graph.sheet_name(sheet_id);
+        let extent = resolve_used_extent_with_fallback(
+            OpenRangeBounds {
+                start_row: sr,
+                start_column: sc,
+                end_row: er,
+                end_column: ec,
+            },
+            ExtentPolicy::EvaluationCompat {
+                fallback_row: None,
+                fallback_column: None,
+            },
+            || {
+                self.sheet_bounds(sheet_name)
+                    .map(|_| self.config.max_open_ended_rows)
+            },
+            || {
+                self.sheet_bounds(sheet_name)
+                    .map(|_| self.config.max_open_ended_cols)
+            },
+            |first, last| self.used_rows_for_columns(sheet_name, first, last),
+            |first, last| self.used_cols_for_rows(sheet_name, first, last),
+        );
+        let (sr, sc, er, ec) = extent
+            .map(|e| (e.start_row, e.start_column, e.end_row, e.end_column))
+            .unwrap_or((1, 1, 0, 0));
+        if self.force_materialize_range_views {
+            if er < sr || ec < sc {
+                return Ok(RangeView::from_owned_rows(
+                    Vec::new(),
+                    self.config.date_system,
+                ));
+            }
+            let h = (er - sr + 1) as u64;
+            let w = (ec - sc + 1) as u64;
+            if h.saturating_mul(w) <= self.config.spill.max_spill_cells as u64 {
+                let mut rows = Vec::with_capacity(h as usize);
+                for r in sr..=er {
+                    let mut row = Vec::with_capacity(w as usize);
+                    for c in sc..=ec {
+                        row.push(
+                            self.read_cell_value(sheet_name, r, c)
+                                .unwrap_or(LiteralValue::Empty),
+                        );
+                    }
+                    rows.push(row);
+                }
+                return Ok(RangeView::from_owned_rows(rows, self.config.date_system));
+            }
+        }
+        let Some(asheet) = self.arrow_sheet_by_id(sheet_id) else {
+            return Ok(RangeView::from_owned_rows(
+                Vec::new(),
+                self.config.date_system,
+            ));
+        };
+        Ok(if er < sr || ec < sc {
+            asheet.range_view(1, 1, 0, 0)
+        } else {
+            asheet.range_view(
+                sr.saturating_sub(1) as usize,
+                sc.saturating_sub(1) as usize,
+                er.saturating_sub(1) as usize,
+                ec.saturating_sub(1) as usize,
+            )
+        })
+    }
+
     /// Semantic used coordinates exclude graph-only dependency placeholders.
     ///
     /// Non-empty base/overlay/computed cells come from Arrow storage, while
@@ -18831,8 +19015,6 @@ where
                         return Err(ExcelError::new(ExcelErrorKind::Ref));
                     }
                 };
-                let sheet_name = self.graph.sheet_name(sheet_id);
-
                 let bounded_range = if range.start_row.is_some()
                     && range.start_col.is_some()
                     && range.end_row.is_some()
@@ -18860,83 +19042,7 @@ where
                     .map(|r| r.end.coord.col() + 1)
                     .or_else(|| range.end_col.map(|b| b.index + 1));
 
-                let extent = resolve_used_extent_with_fallback(
-                    OpenRangeBounds {
-                        start_row: sr,
-                        start_column: sc,
-                        end_row: er,
-                        end_column: ec,
-                    },
-                    ExtentPolicy::EvaluationCompat {
-                        fallback_row: None,
-                        fallback_column: None,
-                    },
-                    || {
-                        self.sheet_bounds(sheet_name)
-                            .map(|_| self.config.max_open_ended_rows)
-                    },
-                    || {
-                        self.sheet_bounds(sheet_name)
-                            .map(|_| self.config.max_open_ended_cols)
-                    },
-                    |first, last| self.used_rows_for_columns(sheet_name, first, last),
-                    |first, last| self.used_cols_for_rows(sheet_name, first, last),
-                );
-                let (sr, sc, er, ec) = extent
-                    .map(|extent| {
-                        (
-                            extent.start_row,
-                            extent.start_column,
-                            extent.end_row,
-                            extent.end_column,
-                        )
-                    })
-                    .unwrap_or((1, 1, 0, 0));
-
-                if self.force_materialize_range_views {
-                    if er < sr || ec < sc {
-                        return Ok(RangeView::from_owned_rows(
-                            Vec::new(),
-                            self.config.date_system,
-                        ));
-                    }
-                    let h = (er - sr + 1) as u64;
-                    let w = (ec - sc + 1) as u64;
-                    let cell_count = h.saturating_mul(w);
-                    if cell_count <= self.config.spill.max_spill_cells as u64 {
-                        let mut rows: Vec<Vec<LiteralValue>> = Vec::with_capacity(h as usize);
-                        for r in sr..=er {
-                            let mut rowv: Vec<LiteralValue> = Vec::with_capacity(w as usize);
-                            for c in sc..=ec {
-                                rowv.push(
-                                    self.read_cell_value(sheet_name, r, c)
-                                        .unwrap_or(LiteralValue::Empty),
-                                );
-                            }
-                            rows.push(rowv);
-                        }
-                        return Ok(RangeView::from_owned_rows(rows, self.config.date_system));
-                    }
-                }
-
-                let Some(asheet) = self.sheet_store().sheet(sheet_name) else {
-                    return Ok(RangeView::from_owned_rows(
-                        Vec::new(),
-                        self.config.date_system,
-                    ));
-                };
-
-                let rv = if er < sr || ec < sc {
-                    asheet.range_view(1, 1, 0, 0)
-                } else {
-                    let sr0 = sr.saturating_sub(1) as usize;
-                    let sc0 = sc.saturating_sub(1) as usize;
-                    let er0 = er.saturating_sub(1) as usize;
-                    let ec0 = ec.saturating_sub(1) as usize;
-                    asheet.range_view(sr0, sc0, er0, ec0)
-                };
-
-                Ok(rv)
+                self.resolve_range_coordinates(sheet_id, sr, sc, er, ec)
             }
             ReferenceType::Cell { .. } => {
                 let shared = self.resolve_shared_ref(reference, current_sheet)?;

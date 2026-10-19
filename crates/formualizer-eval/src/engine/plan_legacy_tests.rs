@@ -29,7 +29,10 @@ fn legacy_collect_references_arena(
 
         match node {
             AstNodeData::Reference { ref_type, .. } => {
-                let reference = data_store.reconstruct_reference_type_for_eval(ref_type, sheet_reg);
+                let reference = data_store.reconstruct_reference_type_for_eval(
+                    data_store.compact_ref(*ref_type),
+                    sheet_reg,
+                );
                 match reference {
                     ReferenceType::Range {
                         sheet,

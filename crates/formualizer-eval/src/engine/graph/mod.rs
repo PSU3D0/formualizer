@@ -5579,7 +5579,10 @@ impl DependencyGraph {
         Some((ast_id, self.is_volatile(vertex_id)))
     }
 
-    pub fn get_formula_node(&self, vertex_id: VertexId) -> Option<&super::arena::AstNodeData> {
+    pub fn get_formula_node(
+        &self,
+        vertex_id: VertexId,
+    ) -> Option<&super::arena::AstNodeData<super::arena::RefId>> {
         let ast_id = self.get_formula_id(vertex_id)?;
         self.data_store.get_node(ast_id)
     }
@@ -5587,7 +5590,7 @@ impl DependencyGraph {
     pub fn get_formula_node_and_volatile(
         &self,
         vertex_id: VertexId,
-    ) -> Option<(&super::arena::AstNodeData, bool)> {
+    ) -> Option<(&super::arena::AstNodeData<super::arena::RefId>, bool)> {
         let (ast_id, vol) = self.get_formula_id_and_volatile(vertex_id)?;
         let node = self.data_store.get_node(ast_id)?;
         Some((node, vol))

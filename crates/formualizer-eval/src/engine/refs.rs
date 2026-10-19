@@ -301,8 +301,10 @@ pub(crate) fn visit_arena_references<C>(
 
     match node {
         AstNodeData::Reference { ref_type, .. } => {
-            let reference = data_store(context)
-                .reconstruct_reference_type_for_eval(&ref_type, sheet_registry(context));
+            let reference = data_store(context).reconstruct_reference_type_for_eval(
+                data_store(context).compact_ref(ref_type),
+                sheet_registry(context),
+            );
             visitor(context, classify(&reference))
         }
         AstNodeData::UnaryOp { expr_id, .. } => {
@@ -360,7 +362,7 @@ pub(crate) fn visit_arena_references_keyed<C>(
         let node = store.get_node(id).ok_or_else(missing_ast_error)?;
         match node {
             AstNodeData::Reference { ref_type, .. } => {
-                let (compact, key) = match *ref_type {
+                let (compact, key) = match *store.compact_ref(*ref_type) {
                     CompactRefType::Cell {
                         sheet: Some(SheetKey::Id(sid)),
                         row,

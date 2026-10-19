@@ -61,7 +61,7 @@ pub(super) struct CriteriaPlan {
 /// two rows) or open (`$F:$F`, `$F$2:$F`: its view is the used extent, the
 /// same for every member).
 fn invariant_column(ds: &DataStore, arg: AstNodeId) -> bool {
-    match ds.get_node(arg) {
+    match ds.expanded_node(arg).as_ref() {
         Some(AstNodeData::Reference {
             ref_type:
                 CompactRefType::Range {
@@ -130,7 +130,7 @@ impl CriteriaPlan {
             }
             // A criterion that is itself a range is not one value.
             if matches!(
-                ds.get_node(pair[1]),
+                ds.expanded_node(pair[1]).as_ref(),
                 Some(AstNodeData::Reference {
                     ref_type: CompactRefType::Range { .. },
                     ..
@@ -283,6 +283,7 @@ where
         let AstNodeData::Reference { ref_type, .. } = ds.get_node(arg)? else {
             return None;
         };
+        let ref_type = ds.compact_ref(*ref_type);
         let reference = ds.reconstruct_reference_type_for_eval(ref_type, self.graph.sheet_reg());
         self.resolve_range_view(&reference, current_sheet).ok()
     }

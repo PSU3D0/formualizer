@@ -561,6 +561,7 @@ fn walk(
             original_id,
             ref_type,
         } => {
+            let ref_type = *data_store.compact_ref(ref_type);
             // Spill references carry the per-placement original text into
             // canonical diagnostics.
             if data_store

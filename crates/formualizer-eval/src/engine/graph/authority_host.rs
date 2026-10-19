@@ -2197,6 +2197,7 @@ fn formula_texts_rendered(
                 original_id,
                 ref_type,
             } => {
+                let ref_type = ds.compact_ref(*ref_type);
                 let text = ds.resolve_ast_string(*original_id);
                 let ok = reference_text_rendered(ds, reg, text, ref_type, prefixes);
                 if !ok {
@@ -2247,6 +2248,7 @@ pub(crate) fn template_rendered_refs(
                 original_id,
                 ref_type,
             } => {
+                let ref_type = ds.compact_ref(*ref_type);
                 let text = ds.resolve_ast_string(*original_id);
                 let rendered = reference_text_rendered(ds, reg, text, ref_type, &mut prefixes);
                 debug_assert_eq!(
@@ -2332,10 +2334,12 @@ fn ast_equal_relocated(
                     ref_type: rb,
                 },
             ) => {
+                let rb = ds.compact_ref(*rb);
                 let Some(&rerender) = rendered.get(ref_index) else {
                     return false;
                 };
                 ref_index += 1;
+                let ra = ds.compact_ref(*ra);
                 if let R::NamedRange(_) = rb {
                     if ra != rb || oa != ob {
                         return false;
@@ -2573,6 +2577,7 @@ pub(crate) fn parsed_equal_relocated<'a>(
                     ref_type: rb,
                 },
             ) => {
+                let rb = ds.compact_ref(*rb);
                 let Some(&rerender) = rendered.get(ref_index) else {
                     return false;
                 };

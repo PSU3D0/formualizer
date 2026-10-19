@@ -341,6 +341,7 @@ impl AggregateKernel {
             let AstNodeData::Reference { ref_type, .. } = ds.get_node(arg)? else {
                 return None;
             };
+            let ref_type = ds.compact_ref(*ref_type);
             let sheet_of = |sheet: &Option<SheetKey>| -> Option<SheetId> {
                 match sheet {
                     None => Some(current_sheet),
