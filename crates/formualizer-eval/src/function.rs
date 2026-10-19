@@ -313,9 +313,9 @@ pub trait Function: Send + Sync + 'static {
 
         // Central argument validation (includes min-arity check)
         {
-            use crate::args::{ValidationOptions, validate_and_prepare};
+            use crate::args::{ValidationOptions, validate_and_prepare_inline};
             let schema = self.arg_schema();
-            if let Err(e) = validate_and_prepare(
+            if let Err(e) = validate_and_prepare_inline(
                 args,
                 schema,
                 ValidationOptions {
@@ -329,5 +329,105 @@ pub trait Function: Send + Sync + 'static {
 
         self.eval(args, ctx)
             .map(|result| self.apply_format_propagation(result))
+    }
+}
+
+#[cfg(test)]
+mod argument_preparation_tests {
+    use super::*;
+    use crate::{test_workbook::TestWorkbook, traits::CalcValue};
+    use formualizer_common::ExcelErrorKind;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    struct Count(Arc<AtomicUsize>);
+    impl Function for Count {
+        fn name(&self) -> &'static str {
+            "ARGCOUNT"
+        }
+        fn eval<'a, 'b, 'c>(
+            &self,
+            _args: &'c [ArgumentHandle<'a, 'b>],
+            _ctx: &dyn crate::traits::FunctionContext<'b>,
+        ) -> Result<CalcValue<'b>, ExcelError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(CalcValue::Scalar(LiteralValue::Number(-7.0)))
+        }
+    }
+
+    #[test]
+    fn nested_validation_memo_is_linear() -> Result<(), Box<dyn std::error::Error>> {
+        crate::builtins::load_builtins();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let wb = TestWorkbook::new().with_function(Arc::new(Count(Arc::clone(&calls))));
+        let interp = wb.interpreter();
+        let formula = format!("={}ARGCOUNT(){}", "ABS(".repeat(12), ")".repeat(12));
+        let ast = formualizer_parse::parser::parse(&formula)?;
+        for expected in 1..=2 {
+            assert_eq!(
+                interp.evaluate_ast(&ast)?.into_literal(),
+                LiteralValue::Number(7.0)
+            );
+            assert_eq!(
+                calls.load(Ordering::SeqCst),
+                expected,
+                "one leaf evaluation per recalc, not 2^depth"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn lazy_omitted_and_validation_errors_are_preserved() -> Result<(), Box<dyn std::error::Error>>
+    {
+        crate::builtins::load_builtins();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let wb = TestWorkbook::new().with_function(Arc::new(Count(Arc::clone(&calls))));
+        let interp = wb.interpreter();
+        for (formula, expected) in [
+            ("=IF(TRUE,7,ARGCOUNT())", LiteralValue::Number(7.0)),
+            ("=IF(FALSE,ARGCOUNT(),7)", LiteralValue::Number(7.0)),
+            ("=IFERROR(7,ARGCOUNT())", LiteralValue::Number(7.0)),
+            ("=IFERROR(1/0,7)", LiteralValue::Number(7.0)),
+            (
+                "=CHOOSE(2,ARGCOUNT(),7,ARGCOUNT())",
+                LiteralValue::Number(7.0),
+            ),
+            ("=IF(TRUE,,ARGCOUNT())", LiteralValue::Number(0.0)),
+            ("=CHOOSE(2,ARGCOUNT(),)", LiteralValue::Number(0.0)),
+        ] {
+            let ast = formualizer_parse::parser::parse(formula)?;
+            assert_eq!(
+                interp.evaluate_ast(&ast)?.into_literal(),
+                expected,
+                "{formula}"
+            );
+        }
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "untaken branches stay lazy"
+        );
+        for (formula, kind) in [
+            ("=ROUND(1/0,ARGCOUNT())", ExcelErrorKind::Div),
+            ("=ROUND(NA(),1/0)", ExcelErrorKind::Na),
+            ("=ROUND(NA())", ExcelErrorKind::Value),
+            ("=ABS(\"not a number\")", ExcelErrorKind::Value),
+        ] {
+            let ast = formualizer_parse::parser::parse(formula)?;
+            let result = interp.evaluate_ast(&ast)?.into_literal();
+            assert!(
+                matches!(result, LiteralValue::Error(ref e) if e.kind == kind),
+                "{formula}: {result:?}"
+            );
+        }
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "validation stops at the first error"
+        );
+        Ok(())
     }
 }

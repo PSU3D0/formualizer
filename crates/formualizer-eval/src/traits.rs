@@ -327,6 +327,36 @@ pub struct ArgumentHandle<'a, 'b> {
     expr: ArgumentExpr<'a>,
     interp: &'a Interpreter<'b>,
     caches: std::cell::OnceCell<Box<ArgumentCaches<'b>>>,
+    /// Validation and builtin evaluation both read arguments. Memoization keeps
+    /// nested calls linear instead of re-evaluating a leaf 2^depth times.
+    /// Handles are per-call/per-evaluation; value_with_env deliberately bypasses
+    /// this memo because its local environment may change.
+    /// Scalar results/errors are hot; AST/reference/resolution caches stay cold.
+    cached_value: std::cell::OnceCell<Result<MemoizedValue<'b>, ExcelError>>,
+}
+
+/// Keep the common scalar memo inline without paying for RangeView in every handle.
+enum MemoizedValue<'b> {
+    Scalar(LiteralValue, Option<crate::format::FormatId>),
+    Other(Box<CalcValue<'b>>),
+}
+
+impl<'b> MemoizedValue<'b> {
+    fn new(value: CalcValue<'b>) -> Self {
+        match value {
+            CalcValue::Scalar(value) => Self::Scalar(value, None),
+            CalcValue::AnnotatedScalar(value, format) => Self::Scalar(value, Some(format)),
+            other => Self::Other(Box::new(other)),
+        }
+    }
+
+    fn value(&self) -> CalcValue<'b> {
+        match self {
+            Self::Scalar(value, None) => CalcValue::Scalar(value.clone()),
+            Self::Scalar(value, Some(format)) => CalcValue::AnnotatedScalar(value.clone(), *format),
+            Self::Other(value) => (**value).clone(),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -336,15 +366,6 @@ struct ArgumentCaches<'b> {
     cached_reference_or_value:
         std::cell::OnceCell<Result<crate::function::FunctionResolution<'b>, ExcelError>>,
     cached_resolved: std::cell::OnceCell<Result<ResolvedArgument<'b>, ExcelError>>,
-    /// Memoized result of [`Self::value`]. `Function::dispatch` evaluates
-    /// every argument once during schema validation and the function's `eval`
-    /// evaluates it again — without this cache that re-entry compounds to
-    /// 2^depth evaluations of the innermost node for nested non-short-circuit
-    /// calls (measured: depth 12 ⇒ 4096 evaluations). The handle is created
-    /// per call site and per evaluation, so the memo can never go stale
-    /// across recalcs. `value_with_env` is intentionally NOT memoized (the
-    /// local env changes the result).
-    cached_value: std::cell::OnceCell<Result<crate::traits::CalcValue<'b>, ExcelError>>,
 }
 
 impl<'a, 'b> ArgumentHandle<'a, 'b> {
@@ -358,6 +379,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
             expr: ArgumentExpr::Ast(node),
             interp,
             caches: std::cell::OnceCell::new(),
+            cached_value: std::cell::OnceCell::new(),
         }
     }
 
@@ -375,6 +397,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
             },
             interp,
             caches: std::cell::OnceCell::new(),
+            cached_value: std::cell::OnceCell::new(),
         }
     }
 
@@ -511,10 +534,11 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
     }
 
     pub fn value(&self) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
-        self.caches()
-            .cached_value
-            .get_or_init(|| self.compute_value())
-            .clone()
+        self.cached_value
+            .get_or_init(|| self.compute_value().map(MemoizedValue::new))
+            .as_ref()
+            .map(MemoizedValue::value)
+            .map_err(Clone::clone)
     }
 
     /// Resolves a scalar that is about to be coerced to text.
@@ -1019,7 +1043,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
             .get_or_init(|| self.compute_reference_or_value())
             .clone();
         if let Ok(crate::function::FunctionResolution::Value(value)) = &resolved {
-            let _ = self.caches().cached_value.set(Ok(value.clone()));
+            let _ = self.cached_value.set(Ok(MemoizedValue::new(value.clone())));
         }
         resolved
     }
@@ -2563,6 +2587,7 @@ mod argument_handle_size_tests {
     fn argument_handle_fits_inline_call_storage() {
         let before = std::mem::size_of::<LegacyArgumentHandle<'_, '_>>();
         let after = std::mem::size_of::<ArgumentHandle<'_, '_>>();
-        assert!(after <= 48, "ArgumentHandle is {after} bytes");
+        assert_eq!(after, 80, "ArgumentHandle layout changed");
+        assert!(after < before / 4, "cold caches must stay out of line");
     }
 }
