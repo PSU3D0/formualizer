@@ -321,8 +321,7 @@ impl AggregateKernel {
         let AstNodeData::Function { name_id, .. } = ds.get_node(template)? else {
             return None;
         };
-        let name = ds.resolve_ast_string(*name_id);
-        let fun = crate::traits::FunctionProvider::get_function(engine, "", name)?;
+        let fun = engine.resolved_functions.get(*name_id)?;
         let kind = fun.family_kernel().filter(|k| {
             matches!(
                 k,

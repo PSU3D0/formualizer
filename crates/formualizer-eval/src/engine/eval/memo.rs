@@ -21,14 +21,14 @@ pub(super) struct MemoPlan {
 
 impl MemoPlan {
     pub(super) fn plan(
-        functions: &dyn crate::traits::FunctionProvider,
+        functions: &crate::interpreter::ResolvedFunctions,
         ds: &DataStore,
         template: AstNodeId,
     ) -> Option<Self> {
         let AstNodeData::Function { name_id, .. } = ds.get_node(template)? else {
             return Self::plan_general(functions, ds, template);
         };
-        let fun = functions.get_function("", ds.resolve_ast_string(*name_id))?;
+        let fun = functions.get(*name_id)?;
         if !matches!(
             fun.family_kernel(),
             Some(FamilyKernel::CriteriaAggregate | FamilyKernel::Lookup)
@@ -78,12 +78,12 @@ impl MemoPlan {
     /// criteria aggregate (`INDEX(.., MATCH(C5, ..))`): those references are
     /// the key; equal keys give equal results.
     fn plan_general(
-        functions: &dyn crate::traits::FunctionProvider,
+        functions: &crate::interpreter::ResolvedFunctions,
         ds: &DataStore,
         template: AstNodeId,
     ) -> Option<Self> {
         fn visit(
-            functions: &dyn crate::traits::FunctionProvider,
+            functions: &crate::interpreter::ResolvedFunctions,
             ds: &DataStore,
             id: AstNodeId,
             as_arg: bool,

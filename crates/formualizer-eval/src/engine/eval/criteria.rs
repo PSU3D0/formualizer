@@ -87,14 +87,14 @@ fn invariant_column(ds: &DataStore, arg: AstNodeId) -> bool {
 
 impl CriteriaPlan {
     pub(super) fn plan(
-        functions: &dyn crate::traits::FunctionProvider,
+        functions: &crate::interpreter::ResolvedFunctions,
         ds: &DataStore,
         template: AstNodeId,
     ) -> Option<Self> {
         let AstNodeData::Function { name_id, .. } = ds.get_node(template)? else {
             return None;
         };
-        let fun = functions.get_function("", ds.resolve_ast_string(*name_id))?;
+        let fun = functions.get(*name_id)?;
         if fun.family_kernel() != Some(FamilyKernel::CriteriaAggregate) {
             return None;
         }

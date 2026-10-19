@@ -256,7 +256,7 @@ where
         // P2-M4 memo: members repeating another's varying arguments reuse
         // its result (see `memo.rs`).
         let memo_plan = (self.config.family_kernels && members.len() > 1)
-            .then(|| super::memo::MemoPlan::plan(self, ds, template))
+            .then(|| super::memo::MemoPlan::plan(&self.resolved_functions, ds, template))
             .flatten()
             .filter(|_| !members.iter().any(|&v| self.graph.is_volatile(v)));
         let mut memo = super::memo::RunMemo::new(shared_memo);
@@ -265,7 +265,7 @@ where
         // parallel chunks); see `criteria.rs`.
         let criteria_plan = (self.config.family_kernels
             && (members.len() > 1 || shared_memo.is_some()))
-        .then(|| super::criteria::CriteriaPlan::plan(self, ds, template))
+        .then(|| super::criteria::CriteriaPlan::plan(&self.resolved_functions, ds, template))
         .flatten()
         .filter(|_| !members.iter().any(|&v| self.graph.is_volatile(v)));
         let local_index;
@@ -292,7 +292,12 @@ where
         {
             let names =
                 |name: &str, as_arg: bool| self.lift_name_is_run_constant(run.sheet, name, as_arg);
-            super::lift::LiftProgram::invariant_subtrees(self, ds, template, &names)
+            super::lift::LiftProgram::invariant_subtrees(
+                &self.resolved_functions,
+                ds,
+                template,
+                &names,
+            )
         } else {
             Vec::new()
         };
@@ -325,7 +330,8 @@ where
                 }
             };
             let row_delta = i64::from(row) - i64::from(anchor.0);
-            let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref);
+            let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref)
+                .with_resolved_functions(&self.resolved_functions);
             let compute =
                 || self.run_invariant_values(&interpreter, &invariant_nodes, row_delta, col_delta);
             let invariant_values: Option<&crate::interpreter::InvariantValues> =
@@ -501,7 +507,8 @@ where
         }
         let names =
             |name: &str, as_arg: bool| self.lift_name_is_run_constant(run.sheet, name, as_arg);
-        let program = super::lift::LiftProgram::compile(self, ds, template, &names)?;
+        let program =
+            super::lift::LiftProgram::compile(&self.resolved_functions, ds, template, &names)?;
         let mut bound = Vec::new();
         let mut cells = Vec::with_capacity(members.len());
         for (i, &v) in members.iter().enumerate() {
@@ -535,6 +542,7 @@ where
                 let result = result.unwrap_or_else(|| {
                     let row_delta = i64::from(run.row0 + i as u32) - i64::from(anchor.0);
                     Interpreter::new_with_cell(self, sheet_name, cell)
+                        .with_resolved_functions(&self.resolved_functions)
                         .evaluate_arena_ast_with_offset(template, row_delta, col_delta, ds, reg)
                         .map(|cv| {
                             let format = cv.format_id();
@@ -597,7 +605,8 @@ where
         let literals = LiteralPlan::new(ds, template, anchor);
         let names =
             |name: &str, as_arg: bool| self.lift_name_is_run_constant(run.sheet, name, as_arg);
-        let program = super::lift::LiftProgram::compile(self, ds, template, &names)?;
+        let program =
+            super::lift::LiftProgram::compile(&self.resolved_functions, ds, template, &names)?;
         // Every member has the template's literal row (a formula cell's
         // authority id is its vertex id).
         #[cfg(debug_assertions)]

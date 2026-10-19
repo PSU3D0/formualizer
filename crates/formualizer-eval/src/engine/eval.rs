@@ -47,6 +47,9 @@ use crate::engine::{
 };
 use crate::function::FnCaps;
 use crate::interpreter::Interpreter;
+
+#[cfg(test)]
+mod fn_snapshot_tests;
 use crate::reference::{CellRef, Coord, RangeRef};
 use crate::traits::FunctionProvider;
 use crate::traits::{EvaluationContext, ReferenceInfo, Resolver};
@@ -990,7 +993,7 @@ struct TraceEvaluationCounters {
 pub struct Engine<R> {
     pub(crate) graph: DependencyGraph,
     resolver: R,
-    resolved_functions: crate::interpreter::ResolvedFunctions,
+    pub(super) resolved_functions: crate::interpreter::ResolvedFunctions,
     resolved_sheet_names:
         FxHashMap<crate::engine::arena::StringId, (crate::SheetId, Option<usize>)>,
     resolution_sheet_revision: Option<(u64, u64, usize)>,
@@ -3722,6 +3725,16 @@ where
     /// Begin a new evaluation request: reset per-recalc cycle telemetry and
     /// take the per-recalc volatile clock sample. Called at the start of
     /// every evaluation request that walks schedule units.
+    /// The per-request function table when it describes the current registry,
+    /// provider and arena; `None` outside a request when it may be stale.
+    pub(crate) fn current_resolved_functions(
+        &self,
+    ) -> Option<&crate::interpreter::ResolvedFunctions> {
+        self.resolved_functions
+            .is_current(self.graph.data_store(), &self.resolver)
+            .then_some(&self.resolved_functions)
+    }
+
     fn refresh_resolution_snapshots(&mut self) {
         self.resolved_functions
             .refresh(self.graph.data_store(), &self.resolver);
