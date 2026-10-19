@@ -46,6 +46,7 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Performance
 
+- Committing a single-cell formula result no longer allocates an effect list or a copy of the sheet name.
 - Function calls no longer allocate for their arguments: argument lists of up to four are prepared inline, and each argument's value memo is stored in its handle. Allocations per evaluated single-cell formula fall from 14 to 2.
 - Filled-down formulas (template walks, lifted and criteria runs, and their planning) now use the per-pass function table too, instead of looking each function up by name for every cell: 98.6% fewer function-provider lookups on a set of real workbooks.
 - Formula evaluation resolves each function name once per evaluation pass instead of on every call (previously each call upper-cased the name, took the registry lock and hashed it), resolves sheet references once per pass, and keeps function arguments inline instead of allocating them (`ArgumentHandle` shrinks from 680 to 40 bytes). Together with the operator and value-size changes, single-cell formulas evaluate about 5–8% faster and peak memory is lower. Functions registered or replaced between evaluations take effect on the next evaluation, as before.
