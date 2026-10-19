@@ -6,6 +6,7 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Changed
 
+- **`SUM`, `AVERAGE`, `SUMIF`, `SUMIFS`, `AVERAGEIF` and `AVERAGEIFS` add values in Excel's order:** one running total, arguments left to right and each range row by row. Before, ranges were summed with Arrow's multi-accumulator reduction, whose result differed from Excel's in the last bits whenever the order of additions matters (2,573 of 3,496 such `SUM` cells in a 600-workbook Enron sample; now none, all remaining differences come from different inputs). Results no longer depend on the CPU's vector width. Summing very large ranges is slower, because one running total cannot be split across vector lanes (about 2x at 1,000 cells and 3.7x at 100,000 cells without blanks, 1.2x with blanks); recalculation of real workbooks is unaffected.
 - **SORT and SORTBY now use Excel's sort order** for mixed values: numbers, then text (case-insensitive), then FALSE, TRUE, errors and blanks. The previous comparison treated numeric text as numbers, TRUE/FALSE as 1/0 and a number and non-numeric text as equal, which gave non-Excel results (`SORT({"10";"9"})` returned 9, 10; Excel gives "10", "9") and panicked on mixed columns of 21 or more values. Single-type columns sort as before.
 - `EVEN` on very large inputs returned a wrapped integer (`EVEN(1E300)` gave -9.2e18); it now returns the correct value.
 - Several functions now return Excel's error instead of an overflowed or wrapped value: `LCM` at 2^53 and above, `TIME` with a component of 32768 or more, `COMBIN`/`PERMUT`/`COMBINA`/`FACTDOUBLE` when the result exceeds the double range (previously infinity), and `FIXED`/`DOLLAR` with more than 127 decimals (previously the text "NaN" or a panic).
@@ -19,6 +20,7 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Added
 
+- `EvalConfig::numeric_profile` selects how floating-point reductions are ordered. The only profile, and the default, is `NumericProfile::ExcelCompatible` (Excel's results, a single reduction on one core). The enum is non-exhaustive: a faster profile that sums in a fixed block order across cores and vector lanes, and lists where its results differ from Excel's, can be added later without a breaking change.
 - `evaluation_budgets.scratch.materialized_array_cells` caps the number of cells any single range or array value may expand to (default 16,777,216, the limit generated arrays already used). Exceeding it returns `#NUM!` instead of allocating. Ranges are counted after trimming to the used area, so whole-column references over ordinary data are unaffected.
 - `Coord::try_new` in `formualizer-eval` and `LiteralValue::finite_or_num_error` in `formualizer-common`.
 

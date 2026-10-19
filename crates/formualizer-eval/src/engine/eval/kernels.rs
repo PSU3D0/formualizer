@@ -6,16 +6,15 @@
 //! per member, merges the overlays of the run's union rows once per column
 //! chunk (decision 20.3), and reduces each member's slice in the scalar
 //! builtin's exact order: per argument, errors first (segment by chunk,
-//! then column, then row), then `total += sum(slice)` per segment per
-//! column with Arrow's reduction replicated bit for bit (`exact::sum_f64`;
-//! no reassociation, no prefix sums, decision 20.2).
+//! then column, then row), then numbers in row-major order into one seeded
+//! accumulator across all arguments and chunks (no subtotals or prefix sums).
 //!
 //! Anything else declines (the tier-1 path evaluates it): open ranges,
 //! names, 3-D or external references, missing sheets, relocation out of
 //! the grid, reversed rectangles, forced materialization, or a function
 //! that is not the built-in (an override keeps `family_kernel() == None`).
 
-use super::exact::{LaneSlice, lane_slice, sum_f64};
+use super::exact::{LaneSlice, add_f64, lane_slice};
 use super::*;
 use crate::arrow_store::{ArrowSheet, OverlayCascade};
 use crate::engine::arena::{AstNodeData, CompactRefType, DataStore, SheetKey};
@@ -197,18 +196,29 @@ impl ArgLanes<'_> {
             }
         }
         for &(ci, lo, hi) in &segs {
-            for col in c0..=c1 {
-                let seg = self.lane(col, ci);
-                match seg.and_then(|s| s.numbers.as_ref()) {
-                    Some(numbers) => {
-                        let seg = seg.expect("lane");
-                        let slice: LaneSlice<'_, f64> =
-                            lane_slice(numbers.as_ref(), lo - seg.row, hi - lo + 1);
-                        *total += sum_f64(slice).unwrap_or(0.0);
-                        *count += (slice.len() - slice.null_count()) as i64;
-                    }
-                    None => {
-                        *total += 0.0;
+            let slices: smallvec::SmallVec<[Option<LaneSlice<'_, f64>>; 4]> = (c0..=c1)
+                .map(|col| {
+                    let seg = self.lane(col, ci)?;
+                    Some(lane_slice(
+                        seg.numbers.as_ref()?.as_ref(),
+                        lo - seg.row,
+                        hi - lo + 1,
+                    ))
+                })
+                .collect();
+            for slice in slices.iter().flatten() {
+                *count += (slice.len() - slice.null_count()) as i64;
+            }
+            if let [Some(slice)] = slices.as_slice() {
+                add_f64(total, *slice);
+            } else {
+                for row in 0..=hi - lo {
+                    for slice in slices.iter().flatten() {
+                        *total += if slice.is_valid(row) {
+                            slice.values.get(row).copied().unwrap_or(0.0)
+                        } else {
+                            0.0
+                        };
                     }
                 }
             }
@@ -472,5 +482,75 @@ impl AggregateKernel {
             ));
         }
         Some(out)
+    }
+}
+
+#[cfg(test)]
+mod sequential_tests {
+    use crate::engine::{Engine, EvalConfig};
+    use crate::test_workbook::TestWorkbook;
+    use formualizer_common::LiteralValue;
+    use formualizer_parse::parser::parse;
+
+    #[test]
+    fn sequential_ranges_cross_arrow_chunks_and_family_paths() {
+        for family in [false, true] {
+            let mut engine = Engine::new(
+                TestWorkbook::new(),
+                EvalConfig {
+                    family_execution: family,
+                    arrow_storage_enabled: true,
+                    delta_overlay_enabled: true,
+                    write_formula_overlay_enabled: true,
+                    ..EvalConfig::default()
+                },
+            );
+            let mut ingest = engine.begin_bulk_ingest_arrow();
+            ingest.add_sheet("Sheet1", 2, 2);
+            ingest
+                .append_row("Sheet1", &[LiteralValue::Empty, LiteralValue::Empty])
+                .unwrap();
+            for value in [1e16, 1.0, -1e16, 1.0] {
+                ingest
+                    .append_row(
+                        "Sheet1",
+                        &[LiteralValue::Number(value), LiteralValue::Number(1.0)],
+                    )
+                    .unwrap();
+            }
+            ingest.finish().unwrap();
+            let cases = [
+                ("=SUM($A$1:$A$5)", 1.0),
+                ("=SUM($A$1:$B$5)", 3.0),
+                ("=SUM($A$2,$A$3:$A$5)", 1.0),
+                ("=AVERAGE($A$1:$A$5)", 0.25),
+                ("=AVERAGE($A$1:$B$5)", 0.375),
+                ("=SUMIF($B$1:$B$5,\">0\",$A$1:$A$5)", 1.0),
+                ("=SUMIFS($A$1:$A$5,$B$1:$B$5,\">0\")", 1.0),
+                ("=AVERAGEIF($B$1:$B$5,\">0\",$A$1:$A$5)", 0.25),
+                ("=AVERAGEIFS($A$1:$A$5,$B$1:$B$5,\">0\")", 0.25),
+                ("=SUMIFS($A$1:$B$5,$A$1:$B$5,\"<>\")", 3.0),
+            ];
+            for (column, (formula, _)) in cases.iter().enumerate() {
+                for row in 1..=40 {
+                    engine
+                        .set_cell_formula("Sheet1", row, column as u32 + 4, parse(formula).unwrap())
+                        .unwrap();
+                }
+            }
+            engine.evaluate_all().unwrap();
+            for (column, (formula, expected)) in cases.iter().enumerate() {
+                for row in 1..=40 {
+                    assert_eq!(
+                        engine.get_cell_value("Sheet1", row, column as u32 + 4),
+                        Some(LiteralValue::Number(*expected)),
+                        "family={family} row={row} {formula}"
+                    );
+                }
+            }
+            if family {
+                assert!(engine.family_members_for_test() > 0);
+            }
+        }
     }
 }

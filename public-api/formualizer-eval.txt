@@ -5386,6 +5386,21 @@ impl core::fmt::Debug for formualizer_eval::engine::resource_ledger::LegacyResou
 pub fn formualizer_eval::engine::resource_ledger::LegacyResourceConfigDisposition::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for formualizer_eval::engine::resource_ledger::LegacyResourceConfigDisposition
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::resource_ledger::LegacyResourceConfigDisposition
+#[non_exhaustive] pub enum formualizer_eval::engine::NumericProfile
+pub formualizer_eval::engine::NumericProfile::ExcelCompatible
+impl core::clone::Clone for formualizer_eval::engine::NumericProfile
+pub fn formualizer_eval::engine::NumericProfile::clone(&self) -> formualizer_eval::engine::NumericProfile
+impl core::cmp::Eq for formualizer_eval::engine::NumericProfile
+impl core::cmp::PartialEq for formualizer_eval::engine::NumericProfile
+pub fn formualizer_eval::engine::NumericProfile::eq(&self, &formualizer_eval::engine::NumericProfile) -> bool
+impl core::default::Default for formualizer_eval::engine::NumericProfile
+pub fn formualizer_eval::engine::NumericProfile::default() -> formualizer_eval::engine::NumericProfile
+impl core::fmt::Debug for formualizer_eval::engine::NumericProfile
+pub fn formualizer_eval::engine::NumericProfile::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_eval::engine::NumericProfile
+pub fn formualizer_eval::engine::NumericProfile::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for formualizer_eval::engine::NumericProfile
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::NumericProfile
 pub enum formualizer_eval::engine::OpaquePreparePolicy
 pub formualizer_eval::engine::OpaquePreparePolicy::Error
 pub formualizer_eval::engine::OpaquePreparePolicy::Widen
@@ -6283,6 +6298,7 @@ pub formualizer_eval::engine::EvalConfig::max_open_ended_rows: u32
 pub formualizer_eval::engine::EvalConfig::max_overlay_memory_bytes: core::option::Option<usize>
 pub formualizer_eval::engine::EvalConfig::max_threads: core::option::Option<usize>
 pub formualizer_eval::engine::EvalConfig::max_vertices: core::option::Option<usize>
+pub formualizer_eval::engine::EvalConfig::numeric_profile: formualizer_eval::engine::NumericProfile
 pub formualizer_eval::engine::EvalConfig::pk_compaction_interval_ops: u64
 pub formualizer_eval::engine::EvalConfig::pk_reject_cycle_edges: bool
 pub formualizer_eval::engine::EvalConfig::pk_visit_budget: usize

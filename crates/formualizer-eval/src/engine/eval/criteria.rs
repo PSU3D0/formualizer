@@ -19,7 +19,7 @@
 //! kernel, so every row gets the mask's own verdict. It then walks the
 //! matching rows of its most selective criterion in row order, checks the
 //! others by class, and reduces as the builtin does: a count, or per driver
-//! row chunk the Arrow sum (`exact::sum_f64`) of the filtered target lane,
+//! row chunk sequential addition into the same running accumulator,
 //! with the non-null count for averages.
 //!
 //! Whole columns (`$F:$F`) and open-ended columns (`$F$2:$F`) are views of
@@ -33,7 +33,7 @@
 //! evaluation fails, and `COUNTIF` whose criterion matches an empty cell
 //! (it counts logical cells past the data).
 
-use super::exact::{LaneSlice, sum_f64};
+use super::exact::{LaneSlice, add_f64};
 use super::*;
 use crate::args::CriteriaPredicate as P;
 use crate::engine::arena::{AstNodeData, CompactRefType, DataStore};
@@ -688,9 +688,7 @@ where
                         values: &buf,
                         validity: (nulls > 0).then_some((&bits[..], 0)),
                     };
-                    if let Some(s) = sum_f64(slice) {
-                        total_sum += s;
-                    }
+                    add_f64(&mut total_sum, slice);
                     total_count += (buf.len() - nulls) as i64;
                 }
                 debug_assert!(it.next().is_none(), "matched rows past the last chunk");
