@@ -347,6 +347,12 @@ impl<'a> RangeView<'a> {
     }
 
     #[inline]
+    pub(crate) fn criteria_cache_cancelled(&self) -> bool {
+        self.cancel_token
+            .as_ref()
+            .is_some_and(CancelToken::is_cancelled)
+    }
+
     pub fn sheet(&self) -> &arrow_store::ArrowSheet {
         match &self.backing {
             RangeBacking::Borrowed(s) => s,

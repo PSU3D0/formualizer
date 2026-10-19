@@ -1,6 +1,9 @@
 use crate::SheetId;
 
 mod criteria;
+mod criteria_mask_cache;
+#[cfg(test)]
+mod criteria_mask_cache_tests;
 mod exact;
 mod family;
 mod kernels;
@@ -991,6 +994,7 @@ struct TraceEvaluationCounters {
 }
 
 pub struct Engine<R> {
+    criteria_mask_cache: criteria_mask_cache::CriteriaMaskCache,
     pub(crate) graph: DependencyGraph,
     resolver: R,
     pub(super) resolved_functions: crate::interpreter::ResolvedFunctions,
@@ -2887,6 +2891,7 @@ where
         let lookup_cache_max_bytes = config.lookup_index_cache_max_bytes;
         let function_provider_revision_seen = resolver.planning_semantic_revision();
         let mut engine = Self {
+            criteria_mask_cache: Default::default(),
             graph: DependencyGraph::new_with_config(config.clone()),
             resolver,
             resolved_functions: Default::default(),
@@ -3060,6 +3065,7 @@ where
         let lookup_cache_max_bytes = config.lookup_index_cache_max_bytes;
         let function_provider_revision_seen = resolver.planning_semantic_revision();
         let mut engine = Self {
+            criteria_mask_cache: Default::default(),
             graph: DependencyGraph::new_with_config(config.clone()),
             resolver,
             resolved_functions: Default::default(),
@@ -19415,7 +19421,17 @@ where
         if sheet_rows == 0 || view.start_row() >= sheet_rows {
             return Some(std::sync::Arc::new(arrow_array::BooleanArray::new_null(0)));
         }
-        compute_criteria_mask(view, col_in_view, pred)
+        self.criteria_mask_cache.get_or_build(
+            view,
+            col_in_view,
+            pred,
+            (
+                self.recalc_epoch,
+                self.topology_epoch,
+                self.graph.topology_revision(),
+            ),
+            || compute_criteria_mask(view, col_in_view, pred),
+        )
     }
 
     fn build_row_visibility_mask(

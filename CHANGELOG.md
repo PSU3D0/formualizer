@@ -46,6 +46,7 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Performance
 
+- `COUNTIF(S)`, `SUMIF(S)` and `AVERAGEIF(S)` formulas that test the same range with the same criterion share one match mask until the range changes (1,000 mask builds become 97 in a criteria-heavy benchmark, about 1.5x faster).
 - Committing a single-cell formula result no longer allocates an effect list or a copy of the sheet name.
 - Function calls no longer allocate for their arguments: argument lists of up to four are prepared inline, and each argument's value memo is stored in its handle. Allocations per evaluated single-cell formula fall from 14 to 2.
 - Filled-down formulas (template walks, lifted and criteria runs, and their planning) now use the per-pass function table too, instead of looking each function up by name for every cell: 98.6% fewer function-provider lookups on a set of real workbooks.
