@@ -423,7 +423,7 @@ pub(crate) struct SheetPlan {
     /// `sheetFormatPr/@zeroHeight`: row visibility is not provable.
     rows_hidden_by_default: bool,
     active_filters: Vec<sheet::SourceRect>,
-    data: package::Part,
+    data: Vec<u8>,
     pub(crate) cells: Vec<sheet::Cell>,
     index: Option<sheet::SourceIndex>,
     ownership: dynamic_metadata::SheetOwnership,
@@ -451,212 +451,199 @@ fn admit_source<'a>(
     options: &XlsxRecalculateOptions,
 ) -> Result<SourceAdmission<'a>, IoError> {
     let mut archive = package::admit(bytes, options)?;
-    let result = (|| {
-        let package::Discovery {
-            sheets,
-            date_system,
-            metadata: metadata_part,
-            external_links,
-            defined_names,
-        } = package::discover(&mut archive, options)?;
-        let links = if external_links.is_empty() {
-            None
+    let package::Discovery {
+        sheets,
+        date_system,
+        metadata: metadata_part,
+        external_links,
+        defined_names,
+    } = package::discover(&mut archive, options)?;
+    let links = if external_links.is_empty() {
+        None
+    } else {
+        let links = external_links::parse(&mut archive, &external_links, options)?;
+        links.check_kinds()?;
+        Some(links)
+    };
+    let metadata = metadata_part
+        .map(|part| dynamic_metadata::parse(&mut archive, &part, options))
+        .transpose()?;
+    let mut plans = Vec::new();
+    let mut observed = 0;
+    let mut logical_cells = 0u64;
+    let mut formula_count = 0usize;
+    let mut table_budget = tables::Budget::default();
+    let mut table_names = HashSet::new();
+    for sheet in &sheets {
+        checkpoint(&options.cancel)?;
+        let data = if sheet.inert {
+            inert_sheets::EMPTY.as_bytes().to_vec()
         } else {
-            let links = external_links::parse(&mut archive, &external_links, options)?;
-            links.check_kinds()?;
-            Some(links)
+            package::read_part(
+                &mut archive,
+                &sheet.part,
+                options.limits.max_worksheet_bytes,
+            )?
         };
-        let metadata = metadata_part
-            .map(|part| dynamic_metadata::parse(&mut archive, &part, options))
-            .transpose()?;
-        let mut plans = Vec::new();
-        let mut observed = 0;
-        let mut logical_cells = 0u64;
-        let mut formula_count = 0usize;
-        let mut table_budget = tables::Budget::default();
-        let mut table_names = HashSet::new();
-        for sheet in &sheets {
-            checkpoint(&options.cancel)?;
-            let data = if sheet.inert {
-                std::sync::Arc::new(inert_sheets::EMPTY.as_bytes().to_vec())
+        let counted = (observed, logical_cells);
+        let mut scanned = sheet::scan(
+            &data,
+            options,
+            if sheet.tables.is_empty() {
+                sheet::Mode::Plain
             } else {
-                package::read_part(
-                    &mut archive,
-                    &sheet.part,
-                    options.limits.max_worksheet_bytes,
-                )?
-            };
-            let counted = (observed, logical_cells);
-            let mut scanned = sheet::scan(
+                sheet::Mode::TablePlain
+            },
+            &mut observed,
+            &mut logical_cells,
+        )?;
+        if matches!(scanned, sheet::Scanned::NeedsIndex) {
+            // Dynamic cell metadata: index this sheet only.
+            (observed, logical_cells) = counted;
+            scanned = sheet::scan(
                 &data,
                 options,
-                if sheet.tables.is_empty() {
-                    sheet::Mode::Plain
-                } else {
-                    sheet::Mode::TablePlain
-                },
+                sheet::Mode::Indexed,
                 &mut observed,
                 &mut logical_cells,
             )?;
-            if matches!(scanned, sheet::Scanned::NeedsIndex) {
-                // Dynamic cell metadata: index this sheet only.
-                (observed, logical_cells) = counted;
-                scanned = sheet::scan(
-                    &data,
-                    options,
-                    sheet::Mode::Indexed,
-                    &mut observed,
-                    &mut logical_cells,
-                )?;
-            }
-            let sheet::Scanned::Done(mut scan) = scanned else {
-                return Err(unsupported("unindexed dynamic cell metadata", "worksheet"));
-            };
-            let mut table_ids = HashSet::new();
-            let mut tables = Vec::new();
-            for id in &scan.table_ids {
-                if !table_ids.insert(id) {
-                    return Err(unsupported("duplicate tablePart", &sheet.name));
-                }
-                let part = sheet.tables.get(id).ok_or_else(|| {
-                    unsupported("missing/wrong-kind table relationship", &sheet.name)
-                })?;
-                let table = tables::parse(&mut archive, part, options, &mut table_budget)?;
-                if !table_names.insert(table.name.to_lowercase()) {
-                    return Err(unsupported("table name collision", &table.name));
-                }
-                if tables
-                    .iter()
-                    .any(|t: &tables::Table| t.rect.intersects(table.rect))
-                {
-                    return Err(unsupported("overlapping tables", &table.name));
-                }
-                // Without a `<dimension>`, trailing empty table rows/columns are
-                // not serialized; admit them within the sheet limits, counting the
-                // grown logical area exactly as a declared dimension would be.
-                if !scan.has_dimension
-                    && (table.rect.last_row > scan.bounds.0 || table.rect.last_col > scan.bounds.1)
-                {
-                    let grown = (
-                        scan.bounds.0.max(table.rect.last_row),
-                        scan.bounds.1.max(table.rect.last_col),
-                    );
-                    if grown.1 > options.limits.max_columns {
-                        return Err(unsupported("worksheet width limit", &table.name));
-                    }
-                    logical_cells = (logical_cells
-                        - u64::from(scan.bounds.0) * u64::from(scan.bounds.1))
-                    .checked_add(u64::from(grown.0) * u64::from(grown.1))
-                    .ok_or_else(|| unsupported("logical area overflow", "workbook"))?;
-                    if logical_cells > options.limits.max_cells as u64 {
-                        return Err(unsupported("workbook logical cell limit", "workbook"));
-                    }
-                    scan.bounds = grown;
-                }
-                tables::validate(
-                    &table,
-                    &scan.cells,
-                    scan.index
-                        .as_ref()
-                        .map_or(scan.table_merges.as_slice(), |i| i.merges.as_slice()),
-                    scan.bounds,
-                    options,
-                )?;
-                tables.push(table);
-            }
-            if table_ids.len() != sheet.tables.len() {
-                return Err(unsupported("unreferenced table relationship", &sheet.name));
-            }
-            #[cfg(not(feature = "system-clock"))]
-            for cell in &scan.cells {
-                wall_clock_guard::validate(
-                    &cell.formula_text,
-                    &format!("{}!{}", sheet.name, cell.address()),
-                    options,
-                )?;
-            }
-            formula_count = formula_count
-                .checked_add(scan.cells.len())
-                .ok_or_else(|| unsupported("formula count overflow", "workbook"))?;
-            if formula_count > options.limits.max_formula_cells {
-                return Err(unsupported("formula cell count limit", "workbook"));
-            }
-            let ownership = match &scan.index {
-                Some(index) => {
-                    dynamic_metadata::own_sheet(index, &scan.cells, metadata.as_ref(), options)?
-                }
-                None => dynamic_metadata::SheetOwnership::default(),
-            };
-            plans.push(SheetPlan {
-                hidden_rows: scan.hidden_rows,
-                rows_hidden_by_default: scan.rows_hidden_by_default,
-                active_filters: scan.active_filters,
-                tables,
-                data,
-                cells: scan.cells,
-                index: scan.index,
-                ownership,
-                serialized: scan.serialized,
-                bounds: scan.bounds,
-            });
         }
-        if !table_names.is_empty() {
-            let workbook = package::read_part(
-                &mut archive,
-                "xl/workbook.xml",
-                options.limits.max_worksheet_bytes,
+        let sheet::Scanned::Done(mut scan) = scanned else {
+            return Err(unsupported("unindexed dynamic cell metadata", "worksheet"));
+        };
+        let mut table_ids = HashSet::new();
+        let mut tables = Vec::new();
+        for id in &scan.table_ids {
+            if !table_ids.insert(id) {
+                return Err(unsupported("duplicate tablePart", &sheet.name));
+            }
+            let part = sheet
+                .tables
+                .get(id)
+                .ok_or_else(|| unsupported("missing/wrong-kind table relationship", &sheet.name))?;
+            let table = tables::parse(&mut archive, part, options, &mut table_budget)?;
+            if !table_names.insert(table.name.to_lowercase()) {
+                return Err(unsupported("table name collision", &table.name));
+            }
+            if tables
+                .iter()
+                .any(|t: &tables::Table| t.rect.intersects(table.rect))
+            {
+                return Err(unsupported("overlapping tables", &table.name));
+            }
+            // Without a `<dimension>`, trailing empty table rows/columns are
+            // not serialized; admit them within the sheet limits, counting the
+            // grown logical area exactly as a declared dimension would be.
+            if !scan.has_dimension
+                && (table.rect.last_row > scan.bounds.0 || table.rect.last_col > scan.bounds.1)
+            {
+                let grown = (
+                    scan.bounds.0.max(table.rect.last_row),
+                    scan.bounds.1.max(table.rect.last_col),
+                );
+                if grown.1 > options.limits.max_columns {
+                    return Err(unsupported("worksheet width limit", &table.name));
+                }
+                logical_cells = (logical_cells
+                    - u64::from(scan.bounds.0) * u64::from(scan.bounds.1))
+                .checked_add(u64::from(grown.0) * u64::from(grown.1))
+                .ok_or_else(|| unsupported("logical area overflow", "workbook"))?;
+                if logical_cells > options.limits.max_cells as u64 {
+                    return Err(unsupported("workbook logical cell limit", "workbook"));
+                }
+                scan.bounds = grown;
+            }
+            tables::validate(
+                &table,
+                &scan.cells,
+                scan.index
+                    .as_ref()
+                    .map_or(scan.table_merges.as_slice(), |i| i.merges.as_slice()),
+                scan.bounds,
+                options,
             )?;
-            let table_name_list: Vec<String> = table_names.iter().cloned().collect();
-            xml::walk(&workbook, options, |path, node| {
-                if xml::path_is(
-                    path,
-                    xml::MAIN,
-                    &["workbook", "definedNames", "definedName"],
-                ) && let xml::Kind::Text(text) = &node.kind
-                    && text.contains('[')
-                {
-                    return Err(unsupported(
-                        "defined-name formula contains structured references",
-                        "table-bearing workbook",
-                    ));
-                }
-                if xml::path_is(
-                    path,
-                    xml::MAIN,
-                    &["workbook", "definedNames", "definedName"],
-                ) && let xml::Kind::Text(text) = &node.kind
-                {
-                    table_lowering::validate_defined_name(text, &table_name_list)?;
-                }
-                if xml::path_is(
-                    path,
-                    xml::MAIN,
-                    &["workbook", "definedNames", "definedName"],
-                ) && let Some(n) = node.value("name")
-                    && table_names.contains(&n.to_lowercase())
-                {
-                    return Err(unsupported("table/defined-name collision", n));
-                }
-                Ok(())
-            })?;
+            tables.push(table);
         }
-        // Every external reference read must map exactly to cached cells.
-        let external = links
-            .map(|links| external_links::plan(&links, &sheets, &plans, &defined_names, options))
-            .transpose()?;
-        Ok((
-            sheets,
-            date_system,
-            plans,
-            formula_count,
-            metadata,
-            external,
-        ))
-    })();
-    // The original eager payload audit precedes every semantic refusal. Keep
-    // that ordering, including corrupt unused members and combined failures.
-    archive.finish()?;
-    let (sheets, date_system, plans, formula_count, metadata, external) = result?;
+        if table_ids.len() != sheet.tables.len() {
+            return Err(unsupported("unreferenced table relationship", &sheet.name));
+        }
+        #[cfg(not(feature = "system-clock"))]
+        for cell in &scan.cells {
+            wall_clock_guard::validate(
+                &cell.formula_text,
+                &format!("{}!{}", sheet.name, cell.address()),
+                options,
+            )?;
+        }
+        formula_count = formula_count
+            .checked_add(scan.cells.len())
+            .ok_or_else(|| unsupported("formula count overflow", "workbook"))?;
+        if formula_count > options.limits.max_formula_cells {
+            return Err(unsupported("formula cell count limit", "workbook"));
+        }
+        let ownership = match &scan.index {
+            Some(index) => {
+                dynamic_metadata::own_sheet(index, &scan.cells, metadata.as_ref(), options)?
+            }
+            None => dynamic_metadata::SheetOwnership::default(),
+        };
+        plans.push(SheetPlan {
+            hidden_rows: scan.hidden_rows,
+            rows_hidden_by_default: scan.rows_hidden_by_default,
+            active_filters: scan.active_filters,
+            tables,
+            data,
+            cells: scan.cells,
+            index: scan.index,
+            ownership,
+            serialized: scan.serialized,
+            bounds: scan.bounds,
+        });
+    }
+    if !table_names.is_empty() {
+        let workbook = package::read_part(
+            &mut archive,
+            "xl/workbook.xml",
+            options.limits.max_worksheet_bytes,
+        )?;
+        let table_name_list: Vec<String> = table_names.iter().cloned().collect();
+        xml::walk(&workbook, options, |path, node| {
+            if xml::path_is(
+                path,
+                xml::MAIN,
+                &["workbook", "definedNames", "definedName"],
+            ) && let xml::Kind::Text(text) = &node.kind
+                && text.contains('[')
+            {
+                return Err(unsupported(
+                    "defined-name formula contains structured references",
+                    "table-bearing workbook",
+                ));
+            }
+            if xml::path_is(
+                path,
+                xml::MAIN,
+                &["workbook", "definedNames", "definedName"],
+            ) && let xml::Kind::Text(text) = &node.kind
+            {
+                table_lowering::validate_defined_name(text, &table_name_list)?;
+            }
+            if xml::path_is(
+                path,
+                xml::MAIN,
+                &["workbook", "definedNames", "definedName"],
+            ) && let Some(n) = node.value("name")
+                && table_names.contains(&n.to_lowercase())
+            {
+                return Err(unsupported("table/defined-name collision", n));
+            }
+            Ok(())
+        })?;
+    }
+    // Every external reference read must map exactly to cached cells.
+    let external = links
+        .map(|links| external_links::plan(&links, &sheets, &plans, &defined_names, options))
+        .transpose()?;
     Ok(SourceAdmission {
         archive,
         sheets,

@@ -70,7 +70,6 @@ fn rewrite(
     options: &XlsxRecalculateOptions,
 ) -> Result<Vec<u8>, crate::IoError> {
     let mut archive = package::admit(bytes, options)?;
-    archive.finish()?;
     package::rewrite(bytes, &mut archive, edits, options)
 }
 fn edits(replace: &[(&str, &[u8])], add: &[(&str, &[u8])]) -> Edits {
@@ -166,7 +165,7 @@ fn a_new_member_is_appended_and_old_records_and_payloads_are_preserved() {
     assert_eq!(h32(&output, new_end + 16), directory_start);
     assert_eq!(output[new_end + 20..], input[old_end + 20..]);
     // The output passes the same bounded admission audit as any input.
-    package::admit(&output, &options).unwrap().finish().unwrap();
+    package::admit(&output, &options).unwrap();
 }
 
 #[test]

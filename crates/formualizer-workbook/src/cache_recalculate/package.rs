@@ -8,123 +8,30 @@ use std::collections::{BTreeMap, HashSet};
 use std::io::{Cursor, Read};
 use zip::ZipArchive;
 
-type RawArchive<'a> = ZipArchive<Cursor<&'a [u8]>>;
-pub(crate) type Part = std::sync::Arc<Vec<u8>>;
-/// Payload proofs advance in original directory order, so CRC/expansion errors
-/// retain their priority even when XML consumers request parts out of order.
-pub(crate) struct Archive<'a> {
-    zip: RawArchive<'a>,
-    ledger: Vec<VerifiedPart>,
-    next: usize,
-    total: usize,
-    options: XlsxRecalculateOptions,
-    failure: Option<IoError>,
-    /// Output re-audit historically reads only discovery/metadata parts.
-    source_audit: bool,
-}
-#[derive(Default)]
-struct VerifiedPart {
-    bytes: Option<Part>,
-    expanded: u64,
-    consumed: usize,
-}
-impl<'a> std::ops::Deref for Archive<'a> {
-    type Target = RawArchive<'a>;
-    fn deref(&self) -> &Self::Target {
-        &self.zip
-    }
-}
-impl std::ops::DerefMut for Archive<'_> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.zip
-    }
-}
-impl Archive<'_> {
-    fn verify_next(&mut self) -> Result<(), IoError> {
-        let i = self.next;
-        let mut file = self
-            .zip
-            .by_index(i)
-            .map_err(|e| IoError::from_backend("zip", e))?;
-        if file.encrypted() {
-            return Err(unsupported("encrypted ZIP member", file.name()));
-        }
-        if file.name().starts_with("_xmlsignatures/") || file.name().ends_with("origin.sigs") {
-            return Err(unsupported("package digital signature", "XLSX package"));
-        }
-        if file.name().starts_with("xl/richData/") {
-            return Err(unsupported("rich value data", "XLSX package"));
-        }
-        #[cfg(test)]
-        PART_INFLATES.with(|counts| {
-            *counts
-                .borrow_mut()
-                .entry(file.name().to_owned())
-                .or_default() += 1
-        });
-        let capacity = usize::try_from(file.size())
-            .unwrap_or(self.options.limits.max_expanded_bytes)
-            .min(self.options.limits.max_expanded_bytes.saturating_add(1));
-        let mut bytes = Vec::with_capacity(capacity);
-        #[cfg(test)]
-        let initial_capacity = bytes.capacity();
-        let mut buffer = [0u8; 64 * 1024];
-        let mut member_bytes = 0u64;
-        loop {
-            checkpoint(&self.options.cancel)?;
-            let n = file.read(&mut buffer)?;
-            member_bytes += n as u64;
-            if n == 0 {
-                break;
-            }
-            self.total = self
-                .total
-                .checked_add(n)
-                .ok_or_else(|| unsupported("expanded byte overflow", "XLSX package"))?;
-            if self.total > self.options.limits.max_expanded_bytes {
-                return Err(unsupported("actual ZIP expansion limit", "XLSX package"));
-            }
-            bytes.extend_from_slice(&buffer[..n]);
-        }
-        if member_bytes != file.size() {
-            return Err(unsupported("ZIP expanded-size mismatch", file.name()));
-        }
-        #[cfg(test)]
-        if bytes.capacity() > initial_capacity {
-            PART_BUFFER_GROWTHS.with(|n| n.set(n.get().saturating_add(1)));
-        }
-        self.ledger[i].expanded = member_bytes;
-        self.ledger[i].bytes = Some(std::sync::Arc::new(bytes));
-        self.next += 1;
-        Ok(())
-    }
-    /// Mandatory even when semantic admission failed: payload failures came
-    /// first in the original eager audit. Unconsumed members are drained once.
-    pub(super) fn finish(&mut self) -> Result<(), IoError> {
-        if !self.source_audit {
-            return Ok(());
-        }
-        if let Some(error) = self.failure.take() {
-            return Err(error);
-        }
-        while self.next < self.zip.len() {
-            self.verify_next()?;
-        }
-        Ok(())
-    }
-}
+pub(crate) type Archive<'a> = ZipArchive<Cursor<&'a [u8]>>;
 #[cfg(test)]
 thread_local! {
     static PART_BUFFER_GROWTHS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static PART_INFLATES: std::cell::RefCell<BTreeMap<String, usize>> = const { std::cell::RefCell::new(BTreeMap::new()) };
+    static AUDIT_BUFFER_PEAK: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 #[cfg(test)]
 pub(super) fn take_part_buffer_growths() -> usize {
     PART_BUFFER_GROWTHS.with(|n| n.replace(0))
 }
 #[cfg(test)]
+fn record_inflate(name: &str) {
+    PART_INFLATES.with(|counts| {
+        *counts.borrow_mut().entry(name.to_owned()).or_default() += 1;
+    });
+}
+#[cfg(test)]
 pub(super) fn take_part_inflates() -> BTreeMap<String, usize> {
     PART_INFLATES.with(|counts| std::mem::take(&mut *counts.borrow_mut()))
+}
+#[cfg(test)]
+pub(super) fn take_audit_buffer_peak() -> usize {
+    AUDIT_BUFFER_PEAK.with(|peak| peak.replace(0))
 }
 #[derive(Debug)]
 pub(super) struct Relationship {
@@ -467,7 +374,7 @@ pub(super) fn audit_directory(
     })
 }
 /// Parse the audited directory with ZIP7 and confirm it agrees with the audit.
-fn open<'a>(bytes: &'a [u8], directory: &Directory) -> Result<RawArchive<'a>, IoError> {
+fn open<'a>(bytes: &'a [u8], directory: &Directory) -> Result<Archive<'a>, IoError> {
     let archive =
         ZipArchive::new(Cursor::new(bytes)).map_err(|e| IoError::from_backend("zip", e))?;
     if archive.offset() != 0
@@ -508,65 +415,75 @@ pub(super) fn admit<'a>(
     // Bound and audit the declared directory before ZIP7 allocates its
     // member index or parses extra fields.
     let directory = audit_directory(bytes, options)?;
-    let zip = open(bytes, &directory)?;
-    let ledger = (0..zip.len()).map(|_| VerifiedPart::default()).collect();
-    Ok(Archive {
-        zip,
-        ledger,
-        next: 0,
-        total: 0,
-        options: options.clone(),
-        failure: None,
-        source_audit: true,
-    })
+    let mut archive = open(bytes, &directory)?;
+    let mut total = 0usize;
+    let mut buffer = [0u8; 64 * 1024];
+    #[cfg(test)]
+    AUDIT_BUFFER_PEAK.with(|peak| peak.set(peak.get().max(buffer.len())));
+    for i in 0..archive.len() {
+        let mut file = archive
+            .by_index(i)
+            .map_err(|e| IoError::from_backend("zip", e))?;
+        if file.encrypted() {
+            return Err(unsupported("encrypted ZIP member", file.name()));
+        }
+        if file.name().starts_with("_xmlsignatures/") || file.name().ends_with("origin.sigs") {
+            return Err(unsupported("package digital signature", "XLSX package"));
+        }
+        if file.name().starts_with("xl/richData/") {
+            return Err(unsupported("rich value data", "XLSX package"));
+        }
+        #[cfg(test)]
+        record_inflate(file.name());
+        let mut member_bytes = 0u64;
+        loop {
+            checkpoint(&options.cancel)?;
+            let n = file.read(&mut buffer)?;
+            member_bytes += n as u64;
+            if n == 0 {
+                break;
+            }
+            total = total
+                .checked_add(n)
+                .ok_or_else(|| unsupported("expanded byte overflow", "XLSX package"))?;
+            if total > options.limits.max_expanded_bytes {
+                return Err(unsupported("actual ZIP expansion limit", "XLSX package"));
+            }
+        }
+        if member_bytes != file.size() {
+            return Err(unsupported("ZIP expanded-size mismatch", file.name()));
+        }
+    }
+    Ok(archive)
 }
 pub(crate) fn read_part(
     archive: &mut Archive<'_>,
     name: &str,
     limit: usize,
-) -> Result<Part, IoError> {
-    if !archive.source_audit {
-        // Preserve the old surgical output re-audit, not another full audit
-        // of worksheets that were already verified at source admission.
-        let file = archive
-            .zip
-            .by_name(name)
-            .map_err(|e| IoError::from_backend("zip", e))?;
-        let capacity = usize::try_from(file.size())
-            .unwrap_or(limit.saturating_add(1))
-            .min(limit.saturating_add(1));
-        let mut bytes = Vec::with_capacity(capacity);
-        file.take((limit as u64).saturating_add(1))
-            .read_to_end(&mut bytes)?;
-        if bytes.len() > limit {
-            return Err(unsupported("XML part byte limit", name));
-        }
-        return Ok(std::sync::Arc::new(bytes));
+) -> Result<Vec<u8>, IoError> {
+    let file = archive
+        .by_name(name)
+        .map_err(|e| IoError::from_backend("zip", e))?;
+    #[cfg(test)]
+    record_inflate(file.name());
+    // Package admission audited this member size; still bound both the
+    // reservation and the actual read, including the over-limit probe byte.
+    let capacity = usize::try_from(file.size())
+        .unwrap_or(limit.saturating_add(1))
+        .min(limit.saturating_add(1));
+    let mut bytes = Vec::with_capacity(capacity);
+    #[cfg(test)]
+    let initial_capacity = bytes.capacity();
+    file.take((limit as u64).saturating_add(1))
+        .read_to_end(&mut bytes)?;
+    #[cfg(test)]
+    if bytes.capacity() > initial_capacity {
+        PART_BUFFER_GROWTHS.with(|n| n.set(n.get().saturating_add(1)));
     }
-    let index = archive
-        .zip
-        .index_for_name(name)
-        .ok_or_else(|| IoError::from_backend("zip", zip::result::ZipError::FileNotFound))?;
-    while archive.next <= index && archive.failure.is_none() {
-        if let Err(error) = archive.verify_next() {
-            archive.failure = Some(error);
-        }
-    }
-    if archive.failure.is_some() {
-        // Never escapes SourceAdmission: finish returns the original failure,
-        // preserving ZIP priority over any earlier semantic admission error.
-        return Err(unsupported("payload verification pending", "XLSX package"));
-    }
-    let entry = &mut archive.ledger[index];
-    if entry.expanded > limit as u64 {
+    if bytes.len() > limit {
         return Err(unsupported("XML part byte limit", name));
     }
-    entry.consumed = entry.consumed.saturating_add(1);
-    entry
-        .bytes
-        .as_ref()
-        .cloned()
-        .ok_or_else(|| unsupported("unverified ZIP member", name))
+    Ok(bytes)
 }
 pub(super) fn relationships(
     archive: &mut Archive<'_>,
@@ -1129,26 +1046,12 @@ pub(super) fn append_child(
 /// sheet metadata part, read in full (CRC-checked) and parsed.
 pub(super) fn check_output(bytes: &[u8], options: &XlsxRecalculateOptions) -> Result<(), IoError> {
     let directory = audit_directory(bytes, options)?;
-    let zip = open(bytes, &directory)?;
-    let ledger = (0..zip.len()).map(|_| VerifiedPart::default()).collect();
-    let mut archive = Archive {
-        zip,
-        ledger,
-        next: 0,
-        total: 0,
-        options: options.clone(),
-        failure: None,
-        source_audit: false,
-    };
-    let result = (|| {
-        let part = discover(&mut archive, options)?
-            .metadata
-            .ok_or_else(|| unsupported("unrelated added metadata part", "XLSX output"))?;
-        super::dynamic_metadata::parse(&mut archive, &part, options)?;
-        Ok(())
-    })();
-    archive.finish()?;
-    result
+    let mut archive = open(bytes, &directory)?;
+    let part = discover(&mut archive, options)?
+        .metadata
+        .ok_or_else(|| unsupported("unrelated added metadata part", "XLSX output"))?;
+    super::dynamic_metadata::parse(&mut archive, &part, options)?;
+    Ok(())
 }
 /// Exactly zero or one internal sheetMetadata relationship whose target
 /// exists; no metadata member may exist without that relationship.
