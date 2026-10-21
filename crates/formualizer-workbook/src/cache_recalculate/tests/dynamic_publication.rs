@@ -40,6 +40,21 @@ fn hidden_row_guard_only_reconstructs_reducer_formulas() {
     }
 }
 
+#[test]
+fn deferred_hidden_reducers_keep_the_existing_refusal() {
+    let rows = "<row r=\"1\"><c r=\"A1\"><v>2</v></c><c r=\"B1\"><f>SUBTOTAL(9,A1:A2)</f><v>99</v></c></row><row r=\"2\" hidden=\"1\"><c r=\"A2\"><v>3</v></c></row>";
+    let bytes = pack(&package("A1:B2", rows, ""));
+    let mut options = XlsxRecalculateOptions::default();
+    options.eval_config.defer_graph_building = true;
+    let error = recalculate_xlsx_bytes(&bytes, options)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("hidden row") && error.contains("B1"),
+        "{error}"
+    );
+}
+
 fn sheet_xml(bytes: &[u8]) -> String {
     let mut z = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
     let mut s = String::new();

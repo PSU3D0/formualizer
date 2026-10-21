@@ -380,10 +380,15 @@ pub(super) fn validate(
             )?;
         }
     }
+    // Deferred packages do not yet have arena call bits. Preserve the old
+    // read-only inspection path rather than treating unavailable metadata as
+    // proof that a staged formula cannot contain a visibility reducer.
+    let prepared = !engine.has_staged_formulas();
     for (sheet, plan) in sheets.iter().zip(plans) {
         for cell in &plan.cells {
             checkpoint(&options.cancel)?;
-            if !engine.formula_calls_visibility_reducer(&sheet.name, cell.row, cell.col) {
+            if prepared && !engine.formula_calls_visibility_reducer(&sheet.name, cell.row, cell.col)
+            {
                 continue;
             }
             let address = formualizer_common::CellAddress::new(&sheet.name, cell.row, cell.col)
