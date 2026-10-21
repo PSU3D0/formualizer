@@ -19,6 +19,14 @@
 //! wrapped in an explicit `@(...)`, which the engine already evaluates. The
 //! stored `<f>` text is untouched.
 mod classes;
+#[cfg(test)]
+thread_local! {
+    static CHAIN_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+#[cfg(test)]
+pub(super) fn take_chain_reads() -> usize {
+    CHAIN_READS.with(|n| n.replace(0))
+}
 
 use super::{IoError, Patch, SheetPlan, checkpoint, package, xml};
 use crate::XlsxRecalculateOptions;
@@ -613,6 +621,55 @@ impl CalcChain {
 
 /// Read the calc chain. It is evidence only: a missing, malformed or
 /// oversized part yields no evidence rather than a refusal.
+/// Only legacy scalar formulas that pass the lowerer's own cheap screen
+/// need calc-chain evidence. Keep cancellation responsive on scalar-only files.
+pub(super) fn needs_calc_chain(
+    plans: &[SheetPlan],
+    options: &XlsxRecalculateOptions,
+) -> Result<bool, IoError> {
+    for plan in plans {
+        for cell in &plan.cells {
+            checkpoint(&options.cancel)?;
+            if cell.formula_kind != "array"
+                && cell.cm().is_none()
+                && !plan.ownership.children.contains_key(&(cell.row, cell.col))
+                && may_intersect(&cell.formula_text)
+            {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+#[cfg(test)]
+#[test]
+fn cheap_chain_coordinates_preserve_legacy_parser_acceptance() {
+    let by_id = BTreeMap::from([(1, 0)]);
+    for reference in [
+        "B1",
+        "b1",
+        "$B$1",
+        "XFD1048576",
+        "A0001",
+        "A0",
+        "XFE1",
+        "A1048577",
+        "bad",
+    ] {
+        let expected = formualizer_common::coord::parse_a1_1based(reference).ok();
+        let xml = format!(
+            "<calcChain xmlns=\"{}\"><c i=\"1\" r=\"{reference}\"/></calcChain>",
+            xml::MAIN
+        );
+        let chain = read_chain(xml.as_bytes(), &by_id, 1, &Default::default()).unwrap();
+        assert_eq!(chain.is_some(), expected.is_some(), "{reference}");
+        if let (Some(chain), Some((row, col, _, _))) = (chain, expected) {
+            assert!(chain.contains(0, row, col), "{reference}");
+        }
+    }
+}
+
 pub(super) fn calc_chain(
     archive: &mut package::Archive<'_>,
     part: Option<&str>,
@@ -644,6 +701,8 @@ fn read_chain(
 ) -> Result<Option<CalcChain>, IoError> {
     use quick_xml::events::Event;
     use quick_xml::name::ResolveResult;
+    #[cfg(test)]
+    CHAIN_READS.with(|n| n.set(n.get().saturating_add(1)));
     let Ok(text) = std::str::from_utf8(data) else {
         return Ok(None);
     };
@@ -705,9 +764,18 @@ fn read_chain(
             let cell = r
                 .as_deref()
                 .and_then(|r| std::str::from_utf8(r).ok())
-                .and_then(|r| formualizer_common::coord::parse_a1_1based(r).ok());
+                .and_then(|r| {
+                    crate::xlsx_xml::plain_coord(r).or_else(|| {
+                        // Preserve the old acceptance of noncanonical spellings
+                        // (e.g. absolute coordinates); ordinary OOXML takes the
+                        // allocation-free parser above.
+                        formualizer_common::coord::parse_a1_1based(r)
+                            .ok()
+                            .map(|(row, col, _, _)| (row, col))
+                    })
+                });
             match (current, cell) {
-                (Some(sheet), Some((row, col, _, _))) => {
+                (Some(sheet), Some((row, col))) => {
                     chain.cells[sheet].insert((row, col));
                 }
                 _ => return Ok(None),

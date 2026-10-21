@@ -3,6 +3,48 @@ use crate::engine::{DependencyGraph, EvalConfig};
 use formualizer_common::PackedSheetCell;
 
 #[test]
+fn all_sheet_indexes_visit_coordinates_once_even_with_many_empty_sheets() {
+    for flush in [false, true] {
+        let mut graph = DependencyGraph::new_with_config(EvalConfig::default());
+        let names: Vec<_> = (0..32).map(|i| format!("Sheet{i}")).collect();
+        let ids: Vec<_> = names.iter().map(|name| graph.sheet_id_mut(name)).collect();
+        graph.set_first_load_assume_new(true);
+        let packed: Vec<_> = [(ids[0], 1000), (ids[1], 700), (ids[2], 300)]
+            .into_iter()
+            .flat_map(|(id, count)| {
+                (0..count).map(move |row| PackedSheetCell::try_new(id, row, 1).unwrap())
+            })
+            .collect();
+        let (vertices, _) = graph.ensure_vertices_batch_packed_ordered(&packed);
+        if flush {
+            graph.set_first_load_assume_new(false);
+        }
+        graph.sheet_index_finalize_visits = 0;
+        graph.finalize_all_sheet_indexes(names.iter().map(String::as_str));
+        assert_eq!(
+            graph.sheet_index_finalize_visits,
+            packed.len(),
+            "flush={flush}"
+        );
+        for (id, count) in [(ids[0], 1000), (ids[1], 700), (ids[2], 300)] {
+            assert_eq!(graph.sheet_index(id).unwrap().len(), count);
+        }
+        for (cell, vertex) in packed.iter().zip(vertices) {
+            assert_eq!(
+                graph
+                    .sheet_index(cell.sheet_id())
+                    .unwrap()
+                    .vertices_in_row_range(cell.row0(), cell.row0()),
+                vec![vertex],
+            );
+        }
+        for id in &ids[3..] {
+            assert_eq!(graph.sheet_index(*id).unwrap().len(), 0);
+        }
+    }
+}
+
+#[test]
 fn packed_load_mappings_flush_to_cell_lookup_single_sheet() {
     let mut graph = DependencyGraph::new_with_config(EvalConfig::default());
     let sid = graph.sheet_id_mut("Sheet1");

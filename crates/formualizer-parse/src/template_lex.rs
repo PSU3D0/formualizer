@@ -1,7 +1,7 @@
 //! Conservative lexical recognition of relocatable formula templates.
 //!
-//! A formula in the supported subset is fixed bytes plus local A1 cell and
-//! finite range references. [`lex_template`] finds those reference slots
+//! A formula in the supported subset is fixed bytes plus A1 cell and finite
+//! range coordinates, optionally preceded by invariant sheet qualifiers. [`lex_template`] finds those reference slots
 //! with the parser's own tokenizer, and [`TemplateLexeme::match_relocated`]
 //! decides, without parsing, whether another formula's text is exactly the
 //! template with every reference relocated by a row/column offset. A load
@@ -9,12 +9,14 @@
 //! engine certifies the template's parsed tree against its slots before it
 //! trusts a match.
 //!
-//! The subset is deliberately narrow: no whitespace, names, sheet or
-//! external qualifiers, whole rows/columns, structured references, arrays,
-//! error literals, `@`, `#`, unions or intersections, and only an allowlist
-//! of pure functions. Reference spelling must be canonical (uppercase
-//! letters, no leading zeros), so a relocated reference has exactly one
-//! spelling. Anything else is not a template; its copies are parsed.
+//! Whitespace, defined names, sheet qualifiers, `@` and general functions
+//! are fixed bytes. External references, whole rows/columns, structured
+//! references, arrays, error literals, `#`, unions and intersections remain
+//! excluded. Coordinate spelling must be canonical (uppercase letters, no
+//! leading zeros), so a relocated coordinate has exactly one spelling.
+//! This is a lexical envelope, not an AST certification: callers must check
+//! its slots against the already parsed tree and reject structural rewrites
+//! or node/reference kinds their family comparator cannot instantiate.
 
 use crate::tokenizer::{TokenSubType, TokenType, tokenize_spans_with_limits};
 use crate::types::FormulaDialect;
@@ -22,71 +24,7 @@ use crate::types::FormulaDialect;
 const MAX_ROW: u32 = 1_048_576;
 const MAX_COL: u32 = 16_384;
 
-/// Functions a template may call: pure, non-volatile, not reference
-/// returning and not dependent on the calling cell.
-const FUNCTIONS: &[&str] = &[
-    "ABS",
-    "AND",
-    "AVERAGE",
-    "AVERAGEIF",
-    "AVERAGEIFS",
-    "CHOOSE",
-    "CONCATENATE",
-    "COUNT",
-    "COUNTA",
-    "COUNTBLANK",
-    "COUNTIF",
-    "COUNTIFS",
-    "DATE",
-    "DAY",
-    "EXACT",
-    "EXP",
-    "FIND",
-    "HLOOKUP",
-    "IF",
-    "IFERROR",
-    "INT",
-    "ISBLANK",
-    "ISERR",
-    "ISERROR",
-    "ISNA",
-    "ISNUMBER",
-    "ISTEXT",
-    "LEFT",
-    "LEN",
-    "LN",
-    "LOWER",
-    "MATCH",
-    "MAX",
-    "MID",
-    "MIN",
-    "MOD",
-    "MONTH",
-    "NOT",
-    "OR",
-    "POWER",
-    "PRODUCT",
-    "PROPER",
-    "RIGHT",
-    "ROUND",
-    "ROUNDDOWN",
-    "ROUNDUP",
-    "SEARCH",
-    "SIGN",
-    "SQRT",
-    "SUBSTITUTE",
-    "SUM",
-    "SUMIF",
-    "SUMIFS",
-    "SUMPRODUCT",
-    "TRIM",
-    "UPPER",
-    "VALUE",
-    "VLOOKUP",
-    "YEAR",
-];
-
-/// One endpoint of a local A1 reference: 1-based coordinates and `$` flags.
+/// One endpoint's A1 coordinates: 1-based coordinates and `$` flags.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct A1Point {
     pub row: u32,
@@ -102,7 +40,8 @@ pub enum SlotRef {
     Range(A1Point, A1Point),
 }
 
-/// A reference token of the template: its byte span and referent.
+/// A coordinate slot of the template: its byte span and referent.
+/// Any sheet qualifier is outside the span and remains fixed text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RefSlot {
     pub start: u32,
@@ -195,30 +134,13 @@ pub fn lex_template(formula: &str) -> Option<TemplateLexeme> {
     if body.is_empty() || formula.len() > u32::MAX as usize {
         return None;
     }
-    // Cheap byte screen before tokenizing: characters that only occur in
-    // excluded syntax (outside string literals they mean whitespace,
-    // qualifiers, structured references, arrays, `#` or `@`).
+    // Cheap byte screen before tokenizing: exclude structured/external
+    // references, arrays, error/spill syntax and array row separators.
     let mut in_string = false;
     for &b in body.as_bytes() {
         if b == b'"' {
             in_string = !in_string;
-        } else if !in_string
-            && matches!(
-                b,
-                b' ' | b'\t'
-                    | b'\r'
-                    | b'\n'
-                    | b'!'
-                    | b'\''
-                    | b'['
-                    | b']'
-                    | b'{'
-                    | b'}'
-                    | b'#'
-                    | b'@'
-                    | b';'
-            )
-        {
+        } else if !in_string && matches!(b, b'[' | b']' | b'{' | b'}' | b'#' | b';') {
             return None;
         }
     }
@@ -241,15 +163,33 @@ pub fn lex_template(formula: &str) -> Option<TemplateLexeme> {
             }
             (TokenType::Operand, TokenSubType::Text | TokenSubType::Logical) => {}
             (TokenType::Operand, TokenSubType::Range) => {
-                slots.push(RefSlot {
-                    start: span.start as u32,
-                    end: span.end as u32,
-                    reference: canonical_reference(text)?,
-                });
+                // A qualifier is invariant source text; only its coordinate
+                // suffix relocates. Other range operands may be invariant
+                // defined names. The engine must certify every parsed leaf
+                // against these slots before trusting this lexical envelope.
+                let (prefix_len, coordinates) =
+                    text.rsplit_once('!').map_or((0, text), |(_, suffix)| {
+                        (text.len().saturating_sub(suffix.len()), suffix)
+                    });
+                if let Some(reference) = canonical_reference(coordinates) {
+                    if text.get(..prefix_len)?.contains(':') {
+                        return None;
+                    }
+                    slots.push(RefSlot {
+                        start: span.start.checked_add(prefix_len)? as u32,
+                        end: span.end as u32,
+                        reference,
+                    });
+                } else if !matches!(
+                    crate::parser::ReferenceType::from_string(text).ok()?,
+                    crate::parser::ReferenceType::NamedRange(_)
+                ) {
+                    return None;
+                }
             }
             (TokenType::Func, TokenSubType::Open) => {
                 let name = text.strip_suffix('(')?;
-                if !FUNCTIONS.iter().any(|f| f.eq_ignore_ascii_case(name)) {
+                if name.trim().is_empty() {
                     return None;
                 }
                 open.push(true);
@@ -271,7 +211,7 @@ pub fn lex_template(formula: &str) -> Option<TemplateLexeme> {
                 }
             }
             (TokenType::OpPrefix, _) => {
-                if !matches!(text, "+" | "-") {
+                if !matches!(text, "+" | "-" | "@") {
                     return None;
                 }
             }
@@ -288,6 +228,7 @@ pub fn lex_template(formula: &str) -> Option<TemplateLexeme> {
                     return None;
                 }
             }
+            (TokenType::Whitespace, _) => {}
             _ => return None,
         }
     }
@@ -497,17 +438,13 @@ mod tests {
         for formula in [
             "A1",
             "=",
-            "=A1 + B1",
             "=A1 B1",
             "=SUM((A1,B1))",
-            "=Sheet1!A1",
-            "='Sheet 1'!A1",
             "=Sheet1:Sheet3!A1",
             "=[1]Sheet1!A1",
             "=Table1[Col]",
             "=[@Col]",
             "=A1#",
-            "=@A1",
             "={1,2;3,4}",
             "=SUM({1,2})",
             "=#REF!",
@@ -516,25 +453,7 @@ mod tests {
             "=A1:B",
             "=a1",
             "=A01",
-            "=A0",
-            "=XFE1",
-            "=A1048577",
             "=B2:A1",
-            "=TAXRATE",
-            "=MyName+1",
-            "=R1C1",
-            "=RC",
-            "=_A1",
-            "=A1_name",
-            "=name.with.dots",
-            "=LOG10(A1)",
-            "=ROW()",
-            "=COLUMN(A1)",
-            "=INDIRECT(\"A1\")",
-            "=OFFSET(A1,1,1)",
-            "=NOW()",
-            "=_xlfn.IFS(A1,1)",
-            "=MYFUNC(A1)",
             "=1E10",
             "=1e+10*A1",
             "=A1:INDEX(B1:B3,1)",
@@ -545,13 +464,39 @@ mod tests {
     }
 
     #[test]
+    fn qualified_slots_leave_names_whitespace_and_functions_byte_exact() {
+        let root = "=SPDVOL( Sheet1!A1, 'Sheet 1'!$B2, Rate, @(C1:C10))";
+        let follower = "=SPDVOL( Sheet1!A2, 'Sheet 1'!$B3, Rate, @(C2:C11))";
+        assert_eq!(
+            slots(root),
+            Some(vec!["A1".into(), "$B2".into(), "C1:C10".into()])
+        );
+        let lexical = lex_template(root).unwrap();
+        assert_eq!(
+            lexical.match_relocated(root, follower, 1, 0),
+            RelocatedMatch::Match
+        );
+        for changed in [
+            follower.replace("Rate", "RATE"),
+            follower.replace(" Sheet1", "Sheet1"),
+            follower.replace("SPDVOL", "OTHER"),
+            follower.replace("Sheet1!", "Sheet2!"),
+        ] {
+            assert_eq!(
+                lexical.match_relocated(root, &changed, 1, 0),
+                RelocatedMatch::Mismatch
+            );
+        }
+    }
+
+    #[test]
     fn tax2024_and_function_like_names_follow_the_tokenizer() {
         // TAX2024 is an in-grid cell (column TAX), not a name.
         assert_eq!(slots("=TAX2024*2"), Some(vec!["TAX2024".into()]));
         // XFD is the last column.
         assert_eq!(slots("=XFD1048576"), Some(vec!["XFD1048576".into()]));
         // A function-shaped atom is a function call, never a reference.
-        assert_eq!(lex_template("=TAX2024(1)"), None);
+        assert_eq!(slots("=TAX2024(1)"), Some(vec![]));
     }
 
     #[test]

@@ -19,6 +19,7 @@ c6_calibration = [
   "dep:sheetport-spec",
 ]
 dhat-heap = ["dep:dhat"]
+publication_allocations = ["formualizer_runner", "dhat-heap", "formualizer-workbook/xlsx-recalc"]
 perf_instrumentation = ["formualizer-workbook/perf_instrumentation"]
 ironcalc_runner = ["dep:ironcalc"]
 # Program 1 M1a corpus harness for the unified authority; never default.

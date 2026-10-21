@@ -36,8 +36,8 @@ pub(crate) mod name_references;
 
 use compressed_evidence::{EvidenceRecord, MonotonicFormulaEvidence};
 use formula_replay::{
-    CalamineDeferredFormulaReplay, FormulaReplaySpool, FormulaSpoolLimits,
-    HybridFormulaReplaySpool, SpoolFormulaRecord, replay_spool_per_cell_filtered_with_family,
+    CalamineDeferredFormulaReplay, FormulaReplaySpool, FormulaReplayState, FormulaSpoolLimits,
+    HybridFormulaReplaySpool, OwnedSpoolFormulaRecord, replay_spool_per_cell_filtered_with_family,
 };
 
 struct SharedFile {
@@ -1017,16 +1017,21 @@ impl CalamineAdapter {
         let spill_files_remaining = spool_limits
             .max_formula_spool_files_per_workbook
             .saturating_sub(workbook_spool_usage.files);
-        let mut formula_spool = HybridFormulaReplaySpool::new(FormulaSpoolLimits {
-            sheet_bytes: spool_limits.max_formula_spool_bytes_per_sheet,
-            workbook_bytes_remaining,
-            workbook_bytes_used: workbook_spool_usage.bytes,
-            memory_prefix_bytes: spool_limits.formula_spool_memory_prefix_bytes,
-            memory_only_bytes: spool_limits.max_formula_spool_memory_bytes,
-            allow_disk: spool_limits.formula_spool_disk_policy
-                == FormulaSpoolDiskPolicy::NativeSpill,
-            spill_files_remaining,
-            spill_files_limit: spool_limits.max_formula_spool_files_per_workbook,
+        let eager_staging = !engine.config.defer_graph_building
+            && engine.config.formula_plane_mode == formualizer_eval::engine::FormulaPlaneMode::Off;
+        let mut eager_replay = eager_staging.then(FormulaReplayState::default);
+        let mut formula_spool = (!eager_staging).then(|| {
+            HybridFormulaReplaySpool::new(FormulaSpoolLimits {
+                sheet_bytes: spool_limits.max_formula_spool_bytes_per_sheet,
+                workbook_bytes_remaining,
+                workbook_bytes_used: workbook_spool_usage.bytes,
+                memory_prefix_bytes: spool_limits.formula_spool_memory_prefix_bytes,
+                memory_only_bytes: spool_limits.max_formula_spool_memory_bytes,
+                allow_disk: spool_limits.formula_spool_disk_policy
+                    == FormulaSpoolDiskPolicy::NativeSpill,
+                spill_files_remaining,
+                spill_files_limit: spool_limits.max_formula_spool_files_per_workbook,
+            })
         });
         let mut last_formula_coord = None;
         let mut shared_formula_tags = 0usize;
@@ -1080,7 +1085,7 @@ impl CalamineAdapter {
                     col: col0,
                 };
                 let source_sequence = formula_count as u64;
-                match metadata {
+                let source_record = match metadata {
                     XlsxFormulaMetadata::Normal { formula } => {
                         if let Some(coordinates) = deferred_source_coordinates.as_mut() {
                             coordinates.push((coord0, None));
@@ -1090,11 +1095,11 @@ impl CalamineAdapter {
                             SourceFormulaOrder::new(source_sequence),
                             EvidenceRecord::Ordinary,
                         );
-                        formula_spool.append(SpoolFormulaRecord::Ordinary {
+                        OwnedSpoolFormulaRecord::Ordinary {
                             sequence: source_sequence,
                             coord0,
-                            text: &formula,
-                        })
+                            text: formula,
+                        }
                     }
                     XlsxFormulaMetadata::Shared {
                         shared_index,
@@ -1128,13 +1133,13 @@ impl CalamineAdapter {
                                 text: &formula,
                             },
                         );
-                        formula_spool.append(SpoolFormulaRecord::SharedAnchor {
+                        OwnedSpoolFormulaRecord::SharedAnchor {
                             sequence: source_sequence,
                             coord0,
                             shared_index,
                             declared_range,
-                            text: &formula,
-                        })
+                            text: formula,
+                        }
                     }
                     XlsxFormulaMetadata::SharedDerived { shared_index } => {
                         shared_formula_tags += 1;
@@ -1150,11 +1155,11 @@ impl CalamineAdapter {
                             SourceFormulaOrder::new(source_sequence),
                             EvidenceRecord::Descendant { family },
                         );
-                        formula_spool.append(SpoolFormulaRecord::SharedDescendant {
+                        OwnedSpoolFormulaRecord::SharedDescendant {
                             sequence: source_sequence,
                             coord0,
                             shared_index,
-                        })
+                        }
                     }
                     _ => {
                         if let Some(coordinates) = deferred_source_coordinates.as_mut() {
@@ -1165,13 +1170,39 @@ impl CalamineAdapter {
                             SourceFormulaOrder::new(source_sequence),
                             EvidenceRecord::Unsupported,
                         );
-                        formula_spool.append(SpoolFormulaRecord::Unsupported {
+                        OwnedSpoolFormulaRecord::Unsupported {
                             sequence: source_sequence,
                             coord0,
-                        })
+                        }
                     }
+                };
+                if let Some(spool) = formula_spool.as_mut() {
+                    spool.append(source_record.as_borrowed()).map_err(|error| {
+                        calamine::Error::Io(std::io::Error::other(error.to_string()))
+                    })?;
+                } else if let Some(state) = eager_replay.as_mut() {
+                    state.emit_record(
+                        source_record,
+                        sheet,
+                        |_, _| true,
+                        |_, coord, formula, shared_index| {
+                            Self::cancellation_checkpoint(cancel)?;
+                            Self::stage_formula(
+                                engine,
+                                sheet,
+                                (coord.row, coord.col),
+                                if refused_external_formulas.contains(&(coord.row, coord.col)) {
+                                    "#REF!"
+                                } else {
+                                    formula
+                                },
+                                shared_index,
+                                debug,
+                                &mut formula_staging,
+                            )
+                        },
+                    )?;
                 }
-                .map_err(|error| calamine::Error::Io(std::io::Error::other(error.to_string())))?;
                 last_formula_coord = Some((row, col));
                 if let Some(state) = dense.as_mut()
                     && state.row_started
@@ -1358,21 +1389,28 @@ impl CalamineAdapter {
         let formula_spool_bytes = if formula_count == 0 {
             0
         } else {
-            formula_spool.encoded_bytes()
+            formula_spool
+                .as_ref()
+                .map_or(0, |spool| spool.encoded_bytes())
         };
-        let formula_spool_spilled = formula_spool.spilled();
-        formula_source_report.source_formula_records_spooled = formula_count as u64;
+        let formula_spool_spilled = formula_spool.as_ref().is_some_and(|spool| spool.spilled());
+        formula_source_report.source_formula_records_spooled = if eager_staging {
+            0
+        } else {
+            formula_count as u64
+        };
         formula_source_report.source_spool_encoded_bytes = formula_spool_bytes;
-        formula_source_report.source_spool_peak_memory_bytes = formula_spool.peak_memory_bytes();
+        formula_source_report.source_spool_peak_memory_bytes = formula_spool
+            .as_ref()
+            .map_or(0, |spool| spool.peak_memory_bytes());
         formula_source_report.source_spool_spilled_bytes = if formula_spool_spilled {
             formula_spool_bytes
         } else {
             0
         };
         formula_source_report.source_spool_spill_files = u64::from(formula_spool_spilled);
-        let _formula_spool_storage = formula_spool.storage_kind();
-        debug_assert!(formula_count == 0 || formula_spool_bytes >= 5);
-        let mut formula_spool = Some(formula_spool);
+        let _formula_spool_storage = formula_spool.as_ref().map(|spool| spool.storage_kind());
+        debug_assert!(eager_staging || formula_count == 0 || formula_spool_bytes >= 5);
         let direct_preparation = if engine.config.formula_plane_mode
             == formualizer_eval::engine::FormulaPlaneMode::AuthoritativeExperimental
             && !engine.config.defer_graph_building
@@ -1400,7 +1438,7 @@ impl CalamineAdapter {
             None
         };
         Self::cancellation_checkpoint(cancel)?;
-        if direct_preparation.is_none() && !engine.config.defer_graph_building {
+        if direct_preparation.is_none() && !engine.config.defer_graph_building && !eager_staging {
             formula_source_report.source_spool_replays = 1;
             let compare_shadow = engine.config.formula_plane_mode
                 == formualizer_eval::engine::FormulaPlaneMode::Shadow;
@@ -3473,10 +3511,6 @@ where
                     engine.source_family_counters().debug_line()
                 );
             }
-            for n in &names {
-                engine.finalize_sheet_index(n);
-            }
-
             self.load_stats = AdapterLoadStats {
                 formula_cells_observed: Some(total_formulas as u64),
                 value_cells_observed: Some(total_value_cells_observed as u64),
@@ -3495,6 +3529,10 @@ where
         engine.config.range_expansion_limit = prev_range_limit;
         engine.config.defer_graph_building = prev_deferred;
         engine.config.formula_plane_mode = prev_formula_plane;
+        if load_result.is_ok() {
+            // Leaving the first-load scope flushes packed mappings first.
+            engine.finalize_all_sheet_indexes(names.iter().map(String::as_str));
+        }
         load_result
     }
 }

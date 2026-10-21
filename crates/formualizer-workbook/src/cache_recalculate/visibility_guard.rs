@@ -5,6 +5,14 @@ use super::{IoError, SheetPlan, XlsxRecalculateOptions, checkpoint, package, uns
 use crate::workbook::WBResolver;
 use formualizer_eval::engine::{Engine, named_range::NamedDefinition};
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
+#[cfg(test)]
+thread_local! {
+    static INSPECTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+#[cfg(test)]
+pub(super) fn take_inspections() -> usize {
+    INSPECTIONS.with(|n| n.replace(0))
+}
 fn hidden(
     sheets: &[package::Sheet],
     plans: &[SheetPlan],
@@ -372,11 +380,21 @@ pub(super) fn validate(
             )?;
         }
     }
+    // Deferred packages do not yet have arena call bits. Preserve the old
+    // read-only inspection path rather than treating unavailable metadata as
+    // proof that a staged formula cannot contain a visibility reducer.
+    let prepared = !engine.has_staged_formulas();
     for (sheet, plan) in sheets.iter().zip(plans) {
         for cell in &plan.cells {
             checkpoint(&options.cancel)?;
+            if prepared && !engine.formula_calls_visibility_reducer(&sheet.name, cell.row, cell.col)
+            {
+                continue;
+            }
             let address = formualizer_common::CellAddress::new(&sheet.name, cell.row, cell.col)
                 .map_err(|e| IoError::from_backend("xlsx-coordinate", e))?;
+            #[cfg(test)]
+            INSPECTIONS.with(|n| n.set(n.get().saturating_add(1)));
             let formula = engine
                 .inspect_cell(
                     &address,

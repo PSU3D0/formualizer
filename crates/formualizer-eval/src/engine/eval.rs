@@ -4898,6 +4898,12 @@ where
         self.graph.finalize_sheet_index(sheet);
     }
 
+    /// Rebuild the requested sheet indexes in a single coordinate-map pass.
+    #[doc(hidden)]
+    pub fn finalize_all_sheet_indexes<'a>(&mut self, sheets: impl IntoIterator<Item = &'a str>) {
+        self.graph.finalize_all_sheet_indexes(sheets);
+    }
+
     /// Execute a named Engine action.
     ///
     /// Ticket 614 introduces this as the stable Engine-level transaction surface.

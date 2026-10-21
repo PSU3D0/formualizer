@@ -16,11 +16,89 @@ use std::io::{Cursor, Read};
 
 type Parts = BTreeMap<String, String>;
 
+#[test]
+fn hidden_row_guard_only_reconstructs_reducer_formulas() {
+    use super::super::visibility_guard::take_inspections;
+    for (formula, expected, refused) in [
+        ("SUM(A1:A2)", 0, false),
+        ("SUBTOTAL(9,A3:A3)", 1, false),
+        ("SUBTOTAL(9,A1:A2)", 1, true),
+        ("AGGREGATE(9,0,A1:A2)", 1, true),
+        ("_xlfn._xlws.SUBTOTAL(109,A1:A2)", 1, true),
+        ("_xlws._xlfn.SUBTOTAL(109,A1:A2)", 1, true),
+        ("_xll.AGGREGATE(9,0,A1:A2)", 1, true),
+        ("_XLL._XLWS._XLFN.SUBTOTAL(109,A1:A2)", 1, true),
+        ("FOO.SUBTOTAL(9,A1:A2)", 1, true),
+    ] {
+        let rows = format!(
+            "<row r=\"1\"><c r=\"A1\"><v>2</v></c><c r=\"B1\"><f>{formula}</f><v>99</v></c><c r=\"C1\"><f>B1+1</f><v>99</v></c></row><row r=\"2\" hidden=\"1\"><c r=\"A2\"><v>3</v></c></row><row r=\"3\"><c r=\"A3\"><v>4</v></c></row>"
+        );
+        take_inspections();
+        let result =
+            recalculate_xlsx_bytes(&pack(&package("A1:C3", &rows, "")), Default::default());
+        assert_eq!(take_inspections(), expected, "{formula}");
+        assert_eq!(result.is_err(), refused, "{formula}: {result:?}");
+        if let Err(error) = result {
+            assert!(error.to_string().contains("hidden row"));
+            assert!(error.to_string().contains("B1"));
+        }
+    }
+}
+
+#[test]
+fn deferred_hidden_reducers_keep_the_existing_refusal() {
+    let rows = "<row r=\"1\"><c r=\"A1\"><v>2</v></c><c r=\"B1\"><f>SUBTOTAL(9,A1:A2)</f><v>99</v></c></row><row r=\"2\" hidden=\"1\"><c r=\"A2\"><v>3</v></c></row>";
+    let bytes = pack(&package("A1:B2", rows, ""));
+    let mut options = XlsxRecalculateOptions::default();
+    options.eval_config.defer_graph_building = true;
+    let error = recalculate_xlsx_bytes(&bytes, options)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("hidden row") && error.contains("B1"),
+        "{error}"
+    );
+}
+
 fn sheet_xml(bytes: &[u8]) -> String {
     let mut z = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
     let mut s = String::new();
     z.by_name(SHEET).unwrap().read_to_string(&mut s).unwrap();
     s
+}
+
+#[test]
+fn scalar_chain_is_lazy_and_audited_parts_do_not_grow_buffers() {
+    use super::super::{legacy_intersection::take_chain_reads, package::take_part_buffer_growths};
+    for (formula, reads) in [("A1+1", 0), ("A1:A2+1", 1)] {
+        let rows = format!(
+            "<row r=\"1\"><c r=\"A1\"><v>2</v></c><c r=\"B1\"><f>{formula}</f><v>99</v></c></row><row r=\"2\"><c r=\"A2\"><v>3</v></c></row>"
+        );
+        let mut parts = package("A1:B2", &rows, "");
+        parts = edit(
+            parts,
+            WB_RELS,
+            "</Relationships>",
+            "<Relationship Id=\"chain\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/calcChain\" Target=\"calcChain.xml\"/></Relationships>",
+        );
+        parts = edit(
+            parts,
+            TYPES,
+            "</Types>",
+            "<Override PartName=\"/xl/calcChain.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.calcChain+xml\"/></Types>",
+        );
+        parts.insert("xl/calcChain.xml".into(), "<calcChain xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><c r=\"B1\" i=\"1\"/></calcChain>".into());
+        take_chain_reads();
+        take_part_buffer_growths();
+        let result = recalculate_xlsx_bytes(&pack(&parts), Default::default()).unwrap();
+        let actual_reads = take_chain_reads();
+        let growths = take_part_buffer_growths();
+        eprintln!("formula={formula} chain_reads={actual_reads} part_buffer_growths={growths}");
+        assert_eq!(actual_reads, reads, "{formula}");
+        assert_eq!(growths, 0, "{formula}");
+        assert_eq!(result.summary.evaluated, 1);
+        assert!(sheet_xml(&result.bytes).contains(&format!("<f>{formula}</f><v>3</v>")));
+    }
 }
 
 /// The parent `new-vertical` shape: an ordinary formula that spills.

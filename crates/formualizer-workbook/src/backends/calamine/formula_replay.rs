@@ -1185,6 +1185,46 @@ impl Iterator for FormulaReplayIter<'_> {
 }
 
 impl OwnedSpoolFormulaRecord {
+    pub(super) fn as_borrowed(&self) -> SpoolFormulaRecord<'_> {
+        match self {
+            Self::Ordinary {
+                sequence,
+                coord0,
+                text,
+            } => SpoolFormulaRecord::Ordinary {
+                sequence: *sequence,
+                coord0: *coord0,
+                text,
+            },
+            Self::SharedAnchor {
+                sequence,
+                coord0,
+                shared_index,
+                declared_range,
+                text,
+            } => SpoolFormulaRecord::SharedAnchor {
+                sequence: *sequence,
+                coord0: *coord0,
+                shared_index: *shared_index,
+                declared_range: *declared_range,
+                text,
+            },
+            Self::SharedDescendant {
+                sequence,
+                coord0,
+                shared_index,
+            } => SpoolFormulaRecord::SharedDescendant {
+                sequence: *sequence,
+                coord0: *coord0,
+                shared_index: *shared_index,
+            },
+            Self::Unsupported { sequence, coord0 } => SpoolFormulaRecord::Unsupported {
+                sequence: *sequence,
+                coord0: *coord0,
+            },
+        }
+    }
+
     #[cfg(test)]
     fn into_source_event(self, sheet_name: &str, sheet_instance: u32) -> FormulaSourceEvent {
         let (source_sequence, coord0, formula) = match self {
@@ -1407,30 +1447,30 @@ impl std::fmt::Display for SourceFormulaError {
 
 impl std::error::Error for SourceFormulaError {}
 
-fn replay_spool_with_family<S: FormulaReplaySpool>(
-    spool: &mut S,
-    sheet_name: &str,
-    mut emit_shared_coord: impl FnMut(usize, SourceCoord) -> bool,
-    mut emit: impl FnMut(u64, SourceCoord, &str, Option<usize>) -> Result<(), calamine::Error>,
-) -> Result<(), calamine::Error> {
-    let mut shared: rustc_hash::FxHashMap<usize, (SourceCoord, String)> =
-        rustc_hash::FxHashMap::default();
-    let mut pending: rustc_hash::FxHashMap<usize, Vec<(u64, SourceCoord)>> =
-        rustc_hash::FxHashMap::default();
-    let mut expansion = String::with_capacity(128);
-    let records = spool
-        .replay()
-        .map_err(|error| calamine::Error::Io(std::io::Error::other(error.to_string())))?;
+/// Shared-formula resolution shared by eager source events and deferred spools.
+#[derive(Default)]
+pub(super) struct FormulaReplayState {
+    shared: rustc_hash::FxHashMap<usize, (SourceCoord, String)>,
+    pending: rustc_hash::FxHashMap<usize, Vec<(u64, SourceCoord)>>,
+    expansion: String,
+}
 
-    for record in records {
-        let record = record
-            .map_err(|error| calamine::Error::Io(std::io::Error::other(error.to_string())))?;
+impl FormulaReplayState {
+    pub(super) fn emit_record(
+        &mut self,
+        record: OwnedSpoolFormulaRecord,
+        sheet_name: &str,
+        mut emit_shared_coord: impl FnMut(usize, SourceCoord) -> bool,
+        mut emit: impl FnMut(u64, SourceCoord, &str, Option<usize>) -> Result<(), calamine::Error>,
+    ) -> Result<(), calamine::Error> {
         match record {
             OwnedSpoolFormulaRecord::Ordinary {
                 sequence,
                 coord0,
                 text,
-            } => emit(sequence, coord0, &text, None)?,
+            } => {
+                emit(sequence, coord0, &text, None)?;
+            }
             OwnedSpoolFormulaRecord::SharedAnchor {
                 sequence,
                 coord0,
@@ -1441,19 +1481,20 @@ fn replay_spool_with_family<S: FormulaReplaySpool>(
                 if emit_shared_coord(shared_index, coord0) {
                     emit(sequence, coord0, &text, Some(shared_index))?;
                 }
-                shared.insert(shared_index, (coord0, text));
-                if let Some(waiting) = pending.remove(&shared_index) {
-                    let (anchor, template) = shared.get(&shared_index).expect("anchor inserted");
+                self.shared.insert(shared_index, (coord0, text));
+                if let Some(waiting) = self.pending.remove(&shared_index) {
+                    let (anchor, template) =
+                        self.shared.get(&shared_index).expect("anchor inserted");
                     for (sequence, target) in waiting {
                         if emit_shared_coord(shared_index, target) {
                             expand_shared_formula_into(
                                 template,
                                 (anchor.row, anchor.col),
                                 (target.row, target.col),
-                                &mut expansion,
+                                &mut self.expansion,
                             )
                             .map_err(calamine::Error::Xlsx)?;
-                            emit(sequence, target, &expansion, Some(shared_index))?;
+                            emit(sequence, target, &self.expansion, Some(shared_index))?;
                         }
                     }
                 }
@@ -1463,19 +1504,19 @@ fn replay_spool_with_family<S: FormulaReplaySpool>(
                 coord0,
                 shared_index,
             } => {
-                if let Some((anchor, template)) = shared.get(&shared_index) {
+                if let Some((anchor, template)) = self.shared.get(&shared_index) {
                     if emit_shared_coord(shared_index, coord0) {
                         expand_shared_formula_into(
                             template,
                             (anchor.row, anchor.col),
                             (coord0.row, coord0.col),
-                            &mut expansion,
+                            &mut self.expansion,
                         )
                         .map_err(calamine::Error::Xlsx)?;
-                        emit(sequence, coord0, &expansion, Some(shared_index))?;
+                        emit(sequence, coord0, &self.expansion, Some(shared_index))?;
                     }
                 } else {
-                    pending
+                    self.pending
                         .entry(shared_index)
                         .or_default()
                         .push((sequence, coord0));
@@ -1489,6 +1530,24 @@ fn replay_spool_with_family<S: FormulaReplaySpool>(
                 .into_calamine());
             }
         }
+        Ok(())
+    }
+}
+
+fn replay_spool_with_family<S: FormulaReplaySpool>(
+    spool: &mut S,
+    sheet_name: &str,
+    mut emit_shared_coord: impl FnMut(usize, SourceCoord) -> bool,
+    mut emit: impl FnMut(u64, SourceCoord, &str, Option<usize>) -> Result<(), calamine::Error>,
+) -> Result<(), calamine::Error> {
+    let mut state = FormulaReplayState::default();
+    let records = spool
+        .replay()
+        .map_err(|error| calamine::Error::Io(std::io::Error::other(error.to_string())))?;
+    for record in records {
+        let record = record
+            .map_err(|error| calamine::Error::Io(std::io::Error::other(error.to_string())))?;
+        state.emit_record(record, sheet_name, &mut emit_shared_coord, &mut emit)?;
     }
     Ok(())
 }

@@ -297,18 +297,12 @@ fn names_scopes_and_late_definitions_are_identical() {
                 None,
             )
             .unwrap();
-        (
-            formula.dep_plan.resolved_named_refs,
-            formula.read_projections,
-        )
+        formula.dep_plan.resolved_named_refs
     };
     let s1 = resolved(&mut engine, "Sheet1", 5);
     let s2 = resolved(&mut engine, "Sheet2", 5);
-    assert_eq!(s1.0, vec!["Rate".to_string()]);
-    assert_ne!(
-        s1.1, s2.1,
-        "sheet scope must change the resolved projection"
-    );
+    assert_eq!(s1, vec!["Rate".to_string()]);
+    assert_eq!(s2, vec!["Rate".to_string()]);
 }
 
 #[test]
@@ -714,7 +708,10 @@ fn scratch_is_bounded(pipeline: &crate::engine::ingest_pipeline::IngestPipeline<
 /// Ingest `cells` through a memoized and an unmemoized pipeline; assert every
 /// result is identical and the memo's scratch stays bounded after each cell.
 /// Returns the memo counts and retained specialization count.
-fn differential_bounded(engine: &mut Engine<TestWorkbook>, cells: &Cells) -> (MemoCounts, usize) {
+fn differential_bounded(
+    engine: &mut Engine<TestWorkbook>,
+    cells: &Cells,
+) -> (MemoCounts, usize, usize) {
     let inputs: Vec<_> = cells
         .iter()
         .map(|(sheet, row, col, text)| {
@@ -735,7 +732,7 @@ fn differential_bounded(engine: &mut Engine<TestWorkbook>, cells: &Cells) -> (Me
         })
         .collect();
     let mut memoized = Vec::new();
-    let (counts, retained) = {
+    let (counts, retained, bytes) = {
         let mut pipeline = engine.ingest_pipeline();
         for (i, &(ast_id, placement)) in inputs.iter().enumerate() {
             memoized.push(
@@ -748,7 +745,11 @@ fn differential_bounded(engine: &mut Engine<TestWorkbook>, cells: &Cells) -> (Me
             }
         }
         let memo = pipeline.shape_memo_state().expect("memo allocated");
-        (pipeline.memo_counts(), memo.retained_specializations())
+        (
+            pipeline.memo_counts(),
+            memo.retained_specializations(),
+            memo.stored_bytes(),
+        )
     };
     let mut reference = engine.ingest_pipeline().without_shape_memo();
     for (memoized, &(ast_id, placement)) in memoized.iter().zip(&inputs) {
@@ -759,7 +760,7 @@ fn differential_bounded(engine: &mut Engine<TestWorkbook>, cells: &Cells) -> (Me
             panic!("{placement:?}: memoized result differs in {field}");
         }
     }
-    (counts, retained)
+    (counts, retained, bytes)
 }
 
 // FORM-000139: huge real ASTs (thousands of function arguments, a large flat
@@ -782,16 +783,15 @@ fn huge_asts_stop_key_walk_and_keep_scratch_bounded() {
     for r in 1..=4u32 {
         cells.push(("Sheet1".into(), r, 4, format!("=A{r}*2")));
     }
-    let (counts, _) = differential_bounded(&mut engine, &cells);
+    let (counts, _, _) = differential_bounded(&mut engine, &cells);
     assert_eq!(counts.bypasses, 8 + 1, "{counts:?}");
 }
 
-// FORM-000139: variable-length payloads (long text literals, sheet names,
-// undefined names and function names) are charged by retained bytes; an
-// oversized specialization is not retained, and results stay identical to the
-// per-cell path.
+// Large literals and identifiers belong to the arena, not dependency-plan
+// specializations. Pin the byte count so copying canonical keys, expressions
+// or literal bindings back into the memo cannot silently regress ingestion.
 #[test]
-fn oversized_payloads_are_not_retained() {
+fn oversized_payloads_do_not_inflate_dependency_specializations() {
     let mut large = engine();
     let big = "x".repeat(300_000);
     let long_sheet = format!("S{}", "q".repeat(200_000));
@@ -806,16 +806,20 @@ fn oversized_payloads_are_not_retained() {
     }));
     cells.extend(family("Sheet1", 4, 1..=6, |r| format!("={long_name}+A{r}")));
     cells.extend(family("Sheet1", 5, 1..=6, |r| format!("={long_fn}(A{r})")));
-    let (counts, retained) = differential_bounded(&mut large, &cells);
-    // Each family was derived (specialization miss) but not retained.
+    let (counts, retained, bytes) = differential_bounded(&mut large, &cells);
     assert_eq!(counts.specialization_misses, 4, "{counts:?}");
-    assert_eq!(retained, 0, "{counts:?}");
-    assert_eq!(counts.specialization_hits, 0, "{counts:?}");
+    assert_eq!(retained, 4, "{counts:?}");
+    assert!(counts.specialization_hits > 0, "{counts:?}");
+    assert!(
+        bytes < 1024,
+        "dependency specializations retained {bytes} bytes"
+    );
+    println!("dependency_specialization_bytes={bytes}");
 
     // Ordinary shapes are still retained and hit.
     let mut small = engine();
     let cells = family("Sheet1", 2, 1..=6, |r| format!("=\"short\"&A{r}"));
-    let (counts, retained) = differential_bounded(&mut small, &cells);
+    let (counts, retained, _) = differential_bounded(&mut small, &cells);
     assert_eq!(retained, 1, "{counts:?}");
     assert!(counts.specialization_hits > 0, "{counts:?}");
 }

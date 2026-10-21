@@ -208,8 +208,10 @@ pub(crate) struct AstNodeEntry {
     /// Which of SUBTOTAL ([`SUBTOTAL_CALL`]) and AGGREGATE
     /// ([`AGGREGATE_CALL`]) the subtree calls: a cell whose formula calls
     /// them is skipped by an enclosing SUBTOTAL/AGGREGATE (Excel's "nested
-    /// subtotals are ignored"). Derived from the node's data and its
-    /// children's bits, so dedup and compaction carry it unchanged.
+    /// subtotals are ignored"). A separate guard-only bit conservatively
+    /// recognizes additional dotted spellings without altering that policy.
+    /// Derived from the node's data and its children's bits, so dedup and
+    /// compaction carry it unchanged.
     pub(crate) subtotal_calls: u8,
 }
 
@@ -217,6 +219,25 @@ pub(crate) struct AstNodeEntry {
 pub(crate) const SUBTOTAL_CALL: u8 = 1;
 /// [`AstNodeEntry::subtotal_calls`] bit: the subtree calls AGGREGATE.
 pub(crate) const AGGREGATE_CALL: u8 = 2;
+/// Conservative visibility-guard match not recognized by the legacy nested-
+/// subtotal evaluator. Kept separate so guard fixes do not change evaluation.
+const VISIBILITY_REDUCER_ONLY_CALL: u8 = 4;
+
+fn visibility_reducer_call_bit(name: &str) -> u8 {
+    let legacy = subtotal_call_bit(name);
+    if legacy != 0 {
+        return legacy;
+    }
+    // Match visibility inspection's suffix rule. This includes every repeated
+    // _xlfn./_xll./_xlws. spelling resolved by the registry, and preserves the
+    // old conservative refusal for foreign dotted names such as FOO.SUBTOTAL.
+    let suffix = name.rsplit('.').next().unwrap_or(name);
+    if suffix.eq_ignore_ascii_case("SUBTOTAL") || suffix.eq_ignore_ascii_case("AGGREGATE") {
+        VISIBILITY_REDUCER_ONLY_CALL
+    } else {
+        0
+    }
+}
 
 /// The [`AstNodeEntry::subtotal_calls`] bit of a function name
 /// (case-insensitive, with or without the `_xlfn.` prefix).
@@ -576,7 +597,7 @@ impl AstArena {
                 args_count,
             } => {
                 let start = *args_offset as usize;
-                subtotal_call_bit(self.strings.resolve(*name_id))
+                visibility_reducer_call_bit(self.strings.resolve(*name_id))
                     | children(&self.function_args[start..start + *args_count as usize])
             }
             AstNodeData::UnaryOp { expr_id, .. } => self.subtotal_calls(*expr_id),

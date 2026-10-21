@@ -490,6 +490,8 @@ pub struct DependencyGraph {
     // row-major bulk ingest; CoordBuildHasher keeps these strictly O(N).
     cell_to_vertex: std::collections::HashMap<CellRef, VertexId, CoordBuildHasher>,
     load_packed_to_vertex: std::collections::HashMap<PackedSheetCell, VertexId, CoordBuildHasher>,
+    #[cfg(test)]
+    pub(crate) sheet_index_finalize_visits: usize,
 
     /// Vertices removed per cell, revived when replay re-creates the cell
     /// (decision 9 as amended in Program 2: undo restores the id).
@@ -1706,16 +1708,69 @@ impl DependencyGraph {
         self.rebuild_sheet_index(sheet_id);
     }
 
+    pub(crate) fn finalize_all_sheet_indexes<'a>(
+        &mut self,
+        sheets: impl IntoIterator<Item = &'a str>,
+    ) {
+        let mut batches: FxHashMap<SheetId, Vec<(GridAddr, VertexId)>> = sheets
+            .into_iter()
+            .filter_map(|sheet| self.sheet_reg.get_id(sheet))
+            .map(|sheet| (sheet, Vec::new()))
+            .collect();
+        for (cell, &vertex) in &self.cell_to_vertex {
+            #[cfg(test)]
+            {
+                self.sheet_index_finalize_visits =
+                    self.sheet_index_finalize_visits.saturating_add(1);
+            }
+            if let Some(batch) = batches.get_mut(&cell.sheet_id) {
+                batch.push((GridAddr::new(cell.coord.row(), cell.coord.col()), vertex));
+            }
+        }
+        for (&packed, &vertex) in &self.load_packed_to_vertex {
+            #[cfg(test)]
+            {
+                self.sheet_index_finalize_visits =
+                    self.sheet_index_finalize_visits.saturating_add(1);
+            }
+            if let Some(batch) = batches.get_mut(&packed.sheet_id()) {
+                let coord = GridAddr::new(packed.row0(), packed.col0());
+                let cell = CellRef::new(
+                    packed.sheet_id(),
+                    Coord::new(coord.row(), coord.col(), true, true),
+                );
+                if !self.cell_to_vertex.contains_key(&cell) {
+                    batch.push((coord, vertex));
+                }
+            }
+        }
+        for (sheet, batch) in batches {
+            let mut index = SheetIndex::new();
+            index.add_vertices_batch(&batch);
+            self.sheet_indexes.insert(sheet, index);
+        }
+    }
+
     fn rebuild_sheet_index(&mut self, sheet_id: SheetId) {
         let mut idx = SheetIndex::new();
         let mut batch: Vec<(GridAddr, VertexId)> =
             Vec::with_capacity(self.cell_to_vertex.len() + self.load_packed_to_vertex.len());
         for (cref, vid) in &self.cell_to_vertex {
+            #[cfg(test)]
+            {
+                self.sheet_index_finalize_visits =
+                    self.sheet_index_finalize_visits.saturating_add(1);
+            }
             if cref.sheet_id == sheet_id {
                 batch.push((GridAddr::new(cref.coord.row(), cref.coord.col()), *vid));
             }
         }
         for (&packed, &vid) in &self.load_packed_to_vertex {
+            #[cfg(test)]
+            {
+                self.sheet_index_finalize_visits =
+                    self.sheet_index_finalize_visits.saturating_add(1);
+            }
             if packed.sheet_id() != sheet_id {
                 continue;
             }
@@ -1908,6 +1963,8 @@ impl DependencyGraph {
             cell_to_vertex: std::collections::HashMap::with_hasher(CoordBuildHasher),
             vertex_journal: Default::default(),
             load_packed_to_vertex: std::collections::HashMap::with_hasher(CoordBuildHasher),
+            #[cfg(test)]
+            sheet_index_finalize_visits: 0,
             formula_dirty: FormulaDirtyState::default(),
             dirty_propagation_visits: 0,
             deferred_dirty_depth: 0,
@@ -2109,7 +2166,7 @@ impl DependencyGraph {
         policy: formualizer_parse::parser::CollectPolicy,
     ) -> crate::engine::ingest_pipeline::IngestPipeline<'a> {
         use crate::engine::ingest_pipeline::{
-            NameRegistryView, NamedEntryRef, NamedTarget, SourceEntryRef, SourceRegistryView,
+            NameRegistryView, NamedEntryRef, SourceEntryRef, SourceRegistryView,
             TableEntrySnapshot, TableRegistryView,
         };
 
@@ -2149,18 +2206,6 @@ impl DependencyGraph {
             };
             found.map(|entry| NamedEntryRef {
                 vertex: entry.vertex,
-                target: match &entry.definition {
-                    crate::engine::named_range::NamedDefinition::Cell(cell) => {
-                        NamedTarget::Cell(*cell)
-                    }
-                    crate::engine::named_range::NamedDefinition::Range(range) => {
-                        NamedTarget::Range(*range)
-                    }
-                    crate::engine::named_range::NamedDefinition::Literal(_)
-                    | crate::engine::named_range::NamedDefinition::Formula { .. } => {
-                        NamedTarget::Other
-                    }
-                },
             })
         });
 

@@ -1,8 +1,8 @@
 //! FP8 IngestPipeline: arena-native ingest parity path.
 //!
 //! The pipeline is intentionally side-effect-light: it interns/reuses formula AST
-//! nodes in the engine arena, computes arena canonical metadata bottom-up, and
-//! returns dependency-planning facts without adding graph edges or creating
+//! nodes in the engine arena and returns dependency-planning facts without
+//! adding graph edges or creating
 //! vertices. Graph materialization remains in the existing graph code.
 
 use crate::SheetId;
@@ -16,15 +16,6 @@ use crate::engine::shape_memo::{
     self, MemoValidity, ShapeLookup, ShapeMemo, Specialization, VisitTrace,
 };
 use crate::engine::sheet_registry::SheetRegistry;
-use crate::engine::template::canonical::{CanonicalExpr, LiteralSlotDescriptor};
-use crate::engine::template::dependency_summary::{AnalyzerContext, function_argument_context};
-use crate::engine::template::domain::{TemplateSlotMap, ValueRefSlotDescriptor};
-use crate::engine::template::read_summary::{
-    AxisProjection, DirtyProjectionRule, ProjectionFallbackReason, ReadProjection,
-    SpanReadDependency, SpanReadSummary,
-};
-use crate::engine::template::region::Region;
-use crate::engine::template::slots::{build_template_slot_map, value_ref_slot_descriptors};
 use crate::engine::vertex::VertexId;
 use crate::function::FnCaps;
 use crate::reference::{CellRef, Coord, RangeRef, SharedRangeRef, SharedRef, SharedSheetLocator};
@@ -40,19 +31,6 @@ use std::sync::Arc;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct NamedEntryRef {
     pub(crate) vertex: VertexId,
-    /// Concrete resolution target snapshot for FormulaPlane read projections.
-    pub(crate) target: NamedTarget,
-}
-
-/// Snapshot of what a defined name resolves to, taken at ingest time.
-///
-/// Only `Cell` and `Range` definitions are FormulaPlane-supported; `Other`
-/// covers Literal/Formula definitions, which fall back to legacy evaluation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum NamedTarget {
-    Cell(CellRef),
-    Range(RangeRef),
-    Other,
 }
 
 #[derive(Clone, Debug)]
@@ -196,6 +174,18 @@ impl<'a> IngestPipeline<'a> {
             arena_formulas_seen: false,
             unbound_pending: false,
         }
+    }
+
+    /// Explicit metadata oracle for the hidden FP8 parity harness; never part
+    /// of dependency ingestion.
+    pub(crate) fn parity_metadata(&self, ast: &ASTNode, placement: CellRef) -> AstNodeMetadata {
+        compute_tree_metadata(
+            ast,
+            self.data_store,
+            self.function_provider,
+            placement,
+            self.function_semantics_enabled,
+        )
     }
 
     pub(crate) fn with_unbound_pending(mut self, on: bool) -> Self {
@@ -480,23 +470,11 @@ impl<'a> IngestPipeline<'a> {
                     Some(memo.refs.len()),
                 );
                 Some(result.map(|(formula, traced)| {
-                    let specialization = traced.and_then(|(expr, trace)| {
-                        let mut trace = trace.filter(|trace| trace.valid)?;
+                    let specialization = traced.and_then(|mut trace| {
+                        if !trace.valid {
+                            return None;
+                        }
                         Some(Specialization {
-                            canonical_hash: formula.canonical_hash,
-                            exact_canonical_hash: formula.exact_canonical_hash,
-                            exact_canonical_key: formula.exact_canonical_key.clone(),
-                            parameterized_canonical_hash: formula.parameterized_canonical_hash,
-                            parameterized_canonical_key: formula
-                                .parameterized_canonical_key
-                                .clone(),
-                            literal_slot_descriptors: formula.literal_slot_descriptors.clone(),
-                            literal_bindings: formula.literal_bindings.clone(),
-                            value_ref_slot_descriptors: formula.value_ref_slot_descriptors.clone(),
-                            expr,
-                            labels: formula.labels,
-                            read_projections: formula.read_projections.clone(),
-                            read_projection_fallback: formula.read_projection_fallback,
                             volatile: formula.dep_plan.volatile,
                             dynamic: formula.dep_plan.dynamic,
                             visit: std::mem::take(&mut trace.visit).into_boxed_slice(),
@@ -517,7 +495,7 @@ impl<'a> IngestPipeline<'a> {
         ast_id: AstNodeId,
         placement: CellRef,
         offset: Option<(i64, i64)>,
-        formula_text: Option<Arc<str>>,
+        _formula_text: Option<Arc<str>>,
     ) -> Result<IngestedFormula, ExcelError> {
         let mut dep_plan = DependencyPlanRow::default();
         for &index in specialization.visit.iter() {
@@ -546,33 +524,11 @@ impl<'a> IngestPipeline<'a> {
         dep_plan.volatile = specialization.volatile;
         dep_plan.dynamic = specialization.dynamic;
         dep_plan.dedup_and_sort();
-        let read_summary = specialization
-            .read_projections
-            .as_ref()
-            .and_then(|projections| {
-                span_read_summary_from_projections(placement, projections).ok()
-            });
-        let template_slot_map =
-            build_template_slot_map(ast_id, self.data_store, &specialization.expr);
         Ok(IngestedFormula {
             ast_id,
             member_anchor: None,
             placement,
-            canonical_hash: specialization.canonical_hash,
-            exact_canonical_hash: specialization.exact_canonical_hash,
-            exact_canonical_key: specialization.exact_canonical_key.clone(),
-            parameterized_canonical_hash: specialization.parameterized_canonical_hash,
-            parameterized_canonical_key: specialization.parameterized_canonical_key.clone(),
-            literal_slot_descriptors: specialization.literal_slot_descriptors.clone(),
-            literal_bindings: specialization.literal_bindings.clone(),
-            value_ref_slot_descriptors: specialization.value_ref_slot_descriptors.clone(),
-            template_slot_map,
-            labels: specialization.labels,
             dep_plan,
-            read_summary,
-            read_projections: specialization.read_projections.clone(),
-            read_projection_fallback: specialization.read_projection_fallback,
-            formula_text,
         })
     }
 
@@ -614,15 +570,14 @@ impl<'a> IngestPipeline<'a> {
 
     /// The unchanged per-cell path. With `trace_refs` (the key walk's
     /// reference-node count), also records the dependency visit sequence over
-    /// the tree it walks and returns it with the canonical expression.
-    #[allow(clippy::type_complexity)]
+    /// the tree it walks. No FormulaPlane payload is constructed.
     fn ingest_formula_unmemoized(
         &mut self,
         ast: FormulaAstInput<'_>,
         placement: CellRef,
-        formula_text: Option<Arc<str>>,
+        _formula_text: Option<Arc<str>>,
         trace_refs: Option<usize>,
-    ) -> Result<(IngestedFormula, Option<(CanonicalExpr, Option<VisitTrace>)>), ExcelError> {
+    ) -> Result<(IngestedFormula, Option<VisitTrace>), ExcelError> {
         let (ast_id, ast_for_oracles) = match ast {
             FormulaAstInput::Tree(mut tree) => {
                 self.rewrite_structured_references_for_cell(&mut tree, placement)?;
@@ -654,23 +609,6 @@ impl<'a> IngestPipeline<'a> {
             FormulaAstInput::_Lifetime(_) => unreachable!("marker variant is not constructible"),
         };
 
-        let metadata = compute_tree_metadata(
-            &ast_for_oracles,
-            self.data_store,
-            self.function_provider,
-            placement,
-            self.function_semantics_enabled,
-        );
-        let anchor_row = placement.coord.row().saturating_add(1);
-        let anchor_col = placement.coord.col().saturating_add(1);
-        let canonical_template =
-            crate::engine::template::canonical::canonicalize_template_with_provider(
-                &ast_for_oracles,
-                anchor_row,
-                anchor_col,
-                self.function_semantics_enabled
-                    .then_some(self.function_provider),
-            );
         let mut trace = trace_refs.and_then(|expected| {
             let mut keys = Vec::with_capacity(expected);
             shape_memo::tree_reference_keys(&ast_for_oracles, &mut keys);
@@ -686,56 +624,16 @@ impl<'a> IngestPipeline<'a> {
             trace.as_mut(),
         )?;
         dep_plan.volatile = self.ast_is_volatile(&ast_for_oracles);
-        dep_plan.dynamic = metadata.labels.has_flag(CanonicalLabels::FLAG_DYNAMIC);
+        dep_plan.dynamic = self.ast_is_dynamic(&ast_for_oracles);
         dep_plan.dedup_and_sort();
-
-        let (read_projections, read_projection_fallback) = match compute_read_projections(
-            &ast_for_oracles,
-            placement,
-            self.sheet_registry,
-            &self.names,
-            self.function_semantics_enabled
-                .then_some(self.function_provider),
-        ) {
-            Ok(projections) => (Some(projections), None),
-            Err(reason) => (None, Some(reason)),
-        };
-        let read_summary = read_projections.as_ref().and_then(|projections| {
-            span_read_summary_from_projections(placement, projections).ok()
-        });
 
         let formula = IngestedFormula {
             ast_id,
             member_anchor: None,
             placement,
-            canonical_hash: metadata.canonical_hash,
-            exact_canonical_hash: canonical_template.key.stable_hash(),
-            exact_canonical_key: Arc::<str>::from(canonical_template.key.payload()),
-            parameterized_canonical_hash: canonical_template.parameterized_key.stable_hash(),
-            parameterized_canonical_key: Arc::<str>::from(
-                canonical_template.parameterized_key.payload(),
-            ),
-            literal_slot_descriptors: canonical_template.literal_slot_descriptors.clone(),
-            literal_bindings: canonical_template.literal_bindings.clone(),
-            value_ref_slot_descriptors: Arc::from(
-                value_ref_slot_descriptors(&canonical_template.expr).into_boxed_slice(),
-            ),
-            template_slot_map: build_template_slot_map(
-                ast_id,
-                self.data_store,
-                &canonical_template.expr,
-            ),
-            labels: metadata.labels,
             dep_plan,
-            read_summary,
-            read_projections,
-            read_projection_fallback,
-            formula_text,
         };
-        Ok((
-            formula,
-            trace_refs.map(|_| (canonical_template.expr, trace)),
-        ))
+        Ok((formula, trace))
     }
 
     pub(crate) fn ingest_batch<'b, I>(
@@ -752,6 +650,30 @@ impl<'a> IngestPipeline<'a> {
             out.push(self.ingest_formula(ast, placement, formula_text)?);
         }
         Ok(out)
+    }
+
+    fn ast_is_dynamic(&self, ast: &ASTNode) -> bool {
+        match &ast.node_type {
+            ASTNodeType::Function { name, args } => {
+                let dynamic = self.function_semantics_enabled
+                    && self.function_provider.function_semantic_identity("", name, args.len())
+                        .is_some_and(|identity| {
+                            identity.caps.contains(FnCaps::DYNAMIC_DEPENDENCY)
+                                || identity.contract.dependency
+                                    == crate::function_contract::FunctionDependencySemantics::Dynamic
+                        });
+                dynamic || args.iter().any(|arg| self.ast_is_dynamic(arg))
+            }
+            ASTNodeType::UnaryOp { expr, .. } => self.ast_is_dynamic(expr),
+            ASTNodeType::BinaryOp { left, right, .. } => {
+                self.ast_is_dynamic(left) || self.ast_is_dynamic(right)
+            }
+            ASTNodeType::Array(rows) => rows.iter().flatten().any(|arg| self.ast_is_dynamic(arg)),
+            ASTNodeType::Call { callee, args } => {
+                self.ast_is_dynamic(callee) || args.iter().any(|arg| self.ast_is_dynamic(arg))
+            }
+            _ => false,
+        }
     }
 
     fn ast_is_volatile(&self, ast: &ASTNode) -> bool {
@@ -1181,21 +1103,7 @@ pub(crate) struct IngestedFormula {
     /// 0-based anchor cell rather than this formula's own AST.
     pub(crate) member_anchor: Option<(u32, u32)>,
     pub(crate) placement: CellRef,
-    pub(crate) canonical_hash: u64,
-    pub(crate) exact_canonical_hash: u64,
-    pub(crate) exact_canonical_key: Arc<str>,
-    pub(crate) parameterized_canonical_hash: u64,
-    pub(crate) parameterized_canonical_key: Arc<str>,
-    pub(crate) literal_slot_descriptors: Arc<[LiteralSlotDescriptor]>,
-    pub(crate) literal_bindings: Box<[LiteralValue]>,
-    pub(crate) value_ref_slot_descriptors: Arc<[ValueRefSlotDescriptor]>,
-    pub(crate) template_slot_map: TemplateSlotMap,
-    pub(crate) labels: CanonicalLabels,
     pub(crate) dep_plan: DependencyPlanRow,
-    pub(crate) read_summary: Option<SpanReadSummary>,
-    pub(crate) read_projections: Option<Vec<ReadProjection>>,
-    pub(crate) read_projection_fallback: Option<ProjectionFallbackReason>,
-    pub(crate) formula_text: Option<Arc<str>>,
 }
 
 /// First field in which two ingest results differ, or `None` if they are
@@ -1205,52 +1113,11 @@ pub(crate) fn ingested_formula_difference(
     a: &IngestedFormula,
     b: &IngestedFormula,
 ) -> Option<&'static str> {
-    let checks: [(&'static str, bool); 18] = [
+    let checks = [
         ("ast_id", a.ast_id == b.ast_id),
+        ("member_anchor", a.member_anchor == b.member_anchor),
         ("placement", a.placement == b.placement),
-        ("canonical_hash", a.canonical_hash == b.canonical_hash),
-        (
-            "exact_canonical_hash",
-            a.exact_canonical_hash == b.exact_canonical_hash,
-        ),
-        (
-            "exact_canonical_key",
-            a.exact_canonical_key == b.exact_canonical_key,
-        ),
-        (
-            "parameterized_canonical_hash",
-            a.parameterized_canonical_hash == b.parameterized_canonical_hash,
-        ),
-        (
-            "parameterized_canonical_key",
-            a.parameterized_canonical_key == b.parameterized_canonical_key,
-        ),
-        (
-            "literal_slot_descriptors",
-            a.literal_slot_descriptors == b.literal_slot_descriptors,
-        ),
-        ("literal_bindings", a.literal_bindings == b.literal_bindings),
-        (
-            "value_ref_slot_descriptors",
-            a.value_ref_slot_descriptors == b.value_ref_slot_descriptors,
-        ),
-        (
-            "template_slot_map",
-            a.template_slot_map == b.template_slot_map,
-        ),
-        ("labels", a.labels == b.labels),
         ("dep_plan", a.dep_plan == b.dep_plan),
-        ("read_summary", a.read_summary == b.read_summary),
-        ("read_projections", a.read_projections == b.read_projections),
-        (
-            "read_projection_fallback",
-            a.read_projection_fallback == b.read_projection_fallback,
-        ),
-        ("formula_text", a.formula_text == b.formula_text),
-        (
-            "placement_input",
-            a.dep_plan.resolved_named_refs == b.dep_plan.resolved_named_refs,
-        ),
     ];
     checks
         .into_iter()
@@ -1319,507 +1186,6 @@ impl From<DependencyPlanRow> for DependencyPlan {
 fn dedup_strings(values: &mut Vec<String>) {
     values.sort();
     values.dedup();
-}
-
-#[derive(Clone, Copy)]
-struct ReferenceReturningProjectionShape {
-    safe: bool,
-    scalar: bool,
-}
-
-fn reference_returning_projection_shape(
-    ast: &ASTNode,
-    function_provider: Option<&dyn FunctionProvider>,
-) -> ReferenceReturningProjectionShape {
-    match &ast.node_type {
-        ASTNodeType::Literal(_) | ASTNodeType::Omitted => ReferenceReturningProjectionShape {
-            safe: true,
-            scalar: true,
-        },
-        ASTNodeType::Reference { reference, .. } => match reference {
-            ReferenceType::Cell { .. } => ReferenceReturningProjectionShape {
-                safe: true,
-                scalar: true,
-            },
-            ReferenceType::Range {
-                start_row,
-                start_col,
-                end_row,
-                end_col,
-                ..
-            } if start_row.is_some()
-                && start_col.is_some()
-                && end_row.is_some()
-                && end_col.is_some() =>
-            {
-                ReferenceReturningProjectionShape {
-                    safe: true,
-                    scalar: false,
-                }
-            }
-            _ => ReferenceReturningProjectionShape {
-                safe: false,
-                scalar: false,
-            },
-        },
-        ASTNodeType::UnaryOp { op, expr } => {
-            let child = reference_returning_projection_shape(expr, function_provider);
-            let supported = matches!(op.as_str(), "+" | "-" | "%");
-            ReferenceReturningProjectionShape {
-                safe: supported && child.safe,
-                scalar: supported && child.scalar,
-            }
-        }
-        ASTNodeType::BinaryOp { op, left, right } => {
-            let left = reference_returning_projection_shape(left, function_provider);
-            let right = reference_returning_projection_shape(right, function_provider);
-            let supported = matches!(
-                op.as_str(),
-                "+" | "-" | "*" | "/" | "^" | "&" | "=" | "<>" | "<" | "<=" | ">" | ">="
-            );
-            ReferenceReturningProjectionShape {
-                safe: supported && left.safe && right.safe,
-                scalar: supported && left.scalar && right.scalar,
-            }
-        }
-        ASTNodeType::Function { name, args } => {
-            let function =
-                crate::engine::template::canonical::resolve_canonical_function_with_provider(
-                    function_provider,
-                    name,
-                    args.len(),
-                );
-            let children = args
-                .iter()
-                .map(|arg| reference_returning_projection_shape(arg, function_provider))
-                .collect::<Vec<_>>();
-            let all_safe = children.iter().all(|child| child.safe);
-            if matches!(function.canonical_name.as_str(), "IF" | "IFS" | "CHOOSE") {
-                let step = if function.canonical_name == "IFS" {
-                    2
-                } else {
-                    1
-                };
-                let admitted = all_safe
-                    && (1..children.len())
-                        .step_by(step)
-                        .all(|index| children[index].scalar);
-                ReferenceReturningProjectionShape {
-                    safe: admitted,
-                    scalar: admitted,
-                }
-            } else {
-                let caps = crate::function::FnCaps::from_bits_retain(function.semantic_flags);
-                let forbidden = crate::function::FnCaps::VOLATILE
-                    | crate::function::FnCaps::DYNAMIC_DEPENDENCY
-                    | crate::function::FnCaps::LOCAL_ENVIRONMENT
-                    | crate::function::FnCaps::RETURNS_REFERENCE
-                    | crate::function::FnCaps::MAY_SPILL;
-                let static_scalar = function.contract.is_some_and(|contract| {
-                    contract.dependency
-                        == crate::function_contract::FunctionDependencySemantics::RecursiveSyntacticArgs
-                        && contract.environment
-                            == crate::function_contract::FunctionEnvironmentSemantics::None
-                        && contract.context
-                            == crate::function_contract::FunctionContextDependence::None
-                        && !contract.result.may_return_reference()
-                        && !contract.result.may_spill()
-                }) && (caps & forbidden).is_empty();
-                let safe = all_safe && static_scalar;
-                ReferenceReturningProjectionShape { safe, scalar: safe }
-            }
-        }
-        ASTNodeType::Call { .. } | ASTNodeType::Array(_) => ReferenceReturningProjectionShape {
-            safe: false,
-            scalar: false,
-        },
-    }
-}
-
-fn compute_read_projections(
-    ast: &ASTNode,
-    placement: CellRef,
-    sheet_registry: &SheetRegistry,
-    names: &NameRegistryView<'_>,
-    function_provider: Option<&dyn FunctionProvider>,
-) -> Result<Vec<ReadProjection>, ProjectionFallbackReason> {
-    fn axis_projection(index: u32, is_abs: bool, anchor: i64) -> AxisProjection {
-        if is_abs {
-            AxisProjection::Absolute {
-                index: index.saturating_sub(1),
-            }
-        } else {
-            AxisProjection::Relative {
-                offset: i64::from(index) - anchor,
-            }
-        }
-    }
-
-    fn push_projection(projections: &mut Vec<ReadProjection>, read_projection: ReadProjection) {
-        if !projections.contains(&read_projection) {
-            projections.push(read_projection);
-        }
-    }
-
-    fn visit(
-        ast: &ASTNode,
-        placement: CellRef,
-        sheet_registry: &SheetRegistry,
-        names: &NameRegistryView<'_>,
-        function_provider: Option<&dyn FunctionProvider>,
-        projections: &mut Vec<ReadProjection>,
-        context: AnalyzerContext,
-        in_function_arg: bool,
-    ) -> Result<(), ProjectionFallbackReason> {
-        match &ast.node_type {
-            ASTNodeType::Literal(_) | ASTNodeType::Omitted => {
-                if matches!(
-                    context,
-                    AnalyzerContext::Value | AnalyzerContext::CriteriaExpressionArg
-                ) {
-                    Ok(())
-                } else {
-                    Err(ProjectionFallbackReason::UnsupportedDependencySummary)
-                }
-            }
-            ASTNodeType::Reference {
-                reference: ReferenceType::NamedRange(name),
-                ..
-            } => {
-                // Resolve the name with the placement's sheet scope (the same
-                // resolution legacy dependency planning uses, so sheet-scoped
-                // names shadow workbook-scoped names identically). A resolved
-                // Cell/Range definition is an all-absolute read region; the
-                // resolved target's sheet need not be the placement sheet.
-                let entry = names
-                    .resolve(name, placement.sheet_id)
-                    .ok_or(ProjectionFallbackReason::NamedReferenceUnsupported)?;
-                match entry.target {
-                    NamedTarget::Cell(cell) => {
-                        // A named CELL behaves like a concrete cell reference:
-                        // no extra context gating beyond what cells get.
-                        push_projection(
-                            projections,
-                            ReadProjection {
-                                target_sheet_id: cell.sheet_id,
-                                rule: DirtyProjectionRule::AffineCell {
-                                    row: AxisProjection::Absolute {
-                                        index: cell.coord.row(),
-                                    },
-                                    col: AxisProjection::Absolute {
-                                        index: cell.coord.col(),
-                                    },
-                                },
-                            },
-                        );
-                        Ok(())
-                    }
-                    NamedTarget::Range(range) => {
-                        // A named RANGE behaves like its underlying range
-                        // reference: only valid as a function argument in a
-                        // range-accepting position (same gating as concrete
-                        // ranges below).
-                        if !in_function_arg
-                            || !matches!(
-                                context,
-                                AnalyzerContext::Value | AnalyzerContext::CriteriaRangeArg
-                            )
-                        {
-                            return Err(ProjectionFallbackReason::UnsupportedDependencySummary);
-                        }
-                        if range.start.sheet_id != range.end.sheet_id {
-                            return Err(ProjectionFallbackReason::NamedReferenceUnsupported);
-                        }
-                        let (row_min, row_max) = (
-                            range.start.coord.row().min(range.end.coord.row()),
-                            range.start.coord.row().max(range.end.coord.row()),
-                        );
-                        let (col_min, col_max) = (
-                            range.start.coord.col().min(range.end.coord.col()),
-                            range.start.coord.col().max(range.end.coord.col()),
-                        );
-                        push_projection(
-                            projections,
-                            ReadProjection {
-                                target_sheet_id: range.start.sheet_id,
-                                rule: DirtyProjectionRule::AffineRange {
-                                    row_start: AxisProjection::Absolute { index: row_min },
-                                    row_end: AxisProjection::Absolute { index: row_max },
-                                    col_start: AxisProjection::Absolute { index: col_min },
-                                    col_end: AxisProjection::Absolute { index: col_max },
-                                },
-                            },
-                        );
-                        Ok(())
-                    }
-                    NamedTarget::Other => Err(ProjectionFallbackReason::NamedReferenceUnsupported),
-                }
-            }
-            ASTNodeType::Reference { reference, .. } => {
-                let target_sheet_id = match reference {
-                    ReferenceType::Cell { sheet, .. } | ReferenceType::Range { sheet, .. } => {
-                        match sheet {
-                            Some(name) => sheet_registry
-                                .get_id(name)
-                                .ok_or(ProjectionFallbackReason::UnsupportedSheetBinding)?,
-                            None => placement.sheet_id,
-                        }
-                    }
-                    _ => return Err(ProjectionFallbackReason::UnsupportedDependencySummary),
-                };
-                let anchor_row = placement.coord.row() as i64 + 1;
-                let anchor_col = placement.coord.col() as i64 + 1;
-                match reference {
-                    ReferenceType::Cell {
-                        row,
-                        col,
-                        row_abs,
-                        col_abs,
-                        ..
-                    } => {
-                        push_projection(
-                            projections,
-                            ReadProjection {
-                                target_sheet_id,
-                                rule: DirtyProjectionRule::AffineCell {
-                                    row: axis_projection(*row, *row_abs, anchor_row),
-                                    col: axis_projection(*col, *col_abs, anchor_col),
-                                },
-                            },
-                        );
-                        Ok(())
-                    }
-                    ReferenceType::Range {
-                        start_row,
-                        start_col,
-                        end_row,
-                        end_col,
-                        start_row_abs,
-                        start_col_abs,
-                        end_row_abs,
-                        end_col_abs,
-                        ..
-                    } => {
-                        if !in_function_arg
-                            || !matches!(
-                                context,
-                                AnalyzerContext::Value | AnalyzerContext::CriteriaRangeArg
-                            )
-                        {
-                            return Err(ProjectionFallbackReason::UnsupportedDependencySummary);
-                        }
-                        let whole_column = start_row.is_none()
-                            && end_row.is_none()
-                            && start_col.is_some()
-                            && end_col.is_some();
-                        let whole_row = start_col.is_none()
-                            && end_col.is_none()
-                            && start_row.is_some()
-                            && end_row.is_some();
-                        if whole_row {
-                            return Err(ProjectionFallbackReason::UnsupportedDependencySummary);
-                        }
-                        if whole_column {
-                            if start_col_abs != end_col_abs {
-                                return Err(ProjectionFallbackReason::UnsupportedDependencySummary);
-                            }
-                            let (Some(start_col), Some(end_col)) = (*start_col, *end_col) else {
-                                return Err(ProjectionFallbackReason::UnsupportedDependencySummary);
-                            };
-                            push_projection(
-                                projections,
-                                ReadProjection {
-                                    target_sheet_id,
-                                    rule: DirtyProjectionRule::WholeColumnRange {
-                                        col_start: axis_projection(
-                                            start_col,
-                                            *start_col_abs,
-                                            anchor_col,
-                                        ),
-                                        col_end: axis_projection(end_col, *end_col_abs, anchor_col),
-                                    },
-                                },
-                            );
-                            return Ok(());
-                        }
-                        if start_row.is_none() != end_row.is_none()
-                            || start_col.is_none() != end_col.is_none()
-                        {
-                            return Err(ProjectionFallbackReason::UnsupportedDependencySummary);
-                        }
-                        let (Some(start_row), Some(start_col), Some(end_row), Some(end_col)) =
-                            (start_row, start_col, end_row, end_col)
-                        else {
-                            return Err(ProjectionFallbackReason::UnsupportedDependencySummary);
-                        };
-                        // Mixed-anchor bounds (one absolute, one placement-
-                        // relative per axis, e.g. `$A$2:$A2` running totals or
-                        // `$A2:$A$100` tail reads) are supported: the read
-                        // region is the per-bound extent union and the dirty
-                        // projection inverts them as half-open placement
-                        // intervals.
-                        push_projection(
-                            projections,
-                            ReadProjection {
-                                target_sheet_id,
-                                rule: DirtyProjectionRule::AffineRange {
-                                    row_start: axis_projection(
-                                        *start_row,
-                                        *start_row_abs,
-                                        anchor_row,
-                                    ),
-                                    row_end: axis_projection(*end_row, *end_row_abs, anchor_row),
-                                    col_start: axis_projection(
-                                        *start_col,
-                                        *start_col_abs,
-                                        anchor_col,
-                                    ),
-                                    col_end: axis_projection(*end_col, *end_col_abs, anchor_col),
-                                },
-                            },
-                        );
-                        Ok(())
-                    }
-                    _ => Err(ProjectionFallbackReason::UnsupportedDependencySummary),
-                }
-            }
-            ASTNodeType::UnaryOp { op, expr } => match op.as_str() {
-                "+" | "-" | "%" => visit(
-                    expr,
-                    placement,
-                    sheet_registry,
-                    names,
-                    function_provider,
-                    projections,
-                    context,
-                    in_function_arg,
-                ),
-                _ => Err(ProjectionFallbackReason::UnsupportedDependencySummary),
-            },
-            ASTNodeType::BinaryOp { op, left, right } => {
-                if !matches!(
-                    op.as_str(),
-                    "+" | "-" | "*" | "/" | "^" | "&" | "=" | "<>" | "<" | "<=" | ">" | ">="
-                ) {
-                    return Err(ProjectionFallbackReason::UnsupportedDependencySummary);
-                }
-                visit(
-                    left,
-                    placement,
-                    sheet_registry,
-                    names,
-                    function_provider,
-                    projections,
-                    context,
-                    in_function_arg,
-                )?;
-                visit(
-                    right,
-                    placement,
-                    sheet_registry,
-                    names,
-                    function_provider,
-                    projections,
-                    context,
-                    in_function_arg,
-                )
-            }
-            ASTNodeType::Function { name, args } => {
-                let function =
-                    crate::engine::template::canonical::resolve_canonical_function_with_provider(
-                        function_provider,
-                        name,
-                        args.len(),
-                    );
-                let contract = function
-                    .contract
-                    .ok_or(ProjectionFallbackReason::UnsupportedDependencySummary)?;
-                let admitted_reference_returning =
-                    matches!(function.canonical_name.as_str(), "IF" | "IFS" | "CHOOSE")
-                        && reference_returning_projection_shape(ast, function_provider).safe;
-                if contract.dependency
-                    != crate::function_contract::FunctionDependencySemantics::RecursiveSyntacticArgs
-                    || contract.environment
-                        != crate::function_contract::FunctionEnvironmentSemantics::None
-                    || contract.context != crate::function_contract::FunctionContextDependence::None
-                    || (!admitted_reference_returning
-                        && (contract.result.may_return_reference() || contract.result.may_spill()))
-                    || function.semantic_flags & crate::function::FnCaps::VOLATILE.bits() != 0
-                {
-                    return Err(ProjectionFallbackReason::UnsupportedDependencySummary);
-                }
-                for (arg_index, arg) in args.iter().enumerate() {
-                    let arg_context = function_argument_context(&function, arg_index);
-                    let accepts_range = matches!(
-                        arg_context,
-                        AnalyzerContext::Value | AnalyzerContext::CriteriaRangeArg
-                    );
-                    visit(
-                        arg,
-                        placement,
-                        sheet_registry,
-                        names,
-                        function_provider,
-                        projections,
-                        arg_context,
-                        accepts_range,
-                    )?;
-                }
-                if matches!(context, AnalyzerContext::Value) {
-                    Ok(())
-                } else {
-                    Err(ProjectionFallbackReason::UnsupportedDependencySummary)
-                }
-            }
-            ASTNodeType::Call { .. } | ASTNodeType::Array(_) => {
-                Err(ProjectionFallbackReason::UnsupportedDependencySummary)
-            }
-        }
-    }
-
-    let mut projections = Vec::new();
-    visit(
-        ast,
-        placement,
-        sheet_registry,
-        names,
-        function_provider,
-        &mut projections,
-        AnalyzerContext::Value,
-        false,
-    )?;
-    Ok(projections)
-}
-
-pub(crate) fn span_read_summary_from_projections(
-    placement: CellRef,
-    projections: &[ReadProjection],
-) -> Result<SpanReadSummary, crate::engine::template::read_summary::ProjectionFallbackReason> {
-    let result_region = Region::col_interval(
-        placement.sheet_id,
-        placement.coord.col(),
-        placement.coord.row(),
-        placement.coord.row(),
-    );
-    let mut dependencies = Vec::new();
-    for &read_projection in projections {
-        let projection = read_projection.rule;
-        for read_region in
-            projection.read_regions_for_result(read_projection.target_sheet_id, result_region)?
-        {
-            let dependency = SpanReadDependency {
-                read_region,
-                projection,
-            };
-            if !dependencies.contains(&dependency) {
-                dependencies.push(dependency);
-            }
-        }
-    }
-    Ok(SpanReadSummary {
-        result_region,
-        dependencies,
-    })
 }
 
 fn missing_ast_error() -> ExcelError {
@@ -2306,186 +1672,66 @@ mod tests {
     use proptest::prelude::*;
     use rustc_hash::FxHashSet;
 
-    fn empty_names() -> NameRegistryView<'static> {
-        NameRegistryView::new(|_, _| None)
-    }
-
-    /// `compute_read_projections` resolves functions through the process-global
-    /// registry. Without this, `SUM` is unknown and every projection collapses to
-    /// `UnsupportedDependencySummary` — which silently turns the accept-tests red
-    /// and, worse, makes the reject-tests pass for the wrong reason. Registering
-    /// here keeps each test in this module independent of what else has run.
     fn ensure_builtins_registered() {
-        use std::sync::Once;
-        static ONCE: Once = Once::new();
-        ONCE.call_once(|| {
-            crate::builtins::math::register_builtins();
-        });
+        crate::builtins::load_builtins();
     }
 
-    fn read_projections_for(formula: &str, row: u32, col: u32) -> Vec<ReadProjection> {
+    #[test]
+    fn ingest_has_no_formula_plane_producer_sites() {
+        // Census of executable producer call sites, not timings: these APIs
+        // must not be reintroduced on either memo hits or misses.
+        let production = include_str!("ingest_pipeline.rs")
+            .split("#[cfg(test)]\nmod tests")
+            .next()
+            .unwrap();
+        for producer in [
+            "span_read_summary_from_projections(",
+            "build_template_slot_map(",
+            "compute_read_projections(",
+            "canonicalize_template_with_provider(",
+        ] {
+            assert_eq!(
+                production.matches(producer).count(),
+                0,
+                "dead producer {producer}"
+            );
+        }
+        assert_eq!(
+            std::mem::size_of::<IngestedFormula>(),
+            std::mem::size_of::<(AstNodeId, Option<(u32, u32)>, CellRef, DependencyPlanRow)>()
+        );
+    }
+
+    #[test]
+    fn dependency_dynamic_flag_matches_metadata_oracle() {
         ensure_builtins_registered();
-        let mut sheet_registry = SheetRegistry::new();
-        let sheet = sheet_registry.id_for("Sheet1");
-        let ast = parse(formula).unwrap();
-        compute_read_projections(
-            &ast,
-            CellRef::new(sheet, Coord::from_excel(row, col, true, true)),
-            &sheet_registry,
-            &empty_names(),
-            Some(&crate::function_registry::GlobalRegistryFunctionProvider),
-        )
-        .unwrap()
-    }
-
-    #[test]
-    fn formula_plane_ingest_read_projections_accept_function_arg_range() {
-        let projections = read_projections_for("=SUM(A1:A10)", 1, 2);
-
-        assert_eq!(
-            projections,
-            vec![ReadProjection {
-                target_sheet_id: 0,
-                rule: DirtyProjectionRule::AffineRange {
-                    row_start: AxisProjection::Relative { offset: 0 },
-                    row_end: AxisProjection::Relative { offset: 9 },
-                    col_start: AxisProjection::Relative { offset: -1 },
-                    col_end: AxisProjection::Relative { offset: -1 },
-                },
-            }]
-        );
-    }
-
-    #[test]
-    fn formula_plane_ingest_read_projections_accept_whole_column_function_arg_range() {
-        let projections = read_projections_for("=SUM($A:$A)", 1, 2);
-
-        assert_eq!(
-            projections,
-            vec![ReadProjection {
-                target_sheet_id: 0,
-                rule: DirtyProjectionRule::WholeColumnRange {
-                    col_start: AxisProjection::Absolute { index: 0 },
-                    col_end: AxisProjection::Absolute { index: 0 },
-                },
-            }]
-        );
-    }
-
-    #[test]
-    fn formula_plane_ingest_read_projections_reject_top_level_and_open_ranges() {
-        ensure_builtins_registered();
-        let mut sheet_registry = SheetRegistry::new();
-        let sheet = sheet_registry.id_for("Sheet1");
-        let placement = CellRef::new(sheet, Coord::from_excel(1, 2, true, true));
-        let top_level = parse("=A1:A10").unwrap();
-        let top_level_whole_column = parse("=$A:$A").unwrap();
-        let open_whole_column = parse("=SUM($A$1:$A)").unwrap();
-        let whole_row = parse("=SUM($1:$1)").unwrap();
-        let mixed_whole_column = parse("=SUM(A:$A)").unwrap();
-
-        assert_eq!(
-            compute_read_projections(
-                &top_level,
-                placement,
-                &sheet_registry,
-                &empty_names(),
-                Some(&crate::function_registry::GlobalRegistryFunctionProvider)
-            ),
-            Err(ProjectionFallbackReason::UnsupportedDependencySummary)
-        );
-        assert_eq!(
-            compute_read_projections(
-                &top_level_whole_column,
-                placement,
-                &sheet_registry,
-                &empty_names(),
-                Some(&crate::function_registry::GlobalRegistryFunctionProvider),
-            ),
-            Err(ProjectionFallbackReason::UnsupportedDependencySummary)
-        );
-        assert_eq!(
-            compute_read_projections(
-                &open_whole_column,
-                placement,
-                &sheet_registry,
-                &empty_names(),
-                Some(&crate::function_registry::GlobalRegistryFunctionProvider),
-            ),
-            Err(ProjectionFallbackReason::UnsupportedDependencySummary)
-        );
-        assert_eq!(
-            compute_read_projections(
-                &whole_row,
-                placement,
-                &sheet_registry,
-                &empty_names(),
-                Some(&crate::function_registry::GlobalRegistryFunctionProvider)
-            ),
-            Err(ProjectionFallbackReason::UnsupportedDependencySummary)
-        );
-        // Whole-column ranges with mixed column anchors stay rejected to match
-        // the dependency-summary analyzer.
-        assert_eq!(
-            compute_read_projections(
-                &mixed_whole_column,
-                placement,
-                &sheet_registry,
-                &empty_names(),
-                Some(&crate::function_registry::GlobalRegistryFunctionProvider),
-            ),
-            Err(ProjectionFallbackReason::UnsupportedDependencySummary)
-        );
-    }
-
-    #[test]
-    fn formula_plane_ingest_read_projections_accept_mixed_anchor_ranges() {
-        ensure_builtins_registered();
-        let mut sheet_registry = SheetRegistry::new();
-        let sheet = sheet_registry.id_for("Sheet1");
-        let placement = CellRef::new(sheet, Coord::from_excel(1, 2, true, true));
-
-        // Running total `=SUM($A$1:$A1)`: absolute start row, relative end row.
-        let running_total = parse("=SUM($A$1:$A1)").unwrap();
-        let projections = compute_read_projections(
-            &running_total,
-            placement,
-            &sheet_registry,
-            &empty_names(),
-            Some(&crate::function_registry::GlobalRegistryFunctionProvider),
-        )
-        .unwrap();
-        assert_eq!(projections.len(), 1);
-        assert_eq!(
-            projections[0].rule,
-            DirtyProjectionRule::AffineRange {
-                row_start: AxisProjection::Absolute { index: 0 },
-                row_end: AxisProjection::Relative { offset: 0 },
-                col_start: AxisProjection::Absolute { index: 0 },
-                col_end: AxisProjection::Absolute { index: 0 },
-            }
-        );
-
-        // Tail read `=SUM($A1:$A$100)`: relative start row, absolute end row.
-        let tail_read = parse("=SUM($A1:$A$100)").unwrap();
-        let projections = compute_read_projections(
-            &tail_read,
-            placement,
-            &sheet_registry,
-            &empty_names(),
-            Some(&crate::function_registry::GlobalRegistryFunctionProvider),
-        )
-        .unwrap();
-        assert_eq!(projections.len(), 1);
-        assert_eq!(
-            projections[0].rule,
-            DirtyProjectionRule::AffineRange {
-                row_start: AxisProjection::Relative { offset: 0 },
-                row_end: AxisProjection::Absolute { index: 99 },
-                col_start: AxisProjection::Absolute { index: 0 },
-                col_end: AxisProjection::Absolute { index: 0 },
-            }
-        );
+        let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+        let sheet = engine.graph.sheet_id_mut("Sheet1");
+        let placement = CellRef::new(sheet, Coord::from_excel(2, 2, true, true));
+        for text in [
+            "=A1+1",
+            "=OFFSET(A1,0,0)",
+            "=IF(TRUE,INDIRECT(\"A1\"),0)",
+            "=SUM(A1:A10)",
+            "=ROW(A1)",
+            "=RAND()+1",
+            "=UNKNOWN(A1)",
+            "={1,2;3,4}",
+        ] {
+            let ast = parse(text).unwrap();
+            // Metadata uses the arena's interned function and identifier strings,
+            // as the old ingest path did after storing the input AST.
+            engine.intern_formula_ast(&ast);
+            let mut pipeline = engine.ingest_pipeline();
+            let expected = pipeline
+                .parity_metadata(&ast, placement)
+                .labels
+                .has_flag(CanonicalLabels::FLAG_DYNAMIC);
+            let result = pipeline
+                .ingest_formula(FormulaAstInput::Tree(ast), placement, None)
+                .unwrap();
+            assert_eq!(result.dep_plan.dynamic, expected, "{text}");
+        }
     }
 
     #[test]
@@ -2498,8 +1744,7 @@ mod tests {
         let ingested = pipeline
             .ingest_formula(FormulaAstInput::Tree(ast), placement, None)
             .unwrap();
-        assert_eq!(ingested.placement, placement);
-        assert_ne!(ingested.canonical_hash, 0);
+        assert_eq!(ingested.dep_plan.direct_cell_deps, vec![placement]);
     }
 
     // Frozen from `engine/ingest_pipeline.rs` at `ccfeaf83`. Only method names

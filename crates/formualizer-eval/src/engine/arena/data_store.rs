@@ -373,7 +373,13 @@ impl DataStore {
     /// SUBTOTAL/AGGREGATE call bits of the formula rooted at `id` (see
     /// `AstNodeEntry::subtotal_calls`).
     pub(crate) fn ast_subtotal_calls(&self, id: AstNodeId) -> u8 {
-        self.asts.subtotal_calls(id)
+        self.asts.subtotal_calls(id) & (super::ast::SUBTOTAL_CALL | super::ast::AGGREGATE_CALL)
+    }
+
+    /// Conservative visibility guard metadata, including dotted reducer names.
+    /// Unlike `ast_subtotal_calls`, this is not a nested-evaluation policy.
+    pub(crate) fn ast_calls_visibility_reducer(&self, id: AstNodeId) -> bool {
+        self.asts.subtotal_calls(id) != 0
     }
 
     pub fn get_args(&self, id: AstNodeId) -> Option<&[AstNodeId]> {
@@ -970,6 +976,25 @@ impl super::scalar::ScalarRef {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn visibility_reducer_prefixes_do_not_change_legacy_nested_skip_bits() {
+        let mut store = DataStore::new();
+        let registry = SheetRegistry::new();
+        for (formula, legacy) in [
+            ("=SUBTOTAL(9,1)", 1),
+            ("=_xlfn.SUBTOTAL(9,1)", 1),
+            ("=AGGREGATE(9,0,1)", 2),
+            ("=1+_xlws._xlfn.SUBTOTAL(109,1)", 0),
+            ("=_xll.AGGREGATE(9,0,1)", 0),
+            ("=FOO.SUBTOTAL(9,1)", 0),
+        ] {
+            let ast = formualizer_parse::parser::parse(formula).unwrap();
+            let id = store.store_ast(&ast, &registry);
+            assert!(store.ast_calls_visibility_reducer(id), "{formula}");
+            assert_eq!(store.ast_subtotal_calls(id), legacy, "{formula}");
+        }
+    }
 
     #[test]
     fn test_data_store_empty_value() {

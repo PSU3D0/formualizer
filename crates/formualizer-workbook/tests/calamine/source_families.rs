@@ -134,7 +134,7 @@ fn families_xlsx() -> Vec<u8> {
     main.push(("F1", anchor(2, &range(6), "SUM($A$1:A1)/COUNT(B$1:B1)")));
     // G: lowercase anchor reference (Calamine upper-cases its copies).
     main.push(("G1", anchor(3, &range(7), "a1+1")));
-    // H: sheet-qualified (not a lexical template).
+    // H: sheet-qualified (certified with an invariant sheet prefix).
     main.push(("H1", anchor(4, &range(8), "Other!A1*2")));
     for row in 2..=ROWS {
         if row == 10 {
@@ -225,25 +225,46 @@ fn proven_shared_copies_skip_parsing_and_match_the_parsed_load() {
         assert_eq!(o.shared_members, 0);
         assert_eq!(o.parse_calls, o.formulas - o.parse_cache_hits);
         // D (28 copies), E, F (29 each), the horizontal family (3), and
-        // G from its first (upper-cased, so certified) copy on (28).
+        // G from its first (upper-cased, so certified) copy on (28),
+        // and H's newly certified sheet-qualified followers (29).
         // Most copies are also adjacent to a member of their family.
         assert_eq!(
             n.shared_members + n.adjacent_members,
-            28 + 29 + 29 + 3 + 28,
+            28 + 29 + 29 + 3 + 28 + 29,
             "{n:?}"
         );
         assert_eq!(
             n.parse_calls + n.shared_members + n.adjacent_members + n.parse_cache_hits,
             n.formulas
         );
-        // G's lowercase anchor and H's qualified anchor are not templates.
-        assert!(n.templates_uncertified >= 2, "{n:?}");
+        // G's lowercase anchor still falls back; H's qualifier is fixed bytes.
+        assert_eq!(n.templates_uncertified, 1, "{n:?}");
+        assert_eq!(n.parse_calls, 10, "{n:?}");
+        assert_eq!(n.parsed_members, 0, "{n:?}");
         assert_eq!(n.fallback_off_grid, 1, "{n:?}");
         // A second evaluation is stable.
         new.evaluate_all().unwrap();
         old.evaluate_all().unwrap();
         assert_eq!(snapshot(&new), snapshot(&old));
     }
+}
+
+#[test]
+fn eager_staging_does_not_encode_or_replay_a_formula_spool() {
+    let bytes = families_xlsx();
+    let eager = load(&bytes, false, SourceFamilyMode::On);
+    let report = eager.formula_ingest_report_total();
+    assert!(report.formula_cells_seen > 0);
+    assert_eq!(report.source_formula_records_spooled, 0);
+    assert_eq!(report.source_spool_encoded_bytes, 0);
+    assert_eq!(report.source_spool_replays, 0);
+
+    let mut deferred = load(&bytes, true, SourceFamilyMode::On);
+    deferred.evaluate_all().unwrap();
+    let report = deferred.formula_ingest_report_total();
+    assert!(report.source_formula_records_spooled > 0);
+    assert!(report.source_spool_encoded_bytes > 0);
+    assert!(report.source_spool_replays > 0);
 }
 
 #[test]
@@ -339,7 +360,7 @@ fn compression_off_parses_every_formula() {
 /// Ordinary formula text as openpyxl writes it (no shared metadata):
 /// vertical runs, a run broken by a different formula then resumed, a
 /// horizontal run, string literals with reference-like text, and
-/// formulas outside the lexical subset (whitespace, names, qualifiers).
+/// newly certified formulas with whitespace and sheet qualifiers.
 fn ordinary_xlsx() -> Vec<u8> {
     let mut main = Vec::new();
     for row in 1..=ROWS {
@@ -394,8 +415,15 @@ fn proven_ordinary_copies_skip_parsing_and_match_the_parsed_load() {
         assert_eq!(n.shared_members, 0);
         // D, E: 29 each; F: 10 + 17 (resumed after row 12, whose formula
         // is not a copy, and row 13 parses as a new root); I: 19, then 9
-        // copies of row 21's (new) root; the horizontal row: 4.
-        assert_eq!(n.adjacent_members, 29 + 29 + 10 + 17 + 19 + 9 + 4, "{n:?}");
+        // copies of row 21's (new) root; the horizontal row: 4;
+        // G and H (whitespace / qualifier): 29 each.
+        assert_eq!(
+            n.adjacent_members,
+            29 + 29 + 10 + 17 + 19 + 9 + 4 + 29 + 29,
+            "{n:?}"
+        );
+        assert_eq!(n.parse_calls, 10, "{n:?}");
+        assert_eq!(n.parsed_members, 0, "{n:?}");
         assert_eq!(
             n.parse_calls + n.adjacent_members + n.parse_cache_hits,
             n.formulas

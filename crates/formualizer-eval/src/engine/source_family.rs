@@ -156,14 +156,18 @@ enum Miss {
     OffGrid,
 }
 
-/// The parsed tree's reference leaves, in source order; `None` when the
-/// tree has a node kind templates exclude.
+/// The parsed tree's relocating reference leaves, in source order; named
+/// references stay fixed source bytes. `None` for excluded node kinds.
 fn reference_leaves<'a>(
     ast: &'a ASTNode,
     out: &mut Vec<(&'a str, &'a ReferenceType)>,
 ) -> Option<()> {
     match &ast.node_type {
         ASTNodeType::Literal(_) | ASTNodeType::Omitted => {}
+        ASTNodeType::Reference {
+            reference: ReferenceType::NamedRange(_),
+            ..
+        } => {}
         ASTNodeType::Reference {
             original,
             reference,
@@ -187,7 +191,7 @@ fn slot_is(reference: &ReferenceType, slot: SlotRef) -> bool {
     match (reference, slot) {
         (
             ReferenceType::Cell {
-                sheet: None,
+                sheet: _,
                 row,
                 col,
                 row_abs,
@@ -197,7 +201,7 @@ fn slot_is(reference: &ReferenceType, slot: SlotRef) -> bool {
         ) => (*row, *col, *row_abs, *col_abs) == (p.row, p.col, p.row_abs, p.col_abs),
         (
             ReferenceType::Range {
-                sheet: None,
+                sheet: _,
                 start_row: Some(sr),
                 start_col: Some(sc),
                 end_row: Some(er),
@@ -223,10 +227,11 @@ impl<R: EvaluationContext> Engine<R> {
 
     /// Certify `ast`, the parse of `text` interned as `template`, for
     /// lexical relocation. The parser's tokenizer finds the reference
-    /// slots of `text` (a conservative subset: canonical local A1 cells and
-    /// finite ranges, fixed bytes elsewhere); the tree's reference leaves
-    /// must be exactly those slots, in order, each spelled as its
-    /// reference's rendering, and the template must need no structural
+    /// coordinate slots of `text` (canonical A1 cells and finite ranges,
+    /// fixed bytes elsewhere, including qualifiers and defined names);
+    /// the tree's relocating reference leaves must be exactly those slots,
+    /// in order, each spelled as its reference's rendering, and the template
+    /// must need no structural
     /// rewrite. Then replacing every slot by the canonical spelling of its
     /// relocated reference changes only those tokens' text, so the parse
     /// of the result is the template with each reference relocated and
@@ -244,7 +249,22 @@ impl<R: EvaluationContext> Engine<R> {
             return None;
         }
         for ((original, reference), slot) in leaves.iter().zip(lexeme.slots()) {
-            if *original != &text[slot.start as usize..slot.end as usize]
+            // The structural comparator rejects qualifiers absent from the
+            // registry, even when relocation leaves their spelling unchanged.
+            if let ReferenceType::Cell {
+                sheet: Some(name), ..
+            }
+            | ReferenceType::Range {
+                sheet: Some(name), ..
+            } = reference
+                && self.graph.sheet_reg().get_id(name).is_none()
+            {
+                return None;
+            }
+            let coordinates = original
+                .rsplit_once('!')
+                .map_or(*original, |(_, suffix)| suffix);
+            if coordinates != &text[slot.start as usize..slot.end as usize]
                 || !slot_is(reference, slot.reference)
                 || reference.normalise() != *original
             {
@@ -433,6 +453,83 @@ impl<R: EvaluationContext> Engine<R> {
         {
             let family = family.clone();
             grouper.shared_roots.insert(key, family);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::EvalConfig;
+    use crate::test_workbook::TestWorkbook;
+    use formualizer_parse::parser::parse;
+
+    fn engine() -> Engine<TestWorkbook> {
+        let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+        engine.graph.sheet_id_mut("Sheet1");
+        engine.graph.sheet_id_mut("Sheet2");
+        engine.graph.sheet_id_mut("Sheet 2");
+        engine
+    }
+
+    #[test]
+    fn certification_supports_parsed_family_syntax_without_follower_parsing() {
+        let mut engine = engine();
+        for (root, follower) in [
+            ("=A1 + B1", "=A2 + B2"),
+            ("=SUM(\tA1,\nB1)", "=SUM(\tA2,\nB2)"),
+            ("=Sheet2!A1+'Sheet 2'!B1", "=Sheet2!A2+'Sheet 2'!B2"),
+            ("=@(A1:A10)", "=@(A2:A11)"),
+            ("=Rate*A1", "=Rate*A2"),
+            ("=SPDVOL(A1)+INDEX(B1:B10,1)", "=SPDVOL(A2)+INDEX(B2:B11,1)"),
+        ] {
+            let ast = parse(root).unwrap();
+            let template = engine.intern_formula_ast(&ast);
+            let lexical = engine
+                .certify_template(root, &ast, template)
+                .unwrap_or_else(|| panic!("uncertified {root}"));
+            assert_eq!(
+                lexical.lexeme.match_relocated(root, follower, 1, 0),
+                RelocatedMatch::Match,
+                "{root}"
+            );
+            let own = parse(follower).unwrap();
+            assert!(
+                engine
+                    .graph
+                    .relocated_member_oracle(template, (0, 0), 1, 0, &own),
+                "{root}"
+            );
+            assert_eq!(
+                lexical
+                    .lexeme
+                    .match_relocated(root, &format!("{follower} "), 1, 0),
+                RelocatedMatch::Mismatch
+            );
+        }
+    }
+
+    #[test]
+    fn certification_keeps_structural_and_unsupported_reference_fallbacks() {
+        let mut engine = engine();
+        for text in [
+            "=Table1[Col]",
+            "={1,2;3,4}",
+            "=A1#",
+            "=SUM(A:A)",
+            "=Sheet1:Sheet2!A1",
+            "=Missing!A1",
+            "=[1]Sheet1!A1",
+            "=#REF!",
+            "=a1",
+            "=A01",
+        ] {
+            let ast = parse(text).unwrap();
+            let template = engine.intern_formula_ast(&ast);
+            assert!(
+                engine.certify_template(text, &ast, template).is_none(),
+                "{text}"
+            );
         }
     }
 }
