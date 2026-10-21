@@ -157,9 +157,6 @@ pub mod fp8_parity_test_support {
     use crate::engine::template::canonical::{
         CanonicalRejectReason, CanonicalTemplateFlag, canonicalize_template,
     };
-    use crate::engine::template::dependency_summary::summarize_canonical_template;
-    use crate::engine::template::domain::{PlacementDomain, ResultRegion};
-    use crate::engine::template::read_summary::SpanReadSummary;
     use crate::reference::{CellRef, Coord};
     use crate::traits::EvaluationContext;
     use formualizer_common::{ExcelError, LiteralValue};
@@ -296,41 +293,11 @@ pub mod fp8_parity_test_support {
                     old.dynamic, new.dep_plan.dynamic,
                     "dynamic flag differs for {formula} at {placement:?}"
                 );
-                let mut expected_labels = canonical_labels_from_old(&old.labels);
-                if old.dynamic {
-                    expected_labels.flags |= CanonicalLabels::FLAG_DYNAMIC;
-                }
-                assert_eq!(
-                    expected_labels.flags, new.labels.flags,
-                    "canonical label flags differ for {formula} at {placement:?}\nold={:?}\nnew={:#x}",
-                    old.labels.flags, new.labels.flags
-                );
-                assert_eq!(
-                    expected_labels.rejects, new.labels.rejects,
-                    "canonical label rejects differ for {formula} at {placement:?}\nold={:?}\nnew={:#x}",
-                    old.labels.reject_reasons, new.labels.rejects
-                );
-                // The passive summary oracle cannot resolve defined names, so
-                // a named formula that the ingest pipeline resolved to a
-                // concrete region is an intentional superset: old None / new
-                // Some is allowed exactly when the only blocking reason was a
-                // named reference.
-                let named_resolution_superset = old.summary_rejected_only_for_named_reference
-                    && old.read_summary_debug.is_none();
-                if !named_resolution_superset {
-                    assert_eq!(
-                        old.read_summary_debug,
-                        new.read_summary.as_ref().map(|s| format!("{s:?}")),
-                        "read summary differs for {formula} at {placement:?}"
-                    );
-                }
-                assert_eq!(new.formula_text.as_deref(), Some(formula));
-                assert_eq!(new.placement, placement);
                 Fp8ParityObservation {
                     formula: formula.to_string(),
                     placement,
                     old_payload: old.payload,
-                    new_hash: new.canonical_hash,
+                    new_hash: old.canonical_hash,
                 }
             }
             (Err(old), Err(new)) => {
@@ -358,14 +325,12 @@ pub mod fp8_parity_test_support {
     #[derive(Debug)]
     struct OldOutput {
         payload: String,
-        labels: crate::engine::template::canonical::CanonicalTemplateLabels,
         direct_cells: Vec<CellRef>,
         range_deps: Vec<crate::reference::SharedRangeRef<'static>>,
         unresolved_names: Vec<String>,
         volatile: bool,
         dynamic: bool,
-        read_summary_debug: Option<String>,
-        summary_rejected_only_for_named_reference: bool,
+        canonical_hash: u64,
     }
 
     fn old_path<R: EvaluationContext>(
@@ -380,39 +345,30 @@ pub mod fp8_parity_test_support {
         let dynamic = engine.graph.is_ast_dynamic(ast);
         let template =
             canonicalize_template(ast, placement.coord.row() + 1, placement.coord.col() + 1);
-        let summary = summarize_canonical_template(&template);
-        let scalar_domain = PlacementDomain::row_run(
-            placement.sheet_id,
-            placement.coord.row(),
-            placement.coord.row(),
-            placement.coord.col(),
+        // The metadata oracle resolves strings through the arena, just as the
+        // former ingest producer did after storing the rewritten tree.
+        engine.intern_formula_ast(ast);
+        let metadata = engine.ingest_pipeline().parity_metadata(ast, placement);
+        let mut expected = canonical_labels_from_old(&template.labels);
+        if dynamic {
+            expected.flags |= CanonicalLabels::FLAG_DYNAMIC;
+        }
+        assert_eq!(
+            expected.flags, metadata.labels.flags,
+            "canonical flags for {ast:?}"
         );
-        let result_region = ResultRegion::scalar_cells(scalar_domain);
-        let read_summary = SpanReadSummary::from_formula_summary(
-            placement.sheet_id,
-            &result_region,
-            &summary,
-            engine.graph.sheet_reg(),
-        )
-        .ok();
-        let summary_rejected_only_for_named_reference = !summary.reject_reasons.is_empty()
-            && summary.reject_reasons.iter().all(|reason| {
-                matches!(
-                    reason,
-                    crate::engine::template::dependency_summary::DependencyRejectReason
-                        ::NamedRangeUnsupported { .. }
-                )
-            });
+        assert_eq!(
+            expected.rejects, metadata.labels.rejects,
+            "canonical rejects for {ast:?}"
+        );
         Ok(OldOutput {
             payload: template.key.payload().to_string(),
-            labels: template.labels,
             direct_cells: sorted_cells(placeholders),
             range_deps: ranges,
             unresolved_names,
             volatile,
             dynamic,
-            read_summary_debug: read_summary.as_ref().map(|s| format!("{s:?}")),
-            summary_rejected_only_for_named_reference,
+            canonical_hash: metadata.canonical_hash,
         })
     }
 

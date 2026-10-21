@@ -5,8 +5,6 @@
 
 use crate::SheetId;
 
-use super::domain::PlacementDomain;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct Region {
     pub(crate) sheet_id: SheetId,
@@ -106,38 +104,6 @@ impl Region {
         }
     }
 
-    pub(crate) fn from_domain(domain: &PlacementDomain) -> Self {
-        match domain {
-            PlacementDomain::RowRun {
-                sheet_id,
-                row_start,
-                row_end,
-                col,
-            } => Self::col_interval(*sheet_id, *col, *row_start, *row_end),
-            PlacementDomain::ColRun {
-                sheet_id,
-                row,
-                col_start,
-                col_end,
-            } => Self::row_interval(*sheet_id, *row, *col_start, *col_end),
-            PlacementDomain::Rect {
-                sheet_id,
-                row_start,
-                row_end,
-                col_start,
-                col_end,
-            } => Self::rect(*sheet_id, *row_start, *row_end, *col_start, *col_end),
-        }
-    }
-
-    /// Canonical axis-kind form: degenerate one-cell spans (`Span(x, x)`)
-    /// become `Point(x)` on each axis. Semantically a no-op
-    /// (`intersects`/`contains` already treat them identically), but the
-    /// index's routing is kind-driven: a single-column finite range left as
-    /// `(Span, Span)` lands in the coarse 64x16 rect buckets where it
-    /// over-candidates every point query in the same bucket column, instead
-    /// of the precise per-column interval tree.
-    #[inline]
     pub(crate) fn normalized(self) -> Self {
         Self {
             sheet_id: self.sheet_id,

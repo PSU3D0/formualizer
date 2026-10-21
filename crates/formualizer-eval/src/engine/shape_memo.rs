@@ -16,8 +16,7 @@
 //! 3. **Per-placement work**, never memoized: dependency-plan replay through
 //!    `collect_reference` on the cell's own references (sheet resolution,
 //!    reversed ranges, range expansion versus subscription from the
-//!    instantiated area, name/source/table classification), the read summary
-//!    and the template slot map over real arena node ids.
+//!    instantiated area, name/source/table classification).
 //!
 //! Anything the key walk cannot prove shape-invariant makes the formula
 //! ineligible, and it takes the unchanged per-cell path.
@@ -55,10 +54,8 @@
 //!   scratch buffers never grow past those bounds; such a formula is
 //!   ineligible. Stored shapes and specializations are charged their shape's
 //!   token count against [`MAX_STORED_TOKENS`] (8 MiB of stored tokens).
-//!   Variable-length specialization payloads (canonical keys and expression,
-//!   literal bindings including text, and the names, identifiers and sheet
-//!   names they spell out) are not proportional to the token count, so each
-//!   specialization is also charged an estimate of its retained bytes
+//!   Each specialization retains only flags and a dependency visit sequence,
+//!   and is also charged its retained bytes
 //!   ([`Specialization::retained_bytes`]) against [`MAX_STORED_BYTES`]; one
 //!   over [`MAX_SPECIALIZATION_BYTES`] is not retained and its shape takes the
 //!   per-cell path on that sheet. First-sighting hashes add about 1 MiB. Past
@@ -68,16 +65,10 @@
 use crate::SheetId;
 use crate::engine::arena::value_ref::ValueType;
 use crate::engine::arena::{AstNodeData, AstNodeId, CompactRefType, DataStore, SheetKey};
-use crate::engine::template::canonical::{CanonicalExpr, LiteralSlotDescriptor};
-use crate::engine::template::domain::ValueRefSlotDescriptor;
-use crate::engine::template::read_summary::{ProjectionFallbackReason, ReadProjection};
 use crate::reference::CellRef;
 use formualizer_common::LiteralValue;
 use rustc_hash::FxHashMap;
 use std::hash::{Hash, Hasher};
-use std::sync::Arc;
-
-use super::arena::CanonicalLabels;
 
 /// Upper bound on distinct shapes per pipeline; beyond it new shapes bypass.
 pub(crate) const MAX_SHAPES: usize = 16_384;
@@ -118,18 +109,6 @@ const T_ARRAY: u64 = 13;
 
 /// Product 2: binding-sensitive specialization of one shape on one sheet.
 pub(crate) struct Specialization {
-    pub(crate) canonical_hash: u64,
-    pub(crate) exact_canonical_hash: u64,
-    pub(crate) exact_canonical_key: Arc<str>,
-    pub(crate) parameterized_canonical_hash: u64,
-    pub(crate) parameterized_canonical_key: Arc<str>,
-    pub(crate) literal_slot_descriptors: Arc<[LiteralSlotDescriptor]>,
-    pub(crate) literal_bindings: Box<[LiteralValue]>,
-    pub(crate) value_ref_slot_descriptors: Arc<[ValueRefSlotDescriptor]>,
-    pub(crate) expr: CanonicalExpr,
-    pub(crate) labels: CanonicalLabels,
-    pub(crate) read_projections: Option<Vec<ReadProjection>>,
-    pub(crate) read_projection_fallback: Option<ProjectionFallbackReason>,
     pub(crate) volatile: bool,
     pub(crate) dynamic: bool,
     /// Dependency visit sequence: indices into the formula's pre-order
@@ -138,39 +117,9 @@ pub(crate) struct Specialization {
 }
 
 impl Specialization {
-    /// Conservative estimate of the heap and inline bytes this entry keeps
-    /// alive. The canonical keys are measured exactly. The canonical
-    /// expression and the reference slot descriptors hold no string that the
-    /// exact key does not spell out, so each is charged the exact key's
-    /// length again plus a node-size term per shape token; literal bindings
-    /// are charged their text.
-    pub(crate) fn retained_bytes(&self, shape_tokens: usize) -> usize {
-        use std::mem::size_of;
-        let literal_text: usize = self
-            .literal_bindings
-            .iter()
-            .map(|value| match value {
-                LiteralValue::Text(text) => text.len(),
-                LiteralValue::Error(error) => error.message().map_or(0, str::len) + 64,
-                _ => 0,
-            })
-            .sum();
-        let exact = self.exact_canonical_key.len();
-        size_of::<Self>()
-            + exact
-            + self.parameterized_canonical_key.len()
-            + exact
-            + shape_tokens * size_of::<CanonicalExpr>()
-            + self.literal_bindings.len() * size_of::<LiteralValue>()
-            + literal_text
-            + self.literal_slot_descriptors.len() * size_of::<LiteralSlotDescriptor>()
-            + self.value_ref_slot_descriptors.len() * size_of::<ValueRefSlotDescriptor>()
-            + exact
-            + self
-                .read_projections
-                .as_ref()
-                .map_or(0, |p| p.len() * size_of::<ReadProjection>())
-            + self.visit.len() * size_of::<u32>()
+    /// Only the dependency visit sequence is retained beyond the inline flags.
+    pub(crate) fn retained_bytes(&self, _shape_tokens: usize) -> usize {
+        std::mem::size_of::<Self>() + std::mem::size_of_val(self.visit.as_ref())
     }
 }
 
@@ -948,23 +897,10 @@ mod tests {
     }
 
     fn specialization_with_key(bytes: usize) -> Specialization {
-        let key: Arc<str> = Arc::from("k".repeat(bytes));
         Specialization {
-            canonical_hash: 0,
-            exact_canonical_hash: 0,
-            exact_canonical_key: key.clone(),
-            parameterized_canonical_hash: 0,
-            parameterized_canonical_key: key,
-            literal_slot_descriptors: Arc::from(Vec::new()),
-            literal_bindings: vec![LiteralValue::Text("t".repeat(bytes))].into_boxed_slice(),
-            value_ref_slot_descriptors: Arc::from(Vec::new()),
-            expr: CanonicalExpr::Omitted,
-            labels: CanonicalLabels::default(),
-            read_projections: None,
-            read_projection_fallback: None,
             volatile: false,
             dynamic: false,
-            visit: Box::new([]),
+            visit: vec![0; bytes].into_boxed_slice(),
         }
     }
 
