@@ -1033,6 +1033,24 @@ impl<R: EvaluationContext> Engine<R> {
         })
     }
 
+    /// Whether a prepared formula calls SUBTOTAL or AGGREGATE. Reads the
+    /// arena's precomputed subtree bits, including grouped family templates;
+    /// does not reconstruct, render or evaluate the formula. Coordinates are
+    /// one-based; unknown cells and unprepared formulas return false.
+    pub fn formula_calls_visibility_reducer(&self, sheet: &str, row: u32, col: u32) -> bool {
+        let Some(sheet_id) = self.graph.sheet_id(sheet) else {
+            return false;
+        };
+        let (Some(row), Some(col)) = (row.checked_sub(1), col.checked_sub(1)) else {
+            return false;
+        };
+        let cell = CellRef::new(sheet_id, Coord::new(row, col, true, true));
+        self.graph
+            .get_vertex_for_cell(&cell)
+            .and_then(|vertex| self.graph.formula_view(vertex))
+            .is_some_and(|view| self.graph.data_store().ast_subtotal_calls(view.template) != 0)
+    }
+
     /// Read result presence, currentness and committed spill ownership without
     /// reconstructing or pretty-printing a formula AST. Does not evaluate,
     /// prepare dependency state, or materialize compressed formula members.

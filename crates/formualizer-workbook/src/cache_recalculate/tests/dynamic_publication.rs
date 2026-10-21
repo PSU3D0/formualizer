@@ -16,6 +16,30 @@ use std::io::{Cursor, Read};
 
 type Parts = BTreeMap<String, String>;
 
+#[test]
+fn hidden_row_guard_only_reconstructs_reducer_formulas() {
+    use super::super::visibility_guard::take_inspections;
+    for (formula, expected, refused) in [
+        ("SUM(A1:A2)", 0, false),
+        ("SUBTOTAL(9,A3:A3)", 1, false),
+        ("SUBTOTAL(9,A1:A2)", 1, true),
+        ("AGGREGATE(9,0,A1:A2)", 1, true),
+    ] {
+        let rows = format!(
+            "<row r=\"1\"><c r=\"A1\"><v>2</v></c><c r=\"B1\"><f>{formula}</f><v>99</v></c><c r=\"C1\"><f>B1+1</f><v>99</v></c></row><row r=\"2\" hidden=\"1\"><c r=\"A2\"><v>3</v></c></row><row r=\"3\"><c r=\"A3\"><v>4</v></c></row>"
+        );
+        take_inspections();
+        let result =
+            recalculate_xlsx_bytes(&pack(&package("A1:C3", &rows, "")), Default::default());
+        assert_eq!(take_inspections(), expected, "{formula}");
+        assert_eq!(result.is_err(), refused, "{formula}: {result:?}");
+        if let Err(error) = result {
+            assert!(error.to_string().contains("hidden row"));
+            assert!(error.to_string().contains("B1"));
+        }
+    }
+}
+
 fn sheet_xml(bytes: &[u8]) -> String {
     let mut z = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
     let mut s = String::new();
