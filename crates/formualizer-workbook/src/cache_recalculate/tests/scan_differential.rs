@@ -101,8 +101,8 @@ fn compare_walk(bytes: &[u8], options: &XlsxRecalculateOptions) {
         );
     }
 }
-fn scan_outcome(
-    f: impl FnOnce(&mut usize, &mut u64) -> Result<sheet::Scanned, IoError>,
+fn scan_outcome<T: std::fmt::Debug>(
+    f: impl FnOnce(&mut usize, &mut u64) -> Result<T, IoError>,
     observed: usize,
     logical: u64,
 ) -> String {
@@ -118,7 +118,10 @@ fn compare_scan(
     logical: u64,
 ) {
     let new = scan_outcome(
-        |o, l| sheet::scan_uncounted(bytes, options, mode, o, l),
+        |o, l| {
+            sheet::scan_uncounted(bytes, options, mode, o, l)
+                .map(|scan| sheet::reference::normalize(scan, bytes))
+        },
         observed,
         logical,
     );
@@ -555,6 +558,58 @@ fn fused_encoding_block_boundaries_match_the_reference() {
             compare_all(&bytes, &options);
         }
     }
+}
+
+#[test]
+fn compact_records_preserve_text_proofs_names_and_address_spelling() {
+    let prefix = "q".repeat(300);
+    for options in option_sets() {
+        for address in ["A1", "a1", "A01", "A000001", "A&#49;"] {
+            for kind in [
+                "",
+                " t=\"n\"",
+                " t=\"b\"",
+                " t=\"e\"",
+                " t=\"str\"",
+                " t=\"s\"",
+                " t=\"d\"",
+            ] {
+                for value in [
+                    "0",
+                    "-0",
+                    "1.2345678901234567",
+                    " 1 ",
+                    "1e309",
+                    "NaN",
+                    "1&#46;5",
+                    "&#49;",
+                    "a&amp;b",
+                    "a\r\nb",
+                    "1<!-- split -->2",
+                    "",
+                    "#N/A",
+                ] {
+                    let sheet = format!(
+                        "<worksheet xmlns=\"{MAIN}\" xmlns:{prefix}=\"{MAIN}\"><sheetData><row r=\"1\"><{prefix}:c r=\"{address}\"{kind}><f>1</f><u:v xmlns:u=\"{MAIN}\">{value}</u:v></{prefix}:c></row></sheetData></worksheet>"
+                    );
+                    compare_all(sheet.as_bytes(), &options);
+                }
+                let sheet = format!(
+                    "<worksheet xmlns=\"{MAIN}\"><sheetData><row r=\"1\"><c r=\"{address}\"{kind}><f>1</f><u:v xmlns:u=\"{MAIN}\"/></c></row></sheetData></worksheet>"
+                );
+                compare_all(sheet.as_bytes(), &options);
+            }
+        }
+    }
+    // The retained type/name/address fields no longer require heap pointers.
+    eprintln!(
+        "retained Cell bytes: legacy={} compact={}",
+        std::mem::size_of::<sheet::reference::LegacyCell>(),
+        std::mem::size_of::<sheet::Cell>()
+    );
+    assert!(
+        std::mem::size_of::<sheet::Cell>() < std::mem::size_of::<sheet::reference::LegacyCell>()
+    );
 }
 
 #[test]

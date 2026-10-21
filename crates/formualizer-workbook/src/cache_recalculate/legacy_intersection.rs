@@ -861,7 +861,7 @@ pub(super) fn patches(
             // Such a name's value has no worksheet position to intersect.
             return Err(super::unsupported(
                 "implicit intersection of a defined name holding an external range",
-                format!("{}: {name}", cell.address),
+                format!("{}: {name}", cell.address()),
             ));
         }
         let raw = &plan.data[cell.formula_open.end..cell.formula_end];

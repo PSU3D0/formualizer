@@ -234,7 +234,7 @@ impl Cache {
             Self::Empty => String::new(),
         }
     }
-    fn matches(&self, cell: &sheet::Cell) -> bool {
+    fn matches(&self, cell: &sheet::Cell, bytes: &[u8]) -> bool {
         if cell.inline.is_some() {
             return false;
         }
@@ -242,18 +242,13 @@ impl Cache {
             return false;
         };
         match (self, cell.kind.as_deref()) {
-            (Self::Number(n), None | Some("n")) => v
-                .text
-                .trim()
-                .parse::<f64>()
-                .ok()
-                .is_some_and(|old| display_equal(old, *n)),
-            (Self::Empty, None | Some("n")) => v.text.is_empty(),
+            (Self::Number(n), None | Some("n")) => display_equal(v.number, *n),
+            (Self::Empty, None | Some("n")) => v.text(bytes).is_empty(),
             (Self::Boolean(b), Some("b")) => {
-                matches!((v.text.trim(), b), ("1", true) | ("0", false))
+                matches!((v.text(bytes).trim(), b), ("1", true) | ("0", false))
             }
-            (Self::Text(t), Some("str")) => &v.text == t,
-            (Self::Error(e), Some("e")) => &v.text == e,
+            (Self::Text(t), Some("str")) => v.text(bytes).as_ref() == t,
+            (Self::Error(e), Some("e")) => v.text(bytes).as_ref() == e,
             _ => false,
         }
     }
@@ -326,11 +321,7 @@ fn cache_patches(xml: &[u8], cell: &sheet::Cell, value: &Cache, patches: &mut Ve
             replacement: Vec::new(),
         });
     }
-    let prefix = cell
-        .qualified
-        .rsplit_once(':')
-        .map(|(p, _)| format!("{p}:"))
-        .unwrap_or_default();
+    let prefix = cell.prefix(xml);
     let name = format!("{prefix}v");
     let text = value.text();
     let replacement = if let Some(v) = &cell.value {
@@ -345,7 +336,7 @@ fn cache_patches(xml: &[u8], cell: &sheet::Cell, value: &Cache, patches: &mut Ve
             out.push(b'>');
             out.extend_from_slice(text.as_bytes());
             if v.empty {
-                out.extend_from_slice(format!("</{}>", v.qualified).as_bytes());
+                out.extend_from_slice(format!("</{}>", v.qualified(xml)).as_bytes());
             } else {
                 out.extend_from_slice(&xml[v.close_start..v.span.end]);
             }
@@ -580,7 +571,7 @@ fn admit_source<'a>(
         for cell in &scan.cells {
             wall_clock_guard::validate(
                 &cell.formula_text,
-                &format!("{}!{}", sheet.name, cell.address),
+                &format!("{}!{}", sheet.name, cell.address()),
                 options,
             )?;
         }
@@ -1256,8 +1247,7 @@ fn record_result(
     value: &LiteralValue,
     limit: usize,
 ) {
-    let address = &cell.address;
-    let location = || format!("{sheet}!{address}");
+    let location = || format!("{sheet}!{}", cell.address());
     match value {
         LiteralValue::Error(error)
             if error.kind == formualizer_common::ExcelErrorKind::Name
@@ -1567,7 +1557,7 @@ fn plan_spill_publication(
             )?;
             match projection {
                 result_projection::Projection::Scalar(cache) => {
-                    if !cache.matches(cell) {
+                    if !cache.matches(cell, &plan.data) {
                         publication.changed += 1;
                         cache_patches(&plan.data, cell, &cache, &mut scalar_patches);
                     }

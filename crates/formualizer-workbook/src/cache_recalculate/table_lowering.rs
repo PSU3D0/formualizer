@@ -384,7 +384,7 @@ pub(super) fn patches(
         let stream = TokenStream::new(&token_formula).map_err(|e| {
             unsupported(
                 "cannot tokenize table-bearing formula",
-                format!("{sheet_name} {}: {e}", cell.address),
+                format!("{sheet_name} {}: {e}", cell.address()),
             )
         })?;
         if stream
@@ -395,13 +395,13 @@ pub(super) fn patches(
             let ast = formualizer_parse::parser::parse(&token_formula).map_err(|e| {
                 unsupported(
                     "cannot parse INDIRECT formula in a table-bearing workbook",
-                    format!("{sheet_name} {}: {e}", cell.address),
+                    format!("{sheet_name} {}: {e}", cell.address()),
                 )
             })?;
             if !indirect_text_is_table_free(&ast, &names) {
                 return Err(unsupported(
                     "INDIRECT text in a table-bearing workbook must be literal and free of table names/structured references",
-                    format!("{sheet_name} {}", cell.address),
+                    format!("{sheet_name} {}", cell.address()),
                 ));
             }
         }
@@ -433,13 +433,13 @@ pub(super) fn patches(
                 if qualifier.is_some() {
                     return Err(unsupported(
                         "sheet-qualified table name",
-                        format!("{sheet_name} {}: {spelling}", cell.address),
+                        format!("{sheet_name} {}: {spelling}", cell.address()),
                     ));
                 }
                 if binds_names {
                     return Err(unsupported(
                         "bare table name in a LET/LAMBDA formula",
-                        format!("{sheet_name} {}: {spelling}", cell.address),
+                        format!("{sheet_name} {}: {spelling}", cell.address()),
                     ));
                 }
                 let reference = TableReference {
@@ -474,7 +474,7 @@ pub(super) fn patches(
             let close = raw
                 .iter()
                 .rposition(|b| *b == b'<')
-                .ok_or_else(|| unsupported("missing formula end tag", &cell.address))?;
+                .ok_or_else(|| unsupported("missing formula end tag", cell.address()))?;
             patches.push(Patch {
                 span: cell.formula_open.end..cell.formula_open.end + close,
                 replacement: quick_xml::escape::escape(&lowered)

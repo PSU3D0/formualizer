@@ -780,7 +780,7 @@ fn formula_texts<'p>(
             (anchor.row - 1, anchor.col - 1),
             (cell.row - 1, cell.col - 1),
         )
-        .map_err(|_| unsupported("shared formula expansion", cell.address.clone()))?;
+        .map_err(|_| unsupported("shared formula expansion", cell.address().into_owned()))?;
         out.push((cell, std::borrow::Cow::Owned(expanded)));
     }
     Ok(out)
@@ -868,7 +868,7 @@ pub(crate) fn plan(
             if !lower.contains('[') && !lower.contains("indirect") && !names_hit {
                 continue;
             }
-            let context = format!("{}!{}", sheet.name, cell.address);
+            let context = format!("{}!{}", sheet.name, cell.address());
             let Some(ast) = parse_formula(&text) else {
                 // An unparseable formula is refused by ingestion.
                 continue;
