@@ -47,6 +47,40 @@ fn sheet_xml(bytes: &[u8]) -> String {
     s
 }
 
+#[test]
+fn scalar_chain_is_lazy_and_audited_parts_do_not_grow_buffers() {
+    use super::super::{legacy_intersection::take_chain_reads, package::take_part_buffer_growths};
+    for (formula, reads) in [("A1+1", 0), ("A1:A2+1", 1)] {
+        let rows = format!(
+            "<row r=\"1\"><c r=\"A1\"><v>2</v></c><c r=\"B1\"><f>{formula}</f><v>99</v></c></row><row r=\"2\"><c r=\"A2\"><v>3</v></c></row>"
+        );
+        let mut parts = package("A1:B2", &rows, "");
+        parts = edit(
+            parts,
+            WB_RELS,
+            "</Relationships>",
+            "<Relationship Id=\"chain\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/calcChain\" Target=\"calcChain.xml\"/></Relationships>",
+        );
+        parts = edit(
+            parts,
+            TYPES,
+            "</Types>",
+            "<Override PartName=\"/xl/calcChain.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.calcChain+xml\"/></Types>",
+        );
+        parts.insert("xl/calcChain.xml".into(), "<calcChain xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><c r=\"B1\" i=\"1\"/></calcChain>".into());
+        take_chain_reads();
+        take_part_buffer_growths();
+        let result = recalculate_xlsx_bytes(&pack(&parts), Default::default()).unwrap();
+        let actual_reads = take_chain_reads();
+        let growths = take_part_buffer_growths();
+        eprintln!("formula={formula} chain_reads={actual_reads} part_buffer_growths={growths}");
+        assert_eq!(actual_reads, reads, "{formula}");
+        assert_eq!(growths, 0, "{formula}");
+        assert_eq!(result.summary.evaluated, 1);
+        assert!(sheet_xml(&result.bytes).contains(&format!("<f>{formula}</f><v>3</v>")));
+    }
+}
+
 /// The parent `new-vertical` shape: an ordinary formula that spills.
 fn new_vertical() -> Parts {
     let rows = concat!(

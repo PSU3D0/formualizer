@@ -902,13 +902,12 @@ fn ingest_source<'a>(
     let has_tables = plans.iter().any(|p| !p.tables.is_empty());
     // Legacy implicit intersection for formulas Excel calculated (listed in
     // the calc chain); see `legacy_intersection`.
-    let calc_chain_part = package::calc_chain_part(&mut archive, options);
-    let calc_chain = legacy_intersection::calc_chain(
-        &mut archive,
-        calc_chain_part.as_deref(),
-        &sheets,
-        options,
-    )?;
+    let calc_chain = if legacy_intersection::needs_calc_chain(&plans, options)? {
+        let calc_chain_part = package::calc_chain_part(&mut archive, options);
+        legacy_intersection::calc_chain(&mut archive, calc_chain_part.as_deref(), &sheets, options)?
+    } else {
+        Default::default()
+    };
     let table_names: Vec<String> = plans
         .iter()
         .flat_map(|p| &p.tables)

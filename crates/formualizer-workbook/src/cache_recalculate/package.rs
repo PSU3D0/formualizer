@@ -9,6 +9,14 @@ use std::io::{Cursor, Read};
 use zip::ZipArchive;
 
 pub(crate) type Archive<'a> = ZipArchive<Cursor<&'a [u8]>>;
+#[cfg(test)]
+thread_local! {
+    static PART_BUFFER_GROWTHS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+#[cfg(test)]
+pub(super) fn take_part_buffer_growths() -> usize {
+    PART_BUFFER_GROWTHS.with(|n| n.replace(0))
+}
 #[derive(Debug)]
 pub(super) struct Relationship {
     pub kind: String,
@@ -436,9 +444,20 @@ pub(crate) fn read_part(
     let file = archive
         .by_name(name)
         .map_err(|e| IoError::from_backend("zip", e))?;
-    let mut bytes = Vec::new();
+    // Package admission audited this member size; still bound both the
+    // reservation and the actual read, including the over-limit probe byte.
+    let capacity = usize::try_from(file.size())
+        .unwrap_or(limit.saturating_add(1))
+        .min(limit.saturating_add(1));
+    let mut bytes = Vec::with_capacity(capacity);
+    #[cfg(test)]
+    let initial_capacity = bytes.capacity();
     file.take((limit as u64).saturating_add(1))
         .read_to_end(&mut bytes)?;
+    #[cfg(test)]
+    if bytes.capacity() > initial_capacity {
+        PART_BUFFER_GROWTHS.with(|n| n.set(n.get().saturating_add(1)));
+    }
     if bytes.len() > limit {
         return Err(unsupported("XML part byte limit", name));
     }
