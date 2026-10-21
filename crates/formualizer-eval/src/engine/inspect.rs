@@ -885,7 +885,9 @@ impl<R: EvaluationContext> Engine<R> {
         &self,
         address: &CellAddress,
     ) -> Result<(CellKey, CellAddress), InspectError> {
-        CellAddress::new(address.sheet.clone(), address.row, address.column).map_err(|error| {
+        // The constructor validates coordinates only; do not clone the sheet
+        // name merely to discard this temporary validation address.
+        CellAddress::new(String::new(), address.row, address.column).map_err(|error| {
             InspectError::InvalidAddress {
                 message: error.to_string(),
             }

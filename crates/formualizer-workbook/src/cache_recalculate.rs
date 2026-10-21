@@ -33,7 +33,7 @@ use formualizer_eval::engine::{
     SpillConflictPolicy,
 };
 use phase_clock::PhaseClock;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 #[cfg(not(target_arch = "wasm32"))]
 use std::io::Read;
 use std::io::{Cursor, Seek, SeekFrom, Write};
@@ -1228,21 +1228,21 @@ fn validated_result(
     has_formula: bool,
     staleness: Staleness,
     coerced: bool,
-    sheet: &str,
+    location: impl Fn() -> String,
 ) -> Result<LiteralValue, IoError> {
-    let mut value = value.ok_or_else(|| unsupported("absent formula result", sheet))?;
+    let mut value = value.ok_or_else(|| unsupported("absent formula result", location()))?;
     if matches!(&value,LiteralValue::Array(rows) if rows.len()==1 && rows[0].len()==1) {
         value = value
             .coerce_to_single_value()
             .map_err(|_| unsupported("non-scalar result", "cache-only writer"))?;
     }
     if !(has_formula || (matches!(value, LiteralValue::Error(_)) && coerced)) {
-        return Err(unsupported("source formula was not ingested", sheet));
+        return Err(unsupported("source formula was not ingested", location()));
     }
     if staleness != Staleness::Current {
         return Err(unsupported(
             format!("formula result is not current: {staleness:?} after evaluation"),
-            sheet,
+            location(),
         ));
     }
     Ok(value)
@@ -1515,6 +1515,15 @@ fn plan_spill_publication(
         changed: 0,
         patches: Vec::with_capacity(plans.len()),
     };
+    // Borrow sheet names and copy coordinates once, instead of cloning a
+    // worksheet name for every membership probe (including an empty set).
+    let mut coerced_by_sheet: HashMap<&str, HashSet<(u32, u32)>> = HashMap::new();
+    for (sheet, row, col) in coerced {
+        coerced_by_sheet
+            .entry(sheet.as_str())
+            .or_default()
+            .insert((*row, *col));
+    }
     // 1. Project every source formula; nothing is materialized yet.
     let mut projected = Vec::with_capacity(plans.len());
     for (sheet, plan) in sheets.iter().zip(plans) {
@@ -1522,6 +1531,12 @@ fn plan_spill_publication(
         // pre-spill writer; only anchors are retained for the bounds pass.
         let mut scalar_patches = Vec::new();
         let mut anchors = Vec::new();
+        let mut address = CellAddress {
+            sheet: sheet.name.clone(),
+            row: 1,
+            column: 1,
+        };
+        let sheet_coerced = coerced_by_sheet.get(sheet.name.as_str());
         for (i, cell) in plan.cells.iter().enumerate() {
             checkpoint(&options.cancel)?;
             let prior = plan
@@ -1530,13 +1545,15 @@ fn plan_spill_publication(
                 .get(&(cell.row, cell.col))
                 .filter(|a| a.formula == i);
             let summary = &mut publication.summary;
+            address.row = cell.row;
+            address.column = cell.col;
             let projection = result_projection::project_formula(
                 engine,
-                &sheet.name,
+                &address,
                 cell,
                 i,
                 prior,
-                coerced.contains(&(sheet.name.clone(), cell.row, cell.col)),
+                sheet_coerced.is_some_and(|cells| cells.contains(&(cell.row, cell.col))),
                 date_system,
                 &mut |value| {
                     record_result(

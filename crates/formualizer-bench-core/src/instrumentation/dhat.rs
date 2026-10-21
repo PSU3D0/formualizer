@@ -33,8 +33,8 @@ pub fn init_profiler() -> ProfilerGuard {
 pub fn snapshot() -> AllocationSnapshot {
     let stats = dhat::HeapStats::get();
     AllocationSnapshot {
-        allocs_count: Some(stats.total_blocks as u64),
-        allocs_bytes: Some(stats.total_bytes as u64),
+        allocs_count: Some(stats.total_blocks),
+        allocs_bytes: Some(stats.total_bytes),
         allocs_max_bytes: Some(stats.max_bytes as u64),
     }
 }

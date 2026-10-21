@@ -60,7 +60,7 @@ fn is_multi_cell(extent: &formualizer_common::RangeAddress) -> bool {
 #[allow(clippy::too_many_arguments)]
 pub(super) fn project_formula(
     engine: &Engine<WBResolver>,
-    sheet: &str,
+    address: &CellAddress,
     cell: &Cell,
     formula: usize,
     prior: Option<&DynamicAnchor>,
@@ -68,10 +68,9 @@ pub(super) fn project_formula(
     date_system: DateSystem,
     record: &mut dyn FnMut(&LiteralValue),
 ) -> Result<Projection, IoError> {
-    let address = CellAddress::new(sheet, cell.row, cell.col)
-        .map_err(|e| IoError::from_backend("xlsx-coordinate", e))?;
+    let sheet = address.sheet.as_str();
     let snapshot = engine
-        .inspect_cell_result(&address)
+        .inspect_cell_result(address)
         .map_err(|e| IoError::from_backend("xlsx-inspect", e))?;
     let spill = match &snapshot.spill {
         None => None,
@@ -109,7 +108,7 @@ pub(super) fn project_formula(
         snapshot.has_formula,
         snapshot.staleness,
         coerced,
-        &format!("{sheet}!{}", cell.address),
+        || format!("{sheet}!{}", cell.address),
     )?;
     record(&value);
     let shape = if let Some(prior) = prior.filter(|a| a.binding.is_none()) {
