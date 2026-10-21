@@ -558,6 +558,45 @@ fn fused_encoding_block_boundaries_match_the_reference() {
 }
 
 #[test]
+fn worksheet_attribute_fast_path_and_fallback_match_the_reference() {
+    let cases = [
+        "<row r=\"1\" s=\"0\" customFormat=\"1\" ht=\"15\" customHeight=\"1\" spans=\"1:2\" thickBot=\"0\" thickTop=\"0\"><c r=\"A1\" s=\"1\" ph=\"0\"><f t=\"normal\" ca=\"1\">1</f><v>0</v></c></row>",
+        "<row r=\"1\"><c r=\"A1\" r=\"B1\"/></row>",
+        "<row r=\"1\" hidden=\"1\" hidden=\"0\"/>",
+        "<row r=\"1\"><c r=\"A1\"><f t=\"normal\" t=\"shared\">1</f><v/></c></row>",
+        "<row r=\"1\"><c r=\"A1\" custom=\"é\"><v>0</v></c></row>",
+        "<row r=\"1\"><c r=\"&#65;1\"><v>0</v></c></row>",
+        "<row r=\"1\"><c r=\"A1\" s = \"0\"><v>0</v></c></row>",
+        "<row r=\"1\"><c r=\"A1\" s=\"x\t\"><v>0</v></c></row>",
+        "<row r=\"1\"><c r=\"A1\" s=\"<\"><v>0</v></c></row>",
+        "<row r=\"1\"><c r=\"A1\" p:s=\"0\" xmlns:p=\"urn:p\"><v>0</v></c></row>",
+        "<row r=\"1\"><c r=\"A1\" xmlns:p=\"urn:p\" xmlns:q=\"urn:p\" p:s=\"0\" q:s=\"1\"/></row>",
+        "<row r=\"1\"><c r=\"A1\" xmlns=\"urn:foreign\"/></row>",
+        "<row xmlns=\"urn:foreign\" r=\"1\"><c xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" r=\"A1\"/></row>",
+        "<row r=\"1\"><c r=\"A1\"><v a=\"1\"/></c><c r=\"B1\"><v/></c></row>",
+        "<row r=\"1\"><c r=\"A1\"><f>1<!--ignored--><?p?></f><v>0</v></c></row>",
+    ];
+    for options in option_sets() {
+        for rows in cases {
+            let sheet =
+                format!("<worksheet xmlns=\"{MAIN}\"><sheetData>{rows}</sheetData></worksheet>");
+            compare_all(sheet.as_bytes(), &options);
+        }
+        // Declarations before/after ordinary attributes, and rebinding at
+        // both row and cell scopes. Leaving a scope restores its bindings.
+        for attrs in [
+            format!("xmlns=\"{MAIN}\" r=\"1\""),
+            format!("r=\"1\" xmlns=\"{MAIN}\""),
+        ] {
+            let sheet = format!(
+                "<worksheet xmlns=\"{MAIN}\" xmlns:p=\"{MAIN}\"><sheetData><row {attrs}><c r=\"A1\" xmlns:p=\"urn:foreign\"><v>0</v></c><p:c r=\"B1\"><p:v>0</p:v></p:c></row><row r=\"2\"><c xmlns:p=\"{MAIN}\" r=\"A2\"><p:f>1</p:f><v>0</v></c></row></sheetData></worksheet>"
+            );
+            compare_all(sheet.as_bytes(), &options);
+        }
+    }
+}
+
+#[test]
 fn many_distinct_namespaces_and_prefixes_match_the_reference() {
     // Interning is hashed; a linear intern list made these quadratic.
     let n = 2_000;
