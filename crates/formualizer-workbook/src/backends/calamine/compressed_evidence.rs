@@ -239,22 +239,18 @@ impl MonotonicFormulaEvidence {
         record: EvidenceRecord<'_>,
         owner: Option<SourceFamilyId>,
     ) {
-        let active = self.active_families.clone();
         let remaining_bytes = self.limit.saturating_sub(self.evidence_bytes);
         let byte_capacity =
             usize::try_from(remaining_bytes / EXCLUSION_BYTES).unwrap_or(usize::MAX);
         let max_exclusions = self.max_exclusions.min(byte_capacity);
-        let mut retained = Vec::with_capacity(active.len());
         let mut added = 0usize;
-        for family in active {
-            let evidence = self
-                .families
-                .get_mut(&family)
-                .expect("active family exists");
+        let families = &mut self.families;
+        self.active_families.retain(|family| {
+            let evidence = families.get_mut(family).expect("active family exists");
             let Some(range) = evidence.range else {
-                continue;
+                return false;
             };
-            let disposition = if owner == Some(family) {
+            let disposition = if owner == Some(*family) {
                 ActivePointDisposition::FamilyMember
             } else {
                 match record {
@@ -282,11 +278,8 @@ impl MonotonicFormulaEvidence {
                 disposition,
                 max_exclusions,
             ));
-            if range.end >= coord {
-                retained.push(family);
-            }
-        }
-        self.active_families = retained;
+            range.end >= coord
+        });
         let growth = (added as u64).saturating_mul(EXCLUSION_BYTES);
         self.evidence_bytes = self.evidence_bytes.saturating_add(growth);
         self.evidence_peak_bytes = self.evidence_peak_bytes.max(self.evidence_bytes);
@@ -872,6 +865,40 @@ mod tests {
             sheet_instance: 0,
             source_index: index as u32,
         }
+    }
+
+    #[test]
+    fn active_family_buffer_is_reused_between_formula_cells() {
+        let mut evidence = MonotonicFormulaEvidence::new();
+        for col in 0..16 {
+            evidence.observe(
+                coord(0, col),
+                EvidenceRecord::Anchor {
+                    family: family(col as usize),
+                    range: Some(rect(0, col, 2, col)),
+                    text: "A1",
+                },
+            );
+        }
+        let mut buffer_replacements = 0;
+        for row in 1..=2 {
+            for col in 0..16 {
+                let buffer = evidence.active_families.as_ptr();
+                evidence.observe(
+                    coord(row, col),
+                    EvidenceRecord::Descendant {
+                        family: family(col as usize),
+                    },
+                );
+                buffer_replacements += usize::from(evidence.active_families.as_ptr() != buffer);
+            }
+        }
+        assert_eq!(buffer_replacements, 0, "per-cell active-family allocations");
+        let report = evidence.finish().report;
+        assert_eq!(report.source_clean_families, 16);
+        assert_eq!(report.source_clean_cells, 48);
+        assert_eq!(report.source_formula_events, 48);
+        assert_eq!(report.source_partition_failures, 0);
     }
 
     fn clean(range: SourceRect) -> MonotonicFormulaEvidence {
