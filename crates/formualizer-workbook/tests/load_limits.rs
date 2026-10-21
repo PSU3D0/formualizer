@@ -404,6 +404,11 @@ fn calamine_loader_loads_shared_formula_semantics() {
 #[test]
 fn calamine_formula_spool_enforces_sheet_workbook_file_and_no_disk_limits() {
     use formualizer_workbook::FormulaSpoolDiskPolicy;
+    let deferred_config = |limits| {
+        let mut config = WorkbookConfig::ephemeral().with_ingest_limits(limits);
+        config.eval.defer_graph_building = true;
+        config
+    };
 
     let zero_limits = WorkbookLoadLimits {
         max_formula_spool_bytes_per_sheet: 0,
@@ -416,11 +421,17 @@ fn calamine_formula_spool_enforces_sheet_workbook_file_and_no_disk_limits() {
     Workbook::from_reader(
         literal_adapter,
         LoadStrategy::EagerAll,
-        WorkbookConfig::ephemeral().with_ingest_limits(zero_limits),
+        WorkbookConfig::ephemeral().with_ingest_limits(zero_limits.clone()),
     )
     .expect("formula spool limits must not charge literal-only sheets");
 
     let one_sheet = shared_formula_xlsx_bytes(1);
+    Workbook::from_reader(
+        CalamineAdapter::open_bytes(one_sheet.clone()).unwrap(),
+        LoadStrategy::EagerAll,
+        WorkbookConfig::ephemeral().with_ingest_limits(zero_limits),
+    )
+    .expect("eager formula staging does not need a spool");
     let cases = [
         (
             WorkbookLoadLimits {
@@ -448,14 +459,11 @@ fn calamine_formula_spool_enforces_sheet_workbook_file_and_no_disk_limits() {
     ];
     for (limits, expected) in cases {
         let adapter = CalamineAdapter::open_bytes(one_sheet.clone()).unwrap();
-        let error = match Workbook::from_reader(
-            adapter,
-            LoadStrategy::EagerAll,
-            WorkbookConfig::ephemeral().with_ingest_limits(limits),
-        ) {
-            Ok(_) => panic!("spool limit must reject the workbook"),
-            Err(error) => error,
-        };
+        let error =
+            match Workbook::from_reader(adapter, LoadStrategy::EagerAll, deferred_config(limits)) {
+                Ok(_) => panic!("spool limit must reject the workbook"),
+                Err(error) => error,
+            };
         assert!(
             error.to_string().contains(expected),
             "unexpected error: {error}"
@@ -468,14 +476,11 @@ fn calamine_formula_spool_enforces_sheet_workbook_file_and_no_disk_limits() {
         max_formula_spool_bytes_per_workbook: 20,
         ..WorkbookLoadLimits::default()
     };
-    let error = match Workbook::from_reader(
-        adapter,
-        LoadStrategy::EagerAll,
-        WorkbookConfig::ephemeral().with_ingest_limits(limits),
-    ) {
-        Ok(_) => panic!("aggregate spool limit must include both sheets"),
-        Err(error) => error,
-    };
+    let error =
+        match Workbook::from_reader(adapter, LoadStrategy::EagerAll, deferred_config(limits)) {
+            Ok(_) => panic!("aggregate spool limit must include both sheets"),
+            Err(error) => error,
+        };
     assert!(
         error.to_string().contains("per-workbook limit"),
         "unexpected error: {error}"

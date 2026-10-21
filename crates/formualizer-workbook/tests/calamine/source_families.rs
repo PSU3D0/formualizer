@@ -250,6 +250,24 @@ fn proven_shared_copies_skip_parsing_and_match_the_parsed_load() {
 }
 
 #[test]
+fn eager_staging_does_not_encode_or_replay_a_formula_spool() {
+    let bytes = families_xlsx();
+    let eager = load(&bytes, false, SourceFamilyMode::On);
+    let report = eager.formula_ingest_report_total();
+    assert!(report.formula_cells_seen > 0);
+    assert_eq!(report.source_formula_records_spooled, 0);
+    assert_eq!(report.source_spool_encoded_bytes, 0);
+    assert_eq!(report.source_spool_replays, 0);
+
+    let mut deferred = load(&bytes, true, SourceFamilyMode::On);
+    deferred.evaluate_all().unwrap();
+    let report = deferred.formula_ingest_report_total();
+    assert!(report.source_formula_records_spooled > 0);
+    assert!(report.source_spool_encoded_bytes > 0);
+    assert!(report.source_spool_replays > 0);
+}
+
+#[test]
 fn off_grid_copy_keeps_calamine_text() {
     let bytes = families_xlsx();
     let engine = load(&bytes, false, SourceFamilyMode::On);

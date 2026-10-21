@@ -700,9 +700,9 @@ fn authoritative_eager_commits_clean_family_without_descendant_graph_materializa
 
     let report = engine.last_formula_ingest_report().unwrap();
     assert_eq!(report.formula_cells_seen, 100);
-    assert_eq!(report.source_formula_records_spooled, 100);
-    assert!(report.source_spool_encoded_bytes > 100);
-    assert!(report.source_spool_peak_memory_bytes > 0);
+    assert_eq!(report.source_formula_records_spooled, 0);
+    assert_eq!(report.source_spool_encoded_bytes, 0);
+    assert_eq!(report.source_spool_peak_memory_bytes, 0);
     assert_eq!(report.source_spool_spilled_bytes, 0);
     assert_eq!(
         engine.get_cell_value("Sheet1", 100, 2),
@@ -869,7 +869,7 @@ fn fragmented_relative_family_preserves_replay_values_lookup_edits_and_structure
     let report = direct.last_formula_ingest_report().unwrap();
     assert_eq!(report.source_partition_holes, 1, "{report:?}");
     assert_eq!(report.source_partition_ordinary_exceptions, 1, "{report:?}");
-    assert_eq!(report.source_spool_replays, 1, "{report:?}");
+    assert_eq!(report.source_spool_replays, 0, "{report:?}");
     let deferred_report = deferred.last_formula_ingest_report().unwrap();
     assert_eq!(deferred_report.source_spool_replays, 1);
 
@@ -1432,7 +1432,7 @@ fn deferred_selected_build_isolates_packages_and_replacement_invalidates_family(
 
 #[test]
 fn compressed_shadow_prepares_one_anchor_and_replays_every_cell_eager_and_deferred() {
-    let mut eager = None;
+    let mut eager: Option<formualizer_eval::engine::FormulaIngestReport> = None;
     for deferred in [false, true] {
         let config = EvalConfig {
             formula_plane_mode: FormulaPlaneMode::Shadow,
@@ -1450,8 +1450,19 @@ fn compressed_shadow_prepares_one_anchor_and_replays_every_cell_eager_and_deferr
         assert_eq!(report.graph_formula_cells_materialized, 100);
         assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
         if deferred {
-            assert_eq!(eager.as_ref(), Some(&report));
+            assert_eq!(report.source_spool_replays, 1);
+            assert!(report.source_spool_encoded_bytes > 0);
+            let mut expected = eager.as_ref().unwrap().clone();
+            expected.source_formula_records_spooled = report.source_formula_records_spooled;
+            expected.source_spool_encoded_bytes = report.source_spool_encoded_bytes;
+            expected.source_spool_peak_memory_bytes = report.source_spool_peak_memory_bytes;
+            expected.source_spool_spilled_bytes = report.source_spool_spilled_bytes;
+            expected.source_spool_spill_files = report.source_spool_spill_files;
+            expected.source_spool_replays = report.source_spool_replays;
+            assert_eq!(expected, report);
         } else {
+            assert_eq!(report.source_spool_replays, 0);
+            assert_eq!(report.source_spool_encoded_bytes, 0);
             eager = Some(report);
         }
     }
@@ -1513,7 +1524,7 @@ fn injected_calamine_arena_relocation_mismatch_replays_complete_shadow_family() 
     assert_eq!(report.source_compressed_cells_prepared, 0, "{report:?}");
     assert_eq!(report.source_family_promoted, 0, "{report:?}");
     assert_eq!(report.graph_formula_cells_materialized, 100, "{report:?}");
-    assert_eq!(report.source_spool_replays, 1, "{report:?}");
+    assert_eq!(report.source_spool_replays, 0, "{report:?}");
     assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
     assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 100);
 
