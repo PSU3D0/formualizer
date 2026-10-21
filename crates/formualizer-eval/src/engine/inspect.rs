@@ -1039,6 +1039,7 @@ impl<R: EvaluationContext> Engine<R> {
     /// arena's precomputed subtree bits, including grouped family templates;
     /// does not reconstruct, render or evaluate the formula. Coordinates are
     /// one-based; unknown cells and unprepared formulas return false.
+    #[doc(hidden)]
     pub fn formula_calls_visibility_reducer(&self, sheet: &str, row: u32, col: u32) -> bool {
         let Some(sheet_id) = self.graph.sheet_id(sheet) else {
             return false;
@@ -1050,7 +1051,11 @@ impl<R: EvaluationContext> Engine<R> {
         self.graph
             .get_vertex_for_cell(&cell)
             .and_then(|vertex| self.graph.formula_view(vertex))
-            .is_some_and(|view| self.graph.data_store().ast_subtotal_calls(view.template) != 0)
+            .is_some_and(|view| {
+                self.graph
+                    .data_store()
+                    .ast_calls_visibility_reducer(view.template)
+            })
     }
 
     /// Read result presence, currentness and committed spill ownership without

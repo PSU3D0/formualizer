@@ -24,6 +24,11 @@ fn hidden_row_guard_only_reconstructs_reducer_formulas() {
         ("SUBTOTAL(9,A3:A3)", 1, false),
         ("SUBTOTAL(9,A1:A2)", 1, true),
         ("AGGREGATE(9,0,A1:A2)", 1, true),
+        ("_xlfn._xlws.SUBTOTAL(109,A1:A2)", 1, true),
+        ("_xlws._xlfn.SUBTOTAL(109,A1:A2)", 1, true),
+        ("_xll.AGGREGATE(9,0,A1:A2)", 1, true),
+        ("_XLL._XLWS._XLFN.SUBTOTAL(109,A1:A2)", 1, true),
+        ("FOO.SUBTOTAL(9,A1:A2)", 1, true),
     ] {
         let rows = format!(
             "<row r=\"1\"><c r=\"A1\"><v>2</v></c><c r=\"B1\"><f>{formula}</f><v>99</v></c><c r=\"C1\"><f>B1+1</f><v>99</v></c></row><row r=\"2\" hidden=\"1\"><c r=\"A2\"><v>3</v></c></row><row r=\"3\"><c r=\"A3\"><v>4</v></c></row>"
