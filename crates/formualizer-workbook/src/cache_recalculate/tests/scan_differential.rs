@@ -561,6 +561,28 @@ fn fused_encoding_block_boundaries_match_the_reference() {
 }
 
 #[test]
+fn whole_slice_validation_visits_each_input_once_per_pass() {
+    use crate::xlsx_xml::{WHOLE_SLICE_VALIDATION_BYTES, walk};
+    let options = XlsxRecalculateOptions::default();
+    let xml_options = (&options).into();
+    for text in [
+        "<a/>",
+        "<a q=\"é\">x&amp;y\r\nz</a>",
+        "<a xmlns=\"u\"><b/></a>",
+    ] {
+        WHOLE_SLICE_VALIDATION_BYTES.with(|n| n.set((0, 0)));
+        walk(text.as_bytes(), &xml_options, |_, _| Ok(())).unwrap();
+        assert_eq!(
+            WHOLE_SLICE_VALIDATION_BYTES.with(|n| n.get()),
+            (text.len(), text.len())
+        );
+    }
+    WHOLE_SLICE_VALIDATION_BYTES.with(|n| n.set((0, 0)));
+    assert!(walk(b"<a>\xff</a>", &xml_options, |_, _| Ok(())).is_err());
+    assert_eq!(WHOLE_SLICE_VALIDATION_BYTES.with(|n| n.get()), (8, 0));
+}
+
+#[test]
 fn compact_records_preserve_text_proofs_names_and_address_spelling() {
     let prefix = "q".repeat(300);
     for options in option_sets() {

@@ -127,7 +127,7 @@ fn existing_spill_old_children_are_masked_and_the_anchor_grows() {
 
     with_ingested(&p, |ingested| {
         // The authoritative worksheet bytes are not edited.
-        assert_eq!(ingested.plans[0].data, p[SHEET].as_bytes());
+        assert_eq!(ingested.plans[0].data.as_slice(), p[SHEET].as_bytes());
         let e = &mut ingested.engine;
         // No value-plane entries from proven old children.
         assert_eq!(value(e, "C3"), None);

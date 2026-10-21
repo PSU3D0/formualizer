@@ -31,7 +31,8 @@ const FIXTURES: [(&str, &[u8]); 6] = [
 ];
 
 fn admit(bytes: &[u8]) -> Result<(), crate::IoError> {
-    package::admit(bytes, &XlsxRecalculateOptions::default()).map(|_| ())
+    package::admit(bytes, &XlsxRecalculateOptions::default())
+        .and_then(|mut archive| archive.finish())
 }
 
 #[test]
@@ -41,6 +42,57 @@ fn producer_containers_are_admitted() {
             panic!("{name}: {e}");
         }
     }
+}
+
+#[test]
+fn admission_inflates_every_member_and_each_worksheet_once() {
+    package::take_part_inflates();
+    let options = XlsxRecalculateOptions::default();
+    let source = super::super::admit_source(FIXTURES[0].1, &options).unwrap();
+    let counts = package::take_part_inflates();
+    assert_eq!(counts.len(), source.archive.len());
+    assert!(counts.values().all(|n| *n == 1), "{counts:?}");
+    for sheet in &source.sheets {
+        assert_eq!(counts.get(&sheet.part), Some(&1));
+    }
+    let mut archive = package::admit(FIXTURES[0].1, &options).unwrap();
+    let a = package::read_part(
+        &mut archive,
+        &source.sheets[0].part,
+        options.limits.max_worksheet_bytes,
+    )
+    .unwrap();
+    let b = package::read_part(
+        &mut archive,
+        &source.sheets[0].part,
+        options.limits.max_worksheet_bytes,
+    )
+    .unwrap();
+    assert!(std::sync::Arc::ptr_eq(&a, &b));
+    archive.finish().unwrap();
+    assert!(package::take_part_inflates().values().all(|n| *n == 1));
+}
+
+#[test]
+fn unused_crc_failure_still_precedes_semantic_refusal() {
+    let mut entries = workbook();
+    let mut unused = entries[0].clone();
+    unused.name = "unused.bin".into();
+    unused.data = b"unused payload".to_vec();
+    entries.push(unused);
+    entries
+        .iter_mut()
+        .find(|e| e.name == "xl/worksheets/sheet1.xml")
+        .unwrap()
+        .data = b"<bad/>".to_vec();
+    let mut bytes = build(&entries);
+    let end = find(&bytes, "unused.bin").data_end;
+    bytes[end - 1] ^= 1; // payload only: leave both directory/local CRC records intact
+    let expected = admit(&bytes).expect_err("CRC audit refuses");
+    let actual = super::super::admit_source(&bytes, &XlsxRecalculateOptions::default())
+        .err()
+        .expect("CRC outranks worksheet root refusal");
+    assert_eq!(format!("{expected:?}"), format!("{actual:?}"));
 }
 
 fn crc32(data: &[u8]) -> u32 {
@@ -443,6 +495,7 @@ fn rewrite_relocates_untouched_members_verbatim_and_simplifies_replaced_ones() {
     let added = "xl/metadata.xml";
     let options = XlsxRecalculateOptions::default();
     let mut archive = package::admit(&input, &options).unwrap();
+    archive.finish().unwrap();
     let edits = Edits {
         replace: [(sheet.to_owned(), body.clone())].into(),
         add: [(added.to_owned(), b"<metadata/>".to_vec())].into(),

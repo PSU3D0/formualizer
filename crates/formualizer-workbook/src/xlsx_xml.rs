@@ -655,12 +655,27 @@ impl std::hash::Hash for Ns {
         (**self).hash(state)
     }
 }
+#[cfg(test)]
+thread_local! {
+    /// Bytes presented to the two whole-part passes (not decoded-text checks).
+    pub(crate) static WHOLE_SLICE_VALIDATION_BYTES: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+}
 pub(crate) fn walk<'a>(
     bytes: &'a [u8],
     options: &CacheOptions,
     mut visit: impl FnMut(&[Element<'a>], Node<'_, 'a>) -> Result<(), IoError>,
 ) -> Result<(), IoError> {
+    #[cfg(test)]
+    WHOLE_SLICE_VALIDATION_BYTES.with(|counts| {
+        let (utf8, xml) = counts.get();
+        counts.set((utf8.saturating_add(bytes.len()), xml));
+    });
     let text = std::str::from_utf8(bytes).map_err(|_| unsupported("non-UTF-8 XML", "XLSX XML"))?;
+    #[cfg(test)]
+    WHOLE_SLICE_VALIDATION_BYTES.with(|counts| {
+        let (utf8, xml) = counts.get();
+        counts.set((utf8, xml.saturating_add(bytes.len())));
+    });
     valid_text(text)?;
     let mut reader = Reader::from_str(text);
     reader.config_mut().check_end_names = true;
