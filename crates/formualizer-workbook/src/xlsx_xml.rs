@@ -176,6 +176,47 @@ fn valid_text(text: &str) -> Result<(), IoError> {
     }
     Ok(())
 }
+/// Validate UTF-8 and XML 1.0 characters together. Printable ASCII blocks
+/// (including XML whitespace) need no UTF-8 decoder. Non-ASCII sequences
+/// use the standard decoder, preserving its exact UTF-8 acceptance set.
+///
+/// Keep scanning after an XML-invalid character: the old UTF-8-first pass
+/// reported a later encoding error before any XML character error.
+fn valid_xml_bytes(bytes: &[u8]) -> Result<(), IoError> {
+    let mut at = 0usize;
+    let mut xml_valid = true;
+    while let Some(&lead) = bytes.get(at) {
+        if let Some(block) = bytes.get(at..at.saturating_add(16))
+            && block.iter().fold(true, |ok, &b| {
+                ok & ((0x20..0x80).contains(&b) | matches!(b, b'\t' | b'\r' | b'\n'))
+            })
+        {
+            at = at.saturating_add(16);
+            continue;
+        }
+        if lead.is_ascii() {
+            xml_valid &= lead >= 0x20 || matches!(lead, b'\t' | b'\r' | b'\n');
+            at = at.saturating_add(1);
+            continue;
+        }
+        let width = match lead {
+            0xc2..=0xdf => 2,
+            0xe0..=0xef => 3,
+            0xf0..=0xf4 => 4,
+            _ => return Err(unsupported("non-UTF-8 XML", "XLSX XML")),
+        };
+        let sequence = bytes
+            .get(at..at.saturating_add(width))
+            .and_then(|s| std::str::from_utf8(s).ok())
+            .ok_or_else(|| unsupported("non-UTF-8 XML", "XLSX XML"))?;
+        xml_valid &= sequence.chars().all(valid_char);
+        at = at.saturating_add(width);
+    }
+    if !xml_valid {
+        return Err(unsupported("XML-invalid character", "XLSX XML"));
+    }
+    Ok(())
+}
 fn qualified_name(bytes: &[u8]) -> Result<(), IoError> {
     // OOXML names are ASCII; reject other naming grammars rather than relying
     // on quick-xml's intentionally permissive lexical name handling.
@@ -310,10 +351,12 @@ struct Scratch<'a> {
     attributes: Vec<Attribute<'a>>,
 }
 /// Start-tag content of a borrowed event as a slice of the input.
-fn content<'a>(text: &'a str, e: &BytesStart<'_>) -> Result<(usize, &'a str), IoError> {
+fn content<'a>(bytes: &'a [u8], e: &BytesStart<'_>) -> Result<(usize, &'a str), IoError> {
     let raw = e.as_ref();
-    let at = offset(text.as_bytes(), raw)?;
-    text.get(at..at + raw.len())
+    let at = offset(bytes, raw)?;
+    bytes
+        .get(at..at + raw.len())
+        .and_then(|s| std::str::from_utf8(s).ok())
         .map(|s| (at, s))
         .ok_or_else(|| unsupported("unavailable XML attribute source span", "XLSX XML"))
 }
@@ -505,9 +548,8 @@ pub(crate) fn walk<'a>(
     options: &CacheOptions,
     mut visit: impl FnMut(&[Element<'a>], Node<'_, 'a>) -> Result<(), IoError>,
 ) -> Result<(), IoError> {
-    let text = std::str::from_utf8(bytes).map_err(|_| unsupported("non-UTF-8 XML", "XLSX XML"))?;
-    valid_text(text)?;
-    let mut reader = Reader::from_str(text);
+    valid_xml_bytes(bytes)?;
+    let mut reader = Reader::from_reader(bytes);
     reader.config_mut().check_end_names = true;
     reader.config_mut().check_comments = true;
     let decoder = reader.decoder();
@@ -535,7 +577,7 @@ pub(crate) fn walk<'a>(
         match event {
             Event::Start(ref e) | Event::Empty(ref e) => {
                 let empty = matches!(event, Event::Empty(_));
-                let (_, content) = content(text, e)?;
+                let (_, content) = content(bytes, e)?;
                 let name_len = e.name().as_ref().len();
                 let malformed = bind(&mut scopes, content, name_len, &mut scratch.parsed)?;
                 pending_pop = empty;
@@ -627,7 +669,7 @@ pub(crate) fn walk<'a>(
                 path.pop();
             }
             Event::Text(t) => {
-                let value = match plain_text(text, &t) {
+                let value = match plain_text(bytes, &t) {
                     Some(value) => Cow::Borrowed(value),
                     None => {
                         if cdata_end(&t) {
@@ -718,12 +760,14 @@ pub(crate) fn walk<'a>(
 /// The text event as a slice of the validated input when it needs no
 /// end-of-line normalization (no `\r`, U+0085 or U+2028 lead byte) and
 /// cannot contain `]]>`; otherwise `None`.
-fn plain_text<'a>(input: &'a str, raw: &[u8]) -> Option<&'a str> {
+fn plain_text<'a>(input: &'a [u8], raw: &[u8]) -> Option<&'a str> {
     if raw.iter().any(|b| matches!(b, b'\r' | 0xC2 | 0xE2 | b']')) {
         return None;
     }
-    let at = offset(input.as_bytes(), raw).ok()?;
-    input.get(at..at + raw.len())
+    let at = offset(input, raw).ok()?;
+    input
+        .get(at..at + raw.len())
+        .and_then(|s| std::str::from_utf8(s).ok())
 }
 /// Whether text contains the CDATA section terminator `]]>`.
 fn cdata_end(text: &[u8]) -> bool {

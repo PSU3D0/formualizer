@@ -507,6 +507,57 @@ fn bad_utf8_and_cancellation_match_the_reference() {
 }
 
 #[test]
+fn fused_encoding_block_boundaries_match_the_reference() {
+    let options = XlsxRecalculateOptions::default();
+    let sequences: &[&[u8]] = &[
+        b"\xc2\x80",
+        b"\xdf\xbf",
+        b"\xe0\xa0\x80",
+        b"\xed\x9f\xbf",
+        b"\xee\x80\x80",
+        b"\xef\xbf\xbd",
+        b"\xf0\x90\x80\x80",
+        b"\xf4\x8f\xbf\xbf",
+        b"\xef\xbf\xbe",
+        b"\xef\xbf\xbf",
+        b"\xc0\x80",
+        b"\xc1\xbf",
+        b"\xe0\x80\x80",
+        b"\xed\xa0\x80",
+        b"\xf0\x80\x80\x80",
+        b"\xf4\x90\x80\x80",
+        b"\xf5\x80\x80\x80",
+        b"\xff",
+        b"\x80",
+        b"\xc2",
+        b"\xe0\xa0",
+        b"\xf0\x90\x80",
+        b"\x00",
+        b"\x01",
+        b"\x08",
+        b"\x0b",
+        b"\x0c",
+        b"\x1f",
+        b"\t\r\n",
+        b"\x7f",
+    ];
+    for padding in 0..32 {
+        for sequence in sequences {
+            let mut bytes = b"<a>".to_vec();
+            bytes.extend(std::iter::repeat_n(b' ', padding));
+            bytes.extend_from_slice(sequence);
+            bytes.extend_from_slice(b"</a>");
+            compare_all(&bytes, &options);
+            // Full UTF-8 validation used to precede XML Char validation:
+            // a later encoding error still outranks the earlier control.
+            bytes.insert(3, 1);
+            bytes.push(0xff);
+            compare_all(&bytes, &options);
+        }
+    }
+}
+
+#[test]
 fn many_distinct_namespaces_and_prefixes_match_the_reference() {
     // Interning is hashed; a linear intern list made these quadratic.
     let n = 2_000;
