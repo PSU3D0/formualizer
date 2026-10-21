@@ -249,6 +249,18 @@ impl<R: EvaluationContext> Engine<R> {
             return None;
         }
         for ((original, reference), slot) in leaves.iter().zip(lexeme.slots()) {
+            // The structural comparator rejects qualifiers absent from the
+            // registry, even when relocation leaves their spelling unchanged.
+            if let ReferenceType::Cell {
+                sheet: Some(name), ..
+            }
+            | ReferenceType::Range {
+                sheet: Some(name), ..
+            } = reference
+                && self.graph.sheet_reg().get_id(name).is_none()
+            {
+                return None;
+            }
             let coordinates = original
                 .rsplit_once('!')
                 .map_or(*original, |(_, suffix)| suffix);
@@ -506,6 +518,7 @@ mod tests {
             "=A1#",
             "=SUM(A:A)",
             "=Sheet1:Sheet2!A1",
+            "=Missing!A1",
             "=[1]Sheet1!A1",
             "=#REF!",
             "=a1",
