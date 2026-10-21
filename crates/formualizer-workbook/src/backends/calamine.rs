@@ -3511,10 +3511,6 @@ where
                     engine.source_family_counters().debug_line()
                 );
             }
-            for n in &names {
-                engine.finalize_sheet_index(n);
-            }
-
             self.load_stats = AdapterLoadStats {
                 formula_cells_observed: Some(total_formulas as u64),
                 value_cells_observed: Some(total_value_cells_observed as u64),
@@ -3533,6 +3529,10 @@ where
         engine.config.range_expansion_limit = prev_range_limit;
         engine.config.defer_graph_building = prev_deferred;
         engine.config.formula_plane_mode = prev_formula_plane;
+        if load_result.is_ok() {
+            // Leaving the first-load scope flushes packed mappings first.
+            engine.finalize_all_sheet_indexes(names.iter().map(String::as_str));
+        }
         load_result
     }
 }

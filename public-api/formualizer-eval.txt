@@ -1425,6 +1425,7 @@ pub fn formualizer_eval::engine::eval::Engine<R>::evaluation_resource_baseline_s
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluation_resource_budgets(&self) -> &formualizer_eval::engine::resource_ledger::EvaluationBudgets
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluation_resource_config_diagnostic(&self) -> core::option::Option<&formualizer_eval::engine::resource_ledger::EvaluationResourceConfigDiagnostic>
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluation_vertices(&self) -> alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>
+pub fn formualizer_eval::engine::eval::Engine<R>::finalize_all_sheet_indexes<'a>(&mut self, impl core::iter::traits::collect::IntoIterator<Item = &'a str>)
 pub fn formualizer_eval::engine::eval::Engine<R>::finalize_sheet_index(&mut self, &str)
 pub fn formualizer_eval::engine::eval::Engine<R>::first_load_assume_new(&self) -> bool
 pub fn formualizer_eval::engine::eval::Engine<R>::formula_ingest_report_total(&self) -> &formualizer_eval::engine::formula_ingest::FormulaIngestReport
@@ -6096,6 +6097,7 @@ pub fn formualizer_eval::engine::eval::Engine<R>::evaluation_resource_baseline_s
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluation_resource_budgets(&self) -> &formualizer_eval::engine::resource_ledger::EvaluationBudgets
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluation_resource_config_diagnostic(&self) -> core::option::Option<&formualizer_eval::engine::resource_ledger::EvaluationResourceConfigDiagnostic>
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluation_vertices(&self) -> alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>
+pub fn formualizer_eval::engine::eval::Engine<R>::finalize_all_sheet_indexes<'a>(&mut self, impl core::iter::traits::collect::IntoIterator<Item = &'a str>)
 pub fn formualizer_eval::engine::eval::Engine<R>::finalize_sheet_index(&mut self, &str)
 pub fn formualizer_eval::engine::eval::Engine<R>::first_load_assume_new(&self) -> bool
 pub fn formualizer_eval::engine::eval::Engine<R>::formula_ingest_report_total(&self) -> &formualizer_eval::engine::formula_ingest::FormulaIngestReport
