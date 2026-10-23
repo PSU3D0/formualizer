@@ -6,6 +6,9 @@
 //! interned per walk. The validation policy is the one the owned-string
 //! walker (kept as a test oracle in `reference`) enforced, error for error.
 #![cfg_attr(not(feature = "xlsx-recalc"), allow(dead_code))]
+#[cfg(all(test, feature = "xlsx-recalc"))]
+pub(crate) mod worksheet;
+
 use crate::IoError;
 use crate::xlsx_cache_options::{CacheOptions, checkpoint, unsupported};
 use quick_xml::{

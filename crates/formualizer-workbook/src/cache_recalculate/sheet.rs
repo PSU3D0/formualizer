@@ -11,6 +11,8 @@ use std::{
 };
 
 #[cfg(test)]
+pub(super) mod machine;
+#[cfg(test)]
 pub(super) mod reference;
 
 /// Inclusive source rectangle in one-based worksheet coordinates (row 1 is

@@ -125,6 +125,15 @@ fn compare_scan(
         observed,
         logical,
     );
+    let machine = scan_outcome(
+        |o, l| {
+            sheet::machine::scan(bytes, options, mode, o, l)
+                .map(|scan| sheet::reference::normalize(scan, bytes))
+        },
+        observed,
+        logical,
+    );
+    assert_eq!(machine, new, "flat worksheet machine ({mode:?}) diverged");
     let old = scan_outcome(
         |o, l| sheet::reference::scan(bytes, options, mode, o, l),
         observed,
