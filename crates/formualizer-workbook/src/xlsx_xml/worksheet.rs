@@ -1,12 +1,21 @@
 //! Pull tokenizer for the worksheet machine. The generic visitor stays unchanged.
 use super::*;
+mod attributes;
+use attributes::HotAttributes;
+
+#[derive(Default)]
+struct WorksheetScratch<'a> {
+    parsed: Vec<Parsed<'a>>,
+    attributes: Vec<Attribute<'a>>,
+    hot: HotAttributes<'a>,
+}
 
 pub(crate) struct Tokens<'a> {
     text: &'a str,
     bytes: &'a [u8],
     reader: Reader<&'a [u8]>,
     scopes: Scopes<'a>,
-    scratch: Scratch<'a>,
+    scratch: WorksheetScratch<'a>,
     path: Vec<Element<'a>>,
     roots: usize,
     events: u64,
@@ -30,7 +39,7 @@ impl<'a> Tokens<'a> {
             bytes,
             reader,
             scopes: Scopes::new(),
-            scratch: Scratch::default(),
+            scratch: WorksheetScratch::default(),
             path: Vec::new(),
             roots: 0,
             events: 0,
@@ -87,7 +96,7 @@ impl<'a> Tokens<'a> {
                     let qualified = &content[..name_len];
                     let fast = sheet_data_depth.is_some()
                         && matches!(qualified, "row" | "c" | "f" | "v" | "is" | "t")
-                        && scratch.fast.parse(content, name_len, start)
+                        && scratch.hot.parse(content, qualified, start)
                         && if *sheet_data_generation == Some(scopes.generation) {
                             true
                         } else if scopes.element(qualified)?.is_main() {
@@ -177,13 +186,13 @@ impl<'a> Tokens<'a> {
                         kind: Kind::Open {
                             empty,
                             attributes: if fast {
-                                scratch.fast.as_slice()
+                                scratch.hot.as_slice()
                             } else {
                                 &scratch.attributes
                             },
                         },
                         span: start..end,
-                        fast_attributes: fast.then_some(&scratch.fast),
+                        fast_attributes: None,
                     };
                     *pending_path_pop = empty;
                     return Ok(Some((path.as_slice(), node)));

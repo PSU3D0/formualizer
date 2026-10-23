@@ -103,6 +103,30 @@ impl Cursor {
     }
 }
 
+/// Canonical coordinates in one pass. Uncommon accepted spellings still
+/// go through the unchanged `coord` fallback and retain their source spelling.
+pub(super) fn plain_coord(value: &str) -> Option<(u32, u32)> {
+    let (mut row, mut col) = (0u32, 0u32);
+    let (mut letters, mut digits) = (0u8, 0u8);
+    for b in value.bytes() {
+        match b {
+            b'A'..=b'Z' if digits == 0 && letters < 3 => {
+                letters += 1;
+                col = col * 26 + u32::from(b - b'A') + 1;
+            }
+            b'0'..=b'9' if letters != 0 && digits < 7 => {
+                if digits == 0 && b == b'0' {
+                    return None;
+                }
+                digits += 1;
+                row = row * 10 + u32::from(b - b'0');
+            }
+            _ => return None,
+        }
+    }
+    (digits != 0 && row <= 1_048_576 && col <= 16_384).then_some((row, col))
+}
+
 pub(in crate::cache_recalculate) fn scan(
     bytes: &[u8],
     options: &XlsxRecalculateOptions,

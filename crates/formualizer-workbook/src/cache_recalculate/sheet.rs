@@ -1430,6 +1430,11 @@ mod coord_tests {
             inputs.push(s);
         }
         for input in inputs {
+            assert_eq!(
+                super::machine::plain_coord(&input),
+                plain_coord(&input),
+                "{input}"
+            );
             if let Some((row, col)) = plain_coord(&input) {
                 assert_eq!(
                     parse_a1_1based(&input).ok(),
