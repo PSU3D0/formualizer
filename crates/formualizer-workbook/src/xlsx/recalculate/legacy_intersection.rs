@@ -24,7 +24,7 @@ thread_local! {
     static CHAIN_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 #[cfg(test)]
-pub(super) fn take_chain_reads() -> usize {
+pub(in crate::xlsx) fn take_chain_reads() -> usize {
     CHAIN_READS.with(|n| n.replace(0))
 }
 
@@ -39,7 +39,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// Excel token class of a function's return value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Class {
+pub(in crate::xlsx) enum Class {
     R,
     V,
     A,
@@ -54,7 +54,7 @@ enum Tok {
 }
 /// Parameter class conversion (`Rpo`: operator operands repeat the parent's).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Conv {
+pub(in crate::xlsx) enum Conv {
     Org,
     Val,
     Arr,
@@ -70,22 +70,22 @@ enum ClassConv {
 }
 /// One parameter: its conversion and whether it requires a value type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct Param {
+pub(in crate::xlsx) struct Param {
     conv: Conv,
     value: bool,
 }
 const fn param(conv: Conv, value: bool) -> Param {
     Param { conv, value }
 }
-pub(super) const RO: Param = param(Conv::Org, false);
-pub(super) const RA: Param = param(Conv::Arr, false);
-pub(super) const RR: Param = param(Conv::Rpt, false);
-pub(super) const RX: Param = param(Conv::Rpx, false);
-pub(super) const VO: Param = param(Conv::Org, true);
-pub(super) const VV: Param = param(Conv::Val, true);
-pub(super) const VA: Param = param(Conv::Arr, true);
-pub(super) const VR: Param = param(Conv::Rpt, true);
-pub(super) const VX: Param = param(Conv::Rpx, true);
+pub(in crate::xlsx) const RO: Param = param(Conv::Org, false);
+pub(in crate::xlsx) const RA: Param = param(Conv::Arr, false);
+pub(in crate::xlsx) const RR: Param = param(Conv::Rpt, false);
+pub(in crate::xlsx) const RX: Param = param(Conv::Rpx, false);
+pub(in crate::xlsx) const VO: Param = param(Conv::Org, true);
+pub(in crate::xlsx) const VV: Param = param(Conv::Val, true);
+pub(in crate::xlsx) const VA: Param = param(Conv::Arr, true);
+pub(in crate::xlsx) const VR: Param = param(Conv::Rpt, true);
+pub(in crate::xlsx) const VX: Param = param(Conv::Rpx, true);
 const OPERAND: Param = param(Conv::Rpo, true);
 const REF_OPERAND: Param = param(Conv::Rpo, false);
 
@@ -133,11 +133,11 @@ const SCALAR_REFERENCE: &[&str] = &["N", "T", "CELL", "ISFORMULA", "FORMULATEXT"
 
 /// Why a formula was left with dynamic-array evaluation.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct Skip(pub &'static str);
+pub(in crate::xlsx) struct Skip(pub &'static str);
 
 /// Outcome of lowering one formula.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum Lowering {
+pub(in crate::xlsx) enum Lowering {
     /// No value position can hold more than one cell.
     Unchanged,
     /// The formula with explicit `@(...)` at every legacy intersection.
@@ -157,7 +157,7 @@ struct Walk<'a> {
 
 /// Rewrite `formula` (stored text, with or without the leading `=`).
 #[cfg(test)]
-pub(super) fn lower(formula: &str) -> Lowering {
+pub(in crate::xlsx) fn lower(formula: &str) -> Lowering {
     Lowerer::default().lower(formula)
 }
 
@@ -169,7 +169,7 @@ pub(super) fn lower(formula: &str) -> Lowering {
 /// filled down a sheet (`IF(VLOOKUP(S2,…)=…)`, `…S3…`) share one shape, so
 /// only the first is parsed.
 #[derive(Default)]
-pub(super) struct Lowerer {
+pub(in crate::xlsx) struct Lowerer {
     unchanged: HashSet<String>,
 }
 impl Lowerer {
@@ -607,7 +607,7 @@ fn reference_multi(reference: &ReferenceType) -> Result<bool, Skip> {
 
 /// Formula cells Excel calculated, by worksheet position in the workbook.
 #[derive(Debug, Default)]
-pub(super) struct CalcChain {
+pub(in crate::xlsx) struct CalcChain {
     cells: Vec<FxHashSet<(u32, u32)>>,
 }
 impl CalcChain {
@@ -625,7 +625,7 @@ impl CalcChain {
 /// oversized part yields no evidence rather than a refusal.
 /// Only legacy scalar formulas that pass the lowerer's own cheap screen
 /// need calc-chain evidence. Keep cancellation responsive on scalar-only files.
-pub(super) fn needs_calc_chain(
+pub(in crate::xlsx) fn needs_calc_chain(
     plans: &[SheetPlan],
     options: &XlsxRecalculateOptions,
 ) -> Result<bool, IoError> {
@@ -672,7 +672,7 @@ fn cheap_chain_coordinates_preserve_legacy_parser_acceptance() {
     }
 }
 
-pub(super) fn calc_chain(
+pub(in crate::xlsx) fn calc_chain(
     archive: &mut package::Archive<'_>,
     part: Option<&str>,
     sheets: &[package::Sheet],
@@ -792,7 +792,7 @@ fn read_chain(
 
 /// Counters for one worksheet, reported in debug output and tests.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub(super) struct Stats {
+pub(in crate::xlsx) struct Stats {
     pub rewritten: usize,
     pub skipped: usize,
 }
@@ -805,7 +805,7 @@ pub(super) struct Stats {
 /// external references are classified too; structured references still
 /// skip them.
 #[cfg(test)]
-pub(super) fn patches(
+pub(in crate::xlsx) fn patches(
     sheet_index: usize,
     plan: &SheetPlan,
     chain: &CalcChain,
@@ -831,7 +831,7 @@ pub(super) fn patches(
 }
 
 /// The same conservative legacy lowering, without an XML transport copy.
-pub(super) fn lowered_texts(
+pub(in crate::xlsx) fn lowered_texts(
     sheet_index: usize,
     plan: &SheetPlan,
     chain: &CalcChain,

@@ -6,10 +6,10 @@ use super::{Patch, apply_patches};
 use crate::backends::calamine::CalamineAdapter;
 use formualizer_parse::parser::{ASTNode, RefView};
 
-pub(super) const EMPTY: &str = "<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><sheetData/></worksheet>";
+pub(in crate::xlsx) const EMPTY: &str = "<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><sheetData/></worksheet>";
 
 #[cfg(test)]
-pub(super) fn project(
+pub(in crate::xlsx) fn project(
     archive: &mut package::Archive<'_>,
     sheets: &[package::Sheet],
     edits: &mut package::Edits,
@@ -82,7 +82,7 @@ pub(super) fn project(
 }
 
 /// Preserve the old projection collision refusal without creating any view.
-pub(super) fn validate_projection_names(
+pub(in crate::xlsx) fn validate_projection_names(
     archive: &mut package::Archive<'_>,
     sheets: &[package::Sheet],
     options: &XlsxRecalculateOptions,
@@ -112,7 +112,7 @@ pub(super) fn validate_projection_names(
         Ok(())
     })
 }
-pub(super) fn validate_native(
+pub(in crate::xlsx) fn validate_native(
     sheets: &[package::Sheet],
     plans: &[SheetPlan],
     names: Vec<ASTNode>,
@@ -239,7 +239,7 @@ fn check(ast: &ASTNode, sheets: &[package::Sheet]) -> Result<(), IoError> {
 }
 
 #[cfg(test)]
-pub(super) fn validate(
+pub(in crate::xlsx) fn validate(
     sheets: &[package::Sheet],
     plans: &[SheetPlan],
     adapter: &CalamineAdapter,

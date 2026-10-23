@@ -1,12 +1,12 @@
 //! Native Arrow value plane. Ephemeral worksheet borrows are copied directly
 //! into Arrow, never round-tripped through LiteralValue::Text.
-use super::{
+use crate::load_limits::enforce_sheet_dimension_limits;
+use crate::xlsx::recalculate::{
     IoError,
     native_metadata::{SharedStringTable, Styles},
     sheet::machine::emission::{Literal, Value},
     unsupported,
 };
-use crate::load_limits::enforce_sheet_dimension_limits;
 use formualizer_common::{DateSystem, ExcelErrorKind};
 use formualizer_eval::{
     arrow_store::{ArrowSheet, CellIngest, IngestBuilder, OverlayValue, map_error_code},
@@ -15,7 +15,7 @@ use formualizer_eval::{
 };
 use std::borrow::Cow;
 
-pub(super) struct Context<'a> {
+pub(in crate::xlsx) struct Context<'a> {
     pub name: &'a str,
     pub source: &'a [u8],
     pub strings: &'a SharedStringTable,
@@ -28,7 +28,7 @@ pub(super) struct Context<'a> {
 /// Raw spellings supplied by the coordinated additive emission spans. Keeping
 /// this explicit lets the value sink be tested independently of the scanner.
 #[derive(Clone, Copy)]
-pub(super) struct RawCell<'a> {
+pub(in crate::xlsx) struct RawCell<'a> {
     pub kind: Option<&'a str>,
     pub style: Option<&'a str>,
     pub payload: Option<&'a [u8]>,
@@ -117,14 +117,14 @@ impl SparseValueBatch {
         self.max_row = 0;
     }
 }
-pub(super) struct ValuePlane {
+pub(in crate::xlsx) struct ValuePlane {
     pub arrow: ArrowSheet,
     pub dimensions: (usize, usize),
     pub values_observed: usize,
     pub values_handed_to_engine: usize,
     pub used_sparse_fallback: bool,
 }
-pub(super) struct ValueSink<'a> {
+pub(in crate::xlsx) struct ValueSink<'a> {
     context: Context<'a>,
     dimensions: (usize, usize),
     dense: Option<Dense<'a>>,
@@ -135,7 +135,7 @@ pub(super) struct ValueSink<'a> {
     used_sparse: bool,
 }
 impl<'a> ValueSink<'a> {
-    pub(super) fn new(context: Context<'a>) -> Result<Self, IoError> {
+    pub(in crate::xlsx) fn new(context: Context<'a>) -> Result<Self, IoError> {
         let dimensions = (context.dimensions.0.max(1), context.dimensions.1.max(1));
         enforce_sheet_dimension_limits(
             "calamine",
@@ -211,7 +211,7 @@ impl<'a> ValueSink<'a> {
         }
         Ok(())
     }
-    pub(super) fn observe_formula(&mut self, row: u32, col: u32) -> Result<(), IoError> {
+    pub(in crate::xlsx) fn observe_formula(&mut self, row: u32, col: u32) -> Result<(), IoError> {
         let (row, col) = self.coordinate(row, col)?;
         self.formulas += 1;
         self.budget()?;
@@ -224,7 +224,11 @@ impl<'a> ValueSink<'a> {
         }
         Ok(())
     }
-    pub(super) fn push(&mut self, literal: Literal<'_>, raw: RawCell<'_>) -> Result<(), IoError> {
+    pub(in crate::xlsx) fn push(
+        &mut self,
+        literal: Literal<'_>,
+        raw: RawCell<'_>,
+    ) -> Result<(), IoError> {
         let (row, col) = self.coordinate(literal.row, literal.col)?;
         // Calamine examines t only for v, never for is or an empty c shell.
         if raw.payload.is_some()
@@ -359,7 +363,7 @@ impl<'a> ValueSink<'a> {
         }
         Cow::Owned(text.to_owned())
     }
-    pub(super) fn finish(
+    pub(in crate::xlsx) fn finish(
         mut self,
         authoritative_bounds: (u32, u32),
     ) -> Result<ValuePlane, IoError> {
@@ -404,9 +408,9 @@ impl<'a> ValueSink<'a> {
 /// in today's options: cap the probe at 64 KiB and the existing part limit.
 /// Truncation, incomplete UTF-8/XML and unrecognized metadata mean 1x1; the
 /// authoritative complete scan still owns every acceptance check and refusal.
-pub(super) fn dimension_hint(
+pub(in crate::xlsx) fn dimension_hint(
     bytes: &[u8],
-    options: &super::XlsxRecalculateOptions,
+    options: &crate::xlsx::recalculate::XlsxRecalculateOptions,
 ) -> (usize, usize) {
     let length = bytes
         .len()
@@ -418,16 +422,23 @@ pub(super) fn dimension_hint(
     // the validated generic walker only for this bounded pre-sheetData prefix;
     // this is not an additional body/admission walk. Its result is advisory.
     let _ = crate::xlsx_xml::walk(prefix, &options.into(), |path, node| {
-        if !matches!(node.kind, super::xml::Kind::Open { .. }) {
+        if !matches!(node.kind, crate::xlsx::recalculate::xml::Kind::Open { .. }) {
             return Ok(());
         }
-        if super::xml::path_is(path, super::xml::MAIN, &["worksheet", "sheetData"]) {
+        if crate::xlsx::recalculate::xml::path_is(
+            path,
+            crate::xlsx::recalculate::xml::MAIN,
+            &["worksheet", "sheetData"],
+        ) {
             // No-allocation internal stop signal, never surfaced to the caller.
             return Err(IoError::Io(std::io::ErrorKind::Interrupted.into()));
         }
-        if super::xml::path_is(path, super::xml::MAIN, &["worksheet", "dimension"])
-            && let Some(value) = node.value("ref")
-            && let Ok(rect) = super::sheet::SourceRect::parse(value)
+        if crate::xlsx::recalculate::xml::path_is(
+            path,
+            crate::xlsx::recalculate::xml::MAIN,
+            &["worksheet", "dimension"],
+        ) && let Some(value) = node.value("ref")
+            && let Ok(rect) = crate::xlsx::recalculate::sheet::SourceRect::parse(value)
         {
             hint = (rect.last_row as usize, rect.last_col as usize);
         }

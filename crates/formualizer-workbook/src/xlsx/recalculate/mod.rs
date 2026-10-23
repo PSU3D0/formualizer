@@ -4,21 +4,21 @@ pub(super) use crate::xlsx::metadata::dynamic as dynamic_metadata;
 mod error_reasons;
 pub(crate) use crate::cached_external_links as external_links;
 mod geometry;
-mod inert_sheets;
-mod ingest_view;
-mod legacy_intersection;
+pub(super) mod inert_sheets;
+pub(super) mod ingest_view;
+pub(super) mod legacy_intersection;
 mod native_admission;
-mod native_formulas;
+pub(super) use crate::xlsx::ingest::formulas as native_formulas;
 mod native_ingest;
+pub(super) use crate::xlsx::ingest::names as native_names;
+pub(super) use crate::xlsx::ingest::values as native_values;
 pub(super) use crate::xlsx::metadata as native_metadata;
-mod native_names;
-mod native_values;
 pub(crate) use crate::xlsx::package;
 mod phase_clock;
 mod result_projection;
 pub(super) mod shared_qualifiers;
 pub(crate) use crate::xlsx::worksheet as sheet;
-mod table_lowering;
+pub(super) mod table_lowering;
 pub(super) use crate::xlsx::metadata::tables;
 #[cfg(test)]
 pub(super) mod tests;
@@ -230,9 +230,9 @@ pub(super) struct Patch {
 /// Evaluation text, separate from the immutable source formula and its marks.
 /// Legacy ingestion serializes this only at its compatibility boundary; the
 /// native sink consumes the text directly without constructing patched XML.
-struct FormulaTextTransform {
-    span: Range<usize>,
-    text: String,
+pub(super) struct FormulaTextTransform {
+    pub(super) span: Range<usize>,
+    pub(super) text: String,
 }
 impl FormulaTextTransform {
     #[cfg(test)]
@@ -372,37 +372,37 @@ impl Seek for BoundedOutput {
 /// ownership. The per-cell source index exists only for worksheets with
 /// admitted anchors; a sheet with a new spill builds it after evaluation.
 pub(crate) struct SheetPlan {
-    tables: Vec<tables::Table>,
-    hidden_rows: Vec<u32>,
+    pub(super) tables: Vec<tables::Table>,
+    pub(super) hidden_rows: Vec<u32>,
     /// `sheetFormatPr/@zeroHeight`: row visibility is not provable.
-    rows_hidden_by_default: bool,
-    active_filters: Vec<sheet::SourceRect>,
-    data: Vec<u8>,
+    pub(super) rows_hidden_by_default: bool,
+    pub(super) active_filters: Vec<sheet::SourceRect>,
+    pub(super) data: Vec<u8>,
     pub(crate) cells: Vec<sheet::Cell>,
-    index: Option<sheet::SourceIndex>,
-    ownership: dynamic_metadata::SheetOwnership,
+    pub(super) index: Option<sheet::SourceIndex>,
+    pub(super) ownership: dynamic_metadata::SheetOwnership,
     /// Serialized `<c>` elements, counted toward the generated-cell bound.
-    serialized: usize,
+    pub(super) serialized: usize,
     /// Logical `(max_row, max_col)` counted toward the workbook area bound.
-    bounds: (u32, u32),
+    pub(super) bounds: (u32, u32),
 }
-struct SourceAdmission<'a> {
-    archive: package::Archive<'a>,
-    sheets: Vec<package::Sheet>,
-    date_system: DateSystem,
-    plans: Vec<SheetPlan>,
-    formula_count: usize,
+pub(super) struct SourceAdmission<'a> {
+    pub(super) archive: package::Archive<'a>,
+    pub(super) sheets: Vec<package::Sheet>,
+    pub(super) date_system: DateSystem,
+    pub(super) plans: Vec<SheetPlan>,
+    pub(super) formula_count: usize,
     native_values: Vec<native_admission::ValueResult>,
-    native_metadata_error: Option<IoError>,
-    metadata: Option<dynamic_metadata::DynamicMetadata>,
+    pub(super) native_metadata_error: Option<IoError>,
+    pub(super) metadata: Option<dynamic_metadata::DynamicMetadata>,
     /// External sources served from the link caches, when the workbook
     /// has links.
-    external: Option<external_links::Plan>,
+    pub(super) external: Option<external_links::Plan>,
 }
 /// Bounded package/worksheet admission. This also resolves the XLDAPR
 /// metadata chain and returns disjoint prior-footprint ownership per
 /// worksheet, or a precise unsupported error.
-fn admit_source<'a>(
+pub(super) fn admit_source<'a>(
     bytes: &'a [u8],
     options: &XlsxRecalculateOptions,
 ) -> Result<SourceAdmission<'a>, IoError> {

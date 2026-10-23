@@ -1,10 +1,10 @@
 //! Calculation-name import from immutable workbook XML.
 //! Scoped and unscoped scans deliberately preserve distinct reader compatibility.
 //! Import policy is fixed before dependency or grounding caches are populated.
-use super::package;
 use crate::traits::{DefinedName, DefinedNameDefinition, DefinedNameScope};
-use crate::xlsx::ingest::name_parsing::NameParsing;
 use crate::xlsx::ingest::name_references;
+use crate::xlsx::metadata::names::NameParsing;
+use crate::xlsx::recalculate::package;
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_eval::engine::named_range::{NameScope, NamedDefinition};
 use formualizer_eval::engine::{CancelToken, Engine};
@@ -35,18 +35,18 @@ struct CalculationNameIndex {
 
 /// Immutable selection of name import and validation semantics.
 #[derive(Clone, Copy)]
-pub(super) struct NameImportPolicy {
+pub(in crate::xlsx) struct NameImportPolicy {
     referenced_only: bool,
     strict_validation: bool,
 }
 impl NameImportPolicy {
-    pub(super) const STRICT_REFERENCED: Self = Self {
+    pub(in crate::xlsx) const STRICT_REFERENCED: Self = Self {
         referenced_only: true,
         strict_validation: true,
     };
 }
 
-pub(super) struct NativeNames {
+pub(in crate::xlsx) struct NativeNames {
     raw: Vec<(String, String, Option<usize>)>,
     calamine_defined_names: Vec<(String, String)>,
     sheet_names: Vec<String>,
@@ -64,7 +64,7 @@ pub(super) struct NativeNames {
 impl NativeNames {
     const EXCEL_MAX_ROWS: u32 = 1_048_576;
     const EXCEL_MAX_COLS: u32 = 16_384;
-    pub(super) fn new(
+    pub(in crate::xlsx) fn new(
         bytes: &[u8],
         sheets: &[package::Sheet],
         cancel: Option<CancelToken>,
@@ -97,7 +97,7 @@ impl NativeNames {
             cancel,
         }
     }
-    pub(super) fn admit_external(
+    pub(in crate::xlsx) fn admit_external(
         &mut self,
         values: Arc<crate::cached_external_links::ExternalValues>,
         skipped: Vec<String>,
@@ -370,7 +370,7 @@ impl NativeNames {
         .then_some(ast)
     }
 
-    pub(super) fn unimported_document_names(&self) -> Vec<String> {
+    pub(in crate::xlsx) fn unimported_document_names(&self) -> Vec<String> {
         let cyclic = self.cyclic_calculation_names();
         let mut names = Vec::new();
         for (i, (name, _, _)) in self.raw_calculation_names().iter().enumerate() {
@@ -553,7 +553,7 @@ impl NativeNames {
         &self.calculation_name_analysis().cyclic
     }
 
-    pub(super) fn validate_calculation_names(
+    pub(in crate::xlsx) fn validate_calculation_names(
         &mut self,
         formulas: &[(String, String)],
         admitted_inert_sheets: bool,
@@ -680,13 +680,13 @@ impl NativeNames {
         self.calculation_name_order().map(|_| ())
     }
 
-    pub(super) fn has_new_unimported_names(&self) -> bool {
+    pub(in crate::xlsx) fn has_new_unimported_names(&self) -> bool {
         self.unimported_document_names()
             .iter()
             .any(|name| !name.starts_with("_xlnm.") && !self.skipped_external_names.contains(name))
     }
 
-    pub(super) fn calculation_name_asts(&self) -> Result<Vec<ASTNode>, crate::IoError> {
+    pub(in crate::xlsx) fn calculation_name_asts(&self) -> Result<Vec<ASTNode>, crate::IoError> {
         Ok(self
             .calculation_name_order()?
             .into_iter()
@@ -784,9 +784,9 @@ impl NativeNames {
         Ok(())
     }
 
-    pub(super) fn register(
+    pub(in crate::xlsx) fn register(
         &mut self,
-        engine: &mut Engine<super::WBResolver>,
+        engine: &mut Engine<crate::xlsx::recalculate::WBResolver>,
     ) -> Result<(), calamine::Error> {
         let cancel = self.cancel.clone();
         let scope_names = self.sheet_names.clone();

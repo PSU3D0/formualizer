@@ -24,7 +24,7 @@ use std::ops::Range;
 /// The ingestion-view patches for one worksheet, nonoverlapping and in
 /// source order.
 #[cfg(test)]
-pub(super) fn patches(
+pub(in crate::xlsx) fn patches(
     plan: &SheetPlan,
     cancel: &Option<CancelToken>,
 ) -> Result<Vec<Patch>, IoError> {
@@ -72,7 +72,7 @@ pub(super) fn patches(
 
 /// Remove every cache payload of a proven generated child cell. Style and
 /// other attributes, and the element itself, are kept.
-pub(super) fn mask_child(child: &IndexedCell, patches: &mut Vec<Patch>) {
+pub(in crate::xlsx) fn mask_child(child: &IndexedCell, patches: &mut Vec<Patch>) {
     for span in [&child.kind_span, &child.value, &child.inline]
         .into_iter()
         .flatten()
@@ -101,7 +101,7 @@ fn flush_cell(cell: &mut Vec<Patch>, out: &mut Vec<Patch>) -> Result<(), IoError
 /// partial overlap are refused rather than applied in an arbitrary order.
 /// A zero-length insertion sorts before a replacement starting at the same
 /// offset, which `apply_patches` accepts.
-pub(super) fn coalesce(patches: &mut Vec<Patch>) -> Result<(), IoError> {
+pub(in crate::xlsx) fn coalesce(patches: &mut Vec<Patch>) -> Result<(), IoError> {
     patches.sort_by_key(|p| (p.span.start, p.span.end));
     let mut merged: Vec<Patch> = Vec::with_capacity(patches.len());
     for patch in patches.drain(..) {

@@ -1,6 +1,6 @@
 //! Native evaluation-text transport into the unchanged W1 formula ingress.
 //! Source marks/text stay immutable for cache-only publication.
-use super::{FormulaTextTransform, IoError, SheetPlan, sheet, unsupported};
+use crate::xlsx::recalculate::{FormulaTextTransform, IoError, SheetPlan, sheet, unsupported};
 use formualizer_eval::engine::{SourceCoord, SourceRect};
 use quick_xml::events::{BytesStart, Event};
 use std::borrow::Cow;
@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 #[cfg(test)]
 use crate::xlsx::ingest::utilities::parse_error_token;
 #[cfg(test)]
-pub(super) use crate::xlsx::ingest::utilities::take_utility_calls;
+pub(in crate::xlsx) use crate::xlsx::ingest::utilities::take_utility_calls;
 use crate::xlsx::ingest::{evidence as compressed_evidence, replay as formula_replay};
 use formula_replay::OwnedSpoolFormulaRecord;
 
@@ -18,12 +18,12 @@ fn shared_source_index(index: usize) -> u32 {
 }
 
 #[derive(Default)]
-pub(super) struct EvaluationTexts {
+pub(in crate::xlsx) struct EvaluationTexts {
     texts: BTreeMap<usize, String>,
 }
 impl EvaluationTexts {
     /// Preserve the old surgical edit-conflict rule without editing XML.
-    pub(super) fn new(mut transforms: Vec<FormulaTextTransform>) -> Result<Self, IoError> {
+    pub(in crate::xlsx) fn new(mut transforms: Vec<FormulaTextTransform>) -> Result<Self, IoError> {
         transforms.sort_by_key(|t| (t.span.start, t.span.end));
         let mut previous = 0;
         let mut texts = BTreeMap::new();
@@ -233,7 +233,7 @@ fn source_record(
 /// Only on a failed value plane, preserve the reader's interleaved envelope
 /// error order against a later literal/row error. This visits retained formula
 /// headers before that byte offset, never rescans the worksheet body.
-pub(super) fn validate_reader_prefix(
+pub(in crate::xlsx) fn validate_reader_prefix(
     plan: &SheetPlan,
     texts: &EvaluationTexts,
     before: usize,
@@ -249,8 +249,8 @@ pub(super) fn validate_reader_prefix(
     Ok(())
 }
 
-use super::{XlsxRecalculateOptions, checkpoint};
 use crate::workbook::WBResolver;
+use crate::xlsx::recalculate::{XlsxRecalculateOptions, checkpoint};
 use compressed_evidence::{EvidenceRecord, MonotonicFormulaEvidence};
 use formualizer_eval::engine::{
     DeferredFormulaPackage, Engine, FormulaCompressedPreparation, FormulaCompressedSourceReport,
@@ -263,9 +263,9 @@ use formula_replay::{
     replay_spool_per_cell_filtered_with_family,
 };
 
-pub(super) use crate::xlsx::ingest::staging::WorkbookSpoolUsage;
+pub(in crate::xlsx) use crate::xlsx::ingest::staging::WorkbookSpoolUsage;
 use crate::xlsx::ingest::staging::{FormulaStaging, engine_error};
-pub(super) struct FormulaPlane {
+pub(in crate::xlsx) struct FormulaPlane {
     pub records: Vec<FormulaIngestRecord>,
     pub report: FormulaCompressedSourceReport,
     pub families: Vec<SourceFormulaFamily>,
@@ -281,7 +281,7 @@ pub(super) struct FormulaPlane {
 /// Prepare the same W1 evidence, bounded replay and certification proposals as
 /// the adapter, consuming only retained source-order formula records. All
 /// graph mutation and compressed replay remain in the existing engine ingress.
-pub(super) fn stage(
+pub(in crate::xlsx) fn stage(
     engine: &mut Engine<WBResolver>,
     sheet: &str,
     sheet_instance: u32,
@@ -474,5 +474,5 @@ pub(super) fn stage(
 }
 
 #[cfg(test)]
-#[path = "tests/native_formula_sink.rs"]
+#[path = "../recalculate/tests/native_formula_sink.rs"]
 mod tests;

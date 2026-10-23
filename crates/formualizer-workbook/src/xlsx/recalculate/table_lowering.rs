@@ -269,7 +269,7 @@ fn literal_text(ast: &ASTNode) -> Option<String> {
 /// syntax: only literal (or literal-concatenation) text without `[` or any
 /// table name is admitted. Cell-sourced or computed text could name a table,
 /// which would bypass this source-only lowering.
-pub(super) fn indirect_text_is_table_free(ast: &ASTNode, names: &[String]) -> bool {
+pub(in crate::xlsx) fn indirect_text_is_table_free(ast: &ASTNode, names: &[String]) -> bool {
     match &ast.node_type {
         ASTNodeType::Function { name, args } => {
             let n = name.rsplit('.').next().unwrap_or(name);
@@ -315,7 +315,7 @@ fn is_function(
 /// Refuse a defined-name formula that names a table without brackets
 /// (`T = Table1`) or builds INDIRECT text that could name one: the
 /// source-only lowering does not rewrite defined names.
-pub(super) fn validate_defined_name(text: &str, names: &[String]) -> Result<(), IoError> {
+pub(in crate::xlsx) fn validate_defined_name(text: &str, names: &[String]) -> Result<(), IoError> {
     let folded = text.to_lowercase();
     let mentions = names.iter().any(|t| folded.contains(t.as_str()));
     if !mentions && !folded.contains("indirect") {
@@ -352,7 +352,7 @@ pub(super) fn validate_defined_name(text: &str, names: &[String]) -> Result<(), 
 }
 
 #[cfg(test)]
-pub(super) fn patches(
+pub(in crate::xlsx) fn patches(
     sheet_name: &str,
     plan: &SheetPlan,
     sheets: &[package::Sheet],
@@ -366,7 +366,7 @@ pub(super) fn patches(
 }
 
 /// Structured-reference evaluation text; publication retains the source text.
-pub(super) fn lowered_texts(
+pub(in crate::xlsx) fn lowered_texts(
     sheet_name: &str,
     plan: &SheetPlan,
     sheets: &[package::Sheet],

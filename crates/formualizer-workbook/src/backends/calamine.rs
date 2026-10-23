@@ -11,7 +11,7 @@ use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use crate::xlsx::ingest::name_parsing::NameParsing;
+use crate::xlsx::metadata::names::NameParsing;
 use calamine::{Data, DataRef, Reader, Xlsx, XlsxFormulaMetadata, open_workbook_from_rs};
 use formualizer_eval::arrow_store::{IngestBuilder, OverlayValue, map_error_code};
 use formualizer_eval::engine::ingest::EngineLoadStream;
