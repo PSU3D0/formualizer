@@ -138,6 +138,9 @@ impl NativeNames {
     fn scan_names(bytes: &[u8], scoped: bool) -> Vec<(String, String, Option<usize>)> {
         let mut xml = XmlReader::from_reader(bytes);
         xml.config_mut().trim_text(false);
+        // The scoped adapter ignored Empty events; the pinned unscoped reader
+        // expanded them. Preserve that distinction before scoped fallback.
+        xml.config_mut().expand_empty_elements = !scoped;
         let mut out = Vec::new();
         let mut buf = Vec::new();
         let mut inner = Vec::new();

@@ -72,6 +72,67 @@ fn native_name_cycles_scopes_unicode_and_legacy_range_match_adapter() {
 }
 
 #[test]
+fn empty_names_preserve_scoped_scan_and_unscoped_fallback() {
+    for scope in ["", " localSheetId=\"0\""] {
+        for empty in ["/>", "></definedName>"] {
+            for referenced in [false, true] {
+                for mixed in [
+                    "",
+                    "<definedName name=\"Num\">42</definedName>",
+                    "<definedName name=\"Y\"/>",
+                ] {
+                    let workbook = format!(
+                        "<workbook xmlns='{}' xmlns:r='http://schemas.openxmlformats.org/officeDocument/2006/relationships'><sheets><sheet name='Probe' sheetId='1' r:id='r1'/></sheets><definedNames><definedName name=\"X\"{scope}{empty}{mixed}</definedNames></workbook>",
+                        xml::MAIN
+                    );
+                    let formula = if referenced { "X+1" } else { "A1+1" };
+                    let worksheet = format!(
+                        "<worksheet xmlns='{}'><sheetData><row r='1'><c r='A1'><v>7</v></c><c r='B1'><f>{formula}</f><v>0</v></c></row></sheetData></worksheet>",
+                        xml::MAIN
+                    );
+                    let bytes = fixture_with_sheet(workbook.as_bytes(), worksheet.as_bytes());
+                    let options = XlsxRecalculateOptions::default();
+                    let admitted = admit_source(&bytes, &options).unwrap();
+                    assert_name_parity(&bytes, workbook.as_bytes(), &admitted.sheets);
+                    let old = legacy_ingest_source(
+                        &bytes,
+                        admitted,
+                        &options,
+                        &mut PhaseClock::from_env(),
+                    )
+                    .err();
+                    let native = recalculate_xlsx_bytes(&bytes, options).err();
+                    assert_eq!(
+                        format!("{native:?}"),
+                        format!("{old:?}"),
+                        "{scope} {empty} {referenced} {mixed}"
+                    );
+                    if referenced && mixed.is_empty() {
+                        assert!(
+                            matches!(native, Some(IoError::Unsupported { feature, context }) if feature == "unsupported or cyclic calculation name" && context == "X")
+                        );
+                        let directory = tempfile::tempdir().unwrap();
+                        let input = directory.path().join("input.xlsx");
+                        let output = directory.path().join("output.xlsx");
+                        std::fs::write(&input, &bytes).unwrap();
+                        assert!(
+                            recalculate_xlsx_file(
+                                &input,
+                                Some(&output),
+                                XlsxRecalculateOptions::default()
+                            )
+                            .is_err()
+                        );
+                        assert!(!output.exists());
+                        assert_eq!(std::fs::read(input).unwrap(), bytes);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
 #[ignore = "needs FORMUALIZER_SCAN_DIFF_FILES"]
 fn listed_native_name_metadata_matches_strict_adapter() {
     let files =
