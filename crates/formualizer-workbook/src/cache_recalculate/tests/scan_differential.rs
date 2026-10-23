@@ -683,6 +683,25 @@ fn worksheet_attribute_fast_path_and_fallback_match_the_reference() {
 }
 
 #[test]
+fn machine_position_restoration_and_refusal_priority_match_the_reference() {
+    for body in [
+        "<sheetData><row r=\"1\"><c r=\"A1\"><other><a><t>ignored</t></a></other><f>1</f><v>1</v></c></row></sheetData>",
+        "<sheetData><row r=\"1\"><c r=\"A1\" t=\"inlineStr\"><is><r><t>x</t></r><t>y</t></is></c><c r=\"B1\"><f>1</f></c></row></sheetData>",
+        "<cols><col min=\"1\" max=\"1\"/></cols><sheetData/><extLst><ext><other/></ext></extLst><sheetFormatPr zeroHeight=\"1\"/>",
+        "<sheetData><row r=\"1\"><c r=\"A1\"><other><f>1</f></other></c></row></sheetData>",
+        "<sheetData><row r=\"1\"><c r=\"A1\"><f>1<other/></f></c></row></sheetData>",
+        "<sheetData><row r=\"1\"><c r=\"A1\"><f t=\"shared\" si=\"4294967295\" ref=\"A1\">1</f></c></row></sheetData>",
+        "<sheetData><row r=\"1\"><c r=\"A1\"><f t=\"shared\" si=\"1\"/></c><c r=\"B1\"><f t=\"shared\" si=\"2\"/></c></row></sheetData><tableParts count=\"1\"/>",
+        "<sheetData><row r=\"1\"><c r=\"A1\"><f t=\"shared\" si=\"1\"/></c><c r=\"B1\"><f t=\"shared\" si=\"2\">1</f></c></row></sheetData>",
+    ] {
+        let doc = format!("<worksheet xmlns=\"{MAIN}\">{body}</worksheet>");
+        for options in option_sets() {
+            compare_all(doc.as_bytes(), &options);
+        }
+    }
+}
+
+#[test]
 fn many_distinct_namespaces_and_prefixes_match_the_reference() {
     // Interning is hashed; a linear intern list made these quadratic.
     let n = 2_000;

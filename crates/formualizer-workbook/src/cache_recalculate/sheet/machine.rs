@@ -1,6 +1,108 @@
 //! Independent flat worksheet rule loop; the visitor scanner remains the oracle.
 use super::*;
 
+/// Semantic position; the tokenizer's namespace path is the only path stack.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Position {
+    Root,
+    Worksheet,
+    SheetData,
+    Row,
+    Cell,
+    CellFormula,
+    CellValue,
+    CellInline,
+    CellInlineText,
+    Dimension,
+    SheetFormatPr,
+    Cols,
+    AutoFilter,
+    MergeCells,
+    MergeCell,
+    TableParts,
+    TablePart,
+    ExtLst,
+    Other { depth: usize },
+}
+
+struct Cursor {
+    position: Position,
+    /// Position immediately outside an opaque subtree. Nested unknown
+    /// elements share its depth witness instead of another path stack.
+    restore: Position,
+}
+impl Cursor {
+    fn new() -> Self {
+        Self {
+            position: Position::Root,
+            restore: Position::Root,
+        }
+    }
+    fn open(&mut self, tag: Tag, local: &str, depth: usize) {
+        if matches!(self.position, Position::Other { .. }) {
+            return;
+        }
+        let next = if tag.main {
+            match (self.position, tag.local) {
+                (Position::Root, Local::Worksheet) => Position::Worksheet,
+                (Position::Worksheet, Local::SheetData) => Position::SheetData,
+                (Position::Worksheet, Local::Dimension) => Position::Dimension,
+                (Position::Worksheet, Local::SheetFormatPr) => Position::SheetFormatPr,
+                (Position::Worksheet, Local::AutoFilter) => Position::AutoFilter,
+                (Position::Worksheet, Local::MergeCells) => Position::MergeCells,
+                (Position::Worksheet, Local::TableParts) => Position::TableParts,
+                (Position::Worksheet, _) if local == "cols" => Position::Cols,
+                (Position::Worksheet, _) if local == "extLst" => Position::ExtLst,
+                (Position::SheetData, Local::Row) => Position::Row,
+                (Position::Row, Local::C) => Position::Cell,
+                (Position::Cell, Local::F) => Position::CellFormula,
+                (Position::Cell, Local::V) => Position::CellValue,
+                (Position::Cell, Local::Is) => Position::CellInline,
+                (Position::CellInline, Local::T) => Position::CellInlineText,
+                (Position::MergeCells, Local::MergeCell) => Position::MergeCell,
+                (Position::TableParts, Local::TablePart) => Position::TablePart,
+                _ => Position::Other { depth },
+            }
+        } else {
+            Position::Other { depth }
+        };
+        if matches!(next, Position::Other { .. }) {
+            self.restore = self.position;
+        }
+        self.position = next;
+    }
+    fn direct(&self, depth: usize) -> bool {
+        matches!(
+            self.position,
+            Position::CellFormula | Position::CellValue | Position::CellInline
+        ) || (depth == 5
+            && matches!(self.position, Position::Other { depth: 5 })
+            && self.restore == Position::Cell)
+    }
+    fn close(&mut self, depth: usize) {
+        self.position = match self.position {
+            Position::Other { depth: outer } if outer == depth => self.restore,
+            Position::Other { .. } => return,
+            Position::Worksheet => Position::Root,
+            Position::SheetData => Position::Worksheet,
+            Position::Row => Position::SheetData,
+            Position::Cell => Position::Row,
+            Position::CellFormula | Position::CellValue | Position::CellInline => Position::Cell,
+            Position::CellInlineText => Position::CellInline,
+            Position::MergeCell => Position::MergeCells,
+            Position::TablePart => Position::TableParts,
+            Position::Dimension
+            | Position::SheetFormatPr
+            | Position::Cols
+            | Position::AutoFilter
+            | Position::MergeCells
+            | Position::TableParts
+            | Position::ExtLst => Position::Worksheet,
+            Position::Root => Position::Root,
+        };
+    }
+}
+
 pub(in crate::cache_recalculate) fn scan(
     bytes: &[u8],
     options: &XlsxRecalculateOptions,
@@ -60,8 +162,7 @@ fn scan_inner(
         merges: Vec::new(),
     });
     let mut extent_cells = 0u64;
-    // Tags of the open elements, parallel to the walker's path.
-    let mut tags: Vec<Tag> = Vec::new();
+    let mut cursor = Cursor::new();
     let mut tokens = crate::xlsx_xml::worksheet::Tokens::new(bytes)?;
     let xml_options = options.into();
     while let Some((path, node)) = tokens.next(&xml_options)? {
@@ -70,53 +171,51 @@ fn scan_inner(
         };
         if let xml::Kind::Text(text) = node.kind {
             // Text only matters as the content of a direct `f`/`v` child.
-            if tags.len() == 5
-                && main_path(&tags[..4], &CELL_PATH)
-                && let Some(cell) = current.as_mut()
-            {
-                match tags[4].local {
-                    Local::F => append(&mut cell.formula_text, text),
-                    Local::V => append(&mut cell.value.as_mut().expect("opened v").text, text),
+            if let Some(cell) = current.as_mut() {
+                match cursor.position {
+                    Position::CellFormula => append(&mut cell.formula_text, text),
+                    Position::CellValue => {
+                        append(&mut cell.value.as_mut().expect("opened v").text, text)
+                    }
                     _ => {}
                 }
             }
             continue;
         }
+        let tag = Tag::of(element);
         if matches!(node.kind, xml::Kind::Open { .. }) {
-            tags.push(Tag::of(element));
+            cursor.open(tag, element.local, path.len());
         }
         let closes = matches!(
             node.kind,
             xml::Kind::Open { empty: true, .. } | xml::Kind::Close
         );
-        let tags_now = tags.as_slice();
         'rules: {
-            let tags = tags_now;
-            let tag = *tags.last().expect("open element tag");
-            let is_cell = main_path(tags, &CELL_PATH);
-            let direct = tags.len() == 5 && main_path(&tags[..4], &CELL_PATH);
+            let position = cursor.position;
+            let is_cell = position == Position::Cell;
+            let direct = cursor.direct(path.len());
             match &node.kind {
                 xml::Kind::Open { empty, .. } => {
-                    if main_path(tags, &[Local::Worksheet, Local::SheetFormatPr])
+                    if (position == Position::SheetFormatPr)
                         && matches!(node.value("zeroHeight"), Some("1" | "true"))
                     {
                         rows_hidden_by_default = true;
                     }
-                    if main_path(tags, &[Local::Worksheet, Local::AutoFilter]) {
+                    if position == Position::AutoFilter {
                         if filter_seen {
                             return Err(unsupported("duplicate worksheet autoFilter", "worksheet"));
                         }
                         filter_seen = true;
                         filter_ref = Some(SourceRect::parse(node.required("ref")?)?);
                     }
-                    if tags.len() == 4
-                        && tags[1].main
-                        && tags[1].local == Local::AutoFilter
-                        && tags[2].local == Local::FilterColumn
+                    if path.len() == 4
+                        && path[1].ns.is_main()
+                        && path[1].local == "autoFilter"
+                        && path[2].local == "filterColumn"
                     {
                         filter_active = true;
                     }
-                    if tags.len() == 1 && !main_path(tags, &[Local::Worksheet]) {
+                    if path.len() == 1 && position != Position::Worksheet {
                         return Err(unsupported("worksheet root/namespace", "worksheet"));
                     }
                     // Structural names (and merge metadata) outside the main
@@ -149,12 +248,9 @@ fn scan_inner(
                     }
                     if matches!(tag.local, Local::TableParts | Local::TablePart) {
                         let valid = if tag.local == Local::TableParts {
-                            main_path(tags, &[Local::Worksheet, Local::TableParts])
+                            position == Position::TableParts
                         } else {
-                            main_path(
-                                tags,
-                                &[Local::Worksheet, Local::TableParts, Local::TablePart],
-                            )
+                            position == Position::TablePart
                         };
                         if !valid {
                             return Err(unsupported(
@@ -192,7 +288,7 @@ fn scan_inner(
                         }
                     }
                     if tag.local == Local::Dimension {
-                        if !main_path(tags, &[Local::Worksheet, Local::Dimension])
+                        if position != Position::Dimension
                             || dimension.is_some()
                             || sheet_data_count != 0
                         {
@@ -225,7 +321,7 @@ fn scan_inner(
                         }
                     }
                     if tag.local == Local::SheetData {
-                        if !main_path(tags, &[Local::Worksheet, Local::SheetData]) {
+                        if position != Position::SheetData {
                             return Err(unsupported("misplaced sheetData", "worksheet"));
                         }
                         sheet_data_count += 1;
@@ -239,10 +335,7 @@ fn scan_inner(
                         }
                     }
                     if tag.local == Local::MergeCell {
-                        if !main_path(
-                            tags,
-                            &[Local::Worksheet, Local::MergeCells, Local::MergeCell],
-                        ) {
+                        if position != Position::MergeCell {
                             return Err(unsupported("misplaced merge cell", "worksheet"));
                         }
                         let merge = SourceRect::parse(node.required("ref")?)?;
@@ -260,7 +353,7 @@ fn scan_inner(
                         }
                     }
                     if tag.local == Local::Row {
-                        if !main_path(tags, &[Local::Worksheet, Local::SheetData, Local::Row]) {
+                        if position != Position::Row {
                             return Err(unsupported("misplaced row", "worksheet"));
                         }
                         let next_row = integer(node.required("r")?)?;
@@ -530,13 +623,15 @@ fn scan_inner(
                             _ => {}
                         }
                     }
-                    if tags.len() > 5 && matches!(tags[4].local, Local::F | Local::V) {
+                    if path.len() > 5
+                        && matches!(cursor.restore, Position::CellFormula | Position::CellValue)
+                    {
                         return Err(unsupported("nested formula/cache content", "worksheet"));
                     }
                 }
                 xml::Kind::Text(_) => {}
                 xml::Kind::Close => {
-                    if main_path(tags, &[Local::Worksheet, Local::AutoFilter]) && filter_active {
+                    if (position == Position::AutoFilter) && filter_active {
                         let mut rect = filter_ref.take().expect("validated autoFilter");
                         rect.first_row += 1;
                         if rect.first_row <= rect.last_row {
@@ -561,11 +656,11 @@ fn scan_inner(
                         }
                     }
                     if let Some(index) = index.as_mut() {
-                        if main_path(tags, &[Local::Worksheet, Local::SheetData, Local::Row]) {
+                        if position == Position::Row {
                             let entry = index.rows.last_mut().expect("open row");
                             entry.span.end = node.span.end;
                         }
-                        if main_path(tags, &[Local::Worksheet, Local::SheetData]) {
+                        if position == Position::SheetData {
                             index.sheet_data.end = node.span.end;
                         }
                     }
@@ -617,7 +712,7 @@ fn scan_inner(
             }
         }
         if closes {
-            tags.pop();
+            cursor.close(path.len());
         }
     }
     if sheet_data_count != 1 {

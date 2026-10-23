@@ -15,6 +15,7 @@ pub(crate) struct Tokens<'a> {
     pending_path_pop: bool,
     scoped_depths: Vec<usize>,
     sheet_data_generation: Option<u64>,
+    sheet_data_depth: Option<usize>,
 }
 impl<'a> Tokens<'a> {
     pub(crate) fn new(bytes: &'a [u8]) -> Result<Self, IoError> {
@@ -38,6 +39,7 @@ impl<'a> Tokens<'a> {
             pending_path_pop: false,
             scoped_depths: Vec::new(),
             sheet_data_generation: None,
+            sheet_data_depth: None,
         })
     }
     pub(crate) fn next(
@@ -58,6 +60,7 @@ impl<'a> Tokens<'a> {
             pending_path_pop,
             scoped_depths,
             sheet_data_generation,
+            sheet_data_depth,
         } = self;
         loop {
             if *events & 1023 == 0 {
@@ -82,16 +85,17 @@ impl<'a> Tokens<'a> {
                     let (_, content) = content(text, e)?;
                     let name_len = e.name().as_ref().len();
                     let qualified = &content[..name_len];
-                    let in_sheet_data = path.len() >= 2
-                        && path[0].ns.is_main()
-                        && path[0].local == "worksheet"
-                        && path[1].ns.is_main()
-                        && path[1].local == "sheetData";
-                    let fast = in_sheet_data
-                        && *sheet_data_generation == Some(scopes.generation)
-                        && matches!(qualified, "row" | "c" | "f" | "v")
+                    let fast = sheet_data_depth.is_some()
+                        && matches!(qualified, "row" | "c" | "f" | "v" | "is" | "t")
                         && scratch.fast.parse(content, name_len, start)
-                        && scopes.element(qualified)?.is_main();
+                        && if *sheet_data_generation == Some(scopes.generation) {
+                            true
+                        } else if scopes.element(qualified)?.is_main() {
+                            *sheet_data_generation = Some(scopes.generation);
+                            true
+                        } else {
+                            false
+                        };
                     let malformed = if fast {
                         false
                     } else {
@@ -107,9 +111,15 @@ impl<'a> Tokens<'a> {
                             return Err(unsupported("multiple XML roots", "XLSX XML"));
                         }
                     }
-                    qualified_name(qualified.as_bytes())?;
+                    if !fast {
+                        qualified_name(qualified.as_bytes())?;
+                    }
                     let element = Element {
-                        ns: scopes.element(qualified)?,
+                        ns: if fast {
+                            Ns::Main
+                        } else {
+                            scopes.element(qualified)?
+                        },
                         local: local_part(qualified),
                         qualified,
                     };
@@ -159,8 +169,9 @@ impl<'a> Tokens<'a> {
                         && path[0].local == "worksheet"
                         && path[1].ns.is_main()
                         && path[1].local == "sheetData"
+                        && !empty
                     {
-                        *sheet_data_generation = Some(scopes.generation);
+                        *sheet_data_depth = Some(path.len());
                     }
                     let node = Node {
                         kind: Kind::Open {
@@ -178,6 +189,9 @@ impl<'a> Tokens<'a> {
                     return Ok(Some((path.as_slice(), node)));
                 }
                 Event::End(_) => {
+                    if *sheet_data_depth == Some(path.len()) {
+                        *sheet_data_depth = None;
+                    }
                     *pending_pop = scoped_depths.last().copied() == Some(path.len());
                     if *pending_pop {
                         scoped_depths.pop();
