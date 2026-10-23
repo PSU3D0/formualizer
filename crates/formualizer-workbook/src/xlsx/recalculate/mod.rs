@@ -5,6 +5,7 @@ mod error_reasons;
 pub(crate) use crate::cached_external_links as external_links;
 mod geometry;
 mod guards;
+pub(super) mod ownership;
 pub(super) use guards::inert as inert_sheets;
 pub(super) mod ingest_view;
 mod transforms;
