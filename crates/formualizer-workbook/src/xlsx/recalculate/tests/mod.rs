@@ -9,6 +9,7 @@ mod metadata;
 mod metadata_binding;
 mod names;
 mod native_ingestion;
+pub(in crate::xlsx) mod oracles;
 pub(in crate::xlsx) mod scan_differential;
 mod values;
 mod zip_additions;

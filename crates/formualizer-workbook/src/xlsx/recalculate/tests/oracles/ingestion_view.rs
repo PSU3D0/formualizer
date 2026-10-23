@@ -1,9 +1,11 @@
 //! Test-only projected XML input for the independent legacy-ingestion oracle.
 //! Production ingestion never constructs this view.
-use super::super::{Cache, SheetPlan, cache_patches, checkpoint, sheet, unsupported};
-use super::patches::remove;
-use super::{Patch, coalesce, mask_child};
 use crate::IoError;
+use crate::xlsx::recalculate::publication::patches::remove;
+use crate::xlsx::recalculate::publication::{coalesce, mask_child};
+use crate::xlsx::recalculate::{
+    Cache, Patch, SheetPlan, cache_patches, checkpoint, sheet, unsupported,
+};
 use formualizer_eval::engine::CancelToken;
 
 /// The ingestion-view patches for one worksheet, nonoverlapping and in

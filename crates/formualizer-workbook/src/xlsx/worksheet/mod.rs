@@ -13,7 +13,7 @@ use std::{
 mod cursor;
 pub(in crate::xlsx) mod events;
 #[cfg(test)]
-pub(in crate::xlsx) mod reference;
+pub(in crate::xlsx) use crate::xlsx::recalculate::tests::oracles::worksheet_legacy as reference;
 #[cfg(any(test, feature = "xlsx-recalc"))]
 pub(in crate::xlsx) mod scanner;
 mod shared;
@@ -143,29 +143,29 @@ pub(crate) struct FormulaMark {
     /// `normal`, `shared` or `array`.
     pub formula_kind: &'static str,
     pub shared_id: Option<u32>,
-    shared_range: Option<(u32, u32, u32, u32)>,
+    pub(in crate::xlsx) shared_range: Option<(u32, u32, u32, u32)>,
     #[allow(dead_code)] // true for every retained cell
-    has_formula: bool,
+    pub(in crate::xlsx) has_formula: bool,
     /// `<f …>` start tag (or whole empty element) span.
     pub formula_open: Range<usize>,
     /// `t="…"` attribute span on the formula start tag.
     pub formula_kind_span: Option<Range<usize>>,
     /// `cm` and array-extent attributes, boxed: present only on the rare
     /// cells that carry them.
-    dynamic: Option<Box<DynamicAttributes>>,
+    pub(in crate::xlsx) dynamic: Option<Box<DynamicAttributes>>,
 }
 #[derive(Debug, Default)]
-struct DynamicAttributes {
+pub(in crate::xlsx) struct DynamicAttributes {
     /// Preserve accepted noncanonical A1 spellings in cold diagnostics.
     original_address: Option<Box<str>>,
     /// One-based cellMetadata index from `c/@cm`.
-    cm: Option<u32>,
+    pub(in crate::xlsx) cm: Option<u32>,
     /// `cm="…"` attribute span on the cell start tag.
-    cm_span: Option<Range<usize>>,
+    pub(in crate::xlsx) cm_span: Option<Range<usize>>,
     /// Declared array extent from `f/@ref` for `t="array"` formulas.
-    array_ref: Option<SourceRect>,
+    pub(in crate::xlsx) array_ref: Option<SourceRect>,
     /// `ref="…"` attribute span on an array formula start tag.
-    array_ref_span: Option<Range<usize>>,
+    pub(in crate::xlsx) array_ref_span: Option<Range<usize>>,
 }
 impl FormulaMark {
     pub fn address(&self) -> Cow<'_, str> {
@@ -561,7 +561,7 @@ pub(in crate::xlsx) enum Scanned {
     /// A `Plain` scan met dynamic cell metadata; rescan `Indexed`.
     NeedsIndex,
 }
-const NEEDS_INDEX: &str = "dynamic cell metadata needs a source index";
+pub(in crate::xlsx) const NEEDS_INDEX: &str = "dynamic cell metadata needs a source index";
 #[cfg(test)]
 thread_local! {
     /// Indexed scans on this thread (tests prove scalar workbooks build none).
@@ -581,7 +581,7 @@ pub(in crate::xlsx) fn scan(
         if mode == ScanRetention::Indexed {
             INDEXED_SCANS.with(|n| n.set(n.get() + 1));
         }
-        crate::xlsx::recalculate::tests::scan_differential::shadow_scan(
+        crate::xlsx::recalculate::tests::oracles::shadow_scan(
             bytes,
             options,
             mode,
@@ -606,7 +606,7 @@ pub(in crate::xlsx) fn scan_emitting(
         if mode == ScanRetention::Indexed {
             INDEXED_SCANS.with(|n| n.set(n.get() + 1));
         }
-        crate::xlsx::recalculate::tests::scan_differential::shadow_scan(
+        crate::xlsx::recalculate::tests::oracles::shadow_scan(
             bytes,
             options,
             mode,

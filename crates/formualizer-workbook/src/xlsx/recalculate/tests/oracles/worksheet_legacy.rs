@@ -4,9 +4,11 @@
 use crate::xlsx::recalculate::{
     IoError, XlsxRecalculateOptions, unsupported, xml::reference as xml,
 };
-#[path = "reference_types.rs"]
+#[path = "worksheet_legacy_types.rs"]
 mod retained;
-use super::{IndexedCell, NEEDS_INDEX, RowEntry, ScanRetention, SourceIndex, SourceRect};
+use crate::xlsx::worksheet::{
+    IndexedCell, NEEDS_INDEX, RowEntry, ScanRetention, SourceIndex, SourceRect,
+};
 use formualizer_common::coord::parse_a1_1based;
 pub(in crate::xlsx) use retained::Cell as LegacyCell;
 pub(super) use retained::Scanned;
@@ -114,8 +116,8 @@ fn dynamic_anchor_extent(cell: &Cell) -> Result<Option<SourceRect>, IoError> {
 /// Project compact records back to the frozen owned shape. This compares every
 /// retained observable field and independently checks the newly retained proof
 /// and number against the old decisions, without changing the old algorithm.
-pub(in crate::xlsx) fn normalize(scan: super::Scanned, bytes: &[u8]) -> Scanned {
-    let super::Scanned::Done(scan) = scan else {
+pub(in crate::xlsx) fn normalize(scan: crate::xlsx::worksheet::Scanned, bytes: &[u8]) -> Scanned {
+    let crate::xlsx::worksheet::Scanned::Done(scan) = scan else {
         return Scanned::NeedsIndex;
     };
     let cells = scan
@@ -168,7 +170,7 @@ pub(in crate::xlsx) fn normalize(scan: super::Scanned, bytes: &[u8]) -> Scanned 
                 dynamic,
             };
             assert_eq!(
-                super::readable_scalar_cache(&c, bytes),
+                crate::xlsx::worksheet::readable_scalar_cache(&c, bytes),
                 readable_scalar_cache(&old, bytes),
                 "retained scalar proof differs from reference at {}",
                 old.address

@@ -4,13 +4,11 @@ use super::*;
 mod coalesce;
 mod mask_child;
 pub(in crate::xlsx) mod patches;
+#[cfg(test)]
+pub(in crate::xlsx) use super::tests::oracles::ingestion_view::patches;
 pub(in crate::xlsx) use coalesce::coalesce;
 pub(in crate::xlsx) use mask_child::mask_child;
 use patches::cache_patches;
-#[cfg(test)]
-mod compatibility;
-#[cfg(test)]
-pub(in crate::xlsx) use compatibility::patches;
 
 /// Package edits produced by a publication path.
 struct Publication {

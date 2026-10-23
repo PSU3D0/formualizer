@@ -1,6 +1,6 @@
 //! Frozen owned records for the pre-compact scanner oracle. Test-only: changing
 //! production storage must not also change the reference's scalar decisions.
-use super::super::{SourceIndex, SourceRect};
+use crate::xlsx::worksheet::{SourceIndex, SourceRect};
 use std::{ops::Range, rc::Rc};
 
 pub(crate) struct ValueNode {

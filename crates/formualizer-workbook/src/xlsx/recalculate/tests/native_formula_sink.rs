@@ -555,7 +555,7 @@ fn listed_native_formula_records_match_contextual_calamine() {
         admit_source, apply_patches, inert_sheets, ingest_view, legacy_intersection, package,
         table_lowering,
     };
-    crate::xlsx::recalculate::tests::scan_differential::exclusive(|| {
+    crate::xlsx::recalculate::tests::oracles::exclusive(|| {
         let paths =
             std::fs::read_to_string(std::env::var("FORMUALIZER_SCAN_DIFF_FILES").unwrap()).unwrap();
         let options = XlsxRecalculateOptions::default();

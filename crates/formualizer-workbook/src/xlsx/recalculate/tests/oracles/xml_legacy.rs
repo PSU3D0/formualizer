@@ -1,12 +1,12 @@
 //! The owned-string XML walker that preceded the borrowed walker in the
 //! parent module, kept verbatim as a test oracle: both must report the same
 //! events, spans and errors for any input.
-use super::super::{IoError, XlsxRecalculateOptions, checkpoint, unsupported};
+use crate::xlsx::recalculate::{IoError, XlsxRecalculateOptions, checkpoint, unsupported};
 use quick_xml::{NsReader, events::Event, name::ResolveResult};
 use std::collections::HashSet;
 use std::ops::Range;
 
-pub(in crate::xlsx) use super::{MAIN, OFFICE};
+pub(in crate::xlsx) use crate::xlsx::xml::{MAIN, OFFICE};
 
 #[derive(Debug)]
 pub(in crate::xlsx) struct Element {
