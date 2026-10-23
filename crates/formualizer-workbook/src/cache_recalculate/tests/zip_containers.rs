@@ -91,13 +91,18 @@ fn opaque_payloads_are_streamed_before_discovery_not_retained() {
     package::take_audit_buffer_peak();
     let source = super::super::admit_source(&bytes, &XlsxRecalculateOptions::default()).unwrap();
     let counts = package::take_part_inflates();
+    assert!(
+        package::retained_bytes(&source.archive) < 64 * 1024,
+        "opaque payloads must not be retained"
+    );
     assert_eq!(counts["opaque/0.bin"], 1);
     assert_eq!(counts["opaque/1.bin"], 1);
-    // Part C was withdrawn: the original audit plus consumer read is honest
-    // baseline behaviour, not a claimed single-inflate worksheet proof.
+    // B6 reuses verified bootstrap metadata and transfers each worksheet's
+    // single audited buffer into its retained publication marks.
     for sheet in source.sheets {
-        assert_eq!(counts[&sheet.part], 2);
+        assert_eq!(counts[&sheet.part], 1);
     }
+    assert!(counts.values().all(|count| *count == 1), "{counts:?}");
     // This metric covers the actual streaming audit buffer, not all source
     // allocations. The companion process-RSS regression checks retained heap.
     assert_eq!(package::take_audit_buffer_peak(), 64 * 1024);

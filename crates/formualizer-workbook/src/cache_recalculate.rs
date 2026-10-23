@@ -514,7 +514,7 @@ fn admit_source<'a>(
         let data = if sheet.inert {
             inert_sheets::EMPTY.as_bytes().to_vec()
         } else {
-            package::read_part(
+            package::take_part(
                 &mut archive,
                 &sheet.part,
                 options.limits.max_worksheet_bytes,
@@ -685,6 +685,7 @@ fn admit_source<'a>(
     let external = links
         .map(|links| external_links::plan(&links, &sheets, &plans, &defined_names, options))
         .transpose()?;
+    package::release_value_metadata(&mut archive);
     Ok(SourceAdmission {
         archive,
         sheets,

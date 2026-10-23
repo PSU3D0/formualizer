@@ -30,6 +30,84 @@ fn formula_reader_errors_keep_source_order_against_later_literal_or_row_errors()
 }
 
 #[test]
+fn native_reader_counter_has_a_legacy_positive_control() {
+    let bytes = current_cse();
+    let options = XlsxRecalculateOptions::default();
+    crate::backends::calamine::take_reader_io_calls();
+    recalculate_xlsx_bytes(&bytes, options.clone()).unwrap();
+    assert_eq!(crate::backends::calamine::take_reader_io_calls(), [0; 5]);
+    let admitted = admit_source(&bytes, &options).unwrap();
+    legacy_ingest_source(&bytes, admitted, &options, &mut PhaseClock::from_env()).unwrap();
+    let positive = crate::backends::calamine::take_reader_io_calls();
+    assert!(positive.iter().all(|count| *count > 0), "{positive:?}");
+}
+
+#[test]
+#[ignore = "needs FORMUALIZER_SCAN_DIFF_FILES"]
+fn listed_native_pipeline_counters() {
+    super::scan_differential::exclusive(|| {
+        let paths =
+            std::fs::read_to_string(std::env::var("FORMUALIZER_SCAN_DIFF_FILES").unwrap()).unwrap();
+        let options = XlsxRecalculateOptions::default();
+        let (mut files, mut walks, mut indexed, mut shared, mut errors) = (0, 0, 0, 0, 0);
+        for path in paths.lines().filter(|line| !line.trim().is_empty()) {
+            let bytes = std::fs::read(path).unwrap();
+            package::take_part_inflates();
+            sheet::MACHINE_WALKS.with(|n| n.set(0));
+            sheet::INDEXED_SCANS.with(|n| n.set(0));
+            let admitted = admit_source(&bytes, &options).unwrap();
+            let actual_walks = sheet::MACHINE_WALKS.with(|n| n.get());
+            let actual_indexed = sheet::INDEXED_SCANS.with(|n| n.get());
+            let inflates = package::take_part_inflates();
+            let (mut expected_walks, mut expected_indexed) = (0, 0);
+            for (source, plan) in admitted.sheets.iter().zip(&admitted.plans) {
+                if !source.inert {
+                    assert_eq!(inflates[&source.part], 1, "{path}: {}", source.part);
+                }
+                let mode = if source.tables.is_empty() {
+                    sheet::Mode::Plain
+                } else {
+                    sheet::Mode::TablePlain
+                };
+                expected_walks += 1;
+                expected_indexed += usize::from(mode == sheet::Mode::Indexed);
+                if matches!(
+                    sheet::scan_uncounted(&plan.data, &options, mode, &mut 0, &mut 0).unwrap(),
+                    sheet::Scanned::NeedsIndex
+                ) {
+                    expected_walks += 1;
+                    expected_indexed += 1;
+                }
+            }
+            assert_eq!(
+                (actual_walks, actual_indexed),
+                (expected_walks, expected_indexed),
+                "{path}"
+            );
+            drop(admitted);
+            crate::backends::calamine::take_reader_io_calls();
+            native_formulas::take_utility_calls();
+            let _ = recalculate_xlsx_bytes(&bytes, options.clone());
+            assert_eq!(
+                crate::backends::calamine::take_reader_io_calls(),
+                [0; 5],
+                "{path}"
+            );
+            let utilities = native_formulas::take_utility_calls();
+            files += 1;
+            walks += actual_walks;
+            indexed += actual_indexed;
+            shared += utilities.0;
+            errors += utilities.1;
+        }
+        assert!(files > 0);
+        eprintln!(
+            "native counters: {files} packages; {walks} admission walks; {indexed} indexed (baseline equal); each worksheet inflated once; reader/open/metadata/worksheet/cell/formula surfaces zero; shared-text utilities={shared}; error-token utilities={errors}"
+        );
+    });
+}
+
+#[test]
 fn output_budget_is_enforced_at_publication_not_a_nonexistent_ingestion_zip() {
     let bytes = current_cse();
     let unchanged = recalculate_xlsx_bytes(&bytes, XlsxRecalculateOptions::default()).unwrap();

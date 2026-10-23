@@ -25,6 +25,11 @@ thread_local! {
     static UTILITY_CALLS: std::cell::Cell<(u64, u64)> = const { std::cell::Cell::new((0, 0)) };
 }
 
+#[cfg(test)]
+pub(super) fn take_utility_calls() -> (u64, u64) {
+    UTILITY_CALLS.with(|calls| calls.replace((0, 0)))
+}
+
 /// Allowed pinned text utility, only on W1's uncertified placement fallback.
 fn expand_shared_formula_into(
     formula: &str,

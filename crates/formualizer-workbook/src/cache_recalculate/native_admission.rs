@@ -32,7 +32,7 @@ impl Metadata {
             .any(|name| name == "xl/sharedStrings.xml")
         {
             native_metadata::SharedStringTable::parse(
-                &package::read_part(
+                &package::take_part(
                     archive,
                     "xl/sharedStrings.xml",
                     options.limits.max_worksheet_bytes,
@@ -44,7 +44,7 @@ impl Metadata {
         };
         let styles = if archive.file_names().any(|name| name == "xl/styles.xml") {
             native_metadata::Styles::parse(
-                &package::read_part(archive, "xl/styles.xml", options.limits.max_worksheet_bytes)?,
+                &package::take_part(archive, "xl/styles.xml", options.limits.max_worksheet_bytes)?,
                 options,
             )?
         } else {

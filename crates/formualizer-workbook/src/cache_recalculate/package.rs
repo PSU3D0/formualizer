@@ -1,5 +1,6 @@
 //! Bounded package admission and relationship-aware workbook discovery.
 mod content_types;
+mod ownership;
 mod rewrite;
 use super::{IoError, XlsxRecalculateOptions, checkpoint, unsupported, xml};
 pub(super) use content_types::add_override;
@@ -8,12 +9,38 @@ use std::collections::{BTreeMap, HashSet};
 use std::io::{Cursor, Read};
 use zip::ZipArchive;
 
-pub(crate) type Archive<'a> = ZipArchive<Cursor<&'a [u8]>>;
+/// Retain only the relationship-resolved consumer closure. Worksheet buffers
+/// transfer to their plans; opaque members never enter this map.
+pub(crate) struct Archive<'a> {
+    zip: ZipArchive<Cursor<&'a [u8]>>,
+    parts: BTreeMap<String, VerifiedPart>,
+    provisional: Option<XlsxRecalculateOptions>,
+}
+struct VerifiedPart {
+    bytes: Vec<u8>,
+    actual: usize,
+    failure: Option<IoError>,
+}
+impl<'a> std::ops::Deref for Archive<'a> {
+    type Target = ZipArchive<Cursor<&'a [u8]>>;
+    fn deref(&self) -> &Self::Target {
+        &self.zip
+    }
+}
+impl std::ops::DerefMut for Archive<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.zip
+    }
+}
 #[cfg(test)]
 thread_local! {
     static PART_BUFFER_GROWTHS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static PART_INFLATES: std::cell::RefCell<BTreeMap<String, usize>> = const { std::cell::RefCell::new(BTreeMap::new()) };
     static AUDIT_BUFFER_PEAK: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+#[cfg(test)]
+pub(super) fn retained_bytes(archive: &Archive<'_>) -> usize {
+    archive.parts.values().map(|part| part.bytes.len()).sum()
 }
 #[cfg(test)]
 pub(super) fn take_part_buffer_growths() -> usize {
@@ -386,7 +413,11 @@ fn open<'a>(bytes: &'a [u8], directory: &Directory) -> Result<Archive<'a>, IoErr
             "XLSX package",
         ));
     }
-    Ok(archive)
+    Ok(Archive {
+        zip: archive,
+        parts: BTreeMap::new(),
+        provisional: None,
+    })
 }
 /// Sum of the members' declared expanded sizes (the audit bounds each to
 /// ZIP32; admission verified them against the decoded bytes).
@@ -415,52 +446,22 @@ pub(super) fn admit<'a>(
     // Bound and audit the declared directory before ZIP7 allocates its
     // member index or parses extra fields.
     let directory = audit_directory(bytes, options)?;
-    let mut archive = open(bytes, &directory)?;
-    let mut total = 0usize;
-    let mut buffer = [0u8; 64 * 1024];
-    #[cfg(test)]
-    AUDIT_BUFFER_PEAK.with(|peak| peak.set(peak.get().max(buffer.len())));
-    for i in 0..archive.len() {
-        let mut file = archive
-            .by_index(i)
-            .map_err(|e| IoError::from_backend("zip", e))?;
-        if file.encrypted() {
-            return Err(unsupported("encrypted ZIP member", file.name()));
-        }
-        if file.name().starts_with("_xmlsignatures/") || file.name().ends_with("origin.sigs") {
-            return Err(unsupported("package digital signature", "XLSX package"));
-        }
-        if file.name().starts_with("xl/richData/") {
-            return Err(unsupported("rich value data", "XLSX package"));
-        }
-        #[cfg(test)]
-        record_inflate(file.name());
-        let mut member_bytes = 0u64;
-        loop {
-            checkpoint(&options.cancel)?;
-            let n = file.read(&mut buffer)?;
-            member_bytes += n as u64;
-            if n == 0 {
-                break;
-            }
-            total = total
-                .checked_add(n)
-                .ok_or_else(|| unsupported("expanded byte overflow", "XLSX package"))?;
-            if total > options.limits.max_expanded_bytes {
-                return Err(unsupported("actual ZIP expansion limit", "XLSX package"));
-            }
-        }
-        if member_bytes != file.size() {
-            return Err(unsupported("ZIP expanded-size mismatch", file.name()));
-        }
-    }
-    Ok(archive)
+    ownership::audit(open(bytes, &directory)?, options)
 }
 pub(crate) fn read_part(
     archive: &mut Archive<'_>,
     name: &str,
     limit: usize,
 ) -> Result<Vec<u8>, IoError> {
+    if let Some(options) = archive.provisional.clone() {
+        return ownership::bootstrap_read(archive, name, limit, &options);
+    }
+    if let Some(part) = archive.parts.get(name) {
+        if part.bytes.len() > limit {
+            return Err(unsupported("XML part byte limit", name));
+        }
+        return Ok(part.bytes.clone());
+    }
     let file = archive
         .by_name(name)
         .map_err(|e| IoError::from_backend("zip", e))?;
@@ -484,6 +485,28 @@ pub(crate) fn read_part(
         return Err(unsupported("XML part byte limit", name));
     }
     Ok(bytes)
+}
+/// Move a worksheet's verified buffer to its retained marks/publication owner.
+pub(super) fn take_part(
+    archive: &mut Archive<'_>,
+    name: &str,
+    limit: usize,
+) -> Result<Vec<u8>, IoError> {
+    if archive.provisional.is_some() {
+        return read_part(archive, name, limit);
+    }
+    if let Some(part) = archive.parts.remove(name) {
+        if part.bytes.len() > limit {
+            return Err(unsupported("XML part byte limit", name));
+        }
+        return Ok(part.bytes);
+    }
+    read_part(archive, name, limit)
+}
+/// Parsed workbook-wide tables no longer need their raw XML after admission.
+pub(super) fn release_value_metadata(archive: &mut Archive<'_>) {
+    archive.parts.remove("xl/sharedStrings.xml");
+    archive.parts.remove("xl/styles.xml");
 }
 pub(super) fn relationships(
     archive: &mut Archive<'_>,
@@ -1099,7 +1122,18 @@ fn validate_aux(
     root: &str,
     options: &XlsxRecalculateOptions,
 ) -> Result<(), IoError> {
-    let data = read_part(archive, part, options.limits.max_worksheet_bytes)?;
+    let data = if let Some(cached) = archive.parts.get(part) {
+        if cached.bytes.len() > options.limits.max_worksheet_bytes {
+            return Err(unsupported("XML part byte limit", part));
+        }
+        std::borrow::Cow::Borrowed(cached.bytes.as_slice())
+    } else {
+        std::borrow::Cow::Owned(read_part(
+            archive,
+            part,
+            options.limits.max_worksheet_bytes,
+        )?)
+    };
     xml::walk(&data, options, |path, node| {
         if let xml::Kind::Open { .. } = node.kind {
             let e = path.last().expect("open XML element");

@@ -563,6 +563,7 @@ const NEEDS_INDEX: &str = "dynamic cell metadata needs a source index";
 thread_local! {
     /// Indexed scans on this thread (tests prove scalar workbooks build none).
     pub(super) static INDEXED_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(super) static MACHINE_WALKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 pub(super) fn scan(
     bytes: &[u8],
@@ -573,6 +574,7 @@ pub(super) fn scan(
 ) -> Result<Scanned, IoError> {
     #[cfg(test)]
     {
+        MACHINE_WALKS.with(|n| n.set(n.get() + 1));
         if mode == Mode::Indexed {
             INDEXED_SCANS.with(|n| n.set(n.get() + 1));
         }
@@ -597,6 +599,7 @@ pub(super) fn scan_emitting(
 ) -> Result<Scanned, IoError> {
     #[cfg(test)]
     {
+        MACHINE_WALKS.with(|n| n.set(n.get() + 1));
         if mode == Mode::Indexed {
             INDEXED_SCANS.with(|n| n.set(n.get() + 1));
         }

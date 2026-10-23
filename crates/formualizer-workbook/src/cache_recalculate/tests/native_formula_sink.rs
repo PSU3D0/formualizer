@@ -402,7 +402,7 @@ fn table_evaluation_text_matches_transport_without_editing_source() {
         .unwrap();
     zip.write_all(table.as_bytes()).unwrap();
     let bytes = zip.finish().unwrap().into_inner();
-    let mut archive = package::Archive::new(Cursor::new(bytes.as_slice())).unwrap();
+    let mut archive = package::admit(&bytes, &XlsxRecalculateOptions::default()).unwrap();
     let options = XlsxRecalculateOptions::default();
     plan.tables.push(
         tables::parse(

@@ -158,7 +158,7 @@ pub(super) fn parse(
     part: &str,
     options: &XlsxRecalculateOptions,
 ) -> Result<DynamicMetadata, IoError> {
-    let data = package::read_part(archive, part, options.limits.max_worksheet_bytes)?;
+    let data = package::take_part(archive, part, options.limits.max_worksheet_bytes)?;
     parse_bytes(&data, part, options)
 }
 pub(super) fn parse_bytes(

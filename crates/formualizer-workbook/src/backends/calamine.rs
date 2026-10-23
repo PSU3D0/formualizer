@@ -365,12 +365,16 @@ type SparseCells<T> = Vec<((u32, u32), T)>;
 impl CalamineWorkbook {
     /// Non-empty cell values, as `worksheet_range` would hold them.
     fn worksheet_cells(&mut self, sheet: &str) -> Result<SparseCells<Data>, calamine::Error> {
+        #[cfg(test)]
+        reader_io_call(2);
         let mut reader = match self.0.worksheet_cells_reader(sheet) {
             Ok(reader) => reader,
             Err(calamine::XlsxError::NotAWorksheet(_)) => return Ok(Vec::new()),
             Err(e) => return Err(e.into()),
         };
         let mut cells = Vec::new();
+        #[cfg(test)]
+        reader_io_call(3);
         while let Some(cell) = reader.next_cell()? {
             if !matches!(cell.get_value(), DataRef::Empty) {
                 let pos = cell.get_position();
@@ -382,12 +386,16 @@ impl CalamineWorkbook {
 
     /// Non-empty formula texts, as `worksheet_formula` would hold them.
     fn worksheet_formulas(&mut self, sheet: &str) -> Result<SparseCells<String>, calamine::Error> {
+        #[cfg(test)]
+        reader_io_call(2);
         let mut reader = match self.0.worksheet_cells_reader(sheet) {
             Ok(reader) => reader,
             Err(calamine::XlsxError::NotAWorksheet(_)) => return Ok(Vec::new()),
             Err(e) => return Err(e.into()),
         };
         let mut formulas = Vec::new();
+        #[cfg(test)]
+        reader_io_call(4);
         while let Some(cell) = reader.next_formula()? {
             if !cell.get_value().is_empty() {
                 let pos = cell.get_position();
@@ -766,6 +774,23 @@ struct LazyScanCounts {
     defined_names: std::sync::atomic::AtomicUsize,
 }
 
+#[cfg(test)]
+thread_local! {
+    static READER_IO_CALLS: std::cell::Cell<[u64; 5]> = const { std::cell::Cell::new([0; 5]) };
+}
+#[cfg(test)]
+fn reader_io_call(surface: usize) {
+    READER_IO_CALLS.with(|calls| {
+        let mut counts = calls.get();
+        counts[surface] += 1;
+        calls.set(counts);
+    });
+}
+#[cfg(test)]
+pub(crate) fn take_reader_io_calls() -> [u64; 5] {
+    READER_IO_CALLS.with(|calls| calls.replace([0; 5]))
+}
+
 impl CalamineAdapter {
     const EXCEL_MAX_ROWS: u32 = 1_048_576;
 
@@ -965,6 +990,8 @@ impl CalamineAdapter {
             workbook_spool_usage,
             shadow_relocation_comparator,
         } = options;
+        #[cfg(test)]
+        reader_io_call(2);
         let mut reader = workbook
             .worksheet_cells_reader(sheet)
             .map_err(calamine::Error::Xlsx)?;
@@ -1037,6 +1064,11 @@ impl CalamineAdapter {
         let mut shared_formula_tags = 0usize;
         let mut last_cancel_row = None;
 
+        #[cfg(test)]
+        {
+            reader_io_call(3);
+            reader_io_call(4);
+        }
         while let Some(record) = reader
             .next_cell_with_formula_metadata()
             .map_err(calamine::Error::Xlsx)?
@@ -1585,8 +1617,12 @@ impl CalamineAdapter {
         let source = projection
             .map(SharedXlsxReader::from_bytes)
             .unwrap_or(source);
+        #[cfg(test)]
+        reader_io_call(0);
         let workbook: Xlsx<CancellableReader> =
             open_workbook_from_rs(CancellableReader::new(source.reader(), cancel.clone()))?;
+        #[cfg(test)]
+        reader_io_call(1);
         for sheet in workbook.sheets_metadata() {
             let kind = match sheet.typ {
                 calamine::SheetType::ChartSheet => "chartsheet",

@@ -114,7 +114,7 @@ pub(super) fn parse(
             part,
         ));
     }
-    let bytes = package::read_part(archive, part, options.limits.max_worksheet_bytes)?;
+    let bytes = package::take_part(archive, part, options.limits.max_worksheet_bytes)?;
     let mut table: Option<Table> = None;
     let mut count = None;
     let mut ids = HashSet::new();
