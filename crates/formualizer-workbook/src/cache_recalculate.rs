@@ -7,6 +7,8 @@ mod geometry;
 mod inert_sheets;
 mod ingest_view;
 mod legacy_intersection;
+#[cfg(test)]
+mod native_metadata;
 pub(crate) mod package;
 mod phase_clock;
 mod result_projection;
