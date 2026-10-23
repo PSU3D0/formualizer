@@ -12,10 +12,26 @@ pub(crate) type Archive<'a> = ZipArchive<Cursor<&'a [u8]>>;
 #[cfg(test)]
 thread_local! {
     static PART_BUFFER_GROWTHS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static PART_INFLATES: std::cell::RefCell<BTreeMap<String, usize>> = const { std::cell::RefCell::new(BTreeMap::new()) };
+    static AUDIT_BUFFER_PEAK: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 #[cfg(test)]
 pub(super) fn take_part_buffer_growths() -> usize {
     PART_BUFFER_GROWTHS.with(|n| n.replace(0))
+}
+#[cfg(test)]
+fn record_inflate(name: &str) {
+    PART_INFLATES.with(|counts| {
+        *counts.borrow_mut().entry(name.to_owned()).or_default() += 1;
+    });
+}
+#[cfg(test)]
+pub(super) fn take_part_inflates() -> BTreeMap<String, usize> {
+    PART_INFLATES.with(|counts| std::mem::take(&mut *counts.borrow_mut()))
+}
+#[cfg(test)]
+pub(super) fn take_audit_buffer_peak() -> usize {
+    AUDIT_BUFFER_PEAK.with(|peak| peak.replace(0))
 }
 #[derive(Debug)]
 pub(super) struct Relationship {
@@ -402,6 +418,8 @@ pub(super) fn admit<'a>(
     let mut archive = open(bytes, &directory)?;
     let mut total = 0usize;
     let mut buffer = [0u8; 64 * 1024];
+    #[cfg(test)]
+    AUDIT_BUFFER_PEAK.with(|peak| peak.set(peak.get().max(buffer.len())));
     for i in 0..archive.len() {
         let mut file = archive
             .by_index(i)
@@ -415,6 +433,8 @@ pub(super) fn admit<'a>(
         if file.name().starts_with("xl/richData/") {
             return Err(unsupported("rich value data", "XLSX package"));
         }
+        #[cfg(test)]
+        record_inflate(file.name());
         let mut member_bytes = 0u64;
         loop {
             checkpoint(&options.cancel)?;
@@ -444,6 +464,8 @@ pub(crate) fn read_part(
     let file = archive
         .by_name(name)
         .map_err(|e| IoError::from_backend("zip", e))?;
+    #[cfg(test)]
+    record_inflate(file.name());
     // Package admission audited this member size; still bound both the
     // reservation and the actual read, including the over-limit probe byte.
     let capacity = usize::try_from(file.size())

@@ -411,10 +411,10 @@ pub(super) fn validate(
                 let ast = formualizer_parse::parser::parse(&formula).map_err(|e| {
                     unsupported(
                         "cannot inspect hidden-row reducer formula",
-                        format!("{}!{}: {e}", sheet.name, cell.address),
+                        format!("{}!{}: {e}", sheet.name, cell.address()),
                     )
                 })?;
-                let location = format!("{}!{}", sheet.name, cell.address);
+                let location = format!("{}!{}", sheet.name, cell.address());
                 let mut bound = Vec::new();
                 bindings(&ast, &mut bound);
                 inspect(

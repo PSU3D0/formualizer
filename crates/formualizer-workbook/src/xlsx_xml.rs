@@ -120,9 +120,13 @@ pub(crate) enum Kind<'n, 'a> {
 pub(crate) struct Node<'n, 'a> {
     pub kind: Kind<'n, 'a>,
     pub span: Range<usize>,
+    fast_attributes: Option<&'n FastAttributes<'a>>,
 }
 impl<'n, 'a> Node<'n, 'a> {
     pub fn attribute(&self, ns: &str, local: &str) -> Option<&'n Attribute<'a>> {
+        if let Some(fast) = self.fast_attributes {
+            return if ns.is_empty() { fast.get(local) } else { None };
+        }
         match self.kind {
             Kind::Open { attributes, .. } => {
                 attributes.iter().find(|a| a.local == local && *a.ns == *ns)
@@ -238,6 +242,7 @@ struct Scopes<'a> {
     declared: Vec<bool>,
     /// Element prefix (`None` for the default namespace) to namespace.
     cache: FxHashMap<Option<&'a [u8]>, Ns>,
+    generation: u64,
 }
 impl<'a> Scopes<'a> {
     fn new() -> Self {
@@ -246,12 +251,17 @@ impl<'a> Scopes<'a> {
             namespaces: Namespaces::new(),
             declared: Vec::new(),
             cache: FxHashMap::default(),
+            generation: 0,
         }
+    }
+    fn invalidate(&mut self) {
+        self.cache.clear();
+        self.generation = self.generation.saturating_add(1);
     }
     fn pop(&mut self) {
         self.resolver.pop();
         if self.declared.pop() == Some(true) {
-            self.cache.clear();
+            self.invalidate();
         }
     }
     fn element(&mut self, qualified: &'a str) -> Result<Ns, IoError> {
@@ -308,6 +318,151 @@ struct Parsed<'a> {
 struct Scratch<'a> {
     parsed: Vec<Parsed<'a>>,
     attributes: Vec<Attribute<'a>>,
+    fast: FastAttributes<'a>,
+}
+/// Known, unprefixed worksheet attributes. Unknown spellings are not refused:
+/// they go through the generic namespace/duplicate validator on this event.
+fn known_attribute(key: &[u8]) -> Option<usize> {
+    Some(match key {
+        b"r" => 0,
+        b"s" => 1,
+        b"t" => 2,
+        b"cm" => 3,
+        b"vm" => 4,
+        b"ph" => 5,
+        b"spans" => 6,
+        b"ht" => 7,
+        b"customHeight" => 8,
+        b"hidden" => 9,
+        b"collapsed" => 10,
+        b"outlineLevel" => 11,
+        b"thickBot" => 12,
+        b"thickTop" => 13,
+        b"customFormat" => 14,
+        b"ref" => 15,
+        b"si" => 16,
+        b"aca" => 17,
+        b"bx" => 18,
+        b"ca" => 19,
+        b"del1" => 20,
+        b"del2" => 21,
+        b"dt2D" => 22,
+        b"dtr" => 23,
+        b"r1" => 24,
+        b"r2" => 25,
+        _ => return None,
+    })
+}
+const KNOWN_ATTRIBUTES: usize = 26;
+/// Stack storage in source order plus direct lookup slots. Partial parses
+/// never escape: any unusual spelling/value restarts the generic attribute
+/// validator on the same quick-xml event, before invoking the consumer.
+#[derive(Debug)]
+struct FastAttributes<'a> {
+    entries: [Attribute<'a>; KNOWN_ATTRIBUTES],
+    positions: [usize; KNOWN_ATTRIBUTES],
+    len: usize,
+}
+impl Default for FastAttributes<'_> {
+    fn default() -> Self {
+        Self {
+            entries: std::array::from_fn(|_| Attribute {
+                ns: Ns::Static(""),
+                local: "",
+                qualified: "",
+                value: Cow::Borrowed(""),
+                span: 0..0,
+            }),
+            positions: [usize::MAX; KNOWN_ATTRIBUTES],
+            len: 0,
+        }
+    }
+}
+impl<'a> FastAttributes<'a> {
+    fn get(&self, local: &str) -> Option<&Attribute<'a>> {
+        let slot = known_attribute(local.as_bytes())?;
+        self.entries.get(*self.positions.get(slot)?)
+    }
+    fn parse(&mut self, content: &'a str, name_len: usize, start: usize) -> bool {
+        self.len = 0;
+        self.positions.fill(usize::MAX);
+        let mut seen = 0u32;
+        let bytes = content.as_bytes();
+        let mut at = name_len;
+        loop {
+            while bytes
+                .get(at)
+                .is_some_and(|b| matches!(b, b' ' | b'\r' | b'\n' | b'\t'))
+            {
+                at = at.saturating_add(1);
+            }
+            if at == bytes.len() {
+                return true;
+            }
+            let key_start = at;
+            while bytes
+                .get(at)
+                .is_some_and(|b| !matches!(b, b'=' | b' ' | b'\r' | b'\n' | b'\t'))
+            {
+                at = at.saturating_add(1);
+            }
+            let Some(key) = bytes.get(key_start..at) else {
+                return false;
+            };
+            let Some(slot) = known_attribute(key) else {
+                return false;
+            };
+            let bit = 1u32 << slot;
+            if seen & bit != 0 || bytes.get(at) != Some(&b'=') {
+                return false;
+            }
+            let Some(&quote @ (b'"' | b'\'')) = bytes.get(at.saturating_add(1)) else {
+                return false;
+            };
+            let value_start = at.saturating_add(2);
+            at = value_start;
+            while let Some(&b) = bytes.get(at) {
+                if b == quote {
+                    break;
+                }
+                // References, markup and unnormalized whitespace retain the
+                // generic decoder's exact validation and error precedence.
+                if matches!(b, b'&' | b'<' | b'\t' | b'\r' | b'\n') {
+                    return false;
+                }
+                at = at.saturating_add(1);
+            }
+            if bytes.get(at) != Some(&quote) {
+                return false;
+            }
+            let (Some(qualified), Some(value)) = (
+                content.get(key_start..value_start.saturating_sub(2)),
+                content.get(value_start..at),
+            ) else {
+                return false;
+            };
+            let Some(entry) = self.entries.get_mut(self.len) else {
+                return false;
+            };
+            let Some(position) = self.positions.get_mut(slot) else {
+                return false;
+            };
+            *entry = Attribute {
+                ns: Ns::Static(""),
+                local: qualified,
+                qualified,
+                value: Cow::Borrowed(value),
+                span: start + 1 + key_start..start + 1 + at + 1,
+            };
+            *position = self.len;
+            self.len = self.len.saturating_add(1);
+            seen |= bit;
+            at = at.saturating_add(1);
+        }
+    }
+    fn as_slice(&self) -> &[Attribute<'a>] {
+        &self.entries[..self.len]
+    }
 }
 /// Start-tag content of a borrowed event as a slice of the input.
 fn content<'a>(text: &'a str, e: &BytesStart<'_>) -> Result<(usize, &'a str), IoError> {
@@ -335,7 +490,7 @@ fn bind<'a>(
         for p in parsed.iter() {
             if let Some(prefix) = QName(p.key).as_namespace_binding() {
                 *scopes.declared.last_mut().expect("open scope") = true;
-                scopes.cache.clear();
+                scopes.invalidate();
                 scopes
                     .resolver
                     .add(prefix, quick_xml::name::Namespace(p.value))
@@ -353,7 +508,7 @@ fn bind<'a>(
         };
         if let Some(prefix) = a.key.as_namespace_binding() {
             *scopes.declared.last_mut().expect("open scope") = true;
-            scopes.cache.clear();
+            scopes.invalidate();
             scopes
                 .resolver
                 .add(prefix, quick_xml::name::Namespace(&a.value))
@@ -500,12 +655,27 @@ impl std::hash::Hash for Ns {
         (**self).hash(state)
     }
 }
+#[cfg(test)]
+thread_local! {
+    /// Bytes presented to the two whole-part passes (not decoded-text checks).
+    pub(crate) static WHOLE_SLICE_VALIDATION_BYTES: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+}
 pub(crate) fn walk<'a>(
     bytes: &'a [u8],
     options: &CacheOptions,
     mut visit: impl FnMut(&[Element<'a>], Node<'_, 'a>) -> Result<(), IoError>,
 ) -> Result<(), IoError> {
+    #[cfg(test)]
+    WHOLE_SLICE_VALIDATION_BYTES.with(|counts| {
+        let (utf8, xml) = counts.get();
+        counts.set((utf8.saturating_add(bytes.len()), xml));
+    });
     let text = std::str::from_utf8(bytes).map_err(|_| unsupported("non-UTF-8 XML", "XLSX XML"))?;
+    #[cfg(test)]
+    WHOLE_SLICE_VALIDATION_BYTES.with(|counts| {
+        let (utf8, xml) = counts.get();
+        counts.set((utf8, xml.saturating_add(bytes.len())));
+    });
     valid_text(text)?;
     let mut reader = Reader::from_str(text);
     reader.config_mut().check_end_names = true;
@@ -520,6 +690,10 @@ pub(crate) fn walk<'a>(
     // A closed element's namespace scope ends before the next event, as in
     // quick-xml's namespace-aware reader.
     let mut pending_pop = false;
+    // Only generic starts open namespace scopes. Fast starts proved that
+    // every attribute is unprefixed and cannot declare a binding.
+    let mut scoped_depths = Vec::new();
+    let mut sheet_data_generation = None;
     loop {
         if events & 1023 == 0 {
             checkpoint(&options.cancel)?;
@@ -537,8 +711,23 @@ pub(crate) fn walk<'a>(
                 let empty = matches!(event, Event::Empty(_));
                 let (_, content) = content(text, e)?;
                 let name_len = e.name().as_ref().len();
-                let malformed = bind(&mut scopes, content, name_len, &mut scratch.parsed)?;
-                pending_pop = empty;
+                let qualified = &content[..name_len];
+                let in_sheet_data = path.len() >= 2
+                    && path[0].ns.is_main()
+                    && path[0].local == "worksheet"
+                    && path[1].ns.is_main()
+                    && path[1].local == "sheetData";
+                let fast = in_sheet_data
+                    && sheet_data_generation == Some(scopes.generation)
+                    && matches!(qualified, "row" | "c" | "f" | "v")
+                    && scratch.fast.parse(content, name_len, start)
+                    && scopes.element(qualified)?.is_main();
+                let malformed = if fast {
+                    false
+                } else {
+                    bind(&mut scopes, content, name_len, &mut scratch.parsed)?
+                };
+                pending_pop = empty && !fast;
                 if path.len() >= options.limits.max_xml_depth {
                     return Err(unsupported("XML depth limit", "XLSX XML"));
                 }
@@ -548,7 +737,6 @@ pub(crate) fn walk<'a>(
                         return Err(unsupported("multiple XML roots", "XLSX XML"));
                     }
                 }
-                let qualified = &content[..name_len];
                 qualified_name(qualified.as_bytes())?;
                 let element = Element {
                     ns: scopes.element(qualified)?,
@@ -558,7 +746,9 @@ pub(crate) fn walk<'a>(
                 let attributes = &mut scratch.attributes;
                 attributes.clear();
                 let mut seen = None;
-                if malformed {
+                if fast {
+                    // Fully validated stack attributes; no generic vector.
+                } else if malformed {
                     // Replay with quick-xml's own duplicate checks for its
                     // exact error.
                     for a in Attributes::new(content, name_len) {
@@ -598,14 +788,30 @@ pub(crate) fn walk<'a>(
                     }
                 }
                 path.push(element);
+                if !empty && !fast {
+                    scoped_depths.push(path.len());
+                }
+                if path.len() == 2
+                    && path[0].ns.is_main()
+                    && path[0].local == "worksheet"
+                    && path[1].ns.is_main()
+                    && path[1].local == "sheetData"
+                {
+                    sheet_data_generation = Some(scopes.generation);
+                }
                 visit(
                     &path,
                     Node {
                         kind: Kind::Open {
                             empty,
-                            attributes: &scratch.attributes,
+                            attributes: if fast {
+                                scratch.fast.as_slice()
+                            } else {
+                                &scratch.attributes
+                            },
                         },
                         span: start..end,
+                        fast_attributes: fast.then_some(&scratch.fast),
                     },
                 )?;
                 if empty {
@@ -613,7 +819,10 @@ pub(crate) fn walk<'a>(
                 }
             }
             Event::End(_) => {
-                pending_pop = true;
+                pending_pop = scoped_depths.last().copied() == Some(path.len());
+                if pending_pop {
+                    scoped_depths.pop();
+                }
                 if path.is_empty() {
                     return Err(unsupported("unbalanced XML", "XLSX XML"));
                 }
@@ -622,6 +831,7 @@ pub(crate) fn walk<'a>(
                     Node {
                         kind: Kind::Close,
                         span: start..end,
+                        fast_attributes: None,
                     },
                 )?;
                 path.pop();
@@ -649,6 +859,7 @@ pub(crate) fn walk<'a>(
                     Node {
                         kind: Kind::Text(value),
                         span: start..end,
+                        fast_attributes: None,
                     },
                 )?;
             }
@@ -684,6 +895,7 @@ pub(crate) fn walk<'a>(
                     Node {
                         kind: Kind::Text(value),
                         span: start..end,
+                        fast_attributes: None,
                     },
                 )?;
             }

@@ -346,7 +346,7 @@ pub(super) fn plan(
     for anchor in anchors {
         checkpoint(cancel)?;
         let cell = &plan.cells[anchor.formula];
-        if anchor.cache.matches(cell) {
+        if anchor.cache.matches(cell, data) {
             // No cache edit.
         } else {
             changed += 1;

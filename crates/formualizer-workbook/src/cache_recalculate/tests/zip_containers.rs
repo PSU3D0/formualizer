@@ -43,6 +43,90 @@ fn producer_containers_are_admitted() {
     }
 }
 
+// Put large opaque payloads before *all* discovery metadata. Releasing a
+// cache only after discovery/finalisation cannot bound this fixture's peak.
+fn opaque_first(bytes: &[u8]) -> Vec<u8> {
+    use std::io::Write;
+    let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+    let block = vec![b'x'; 1024 * 1024];
+    for i in 0..2 {
+        writer
+            .start_file(format!("opaque/{i}.bin"), options)
+            .unwrap();
+        for _ in 0..16 {
+            writer.write_all(&block).unwrap();
+        }
+    }
+    let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i).unwrap();
+        let mut data = Vec::new();
+        file.read_to_end(&mut data).unwrap();
+        if file.name() == "[Content_Types].xml" {
+            data = String::from_utf8(data)
+                .unwrap()
+                .replace(
+                    "</Types>",
+                    "<Default Extension=\"bin\" ContentType=\"application/octet-stream\"/></Types>",
+                )
+                .into_bytes();
+        }
+        let options = if file.name() == "unused.bin" {
+            options.compression_method(zip::CompressionMethod::Stored)
+        } else {
+            options
+        };
+        writer.start_file(file.name(), options).unwrap();
+        writer.write_all(&data).unwrap();
+    }
+    writer.finish().unwrap().into_inner()
+}
+
+#[test]
+fn opaque_payloads_are_streamed_before_discovery_not_retained() {
+    let bytes = opaque_first(FIXTURES[0].1);
+    package::take_part_inflates();
+    package::take_audit_buffer_peak();
+    let source = super::super::admit_source(&bytes, &XlsxRecalculateOptions::default()).unwrap();
+    let counts = package::take_part_inflates();
+    assert_eq!(counts["opaque/0.bin"], 1);
+    assert_eq!(counts["opaque/1.bin"], 1);
+    // Part C was withdrawn: the original audit plus consumer read is honest
+    // baseline behaviour, not a claimed single-inflate worksheet proof.
+    for sheet in source.sheets {
+        assert_eq!(counts[&sheet.part], 2);
+    }
+    // This metric covers the actual streaming audit buffer, not all source
+    // allocations. The companion process-RSS regression checks retained heap.
+    assert_eq!(package::take_audit_buffer_peak(), 64 * 1024);
+}
+
+#[test]
+fn opaque_audit_finishes_before_semantic_refusal_and_late_crc_error() {
+    let mut entries = workbook();
+    entries
+        .iter_mut()
+        .find(|e| e.name == "xl/worksheets/sheet1.xml")
+        .unwrap()
+        .data = b"<bad/>".to_vec();
+    let mut unused = entries[0].clone();
+    unused.name = "unused.bin".into();
+    unused.data = b"unused payload".to_vec();
+    entries.push(unused);
+    let mut bytes = opaque_first(&build(&entries));
+    let end = find(&bytes, "unused.bin").data_end;
+    bytes[end - 1] ^= 1;
+    package::take_audit_buffer_peak();
+    let expected = admit(&bytes).expect_err("late CRC audit refuses");
+    let Err(actual) = super::super::admit_source(&bytes, &XlsxRecalculateOptions::default()) else {
+        panic!("CRC must outrank the worksheet root refusal");
+    };
+    assert_eq!(format!("{expected:?}"), format!("{actual:?}"));
+    assert_eq!(package::take_audit_buffer_peak(), 64 * 1024);
+}
+
 fn crc32(data: &[u8]) -> u32 {
     let mut crc = !0u32;
     for byte in data {

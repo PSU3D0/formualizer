@@ -101,8 +101,8 @@ fn compare_walk(bytes: &[u8], options: &XlsxRecalculateOptions) {
         );
     }
 }
-fn scan_outcome(
-    f: impl FnOnce(&mut usize, &mut u64) -> Result<sheet::Scanned, IoError>,
+fn scan_outcome<T: std::fmt::Debug>(
+    f: impl FnOnce(&mut usize, &mut u64) -> Result<T, IoError>,
     observed: usize,
     logical: u64,
 ) -> String {
@@ -118,7 +118,10 @@ fn compare_scan(
     logical: u64,
 ) {
     let new = scan_outcome(
-        |o, l| sheet::scan_uncounted(bytes, options, mode, o, l),
+        |o, l| {
+            sheet::scan_uncounted(bytes, options, mode, o, l)
+                .map(|scan| sheet::reference::normalize(scan, bytes))
+        },
         observed,
         logical,
     );
@@ -504,6 +507,170 @@ fn bad_utf8_and_cancellation_match_the_reference() {
         ..XlsxRecalculateOptions::default()
     };
     compare_all(rich_sheet().as_bytes(), &options);
+}
+
+#[test]
+fn fused_encoding_block_boundaries_match_the_reference() {
+    let options = XlsxRecalculateOptions::default();
+    let sequences: &[&[u8]] = &[
+        b"\xc2\x80",
+        b"\xdf\xbf",
+        b"\xe0\xa0\x80",
+        b"\xed\x9f\xbf",
+        b"\xee\x80\x80",
+        b"\xef\xbf\xbd",
+        b"\xf0\x90\x80\x80",
+        b"\xf4\x8f\xbf\xbf",
+        b"\xef\xbf\xbe",
+        b"\xef\xbf\xbf",
+        b"\xc0\x80",
+        b"\xc1\xbf",
+        b"\xe0\x80\x80",
+        b"\xed\xa0\x80",
+        b"\xf0\x80\x80\x80",
+        b"\xf4\x90\x80\x80",
+        b"\xf5\x80\x80\x80",
+        b"\xff",
+        b"\x80",
+        b"\xc2",
+        b"\xe0\xa0",
+        b"\xf0\x90\x80",
+        b"\x00",
+        b"\x01",
+        b"\x08",
+        b"\x0b",
+        b"\x0c",
+        b"\x1f",
+        b"\t\r\n",
+        b"\x7f",
+    ];
+    for padding in 0..32 {
+        for sequence in sequences {
+            let mut bytes = b"<a>".to_vec();
+            bytes.extend(std::iter::repeat_n(b' ', padding));
+            bytes.extend_from_slice(sequence);
+            bytes.extend_from_slice(b"</a>");
+            compare_all(&bytes, &options);
+            // Full UTF-8 validation used to precede XML Char validation:
+            // a later encoding error still outranks the earlier control.
+            bytes.insert(3, 1);
+            bytes.push(0xff);
+            compare_all(&bytes, &options);
+        }
+    }
+}
+
+#[test]
+fn whole_slice_validation_visits_each_input_once_per_pass() {
+    use crate::xlsx_xml::{WHOLE_SLICE_VALIDATION_BYTES, walk};
+    let options = XlsxRecalculateOptions::default();
+    let xml_options = (&options).into();
+    for text in [
+        "<a/>",
+        "<a q=\"é\">x&amp;y\r\nz</a>",
+        "<a xmlns=\"u\"><b/></a>",
+    ] {
+        WHOLE_SLICE_VALIDATION_BYTES.with(|n| n.set((0, 0)));
+        walk(text.as_bytes(), &xml_options, |_, _| Ok(())).unwrap();
+        assert_eq!(
+            WHOLE_SLICE_VALIDATION_BYTES.with(|n| n.get()),
+            (text.len(), text.len())
+        );
+    }
+    WHOLE_SLICE_VALIDATION_BYTES.with(|n| n.set((0, 0)));
+    assert!(walk(b"<a>\xff</a>", &xml_options, |_, _| Ok(())).is_err());
+    assert_eq!(WHOLE_SLICE_VALIDATION_BYTES.with(|n| n.get()), (8, 0));
+}
+
+#[test]
+fn compact_records_preserve_text_proofs_names_and_address_spelling() {
+    let prefix = "q".repeat(300);
+    for options in option_sets() {
+        for address in ["A1", "a1", "A01", "A000001", "A&#49;"] {
+            for kind in [
+                "",
+                " t=\"n\"",
+                " t=\"b\"",
+                " t=\"e\"",
+                " t=\"str\"",
+                " t=\"s\"",
+                " t=\"d\"",
+            ] {
+                for value in [
+                    "0",
+                    "-0",
+                    "1.2345678901234567",
+                    " 1 ",
+                    "1e309",
+                    "NaN",
+                    "1&#46;5",
+                    "&#49;",
+                    "a&amp;b",
+                    "a\r\nb",
+                    "1<!-- split -->2",
+                    "",
+                    "#N/A",
+                ] {
+                    let sheet = format!(
+                        "<worksheet xmlns=\"{MAIN}\" xmlns:{prefix}=\"{MAIN}\"><sheetData><row r=\"1\"><{prefix}:c r=\"{address}\"{kind}><f>1</f><u:v xmlns:u=\"{MAIN}\">{value}</u:v></{prefix}:c></row></sheetData></worksheet>"
+                    );
+                    compare_all(sheet.as_bytes(), &options);
+                }
+                let sheet = format!(
+                    "<worksheet xmlns=\"{MAIN}\"><sheetData><row r=\"1\"><c r=\"{address}\"{kind}><f>1</f><u:v xmlns:u=\"{MAIN}\"/></c></row></sheetData></worksheet>"
+                );
+                compare_all(sheet.as_bytes(), &options);
+            }
+        }
+    }
+    // The retained type/name/address fields no longer require heap pointers.
+    eprintln!(
+        "retained Cell bytes: legacy={} compact={}",
+        std::mem::size_of::<sheet::reference::LegacyCell>(),
+        std::mem::size_of::<sheet::Cell>()
+    );
+    assert!(
+        std::mem::size_of::<sheet::Cell>() < std::mem::size_of::<sheet::reference::LegacyCell>()
+    );
+}
+
+#[test]
+fn worksheet_attribute_fast_path_and_fallback_match_the_reference() {
+    let cases = [
+        "<row r=\"1\" s=\"0\" customFormat=\"1\" ht=\"15\" customHeight=\"1\" spans=\"1:2\" thickBot=\"0\" thickTop=\"0\"><c r=\"A1\" s=\"1\" ph=\"0\"><f t=\"normal\" ca=\"1\">1</f><v>0</v></c></row>",
+        "<row r=\"1\"><c r=\"A1\" r=\"B1\"/></row>",
+        "<row r=\"1\" hidden=\"1\" hidden=\"0\"/>",
+        "<row r=\"1\"><c r=\"A1\"><f t=\"normal\" t=\"shared\">1</f><v/></c></row>",
+        "<row r=\"1\"><c r=\"A1\" custom=\"é\"><v>0</v></c></row>",
+        "<row r=\"1\"><c r=\"&#65;1\"><v>0</v></c></row>",
+        "<row r=\"1\"><c r=\"A1\" s = \"0\"><v>0</v></c></row>",
+        "<row r=\"1\"><c r=\"A1\" s=\"x\t\"><v>0</v></c></row>",
+        "<row r=\"1\"><c r=\"A1\" s=\"<\"><v>0</v></c></row>",
+        "<row r=\"1\"><c r=\"A1\" p:s=\"0\" xmlns:p=\"urn:p\"><v>0</v></c></row>",
+        "<row r=\"1\"><c r=\"A1\" xmlns:p=\"urn:p\" xmlns:q=\"urn:p\" p:s=\"0\" q:s=\"1\"/></row>",
+        "<row r=\"1\"><c r=\"A1\" xmlns=\"urn:foreign\"/></row>",
+        "<row xmlns=\"urn:foreign\" r=\"1\"><c xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" r=\"A1\"/></row>",
+        "<row r=\"1\"><c r=\"A1\"><v a=\"1\"/></c><c r=\"B1\"><v/></c></row>",
+        "<row r=\"1\"><c r=\"A1\"><f>1<!--ignored--><?p?></f><v>0</v></c></row>",
+    ];
+    for options in option_sets() {
+        for rows in cases {
+            let sheet =
+                format!("<worksheet xmlns=\"{MAIN}\"><sheetData>{rows}</sheetData></worksheet>");
+            compare_all(sheet.as_bytes(), &options);
+        }
+        // Declarations before/after ordinary attributes, and rebinding at
+        // both row and cell scopes. Leaving a scope restores its bindings.
+        for attrs in [
+            format!("xmlns=\"{MAIN}\" r=\"1\""),
+            format!("r=\"1\" xmlns=\"{MAIN}\""),
+        ] {
+            let sheet = format!(
+                "<worksheet xmlns=\"{MAIN}\" xmlns:p=\"{MAIN}\"><sheetData><row {attrs}><c r=\"A1\" xmlns:p=\"urn:foreign\"><v>0</v></c><p:c r=\"B1\"><p:v>0</p:v></p:c></row><row r=\"2\"><c xmlns:p=\"{MAIN}\" r=\"A2\"><p:f>1</p:f><v>0</v></c></row></sheetData></worksheet>"
+            );
+            compare_all(sheet.as_bytes(), &options);
+        }
+    }
 }
 
 #[test]

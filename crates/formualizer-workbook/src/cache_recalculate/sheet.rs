@@ -4,7 +4,11 @@
 //! merges for dynamic-array ownership and geometry.
 use super::{IoError, XlsxRecalculateOptions, unsupported, xml};
 use formualizer_common::coord::parse_a1_1based;
-use std::{borrow::Cow, collections::HashMap, ops::Range, rc::Rc};
+use std::{
+    borrow::Cow,
+    collections::HashMap,
+    ops::{Deref, Range},
+};
 
 #[cfg(test)]
 pub(super) mod reference;
@@ -48,27 +52,84 @@ impl SourceRect {
     }
 }
 
+/// Validated cell type, without a per-cell name-interning lookup.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum CellKind {
+    Number,
+    Boolean,
+    Error,
+    Text,
+    Shared,
+    Inline,
+    Date,
+}
+impl CellKind {
+    fn parse(value: &str) -> Option<Self> {
+        Some(match value {
+            "n" => Self::Number,
+            "b" => Self::Boolean,
+            "e" => Self::Error,
+            "str" => Self::Text,
+            "s" => Self::Shared,
+            "inlineStr" => Self::Inline,
+            "d" => Self::Date,
+            _ => return None,
+        })
+    }
+}
+impl Deref for CellKind {
+    type Target = str;
+    fn deref(&self) -> &str {
+        match self {
+            Self::Number => "n",
+            Self::Boolean => "b",
+            Self::Error => "e",
+            Self::Text => "str",
+            Self::Shared => "s",
+            Self::Inline => "inlineStr",
+            Self::Date => "d",
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct ValueNode {
     pub span: Range<usize>,
     pub open_end: usize,
     pub close_start: usize,
     pub empty: bool,
-    pub qualified: Rc<str>,
-    pub text: String,
+    prefix_len: usize,
+    /// Only entity/EOL-normalised or multi-event payloads need owned text.
+    decoded: Option<Box<str>>,
+    /// Numeric cache decoded once, including trimming used by Cache::matches.
+    /// NaN is the non-number/unparseable sentinel (never display-equal).
+    pub number: f64,
+    readable: bool,
+}
+impl ValueNode {
+    pub fn text<'a>(&'a self, bytes: &'a [u8]) -> Cow<'a, str> {
+        self.decoded.as_deref().map_or_else(
+            || String::from_utf8_lossy(&bytes[self.open_end..self.close_start]),
+            Cow::Borrowed,
+        )
+    }
+    pub fn qualified(&self, bytes: &[u8]) -> String {
+        format!("{}v", prefix(bytes, self.span.start, self.prefix_len))
+    }
+}
+/// Prefix length is unrestricted: long accepted XML prefixes must stay valid.
+fn prefix(bytes: &[u8], start: usize, len: usize) -> Cow<'_, str> {
+    String::from_utf8_lossy(&bytes[start + 1..start + 1 + len])
 }
 #[derive(Debug)]
 pub(crate) struct Cell {
     pub row: u32,
     pub col: u32,
-    pub address: String,
     #[allow(dead_code)] // consumers use the narrower spans below
     pub span: Range<usize>,
     pub open_end: usize,
-    /// Qualified names and cell types repeat on every cell: one shared copy
-    /// per distinct spelling and worksheet.
-    pub qualified: Rc<str>,
-    pub kind: Option<Rc<str>>,
+    prefix_len: usize,
+    pub kind: Option<CellKind>,
     pub kind_span: Option<Range<usize>>,
     pub formula_end: usize,
     pub formula_text: String,
@@ -90,6 +151,8 @@ pub(crate) struct Cell {
 }
 #[derive(Debug, Default)]
 struct DynamicAttributes {
+    /// Preserve accepted noncanonical A1 spellings in cold diagnostics.
+    original_address: Option<Box<str>>,
     /// One-based cellMetadata index from `c/@cm`.
     cm: Option<u32>,
     /// `cm="…"` attribute span on the cell start tag.
@@ -100,6 +163,33 @@ struct DynamicAttributes {
     array_ref_span: Option<Range<usize>>,
 }
 impl Cell {
+    pub fn address(&self) -> Cow<'_, str> {
+        if let Some(address) = self
+            .dynamic
+            .as_ref()
+            .and_then(|d| d.original_address.as_deref())
+        {
+            return Cow::Borrowed(address);
+        }
+        // Coordinates were already checked against the worksheet grid.
+        let mut col = self.col;
+        let mut letters = [0u8; 7]; // enough even for u32::MAX
+        let mut at = letters.len();
+        while col > 0 {
+            col -= 1;
+            at -= 1;
+            letters[at] = b'A' + (col % 26) as u8;
+            col /= 26;
+        }
+        Cow::Owned(format!(
+            "{}{row}",
+            String::from_utf8_lossy(&letters[at..]),
+            row = self.row
+        ))
+    }
+    pub fn prefix<'a>(&self, bytes: &'a [u8]) -> Cow<'a, str> {
+        prefix(bytes, self.span.start, self.prefix_len)
+    }
     pub fn shared_rect(&self) -> Option<SourceRect> {
         self.shared_range
             .map(|(first_row, first_col, last_row, last_col)| SourceRect {
@@ -210,17 +300,8 @@ pub(super) struct Scan {
 /// Calamine's fast scalar reader consumes just one raw ASCII text event.
 /// Literal cells must satisfy that assumption; formula caches may instead be
 /// cleared in the transient ingestion view because they are not authority.
-pub(super) fn readable_scalar_cache(cell: &Cell, bytes: &[u8]) -> bool {
-    scalar_cache_readable(
-        cell.kind.as_deref(),
-        cell.value.as_ref().map(|v| CacheText {
-            empty: v.empty,
-            text: &v.text,
-            open_end: v.open_end,
-            close_start: v.close_start,
-        }),
-        bytes,
-    )
+pub(super) fn readable_scalar_cache(cell: &Cell, _bytes: &[u8]) -> bool {
+    cell.value.as_ref().is_none_or(|v| v.readable)
 }
 /// The `<v>` facts [`readable_scalar_cache`] decides on.
 struct CacheText<'v> {
@@ -295,11 +376,10 @@ struct OpenValue<'a> {
 struct OpenCell<'a> {
     row: u32,
     col: u32,
-    address: Cow<'a, str>,
     span: Range<usize>,
     open_end: usize,
     qualified: &'a str,
-    kind: Option<Cow<'a, str>>,
+    kind: Option<CellKind>,
     kind_span: Option<Range<usize>>,
     formula_end: usize,
     formula_text: Cow<'a, str>,
@@ -374,26 +454,59 @@ impl<'a> OpenCell<'a> {
         }
         Ok(Some(extent))
     }
-    fn into_cell(self, names: &mut Names) -> Cell {
-        Cell {
-            row: self.row,
-            col: self.col,
-            address: self.address.into_owned(),
-            span: self.span,
-            open_end: self.open_end,
-            qualified: names.get(self.qualified),
-            kind: self.kind.map(|k| names.get(&k)),
-            kind_span: self.kind_span,
-            formula_end: self.formula_end,
-            formula_text: self.formula_text.into_owned(),
-            value: self.value.map(|v| ValueNode {
+    fn into_cell(self, bytes: &[u8]) -> Cell {
+        let kind = self.kind.as_deref();
+        let value = self.value.map(|v| {
+            // Matching trims numeric caches; Calamine's proof deliberately
+            // does not. Keep those separate decisions with one numeric parse.
+            let numeric = matches!(kind, None | Some("n"));
+            let number = if numeric {
+                v.text.trim().parse::<f64>().unwrap_or(f64::NAN)
+            } else {
+                f64::NAN
+            };
+            let readable = if numeric {
+                v.empty
+                    || v.text.is_empty()
+                    || (bytes[v.open_end..v.close_start] == *v.text.as_bytes()
+                        && v.text.trim() == v.text
+                        && number.is_finite())
+            } else {
+                scalar_cache_readable(
+                    kind,
+                    Some(CacheText {
+                        empty: v.empty,
+                        text: &v.text,
+                        open_end: v.open_end,
+                        close_start: v.close_start,
+                    }),
+                    bytes,
+                )
+            };
+            let decoded = (bytes[v.open_end..v.close_start] != *v.text.as_bytes())
+                .then(|| v.text.into_owned().into_boxed_str());
+            ValueNode {
                 span: v.span,
                 open_end: v.open_end,
                 close_start: v.close_start,
                 empty: v.empty,
-                qualified: names.get(v.qualified),
-                text: v.text.into_owned(),
-            }),
+                prefix_len: v.qualified.find(':').map_or(0, |i| i + 1),
+                decoded,
+                number,
+                readable,
+            }
+        });
+        Cell {
+            row: self.row,
+            col: self.col,
+            span: self.span,
+            open_end: self.open_end,
+            prefix_len: self.qualified.find(':').map_or(0, |i| i + 1),
+            kind: self.kind,
+            kind_span: self.kind_span,
+            formula_end: self.formula_end,
+            formula_text: self.formula_text.into_owned(),
+            value,
             inline: self.inline,
             formula_kind: self.formula_kind,
             shared_id: self.shared_id,
@@ -403,20 +516,6 @@ impl<'a> OpenCell<'a> {
             formula_kind_span: self.formula_kind_span,
             dynamic: self.dynamic,
         }
-    }
-}
-/// Interned element names and cell types of one worksheet, hashed: every
-/// formula cell may use its own prefix.
-#[derive(Default)]
-struct Names(rustc_hash::FxHashSet<Rc<str>>);
-impl Names {
-    fn get(&mut self, name: &str) -> Rc<str> {
-        if let Some(known) = self.0.get(name) {
-            return known.clone();
-        }
-        let name: Rc<str> = Rc::from(name);
-        self.0.insert(name.clone());
-        name
     }
 }
 /// Append one text event, borrowing when it is the only one.
@@ -643,7 +742,6 @@ fn scan_inner(
         merges: Vec::new(),
     });
     let mut extent_cells = 0u64;
-    let mut names = Names::default();
     // Tags of the open elements, parallel to the walker's path.
     let mut tags: Vec<Tag> = Vec::new();
     xml::walk(bytes, options, |path, node| {
@@ -894,7 +992,8 @@ fn scan_inner(
                             return Err(unsupported("misplaced/nested cell", "worksheet"));
                         }
                         let address = &node.required_attribute("r")?.value;
-                        let (r, c) = coord(address)?;
+                        let canonical = plain_coord(address);
+                        let (r, c) = canonical.map_or_else(|| coord(address), Ok)?;
                         if c > options.limits.max_columns {
                             return Err(unsupported("worksheet width limit", "worksheet"));
                         }
@@ -953,11 +1052,10 @@ fn scan_inner(
                             current = Some(OpenCell {
                                 row: r,
                                 col: c,
-                                address: address.clone(),
                                 span: node.span.clone(),
                                 open_end: node.span.end,
                                 qualified: element.qualified,
-                                kind: kind.cloned(),
+                                kind: kind.and_then(|k| CellKind::parse(k)),
                                 kind_span,
                                 formula_end: 0,
                                 formula_text: Cow::Borrowed(""),
@@ -969,9 +1067,12 @@ fn scan_inner(
                                 has_formula: false,
                                 formula_open: 0..0,
                                 formula_kind_span: None,
-                                dynamic: cm.map(|cm| {
+                                dynamic: (cm.is_some() || canonical.is_none()).then(|| {
                                     Box::new(DynamicAttributes {
-                                        cm: Some(cm),
+                                        original_address: canonical
+                                            .is_none()
+                                            .then(|| address.to_string().into_boxed_str()),
+                                        cm,
                                         cm_span: node.attribute("", "cm").map(|a| a.span.clone()),
                                         ..Default::default()
                                     })
@@ -1186,7 +1287,7 @@ fn scan_inner(
                             if cell.formula_end == 0 {
                                 return Err(unsupported("missing formula boundary", "worksheet"));
                             }
-                            cells.push(current.take().expect("open cell").into_cell(&mut names));
+                            cells.push(current.take().expect("open cell").into_cell(bytes));
                             if cells.len() > options.limits.max_formula_cells {
                                 return Err(unsupported("formula cell count limit", "worksheet"));
                             }
@@ -1235,7 +1336,7 @@ fn scan_inner(
                     ));
                 }
                 if area > 1 {
-                    super::shared_qualifiers::validate(&cell.formula_text, &cell.address)?;
+                    super::shared_qualifiers::validate(&cell.formula_text, &cell.address())?;
                 }
             } else if cell.shared_range.is_some() {
                 return Err(unsupported("shared descendant declares range", "worksheet"));

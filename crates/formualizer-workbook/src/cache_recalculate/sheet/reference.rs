@@ -2,11 +2,13 @@
 //! kept verbatim (over the owned-string reference walker) as a test oracle:
 //! both must produce the same scan, counters and errors for any input.
 use super::super::{IoError, XlsxRecalculateOptions, unsupported, xml::reference as xml};
-use super::{
-    Cell, DynamicAttributes, IndexedCell, Mode, NEEDS_INDEX, RowEntry, Scan, Scanned, SourceIndex,
-    SourceRect, ValueNode,
-};
+#[path = "reference_types.rs"]
+mod retained;
+use super::{IndexedCell, Mode, NEEDS_INDEX, RowEntry, SourceIndex, SourceRect};
 use formualizer_common::coord::parse_a1_1based;
+pub(in crate::cache_recalculate) use retained::Cell as LegacyCell;
+pub(super) use retained::Scanned;
+use retained::{Cell, DynamicAttributes, Scan, ValueNode};
 use std::collections::HashMap;
 
 /// Calamine's fast scalar reader consumes just one raw ASCII text event.
@@ -107,6 +109,96 @@ fn dynamic_anchor_extent(cell: &Cell) -> Result<Option<SourceRect>, IoError> {
     }
     Ok(Some(extent))
 }
+/// Project compact records back to the frozen owned shape. This compares every
+/// retained observable field and independently checks the newly retained proof
+/// and number against the old decisions, without changing the old algorithm.
+pub(in crate::cache_recalculate) fn normalize(scan: super::Scanned, bytes: &[u8]) -> Scanned {
+    let super::Scanned::Done(scan) = scan else {
+        return Scanned::NeedsIndex;
+    };
+    let cells = scan
+        .cells
+        .into_iter()
+        .map(|c| {
+            let dynamic = c
+                .dynamic
+                .as_ref()
+                .filter(|d| {
+                    d.cm.is_some()
+                        || d.cm_span.is_some()
+                        || d.array_ref.is_some()
+                        || d.array_ref_span.is_some()
+                })
+                .map(|d| {
+                    Box::new(DynamicAttributes {
+                        cm: d.cm,
+                        cm_span: d.cm_span.clone(),
+                        array_ref: d.array_ref,
+                        array_ref_span: d.array_ref_span.clone(),
+                    })
+                });
+            let old = Cell {
+                row: c.row,
+                col: c.col,
+                address: c.address().into_owned(),
+                span: c.span.clone(),
+                open_end: c.open_end,
+                qualified: std::rc::Rc::from(format!("{}c", c.prefix(bytes))),
+                kind: c.kind.as_deref().map(std::rc::Rc::from),
+                kind_span: c.kind_span.clone(),
+                formula_end: c.formula_end,
+                formula_text: c.formula_text.clone(),
+                value: c.value.as_ref().map(|v| ValueNode {
+                    span: v.span.clone(),
+                    open_end: v.open_end,
+                    close_start: v.close_start,
+                    empty: v.empty,
+                    qualified: std::rc::Rc::from(v.qualified(bytes)),
+                    text: v.text(bytes).into_owned(),
+                }),
+                inline: c.inline.clone(),
+                formula_kind: c.formula_kind,
+                shared_id: c.shared_id,
+                shared_range: c.shared_range,
+                has_formula: c.has_formula,
+                formula_open: c.formula_open.clone(),
+                formula_kind_span: c.formula_kind_span.clone(),
+                dynamic,
+            };
+            assert_eq!(
+                super::readable_scalar_cache(&c, bytes),
+                readable_scalar_cache(&old, bytes),
+                "retained scalar proof differs from reference at {}",
+                old.address
+            );
+            if let Some(v) = &c.value {
+                let number = if matches!(old.kind.as_deref(), None | Some("n")) {
+                    v.text(bytes).trim().parse::<f64>().unwrap_or(f64::NAN)
+                } else {
+                    f64::NAN
+                };
+                assert_eq!(
+                    v.number.to_bits(),
+                    number.to_bits(),
+                    "retained scalar number differs"
+                );
+            }
+            old
+        })
+        .collect();
+    Scanned::Done(Box::new(Scan {
+        cells,
+        table_ids: scan.table_ids,
+        table_merges: scan.table_merges,
+        hidden_rows: scan.hidden_rows,
+        rows_hidden_by_default: scan.rows_hidden_by_default,
+        has_dimension: scan.has_dimension,
+        active_filters: scan.active_filters,
+        index: scan.index,
+        serialized: scan.serialized,
+        bounds: scan.bounds,
+    }))
+}
 pub(in crate::cache_recalculate) fn scan(
     bytes: &[u8],
     options: &XlsxRecalculateOptions,
@@ -124,7 +216,7 @@ pub(in crate::cache_recalculate) fn scan(
         &mut needs_index,
     ) {
         Err(_) if needs_index => Ok(Scanned::NeedsIndex),
-        result => result.map(Scanned::Done),
+        result => result.map(|scan| Scanned::Done(Box::new(scan))),
     }
 }
 const MC: &str = "http://schemas.openxmlformats.org/markup-compatibility/2006";
