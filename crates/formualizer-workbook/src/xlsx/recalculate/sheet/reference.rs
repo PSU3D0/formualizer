@@ -6,7 +6,7 @@ use super::super::{IoError, XlsxRecalculateOptions, unsupported, xml::reference 
 mod retained;
 use super::{IndexedCell, Mode, NEEDS_INDEX, RowEntry, SourceIndex, SourceRect};
 use formualizer_common::coord::parse_a1_1based;
-pub(in crate::cache_recalculate) use retained::Cell as LegacyCell;
+pub(in crate::xlsx::recalculate) use retained::Cell as LegacyCell;
 pub(super) use retained::Scanned;
 use retained::{Cell, DynamicAttributes, Scan, ValueNode};
 use std::collections::HashMap;
@@ -14,7 +14,7 @@ use std::collections::HashMap;
 /// Calamine's fast scalar reader consumes just one raw ASCII text event.
 /// Literal cells must satisfy that assumption; formula caches may instead be
 /// cleared in the transient ingestion view because they are not authority.
-pub(in crate::cache_recalculate) fn readable_scalar_cache(cell: &Cell, bytes: &[u8]) -> bool {
+pub(in crate::xlsx::recalculate) fn readable_scalar_cache(cell: &Cell, bytes: &[u8]) -> bool {
     let Some(v) = &cell.value else {
         return true;
     };
@@ -112,7 +112,7 @@ fn dynamic_anchor_extent(cell: &Cell) -> Result<Option<SourceRect>, IoError> {
 /// Project compact records back to the frozen owned shape. This compares every
 /// retained observable field and independently checks the newly retained proof
 /// and number against the old decisions, without changing the old algorithm.
-pub(in crate::cache_recalculate) fn normalize(scan: super::Scanned, bytes: &[u8]) -> Scanned {
+pub(in crate::xlsx::recalculate) fn normalize(scan: super::Scanned, bytes: &[u8]) -> Scanned {
     let super::Scanned::Done(scan) = scan else {
         return Scanned::NeedsIndex;
     };
@@ -199,7 +199,7 @@ pub(in crate::cache_recalculate) fn normalize(scan: super::Scanned, bytes: &[u8]
         bounds: scan.bounds,
     }))
 }
-pub(in crate::cache_recalculate) fn scan(
+pub(in crate::xlsx::recalculate) fn scan(
     bytes: &[u8],
     options: &XlsxRecalculateOptions,
     mode: Mode,

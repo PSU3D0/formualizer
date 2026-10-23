@@ -14,7 +14,9 @@
 //! that contains an omitted cell is refused.
 use crate::IoError;
 #[cfg(feature = "xlsx-recalc")]
-use crate::cache_recalculate::{SheetPlan, XlsxRecalculateOptions, package};
+use crate::cache_recalculate::XlsxRecalculateOptions;
+#[cfg(feature = "xlsx-recalc")]
+use crate::xlsx::recalculate::{SheetPlan, package};
 use crate::xlsx_cache_options::{CacheOptions, checkpoint, unsupported};
 use crate::xlsx_xml as xml;
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
@@ -746,7 +748,7 @@ fn formula_texts<'p>(
     plan: &'p SheetPlan,
 ) -> Result<
     Vec<(
-        &'p crate::cache_recalculate::sheet::Cell,
+        &'p crate::xlsx::recalculate::sheet::Cell,
         std::borrow::Cow<'p, str>,
     )>,
     IoError,

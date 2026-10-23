@@ -1,6 +1,6 @@
 //! Fused worksheet reader and rule loop; the visitor remains the oracle.
 use super::*;
-pub(in crate::cache_recalculate) mod emission;
+pub(in crate::xlsx::recalculate) mod emission;
 mod generated;
 #[cfg(test)]
 mod path_tests;
@@ -244,7 +244,7 @@ pub(super) fn plain_coord(value: &str) -> Option<(u32, u32)> {
 }
 
 #[cfg(test)]
-pub(in crate::cache_recalculate) fn scan(
+pub(in crate::xlsx::recalculate) fn scan(
     bytes: &[u8],
     options: &XlsxRecalculateOptions,
     mode: Mode,
@@ -254,7 +254,7 @@ pub(in crate::cache_recalculate) fn scan(
     scan_emitting(bytes, options, mode, observed, logical_cells, |_| Ok(()))
 }
 
-pub(in crate::cache_recalculate) fn scan_emitting(
+pub(in crate::xlsx::recalculate) fn scan_emitting(
     bytes: &[u8],
     options: &XlsxRecalculateOptions,
     mode: Mode,

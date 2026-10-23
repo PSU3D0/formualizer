@@ -131,7 +131,7 @@ pub(super) fn coalesce(patches: &mut Vec<Patch>) -> Result<(), IoError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cache_recalculate::apply_patches;
+    use crate::xlsx::recalculate::apply_patches;
 
     fn patch(span: Range<usize>, text: &str) -> Patch {
         Patch {

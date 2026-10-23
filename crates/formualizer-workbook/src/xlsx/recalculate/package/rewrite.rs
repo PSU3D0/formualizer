@@ -24,7 +24,7 @@ use zip::{CompressionMethod, ZipArchive, ZipWriter, write::SimpleFileOptions};
 /// Container edits: existing members to replace and validated new members
 /// to add. A name is in at most one of the two maps.
 #[derive(Debug, Default)]
-pub(in crate::cache_recalculate) struct Edits {
+pub(in crate::xlsx::recalculate) struct Edits {
     pub replace: BTreeMap<String, Vec<u8>>,
     pub add: BTreeMap<String, Vec<u8>>,
 }
@@ -78,7 +78,7 @@ fn zip32(value: usize, name: &str) -> Result<[u8; 4], IoError> {
         .ok_or_else(|| unsupported("ZIP32 size or offset overflow", name.to_owned()))
 }
 
-pub(in crate::cache_recalculate) fn rewrite(
+pub(in crate::xlsx::recalculate) fn rewrite(
     bytes: &[u8],
     archive: &mut Archive<'_>,
     edits: &Edits,

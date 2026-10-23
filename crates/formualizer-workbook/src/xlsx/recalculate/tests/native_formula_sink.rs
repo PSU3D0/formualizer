@@ -1,5 +1,5 @@
 use super::*;
-use crate::cache_recalculate::{
+use crate::xlsx::recalculate::{
     native_metadata::{SharedStringTable, Styles},
     native_values::{Context, RawCell, ValueSink, dimension_hint},
 };
@@ -302,7 +302,7 @@ fn evaluation_text_preserves_xml10_and_does_not_mutate_marks() {
 
 #[test]
 fn raw_formula_envelopes_and_cache_type_refusals_match_pinned_reader() {
-    use crate::cache_recalculate::{apply_patches, ingest_view};
+    use crate::xlsx::recalculate::{apply_patches, ingest_view};
     let mut cases = Vec::new();
     for (kind, si, reference) in [
         ("shared", "+0", "A1:A2"),
@@ -384,7 +384,7 @@ fn raw_formula_envelopes_and_cache_type_refusals_match_pinned_reader() {
 
 #[test]
 fn table_evaluation_text_matches_transport_without_editing_source() {
-    use crate::cache_recalculate::{apply_patches, package, table_lowering, tables};
+    use crate::xlsx::recalculate::{apply_patches, package, table_lowering, tables};
     let data = format!(
         "<worksheet xmlns=\"{MAIN}\"><sheetData>\
         <row r=\"1\"><c r=\"C1\"><f>SUM(T[Qty])</f><v>0</v></c></row>\
@@ -551,11 +551,11 @@ fn expected(record: calamine::XlsxFormulaMetadata) -> Metadata {
 #[test]
 #[ignore = "needs FORMUALIZER_SCAN_DIFF_FILES"]
 fn listed_native_formula_records_match_contextual_calamine() {
-    use crate::cache_recalculate::{
+    use crate::xlsx::recalculate::{
         admit_source, apply_patches, inert_sheets, ingest_view, legacy_intersection, package,
         table_lowering,
     };
-    crate::cache_recalculate::tests::scan_differential::exclusive(|| {
+    crate::xlsx::recalculate::tests::scan_differential::exclusive(|| {
         let paths =
             std::fs::read_to_string(std::env::var("FORMUALIZER_SCAN_DIFF_FILES").unwrap()).unwrap();
         let options = XlsxRecalculateOptions::default();

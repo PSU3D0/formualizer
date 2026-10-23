@@ -3,7 +3,7 @@
 use super::*;
 
 #[derive(Debug)]
-pub(in crate::cache_recalculate) enum Value<'a> {
+pub(in crate::xlsx::recalculate) enum Value<'a> {
     Empty,
     Number(f64),
     Boolean(bool),
@@ -16,7 +16,7 @@ pub(in crate::cache_recalculate) enum Value<'a> {
     Unreadable,
 }
 #[derive(Debug)]
-pub(in crate::cache_recalculate) struct Literal<'a> {
+pub(in crate::xlsx::recalculate) struct Literal<'a> {
     pub row: u32,
     pub col: u32,
     pub style: Option<Cow<'a, str>>,
@@ -76,7 +76,7 @@ fn display_text(text: &str) -> Cow<'_, str> {
 }
 
 #[derive(Default)]
-pub(in crate::cache_recalculate) struct DisplayString<'a> {
+pub(in crate::xlsx::recalculate) struct DisplayString<'a> {
     value: String,
     segment: Cow<'a, str>,
     text_closing: Option<&'a str>,
@@ -84,7 +84,7 @@ pub(in crate::cache_recalculate) struct DisplayString<'a> {
     preserve: bool,
 }
 impl<'a> DisplayString<'a> {
-    pub(in crate::cache_recalculate) fn event(
+    pub(in crate::xlsx::recalculate) fn event(
         &mut self,
         path: &[xml::Element<'a>],
         node: &xml::Node<'_, 'a>,
@@ -142,10 +142,10 @@ impl<'a> DisplayString<'a> {
         self.value.push_str(&display_text(text));
         self.text_closing = None;
     }
-    pub(in crate::cache_recalculate) fn consuming_text(&self) -> bool {
+    pub(in crate::xlsx::recalculate) fn consuming_text(&self) -> bool {
         self.text_closing.is_some()
     }
-    pub(in crate::cache_recalculate) fn finish(self) -> String {
+    pub(in crate::xlsx::recalculate) fn finish(self) -> String {
         self.value
     }
 }

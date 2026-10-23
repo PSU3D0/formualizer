@@ -1,6 +1,6 @@
 use super::super::*;
-use crate::cache_recalculate::native_names::NativeNames;
 use crate::traits::SpreadsheetReader;
+use crate::xlsx::recalculate::native_names::NativeNames;
 use std::io::Write;
 
 fn assert_name_parity(bytes: &[u8], workbook: &[u8], sheets: &[package::Sheet]) {

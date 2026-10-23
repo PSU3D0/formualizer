@@ -2,7 +2,7 @@
 //! Calamine cell stream over the existing recalc ingestion view. No engine
 //! construction, formula evaluation, or production ingestion wiring.
 use super::*;
-use crate::cache_recalculate::{admit_source, apply_patches, inert_sheets, ingest_view, package};
+use crate::xlsx::recalculate::{admit_source, apply_patches, inert_sheets, ingest_view, package};
 use calamine::{DataRef, Reader, Xlsx};
 use sheet::machine::{
     emission::{DisplayString, Value},

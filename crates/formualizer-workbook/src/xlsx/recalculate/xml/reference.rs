@@ -6,16 +6,16 @@ use quick_xml::{NsReader, events::Event, name::ResolveResult};
 use std::collections::HashSet;
 use std::ops::Range;
 
-pub(in crate::cache_recalculate) use super::{MAIN, OFFICE};
+pub(in crate::xlsx::recalculate) use super::{MAIN, OFFICE};
 
 #[derive(Debug)]
-pub(in crate::cache_recalculate) struct Element {
+pub(in crate::xlsx::recalculate) struct Element {
     pub ns: String,
     pub local: String,
     pub qualified: String,
 }
 #[derive(Debug)]
-pub(in crate::cache_recalculate) struct Attribute {
+pub(in crate::xlsx::recalculate) struct Attribute {
     pub ns: String,
     pub local: String,
     pub qualified: String,
@@ -24,7 +24,7 @@ pub(in crate::cache_recalculate) struct Attribute {
     pub span: Range<usize>,
 }
 #[derive(Debug)]
-pub(in crate::cache_recalculate) enum Kind {
+pub(in crate::xlsx::recalculate) enum Kind {
     Open {
         empty: bool,
         attributes: Vec<Attribute>,
@@ -33,7 +33,7 @@ pub(in crate::cache_recalculate) enum Kind {
     Text(String),
 }
 #[derive(Debug)]
-pub(in crate::cache_recalculate) struct Node {
+pub(in crate::xlsx::recalculate) struct Node {
     pub kind: Kind,
     pub span: Range<usize>,
 }
@@ -54,7 +54,7 @@ impl Node {
             .ok_or_else(|| unsupported(format!("missing {name} attribute"), "XLSX XML"))
     }
 }
-pub(in crate::cache_recalculate) fn path_is(path: &[Element], ns: &str, names: &[&str]) -> bool {
+pub(in crate::xlsx::recalculate) fn path_is(path: &[Element], ns: &str, names: &[&str]) -> bool {
     path.len() == names.len()
         && path
             .iter()
@@ -105,7 +105,7 @@ fn offset(whole: &[u8], part: &[u8]) -> Result<usize, IoError> {
         });
     n.ok_or_else(|| unsupported("unavailable XML attribute source span", "XLSX XML"))
 }
-pub(in crate::cache_recalculate) fn walk(
+pub(in crate::xlsx::recalculate) fn walk(
     bytes: &[u8],
     options: &XlsxRecalculateOptions,
     mut visit: impl FnMut(&[Element], Node) -> Result<(), IoError>,
