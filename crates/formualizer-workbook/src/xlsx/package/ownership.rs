@@ -13,8 +13,11 @@ fn closure(
     }
     needed.extend(discovery.metadata);
     if !discovery.external_links.is_empty() {
-        let links =
-            super::super::external_links::parse(archive, &discovery.external_links, options)?;
+        let links = crate::xlsx::recalculate::external_links::parse(
+            archive,
+            &discovery.external_links,
+            options,
+        )?;
         links.check_kinds()?;
     }
     if let Some(part) = calc_chain_part(archive, options) {

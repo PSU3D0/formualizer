@@ -13,18 +13,18 @@
 //! local record inserted before the original central directory and a
 //! matching central record appended to it. The end record's counts,
 //! directory size and offset are patched and the archive comment is kept.
-use super::super::{BoundedOutput, Patch, apply_patches};
 use super::{
     Archive, BTreeMap, IoError, XlsxRecalculateOptions, audit_directory, checkpoint, part_name,
     u16_at, unsupported,
 };
+use crate::xlsx::recalculate::{BoundedOutput, Patch, apply_patches};
 use std::io::{Cursor, Write};
 use zip::{CompressionMethod, ZipArchive, ZipWriter, write::SimpleFileOptions};
 
 /// Container edits: existing members to replace and validated new members
 /// to add. A name is in at most one of the two maps.
 #[derive(Debug, Default)]
-pub(in crate::xlsx::recalculate) struct Edits {
+pub(in crate::xlsx) struct Edits {
     pub replace: BTreeMap<String, Vec<u8>>,
     pub add: BTreeMap<String, Vec<u8>>,
 }
@@ -78,7 +78,7 @@ fn zip32(value: usize, name: &str) -> Result<[u8; 4], IoError> {
         .ok_or_else(|| unsupported("ZIP32 size or offset overflow", name.to_owned()))
 }
 
-pub(in crate::xlsx::recalculate) fn rewrite(
+pub(in crate::xlsx) fn rewrite(
     bytes: &[u8],
     archive: &mut Archive<'_>,
     edits: &Edits,

@@ -1,11 +1,11 @@
 //! Recalculation's options and differential oracle over the shared XML walker.
 use super::{IoError, XlsxRecalculateOptions};
-pub(super) use crate::xlsx_xml::*;
+pub(in crate::xlsx) use crate::xlsx_xml::*;
 
 #[cfg(test)]
-pub(super) mod reference;
+pub(in crate::xlsx) mod reference;
 
-pub(super) fn walk<'a>(
+pub(in crate::xlsx) fn walk<'a>(
     bytes: &'a [u8],
     options: &XlsxRecalculateOptions,
     visit: impl FnMut(&[Element<'a>], Node<'_, 'a>) -> Result<(), IoError>,

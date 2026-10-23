@@ -18,7 +18,7 @@ fn needs_clock(ast: &ASTNode) -> bool {
         _ => false,
     }
 }
-pub(super) fn validate(
+pub(in crate::xlsx) fn validate(
     formula: &str,
     context: &str,
     options: &XlsxRecalculateOptions,

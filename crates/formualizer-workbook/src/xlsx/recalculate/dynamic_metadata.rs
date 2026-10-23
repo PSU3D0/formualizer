@@ -15,19 +15,19 @@ use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap};
 use std::ops::Range;
 
-pub(super) const SHEET_METADATA_RELATIONSHIP: &str =
+pub(in crate::xlsx) const SHEET_METADATA_RELATIONSHIP: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/sheetMetadata";
-pub(super) const SHEET_METADATA_CONTENT_TYPE: &str =
+pub(in crate::xlsx) const SHEET_METADATA_CONTENT_TYPE: &str =
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheetMetadata+xml";
-pub(super) const DYNAMIC_ARRAY_NS: &str =
+pub(in crate::xlsx) const DYNAMIC_ARRAY_NS: &str =
     "http://schemas.microsoft.com/office/spreadsheetml/2017/dynamicarray";
-pub(super) const XLDAPR_URI: &str = "{bdbb8cdc-fa1e-496e-a857-3c3f30c029c3}";
+pub(in crate::xlsx) const XLDAPR_URI: &str = "{bdbb8cdc-fa1e-496e-a857-3c3f30c029c3}";
 const XLDAPR: &str = "XLDAPR";
 const CONTEXT: &str = "sheet metadata";
 
 /// A resolved `cm` binding. Several anchors may share one binding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct DynamicBinding {
+pub(in crate::xlsx) struct DynamicBinding {
     /// One-based `c/@cm` value (cellMetadata block).
     pub cell_metadata: u32,
     /// One-based `rc/@t` value (metadataType).
@@ -40,7 +40,7 @@ pub(super) struct DynamicBinding {
 /// The validated metadata part. Every cellMetadata block resolves to an
 /// XLDAPR block with `fDynamic="1"`; anything else was refused at parse.
 #[derive(Debug)]
-pub(super) struct DynamicMetadata {
+pub(in crate::xlsx) struct DynamicMetadata {
     /// Package part name, relationship-resolved from the workbook.
     pub part: String,
     blocks: Vec<DynamicBinding>,
@@ -84,7 +84,7 @@ impl DynamicMetadata {
 }
 /// A source-declared dynamic-array anchor and its prior footprint.
 #[derive(Debug, Clone, Copy)]
-pub(super) struct DynamicAnchor {
+pub(in crate::xlsx) struct DynamicAnchor {
     #[allow(dead_code)] // the map key is authoritative; kept for diagnostics
     pub row: u32,
     #[allow(dead_code)] // the map key is authoritative; kept for diagnostics
@@ -100,7 +100,7 @@ pub(super) struct DynamicAnchor {
 /// set of proven generated child cells (serialized cells only, anchor
 /// excluded). Keys are one-based `(row, col)`.
 #[derive(Debug, Default)]
-pub(super) struct SheetOwnership {
+pub(in crate::xlsx) struct SheetOwnership {
     pub anchors: BTreeMap<(u32, u32), DynamicAnchor>,
     /// Child cell -> owning anchor.
     pub children: BTreeMap<(u32, u32), (u32, u32)>,
@@ -153,7 +153,7 @@ fn section(path: &[xml::Element], node: &xml::Node) -> Section {
     }
 }
 /// Parse and fully validate the relationship-resolved metadata part.
-pub(super) fn parse(
+pub(in crate::xlsx) fn parse(
     archive: &mut package::Archive<'_>,
     part: &str,
     options: &XlsxRecalculateOptions,
@@ -161,7 +161,7 @@ pub(super) fn parse(
     let data = package::take_part(archive, part, options.limits.max_worksheet_bytes)?;
     parse_bytes(&data, part, options)
 }
-pub(super) fn parse_bytes(
+pub(in crate::xlsx) fn parse_bytes(
     data: &[u8],
     part: &str,
     options: &XlsxRecalculateOptions,
@@ -380,7 +380,7 @@ pub(super) fn parse_bytes(
 }
 
 /// Canonical part name of a synthesized metadata part.
-pub(super) const METADATA_PART: &str = "xl/metadata.xml";
+pub(in crate::xlsx) const METADATA_PART: &str = "xl/metadata.xml";
 /// The minimal canonical metadata part: one XLDAPR metadata type, one
 /// `fDynamic=1 fCollapsed=0` future block and one cell block selecting it.
 /// The same prefix/namespace layout the parser above validates.
@@ -412,7 +412,7 @@ fn prefix(qualified: &str) -> &str {
 }
 /// The metadata part a publication must write.
 #[derive(Debug)]
-pub(super) struct MetadataPart {
+pub(in crate::xlsx) struct MetadataPart {
     pub part: String,
     pub bytes: Vec<u8>,
     /// The package has no metadata part: this one is added, with its
@@ -431,7 +431,7 @@ pub(super) struct MetadataPart {
 ///
 /// A shared record's `fCollapsed` is never toggled. Anchors that keep their
 /// binding never reach the resolver, so a repeated recalc edits nothing.
-pub(super) struct Binder<'m> {
+pub(in crate::xlsx) struct Binder<'m> {
     metadata: Option<&'m DynamicMetadata>,
     reuse: Option<u32>,
     appended: Option<u32>,

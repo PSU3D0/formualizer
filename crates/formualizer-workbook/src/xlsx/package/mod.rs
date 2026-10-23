@@ -2,7 +2,7 @@
 mod content_types;
 mod ownership;
 mod rewrite;
-use super::{IoError, XlsxRecalculateOptions, checkpoint, unsupported, xml};
+use crate::xlsx::recalculate::{IoError, XlsxRecalculateOptions, checkpoint, unsupported, xml};
 pub(super) use content_types::add_override;
 pub(super) use rewrite::{Edits, rewrite};
 use std::collections::{BTreeMap, HashSet};
@@ -640,7 +640,7 @@ pub(super) fn discover(
     let relations = relationships(archive, "xl/workbook.xml", options)?;
     for rel in relations.values() {
         if (rel.kind.ends_with("/externalLink")
-            && rel.kind != super::external_links::LINK_RELATIONSHIP)
+            && rel.kind != crate::xlsx::recalculate::external_links::LINK_RELATIONSHIP)
             || rel.kind.contains("digital-signature")
         {
             return Err(unsupported(
@@ -722,7 +722,7 @@ pub(super) fn discover(
                 }
                 xml::Kind::Close => {
                     if let Some((name, formula)) = clock_name.take() {
-                        super::wall_clock_guard::validate(
+                        crate::xlsx::recalculate::wall_clock_guard::validate(
                             &formula,
                             &format!("defined name {name}"),
                             options,
@@ -815,7 +815,7 @@ pub(super) fn discover(
                 .ok_or_else(|| unsupported("missing external link relationship", "workbook XML"))?;
             let rel = relations
                 .get(&*id.value)
-                .filter(|r| r.kind == super::external_links::LINK_RELATIONSHIP)
+                .filter(|r| r.kind == crate::xlsx::recalculate::external_links::LINK_RELATIONSHIP)
                 .ok_or_else(|| unsupported("missing external link relationship", "workbook XML"))?;
             let part = rel
                 .target
@@ -962,7 +962,7 @@ pub(super) fn discover(
     }
     if relations
         .values()
-        .filter(|r| r.kind == super::external_links::LINK_RELATIONSHIP)
+        .filter(|r| r.kind == crate::xlsx::recalculate::external_links::LINK_RELATIONSHIP)
         .count()
         != external_links.len()
     {
@@ -1051,18 +1051,18 @@ pub(super) fn append_child(
         .map_or(String::new(), |(p, _)| format!("{p}:"));
     let child = element(&prefix);
     let patch = if empty {
-        super::Patch {
+        crate::xlsx::recalculate::Patch {
             span: open.end - 2..open.end,
             replacement: format!(">{child}</{qualified}>").into_bytes(),
         }
     } else {
         let at = close.ok_or_else(|| unsupported("unbalanced XML root", part))?;
-        super::Patch {
+        crate::xlsx::recalculate::Patch {
             span: at..at,
             replacement: child.into_bytes(),
         }
     };
-    super::apply_patches(data, vec![patch], options.limits.max_worksheet_bytes)
+    crate::xlsx::recalculate::apply_patches(data, vec![patch], options.limits.max_worksheet_bytes)
 }
 /// Re-audit a package that gained members: the bounded ZIP directory audit,
 /// workbook discovery with its relationship/content-type agreement and the
@@ -1073,7 +1073,7 @@ pub(super) fn check_output(bytes: &[u8], options: &XlsxRecalculateOptions) -> Re
     let part = discover(&mut archive, options)?
         .metadata
         .ok_or_else(|| unsupported("unrelated added metadata part", "XLSX output"))?;
-    super::dynamic_metadata::parse(&mut archive, &part, options)?;
+    crate::xlsx::recalculate::dynamic_metadata::parse(&mut archive, &part, options)?;
     Ok(())
 }
 /// Exactly zero or one internal sheetMetadata relationship whose target
@@ -1082,7 +1082,7 @@ fn sheet_metadata_part(
     archive: &Archive<'_>,
     relations: &BTreeMap<String, Relationship>,
 ) -> Result<Option<String>, IoError> {
-    use super::dynamic_metadata::SHEET_METADATA_RELATIONSHIP;
+    use crate::xlsx::recalculate::dynamic_metadata::SHEET_METADATA_RELATIONSHIP;
     let mut part = None;
     for rel in relations
         .values()

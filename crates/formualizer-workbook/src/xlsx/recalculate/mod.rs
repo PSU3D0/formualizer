@@ -1,6 +1,6 @@
 //! Strict cache-only XLSX recalculation, without a rich document model.
 //! Unsupported package/formula cases fail before any output is published.
-mod dynamic_metadata;
+pub(super) mod dynamic_metadata;
 mod error_reasons;
 pub(crate) use crate::cached_external_links as external_links;
 mod geometry;
@@ -13,7 +13,7 @@ mod native_ingest;
 mod native_metadata;
 mod native_names;
 mod native_values;
-pub(crate) mod package;
+pub(crate) use crate::xlsx::package;
 mod phase_clock;
 mod result_projection;
 mod shared_qualifiers;
@@ -24,15 +24,15 @@ mod tables;
 mod tests;
 mod visibility_guard;
 #[cfg(not(feature = "system-clock"))]
-mod wall_clock_guard;
-mod xml;
+pub(super) mod wall_clock_guard;
+pub(super) mod xml;
 
 #[cfg(test)]
 use crate::cache_recalculate::XlsxRecalculateLimits;
 use crate::recalculate::{RecalculateStatus, RecalculateSummary};
 #[cfg(test)]
 use crate::{CalamineAdapter, SpreadsheetReader};
-use crate::{IoError, workbook::WBResolver};
+pub(super) use crate::{IoError, workbook::WBResolver};
 use chrono::{DateTime, Utc};
 use formualizer_common::{CellAddress, DateSystem, LiteralValue};
 use formualizer_eval::engine::DeterministicMode;
@@ -56,14 +56,16 @@ use std::ops::Range;
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
 
-use crate::cache_recalculate::{ExternalLinkPolicy, XlsxRecalculateOptions, XlsxRecalculateResult};
-fn unsupported(feature: impl Into<String>, context: impl Into<String>) -> IoError {
+pub(super) use crate::cache_recalculate::{
+    ExternalLinkPolicy, XlsxRecalculateOptions, XlsxRecalculateResult,
+};
+pub(super) fn unsupported(feature: impl Into<String>, context: impl Into<String>) -> IoError {
     IoError::Unsupported {
         feature: feature.into(),
         context: context.into(),
     }
 }
-fn checkpoint(token: &Option<CancelToken>) -> Result<(), IoError> {
+pub(super) fn checkpoint(token: &Option<CancelToken>) -> Result<(), IoError> {
     if token.as_ref().is_some_and(CancelToken::is_cancelled) {
         Err(IoError::Engine(formualizer_common::ExcelError::new(
             formualizer_common::ExcelErrorKind::Cancelled,
@@ -221,9 +223,9 @@ pub(crate) fn display_equal(old: f64, new: f64) -> bool {
     };
     (old - new).abs() <= bound
 }
-struct Patch {
-    span: Range<usize>,
-    replacement: Vec<u8>,
+pub(super) struct Patch {
+    pub(super) span: Range<usize>,
+    pub(super) replacement: Vec<u8>,
 }
 /// Evaluation text, separate from the immutable source formula and its marks.
 /// Legacy ingestion serializes this only at its compatibility boundary; the
@@ -304,7 +306,11 @@ fn cache_patches(xml: &[u8], cell: &sheet::Cell, value: &Cache, patches: &mut Ve
         replacement,
     });
 }
-fn apply_patches(bytes: &[u8], mut patches: Vec<Patch>, limit: usize) -> Result<Vec<u8>, IoError> {
+pub(super) fn apply_patches(
+    bytes: &[u8],
+    mut patches: Vec<Patch>,
+    limit: usize,
+) -> Result<Vec<u8>, IoError> {
     // An insertion sorts before a replacement starting at the same offset.
     patches.sort_by_key(|p| (p.span.start, p.span.end));
     let mut length = bytes.len();
@@ -336,9 +342,9 @@ fn apply_patches(bytes: &[u8], mut patches: Vec<Patch>, limit: usize) -> Result<
     out.extend_from_slice(&bytes[previous..]);
     Ok(out)
 }
-struct BoundedOutput {
-    cursor: Cursor<Vec<u8>>,
-    limit: usize,
+pub(super) struct BoundedOutput {
+    pub(super) cursor: Cursor<Vec<u8>>,
+    pub(super) limit: usize,
 }
 impl Write for BoundedOutput {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {

@@ -8,7 +8,7 @@ const PART: &str = "[Content_Types].xml";
 /// Add an `Override` for `part` (a validated package part name) to the
 /// content types, unless any declaration already names it: the result is
 /// refused rather than given a duplicate. All other bytes are kept.
-pub(in crate::xlsx::recalculate) fn add_override(
+pub(in crate::xlsx) fn add_override(
     archive: &mut Archive<'_>,
     part: &str,
     content_type: &str,
@@ -43,8 +43,8 @@ pub(super) fn validate(
     links: &[String],
     options: &XlsxRecalculateOptions,
 ) -> Result<(), IoError> {
-    use super::super::dynamic_metadata::SHEET_METADATA_CONTENT_TYPE;
-    use super::super::external_links::LINK_CONTENT_TYPE;
+    use crate::xlsx::recalculate::dynamic_metadata::SHEET_METADATA_CONTENT_TYPE;
+    use crate::xlsx::recalculate::external_links::LINK_CONTENT_TYPE;
     const NS: &str = "http://schemas.openxmlformats.org/package/2006/content-types";
     const PREFIX: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.";
     let data = read_part(archive, PART, options.limits.max_worksheet_bytes)?;
