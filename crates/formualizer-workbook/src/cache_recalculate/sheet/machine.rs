@@ -37,6 +37,24 @@ enum Boundary {
     Close,
 }
 
+/// Preserve the source spelling for the native sink without changing decoded
+/// admission/value semantics. Every input here has passed attribute validation.
+fn raw_attribute_span(bytes: &[u8], span: &Range<usize>) -> Result<Range<usize>, IoError> {
+    let raw = bytes
+        .get(span.clone())
+        .ok_or_else(|| unsupported("unavailable XML attribute source span", "XLSX XML"))?;
+    let quote = raw
+        .iter()
+        .position(|b| matches!(b, b'\'' | b'"'))
+        .ok_or_else(|| unsupported("unavailable XML attribute source span", "XLSX XML"))?;
+    let end = span
+        .end
+        .checked_sub(1)
+        .filter(|end| span.start + quote < *end)
+        .ok_or_else(|| unsupported("unavailable XML attribute source span", "XLSX XML"))?;
+    Ok(span.start + quote + 1..end)
+}
+
 struct AttributeValue<'a> {
     value: Cow<'a, str>,
     span: Range<usize>,
@@ -76,7 +94,7 @@ impl<'n, 'a> TagAttributes<'n, 'a> {
             Self::Hot(a) => a.get(name).map(|a| a.value),
             Self::Cold(a) => a
                 .iter()
-                .find(|a| a.local == name && a.ns == "")
+                .find(|a| a.local == name && a.ns.is_empty())
                 .map(|a| a.value.as_ref()),
         }
     }
@@ -283,6 +301,8 @@ fn scan_inner<const COUNT_PATHS: bool>(
     let mut current: Option<ScalarCell<'_>> = None;
     let mut formula = FormulaState::default();
     let mut current_style = None;
+    let mut current_raw_type = None;
+    let mut current_raw_style = None;
     let mut literal_text = Cow::Borrowed("");
     let mut inline_text = emission::DisplayString::default();
     let mut row = 0;
@@ -919,7 +939,16 @@ fn scan_inner<const COUNT_PATHS: bool>(
                             return Err(unsupported("unknown cell type", "worksheet"));
                         }
                         let kind_span = kind_attribute.as_ref().map(|a| a.span.clone());
-                        current_style = attrs.attribute("", "s").map(|a| a.value.clone());
+                        current_raw_type = kind_attribute
+                            .as_ref()
+                            .map(|a| raw_attribute_span(bytes, &a.span))
+                            .transpose()?;
+                        let style_attribute = attrs.attribute("", "s");
+                        current_raw_style = style_attribute
+                            .as_ref()
+                            .map(|a| raw_attribute_span(bytes, &a.span))
+                            .transpose()?;
+                        current_style = style_attribute.map(|a| a.value);
                         literal_text = Cow::Borrowed("");
                         inline_text = emission::DisplayString::default();
                         if !*empty {
@@ -973,6 +1002,9 @@ fn scan_inner<const COUNT_PATHS: bool>(
                                 row: r,
                                 col: c,
                                 style: current_style.take(),
+                                raw_type_span: current_raw_type.take(),
+                                raw_style_span: current_raw_style.take(),
+                                raw_value_span: None,
                                 value: emission::Value::Empty,
                             })?;
                         }
@@ -1166,6 +1198,12 @@ fn scan_inner<const COUNT_PATHS: bool>(
                                 row: cell.row,
                                 col: cell.col,
                                 style: current_style.take(),
+                                raw_type_span: current_raw_type.take(),
+                                raw_style_span: current_raw_style.take(),
+                                raw_value_span: cell
+                                    .value
+                                    .as_ref()
+                                    .map(|v| v.open_end..v.close_start),
                                 value,
                             })?;
                             current = None;
