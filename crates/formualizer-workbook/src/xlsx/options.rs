@@ -1,3 +1,5 @@
+//! Bounded XML/package reads and cancellation shared by XLSX consumers.
+//! Source immutability and source-preserving publication do not relax these bounds.
 use crate::IoError;
 use formualizer_eval::engine::CancelToken;
 

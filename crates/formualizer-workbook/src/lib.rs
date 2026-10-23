@@ -29,11 +29,11 @@ mod wasm_runtime_wasmtime;
 pub mod workbook;
 pub mod worksheet;
 #[cfg(feature = "calamine")]
-mod xlsx_cache_options;
+use xlsx::options as xlsx_cache_options;
 #[cfg(any(feature = "umya3", feature = "xlsx-recalc"))]
 pub(crate) mod xlsx_path;
 #[cfg(feature = "calamine")]
-mod xlsx_xml;
+use xlsx::xml as xlsx_xml;
 
 #[cfg(feature = "csv")]
 pub use backends::CsvAdapter;

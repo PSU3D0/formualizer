@@ -27,6 +27,8 @@ mod visibility_guard;
 mod wall_clock_guard;
 mod xml;
 
+#[cfg(test)]
+use crate::cache_recalculate::XlsxRecalculateLimits;
 use crate::recalculate::{RecalculateStatus, RecalculateSummary};
 #[cfg(test)]
 use crate::{CalamineAdapter, SpreadsheetReader};
@@ -54,9 +56,7 @@ use std::ops::Range;
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
 
-use crate::cache_recalculate::{
-    ExternalLinkPolicy, XlsxRecalculateLimits, XlsxRecalculateOptions, XlsxRecalculateResult,
-};
+use crate::cache_recalculate::{ExternalLinkPolicy, XlsxRecalculateOptions, XlsxRecalculateResult};
 fn unsupported(feature: impl Into<String>, context: impl Into<String>) -> IoError {
     IoError::Unsupported {
         feature: feature.into(),
