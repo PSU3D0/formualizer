@@ -30,6 +30,95 @@ fn formula_reader_errors_keep_source_order_against_later_literal_or_row_errors()
 }
 
 #[test]
+fn noncanonical_display_markup_preserves_published_cache_bytes() {
+    use std::io::{Read, Write};
+    for (body, expected) in [
+        ("<t>a<t>b</t>c</t>", "ab"),
+        ("<rPh><rPh/><t>a</t></rPh><t>b</t>", "ab"),
+        ("<t>a<p:t>b</p:t>c</t>", "abc"),
+        ("<p:t>a<p:t>b</p:t>c</p:t>", "ab"),
+        ("<t>a<t/>c</t>", "a"),
+        ("<t>a<p:t/>c</t>", "ac"),
+        ("<rPh><rPh><t>omit</t></rPh><t>a</t></rPh><t>b</t>", "ab"),
+        ("<t>a<rPh>b</rPh>c</t><t>d</t>", "abcd"),
+        ("<t>a<si>b</si>c</t>", "abc"),
+    ] {
+        for shared in [true, false] {
+            let workbook = format!(
+                "<workbook xmlns='{}' xmlns:r='http://schemas.openxmlformats.org/officeDocument/2006/relationships'><sheets><sheet name='Probe' sheetId='1' r:id='r1'/></sheets></workbook>",
+                xml::MAIN
+            );
+            let a = if shared {
+                "<c r='A1' t='s'><v>0</v></c>".to_owned()
+            } else {
+                format!("<c r='A1' t='inlineStr'><is>{body}</is></c>")
+            };
+            let worksheet = format!(
+                "<worksheet xmlns='{}' xmlns:p='{}'><sheetData><row r='1'>{a}<c r='B1'><f>A1</f><v>0</v></c></row></sheetData></worksheet>",
+                xml::MAIN,
+                xml::MAIN
+            );
+            let fixture =
+                super::native_names::fixture_with_sheet(workbook.as_bytes(), worksheet.as_bytes());
+            let bytes = if shared {
+                let mut source = zip::ZipArchive::new(Cursor::new(fixture)).unwrap();
+                let mut target = zip::ZipWriter::new(Cursor::new(Vec::new()));
+                for i in 0..source.len() {
+                    let mut file = source.by_index(i).unwrap();
+                    let mut data = String::new();
+                    file.read_to_string(&mut data).unwrap();
+                    if file.name() == "[Content_Types].xml" {
+                        data = data.replace("</Types>", "<Override PartName='/xl/sharedStrings.xml' ContentType='application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml'/></Types>");
+                    } else if file.name() == "xl/_rels/workbook.xml.rels" {
+                        data = data.replace("</Relationships>", "<Relationship Id='sst' Type='http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings' Target='sharedStrings.xml'/></Relationships>");
+                    }
+                    target
+                        .start_file(file.name(), zip::write::SimpleFileOptions::default())
+                        .unwrap();
+                    target.write_all(data.as_bytes()).unwrap();
+                }
+                target
+                    .start_file(
+                        "xl/sharedStrings.xml",
+                        zip::write::SimpleFileOptions::default(),
+                    )
+                    .unwrap();
+                write!(
+                    target,
+                    "<sst xmlns='{}' xmlns:p='{}'><si>{body}</si></sst>",
+                    xml::MAIN,
+                    xml::MAIN
+                )
+                .unwrap();
+                target.finish().unwrap().into_inner()
+            } else {
+                fixture
+            };
+            let options = XlsxRecalculateOptions::default();
+            let admitted = admit_source(&bytes, &options).unwrap();
+            let count = admitted.formula_count;
+            let mut clock = PhaseClock::from_env();
+            let mut old = legacy_ingest_source(&bytes, admitted, &options, &mut clock).unwrap();
+            evaluate(&mut old.engine, &options).unwrap();
+            let old = publish(&bytes, old, count, &options, &mut clock).unwrap();
+            let native = recalculate_xlsx_bytes(&bytes, options).unwrap();
+            let mut archive = zip::ZipArchive::new(Cursor::new(&old.bytes)).unwrap();
+            let mut sheet = String::new();
+            archive
+                .by_name("xl/worksheets/sheet1.xml")
+                .unwrap()
+                .read_to_string(&mut sheet)
+                .unwrap();
+            assert!(
+                sheet.contains(&format!("<v>{expected}</v>")),
+                "{body}: {sheet}"
+            );
+            assert_eq!(native.bytes, old.bytes, "shared={shared}, {body}");
+        }
+    }
+}
+
+#[test]
 fn native_reader_counter_has_a_legacy_positive_control() {
     let bytes = current_cse();
     let options = XlsxRecalculateOptions::default();

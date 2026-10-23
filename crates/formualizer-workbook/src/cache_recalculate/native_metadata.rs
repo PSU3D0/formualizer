@@ -10,7 +10,7 @@ pub(super) struct SharedStringTable(Vec<String>);
 impl SharedStringTable {
     pub(super) fn parse(bytes: &[u8], options: &XlsxRecalculateOptions) -> Result<Self, IoError> {
         let mut values = Vec::new();
-        let mut current = None;
+        let mut current: Option<DisplayString<'_>> = None;
         let mut closing = None;
         let mut done = false;
         xml::walk(bytes, options, |path, node| {
@@ -18,6 +18,14 @@ impl SharedStringTable {
                 return Ok(());
             };
             if done {
+                return Ok(());
+            }
+            // Once a t segment starts, its qualified-name loop consumes even
+            // nested si/sst events before the outer display reader sees them.
+            if let Some(value) = current.as_mut()
+                && value.consuming_text()
+            {
+                value.event(path, &node, bytes)?;
                 return Ok(());
             }
             match &node.kind {

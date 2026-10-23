@@ -79,8 +79,8 @@ fn display_text(text: &str) -> Cow<'_, str> {
 pub(in crate::cache_recalculate) struct DisplayString<'a> {
     value: String,
     segment: Cow<'a, str>,
-    text_depth: Option<usize>,
-    phonetic_depth: Option<usize>,
+    text_closing: Option<&'a str>,
+    phonetic: bool,
     preserve: bool,
 }
 impl<'a> DisplayString<'a> {
@@ -93,18 +93,30 @@ impl<'a> DisplayString<'a> {
         let Some(element) = path.last() else {
             return Ok(());
         };
-        let depth = path.len();
-        match &node.kind {
-            xml::Kind::Open { empty, .. } if element.local == "rPh" => {
-                if !empty {
-                    self.phonetic_depth = Some(depth);
+        // The pinned reader's inner text loop owns every event until the
+        // first matching qualified end name, not the opening depth. Nested
+        // rPh events inside that loop never modify its outer phonetic flag.
+        if let Some(closing) = self.text_closing {
+            match &node.kind {
+                xml::Kind::Text(decoded) => {
+                    append(&mut self.segment, text(bytes, node, decoded.clone())?);
                 }
+                xml::Kind::Close if element.qualified == closing => self.end_text(),
+                xml::Kind::Open { empty: true, .. } if element.qualified == closing => {
+                    self.end_text();
+                }
+                _ => {}
             }
-            xml::Kind::Open { empty, .. }
-                if element.local == "t"
-                    && self.phonetic_depth.is_none()
-                    && self.text_depth.is_none() =>
-            {
+            return Ok(());
+        }
+        match &node.kind {
+            // Calamine expands Empty into Start/End and uses a boolean:
+            // even a nested <rPh/> resets an enclosing phonetic run.
+            xml::Kind::Open { empty, .. } if element.local == "rPh" => {
+                self.phonetic = !empty;
+            }
+            xml::Kind::Close if element.local == "rPh" => self.phonetic = false,
+            xml::Kind::Open { empty, .. } if element.local == "t" && !self.phonetic => {
                 self.segment = Cow::Borrowed("");
                 self.preserve = node
                     .attribute("http://www.w3.org/XML/1998/namespace", "space")
@@ -114,25 +126,24 @@ impl<'a> DisplayString<'a> {
                         })
                     });
                 if !empty {
-                    self.text_depth = Some(depth);
+                    self.text_closing = Some(element.qualified);
                 }
             }
-            xml::Kind::Text(decoded) if self.text_depth.is_some() => {
-                append(&mut self.segment, text(bytes, node, decoded.clone())?);
-            }
-            xml::Kind::Close if self.text_depth == Some(depth) => {
-                let text = if self.preserve {
-                    self.segment.as_ref()
-                } else {
-                    self.segment.trim_matches([' ', '\t', '\r', '\n'])
-                };
-                self.value.push_str(&display_text(text));
-                self.text_depth = None;
-            }
-            xml::Kind::Close if self.phonetic_depth == Some(depth) => self.phonetic_depth = None,
             _ => {}
         }
         Ok(())
+    }
+    fn end_text(&mut self) {
+        let text = if self.preserve {
+            self.segment.as_ref()
+        } else {
+            self.segment.trim_matches([' ', '\t', '\r', '\n'])
+        };
+        self.value.push_str(&display_text(text));
+        self.text_closing = None;
+    }
+    pub(in crate::cache_recalculate) fn consuming_text(&self) -> bool {
+        self.text_closing.is_some()
     }
     pub(in crate::cache_recalculate) fn finish(self) -> String {
         self.value
