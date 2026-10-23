@@ -2,7 +2,7 @@
 //! (worksheets with dynamic-array anchors or new spills only), the same
 //! bounded pass also builds a source index of rows, cells, dimensions and
 //! merges for dynamic-array ownership and geometry.
-use super::{IoError, XlsxRecalculateOptions, unsupported, xml};
+use crate::xlsx::recalculate::{IoError, XlsxRecalculateOptions, unsupported, xml};
 use formualizer_common::coord::parse_a1_1based;
 use std::{
     borrow::Cow,
@@ -11,9 +11,13 @@ use std::{
 };
 
 #[cfg(any(test, feature = "xlsx-recalc"))]
-pub(in crate::xlsx) mod machine;
+pub(in crate::xlsx) mod scanner;
+pub(in crate::xlsx) use scanner as machine;
+mod cursor;
+pub(in crate::xlsx) mod events;
 #[cfg(test)]
 pub(in crate::xlsx) mod reference;
+mod shared;
 
 /// Inclusive source rectangle in one-based worksheet coordinates (row 1 is
 /// the first row, column 1 is `A`), matching `Cell::row`/`Cell::col`.
@@ -334,7 +338,7 @@ fn scalar_cache_readable(kind: Option<&str>, value: Option<CacheText<'_>>, bytes
         None | Some("n") => v.text.parse::<f64>().is_ok_and(f64::is_finite),
         Some("s") => v.text.parse::<u32>().is_ok(),
         Some("b") => matches!(v.text, "0" | "1"),
-        Some("e") => super::native_formulas::parse_error_token(v.text).is_ok(),
+        Some("e") => crate::xlsx::ingest::utilities::parse_error_token(v.text).is_ok(),
         _ => true,
     }
 }
@@ -414,7 +418,7 @@ impl<'a> OpenCell<'a> {
             && self
                 .value
                 .as_ref()
-                .is_none_or(|v| super::native_formulas::parse_error_token(&v.text).is_err())
+                .is_none_or(|v| crate::xlsx::ingest::utilities::parse_error_token(&v.text).is_err())
         {
             return Some("literal error value unsupported by Calamine");
         }
@@ -578,7 +582,7 @@ pub(in crate::xlsx) fn scan(
         if mode == Mode::Indexed {
             INDEXED_SCANS.with(|n| n.set(n.get() + 1));
         }
-        super::tests::scan_differential::shadow_scan(
+        crate::xlsx::recalculate::tests::scan_differential::shadow_scan(
             bytes,
             options,
             mode,
@@ -603,7 +607,7 @@ pub(in crate::xlsx) fn scan_emitting(
         if mode == Mode::Indexed {
             INDEXED_SCANS.with(|n| n.set(n.get() + 1));
         }
-        super::tests::scan_differential::shadow_scan(
+        crate::xlsx::recalculate::tests::scan_differential::shadow_scan(
             bytes,
             options,
             mode,
@@ -1377,7 +1381,10 @@ fn scan_inner(
                     ));
                 }
                 if area > 1 {
-                    super::shared_qualifiers::validate(&cell.formula_text, &cell.address())?;
+                    crate::xlsx::recalculate::shared_qualifiers::validate(
+                        &cell.formula_text,
+                        &cell.address(),
+                    )?;
                 }
             } else if cell.shared_range.is_some() {
                 return Err(unsupported("shared descendant declares range", "worksheet"));

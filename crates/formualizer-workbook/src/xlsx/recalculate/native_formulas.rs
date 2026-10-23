@@ -6,7 +6,8 @@ use quick_xml::events::{BytesStart, Event};
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
-pub(in crate::xlsx::recalculate) use crate::xlsx::ingest::utilities::parse_error_token;
+#[cfg(test)]
+use crate::xlsx::ingest::utilities::parse_error_token;
 #[cfg(test)]
 pub(super) use crate::xlsx::ingest::utilities::take_utility_calls;
 use crate::xlsx::ingest::{evidence as compressed_evidence, replay as formula_replay};

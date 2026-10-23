@@ -1,12 +1,14 @@
 //! The scanner that preceded the borrowed-event scanner in the parent module,
 //! kept verbatim (over the owned-string reference walker) as a test oracle:
 //! both must produce the same scan, counters and errors for any input.
-use super::super::{IoError, XlsxRecalculateOptions, unsupported, xml::reference as xml};
+use crate::xlsx::recalculate::{
+    IoError, XlsxRecalculateOptions, unsupported, xml::reference as xml,
+};
 #[path = "reference_types.rs"]
 mod retained;
 use super::{IndexedCell, Mode, NEEDS_INDEX, RowEntry, SourceIndex, SourceRect};
 use formualizer_common::coord::parse_a1_1based;
-pub(in crate::xlsx::recalculate) use retained::Cell as LegacyCell;
+pub(in crate::xlsx) use retained::Cell as LegacyCell;
 pub(super) use retained::Scanned;
 use retained::{Cell, DynamicAttributes, Scan, ValueNode};
 use std::collections::HashMap;
@@ -14,7 +16,7 @@ use std::collections::HashMap;
 /// Calamine's fast scalar reader consumes just one raw ASCII text event.
 /// Literal cells must satisfy that assumption; formula caches may instead be
 /// cleared in the transient ingestion view because they are not authority.
-pub(in crate::xlsx::recalculate) fn readable_scalar_cache(cell: &Cell, bytes: &[u8]) -> bool {
+pub(in crate::xlsx) fn readable_scalar_cache(cell: &Cell, bytes: &[u8]) -> bool {
     let Some(v) = &cell.value else {
         return true;
     };
@@ -112,7 +114,7 @@ fn dynamic_anchor_extent(cell: &Cell) -> Result<Option<SourceRect>, IoError> {
 /// Project compact records back to the frozen owned shape. This compares every
 /// retained observable field and independently checks the newly retained proof
 /// and number against the old decisions, without changing the old algorithm.
-pub(in crate::xlsx::recalculate) fn normalize(scan: super::Scanned, bytes: &[u8]) -> Scanned {
+pub(in crate::xlsx) fn normalize(scan: super::Scanned, bytes: &[u8]) -> Scanned {
     let super::Scanned::Done(scan) = scan else {
         return Scanned::NeedsIndex;
     };
@@ -199,7 +201,7 @@ pub(in crate::xlsx::recalculate) fn normalize(scan: super::Scanned, bytes: &[u8]
         bounds: scan.bounds,
     }))
 }
-pub(in crate::xlsx::recalculate) fn scan(
+pub(in crate::xlsx) fn scan(
     bytes: &[u8],
     options: &XlsxRecalculateOptions,
     mode: Mode,
@@ -836,7 +838,10 @@ fn scan_inner(
                     ));
                 }
                 if area > 1 {
-                    super::super::shared_qualifiers::validate(&cell.formula_text, &cell.address)?;
+                    crate::xlsx::recalculate::shared_qualifiers::validate(
+                        &cell.formula_text,
+                        &cell.address,
+                    )?;
                 }
             } else if cell.shared_range.is_some() {
                 return Err(unsupported("shared descendant declares range", "worksheet"));

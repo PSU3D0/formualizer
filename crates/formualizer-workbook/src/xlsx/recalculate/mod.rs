@@ -16,12 +16,12 @@ mod native_values;
 pub(crate) use crate::xlsx::package;
 mod phase_clock;
 mod result_projection;
-mod shared_qualifiers;
-pub(crate) mod sheet;
+pub(super) mod shared_qualifiers;
+pub(crate) use crate::xlsx::worksheet as sheet;
 mod table_lowering;
 pub(super) use crate::xlsx::metadata::tables;
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;
 mod visibility_guard;
 #[cfg(not(feature = "system-clock"))]
 pub(super) mod wall_clock_guard;

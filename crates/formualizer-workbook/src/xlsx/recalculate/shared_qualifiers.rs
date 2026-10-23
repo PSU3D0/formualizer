@@ -12,7 +12,7 @@ use super::{IoError, unsupported};
 /// the right of the top-left master, so offsets are non-negative; a run that
 /// survives a one-row and a one-column step unchanged is either absolute,
 /// not a reference, or already at the grid edge, where Calamine keeps it.
-pub(super) fn shifted_by_shared_expansion(qualifier: &str) -> bool {
+pub(in crate::xlsx) fn shifted_by_shared_expansion(qualifier: &str) -> bool {
     qualifier.contains('"')
         || [(1, 0), (0, 1)].into_iter().any(|end| {
             calamine::expand_shared_formula(qualifier, (0, 0), end)
@@ -53,7 +53,7 @@ fn delimiter(b: u8) -> bool {
 /// Refuse a shared master formula (with followers) whose text contains a
 /// sheet qualifier, quoted or not, that [`shifted_by_shared_expansion`]
 /// would alter. Excel string literals (with `""` escapes) are skipped.
-pub(super) fn validate(formula: &str, location: &str) -> Result<(), IoError> {
+pub(in crate::xlsx) fn validate(formula: &str, location: &str) -> Result<(), IoError> {
     if !formula.contains('!') {
         return Ok(());
     }

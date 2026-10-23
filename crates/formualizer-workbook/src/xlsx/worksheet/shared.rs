@@ -93,7 +93,7 @@ impl Families {
             return;
         }
         if area > 1
-            && let Err(error) = super::super::super::shared_qualifiers::validate(
+            && let Err(error) = crate::xlsx::recalculate::shared_qualifiers::validate(
                 &cell.formula_text,
                 &cell.address(),
             )

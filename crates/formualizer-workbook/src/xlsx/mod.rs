@@ -9,4 +9,6 @@ pub(crate) mod options;
 pub(crate) mod package;
 #[cfg(feature = "xlsx-recalc")]
 pub mod recalculate;
+#[cfg(feature = "xlsx-recalc")]
+pub(crate) mod worksheet;
 pub(crate) mod xml;

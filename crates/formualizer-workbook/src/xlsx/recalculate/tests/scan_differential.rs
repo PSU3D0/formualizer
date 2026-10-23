@@ -18,7 +18,7 @@ thread_local! {
     static COMPARING: Cell<bool> = const { Cell::new(false) };
 }
 /// Run `f` unless a comparison is already running on this thread.
-pub(in crate::xlsx::recalculate) fn exclusive(f: impl FnOnce()) {
+pub(in crate::xlsx) fn exclusive(f: impl FnOnce()) {
     if COMPARING.with(Cell::get) {
         return;
     }
@@ -157,11 +157,11 @@ fn compare_scan(
     }
 }
 /// Shadow check made by every `xml::walk` under test.
-pub(in crate::xlsx::recalculate) fn shadow_walk(bytes: &[u8], options: &XlsxRecalculateOptions) {
+pub(in crate::xlsx) fn shadow_walk(bytes: &[u8], options: &XlsxRecalculateOptions) {
     exclusive(|| compare_walk(bytes, options));
 }
 /// Shadow check made by every `sheet::scan` under test.
-pub(in crate::xlsx::recalculate) fn shadow_scan(
+pub(in crate::xlsx) fn shadow_scan(
     bytes: &[u8],
     options: &XlsxRecalculateOptions,
     mode: sheet::Mode,

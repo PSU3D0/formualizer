@@ -10,6 +10,6 @@ mod native_ingestion;
 mod native_metadata;
 mod native_names;
 mod native_values;
-pub(super) mod scan_differential;
+pub(in crate::xlsx) mod scan_differential;
 mod zip_additions;
 mod zip_containers;
