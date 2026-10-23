@@ -1,6 +1,7 @@
 //! Fused worksheet reader and rule loop; the visitor remains the oracle.
 use super::*;
 pub(in crate::cache_recalculate) mod emission;
+mod generated;
 #[cfg(test)]
 mod path_tests;
 mod scalar;
@@ -322,6 +323,7 @@ fn scan_inner<const COUNT_PATHS: bool>(
     });
     let mut extent_cells = 0u64;
     let mut families = shared::Families::default();
+    let mut generated_children = generated::GeneratedChildren::default();
     let mut cursor = Cursor::new();
     use crate::xlsx_cache_options::checkpoint;
     use crate::xlsx_xml::{
@@ -1001,6 +1003,7 @@ fn scan_inner<const COUNT_PATHS: bool>(
                             emit(emission::Literal {
                                 row: r,
                                 col: c,
+                                generated_child_hint: generated_children.contains(r, c),
                                 style: current_style.take(),
                                 raw_type_span: current_raw_type.take(),
                                 raw_style_span: current_raw_style.take(),
@@ -1172,6 +1175,15 @@ fn scan_inner<const COUNT_PATHS: bool>(
                             .as_ref()
                             .and_then(|value| cell.refusal(bytes, value));
                         cell.dynamic_anchor_extent(&formula)?;
+                        if cell.has_formula
+                            && formula.kind == "array"
+                            && let Some(extent) = cell.dynamic.as_ref().and_then(|d| d.array_ref)
+                        {
+                            // cm/XLDAPR and legacy array anchors share the same
+                            // validated top-left source extent. Do not resolve
+                            // metadata or check overlap/ownership here.
+                            generated_children.observe(extent);
+                        }
                         if let Some(index) = index.as_mut() {
                             // Ownership decides later whether a refused literal
                             // is a masked generated child or a refused input.
@@ -1197,6 +1209,8 @@ fn scan_inner<const COUNT_PATHS: bool>(
                             emit(emission::Literal {
                                 row: cell.row,
                                 col: cell.col,
+                                generated_child_hint: generated_children
+                                    .contains(cell.row, cell.col),
                                 style: current_style.take(),
                                 raw_type_span: current_raw_type.take(),
                                 raw_style_span: current_raw_style.take(),

@@ -58,6 +58,68 @@ fn raw_literal_provenance_preserves_encoded_and_unsigned_spellings() {
 }
 
 #[test]
+fn generated_child_hint_covers_seen_legacy_and_metadata_array_extents() {
+    for metadata in ["", " cm='1'"] {
+        let xml = format!(
+            "<worksheet xmlns='{}'><sheetData><row r='1'><c r='A1'{metadata}><f t='array' ref='A1:B2'>1</f><v>1</v></c><c r='B1'><v>2</v></c><c r='C1'><v>3</v></c></row><row r='2'><c r='A2'/><c r='B2'><v>4</v></c><c r='C2'/></row><row r='3'><c r='A3'/></row></sheetData></worksheet>",
+            xml::MAIN
+        );
+        let mut hints = Vec::new();
+        let result = scan_emitting(
+            xml.as_bytes(),
+            &XlsxRecalculateOptions::default(),
+            Mode::Indexed,
+            &mut 0,
+            &mut 0,
+            |literal| {
+                hints.push(((literal.row, literal.col), literal.generated_child_hint));
+                Ok(())
+            },
+        );
+        assert!(matches!(result, Ok(Scanned::Done(_))));
+        assert_eq!(
+            hints,
+            [
+                ((1, 2), true),
+                ((1, 3), false),
+                ((2, 1), true),
+                ((2, 2), true),
+                ((2, 3), false),
+                ((3, 1), false)
+            ]
+        );
+    }
+}
+
+#[test]
+fn generated_child_hint_does_not_look_ahead_or_change_refusal_order() {
+    // A child before its top-left anchor cannot be admitted in row-major
+    // order. Its emitted prefix must remain unhinted, and the old coordinate
+    // refusal (not an eager ownership/metadata decision) remains authoritative.
+    let xml = format!(
+        "<worksheet xmlns='{}'><sheetData><row r='1'><c r='B1'><v>2</v></c><c r='A1'><f t='array' ref='A1:B2'>1</f><v>1</v></c></row></sheetData></worksheet>",
+        xml::MAIN
+    );
+    let options = XlsxRecalculateOptions::default();
+    let mut hints = Vec::new();
+    let result = scan_emitting(
+        xml.as_bytes(),
+        &options,
+        Mode::Indexed,
+        &mut 0,
+        &mut 0,
+        |literal| {
+            hints.push(((literal.row, literal.col), literal.generated_child_hint));
+            Ok(())
+        },
+    );
+    let old = super::super::scan_uncounted(xml.as_bytes(), &options, Mode::Indexed, &mut 0, &mut 0);
+    assert_eq!(hints, [((1, 2), false)]);
+    assert!(result.is_err());
+    assert_eq!(format!("{:?}", result.err()), format!("{:?}", old.err()));
+}
+
+#[test]
 fn canonical_tags_take_the_hot_path() {
     let xml = format!(
         "<worksheet xmlns='{}'><sheetData><row r='1'><c r='A1'><f>1</f><v>1</v></c></row></sheetData></worksheet>",
