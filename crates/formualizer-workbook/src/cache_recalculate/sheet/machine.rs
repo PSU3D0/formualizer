@@ -1,5 +1,6 @@
 //! Independent flat worksheet rule loop; the visitor scanner remains the oracle.
 use super::*;
+mod shared;
 
 /// Semantic position; the tokenizer's namespace path is the only path stack.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -186,6 +187,7 @@ fn scan_inner(
         merges: Vec::new(),
     });
     let mut extent_cells = 0u64;
+    let mut families = shared::Families::default();
     let mut cursor = Cursor::new();
     let mut tokens = crate::xlsx_xml::worksheet::Tokens::new(bytes)?;
     let xml_options = options.into();
@@ -730,6 +732,9 @@ fn scan_inner(
                             if cells.len() > options.limits.max_formula_cells {
                                 return Err(unsupported("formula cell count limit", "worksheet"));
                             }
+                            if let Some(cell) = cells.last() {
+                                families.observe(cell, cells.len() - 1, options);
+                            }
                         }
                     }
                 }
@@ -752,47 +757,7 @@ fn scan_inner(
     if *logical_cells > options.limits.max_cells as u64 {
         return Err(unsupported("workbook logical cell limit", "workbook"));
     }
-    let mut anchors = HashMap::new();
-    for cell in &cells {
-        if let Some(id) = cell.shared_id {
-            if !cell.formula_text.trim().is_empty() {
-                let range = cell
-                    .shared_range
-                    .ok_or_else(|| unsupported("unbounded shared formula anchor", "worksheet"))?;
-                if (cell.row, cell.col) != (range.0, range.1) {
-                    return Err(unsupported(
-                        "non-top-left shared formula anchor",
-                        "worksheet",
-                    ));
-                }
-                let area = u64::from(range.2 - range.0 + 1) * u64::from(range.3 - range.1 + 1);
-                if area > options.limits.max_cells as u64 || anchors.insert(id, range).is_some() {
-                    return Err(unsupported(
-                        "duplicate/oversized shared formula anchor",
-                        "worksheet",
-                    ));
-                }
-                if area > 1 {
-                    super::super::shared_qualifiers::validate(&cell.formula_text, &cell.address())?;
-                }
-            } else if cell.shared_range.is_some() {
-                return Err(unsupported("shared descendant declares range", "worksheet"));
-            }
-        }
-    }
-    for cell in &cells {
-        if let Some(id) = cell.shared_id {
-            let &(r1, c1, r2, c2) = anchors
-                .get(&id)
-                .ok_or_else(|| unsupported("orphan shared formula descendant", "worksheet"))?;
-            if !(r1..=r2).contains(&cell.row) || !(c1..=c2).contains(&cell.col) {
-                return Err(unsupported(
-                    "shared formula outside declared range",
-                    "worksheet",
-                ));
-            }
-        }
-    }
+    families.finish()?;
     if table_count.is_some_and(|n| n != table_ids.len()) {
         return Err(unsupported("tablePart count disagreement", "worksheet"));
     }
