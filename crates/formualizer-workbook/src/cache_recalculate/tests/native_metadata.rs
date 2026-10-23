@@ -12,7 +12,7 @@ use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 const MAIN: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 const VALUES: [f64; 6] = [-1.0, 0.0, 0.5, 1.0, 1.25, 60.0];
 
-fn annotation(value: &DataRef<'_>) -> Option<FormatId> {
+pub(super) fn annotation(value: &DataRef<'_>) -> Option<FormatId> {
     match value {
         DataRef::DateTime(dt) if dt.is_duration() => Some(FormatId::DURATION),
         DataRef::DateTime(dt) if (0.0..1.0).contains(&dt.as_f64()) => Some(FormatId::TIME),
@@ -23,7 +23,7 @@ fn annotation(value: &DataRef<'_>) -> Option<FormatId> {
         _ => None,
     }
 }
-fn probe(sst: Option<&[u8]>, styles: Option<&[u8]>, worksheet: &[u8]) -> Vec<u8> {
+pub(super) fn probe(sst: Option<&[u8]>, styles: Option<&[u8]>, worksheet: &[u8]) -> Vec<u8> {
     let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
     let mut add = |name: &str, data: &[u8]| {
         zip.start_file(name, SimpleFileOptions::default()).unwrap();
@@ -83,7 +83,7 @@ fn compare(
                 panic!("{label}: non-SST value")
             };
             assert_eq!(
-                strings.get(index as u32).unwrap(),
+                strings.get(index).unwrap(),
                 actual,
                 "{label}: SST index {index}"
             );
@@ -101,7 +101,7 @@ fn compare(
     }
     assert_eq!(string_count, strings.len());
     assert_eq!(style_values, formats.len() * VALUES.len());
-    assert!(strings.get(strings.len() as u32).is_err());
+    assert!(strings.get(strings.len()).is_err());
     Ok((string_count, formats.len()))
 }
 fn package(path: &Path) -> (usize, usize) {

@@ -9,6 +9,8 @@ mod ingest_view;
 mod legacy_intersection;
 #[cfg(test)]
 mod native_metadata;
+#[cfg(test)]
+mod native_values;
 pub(crate) mod package;
 mod phase_clock;
 mod result_projection;

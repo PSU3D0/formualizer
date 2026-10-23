@@ -50,15 +50,12 @@ impl SharedStringTable {
     pub(super) fn len(&self) -> usize {
         self.0.len()
     }
-    pub(super) fn get(&self, index: u32) -> Result<&str, IoError> {
-        self.0
-            .get(index as usize)
-            .map(String::as_str)
-            .ok_or_else(|| {
-                IoError::Calamine(calamine::Error::Xlsx(calamine::XlsxError::Unexpected(
-                    "Cell string index not found in shared strings table",
-                )))
-            })
+    pub(super) fn get(&self, index: usize) -> Result<&str, IoError> {
+        self.0.get(index).map(String::as_str).ok_or_else(|| {
+            IoError::Calamine(calamine::Error::Xlsx(calamine::XlsxError::Unexpected(
+                "Cell string index not found in shared strings table",
+            )))
+        })
     }
 }
 
@@ -210,7 +207,11 @@ impl Styles {
             .annotation(number)
     }
 }
-fn raw_attribute<'a>(bytes: &'a [u8], node: &xml::Node<'_, '_>, name: &str) -> Option<&'a str> {
+pub(super) fn raw_attribute<'a>(
+    bytes: &'a [u8],
+    node: &xml::Node<'_, '_>,
+    name: &str,
+) -> Option<&'a str> {
     let attribute = node.attribute("", name)?;
     let raw = std::str::from_utf8(bytes.get(attribute.span.clone())?).ok()?;
     let value = raw
