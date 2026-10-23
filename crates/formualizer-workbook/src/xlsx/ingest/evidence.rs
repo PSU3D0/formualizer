@@ -1,3 +1,5 @@
+//! Bounded source-order evidence for complete or partitioned formula families.
+//! Certification proposals do not modify source records or replace exact replay.
 use std::collections::BTreeMap;
 use std::mem::size_of;
 use std::sync::Arc;
@@ -12,11 +14,11 @@ const FAMILY_BYTES: u64 = 256;
 const RUN_BYTES: u64 = size_of::<SourceRect>() as u64;
 const EXCLUSION_BYTES: u64 = size_of::<SourceExclusion>() as u64;
 const FRAGMENT_BYTES: u64 = size_of::<PlacementDomainTransport>() as u64;
-pub(super) const DEFAULT_MAX_FAMILY_EXCLUSIONS: usize = 64;
-pub(super) const DEFAULT_MAX_FAMILY_FRAGMENTS: usize = 128;
+pub(crate) const DEFAULT_MAX_FAMILY_EXCLUSIONS: usize = 64;
+pub(crate) const DEFAULT_MAX_FAMILY_FRAGMENTS: usize = 128;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum SourceExclusion {
+pub(crate) enum SourceExclusion {
     Hole(SourceCoord),
     OrdinaryFormula(SourceCoord),
 }
@@ -30,20 +32,20 @@ impl SourceExclusion {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct FragmentedFamilyProposal {
-    pub(super) source_id: SourceFamilyId,
-    pub(super) source_order: SourceFormulaOrder,
-    pub(super) anchor_coord0: SourceCoord,
-    pub(super) anchor_text: Arc<str>,
-    pub(super) declared: SourceRect,
-    pub(super) fragments: Vec<PlacementDomainTransport>,
-    pub(super) fallback_members: Vec<SourceCoord>,
-    pub(super) exclusions: Vec<SourceExclusion>,
-    pub(super) member_count: u64,
+pub(crate) struct FragmentedFamilyProposal {
+    pub(crate) source_id: SourceFamilyId,
+    pub(crate) source_order: SourceFormulaOrder,
+    pub(crate) anchor_coord0: SourceCoord,
+    pub(crate) anchor_text: Arc<str>,
+    pub(crate) declared: SourceRect,
+    pub(crate) fragments: Vec<PlacementDomainTransport>,
+    pub(crate) fallback_members: Vec<SourceCoord>,
+    pub(crate) exclusions: Vec<SourceExclusion>,
+    pub(crate) member_count: u64,
 }
 
 #[derive(Clone, Copy)]
-pub(super) enum EvidenceRecord<'a> {
+pub(crate) enum EvidenceRecord<'a> {
     Ordinary,
     Anchor {
         family: SourceFamilyId,
@@ -69,7 +71,7 @@ struct FamilyEvidence {
     anomaly: Option<&'static str>,
 }
 
-pub(super) struct MonotonicFormulaEvidence {
+pub(crate) struct MonotonicFormulaEvidence {
     families: BTreeMap<SourceFamilyId, FamilyEvidence>,
     active_families: Vec<SourceFamilyId>,
     last_coord: Option<SourceCoord>,
@@ -83,7 +85,7 @@ pub(super) struct MonotonicFormulaEvidence {
 }
 
 impl MonotonicFormulaEvidence {
-    pub(super) fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::with_limit(DEFAULT_EVIDENCE_LIMIT)
     }
 
@@ -111,12 +113,12 @@ impl MonotonicFormulaEvidence {
     }
 
     #[cfg(test)]
-    pub(super) fn observe(&mut self, coord: SourceCoord, record: EvidenceRecord<'_>) {
+    pub(crate) fn observe(&mut self, coord: SourceCoord, record: EvidenceRecord<'_>) {
         let source_order = SourceFormulaOrder::new(self.counters[0]);
         self.observe_ordered(coord, source_order, record);
     }
 
-    pub(super) fn observe_ordered(
+    pub(crate) fn observe_ordered(
         &mut self,
         coord: SourceCoord,
         source_order: SourceFormulaOrder,
@@ -346,7 +348,7 @@ impl MonotonicFormulaEvidence {
         }
     }
 
-    pub(super) fn finish(mut self) -> CompressedEvidenceOutput {
+    pub(crate) fn finish(mut self) -> CompressedEvidenceOutput {
         if self.halted.is_none() {
             let family_ids: Vec<_> = self.families.keys().copied().collect();
             for family_id in family_ids {
@@ -531,10 +533,10 @@ impl MonotonicFormulaEvidence {
     }
 }
 
-pub(super) struct CompressedEvidenceOutput {
-    pub(super) report: FormulaCompressedSourceReport,
-    pub(super) families: Vec<SourceFormulaFamily>,
-    pub(super) fragmented: Vec<FragmentedFamilyProposal>,
+pub(crate) struct CompressedEvidenceOutput {
+    pub(crate) report: FormulaCompressedSourceReport,
+    pub(crate) families: Vec<SourceFormulaFamily>,
+    pub(crate) fragmented: Vec<FragmentedFamilyProposal>,
 }
 
 #[derive(Clone, Copy)]

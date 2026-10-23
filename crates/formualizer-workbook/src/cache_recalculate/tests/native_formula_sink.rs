@@ -172,7 +172,7 @@ fn load(data: &[u8], config: EvalConfig, native: bool) -> Engine<WBResolver> {
 
 #[test]
 fn permitted_pure_utilities_have_one_counted_native_surface() {
-    UTILITY_CALLS.with(|c| c.set((0, 0)));
+    take_utility_calls();
     let mut replay = FormulaReplayState::default();
     for (sequence, record) in [
         OwnedSpoolFormulaRecord::SharedAnchor {
@@ -204,7 +204,7 @@ fn permitted_pure_utilities_have_one_counted_native_surface() {
             .unwrap();
     }
     assert!(parse_error_token("#DIV/0!").is_ok());
-    assert_eq!(UTILITY_CALLS.with(|c| c.get()), (1, 1));
+    assert_eq!(take_utility_calls(), (1, 1));
 }
 
 #[test]

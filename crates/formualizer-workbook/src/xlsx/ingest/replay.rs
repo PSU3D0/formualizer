@@ -1,3 +1,5 @@
+//! Bounded exact formula replay, independent of the workbook source reader.
+//! Source order and shared-family identity survive memory or disk spooling.
 use std::sync::Arc;
 #[cfg(not(target_arch = "wasm32"))]
 use std::{
@@ -5,7 +7,7 @@ use std::{
     io::{BufReader, Read, Seek, SeekFrom, Write},
 };
 
-use calamine::expand_shared_formula_into;
+use super::utilities::expand_shared_formula_into;
 use formualizer_eval::engine::{
     DeferredFormulaReplay, DeferredReplayFormula, FormulaReplayCoordinateDisposition,
     FormulaReplayDisposition, FormulaReplayPartitionRouter, PartitionedSourceFormulaFamily,
@@ -19,7 +21,7 @@ use formualizer_eval::engine::{
 
 #[cfg(test)]
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) enum FormulaMetadataEnvelope {
+pub(crate) enum FormulaMetadataEnvelope {
     Ordinary,
     Shared {
         shared_index: usize,
@@ -30,7 +32,7 @@ pub(super) enum FormulaMetadataEnvelope {
 
 #[cfg(test)]
 #[derive(Clone, Debug, PartialEq)]
-pub(super) enum FormulaSourceKind {
+pub(crate) enum FormulaSourceKind {
     Ordinary {
         formula: Arc<str>,
         metadata: FormulaMetadataEnvelope,
@@ -53,11 +55,11 @@ pub(super) enum FormulaSourceKind {
 
 #[cfg(test)]
 #[derive(Clone, Debug, PartialEq)]
-pub(super) struct FormulaSourceEvent {
-    pub(super) sheet_name: Arc<str>,
-    pub(super) coord0: SourceCoord,
-    pub(super) source_sequence: u64,
-    pub(super) formula: FormulaSourceKind,
+pub(crate) struct FormulaSourceEvent {
+    pub(crate) sheet_name: Arc<str>,
+    pub(crate) coord0: SourceCoord,
+    pub(crate) source_sequence: u64,
+    pub(crate) formula: FormulaSourceKind,
 }
 
 const MAGIC: &[u8; 4] = b"FZFR";
@@ -65,17 +67,17 @@ const VERSION: u8 = 1;
 const HEADER_LEN: usize = MAGIC.len() + 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct SpoolOffset(u64);
+pub(crate) struct SpoolOffset(u64);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum SpoolStorageKind {
+pub(crate) enum SpoolStorageKind {
     Memory,
     #[cfg(not(target_arch = "wasm32"))]
     NativeFile,
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(super) enum SpoolFormulaRecord<'a> {
+pub(crate) enum SpoolFormulaRecord<'a> {
     Ordinary {
         sequence: u64,
         coord0: SourceCoord,
@@ -100,7 +102,7 @@ pub(super) enum SpoolFormulaRecord<'a> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) enum OwnedSpoolFormulaRecord {
+pub(crate) enum OwnedSpoolFormulaRecord {
     Ordinary {
         sequence: u64,
         coord0: SourceCoord,
@@ -126,7 +128,7 @@ pub(super) enum OwnedSpoolFormulaRecord {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(not(test), allow(dead_code))]
-pub(super) enum SpoolError {
+pub(crate) enum SpoolError {
     SheetLimit {
         limit: u64,
         attempted: u64,
@@ -197,7 +199,7 @@ impl std::fmt::Display for SpoolError {
 
 impl std::error::Error for SpoolError {}
 
-pub(super) trait FormulaReplaySpool {
+pub(crate) trait FormulaReplaySpool {
     fn append(&mut self, record: SpoolFormulaRecord<'_>) -> Result<SpoolOffset, SpoolError>;
     fn replay(&mut self) -> Result<FormulaReplayIter<'_>, SpoolError>;
     fn encoded_bytes(&self) -> u64;
@@ -205,7 +207,7 @@ pub(super) trait FormulaReplaySpool {
 }
 
 #[cfg(test)]
-pub(super) struct MemoryFormulaReplaySpool {
+pub(crate) struct MemoryFormulaReplaySpool {
     bytes: Vec<u8>,
     max_bytes: u64,
     #[cfg(test)]
@@ -237,7 +239,7 @@ impl MemoryFormulaReplaySpool {
         }
     }
 
-    pub(super) fn replay_events(
+    pub(crate) fn replay_events(
         &mut self,
         sheet_name: &str,
         sheet_instance: u32,
@@ -305,7 +307,7 @@ impl FormulaReplaySpool for MemoryFormulaReplaySpool {
 #[cfg(not(target_arch = "wasm32"))]
 const SPILL_WRITE_BLOCK: usize = 64 * 1024;
 
-pub(super) struct FormulaSpoolLimits {
+pub(crate) struct FormulaSpoolLimits {
     pub sheet_bytes: u64,
     pub workbook_bytes_remaining: u64,
     pub workbook_bytes_used: u64,
@@ -318,7 +320,7 @@ pub(super) struct FormulaSpoolLimits {
     pub spill_files_limit: u32,
 }
 
-pub(super) struct HybridFormulaReplaySpool {
+pub(crate) struct HybridFormulaReplaySpool {
     memory: Vec<u8>,
     encoded_bytes: u64,
     peak_memory_bytes: u64,
@@ -341,7 +343,7 @@ pub(super) struct HybridFormulaReplaySpool {
 }
 
 impl HybridFormulaReplaySpool {
-    pub(super) fn new(limits: FormulaSpoolLimits) -> Self {
+    pub(crate) fn new(limits: FormulaSpoolLimits) -> Self {
         Self {
             memory: [MAGIC.as_slice(), &[VERSION]].concat(),
             encoded_bytes: HEADER_LEN as u64,
@@ -396,11 +398,11 @@ impl HybridFormulaReplaySpool {
         Ok(())
     }
 
-    pub(super) fn peak_memory_bytes(&self) -> u64 {
+    pub(crate) fn peak_memory_bytes(&self) -> u64 {
         self.peak_memory_bytes
     }
 
-    pub(super) fn spilled(&self) -> bool {
+    pub(crate) fn spilled(&self) -> bool {
         #[cfg(not(target_arch = "wasm32"))]
         {
             self.file.is_some()
@@ -424,7 +426,7 @@ impl HybridFormulaReplaySpool {
 
 type ExactReplayLocator = (Vec<(u32, u32, u64)>, Vec<(usize, u64)>);
 
-pub(super) struct CalamineDeferredFormulaReplay {
+pub(crate) struct CalamineDeferredFormulaReplay {
     /// Lazy, text-free coordinate/offset locator. None means not scanned yet;
     /// The second buffer maps shared ids to anchor offsets, never anchor text.
     /// Err means unsupported metadata requires conservative replay.
@@ -463,7 +465,7 @@ fn sort_by_source_order(formulas: &mut [DeferredReplayFormula]) {
 }
 
 impl CalamineDeferredFormulaReplay {
-    pub(super) fn new(
+    pub(crate) fn new(
         spool: HybridFormulaReplaySpool,
         sheet_name: String,
         sheet_instance: u32,
@@ -1132,7 +1134,7 @@ fn encode_frame(record: SpoolFormulaRecord<'_>) -> Result<Vec<u8>, SpoolError> {
 }
 
 #[derive(Debug)]
-pub(super) enum FormulaReplayIter<'a> {
+pub(crate) enum FormulaReplayIter<'a> {
     Memory {
         bytes: &'a [u8],
         cursor: usize,
@@ -1185,7 +1187,7 @@ impl Iterator for FormulaReplayIter<'_> {
 }
 
 impl OwnedSpoolFormulaRecord {
-    pub(super) fn as_borrowed(&self) -> SpoolFormulaRecord<'_> {
+    pub(crate) fn as_borrowed(&self) -> SpoolFormulaRecord<'_> {
         match self {
             Self::Ordinary {
                 sequence,
@@ -1404,15 +1406,15 @@ fn checked_next_offset(offset: u64, appended_len: usize) -> Result<u64, SpoolErr
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(not(test), allow(dead_code))]
-pub(super) struct ExpandedFormulaCell {
-    pub(super) coord0: SourceCoord,
-    pub(super) formula: Arc<str>,
+#[cfg(test)]
+pub(crate) struct ExpandedFormulaCell {
+    pub(crate) coord0: SourceCoord,
+    pub(crate) formula: Arc<str>,
 }
 
 #[derive(Debug)]
 #[cfg_attr(not(test), allow(dead_code))]
-pub(super) enum SourceFormulaError {
+pub(crate) enum SourceFormulaError {
     Expansion(calamine::XlsxError),
     UnsupportedMetadata {
         sheet_name: Arc<str>,
@@ -1421,7 +1423,7 @@ pub(super) enum SourceFormulaError {
 }
 
 impl SourceFormulaError {
-    pub(super) fn into_calamine(self) -> calamine::Error {
+    pub(crate) fn into_calamine(self) -> calamine::Error {
         match self {
             Self::Expansion(error) => calamine::Error::Xlsx(error),
             error @ Self::UnsupportedMetadata { .. } => {
@@ -1449,14 +1451,14 @@ impl std::error::Error for SourceFormulaError {}
 
 /// Shared-formula resolution shared by eager source events and deferred spools.
 #[derive(Default)]
-pub(super) struct FormulaReplayState {
+pub(crate) struct FormulaReplayState {
     shared: rustc_hash::FxHashMap<usize, (SourceCoord, String)>,
     pending: rustc_hash::FxHashMap<usize, Vec<(u64, SourceCoord)>>,
     expansion: String,
 }
 
 impl FormulaReplayState {
-    pub(super) fn emit_record(
+    pub(crate) fn emit_record(
         &mut self,
         record: OwnedSpoolFormulaRecord,
         sheet_name: &str,
@@ -1553,7 +1555,7 @@ fn replay_spool_with_family<S: FormulaReplaySpool>(
 }
 
 #[cfg(test)]
-pub(super) fn replay_spool_per_cell_filtered<S: FormulaReplaySpool>(
+pub(crate) fn replay_spool_per_cell_filtered<S: FormulaReplaySpool>(
     spool: &mut S,
     sheet_name: &str,
     mut skip_family: impl FnMut(usize) -> bool,
@@ -1567,7 +1569,7 @@ pub(super) fn replay_spool_per_cell_filtered<S: FormulaReplaySpool>(
     )
 }
 
-pub(super) fn replay_spool_per_cell_filtered_with_family<S: FormulaReplaySpool>(
+pub(crate) fn replay_spool_per_cell_filtered_with_family<S: FormulaReplaySpool>(
     spool: &mut S,
     sheet_name: &str,
     mut skip_family: impl FnMut(usize) -> bool,
@@ -1581,7 +1583,7 @@ pub(super) fn replay_spool_per_cell_filtered_with_family<S: FormulaReplaySpool>(
     )
 }
 
-pub(super) fn replay_spool_per_cell_with_coordinate_disposition<S: FormulaReplaySpool>(
+pub(crate) fn replay_spool_per_cell_with_coordinate_disposition<S: FormulaReplaySpool>(
     spool: &mut S,
     sheet_name: &str,
     emit_shared_coord: impl FnMut(usize, SourceCoord) -> bool,
@@ -1596,7 +1598,7 @@ pub(super) fn replay_spool_per_cell_with_coordinate_disposition<S: FormulaReplay
 }
 
 #[cfg(test)]
-pub(super) fn expand_source_events_per_cell(
+pub(crate) fn expand_source_events_per_cell(
     events: &[FormulaSourceEvent],
 ) -> Result<Vec<ExpandedFormulaCell>, SourceFormulaError> {
     let mut shared: rustc_hash::FxHashMap<u32, (SourceCoord, Arc<str>)> =

@@ -138,7 +138,7 @@ fn check_indirect(ast: &ASTNode, sheets: &[package::Sheet]) -> Result<(), IoErro
     use formualizer_parse::parser::ASTNodeType as N;
     match &ast.node_type {
         N::Function { name, args } => {
-            if crate::backends::calamine::name_references::is_indirect(name) {
+            if crate::xlsx::ingest::name_references::is_indirect(name) {
                 let Some(ASTNode {
                     node_type: N::Literal(formualizer_common::LiteralValue::Text(text)),
                     ..

@@ -6,8 +6,7 @@ pub mod cache_recalculate;
 mod cached_external_links;
 pub mod calc_pr;
 #[cfg(feature = "calamine")]
-#[path = "backends/calamine/compressed_evidence.rs"]
-mod source_formula_evidence;
+mod xlsx;
 #[cfg(feature = "calamine")]
 pub use cached_external_links::CachedExternalLinkValues;
 pub mod error;

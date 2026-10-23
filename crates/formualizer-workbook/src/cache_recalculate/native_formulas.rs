@@ -6,56 +6,11 @@ use quick_xml::events::{BytesStart, Event};
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
-// These pure W1 modules have no workbook-reader dependency. Share their exact
-// implementation until W5 removes the old backend, then give them one home.
-use crate::source_formula_evidence as compressed_evidence;
-mod formula_replay {
-    // Resolve the unchanged replay module's import through the one permitted
-    // native utility wrapper. Only error types are visible: no reader surface.
-    mod calamine {
-        pub(super) use super::super::expand_shared_formula_into;
-        pub(super) use ::calamine::{Error, XlsxError};
-    }
-    include!("../backends/calamine/formula_replay.rs");
-}
+pub(in crate::cache_recalculate) use crate::xlsx::ingest::utilities::parse_error_token;
+#[cfg(test)]
+pub(super) use crate::xlsx::ingest::utilities::take_utility_calls;
+use crate::xlsx::ingest::{evidence as compressed_evidence, replay as formula_replay};
 use formula_replay::OwnedSpoolFormulaRecord;
-
-#[cfg(test)]
-thread_local! {
-    static UTILITY_CALLS: std::cell::Cell<(u64, u64)> = const { std::cell::Cell::new((0, 0)) };
-}
-
-#[cfg(test)]
-pub(super) fn take_utility_calls() -> (u64, u64) {
-    UTILITY_CALLS.with(|calls| calls.replace((0, 0)))
-}
-
-/// Allowed pinned text utility, only on W1's uncertified placement fallback.
-fn expand_shared_formula_into(
-    formula: &str,
-    start: (u32, u32),
-    end: (u32, u32),
-    out: &mut String,
-) -> Result<(), calamine::XlsxError> {
-    #[cfg(test)]
-    UTILITY_CALLS.with(|calls| {
-        let (e, p) = calls.get();
-        calls.set((e + 1, p));
-    });
-    calamine::expand_shared_formula_into(formula, start, end, out)
-}
-
-/// Allowed pinned error-token utility. Scanner callers are coordinated at B4.
-pub(in crate::cache_recalculate) fn parse_error_token(
-    token: &str,
-) -> Result<calamine::CellErrorType, calamine::XlsxError> {
-    #[cfg(test)]
-    UTILITY_CALLS.with(|calls| {
-        let (e, p) = calls.get();
-        calls.set((e, p + 1));
-    });
-    token.parse()
-}
 
 fn shared_source_index(index: usize) -> u32 {
     u32::try_from(index).unwrap_or(u32::MAX)

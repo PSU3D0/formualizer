@@ -29,10 +29,9 @@ use quick_xml::events::{BytesRef, BytesStart, Event};
 use quick_xml::name::QName;
 use zip::ZipArchive;
 
-use crate::source_formula_evidence as compressed_evidence;
-mod formula_replay;
+use crate::xlsx::ingest::{evidence as compressed_evidence, replay as formula_replay};
 mod inert_sheets;
-pub(crate) mod name_references;
+use crate::xlsx::ingest::name_references;
 
 use compressed_evidence::{EvidenceRecord, MonotonicFormulaEvidence};
 use formula_replay::{

@@ -2,8 +2,8 @@
 //! are copied verbatim from the old adapter except visibility/type paths;
 //! workbook XML parsing is separate from all Calamine reader APIs.
 use super::package;
-use crate::backends::calamine::name_references;
 use crate::traits::{DefinedName, DefinedNameDefinition, DefinedNameScope};
+use crate::xlsx::ingest::name_references;
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue, RangeAddress};
 use formualizer_eval::engine::named_range::{NameScope, NamedDefinition};
 use formualizer_eval::engine::{CancelToken, Engine};
