@@ -126,6 +126,14 @@ pub(crate) struct Node<'n, 'a> {
     fast_attributes: Option<&'n FastAttributes<'a>>,
 }
 impl<'n, 'a> Node<'n, 'a> {
+    #[cfg(test)]
+    pub(crate) fn new(kind: Kind<'n, 'a>, span: Range<usize>) -> Self {
+        Self {
+            kind,
+            span,
+            fast_attributes: None,
+        }
+    }
     pub fn attribute(&self, ns: &str, local: &str) -> Option<&'n Attribute<'a>> {
         if let Some(fast) = self.fast_attributes {
             return if ns.is_empty() { fast.get(local) } else { None };
@@ -161,7 +169,7 @@ fn valid_char(c: char) -> bool {
 }
 /// XML 1.0 `Char` production over the whole string, with a branch-free scan
 /// of printable-ASCII blocks.
-fn valid_text(text: &str) -> Result<(), IoError> {
+pub(crate) fn valid_text(text: &str) -> Result<(), IoError> {
     const BLOCK: usize = 16;
     let bytes = text.as_bytes();
     let mut i = 0;
@@ -183,7 +191,7 @@ fn valid_text(text: &str) -> Result<(), IoError> {
     }
     Ok(())
 }
-fn qualified_name(bytes: &[u8]) -> Result<(), IoError> {
+pub(crate) fn qualified_name(bytes: &[u8]) -> Result<(), IoError> {
     // OOXML names are ASCII; reject other naming grammars rather than relying
     // on quick-xml's intentionally permissive lexical name handling.
     let mut pieces = 0;
@@ -238,17 +246,17 @@ impl Namespaces {
 }
 /// quick-xml's namespace scopes plus a cache of resolved element prefixes,
 /// valid while no binding is added or removed.
-struct Scopes<'a> {
+pub(crate) struct Scopes<'a> {
     resolver: NamespaceResolver,
     namespaces: Namespaces,
     /// Per open scope: whether it declared a binding.
     declared: Vec<bool>,
     /// Element prefix (`None` for the default namespace) to namespace.
     cache: FxHashMap<Option<&'a [u8]>, Ns>,
-    generation: u64,
+    pub(crate) generation: u64,
 }
 impl<'a> Scopes<'a> {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             resolver: NamespaceResolver::default(),
             namespaces: Namespaces::new(),
@@ -261,13 +269,13 @@ impl<'a> Scopes<'a> {
         self.cache.clear();
         self.generation = self.generation.saturating_add(1);
     }
-    fn pop(&mut self) {
+    pub(crate) fn pop(&mut self) {
         self.resolver.pop();
         if self.declared.pop() == Some(true) {
             self.invalidate();
         }
     }
-    fn element(&mut self, qualified: &'a str) -> Result<Ns, IoError> {
+    pub(crate) fn element(&mut self, qualified: &'a str) -> Result<Ns, IoError> {
         let prefix = qualified
             .as_bytes()
             .iter()
@@ -292,7 +300,7 @@ impl<'a> Scopes<'a> {
 // Attribute slices returned by quick-xml borrow the start-event buffer. Bounds
 // checks make the offset derivation fail closed if that implementation changes.
 // This is safe pointer arithmetic only: no pointer is dereferenced or retained.
-fn offset(whole: &[u8], part: &[u8]) -> Result<usize, IoError> {
+pub(crate) fn offset(whole: &[u8], part: &[u8]) -> Result<usize, IoError> {
     let n = (part.as_ptr() as usize)
         .checked_sub(whole.as_ptr() as usize)
         .filter(|n| {
@@ -301,20 +309,20 @@ fn offset(whole: &[u8], part: &[u8]) -> Result<usize, IoError> {
         });
     n.ok_or_else(|| unsupported("unavailable XML attribute source span", "XLSX XML"))
 }
-fn backend(e: impl std::error::Error) -> IoError {
+pub(crate) fn backend(e: impl std::error::Error) -> IoError {
     IoError::from_backend("xlsx-xml", e)
 }
 /// Name of a local part without its prefix (quick-xml's `local_name`).
-fn local_part(qualified: &str) -> &str {
+pub(crate) fn local_part(qualified: &str) -> &str {
     qualified
         .split_once(':')
         .map_or(qualified, |(_, local)| local)
 }
 /// One attribute as parsed (without duplicate checks) while binding the
 /// element's namespace declarations.
-struct Parsed<'a> {
-    key: &'a [u8],
-    value: &'a [u8],
+pub(crate) struct Parsed<'a> {
+    pub(crate) key: &'a [u8],
+    pub(crate) value: &'a [u8],
 }
 /// Reusable per-element state.
 #[derive(Default)]
@@ -325,7 +333,7 @@ struct Scratch<'a> {
 }
 /// Known, unprefixed worksheet attributes. Unknown spellings are not refused:
 /// they go through the generic namespace/duplicate validator on this event.
-fn known_attribute(key: &[u8]) -> Option<usize> {
+pub(crate) fn known_attribute(key: &[u8]) -> Option<usize> {
     Some(match key {
         b"r" => 0,
         b"s" => 1,
@@ -468,7 +476,7 @@ impl<'a> FastAttributes<'a> {
     }
 }
 /// Start-tag content of a borrowed event as a slice of the input.
-fn content<'a>(text: &'a str, e: &BytesStart<'_>) -> Result<(usize, &'a str), IoError> {
+pub(crate) fn content<'a>(text: &'a str, e: &BytesStart<'_>) -> Result<(usize, &'a str), IoError> {
     let raw = e.as_ref();
     let at = offset(text.as_bytes(), raw)?;
     text.get(at..at + raw.len())
@@ -478,7 +486,7 @@ fn content<'a>(text: &'a str, e: &BytesStart<'_>) -> Result<(usize, &'a str), Io
 /// Open a namespace scope for `e`, exactly as quick-xml's namespace reader
 /// does (bindings from every attribute up to the first malformed one), and
 /// keep the unchecked parse. Returns whether the parse stopped at an error.
-fn bind<'a>(
+pub(crate) fn bind<'a>(
     scopes: &mut Scopes<'_>,
     content: &'a str,
     name_len: usize,
@@ -568,7 +576,7 @@ fn plain_attributes<'a>(content: &'a str, name_len: usize, parsed: &mut Vec<Pars
 }
 /// Validate and resolve one attribute; `None` for namespace declarations.
 #[allow(clippy::too_many_arguments)]
-fn attribute<'a>(
+pub(crate) fn attribute<'a>(
     a: RawAttribute<'a>,
     content: &'a str,
     start: usize,
@@ -933,7 +941,7 @@ pub(crate) fn walk<'a>(
 /// The text event as a slice of the validated input when it needs no
 /// end-of-line normalization (no `\r`, U+0085 or U+2028 lead byte) and
 /// cannot contain `]]>`; otherwise `None`.
-fn plain_text<'a>(input: &'a str, raw: &[u8]) -> Option<&'a str> {
+pub(crate) fn plain_text<'a>(input: &'a str, raw: &[u8]) -> Option<&'a str> {
     if raw.iter().any(|b| matches!(b, b'\r' | 0xC2 | 0xE2 | b']')) {
         return None;
     }
@@ -941,7 +949,7 @@ fn plain_text<'a>(input: &'a str, raw: &[u8]) -> Option<&'a str> {
     input.get(at..at + raw.len())
 }
 /// Whether text contains the CDATA section terminator `]]>`.
-fn cdata_end(text: &[u8]) -> bool {
+pub(crate) fn cdata_end(text: &[u8]) -> bool {
     let mut from = 0;
     while let Some(at) = text[from..].iter().position(|b| *b == b'>') {
         let at = from + at;

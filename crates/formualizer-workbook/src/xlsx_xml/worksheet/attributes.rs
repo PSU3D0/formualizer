@@ -1,10 +1,11 @@
 //! Tag-specific lexical attribute fast path. Uncommon syntax is replayed
 //! through the generic validator on the same event, before semantic effects.
-use super::*;
+use crate::xlsx_xml::{Attribute, Ns, known_attribute};
+use std::borrow::Cow;
 
 /// At most twelve formula attributes, eleven row attributes, or six cell
 /// attributes. Entries retain source order; no 26-slot lookup table is cleared.
-pub(super) struct HotAttributes<'a> {
+pub(crate) struct HotAttributes<'a> {
     entries: [Attribute<'a>; 12],
     len: usize,
 }
@@ -23,7 +24,7 @@ impl Default for HotAttributes<'_> {
     }
 }
 impl<'a> HotAttributes<'a> {
-    pub(super) fn parse(&mut self, content: &'a str, name: &str, start: usize) -> bool {
+    pub(crate) fn parse(&mut self, content: &'a str, name: &str, start: usize) -> bool {
         self.len = 0;
         // No attribute iterator, slot initialization, or byte scan for the
         // common attribute-free formula/value opening.
@@ -100,7 +101,7 @@ impl<'a> HotAttributes<'a> {
             at += 1;
         }
     }
-    pub(super) fn as_slice(&self) -> &[Attribute<'a>] {
+    pub(crate) fn as_slice(&self) -> &[Attribute<'a>] {
         self.entries.get(..self.len).unwrap_or_default()
     }
 }
