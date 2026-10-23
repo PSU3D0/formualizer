@@ -1,6 +1,7 @@
 //! Source-order formula transport, evidence and name-reference analysis.
 //! Replay preserves source identity independently of engine family grouping.
 pub(crate) mod evidence;
+pub(crate) mod name_analysis;
 pub(crate) mod name_references;
 pub(crate) mod partition;
 pub(crate) mod replay;

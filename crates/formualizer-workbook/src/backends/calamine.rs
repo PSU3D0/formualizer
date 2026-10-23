@@ -668,11 +668,7 @@ impl DebugTimer {
 
 type ShadowRelocationComparator = Arc<dyn Fn(&ASTNode, &ASTNode) -> bool + Send + Sync>;
 
-#[derive(Default)]
-struct CalculationNameAnalysis {
-    dependencies: Vec<Vec<usize>>,
-    cyclic: HashSet<usize>,
-}
+use crate::xlsx::ingest::name_analysis::{CalculationNameAnalysis, analyze};
 
 #[derive(Default)]
 struct CalculationNameCandidates {
@@ -2005,72 +2001,9 @@ impl CalamineAdapter {
 
     fn calculation_name_analysis(&self) -> &CalculationNameAnalysis {
         self.name_analysis.get_or_init(|| {
-            let dependencies = self.calculation_name_dependencies();
-            let mut reverse = vec![Vec::new(); dependencies.len()];
-            let mut seen = vec![false; dependencies.len()];
-            let mut finish = Vec::with_capacity(dependencies.len());
-            // Iterative postorder and reverse traversal identify exactly the
-            // strongly connected components, not names downstream of cycles.
-            for (root, deps) in dependencies.iter().enumerate() {
-                if Self::cancellation_checkpoint(self.cancel.as_ref()).is_err() {
-                    return CalculationNameAnalysis::default();
-                }
-                for &j in deps {
-                    reverse[j].push(root);
-                }
-                if seen[root] {
-                    continue;
-                }
-                seen[root] = true;
-                let mut stack = vec![(root, 0)];
-                while let Some((i, next)) = stack.last_mut() {
-                    if Self::cancellation_checkpoint(self.cancel.as_ref()).is_err() {
-                        return CalculationNameAnalysis::default();
-                    }
-                    if let Some(&j) = dependencies[*i].get(*next) {
-                        *next += 1;
-                        if !seen[j] {
-                            seen[j] = true;
-                            stack.push((j, 0));
-                        }
-                    } else {
-                        finish.push(*i);
-                        stack.pop();
-                    }
-                }
-            }
-            seen.fill(false);
-            let mut cyclic = HashSet::new();
-            for root in finish.into_iter().rev() {
-                if Self::cancellation_checkpoint(self.cancel.as_ref()).is_err() {
-                    return CalculationNameAnalysis::default();
-                }
-                if seen[root] {
-                    continue;
-                }
-                seen[root] = true;
-                let mut component = Vec::new();
-                let mut stack = vec![root];
-                while let Some(i) = stack.pop() {
-                    if Self::cancellation_checkpoint(self.cancel.as_ref()).is_err() {
-                        return CalculationNameAnalysis::default();
-                    }
-                    component.push(i);
-                    for &j in &reverse[i] {
-                        if !seen[j] {
-                            seen[j] = true;
-                            stack.push(j);
-                        }
-                    }
-                }
-                if component.len() > 1 || dependencies[root].contains(&root) {
-                    cyclic.extend(component);
-                }
-            }
-            CalculationNameAnalysis {
-                dependencies,
-                cyclic,
-            }
+            analyze(self.calculation_name_dependencies(), || {
+                Self::cancellation_checkpoint(self.cancel.as_ref()).is_err()
+            })
         })
     }
 
