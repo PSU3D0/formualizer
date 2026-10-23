@@ -2,8 +2,8 @@
 //! It never rewrites output formulas. Parser enums, not string splitting,
 //! describe selectors; decoded formula bytes outside reference tokens survive.
 #[cfg(test)]
-use super::Patch;
-use super::{
+use crate::xlsx::recalculate::Patch;
+use crate::xlsx::recalculate::{
     IoError, SheetPlan, XlsxRecalculateOptions, checkpoint, package, sheet, tables::Table,
     unsupported,
 };
@@ -208,7 +208,7 @@ fn lower(
         && cell
             .shared_rect()
             .is_some_and(|span| span.cell_count() != Some(1))
-        && super::shared_qualifiers::shifted_by_shared_expansion(&prefix)
+        && crate::xlsx::recalculate::shared_qualifiers::shifted_by_shared_expansion(&prefix)
     {
         return Err(unsupported(
             "cross-sheet table reference in a shared formula would be rewritten by shared-formula expansion",
@@ -361,7 +361,7 @@ pub(in crate::xlsx) fn patches(
 ) -> Result<Vec<Patch>, IoError> {
     Ok(lowered_texts(sheet_name, plan, sheets, plans, options)?
         .into_iter()
-        .map(super::FormulaTextTransform::into_patch)
+        .map(crate::xlsx::recalculate::FormulaTextTransform::into_patch)
         .collect())
 }
 
@@ -372,7 +372,7 @@ pub(in crate::xlsx) fn lowered_texts(
     sheets: &[package::Sheet],
     plans: &[SheetPlan],
     options: &XlsxRecalculateOptions,
-) -> Result<Vec<super::FormulaTextTransform>, IoError> {
+) -> Result<Vec<crate::xlsx::recalculate::FormulaTextTransform>, IoError> {
     let mut texts = Vec::new();
     let names: Vec<String> = plans
         .iter()
@@ -492,7 +492,7 @@ pub(in crate::xlsx) fn lowered_texts(
                 .iter()
                 .rposition(|b| *b == b'<')
                 .ok_or_else(|| unsupported("missing formula end tag", cell.address()))?;
-            texts.push(super::FormulaTextTransform {
+            texts.push(crate::xlsx::recalculate::FormulaTextTransform {
                 span: cell.formula_open.end..cell.formula_open.end + close,
                 text: lowered,
             });

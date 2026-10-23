@@ -28,10 +28,10 @@ pub(in crate::xlsx) fn take_chain_reads() -> usize {
     CHAIN_READS.with(|n| n.replace(0))
 }
 
-#[cfg(test)]
-use super::Patch;
-use super::{IoError, SheetPlan, checkpoint, package, xml};
 use crate::XlsxRecalculateOptions;
+#[cfg(test)]
+use crate::xlsx::recalculate::Patch;
+use crate::xlsx::recalculate::{IoError, SheetPlan, checkpoint, package, xml};
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 use formualizer_parse::tokenizer::{TokenStream, TokenSubType, TokenType};
 use rustc_hash::FxHashSet;
@@ -824,7 +824,7 @@ pub(in crate::xlsx) fn patches(
     Ok((
         texts
             .into_iter()
-            .map(super::FormulaTextTransform::into_patch)
+            .map(crate::xlsx::recalculate::FormulaTextTransform::into_patch)
             .collect(),
         stats,
     ))
@@ -838,7 +838,7 @@ pub(in crate::xlsx) fn lowered_texts(
     table_names: &[String],
     external_range_names: Option<&HashSet<String>>,
     options: &XlsxRecalculateOptions,
-) -> Result<(Vec<super::FormulaTextTransform>, Stats), IoError> {
+) -> Result<(Vec<crate::xlsx::recalculate::FormulaTextTransform>, Stats), IoError> {
     let mut stats = Stats::default();
     let mut out = Vec::new();
     if chain.cells.get(sheet_index).is_none_or(FxHashSet::is_empty) {
@@ -888,7 +888,7 @@ pub(in crate::xlsx) fn lowered_texts(
             && let Some(name) = intersected_name(&text, names)
         {
             // Such a name's value has no worksheet position to intersect.
-            return Err(super::unsupported(
+            return Err(crate::xlsx::recalculate::unsupported(
                 "implicit intersection of a defined name holding an external range",
                 format!("{}: {name}", cell.address()),
             ));
@@ -898,7 +898,7 @@ pub(in crate::xlsx) fn lowered_texts(
             continue;
         };
         stats.rewritten += 1;
-        out.push(super::FormulaTextTransform {
+        out.push(crate::xlsx::recalculate::FormulaTextTransform {
             span: cell.formula_open.end..cell.formula_open.end + close,
             text,
         });
