@@ -8,6 +8,8 @@ mod inert_sheets;
 mod ingest_view;
 mod legacy_intersection;
 #[cfg(test)]
+mod native_formulas;
+#[cfg(test)]
 mod native_metadata;
 #[cfg(test)]
 mod native_values;
@@ -298,6 +300,23 @@ pub(crate) fn display_equal(old: f64, new: f64) -> bool {
 struct Patch {
     span: Range<usize>,
     replacement: Vec<u8>,
+}
+/// Evaluation text, separate from the immutable source formula and its marks.
+/// Legacy ingestion serializes this only at its compatibility boundary; the
+/// native sink consumes the text directly without constructing patched XML.
+struct FormulaTextTransform {
+    span: Range<usize>,
+    text: String,
+}
+impl FormulaTextTransform {
+    fn into_patch(self) -> Patch {
+        Patch {
+            span: self.span,
+            replacement: quick_xml::escape::escape(&self.text)
+                .replace('\r', "&#13;")
+                .into_bytes(),
+        }
+    }
 }
 fn cache_patches(xml: &[u8], cell: &sheet::Cell, value: &Cache, patches: &mut Vec<Patch>) {
     let wanted = value.kind();

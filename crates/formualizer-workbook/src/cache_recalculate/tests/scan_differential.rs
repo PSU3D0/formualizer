@@ -18,7 +18,7 @@ thread_local! {
     static COMPARING: Cell<bool> = const { Cell::new(false) };
 }
 /// Run `f` unless a comparison is already running on this thread.
-pub(super) fn exclusive(f: impl FnOnce()) {
+pub(in crate::cache_recalculate) fn exclusive(f: impl FnOnce()) {
     if COMPARING.with(Cell::get) {
         return;
     }

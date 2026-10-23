@@ -356,7 +356,21 @@ pub(super) fn patches(
     plans: &[SheetPlan],
     options: &XlsxRecalculateOptions,
 ) -> Result<Vec<Patch>, IoError> {
-    let mut patches = Vec::new();
+    Ok(lowered_texts(sheet_name, plan, sheets, plans, options)?
+        .into_iter()
+        .map(super::FormulaTextTransform::into_patch)
+        .collect())
+}
+
+/// Structured-reference evaluation text; publication retains the source text.
+pub(super) fn lowered_texts(
+    sheet_name: &str,
+    plan: &SheetPlan,
+    sheets: &[package::Sheet],
+    plans: &[SheetPlan],
+    options: &XlsxRecalculateOptions,
+) -> Result<Vec<super::FormulaTextTransform>, IoError> {
+    let mut texts = Vec::new();
     let names: Vec<String> = plans
         .iter()
         .flat_map(|p| &p.tables)
@@ -475,13 +489,11 @@ pub(super) fn patches(
                 .iter()
                 .rposition(|b| *b == b'<')
                 .ok_or_else(|| unsupported("missing formula end tag", cell.address()))?;
-            patches.push(Patch {
+            texts.push(super::FormulaTextTransform {
                 span: cell.formula_open.end..cell.formula_open.end + close,
-                replacement: quick_xml::escape::escape(&lowered)
-                    .replace('\r', "&#13;")
-                    .into_bytes(),
+                text: lowered,
             });
         }
     }
-    Ok(patches)
+    Ok(texts)
 }

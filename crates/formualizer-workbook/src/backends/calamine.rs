@@ -29,7 +29,7 @@ use quick_xml::events::{BytesRef, BytesStart, Event};
 use quick_xml::name::QName;
 use zip::ZipArchive;
 
-mod compressed_evidence;
+use crate::source_formula_evidence as compressed_evidence;
 mod formula_replay;
 mod inert_sheets;
 pub(crate) mod name_references;

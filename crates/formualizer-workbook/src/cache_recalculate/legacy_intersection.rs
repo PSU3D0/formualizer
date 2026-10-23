@@ -810,6 +810,32 @@ pub(super) fn patches(
     external_range_names: Option<&HashSet<String>>,
     options: &XlsxRecalculateOptions,
 ) -> Result<(Vec<Patch>, Stats), IoError> {
+    let (texts, stats) = lowered_texts(
+        sheet_index,
+        plan,
+        chain,
+        table_names,
+        external_range_names,
+        options,
+    )?;
+    Ok((
+        texts
+            .into_iter()
+            .map(super::FormulaTextTransform::into_patch)
+            .collect(),
+        stats,
+    ))
+}
+
+/// The same conservative legacy lowering, without an XML transport copy.
+pub(super) fn lowered_texts(
+    sheet_index: usize,
+    plan: &SheetPlan,
+    chain: &CalcChain,
+    table_names: &[String],
+    external_range_names: Option<&HashSet<String>>,
+    options: &XlsxRecalculateOptions,
+) -> Result<(Vec<super::FormulaTextTransform>, Stats), IoError> {
     let mut stats = Stats::default();
     let mut out = Vec::new();
     if chain.cells.get(sheet_index).is_none_or(FxHashSet::is_empty) {
@@ -869,11 +895,9 @@ pub(super) fn patches(
             continue;
         };
         stats.rewritten += 1;
-        out.push(Patch {
+        out.push(super::FormulaTextTransform {
             span: cell.formula_open.end..cell.formula_open.end + close,
-            replacement: quick_xml::escape::escape(&text)
-                .replace('\r', "&#13;")
-                .into_bytes(),
+            text,
         });
     }
     Ok((out, stats))
