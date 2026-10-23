@@ -121,7 +121,7 @@ fn compare_scan(
 ) {
     let new = scan_outcome(
         |o, l| {
-            sheet::scan_uncounted(bytes, options, mode, o, l)
+            super::oracles::worksheet_intermediate::scan_uncounted(bytes, options, mode, o, l)
                 .map(|scan| sheet::reference::normalize(scan, bytes))
         },
         observed,
