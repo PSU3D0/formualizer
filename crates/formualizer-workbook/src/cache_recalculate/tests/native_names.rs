@@ -5,7 +5,12 @@ use std::io::Write;
 
 fn assert_name_parity(bytes: &[u8], workbook: &[u8], sheets: &[package::Sheet]) {
     let mut old = CalamineAdapter::open_bytes(bytes.to_vec()).unwrap();
-    let mut native = NativeNames::new(workbook, sheets, None);
+    let mut native = NativeNames::new(
+        workbook,
+        sheets,
+        None,
+        native_names::NameImportPolicy::STRICT_REFERENCED,
+    );
     let inert = sheets.iter().any(|sheet| sheet.inert);
     assert_eq!(
         format!("{:?}", old.validate_calculation_names(&[], inert)),
@@ -149,7 +154,12 @@ fn listed_native_name_metadata_matches_strict_adapter() {
         )
         .unwrap();
         let mut old = CalamineAdapter::open_bytes(bytes.clone()).unwrap();
-        let mut native = NativeNames::new(&workbook, &admission.sheets, None);
+        let mut native = NativeNames::new(
+            &workbook,
+            &admission.sheets,
+            None,
+            native_names::NameImportPolicy::STRICT_REFERENCED,
+        );
         if let Some(external) = admission.external {
             let values = std::sync::Arc::new(external.values);
             old.skip_external_names(external.skipped_names.clone());

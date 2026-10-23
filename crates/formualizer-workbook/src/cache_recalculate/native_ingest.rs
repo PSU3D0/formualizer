@@ -72,7 +72,12 @@ pub(super) fn ingest_source<'a>(
         "xl/workbook.xml",
         options.limits.max_worksheet_bytes,
     )?;
-    let mut names = native_names::NativeNames::new(&workbook, &sheets, options.cancel.clone());
+    let mut names = native_names::NativeNames::new(
+        &workbook,
+        &sheets,
+        options.cancel.clone(),
+        native_names::NameImportPolicy::STRICT_REFERENCED,
+    );
     checkpoint(&options.cancel)?;
     let mut config = options.eval_config.clone();
     config.date_system = date_system;

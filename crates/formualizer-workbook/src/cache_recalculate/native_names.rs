@@ -1,6 +1,6 @@
-//! Private native calculation-name plane. The strict calculation algorithms
-//! are copied verbatim from the old adapter except visibility/type paths;
-//! workbook XML parsing is separate from all Calamine reader APIs.
+//! Calculation-name import from immutable workbook XML.
+//! Scoped and unscoped scans deliberately preserve distinct reader compatibility.
+//! Import policy is fixed before dependency or grounding caches are populated.
 use super::package;
 use crate::traits::{DefinedName, DefinedNameDefinition, DefinedNameScope};
 use crate::xlsx::ingest::name_parsing::NameParsing;
@@ -33,16 +33,28 @@ struct CalculationNameIndex {
     sheets: HashMap<String, usize>,
 }
 
+/// Immutable selection of name import and validation semantics.
+#[derive(Clone, Copy)]
+pub(super) struct NameImportPolicy {
+    referenced_only: bool,
+    strict_validation: bool,
+}
+impl NameImportPolicy {
+    pub(super) const STRICT_REFERENCED: Self = Self {
+        referenced_only: true,
+        strict_validation: true,
+    };
+}
+
 pub(super) struct NativeNames {
     raw: Vec<(String, String, Option<usize>)>,
     calamine_defined_names: Vec<(String, String)>,
-    cached_names: Option<Vec<String>>,
+    sheet_names: Vec<String>,
     defined_names: OnceLock<Vec<DefinedName>>,
     name_index: OnceLock<CalculationNameIndex>,
     name_analysis: OnceLock<CalculationNameAnalysis>,
     grounded_names: OnceLock<Vec<Option<ASTNode>>>,
-    referenced_only_names: bool,
-    strict_calculation_names: bool,
+    policy: NameImportPolicy,
     unregistrable_names: HashSet<String>,
     external_values: Option<Arc<crate::cached_external_links::ExternalValues>>,
     skipped_external_names: Vec<String>,
@@ -56,6 +68,7 @@ impl NativeNames {
         bytes: &[u8],
         sheets: &[package::Sheet],
         cancel: Option<CancelToken>,
+        policy: NameImportPolicy,
     ) -> Self {
         let calamine_defined_names = Self::scan_names(bytes, false)
             .into_iter()
@@ -71,13 +84,12 @@ impl NativeNames {
         Self {
             raw,
             calamine_defined_names,
-            cached_names: Some(sheets.iter().map(|s| s.name.clone()).collect()),
+            sheet_names: sheets.iter().map(|s| s.name.clone()).collect(),
             defined_names: OnceLock::new(),
             name_index: OnceLock::new(),
             name_analysis: OnceLock::new(),
             grounded_names: OnceLock::new(),
-            referenced_only_names: false,
-            strict_calculation_names: false,
+            policy,
             unregistrable_names: HashSet::new(),
             external_values: None,
             skipped_external_names: Vec::new(),
@@ -99,23 +111,12 @@ impl NativeNames {
     fn raw_calculation_names(&self) -> &Vec<(String, String, Option<usize>)> {
         &self.raw
     }
-    // Source recalc projects inert positions to empty worksheets before the old
-    // adapter opens them. Its projected name plane therefore has no omitted
-    // scopes; the separate source-level inert-sheet guard remains authoritative.
-    fn is_inert_sheet(&self, _name: &str) -> bool {
-        false
-    }
-    fn inert_scope(&self, scope: Option<usize>) -> bool {
-        scope
-            .and_then(|i| self.cached_names.as_ref()?.get(i))
-            .is_some_and(|s| self.is_inert_sheet(s))
-    }
     fn lazy_defined_names(&self) -> &Vec<DefinedName> {
         self.defined_names.get_or_init(|| {
             if self.calamine_defined_names.is_empty() {
                 return Vec::new();
             }
-            let sheets = self.cached_names.as_deref().unwrap_or_default();
+            let sheets = &self.sheet_names;
             let parsed: Vec<_> = self
                 .raw
                 .iter()
@@ -190,25 +191,14 @@ impl NativeNames {
         out
     }
     fn external_admitted(&self, raw: &str) -> bool {
-        #[cfg(feature = "calamine")]
-        {
-            self.external_values
-                .as_ref()
-                .is_some_and(|values| values.contains(raw))
-        }
-        #[cfg(not(feature = "calamine"))]
-        {
-            let _ = raw;
-            false
-        }
+        self.external_values
+            .as_ref()
+            .is_some_and(|values| values.contains(raw))
     }
 
     fn grounded_calculation_name(&self, i: usize) -> Option<ASTNode> {
-        if self.inert_scope(self.raw_calculation_names()[i].2) {
-            return None;
-        }
         let name = &self.raw_calculation_names()[i].0;
-        if self.referenced_only_names
+        if self.policy.referenced_only
             && !self.legacy_calculation_name(name)
             && self.unregistrable_names.contains(&name.to_lowercase())
         {
@@ -237,7 +227,7 @@ impl NativeNames {
         if Self::cancellation_checkpoint(self.cancel.as_ref()).is_err() {
             return None;
         }
-        let sheets = self.cached_names.as_deref().unwrap_or_default();
+        let sheets = &self.sheet_names;
         if scope.is_some_and(|id| id >= sheets.len()) {
             return None;
         }
@@ -370,7 +360,7 @@ impl NativeNames {
                 names_exist &= self.calculation_name_index(name, scope).is_some();
             }
         });
-        ((!self.referenced_only_names || self.legacy_calculation_name(name) || names_exist)
+        ((!self.policy.referenced_only || self.legacy_calculation_name(name) || names_exist)
             && ground(
                 &mut ast,
                 scope.and_then(|id| sheets.get(id)),
@@ -408,7 +398,7 @@ impl NativeNames {
                 }
                 let mut deps = HashSet::new();
                 let referenced_only =
-                    self.referenced_only_names && !self.legacy_calculation_name(name);
+                    self.policy.referenced_only && !self.legacy_calculation_name(name);
                 let ast = if referenced_only {
                     formualizer_parse::parser::parse(format!(
                         "={}",
@@ -445,7 +435,7 @@ impl NativeNames {
     }
 
     fn calculation_name_index(&self, name: &str, scope: Option<usize>) -> Option<usize> {
-        if !self.referenced_only_names {
+        if !self.policy.referenced_only {
             return self.legacy_name_index(name, scope);
         }
         let (name, scope) = if let Some((sheet, name)) = name.rsplit_once('!') {
@@ -503,13 +493,7 @@ impl NativeNames {
                         .get_or_insert(i);
                 }
             }
-            for (i, sheet) in self
-                .cached_names
-                .as_deref()
-                .unwrap_or_default()
-                .iter()
-                .enumerate()
-            {
+            for (i, sheet) in self.sheet_names.iter().enumerate() {
                 if Self::cancellation_checkpoint(self.cancel.as_ref()).is_err() {
                     return index;
                 }
@@ -531,13 +515,11 @@ impl NativeNames {
     fn legacy_calculation_name(&self, name: &str) -> bool {
         let name = name.to_ascii_lowercase();
         let legacy = name.starts_with("_xlnm.");
-        #[cfg(feature = "calamine")]
-        let legacy = legacy || self.skipped_external_names.contains(&name);
-        legacy
+        legacy || self.skipped_external_names.contains(&name)
     }
 
     fn skippable_name_registration_error(&self, name: &str, error: &ExcelError) -> bool {
-        self.referenced_only_names
+        self.policy.referenced_only
             && !self.legacy_calculation_name(name)
             && error.kind == ExcelErrorKind::Name
             && error
@@ -576,11 +558,8 @@ impl NativeNames {
         formulas: &[(String, String)],
         admitted_inert_sheets: bool,
     ) -> Result<(), crate::IoError> {
-        self.strict_calculation_names = true;
-        if !self.referenced_only_names {
-            self.name_analysis.take();
-            self.grounded_names.take();
-            self.referenced_only_names = true;
+        if !self.policy.strict_validation {
+            return Ok(());
         }
         let references = |ast: &ASTNode, scope: Option<usize>, out: &mut HashSet<usize>| {
             name_references::visit(ast, |name, indirect| {
@@ -625,9 +604,7 @@ impl NativeNames {
                 f.trim().strip_prefix('=').unwrap_or(f.trim())
             )) {
                 let scope = self
-                    .cached_names
-                    .as_deref()
-                    .unwrap_or_default()
+                    .sheet_names
                     .iter()
                     .position(|s| s.to_lowercase() == sheet.to_lowercase());
                 nonliteral |= references(&ast, scope, &mut used);
@@ -727,10 +704,10 @@ impl NativeNames {
         for (i, _) in raw.iter().enumerate() {
             Self::cancellation_checkpoint(self.cancel.as_ref())
                 .map_err(crate::IoError::Calamine)?;
-            if (self.referenced_only_names && cyclic.contains(&i))
+            if (self.policy.referenced_only && cyclic.contains(&i))
                 || self.grounded_calculation_name(i).is_none()
             {
-                if self.referenced_only_names {
+                if self.policy.referenced_only {
                     pending[i] = usize::MAX;
                 }
                 continue;
@@ -758,7 +735,7 @@ impl NativeNames {
                 }
             }
         }
-        if !self.referenced_only_names && order.len() != raw.len() {
+        if !self.policy.referenced_only && order.len() != raw.len() {
             return Err(crate::IoError::Unsupported {
                 feature: "cyclic calculation name".into(),
                 context: raw[pending.iter().position(|n| *n != 0).unwrap()].0.clone(),
@@ -812,12 +789,12 @@ impl NativeNames {
         engine: &mut Engine<super::WBResolver>,
     ) -> Result<(), calamine::Error> {
         let cancel = self.cancel.clone();
-        let scope_names = self.cached_names.clone().unwrap_or_default();
+        let scope_names = self.sheet_names.clone();
         {
             use rustc_hash::FxHashSet;
 
             Self::cancellation_checkpoint(cancel.as_ref())?;
-            let mut defined: Vec<_> = if !self.referenced_only_names {
+            let mut defined: Vec<_> = if !self.policy.referenced_only {
                 self.defined_names()?
             } else {
                 self.calculation_name_order()
@@ -829,7 +806,7 @@ impl NativeNames {
                     })
                     .collect()
             };
-            if self.referenced_only_names {
+            if self.policy.referenced_only {
                 // Keep legacy document-name range/literal import unchanged,
                 // including malformed ranges that create a missing sheet.
                 defined.extend(
@@ -842,18 +819,6 @@ impl NativeNames {
                 FxHashSet::default();
 
             for dn in defined {
-                if dn
-                    .scope_sheet
-                    .as_deref()
-                    .is_some_and(|s| self.is_inert_sheet(s))
-                {
-                    continue;
-                }
-                if let DefinedNameDefinition::Range { address } = &dn.definition
-                    && self.is_inert_sheet(&address.sheet)
-                {
-                    continue;
-                }
                 Self::cancellation_checkpoint(cancel.as_ref())?;
                 let key = (dn.scope.clone(), dn.scope_sheet.clone(), dn.name.clone());
                 if !seen.insert(key) {
@@ -945,7 +910,7 @@ impl NativeNames {
             let Some(ast) = self.grounded_calculation_name(index) else {
                 continue;
             };
-            if self.referenced_only_names && self.reads_unregistrable_name(&ast, *local) {
+            if self.policy.referenced_only && self.reads_unregistrable_name(&ast, *local) {
                 // Leave the evaluated reader for the post-ingest name guard,
                 // rather than surfacing a masked name failure as an I/O error.
                 continue;
