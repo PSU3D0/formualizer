@@ -1,6 +1,6 @@
 //! Fused worksheet reader and rule loop; the visitor remains the oracle.
 use super::*;
-pub(in crate::xlsx::recalculate) mod emission;
+pub(in crate::xlsx) mod emission;
 mod generated;
 #[cfg(test)]
 mod path_tests;

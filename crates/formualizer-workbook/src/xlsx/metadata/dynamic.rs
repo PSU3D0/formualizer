@@ -7,8 +7,8 @@
 //! * `rc/@t` is ONE-based into `metadataTypes/metadataType`;
 //! * `rc/@v` is ZERO-based into the `bk` list of the `futureMetadata` block
 //!   whose `name` equals the selected metadata type name.
-use super::sheet::{Cell, SourceIndex, SourceRect};
-use super::{
+use crate::xlsx::recalculate::sheet::{Cell, SourceIndex, SourceRect};
+use crate::xlsx::recalculate::{
     IoError, Patch, XlsxRecalculateOptions, apply_patches, checkpoint, package, unsupported, xml,
 };
 use std::cmp::Reverse;
@@ -559,7 +559,7 @@ fn append_block(m: &DynamicMetadata, options: &XlsxRecalculateOptions) -> Result
 
 /// Build the disjoint prior-footprint ownership of one worksheet and apply
 /// the literal-cache refusals that the scan deferred until classification.
-pub(super) fn own_sheet(
+pub(in crate::xlsx) fn own_sheet(
     index: &SourceIndex,
     cells: &[Cell],
     metadata: Option<&DynamicMetadata>,

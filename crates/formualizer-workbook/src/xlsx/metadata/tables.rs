@@ -1,9 +1,11 @@
 //! Strict, bounded ListObject metadata. The source table part is never edited.
-use super::{IoError, XlsxRecalculateOptions, checkpoint, package, sheet, unsupported, xml};
+use crate::xlsx::recalculate::{
+    IoError, XlsxRecalculateOptions, checkpoint, package, sheet, unsupported, xml,
+};
 use std::collections::HashSet;
 
 #[derive(Debug)]
-pub(super) struct Table {
+pub(in crate::xlsx) struct Table {
     pub name: String,
     pub rect: sheet::SourceRect,
     pub header: bool,
@@ -12,13 +14,13 @@ pub(super) struct Table {
     pub columns: Vec<Column>,
 }
 #[derive(Debug)]
-pub(super) struct Column {
+pub(in crate::xlsx) struct Column {
     pub name: String,
     calculated: bool,
     total: bool,
 }
 #[derive(Default)]
-pub(super) struct Budget {
+pub(in crate::xlsx) struct Budget {
     count: usize,
     columns: usize,
     area: u64,
@@ -91,7 +93,7 @@ fn name(value: &str) -> bool {
         && !matches!(value.to_lowercase().as_str(), "r" | "c")
         && sheet::SourceRect::parse(value).is_err()
 }
-pub(super) fn parse(
+pub(in crate::xlsx) fn parse(
     archive: &mut package::Archive<'_>,
     part: &str,
     options: &XlsxRecalculateOptions,
@@ -349,7 +351,7 @@ pub(super) fn parse(
     Ok(t)
 }
 
-pub(super) fn validate(
+pub(in crate::xlsx) fn validate(
     table: &Table,
     cells: &[sheet::Cell],
     merges: &[sheet::SourceRect],

@@ -1,71 +1,8 @@
-//! Native workbook-wide value context. The existing generic XML walker keeps
-//! its validation/error ordering; worksheet emission semantics are unchanged.
-use super::sheet::machine::emission::DisplayString;
-use super::{IoError, XlsxRecalculateOptions, xml};
+//! Calculation format annotations from immutable workbook style declarations.
+//! Raw style tokens retain their pinned-reader interpretation.
+use crate::xlsx::recalculate::{IoError, XlsxRecalculateOptions, xml};
 use formualizer_eval::format::FormatId;
 use std::collections::HashMap;
-
-#[derive(Debug, Default)]
-pub(super) struct SharedStringTable(Vec<String>);
-impl SharedStringTable {
-    pub(super) fn parse(bytes: &[u8], options: &XlsxRecalculateOptions) -> Result<Self, IoError> {
-        let mut values = Vec::new();
-        let mut current: Option<DisplayString<'_>> = None;
-        let mut closing = None;
-        let mut done = false;
-        xml::walk(bytes, options, |path, node| {
-            let Some(element) = path.last() else {
-                return Ok(());
-            };
-            if done {
-                return Ok(());
-            }
-            // Once a t segment starts, its qualified-name loop consumes even
-            // nested si/sst events before the outer display reader sees them.
-            if let Some(value) = current.as_mut()
-                && value.consuming_text()
-            {
-                value.event(path, &node, bytes)?;
-                return Ok(());
-            }
-            match &node.kind {
-                xml::Kind::Close if current.is_none() && element.local == "sst" => done = true,
-                xml::Kind::Open { empty, .. } if element.local == "si" && current.is_none() => {
-                    if *empty {
-                        // Every si has a positional entry, including <si/>.
-                        values.push(String::new());
-                    } else {
-                        current = Some(DisplayString::default());
-                        closing = Some(element.qualified);
-                    }
-                }
-                xml::Kind::Close if closing == Some(element.qualified) => {
-                    if let Some(value) = current.take() {
-                        values.push(value.finish());
-                    }
-                    closing = None;
-                }
-                _ => {
-                    if let Some(value) = current.as_mut() {
-                        value.event(path, &node, bytes)?;
-                    }
-                }
-            }
-            Ok(())
-        })?;
-        Ok(Self(values))
-    }
-    pub(super) fn len(&self) -> usize {
-        self.0.len()
-    }
-    pub(super) fn get(&self, index: usize) -> Result<&str, IoError> {
-        self.0.get(index).map(String::as_str).ok_or_else(|| {
-            IoError::Calamine(calamine::Error::Xlsx(calamine::XlsxError::Unexpected(
-                "Cell string index not found in shared strings table",
-            )))
-        })
-    }
-}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 enum NumberClass {
@@ -141,9 +78,12 @@ impl NumberClass {
 }
 
 #[derive(Debug, Default)]
-pub(super) struct Styles(Vec<NumberClass>);
+pub(in crate::xlsx) struct Styles(Vec<NumberClass>);
 impl Styles {
-    pub(super) fn parse(bytes: &[u8], options: &XlsxRecalculateOptions) -> Result<Self, IoError> {
+    pub(in crate::xlsx) fn parse(
+        bytes: &[u8],
+        options: &XlsxRecalculateOptions,
+    ) -> Result<Self, IoError> {
         let mut custom = HashMap::new();
         let mut values = Vec::new();
         let mut section = None;
@@ -196,12 +136,12 @@ impl Styles {
         })?;
         Ok(Self(values))
     }
-    pub(super) fn len(&self) -> usize {
+    pub(in crate::xlsx) fn len(&self) -> usize {
         self.0.len()
     }
     /// `style` is the raw source token, not XML-unescaped text. Missing means
     /// unformatted even if style zero is a date; malformed means style zero.
-    pub(super) fn format(&self, style: Option<&str>, number: f64) -> Option<FormatId> {
+    pub(in crate::xlsx) fn format(&self, style: Option<&str>, number: f64) -> Option<FormatId> {
         let raw = style?;
         let index = if raw.bytes().all(|b| b.is_ascii_digit()) {
             raw.parse::<usize>().unwrap_or(0)
@@ -215,7 +155,7 @@ impl Styles {
             .annotation(number)
     }
 }
-pub(super) fn raw_attribute<'a>(
+pub(in crate::xlsx) fn raw_attribute<'a>(
     bytes: &'a [u8],
     node: &xml::Node<'_, '_>,
     name: &str,

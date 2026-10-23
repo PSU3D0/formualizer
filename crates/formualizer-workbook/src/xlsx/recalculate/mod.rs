@@ -1,6 +1,6 @@
 //! Strict cache-only XLSX recalculation, without a rich document model.
 //! Unsupported package/formula cases fail before any output is published.
-pub(super) mod dynamic_metadata;
+pub(super) use crate::xlsx::metadata::dynamic as dynamic_metadata;
 mod error_reasons;
 pub(crate) use crate::cached_external_links as external_links;
 mod geometry;
@@ -10,7 +10,7 @@ mod legacy_intersection;
 mod native_admission;
 mod native_formulas;
 mod native_ingest;
-mod native_metadata;
+pub(super) use crate::xlsx::metadata as native_metadata;
 mod native_names;
 mod native_values;
 pub(crate) use crate::xlsx::package;
@@ -19,7 +19,7 @@ mod result_projection;
 mod shared_qualifiers;
 pub(crate) mod sheet;
 mod table_lowering;
-mod tables;
+pub(super) use crate::xlsx::metadata::tables;
 #[cfg(test)]
 mod tests;
 mod visibility_guard;

@@ -11,9 +11,9 @@ use std::{
 };
 
 #[cfg(any(test, feature = "xlsx-recalc"))]
-pub(super) mod machine;
+pub(in crate::xlsx) mod machine;
 #[cfg(test)]
-pub(super) mod reference;
+pub(in crate::xlsx) mod reference;
 
 /// Inclusive source rectangle in one-based worksheet coordinates (row 1 is
 /// the first row, column 1 is `A`), matching `Cell::row`/`Cell::col`.
@@ -222,7 +222,7 @@ impl Cell {
 }
 /// One serialized worksheet row.
 #[derive(Debug)]
-pub(super) struct RowEntry {
+pub(in crate::xlsx) struct RowEntry {
     pub row: u32,
     /// Start tag through end tag, or the whole self-closing element.
     pub span: Range<usize>,
@@ -236,7 +236,7 @@ pub(super) struct RowEntry {
 }
 /// One serialized cell, formula or not.
 #[derive(Debug)]
-pub(super) struct IndexedCell {
+pub(in crate::xlsx) struct IndexedCell {
     pub row: u32,
     pub col: u32,
     /// Start tag through end tag, or the whole self-closing element.
@@ -255,11 +255,11 @@ pub(super) struct IndexedCell {
     pub formula: Option<usize>,
     /// Literal-cache refusal deferred until ownership is classified: a proven
     /// generated child is masked, any other such literal is still refused.
-    pub(super) literal_refusal: Option<&'static str>,
+    pub(in crate::xlsx) literal_refusal: Option<&'static str>,
 }
 /// Bounded source geometry of one worksheet.
 #[derive(Debug)]
-pub(super) struct SourceIndex {
+pub(in crate::xlsx) struct SourceIndex {
     /// Declared dimension and the span of its `ref="…"` attribute.
     pub dimension: Option<(SourceRect, Range<usize>)>,
     /// `<sheetData>` start tag through end tag (or self-closing element).
@@ -280,7 +280,7 @@ impl SourceIndex {
     }
 }
 #[cfg_attr(test, derive(Debug))]
-pub(super) struct Scan {
+pub(in crate::xlsx) struct Scan {
     pub cells: Vec<Cell>,
     pub table_ids: Vec<String>,
     pub table_merges: Vec<SourceRect>,
@@ -307,7 +307,7 @@ pub(super) struct Scan {
 /// Calamine's fast scalar reader consumes just one raw ASCII text event.
 /// Literal cells must satisfy that assumption; formula caches may instead be
 /// cleared in the transient ingestion view because they are not authority.
-pub(super) fn readable_scalar_cache(cell: &Cell, _bytes: &[u8]) -> bool {
+pub(in crate::xlsx) fn readable_scalar_cache(cell: &Cell, _bytes: &[u8]) -> bool {
     cell.value.as_ref().is_none_or(|v| v.readable)
 }
 /// The `<v>` facts [`readable_scalar_cache`] decides on.
@@ -340,7 +340,7 @@ fn scalar_cache_readable(kind: Option<&str>, value: Option<CacheText<'_>>, bytes
 }
 /// `[A-Z]{1,3}[1-9][0-9]{0,6}` within the grid, which
 /// `parse_a1_1based` reads as the same relative row and column.
-pub(super) use crate::xlsx_xml::plain_coord;
+pub(in crate::xlsx) use crate::xlsx_xml::plain_coord;
 fn coord(value: &str) -> Result<(u32, u32), IoError> {
     if let Some(coord) = plain_coord(value) {
         return Ok(coord);
@@ -538,7 +538,7 @@ fn append<'a>(to: &mut Cow<'a, str>, text: Cow<'a, str>) {
 }
 /// How [`scan`] treats dynamic-array cell metadata.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Mode {
+pub(in crate::xlsx) enum Mode {
     /// No source index. A `cm` attribute stops the scan with
     /// [`Scanned::NeedsIndex`]: until the first anchor no cell can be a
     /// generated child (children follow their top-left anchor in document
@@ -553,7 +553,7 @@ pub(super) enum Mode {
 // scalar hot path instead of adding a heap allocation to every worksheet.
 #[allow(clippy::large_enum_variant)]
 #[cfg_attr(test, derive(Debug))]
-pub(super) enum Scanned {
+pub(in crate::xlsx) enum Scanned {
     Done(Scan),
     /// A `Plain` scan met dynamic cell metadata; rescan `Indexed`.
     NeedsIndex,
@@ -562,10 +562,10 @@ const NEEDS_INDEX: &str = "dynamic cell metadata needs a source index";
 #[cfg(test)]
 thread_local! {
     /// Indexed scans on this thread (tests prove scalar workbooks build none).
-    pub(super) static INDEXED_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    pub(super) static MACHINE_WALKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(in crate::xlsx) static INDEXED_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(in crate::xlsx) static MACHINE_WALKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
-pub(super) fn scan(
+pub(in crate::xlsx) fn scan(
     bytes: &[u8],
     options: &XlsxRecalculateOptions,
     mode: Mode,
@@ -589,7 +589,7 @@ pub(super) fn scan(
     machine::scan_emitting(bytes, options, mode, observed, logical_cells, |_| Ok(()))
 }
 /// Native admission's same counter/shadow seam, with ephemeral value emission.
-pub(super) fn scan_emitting(
+pub(in crate::xlsx) fn scan_emitting(
     bytes: &[u8],
     options: &XlsxRecalculateOptions,
     mode: Mode,
@@ -615,7 +615,7 @@ pub(super) fn scan_emitting(
 }
 /// [`scan`] without the test-only indexed-scan count.
 #[cfg(test)]
-pub(super) fn scan_uncounted(
+pub(in crate::xlsx) fn scan_uncounted(
     bytes: &[u8],
     options: &XlsxRecalculateOptions,
     mode: Mode,
