@@ -401,9 +401,11 @@ struct OpenCell<'a> {
     dynamic: Option<Box<DynamicAttributes>>,
 }
 impl<'a> OpenCell<'a> {
+    #[cfg(test)]
     fn cm(&self) -> Option<u32> {
         self.dynamic.as_ref().and_then(|d| d.cm)
     }
+    #[cfg(test)]
     fn literal_refusal(&self, bytes: &[u8]) -> Option<&'static str> {
         if self.has_formula {
             return None;
@@ -429,6 +431,7 @@ impl<'a> OpenCell<'a> {
     }
     /// Dynamic-array cell rules. Ownership through the
     /// metadata chain is resolved later; this validates the source encoding.
+    #[cfg(test)]
     fn dynamic_anchor_extent(&self) -> Result<Option<SourceRect>, IoError> {
         if self.cm().is_none() && self.formula_kind != "array" {
             return Ok(None);
@@ -581,7 +584,7 @@ pub(super) fn scan(
             *logical_cells,
         );
     }
-    scan_uncounted(bytes, options, mode, observed, logical_cells)
+    machine::scan_emitting(bytes, options, mode, observed, logical_cells, |_| Ok(()))
 }
 /// Native admission's same counter/shadow seam, with ephemeral value emission.
 pub(super) fn scan_emitting(
@@ -608,6 +611,7 @@ pub(super) fn scan_emitting(
     machine::scan_emitting(bytes, options, mode, observed, logical_cells, emit)
 }
 /// [`scan`] without the test-only indexed-scan count.
+#[cfg(test)]
 pub(super) fn scan_uncounted(
     bytes: &[u8],
     options: &XlsxRecalculateOptions,
@@ -731,10 +735,13 @@ impl Tag {
     }
 }
 /// [`xml::path_is`] for the main namespace over classified tags.
+#[cfg(test)]
 fn main_path(tags: &[Tag], names: &[Local]) -> bool {
     tags.len() == names.len() && tags.iter().zip(names).all(|(t, n)| t.main && t.local == *n)
 }
+#[cfg(test)]
 const CELL_PATH: [Local; 4] = [Local::Worksheet, Local::SheetData, Local::Row, Local::C];
+#[cfg(test)]
 fn scan_inner(
     bytes: &[u8],
     options: &XlsxRecalculateOptions,
