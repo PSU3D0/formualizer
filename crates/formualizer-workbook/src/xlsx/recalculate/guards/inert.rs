@@ -1,9 +1,11 @@
 //! Non-calculating sheet positions in the transient adapter view.
-use super::{IoError, SheetPlan, XlsxRecalculateOptions, package, unsupported, xml};
-#[cfg(test)]
-use super::{Patch, apply_patches};
 #[cfg(test)]
 use crate::backends::calamine::CalamineAdapter;
+use crate::xlsx::recalculate::{
+    IoError, SheetPlan, XlsxRecalculateOptions, package, unsupported, xml,
+};
+#[cfg(test)]
+use crate::xlsx::recalculate::{Patch, apply_patches};
 use formualizer_parse::parser::{ASTNode, RefView};
 
 pub(in crate::xlsx) const EMPTY: &str = "<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><sheetData/></worksheet>";
@@ -122,7 +124,7 @@ pub(in crate::xlsx) fn validate_native(
         return Ok(());
     }
     for cell in plans.iter().flat_map(|plan| &plan.cells) {
-        super::checkpoint(&options.cancel)?;
+        crate::xlsx::recalculate::checkpoint(&options.cancel)?;
         if !cell.formula_text.is_empty()
             && let Ok(ast) = formualizer_parse::parser::parse(format!("={}", cell.formula_text))
         {
@@ -249,7 +251,7 @@ pub(in crate::xlsx) fn validate(
         return Ok(());
     }
     for cell in plans.iter().flat_map(|p| &p.cells) {
-        super::checkpoint(&options.cancel)?;
+        crate::xlsx::recalculate::checkpoint(&options.cancel)?;
         if !cell.formula_text.is_empty()
             && let Ok(ast) = formualizer_parse::parser::parse(format!("={}", cell.formula_text))
         {

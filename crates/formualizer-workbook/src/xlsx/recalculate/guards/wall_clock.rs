@@ -1,7 +1,7 @@
 //! Portable builds must never publish ambient date/time values from the
 //! engine's epoch fallback. A caller-supplied deterministic instant is valid.
 #![cfg(not(feature = "system-clock"))]
-use super::{IoError, XlsxRecalculateOptions, unsupported};
+use crate::xlsx::recalculate::{IoError, XlsxRecalculateOptions, unsupported};
 use formualizer_parse::parser::{ASTNode, ASTNodeType};
 fn needs_clock(ast: &ASTNode) -> bool {
     match &ast.node_type {
@@ -23,7 +23,7 @@ pub(in crate::xlsx) fn validate(
     context: &str,
     options: &XlsxRecalculateOptions,
 ) -> Result<(), IoError> {
-    super::checkpoint(&options.cancel)?;
+    crate::xlsx::recalculate::checkpoint(&options.cancel)?;
     if options.eval_config.deterministic_mode.is_enabled() {
         return Ok(());
     }

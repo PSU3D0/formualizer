@@ -4,7 +4,8 @@ pub(super) use crate::xlsx::metadata::dynamic as dynamic_metadata;
 mod error_reasons;
 pub(crate) use crate::cached_external_links as external_links;
 mod geometry;
-pub(super) mod inert_sheets;
+mod guards;
+pub(super) use guards::inert as inert_sheets;
 pub(super) mod ingest_view;
 pub(super) mod legacy_intersection;
 mod native_admission;
@@ -22,9 +23,9 @@ pub(super) mod table_lowering;
 pub(super) use crate::xlsx::metadata::tables;
 #[cfg(test)]
 pub(super) mod tests;
-mod visibility_guard;
+use guards::visibility as visibility_guard;
 #[cfg(not(feature = "system-clock"))]
-pub(super) mod wall_clock_guard;
+pub(super) use guards::wall_clock as wall_clock_guard;
 pub(super) mod xml;
 
 #[cfg(test)]

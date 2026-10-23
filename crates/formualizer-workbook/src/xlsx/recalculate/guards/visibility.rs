@@ -1,8 +1,10 @@
 //! Refuse reducers whose row-visibility semantics cannot be represented by
 //! the source ingestion view. Only workbooks with stored hidden rows or active filters pay for
 //! this formula inspection pass.
-use super::{IoError, SheetPlan, XlsxRecalculateOptions, checkpoint, package, unsupported};
 use crate::workbook::WBResolver;
+use crate::xlsx::recalculate::{
+    IoError, SheetPlan, XlsxRecalculateOptions, checkpoint, package, unsupported,
+};
 use formualizer_eval::engine::{Engine, named_range::NamedDefinition};
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 #[cfg(test)]
@@ -10,7 +12,7 @@ thread_local! {
     static INSPECTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 #[cfg(test)]
-pub(super) fn take_inspections() -> usize {
+pub(in crate::xlsx::recalculate) fn take_inspections() -> usize {
     INSPECTIONS.with(|n| n.replace(0))
 }
 fn hidden(
@@ -328,7 +330,7 @@ fn inspect(ast: &ASTNode, c: &Context<'_>) -> Result<(), IoError> {
         _ => Ok(()),
     }
 }
-pub(super) fn validate(
+pub(in crate::xlsx::recalculate) fn validate(
     engine: &Engine<WBResolver>,
     sheets: &[package::Sheet],
     plans: &[SheetPlan],
