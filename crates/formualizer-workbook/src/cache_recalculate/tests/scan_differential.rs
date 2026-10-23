@@ -8,6 +8,8 @@
 //! over worksheets from the committed XLSX fixtures and an ignored check
 //! over a list of XLSX files.
 use super::super::{IoError, XlsxRecalculateLimits, XlsxRecalculateOptions, sheet, xml};
+mod literal_emission;
+mod standalone;
 use std::cell::Cell;
 use std::io::Read;
 
@@ -16,7 +18,7 @@ thread_local! {
     static COMPARING: Cell<bool> = const { Cell::new(false) };
 }
 /// Run `f` unless a comparison is already running on this thread.
-fn exclusive(f: impl FnOnce()) {
+pub(in crate::cache_recalculate) fn exclusive(f: impl FnOnce()) {
     if COMPARING.with(Cell::get) {
         return;
     }
@@ -125,6 +127,15 @@ fn compare_scan(
         observed,
         logical,
     );
+    let machine = scan_outcome(
+        |o, l| {
+            sheet::machine::scan(bytes, options, mode, o, l)
+                .map(|scan| sheet::reference::normalize(scan, bytes))
+        },
+        observed,
+        logical,
+    );
+    assert_eq!(machine, new, "flat worksheet machine ({mode:?}) diverged");
     let old = scan_outcome(
         |o, l| sheet::reference::scan(bytes, options, mode, o, l),
         observed,
@@ -669,6 +680,25 @@ fn worksheet_attribute_fast_path_and_fallback_match_the_reference() {
                 "<worksheet xmlns=\"{MAIN}\" xmlns:p=\"{MAIN}\"><sheetData><row {attrs}><c r=\"A1\" xmlns:p=\"urn:foreign\"><v>0</v></c><p:c r=\"B1\"><p:v>0</p:v></p:c></row><row r=\"2\"><c xmlns:p=\"{MAIN}\" r=\"A2\"><p:f>1</p:f><v>0</v></c></row></sheetData></worksheet>"
             );
             compare_all(sheet.as_bytes(), &options);
+        }
+    }
+}
+
+#[test]
+fn machine_position_restoration_and_refusal_priority_match_the_reference() {
+    for body in [
+        "<sheetData><row r=\"1\"><c r=\"A1\"><other><a><t>ignored</t></a></other><f>1</f><v>1</v></c></row></sheetData>",
+        "<sheetData><row r=\"1\"><c r=\"A1\" t=\"inlineStr\"><is><r><t>x</t></r><t>y</t></is></c><c r=\"B1\"><f>1</f></c></row></sheetData>",
+        "<cols><col min=\"1\" max=\"1\"/></cols><sheetData/><extLst><ext><other/></ext></extLst><sheetFormatPr zeroHeight=\"1\"/>",
+        "<sheetData><row r=\"1\"><c r=\"A1\"><other><f>1</f></other></c></row></sheetData>",
+        "<sheetData><row r=\"1\"><c r=\"A1\"><f>1<other/></f></c></row></sheetData>",
+        "<sheetData><row r=\"1\"><c r=\"A1\"><f t=\"shared\" si=\"4294967295\" ref=\"A1\">1</f></c></row></sheetData>",
+        "<sheetData><row r=\"1\"><c r=\"A1\"><f t=\"shared\" si=\"1\"/></c><c r=\"B1\"><f t=\"shared\" si=\"2\"/></c></row></sheetData><tableParts count=\"1\"/>",
+        "<sheetData><row r=\"1\"><c r=\"A1\"><f t=\"shared\" si=\"1\"/></c><c r=\"B1\"><f t=\"shared\" si=\"2\">1</f></c></row></sheetData>",
+    ] {
+        let doc = format!("<worksheet xmlns=\"{MAIN}\">{body}</worksheet>");
+        for options in option_sets() {
+            compare_all(doc.as_bytes(), &options);
         }
     }
 }

@@ -10,6 +10,8 @@ use std::{
     ops::{Deref, Range},
 };
 
+#[cfg(any(test, feature = "xlsx-recalc"))]
+pub(super) mod machine;
 #[cfg(test)]
 pub(super) mod reference;
 
@@ -288,6 +290,11 @@ pub(super) struct Scan {
     pub rows_hidden_by_default: bool,
     /// Whether the worksheet declares a `<dimension>`.
     pub has_dimension: bool,
+    /// Original attribute value bytes, excluding quotes; no normalization.
+    pub raw_dimension_span: Option<Range<usize>>,
+    /// Earliest raw row-r token incompatible with the pinned reader. Advisory
+    /// provenance only: normalized admission and its refusal order are intact.
+    pub raw_row_refusal_span: Option<Range<usize>>,
     pub active_filters: Vec<SourceRect>,
     /// Built only when requested.
     pub index: Option<SourceIndex>,
@@ -327,7 +334,7 @@ fn scalar_cache_readable(kind: Option<&str>, value: Option<CacheText<'_>>, bytes
         None | Some("n") => v.text.parse::<f64>().is_ok_and(f64::is_finite),
         Some("s") => v.text.parse::<u32>().is_ok(),
         Some("b") => matches!(v.text, "0" | "1"),
-        Some("e") => v.text.parse::<calamine::CellErrorType>().is_ok(),
+        Some("e") => super::native_formulas::parse_error_token(v.text).is_ok(),
         _ => true,
     }
 }
@@ -394,9 +401,11 @@ struct OpenCell<'a> {
     dynamic: Option<Box<DynamicAttributes>>,
 }
 impl<'a> OpenCell<'a> {
+    #[cfg(test)]
     fn cm(&self) -> Option<u32> {
         self.dynamic.as_ref().and_then(|d| d.cm)
     }
+    #[cfg(test)]
     fn literal_refusal(&self, bytes: &[u8]) -> Option<&'static str> {
         if self.has_formula {
             return None;
@@ -405,7 +414,7 @@ impl<'a> OpenCell<'a> {
             && self
                 .value
                 .as_ref()
-                .is_none_or(|v| v.text.parse::<calamine::CellErrorType>().is_err())
+                .is_none_or(|v| super::native_formulas::parse_error_token(&v.text).is_err())
         {
             return Some("literal error value unsupported by Calamine");
         }
@@ -422,6 +431,7 @@ impl<'a> OpenCell<'a> {
     }
     /// Dynamic-array cell rules. Ownership through the
     /// metadata chain is resolved later; this validates the source encoding.
+    #[cfg(test)]
     fn dynamic_anchor_extent(&self) -> Result<Option<SourceRect>, IoError> {
         if self.cm().is_none() && self.formula_kind != "array" {
             return Ok(None);
@@ -553,6 +563,7 @@ const NEEDS_INDEX: &str = "dynamic cell metadata needs a source index";
 thread_local! {
     /// Indexed scans on this thread (tests prove scalar workbooks build none).
     pub(super) static INDEXED_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(super) static MACHINE_WALKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 pub(super) fn scan(
     bytes: &[u8],
@@ -563,6 +574,7 @@ pub(super) fn scan(
 ) -> Result<Scanned, IoError> {
     #[cfg(test)]
     {
+        MACHINE_WALKS.with(|n| n.set(n.get() + 1));
         if mode == Mode::Indexed {
             INDEXED_SCANS.with(|n| n.set(n.get() + 1));
         }
@@ -574,9 +586,35 @@ pub(super) fn scan(
             *logical_cells,
         );
     }
-    scan_uncounted(bytes, options, mode, observed, logical_cells)
+    machine::scan_emitting(bytes, options, mode, observed, logical_cells, |_| Ok(()))
+}
+/// Native admission's same counter/shadow seam, with ephemeral value emission.
+pub(super) fn scan_emitting(
+    bytes: &[u8],
+    options: &XlsxRecalculateOptions,
+    mode: Mode,
+    observed: &mut usize,
+    logical_cells: &mut u64,
+    emit: impl FnMut(machine::emission::Literal<'_>) -> Result<(), IoError>,
+) -> Result<Scanned, IoError> {
+    #[cfg(test)]
+    {
+        MACHINE_WALKS.with(|n| n.set(n.get() + 1));
+        if mode == Mode::Indexed {
+            INDEXED_SCANS.with(|n| n.set(n.get() + 1));
+        }
+        super::tests::scan_differential::shadow_scan(
+            bytes,
+            options,
+            mode,
+            *observed,
+            *logical_cells,
+        );
+    }
+    machine::scan_emitting(bytes, options, mode, observed, logical_cells, emit)
 }
 /// [`scan`] without the test-only indexed-scan count.
+#[cfg(test)]
 pub(super) fn scan_uncounted(
     bytes: &[u8],
     options: &XlsxRecalculateOptions,
@@ -700,10 +738,13 @@ impl Tag {
     }
 }
 /// [`xml::path_is`] for the main namespace over classified tags.
+#[cfg(test)]
 fn main_path(tags: &[Tag], names: &[Local]) -> bool {
     tags.len() == names.len() && tags.iter().zip(names).all(|(t, n)| t.main && t.local == *n)
 }
+#[cfg(test)]
 const CELL_PATH: [Local; 4] = [Local::Worksheet, Local::SheetData, Local::Row, Local::C];
+#[cfg(test)]
 fn scan_inner(
     bytes: &[u8],
     options: &XlsxRecalculateOptions,
@@ -1371,6 +1412,8 @@ fn scan_inner(
         hidden_rows,
         rows_hidden_by_default,
         has_dimension: dimension.is_some(),
+        raw_dimension_span: None,
+        raw_row_refusal_span: None,
         table_merges,
         table_ids,
         cells,
@@ -1428,6 +1471,11 @@ mod coord_tests {
             inputs.push(s);
         }
         for input in inputs {
+            assert_eq!(
+                super::machine::plain_coord(&input),
+                plain_coord(&input),
+                "{input}"
+            );
             if let Some((row, col)) = plain_coord(&input) {
                 assert_eq!(
                     parse_a1_1based(&input).ok(),

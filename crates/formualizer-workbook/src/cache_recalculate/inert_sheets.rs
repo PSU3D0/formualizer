@@ -1,12 +1,14 @@
 //! Non-calculating sheet positions in the transient adapter view.
-use super::{
-    IoError, Patch, SheetPlan, XlsxRecalculateOptions, apply_patches, package, unsupported, xml,
-};
+use super::{IoError, SheetPlan, XlsxRecalculateOptions, package, unsupported, xml};
+#[cfg(test)]
+use super::{Patch, apply_patches};
+#[cfg(test)]
 use crate::backends::calamine::CalamineAdapter;
 use formualizer_parse::parser::{ASTNode, RefView};
 
 pub(super) const EMPTY: &str = "<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><sheetData/></worksheet>";
 
+#[cfg(test)]
 pub(super) fn project(
     archive: &mut package::Archive<'_>,
     sheets: &[package::Sheet],
@@ -79,6 +81,59 @@ pub(super) fn project(
     Ok(())
 }
 
+/// Preserve the old projection collision refusal without creating any view.
+pub(super) fn validate_projection_names(
+    archive: &mut package::Archive<'_>,
+    sheets: &[package::Sheet],
+    options: &XlsxRecalculateOptions,
+) -> Result<(), IoError> {
+    let mut ids = Vec::new();
+    for (i, sheet) in sheets.iter().enumerate().filter(|(_, sheet)| sheet.inert) {
+        if archive
+            .file_names()
+            .any(|name| name == format!("xl/worksheets/__inert_sheet_{i}.xml"))
+        {
+            return Err(unsupported("inert sheet projection collision", &sheet.name));
+        }
+        ids.push(format!("__inert_sheet_{i}"));
+    }
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let part = "xl/_rels/workbook.xml.rels";
+    let data = package::read_part(archive, part, options.limits.max_worksheet_bytes)?;
+    xml::walk(&data, options, |_, node| {
+        if node
+            .value("Id")
+            .is_some_and(|id| ids.iter().any(|expected| expected == id))
+        {
+            return Err(unsupported("inert sheet projection collision", part));
+        }
+        Ok(())
+    })
+}
+pub(super) fn validate_native(
+    sheets: &[package::Sheet],
+    plans: &[SheetPlan],
+    names: Vec<ASTNode>,
+    options: &XlsxRecalculateOptions,
+) -> Result<(), IoError> {
+    if !sheets.iter().any(|sheet| sheet.inert) {
+        return Ok(());
+    }
+    for cell in plans.iter().flat_map(|plan| &plan.cells) {
+        super::checkpoint(&options.cancel)?;
+        if !cell.formula_text.is_empty()
+            && let Ok(ast) = formualizer_parse::parser::parse(format!("={}", cell.formula_text))
+        {
+            check(&ast, sheets)?;
+        }
+    }
+    for ast in names {
+        check(&ast, sheets)?;
+    }
+    Ok(())
+}
 fn check_indirect(ast: &ASTNode, sheets: &[package::Sheet]) -> Result<(), IoError> {
     use formualizer_parse::parser::ASTNodeType as N;
     match &ast.node_type {
@@ -183,6 +238,7 @@ fn check(ast: &ASTNode, sheets: &[package::Sheet]) -> Result<(), IoError> {
     check_indirect(ast, sheets)
 }
 
+#[cfg(test)]
 pub(super) fn validate(
     sheets: &[package::Sheet],
     plans: &[SheetPlan],
