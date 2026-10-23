@@ -16,11 +16,10 @@ use formualizer_common::RangeAddress;
 use formualizer_eval::arrow_store::{IngestBuilder, OverlayValue, map_error_code};
 use formualizer_eval::engine::ingest::EngineLoadStream;
 use formualizer_eval::engine::{
-    CancelToken, DeferredFormulaPackage, Engine as EvalEngine, ExplicitPartitionLegacyMembers,
-    FormulaCompressedPreparation, FormulaCompressedSourceBatch, FormulaCompressedSourceReport,
-    FormulaIngestBatch, FormulaIngestRecord, FormulaSpoolDiskPolicy, PartitionLegacyMember,
-    PartitionLegacyMemberKind, PartitionReconciliation, PartitionedSourceFormulaFamily,
-    SourceCoord, SourceFamilyId, SourceFormulaFamily, SourceFormulaOrder, SourceRect,
+    CancelToken, DeferredFormulaPackage, Engine as EvalEngine, FormulaCompressedPreparation,
+    FormulaCompressedSourceBatch, FormulaCompressedSourceReport, FormulaIngestBatch,
+    FormulaIngestRecord, FormulaSpoolDiskPolicy, PartitionedSourceFormulaFamily, SourceCoord,
+    SourceFamilyId, SourceFormulaFamily, SourceFormulaOrder, SourceRect,
 };
 use formualizer_eval::traits::EvaluationContext;
 use formualizer_parse::parser::{ASTNode, ReferenceType};
@@ -1242,47 +1241,8 @@ impl CalamineAdapter {
             .fragmented
             .into_iter()
             .map(|proposal| {
-                let mut legacy_members: Vec<_> = proposal
-                    .fallback_members
-                    .into_iter()
-                    .map(|coord| PartitionLegacyMember {
-                        coord,
-                        kind: PartitionLegacyMemberKind::SharedFamilyMember,
-                    })
-                    .collect();
-                let mut ordinary_exceptions = 0u64;
-                let mut holes = 0u64;
-                for exclusion in proposal.exclusions {
-                    match exclusion {
-                        compressed_evidence::SourceExclusion::Hole(_) => {
-                            holes = holes.saturating_add(1);
-                        }
-                        compressed_evidence::SourceExclusion::OrdinaryFormula(coord) => {
-                            ordinary_exceptions = ordinary_exceptions.saturating_add(1);
-                            legacy_members.push(PartitionLegacyMember {
-                                coord,
-                                kind: PartitionLegacyMemberKind::OrdinaryException,
-                            });
-                        }
-                    }
-                }
-                let legacy_members = ExplicitPartitionLegacyMembers::try_new(legacy_members)
-                    .map_err(|reason| calamine::Error::Io(std::io::Error::other(reason)))?;
-                Ok(PartitionedSourceFormulaFamily {
-                    source_id: proposal.source_id,
-                    source_order: proposal.source_order,
-                    template_origin0: proposal.anchor_coord0,
-                    template_text: proposal.anchor_text,
-                    declared: proposal.declared,
-                    surviving_member_count: proposal.member_count,
-                    fragments: proposal.fragments,
-                    legacy_members,
-                    reconciliation: PartitionReconciliation {
-                        shared_members: proposal.member_count,
-                        ordinary_exceptions,
-                        holes,
-                    },
-                })
+                crate::xlsx::ingest::partition::convert(proposal)
+                    .map_err(|reason| calamine::Error::Io(std::io::Error::other(reason)))
             })
             .collect::<Result<Vec<_>, calamine::Error>>()?;
         let deferred_source_coordinates = deferred_source_coordinates

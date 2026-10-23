@@ -252,10 +252,9 @@ use super::{XlsxRecalculateOptions, checkpoint};
 use crate::workbook::WBResolver;
 use compressed_evidence::{EvidenceRecord, MonotonicFormulaEvidence};
 use formualizer_eval::engine::{
-    DeferredFormulaPackage, Engine, ExplicitPartitionLegacyMembers, FormulaCompressedPreparation,
-    FormulaCompressedSourceReport, FormulaIngestRecord, FormulaPlaneMode, FormulaSpoolDiskPolicy,
-    PartitionLegacyMember, PartitionLegacyMemberKind, PartitionReconciliation,
-    PartitionedSourceFormulaFamily, SourceFamilyId, SourceFormulaFamily, SourceFormulaOrder,
+    DeferredFormulaPackage, Engine, FormulaCompressedPreparation, FormulaCompressedSourceReport,
+    FormulaIngestRecord, FormulaPlaneMode, FormulaSpoolDiskPolicy, PartitionedSourceFormulaFamily,
+    SourceFamilyId, SourceFormulaFamily, SourceFormulaOrder,
 };
 use formula_replay::{
     CalamineDeferredFormulaReplay as SourceDeferredFormulaReplay, FormulaReplaySpool,
@@ -382,44 +381,8 @@ pub(super) fn stage(
         .fragmented
         .into_iter()
         .map(|proposal| {
-            let mut members: Vec<_> = proposal
-                .fallback_members
-                .into_iter()
-                .map(|coord| PartitionLegacyMember {
-                    coord,
-                    kind: PartitionLegacyMemberKind::SharedFamilyMember,
-                })
-                .collect();
-            let mut ordinary_exceptions = 0u64;
-            let mut holes = 0u64;
-            for exclusion in proposal.exclusions {
-                match exclusion {
-                    compressed_evidence::SourceExclusion::Hole(_) => holes += 1,
-                    compressed_evidence::SourceExclusion::OrdinaryFormula(coord) => {
-                        ordinary_exceptions += 1;
-                        members.push(PartitionLegacyMember {
-                            coord,
-                            kind: PartitionLegacyMemberKind::OrdinaryException,
-                        });
-                    }
-                }
-            }
-            Ok(PartitionedSourceFormulaFamily {
-                source_id: proposal.source_id,
-                source_order: proposal.source_order,
-                template_origin0: proposal.anchor_coord0,
-                template_text: proposal.anchor_text,
-                declared: proposal.declared,
-                surviving_member_count: proposal.member_count,
-                fragments: proposal.fragments,
-                legacy_members: ExplicitPartitionLegacyMembers::try_new(members)
-                    .map_err(|error| IoError::Calamine(engine_error(error)))?,
-                reconciliation: PartitionReconciliation {
-                    shared_members: proposal.member_count,
-                    ordinary_exceptions,
-                    holes,
-                },
-            })
+            crate::xlsx::ingest::partition::convert(proposal)
+                .map_err(|error| IoError::Calamine(engine_error(error)))
         })
         .collect::<Result<Vec<_>, IoError>>()?;
     let spool_bytes = if count == 0 {
