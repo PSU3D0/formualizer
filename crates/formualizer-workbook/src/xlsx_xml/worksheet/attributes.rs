@@ -1,33 +1,67 @@
-//! Tag-specific lexical attribute fast path. Uncommon syntax is replayed
-//! through the generic validator on the same event, before semantic effects.
-use crate::xlsx_xml::{Attribute, Ns, known_attribute};
-use std::borrow::Cow;
+//! Typed worksheet attributes. Unknown names and noncanonical lexical forms
+//! replay through the original binder/validator before any semantic effect.
+use crate::xlsx_xml::known_attribute;
+use std::ops::Range;
 
-/// At most twelve formula attributes, eleven row attributes, or six cell
-/// attributes. Entries retain source order; no 26-slot lookup table is cleared.
-pub(crate) struct HotAttributes<'a> {
-    entries: [Attribute<'a>; 12],
-    len: usize,
+#[derive(Clone)]
+pub(crate) struct RawValue<'a> {
+    pub(crate) value: &'a str,
+    pub(crate) span: Range<usize>,
 }
-impl Default for HotAttributes<'_> {
-    fn default() -> Self {
-        Self {
-            entries: std::array::from_fn(|_| Attribute {
-                ns: Ns::Static(""),
-                local: "",
-                qualified: "",
-                value: Cow::Borrowed(""),
-                span: 0..0,
-            }),
-            len: 0,
+
+macro_rules! attributes {
+    ($name:ident { $($field:ident => $key:literal),* $(,)? }) => {
+        #[derive(Default)]
+        pub(crate) struct $name<'a> { $( $field: Option<RawValue<'a>>, )* }
+        impl<'a> $name<'a> {
+            fn get(&self, key: &str) -> Option<&RawValue<'a>> {
+                match key { $( $key => self.$field.as_ref(), )* _ => None }
+            }
+            fn set(&mut self, key: &str, value: RawValue<'a>) {
+                match key { $( $key => self.$field = Some(value), )* _ => {} }
+            }
         }
-    }
+    };
+}
+attributes!(RowAttrs {
+    r => "r", height => "ht", hidden => "hidden", outline => "outlineLevel",
+    collapsed => "collapsed", spans => "spans",
+});
+attributes!(CellAttrs { r => "r", style => "s", kind => "t", cm => "cm", vm => "vm" });
+attributes!(FormulaAttrs { kind => "t", index => "si", extent => "ref" });
+
+#[derive(Default)]
+pub(crate) enum HotAttributes<'a> {
+    #[default]
+    Empty,
+    Row(RowAttrs<'a>),
+    Cell(CellAttrs<'a>),
+    Formula(FormulaAttrs<'a>),
 }
 impl<'a> HotAttributes<'a> {
+    pub(crate) fn get(&self, key: &str) -> Option<&RawValue<'a>> {
+        match self {
+            Self::Empty => None,
+            Self::Row(a) => a.get(key),
+            Self::Cell(a) => a.get(key),
+            Self::Formula(a) => a.get(key),
+        }
+    }
+    fn set(&mut self, key: &str, value: RawValue<'a>) {
+        match self {
+            Self::Empty => {}
+            Self::Row(a) => a.set(key, value),
+            Self::Cell(a) => a.set(key, value),
+            Self::Formula(a) => a.set(key, value),
+        }
+    }
     pub(crate) fn parse(&mut self, content: &'a str, name: &str, start: usize) -> bool {
-        self.len = 0;
-        // No attribute iterator, slot initialization, or byte scan for the
-        // common attribute-free formula/value opening.
+        *self = match name {
+            "row" => Self::Row(RowAttrs::default()),
+            "c" => Self::Cell(CellAttrs::default()),
+            "f" => Self::Formula(FormulaAttrs::default()),
+            _ => Self::Empty,
+        };
         if content.len() == name.len() {
             return true;
         }
@@ -82,26 +116,21 @@ impl<'a> HotAttributes<'a> {
             if bytes.get(at) != Some(&quote) {
                 return false;
             }
-            let (Some(key), Some(value), Some(entry)) = (
+            let (Some(key), Some(value)) = (
                 content.get(key_start..key_end),
                 content.get(value_start..at),
-                self.entries.get_mut(self.len),
             ) else {
                 return false;
             };
-            *entry = Attribute {
-                ns: Ns::Static(""),
-                local: key,
-                qualified: key,
-                value: Cow::Borrowed(value),
-                span: start + 1 + key_start..start + 2 + at,
-            };
+            self.set(
+                key,
+                RawValue {
+                    value,
+                    span: start + 1 + key_start..start + 2 + at,
+                },
+            );
             seen |= bit;
-            self.len += 1;
             at += 1;
         }
-    }
-    pub(crate) fn as_slice(&self) -> &[Attribute<'a>] {
-        self.entries.get(..self.len).unwrap_or_default()
     }
 }
