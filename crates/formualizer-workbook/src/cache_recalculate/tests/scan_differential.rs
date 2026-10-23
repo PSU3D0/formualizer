@@ -8,6 +8,8 @@
 //! over worksheets from the committed XLSX fixtures and an ignored check
 //! over a list of XLSX files.
 use super::super::{IoError, XlsxRecalculateLimits, XlsxRecalculateOptions, sheet, xml};
+mod literal_emission;
+mod standalone;
 use std::cell::Cell;
 use std::io::Read;
 

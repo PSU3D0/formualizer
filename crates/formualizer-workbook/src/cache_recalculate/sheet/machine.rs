@@ -1,5 +1,6 @@
 //! Independent flat worksheet rule loop; the visitor scanner remains the oracle.
 use super::*;
+pub(in crate::cache_recalculate) mod emission;
 mod shared;
 
 /// Semantic position; the tokenizer's namespace path is the only path stack.
@@ -135,14 +136,25 @@ pub(in crate::cache_recalculate) fn scan(
     observed: &mut usize,
     logical_cells: &mut u64,
 ) -> Result<Scanned, IoError> {
+    scan_emitting(bytes, options, mode, observed, logical_cells, |_| Ok(()))
+}
+
+pub(in crate::cache_recalculate) fn scan_emitting(
+    bytes: &[u8],
+    options: &XlsxRecalculateOptions,
+    mode: Mode,
+    observed: &mut usize,
+    logical_cells: &mut u64,
+    mut emit: impl FnMut(emission::Literal<'_>) -> Result<(), IoError>,
+) -> Result<Scanned, IoError> {
     let mut needs_index = false;
     match scan_inner(
         bytes,
         options,
         mode,
-        observed,
-        logical_cells,
+        (observed, logical_cells),
         &mut needs_index,
+        &mut emit,
     ) {
         Err(_) if needs_index => Ok(Scanned::NeedsIndex),
         result => result.map(Scanned::Done),
@@ -153,10 +165,11 @@ fn scan_inner(
     bytes: &[u8],
     options: &XlsxRecalculateOptions,
     mode: Mode,
-    observed: &mut usize,
-    logical_cells: &mut u64,
+    counts: (&mut usize, &mut u64),
     needs_index: &mut bool,
+    emit: &mut impl FnMut(emission::Literal<'_>) -> Result<(), IoError>,
 ) -> Result<Scan, IoError> {
+    let (observed, logical_cells) = counts;
     let mut hidden_rows = Vec::new();
     let mut rows_hidden_by_default = false;
     let mut outline_rows = Vec::new();
@@ -171,6 +184,9 @@ fn scan_inner(
     let mut serialized = 0usize;
     let mut cells = Vec::new();
     let mut current: Option<OpenCell<'_>> = None;
+    let mut current_style = None;
+    let mut literal_text = Cow::Borrowed("");
+    let mut inline_text = emission::DisplayString::default();
     let mut row = 0;
     let mut column = 0;
     let mut sheet_data_count = 0;
@@ -195,6 +211,21 @@ fn scan_inner(
         let Some(element) = path.last() else {
             continue;
         };
+        if current
+            .as_ref()
+            .is_some_and(|c| c.inline.is_some() && !c.has_formula)
+        {
+            inline_text.event(path, &node, bytes)?;
+        }
+        if cursor.position == Position::CellValue
+            && current.as_ref().is_some_and(|c| !c.has_formula)
+            && let xml::Kind::Text(decoded) = &node.kind
+        {
+            append(
+                &mut literal_text,
+                emission::text(bytes, &node, decoded.clone())?,
+            );
+        }
         if let xml::Kind::Text(text) = node.kind {
             // Text only matters as the content of a direct `f`/`v` child.
             if let Some(cell) = current.as_mut() {
@@ -487,6 +518,9 @@ fn scan_inner(
                             return Err(unsupported("unknown cell type", "worksheet"));
                         }
                         let kind_span = kind_attribute.map(|a| a.span.clone());
+                        current_style = node.attribute("", "s").map(|a| a.value.clone());
+                        literal_text = Cow::Borrowed("");
+                        inline_text = emission::DisplayString::default();
                         if !*empty {
                             current = Some(OpenCell {
                                 row: r,
@@ -539,6 +573,14 @@ fn scan_inner(
                                 literal_refusal: None,
                             });
                             index.rows.last_mut().expect("open row").cells.end = index.cells.len();
+                        }
+                        if *empty {
+                            emit(emission::Literal {
+                                row: r,
+                                col: c,
+                                style: current_style.take(),
+                                value: emission::Value::Empty,
+                            })?;
                         }
                     }
                     if direct {
@@ -695,7 +737,16 @@ fn scan_inner(
                             .as_mut()
                             .ok_or_else(|| unsupported("unbalanced cell", "worksheet"))?;
                         cell.span.end = node.span.end;
-                        let refusal = cell.literal_refusal(bytes);
+                        let emitted_value = (!cell.has_formula).then(|| {
+                            emission::value(
+                                cell,
+                                std::mem::take(&mut literal_text),
+                                std::mem::take(&mut inline_text),
+                            )
+                        });
+                        let refusal = emitted_value
+                            .as_ref()
+                            .and_then(|value| emission::refusal(cell, bytes, value));
                         cell.dynamic_anchor_extent()?;
                         if let Some(index) = index.as_mut() {
                             // Ownership decides later whether a refused literal
@@ -718,7 +769,13 @@ fn scan_inner(
                         } else if let Some(refusal) = refusal {
                             return Err(unsupported(refusal, "worksheet"));
                         }
-                        if !cell.has_formula {
+                        if let Some(value) = emitted_value {
+                            emit(emission::Literal {
+                                row: cell.row,
+                                col: cell.col,
+                                style: current_style.take(),
+                                value,
+                            })?;
                             current = None;
                         } else {
                             if cell.formula_kind == "normal" && cell.formula_text.trim().is_empty()
