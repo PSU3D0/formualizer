@@ -190,7 +190,8 @@ impl<'a> ScalarCell<'a> {
             Some("s") if text.is_empty() => Value::Empty,
             Some("s") => text.parse().map_or(Value::Unreadable, Value::Shared),
             Some("b") => Value::Boolean(text != "0"),
-            Some("e") => text.parse().map_or(Value::Unreadable, Value::Error),
+            Some("e") => crate::cache_recalculate::native_formulas::parse_error_token(&text)
+                .map_or(Value::Unreadable, Value::Error),
             Some("str" | "d") => Value::Text(text),
             Some("inlineStr") => Value::Empty,
             _ => Value::Unreadable,

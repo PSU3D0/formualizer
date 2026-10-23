@@ -10,7 +10,7 @@ use std::{
     ops::{Deref, Range},
 };
 
-#[cfg(test)]
+#[cfg(any(test, feature = "xlsx-recalc"))]
 pub(super) mod machine;
 #[cfg(test)]
 pub(super) mod reference;
@@ -290,6 +290,11 @@ pub(super) struct Scan {
     pub rows_hidden_by_default: bool,
     /// Whether the worksheet declares a `<dimension>`.
     pub has_dimension: bool,
+    /// Original attribute value bytes, excluding quotes; no normalization.
+    pub raw_dimension_span: Option<Range<usize>>,
+    /// Earliest raw row-r token incompatible with the pinned reader. Advisory
+    /// provenance only: normalized admission and its refusal order are intact.
+    pub raw_row_refusal_span: Option<Range<usize>>,
     pub active_filters: Vec<SourceRect>,
     /// Built only when requested.
     pub index: Option<SourceIndex>,
@@ -329,7 +334,7 @@ fn scalar_cache_readable(kind: Option<&str>, value: Option<CacheText<'_>>, bytes
         None | Some("n") => v.text.parse::<f64>().is_ok_and(f64::is_finite),
         Some("s") => v.text.parse::<u32>().is_ok(),
         Some("b") => matches!(v.text, "0" | "1"),
-        Some("e") => v.text.parse::<calamine::CellErrorType>().is_ok(),
+        Some("e") => super::native_formulas::parse_error_token(v.text).is_ok(),
         _ => true,
     }
 }
@@ -407,7 +412,7 @@ impl<'a> OpenCell<'a> {
             && self
                 .value
                 .as_ref()
-                .is_none_or(|v| v.text.parse::<calamine::CellErrorType>().is_err())
+                .is_none_or(|v| super::native_formulas::parse_error_token(&v.text).is_err())
         {
             return Some("literal error value unsupported by Calamine");
         }
@@ -577,6 +582,30 @@ pub(super) fn scan(
         );
     }
     scan_uncounted(bytes, options, mode, observed, logical_cells)
+}
+/// Native admission's same counter/shadow seam, with ephemeral value emission.
+pub(super) fn scan_emitting(
+    bytes: &[u8],
+    options: &XlsxRecalculateOptions,
+    mode: Mode,
+    observed: &mut usize,
+    logical_cells: &mut u64,
+    emit: impl FnMut(machine::emission::Literal<'_>) -> Result<(), IoError>,
+) -> Result<Scanned, IoError> {
+    #[cfg(test)]
+    {
+        if mode == Mode::Indexed {
+            INDEXED_SCANS.with(|n| n.set(n.get() + 1));
+        }
+        super::tests::scan_differential::shadow_scan(
+            bytes,
+            options,
+            mode,
+            *observed,
+            *logical_cells,
+        );
+    }
+    machine::scan_emitting(bytes, options, mode, observed, logical_cells, emit)
 }
 /// [`scan`] without the test-only indexed-scan count.
 pub(super) fn scan_uncounted(
@@ -1373,6 +1402,8 @@ fn scan_inner(
         hidden_rows,
         rows_hidden_by_default,
         has_dimension: dimension.is_some(),
+        raw_dimension_span: None,
+        raw_row_refusal_span: None,
         table_merges,
         table_ids,
         cells,

@@ -131,8 +131,7 @@ fn new_ordinary_spill_plan_binds_the_anchor() {
     let source = pack(&new_vertical());
     let options = XlsxRecalculateOptions::default();
     let admission = admit_source(&source, &options).unwrap();
-    let mut ingested =
-        ingest_source(&source, admission, &options, &mut PhaseClock::from_env()).unwrap();
+    let mut ingested = ingest_source(admission, &options, &mut PhaseClock::from_env()).unwrap();
     evaluate(&mut ingested.engine, &options).unwrap();
     let coerced: HashSet<_> = ingested
         .engine
@@ -190,8 +189,7 @@ fn cancellation_after_evaluation_publishes_nothing() {
     };
     let admission = admit_source(&source, &options).unwrap();
     let count = admission.formula_count;
-    let mut ingested =
-        ingest_source(&source, admission, &options, &mut PhaseClock::from_env()).unwrap();
+    let mut ingested = ingest_source(admission, &options, &mut PhaseClock::from_env()).unwrap();
     evaluate(&mut ingested.engine, &options).unwrap();
     token.cancel();
     match publish(

@@ -15,6 +15,83 @@ fn paths(text: &str) -> ((usize, usize), bool) {
 }
 
 #[test]
+fn raw_coordinate_dimension_and_row_provenance_does_not_change_admission() {
+    for prefix in ["", "x:"] {
+        let namespace = if prefix.is_empty() {
+            "xmlns"
+        } else {
+            "xmlns:x"
+        };
+        let xml = format!(
+            "<{prefix}worksheet {namespace}='{}'><{prefix}dimension ref='&#65;1:B1'/><{prefix}sheetData><{prefix}row r='&#49;'><{prefix}c r='&#65;1'><{prefix}v>1</{prefix}v></{prefix}c><{prefix}c r='&#66;1'/></{prefix}row><{prefix}row r='+2'/></{prefix}sheetData></{prefix}worksheet>",
+            xml::MAIN
+        );
+        let bytes = xml.as_bytes();
+        let mut coordinates = Vec::new();
+        let result = scan_emitting(
+            bytes,
+            &XlsxRecalculateOptions::default(),
+            Mode::Plain,
+            &mut 0,
+            &mut 0,
+            |literal| {
+                coordinates.push((
+                    literal.row,
+                    literal.col,
+                    literal.raw_coordinate_span.and_then(|span| bytes.get(span)),
+                ));
+                Ok(())
+            },
+        )
+        .unwrap();
+        let Scanned::Done(scan) = result else {
+            panic!("plain sheet must not index")
+        };
+        assert_eq!(
+            coordinates,
+            vec![
+                (1, 1, Some(b"&#65;1".as_slice())),
+                (1, 2, Some(b"&#66;1".as_slice()))
+            ]
+        );
+        assert_eq!(
+            scan.raw_dimension_span.and_then(|span| bytes.get(span)),
+            Some(b"&#65;1:B1".as_slice())
+        );
+        assert_eq!(
+            scan.raw_row_refusal_span.and_then(|span| bytes.get(span)),
+            Some(b"&#49;".as_slice())
+        );
+    }
+    for (row, incompatible) in [("&#49;", true), ("+1", true), ("0001", false), ("1", false)] {
+        for cells in ["", "<c r='A1'><v>1</v></c>"] {
+            let xml = format!(
+                "<worksheet xmlns='{}'><sheetData><row r='{row}'>{cells}</row></sheetData></worksheet>",
+                xml::MAIN
+            );
+            let result = scan_emitting(
+                xml.as_bytes(),
+                &XlsxRecalculateOptions::default(),
+                Mode::Plain,
+                &mut 0,
+                &mut 0,
+                |_| Ok(()),
+            )
+            .unwrap();
+            let Scanned::Done(scan) = result else {
+                panic!("plain sheet must not index")
+            };
+            assert_eq!(
+                scan.raw_row_refusal_span
+                    .as_ref()
+                    .map(|span| &xml[span.clone()]),
+                incompatible.then_some(row)
+            );
+        }
+    }
+}
+
+#[test]
 fn raw_literal_provenance_preserves_encoded_and_unsigned_spellings() {
     let xml = format!(
         "<worksheet xmlns='{}'><sheetData><row r='1'><c r='A1' t='&#110;' s='&#49;'><v>+1</v></c><c r='B1' t='s'><v>+1</v></c><c r='C1'/><c r='D1'><v/></c></row></sheetData></worksheet>",

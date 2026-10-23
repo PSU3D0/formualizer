@@ -7,11 +7,11 @@ mod geometry;
 mod inert_sheets;
 mod ingest_view;
 mod legacy_intersection;
-#[cfg(test)]
+mod native_admission;
 mod native_formulas;
-#[cfg(test)]
+mod native_ingest;
 mod native_metadata;
-#[cfg(test)]
+mod native_names;
 mod native_values;
 pub(crate) mod package;
 mod phase_clock;
@@ -28,18 +28,24 @@ mod wall_clock_guard;
 mod xml;
 
 use super::recalculate::{DEFAULT_ERROR_LOCATION_LIMIT, RecalculateStatus, RecalculateSummary};
-use crate::{CalamineAdapter, IoError, SpreadsheetReader, workbook::WBResolver};
+#[cfg(test)]
+use crate::{CalamineAdapter, SpreadsheetReader};
+use crate::{IoError, workbook::WBResolver};
 use chrono::{DateTime, Utc};
 use formualizer_common::{CellAddress, DateSystem, LiteralValue};
 use formualizer_eval::engine::DeterministicMode;
+#[cfg(test)]
 use formualizer_eval::engine::ingest::EngineLoadStream;
 use formualizer_eval::engine::inspect::{SnapshotOptions, Staleness};
 use formualizer_eval::engine::{
     CancelToken, Engine, EvalConfig, FormulaParsePolicy, SpillBoundsPolicy, SpillConfig,
     SpillConflictPolicy,
 };
+use native_ingest::ingest_source;
 use phase_clock::PhaseClock;
-use std::collections::{BTreeMap, HashMap, HashSet};
+#[cfg(test)]
+use std::collections::BTreeMap;
+use std::collections::{HashMap, HashSet};
 #[cfg(not(target_arch = "wasm32"))]
 use std::io::Read;
 use std::io::{Cursor, Seek, SeekFrom, Write};
@@ -58,7 +64,7 @@ pub struct XlsxRecalculateLimits {
     pub max_output_bytes: usize,
     pub max_xml_depth: usize,
     pub max_cells: usize,
-    /// Limits the width of Calamine's per-column ingestion builders.
+    /// Limits the width of the native per-column ingestion builders.
     pub max_columns: u32,
 }
 impl Default for XlsxRecalculateLimits {
@@ -309,6 +315,7 @@ struct FormulaTextTransform {
     text: String,
 }
 impl FormulaTextTransform {
+    #[cfg(test)]
     fn into_patch(self) -> Patch {
         Patch {
             span: self.span,
@@ -461,6 +468,8 @@ struct SourceAdmission<'a> {
     date_system: DateSystem,
     plans: Vec<SheetPlan>,
     formula_count: usize,
+    native_values: Vec<native_admission::ValueResult>,
+    native_metadata_error: Option<IoError>,
     metadata: Option<dynamic_metadata::DynamicMetadata>,
     /// External sources served from the link caches, when the workbook
     /// has links.
@@ -491,6 +500,9 @@ fn admit_source<'a>(
     let metadata = metadata_part
         .map(|part| dynamic_metadata::parse(&mut archive, &part, options))
         .transpose()?;
+    // Reader-shaped errors must not outrank source/table/ownership admission.
+    let native_metadata = native_admission::Metadata::read(&mut archive, options);
+    let mut native_values = Vec::with_capacity(sheets.len());
     let mut plans = Vec::new();
     let mut observed = 0;
     let mut logical_cells = 0u64;
@@ -509,31 +521,36 @@ fn admit_source<'a>(
             )?
         };
         let counted = (observed, logical_cells);
-        let mut scanned = sheet::scan(
+        let mut scanned = native_admission::scan(
             &data,
+            &sheet.name,
+            date_system,
+            native_metadata.as_ref().ok(),
             options,
             if sheet.tables.is_empty() {
                 sheet::Mode::Plain
             } else {
                 sheet::Mode::TablePlain
             },
-            &mut observed,
-            &mut logical_cells,
+            (&mut observed, &mut logical_cells),
         )?;
-        if matches!(scanned, sheet::Scanned::NeedsIndex) {
+        if matches!(scanned, native_admission::ScannedValues::NeedsIndex) {
             // Dynamic cell metadata: index this sheet only.
             (observed, logical_cells) = counted;
-            scanned = sheet::scan(
+            scanned = native_admission::scan(
                 &data,
+                &sheet.name,
+                date_system,
+                native_metadata.as_ref().ok(),
                 options,
                 sheet::Mode::Indexed,
-                &mut observed,
-                &mut logical_cells,
+                (&mut observed, &mut logical_cells),
             )?;
         }
-        let sheet::Scanned::Done(mut scan) = scanned else {
+        let native_admission::ScannedValues::Done { scan, values } = scanned else {
             return Err(unsupported("unindexed dynamic cell metadata", "worksheet"));
         };
+        let mut scan = *scan;
         let mut table_ids = HashSet::new();
         let mut tables = Vec::new();
         for id in &scan.table_ids {
@@ -610,6 +627,7 @@ fn admit_source<'a>(
             }
             None => dynamic_metadata::SheetOwnership::default(),
         };
+        native_values.push(values);
         plans.push(SheetPlan {
             hidden_rows: scan.hidden_rows,
             rows_hidden_by_default: scan.rows_hidden_by_default,
@@ -673,6 +691,8 @@ fn admit_source<'a>(
         date_system,
         plans,
         formula_count,
+        native_values,
+        native_metadata_error: native_metadata.err(),
         metadata,
         external,
     })
@@ -729,7 +749,7 @@ pub fn recalculate_xlsx_bytes(
         result.clock_now_utc = clock_instant(&options);
         return Ok(result);
     }
-    let mut ingested = ingest_source(bytes, admission, &options, &mut clock)?;
+    let mut ingested = ingest_source(admission, &options, &mut clock)?;
     let clock_now_utc = evaluate(&mut ingested.engine, &options)?;
     clock.lap("evaluate (incl. deferred graph build)");
     // Deferred graph building parses formulas during evaluation.
@@ -892,7 +912,8 @@ mod name_prefilter_tests {
 /// Build the transient ingestion view, replay it through Calamine into a new
 /// engine, validate calculation names and declare every
 /// admitted dynamic-array anchor. Nothing is evaluated or published.
-fn ingest_source<'a>(
+#[cfg(test)]
+fn legacy_ingest_source<'a>(
     bytes: &[u8],
     admission: SourceAdmission<'a>,
     options: &XlsxRecalculateOptions,
@@ -904,6 +925,8 @@ fn ingest_source<'a>(
         date_system,
         plans,
         formula_count: _,
+        native_values: _,
+        native_metadata_error: _,
         metadata,
         external,
     } = admission;

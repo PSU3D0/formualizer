@@ -28,7 +28,9 @@ pub(super) fn take_chain_reads() -> usize {
     CHAIN_READS.with(|n| n.replace(0))
 }
 
-use super::{IoError, Patch, SheetPlan, checkpoint, package, xml};
+#[cfg(test)]
+use super::Patch;
+use super::{IoError, SheetPlan, checkpoint, package, xml};
 use crate::XlsxRecalculateOptions;
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 use formualizer_parse::tokenizer::{TokenStream, TokenSubType, TokenType};
@@ -802,6 +804,7 @@ pub(super) struct Stats {
 /// names that hold an external range), formulas whose `[` may come from
 /// external references are classified too; structured references still
 /// skip them.
+#[cfg(test)]
 pub(super) fn patches(
     sheet_index: usize,
     plan: &SheetPlan,

@@ -413,17 +413,17 @@ pub(super) fn dimension_hint(
         .min(options.limits.max_worksheet_bytes)
         .min(64 * 1024);
     let prefix = bytes.get(..length).unwrap_or_default();
-    let Ok(mut tokens) = crate::xlsx_xml::worksheet::Tokens::new(prefix) else {
-        return (1, 1);
-    };
     let mut hint = (1, 1);
-    let cache_options = options.into();
-    while let Ok(Some((path, node))) = tokens.next(&cache_options) {
+    // The fused machine no longer exports a worksheet Tokens wrapper. Reuse
+    // the validated generic walker only for this bounded pre-sheetData prefix;
+    // this is not an additional body/admission walk. Its result is advisory.
+    let _ = crate::xlsx_xml::walk(prefix, &options.into(), |path, node| {
         if !matches!(node.kind, super::xml::Kind::Open { .. }) {
-            continue;
+            return Ok(());
         }
         if super::xml::path_is(path, super::xml::MAIN, &["worksheet", "sheetData"]) {
-            break;
+            // No-allocation internal stop signal, never surfaced to the caller.
+            return Err(IoError::Io(std::io::ErrorKind::Interrupted.into()));
         }
         if super::xml::path_is(path, super::xml::MAIN, &["worksheet", "dimension"])
             && let Some(value) = node.value("ref")
@@ -431,7 +431,8 @@ pub(super) fn dimension_hint(
         {
             hint = (rect.last_row as usize, rect.last_col as usize);
         }
-    }
+        Ok(())
+    });
     hint
 }
 fn load_error(error: impl std::fmt::Display) -> IoError {

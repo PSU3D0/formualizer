@@ -243,6 +243,7 @@ pub(super) fn plain_coord(value: &str) -> Option<(u32, u32)> {
     (digits != 0 && row <= 1_048_576 && col <= 16_384).then_some((row, col))
 }
 
+#[cfg(test)]
 pub(in crate::cache_recalculate) fn scan(
     bytes: &[u8],
     options: &XlsxRecalculateOptions,
@@ -302,6 +303,7 @@ fn scan_inner<const COUNT_PATHS: bool>(
     let mut current: Option<ScalarCell<'_>> = None;
     let mut formula = FormulaState::default();
     let mut current_style = None;
+    let mut current_raw_coordinate = None;
     let mut current_raw_type = None;
     let mut current_raw_style = None;
     let mut literal_text = Cow::Borrowed("");
@@ -310,6 +312,8 @@ fn scan_inner<const COUNT_PATHS: bool>(
     let mut column = 0;
     let mut sheet_data_count = 0;
     let mut dimension = None;
+    let mut raw_dimension_span = None;
+    let mut raw_row_refusal_span = None;
     let mut max_row = 0u32;
     let mut max_col = 0u32;
     let mut index = (mode == Mode::Indexed).then(|| SourceIndex {
@@ -783,6 +787,10 @@ fn scan_inner<const COUNT_PATHS: bool>(
                             return Err(unsupported("worksheet dimension cell limit", "worksheet"));
                         }
                         dimension = Some(range);
+                        raw_dimension_span = Some(raw_attribute_span(
+                            bytes,
+                            &attrs.required_attribute("ref")?.span,
+                        )?);
                         if let Some(index) = index.as_mut() {
                             let span = attrs
                                 .attribute("", "ref")
@@ -837,6 +845,13 @@ fn scan_inner<const COUNT_PATHS: bool>(
                             return Err(unsupported("misplaced row", "worksheet"));
                         }
                         let next_row = integer(attrs.required("r")?)?;
+                        if raw_row_refusal_span.is_none() {
+                            let raw =
+                                raw_attribute_span(bytes, &attrs.required_attribute("r")?.span)?;
+                            if bytes[raw.clone()].iter().any(|byte| !byte.is_ascii_digit()) {
+                                raw_row_refusal_span = Some(raw);
+                            }
+                        }
                         if next_row <= row || next_row > 1_048_576 {
                             return Err(unsupported(
                                 "invalid/non-increasing worksheet row",
@@ -884,7 +899,10 @@ fn scan_inner<const COUNT_PATHS: bool>(
                         if !is_cell || current.is_some() {
                             return Err(unsupported("misplaced/nested cell", "worksheet"));
                         }
-                        let address = &attrs.required_attribute("r")?.value;
+                        let coordinate_attribute = attrs.required_attribute("r")?;
+                        current_raw_coordinate =
+                            Some(raw_attribute_span(bytes, &coordinate_attribute.span)?);
+                        let address = &coordinate_attribute.value;
                         let canonical = plain_coord(address);
                         let (r, c) = canonical.map_or_else(|| coord(address), Ok)?;
                         if c > options.limits.max_columns {
@@ -1005,6 +1023,7 @@ fn scan_inner<const COUNT_PATHS: bool>(
                                 col: c,
                                 generated_child_hint: generated_children.contains(r, c),
                                 style: current_style.take(),
+                                raw_coordinate_span: current_raw_coordinate.take(),
                                 raw_type_span: current_raw_type.take(),
                                 raw_style_span: current_raw_style.take(),
                                 raw_value_span: None,
@@ -1212,6 +1231,7 @@ fn scan_inner<const COUNT_PATHS: bool>(
                                 generated_child_hint: generated_children
                                     .contains(cell.row, cell.col),
                                 style: current_style.take(),
+                                raw_coordinate_span: current_raw_coordinate.take(),
                                 raw_type_span: current_raw_type.take(),
                                 raw_style_span: current_raw_style.take(),
                                 raw_value_span: cell
@@ -1278,6 +1298,8 @@ fn scan_inner<const COUNT_PATHS: bool>(
         hidden_rows,
         rows_hidden_by_default,
         has_dimension: dimension.is_some(),
+        raw_dimension_span,
+        raw_row_refusal_span,
         table_merges,
         table_ids,
         cells,

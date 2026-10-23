@@ -6,7 +6,7 @@
 //! interned per walk. The validation policy is the one the owned-string
 //! walker (kept as a test oracle in `reference`) enforced, error for error.
 #![cfg_attr(not(feature = "xlsx-recalc"), allow(dead_code))]
-#[cfg(all(test, feature = "xlsx-recalc"))]
+#[cfg(any(test, feature = "xlsx-recalc"))]
 pub(crate) mod worksheet;
 
 use crate::IoError;
@@ -126,7 +126,7 @@ pub(crate) struct Node<'n, 'a> {
     fast_attributes: Option<&'n FastAttributes<'a>>,
 }
 impl<'n, 'a> Node<'n, 'a> {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "xlsx-recalc"))]
     pub(crate) fn new(kind: Kind<'n, 'a>, span: Range<usize>) -> Self {
         Self {
             kind,

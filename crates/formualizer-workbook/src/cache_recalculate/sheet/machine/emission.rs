@@ -24,6 +24,7 @@ pub(in crate::cache_recalculate) struct Literal<'a> {
     /// in source order. Final metadata ownership/refusal checks still govern.
     pub generated_child_hint: bool,
     /// Raw attribute value bytes, excluding quotes; entities remain encoded.
+    pub raw_coordinate_span: Option<Range<usize>>,
     pub raw_type_span: Option<Range<usize>>,
     pub raw_style_span: Option<Range<usize>>,
     /// Inner `<v>` bytes, excluding tags. Empty for `<v/>`, absent without v.
@@ -140,6 +141,7 @@ impl<'a> DisplayString<'a> {
 
 /// Reuse the emitted scalar's decode for the original Calamine-readability
 /// admission proof. Formula caches retain the separate unchanged mark policy.
+#[cfg(test)]
 pub(super) fn refusal(
     cell: &OpenCell<'_>,
     bytes: &[u8],
@@ -167,6 +169,7 @@ pub(super) fn refusal(
     (!readable).then_some("literal scalar payload is not supported by Calamine")
 }
 
+#[cfg(test)]
 pub(super) fn value<'a>(
     cell: &OpenCell<'_>,
     text: Cow<'a, str>,

@@ -1,8 +1,10 @@
 //! Ingest-only token lowering for immutable, validated source table geometry.
 //! It never rewrites output formulas. Parser enums, not string splitting,
 //! describe selectors; decoded formula bytes outside reference tokens survive.
+#[cfg(test)]
+use super::Patch;
 use super::{
-    IoError, Patch, SheetPlan, XlsxRecalculateOptions, checkpoint, package, sheet, tables::Table,
+    IoError, SheetPlan, XlsxRecalculateOptions, checkpoint, package, sheet, tables::Table,
     unsupported,
 };
 use formualizer_common::LiteralValue;
@@ -349,6 +351,7 @@ pub(super) fn validate_defined_name(text: &str, names: &[String]) -> Result<(), 
     Ok(())
 }
 
+#[cfg(test)]
 pub(super) fn patches(
     sheet_name: &str,
     plan: &SheetPlan,

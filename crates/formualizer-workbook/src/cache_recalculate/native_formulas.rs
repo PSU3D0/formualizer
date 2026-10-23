@@ -269,6 +269,25 @@ fn source_record(
     }
 }
 
+/// Only on a failed value plane, preserve the reader's interleaved envelope
+/// error order against a later literal/row error. This visits retained formula
+/// headers before that byte offset, never rescans the worksheet body.
+pub(super) fn validate_reader_prefix(
+    plan: &SheetPlan,
+    texts: &EvaluationTexts,
+    before: usize,
+) -> Result<(), IoError> {
+    for (sequence, cell) in plan
+        .cells
+        .iter()
+        .enumerate()
+        .take_while(|(_, cell)| cell.span.start < before)
+    {
+        source_record(plan, cell, texts, sequence as u64)?;
+    }
+    Ok(())
+}
+
 use super::{XlsxRecalculateOptions, checkpoint};
 use crate::workbook::WBResolver;
 use compressed_evidence::{EvidenceRecord, MonotonicFormulaEvidence};
@@ -556,6 +575,15 @@ pub(super) fn stage(
         spool.as_ref().map_or(0, |s| s.encoded_bytes())
     };
     let spool_spilled = spool.as_ref().is_some_and(|s| s.spilled());
+    if std::env::var("FZ_DEBUG_LOAD")
+        .ok()
+        .is_some_and(|value| value != "0")
+    {
+        eprintln!(
+            "[fz][native] formula spool storage={:?}",
+            spool.as_ref().map(FormulaReplaySpool::storage_kind)
+        );
+    }
     report.source_formula_records_spooled = if eager { 0 } else { count as u64 };
     report.source_spool_encoded_bytes = spool_bytes;
     report.source_spool_peak_memory_bytes = spool.as_ref().map_or(0, |s| s.peak_memory_bytes());

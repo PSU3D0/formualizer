@@ -12,14 +12,18 @@
 //!
 //! Edits are collected and coalesced per cell, so no two patches overlap or
 //! conflict at one offset.
-use super::sheet::{self, IndexedCell};
-use super::{Cache, Patch, SheetPlan, cache_patches, checkpoint, unsupported};
+use super::sheet::IndexedCell;
+#[cfg(test)]
+use super::{Cache, SheetPlan, cache_patches, checkpoint, sheet};
+use super::{Patch, unsupported};
 use crate::IoError;
+#[cfg(test)]
 use formualizer_eval::engine::CancelToken;
 use std::ops::Range;
 
 /// The ingestion-view patches for one worksheet, nonoverlapping and in
 /// source order.
+#[cfg(test)]
 pub(super) fn patches(
     plan: &SheetPlan,
     cancel: &Option<CancelToken>,
@@ -84,6 +88,7 @@ fn remove(span: &Range<usize>) -> Patch {
     }
 }
 
+#[cfg(test)]
 fn flush_cell(cell: &mut Vec<Patch>, out: &mut Vec<Patch>) -> Result<(), IoError> {
     coalesce(cell)?;
     out.append(cell);

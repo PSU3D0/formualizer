@@ -1954,7 +1954,7 @@ impl CalamineAdapter {
 
     /// Lowercased unevaluable names kept as raw metadata. No source
     /// calculation may reference one.
-    #[cfg(feature = "xlsx-recalc")]
+    #[cfg(all(test, feature = "xlsx-recalc"))]
     pub(crate) fn unimported_document_names(&self) -> Vec<String> {
         let cyclic = self.cyclic_calculation_names();
         let mut names = Vec::new();
@@ -2209,7 +2209,7 @@ impl CalamineAdapter {
         &self.calculation_name_analysis().cyclic
     }
 
-    #[cfg(feature = "xlsx-recalc")]
+    #[cfg(all(test, feature = "xlsx-recalc"))]
     pub(crate) fn validate_calculation_names(
         &mut self,
         formulas: &[(String, String)],
@@ -2342,14 +2342,14 @@ impl CalamineAdapter {
         self.calculation_name_order().map(|_| ())
     }
 
-    #[cfg(feature = "xlsx-recalc")]
+    #[cfg(all(test, feature = "xlsx-recalc"))]
     pub(crate) fn has_new_unimported_names(&self) -> bool {
         self.unimported_document_names()
             .iter()
             .any(|name| !name.starts_with("_xlnm.") && !self.skipped_external_names.contains(name))
     }
 
-    #[cfg(feature = "xlsx-recalc")]
+    #[cfg(all(test, feature = "xlsx-recalc"))]
     pub(crate) fn calculation_name_asts(&self) -> Result<Vec<ASTNode>, crate::IoError> {
         Ok(self
             .calculation_name_order()?
