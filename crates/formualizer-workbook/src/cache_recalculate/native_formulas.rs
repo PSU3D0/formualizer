@@ -252,25 +252,19 @@ use super::{XlsxRecalculateOptions, checkpoint};
 use crate::workbook::WBResolver;
 use compressed_evidence::{EvidenceRecord, MonotonicFormulaEvidence};
 use formualizer_eval::engine::{
-    AstNodeId, DeferredFormulaPackage, Engine, ExplicitPartitionLegacyMembers,
-    FormulaCompressedPreparation, FormulaCompressedSourceReport, FormulaFamilyGrouper,
-    FormulaIngestRecord, FormulaPlaneMode, FormulaSpoolDiskPolicy, PartitionLegacyMember,
-    PartitionLegacyMemberKind, PartitionReconciliation, PartitionedSourceFormulaFamily,
-    SourceFamilyId, SourceFormulaFamily, SourceFormulaOrder,
+    DeferredFormulaPackage, Engine, ExplicitPartitionLegacyMembers, FormulaCompressedPreparation,
+    FormulaCompressedSourceReport, FormulaIngestRecord, FormulaPlaneMode, FormulaSpoolDiskPolicy,
+    PartitionLegacyMember, PartitionLegacyMemberKind, PartitionReconciliation,
+    PartitionedSourceFormulaFamily, SourceFamilyId, SourceFormulaFamily, SourceFormulaOrder,
 };
 use formula_replay::{
     CalamineDeferredFormulaReplay as SourceDeferredFormulaReplay, FormulaReplaySpool,
     FormulaReplayState, FormulaSpoolLimits, HybridFormulaReplaySpool,
     replay_spool_per_cell_filtered_with_family,
 };
-use rustc_hash::FxHashMap;
-use std::sync::Arc;
 
-#[derive(Clone, Copy, Default)]
-pub(super) struct WorkbookSpoolUsage {
-    pub bytes: u64,
-    pub files: u32,
-}
+pub(super) use crate::xlsx::ingest::staging::WorkbookSpoolUsage;
+use crate::xlsx::ingest::staging::{FormulaStaging, engine_error};
 pub(super) struct FormulaPlane {
     pub records: Vec<FormulaIngestRecord>,
     pub report: FormulaCompressedSourceReport,
@@ -282,107 +276,6 @@ pub(super) struct FormulaPlane {
     pub shared_tags: usize,
     pub spool_bytes: u64,
     pub spool_spilled: bool,
-}
-struct Staging {
-    parse_cache: FxHashMap<String, Option<AstNodeId>>,
-    records: Vec<FormulaIngestRecord>,
-    grouper: FormulaFamilyGrouper,
-}
-impl Staging {
-    fn new() -> Self {
-        let mut parse_cache = FxHashMap::default();
-        parse_cache.reserve(4096);
-        Self {
-            parse_cache,
-            records: Vec::new(),
-            grouper: FormulaFamilyGrouper::new(),
-        }
-    }
-    /// Unchanged ordinary/legacy fallback staging policy from the W1 adapter.
-    fn stage(
-        &mut self,
-        engine: &mut Engine<WBResolver>,
-        sheet: &str,
-        coord: SourceCoord,
-        formula: &str,
-        shared: Option<usize>,
-    ) -> Result<(), calamine::Error> {
-        let (row, col) = (coord.row + 1, coord.col + 1);
-        let normalized = if formula.starts_with('=') {
-            formula.to_owned()
-        } else {
-            format!("={formula}")
-        };
-        if engine.config.defer_graph_building {
-            engine.stage_formula_text(sheet, row, col, normalized);
-            return Ok(());
-        }
-        self.grouper.note_formula();
-        let record = if let Some(cached) = self.parse_cache.get(&normalized) {
-            self.grouper.note_parse_cache_hit();
-            cached.map(|ast_id| {
-                engine.note_staged_formula(&mut self.grouper, row, col, ast_id);
-                FormulaIngestRecord::new(row, col, ast_id, Some(Arc::from(normalized.as_str())))
-            })
-        } else if let Some(record) = engine.stage_relocated_text(
-            &mut self.grouper,
-            row,
-            col,
-            &normalized,
-            shared.map(|index| index as u64),
-        ) {
-            Some(record)
-        } else {
-            self.grouper.note_parse(normalized.len());
-            let parsed = formualizer_parse::parser::parse(&normalized);
-            let parsed_text = parsed.is_ok();
-            let parsed = match parsed {
-                Ok(ast) => Some(ast),
-                Err(error) => engine
-                    .handle_formula_parse_error(sheet, row, col, &normalized, error.to_string())
-                    .map_err(engine_error)?,
-            };
-            match parsed {
-                Some(ast) => {
-                    let record = engine.stage_formula_ast(&mut self.grouper, row, col, &ast, None);
-                    if parsed_text {
-                        engine.note_parsed_text(
-                            &mut self.grouper,
-                            row,
-                            col,
-                            &normalized,
-                            &ast,
-                            &record,
-                            shared.map(|index| index as u64),
-                        );
-                    }
-                    if record.is_family_member() {
-                        Some(record)
-                    } else {
-                        let id = record.ast_id;
-                        self.parse_cache.insert(normalized.clone(), Some(id));
-                        Some(FormulaIngestRecord::new(
-                            row,
-                            col,
-                            id,
-                            Some(Arc::from(normalized)),
-                        ))
-                    }
-                }
-                None => {
-                    self.parse_cache.insert(normalized, None);
-                    None
-                }
-            }
-        };
-        if let Some(record) = record {
-            self.records.push(record);
-        }
-        Ok(())
-    }
-}
-fn engine_error(error: impl std::fmt::Display) -> calamine::Error {
-    calamine::Error::Io(std::io::Error::other(error.to_string()))
 }
 
 /// Prepare the same W1 evidence, bounded replay and certification proposals as
@@ -418,7 +311,7 @@ pub(super) fn stage(
             spill_files_limit: limits.max_formula_spool_files_per_workbook,
         })
     });
-    let mut staging = Staging::new();
+    let mut staging = FormulaStaging::new();
     let mut evidence = MonotonicFormulaEvidence::new();
     let mut coordinates = Vec::new();
     let mut count = 0usize;
@@ -475,7 +368,7 @@ pub(super) fn stage(
                     |_, _| true,
                     |_, coord, text, shared| {
                         checkpoint(&options.cancel).map_err(engine_error)?;
-                        staging.stage(engine, sheet, coord, text, shared)
+                        staging.stage(engine, sheet, (coord.row, coord.col), text, shared, false)
                     },
                 )
                 .map_err(IoError::Calamine)?;
@@ -581,7 +474,7 @@ pub(super) fn stage(
             |_| false,
             |coord, text, shared| {
                 checkpoint(&options.cancel).map_err(engine_error)?;
-                staging.stage(engine, sheet, coord, text, shared)
+                staging.stage(engine, sheet, (coord.row, coord.col), text, shared, false)
             },
         )
         .map_err(IoError::Calamine)?;
@@ -603,7 +496,7 @@ pub(super) fn stage(
         .with_complete_coordinate_coverage()
     });
     Ok(FormulaPlane {
-        records: staging.records,
+        records: staging.formulas,
         report,
         families,
         partitioned,

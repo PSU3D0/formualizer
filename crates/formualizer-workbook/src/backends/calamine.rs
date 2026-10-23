@@ -487,11 +487,7 @@ impl DenseState {
     }
 }
 
-#[derive(Clone, Copy)]
-struct WorkbookSpoolUsage {
-    bytes: u64,
-    files: u32,
-}
+use crate::xlsx::ingest::staging::{FormulaStaging, WorkbookSpoolUsage};
 
 struct StreamWorksheetOptions {
     refused_external_formulas: HashSet<(u32, u32)>,
@@ -499,30 +495,6 @@ struct StreamWorksheetOptions {
     debug: bool,
     workbook_spool_usage: WorkbookSpoolUsage,
     shadow_relocation_comparator: Option<ShadowRelocationComparator>,
-}
-
-struct FormulaStaging {
-    parse_cache: rustc_hash::FxHashMap<String, Option<formualizer_eval::engine::AstNodeId>>,
-    formulas: Vec<FormulaIngestRecord>,
-    /// Load-time family grouping: relative copies of the formula above
-    /// (or to the left) are staged as members and never interned.
-    grouper: formualizer_eval::engine::FormulaFamilyGrouper,
-    observed: usize,
-    handed_to_engine: usize,
-}
-
-impl FormulaStaging {
-    fn new() -> Self {
-        let mut parse_cache = rustc_hash::FxHashMap::default();
-        parse_cache.reserve(4096);
-        Self {
-            parse_cache,
-            formulas: Vec::new(),
-            grouper: formualizer_eval::engine::FormulaFamilyGrouper::new(),
-            observed: 0,
-            handed_to_engine: 0,
-        }
-    }
 }
 
 struct StreamedSheet {
@@ -865,106 +837,7 @@ impl CalamineAdapter {
         debug: bool,
         staging: &mut FormulaStaging,
     ) -> Result<(), calamine::Error> {
-        let excel_row = position.0 + 1;
-        let excel_col = position.1 + 1;
-        let normalized = if formula.starts_with('=') {
-            formula.to_string()
-        } else {
-            format!("={formula}")
-        };
-        if debug && staging.observed < 16 {
-            eprintln!("[fz][load] formula observed at R{excel_row}C{excel_col}");
-        }
-        if engine.config.defer_graph_building {
-            engine.stage_formula_text(sheet, excel_row, excel_col, normalized);
-            staging.handed_to_engine += 1;
-        } else {
-            staging.grouper.note_formula();
-            let record = if let Some(cached) = staging.parse_cache.get(&normalized) {
-                staging.grouper.note_parse_cache_hit();
-                cached.map(|ast_id| {
-                    engine.note_staged_formula(&mut staging.grouper, excel_row, excel_col, ast_id);
-                    FormulaIngestRecord::new(
-                        excel_row,
-                        excel_col,
-                        ast_id,
-                        Some(Arc::<str>::from(normalized.as_str())),
-                    )
-                })
-            } else if let Some(record) = engine.stage_relocated_text(
-                &mut staging.grouper,
-                excel_row,
-                excel_col,
-                &normalized,
-                shared.map(|index| index as u64),
-            ) {
-                Some(record)
-            } else {
-                staging.grouper.note_parse(normalized.len());
-                let parsed = formualizer_parse::parser::parse(&normalized);
-                let parsed_text = parsed.is_ok();
-                let parsed = match parsed {
-                    Ok(parsed) => Some(parsed),
-                    Err(error) => engine
-                        .handle_formula_parse_error(
-                            sheet,
-                            excel_row,
-                            excel_col,
-                            &normalized,
-                            error.to_string(),
-                        )
-                        .map_err(|error| {
-                            calamine::Error::Io(std::io::Error::other(error.to_string()))
-                        })?,
-                };
-                match parsed {
-                    Some(ast) => {
-                        let record = engine.stage_formula_ast(
-                            &mut staging.grouper,
-                            excel_row,
-                            excel_col,
-                            &ast,
-                            None,
-                        );
-                        if parsed_text {
-                            engine.note_parsed_text(
-                                &mut staging.grouper,
-                                excel_row,
-                                excel_col,
-                                &normalized,
-                                &ast,
-                                &record,
-                                shared.map(|index| index as u64),
-                            );
-                        }
-                        // A member's text is not worth caching: relative
-                        // copies do not repeat their text.
-                        if record.is_family_member() {
-                            Some(record)
-                        } else {
-                            let ast_id = record.ast_id;
-                            staging.parse_cache.insert(normalized.clone(), Some(ast_id));
-                            Some(FormulaIngestRecord::new(
-                                excel_row,
-                                excel_col,
-                                ast_id,
-                                Some(Arc::<str>::from(normalized)),
-                            ))
-                        }
-                    }
-                    None => {
-                        staging.parse_cache.insert(normalized, None);
-                        None
-                    }
-                }
-            };
-            if let Some(record) = record {
-                staging.formulas.push(record);
-                staging.handed_to_engine += 1;
-            }
-        }
-        staging.observed += 1;
-        Ok(())
+        staging.stage(engine, sheet, position, formula, shared, debug)
     }
 
     fn stream_worksheet<RS, C>(
