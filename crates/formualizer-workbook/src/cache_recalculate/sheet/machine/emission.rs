@@ -20,6 +20,14 @@ pub(in crate::cache_recalculate) struct Literal<'a> {
     pub row: u32,
     pub col: u32,
     pub style: Option<Cow<'a, str>>,
+    /// Advisory only: inside a validated top-left array extent already seen
+    /// in source order. Final metadata ownership/refusal checks still govern.
+    pub generated_child_hint: bool,
+    /// Raw attribute value bytes, excluding quotes; entities remain encoded.
+    pub raw_type_span: Option<Range<usize>>,
+    pub raw_style_span: Option<Range<usize>>,
+    /// Inner `<v>` bytes, excluding tags. Empty for `<v/>`, absent without v.
+    pub raw_value_span: Option<Range<usize>>,
     pub value: Value<'a>,
 }
 
