@@ -5,6 +5,7 @@ pub(crate) mod name_references;
 pub(crate) mod partition;
 pub(crate) mod replay;
 pub(crate) mod staging;
+pub(crate) mod stream;
 pub(crate) mod utilities;
 
 pub(crate) fn shared_source_index(index: usize) -> u32 {

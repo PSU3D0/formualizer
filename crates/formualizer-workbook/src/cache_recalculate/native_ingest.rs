@@ -1,9 +1,6 @@
 //! Native recalc orchestration. Original worksheet marks remain immutable;
 //! evaluation text and typed Arrow planes never pass through an ingestion ZIP.
 use super::*;
-use formualizer_eval::engine::{
-    FormulaCompressedSourceBatch, FormulaIngestBatch, FormulaPlaneMode, SheetIndexMode,
-};
 
 pub(super) fn ingest_source<'a>(
     admission: SourceAdmission<'a>,
@@ -252,6 +249,8 @@ fn ingest_error(error: impl std::fmt::Display) -> IoError {
         error.to_string(),
     )))
 }
+use crate::xlsx::ingest::stream::{FormulaBatches, LoadConfig, SheetFormulas, install_values};
+
 fn stream(
     engine: &mut Engine<WBResolver>,
     sheets: &[package::Sheet],
@@ -268,24 +267,10 @@ fn stream(
     engine
         .adopt_file_sheets(sheets.iter().map(|sheet| sheet.name.as_str()))
         .map_err(ingest_error)?;
-    let previous = (
-        engine.config.sheet_index_mode,
-        engine.config.range_expansion_limit,
-        engine.first_load_assume_new(),
-        engine.config.defer_graph_building,
-        engine.config.formula_plane_mode,
-    );
-    engine.set_sheet_index_mode(SheetIndexMode::Lazy);
-    engine.config.range_expansion_limit = 0;
-    if external {
-        engine.config.formula_plane_mode = FormulaPlaneMode::Off;
-    }
-    engine.set_first_load_assume_new(true);
-    engine.reset_ensure_touched();
+    let previous = LoadConfig::begin(engine, external, false);
     let result = (|| -> Result<(), IoError> {
         let mut usage = native_formulas::WorkbookSpoolUsage::default();
-        let mut replay = Vec::new();
-        let mut direct = Vec::new();
+        let mut batches = FormulaBatches::default();
         for (instance, (((sheet, plan), values), texts)) in
             sheets.iter().zip(plans).zip(values).zip(texts).enumerate()
         {
@@ -330,62 +315,34 @@ fn stream(
                     formula.shared_tags
                 );
             }
-            let store = engine.sheet_store_mut();
-            if let Some(index) = store
-                .sheets
-                .iter()
-                .position(|existing| existing.name.as_ref() == sheet.name)
-            {
-                store.sheets[index] = values.arrow;
-            } else {
-                store.sheets.push(values.arrow);
-            }
-            if engine.config.defer_graph_building {
-                if let Some(package) = formula.deferred {
-                    engine.source_formula_ingress().stage_deferred(package);
-                }
-            } else if !formula.records.is_empty() || formula.report.source_formula_events != 0 {
-                let batch = FormulaIngestBatch::new(sheet.name.clone(), formula.records);
-                if let Some(preparation) = formula.preparation {
-                    direct.push((batch, formula.report, preparation));
-                } else {
-                    replay.push((
-                        batch,
-                        FormulaCompressedSourceBatch::with_proposals(
-                            sheet.name.clone(),
-                            formula.report,
-                            formula.families,
-                            formula.partitioned,
-                        ),
-                    ));
-                }
-            }
+            install_values(engine, &sheet.name, values.arrow);
+            batches.push(
+                engine,
+                &sheet.name,
+                SheetFormulas {
+                    records: formula.records,
+                    report: formula.report,
+                    families: formula.families,
+                    partitioned: formula.partitioned,
+                    preparation: formula.preparation,
+                    deferred: formula.deferred,
+                },
+            );
         }
         checkpoint(&options.cancel)?;
-        if !replay.is_empty() {
-            engine
-                .source_formula_ingress()
-                .ingest_replay_batches(replay)
-                .map_err(ingest_error)?;
+        if !batches.replay.is_empty() {
+            batches.install_replay(engine).map_err(IoError::Calamine)?;
         }
         checkpoint(&options.cancel)?;
-        if !direct.is_empty() {
-            engine
-                .source_formula_ingress()
-                .finish_prepared(direct)
-                .map_err(ingest_error)?;
+        if !batches.direct.is_empty() {
+            batches.install_direct(engine).map_err(IoError::Calamine)?;
         }
         checkpoint(&options.cancel)?;
         names.register(engine).map_err(IoError::Calamine)?;
         checkpoint(&options.cancel)?;
         Ok(())
     })();
-    engine.set_first_load_assume_new(previous.2);
-    engine.reset_ensure_touched();
-    engine.set_sheet_index_mode(previous.0);
-    engine.config.range_expansion_limit = previous.1;
-    engine.config.defer_graph_building = previous.3;
-    engine.config.formula_plane_mode = previous.4;
+    previous.restore(engine);
     if result.is_ok() {
         engine.finalize_all_sheet_indexes(sheets.iter().map(|sheet| sheet.name.as_str()));
     }

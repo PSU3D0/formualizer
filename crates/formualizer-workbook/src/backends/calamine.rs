@@ -17,9 +17,9 @@ use formualizer_eval::arrow_store::{IngestBuilder, OverlayValue, map_error_code}
 use formualizer_eval::engine::ingest::EngineLoadStream;
 use formualizer_eval::engine::{
     CancelToken, DeferredFormulaPackage, Engine as EvalEngine, FormulaCompressedPreparation,
-    FormulaCompressedSourceBatch, FormulaCompressedSourceReport, FormulaIngestBatch,
-    FormulaIngestRecord, FormulaSpoolDiskPolicy, PartitionedSourceFormulaFamily, SourceCoord,
-    SourceFamilyId, SourceFormulaFamily, SourceFormulaOrder, SourceRect,
+    FormulaCompressedSourceReport, FormulaIngestRecord, FormulaSpoolDiskPolicy,
+    PartitionedSourceFormulaFamily, SourceCoord, SourceFamilyId, SourceFormulaFamily,
+    SourceFormulaOrder, SourceRect,
 };
 use formualizer_eval::traits::EvaluationContext;
 use formualizer_parse::parser::{ASTNode, ReferenceType};
@@ -487,6 +487,7 @@ impl DenseState {
 }
 
 use crate::xlsx::ingest::staging::{FormulaStaging, WorkbookSpoolUsage};
+use crate::xlsx::ingest::stream::{FormulaBatches, LoadConfig, SheetFormulas, install_values};
 
 struct StreamWorksheetOptions {
     refused_external_formulas: HashSet<(u32, u32)>,
@@ -2942,22 +2943,11 @@ where
         #[cfg(feature = "tracing")]
         drop(_span_sheets);
 
-        let prev_index_mode = engine.config.sheet_index_mode;
-        engine.set_sheet_index_mode(formualizer_eval::engine::SheetIndexMode::Lazy);
-        let prev_range_limit = engine.config.range_expansion_limit;
-        engine.config.range_expansion_limit = 0;
-        let prev_first_load = engine.first_load_assume_new();
-        let prev_deferred = engine.config.defer_graph_building;
-        let prev_formula_plane = engine.config.formula_plane_mode;
-        if self.external_values.is_some() {
-            // Cached sources need the per-cell dependency ingestion path.
-            engine.config.formula_plane_mode = formualizer_eval::engine::FormulaPlaneMode::Off;
-        }
-        if !self.refused_external_formulas.is_empty() {
-            engine.config.defer_graph_building = false;
-        }
-        engine.set_first_load_assume_new(true);
-        engine.reset_ensure_touched();
+        let previous = LoadConfig::begin(
+            engine,
+            self.external_values.is_some(),
+            !self.refused_external_formulas.is_empty(),
+        );
 
         let load_result = (|| -> Result<(), calamine::Error> {
             let chunk_rows: usize = 32 * 1024;
@@ -2968,13 +2958,7 @@ where
             let mut total_shared_formula_tags = 0usize;
             let mut workbook_spool_bytes_used = 0u64;
             let mut workbook_spill_files_used = 0u32;
-            let mut eager_formula_batches: Vec<(FormulaIngestBatch, FormulaCompressedSourceBatch)> =
-                Vec::new();
-            let mut eager_direct_batches: Vec<(
-                FormulaIngestBatch,
-                FormulaCompressedSourceReport,
-                FormulaCompressedPreparation,
-            )> = Vec::new();
+            let mut batches = FormulaBatches::default();
 
             for (sheet_instance, n) in names.iter().enumerate() {
                 Self::cancellation_checkpoint(cancel.as_ref())?;
@@ -3048,33 +3032,19 @@ where
                 total_value_cells_observed += sheet_value_cells_observed;
                 total_shared_formula_tags += shared_formula_tags;
 
-                let store = engine.sheet_store_mut();
-                if let Some(pos) = store.sheets.iter().position(|s| s.name.as_ref() == n) {
-                    store.sheets[pos] = asheet;
-                } else {
-                    store.sheets.push(asheet);
-                }
-
-                if engine.config.defer_graph_building {
-                    if let Some(package) = deferred_package {
-                        engine.source_formula_ingress().stage_deferred(package);
-                    }
-                } else if !formulas.is_empty() || formula_source_report.source_formula_events != 0 {
-                    let batch = FormulaIngestBatch::new(n.clone(), formulas);
-                    if let Some(preparation) = direct_preparation {
-                        eager_direct_batches.push((batch, formula_source_report, preparation));
-                    } else {
-                        eager_formula_batches.push((
-                            batch,
-                            FormulaCompressedSourceBatch::with_proposals(
-                                n.clone(),
-                                formula_source_report,
-                                compressed_families,
-                                partitioned_families,
-                            ),
-                        ));
-                    }
-                }
+                install_values(engine, n, asheet);
+                batches.push(
+                    engine,
+                    n,
+                    SheetFormulas {
+                        records: formulas,
+                        report: formula_source_report,
+                        families: compressed_families,
+                        partitioned: partitioned_families,
+                        preparation: direct_preparation,
+                        deferred: deferred_package,
+                    },
+                );
 
                 total_formulas += parsed_n;
                 total_formula_handed_to_engine += formula_handed_to_engine;
@@ -3121,20 +3091,14 @@ where
                 }
             }
 
-            if !engine.config.defer_graph_building && !eager_formula_batches.is_empty() {
+            if !engine.config.defer_graph_building && !batches.replay.is_empty() {
                 Self::cancellation_checkpoint(cancel.as_ref())?;
-                engine
-                    .source_formula_ingress()
-                    .ingest_replay_batches(eager_formula_batches)
-                    .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?;
+                batches.install_replay(engine)?;
                 Self::cancellation_checkpoint(cancel.as_ref())?;
             }
-            if !eager_direct_batches.is_empty() {
+            if !batches.direct.is_empty() {
                 Self::cancellation_checkpoint(cancel.as_ref())?;
-                engine
-                    .source_formula_ingress()
-                    .finish_prepared(eager_direct_batches)
-                    .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?;
+                batches.install_direct(engine)?;
                 Self::cancellation_checkpoint(cancel.as_ref())?;
             }
 
@@ -3391,12 +3355,7 @@ where
 
         // Restore every temporary engine setting even when parsing, limits, or
         // graph ingest exits early.
-        engine.set_first_load_assume_new(prev_first_load);
-        engine.reset_ensure_touched();
-        engine.set_sheet_index_mode(prev_index_mode);
-        engine.config.range_expansion_limit = prev_range_limit;
-        engine.config.defer_graph_building = prev_deferred;
-        engine.config.formula_plane_mode = prev_formula_plane;
+        previous.restore(engine);
         if load_result.is_ok() {
             // Leaving the first-load scope flushes packed mappings first.
             engine.finalize_all_sheet_indexes(names.iter().map(String::as_str));
