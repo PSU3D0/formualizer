@@ -10,15 +10,18 @@ pub(super) use guards::inert as inert_sheets;
 pub(super) mod ingest_view;
 mod transforms;
 pub(super) use transforms::legacy as legacy_intersection;
-mod native_admission;
+mod admission;
 pub(super) use crate::xlsx::ingest::formulas as native_formulas;
-mod native_ingest;
+use admission as native_admission;
+mod ingestion;
 pub(super) use crate::xlsx::ingest::names as native_names;
 pub(super) use crate::xlsx::ingest::values as native_values;
 pub(super) use crate::xlsx::metadata as native_metadata;
 pub(crate) use crate::xlsx::package;
-mod phase_clock;
-mod result_projection;
+mod clock;
+mod projection;
+mod summary;
+use summary::{record_result, unchanged, validated_result};
 pub(super) mod shared_qualifiers;
 pub(super) use crate::xlsx::metadata::tables;
 pub(crate) use crate::xlsx::worksheet as sheet;
@@ -37,6 +40,7 @@ use crate::recalculate::{RecalculateStatus, RecalculateSummary};
 use crate::{CalamineAdapter, SpreadsheetReader};
 pub(super) use crate::{IoError, workbook::WBResolver};
 use chrono::{DateTime, Utc};
+use clock::{PhaseClock, clock_instant};
 use formualizer_common::{CellAddress, DateSystem, LiteralValue};
 use formualizer_eval::engine::DeterministicMode;
 #[cfg(test)]
@@ -47,8 +51,7 @@ use formualizer_eval::engine::inspect::{SnapshotOptions, Staleness};
 use formualizer_eval::engine::{
     CancelToken, Engine, FormulaParsePolicy, SpillBoundsPolicy, SpillConfig, SpillConflictPolicy,
 };
-use native_ingest::ingest_source;
-use phase_clock::PhaseClock;
+use ingestion::ingest_source;
 #[cfg(test)]
 use std::collections::BTreeMap;
 use std::collections::{HashMap, HashSet};
@@ -702,22 +705,6 @@ pub fn recalculate_xlsx_bytes(
     clock.total(formula_count);
     Ok(result)
 }
-/// The instant this run's `NOW()`/`TODAY()` observe: the fixed timestamp in
-/// deterministic mode, otherwise one system-clock sample (when the build has a
-/// system clock).
-fn clock_instant(options: &XlsxRecalculateOptions) -> Option<DateTime<Utc>> {
-    match &options.eval_config.deterministic_mode {
-        DeterministicMode::Enabled { timestamp_utc, .. } => Some(*timestamp_utc),
-        // NOW() has one-second resolution. A whole-second sample is exactly
-        // what the caches record and round-trips through every binding.
-        #[cfg(feature = "system-clock")]
-        DeterministicMode::Disabled { .. } => {
-            Some(chrono::SubsecRound::trunc_subsecs(Utc::now(), 0))
-        }
-        #[cfg(not(feature = "system-clock"))]
-        DeterministicMode::Disabled { .. } => None,
-    }
-}
 /// The admitted source with its ingested, not yet evaluated, engine.
 struct Ingested<'a> {
     archive: package::Archive<'a>,
@@ -1169,73 +1156,6 @@ fn evaluate(
     checkpoint(&options.cancel)?;
     Ok(now)
 }
-fn unchanged(
-    bytes: &[u8],
-    formula_count: usize,
-    summary: RecalculateSummary,
-) -> XlsxRecalculateResult {
-    XlsxRecalculateResult {
-        bytes: bytes.to_vec(),
-        summary,
-        formula_cells: formula_count,
-        cache_cells_changed: 0,
-        worksheet_parts_changed: 0,
-        clock_now_utc: None,
-        external_links_used: 0,
-    }
-}
-/// The validated value of one source formula, exactly as the scalar writer
-/// requires it: present, 1x1 arrays coerced, ingested as a formula (or a
-/// coerced parse error) and current.
-fn validated_result(
-    value: Option<LiteralValue>,
-    has_formula: bool,
-    staleness: Staleness,
-    coerced: bool,
-    location: impl Fn() -> String,
-) -> Result<LiteralValue, IoError> {
-    let mut value = value.ok_or_else(|| unsupported("absent formula result", location()))?;
-    if matches!(&value,LiteralValue::Array(rows) if rows.len()==1 && rows[0].len()==1) {
-        value = value
-            .coerce_to_single_value()
-            .map_err(|_| unsupported("non-scalar result", "cache-only writer"))?;
-    }
-    if !(has_formula || (matches!(value, LiteralValue::Error(_)) && coerced)) {
-        return Err(unsupported("source formula was not ingested", location()));
-    }
-    if staleness != Staleness::Current {
-        return Err(unsupported(
-            format!("formula result is not current: {staleness:?} after evaluation"),
-            location(),
-        ));
-    }
-    Ok(value)
-}
-/// Count one evaluated source formula (anchors included) in the summary.
-/// A `#NAME?` without a message gets the reason its own formula gives.
-fn record_result(
-    summary: &mut RecalculateSummary,
-    engine: &Engine<WBResolver>,
-    sheet: &str,
-    cell: &sheet::Cell,
-    value: &LiteralValue,
-    limit: usize,
-) {
-    let location = || format!("{sheet}!{}", cell.address());
-    match value {
-        LiteralValue::Error(error)
-            if error.kind == formualizer_common::ExcelErrorKind::Name
-                && error.message().is_none() =>
-        {
-            let mut error = error.clone();
-            error.set_message(error_reasons::name_error_reason(
-                engine, sheet, cell.row, cell.col,
-            ));
-            summary.record(sheet, location, &LiteralValue::Error(error), limit);
-        }
-        _ => summary.record(sheet, location, value, limit),
-    }
-}
 /// Package edits produced by a publication path.
 struct Publication {
     summary: RecalculateSummary,
@@ -1510,7 +1430,7 @@ fn plan_spill_publication(
             let summary = &mut publication.summary;
             address.row = cell.row;
             address.column = cell.col;
-            let projection = result_projection::project_formula(
+            let projection = projection::project_formula(
                 engine,
                 &address,
                 cell,
@@ -1530,15 +1450,15 @@ fn plan_spill_publication(
                 },
             )?;
             match projection {
-                result_projection::Projection::Scalar(cache) => {
+                projection::Projection::Scalar(cache) => {
                     if !cache.matches(cell, &plan.data) {
                         publication.changed += 1;
                         cache_patches(&plan.data, cell, &cache, &mut scalar_patches);
                     }
                 }
-                result_projection::Projection::Anchor(anchor) => {
+                projection::Projection::Anchor(anchor) => {
                     check_spill_policy(&options.eval_config.spill)?;
-                    use result_projection::Shape;
+                    use projection::Shape;
                     let spill = match anchor.shape {
                         Shape::Spill(extent) => Some(extent),
                         Shape::Collapsed | Shape::Blocked | Shape::Error => None,
@@ -1631,7 +1551,7 @@ fn plan_spill_publication(
             index,
             &anchors,
             &mut |anchor, row, col| {
-                result_projection::member(
+                projection::member(
                     engine,
                     &sheet.name,
                     (anchor.row, anchor.col),

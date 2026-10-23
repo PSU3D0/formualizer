@@ -56,3 +56,22 @@ impl PhaseClock {
         }
     }
 }
+
+use super::{DateTime, DeterministicMode, Utc, XlsxRecalculateOptions};
+
+/// The instant this run's `NOW()`/`TODAY()` observe: the fixed timestamp in
+/// deterministic mode, otherwise one system-clock sample (when the build has a
+/// system clock).
+pub(super) fn clock_instant(options: &XlsxRecalculateOptions) -> Option<DateTime<Utc>> {
+    match &options.eval_config.deterministic_mode {
+        DeterministicMode::Enabled { timestamp_utc, .. } => Some(*timestamp_utc),
+        // NOW() has one-second resolution. A whole-second sample is exactly
+        // what the caches record and round-trips through every binding.
+        #[cfg(feature = "system-clock")]
+        DeterministicMode::Disabled { .. } => {
+            Some(chrono::SubsecRound::trunc_subsecs(Utc::now(), 0))
+        }
+        #[cfg(not(feature = "system-clock"))]
+        DeterministicMode::Disabled { .. } => None,
+    }
+}
