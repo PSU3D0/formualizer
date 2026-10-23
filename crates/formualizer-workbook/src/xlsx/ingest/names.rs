@@ -46,7 +46,7 @@ impl NameImportPolicy {
     };
 }
 
-pub(in crate::xlsx) struct NativeNames {
+pub(in crate::xlsx) struct CalculationNames {
     raw: Vec<(String, String, Option<usize>)>,
     calamine_defined_names: Vec<(String, String)>,
     sheet_names: Vec<String>,
@@ -61,7 +61,7 @@ pub(in crate::xlsx) struct NativeNames {
     refused_external_names: HashSet<String>,
     cancel: Option<CancelToken>,
 }
-impl NativeNames {
+impl CalculationNames {
     const EXCEL_MAX_ROWS: u32 = 1_048_576;
     const EXCEL_MAX_COLS: u32 = 16_384;
     pub(in crate::xlsx) fn new(
@@ -256,9 +256,9 @@ impl NativeNames {
                         *row_abs
                             && *col_abs
                             && *row > 0
-                            && *row <= NativeNames::EXCEL_MAX_ROWS
+                            && *row <= CalculationNames::EXCEL_MAX_ROWS
                             && *col > 0
-                            && *col <= NativeNames::EXCEL_MAX_COLS
+                            && *col <= CalculationNames::EXCEL_MAX_COLS
                             && sheet.as_ref().is_some_and(|s| sheets.contains(s))
                     }
                     ReferenceType::Range {
@@ -282,14 +282,14 @@ impl NativeNames {
                                 && *end_row_abs
                                 && s > 0
                                 && s <= e
-                                && e <= NativeNames::EXCEL_MAX_ROWS
+                                && e <= CalculationNames::EXCEL_MAX_ROWS
                         }) || (start_row.is_none() && end_row.is_none());
                         let cols_ok = cols.is_some_and(|(s, e)| {
                             *start_col_abs
                                 && *end_col_abs
                                 && s > 0
                                 && s <= e
-                                && e <= NativeNames::EXCEL_MAX_COLS
+                                && e <= CalculationNames::EXCEL_MAX_COLS
                         }) || (start_col.is_none() && end_col.is_none());
                         rows_ok && cols_ok && sheet.as_ref().is_some_and(|s| sheets.contains(s))
                     }

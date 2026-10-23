@@ -143,7 +143,7 @@ impl<'a> ScalarCell<'a> {
         }
         Ok(())
     }
-    pub fn retain(self, formula: FormulaState<'a>, bytes: &[u8]) -> Cell {
+    pub fn retain(self, formula: FormulaState<'a>, bytes: &[u8]) -> FormulaMark {
         OpenCell {
             row: self.row,
             col: self.col,
@@ -168,7 +168,7 @@ impl<'a> ScalarCell<'a> {
     }
     // Keep the emission contract unchanged. These are the same scalar decode
     // and readability proof as emission::{value,refusal}, without constructing
-    // an OpenCell or a retained Cell for a literal.
+    // an OpenCell or a retained FormulaMark for a literal.
     pub fn decode<'v>(
         &self,
         text: Cow<'v, str>,

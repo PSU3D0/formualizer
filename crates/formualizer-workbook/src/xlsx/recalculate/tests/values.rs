@@ -1,10 +1,11 @@
 use super::super::{
     IoError, XlsxRecalculateOptions,
-    native_metadata::{SharedStringTable, Styles, raw_attribute},
-    native_values::{Context, RawCell, ValuePlane, ValueSink, dimension_hint},
-    sheet, xml,
+    metadata::{SharedStringTable, Styles, raw_attribute},
+    sheet,
+    values::{Context, IngestedValues, RawCell, ValueSink, dimension_hint},
+    xml,
 };
-use super::native_metadata::{annotation, probe};
+use super::metadata::{annotation, probe};
 use calamine::{DataRef, Reader, Xlsx};
 use formualizer_common::{DateSystem, LiteralValue};
 use formualizer_eval::engine::WorkbookLoadLimits;
@@ -86,7 +87,12 @@ fn literal(value: &DataRef<'_>) -> Option<LiteralValue> {
         }
     })
 }
-fn compare(data: &[u8], sst: &[u8], styles: &[u8], sparse: bool) -> Result<ValuePlane, IoError> {
+fn compare(
+    data: &[u8],
+    sst: &[u8],
+    styles: &[u8],
+    sparse: bool,
+) -> Result<IngestedValues, IoError> {
     let options = XlsxRecalculateOptions::default();
     let strings = SharedStringTable::parse(sst, &options)?;
     let formats = Styles::parse(styles, &options)?;
@@ -123,10 +129,10 @@ fn compare(data: &[u8], sst: &[u8], styles: &[u8], sparse: bool) -> Result<Value
         limits: &limits,
     })?;
     let mut pending_error = None;
-    let result = sheet::machine::scan_emitting(
+    let result = sheet::scanner::scan_emitting(
         data,
         &options,
-        sheet::Mode::Indexed,
+        sheet::ScanRetention::Indexed,
         &mut 0,
         &mut 0,
         |event| {
@@ -239,10 +245,10 @@ fn advisory_prefix_is_bounded_and_machine_remains_authoritative() {
     let truncated = format!("<worksheet xmlns=\"{MAIN}\"><dimension ref=\"A1:C3\"/><!--");
     assert_eq!(dimension_hint(truncated.as_bytes(), &options), (3, 3));
     assert!(
-        sheet::machine::scan(
+        sheet::scanner::scan(
             truncated.as_bytes(),
             &options,
-            sheet::Mode::Plain,
+            sheet::ScanRetention::Plain,
             &mut 0,
             &mut 0
         )
@@ -323,10 +329,10 @@ fn listed_native_value_planes_match_calamine() {
                     limits: &limits,
                 })
                 .unwrap();
-                let result = sheet::machine::scan_emitting(
+                let result = sheet::scanner::scan_emitting(
                     &plan.data,
                     &options,
-                    sheet::Mode::Indexed,
+                    sheet::ScanRetention::Indexed,
                     &mut 0,
                     &mut 0,
                     |event| {

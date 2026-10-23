@@ -600,7 +600,7 @@ fn cell_name(data: &[u8], start: usize) -> String {
 
 /// Set `c/@cm` on an anchor: replace an existing binding or insert one at
 /// the end of the start tag, after any type attribute inserted there.
-fn set_cell_metadata(out: &mut Vec<Patch>, cell: &super::sheet::Cell, cm: u32) {
+fn set_cell_metadata(out: &mut Vec<Patch>, cell: &super::sheet::FormulaMark, cm: u32) {
     let attribute = format!("cm=\"{cm}\"");
     if let Some(span) = cell.cm_span() {
         out.push(Patch {

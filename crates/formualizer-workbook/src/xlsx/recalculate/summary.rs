@@ -50,7 +50,7 @@ pub(super) fn record_result(
     summary: &mut RecalculateSummary,
     engine: &Engine<WBResolver>,
     sheet: &str,
-    cell: &sheet::Cell,
+    cell: &sheet::FormulaMark,
     value: &LiteralValue,
     limit: usize,
 ) {

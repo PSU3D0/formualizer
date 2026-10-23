@@ -353,7 +353,7 @@ pub(in crate::xlsx) fn parse(
 
 pub(in crate::xlsx) fn validate(
     table: &Table,
-    cells: &[sheet::Cell],
+    cells: &[sheet::FormulaMark],
     merges: &[sheet::SourceRect],
     bounds: (u32, u32),
     options: &XlsxRecalculateOptions,

@@ -101,7 +101,7 @@ fn lower(
     reference: &TableReference,
     spelling: &str,
     sheet_name: &str,
-    cell: &sheet::Cell,
+    cell: &sheet::FormulaMark,
     sheets: &[package::Sheet],
     plans: &[SheetPlan],
 ) -> Result<String, IoError> {
@@ -267,7 +267,7 @@ fn literal_text(ast: &ASTNode) -> Option<String> {
 }
 /// In a table-bearing workbook INDIRECT text must be proven free of table
 /// syntax: only literal (or literal-concatenation) text without `[` or any
-/// table name is admitted. Cell-sourced or computed text could name a table,
+/// table name is admitted. FormulaMark-sourced or computed text could name a table,
 /// which would bypass this source-only lowering.
 pub(in crate::xlsx) fn indirect_text_is_table_free(ast: &ASTNode, names: &[String]) -> bool {
     match &ast.node_type {

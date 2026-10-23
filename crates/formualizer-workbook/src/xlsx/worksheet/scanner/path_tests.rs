@@ -5,7 +5,7 @@ fn paths(text: &str) -> ((usize, usize), bool) {
     let result = scan_inner::<true>(
         text.as_bytes(),
         &XlsxRecalculateOptions::default(),
-        Mode::Plain,
+        ScanRetention::Plain,
         (&mut 0, &mut 0),
         &mut false,
         &mut |_| Ok(()),
@@ -31,7 +31,7 @@ fn raw_coordinate_dimension_and_row_provenance_does_not_change_admission() {
         let result = scan_emitting(
             bytes,
             &XlsxRecalculateOptions::default(),
-            Mode::Plain,
+            ScanRetention::Plain,
             &mut 0,
             &mut 0,
             |literal| {
@@ -72,7 +72,7 @@ fn raw_coordinate_dimension_and_row_provenance_does_not_change_admission() {
             let result = scan_emitting(
                 xml.as_bytes(),
                 &XlsxRecalculateOptions::default(),
-                Mode::Plain,
+                ScanRetention::Plain,
                 &mut 0,
                 &mut 0,
                 |_| Ok(()),
@@ -102,7 +102,7 @@ fn raw_literal_provenance_preserves_encoded_and_unsigned_spellings() {
     scan_emitting(
         bytes,
         &XlsxRecalculateOptions::default(),
-        Mode::Plain,
+        ScanRetention::Plain,
         &mut 0,
         &mut 0,
         |literal| {
@@ -145,7 +145,7 @@ fn generated_child_hint_covers_seen_legacy_and_metadata_array_extents() {
         let result = scan_emitting(
             xml.as_bytes(),
             &XlsxRecalculateOptions::default(),
-            Mode::Indexed,
+            ScanRetention::Indexed,
             &mut 0,
             &mut 0,
             |literal| {
@@ -182,7 +182,7 @@ fn generated_child_hint_does_not_look_ahead_or_change_refusal_order() {
     let result = scan_emitting(
         xml.as_bytes(),
         &options,
-        Mode::Indexed,
+        ScanRetention::Indexed,
         &mut 0,
         &mut 0,
         |literal| {
@@ -190,7 +190,13 @@ fn generated_child_hint_does_not_look_ahead_or_change_refusal_order() {
             Ok(())
         },
     );
-    let old = super::super::scan_uncounted(xml.as_bytes(), &options, Mode::Indexed, &mut 0, &mut 0);
+    let old = super::super::scan_uncounted(
+        xml.as_bytes(),
+        &options,
+        ScanRetention::Indexed,
+        &mut 0,
+        &mut 0,
+    );
     assert_eq!(hints, [((1, 2), false)]);
     assert!(result.is_err());
     assert_eq!(format!("{:?}", result.err()), format!("{:?}", old.err()));

@@ -16,12 +16,11 @@ use publication::{plan_spill_publication, publish_caches as publish};
 mod transforms;
 pub(super) use transforms::legacy as legacy_intersection;
 mod admission;
-pub(super) use crate::xlsx::ingest::formulas as native_formulas;
-use admission as native_admission;
+pub(super) use crate::xlsx::ingest::formulas;
 mod ingestion;
-pub(super) use crate::xlsx::ingest::names as native_names;
-pub(super) use crate::xlsx::ingest::values as native_values;
-pub(super) use crate::xlsx::metadata as native_metadata;
+pub(super) use crate::xlsx::ingest::names;
+pub(super) use crate::xlsx::ingest::values;
+pub(super) use crate::xlsx::metadata;
 pub(crate) use crate::xlsx::package;
 mod clock;
 mod projection;
@@ -179,7 +178,7 @@ impl Cache {
             Self::Empty => String::new(),
         }
     }
-    fn matches(&self, cell: &sheet::Cell, bytes: &[u8]) -> bool {
+    fn matches(&self, cell: &sheet::FormulaMark, bytes: &[u8]) -> bool {
         if cell.inline.is_some() {
             return false;
         }
@@ -264,7 +263,7 @@ pub(crate) struct SheetPlan {
     pub(super) rows_hidden_by_default: bool,
     pub(super) active_filters: Vec<sheet::SourceRect>,
     pub(super) data: Vec<u8>,
-    pub(crate) cells: Vec<sheet::Cell>,
+    pub(crate) cells: Vec<sheet::FormulaMark>,
     pub(super) index: Option<sheet::SourceIndex>,
     pub(super) ownership: dynamic_metadata::SheetOwnership,
     /// Serialized `<c>` elements, counted toward the generated-cell bound.
@@ -278,7 +277,7 @@ pub(super) struct SourceAdmission<'a> {
     pub(super) date_system: DateSystem,
     pub(super) plans: Vec<SheetPlan>,
     pub(super) formula_count: usize,
-    native_values: Vec<native_admission::ValueResult>,
+    values: Vec<admission::ValueResult>,
     pub(super) native_metadata_error: Option<IoError>,
     pub(super) metadata: Option<dynamic_metadata::DynamicMetadata>,
     /// External sources served from the link caches, when the workbook
@@ -311,8 +310,8 @@ pub(super) fn admit_source<'a>(
         .map(|part| dynamic_metadata::parse(&mut archive, &part, options))
         .transpose()?;
     // Reader-shaped errors must not outrank source/table/ownership admission.
-    let native_metadata = native_admission::Metadata::read(&mut archive, options);
-    let mut native_values = Vec::with_capacity(sheets.len());
+    let value_metadata = admission::Metadata::read(&mut archive, options);
+    let mut values = Vec::with_capacity(sheets.len());
     let mut plans = Vec::new();
     let mut observed = 0;
     let mut logical_cells = 0u64;
@@ -331,33 +330,37 @@ pub(super) fn admit_source<'a>(
             )?
         };
         let counted = (observed, logical_cells);
-        let mut scanned = native_admission::scan(
+        let mut scanned = admission::scan(
             &data,
             &sheet.name,
             date_system,
-            native_metadata.as_ref().ok(),
+            value_metadata.as_ref().ok(),
             options,
             if sheet.tables.is_empty() {
-                sheet::Mode::Plain
+                sheet::ScanRetention::Plain
             } else {
-                sheet::Mode::TablePlain
+                sheet::ScanRetention::TablePlain
             },
             (&mut observed, &mut logical_cells),
         )?;
-        if matches!(scanned, native_admission::ScannedValues::NeedsIndex) {
+        if matches!(scanned, admission::ScannedValues::NeedsIndex) {
             // Dynamic cell metadata: index this sheet only.
             (observed, logical_cells) = counted;
-            scanned = native_admission::scan(
+            scanned = admission::scan(
                 &data,
                 &sheet.name,
                 date_system,
-                native_metadata.as_ref().ok(),
+                value_metadata.as_ref().ok(),
                 options,
-                sheet::Mode::Indexed,
+                sheet::ScanRetention::Indexed,
                 (&mut observed, &mut logical_cells),
             )?;
         }
-        let native_admission::ScannedValues::Done { scan, values } = scanned else {
+        let admission::ScannedValues::Done {
+            scan,
+            values: scanned_values,
+        } = scanned
+        else {
             return Err(unsupported("unindexed dynamic cell metadata", "worksheet"));
         };
         let mut scan = *scan;
@@ -437,7 +440,7 @@ pub(super) fn admit_source<'a>(
             }
             None => dynamic_metadata::SheetOwnership::default(),
         };
-        native_values.push(values);
+        values.push(scanned_values);
         plans.push(SheetPlan {
             hidden_rows: scan.hidden_rows,
             rows_hidden_by_default: scan.rows_hidden_by_default,
@@ -502,8 +505,8 @@ pub(super) fn admit_source<'a>(
         date_system,
         plans,
         formula_count,
-        native_values,
-        native_metadata_error: native_metadata.err(),
+        values,
+        native_metadata_error: value_metadata.err(),
         metadata,
         external,
     })
@@ -721,7 +724,7 @@ fn legacy_ingest_source<'a>(
         date_system,
         plans,
         formula_count: _,
-        native_values: _,
+        values: _,
         native_metadata_error: _,
         metadata,
         external,

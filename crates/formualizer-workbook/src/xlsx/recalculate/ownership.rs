@@ -1,6 +1,6 @@
 //! Proven prior spill footprints and generated-child ownership.
 //! Classification only observes immutable source marks and deferred cache refusals.
-use super::sheet::{Cell, SourceIndex, SourceRect};
+use super::sheet::{FormulaMark, SourceIndex, SourceRect};
 use super::{IoError, XlsxRecalculateOptions, checkpoint, unsupported};
 use crate::xlsx::metadata::dynamic::{DynamicBinding, DynamicMetadata};
 use std::cmp::Reverse;
@@ -39,7 +39,7 @@ impl SheetOwnership {
 /// the literal-cache refusals that the scan deferred until classification.
 pub(in crate::xlsx) fn own_sheet(
     index: &SourceIndex,
-    cells: &[Cell],
+    cells: &[FormulaMark],
     metadata: Option<&DynamicMetadata>,
     options: &XlsxRecalculateOptions,
 ) -> Result<SheetOwnership, IoError> {

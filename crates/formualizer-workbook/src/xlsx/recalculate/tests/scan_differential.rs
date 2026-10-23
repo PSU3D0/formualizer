@@ -115,7 +115,7 @@ fn scan_outcome<T: std::fmt::Debug>(
 fn compare_scan(
     bytes: &[u8],
     options: &XlsxRecalculateOptions,
-    mode: sheet::Mode,
+    mode: sheet::ScanRetention,
     observed: usize,
     logical: u64,
 ) {
@@ -129,7 +129,7 @@ fn compare_scan(
     );
     let machine = scan_outcome(
         |o, l| {
-            sheet::machine::scan(bytes, options, mode, o, l)
+            sheet::scanner::scan(bytes, options, mode, o, l)
                 .map(|scan| sheet::reference::normalize(scan, bytes))
         },
         observed,
@@ -164,16 +164,16 @@ pub(in crate::xlsx) fn shadow_walk(bytes: &[u8], options: &XlsxRecalculateOption
 pub(in crate::xlsx) fn shadow_scan(
     bytes: &[u8],
     options: &XlsxRecalculateOptions,
-    mode: sheet::Mode,
+    mode: sheet::ScanRetention,
     observed: usize,
     logical: u64,
 ) {
     exclusive(|| compare_scan(bytes, options, mode, observed, logical));
 }
-const MODES: [sheet::Mode; 3] = [
-    sheet::Mode::Plain,
-    sheet::Mode::TablePlain,
-    sheet::Mode::Indexed,
+const MODES: [sheet::ScanRetention; 3] = [
+    sheet::ScanRetention::Plain,
+    sheet::ScanRetention::TablePlain,
+    sheet::ScanRetention::Indexed,
 ];
 /// Walk and scan `bytes` in every mode under `options`.
 fn compare_all(bytes: &[u8], options: &XlsxRecalculateOptions) {
@@ -573,7 +573,7 @@ fn fused_encoding_block_boundaries_match_the_reference() {
 
 #[test]
 fn whole_slice_validation_visits_each_input_once_per_pass() {
-    use crate::xlsx_xml::{WHOLE_SLICE_VALIDATION_BYTES, walk};
+    use crate::xlsx::xml::{WHOLE_SLICE_VALIDATION_BYTES, walk};
     let options = XlsxRecalculateOptions::default();
     let xml_options = (&options).into();
     for text in [
@@ -638,10 +638,11 @@ fn compact_records_preserve_text_proofs_names_and_address_spelling() {
     eprintln!(
         "retained Cell bytes: legacy={} compact={}",
         std::mem::size_of::<sheet::reference::LegacyCell>(),
-        std::mem::size_of::<sheet::Cell>()
+        std::mem::size_of::<sheet::FormulaMark>()
     );
     assert!(
-        std::mem::size_of::<sheet::Cell>() < std::mem::size_of::<sheet::reference::LegacyCell>()
+        std::mem::size_of::<sheet::FormulaMark>()
+            < std::mem::size_of::<sheet::reference::LegacyCell>()
     );
 }
 

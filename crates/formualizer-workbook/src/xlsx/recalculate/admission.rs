@@ -1,6 +1,6 @@
 //! Fused source admission/value handoff. Reader-shaped value errors are
 //! deferred until source admission/ownership have retained their old priority.
-use super::{IoError, XlsxRecalculateOptions, native_metadata, native_values, package, sheet};
+use super::{IoError, XlsxRecalculateOptions, metadata, package, sheet, values};
 use formualizer_common::DateSystem;
 use formualizer_eval::engine::WorkbookLoadLimits;
 
@@ -19,8 +19,8 @@ pub(super) fn load_limits(options: &XlsxRecalculateOptions) -> WorkbookLoadLimit
     limits
 }
 pub(super) struct Metadata {
-    strings: native_metadata::SharedStringTable,
-    styles: native_metadata::Styles,
+    strings: metadata::SharedStringTable,
+    styles: metadata::Styles,
 }
 impl Metadata {
     pub(super) fn read(
@@ -31,7 +31,7 @@ impl Metadata {
             .file_names()
             .any(|name| name == "xl/sharedStrings.xml")
         {
-            native_metadata::SharedStringTable::parse(
+            metadata::SharedStringTable::parse(
                 &package::take_part(
                     archive,
                     "xl/sharedStrings.xml",
@@ -43,7 +43,7 @@ impl Metadata {
             Default::default()
         };
         let styles = if archive.file_names().any(|name| name == "xl/styles.xml") {
-            native_metadata::Styles::parse(
+            metadata::Styles::parse(
                 &package::take_part(archive, "xl/styles.xml", options.limits.max_worksheet_bytes)?,
                 options,
             )?
@@ -67,7 +67,7 @@ pub(super) struct DeferredValueError {
     pub position: usize,
     pub error: IoError,
 }
-pub(super) type ValueResult = Result<native_values::ValuePlane, DeferredValueError>;
+pub(super) type ValueResult = Result<values::IngestedValues, DeferredValueError>;
 pub(super) enum ScannedValues {
     NeedsIndex,
     Done {
@@ -102,19 +102,19 @@ pub(super) fn scan(
     date_system: DateSystem,
     metadata: Option<&Metadata>,
     options: &XlsxRecalculateOptions,
-    mode: sheet::Mode,
+    mode: sheet::ScanRetention,
     counts: (&mut usize, &mut u64),
 ) -> Result<ScannedValues, IoError> {
     let (observed, logical_cells) = counts;
     let limits = load_limits(options);
     let mut first = None;
     let mut sink = metadata.and_then(|metadata| {
-        match native_values::ValueSink::new(native_values::Context {
+        match values::ValueSink::new(values::Context {
             name,
             source: data,
             strings: &metadata.strings,
             styles: &metadata.styles,
-            dimensions: native_values::dimension_hint(data, options),
+            dimensions: values::dimension_hint(data, options),
             chunk_rows: 32 * 1024,
             date_system,
             limits: &limits,
@@ -147,7 +147,7 @@ pub(super) fn scan(
         }
         if let Some(sink) = &mut sink {
             let raw =
-                native_values::RawCell {
+                values::RawCell {
                     kind: literal.raw_type_span.as_ref().map(|span| {
                         std::str::from_utf8(&data[span.clone()]).expect("admitted UTF-8")
                     }),

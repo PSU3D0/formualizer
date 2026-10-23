@@ -42,7 +42,7 @@ struct AttributeValue<'a> {
 /// Typed hot locals or the exact generic cold validation result. No generic
 /// attribute record is manufactured for an ignored hot attribute.
 enum TagAttributes<'n, 'a> {
-    Hot(&'n crate::xlsx_xml::worksheet::attributes::HotAttributes<'a>),
+    Hot(&'n crate::xlsx::xml::worksheet::attributes::HotAttributes<'a>),
     Cold(&'n [xml::Attribute<'a>]),
 }
 impl<'n, 'a> TagAttributes<'n, 'a> {
@@ -115,7 +115,7 @@ pub(super) fn plain_coord(value: &str) -> Option<(u32, u32)> {
 pub(in crate::xlsx) fn scan(
     bytes: &[u8],
     options: &XlsxRecalculateOptions,
-    mode: Mode,
+    mode: ScanRetention,
     observed: &mut usize,
     logical_cells: &mut u64,
 ) -> Result<Scanned, IoError> {
@@ -125,7 +125,7 @@ pub(in crate::xlsx) fn scan(
 pub(in crate::xlsx) fn scan_emitting(
     bytes: &[u8],
     options: &XlsxRecalculateOptions,
-    mode: Mode,
+    mode: ScanRetention,
     observed: &mut usize,
     logical_cells: &mut u64,
     mut emit: impl FnMut(emission::Literal<'_>) -> Result<(), IoError>,
@@ -148,7 +148,7 @@ pub(in crate::xlsx) fn scan_emitting(
 fn scan_inner<const COUNT_PATHS: bool>(
     bytes: &[u8],
     options: &XlsxRecalculateOptions,
-    mode: Mode,
+    mode: ScanRetention,
     counts: (&mut usize, &mut u64),
     needs_index: &mut bool,
     emit: &mut impl FnMut(emission::Literal<'_>) -> Result<(), IoError>,
@@ -184,7 +184,7 @@ fn scan_inner<const COUNT_PATHS: bool>(
     let mut raw_row_refusal_span = None;
     let mut max_row = 0u32;
     let mut max_col = 0u32;
-    let mut index = (mode == Mode::Indexed).then(|| SourceIndex {
+    let mut index = (mode == ScanRetention::Indexed).then(|| SourceIndex {
         dimension: None,
         sheet_data: 0..0,
         sheet_data_open_end: 0,
@@ -197,8 +197,8 @@ fn scan_inner<const COUNT_PATHS: bool>(
     let mut families = shared::Families::default();
     let mut generated_children = generated::GeneratedChildren::default();
     let mut cursor = Cursor::new();
-    use crate::xlsx_cache_options::checkpoint;
-    use crate::xlsx_xml::{
+    use crate::xlsx::options::checkpoint;
+    use crate::xlsx::xml::{
         Element, Kind, Node, Ns, Scopes, attribute, backend, bind, cdata_end, content, local_part,
         offset, plain_text, qualified_name, valid_text,
     };
@@ -218,7 +218,7 @@ fn scan_inner<const COUNT_PATHS: bool>(
     let mut scopes = Scopes::new();
     let mut parsed = Vec::new();
     let mut attributes = Vec::new();
-    let mut hot = crate::xlsx_xml::worksheet::attributes::HotAttributes::default();
+    let mut hot = crate::xlsx::xml::worksheet::attributes::HotAttributes::default();
     let mut path = Vec::new();
     let mut depth = 0usize;
     let mut roots = 0;
@@ -695,7 +695,7 @@ fn scan_inner<const COUNT_PATHS: bool>(
                             return Err(unsupported("misplaced merge cell", "worksheet"));
                         }
                         let merge = SourceRect::parse(attrs.required("ref")?)?;
-                        if mode == Mode::TablePlain {
+                        if mode == ScanRetention::TablePlain {
                             if table_merges.len() >= options.limits.max_cells {
                                 return Err(unsupported("merge count limit", "worksheet"));
                             }

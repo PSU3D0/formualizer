@@ -767,7 +767,7 @@ fn read_chain(
                 .as_deref()
                 .and_then(|r| std::str::from_utf8(r).ok())
                 .and_then(|r| {
-                    crate::xlsx_xml::plain_coord(r).or_else(|| {
+                    crate::xlsx::xml::plain_coord(r).or_else(|| {
                         // Preserve the old acceptance of noncanonical spellings
                         // (e.g. absolute coordinates); ordinary OOXML takes the
                         // allocation-free parser above.

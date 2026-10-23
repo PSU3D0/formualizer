@@ -1,6 +1,6 @@
 //! Compare every positional SST entry and every style, including unused ones,
 //! through a synthetic worksheet served by the pinned Calamine public reader.
-use super::super::{IoError, XlsxRecalculateOptions, native_metadata as native};
+use super::super::{IoError, XlsxRecalculateOptions, metadata as native};
 use calamine::{DataRef, Reader, Xlsx};
 use formualizer_eval::format::FormatId;
 use std::{

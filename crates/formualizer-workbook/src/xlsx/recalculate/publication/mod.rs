@@ -356,7 +356,13 @@ pub(super) fn plan_spill_publication(
     for (plan, (_, anchors)) in plans.iter().zip(&projected) {
         checkpoint(&options.cancel)?;
         built.push(if plan.index.is_none() && !anchors.is_empty() {
-            match sheet::scan(&plan.data, options, sheet::Mode::Indexed, &mut 0, &mut 0)? {
+            match sheet::scan(
+                &plan.data,
+                options,
+                sheet::ScanRetention::Indexed,
+                &mut 0,
+                &mut 0,
+            )? {
                 sheet::Scanned::Done(scan) => scan.index,
                 sheet::Scanned::NeedsIndex => None,
             }

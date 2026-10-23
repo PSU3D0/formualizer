@@ -1,7 +1,7 @@
 use super::*;
 use crate::xlsx::recalculate::{
-    native_metadata::{SharedStringTable, Styles},
-    native_values::{Context, RawCell, ValueSink, dimension_hint},
+    metadata::{SharedStringTable, Styles},
+    values::{Context, RawCell, ValueSink, dimension_hint},
 };
 use crate::{CalamineAdapter, SpreadsheetReader, workbook::WBResolver};
 use calamine::Reader;
@@ -28,10 +28,10 @@ fn probe(worksheet: &[u8]) -> Vec<u8> {
     zip.finish().unwrap().into_inner()
 }
 fn plan(data: &[u8]) -> SheetPlan {
-    let sheet::Scanned::Done(scan) = sheet::machine::scan_emitting(
+    let sheet::Scanned::Done(scan) = sheet::scanner::scan_emitting(
         data,
         &XlsxRecalculateOptions::default(),
-        sheet::Mode::Indexed,
+        sheet::ScanRetention::Indexed,
         &mut 0,
         &mut 0,
         |_| Ok(()),
@@ -89,10 +89,10 @@ fn load(data: &[u8], config: EvalConfig, native: bool) -> Engine<WBResolver> {
     .unwrap();
     // This isolated fixture uses only unstyled numeric literals. Corpus raw
     // metadata coverage below uses the complete contextual admission view.
-    sheet::machine::scan_emitting(
+    sheet::scanner::scan_emitting(
         &plan.data,
         &options,
-        sheet::Mode::Indexed,
+        sheet::ScanRetention::Indexed,
         &mut 0,
         &mut 0,
         |event| {
@@ -127,7 +127,7 @@ fn load(data: &[u8], config: EvalConfig, native: bool) -> Engine<WBResolver> {
     } else {
         store.sheets.push(arrow);
     }
-    let FormulaPlane {
+    let StagedFormulas {
         records,
         report,
         families,

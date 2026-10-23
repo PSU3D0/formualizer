@@ -1,6 +1,6 @@
 //! Positional shared strings decoded without mutating source XML.
 //! Text-owned nested events and XML whitespace preserve reader compatibility.
-use crate::xlsx::recalculate::sheet::machine::emission::DisplayString;
+use crate::xlsx::recalculate::sheet::events::DisplayString;
 use crate::xlsx::recalculate::{IoError, XlsxRecalculateOptions, xml};
 
 #[derive(Debug, Default)]

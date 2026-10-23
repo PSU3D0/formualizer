@@ -7,7 +7,7 @@
 //! the generated-cell budget was checked; nothing here materializes a spill
 //! rectangle.
 use super::dynamic_metadata::DynamicAnchor;
-use super::sheet::{Cell, SourceRect};
+use super::sheet::{FormulaMark, SourceRect};
 use super::{Cache, IoError, unsupported, validated_result};
 use crate::workbook::WBResolver;
 use formualizer_common::{CellAddress, DateSystem, LiteralValue};
@@ -61,7 +61,7 @@ fn is_multi_cell(extent: &formualizer_common::RangeAddress) -> bool {
 pub(super) fn project_formula(
     engine: &Engine<WBResolver>,
     address: &CellAddress,
-    cell: &Cell,
+    cell: &FormulaMark,
     formula: usize,
     prior: Option<&DynamicAnchor>,
     coerced: bool,

@@ -1,6 +1,6 @@
 //! Typed worksheet attributes. Unknown names and noncanonical lexical forms
 //! replay through the original binder/validator before any semantic effect.
-use crate::xlsx_xml::known_attribute;
+use crate::xlsx::xml::known_attribute;
 use std::ops::Range;
 
 #[derive(Clone)]

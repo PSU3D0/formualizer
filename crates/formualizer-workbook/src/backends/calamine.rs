@@ -2534,7 +2534,7 @@ impl SpreadsheetReader for CalamineAdapter {
                 }
             }
         }
-        let options = crate::xlsx_cache_options::CacheOptions {
+        let options = crate::xlsx::options::CacheOptions {
             cancel: self.cancel.clone(),
             ..Default::default()
         };
@@ -2674,7 +2674,7 @@ where
         .entered();
 
         // Calamine 0.36 streams cached values and formula metadata from each XLSX
-        // cell record in one pass. FormulaPlane staging and authoritative family
+        // cell record in one pass. StagedFormulas staging and authoritative family
         // grouping remain unchanged downstream.
         self.checkpoint_cancel()?;
         let cancel = self.cancel.clone();

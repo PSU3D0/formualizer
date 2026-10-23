@@ -36,7 +36,11 @@ impl EvaluationTexts {
         }
         Ok(Self { texts })
     }
-    fn text<'a>(&'a self, cell: &'a sheet::Cell, data: &'a [u8]) -> Result<Cow<'a, str>, IoError> {
+    fn text<'a>(
+        &'a self,
+        cell: &'a sheet::FormulaMark,
+        data: &'a [u8],
+    ) -> Result<Cow<'a, str>, IoError> {
         if let Some(text) = self.texts.get(&cell.formula_open.end) {
             return Ok(Cow::Borrowed(text));
         }
@@ -103,7 +107,7 @@ fn raw_coordinate(raw: &[u8]) -> Result<(), calamine::XlsxError> {
 /// without a worksheet reader or formula-sized transport copy.
 fn source_record(
     plan: &SheetPlan,
-    cell: &sheet::Cell,
+    cell: &sheet::FormulaMark,
     texts: &EvaluationTexts,
     sequence: u64,
 ) -> Result<OwnedSpoolFormulaRecord, IoError> {
@@ -265,7 +269,7 @@ use formula_replay::{
 
 pub(in crate::xlsx) use crate::xlsx::ingest::staging::WorkbookSpoolUsage;
 use crate::xlsx::ingest::staging::{FormulaStaging, engine_error};
-pub(in crate::xlsx) struct FormulaPlane {
+pub(in crate::xlsx) struct StagedFormulas {
     pub records: Vec<FormulaIngestRecord>,
     pub report: FormulaCompressedSourceReport,
     pub families: Vec<SourceFormulaFamily>,
@@ -289,7 +293,7 @@ pub(in crate::xlsx) fn stage(
     texts: &EvaluationTexts,
     usage: WorkbookSpoolUsage,
     options: &XlsxRecalculateOptions,
-) -> Result<FormulaPlane, IoError> {
+) -> Result<StagedFormulas, IoError> {
     checkpoint(&options.cancel)?;
     let deferred = engine.config.defer_graph_building;
     let eager = !deferred && engine.config.formula_plane_mode == FormulaPlaneMode::Off;
@@ -459,7 +463,7 @@ pub(in crate::xlsx) fn stage(
         )
         .with_complete_coordinate_coverage()
     });
-    Ok(FormulaPlane {
+    Ok(StagedFormulas {
         records: staging.formulas,
         report,
         families,

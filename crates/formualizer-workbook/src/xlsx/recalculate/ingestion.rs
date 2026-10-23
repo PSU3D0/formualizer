@@ -13,7 +13,7 @@ pub(super) fn ingest_source<'a>(
         date_system,
         plans,
         formula_count: _,
-        native_values,
+        values,
         native_metadata_error,
         metadata,
         external,
@@ -60,7 +60,7 @@ pub(super) fn ingest_source<'a>(
                 options,
             )?);
         }
-        evaluation_texts.push(native_formulas::EvaluationTexts::new(transforms)?);
+        evaluation_texts.push(formulas::EvaluationTexts::new(transforms)?);
     }
     inert_sheets::validate_projection_names(&mut archive, &sheets, options)?;
     clock.lap("native evaluation-text transforms (no XML/ZIP view)");
@@ -72,11 +72,11 @@ pub(super) fn ingest_source<'a>(
         "xl/workbook.xml",
         options.limits.max_worksheet_bytes,
     )?;
-    let mut names = native_names::NativeNames::new(
+    let mut names = names::CalculationNames::new(
         &workbook,
         &sheets,
         options.cancel.clone(),
-        native_names::NameImportPolicy::STRICT_REFERENCED,
+        names::NameImportPolicy::STRICT_REFERENCED,
     );
     checkpoint(&options.cancel)?;
     let mut config = options.eval_config.clone();
@@ -114,7 +114,7 @@ pub(super) fn ingest_source<'a>(
         .clone()
         .map_or_else(WBResolver::default, WBResolver::with_external_values);
     let mut engine: Engine<WBResolver> = Engine::new(resolver, config);
-    engine.set_workbook_load_limits(native_admission::load_limits(options));
+    engine.set_workbook_load_limits(admission::load_limits(options));
     if let Some(values) = &external_values {
         engine.adopt_file_sheets(sheets.iter().map(|s| s.name.as_str()))?;
         // Cached values never change during a run: a fixed source version.
@@ -157,7 +157,7 @@ pub(super) fn ingest_source<'a>(
         &mut engine,
         &sheets,
         &plans,
-        (native_values, evaluation_texts),
+        (values, evaluation_texts),
         &mut names,
         external_values.is_some(),
         options,
@@ -260,11 +260,8 @@ fn stream(
     engine: &mut Engine<WBResolver>,
     sheets: &[package::Sheet],
     plans: &[SheetPlan],
-    planes: (
-        Vec<native_admission::ValueResult>,
-        Vec<native_formulas::EvaluationTexts>,
-    ),
-    names: &mut native_names::NativeNames,
+    planes: (Vec<admission::ValueResult>, Vec<formulas::EvaluationTexts>),
+    names: &mut names::CalculationNames,
     external: bool,
     options: &XlsxRecalculateOptions,
 ) -> Result<(), IoError> {
@@ -274,7 +271,7 @@ fn stream(
         .map_err(ingest_error)?;
     let previous = LoadConfig::begin(engine, external, false);
     let result = (|| -> Result<(), IoError> {
-        let mut usage = native_formulas::WorkbookSpoolUsage::default();
+        let mut usage = formulas::WorkbookSpoolUsage::default();
         let mut batches = FormulaBatches::default();
         for (instance, (((sheet, plan), values), texts)) in
             sheets.iter().zip(plans).zip(values).zip(texts).enumerate()
@@ -283,11 +280,11 @@ fn stream(
             let values = match values {
                 Ok(values) => values,
                 Err(deferred) => {
-                    native_formulas::validate_reader_prefix(plan, &texts, deferred.position)?;
+                    formulas::validate_reader_prefix(plan, &texts, deferred.position)?;
                     return Err(deferred.error);
                 }
             };
-            let formula = native_formulas::stage(
+            let formula = formulas::stage(
                 engine,
                 &sheet.name,
                 instance as u32,

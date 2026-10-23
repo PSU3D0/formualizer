@@ -10,7 +10,7 @@
 pub(crate) mod worksheet;
 
 use crate::IoError;
-use crate::xlsx_cache_options::{CacheOptions, checkpoint, unsupported};
+use crate::xlsx::options::{CacheOptions, checkpoint, unsupported};
 use quick_xml::{
     Decoder, Reader,
     events::{

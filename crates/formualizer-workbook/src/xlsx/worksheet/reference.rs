@@ -6,7 +6,7 @@ use crate::xlsx::recalculate::{
 };
 #[path = "reference_types.rs"]
 mod retained;
-use super::{IndexedCell, Mode, NEEDS_INDEX, RowEntry, SourceIndex, SourceRect};
+use super::{IndexedCell, NEEDS_INDEX, RowEntry, ScanRetention, SourceIndex, SourceRect};
 use formualizer_common::coord::parse_a1_1based;
 pub(in crate::xlsx) use retained::Cell as LegacyCell;
 pub(super) use retained::Scanned;
@@ -204,7 +204,7 @@ pub(in crate::xlsx) fn normalize(scan: super::Scanned, bytes: &[u8]) -> Scanned 
 pub(in crate::xlsx) fn scan(
     bytes: &[u8],
     options: &XlsxRecalculateOptions,
-    mode: Mode,
+    mode: ScanRetention,
     observed: &mut usize,
     logical_cells: &mut u64,
 ) -> Result<Scanned, IoError> {
@@ -267,7 +267,7 @@ fn inert_extension(path: &[xml::Element]) -> bool {
 fn scan_inner(
     bytes: &[u8],
     options: &XlsxRecalculateOptions,
-    mode: Mode,
+    mode: ScanRetention,
     observed: &mut usize,
     logical_cells: &mut u64,
     needs_index: &mut bool,
@@ -292,7 +292,7 @@ fn scan_inner(
     let mut dimension = None;
     let mut max_row = 0u32;
     let mut max_col = 0u32;
-    let mut index = (mode == Mode::Indexed).then(|| SourceIndex {
+    let mut index = (mode == ScanRetention::Indexed).then(|| SourceIndex {
         dimension: None,
         sheet_data: 0..0,
         sheet_data_open_end: 0,
@@ -449,7 +449,7 @@ fn scan_inner(
                         return Err(unsupported("misplaced merge cell", "worksheet"));
                     }
                     let merge = SourceRect::parse(node.required("ref")?)?;
-                    if mode == Mode::TablePlain {
+                    if mode == ScanRetention::TablePlain {
                         if table_merges.len() >= options.limits.max_cells {
                             return Err(unsupported("merge count limit", "worksheet"));
                         }

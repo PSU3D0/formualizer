@@ -10,7 +10,7 @@ pub(in crate::xlsx) struct Patch {
 }
 pub(in crate::xlsx::recalculate) fn cache_patches(
     xml: &[u8],
-    cell: &sheet::Cell,
+    cell: &sheet::FormulaMark,
     value: &Cache,
     patches: &mut Vec<Patch>,
 ) {

@@ -1,6 +1,6 @@
 //! Recalculation's options and differential oracle over the shared XML walker.
 use super::{IoError, XlsxRecalculateOptions};
-pub(in crate::xlsx) use crate::xlsx_xml::*;
+pub(in crate::xlsx) use crate::xlsx::xml::*;
 
 #[cfg(test)]
 pub(in crate::xlsx) mod reference;
@@ -12,5 +12,5 @@ pub(in crate::xlsx) fn walk<'a>(
 ) -> Result<(), IoError> {
     #[cfg(test)]
     super::tests::scan_differential::shadow_walk(bytes, options);
-    crate::xlsx_xml::walk(bytes, &options.into(), visit)
+    crate::xlsx::xml::walk(bytes, &options.into(), visit)
 }

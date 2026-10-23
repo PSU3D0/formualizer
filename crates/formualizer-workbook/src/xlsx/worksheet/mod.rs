@@ -10,17 +10,16 @@ use std::{
     ops::{Deref, Range},
 };
 
-#[cfg(any(test, feature = "xlsx-recalc"))]
-pub(in crate::xlsx) mod scanner;
-pub(in crate::xlsx) use scanner as machine;
 mod cursor;
 pub(in crate::xlsx) mod events;
 #[cfg(test)]
 pub(in crate::xlsx) mod reference;
+#[cfg(any(test, feature = "xlsx-recalc"))]
+pub(in crate::xlsx) mod scanner;
 mod shared;
 
 /// Inclusive source rectangle in one-based worksheet coordinates (row 1 is
-/// the first row, column 1 is `A`), matching `Cell::row`/`Cell::col`.
+/// the first row, column 1 is `A`), matching `FormulaMark::row`/`FormulaMark::col`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct SourceRect {
     pub first_row: u32,
@@ -128,7 +127,7 @@ fn prefix(bytes: &[u8], start: usize, len: usize) -> Cow<'_, str> {
     String::from_utf8_lossy(&bytes[start + 1..start + 1 + len])
 }
 #[derive(Debug)]
-pub(crate) struct Cell {
+pub(crate) struct FormulaMark {
     pub row: u32,
     pub col: u32,
     #[allow(dead_code)] // consumers use the narrower spans below
@@ -168,7 +167,7 @@ struct DynamicAttributes {
     /// `ref="…"` attribute span on an array formula start tag.
     array_ref_span: Option<Range<usize>>,
 }
-impl Cell {
+impl FormulaMark {
     pub fn address(&self) -> Cow<'_, str> {
         if let Some(address) = self
             .dynamic
@@ -285,7 +284,7 @@ impl SourceIndex {
 }
 #[cfg_attr(test, derive(Debug))]
 pub(in crate::xlsx) struct Scan {
-    pub cells: Vec<Cell>,
+    pub cells: Vec<FormulaMark>,
     pub table_ids: Vec<String>,
     pub table_merges: Vec<SourceRect>,
     /// Sorted rows hidden by `hidden`, a zero height or a collapsed outline.
@@ -311,7 +310,7 @@ pub(in crate::xlsx) struct Scan {
 /// Calamine's fast scalar reader consumes just one raw ASCII text event.
 /// Literal cells must satisfy that assumption; formula caches may instead be
 /// cleared in the transient ingestion view because they are not authority.
-pub(in crate::xlsx) fn readable_scalar_cache(cell: &Cell, _bytes: &[u8]) -> bool {
+pub(in crate::xlsx) fn readable_scalar_cache(cell: &FormulaMark, _bytes: &[u8]) -> bool {
     cell.value.as_ref().is_none_or(|v| v.readable)
 }
 /// The `<v>` facts [`readable_scalar_cache`] decides on.
@@ -344,7 +343,7 @@ fn scalar_cache_readable(kind: Option<&str>, value: Option<CacheText<'_>>, bytes
 }
 /// `[A-Z]{1,3}[1-9][0-9]{0,6}` within the grid, which
 /// `parse_a1_1based` reads as the same relative row and column.
-pub(in crate::xlsx) use crate::xlsx_xml::plain_coord;
+pub(in crate::xlsx) use crate::xlsx::xml::plain_coord;
 fn coord(value: &str) -> Result<(u32, u32), IoError> {
     if let Some(coord) = plain_coord(value) {
         return Ok(coord);
@@ -383,7 +382,7 @@ struct OpenValue<'a> {
     text: Cow<'a, str>,
 }
 /// A `<c>` element while it is open. It borrows the worksheet; only formula
-/// cells are kept, as an owned [`Cell`].
+/// cells are kept, as an owned [`FormulaMark`].
 struct OpenCell<'a> {
     row: u32,
     col: u32,
@@ -468,7 +467,7 @@ impl<'a> OpenCell<'a> {
         }
         Ok(Some(extent))
     }
-    fn into_cell(self, bytes: &[u8]) -> Cell {
+    fn into_cell(self, bytes: &[u8]) -> FormulaMark {
         let kind = self.kind.as_deref();
         let value = self.value.map(|v| {
             // Matching trims numeric caches; Calamine's proof deliberately
@@ -510,7 +509,7 @@ impl<'a> OpenCell<'a> {
                 readable,
             }
         });
-        Cell {
+        FormulaMark {
             row: self.row,
             col: self.col,
             span: self.span,
@@ -542,7 +541,7 @@ fn append<'a>(to: &mut Cow<'a, str>, text: Cow<'a, str>) {
 }
 /// How [`scan`] treats dynamic-array cell metadata.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::xlsx) enum Mode {
+pub(in crate::xlsx) enum ScanRetention {
     /// No source index. A `cm` attribute stops the scan with
     /// [`Scanned::NeedsIndex`]: until the first anchor no cell can be a
     /// generated child (children follow their top-left anchor in document
@@ -572,14 +571,14 @@ thread_local! {
 pub(in crate::xlsx) fn scan(
     bytes: &[u8],
     options: &XlsxRecalculateOptions,
-    mode: Mode,
+    mode: ScanRetention,
     observed: &mut usize,
     logical_cells: &mut u64,
 ) -> Result<Scanned, IoError> {
     #[cfg(test)]
     {
         MACHINE_WALKS.with(|n| n.set(n.get() + 1));
-        if mode == Mode::Indexed {
+        if mode == ScanRetention::Indexed {
             INDEXED_SCANS.with(|n| n.set(n.get() + 1));
         }
         crate::xlsx::recalculate::tests::scan_differential::shadow_scan(
@@ -590,21 +589,21 @@ pub(in crate::xlsx) fn scan(
             *logical_cells,
         );
     }
-    machine::scan_emitting(bytes, options, mode, observed, logical_cells, |_| Ok(()))
+    scanner::scan_emitting(bytes, options, mode, observed, logical_cells, |_| Ok(()))
 }
 /// Native admission's same counter/shadow seam, with ephemeral value emission.
 pub(in crate::xlsx) fn scan_emitting(
     bytes: &[u8],
     options: &XlsxRecalculateOptions,
-    mode: Mode,
+    mode: ScanRetention,
     observed: &mut usize,
     logical_cells: &mut u64,
-    emit: impl FnMut(machine::emission::Literal<'_>) -> Result<(), IoError>,
+    emit: impl FnMut(scanner::emission::Literal<'_>) -> Result<(), IoError>,
 ) -> Result<Scanned, IoError> {
     #[cfg(test)]
     {
         MACHINE_WALKS.with(|n| n.set(n.get() + 1));
-        if mode == Mode::Indexed {
+        if mode == ScanRetention::Indexed {
             INDEXED_SCANS.with(|n| n.set(n.get() + 1));
         }
         crate::xlsx::recalculate::tests::scan_differential::shadow_scan(
@@ -615,14 +614,14 @@ pub(in crate::xlsx) fn scan_emitting(
             *logical_cells,
         );
     }
-    machine::scan_emitting(bytes, options, mode, observed, logical_cells, emit)
+    scanner::scan_emitting(bytes, options, mode, observed, logical_cells, emit)
 }
 /// [`scan`] without the test-only indexed-scan count.
 #[cfg(test)]
 pub(in crate::xlsx) fn scan_uncounted(
     bytes: &[u8],
     options: &XlsxRecalculateOptions,
-    mode: Mode,
+    mode: ScanRetention,
     observed: &mut usize,
     logical_cells: &mut u64,
 ) -> Result<Scanned, IoError> {
@@ -752,7 +751,7 @@ const CELL_PATH: [Local; 4] = [Local::Worksheet, Local::SheetData, Local::Row, L
 fn scan_inner(
     bytes: &[u8],
     options: &XlsxRecalculateOptions,
-    mode: Mode,
+    mode: ScanRetention,
     observed: &mut usize,
     logical_cells: &mut u64,
     needs_index: &mut bool,
@@ -777,7 +776,7 @@ fn scan_inner(
     let mut dimension = None;
     let mut max_row = 0u32;
     let mut max_col = 0u32;
-    let mut index = (mode == Mode::Indexed).then(|| SourceIndex {
+    let mut index = (mode == ScanRetention::Indexed).then(|| SourceIndex {
         dimension: None,
         sheet_data: 0..0,
         sheet_data_open_end: 0,
@@ -971,7 +970,7 @@ fn scan_inner(
                             return Err(unsupported("misplaced merge cell", "worksheet"));
                         }
                         let merge = SourceRect::parse(node.required("ref")?)?;
-                        if mode == Mode::TablePlain {
+                        if mode == ScanRetention::TablePlain {
                             if table_merges.len() >= options.limits.max_cells {
                                 return Err(unsupported("merge count limit", "worksheet"));
                             }
@@ -1479,7 +1478,7 @@ mod coord_tests {
         }
         for input in inputs {
             assert_eq!(
-                super::machine::plain_coord(&input),
+                super::scanner::plain_coord(&input),
                 plain_coord(&input),
                 "{input}"
             );

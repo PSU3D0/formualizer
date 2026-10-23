@@ -30,14 +30,14 @@ fn standalone_scanner() {
                     "old" => sheet::scan_uncounted(
                         black_box(input),
                         &options,
-                        sheet::Mode::Plain,
+                        sheet::ScanRetention::Plain,
                         &mut 0,
                         &mut 0,
                     ),
-                    "machine" => sheet::machine::scan_emitting(
+                    "machine" => sheet::scanner::scan_emitting(
                         black_box(input),
                         &options,
-                        sheet::Mode::Plain,
+                        sheet::ScanRetention::Plain,
                         &mut 0,
                         &mut 0,
                         |literal| {

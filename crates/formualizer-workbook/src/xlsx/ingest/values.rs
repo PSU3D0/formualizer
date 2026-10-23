@@ -3,8 +3,8 @@
 use crate::load_limits::enforce_sheet_dimension_limits;
 use crate::xlsx::recalculate::{
     IoError,
-    native_metadata::{SharedStringTable, Styles},
-    sheet::machine::emission::{Literal, Value},
+    metadata::{SharedStringTable, Styles},
+    sheet::events::{Literal, Value},
     unsupported,
 };
 use formualizer_common::{DateSystem, ExcelErrorKind};
@@ -117,7 +117,7 @@ impl SparseValueBatch {
         self.max_row = 0;
     }
 }
-pub(in crate::xlsx) struct ValuePlane {
+pub(in crate::xlsx) struct IngestedValues {
     pub arrow: ArrowSheet,
     pub dimensions: (usize, usize),
     pub values_observed: usize,
@@ -366,7 +366,7 @@ impl<'a> ValueSink<'a> {
     pub(in crate::xlsx) fn finish(
         mut self,
         authoritative_bounds: (u32, u32),
-    ) -> Result<ValuePlane, IoError> {
+    ) -> Result<IngestedValues, IoError> {
         self.dimensions.0 = self.dimensions.0.max(authoritative_bounds.0 as usize);
         self.dimensions.1 = self.dimensions.1.max(authoritative_bounds.1 as usize);
         self.budget()?;
@@ -395,7 +395,7 @@ impl<'a> ValueSink<'a> {
         if self.dimensions.1 > arrow.columns.len() {
             arrow.insert_columns(arrow.columns.len(), self.dimensions.1 - arrow.columns.len());
         }
-        Ok(ValuePlane {
+        Ok(IngestedValues {
             arrow,
             dimensions: self.dimensions,
             values_observed: self.values,
@@ -421,7 +421,7 @@ pub(in crate::xlsx) fn dimension_hint(
     // The fused machine no longer exports a worksheet Tokens wrapper. Reuse
     // the validated generic walker only for this bounded pre-sheetData prefix;
     // this is not an additional body/admission walk. Its result is advisory.
-    let _ = crate::xlsx_xml::walk(prefix, &options.into(), |path, node| {
+    let _ = crate::xlsx::xml::walk(prefix, &options.into(), |path, node| {
         if !matches!(node.kind, crate::xlsx::recalculate::xml::Kind::Open { .. }) {
             return Ok(());
         }

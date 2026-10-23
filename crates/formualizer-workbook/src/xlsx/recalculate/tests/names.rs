@@ -1,15 +1,15 @@
 use super::super::*;
 use crate::traits::SpreadsheetReader;
-use crate::xlsx::recalculate::native_names::NativeNames;
+use crate::xlsx::recalculate::names::CalculationNames;
 use std::io::Write;
 
 fn assert_name_parity(bytes: &[u8], workbook: &[u8], sheets: &[package::Sheet]) {
     let mut old = CalamineAdapter::open_bytes(bytes.to_vec()).unwrap();
-    let mut native = NativeNames::new(
+    let mut native = CalculationNames::new(
         workbook,
         sheets,
         None,
-        native_names::NameImportPolicy::STRICT_REFERENCED,
+        names::NameImportPolicy::STRICT_REFERENCED,
     );
     let inert = sheets.iter().any(|sheet| sheet.inert);
     assert_eq!(
@@ -154,11 +154,11 @@ fn listed_native_name_metadata_matches_strict_adapter() {
         )
         .unwrap();
         let mut old = CalamineAdapter::open_bytes(bytes.clone()).unwrap();
-        let mut native = NativeNames::new(
+        let mut native = CalculationNames::new(
             &workbook,
             &admission.sheets,
             None,
-            native_names::NameImportPolicy::STRICT_REFERENCED,
+            names::NameImportPolicy::STRICT_REFERENCED,
         );
         if let Some(external) = admission.external {
             let values = std::sync::Arc::new(external.values);

@@ -1,7 +1,7 @@
 use super::super::*;
 
 fn current_cse() -> Vec<u8> {
-    super::native_names::fixture_with_sheet(
+    super::names::fixture_with_sheet(
         br#"<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Probe" sheetId="1" r:id="r1"/></sheets></workbook>"#,
         br#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1"><f t="array" ref="A1:B1">SEQUENCE(1,2)</f><v>1</v></c><c r="B1"><v>2</v></c></row></sheetData></worksheet>"#,
     )
@@ -18,7 +18,7 @@ fn formula_reader_errors_keep_source_order_against_later_literal_or_row_errors()
             "<worksheet xmlns='{}'><sheetData>{body}</sheetData></worksheet>",
             xml::MAIN
         );
-        let bytes = super::native_names::fixture_with_sheet(workbook, xml.as_bytes());
+        let bytes = super::names::fixture_with_sheet(workbook, xml.as_bytes());
         let options = XlsxRecalculateOptions::default();
         let admitted = admit_source(&bytes, &options).unwrap();
         let old = legacy_ingest_source(&bytes, admitted, &options, &mut PhaseClock::from_env())
@@ -59,7 +59,7 @@ fn noncanonical_display_markup_preserves_published_cache_bytes() {
                 xml::MAIN
             );
             let fixture =
-                super::native_names::fixture_with_sheet(workbook.as_bytes(), worksheet.as_bytes());
+                super::names::fixture_with_sheet(workbook.as_bytes(), worksheet.as_bytes());
             let bytes = if shared {
                 let mut source = zip::ZipArchive::new(Cursor::new(fixture)).unwrap();
                 let mut target = zip::ZipWriter::new(Cursor::new(Vec::new()));
@@ -154,12 +154,12 @@ fn listed_native_pipeline_counters() {
                     assert_eq!(inflates[&source.part], 1, "{path}: {}", source.part);
                 }
                 let mode = if source.tables.is_empty() {
-                    sheet::Mode::Plain
+                    sheet::ScanRetention::Plain
                 } else {
-                    sheet::Mode::TablePlain
+                    sheet::ScanRetention::TablePlain
                 };
                 expected_walks += 1;
-                expected_indexed += usize::from(mode == sheet::Mode::Indexed);
+                expected_indexed += usize::from(mode == sheet::ScanRetention::Indexed);
                 if matches!(
                     sheet::scan_uncounted(&plan.data, &options, mode, &mut 0, &mut 0).unwrap(),
                     sheet::Scanned::NeedsIndex
@@ -175,14 +175,14 @@ fn listed_native_pipeline_counters() {
             );
             drop(admitted);
             crate::backends::calamine::take_reader_io_calls();
-            native_formulas::take_utility_calls();
+            formulas::take_utility_calls();
             let _ = recalculate_xlsx_bytes(&bytes, options.clone());
             assert_eq!(
                 crate::backends::calamine::take_reader_io_calls(),
                 [0; 5],
                 "{path}"
             );
-            let utilities = native_formulas::take_utility_calls();
+            let utilities = formulas::take_utility_calls();
             files += 1;
             walks += actual_walks;
             indexed += actual_indexed;
