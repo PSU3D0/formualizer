@@ -488,8 +488,21 @@ fn first_difference(a: &Dump, b: &Dump) -> Option<String> {
     for key in ordered {
         if a.records.get(key) != b.records.get(key) {
             let context: Vec<_> = a.records.range(..=key.clone()).rev().take(3).collect();
+            let formula_context = key
+                .strip_prefix("evaluated/sheet/")
+                .and_then(|suffix| suffix.split_once('/'))
+                .map(|(sheet, coordinate)| {
+                    let source_key = format!("loaded/sheet/{sheet}/cell/{coordinate}");
+                    format!(
+                        "\nFormula context: baseline={:?} native={:?}\nSheets: {:?}",
+                        a.records.get(&source_key),
+                        b.records.get(&source_key),
+                        a.records.get("loaded/sheets")
+                    )
+                })
+                .unwrap_or_default();
             return Some(format!(
-                "{key}\nCalamine: {:?}\nCandidate: {:?}\nPrevious context: {context:?}",
+                "{key}\nCalamine: {:?}\nCandidate: {:?}\nPrevious context: {context:?}{formula_context}",
                 a.records.get(key),
                 b.records.get(key)
             ));
@@ -597,6 +610,13 @@ where
         writeln!(output, "ARM native")?;
         output.flush()?;
         let b = capture_snapshot(&bytes, candidate, true);
+        // An unstable evaluator result must not conceal a stable loaded-state,
+        // metadata or generic-reader difference that sorts after evaluation.
+        if a.dump.records == b.dump.records {
+            writeln!(output, "SNAPSHOT MATCH")?;
+        } else if let Some(difference) = first_difference(&a.dump, &b.dump) {
+            writeln!(output, "SNAPSHOT DIFFERENCE\n{difference}")?;
+        }
         let both_accepted = a.accepted() && b.accepted();
         if a.accepted() != b.accepted() {
             acceptance_asymmetric += 1;
