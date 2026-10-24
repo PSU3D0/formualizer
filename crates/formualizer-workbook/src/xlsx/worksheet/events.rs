@@ -32,6 +32,76 @@ pub(in crate::xlsx) struct Literal<'a> {
     pub value: Value<'a>,
 }
 
+/// Borrowed source identity, independent of publication marks or engine staging.
+#[derive(Debug)]
+pub(in crate::xlsx) enum FormulaKind<'a> {
+    Ordinary {
+        text: &'a str,
+    },
+    SharedAnchor {
+        shared_index: Option<u32>,
+        declared_range: SourceRect,
+        text: &'a str,
+    },
+    SharedDescendant {
+        shared_index: Option<u32>,
+    },
+    Unsupported {
+        kind: &'a str,
+        text: &'a str,
+    },
+}
+
+/// Raw source evidence. Attribute spans exclude quotes and preserve entities.
+#[derive(Debug)]
+pub(in crate::xlsx) struct FormulaEnvelope {
+    pub cell: Range<usize>,
+    pub formula: Range<usize>,
+    pub raw_coordinate: Option<Range<usize>>,
+    pub raw_cell_type: Option<Range<usize>>,
+    pub raw_formula_type: Option<Range<usize>>,
+    pub raw_shared_index: Option<Range<usize>>,
+    pub raw_declared_range: Option<Range<usize>>,
+    pub raw_cache: Option<Range<usize>>,
+    pub cache_offset: Option<usize>,
+    pub cache_readable: bool,
+    pub cell_kind: Option<CellKind>,
+}
+
+#[derive(Debug)]
+pub(in crate::xlsx) struct Formula<'a> {
+    pub row: u32,
+    pub col: u32,
+    pub sequence: u64,
+    pub offset: usize,
+    pub kind: FormulaKind<'a>,
+    pub envelope: FormulaEnvelope,
+}
+
+/// Ephemeral callbacks cannot retain borrowed formula scratch across cells.
+pub(in crate::xlsx) trait Sink {
+    fn literal(&mut self, _literal: Literal<'_>) -> Result<(), IoError> {
+        Ok(())
+    }
+    fn formula(&mut self, _formula: Formula<'_>) -> Result<(), IoError> {
+        Ok(())
+    }
+}
+impl<S: Sink + ?Sized> Sink for &mut S {
+    fn literal(&mut self, literal: Literal<'_>) -> Result<(), IoError> {
+        (**self).literal(literal)
+    }
+    fn formula(&mut self, formula: Formula<'_>) -> Result<(), IoError> {
+        (**self).formula(formula)
+    }
+}
+pub(super) struct Literals<F>(pub F);
+impl<F: FnMut(Literal<'_>) -> Result<(), IoError>> Sink for Literals<F> {
+    fn literal(&mut self, literal: Literal<'_>) -> Result<(), IoError> {
+        (self.0)(literal)
+    }
+}
+
 /// XML 1.0 text for ingestion. Admission's XML 1.1 normalization is retained
 /// separately in the marks oracle; U+0085/U+2028 must not change literal data.
 pub(super) fn text<'a>(

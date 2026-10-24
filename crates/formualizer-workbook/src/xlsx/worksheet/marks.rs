@@ -116,6 +116,7 @@ fn prefix(bytes: &[u8], start: usize, len: usize) -> Cow<'_, str> {
 pub(crate) struct FormulaMark {
     pub row: u32,
     pub col: u32,
+    pub(in crate::xlsx) compatibility: Option<Box<super::compatibility::Evidence>>,
     #[allow(dead_code)] // consumers use the narrower spans below
     pub span: Range<usize>,
     pub open_end: usize,
@@ -154,6 +155,49 @@ pub(in crate::xlsx) struct DynamicAttributes {
     pub(in crate::xlsx) array_ref_span: Option<Range<usize>>,
 }
 impl FormulaMark {
+    pub(in crate::xlsx) fn source_event(&self, sequence: u64) -> super::events::Formula<'_> {
+        use super::events::{Formula, FormulaEnvelope, FormulaKind};
+        let kind = match self.formula_kind {
+            "normal" => FormulaKind::Ordinary {
+                text: &self.formula_text,
+            },
+            "shared" => match self.shared_rect() {
+                Some(declared_range) => FormulaKind::SharedAnchor {
+                    shared_index: self.shared_id,
+                    declared_range,
+                    text: &self.formula_text,
+                },
+                None => FormulaKind::SharedDescendant {
+                    shared_index: self.shared_id,
+                },
+            },
+            kind => FormulaKind::Unsupported {
+                kind,
+                text: &self.formula_text,
+            },
+        };
+        Formula {
+            row: self.row,
+            col: self.col,
+            sequence,
+            offset: self.span.start,
+            kind,
+            envelope: FormulaEnvelope {
+                cell: self.span.clone(),
+                formula: self.formula_open.start..self.formula_end,
+                raw_coordinate: None,
+                raw_cell_type: None,
+                raw_formula_type: None,
+                raw_shared_index: None,
+                raw_declared_range: None,
+                raw_cache: self.value.as_ref().map(|v| v.open_end..v.close_start),
+                cache_offset: self.value.as_ref().map(|v| v.span.start),
+                cache_readable: super::readable_scalar_cache(self, &[]),
+                cell_kind: self.kind,
+            },
+        }
+    }
+
     pub fn address(&self) -> Cow<'_, str> {
         if let Some(address) = self
             .dynamic

@@ -104,6 +104,9 @@ pub(super) struct FormulaState<'a> {
     pub shared_range: Option<(u32, u32, u32, u32)>,
     pub open: Range<usize>,
     pub kind_span: Option<Range<usize>>,
+    pub raw_kind_span: Option<Range<usize>>,
+    pub raw_shared_index_span: Option<Range<usize>>,
+    pub raw_range_span: Option<Range<usize>>,
 }
 
 impl<'a> ScalarCell<'a> {

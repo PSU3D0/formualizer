@@ -102,7 +102,7 @@ pub(super) fn scan(
     date_system: DateSystem,
     metadata: Option<&Metadata>,
     options: &XlsxRecalculateOptions,
-    mode: sheet::ScanRetention,
+    mode: sheet::ScanStrategy,
     counts: (&mut usize, &mut u64),
 ) -> Result<ScannedValues, IoError> {
     let (observed, logical_cells) = counts;

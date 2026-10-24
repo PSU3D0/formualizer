@@ -108,7 +108,7 @@ fn compare_package(bytes: &[u8], label: &str) -> Result<(usize, usize), IoError>
         let result = scan_emitting(
             &plan.data,
             &options,
-            sheet::ScanRetention::Indexed,
+            sheet::ScanStrategy::Indexed,
             &mut 0,
             &mut 0,
             |literal| {

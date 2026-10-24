@@ -5,7 +5,7 @@ use super::*;
 pub(super) struct RuleContext<'a, 'o, 'c> {
     pub bytes: &'a [u8],
     pub options: &'o ReadOptions,
-    pub mode: ScanRetention,
+    pub request: ScanRequest,
     pub observed: &'c mut usize,
     pub needs_index: &'c mut bool,
 }
@@ -28,7 +28,7 @@ impl<'a> SheetState<'a> {
         &mut self,
         event: &RuleEvent<'_, 'a>,
         context: &mut RuleContext<'a, '_, '_>,
-        emit: &mut impl FnMut(emission::Literal<'_>) -> Result<(), IoError>,
+        emit: &mut impl emission::Sink,
     ) -> Result<(), IoError> {
         // Visibility metadata precedes structural admission, preserving malformed filter precedence.
         self.open_visibility(event)?;
@@ -256,7 +256,9 @@ impl<'a> SheetState<'a> {
                 return Err(unsupported("misplaced merge cell", "worksheet"));
             }
             let merge = SourceRect::parse(attrs.required("ref")?)?;
-            if context.mode == ScanRetention::TablePlain {
+            if context.request.retention.geometry
+                && context.request.strategy == ScanStrategy::TablePlain
+            {
                 if self.table_merges.len() >= context.options.limits.max_cells {
                     return Err(unsupported("merge count limit", "worksheet"));
                 }
@@ -347,7 +349,7 @@ impl<'a> SheetState<'a> {
         &mut self,
         event: &RuleEvent<'_, 'a>,
         context: &mut RuleContext<'a, '_, '_>,
-        emit: &mut impl FnMut(emission::Literal<'_>) -> Result<(), IoError>,
+        emit: &mut impl emission::Sink,
     ) -> Result<(), IoError> {
         let tag = event.tag;
         let attrs = &event.attrs;
@@ -477,8 +479,8 @@ impl<'a> SheetState<'a> {
                 });
                 index.rows.last_mut().expect("open row").cells.end = index.cells.len();
             }
-            if empty {
-                emit(emission::Literal {
+            if empty && context.request.retention.values {
+                emit.literal(emission::Literal {
                     row: r,
                     col: c,
                     generated_child_hint: self.generated_children.contains(r, c),
@@ -532,6 +534,18 @@ impl<'a> SheetState<'a> {
                             }
                         };
                     self.open_cell.formula.open = span.clone();
+                    self.open_cell.formula.raw_kind_span = kind_attribute
+                        .as_ref()
+                        .map(|a| raw_attribute_span(context.bytes, &a.span))
+                        .transpose()?;
+                    self.open_cell.formula.raw_shared_index_span = attrs
+                        .attribute("", "si")
+                        .map(|a| raw_attribute_span(context.bytes, &a.span))
+                        .transpose()?;
+                    self.open_cell.formula.raw_range_span = attrs
+                        .attribute("", "ref")
+                        .map(|a| raw_attribute_span(context.bytes, &a.span))
+                        .transpose()?;
                     self.open_cell.formula.kind_span = kind_attribute.map(|a| a.span.clone());
                     let extent = attrs.attribute("", "ref");
                     if self.open_cell.formula.kind == "array" {
@@ -612,7 +626,7 @@ impl<'a> SheetState<'a> {
         &mut self,
         event: &RuleEvent<'_, 'a>,
         context: &mut RuleContext<'a, '_, '_>,
-        emit: &mut impl FnMut(emission::Literal<'_>) -> Result<(), IoError>,
+        emit: &mut impl emission::Sink,
     ) -> Result<(), IoError> {
         let position = event.position;
         let tag = event.tag;
@@ -678,7 +692,7 @@ impl<'a> SheetState<'a> {
                     cm: cell.cm(),
                     value: cell.value.as_ref().map(|v| v.span.clone()),
                     inline: cell.inline.clone(),
-                    formula: cell.has_formula.then_some(self.cells.len()),
+                    formula: cell.has_formula.then_some(self.formulas),
                     literal_refusal: refusal,
                 });
                 index.rows.last_mut().expect("open row").cells.end = index.cells.len();
@@ -686,17 +700,19 @@ impl<'a> SheetState<'a> {
                 return Err(unsupported(refusal, "worksheet"));
             }
             if let Some(value) = emitted_value {
-                emit(emission::Literal {
-                    row: cell.row,
-                    col: cell.col,
-                    generated_child_hint: self.generated_children.contains(cell.row, cell.col),
-                    style: self.open_cell.style.take(),
-                    raw_coordinate_span: self.open_cell.raw_coordinate.take(),
-                    raw_type_span: self.open_cell.raw_type.take(),
-                    raw_style_span: self.open_cell.raw_style.take(),
-                    raw_value_span: cell.value.as_ref().map(|v| v.open_end..v.close_start),
-                    value,
-                })?;
+                if context.request.retention.values {
+                    emit.literal(emission::Literal {
+                        row: cell.row,
+                        col: cell.col,
+                        generated_child_hint: self.generated_children.contains(cell.row, cell.col),
+                        style: self.open_cell.style.take(),
+                        raw_coordinate_span: self.open_cell.raw_coordinate.take(),
+                        raw_type_span: self.open_cell.raw_type.take(),
+                        raw_style_span: self.open_cell.raw_style.take(),
+                        raw_value_span: cell.value.as_ref().map(|v| v.open_end..v.close_start),
+                        value,
+                    })?;
+                }
                 self.open_cell.cell = None;
             } else {
                 if self.open_cell.formula.kind == "normal"
@@ -707,19 +723,32 @@ impl<'a> SheetState<'a> {
                 if self.open_cell.formula.end == 0 {
                     return Err(unsupported("missing formula boundary", "worksheet"));
                 }
-                self.cells.push(
-                    self.open_cell
-                        .cell
-                        .take()
-                        .expect("open cell")
-                        .retain(std::mem::take(&mut self.open_cell.formula), context.bytes),
-                );
-                if self.cells.len() > context.options.limits.max_formula_cells {
+                let envelope = self.open_cell.source(self.formulas as u64)?.envelope;
+                let mut mark = self
+                    .open_cell
+                    .cell
+                    .take()
+                    .expect("open cell")
+                    .retain(std::mem::take(&mut self.open_cell.formula), context.bytes);
+                let mut source = mark.source_event(self.formulas as u64);
+                source.envelope.raw_coordinate = envelope.raw_coordinate;
+                source.envelope.raw_cell_type = envelope.raw_cell_type;
+                source.envelope.raw_formula_type = envelope.raw_formula_type;
+                source.envelope.raw_shared_index = envelope.raw_shared_index;
+                source.envelope.raw_declared_range = envelope.raw_declared_range;
+                let evidence = super::super::compatibility::inspect(&source, context.bytes);
+                if context.request.retention.formula_events {
+                    emit.formula(source)?;
+                }
+                mark.compatibility = evidence;
+                self.formulas += 1;
+                if self.formulas > context.options.limits.max_formula_cells {
                     return Err(unsupported("formula cell count limit", "worksheet"));
                 }
-                if let Some(cell) = self.cells.last() {
-                    self.families
-                        .observe(cell, self.cells.len() - 1, context.options);
+                self.families
+                    .observe(&mark, self.formulas - 1, context.options);
+                if context.request.retention.marks {
+                    self.cells.push(mark);
                 }
             }
         }

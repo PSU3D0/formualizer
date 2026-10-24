@@ -132,7 +132,7 @@ fn compare(
     let result = sheet::scanner::scan_emitting(
         data,
         &options,
-        sheet::ScanRetention::Indexed,
+        sheet::ScanStrategy::Indexed,
         &mut 0,
         &mut 0,
         |event| {
@@ -248,7 +248,7 @@ fn advisory_prefix_is_bounded_and_machine_remains_authoritative() {
         sheet::scanner::scan(
             truncated.as_bytes(),
             &options,
-            sheet::ScanRetention::Plain,
+            sheet::ScanStrategy::Plain,
             &mut 0,
             &mut 0
         )
@@ -332,7 +332,7 @@ fn listed_native_value_planes_match_calamine() {
                 let result = sheet::scanner::scan_emitting(
                     &plan.data,
                     &options,
-                    sheet::ScanRetention::Indexed,
+                    sheet::ScanStrategy::Indexed,
                     &mut 0,
                     &mut 0,
                     |event| {

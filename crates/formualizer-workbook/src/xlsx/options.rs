@@ -3,6 +3,15 @@
 use crate::IoError;
 use formualizer_eval::engine::CancelToken;
 
+/// Independent outputs requested from a worksheet traversal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ScanRetention {
+    pub(crate) values: bool,
+    pub(crate) formula_events: bool,
+    pub(crate) marks: bool,
+    pub(crate) geometry: bool,
+}
+
 /// Shared parser input; evaluation and publication options do not enter the scanner.
 pub(crate) struct ReadOptions {
     pub(crate) cancel: Option<CancelToken>,

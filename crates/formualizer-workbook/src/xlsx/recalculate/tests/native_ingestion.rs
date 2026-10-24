@@ -154,12 +154,12 @@ fn listed_native_pipeline_counters() {
                     assert_eq!(inflates[&source.part], 1, "{path}: {}", source.part);
                 }
                 let mode = if source.tables.is_empty() {
-                    sheet::ScanRetention::Plain
+                    sheet::ScanStrategy::Plain
                 } else {
-                    sheet::ScanRetention::TablePlain
+                    sheet::ScanStrategy::TablePlain
                 };
                 expected_walks += 1;
-                expected_indexed += usize::from(mode == sheet::ScanRetention::Indexed);
+                expected_indexed += usize::from(mode == sheet::ScanStrategy::Indexed);
                 if matches!(
                     sheet::scan_uncounted(&plan.data, &options, mode, &mut 0, &mut 0).unwrap(),
                     sheet::Scanned::NeedsIndex

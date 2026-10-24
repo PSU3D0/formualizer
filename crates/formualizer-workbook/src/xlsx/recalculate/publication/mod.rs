@@ -357,7 +357,7 @@ pub(super) fn plan_spill_publication(
             match sheet::scan(
                 &plan.data,
                 options,
-                sheet::ScanRetention::Indexed,
+                sheet::ScanStrategy::Indexed,
                 &mut 0,
                 &mut 0,
             )? {

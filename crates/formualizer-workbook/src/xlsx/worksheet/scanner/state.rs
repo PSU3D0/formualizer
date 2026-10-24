@@ -57,6 +57,60 @@ impl<'a> OpenCellState<'a> {
         Ok(())
     }
 
+    pub fn source(&self, sequence: u64) -> Result<emission::Formula<'_>, IoError> {
+        let cell = self
+            .cell
+            .as_ref()
+            .ok_or_else(|| unsupported("formula without cell", "worksheet"))?;
+        let formula = &self.formula;
+        let kind = match formula.kind {
+            "normal" => emission::FormulaKind::Ordinary {
+                text: &formula.text,
+            },
+            "shared" => match formula.shared_range {
+                Some((first_row, first_col, last_row, last_col)) => {
+                    emission::FormulaKind::SharedAnchor {
+                        shared_index: formula.shared_id,
+                        declared_range: SourceRect {
+                            first_row,
+                            first_col,
+                            last_row,
+                            last_col,
+                        },
+                        text: &formula.text,
+                    }
+                }
+                None => emission::FormulaKind::SharedDescendant {
+                    shared_index: formula.shared_id,
+                },
+            },
+            kind => emission::FormulaKind::Unsupported {
+                kind,
+                text: &formula.text,
+            },
+        };
+        Ok(emission::Formula {
+            row: cell.row,
+            col: cell.col,
+            sequence,
+            offset: cell.span.start,
+            kind,
+            envelope: emission::FormulaEnvelope {
+                cell: cell.span.clone(),
+                formula: formula.open.start..formula.end,
+                raw_coordinate: self.raw_coordinate.clone(),
+                raw_cell_type: self.raw_type.clone(),
+                raw_formula_type: formula.raw_kind_span.clone(),
+                raw_shared_index: formula.raw_shared_index_span.clone(),
+                raw_declared_range: formula.raw_range_span.clone(),
+                raw_cache: cell.value.as_ref().map(|v| v.open_end..v.close_start),
+                cache_offset: cell.value.as_ref().map(|v| v.span.start),
+                cache_readable: true,
+                cell_kind: cell.kind,
+            },
+        })
+    }
+
     pub fn close_payload(&mut self, local: Local, span: &Range<usize>) -> Result<(), IoError> {
         let cell = self
             .cell
@@ -91,6 +145,7 @@ pub(super) struct SheetState<'a> {
     pub table_ids: Vec<String>,
     pub table_count: Option<usize>,
     pub serialized: usize,
+    pub formulas: usize,
     pub cells: Vec<FormulaMark>,
     pub row: u32,
     pub column: u32,
@@ -107,7 +162,7 @@ pub(super) struct SheetState<'a> {
 }
 
 impl<'a> SheetState<'a> {
-    pub fn new(mode: ScanRetention) -> Self {
+    pub fn new(request: ScanRequest) -> Self {
         Self {
             open_cell: OpenCellState::default(),
             hidden_rows: Vec::new(),
@@ -122,6 +177,7 @@ impl<'a> SheetState<'a> {
             table_ids: Vec::new(),
             table_count: None,
             serialized: 0,
+            formulas: 0,
             cells: Vec::new(),
             row: 0,
             column: 0,
@@ -131,15 +187,17 @@ impl<'a> SheetState<'a> {
             raw_row_refusal_span: None,
             max_row: 0,
             max_col: 0,
-            index: (mode == ScanRetention::Indexed).then(|| SourceIndex {
-                dimension: None,
-                sheet_data: 0..0,
-                sheet_data_open_end: 0,
-                sheet_data_empty: false,
-                rows: Vec::new(),
-                cells: Vec::new(),
-                merges: Vec::new(),
-            }),
+            index: (request.retention.geometry && request.strategy == ScanStrategy::Indexed).then(
+                || SourceIndex {
+                    dimension: None,
+                    sheet_data: 0..0,
+                    sheet_data_open_end: 0,
+                    sheet_data_empty: false,
+                    rows: Vec::new(),
+                    cells: Vec::new(),
+                    merges: Vec::new(),
+                },
+            ),
             extent_cells: 0,
             families: shared::Families::default(),
             generated_children: generated::GeneratedChildren::default(),

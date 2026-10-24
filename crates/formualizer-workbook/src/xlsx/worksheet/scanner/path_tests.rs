@@ -5,10 +5,10 @@ fn paths(text: &str) -> ((usize, usize), bool) {
     let result = scan_inner::<true>(
         text.as_bytes(),
         &ReadOptions::from(&XlsxRecalculateOptions::default()),
-        ScanRetention::Plain,
+        ScanRequest::recalculate(ScanStrategy::Plain),
         (&mut 0, &mut 0),
         &mut false,
-        &mut |_| Ok(()),
+        &mut emission::Literals(|_: emission::Literal<'_>| Ok(())),
         &mut counts,
     );
     (counts, result.is_ok())
@@ -31,7 +31,7 @@ fn raw_coordinate_dimension_and_row_provenance_does_not_change_admission() {
         let result = scan_emitting(
             bytes,
             &XlsxRecalculateOptions::default(),
-            ScanRetention::Plain,
+            ScanStrategy::Plain,
             &mut 0,
             &mut 0,
             |literal| {
@@ -72,7 +72,7 @@ fn raw_coordinate_dimension_and_row_provenance_does_not_change_admission() {
             let result = scan_emitting(
                 xml.as_bytes(),
                 &XlsxRecalculateOptions::default(),
-                ScanRetention::Plain,
+                ScanStrategy::Plain,
                 &mut 0,
                 &mut 0,
                 |_| Ok(()),
@@ -102,7 +102,7 @@ fn raw_literal_provenance_preserves_encoded_and_unsigned_spellings() {
     scan_emitting(
         bytes,
         &XlsxRecalculateOptions::default(),
-        ScanRetention::Plain,
+        ScanStrategy::Plain,
         &mut 0,
         &mut 0,
         |literal| {
@@ -145,7 +145,7 @@ fn generated_child_hint_covers_seen_legacy_and_metadata_array_extents() {
         let result = scan_emitting(
             xml.as_bytes(),
             &XlsxRecalculateOptions::default(),
-            ScanRetention::Indexed,
+            ScanStrategy::Indexed,
             &mut 0,
             &mut 0,
             |literal| {
@@ -182,7 +182,7 @@ fn generated_child_hint_does_not_look_ahead_or_change_refusal_order() {
     let result = scan_emitting(
         xml.as_bytes(),
         &options,
-        ScanRetention::Indexed,
+        ScanStrategy::Indexed,
         &mut 0,
         &mut 0,
         |literal| {
@@ -193,7 +193,7 @@ fn generated_child_hint_does_not_look_ahead_or_change_refusal_order() {
     let old = super::super::scan_uncounted(
         xml.as_bytes(),
         &options,
-        ScanRetention::Indexed,
+        ScanStrategy::Indexed,
         &mut 0,
         &mut 0,
     );

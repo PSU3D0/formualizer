@@ -11,6 +11,8 @@ mod tokenizer;
 use state::SheetState;
 #[cfg(test)]
 mod path_tests;
+#[cfg(test)]
+mod retention_tests;
 mod scalar;
 use super::shared;
 use scalar::{FormulaState, ScalarCell};
@@ -122,7 +124,7 @@ pub(super) fn plain_coord(value: &str) -> Option<(u32, u32)> {
 pub(in crate::xlsx) fn scan(
     bytes: &[u8],
     options: &XlsxRecalculateOptions,
-    mode: ScanRetention,
+    mode: ScanStrategy,
     observed: &mut usize,
     logical_cells: &mut u64,
 ) -> Result<Scanned, IoError> {
@@ -132,17 +134,34 @@ pub(in crate::xlsx) fn scan(
 pub(in crate::xlsx) fn scan_emitting(
     bytes: &[u8],
     options: &XlsxRecalculateOptions,
-    mode: ScanRetention,
+    mode: ScanStrategy,
     observed: &mut usize,
     logical_cells: &mut u64,
-    mut emit: impl FnMut(emission::Literal<'_>) -> Result<(), IoError>,
+    emit: impl FnMut(emission::Literal<'_>) -> Result<(), IoError>,
+) -> Result<Scanned, IoError> {
+    scan_with(
+        bytes,
+        &ReadOptions::from(options),
+        ScanRequest::recalculate(mode),
+        observed,
+        logical_cells,
+        emission::Literals(emit),
+    )
+}
+
+pub(in crate::xlsx) fn scan_with(
+    bytes: &[u8],
+    options: &ReadOptions,
+    request: ScanRequest,
+    observed: &mut usize,
+    logical_cells: &mut u64,
+    mut emit: impl emission::Sink,
 ) -> Result<Scanned, IoError> {
     let mut needs_index = false;
-    let read_options = ReadOptions::from(options);
     match scan_inner::<false>(
         bytes,
-        &read_options,
-        mode,
+        options,
+        request,
         (observed, logical_cells),
         &mut needs_index,
         &mut emit,
@@ -156,14 +175,14 @@ pub(in crate::xlsx) fn scan_emitting(
 fn scan_inner<const COUNT_PATHS: bool>(
     bytes: &[u8],
     options: &ReadOptions,
-    mode: ScanRetention,
+    request: ScanRequest,
     counts: (&mut usize, &mut u64),
     needs_index: &mut bool,
-    emit: &mut impl FnMut(emission::Literal<'_>) -> Result<(), IoError>,
+    emit: &mut impl emission::Sink,
     path_counts: &mut (usize, usize),
 ) -> Result<Scan, IoError> {
     let (observed, logical_cells) = counts;
-    let mut sheet = SheetState::new(mode);
+    let mut sheet = SheetState::new(request);
     let mut cursor = Cursor::new();
     use crate::xlsx::xml::{Kind, Node, backend};
     use quick_xml::events::Event;
@@ -278,7 +297,7 @@ fn scan_inner<const COUNT_PATHS: bool>(
         let mut context = RuleContext {
             bytes,
             options,
-            mode,
+            request,
             observed,
             needs_index,
         };
