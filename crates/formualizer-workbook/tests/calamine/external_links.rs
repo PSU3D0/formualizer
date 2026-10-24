@@ -311,6 +311,55 @@ fn native_compatible_row_addresses_match() {
     }
 }
 
+#[cfg(feature = "xlsx-recalc")]
+#[test]
+fn native_shared_follower_before_anchor_matches() {
+    use formualizer_workbook::backends::NativeXlsxAdapter;
+    let bytes = book(
+        &[Ws::new(
+            "Sheet1",
+            vec![
+                (
+                    "A1".into(),
+                    "<c r=\"A1\"><f t=\"shared\" si=\"0\"/></c>".into(),
+                ),
+                (
+                    "B1".into(),
+                    "<c r=\"B1\"><f t=\"shared\" si=\"0\" ref=\"A1:B1\">1</f></c>".into(),
+                ),
+            ],
+        )],
+        "",
+    );
+    for config in [WorkbookConfig::ephemeral(), WorkbookConfig::interactive()] {
+        let (mut baseline, baseline_stats) = Workbook::from_reader_with_adapter_stats(
+            CalamineAdapter::open_bytes(bytes.clone()).unwrap(),
+            LoadStrategy::EagerAll,
+            config.clone(),
+        )
+        .unwrap();
+        let (mut native, native_stats) = Workbook::from_reader_with_adapter_stats(
+            NativeXlsxAdapter::open_bytes(bytes.clone()).unwrap(),
+            LoadStrategy::EagerAll,
+            config,
+        )
+        .unwrap();
+        baseline.evaluate_all().unwrap();
+        native.evaluate_all().unwrap();
+        for col in [1, 2] {
+            assert_eq!(
+                baseline.get_formula("Sheet1", 1, col),
+                native.get_formula("Sheet1", 1, col)
+            );
+            assert_eq!(
+                baseline.get_value("Sheet1", 1, col),
+                native.get_value("Sheet1", 1, col)
+            );
+        }
+        assert_eq!(baseline_stats, native_stats);
+    }
+}
+
 #[test]
 fn cached_links_eager() {
     check_mode(WorkbookConfig::ephemeral());

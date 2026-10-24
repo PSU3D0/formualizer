@@ -75,6 +75,18 @@ where
     B: SpreadsheetReader + EngineLoadStream<WBResolver>,
     IoError: From<<B as EngineLoadStream<WBResolver>>::Error>,
 {
+    capture_with_source_inventory(bytes, open, true)
+}
+
+fn capture_with_source_inventory<B>(
+    bytes: &[u8],
+    open: impl Fn(Vec<u8>) -> Result<B, IoError>,
+    baseline_available: bool,
+) -> Dump
+where
+    B: SpreadsheetReader + EngineLoadStream<WBResolver>,
+    IoError: From<<B as EngineLoadStream<WBResolver>>::Error>,
+{
     let mut dump = Dump::default();
     dump.coverage.files = 1;
     // Metadata/random reads use an independent reader. They must not populate
@@ -150,7 +162,28 @@ where
         }
     };
     dump.record("reader/sheets", &names);
-    let mut coordinates = BTreeMap::new();
+    // The generic reader can omit unresolved/shared source cells even when the
+    // stream stores a formula there. Use the independent source-record API as
+    // a common coordinate inventory, then union reader and Arrow coordinates.
+    // A source refusal remains observable through the normal baseline load.
+    let mut coordinates: BTreeMap<String, BTreeSet<(u32, u32)>> = BTreeMap::new();
+    if baseline_available {
+        use calamine::Reader;
+        if let Ok(mut source) = calamine::Xlsx::new(std::io::Cursor::new(bytes)) {
+            for name in &names {
+                if let Ok(mut cells) = source.worksheet_cells_reader(name) {
+                    while let Ok(Some(cell)) = cells.next_cell_with_formula_metadata() {
+                        if cell.formula.is_some() {
+                            coordinates
+                                .entry(name.clone())
+                                .or_default()
+                                .insert((cell.pos.0 + 1, cell.pos.1 + 1));
+                        }
+                    }
+                }
+            }
+        }
+    }
     for (i, name) in names.iter().enumerate() {
         let prefix = format!("reader/sheet/{i:08}");
         dump.record(format!("{prefix}/bounds"), reader.sheet_bounds(name));
@@ -182,7 +215,7 @@ where
                         (value(cell.value), cell.formula, cell.style),
                     );
                 }
-                coordinates.insert(name.clone(), coords);
+                coordinates.entry(name.clone()).or_default().extend(coords);
             }
         }
         dump.record(
@@ -531,7 +564,7 @@ fn listed_native_baseline_unavailable_observations() {
     for (path, reason) in exclusions {
         writeln!(report, "NATIVE_ONLY {}: {reason}", path.display()).unwrap();
         report.flush().unwrap();
-        let dump = capture(&std::fs::read(path).unwrap(), native);
+        let dump = capture_with_source_inventory(&std::fs::read(path).unwrap(), native, false);
         writeln!(report, "{dump:#?}").unwrap();
         report.flush().unwrap();
     }
@@ -723,6 +756,36 @@ fn refusal_asymmetry_does_not_stop_later_files() {
         reverse, 2,
         "the opposite acceptance asymmetry is also a difference"
     );
+}
+
+#[test]
+fn source_inventory_covers_formulas_omitted_by_generic_reader() {
+    use std::io::{Cursor, Read, Write};
+    let bytes = include_bytes!("../../tests/fixtures/shared_formula_above_master.xlsx");
+    let mut input = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut output = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for i in 0..input.len() {
+        let mut part = input.by_index(i).unwrap();
+        let name = part.name().to_owned();
+        output
+            .start_file(&name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        if name == "xl/worksheets/sheet1.xml" {
+            output.write_all(br#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1"><f t="shared" si="0"/></c><c r="B1"><f t="shared" si="0" ref="A1:B1">1</f></c></row></sheetData></worksheet>"#).unwrap();
+        } else {
+            let mut data = Vec::new();
+            part.read_to_end(&mut data).unwrap();
+            output.write_all(&data).unwrap();
+        }
+    }
+    let bytes = output.finish().unwrap().into_inner();
+    let a = capture(&bytes, calamine);
+    let b = capture(&bytes, native);
+    let key = "evaluated/sheet/00000000/00000001/00000001";
+    assert!(a.records.contains_key(key), "{a:?}");
+    assert_eq!(a.records.get(key), b.records.get(key));
+    assert_eq!(a.coverage.formulas, 2);
+    assert_eq!(b.coverage.formulas, 2);
 }
 
 #[test]
