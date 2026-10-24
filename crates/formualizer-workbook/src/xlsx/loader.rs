@@ -78,6 +78,50 @@ mod retained_tests {
     }
 
     #[test]
+    fn bulk_first_source_refusal_is_not_replaced_by_low_formula_budgets() {
+        let bytes = include_bytes!("../../tests/fixtures/zip_containers/libreoffice.xlsx");
+        let native = NativeXlsxAdapter::open_bytes(bytes.to_vec()).unwrap();
+        for (budget, body) in [
+            (
+                1,
+                "<c r=\"A1\" t=\"s\"><v>999999</v></c><c r=\"B1\"><f>1</f></c><c r=\"C1\"><f>1</f></c>",
+            ),
+            (0, "<c r=\"A1\" t=\"s\"><f>1</f><v>999999</v></c>"),
+        ] {
+            let sheet = SheetSource {
+                name: "test".into(),
+                data: format!("<worksheet><sheetData><row>{body}</row></sheetData></worksheet>")
+                    .into_bytes(),
+                parsed: OnceLock::new(),
+                reader: OnceLock::new(),
+                reader_parsed: OnceLock::new(),
+            };
+            let limits = formualizer_eval::engine::WorkbookLoadLimits {
+                max_sheet_logical_cells: budget,
+                ..Default::default()
+            };
+            let mut emit = |_| panic!("invalid source must stop before staging");
+            let parsed = native
+                .scan_sheet_produced(
+                    &sheet,
+                    &limits,
+                    DateSystem::Excel1900,
+                    false,
+                    Some(&mut emit),
+                )
+                .unwrap();
+            assert!(
+                parsed
+                    .stream_error
+                    .unwrap()
+                    .to_error()
+                    .to_string()
+                    .contains("shared strings table")
+            );
+        }
+    }
+
+    #[test]
     fn reader_constructor_preserves_the_incoming_cursor() {
         let bytes = include_bytes!("../../tests/fixtures/zip_containers/libreoffice.xlsx");
         let mut prefixed = b"prefix".to_vec();
@@ -862,9 +906,6 @@ impl LoadSink<'_> {
         formula: Option<OwnedSpoolFormulaRecord>,
     ) -> Result<(), IoError> {
         if let Some(record) = formula {
-            self.values.observe_formula(row, col)?;
-            self.last_formula_coord = Some((row, col));
-            self.record_count += 1;
             if self.value_error.is_none() {
                 let result = if let Some(reader) = &mut self.reader_values {
                     reader.push_decoded(row, col, value, format)
@@ -875,6 +916,9 @@ impl LoadSink<'_> {
                 };
                 self.retain_value_error(result)?;
             }
+            self.values.observe_formula(row, col)?;
+            self.last_formula_coord = Some((row, col));
+            self.record_count += 1;
             if let Some(emit) = &mut self.emit {
                 // A later staging failure must not replace an earlier source
                 // refusal. In particular validate this cell's cache first.
@@ -908,6 +952,15 @@ impl LoadSink<'_> {
             let error = DeferredReadError::capture(error)?;
             self.stream_error.get_or_insert_with(|| error.clone());
             self.value_error = Some(error);
+            // Streaming has no second reader outcome to collect. Stop on its
+            // first source refusal before a later resource/staging failure.
+            if self.emit.is_some() {
+                return Err(self
+                    .stream_error
+                    .as_ref()
+                    .expect("captured error")
+                    .to_error());
+            }
         }
         Ok(())
     }

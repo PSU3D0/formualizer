@@ -392,6 +392,13 @@ pub(super) fn scan(
                                     let error = DeferredReadError::capture(error)?;
                                     sink.stream_error.get_or_insert_with(|| error.clone());
                                     sink.formula_error.get_or_insert(error);
+                                    if sink.emit.is_some() {
+                                        return Err(sink
+                                            .stream_error
+                                            .as_ref()
+                                            .expect("captured error")
+                                            .to_error());
+                                    }
                                 }
                             }
                         }
