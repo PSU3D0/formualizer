@@ -47,3 +47,47 @@ fn value_metadata_extraction_is_independent_of_publication_policy() {
         }
     }
 }
+
+/// Stream immutable declarations under shared XML safety/read bounds.
+/// This entry does not grant calculation or source-publication authority.
+/// Consumers bind declarations in the callback to preserve refusal priority;
+/// compatible consumers can instead collect only the fields they understand.
+#[cfg(feature = "xlsx-recalc")]
+pub(in crate::xlsx) fn read_source<'a>(
+    bytes: &'a [u8],
+    options: &crate::xlsx::options::ReadOptions,
+    visit: impl FnMut(
+        &[crate::xlsx::xml::Element<'a>],
+        crate::xlsx::xml::Node<'_, 'a>,
+    ) -> Result<(), crate::IoError>,
+) -> Result<(), crate::IoError> {
+    crate::xlsx::xml::walk(bytes, options, visit)
+}
+
+#[cfg(all(test, feature = "xlsx-recalc"))]
+#[test]
+fn compatible_metadata_source_stream_does_not_apply_strict_binding() {
+    use crate::xlsx::options::ReadOptions;
+    let inputs = [
+        "<workbook><definedNames><definedName name=\"same\">NOW()</definedName><definedName name=\"same\">2</definedName></definedNames></workbook>",
+        "<table name=\"invalid name\" tableType=\"queryTable\"><tableColumns count=\"9\"><tableColumn id=\"0\" name=\"same\"/></tableColumns></table>",
+        "<metadata><metadataTypes><metadataType name=\"unknown\"/></metadataTypes><cellMetadata><bk><rc t=\"bad\" v=\"bad\"/><rc/></bk></cellMetadata></metadata>",
+        "<Types><Override PartName=\"/opaque.xml\" ContentType=\"unknown\"/></Types>",
+    ];
+    for input in inputs {
+        let mut opens = 0;
+        read_source(input.as_bytes(), &ReadOptions::default(), |_, node| {
+            opens += usize::from(matches!(node.kind, crate::xlsx::xml::Kind::Open { .. }));
+            Ok(())
+        })
+        .unwrap();
+        assert!(opens > 1);
+    }
+    for input in [
+        "<table>",
+        "<!DOCTYPE table><table/>",
+        "<metadata>&unknown;</metadata>",
+    ] {
+        assert!(read_source(input.as_bytes(), &ReadOptions::default(), |_, _| Ok(())).is_err());
+    }
+}

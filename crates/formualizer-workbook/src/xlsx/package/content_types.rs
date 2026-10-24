@@ -52,75 +52,79 @@ pub(super) fn validate(
     let data = read_part(archive, PART, options.limits.max_worksheet_bytes)?;
     let mut defaults = BTreeMap::new();
     let mut overrides = BTreeMap::new();
-    xml::walk(&data, options, |path, node| {
-        if !matches!(node.kind, xml::Kind::Open { .. }) {
-            return Ok(());
-        }
-        let e = path.last().expect("open XML element");
-        if path.len() == 1 && !xml::path_is(path, NS, &["Types"]) {
-            return Err(unsupported("content types root/namespace", "XLSX package"));
-        }
-        if path.len() > 1 {
-            if path.len() != 2 || e.ns != NS || !matches!(e.local, "Default" | "Override") {
-                return Err(unsupported(
-                    "unknown content-type declaration",
-                    "XLSX package",
-                ));
+    crate::xlsx::metadata::read_source(
+        &data,
+        &crate::xlsx::options::ReadOptions::from(options),
+        |path, node| {
+            if !matches!(node.kind, xml::Kind::Open { .. }) {
+                return Ok(());
             }
-            let content = node.required("ContentType")?;
-            if content.is_empty()
-                || content.contains("digital-signature")
-                || (metadata.is_none() && content.contains("sheetMetadata"))
-                || (content.contains("externalLink")
-                    && (content != LINK_CONTENT_TYPE || e.local != "Override"))
-            {
-                return Err(unsupported("unsupported content type", "XLSX package"));
+            let e = path.last().expect("open XML element");
+            if path.len() == 1 && !xml::path_is(path, NS, &["Types"]) {
+                return Err(unsupported("content types root/namespace", "XLSX package"));
             }
-            if let Some(metadata) = metadata
-                && content.contains("sheetMetadata")
-            {
-                if e.local != "Override" || content != SHEET_METADATA_CONTENT_TYPE {
+            if path.len() > 1 {
+                if path.len() != 2 || e.ns != NS || !matches!(e.local, "Default" | "Override") {
                     return Err(unsupported(
-                        "sheet metadata content-type disagreement",
+                        "unknown content-type declaration",
                         "XLSX package",
                     ));
                 }
-                if node.required("PartName")?.strip_prefix('/') != Some(metadata) {
-                    return Err(unsupported("unrelated sheet metadata part", "XLSX package"));
+                let content = node.required("ContentType")?;
+                if content.is_empty()
+                    || content.contains("digital-signature")
+                    || (metadata.is_none() && content.contains("sheetMetadata"))
+                    || (content.contains("externalLink")
+                        && (content != LINK_CONTENT_TYPE || e.local != "Override"))
+                {
+                    return Err(unsupported("unsupported content type", "XLSX package"));
                 }
-            }
-            if e.local == "Default" {
-                let extension = node.required("Extension")?;
-                if extension.is_empty()
-                    || extension.contains(['.', '/', '\\'])
-                    || defaults
-                        .insert(extension.to_ascii_lowercase(), content.to_owned())
+                if let Some(metadata) = metadata
+                    && content.contains("sheetMetadata")
+                {
+                    if e.local != "Override" || content != SHEET_METADATA_CONTENT_TYPE {
+                        return Err(unsupported(
+                            "sheet metadata content-type disagreement",
+                            "XLSX package",
+                        ));
+                    }
+                    if node.required("PartName")?.strip_prefix('/') != Some(metadata) {
+                        return Err(unsupported("unrelated sheet metadata part", "XLSX package"));
+                    }
+                }
+                if e.local == "Default" {
+                    let extension = node.required("Extension")?;
+                    if extension.is_empty()
+                        || extension.contains(['.', '/', '\\'])
+                        || defaults
+                            .insert(extension.to_ascii_lowercase(), content.to_owned())
+                            .is_some()
+                    {
+                        return Err(unsupported(
+                            "invalid/duplicate default content type",
+                            "XLSX package",
+                        ));
+                    }
+                } else {
+                    let name = node
+                        .required("PartName")?
+                        .strip_prefix('/')
+                        .ok_or_else(|| unsupported("relative content-type part", "XLSX package"))?;
+                    part_name(name)?;
+                    if overrides
+                        .insert(name.to_owned(), content.to_owned())
                         .is_some()
-                {
-                    return Err(unsupported(
-                        "invalid/duplicate default content type",
-                        "XLSX package",
-                    ));
-                }
-            } else {
-                let name = node
-                    .required("PartName")?
-                    .strip_prefix('/')
-                    .ok_or_else(|| unsupported("relative content-type part", "XLSX package"))?;
-                part_name(name)?;
-                if overrides
-                    .insert(name.to_owned(), content.to_owned())
-                    .is_some()
-                {
-                    return Err(unsupported(
-                        "duplicate content-type override",
-                        "XLSX package",
-                    ));
+                    {
+                        return Err(unsupported(
+                            "duplicate content-type override",
+                            "XLSX package",
+                        ));
+                    }
                 }
             }
-        }
-        Ok(())
-    })?;
+            Ok(())
+        },
+    )?;
     for name in archive.file_names() {
         if name == "[Content_Types].xml" || name.ends_with('/') {
             continue;

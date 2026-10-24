@@ -1,6 +1,7 @@
 //! Bounded package admission and relationship-aware workbook discovery.
 //! Verified source members remain authoritative and unchanged during discovery.
 mod content_types;
+pub(super) use crate::xlsx::metadata::read_source as read_workbook;
 use crate::xlsx::options::{ReadOptions, ReadPolicy};
 mod ownership;
 mod rewrite;
@@ -770,7 +771,7 @@ pub(super) fn discover(
     let mut name_open = false;
     #[cfg(not(feature = "system-clock"))]
     let mut clock_name: Option<(String, String)> = None;
-    xml::walk(&data, options, |path, node| {
+    read_workbook(&data, &ReadOptions::from(options), |path, node| {
         if xml::path_is(
             path,
             xml::MAIN,

@@ -1,4 +1,5 @@
 //! Strict, bounded ListObject metadata. The source table part is never edited.
+pub(in crate::xlsx) use super::read_source;
 use crate::xlsx::recalculate::{
     IoError, XlsxRecalculateOptions, checkpoint, package, sheet, unsupported, xml,
 };
@@ -125,208 +126,217 @@ pub(in crate::xlsx) fn parse(
     let mut formulas = HashSet::new();
     let mut filter_ref: Option<sheet::SourceRect> = None;
     let mut filter_active = false;
-    xml::walk(&bytes, options, |path, node| {
-        if !matches!(node.kind, xml::Kind::Open { .. }) {
-            return Ok(());
-        }
-        let e = path.last().expect("open element");
-        if path.len() == 1 {
-            if !xml::path_is(path, xml::MAIN, &["table"]) || table.is_some() {
-                return Err(unsupported("table XML root/namespace", part));
+    read_source(
+        &bytes,
+        &crate::xlsx::options::ReadOptions::from(options),
+        |path, node| {
+            if !matches!(node.kind, xml::Kind::Open { .. }) {
+                return Ok(());
             }
-            extended_attrs(
-                &node,
-                &[
-                    "id",
-                    "name",
-                    "displayName",
-                    "ref",
-                    "headerRowCount",
-                    "totalsRowCount",
-                    "totalsRowShown",
-                    "tableType",
-                    "comment",
-                    "headerRowDxfId",
-                    "dataDxfId",
-                    "totalsRowDxfId",
-                    "headerRowBorderDxfId",
-                    "tableBorderDxfId",
-                    "totalsRowBorderDxfId",
-                    "headerRowCellStyle",
-                    "dataCellStyle",
-                    "totalsRowCellStyle",
-                ],
-                ROOT_EXTENSIONS,
-            )?;
-            if number(&node, "id", None)? == 0 {
-                return Err(unsupported("invalid table ID", part));
+            let e = path.last().expect("open element");
+            if path.len() == 1 {
+                if !xml::path_is(path, xml::MAIN, &["table"]) || table.is_some() {
+                    return Err(unsupported("table XML root/namespace", part));
+                }
+                extended_attrs(
+                    &node,
+                    &[
+                        "id",
+                        "name",
+                        "displayName",
+                        "ref",
+                        "headerRowCount",
+                        "totalsRowCount",
+                        "totalsRowShown",
+                        "tableType",
+                        "comment",
+                        "headerRowDxfId",
+                        "dataDxfId",
+                        "totalsRowDxfId",
+                        "headerRowBorderDxfId",
+                        "tableBorderDxfId",
+                        "totalsRowBorderDxfId",
+                        "headerRowCellStyle",
+                        "dataCellStyle",
+                        "totalsRowCellStyle",
+                    ],
+                    ROOT_EXTENSIONS,
+                )?;
+                if number(&node, "id", None)? == 0 {
+                    return Err(unsupported("invalid table ID", part));
+                }
+                let n = node.required("name")?;
+                if !name(n) || node.required("displayName")? != n {
+                    return Err(unsupported("invalid/ambiguous table name", part));
+                }
+                if !matches!(node.value("tableType"), None | Some("worksheet")) {
+                    return Err(unsupported("connection-backed table", part));
+                }
+                if !matches!(
+                    node.value("totalsRowShown"),
+                    None | Some("0" | "1" | "false" | "true")
+                ) {
+                    return Err(unsupported("invalid totalsRowShown", part));
+                }
+                let rect = sheet::SourceRect::parse(node.required("ref")?)?;
+                let header = number(&node, "headerRowCount", Some(1))?;
+                let totals = number(&node, "totalsRowCount", Some(0))?;
+                if header > 1 || totals > 1 || header + totals > rect.last_row - rect.first_row + 1
+                {
+                    return Err(unsupported("unsupported table header/totals layout", part));
+                }
+                let width = (rect.last_col - rect.first_col + 1) as usize;
+                budget.columns = budget
+                    .columns
+                    .checked_add(width)
+                    .ok_or_else(|| unsupported("table column overflow", part))?;
+                budget.area = budget
+                    .area
+                    .checked_add(
+                        rect.cell_count()
+                            .ok_or_else(|| unsupported("table area overflow", part))?,
+                    )
+                    .ok_or_else(|| unsupported("table area overflow", part))?;
+                if rect.last_col > options.limits.max_columns
+                    || budget.columns > options.limits.max_columns as usize
+                    || budget.area > options.limits.max_cells as u64
+                {
+                    return Err(unsupported("table area/column limit", part));
+                }
+                table = Some(Table {
+                    name: n.to_owned(),
+                    rect,
+                    header: header == 1,
+                    totals: totals == 1,
+                    active_filter: None,
+                    columns: Vec::new(),
+                });
+                return Ok(());
             }
-            let n = node.required("name")?;
-            if !name(n) || node.required("displayName")? != n {
-                return Err(unsupported("invalid/ambiguous table name", part));
+            // Display/filter/sort and extension payloads have no formula authority.
+            if path.get(1).is_some_and(|p| {
+                p.ns == xml::MAIN
+                    && matches!(
+                        p.local,
+                        "autoFilter" | "sortState" | "tableStyleInfo" | "extLst"
+                    )
+            }) {
+                if path.len() == 2 && !sections.insert(e.local) {
+                    return Err(unsupported("duplicate table metadata", part));
+                }
+                if xml::path_is(path, xml::MAIN, &["table", "autoFilter"]) {
+                    let r = sheet::SourceRect::parse(node.required("ref")?)?;
+                    filter_ref = Some(r);
+                }
+                if path.len() == 4
+                    && path[1].local == "autoFilter"
+                    && path[2].local == "filterColumn"
+                {
+                    filter_active = true;
+                }
+                // Unknown calculation-bearing payloads are not inert.
+                if matches!(
+                    e.local,
+                    "calculatedColumnFormula" | "totalsRowFormula" | "queryTable" | "connection"
+                ) {
+                    return Err(unsupported("unsupported table extension semantics", part));
+                }
+                return Ok(());
             }
-            if !matches!(node.value("tableType"), None | Some("worksheet")) {
-                return Err(unsupported("connection-backed table", part));
-            }
-            if !matches!(
-                node.value("totalsRowShown"),
-                None | Some("0" | "1" | "false" | "true")
-            ) {
-                return Err(unsupported("invalid totalsRowShown", part));
-            }
-            let rect = sheet::SourceRect::parse(node.required("ref")?)?;
-            let header = number(&node, "headerRowCount", Some(1))?;
-            let totals = number(&node, "totalsRowCount", Some(0))?;
-            if header > 1 || totals > 1 || header + totals > rect.last_row - rect.first_row + 1 {
-                return Err(unsupported("unsupported table header/totals layout", part));
-            }
-            let width = (rect.last_col - rect.first_col + 1) as usize;
-            budget.columns = budget
-                .columns
-                .checked_add(width)
-                .ok_or_else(|| unsupported("table column overflow", part))?;
-            budget.area = budget
-                .area
-                .checked_add(
-                    rect.cell_count()
-                        .ok_or_else(|| unsupported("table area overflow", part))?,
+            if xml::path_is(path, xml::MAIN, &["table", "tableColumns"]) {
+                attrs(&node, &["count"])?;
+                if count.is_some() {
+                    return Err(unsupported("duplicate tableColumns", part));
+                }
+                count = Some(number(&node, "count", None)? as usize);
+                let t = table
+                    .as_ref()
+                    .ok_or_else(|| unsupported("missing table root", part))?;
+                if count != Some((t.rect.last_col - t.rect.first_col + 1) as usize) {
+                    return Err(unsupported("tableColumns width disagreement", part));
+                }
+            } else if xml::path_is(path, xml::MAIN, &["table", "tableColumns", "tableColumn"]) {
+                extended_attrs(
+                    &node,
+                    &[
+                        "id",
+                        "name",
+                        "totalsRowFunction",
+                        "totalsRowLabel",
+                        "headerRowDxfId",
+                        "dataDxfId",
+                        "totalsRowDxfId",
+                        "headerRowCellStyle",
+                        "dataCellStyle",
+                        "totalsRowCellStyle",
+                    ],
+                    COLUMN_EXTENSIONS,
+                )?;
+                let t = table
+                    .as_mut()
+                    .ok_or_else(|| unsupported("missing table root", part))?;
+                if t.columns.len() >= count.unwrap_or(0) {
+                    return Err(unsupported("table column count limit", part));
+                }
+                let id = number(&node, "id", None)?;
+                let n = node.required("name")?;
+                if id == 0 || n.is_empty() || !ids.insert(id) || !names.insert(n.to_lowercase()) {
+                    return Err(unsupported("duplicate/invalid table column", part));
+                }
+                let total = match node.value("totalsRowFunction") {
+                    None | Some("none" | "custom") => false,
+                    Some(
+                        "sum" | "min" | "max" | "average" | "count" | "countNums" | "stdDev"
+                        | "var",
+                    ) => true,
+                    _ => return Err(unsupported("unsupported totalsRowFunction", part)),
+                };
+                if total && !t.totals {
+                    return Err(unsupported("totals formula without totals row", part));
+                }
+                t.columns.push(Column {
+                    name: n.to_owned(),
+                    calculated: false,
+                    total,
+                });
+                formulas.clear();
+            } else if path.len() == 4
+                && xml::path_is(
+                    &path[..3],
+                    xml::MAIN,
+                    &["table", "tableColumns", "tableColumn"],
                 )
-                .ok_or_else(|| unsupported("table area overflow", part))?;
-            if rect.last_col > options.limits.max_columns
-                || budget.columns > options.limits.max_columns as usize
-                || budget.area > options.limits.max_cells as u64
+                && e.ns == xml::MAIN
+                && matches!(e.local, "calculatedColumnFormula" | "totalsRowFormula")
             {
-                return Err(unsupported("table area/column limit", part));
-            }
-            table = Some(Table {
-                name: n.to_owned(),
-                rect,
-                header: header == 1,
-                totals: totals == 1,
-                active_filter: None,
-                columns: Vec::new(),
-            });
-            return Ok(());
-        }
-        // Display/filter/sort and extension payloads have no formula authority.
-        if path.get(1).is_some_and(|p| {
-            p.ns == xml::MAIN
-                && matches!(
-                    p.local,
-                    "autoFilter" | "sortState" | "tableStyleInfo" | "extLst"
-                )
-        }) {
-            if path.len() == 2 && !sections.insert(e.local) {
-                return Err(unsupported("duplicate table metadata", part));
-            }
-            if xml::path_is(path, xml::MAIN, &["table", "autoFilter"]) {
-                let r = sheet::SourceRect::parse(node.required("ref")?)?;
-                filter_ref = Some(r);
-            }
-            if path.len() == 4 && path[1].local == "autoFilter" && path[2].local == "filterColumn" {
-                filter_active = true;
-            }
-            // Unknown calculation-bearing payloads are not inert.
-            if matches!(
-                e.local,
-                "calculatedColumnFormula" | "totalsRowFormula" | "queryTable" | "connection"
-            ) {
-                return Err(unsupported("unsupported table extension semantics", part));
-            }
-            return Ok(());
-        }
-        if xml::path_is(path, xml::MAIN, &["table", "tableColumns"]) {
-            attrs(&node, &["count"])?;
-            if count.is_some() {
-                return Err(unsupported("duplicate tableColumns", part));
-            }
-            count = Some(number(&node, "count", None)? as usize);
-            let t = table
-                .as_ref()
-                .ok_or_else(|| unsupported("missing table root", part))?;
-            if count != Some((t.rect.last_col - t.rect.first_col + 1) as usize) {
-                return Err(unsupported("tableColumns width disagreement", part));
-            }
-        } else if xml::path_is(path, xml::MAIN, &["table", "tableColumns", "tableColumn"]) {
-            extended_attrs(
-                &node,
-                &[
-                    "id",
-                    "name",
-                    "totalsRowFunction",
-                    "totalsRowLabel",
-                    "headerRowDxfId",
-                    "dataDxfId",
-                    "totalsRowDxfId",
-                    "headerRowCellStyle",
-                    "dataCellStyle",
-                    "totalsRowCellStyle",
-                ],
-                COLUMN_EXTENSIONS,
-            )?;
-            let t = table
-                .as_mut()
-                .ok_or_else(|| unsupported("missing table root", part))?;
-            if t.columns.len() >= count.unwrap_or(0) {
-                return Err(unsupported("table column count limit", part));
-            }
-            let id = number(&node, "id", None)?;
-            let n = node.required("name")?;
-            if id == 0 || n.is_empty() || !ids.insert(id) || !names.insert(n.to_lowercase()) {
-                return Err(unsupported("duplicate/invalid table column", part));
-            }
-            let total = match node.value("totalsRowFunction") {
-                None | Some("none" | "custom") => false,
-                Some(
-                    "sum" | "min" | "max" | "average" | "count" | "countNums" | "stdDev" | "var",
-                ) => true,
-                _ => return Err(unsupported("unsupported totalsRowFunction", part)),
-            };
-            if total && !t.totals {
-                return Err(unsupported("totals formula without totals row", part));
-            }
-            t.columns.push(Column {
-                name: n.to_owned(),
-                calculated: false,
-                total,
-            });
-            formulas.clear();
-        } else if path.len() == 4
-            && xml::path_is(
-                &path[..3],
-                xml::MAIN,
-                &["table", "tableColumns", "tableColumn"],
-            )
-            && e.ns == xml::MAIN
-            && matches!(e.local, "calculatedColumnFormula" | "totalsRowFormula")
-        {
-            attrs(&node, &["array"])?;
-            if !matches!(node.value("array"), None | Some("0" | "false"))
-                || !formulas.insert(e.local)
-            {
-                return Err(unsupported("array/duplicate table formula", part));
-            }
-            let t = table.as_mut().expect("validated root");
-            if e.local == "totalsRowFormula" && !t.totals {
-                return Err(unsupported("totals formula without totals row", part));
-            }
-            let c = t
-                .columns
-                .last_mut()
-                .ok_or_else(|| unsupported("misplaced table formula", part))?;
-            if e.local == "calculatedColumnFormula" {
-                c.calculated = true;
+                attrs(&node, &["array"])?;
+                if !matches!(node.value("array"), None | Some("0" | "false"))
+                    || !formulas.insert(e.local)
+                {
+                    return Err(unsupported("array/duplicate table formula", part));
+                }
+                let t = table.as_mut().expect("validated root");
+                if e.local == "totalsRowFormula" && !t.totals {
+                    return Err(unsupported("totals formula without totals row", part));
+                }
+                let c = t
+                    .columns
+                    .last_mut()
+                    .ok_or_else(|| unsupported("misplaced table formula", part))?;
+                if e.local == "calculatedColumnFormula" {
+                    c.calculated = true;
+                } else {
+                    c.total = true;
+                }
             } else {
-                c.total = true;
+                return Err(unsupported(
+                    format!("unsupported/misplaced table element {}", e.local),
+                    part,
+                ));
             }
-        } else {
-            return Err(unsupported(
-                format!("unsupported/misplaced table element {}", e.local),
-                part,
-            ));
-        }
-        Ok(())
-    })?;
+            Ok(())
+        },
+    )?;
     let mut t = table.ok_or_else(|| unsupported("missing table root", part))?;
     if filter_active {
         let mut r = filter_ref.expect("validated table autoFilter");

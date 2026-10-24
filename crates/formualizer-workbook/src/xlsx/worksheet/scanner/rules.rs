@@ -434,6 +434,48 @@ impl<'a, const STRICT: bool> SheetState<'a, STRICT> {
         Ok(())
     }
 
+    /// Coordinate/grid, ordering, dimension and count checks fire before
+    /// cell metadata or scalar kind admission; preserve this refusal order.
+    fn admit_cell_position(
+        &mut self,
+        r: u32,
+        c: u32,
+        context: &mut RuleContext<'a, '_, '_>,
+    ) -> Result<(), IoError> {
+        if r == 0 || r > 1_048_576 || c == 0 || c > 16_384 {
+            return Err(unsupported(
+                "out-of-grid or absolute cell coordinate",
+                "worksheet",
+            ));
+        }
+        if c > context.options.limits.max_columns {
+            return Err(unsupported("worksheet width limit", "worksheet"));
+        }
+        self.max_row = self.max_row.max(r);
+        self.max_col = self.max_col.max(c);
+        if STRICT && (self.row != r || c <= self.column) {
+            return Err(unsupported(
+                "duplicate/non-increasing cell coordinate",
+                "worksheet",
+            ));
+        }
+        self.column = c;
+        if STRICT
+            && let Some((r1, c1, r2, c2)) = self.dimension
+            && (!(r1..=r2).contains(&r) || !(c1..=c2).contains(&c))
+        {
+            return Err(unsupported("cell outside worksheet dimension", "worksheet"));
+        }
+        *context.observed = context
+            .observed
+            .checked_add(1)
+            .ok_or_else(|| unsupported("cell count overflow", "worksheet"))?;
+        if *context.observed > context.options.limits.max_cells {
+            return Err(unsupported("serialized cell count limit", "worksheet"));
+        }
+        Ok(())
+    }
+
     fn open_cell(
         &mut self,
         event: &RuleEvent<'_, 'a>,
@@ -471,37 +513,7 @@ impl<'a, const STRICT: bool> SheetState<'a, STRICT> {
                 self.open_cell.raw_coordinate = None;
                 (None, (self.row.max(1), self.column.saturating_add(1)))
             };
-            if r == 0 || r > 1_048_576 || c == 0 || c > 16_384 {
-                return Err(unsupported(
-                    "out-of-grid or absolute cell coordinate",
-                    "worksheet",
-                ));
-            }
-            if c > context.options.limits.max_columns {
-                return Err(unsupported("worksheet width limit", "worksheet"));
-            }
-            self.max_row = self.max_row.max(r);
-            self.max_col = self.max_col.max(c);
-            if STRICT && (self.row != r || c <= self.column) {
-                return Err(unsupported(
-                    "duplicate/non-increasing cell coordinate",
-                    "worksheet",
-                ));
-            }
-            self.column = c;
-            if STRICT
-                && let Some((r1, c1, r2, c2)) = self.dimension
-                && (!(r1..=r2).contains(&r) || !(c1..=c2).contains(&c))
-            {
-                return Err(unsupported("cell outside worksheet dimension", "worksheet"));
-            }
-            *context.observed = context
-                .observed
-                .checked_add(1)
-                .ok_or_else(|| unsupported("cell count overflow", "worksheet"))?;
-            if *context.observed > context.options.limits.max_cells {
-                return Err(unsupported("serialized cell count limit", "worksheet"));
-            }
+            self.admit_cell_position(r, c, context)?;
             if STRICT && attrs.value("vm").is_some() {
                 return Err(unsupported("rich value metadata (vm)", "worksheet"));
             }
