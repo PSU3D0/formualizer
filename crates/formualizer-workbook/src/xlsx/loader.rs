@@ -1,5 +1,7 @@
 //! Compatible XLSX loading through the shared bounded source reader.
 
+mod timing;
+
 #[cfg(test)]
 mod retained_tests {
     use super::*;
@@ -115,6 +117,10 @@ pub struct NativeXlsxAdapter {
     has_links: bool,
     external: Option<Arc<crate::CachedExternalLinkValues>>,
     admission_error: Option<IoError>,
+    debug_load: bool,
+    load_clock: timing::Timer,
+    package_ms: f64,
+    external_formulas_ms: f64,
 }
 impl NativeXlsxAdapter {
     /// Open an XLSX path using an explicitly selected retained backing source.
@@ -125,6 +131,8 @@ impl NativeXlsxAdapter {
         Self::open_source(XlsxSource::open_path(path.as_ref(), source)?)
     }
     fn open_source(source: XlsxSource) -> Result<Self, IoError> {
+        let debug_load = std::env::var_os("FZ_DEBUG_LOAD").is_some();
+        let load_clock = timing::Timer::start(debug_load);
         let options = ReadOptions::default();
         let (sheets, strings, styles, names, calc_settings, has_links, sheet_diagnostics) = {
             let bytes = source.bytes(options.limits.max_input_bytes)?;
@@ -262,6 +270,7 @@ impl NativeXlsxAdapter {
                 sheet_diagnostics,
             )
         };
+        let package_ms = load_clock.elapsed_ms();
         Ok(Self {
             source,
             sheets,
@@ -277,12 +286,17 @@ impl NativeXlsxAdapter {
             has_links,
             external: None,
             admission_error: None,
+            debug_load,
+            load_clock,
+            package_ms,
+            external_formulas_ms: 0.0,
         })
     }
     fn prepare_external(&mut self) -> Result<Arc<crate::CachedExternalLinkValues>, IoError> {
         let mut formulas = Vec::new();
         for sheet in &self.sheets {
             let parsed = self.parsed_sheet(sheet)?;
+            let formula_timer = timing::Timer::start(self.debug_load);
             let mut replay = FormulaReplayState::default();
             for record in &parsed.records {
                 replay
@@ -302,7 +316,9 @@ impl NativeXlsxAdapter {
                     )
                     .map_err(IoError::from)?;
             }
+            self.external_formulas_ms += formula_timer.elapsed_ms();
         }
+        let package_timer = timing::Timer::start(self.debug_load);
         let snapshot = {
             let bytes = self.source.bytes(self.options.limits.max_input_bytes)?;
             Arc::new(crate::cached_external_links::load(
@@ -313,6 +329,7 @@ impl NativeXlsxAdapter {
             ))
         };
         self.names.admit_external_snapshot(&snapshot);
+        self.package_ms += package_timer.elapsed_ms();
         Ok(snapshot)
     }
     fn parsed_sheet<'a>(&self, sheet: &'a SheetSource) -> Result<&'a ParsedSheet, IoError> {
@@ -441,6 +458,7 @@ impl NativeXlsxAdapter {
         limits: &formualizer_eval::engine::WorkbookLoadLimits,
         date_system: DateSystem,
     ) -> Result<ParsedSheet, IoError> {
+        let scan_timer = timing::Timer::start(self.debug_load);
         // A bounded dimension hint sizes Arrow; actual populated bounds win.
         let dimensions = super::ingest::values::dimension_hint(&sheet.data, &Default::default());
         let values = ValueSink::new(Context {
@@ -510,12 +528,18 @@ impl NativeXlsxAdapter {
                 (0, 0)
             }
         };
+        let scan_ms = scan_timer.elapsed_ms();
+        let sinks_timer = timing::Timer::start(self.debug_load);
         let mut values = sink.values.finish(bounds)?;
         values.values_observed += sink.skipped_values;
+        let reader_values = sink.reader_values.finish(bounds)?;
+        let sinks_ms = sinks_timer.elapsed_ms();
         Ok(ParsedSheet {
             values,
             records: sink.records,
-            reader_values: sink.reader_values.finish(bounds)?,
+            reader_values,
+            scan_ms,
+            sinks_ms,
             value_error: sink.value_error,
             formula_error: sink.formula_error,
             stream_error: sink.stream_error,
@@ -613,6 +637,8 @@ impl DeferredReadError {
 }
 
 struct ParsedSheet {
+    scan_ms: f64,
+    sinks_ms: f64,
     values: super::ingest::values::IngestedValues,
     records: Vec<OwnedSpoolFormulaRecord>,
     reader_values: super::ingest::values::IngestedValues,
@@ -902,6 +928,11 @@ impl<R: EvaluationContext> EngineLoadStream<R> for NativeXlsxAdapter {
                 .as_ref()
                 .is_some_and(|snapshot| !snapshot.refused_formulas.is_empty()),
         );
+        let mut phases = timing::Phases {
+            package_ms: self.package_ms,
+            formulas_ms: self.external_formulas_ms,
+            ..Default::default()
+        };
         let result = (|| {
             let mut batches = FormulaBatches::default();
             let mut usage = WorkbookSpoolUsage::default();
@@ -912,6 +943,10 @@ impl<R: EvaluationContext> EngineLoadStream<R> for NativeXlsxAdapter {
             let mut shared = 0;
             for (index, sheet) in self.sheets.iter().enumerate() {
                 let parsed = self.parsed_sheet(sheet)?;
+                // External-cache preparation may already have populated these
+                // sheets. Include their original scan once in the adapter lap.
+                phases.scan_ms += parsed.scan_ms;
+                phases.sinks_ms += parsed.sinks_ms;
                 if let Some(error) = &parsed.stream_error {
                     return Err(error.to_error());
                 }
@@ -946,7 +981,10 @@ impl<R: EvaluationContext> EngineLoadStream<R> for NativeXlsxAdapter {
                     .collect();
                 values_observed += parsed.values.values_observed as u64;
                 values_handed += parsed.values.values_handed_to_engine as u64;
+                let install_timer = timing::Timer::start(self.debug_load);
                 install_values(engine, &sheet.name, arrow);
+                phases.install_ms += install_timer.elapsed_ms();
+                let formula_timer = timing::Timer::start(self.debug_load);
                 let staged = formulas::stage_records_with_refusals(
                     engine,
                     &sheet.name,
@@ -975,8 +1013,10 @@ impl<R: EvaluationContext> EngineLoadStream<R> for NativeXlsxAdapter {
                         deferred: staged.deferred,
                     },
                 );
+                phases.formulas_ms += formula_timer.elapsed_ms();
                 self.loaded.insert(sheet.name.clone());
             }
+            let install_timer = timing::Timer::start(self.debug_load);
             if !engine.config.defer_graph_building {
                 batches.install_replay(engine).map_err(IoError::from)?;
             }
@@ -1023,11 +1063,17 @@ impl<R: EvaluationContext> EngineLoadStream<R> for NativeXlsxAdapter {
                 formula_cells_handed_to_engine: Some(formulas_handed),
                 shared_formula_tags_observed: Some(shared),
             };
+            phases.install_ms += install_timer.elapsed_ms();
             Ok(())
         })();
         previous.restore(engine);
         if result.is_ok() {
+            let install_timer = timing::Timer::start(self.debug_load);
             engine.finalize_all_sheet_indexes(names.iter().map(String::as_str));
+            phases.install_ms += install_timer.elapsed_ms();
+            if self.debug_load {
+                phases.report(self.load_clock.elapsed_ms());
+            }
         }
         result
     }
