@@ -601,7 +601,7 @@ pub fn formualizer_workbook::backends::NativeXlsxAdapter::name_import_diagnostic
 pub fn formualizer_workbook::backends::NativeXlsxAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::backends::NativeXlsxAdapter::open_path<P: core::convert::AsRef<std::path::Path>>(P) -> core::result::Result<Self, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::backends::NativeXlsxAdapter::open_reader(alloc::boxed::Box<(dyn std::io::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, formualizer_workbook::error::IoError>
-pub fn formualizer_workbook::backends::NativeXlsxAdapter::read_cell(&mut self, &str, u32, u32) -> core::result::Result<core::option::Option<formualizer_workbook::traits::CellData>, Self::Error>
+pub fn formualizer_workbook::backends::NativeXlsxAdapter::read_cell(&mut self, &str, u32, u32) -> core::result::Result<core::option::Option<formualizer_workbook::traits::CellData>, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::backends::NativeXlsxAdapter::read_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::backends::NativeXlsxAdapter::read_sheet(&mut self, &str) -> core::result::Result<formualizer_workbook::traits::SheetData, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::backends::NativeXlsxAdapter::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
@@ -1218,7 +1218,7 @@ pub fn formualizer_workbook::backends::NativeXlsxAdapter::name_import_diagnostic
 pub fn formualizer_workbook::backends::NativeXlsxAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::backends::NativeXlsxAdapter::open_path<P: core::convert::AsRef<std::path::Path>>(P) -> core::result::Result<Self, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::backends::NativeXlsxAdapter::open_reader(alloc::boxed::Box<(dyn std::io::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, formualizer_workbook::error::IoError>
-pub fn formualizer_workbook::backends::NativeXlsxAdapter::read_cell(&mut self, &str, u32, u32) -> core::result::Result<core::option::Option<formualizer_workbook::traits::CellData>, Self::Error>
+pub fn formualizer_workbook::backends::NativeXlsxAdapter::read_cell(&mut self, &str, u32, u32) -> core::result::Result<core::option::Option<formualizer_workbook::traits::CellData>, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::backends::NativeXlsxAdapter::read_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::backends::NativeXlsxAdapter::read_sheet(&mut self, &str) -> core::result::Result<formualizer_workbook::traits::SheetData, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::backends::NativeXlsxAdapter::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
@@ -2846,7 +2846,7 @@ pub fn formualizer_workbook::backends::NativeXlsxAdapter::name_import_diagnostic
 pub fn formualizer_workbook::backends::NativeXlsxAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::backends::NativeXlsxAdapter::open_path<P: core::convert::AsRef<std::path::Path>>(P) -> core::result::Result<Self, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::backends::NativeXlsxAdapter::open_reader(alloc::boxed::Box<(dyn std::io::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, formualizer_workbook::error::IoError>
-pub fn formualizer_workbook::backends::NativeXlsxAdapter::read_cell(&mut self, &str, u32, u32) -> core::result::Result<core::option::Option<formualizer_workbook::traits::CellData>, Self::Error>
+pub fn formualizer_workbook::backends::NativeXlsxAdapter::read_cell(&mut self, &str, u32, u32) -> core::result::Result<core::option::Option<formualizer_workbook::traits::CellData>, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::backends::NativeXlsxAdapter::read_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::backends::NativeXlsxAdapter::read_sheet(&mut self, &str) -> core::result::Result<formualizer_workbook::traits::SheetData, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::backends::NativeXlsxAdapter::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>

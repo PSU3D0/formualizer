@@ -415,6 +415,65 @@ fn native_shared_string_cdata_matches_display_text() {
     }
 }
 
+#[cfg(feature = "xlsx-recalc")]
+#[test]
+fn native_reader_preserves_source_order_and_separate_refusals() {
+    use formualizer_workbook::{IoError, backends::NativeXlsxAdapter};
+    for cells in [
+        r#"<c r="A1"><f>1</f><v>1</v></c><c r="A1"><v>2</v></c>"#,
+        r#"<c r="A1"><v>2</v></c><c r="A1"><f>1</f><v>1</v></c>"#,
+        r#"<c r="A1"><f t="shared" si="bad"/><v>7</v></c>"#,
+        "<c r=\"A1\" t=\"str\"><f>1</f><v>a\u{85}b\u{2028}c</v></c>",
+        r#"<c r="A1"><f t="shared" si="bad"/><v>7</v></c><c r="B1" t="s"><v>999</v></c>"#,
+        r#"<c r="A1" t="s"><v>999</v></c><c r="B1"><v>2</wrong>"#,
+    ] {
+        let bytes = book(&[Ws::new("Sheet1", vec![])], "");
+        let mut parts = unpack(&bytes);
+        parts.insert(SHEET.into(), format!("<worksheet xmlns=\"{MAIN}\"><sheetData><row r=\"1\">{cells}</row></sheetData></worksheet>"));
+        let bytes = pack(&parts);
+        let mut baseline = CalamineAdapter::open_bytes(bytes.clone()).unwrap();
+        let mut native = NativeXlsxAdapter::open_bytes(bytes.clone()).unwrap();
+        for _ in 0..2 {
+            assert_eq!(
+                baseline.sheet_bounds("Sheet1"),
+                native.sheet_bounds("Sheet1"),
+                "{cells}"
+            );
+            let baseline = baseline.read_sheet("Sheet1").map_err(IoError::from);
+            let native = native.read_sheet("Sheet1");
+            assert_eq!(format!("{baseline:?}"), format!("{native:?}"), "{cells}");
+        }
+        let baseline = Workbook::from_reader_with_adapter_stats(
+            CalamineAdapter::open_bytes(bytes.clone()).unwrap(),
+            LoadStrategy::EagerAll,
+            WorkbookConfig::ephemeral(),
+        );
+        let native = Workbook::from_reader_with_adapter_stats(
+            NativeXlsxAdapter::open_bytes(bytes).unwrap(),
+            LoadStrategy::EagerAll,
+            WorkbookConfig::ephemeral(),
+        );
+        match (baseline, native) {
+            (Ok((baseline, baseline_stats)), Ok((native, native_stats))) => {
+                assert_eq!(baseline_stats, native_stats, "{cells}");
+                assert_eq!(
+                    baseline.get_value("Sheet1", 1, 1),
+                    native.get_value("Sheet1", 1, 1),
+                    "{cells}"
+                );
+                assert_eq!(
+                    baseline.get_formula("Sheet1", 1, 1),
+                    native.get_formula("Sheet1", 1, 1)
+                );
+            }
+            (Err(baseline), Err(native)) => {
+                assert_eq!(format!("{baseline:?}"), format!("{native:?}"))
+            }
+            _ => panic!("different stream admission for {cells}"),
+        }
+    }
+}
+
 #[test]
 fn cached_links_eager() {
     check_mode(WorkbookConfig::ephemeral());

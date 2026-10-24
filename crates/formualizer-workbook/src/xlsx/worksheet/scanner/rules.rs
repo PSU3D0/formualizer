@@ -842,6 +842,30 @@ impl<'a, const STRICT: bool> SheetState<'a, STRICT> {
                 .as_mut()
                 .ok_or_else(|| unsupported("unbalanced cell", "worksheet"))?;
             cell.span.end = span.end;
+            if !STRICT
+                && cell.has_formula
+                && context.request.retention.values
+                && emit.retain_formula_cache()
+            {
+                let cache_text = cell
+                    .value
+                    .as_ref()
+                    .map(|v| v.text.clone())
+                    .unwrap_or_default();
+                let value =
+                    cell.decode(cache_text, std::mem::take(&mut self.open_cell.inline_text));
+                emit.formula_cache(emission::Literal {
+                    row: cell.row,
+                    col: cell.col,
+                    generated_child_hint: false,
+                    style: self.open_cell.style.clone(),
+                    raw_coordinate_span: self.open_cell.raw_coordinate.clone(),
+                    raw_type_span: self.open_cell.raw_type.clone(),
+                    raw_style_span: self.open_cell.raw_style.clone(),
+                    raw_value_span: cell.value.as_ref().map(|v| v.open_end..v.close_start),
+                    value,
+                })?;
+            }
             let emitted_value = (!cell.has_formula).then(|| {
                 cell.decode(
                     std::mem::take(&mut self.open_cell.literal_text),

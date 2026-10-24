@@ -216,6 +216,9 @@ impl<'a> ValueSink<'a> {
         }
         Ok(())
     }
+    pub(in crate::xlsx) fn observed_count(&self) -> usize {
+        self.values
+    }
     pub(in crate::xlsx) fn push(&mut self, literal: Literal<'_>) -> Result<(), IoError> {
         let (row, col) = self.coordinate(literal.row, literal.col)?;
         let kind = literal.raw_type(self.context.source);

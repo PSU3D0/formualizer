@@ -57,10 +57,22 @@ struct Coverage {
 struct Dump {
     records: BTreeMap<String, String>,
     coverage: Coverage,
+    raw_reader_errors: BTreeMap<String, String>,
 }
 impl Dump {
     fn record(&mut self, key: impl Into<String>, v: impl Debug) {
         assert!(self.records.insert(key.into(), format!("{v:?}")).is_none());
+    }
+    fn reader_error(
+        &mut self,
+        key: impl Into<String>,
+        error: impl std::fmt::Display + Into<IoError>,
+    ) {
+        let key = key.into();
+        self.raw_reader_errors
+            .insert(key.clone(), error.to_string());
+        let error = error.into();
+        self.record(key, (format!("{error:?}"), error.to_string()));
     }
     fn refusal(&mut self, phase: &str, error: IoError) {
         self.record(
@@ -73,7 +85,8 @@ impl Dump {
 fn capture<B>(bytes: &[u8], open: impl Fn(Vec<u8>) -> Result<B, IoError>) -> Dump
 where
     B: SpreadsheetReader + EngineLoadStream<WBResolver>,
-    IoError: From<<B as EngineLoadStream<WBResolver>>::Error>,
+    IoError:
+        From<<B as EngineLoadStream<WBResolver>>::Error> + From<<B as SpreadsheetReader>::Error>,
 {
     capture_with_source_inventory(bytes, open, true)
 }
@@ -85,7 +98,8 @@ fn capture_with_source_inventory<B>(
 ) -> Dump
 where
     B: SpreadsheetReader + EngineLoadStream<WBResolver>,
-    IoError: From<<B as EngineLoadStream<WBResolver>>::Error>,
+    IoError:
+        From<<B as EngineLoadStream<WBResolver>>::Error> + From<<B as SpreadsheetReader>::Error>,
 {
     let mut dump = Dump::default();
     dump.coverage.files = 1;
@@ -119,7 +133,7 @@ where
                 );
             }
         }
-        Err(e) => dump.record("reader/names-error", e.to_string()),
+        Err(e) => dump.reader_error("reader/names-error", e),
     }
     if let Some(links) = reader.cached_external_link_values() {
         dump.record("external/indices", &links.indices);
@@ -157,7 +171,7 @@ where
     let names = match reader.sheet_names() {
         Ok(names) => names,
         Err(e) => {
-            dump.record("reader/sheets-error", e.to_string());
+            dump.reader_error("reader/sheets-error", e);
             return dump;
         }
     };
@@ -192,7 +206,7 @@ where
             reader.is_loaded(name, None, None),
         );
         match reader.read_sheet(name) {
-            Err(e) => dump.record(format!("{prefix}/error"), e.to_string()),
+            Err(e) => dump.reader_error(format!("{prefix}/error"), e),
             Ok(sheet) => {
                 dump.record(
                     format!("{prefix}/metadata"),
@@ -214,6 +228,38 @@ where
                         format!("{prefix}/cell/{row:08}/{col:08}"),
                         (value(cell.value), cell.formula, cell.style),
                     );
+                }
+                let probes: BTreeSet<_> = [(0, 0)]
+                    .into_iter()
+                    .chain(coords.first().copied())
+                    .chain(coords.last().copied())
+                    .collect();
+                for (row, col) in probes {
+                    let key = format!("{prefix}/read-cell/{row:08}/{col:08}");
+                    match reader.read_cell(name, row, col) {
+                        Ok(cell) => dump.record(
+                            key,
+                            cell.map(|cell| (value(cell.value), cell.formula, cell.style)),
+                        ),
+                        Err(error) => dump.reader_error(key, error),
+                    }
+                    let key = format!("{prefix}/read-range/{row:08}/{col:08}");
+                    match reader.read_range(
+                        name,
+                        (row, col),
+                        (row.saturating_add(1), col.saturating_add(1)),
+                    ) {
+                        Ok(cells) => dump.record(
+                            key,
+                            cells
+                                .into_iter()
+                                .map(|(coord, cell)| {
+                                    (coord, (value(cell.value), cell.formula, cell.style))
+                                })
+                                .collect::<BTreeMap<_, _>>(),
+                        ),
+                        Err(error) => dump.reader_error(key, error),
+                    }
                 }
                 coordinates.entry(name.clone()).or_default().extend(coords);
             }
@@ -409,7 +455,9 @@ where
     A: SpreadsheetReader + EngineLoadStream<WBResolver>,
     B: SpreadsheetReader + EngineLoadStream<WBResolver>,
     IoError: From<<A as EngineLoadStream<WBResolver>>::Error>
-        + From<<B as EngineLoadStream<WBResolver>>::Error>,
+        + From<<B as EngineLoadStream<WBResolver>>::Error>
+        + From<<A as SpreadsheetReader>::Error>
+        + From<<B as SpreadsheetReader>::Error>,
 {
     compare_projected(
         paths,
@@ -462,7 +510,9 @@ where
     A: SpreadsheetReader + EngineLoadStream<WBResolver>,
     B: SpreadsheetReader + EngineLoadStream<WBResolver>,
     IoError: From<<A as EngineLoadStream<WBResolver>>::Error>
-        + From<<B as EngineLoadStream<WBResolver>>::Error>,
+        + From<<B as EngineLoadStream<WBResolver>>::Error>
+        + From<<A as SpreadsheetReader>::Error>
+        + From<<B as SpreadsheetReader>::Error>,
 {
     let mut coverage = Coverage::default();
     let mut divergences = 0;
@@ -486,6 +536,13 @@ where
         writeln!(output, "ARM native")?;
         output.flush()?;
         let b = project(capture(&bytes, candidate));
+        if !a.raw_reader_errors.is_empty() || !b.raw_reader_errors.is_empty() {
+            writeln!(
+                output,
+                "RAW READER ERRORS baseline={:?} native={:?}",
+                a.raw_reader_errors, b.raw_reader_errors
+            )?;
+        }
         coverage.files += 1;
         coverage.sheets += a.coverage.sheets;
         coverage.cells += a.coverage.cells;
