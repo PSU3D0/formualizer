@@ -1,13 +1,17 @@
-//! Borrowed worksheet value events. Workbook-owned shared strings and style
-//! indices are resolved by the sink, not copied into per-cell owned records.
+//! Borrowed worksheet value and formula-source events, independent of retained
+//! publication marks. Workbook-owned shared strings and style indices are
+//! resolved by the sink, not copied into per-cell owned records.
 use super::*;
+
+/// Dependency-owned until the common reader's error vocabulary is extracted.
+pub(in crate::xlsx) type ErrorToken = calamine::CellErrorType;
 
 #[derive(Debug)]
 pub(in crate::xlsx) enum Value<'a> {
     Empty,
     Number(f64),
     Boolean(bool),
-    Error(calamine::CellErrorType),
+    Error(ErrorToken),
     Text(Cow<'a, str>),
     Shared(u32),
     /// Bad scalar caches can occur in generated children and are masked by
@@ -30,6 +34,91 @@ pub(in crate::xlsx) struct Literal<'a> {
     /// Inner `<v>` bytes, excluding tags. Empty for `<v/>`, absent without v.
     pub raw_value_span: Option<Range<usize>>,
     pub value: Value<'a>,
+}
+
+impl Literal<'_> {
+    pub(in crate::xlsx) fn raw_type<'a>(&self, source: &'a [u8]) -> Option<&'a str> {
+        self.raw_type_span
+            .as_ref()
+            .map(|span| std::str::from_utf8(&source[span.clone()]).expect("admitted UTF-8"))
+    }
+    pub(in crate::xlsx) fn raw_style<'a>(&self, source: &'a [u8]) -> Option<&'a str> {
+        self.raw_style_span
+            .as_ref()
+            .map(|span| std::str::from_utf8(&source[span.clone()]).expect("admitted UTF-8"))
+    }
+    pub(in crate::xlsx) fn raw_value<'a>(&self, source: &'a [u8]) -> Option<&'a [u8]> {
+        self.raw_value_span
+            .as_ref()
+            .map(|span| &source[span.clone()])
+    }
+}
+
+/// Borrowed source identity, independent of publication marks or engine staging.
+#[derive(Debug)]
+pub(in crate::xlsx) enum FormulaKind<'a> {
+    Ordinary {
+        text: &'a str,
+    },
+    SharedAnchor {
+        shared_index: Option<u32>,
+        declared_range: SourceRect,
+        text: &'a str,
+    },
+    SharedDescendant {
+        shared_index: Option<u32>,
+    },
+    Unsupported {
+        kind: &'a str,
+        text: &'a str,
+    },
+}
+
+/// Raw source evidence. Attribute spans exclude quotes and preserve entities.
+#[derive(Debug)]
+pub(in crate::xlsx) struct FormulaEnvelope {
+    pub cell: Range<usize>,
+    pub formula: Range<usize>,
+    pub raw_coordinate: Option<Range<usize>>,
+    pub raw_cell_type: Option<Range<usize>>,
+    pub raw_formula_type: Option<Range<usize>>,
+    pub raw_shared_index: Option<Range<usize>>,
+    pub raw_declared_range: Option<Range<usize>>,
+    pub raw_cache: Option<Range<usize>>,
+}
+
+#[derive(Debug)]
+pub(in crate::xlsx) struct Formula<'a> {
+    pub row: u32,
+    pub col: u32,
+    pub sequence: u64,
+    pub offset: usize,
+    pub kind: FormulaKind<'a>,
+    pub envelope: FormulaEnvelope,
+}
+
+/// Ephemeral callbacks cannot retain borrowed formula scratch across cells.
+pub(in crate::xlsx) trait Sink {
+    fn literal(&mut self, _literal: Literal<'_>) -> Result<(), IoError> {
+        Ok(())
+    }
+    fn formula(&mut self, _formula: Formula<'_>) -> Result<(), IoError> {
+        Ok(())
+    }
+}
+impl<S: Sink + ?Sized> Sink for &mut S {
+    fn literal(&mut self, literal: Literal<'_>) -> Result<(), IoError> {
+        (**self).literal(literal)
+    }
+    fn formula(&mut self, formula: Formula<'_>) -> Result<(), IoError> {
+        (**self).formula(formula)
+    }
+}
+pub(super) struct Literals<F>(pub F);
+impl<F: FnMut(Literal<'_>) -> Result<(), IoError>> Sink for Literals<F> {
+    fn literal(&mut self, literal: Literal<'_>) -> Result<(), IoError> {
+        (self.0)(literal)
+    }
 }
 
 /// XML 1.0 text for ingestion. Admission's XML 1.1 normalization is retained

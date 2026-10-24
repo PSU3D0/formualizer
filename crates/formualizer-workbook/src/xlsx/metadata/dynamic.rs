@@ -6,6 +6,7 @@
 //! * `rc/@t` is ONE-based into `metadataTypes/metadataType`;
 //! * `rc/@v` is ZERO-based into the `bk` list of the `futureMetadata` block
 //!   whose `name` equals the selected metadata type name.
+pub(in crate::xlsx) use super::read_source;
 use crate::xlsx::recalculate::{
     IoError, Patch, XlsxRecalculateOptions, apply_patches, package, unsupported, xml,
 };
@@ -153,148 +154,164 @@ pub(in crate::xlsx) fn parse_bytes(
     ];
     let limit = options.limits.max_cells;
     let mut p = Parsed::default();
-    xml::walk(data, options, |path, node| {
-        let names: Vec<&str> = path.iter().map(|e| e.local).collect();
-        match &node.kind {
-            xml::Kind::Open { attributes, .. } => {
-                let e = path.last().expect("open XML element");
-                if path.len() == 1 && !xml::path_is(path, xml::MAIN, &["metadata"]) {
-                    return Err(unsupported("sheet metadata root/namespace", CONTEXT));
-                }
-                if MAIN_NAMES.contains(&e.local) && e.ns != xml::MAIN {
-                    return Err(unsupported("foreign sheet metadata lookalike", e.local));
-                }
-                if e.local == "dynamicArrayProperties" && e.ns != DYNAMIC_ARRAY_NS {
-                    return Err(unsupported(
-                        "foreign dynamic array metadata lookalike",
-                        e.local,
-                    ));
-                }
-                match names.as_slice() {
-                    ["metadata"] => {}
-                    ["metadata", "metadataTypes"] => {
-                        if p.types_section.replace(count(&node)?).is_some() {
-                            return Err(unsupported("duplicate metadataTypes", CONTEXT));
+    read_source(
+        data,
+        &crate::xlsx::options::ReadOptions::from(options),
+        |path, node| {
+            let names: Vec<&str> = path.iter().map(|e| e.local).collect();
+            match &node.kind {
+                xml::Kind::Open { attributes, .. } => {
+                    let e = path.last().expect("open XML element");
+                    if path.len() == 1 && !xml::path_is(path, xml::MAIN, &["metadata"]) {
+                        return Err(unsupported("sheet metadata root/namespace", CONTEXT));
+                    }
+                    if MAIN_NAMES.contains(&e.local) && e.ns != xml::MAIN {
+                        return Err(unsupported("foreign sheet metadata lookalike", e.local));
+                    }
+                    if e.local == "dynamicArrayProperties" && e.ns != DYNAMIC_ARRAY_NS {
+                        return Err(unsupported(
+                            "foreign dynamic array metadata lookalike",
+                            e.local,
+                        ));
+                    }
+                    match names.as_slice() {
+                        ["metadata"] => {}
+                        ["metadata", "metadataTypes"] => {
+                            if p.types_section.replace(count(&node)?).is_some() {
+                                return Err(unsupported("duplicate metadataTypes", CONTEXT));
+                            }
+                        }
+                        ["metadata", "metadataTypes", "metadataType"] => {
+                            // Only one XLDAPR type is interpreted; any other type
+                            // (rich values, MDX, …) has no supported semantics.
+                            if node.required("name")? != XLDAPR || !p.types.is_empty() {
+                                return Err(unsupported("unsupported metadata type", CONTEXT));
+                            }
+                            p.types.push(XLDAPR.to_owned());
+                        }
+                        ["metadata", "futureMetadata"] => {
+                            if node.required("name")? != XLDAPR {
+                                return Err(unsupported("unsupported future metadata", CONTEXT));
+                            }
+                            if p.future_section.replace(count(&node)?).is_some() {
+                                return Err(unsupported(
+                                    "duplicate XLDAPR future metadata",
+                                    CONTEXT,
+                                ));
+                            }
+                            p.future_span = Some(section(path, &node));
+                        }
+                        ["metadata", "futureMetadata", "bk"] => {
+                            if p.future.len() >= limit {
+                                return Err(unsupported("sheet metadata record limit", CONTEXT));
+                            }
+                            p.future.push(FutureBlock::default());
+                        }
+                        ["metadata", "futureMetadata", "bk", "extLst"] => {
+                            let block = p.future.last_mut().expect("open bk");
+                            block.ext += 1;
+                            if block.ext != 1 {
+                                return Err(unsupported(
+                                    "duplicate future metadata extLst",
+                                    CONTEXT,
+                                ));
+                            }
+                        }
+                        ["metadata", "futureMetadata", "bk", "extLst", "ext"] => {
+                            if node.value("uri") != Some(XLDAPR_URI) {
+                                return Err(unsupported(
+                                    "unknown sheet metadata extension URI",
+                                    CONTEXT,
+                                ));
+                            }
+                            let block = p.future.last_mut().expect("open bk");
+                            block.extensions += 1;
+                            if block.extensions != 1 {
+                                return Err(unsupported("duplicate XLDAPR extension", CONTEXT));
+                            }
+                        }
+                        [
+                            "metadata",
+                            "futureMetadata",
+                            "bk",
+                            "extLst",
+                            "ext",
+                            "dynamicArrayProperties",
+                        ] => {
+                            if attributes.iter().any(|a| {
+                                !a.ns.is_empty() || !matches!(a.local, "fDynamic" | "fCollapsed")
+                            }) {
+                                return Err(unsupported("unknown dynamic array property", CONTEXT));
+                            }
+                            let props = (
+                                flag(node.value("fDynamic"))?,
+                                flag(node.value("fCollapsed"))?,
+                            );
+                            if p.future
+                                .last_mut()
+                                .expect("open bk")
+                                .properties
+                                .replace(props)
+                                .is_some()
+                            {
+                                return Err(unsupported(
+                                    "duplicate dynamic array properties",
+                                    CONTEXT,
+                                ));
+                            }
+                        }
+                        ["metadata", "cellMetadata"] => {
+                            if p.cells_section.replace(count(&node)?).is_some() {
+                                return Err(unsupported("duplicate cellMetadata", CONTEXT));
+                            }
+                            p.cells_span = Some(section(path, &node));
+                        }
+                        ["metadata", "cellMetadata", "bk"] => {
+                            if p.cells.len() >= limit {
+                                return Err(unsupported("sheet metadata record limit", CONTEXT));
+                            }
+                            p.cells.push(Vec::new());
+                        }
+                        ["metadata", "cellMetadata", "bk", "rc"] => {
+                            let record = (
+                                node.required("t")?.to_owned(),
+                                node.required("v")?.to_owned(),
+                            );
+                            let block = p.cells.last_mut().expect("open bk");
+                            block.push(record);
+                            if block.len() != 1 {
+                                // One cell binding per block: XLDAPR only.
+                                return Err(unsupported(
+                                    "multi-record cell metadata block",
+                                    CONTEXT,
+                                ));
+                            }
+                        }
+                        _ => {
+                            return Err(unsupported("unsupported sheet metadata element", e.local));
                         }
                     }
-                    ["metadata", "metadataTypes", "metadataType"] => {
-                        // Only one XLDAPR type is interpreted; any other type
-                        // (rich values, MDX, …) has no supported semantics.
-                        if node.required("name")? != XLDAPR || !p.types.is_empty() {
-                            return Err(unsupported("unsupported metadata type", CONTEXT));
-                        }
-                        p.types.push(XLDAPR.to_owned());
+                }
+                xml::Kind::Text(text) => {
+                    if !text.trim().is_empty() {
+                        return Err(unsupported("unexpected sheet metadata text", CONTEXT));
                     }
+                }
+                xml::Kind::Close => match names.as_slice() {
                     ["metadata", "futureMetadata"] => {
-                        if node.required("name")? != XLDAPR {
-                            return Err(unsupported("unsupported future metadata", CONTEXT));
-                        }
-                        if p.future_section.replace(count(&node)?).is_some() {
-                            return Err(unsupported("duplicate XLDAPR future metadata", CONTEXT));
-                        }
-                        p.future_span = Some(section(path, &node));
-                    }
-                    ["metadata", "futureMetadata", "bk"] => {
-                        if p.future.len() >= limit {
-                            return Err(unsupported("sheet metadata record limit", CONTEXT));
-                        }
-                        p.future.push(FutureBlock::default());
-                    }
-                    ["metadata", "futureMetadata", "bk", "extLst"] => {
-                        let block = p.future.last_mut().expect("open bk");
-                        block.ext += 1;
-                        if block.ext != 1 {
-                            return Err(unsupported("duplicate future metadata extLst", CONTEXT));
-                        }
-                    }
-                    ["metadata", "futureMetadata", "bk", "extLst", "ext"] => {
-                        if node.value("uri") != Some(XLDAPR_URI) {
-                            return Err(unsupported(
-                                "unknown sheet metadata extension URI",
-                                CONTEXT,
-                            ));
-                        }
-                        let block = p.future.last_mut().expect("open bk");
-                        block.extensions += 1;
-                        if block.extensions != 1 {
-                            return Err(unsupported("duplicate XLDAPR extension", CONTEXT));
-                        }
-                    }
-                    [
-                        "metadata",
-                        "futureMetadata",
-                        "bk",
-                        "extLst",
-                        "ext",
-                        "dynamicArrayProperties",
-                    ] => {
-                        if attributes.iter().any(|a| {
-                            !a.ns.is_empty() || !matches!(a.local, "fDynamic" | "fCollapsed")
-                        }) {
-                            return Err(unsupported("unknown dynamic array property", CONTEXT));
-                        }
-                        let props = (
-                            flag(node.value("fDynamic"))?,
-                            flag(node.value("fCollapsed"))?,
-                        );
-                        if p.future
-                            .last_mut()
-                            .expect("open bk")
-                            .properties
-                            .replace(props)
-                            .is_some()
-                        {
-                            return Err(unsupported("duplicate dynamic array properties", CONTEXT));
-                        }
+                        p.future_span.as_mut().expect("open section").close_start =
+                            Some(node.span.start);
                     }
                     ["metadata", "cellMetadata"] => {
-                        if p.cells_section.replace(count(&node)?).is_some() {
-                            return Err(unsupported("duplicate cellMetadata", CONTEXT));
-                        }
-                        p.cells_span = Some(section(path, &node));
+                        p.cells_span.as_mut().expect("open section").close_start =
+                            Some(node.span.start);
                     }
-                    ["metadata", "cellMetadata", "bk"] => {
-                        if p.cells.len() >= limit {
-                            return Err(unsupported("sheet metadata record limit", CONTEXT));
-                        }
-                        p.cells.push(Vec::new());
-                    }
-                    ["metadata", "cellMetadata", "bk", "rc"] => {
-                        let record = (
-                            node.required("t")?.to_owned(),
-                            node.required("v")?.to_owned(),
-                        );
-                        let block = p.cells.last_mut().expect("open bk");
-                        block.push(record);
-                        if block.len() != 1 {
-                            // One cell binding per block: XLDAPR only.
-                            return Err(unsupported("multi-record cell metadata block", CONTEXT));
-                        }
-                    }
-                    _ => {
-                        return Err(unsupported("unsupported sheet metadata element", e.local));
-                    }
-                }
+                    _ => {}
+                },
             }
-            xml::Kind::Text(text) => {
-                if !text.trim().is_empty() {
-                    return Err(unsupported("unexpected sheet metadata text", CONTEXT));
-                }
-            }
-            xml::Kind::Close => match names.as_slice() {
-                ["metadata", "futureMetadata"] => {
-                    p.future_span.as_mut().expect("open section").close_start =
-                        Some(node.span.start);
-                }
-                ["metadata", "cellMetadata"] => {
-                    p.cells_span.as_mut().expect("open section").close_start =
-                        Some(node.span.start);
-                }
-                _ => {}
-            },
-        }
-        Ok(())
-    })?;
+            Ok(())
+        },
+    )?;
     for (section, actual) in [
         (p.types_section, p.types.len()),
         (p.future_section, p.future.len()),

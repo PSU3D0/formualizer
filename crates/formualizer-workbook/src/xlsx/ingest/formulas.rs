@@ -2,7 +2,7 @@
 //! Source marks/text stay immutable for cache-only publication.
 use crate::xlsx::recalculate::{FormulaTextTransform, IoError, SheetPlan, sheet, unsupported};
 use formualizer_eval::engine::{SourceCoord, SourceRect};
-use quick_xml::events::{BytesStart, Event};
+use quick_xml::events::Event;
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
@@ -40,6 +40,7 @@ impl EvaluationTexts {
         &'a self,
         cell: &'a sheet::FormulaMark,
         data: &'a [u8],
+        source_text: &'a str,
     ) -> Result<Cow<'a, str>, IoError> {
         if let Some(text) = self.texts.get(&cell.formula_open.end) {
             return Ok(Cow::Borrowed(text));
@@ -49,7 +50,7 @@ impl EvaluationTexts {
         // formula reader only for literal NEL/LS (including CR+NEL). Numeric
         // character references were already decoded without normalization.
         if !raw.contains(&0xC2) && !raw.contains(&0xE2) {
-            return Ok(Cow::Borrowed(&cell.formula_text));
+            return Ok(Cow::Borrowed(source_text));
         }
         let mut reader =
             quick_xml::Reader::from_reader(&data[cell.formula_open.start..cell.formula_end]);
@@ -79,176 +80,105 @@ impl EvaluationTexts {
 fn xml_error(error: impl std::error::Error) -> IoError {
     IoError::from_backend("xlsx-formula", error)
 }
-fn opening(bytes: &[u8]) -> Result<BytesStart<'_>, IoError> {
-    match quick_xml::Reader::from_reader(bytes)
-        .read_event()
-        .map_err(xml_error)?
-    {
-        Event::Start(e) | Event::Empty(e) => Ok(e),
-        _ => Err(unsupported("unavailable formula opening tag", "worksheet")),
-    }
-}
+#[cfg(test)]
 fn reader_error(error: calamine::XlsxError) -> IoError {
     IoError::Calamine(calamine::Error::Xlsx(error))
 }
 
-/// Source admission already proves the decoded coordinate and grid bounds.
-/// Preserve the pinned reader's remaining raw-byte rejection, not a new policy.
-fn raw_coordinate(raw: &[u8]) -> Result<(), calamine::XlsxError> {
-    for byte in raw {
-        if !byte.is_ascii_alphanumeric() {
-            return Err(calamine::XlsxError::Alphanumeric(*byte));
-        }
-    }
-    Ok(())
-}
-
-/// Convert one retained source formula into the pinned metadata envelope,
-/// without a worksheet reader or formula-sized transport copy.
+/// Convert the scanner's source event using its already-validated raw envelope.
+/// Transformed evaluation text stays separate from immutable source text/marks.
 fn source_record(
     plan: &SheetPlan,
     cell: &sheet::FormulaMark,
     texts: &EvaluationTexts,
     sequence: u64,
 ) -> Result<OwnedSpoolFormulaRecord, IoError> {
+    use crate::xlsx::worksheet::events::FormulaKind;
+    if let Some(evidence) = &cell.compatibility {
+        evidence.validate()?;
+    }
+    let event = cell.source_event(sequence);
+    debug_assert_eq!(event.offset, event.envelope.cell.start);
     let coord0 = SourceCoord {
-        row: cell.row - 1,
-        col: cell.col - 1,
+        row: event.row - 1,
+        col: event.col - 1,
     };
-    let c = opening(&plan.data[cell.span.start..cell.open_end])?;
-    let mut raw_kind = None;
-    for attribute in c.attributes().with_checks(false) {
-        let attribute = attribute.map_err(xml_error)?;
-        match attribute.key.as_ref() {
-            b"r" => raw_coordinate(&attribute.value).map_err(reader_error)?,
-            b"t" => raw_kind = Some(attribute.value),
-            _ => {}
-        }
-    }
-    // Unreadable or typed caches are logically absent for compatibility;
-    // all others retain raw type refusals even though no cache enters Arrow.
-    let cleared = !sheet::readable_scalar_cache(cell, &plan.data)
-        || matches!(cell.kind.as_deref(), Some("s" | "inlineStr" | "d"));
-    let kind_kept = !cleared || cell.kind.as_deref() == Some("n");
-    let cache_error = if kind_kept && (cleared || cell.value.is_some()) {
-        raw_kind
-            .as_deref()
-            .filter(|kind| {
-                !matches!(
-                    *kind,
-                    b"s" | b"b" | b"d" | b"e" | b"str" | b"n" | b"inlineStr" | b"is"
-                )
+    let raw_shared = cell
+        .compatibility
+        .as_ref()
+        .map_or(cell.formula_kind == "shared", |evidence| evidence.shared);
+    let evaluation = |text| {
+        texts
+            .text(cell, &plan.data, text)
+            .map(Cow::into_owned)
+            .map_err(|error| {
+                IoError::Calamine(calamine::Error::Xlsx(calamine::XlsxError::Io(
+                    std::io::Error::other(error.to_string()),
+                )))
             })
-            .map(|kind| {
-                calamine::XlsxError::CellTAttribute(String::from_utf8_lossy(kind).into_owned())
-            })
-    } else {
-        None
     };
-    let f = opening(&plan.data[cell.formula_open.clone()])?;
-    let mut t = None;
-    let mut si = None;
-    let mut reference = None;
-    for attribute in f.attributes().with_checks(false) {
-        let attribute = attribute.map_err(xml_error)?;
-        match attribute.key.as_ref() {
-            b"t" => t = Some(attribute.value),
-            b"si" => si = Some(attribute.value),
-            b"ref" => reference = Some(attribute.value),
-            _ => {}
-        }
-    }
-    let record = (|| {
-        if t.as_deref() == Some(b"shared") {
-            let index = si.as_deref().ok_or(calamine::XlsxError::Unexpected(
-                "si attribute is mandatory if it is shared",
-            ))?;
-            let shared_index = (!index.is_empty() && index.iter().all(u8::is_ascii_digit))
-                .then(|| std::str::from_utf8(index).ok()?.parse::<usize>().ok())
-                .flatten()
-                .ok_or(calamine::XlsxError::Unexpected(
-                    "si attribute must be a number",
-                ))?;
-            if let Some(reference) = reference.as_deref() {
-                for coord in reference.split(|b| *b == b':') {
-                    raw_coordinate(coord)?;
-                }
-                let range = cell.shared_rect().expect("admission proved shared ref");
-                Ok(OwnedSpoolFormulaRecord::SharedAnchor {
-                    sequence,
-                    coord0,
-                    shared_index,
-                    declared_range: Some(SourceRect {
-                        start: SourceCoord {
-                            row: range.first_row - 1,
-                            col: range.first_col - 1,
-                        },
-                        end: SourceCoord {
-                            row: range.last_row - 1,
-                            col: range.last_col - 1,
-                        },
-                    }),
-                    text: texts
-                        .text(cell, &plan.data)
-                        .map_err(|error| {
-                            calamine::XlsxError::Io(std::io::Error::other(error.to_string()))
-                        })?
-                        .into_owned(),
-                })
-            } else {
-                Ok(OwnedSpoolFormulaRecord::SharedDescendant {
-                    sequence,
-                    coord0,
-                    shared_index,
-                })
+    if !raw_shared {
+        let text = match event.kind {
+            FormulaKind::Ordinary { text } | FormulaKind::SharedAnchor { text, .. } => text,
+            FormulaKind::SharedDescendant { .. } => &cell.formula_text,
+            FormulaKind::Unsupported { kind, text } => {
+                debug_assert_ne!(kind, "shared");
+                text
             }
-        } else {
-            // An empty f still produces Normal("") in the pinned reader, even
-            // when its raw t spelling is not recognized as shared metadata.
-            Ok(OwnedSpoolFormulaRecord::Ordinary {
-                sequence,
+        };
+        return Ok(OwnedSpoolFormulaRecord::Ordinary {
+            sequence: event.sequence,
+            coord0,
+            text: evaluation(text)?,
+        });
+    }
+    match event.kind {
+        FormulaKind::SharedAnchor {
+            shared_index,
+            declared_range,
+            text,
+        } => Ok(OwnedSpoolFormulaRecord::SharedAnchor {
+            sequence: event.sequence,
+            coord0,
+            shared_index: shared_index.expect("validated shared index") as usize,
+            declared_range: Some(SourceRect {
+                start: SourceCoord {
+                    row: declared_range.first_row - 1,
+                    col: declared_range.first_col - 1,
+                },
+                end: SourceCoord {
+                    row: declared_range.last_row - 1,
+                    col: declared_range.last_col - 1,
+                },
+            }),
+            text: evaluation(text)?,
+        }),
+        FormulaKind::SharedDescendant { shared_index } => {
+            Ok(OwnedSpoolFormulaRecord::SharedDescendant {
+                sequence: event.sequence,
                 coord0,
-                text: texts
-                    .text(cell, &plan.data)
-                    .map_err(|error| {
-                        calamine::XlsxError::Io(std::io::Error::other(error.to_string()))
-                    })?
-                    .into_owned(),
+                shared_index: shared_index.expect("validated shared index") as usize,
             })
         }
-    })();
-    // read_formula_record runs when f is encountered; a v preceding f can
-    // therefore win an otherwise simultaneous raw metadata/type refusal.
-    match (record, cache_error) {
-        (Err(_formula), Some(cache))
-            if cell
-                .value
-                .as_ref()
-                .is_some_and(|v| v.span.start < cell.formula_open.start) =>
-        {
-            Err(reader_error(cache))
-        }
-        (Err(formula), _) => Err(reader_error(formula)),
-        (Ok(_), Some(cache)) => Err(reader_error(cache)),
-        (Ok(record), None) => Ok(record),
+        _ => unreachable!("strict source envelope proved shared metadata"),
     }
 }
 
-/// Only on a failed value plane, preserve the reader's interleaved envelope
-/// error order against a later literal/row error. This visits retained formula
-/// headers before that byte offset, never rescans the worksheet body.
+/// Only on a failed value plane, check earlier scanner evidence without
+/// rebuilding records, parsing headers or evaluating formula text.
 pub(in crate::xlsx) fn validate_reader_prefix(
     plan: &SheetPlan,
-    texts: &EvaluationTexts,
+    _texts: &EvaluationTexts,
     before: usize,
 ) -> Result<(), IoError> {
-    for (sequence, cell) in plan
+    for cell in plan
         .cells
         .iter()
-        .enumerate()
-        .take_while(|(_, cell)| cell.span.start < before)
+        .take_while(|cell| cell.span.start < before)
     {
-        source_record(plan, cell, texts, sequence as u64)?;
+        if let Some(evidence) = &cell.compatibility {
+            evidence.validate()?;
+        }
     }
     Ok(())
 }

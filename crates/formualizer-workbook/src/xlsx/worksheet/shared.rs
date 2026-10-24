@@ -1,5 +1,6 @@
 //! Inline shared-family validation with deferred source-error precedence.
 use super::*;
+use crate::xlsx::options::ReadOptions;
 
 type SharedAnchor = (u32, u32, u32, u32);
 #[derive(Clone, Copy)]
@@ -51,12 +52,7 @@ impl Families {
             ));
         }
     }
-    pub(super) fn observe(
-        &mut self,
-        cell: &FormulaMark,
-        order: usize,
-        options: &XlsxRecalculateOptions,
-    ) {
+    pub(super) fn observe(&mut self, cell: &FormulaMark, order: usize, options: &ReadOptions) {
         let Some(id) = cell.shared_id else { return };
         if cell.formula_text.trim().is_empty() {
             if cell.shared_range.is_some() {

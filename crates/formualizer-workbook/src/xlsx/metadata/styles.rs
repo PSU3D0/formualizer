@@ -1,6 +1,7 @@
 //! Calculation format annotations from immutable workbook style declarations.
 //! Raw style tokens retain their pinned-reader interpretation.
-use crate::xlsx::recalculate::{IoError, XlsxRecalculateOptions, xml};
+use crate::xlsx::{options::ReadOptions, xml};
+use crate::{IoError, cache_recalculate::XlsxRecalculateOptions};
 use formualizer_eval::format::FormatId;
 use std::collections::HashMap;
 
@@ -83,6 +84,14 @@ impl Styles {
     pub(in crate::xlsx) fn parse(
         bytes: &[u8],
         options: &XlsxRecalculateOptions,
+    ) -> Result<Self, IoError> {
+        Self::parse_read(bytes, &ReadOptions::from(options))
+    }
+
+    /// Extraction uses shared read bounds, not evaluation/publication admission.
+    pub(in crate::xlsx) fn parse_read(
+        bytes: &[u8],
+        options: &ReadOptions,
     ) -> Result<Self, IoError> {
         let mut custom = HashMap::new();
         let mut values = Vec::new();

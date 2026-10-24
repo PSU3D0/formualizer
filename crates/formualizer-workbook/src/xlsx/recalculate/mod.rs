@@ -338,9 +338,9 @@ pub(super) fn admit_source<'a>(
             value_metadata.as_ref().ok(),
             options,
             if sheet.tables.is_empty() {
-                sheet::ScanRetention::Plain
+                sheet::ScanStrategy::Plain
             } else {
-                sheet::ScanRetention::TablePlain
+                sheet::ScanStrategy::TablePlain
             },
             (&mut observed, &mut logical_cells),
         )?;
@@ -353,7 +353,7 @@ pub(super) fn admit_source<'a>(
                 date_system,
                 value_metadata.as_ref().ok(),
                 options,
-                sheet::ScanRetention::Indexed,
+                sheet::ScanStrategy::Indexed,
                 (&mut observed, &mut logical_cells),
             )?;
         }

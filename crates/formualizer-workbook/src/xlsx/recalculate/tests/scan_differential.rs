@@ -115,7 +115,7 @@ fn scan_outcome<T: std::fmt::Debug>(
 fn compare_scan(
     bytes: &[u8],
     options: &XlsxRecalculateOptions,
-    mode: sheet::ScanRetention,
+    mode: sheet::ScanStrategy,
     observed: usize,
     logical: u64,
 ) {
@@ -164,16 +164,16 @@ pub(in crate::xlsx) fn shadow_walk(bytes: &[u8], options: &XlsxRecalculateOption
 pub(in crate::xlsx) fn shadow_scan(
     bytes: &[u8],
     options: &XlsxRecalculateOptions,
-    mode: sheet::ScanRetention,
+    mode: sheet::ScanStrategy,
     observed: usize,
     logical: u64,
 ) {
     exclusive(|| compare_scan(bytes, options, mode, observed, logical));
 }
-const MODES: [sheet::ScanRetention; 3] = [
-    sheet::ScanRetention::Plain,
-    sheet::ScanRetention::TablePlain,
-    sheet::ScanRetention::Indexed,
+const MODES: [sheet::ScanStrategy; 3] = [
+    sheet::ScanStrategy::Plain,
+    sheet::ScanStrategy::TablePlain,
+    sheet::ScanStrategy::Indexed,
 ];
 /// Walk and scan `bytes` in every mode under `options`.
 fn compare_all(bytes: &[u8], options: &XlsxRecalculateOptions) {

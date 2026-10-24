@@ -1,7 +1,7 @@
 use super::*;
 use crate::xlsx::recalculate::{
     metadata::{SharedStringTable, Styles},
-    values::{Context, RawCell, ValueSink, dimension_hint},
+    values::{Context, ValueSink, dimension_hint},
 };
 use crate::{CalamineAdapter, SpreadsheetReader, workbook::WBResolver};
 use calamine::Reader;
@@ -31,7 +31,7 @@ fn plan(data: &[u8]) -> SheetPlan {
     let sheet::Scanned::Done(scan) = sheet::scanner::scan_emitting(
         data,
         &XlsxRecalculateOptions::default(),
-        sheet::ScanRetention::Indexed,
+        sheet::ScanStrategy::Indexed,
         &mut 0,
         &mut 0,
         |_| Ok(()),
@@ -87,24 +87,13 @@ fn load(data: &[u8], config: EvalConfig, native: bool) -> Engine<WBResolver> {
         limits: &limits,
     })
     .unwrap();
-    // This isolated fixture uses only unstyled numeric literals. Corpus raw
-    // metadata coverage below uses the complete contextual admission view.
     sheet::scanner::scan_emitting(
         &plan.data,
         &options,
-        sheet::ScanRetention::Indexed,
+        sheet::ScanStrategy::Indexed,
         &mut 0,
         &mut 0,
-        |event| {
-            values.push(
-                event,
-                RawCell {
-                    kind: None,
-                    style: None,
-                    payload: None,
-                },
-            )
-        },
+        |event| values.push(event),
     )
     .unwrap();
     for cell in &plan.cells {
@@ -283,7 +272,12 @@ fn evaluation_text_preserves_xml10_and_does_not_mutate_marks() {
         text: "@A1".into(),
     }])
     .unwrap();
-    assert_eq!(changed.text(&plan.cells[0], &plan.data).unwrap(), "@A1");
+    assert_eq!(
+        changed
+            .text(&plan.cells[0], &plan.data, &plan.cells[0].formula_text)
+            .unwrap(),
+        "@A1"
+    );
     assert_eq!(plan.cells[0].formula_text, original);
     assert!(
         EvaluationTexts::new(vec![
@@ -440,7 +434,12 @@ fn table_evaluation_text_matches_transport_without_editing_source() {
             signature(source_record(plan, cell, &texts, 0).unwrap()).1,
             expected(record.formula.unwrap())
         );
-        assert!(!texts.text(cell, &plan.data).unwrap().contains('['));
+        assert!(
+            !texts
+                .text(cell, &plan.data, &cell.formula_text)
+                .unwrap()
+                .contains('[')
+        );
     }
     assert_eq!(
         plan.cells

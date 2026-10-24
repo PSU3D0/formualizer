@@ -2,7 +2,7 @@ use super::super::{
     IoError, XlsxRecalculateOptions,
     metadata::{SharedStringTable, Styles, raw_attribute},
     sheet,
-    values::{Context, IngestedValues, RawCell, ValueSink, dimension_hint},
+    values::{Context, IngestedValues, ValueSink, dimension_hint},
     xml,
 };
 use super::metadata::{annotation, probe};
@@ -12,12 +12,22 @@ use formualizer_eval::engine::WorkbookLoadLimits;
 use std::{collections::BTreeMap, io::Cursor};
 const MAIN: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 
-// Test-only raw-source adapter until the coordinated additive emission fields
-// arrive. It is deliberately not a second production worksheet pass.
+// Independent test-only raw provenance oracle, not a production worksheet pass.
+#[derive(Clone, Copy)]
+struct ExpectedRawCell<'a> {
+    kind: Option<&'a str>,
+    style: Option<&'a str>,
+    payload: Option<&'a [u8]>,
+}
+fn assert_raw(event: &sheet::events::Literal<'_>, expected: ExpectedRawCell<'_>, bytes: &[u8]) {
+    assert_eq!(event.raw_type(bytes), expected.kind);
+    assert_eq!(event.raw_style(bytes), expected.style);
+    assert_eq!(event.raw_value(bytes), expected.payload);
+}
 fn raw_cells<'a>(
     bytes: &'a [u8],
     options: &XlsxRecalculateOptions,
-) -> BTreeMap<(u32, u32), RawCell<'a>> {
+) -> BTreeMap<(u32, u32), ExpectedRawCell<'a>> {
     let mut cells = BTreeMap::new();
     let (mut current, mut start) = (None, 0);
     xml::walk(bytes, options, |path, node| {
@@ -28,7 +38,7 @@ fn raw_cells<'a>(
             current = Some((pos.first_row, pos.first_col));
             cells.insert(
                 current.unwrap(),
-                RawCell {
+                ExpectedRawCell {
                     kind: raw_attribute(bytes, &node, "t"),
                     style: raw_attribute(bytes, &node, "s"),
                     payload: None,
@@ -132,13 +142,14 @@ fn compare(
     let result = sheet::scanner::scan_emitting(
         data,
         &options,
-        sheet::ScanRetention::Indexed,
+        sheet::ScanStrategy::Indexed,
         &mut 0,
         &mut 0,
         |event| {
             let source = raw[&(event.row, event.col)];
+            assert_raw(&event, source, data);
             if pending_error.is_none()
-                && let Err(error) = sink.push(event, source)
+                && let Err(error) = sink.push(event)
             {
                 pending_error = Some(error);
             }
@@ -248,7 +259,7 @@ fn advisory_prefix_is_bounded_and_machine_remains_authoritative() {
         sheet::scanner::scan(
             truncated.as_bytes(),
             &options,
-            sheet::ScanRetention::Plain,
+            sheet::ScanStrategy::Plain,
             &mut 0,
             &mut 0
         )
@@ -332,7 +343,7 @@ fn listed_native_value_planes_match_calamine() {
                 let result = sheet::scanner::scan_emitting(
                     &plan.data,
                     &options,
-                    sheet::ScanRetention::Indexed,
+                    sheet::ScanStrategy::Indexed,
                     &mut 0,
                     &mut 0,
                     |event| {
@@ -342,7 +353,8 @@ fn listed_native_value_planes_match_calamine() {
                             .contains_key(&(event.row, event.col))
                         {
                             let source = raw[&(event.row, event.col)];
-                            sink.push(event, source)?;
+                            assert_raw(&event, source, &plan.data);
+                            sink.push(event)?;
                         }
                         Ok(())
                     },

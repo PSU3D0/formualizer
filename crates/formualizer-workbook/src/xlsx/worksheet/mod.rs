@@ -6,6 +6,7 @@ use crate::xlsx::recalculate::{IoError, XlsxRecalculateOptions, unsupported, xml
 use formualizer_common::coord::parse_a1_1based;
 use std::{borrow::Cow, collections::HashMap, ops::Range};
 
+pub(in crate::xlsx) mod compatibility;
 mod cursor;
 pub(in crate::xlsx) mod events;
 #[cfg(test)]
@@ -221,6 +222,7 @@ impl<'a> OpenCell<'a> {
             }
         });
         FormulaMark {
+            compatibility: None,
             row: self.row,
             col: self.col,
             span: self.span,
@@ -252,7 +254,7 @@ fn append<'a>(to: &mut Cow<'a, str>, text: Cow<'a, str>) {
 }
 /// How [`scan`] treats dynamic-array cell metadata.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::xlsx) enum ScanRetention {
+pub(in crate::xlsx) enum ScanStrategy {
     /// No source index. A `cm` attribute stops the scan with
     /// [`Scanned::NeedsIndex`]: until the first anchor no cell can be a
     /// generated child (children follow their top-left anchor in document
@@ -262,6 +264,25 @@ pub(in crate::xlsx) enum ScanRetention {
     TablePlain,
     /// Build the source index and defer literal refusals to ownership.
     Indexed,
+}
+/// Retention requirements do not select an index/rescan strategy or admission policy.
+#[derive(Debug, Clone, Copy)]
+pub(in crate::xlsx) struct ScanRequest {
+    pub retention: crate::xlsx::options::ScanRetention,
+    pub strategy: ScanStrategy,
+}
+impl ScanRequest {
+    pub fn recalculate(strategy: ScanStrategy) -> Self {
+        Self {
+            retention: crate::xlsx::options::ScanRetention {
+                values: true,
+                formula_events: false,
+                marks: true,
+                geometry: strategy != ScanStrategy::Plain,
+            },
+            strategy,
+        }
+    }
 }
 // One scan result crosses this boundary per sheet; retain the unboxed
 // scalar hot path instead of adding a heap allocation to every worksheet.
@@ -282,14 +303,14 @@ thread_local! {
 pub(in crate::xlsx) fn scan(
     bytes: &[u8],
     options: &XlsxRecalculateOptions,
-    mode: ScanRetention,
+    mode: ScanStrategy,
     observed: &mut usize,
     logical_cells: &mut u64,
 ) -> Result<Scanned, IoError> {
     #[cfg(test)]
     {
         MACHINE_WALKS.with(|n| n.set(n.get() + 1));
-        if mode == ScanRetention::Indexed {
+        if mode == ScanStrategy::Indexed {
             INDEXED_SCANS.with(|n| n.set(n.get() + 1));
         }
         crate::xlsx::recalculate::tests::oracles::shadow_scan(
@@ -306,7 +327,7 @@ pub(in crate::xlsx) fn scan(
 pub(in crate::xlsx) fn scan_emitting(
     bytes: &[u8],
     options: &XlsxRecalculateOptions,
-    mode: ScanRetention,
+    mode: ScanStrategy,
     observed: &mut usize,
     logical_cells: &mut u64,
     emit: impl FnMut(scanner::emission::Literal<'_>) -> Result<(), IoError>,
@@ -314,7 +335,7 @@ pub(in crate::xlsx) fn scan_emitting(
     #[cfg(test)]
     {
         MACHINE_WALKS.with(|n| n.set(n.get() + 1));
-        if mode == ScanRetention::Indexed {
+        if mode == ScanStrategy::Indexed {
             INDEXED_SCANS.with(|n| n.set(n.get() + 1));
         }
         crate::xlsx::recalculate::tests::oracles::shadow_scan(

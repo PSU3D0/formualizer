@@ -39,7 +39,7 @@ pub(super) fn bootstrap_read(
         let index = archive
             .index_for_name(name)
             .ok_or_else(|| IoError::from_backend("zip", zip::result::ZipError::FileNotFound))?;
-        let part = read(archive, index, Some(limit), options);
+        let part = read(archive, index, Some(limit), &ReadOptions::from(options));
         archive.parts.insert(name.to_owned(), part);
     }
     let part = &archive.parts[name];
@@ -56,7 +56,7 @@ fn read(
     archive: &mut Archive<'_>,
     index: usize,
     retain: Option<usize>,
-    options: &XlsxRecalculateOptions,
+    options: &ReadOptions,
 ) -> VerifiedPart {
     let mut part = VerifiedPart {
         bytes: Vec::new(),
@@ -121,6 +121,18 @@ pub(super) fn audit<'a>(
     // The real discovery repeats from verified metadata after the full audit.
     let needed = closure(&mut archive, options).unwrap_or_default();
     archive.provisional = None;
+    audit_unique_payloads(archive, &needed, &ReadOptions::from(options))
+}
+
+/// Strict directory admission rejects duplicate names and `open` verifies
+/// equal raw/indexed counts: indices therefore cover every physical member.
+/// Preserve this single-inflate path and its provisional-error replay order.
+/// Permissive admission instead audits raw members before name resolution.
+fn audit_unique_payloads<'a>(
+    mut archive: Archive<'a>,
+    needed: &HashSet<String>,
+    options: &ReadOptions,
+) -> Result<Archive<'a>, IoError> {
     let mut total = 0usize;
     for index in 0..archive.len() {
         checkpoint(&options.cancel)?;

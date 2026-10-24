@@ -25,14 +25,6 @@ pub(in crate::xlsx) struct Context<'a> {
     pub date_system: DateSystem,
     pub limits: &'a WorkbookLoadLimits,
 }
-/// Raw spellings supplied by the coordinated additive emission spans. Keeping
-/// this explicit lets the value sink be tested independently of the scanner.
-#[derive(Clone, Copy)]
-pub(in crate::xlsx) struct RawCell<'a> {
-    pub kind: Option<&'a str>,
-    pub style: Option<&'a str>,
-    pub payload: Option<&'a [u8]>,
-}
 #[derive(Clone)]
 enum Scalar<'a> {
     Empty,
@@ -224,15 +216,14 @@ impl<'a> ValueSink<'a> {
         }
         Ok(())
     }
-    pub(in crate::xlsx) fn push(
-        &mut self,
-        literal: Literal<'_>,
-        raw: RawCell<'_>,
-    ) -> Result<(), IoError> {
+    pub(in crate::xlsx) fn push(&mut self, literal: Literal<'_>) -> Result<(), IoError> {
         let (row, col) = self.coordinate(literal.row, literal.col)?;
+        let kind = literal.raw_type(self.context.source);
+        let style = literal.raw_style(self.context.source);
+        let payload = literal.raw_value(self.context.source);
         // Calamine examines t only for v, never for is or an empty c shell.
-        if raw.payload.is_some()
-            && let Some(kind) = raw.kind
+        if payload.is_some()
+            && let Some(kind) = kind
             && !matches!(kind, "s" | "b" | "d" | "e" | "str" | "n")
         {
             return Err(IoError::Calamine(calamine::Error::Xlsx(
@@ -240,8 +231,8 @@ impl<'a> ValueSink<'a> {
             )));
         }
         let mut format = None;
-        let scalar = if raw.kind == Some("s")
-            && let Some(payload) = raw.payload
+        let scalar = if kind == Some("s")
+            && let Some(payload) = payload
         {
             if payload.is_empty() {
                 Scalar::Empty
@@ -253,7 +244,7 @@ impl<'a> ValueSink<'a> {
             match literal.value {
                 Value::Empty => Scalar::Empty,
                 Value::Number(n) => {
-                    format = self.context.styles.format(raw.style, n);
+                    format = self.context.styles.format(style, n);
                     if n.is_finite() {
                         Scalar::Number(n)
                     } else {
