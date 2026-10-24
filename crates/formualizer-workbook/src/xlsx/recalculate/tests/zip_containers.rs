@@ -35,6 +35,64 @@ fn admit(bytes: &[u8]) -> Result<(), crate::IoError> {
 }
 
 #[test]
+fn compatible_container_reads_skip_rewrite_only_admission() {
+    use crate::xlsx::options::ReadOptions;
+    for case in 0..6 {
+        let mut entries = workbook();
+        match case {
+            0 => entries[0].central_extra = field(0xBEEF, &[1, 2]),
+            1 => entries[0].local_extra = field(0xBEEF, &[1, 2]),
+            2 => entries[0].comment = b"producer comment".to_vec(),
+            3 => entries[0].gap = 3,
+            4 => entries[0].name = "_xmlsignatures/sig1.xml".into(),
+            5 => entries[0].name = "xl/richData/value.xml".into(),
+            _ => unreachable!(),
+        }
+        let bytes = build(&entries);
+        assert!(admit(&bytes).is_err(), "strict case {case}");
+        let mut archive = package::admit_with(&bytes, &ReadOptions::default(), |_| {
+            panic!("compatible package read must not invoke strict binding")
+        })
+        .unwrap_or_else(|e| panic!("compatible case {case}: {e}"));
+        assert_eq!(
+            package::read_part(&mut archive, &entries[1].name, 1 << 20).unwrap(),
+            entries[1].data
+        );
+    }
+}
+
+#[test]
+fn compatible_container_reads_keep_payload_and_resource_defences() {
+    use crate::xlsx::options::ReadOptions;
+    for case in 0..7 {
+        let mut entries = workbook();
+        let mut options = ReadOptions::default();
+        match case {
+            0 => entries[0].central_extra = vec![0xEF, 0xBE, 255, 255],
+            1 => entries[0].flags = 1,
+            2 => options.limits.max_entries = 1,
+            3 => options.limits.max_expanded_bytes = 1,
+            4 => options.limits.max_input_bytes = 1,
+            5 => {
+                let token = formualizer_eval::engine::CancelToken::new();
+                token.cancel();
+                options.cancel = Some(token);
+            }
+            6 => {}
+            _ => unreachable!(),
+        }
+        let mut bytes = build(&entries);
+        if case == 6 {
+            bytes[30 + entries[0].name.len()] ^= 1;
+        }
+        assert!(
+            package::admit_with(&bytes, &options, |_| panic!("strict binding")).is_err(),
+            "safety case {case}"
+        );
+    }
+}
+
+#[test]
 fn producer_containers_are_admitted() {
     for (name, bytes) in FIXTURES {
         if let Err(e) = admit(bytes) {

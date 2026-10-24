@@ -32,6 +32,8 @@ pub(crate) struct ReadOptions {
 
 /// Bounds applied regardless of source-admission policy.
 pub(crate) struct ReadLimits {
+    #[cfg(feature = "xlsx-recalc")]
+    pub(crate) max_input_bytes: usize,
     pub(crate) max_cells: usize,
     #[cfg(feature = "xlsx-recalc")]
     pub(crate) max_columns: u32,
@@ -53,6 +55,8 @@ impl Default for ReadOptions {
             policy: ReadPolicy::Compatible,
             cancel: None,
             limits: ReadLimits {
+                #[cfg(feature = "xlsx-recalc")]
+                max_input_bytes: 64 << 20,
                 max_cells: 8_000_000,
                 #[cfg(feature = "xlsx-recalc")]
                 max_columns: 16_384,
@@ -74,6 +78,7 @@ impl From<&crate::cache_recalculate::XlsxRecalculateOptions> for ReadOptions {
             policy: ReadPolicy::Strict,
             cancel: options.cancel.clone(),
             limits: ReadLimits {
+                max_input_bytes: options.limits.max_input_bytes,
                 max_cells: options.limits.max_cells,
                 max_columns: options.limits.max_columns,
                 max_formula_cells: options.limits.max_formula_cells,
@@ -94,6 +99,7 @@ fn recalculate_options_map_every_read_bound_and_share_cancellation() {
         cancel: Some(token.clone()),
         ..Default::default()
     };
+    source.limits.max_input_bytes = 10;
     source.limits.max_cells = 11;
     source.limits.max_columns = 12;
     source.limits.max_formula_cells = 13;
@@ -102,6 +108,7 @@ fn recalculate_options_map_every_read_bound_and_share_cancellation() {
     source.limits.max_entries = 16;
     source.limits.max_expanded_bytes = 17;
     let read = ReadOptions::from(&source);
+    assert_eq!(read.limits.max_input_bytes, 10);
     assert_eq!(read.limits.max_cells, 11);
     assert_eq!(read.limits.max_columns, 12);
     assert_eq!(read.limits.max_formula_cells, 13);

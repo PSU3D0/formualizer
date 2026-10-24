@@ -1,6 +1,7 @@
 //! Bounded package admission and relationship-aware workbook discovery.
 //! Verified source members remain authoritative and unchanged during discovery.
 mod content_types;
+use crate::xlsx::options::{ReadOptions, ReadPolicy};
 mod ownership;
 mod rewrite;
 use crate::xlsx::recalculate::{IoError, XlsxRecalculateOptions, checkpoint, unsupported, xml};
@@ -175,7 +176,11 @@ fn ntfs_times(data: &[u8]) -> bool {
 }
 /// Admit only metadata-only extra fields that do not change how member data
 /// is located or decoded; every block is parsed in full.
-fn extra_fields(block: &[u8], central: bool, name: &str) -> Result<(), IoError> {
+fn extra_fields<const STRICT: bool>(
+    block: &[u8],
+    central: bool,
+    name: &str,
+) -> Result<(), IoError> {
     let mut seen = Vec::new();
     let mut at = 0;
     while at < block.len() {
@@ -185,10 +190,26 @@ fn extra_fields(block: &[u8], central: bool, name: &str) -> Result<(), IoError> 
         let data = block
             .get(at + 4..at + 4 + le16(header, 2))
             .ok_or_else(malformed)?;
-        if seen.contains(&id) {
+        if STRICT && seen.contains(&id) {
             return Err(unsupported("duplicate ZIP extra field", name));
         }
-        seen.push(id);
+        if STRICT {
+            seen.push(id);
+        }
+        if !STRICT {
+            if matches!(id, 0x0001 | 0x9901) {
+                return Err(unsupported(
+                    if id == 1 {
+                        "ZIP64 member"
+                    } else {
+                        "encrypted ZIP member"
+                    },
+                    name,
+                ));
+            }
+            at += 4 + data.len();
+            continue;
+        }
         let valid = match id {
             0xA220 => growth_hint(data),
             0x5455 => extended_timestamp(data, central),
@@ -253,6 +274,13 @@ pub(super) fn audit_directory(
     bytes: &[u8],
     options: &XlsxRecalculateOptions,
 ) -> Result<Directory, IoError> {
+    audit_directory_with::<true>(bytes, &ReadOptions::from(options))
+}
+
+fn audit_directory_with<const STRICT: bool>(
+    bytes: &[u8],
+    options: &ReadOptions,
+) -> Result<Directory, IoError> {
     let footer = footer(bytes)?;
     let count = u16_at(bytes, footer + 10)?;
     if count > options.limits.max_entries || count == u16::MAX as usize {
@@ -291,16 +319,16 @@ pub(super) fn audit_directory(
         let name = std::str::from_utf8(raw_name)
             .map_err(|_| unsupported("non-UTF-8 ZIP name", "XLSX package"))?;
         part_name(name)?;
-        if !names.insert(name) {
+        if STRICT && !names.insert(name) {
             return Err(unsupported("duplicate ZIP member", "XLSX package"));
         }
-        if names.len() > count {
+        if (STRICT && names.len() > count) || (!STRICT && members.len() >= count) {
             return Err(unsupported(
                 "inconsistent ZIP directory/footer",
                 "XLSX package",
             ));
         }
-        if comment_len != 0 {
+        if STRICT && comment_len != 0 {
             return Err(unsupported("ZIP entry comment", name));
         }
         if u16_at(bytes, at + 34)? != 0 {
@@ -325,7 +353,7 @@ pub(super) fn audit_directory(
         if [compressed, expanded, local].contains(&(u32::MAX as usize)) {
             return Err(unsupported("ZIP64 member", name));
         }
-        extra_fields(
+        extra_fields::<STRICT>(
             &bytes[fixed_end + name_len..fixed_end + name_len + extra_len],
             true,
             name,
@@ -344,7 +372,7 @@ pub(super) fn audit_directory(
         {
             return Err(unsupported("inconsistent ZIP local/central metadata", name));
         }
-        extra_fields(&bytes[data - local_extra..data], false, name)?;
+        extra_fields::<STRICT>(&bytes[data - local_extra..data], false, name)?;
         let central = &bytes[at + 16..at + 28];
         let data_end = checked_end(data, compressed, start)?;
         let member_end = if flags & 8 == 0 {
@@ -387,12 +415,12 @@ pub(super) fn audit_directory(
         if local < next {
             return Err(unsupported("overlapping ZIP members", "XLSX package"));
         }
-        if local > next {
+        if STRICT && local > next {
             return Err(unsupported("unaccounted ZIP bytes", "XLSX package"));
         }
         next = end;
     }
-    if next != start {
+    if STRICT && next != start {
         return Err(unsupported("unaccounted ZIP bytes", "XLSX package"));
     }
     Ok(Directory {
@@ -402,11 +430,14 @@ pub(super) fn audit_directory(
     })
 }
 /// Parse the audited directory with ZIP7 and confirm it agrees with the audit.
-fn open<'a>(bytes: &'a [u8], directory: &Directory) -> Result<Archive<'a>, IoError> {
+fn open<'a, const STRICT: bool>(
+    bytes: &'a [u8],
+    directory: &Directory,
+) -> Result<Archive<'a>, IoError> {
     let archive =
         ZipArchive::new(Cursor::new(bytes)).map_err(|e| IoError::from_backend("zip", e))?;
-    if archive.offset() != 0
-        || archive.len() != directory.members.len()
+    if (STRICT && archive.offset() != 0)
+        || (STRICT && archive.len() != directory.members.len())
         || usize::try_from(archive.central_directory_start()).ok() != Some(directory.start)
     {
         return Err(unsupported(
@@ -440,15 +471,39 @@ pub(super) fn admit<'a>(
     bytes: &'a [u8],
     options: &XlsxRecalculateOptions,
 ) -> Result<Archive<'a>, IoError> {
+    admit_with(bytes, &ReadOptions::from(options), |archive| {
+        ownership::audit(archive, options)
+    })
+}
+
+/// Parse bounded package structure independently of publication admission.
+/// Strict binding is injected at this boundary so clock/name/output options
+/// never enter the common read rules. Compatible performs only the payload audit.
+pub(super) fn admit_with<'a>(
+    bytes: &'a [u8],
+    options: &ReadOptions,
+    strict: impl FnOnce(Archive<'a>) -> Result<Archive<'a>, IoError>,
+) -> Result<Archive<'a>, IoError> {
     checkpoint(&options.cancel)?;
     if bytes.len() > options.limits.max_input_bytes {
         return Err(unsupported("input byte limit", "XLSX package"));
     }
-    // Bound and audit the declared directory before ZIP7 allocates its
-    // member index or parses extra fields.
-    let directory = audit_directory(bytes, options)?;
-    ownership::audit(open(bytes, &directory)?, options)
+    match options.policy {
+        ReadPolicy::Strict => {
+            let directory = audit_directory_with::<true>(bytes, options)?;
+            strict(open::<true>(bytes, &directory)?)
+        }
+        ReadPolicy::Compatible => {
+            let directory = audit_directory_with::<false>(bytes, options)?;
+            ownership::audit_payloads::<false>(
+                open::<false>(bytes, &directory)?,
+                &HashSet::new(),
+                options,
+            )
+        }
+    }
 }
+
 pub(crate) fn read_part(
     archive: &mut Archive<'_>,
     name: &str,
@@ -1070,7 +1125,7 @@ pub(super) fn append_child(
 /// sheet metadata part, read in full (CRC-checked) and parsed.
 pub(super) fn check_output(bytes: &[u8], options: &XlsxRecalculateOptions) -> Result<(), IoError> {
     let directory = audit_directory(bytes, options)?;
-    let mut archive = open(bytes, &directory)?;
+    let mut archive = open::<true>(bytes, &directory)?;
     let part = discover(&mut archive, options)?
         .metadata
         .ok_or_else(|| unsupported("unrelated added metadata part", "XLSX output"))?;

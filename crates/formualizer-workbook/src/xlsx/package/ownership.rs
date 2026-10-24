@@ -39,7 +39,7 @@ pub(super) fn bootstrap_read(
         let index = archive
             .index_for_name(name)
             .ok_or_else(|| IoError::from_backend("zip", zip::result::ZipError::FileNotFound))?;
-        let part = read(archive, index, Some(limit), options);
+        let part = read(archive, index, Some(limit), &ReadOptions::from(options));
         archive.parts.insert(name.to_owned(), part);
     }
     let part = &archive.parts[name];
@@ -56,7 +56,7 @@ fn read(
     archive: &mut Archive<'_>,
     index: usize,
     retain: Option<usize>,
-    options: &XlsxRecalculateOptions,
+    options: &ReadOptions,
 ) -> VerifiedPart {
     let mut part = VerifiedPart {
         bytes: Vec::new(),
@@ -121,6 +121,15 @@ pub(super) fn audit<'a>(
     // The real discovery repeats from verified metadata after the full audit.
     let needed = closure(&mut archive, options).unwrap_or_default();
     archive.provisional = None;
+    audit_payloads::<true>(archive, &needed, &ReadOptions::from(options))
+}
+
+/// CRC, actual expansion and cancellation are independent of binding policy.
+pub(super) fn audit_payloads<'a, const STRICT: bool>(
+    mut archive: Archive<'a>,
+    needed: &HashSet<String>,
+    options: &ReadOptions,
+) -> Result<Archive<'a>, IoError> {
     let mut total = 0usize;
     for index in 0..archive.len() {
         checkpoint(&options.cancel)?;
@@ -132,10 +141,10 @@ pub(super) fn audit<'a>(
         if file.encrypted() {
             return Err(unsupported("encrypted ZIP member", &name));
         }
-        if name.starts_with("_xmlsignatures/") || name.ends_with("origin.sigs") {
+        if STRICT && (name.starts_with("_xmlsignatures/") || name.ends_with("origin.sigs")) {
             return Err(unsupported("package digital signature", "XLSX package"));
         }
-        if name.starts_with("xl/richData/") {
+        if STRICT && name.starts_with("xl/richData/") {
             return Err(unsupported("rich value data", "XLSX package"));
         }
         drop(file);
