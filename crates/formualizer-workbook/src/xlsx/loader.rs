@@ -1,5 +1,6 @@
 //! Compatible XLSX loading through the shared bounded source reader.
 
+mod cells;
 mod timing;
 
 #[cfg(test)]
@@ -48,7 +49,7 @@ mod retained_tests {
     }
 
     #[test]
-    fn generic_and_stream_surfaces_share_retained_state() {
+    fn generic_and_stream_surfaces_cache_only_their_requested_state() {
         let bytes = include_bytes!("../../tests/fixtures/zip_containers/libreoffice.xlsx");
         let mut baseline = CalamineAdapter::open_bytes(bytes.to_vec()).unwrap();
         let names = baseline.sheet_names().unwrap();
@@ -71,14 +72,26 @@ mod retained_tests {
                     );
                 }
             }
-            // Any accidental rescan after this point fails. Both ordering paths
-            // must use the same parsed Arrow/source records, not source XML.
-            for sheet in &mut native.sheets {
-                assert!(sheet.parsed.get().is_some());
-                sheet.data.clear();
+            if stream_first {
+                assert!(
+                    native
+                        .sheets
+                        .iter()
+                        .all(|sheet| sheet.reader_parsed.get().is_none()),
+                    "engine loading must not eagerly build a second value plane"
+                );
             }
             if !stream_first {
                 native.stream_into_engine(workbook.engine_mut()).unwrap();
+            }
+            for name in &names {
+                native.read_sheet(name).unwrap();
+            }
+            // Once each surface is requested, subsequent reads use its cache.
+            for sheet in &mut native.sheets {
+                assert!(sheet.parsed.get().is_some());
+                assert!(sheet.reader_parsed.get().is_some());
+                sheet.data.clear();
             }
             for (name, expected) in names.iter().zip(&expected) {
                 let actual = native.read_sheet(name).unwrap();
@@ -109,10 +122,10 @@ use super::{
         values::{Context, ValueSink},
     },
     metadata::{SharedStringTable, Styles, read_source},
-    options::{ReadOptions, ScanRetention},
+    options::ReadOptions,
     package,
     worksheet::{
-        self, ScanRequest, ScanStrategy, Scanned,
+        self,
         events::{Formula, FormulaKind, Literal, Sink},
     },
     xml,
@@ -139,6 +152,7 @@ struct SheetSource {
     data: Vec<u8>,
     parsed: OnceLock<ParsedSheet>,
     reader: OnceLock<SheetData>,
+    reader_parsed: OnceLock<ParsedSheet>,
 }
 
 /// Opt-in XLSX reader using the shared Compatible read policy.
@@ -247,6 +261,7 @@ impl NativeXlsxAdapter {
                     name: sheet.name.clone(),
                     parsed: OnceLock::new(),
                     reader: OnceLock::new(),
+                    reader_parsed: OnceLock::new(),
                     data: package::read_part(
                         &mut archive,
                         &sheet.part,
@@ -374,7 +389,8 @@ impl NativeXlsxAdapter {
     }
     fn parsed_sheet<'a>(&self, sheet: &'a SheetSource) -> Result<&'a ParsedSheet, IoError> {
         if sheet.parsed.get().is_none() {
-            let parsed = self.scan_sheet(sheet, &Default::default(), DateSystem::Excel1900)?;
+            let parsed =
+                self.scan_sheet(sheet, &Default::default(), DateSystem::Excel1900, false)?;
             // Only successful state is retained; failures remain fallible reader results.
             let _ = sheet.parsed.set(parsed);
         }
@@ -394,13 +410,25 @@ impl NativeXlsxAdapter {
         if let Some(reader) = sheet.reader.get() {
             return Ok(reader);
         }
-        let parsed = self.parsed_sheet(sheet)?;
+        if sheet.reader_parsed.get().is_none() {
+            let parsed =
+                self.scan_sheet(sheet, &Default::default(), DateSystem::Excel1900, true)?;
+            let _ = sheet.reader_parsed.set(parsed);
+        }
+        let parsed = sheet
+            .reader_parsed
+            .get()
+            .expect("initialized reader values");
         if let Some(error) = &parsed.value_error {
             return Err(error.to_error());
         }
         let mut cells = BTreeMap::new();
         {
-            let arrow = &parsed.reader_values.arrow;
+            let arrow = &parsed
+                .reader_values
+                .as_ref()
+                .expect("reader values requested")
+                .arrow;
             for (row, col) in populated_coordinates(arrow) {
                 let mut value = arrow.get_cell_value(row as usize - 1, col as usize - 1);
                 if let LiteralValue::Number(number) = value
@@ -497,6 +525,7 @@ impl NativeXlsxAdapter {
         sheet: &SheetSource,
         limits: &formualizer_eval::engine::WorkbookLoadLimits,
         date_system: DateSystem,
+        retain_reader_values: bool,
     ) -> Result<ParsedSheet, IoError> {
         let scan_timer = timing::Timer::start(self.debug_load);
         // A bounded dimension hint sizes Arrow; actual populated bounds win.
@@ -511,18 +540,23 @@ impl NativeXlsxAdapter {
             date_system,
             limits,
         })?;
-        let reader_values = ValueSink::new(Context {
-            name: &sheet.name,
-            source: &sheet.data,
-            strings: &self.strings,
-            styles: &self.styles,
-            dimensions,
-            chunk_rows: 32 * 1024,
-            date_system,
-            limits,
-        })?;
+        let reader_values = if retain_reader_values {
+            Some(ValueSink::new(Context {
+                name: &sheet.name,
+                source: &sheet.data,
+                strings: &self.strings,
+                styles: &self.styles,
+                dimensions,
+                chunk_rows: 32 * 1024,
+                date_system,
+                limits,
+            })?)
+        } else {
+            None
+        };
         let mut sink = LoadSink {
             source: &sheet.data,
+            strings: &self.strings,
             values,
             reader_values,
             records: Vec::new(),
@@ -532,47 +566,20 @@ impl NativeXlsxAdapter {
             last_formula_coord: None,
             skipped_values: 0,
         };
-        let mut observed = 0;
-        let mut logical = 0;
-        let scanned = worksheet::scanner::scan_with(
-            &sheet.data,
-            &self.options,
-            ScanRequest {
-                retention: ScanRetention {
-                    values: true,
-                    formula_events: true,
-                    marks: false,
-                    geometry: false,
-                },
-                strategy: ScanStrategy::Plain,
-            },
-            &mut observed,
-            &mut logical,
-            &mut sink,
-        );
-        let bounds = match scanned {
-            // The scanner validates all source sections, but the ordinary
-            // reader consumes only the first sheetData. Sink coordinates own
-            // the loaded extent; later ignored sections cannot enlarge it.
-            Ok(Scanned::Done(_)) => (0, 0),
-            Ok(_) => {
-                return Err(IoError::from_backend(
-                    "xlsx",
-                    std::io::Error::other("unexpected compatible index request"),
-                ));
-            }
-            Err(error) => {
-                let error = DeferredReadError::capture(error)?;
-                sink.stream_error.get_or_insert_with(|| error.clone());
-                sink.value_error.get_or_insert(error);
-                (0, 0)
-            }
-        };
+        let bounds = (0, 0);
+        if let Err(error) = cells::scan(&sheet.data, &self.options, &mut sink) {
+            let error = DeferredReadError::capture(error)?;
+            sink.stream_error.get_or_insert_with(|| error.clone());
+            sink.value_error.get_or_insert(error);
+        }
         let scan_ms = scan_timer.elapsed_ms();
         let sinks_timer = timing::Timer::start(self.debug_load);
         let mut values = sink.values.finish(bounds)?;
         values.values_observed += sink.skipped_values;
-        let reader_values = sink.reader_values.finish(bounds)?;
+        let reader_values = sink
+            .reader_values
+            .map(|values| values.finish(bounds))
+            .transpose()?;
         let sinks_ms = sinks_timer.elapsed_ms();
         Ok(ParsedSheet {
             values,
@@ -681,16 +688,17 @@ struct ParsedSheet {
     sinks_ms: f64,
     values: super::ingest::values::IngestedValues,
     records: Vec<OwnedSpoolFormulaRecord>,
-    reader_values: super::ingest::values::IngestedValues,
+    reader_values: Option<super::ingest::values::IngestedValues>,
     value_error: Option<DeferredReadError>,
     formula_error: Option<DeferredReadError>,
     stream_error: Option<DeferredReadError>,
 }
 struct LoadSink<'a> {
     source: &'a [u8],
+    strings: &'a SharedStringTable,
     values: ValueSink<'a>,
     records: Vec<OwnedSpoolFormulaRecord>,
-    reader_values: ValueSink<'a>,
+    reader_values: Option<ValueSink<'a>>,
     last_formula_coord: Option<(u32, u32)>,
     skipped_values: usize,
     value_error: Option<DeferredReadError>,
@@ -738,8 +746,13 @@ impl Sink for LoadSink<'_> {
     }
     fn formula_cache(&mut self, literal: Literal<'_>) -> Result<(), IoError> {
         if self.value_error.is_none() {
-            let result = ordinary_literal(self.source, literal)
-                .and_then(|literal| self.reader_values.push(literal));
+            let result = ordinary_literal(self.source, literal).and_then(|literal| {
+                if let Some(values) = &mut self.reader_values {
+                    values.push(literal)
+                } else {
+                    self.validate_cache(&literal)
+                }
+            });
             self.retain_value_error(result)?;
         }
         Ok(())
@@ -747,10 +760,16 @@ impl Sink for LoadSink<'_> {
     fn literal(&mut self, literal: Literal<'_>) -> Result<(), IoError> {
         if self.value_error.is_none() {
             let result = ordinary_literal(self.source, literal).and_then(|literal| {
-                let before = self.reader_values.observed_count();
-                self.reader_values.push(literal.clone())?;
+                let observed = if let Some(reader) = &mut self.reader_values {
+                    let before = reader.observed_count();
+                    reader.push(literal.clone())?;
+                    reader.observed_count() - before
+                } else {
+                    usize::from(!matches!(literal.value, worksheet::events::Value::Empty))
+                };
                 if self.last_formula_coord == Some((literal.row, literal.col)) {
-                    self.skipped_values += self.reader_values.observed_count() - before;
+                    self.validate_cache(&literal)?;
+                    self.skipped_values += observed;
                     Ok(())
                 } else {
                     self.values.push(literal)
@@ -772,6 +791,17 @@ impl Sink for LoadSink<'_> {
     }
 }
 impl LoadSink<'_> {
+    fn validate_cache(&self, literal: &Literal<'_>) -> Result<(), IoError> {
+        if literal.raw_type(self.source) == Some("s")
+            && let Some(raw) = literal.raw_value(self.source)
+            && !raw.is_empty()
+        {
+            let index = atoi_simd::parse::<usize, true, false>(raw).unwrap_or(0);
+            self.strings.get(index)?;
+        }
+        Ok(())
+    }
+
     fn retain_value_error(&mut self, result: Result<(), IoError>) -> Result<(), IoError> {
         if let Err(error) = result {
             let error = DeferredReadError::capture(error)?;

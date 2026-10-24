@@ -24,7 +24,11 @@ chrono = { workspace = true }
 once_cell = { workspace = true }
 rustc-hash = { workspace = true }
 zip = { version = "7.2", default-features = false, features = ["deflate"], optional = true }
+atoi_simd = "0.18"
+fast-float2 = "0.2"
 quick-xml = { version = "0.39", features = ["encoding"], optional = true }
+# Pinned XLSX cell reader uses the same XML API as its upstream implementation.
+quick-xml-cells = { package = "quick-xml", version = "0.41", features = ["encoding"], optional = true }
 
 [features]
 # system-clock: forwards eval's ambient-time feature (Local::now/Utc::now).
@@ -40,7 +44,7 @@ csv = ["dep:csv"]
 # runtime choice on a public enum, so gating the dependency behind `mmap` would
 # make that variant fail with ErrorKind::Unsupported in every default calamine
 # build (including the Python extension, which enables calamine but not mmap).
-calamine = ["dep:calamine", "dep:zip", "dep:quick-xml", "dep:memmap2"]
+calamine = ["dep:calamine", "dep:zip", "dep:quick-xml", "dep:quick-xml-cells", "dep:memmap2"]
 # Package-preserving XLSX formula-cache recalculation through Calamine and ZIP.
 xlsx-recalc = ["calamine"]
 umya = ["dep:umya-spreadsheet", "dep:zip", "dep:quick-xml"]

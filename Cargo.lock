@@ -1844,9 +1844,11 @@ dependencies = [
 name = "formualizer-workbook"
 version = "0.12.0"
 dependencies = [
+ "atoi_simd",
  "calamine",
  "chrono",
  "csv",
+ "fast-float2",
  "formualizer-common",
  "formualizer-eval",
  "formualizer-parse",
@@ -1856,6 +1858,7 @@ dependencies = [
  "once_cell",
  "parking_lot",
  "quick-xml 0.39.2",
+ "quick-xml 0.41.0",
  "reqwest",
  "rustc-hash 1.1.0",
  "serde",
