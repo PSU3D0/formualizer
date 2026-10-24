@@ -224,7 +224,32 @@ pub(in crate::xlsx) fn stage(
     usage: WorkbookSpoolUsage,
     options: &XlsxRecalculateOptions,
 ) -> Result<StagedFormulas, IoError> {
-    checkpoint(&options.cancel)?;
+    let records = plan
+        .cells
+        .iter()
+        .enumerate()
+        .map(|(sequence, cell)| source_record(plan, cell, texts, sequence as u64));
+    stage_records(
+        engine,
+        sheet,
+        sheet_instance,
+        records,
+        usage,
+        &options.cancel,
+    )
+}
+
+/// Stage source records independently of retained publication marks.
+/// Both readers select the same eager, bounded replay and deferred modes here.
+pub(in crate::xlsx) fn stage_records<C: formualizer_eval::traits::EvaluationContext>(
+    engine: &mut Engine<C>,
+    sheet: &str,
+    sheet_instance: u32,
+    records: impl IntoIterator<Item = Result<OwnedSpoolFormulaRecord, IoError>>,
+    usage: WorkbookSpoolUsage,
+    cancel: &Option<formualizer_eval::engine::CancelToken>,
+) -> Result<StagedFormulas, IoError> {
+    checkpoint(cancel)?;
     let deferred = engine.config.defer_graph_building;
     let eager = !deferred && engine.config.formula_plane_mode == FormulaPlaneMode::Off;
     let mut replay = eager.then(FormulaReplayState::default);
@@ -250,12 +275,14 @@ pub(in crate::xlsx) fn stage(
     let mut coordinates = Vec::new();
     let mut count = 0usize;
     let mut shared_tags = 0;
-    for cell in &plan.cells {
-        checkpoint(&options.cancel)?;
-        let record = source_record(plan, cell, texts, count as u64)?;
-        let coord0 = SourceCoord {
-            row: cell.row - 1,
-            col: cell.col - 1,
+    for record in records {
+        checkpoint(cancel)?;
+        let record = record?;
+        let coord0 = match &record {
+            OwnedSpoolFormulaRecord::Ordinary { coord0, .. }
+            | OwnedSpoolFormulaRecord::SharedAnchor { coord0, .. }
+            | OwnedSpoolFormulaRecord::SharedDescendant { coord0, .. }
+            | OwnedSpoolFormulaRecord::Unsupported { coord0, .. } => *coord0,
         };
         let observation = match &record {
             OwnedSpoolFormulaRecord::Ordinary { .. } => EvidenceRecord::Ordinary,
@@ -301,7 +328,7 @@ pub(in crate::xlsx) fn stage(
                     sheet,
                     |_, _| true,
                     |_, coord, text, shared| {
-                        checkpoint(&options.cancel).map_err(engine_error)?;
+                        checkpoint(cancel).map_err(engine_error)?;
                         staging.stage(engine, sheet, (coord.row, coord.col), text, shared, false)
                     },
                 )
@@ -340,7 +367,7 @@ pub(in crate::xlsx) fn stage(
     report.source_spool_peak_memory_bytes = spool.as_ref().map_or(0, |s| s.peak_memory_bytes());
     report.source_spool_spilled_bytes = if spool_spilled { spool_bytes } else { 0 };
     report.source_spool_spill_files = u64::from(spool_spilled);
-    checkpoint(&options.cancel)?;
+    checkpoint(cancel)?;
     let preparation = if engine.config.formula_plane_mode
         == FormulaPlaneMode::AuthoritativeExperimental
         && !deferred
@@ -371,7 +398,7 @@ pub(in crate::xlsx) fn stage(
             sheet,
             |_| false,
             |coord, text, shared| {
-                checkpoint(&options.cancel).map_err(engine_error)?;
+                checkpoint(cancel).map_err(engine_error)?;
                 staging.stage(engine, sheet, (coord.row, coord.col), text, shared, false)
             },
         )
