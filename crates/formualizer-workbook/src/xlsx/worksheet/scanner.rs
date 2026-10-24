@@ -2,7 +2,7 @@
 //! Effects follow source event order without editing authoritative bytes.
 pub(in crate::xlsx) use super::events as emission;
 use super::*;
-use crate::xlsx::options::ReadOptions;
+use crate::xlsx::options::{ReadOptions, ReadPolicy};
 mod generated;
 mod rules;
 use rules::{RuleContext, RuleEvent};
@@ -11,6 +11,8 @@ mod tokenizer;
 use state::SheetState;
 #[cfg(test)]
 mod path_tests;
+#[cfg(test)]
+mod policy_tests;
 #[cfg(test)]
 mod retention_tests;
 mod scalar;
@@ -158,21 +160,35 @@ pub(in crate::xlsx) fn scan_with(
     mut emit: impl emission::Sink,
 ) -> Result<Scanned, IoError> {
     let mut needs_index = false;
-    match scan_inner::<false>(
-        bytes,
-        options,
-        request,
-        (observed, logical_cells),
-        &mut needs_index,
-        &mut emit,
-        &mut (0, 0),
-    ) {
+    // Select the rule set once. Const instantiation removes strict-only work;
+    // scalar decoding never reads a runtime admission flag.
+    let result = match options.policy {
+        ReadPolicy::Strict => scan_inner::<false, true>(
+            bytes,
+            options,
+            request,
+            (observed, logical_cells),
+            &mut needs_index,
+            &mut emit,
+            &mut (0, 0),
+        ),
+        ReadPolicy::Compatible => scan_inner::<false, false>(
+            bytes,
+            options,
+            request,
+            (observed, logical_cells),
+            &mut needs_index,
+            &mut emit,
+            &mut (0, 0),
+        ),
+    };
+    match result {
         Err(_) if needs_index => Ok(Scanned::NeedsIndex),
         result => result.map(Scanned::Done),
     }
 }
 
-fn scan_inner<const COUNT_PATHS: bool>(
+fn scan_inner<const COUNT_PATHS: bool, const STRICT: bool>(
     bytes: &[u8],
     options: &ReadOptions,
     request: ScanRequest,
@@ -182,7 +198,7 @@ fn scan_inner<const COUNT_PATHS: bool>(
     path_counts: &mut (usize, usize),
 ) -> Result<Scan, IoError> {
     let (observed, logical_cells) = counts;
-    let mut sheet = SheetState::new(request);
+    let mut sheet = SheetState::<STRICT>::new(request);
     let mut cursor = Cursor::new();
     use crate::xlsx::xml::{Kind, Node, backend};
     use quick_xml::events::Event;
@@ -237,11 +253,19 @@ fn scan_inner<const COUNT_PATHS: bool>(
                 accept_text!(value, start, end);
                 continue;
             }
-            Event::CData(_) => {
-                return Err(unsupported(
-                    "CDATA is not supported by the ingestion view",
-                    "XLSX XML",
-                ));
+            Event::CData(data) => {
+                if STRICT {
+                    return Err(unsupported(
+                        "CDATA is not supported by the ingestion view",
+                        "XLSX XML",
+                    ));
+                }
+                if lexical.path.is_empty() {
+                    return Err(unsupported("CDATA outside XML root", "XLSX XML"));
+                }
+                let value = data.xml_content().map_err(backend)?;
+                accept_text!(value, start + 9, end - 3);
+                continue;
             }
             Event::GeneralRef(reference) => {
                 let value = lexical.reference(reference)?;

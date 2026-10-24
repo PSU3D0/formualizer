@@ -42,24 +42,34 @@ fn raw<'a>(bytes: &'a [u8], span: &Option<Range<usize>>) -> Option<&'a [u8]> {
 
 /// Common envelopes need no retained allocation. Only a raw/decoded identity
 /// mismatch or a deferred refusal is carried with a publication mark.
-pub(in crate::xlsx) fn inspect(event: &events::Formula<'_>, bytes: &[u8]) -> Option<Box<Evidence>> {
+pub(in crate::xlsx) fn inspect(
+    event: &events::Formula<'_>,
+    bytes: &[u8],
+    cache_readable: bool,
+    cell_kind: Option<CellKind>,
+) -> Option<Box<Evidence>> {
     let envelope = &event.envelope;
     let shared = raw(bytes, &envelope.raw_formula_type) == Some(b"shared");
     let decoded_shared = matches!(
         event.kind,
         events::FormulaKind::SharedAnchor { .. } | events::FormulaKind::SharedDescendant { .. }
     );
-    let refusal = validate(event, bytes, shared).err();
+    let refusal = validate(event, bytes, shared, cache_readable, cell_kind).err();
     (shared != decoded_shared || refusal.is_some()).then(|| Box::new(Evidence { shared, refusal }))
 }
-fn validate(event: &events::Formula<'_>, bytes: &[u8], shared: bool) -> Result<(), Refusal> {
+fn validate(
+    event: &events::Formula<'_>,
+    bytes: &[u8],
+    shared: bool,
+    cache_readable: bool,
+    cell_kind: Option<CellKind>,
+) -> Result<(), Refusal> {
     let envelope = &event.envelope;
     if let Some(raw) = raw(bytes, &envelope.raw_coordinate) {
         coordinate(raw)?;
     }
-    let cleared = !envelope.cache_readable
-        || matches!(envelope.cell_kind.as_deref(), Some("s" | "inlineStr" | "d"));
-    let kind_kept = !cleared || envelope.cell_kind.as_deref() == Some("n");
+    let cleared = !cache_readable || matches!(cell_kind.as_deref(), Some("s" | "inlineStr" | "d"));
+    let kind_kept = !cleared || cell_kind.as_deref() == Some("n");
     let cache_error = if kind_kept && (cleared || envelope.raw_cache.is_some()) {
         raw(bytes, &envelope.raw_cell_type)
             .filter(|kind| {
@@ -101,8 +111,9 @@ fn validate(event: &events::Formula<'_>, bytes: &[u8], shared: bool) -> Result<(
     match (formula_result, cache_error) {
         (Err(_), Some(cache))
             if envelope
-                .cache_offset
-                .is_some_and(|offset| offset < envelope.formula.start) =>
+                .raw_cache
+                .as_ref()
+                .is_some_and(|span| span.start < envelope.formula.start) =>
         {
             Err(cache)
         }

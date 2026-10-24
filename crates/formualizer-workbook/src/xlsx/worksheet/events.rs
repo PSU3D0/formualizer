@@ -2,12 +2,15 @@
 //! indices are resolved by the sink, not copied into per-cell owned records.
 use super::*;
 
+/// Dependency-owned until the common reader's error vocabulary is extracted.
+pub(in crate::xlsx) type ErrorToken = calamine::CellErrorType;
+
 #[derive(Debug)]
 pub(in crate::xlsx) enum Value<'a> {
     Empty,
     Number(f64),
     Boolean(bool),
-    Error(calamine::CellErrorType),
+    Error(ErrorToken),
     Text(Cow<'a, str>),
     Shared(u32),
     /// Bad scalar caches can occur in generated children and are masked by
@@ -81,9 +84,6 @@ pub(in crate::xlsx) struct FormulaEnvelope {
     pub raw_shared_index: Option<Range<usize>>,
     pub raw_declared_range: Option<Range<usize>>,
     pub raw_cache: Option<Range<usize>>,
-    pub cache_offset: Option<usize>,
-    pub cache_readable: bool,
-    pub cell_kind: Option<CellKind>,
 }
 
 #[derive(Debug)]

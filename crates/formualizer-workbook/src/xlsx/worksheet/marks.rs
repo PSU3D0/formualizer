@@ -53,6 +53,7 @@ pub(crate) enum CellKind {
     Shared,
     Inline,
     Date,
+    Unsupported,
 }
 impl CellKind {
     pub(super) fn parse(value: &str) -> Option<Self> {
@@ -79,6 +80,7 @@ impl Deref for CellKind {
             Self::Shared => "s",
             Self::Inline => "inlineStr",
             Self::Date => "d",
+            Self::Unsupported => "unsupported",
         }
     }
 }
@@ -191,9 +193,6 @@ impl FormulaMark {
                 raw_shared_index: None,
                 raw_declared_range: None,
                 raw_cache: self.value.as_ref().map(|v| v.open_end..v.close_start),
-                cache_offset: self.value.as_ref().map(|v| v.span.start),
-                cache_readable: super::readable_scalar_cache(self, &[]),
-                cell_kind: self.kind,
             },
         }
     }

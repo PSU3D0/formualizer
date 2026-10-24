@@ -3,7 +3,17 @@
 use crate::IoError;
 use formualizer_eval::engine::CancelToken;
 
+/// Admission guarantees, selected once at a read boundary.
+#[cfg(feature = "xlsx-recalc")]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum ReadPolicy {
+    Strict,
+    #[default]
+    Compatible,
+}
+
 /// Independent outputs requested from a worksheet traversal.
+#[cfg(feature = "xlsx-recalc")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ScanRetention {
     pub(crate) values: bool,
@@ -14,6 +24,8 @@ pub(crate) struct ScanRetention {
 
 /// Shared parser input; evaluation and publication options do not enter the scanner.
 pub(crate) struct ReadOptions {
+    #[cfg(feature = "xlsx-recalc")]
+    pub(crate) policy: ReadPolicy,
     pub(crate) cancel: Option<CancelToken>,
     pub(crate) limits: ReadLimits,
 }
@@ -37,6 +49,8 @@ pub(crate) type CacheOptions = ReadOptions;
 impl Default for ReadOptions {
     fn default() -> Self {
         Self {
+            #[cfg(feature = "xlsx-recalc")]
+            policy: ReadPolicy::Compatible,
             cancel: None,
             limits: ReadLimits {
                 max_cells: 8_000_000,
@@ -57,6 +71,7 @@ impl Default for ReadOptions {
 impl From<&crate::cache_recalculate::XlsxRecalculateOptions> for ReadOptions {
     fn from(options: &crate::cache_recalculate::XlsxRecalculateOptions) -> Self {
         Self {
+            policy: ReadPolicy::Strict,
             cancel: options.cancel.clone(),
             limits: ReadLimits {
                 max_cells: options.limits.max_cells,

@@ -104,9 +104,6 @@ impl<'a> OpenCellState<'a> {
                 raw_shared_index: formula.raw_shared_index_span.clone(),
                 raw_declared_range: formula.raw_range_span.clone(),
                 raw_cache: cell.value.as_ref().map(|v| v.open_end..v.close_start),
-                cache_offset: cell.value.as_ref().map(|v| v.span.start),
-                cache_readable: true,
-                cell_kind: cell.kind,
             },
         })
     }
@@ -131,7 +128,7 @@ impl<'a> OpenCellState<'a> {
 }
 
 /// Semantic sheet state, independent of XML namespace/tokenizer bookkeeping.
-pub(super) struct SheetState<'a> {
+pub(super) struct SheetState<'a, const STRICT: bool> {
     pub open_cell: OpenCellState<'a>,
     pub hidden_rows: Vec<u32>,
     pub rows_hidden_by_default: bool,
@@ -161,7 +158,7 @@ pub(super) struct SheetState<'a> {
     pub generated_children: generated::GeneratedChildren,
 }
 
-impl<'a> SheetState<'a> {
+impl<'a, const STRICT: bool> SheetState<'a, STRICT> {
     pub fn new(request: ScanRequest) -> Self {
         Self {
             open_cell: OpenCellState::default(),
@@ -209,7 +206,7 @@ impl<'a> SheetState<'a> {
         options: &ReadOptions,
         logical_cells: &mut u64,
     ) -> Result<Scan, IoError> {
-        if self.sheet_data_count != 1 {
+        if STRICT && self.sheet_data_count != 1 {
             return Err(unsupported("missing sheetData", "worksheet"));
         }
         if let Some((_, _, r, c)) = self.dimension {
@@ -222,8 +219,10 @@ impl<'a> SheetState<'a> {
         if *logical_cells > options.limits.max_cells as u64 {
             return Err(unsupported("workbook logical cell limit", "workbook"));
         }
-        self.families.finish()?;
-        if self.table_count.is_some_and(|n| n != self.table_ids.len()) {
+        if STRICT {
+            self.families.finish()?;
+        }
+        if STRICT && self.table_count.is_some_and(|n| n != self.table_ids.len()) {
             return Err(unsupported("tablePart count disagreement", "worksheet"));
         }
         // A collapsed outline may hide grouped rows that carry no `hidden` flag:

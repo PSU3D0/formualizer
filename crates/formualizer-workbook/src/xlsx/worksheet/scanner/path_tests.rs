@@ -2,7 +2,7 @@ use super::*;
 
 fn paths(text: &str) -> ((usize, usize), bool) {
     let mut counts = (0, 0);
-    let result = scan_inner::<true>(
+    let result = scan_inner::<true, true>(
         text.as_bytes(),
         &ReadOptions::from(&XlsxRecalculateOptions::default()),
         ScanRequest::recalculate(ScanStrategy::Plain),
