@@ -93,6 +93,53 @@ fn compatible_container_reads_keep_payload_and_resource_defences() {
 }
 
 #[test]
+fn compatible_relationship_extraction_has_no_strict_binding_authority() {
+    use crate::xlsx::options::ReadOptions;
+    let ordinary = r#"<Relationship Id="x" Type="urn:sheet" Target="xl/workbook.xml"/>"#;
+    let bodies = [
+        ordinary.to_owned(),
+        format!("<wrapper>{ordinary}</wrapper>"),
+        ordinary.replace("Target=", "TargetMode=\"other\" Target="),
+        ordinary.replace("xl/workbook.xml", "xl//workbook.xml"),
+        format!("<Relationship Id=\"x\" Type=\"urn:first\" Target=\"xl/missing.xml\"/>{ordinary}"),
+        ordinary.replace(" Type=\"urn:sheet\"", ""),
+        ordinary.replace("xl/workbook.xml", "../../escape.xml"),
+    ];
+    for (case, body) in bodies.into_iter().enumerate() {
+        let ns = if case == 0 {
+            "urn:foreign"
+        } else {
+            crate::xlsx::xml::RELS
+        };
+        let mut entries = workbook();
+        entries
+            .iter_mut()
+            .find(|e| e.name == "_rels/.rels")
+            .unwrap()
+            .data = format!("<Relationships xmlns=\"{ns}\">{body}</Relationships>").into_bytes();
+        let bytes = build(&entries);
+        let strict = XlsxRecalculateOptions::default();
+        let mut archive = package::admit(&bytes, &strict).unwrap();
+        assert!(
+            package::relationships(&mut archive, "", &strict).is_err(),
+            "strict case {case}"
+        );
+        let relationships =
+            package::relationships_read(&mut archive, "", &ReadOptions::default()).unwrap();
+        if case >= 5 {
+            assert!(relationships.is_empty());
+        } else {
+            assert_eq!(relationships.len(), 1);
+            assert_eq!(relationships["x"].kind, "urn:sheet");
+            assert_eq!(
+                relationships["x"].target.as_deref(),
+                Some("xl/workbook.xml")
+            );
+        }
+    }
+}
+
+#[test]
 fn producer_containers_are_admitted() {
     for (name, bytes) in FIXTURES {
         if let Err(e) = admit(bytes) {

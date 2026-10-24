@@ -569,6 +569,27 @@ pub(super) fn relationships(
     source: &str,
     options: &XlsxRecalculateOptions,
 ) -> Result<BTreeMap<String, Relationship>, IoError> {
+    relationships_read(archive, source, &ReadOptions::from(options))
+}
+
+/// Extract relationships without publication-only identity/namespace proofs.
+/// Compatible unresolved or incomplete declarations have no binding authority.
+pub(super) fn relationships_read(
+    archive: &mut Archive<'_>,
+    source: &str,
+    options: &ReadOptions,
+) -> Result<BTreeMap<String, Relationship>, IoError> {
+    match options.policy {
+        ReadPolicy::Strict => relationships_inner::<true>(archive, source, options),
+        ReadPolicy::Compatible => relationships_inner::<false>(archive, source, options),
+    }
+}
+
+fn relationships_inner<const STRICT: bool>(
+    archive: &mut Archive<'_>,
+    source: &str,
+    options: &ReadOptions,
+) -> Result<BTreeMap<String, Relationship>, IoError> {
     let (parent, name) = source.rsplit_once('/').unwrap_or(("", source));
     let part = if source.is_empty() {
         "_rels/.rels".into()
@@ -579,23 +600,31 @@ pub(super) fn relationships(
     };
     let data = read_part(archive, &part, options.limits.max_worksheet_bytes)?;
     let mut result = BTreeMap::new();
-    xml::walk(&data, options, |path, node| {
+    crate::xlsx::xml::walk(&data, options, |path, node| {
         if !matches!(node.kind, xml::Kind::Open { .. }) {
             return Ok(());
         }
-        if path.len() == 1 && !xml::path_is(path, xml::RELS, &["Relationships"]) {
+        if STRICT && path.len() == 1 && !xml::path_is(path, xml::RELS, &["Relationships"]) {
             return Err(unsupported("relationship XML root/namespace", &part));
         }
         if path.last().is_some_and(|e| e.local == "Relationship") {
-            if !xml::path_is(path, xml::RELS, &["Relationships", "Relationship"]) {
+            if STRICT && !xml::path_is(path, xml::RELS, &["Relationships", "Relationship"]) {
                 return Err(unsupported("ambiguous relationship element", &part));
             }
+            if !STRICT
+                && ["Id", "Type", "Target"]
+                    .iter()
+                    .any(|key| node.value(key).is_none())
+            {
+                return Ok(());
+            }
             let mode = node.value("TargetMode");
-            if !matches!(mode, None | Some("Internal" | "External")) {
+            if STRICT && !matches!(mode, None | Some("Internal" | "External")) {
                 return Err(unsupported("invalid relationship target mode", &part));
             }
             let target = node.required("Target")?;
-            if mode != Some("External") && (target.contains('%') || target.contains("//")) {
+            if STRICT && mode != Some("External") && (target.contains('%') || target.contains("//"))
+            {
                 return Err(unsupported(
                     "encoded/non-canonical internal relationship target",
                     &part,
@@ -604,7 +633,11 @@ pub(super) fn relationships(
             let target = if mode == Some("External") {
                 None
             } else {
-                Some(crate::xlsx_path::resolve(source, target)?)
+                match crate::xlsx_path::resolve(source, target) {
+                    Ok(target) => Some(target),
+                    Err(error) if STRICT => return Err(error.into()),
+                    Err(_) => return Ok(()),
+                }
             };
             let rel = Relationship {
                 kind: node.required("Type")?.to_owned(),
@@ -613,6 +646,7 @@ pub(super) fn relationships(
             if result
                 .insert(node.required("Id")?.to_owned(), rel)
                 .is_some()
+                && STRICT
             {
                 return Err(unsupported("duplicate relationship ID", &part));
             }
