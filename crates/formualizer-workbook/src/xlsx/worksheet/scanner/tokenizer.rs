@@ -60,7 +60,7 @@ impl<'a> XmlState<'a> {
             sheet_data_depth: None,
         })
     }
-    pub fn advance(&mut self, options: &XlsxRecalculateOptions) -> Result<(), IoError> {
+    pub fn advance(&mut self, options: &ReadOptions) -> Result<(), IoError> {
         if self.events & 1023 == 0 {
             checkpoint(&options.cancel)?;
         }
@@ -83,7 +83,7 @@ impl<'a> XmlState<'a> {
         e: &BytesStart<'a>,
         empty: bool,
         start: usize,
-        options: &XlsxRecalculateOptions,
+        options: &ReadOptions,
         cursor: &mut Cursor,
         path_counts: &mut (usize, usize),
     ) -> Result<(bool, Element<'a>), IoError> {

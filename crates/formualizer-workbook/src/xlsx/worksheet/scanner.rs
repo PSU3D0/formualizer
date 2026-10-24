@@ -2,6 +2,7 @@
 //! Effects follow source event order without editing authoritative bytes.
 pub(in crate::xlsx) use super::events as emission;
 use super::*;
+use crate::xlsx::options::ReadOptions;
 mod generated;
 mod rules;
 use rules::{RuleContext, RuleEvent};
@@ -137,9 +138,10 @@ pub(in crate::xlsx) fn scan_emitting(
     mut emit: impl FnMut(emission::Literal<'_>) -> Result<(), IoError>,
 ) -> Result<Scanned, IoError> {
     let mut needs_index = false;
+    let read_options = ReadOptions::from(options);
     match scan_inner::<false>(
         bytes,
-        options,
+        &read_options,
         mode,
         (observed, logical_cells),
         &mut needs_index,
@@ -153,7 +155,7 @@ pub(in crate::xlsx) fn scan_emitting(
 
 fn scan_inner<const COUNT_PATHS: bool>(
     bytes: &[u8],
-    options: &XlsxRecalculateOptions,
+    options: &ReadOptions,
     mode: ScanRetention,
     counts: (&mut usize, &mut u64),
     needs_index: &mut bool,

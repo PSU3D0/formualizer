@@ -4,7 +4,7 @@ use super::*;
 
 pub(super) struct RuleContext<'a, 'o, 'c> {
     pub bytes: &'a [u8],
-    pub options: &'o XlsxRecalculateOptions,
+    pub options: &'o ReadOptions,
     pub mode: ScanRetention,
     pub observed: &'c mut usize,
     pub needs_index: &'c mut bool,

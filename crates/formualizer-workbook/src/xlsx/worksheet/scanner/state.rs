@@ -148,7 +148,7 @@ impl<'a> SheetState<'a> {
 
     pub fn finish(
         mut self,
-        options: &XlsxRecalculateOptions,
+        options: &ReadOptions,
         logical_cells: &mut u64,
     ) -> Result<Scan, IoError> {
         if self.sheet_data_count != 1 {

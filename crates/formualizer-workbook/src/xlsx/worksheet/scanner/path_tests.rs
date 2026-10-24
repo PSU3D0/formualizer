@@ -4,7 +4,7 @@ fn paths(text: &str) -> ((usize, usize), bool) {
     let mut counts = (0, 0);
     let result = scan_inner::<true>(
         text.as_bytes(),
-        &XlsxRecalculateOptions::default(),
+        &ReadOptions::from(&XlsxRecalculateOptions::default()),
         ScanRetention::Plain,
         (&mut 0, &mut 0),
         &mut false,
