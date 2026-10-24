@@ -507,6 +507,48 @@ fn native_formula_staging_matches_eager_deferred_and_authoritative_modes() {
 }
 
 #[test]
+fn native_ordinary_names_diagnostics_and_calc_settings_match() {
+    use std::io::{Cursor, Write};
+    let parts = [
+        (
+            "[Content_Types].xml",
+            "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/><Override PartName=\"/xl/worksheets/sheet1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/></Types>",
+        ),
+        (
+            "_rels/.rels",
+            "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"xl/workbook.xml\"/></Relationships>",
+        ),
+        (
+            "xl/_rels/workbook.xml.rels",
+            "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet1.xml\"/></Relationships>",
+        ),
+        (
+            "xl/workbook.xml",
+            "<workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><sheets><sheet name=\"Sheet1\" sheetId=\"1\" r:id=\"rId1\"/></sheets><definedNames><definedName name=\"Input\">Sheet1!$A$1</definedName><definedName name=\"Twice\">Input*2</definedName><definedName name=\"Bad\">Bad+1</definedName><definedName name=\"Local\" localSheetId=\"0\">3</definedName></definedNames><calcPr iterate=\"1\" iterateCount=\"10\" iterateDelta=\"0.001\"/></workbook>",
+        ),
+        (
+            "xl/worksheets/sheet1.xml",
+            "<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><sheetData><row r=\"1\"><c r=\"A1\"><v>4</v></c><c r=\"B1\"><f>Twice+Local</f><v>11</v></c></row></sheetData></worksheet>",
+        ),
+    ];
+    let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for (name, text) in parts {
+        zip.start_file(name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(text.as_bytes()).unwrap();
+    }
+    let bytes = zip.finish().unwrap().into_inner();
+    let mut a = capture(&bytes, calamine);
+    let mut b = capture(&bytes, native);
+    // Generic source-reader cache values are tested separately from engine load.
+    a.records.retain(|key, _| !key.starts_with("reader/sheet/"));
+    b.records.retain(|key, _| !key.starts_with("reader/sheet/"));
+    assert_eq!(first_difference(&a, &b), None);
+    assert!(a.coverage.names >= 2);
+    assert_eq!(a.coverage.diagnostics, 1);
+}
+
+#[test]
 #[ignore = "set FZ_LOADER_FILES and FZ_LOADER_REPORT for native differential"]
 fn listed_native_loader_differential() {
     let list = std::env::var_os("FZ_LOADER_FILES").expect("fixture list");

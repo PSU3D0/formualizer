@@ -594,7 +594,7 @@ pub fn formualizer_workbook::backends::NativeXlsxAdapter::access_granularity(&se
 pub fn formualizer_workbook::backends::NativeXlsxAdapter::cached_external_link_values(&mut self) -> core::option::Option<alloc::sync::Arc<formualizer_workbook::CachedExternalLinkValues>>
 pub fn formualizer_workbook::backends::NativeXlsxAdapter::calc_settings(&self) -> core::option::Option<formualizer_workbook::traits::CalcSettings>
 pub fn formualizer_workbook::backends::NativeXlsxAdapter::capabilities(&self) -> formualizer_workbook::traits::BackendCaps
-pub fn formualizer_workbook::backends::NativeXlsxAdapter::defined_names(&mut self) -> core::result::Result<alloc::vec::Vec<formualizer_workbook::traits::DefinedName>, Self::Error>
+pub fn formualizer_workbook::backends::NativeXlsxAdapter::defined_names(&mut self) -> core::result::Result<alloc::vec::Vec<formualizer_workbook::traits::DefinedName>, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::backends::NativeXlsxAdapter::is_loaded(&self, &str, core::option::Option<u32>, core::option::Option<u32>) -> bool
 pub fn formualizer_workbook::backends::NativeXlsxAdapter::load_stats(&self) -> core::option::Option<formualizer_workbook::traits::AdapterLoadStats>
 pub fn formualizer_workbook::backends::NativeXlsxAdapter::name_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::NameImportDiagnostic>
@@ -1211,7 +1211,7 @@ pub fn formualizer_workbook::backends::NativeXlsxAdapter::access_granularity(&se
 pub fn formualizer_workbook::backends::NativeXlsxAdapter::cached_external_link_values(&mut self) -> core::option::Option<alloc::sync::Arc<formualizer_workbook::CachedExternalLinkValues>>
 pub fn formualizer_workbook::backends::NativeXlsxAdapter::calc_settings(&self) -> core::option::Option<formualizer_workbook::traits::CalcSettings>
 pub fn formualizer_workbook::backends::NativeXlsxAdapter::capabilities(&self) -> formualizer_workbook::traits::BackendCaps
-pub fn formualizer_workbook::backends::NativeXlsxAdapter::defined_names(&mut self) -> core::result::Result<alloc::vec::Vec<formualizer_workbook::traits::DefinedName>, Self::Error>
+pub fn formualizer_workbook::backends::NativeXlsxAdapter::defined_names(&mut self) -> core::result::Result<alloc::vec::Vec<formualizer_workbook::traits::DefinedName>, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::backends::NativeXlsxAdapter::is_loaded(&self, &str, core::option::Option<u32>, core::option::Option<u32>) -> bool
 pub fn formualizer_workbook::backends::NativeXlsxAdapter::load_stats(&self) -> core::option::Option<formualizer_workbook::traits::AdapterLoadStats>
 pub fn formualizer_workbook::backends::NativeXlsxAdapter::name_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::NameImportDiagnostic>
@@ -2839,7 +2839,7 @@ pub fn formualizer_workbook::backends::NativeXlsxAdapter::access_granularity(&se
 pub fn formualizer_workbook::backends::NativeXlsxAdapter::cached_external_link_values(&mut self) -> core::option::Option<alloc::sync::Arc<formualizer_workbook::CachedExternalLinkValues>>
 pub fn formualizer_workbook::backends::NativeXlsxAdapter::calc_settings(&self) -> core::option::Option<formualizer_workbook::traits::CalcSettings>
 pub fn formualizer_workbook::backends::NativeXlsxAdapter::capabilities(&self) -> formualizer_workbook::traits::BackendCaps
-pub fn formualizer_workbook::backends::NativeXlsxAdapter::defined_names(&mut self) -> core::result::Result<alloc::vec::Vec<formualizer_workbook::traits::DefinedName>, Self::Error>
+pub fn formualizer_workbook::backends::NativeXlsxAdapter::defined_names(&mut self) -> core::result::Result<alloc::vec::Vec<formualizer_workbook::traits::DefinedName>, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::backends::NativeXlsxAdapter::is_loaded(&self, &str, core::option::Option<u32>, core::option::Option<u32>) -> bool
 pub fn formualizer_workbook::backends::NativeXlsxAdapter::load_stats(&self) -> core::option::Option<formualizer_workbook::traits::AdapterLoadStats>
 pub fn formualizer_workbook::backends::NativeXlsxAdapter::name_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::NameImportDiagnostic>

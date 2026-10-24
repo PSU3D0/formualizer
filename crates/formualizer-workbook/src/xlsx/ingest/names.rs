@@ -40,6 +40,10 @@ pub(in crate::xlsx) struct NameImportPolicy {
     strict_validation: bool,
 }
 impl NameImportPolicy {
+    pub(in crate::xlsx) const COMPATIBLE_REFERENCED: Self = Self {
+        referenced_only: true,
+        strict_validation: false,
+    };
     pub(in crate::xlsx) const STRICT_REFERENCED: Self = Self {
         referenced_only: true,
         strict_validation: true,
@@ -129,7 +133,7 @@ impl CalculationNames {
             }
         })
     }
-    fn defined_names(&self) -> Result<Vec<DefinedName>, calamine::Error> {
+    pub(in crate::xlsx) fn defined_names(&self) -> Result<Vec<DefinedName>, calamine::Error> {
         Ok(self.lazy_defined_names().clone())
     }
     fn scan_names(bytes: &[u8], scoped: bool) -> Vec<(String, String, Option<usize>)> {
@@ -784,9 +788,32 @@ impl CalculationNames {
         Ok(())
     }
 
-    pub(in crate::xlsx) fn register(
+    pub(in crate::xlsx) fn import_diagnostics(
+        &self,
+    ) -> Result<Vec<crate::traits::NameImportDiagnostic>, crate::IoError> {
+        let imported: HashSet<_> = self.calculation_name_order()?.into_iter().collect();
+        Ok(self
+            .raw_calculation_names()
+            .iter()
+            .enumerate()
+            .filter(|(index, (name, _, _))| {
+                !self.legacy_calculation_name(name) && !imported.contains(index)
+            })
+            .map(
+                |(_, (name, definition, local))| crate::traits::NameImportDiagnostic {
+                    name: name.clone(),
+                    definition: definition.clone(),
+                    scope_sheet: local.and_then(|index| self.sheet_names.get(index).cloned()),
+                    local_sheet_id: *local,
+                    message: "Unevaluable or cyclic defined name omitted from calculation".into(),
+                },
+            )
+            .collect())
+    }
+
+    pub(in crate::xlsx) fn register<C: formualizer_eval::traits::EvaluationContext>(
         &mut self,
-        engine: &mut Engine<crate::xlsx::recalculate::WBResolver>,
+        engine: &mut Engine<C>,
     ) -> Result<(), calamine::Error> {
         let cancel = self.cancel.clone();
         let scope_names = self.sheet_names.clone();

@@ -46,6 +46,9 @@ pub struct NativeXlsxAdapter {
     options: ReadOptions,
     loaded: HashSet<String>,
     stats: AdapterLoadStats,
+    names: super::ingest::names::CalculationNames,
+    calc_settings: Option<crate::traits::CalcSettings>,
+    name_diagnostics: Vec<crate::traits::NameImportDiagnostic>,
 }
 impl NativeXlsxAdapter {
     /// Open an XLSX path using an explicitly selected retained backing source.
@@ -57,7 +60,7 @@ impl NativeXlsxAdapter {
     }
     fn open_source(source: XlsxSource) -> Result<Self, IoError> {
         let options = ReadOptions::default();
-        let (sheets, strings, styles) = {
+        let (sheets, strings, styles, names, calc_settings) = {
             let bytes = source.bytes(options.limits.max_input_bytes)?;
             let mut archive = package::admit_with(&bytes, &options, Ok)?;
             let root = package::relationships_read(&mut archive, "", &options)?;
@@ -118,7 +121,25 @@ impl NativeXlsxAdapter {
             } else {
                 Styles::parse_read(&style_bytes, &options)?
             };
-            (sheets, strings, styles)
+            let scopes: Vec<_> = sheets
+                .iter()
+                .map(|sheet| package::Sheet {
+                    name: sheet.name.clone(),
+                    part: String::new(),
+                    inert: false,
+                    kind: "worksheet",
+                    sheet_id: 0,
+                    tables: BTreeMap::new(),
+                })
+                .collect();
+            let names = super::ingest::names::CalculationNames::new(
+                &workbook_xml,
+                &scopes,
+                options.cancel.clone(),
+                super::ingest::names::NameImportPolicy::COMPATIBLE_REFERENCED,
+            );
+            let calc_settings = crate::calc_pr::parse_calc_pr(&workbook_xml);
+            (sheets, strings, styles, names, calc_settings)
         };
         Ok(Self {
             source,
@@ -128,6 +149,9 @@ impl NativeXlsxAdapter {
             options,
             loaded: HashSet::new(),
             stats: AdapterLoadStats::default(),
+            names,
+            calc_settings,
+            name_diagnostics: Vec::new(),
         })
     }
     fn scan_sheet(
@@ -288,6 +312,15 @@ impl SpreadsheetReader for NativeXlsxAdapter {
     fn sheet_names(&self) -> Result<Vec<String>, IoError> {
         Ok(self.sheets.iter().map(|s| s.name.clone()).collect())
     }
+    fn calc_settings(&self) -> Option<crate::traits::CalcSettings> {
+        self.calc_settings.clone()
+    }
+    fn defined_names(&mut self) -> Result<Vec<crate::traits::DefinedName>, IoError> {
+        self.names.defined_names().map_err(IoError::from)
+    }
+    fn name_import_diagnostics(&self) -> Vec<crate::traits::NameImportDiagnostic> {
+        self.name_diagnostics.clone()
+    }
     fn load_stats(&self) -> Option<AdapterLoadStats> {
         Some(self.stats.clone())
     }
@@ -437,6 +470,34 @@ impl<R: EvaluationContext> EngineLoadStream<R> for NativeXlsxAdapter {
                 batches.install_replay(engine).map_err(IoError::from)?;
             }
             batches.install_direct(engine).map_err(IoError::from)?;
+            self.names.register(engine).map_err(IoError::from)?;
+            self.name_diagnostics = self.names.import_diagnostics()?;
+            for diagnostic in &self.name_diagnostics {
+                use formualizer_eval::engine::named_range::{NameScope, NamedDefinition};
+                if diagnostic.local_sheet_id.is_some() && diagnostic.scope_sheet.is_none() {
+                    continue;
+                }
+                let scope = match diagnostic.scope_sheet.as_deref() {
+                    Some(sheet) => {
+                        let Some(id) = engine.sheet_id(sheet) else {
+                            continue;
+                        };
+                        NameScope::Sheet(id)
+                    }
+                    None => NameScope::Workbook,
+                };
+                let error =
+                    formualizer_common::ExcelError::new(formualizer_common::ExcelErrorKind::Name)
+                        .with_message(format!(
+                            "Defined name `{}` could not be evaluated",
+                            diagnostic.name
+                        ));
+                engine.define_name(
+                    &diagnostic.name,
+                    NamedDefinition::Literal(LiteralValue::Error(error)),
+                    scope,
+                )?;
+            }
             self.stats = AdapterLoadStats {
                 formula_cells_observed: Some(formulas_observed),
                 value_cells_observed: Some(values_observed),
