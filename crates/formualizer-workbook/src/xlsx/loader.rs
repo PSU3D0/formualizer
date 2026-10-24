@@ -380,12 +380,29 @@ impl NativeXlsxAdapter {
                 }
                 _ => {}
             }
+            // The generic range API uses the declared rectangle's origin for
+            // shared expansion, unlike the stream's actual source anchor. Keep
+            // that legacy reader convention out of engine formula staging.
+            let mut reader_record = record.clone();
+            let anchor_coord = if let OwnedSpoolFormulaRecord::SharedAnchor {
+                coord0,
+                declared_range: Some(range),
+                ..
+            } = &mut reader_record
+            {
+                let actual = *coord0;
+                *coord0 = range.start;
+                Some(actual)
+            } else {
+                None
+            };
             replay
                 .emit_record(
-                    record.clone(),
+                    reader_record,
                     &sheet.name,
                     |_, _| true,
                     |_, coord, text, _| {
+                        let coord = anchor_coord.unwrap_or(coord);
                         if !text.is_empty() {
                             cells
                                 .entry((coord.row + 1, coord.col + 1))
@@ -476,7 +493,10 @@ impl NativeXlsxAdapter {
             &mut sink,
         );
         let bounds = match scanned {
-            Ok(Scanned::Done(scan)) => scan.bounds,
+            // The scanner validates all source sections, but the ordinary
+            // reader consumes only the first sheetData. Sink coordinates own
+            // the loaded extent; later ignored sections cannot enlarge it.
+            Ok(Scanned::Done(_)) => (0, 0),
             Ok(_) => {
                 return Err(IoError::from_backend(
                     "xlsx",

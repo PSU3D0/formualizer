@@ -474,6 +474,92 @@ fn native_reader_preserves_source_order_and_separate_refusals() {
     }
 }
 
+#[cfg(feature = "xlsx-recalc")]
+#[test]
+fn native_generic_shared_origin_is_separate_from_stream_origin() {
+    use formualizer_workbook::backends::NativeXlsxAdapter;
+    let bytes = book(
+        &[Ws::new(
+            "Sheet1",
+            vec![
+                ("A1".into(), "<c r=\"A1\"><v>3</v></c>".into()),
+                (
+                    "B1".into(),
+                    "<c r=\"B1\"><f t=\"shared\" si=\"0\" ref=\"A1:C1\">A1+1</f></c>".into(),
+                ),
+                (
+                    "C1".into(),
+                    "<c r=\"C1\"><f t=\"shared\" si=\"0\"/></c>".into(),
+                ),
+            ],
+        )],
+        "",
+    );
+    let mut baseline = CalamineAdapter::open_bytes(bytes.clone()).unwrap();
+    let mut native = NativeXlsxAdapter::open_bytes(bytes).unwrap();
+    let a = baseline.read_sheet("Sheet1").unwrap();
+    let b = native.read_sheet("Sheet1").unwrap();
+    assert_eq!(format!("{a:?}"), format!("{b:?}"));
+    assert_eq!(a.cells[&(1, 2)].formula.as_deref(), Some("=A1+1"));
+    assert_eq!(a.cells[&(1, 3)].formula.as_deref(), Some("=C1+1"));
+    let mut a = Workbook::from_reader(
+        baseline,
+        LoadStrategy::EagerAll,
+        WorkbookConfig::ephemeral(),
+    )
+    .unwrap();
+    let mut b =
+        Workbook::from_reader(native, LoadStrategy::EagerAll, WorkbookConfig::ephemeral()).unwrap();
+    a.evaluate_all().unwrap();
+    b.evaluate_all().unwrap();
+    assert_eq!(a.get_value("Sheet1", 1, 3), Some(LiteralValue::Number(5.0)));
+    assert_eq!(a.get_formula("Sheet1", 1, 3), b.get_formula("Sheet1", 1, 3));
+    assert_eq!(a.get_value("Sheet1", 1, 3), b.get_value("Sheet1", 1, 3));
+}
+
+#[cfg(feature = "xlsx-recalc")]
+#[test]
+fn native_ordinary_structure_uses_local_names_and_first_sheet_data() {
+    use formualizer_workbook::backends::NativeXlsxAdapter;
+    for body in [
+        r#"<sheetData><row r="1"><x:c xmlns:x="urn:foreign" r="A1"><x:v>5</x:v></x:c></row></sheetData>"#,
+        r#"<x:sheetData xmlns:x="urn:foreign"><x:row r="1"><x:c r="A1"><x:v>5</x:v></x:c></x:row></x:sheetData><sheetData><row r="2"><c r="A2"><v>7</v></c></row></sheetData>"#,
+        r#"<sheetData><row r="1"><c r="A1"><v>5</v></c></row></sheetData><sheetData><row r="2"><c r="A2"><v>7</v></c><c r="C2"><f>1</f></c></row></sheetData>"#,
+    ] {
+        let bytes = book(&[Ws::new("Sheet1", vec![])], "");
+        let mut parts = unpack(&bytes);
+        parts.insert(
+            SHEET.into(),
+            format!("<worksheet xmlns=\"{MAIN}\">{body}</worksheet>"),
+        );
+        let bytes = pack(&parts);
+        let mut baseline = CalamineAdapter::open_bytes(bytes.clone()).unwrap();
+        let mut native = NativeXlsxAdapter::open_bytes(bytes).unwrap();
+        assert_eq!(
+            format!("{:?}", baseline.read_sheet("Sheet1").unwrap()),
+            format!("{:?}", native.read_sheet("Sheet1").unwrap())
+        );
+        let (a, a_stats) = Workbook::from_reader_with_adapter_stats(
+            baseline,
+            LoadStrategy::EagerAll,
+            WorkbookConfig::ephemeral(),
+        )
+        .unwrap();
+        let (b, b_stats) = Workbook::from_reader_with_adapter_stats(
+            native,
+            LoadStrategy::EagerAll,
+            WorkbookConfig::ephemeral(),
+        )
+        .unwrap();
+        assert_eq!(a.get_value("Sheet1", 1, 1), Some(LiteralValue::Number(5.0)));
+        assert_eq!(a.get_value("Sheet1", 1, 1), b.get_value("Sheet1", 1, 1));
+        assert_eq!(a.get_value("Sheet1", 2, 1), b.get_value("Sheet1", 2, 1));
+        assert_eq!(a.get_formula("Sheet1", 2, 3), b.get_formula("Sheet1", 2, 3));
+        assert_eq!(a.sheet_dimensions("Sheet1"), b.sheet_dimensions("Sheet1"));
+        assert_eq!(a_stats, b_stats);
+    }
+}
+
 #[test]
 fn cached_links_eager() {
     check_mode(WorkbookConfig::ephemeral());

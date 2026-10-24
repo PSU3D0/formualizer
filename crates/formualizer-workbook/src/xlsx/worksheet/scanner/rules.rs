@@ -627,7 +627,7 @@ impl<'a, const STRICT: bool> SheetState<'a, STRICT> {
                 });
                 index.rows.last_mut().expect("open row").cells.end = index.cells.len();
             }
-            if empty && context.request.retention.values {
+            if empty && context.request.retention.values && (STRICT || self.sheet_data_count == 1) {
                 emit.literal(emission::Literal {
                     row: r,
                     col: c,
@@ -844,6 +844,7 @@ impl<'a, const STRICT: bool> SheetState<'a, STRICT> {
             cell.span.end = span.end;
             if !STRICT
                 && cell.has_formula
+                && self.sheet_data_count == 1
                 && context.request.retention.values
                 && emit.retain_formula_cache()
             {
@@ -914,7 +915,7 @@ impl<'a, const STRICT: bool> SheetState<'a, STRICT> {
                 return Err(unsupported(refusal, "worksheet"));
             }
             if let Some(value) = emitted_value {
-                if context.request.retention.values {
+                if context.request.retention.values && (STRICT || self.sheet_data_count == 1) {
                     emit.literal(emission::Literal {
                         row: cell.row,
                         col: cell.col,
@@ -940,7 +941,9 @@ impl<'a, const STRICT: bool> SheetState<'a, STRICT> {
                     return Err(unsupported("missing formula boundary", "worksheet"));
                 }
                 if !STRICT && !context.request.retention.marks {
-                    if context.request.retention.formula_events {
+                    if context.request.retention.formula_events
+                        && (STRICT || self.sheet_data_count == 1)
+                    {
                         emit.formula(self.open_cell.source(self.formulas as u64)?)?;
                     }
                     self.open_cell.cell = None;
@@ -973,7 +976,9 @@ impl<'a, const STRICT: bool> SheetState<'a, STRICT> {
                     } else {
                         None
                     };
-                    if context.request.retention.formula_events {
+                    if context.request.retention.formula_events
+                        && (STRICT || self.sheet_data_count == 1)
+                    {
                         emit.formula(source)?;
                     }
                     mark.compatibility = evidence;
