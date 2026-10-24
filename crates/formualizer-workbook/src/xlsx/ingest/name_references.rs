@@ -1,4 +1,5 @@
 //! Static name readers, including literal INDIRECT targets.
+//! Analysis observes formula syntax without modifying source text or name policy.
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::{ASTNode, ASTNodeType as N, ReferenceType};
 

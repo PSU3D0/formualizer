@@ -1,4 +1,5 @@
-//! Fused worksheet reader and rule loop; the visitor remains the oracle.
+//! Flat worksheet scan emitting borrowed literals and retained formula marks.
+//! Effects follow source event order without editing authoritative bytes.
 pub(in crate::xlsx) use super::events as emission;
 use super::*;
 mod generated;

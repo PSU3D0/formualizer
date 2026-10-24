@@ -1,5 +1,5 @@
 //! Refuse reducers whose row-visibility semantics cannot be represented by
-//! the source ingestion view. Only workbooks with stored hidden rows or active filters pay for
+//! the ingested value planes. Only workbooks with stored hidden rows or active filters pay for
 //! this formula inspection pass.
 use crate::workbook::WBResolver;
 use crate::xlsx::recalculate::{

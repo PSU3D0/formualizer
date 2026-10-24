@@ -1,4 +1,6 @@
-//! Non-calculating sheet positions in the transient adapter view.
+//! Non-calculating sheet positions and references to them.
+//! Sheet ordinals are retained without admitting calculation cells or references.
+//! Only the legacy-ingestion test oracle projects a temporary package view.
 #[cfg(test)]
 use crate::backends::calamine::CalamineAdapter;
 use crate::xlsx::recalculate::{

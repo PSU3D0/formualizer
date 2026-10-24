@@ -18,9 +18,9 @@ pub(in crate::xlsx) mod marks;
 pub(crate) use marks::{CellKind, FormulaMark, SourceRect, ValueNode};
 pub(in crate::xlsx) use marks::{DynamicAttributes, IndexedCell, RowEntry, Scan, SourceIndex};
 
-/// Calamine's fast scalar reader consumes just one raw ASCII text event.
-/// Literal cells must satisfy that assumption; formula caches may instead be
-/// cleared in the transient ingestion view because they are not authority.
+/// Retained proof that the pinned reader can decode this scalar payload.
+/// Literal inputs need the proof; non-authoritative formula caches may instead
+/// be treated as absent without rewriting the source bytes.
 pub(in crate::xlsx) fn readable_scalar_cache(cell: &FormulaMark, _bytes: &[u8]) -> bool {
     cell.value.as_ref().is_none_or(|v| v.readable)
 }

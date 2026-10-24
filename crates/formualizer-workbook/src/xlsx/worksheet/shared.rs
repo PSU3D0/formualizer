@@ -1,4 +1,4 @@
-//! Inline family validation with the oracle's deferred error precedence.
+//! Inline shared-family validation with deferred source-error precedence.
 use super::*;
 
 type SharedAnchor = (u32, u32, u32, u32);

@@ -1,4 +1,5 @@
 //! Bounded package admission and relationship-aware workbook discovery.
+//! Verified source members remain authoritative and unchanged during discovery.
 mod content_types;
 mod ownership;
 mod rewrite;

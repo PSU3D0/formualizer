@@ -1,4 +1,4 @@
-//! Worksheet geometry for dynamic-array publication (FORM211-D).
+//! Source-preserving worksheet geometry for dynamic-array publication.
 //!
 //! One ordered patch plan per worksheet, built in one bounded pass over the
 //! desired cell states (row-major) merged with the source index:

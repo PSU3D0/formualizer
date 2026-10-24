@@ -1,4 +1,5 @@
 //! Provisional metadata discovery followed by the authoritative directory audit.
+//! Provisional reads cannot establish ownership or bypass final directory checks.
 use super::*;
 
 fn closure(

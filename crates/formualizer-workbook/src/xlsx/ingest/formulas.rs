@@ -1,4 +1,4 @@
-//! Native evaluation-text transport into the unchanged W1 formula ingress.
+//! Evaluation-text staging and exact source-order formula replay.
 //! Source marks/text stay immutable for cache-only publication.
 use crate::xlsx::recalculate::{FormulaTextTransform, IoError, SheetPlan, sheet, unsupported};
 use formualizer_eval::engine::{SourceCoord, SourceRect};
@@ -125,8 +125,8 @@ fn source_record(
             _ => {}
         }
     }
-    // The old view clears unreadable/typed formula caches; all others must
-    // still exhibit raw type refusals even though no cache enters Arrow.
+    // Unreadable or typed caches are logically absent for compatibility;
+    // all others retain raw type refusals even though no cache enters Arrow.
     let cleared = !sheet::readable_scalar_cache(cell, &plan.data)
         || matches!(cell.kind.as_deref(), Some("s" | "inlineStr" | "d"));
     let kind_kept = !cleared || cell.kind.as_deref() == Some("n");
@@ -282,7 +282,7 @@ pub(in crate::xlsx) struct StagedFormulas {
     pub spool_spilled: bool,
 }
 
-/// Prepare the same W1 evidence, bounded replay and certification proposals as
+/// Prepare the same source evidence, bounded replay and certification proposals as
 /// the adapter, consuming only retained source-order formula records. All
 /// graph mutation and compressed replay remain in the existing engine ingress.
 pub(in crate::xlsx) fn stage(

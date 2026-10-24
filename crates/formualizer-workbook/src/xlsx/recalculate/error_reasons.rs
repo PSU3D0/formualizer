@@ -1,21 +1,17 @@
-//! Reasons for `#NAME?` results in the receipt.
+//! Best-effort local syntactic candidates for `#NAME?` receipt reasons.
 //!
-//! Computed values are stored as error codes, so the engine's message (for
-//! example `Unknown function: SPDVOL`) does not survive to the result read.
-//! For a `#NAME?` cell the reason is recovered from the cell's own formula
-//! with the evaluator's lookup rules: the first function call (in evaluation
-//! order) that is neither a registered function, a `LET`/`LAMBDA` local nor
-//! a defined name gives `Unknown function: NAME`, and the first name
-//! reference that resolves to nothing gives `Undefined name: NAME`, the
-//! messages the evaluator itself raises. A cell that only inherits `#NAME?`
-//! from a precedent has no reason of its own.
+//! Result values retain error codes, not evaluator diagnostic provenance.
+//! This AST walk looks for unknown function/name syntax with local
+//! LET/LAMBDA scoping and current engine lookups. It does not identify the
+//! evaluated branch or prove the cause of an inherited precedent error;
+//! unevaluated syntax can therefore supply a candidate unrelated to the
+//! actual failure. Reporting never changes evaluation or publication.
 use crate::workbook::WBResolver;
 use formualizer_eval::engine::Engine;
 use formualizer_eval::traits::FunctionProvider;
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 
-/// The reason this formula cell evaluates to `#NAME?`, if it has one of its
-/// own.
+/// A local syntactic reason candidate for `#NAME?`, if one is found.
 pub(super) fn name_error_reason(
     engine: &Engine<WBResolver>,
     sheet: &str,

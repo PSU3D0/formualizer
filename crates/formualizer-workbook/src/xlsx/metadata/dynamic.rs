@@ -1,6 +1,5 @@
-//! Namespace-validated XLDAPR dynamic-array metadata, prior-footprint
-//! ownership and (FORM211-E) the binding resolver for anchors that need a
-//! new XLDAPR record.
+//! Namespace-validated XLDAPR declarations and source-preserving binding edits.
+//! Existing metadata records remain immutable; new bindings append records.
 //!
 //! Index bases (ECMA-376 Part 1 §18.9 plus the MS-XLSX XLDAPR extension):
 //! * `c/@cm` is ONE-based into `cellMetadata/bk`;

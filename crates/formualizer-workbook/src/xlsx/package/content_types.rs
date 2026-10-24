@@ -1,3 +1,5 @@
+//! OOXML content-type admission from immutable package declarations.
+//! Declarations cannot bypass relationship or directory ownership checks.
 use super::{
     Archive, BTreeMap, IoError, Sheet, XlsxRecalculateOptions, append_child, part_name, read_part,
     unsupported, xml,

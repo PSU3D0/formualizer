@@ -345,7 +345,7 @@ impl CalculationNames {
                             | "NOT"
                     ) && args.iter_mut().all(|a| ground(a, base, sheets, external))
                 }
-                // Arrays, generic calls and omitted arguments are outside this packet.
+                // Arrays, generic calls and omitted arguments are not supported name literals.
                 _ => false,
             }
         }

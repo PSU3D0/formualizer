@@ -1,5 +1,5 @@
 //! Legacy (pre-dynamic-array) implicit intersection for Excel-calculated
-//! formulas, applied only in the transient ingestion view.
+//! formulas, applied only to evaluation text; source formula bytes stay intact.
 //!
 //! An OOXML formula without dynamic-array metadata keeps its legacy meaning:
 //! a multi-cell reference (or array) in a value position is reduced to one
