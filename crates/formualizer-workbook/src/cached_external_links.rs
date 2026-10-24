@@ -14,9 +14,11 @@
 //! that contains an omitted cell is refused.
 use crate::IoError;
 #[cfg(feature = "xlsx-recalc")]
-use crate::cache_recalculate::{SheetPlan, XlsxRecalculateOptions, package};
-use crate::xlsx_cache_options::{CacheOptions, checkpoint, unsupported};
-use crate::xlsx_xml as xml;
+use crate::cache_recalculate::XlsxRecalculateOptions;
+use crate::xlsx::options::{CacheOptions, checkpoint, unsupported};
+#[cfg(feature = "xlsx-recalc")]
+use crate::xlsx::recalculate::{SheetPlan, package};
+use crate::xlsx::xml;
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ExternalRefKind, ReferenceType};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -282,7 +284,7 @@ fn parse_part(
                     sheet = Some(id);
                 } else if at(path, &["sheetDataSet", "sheetData", "row", "cell"]) {
                     let r = node.required("r")?;
-                    let coord = crate::xlsx_xml::plain_coord(r).ok_or_else(|| malformed(part))?;
+                    let coord = crate::xlsx::xml::plain_coord(r).ok_or_else(|| malformed(part))?;
                     *counted += 1;
                     if *counted > options.limits.max_cells {
                         return Err(unsupported("external link cache cell limit", part));
@@ -746,7 +748,7 @@ fn formula_texts<'p>(
     plan: &'p SheetPlan,
 ) -> Result<
     Vec<(
-        &'p crate::cache_recalculate::sheet::Cell,
+        &'p crate::xlsx::recalculate::sheet::FormulaMark,
         std::borrow::Cow<'p, str>,
     )>,
     IoError,

@@ -11,28 +11,25 @@ use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
 
+use crate::xlsx::metadata::names::NameParsing;
 use calamine::{Data, DataRef, Reader, Xlsx, XlsxFormulaMetadata, open_workbook_from_rs};
-use formualizer_common::RangeAddress;
 use formualizer_eval::arrow_store::{IngestBuilder, OverlayValue, map_error_code};
 use formualizer_eval::engine::ingest::EngineLoadStream;
 use formualizer_eval::engine::{
-    CancelToken, DeferredFormulaPackage, Engine as EvalEngine, ExplicitPartitionLegacyMembers,
-    FormulaCompressedPreparation, FormulaCompressedSourceBatch, FormulaCompressedSourceReport,
-    FormulaIngestBatch, FormulaIngestRecord, FormulaSpoolDiskPolicy, PartitionLegacyMember,
-    PartitionLegacyMemberKind, PartitionReconciliation, PartitionedSourceFormulaFamily,
-    SourceCoord, SourceFamilyId, SourceFormulaFamily, SourceFormulaOrder, SourceRect,
+    CancelToken, DeferredFormulaPackage, Engine as EvalEngine, FormulaCompressedPreparation,
+    FormulaCompressedSourceReport, FormulaIngestRecord, FormulaSpoolDiskPolicy,
+    PartitionedSourceFormulaFamily, SourceCoord, SourceFamilyId, SourceFormulaFamily,
+    SourceFormulaOrder, SourceRect,
 };
 use formualizer_eval::traits::EvaluationContext;
 use formualizer_parse::parser::{ASTNode, ReferenceType};
 use quick_xml::Reader as XmlReader;
 use quick_xml::events::{BytesRef, BytesStart, Event};
-use quick_xml::name::QName;
 use zip::ZipArchive;
 
-use crate::source_formula_evidence as compressed_evidence;
-mod formula_replay;
+use crate::xlsx::ingest::{evidence as compressed_evidence, replay as formula_replay};
 mod inert_sheets;
-pub(crate) mod name_references;
+use crate::xlsx::ingest::name_references;
 
 use compressed_evidence::{EvidenceRecord, MonotonicFormulaEvidence};
 use formula_replay::{
@@ -488,11 +485,8 @@ impl DenseState {
     }
 }
 
-#[derive(Clone, Copy)]
-struct WorkbookSpoolUsage {
-    bytes: u64,
-    files: u32,
-}
+use crate::xlsx::ingest::staging::{FormulaStaging, WorkbookSpoolUsage};
+use crate::xlsx::ingest::stream::{FormulaBatches, LoadConfig, SheetFormulas, install_values};
 
 struct StreamWorksheetOptions {
     refused_external_formulas: HashSet<(u32, u32)>,
@@ -500,30 +494,6 @@ struct StreamWorksheetOptions {
     debug: bool,
     workbook_spool_usage: WorkbookSpoolUsage,
     shadow_relocation_comparator: Option<ShadowRelocationComparator>,
-}
-
-struct FormulaStaging {
-    parse_cache: rustc_hash::FxHashMap<String, Option<formualizer_eval::engine::AstNodeId>>,
-    formulas: Vec<FormulaIngestRecord>,
-    /// Load-time family grouping: relative copies of the formula above
-    /// (or to the left) are staged as members and never interned.
-    grouper: formualizer_eval::engine::FormulaFamilyGrouper,
-    observed: usize,
-    handed_to_engine: usize,
-}
-
-impl FormulaStaging {
-    fn new() -> Self {
-        let mut parse_cache = rustc_hash::FxHashMap::default();
-        parse_cache.reserve(4096);
-        Self {
-            parse_cache,
-            formulas: Vec::new(),
-            grouper: formualizer_eval::engine::FormulaFamilyGrouper::new(),
-            observed: 0,
-            handed_to_engine: 0,
-        }
-    }
 }
 
 struct StreamedSheet {
@@ -697,11 +667,7 @@ impl DebugTimer {
 
 type ShadowRelocationComparator = Arc<dyn Fn(&ASTNode, &ASTNode) -> bool + Send + Sync>;
 
-#[derive(Default)]
-struct CalculationNameAnalysis {
-    dependencies: Vec<Vec<usize>>,
-    cyclic: HashSet<usize>,
-}
+use crate::xlsx::ingest::name_analysis::{CalculationNameAnalysis, analyze};
 
 #[derive(Default)]
 struct CalculationNameCandidates {
@@ -866,106 +832,7 @@ impl CalamineAdapter {
         debug: bool,
         staging: &mut FormulaStaging,
     ) -> Result<(), calamine::Error> {
-        let excel_row = position.0 + 1;
-        let excel_col = position.1 + 1;
-        let normalized = if formula.starts_with('=') {
-            formula.to_string()
-        } else {
-            format!("={formula}")
-        };
-        if debug && staging.observed < 16 {
-            eprintln!("[fz][load] formula observed at R{excel_row}C{excel_col}");
-        }
-        if engine.config.defer_graph_building {
-            engine.stage_formula_text(sheet, excel_row, excel_col, normalized);
-            staging.handed_to_engine += 1;
-        } else {
-            staging.grouper.note_formula();
-            let record = if let Some(cached) = staging.parse_cache.get(&normalized) {
-                staging.grouper.note_parse_cache_hit();
-                cached.map(|ast_id| {
-                    engine.note_staged_formula(&mut staging.grouper, excel_row, excel_col, ast_id);
-                    FormulaIngestRecord::new(
-                        excel_row,
-                        excel_col,
-                        ast_id,
-                        Some(Arc::<str>::from(normalized.as_str())),
-                    )
-                })
-            } else if let Some(record) = engine.stage_relocated_text(
-                &mut staging.grouper,
-                excel_row,
-                excel_col,
-                &normalized,
-                shared.map(|index| index as u64),
-            ) {
-                Some(record)
-            } else {
-                staging.grouper.note_parse(normalized.len());
-                let parsed = formualizer_parse::parser::parse(&normalized);
-                let parsed_text = parsed.is_ok();
-                let parsed = match parsed {
-                    Ok(parsed) => Some(parsed),
-                    Err(error) => engine
-                        .handle_formula_parse_error(
-                            sheet,
-                            excel_row,
-                            excel_col,
-                            &normalized,
-                            error.to_string(),
-                        )
-                        .map_err(|error| {
-                            calamine::Error::Io(std::io::Error::other(error.to_string()))
-                        })?,
-                };
-                match parsed {
-                    Some(ast) => {
-                        let record = engine.stage_formula_ast(
-                            &mut staging.grouper,
-                            excel_row,
-                            excel_col,
-                            &ast,
-                            None,
-                        );
-                        if parsed_text {
-                            engine.note_parsed_text(
-                                &mut staging.grouper,
-                                excel_row,
-                                excel_col,
-                                &normalized,
-                                &ast,
-                                &record,
-                                shared.map(|index| index as u64),
-                            );
-                        }
-                        // A member's text is not worth caching: relative
-                        // copies do not repeat their text.
-                        if record.is_family_member() {
-                            Some(record)
-                        } else {
-                            let ast_id = record.ast_id;
-                            staging.parse_cache.insert(normalized.clone(), Some(ast_id));
-                            Some(FormulaIngestRecord::new(
-                                excel_row,
-                                excel_col,
-                                ast_id,
-                                Some(Arc::<str>::from(normalized)),
-                            ))
-                        }
-                    }
-                    None => {
-                        staging.parse_cache.insert(normalized, None);
-                        None
-                    }
-                }
-            };
-            if let Some(record) = record {
-                staging.formulas.push(record);
-                staging.handed_to_engine += 1;
-            }
-        }
-        staging.observed += 1;
-        Ok(())
+        staging.stage(engine, sheet, position, formula, shared, debug)
     }
 
     fn stream_worksheet<RS, C>(
@@ -1370,47 +1237,8 @@ impl CalamineAdapter {
             .fragmented
             .into_iter()
             .map(|proposal| {
-                let mut legacy_members: Vec<_> = proposal
-                    .fallback_members
-                    .into_iter()
-                    .map(|coord| PartitionLegacyMember {
-                        coord,
-                        kind: PartitionLegacyMemberKind::SharedFamilyMember,
-                    })
-                    .collect();
-                let mut ordinary_exceptions = 0u64;
-                let mut holes = 0u64;
-                for exclusion in proposal.exclusions {
-                    match exclusion {
-                        compressed_evidence::SourceExclusion::Hole(_) => {
-                            holes = holes.saturating_add(1);
-                        }
-                        compressed_evidence::SourceExclusion::OrdinaryFormula(coord) => {
-                            ordinary_exceptions = ordinary_exceptions.saturating_add(1);
-                            legacy_members.push(PartitionLegacyMember {
-                                coord,
-                                kind: PartitionLegacyMemberKind::OrdinaryException,
-                            });
-                        }
-                    }
-                }
-                let legacy_members = ExplicitPartitionLegacyMembers::try_new(legacy_members)
-                    .map_err(|reason| calamine::Error::Io(std::io::Error::other(reason)))?;
-                Ok(PartitionedSourceFormulaFamily {
-                    source_id: proposal.source_id,
-                    source_order: proposal.source_order,
-                    template_origin0: proposal.anchor_coord0,
-                    template_text: proposal.anchor_text,
-                    declared: proposal.declared,
-                    surviving_member_count: proposal.member_count,
-                    fragments: proposal.fragments,
-                    legacy_members,
-                    reconciliation: PartitionReconciliation {
-                        shared_members: proposal.member_count,
-                        ordinary_exceptions,
-                        holes,
-                    },
-                })
+                crate::xlsx::ingest::partition::convert(proposal)
+                    .map_err(|reason| calamine::Error::Io(std::io::Error::other(reason)))
             })
             .collect::<Result<Vec<_>, calamine::Error>>()?;
         let deferred_source_coordinates = deferred_source_coordinates
@@ -1963,7 +1791,7 @@ impl CalamineAdapter {
                             | "NOT"
                     ) && args.iter_mut().all(|a| ground(a, base, sheets, external))
                 }
-                // Arrays, generic calls and omitted arguments are outside this packet.
+                // Arrays, generic calls and omitted arguments are not supported name literals.
                 _ => false,
             }
         }
@@ -2172,72 +2000,9 @@ impl CalamineAdapter {
 
     fn calculation_name_analysis(&self) -> &CalculationNameAnalysis {
         self.name_analysis.get_or_init(|| {
-            let dependencies = self.calculation_name_dependencies();
-            let mut reverse = vec![Vec::new(); dependencies.len()];
-            let mut seen = vec![false; dependencies.len()];
-            let mut finish = Vec::with_capacity(dependencies.len());
-            // Iterative postorder and reverse traversal identify exactly the
-            // strongly connected components, not names downstream of cycles.
-            for (root, deps) in dependencies.iter().enumerate() {
-                if Self::cancellation_checkpoint(self.cancel.as_ref()).is_err() {
-                    return CalculationNameAnalysis::default();
-                }
-                for &j in deps {
-                    reverse[j].push(root);
-                }
-                if seen[root] {
-                    continue;
-                }
-                seen[root] = true;
-                let mut stack = vec![(root, 0)];
-                while let Some((i, next)) = stack.last_mut() {
-                    if Self::cancellation_checkpoint(self.cancel.as_ref()).is_err() {
-                        return CalculationNameAnalysis::default();
-                    }
-                    if let Some(&j) = dependencies[*i].get(*next) {
-                        *next += 1;
-                        if !seen[j] {
-                            seen[j] = true;
-                            stack.push((j, 0));
-                        }
-                    } else {
-                        finish.push(*i);
-                        stack.pop();
-                    }
-                }
-            }
-            seen.fill(false);
-            let mut cyclic = HashSet::new();
-            for root in finish.into_iter().rev() {
-                if Self::cancellation_checkpoint(self.cancel.as_ref()).is_err() {
-                    return CalculationNameAnalysis::default();
-                }
-                if seen[root] {
-                    continue;
-                }
-                seen[root] = true;
-                let mut component = Vec::new();
-                let mut stack = vec![root];
-                while let Some(i) = stack.pop() {
-                    if Self::cancellation_checkpoint(self.cancel.as_ref()).is_err() {
-                        return CalculationNameAnalysis::default();
-                    }
-                    component.push(i);
-                    for &j in &reverse[i] {
-                        if !seen[j] {
-                            seen[j] = true;
-                            stack.push(j);
-                        }
-                    }
-                }
-                if component.len() > 1 || dependencies[root].contains(&root) {
-                    cyclic.extend(component);
-                }
-            }
-            CalculationNameAnalysis {
-                dependencies,
-                cyclic,
-            }
+            analyze(self.calculation_name_dependencies(), || {
+                Self::cancellation_checkpoint(self.cancel.as_ref()).is_err()
+            })
         })
     }
 
@@ -2450,137 +2215,13 @@ impl CalamineAdapter {
             .map(String::as_str)
     }
 
-    fn normalize_open_ended_bounds(
-        start_row: Option<u32>,
-        start_col: Option<u32>,
-        end_row: Option<u32>,
-        end_col: Option<u32>,
-    ) -> Option<(u32, u32, u32, u32)> {
-        let mut sr = start_row;
-        let mut sc = start_col;
-        let mut er = end_row;
-        let mut ec = end_col;
-
-        if sr.is_none() && er.is_none() {
-            sr = Some(1);
-            er = Some(Self::EXCEL_MAX_ROWS);
-        }
-        if sc.is_none() && ec.is_none() {
-            sc = Some(1);
-            ec = Some(Self::EXCEL_MAX_COLS);
-        }
-
-        if sr.is_some() && er.is_none() {
-            er = Some(Self::EXCEL_MAX_ROWS);
-        }
-        if er.is_some() && sr.is_none() {
-            sr = Some(1);
-        }
-
-        if sc.is_some() && ec.is_none() {
-            ec = Some(Self::EXCEL_MAX_COLS);
-        }
-        if ec.is_some() && sc.is_none() {
-            sc = Some(1);
-        }
-
-        let sr = sr?;
-        let sc = sc?;
-        let er = er?;
-        let ec = ec?;
-
-        if er < sr || ec < sc {
-            return None;
-        }
-
-        Some((sr, sc, er, ec))
-    }
-
     fn convert_defined_name(
         name: &str,
         raw_formula: &str,
         local_sheet_id: Option<usize>,
         sheet_names: &[String],
     ) -> Option<DefinedName> {
-        let mut trimmed = raw_formula.trim();
-        if let Some(rest) = trimmed.strip_prefix('=') {
-            trimmed = rest.trim();
-        }
-        if trimmed.is_empty() {
-            return None;
-        }
-
-        let scope_sheet = local_sheet_id.and_then(|idx| sheet_names.get(idx).cloned());
-        if local_sheet_id.is_some() && scope_sheet.is_none() {
-            return None;
-        }
-        let literal = trimmed
-            .parse::<f64>()
-            .ok()
-            .filter(|n| n.is_finite())
-            .map(LiteralValue::Number)
-            .or_else(|| {
-                let ast = formualizer_parse::parser::parse(format!("={trimmed}")).ok()?;
-                match ast.node_type {
-                    formualizer_parse::parser::ASTNodeType::Literal(value) => Some(value),
-                    _ => None,
-                }
-            });
-        if let Some(value) = literal {
-            return Some(DefinedName {
-                name: name.to_owned(),
-                scope: if scope_sheet.is_some() {
-                    DefinedNameScope::Sheet
-                } else {
-                    DefinedNameScope::Workbook
-                },
-                scope_sheet,
-                definition: DefinedNameDefinition::Literal { value },
-            });
-        }
-        if super::has_union_comma(trimmed) {
-            return None;
-        }
-        let reference = ReferenceType::from_string(trimmed).ok()?;
-        let scope_sheet = local_sheet_id.and_then(|idx| sheet_names.get(idx).cloned());
-        let scope = if scope_sheet.is_some() {
-            DefinedNameScope::Sheet
-        } else {
-            DefinedNameScope::Workbook
-        };
-        let base_sheet = scope_sheet.as_deref();
-
-        let (sheet_name, start_row, start_col, end_row, end_col) = match reference {
-            ReferenceType::Cell {
-                sheet, row, col, ..
-            } => {
-                let sheet = sheet.or_else(|| base_sheet.map(|s| s.to_string()))?;
-                (sheet, row, col, row, col)
-            }
-            ReferenceType::Range {
-                sheet,
-                start_row,
-                start_col,
-                end_row,
-                end_col,
-                ..
-            } => {
-                let (sr, sc, er, ec) =
-                    Self::normalize_open_ended_bounds(start_row, start_col, end_row, end_col)?;
-                let sheet = sheet.or_else(|| base_sheet.map(|s| s.to_string()))?;
-                (sheet, sr, sc, er, ec)
-            }
-            _ => return None,
-        };
-
-        let address = RangeAddress::new(sheet_name, start_row, start_col, end_row, end_col).ok()?;
-
-        Some(DefinedName {
-            name: name.to_string(),
-            scope,
-            scope_sheet,
-            definition: DefinedNameDefinition::Range { address },
-        })
+        NameParsing::convert_defined_name(name, raw_formula, local_sheet_id, sheet_names)
     }
 
     fn decode_attr<R: BufRead>(
@@ -2588,65 +2229,21 @@ impl CalamineAdapter {
         start: &BytesStart<'_>,
         key: &[u8],
     ) -> Option<String> {
-        start
-            .attributes()
-            .filter_map(Result::ok)
-            .find(|attr| attr.key == QName(key))
-            .and_then(|attr| {
-                attr.decode_and_unescape_value(reader.decoder())
-                    .ok()
-                    .map(|v| v.into_owned())
-            })
+        NameParsing::decode_attr(reader, start, key)
     }
 
     fn append_xml_entity(
         entity: &BytesRef<'_>,
         buffer: &mut String,
     ) -> Result<(), quick_xml::Error> {
-        let decoded = entity.decode()?;
-        match decoded.as_ref() {
-            "lt" => buffer.push('<'),
-            "gt" => buffer.push('>'),
-            "amp" => buffer.push('&'),
-            "apos" => buffer.push('\''),
-            "quot" => buffer.push('"'),
-            _ => {
-                if let Some(ch) = entity.resolve_char_ref()? {
-                    buffer.push(ch);
-                } else {
-                    return Err(quick_xml::Error::Escape(
-                        quick_xml::escape::EscapeError::UnrecognizedEntity(
-                            0..0,
-                            format!("&{decoded};"),
-                        ),
-                    ));
-                }
-            }
-        }
-        Ok(())
+        NameParsing::append_xml_entity(entity, buffer)
     }
 
     fn fallback_defined_names(
         calamine_defined_names: &[(String, String)],
         sheet_names: &[String],
     ) -> Vec<DefinedName> {
-        let mut out = Vec::new();
-        let mut seen: HashSet<(DefinedNameScope, Option<String>, String)> = HashSet::new();
-
-        for (name, formula) in calamine_defined_names {
-            if let Some(converted) = Self::convert_defined_name(name, formula, None, sheet_names) {
-                let key = (
-                    converted.scope.clone(),
-                    converted.scope_sheet.clone(),
-                    converted.name.clone(),
-                );
-                if seen.insert(key) {
-                    out.push(converted);
-                }
-            }
-        }
-
-        out
+        NameParsing::fallback_defined_names(calamine_defined_names, sheet_names)
     }
 
     fn scan_defined_names_from_reader<R>(reader: R) -> Vec<(String, String, Option<usize>)>
@@ -2937,7 +2534,7 @@ impl SpreadsheetReader for CalamineAdapter {
                 }
             }
         }
-        let options = crate::xlsx_cache_options::CacheOptions {
+        let options = crate::xlsx::options::CacheOptions {
             cancel: self.cancel.clone(),
             ..Default::default()
         };
@@ -3077,7 +2674,7 @@ where
         .entered();
 
         // Calamine 0.36 streams cached values and formula metadata from each XLSX
-        // cell record in one pass. FormulaPlane staging and authoritative family
+        // cell record in one pass. StagedFormulas staging and authoritative family
         // grouping remain unchanged downstream.
         self.checkpoint_cancel()?;
         let cancel = self.cancel.clone();
@@ -3110,22 +2707,11 @@ where
         #[cfg(feature = "tracing")]
         drop(_span_sheets);
 
-        let prev_index_mode = engine.config.sheet_index_mode;
-        engine.set_sheet_index_mode(formualizer_eval::engine::SheetIndexMode::Lazy);
-        let prev_range_limit = engine.config.range_expansion_limit;
-        engine.config.range_expansion_limit = 0;
-        let prev_first_load = engine.first_load_assume_new();
-        let prev_deferred = engine.config.defer_graph_building;
-        let prev_formula_plane = engine.config.formula_plane_mode;
-        if self.external_values.is_some() {
-            // Cached sources need the per-cell dependency ingestion path.
-            engine.config.formula_plane_mode = formualizer_eval::engine::FormulaPlaneMode::Off;
-        }
-        if !self.refused_external_formulas.is_empty() {
-            engine.config.defer_graph_building = false;
-        }
-        engine.set_first_load_assume_new(true);
-        engine.reset_ensure_touched();
+        let previous = LoadConfig::begin(
+            engine,
+            self.external_values.is_some(),
+            !self.refused_external_formulas.is_empty(),
+        );
 
         let load_result = (|| -> Result<(), calamine::Error> {
             let chunk_rows: usize = 32 * 1024;
@@ -3136,13 +2722,7 @@ where
             let mut total_shared_formula_tags = 0usize;
             let mut workbook_spool_bytes_used = 0u64;
             let mut workbook_spill_files_used = 0u32;
-            let mut eager_formula_batches: Vec<(FormulaIngestBatch, FormulaCompressedSourceBatch)> =
-                Vec::new();
-            let mut eager_direct_batches: Vec<(
-                FormulaIngestBatch,
-                FormulaCompressedSourceReport,
-                FormulaCompressedPreparation,
-            )> = Vec::new();
+            let mut batches = FormulaBatches::default();
 
             for (sheet_instance, n) in names.iter().enumerate() {
                 Self::cancellation_checkpoint(cancel.as_ref())?;
@@ -3216,33 +2796,19 @@ where
                 total_value_cells_observed += sheet_value_cells_observed;
                 total_shared_formula_tags += shared_formula_tags;
 
-                let store = engine.sheet_store_mut();
-                if let Some(pos) = store.sheets.iter().position(|s| s.name.as_ref() == n) {
-                    store.sheets[pos] = asheet;
-                } else {
-                    store.sheets.push(asheet);
-                }
-
-                if engine.config.defer_graph_building {
-                    if let Some(package) = deferred_package {
-                        engine.source_formula_ingress().stage_deferred(package);
-                    }
-                } else if !formulas.is_empty() || formula_source_report.source_formula_events != 0 {
-                    let batch = FormulaIngestBatch::new(n.clone(), formulas);
-                    if let Some(preparation) = direct_preparation {
-                        eager_direct_batches.push((batch, formula_source_report, preparation));
-                    } else {
-                        eager_formula_batches.push((
-                            batch,
-                            FormulaCompressedSourceBatch::with_proposals(
-                                n.clone(),
-                                formula_source_report,
-                                compressed_families,
-                                partitioned_families,
-                            ),
-                        ));
-                    }
-                }
+                install_values(engine, n, asheet);
+                batches.push(
+                    engine,
+                    n,
+                    SheetFormulas {
+                        records: formulas,
+                        report: formula_source_report,
+                        families: compressed_families,
+                        partitioned: partitioned_families,
+                        preparation: direct_preparation,
+                        deferred: deferred_package,
+                    },
+                );
 
                 total_formulas += parsed_n;
                 total_formula_handed_to_engine += formula_handed_to_engine;
@@ -3289,20 +2855,14 @@ where
                 }
             }
 
-            if !engine.config.defer_graph_building && !eager_formula_batches.is_empty() {
+            if !engine.config.defer_graph_building && !batches.replay.is_empty() {
                 Self::cancellation_checkpoint(cancel.as_ref())?;
-                engine
-                    .source_formula_ingress()
-                    .ingest_replay_batches(eager_formula_batches)
-                    .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?;
+                batches.install_replay(engine)?;
                 Self::cancellation_checkpoint(cancel.as_ref())?;
             }
-            if !eager_direct_batches.is_empty() {
+            if !batches.direct.is_empty() {
                 Self::cancellation_checkpoint(cancel.as_ref())?;
-                engine
-                    .source_formula_ingress()
-                    .finish_prepared(eager_direct_batches)
-                    .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?;
+                batches.install_direct(engine)?;
                 Self::cancellation_checkpoint(cancel.as_ref())?;
             }
 
@@ -3559,12 +3119,7 @@ where
 
         // Restore every temporary engine setting even when parsing, limits, or
         // graph ingest exits early.
-        engine.set_first_load_assume_new(prev_first_load);
-        engine.reset_ensure_touched();
-        engine.set_sheet_index_mode(prev_index_mode);
-        engine.config.range_expansion_limit = prev_range_limit;
-        engine.config.defer_graph_building = prev_deferred;
-        engine.config.formula_plane_mode = prev_formula_plane;
+        previous.restore(engine);
         if load_result.is_ok() {
             // Leaving the first-load scope flushes packed mappings first.
             engine.finalize_all_sheet_indexes(names.iter().map(String::as_str));
