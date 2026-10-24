@@ -649,6 +649,26 @@ where
         if let Some(difference) = first_difference(&a, &b) {
             divergences += 1;
             writeln!(output, "DIVERGENCE {}\n{difference}", path.display())?;
+            // Enumerate every evaluated-coordinate difference as evidence, not
+            // merely the first one: a proven unstable zero must never hide a
+            // later stable mismatch in the same workbook. The raw verdict and
+            // bitwise comparison above remain unchanged.
+            let evaluation_keys: BTreeSet<_> = a
+                .records
+                .keys()
+                .chain(b.records.keys())
+                .filter(|key| key.starts_with("evaluated/sheet/"))
+                .collect();
+            for key in evaluation_keys {
+                if a.records.get(key) != b.records.get(key) {
+                    writeln!(
+                        output,
+                        "EVALUATION DIFFERENCE {key}\nCalamine: {:?}\nCandidate: {:?}",
+                        a.records.get(key),
+                        b.records.get(key)
+                    )?;
+                }
+            }
         } else {
             writeln!(output, "MATCH {} {:?}", path.display(), a.coverage)?;
         }
