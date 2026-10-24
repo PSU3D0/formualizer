@@ -6,6 +6,7 @@ mod generated;
 mod rules;
 use rules::{RuleContext, RuleEvent};
 mod state;
+mod tokenizer;
 use state::SheetState;
 #[cfg(test)]
 mod path_tests;
@@ -162,245 +163,56 @@ fn scan_inner<const COUNT_PATHS: bool>(
     let (observed, logical_cells) = counts;
     let mut sheet = SheetState::new(mode);
     let mut cursor = Cursor::new();
-    use crate::xlsx::options::checkpoint;
-    use crate::xlsx::xml::{
-        Element, Kind, Node, Ns, Scopes, attribute, backend, bind, cdata_end, content, local_part,
-        offset, plain_text, qualified_name, valid_text,
-    };
-    use quick_xml::{
-        Reader,
-        events::{
-            Event,
-            attributes::{AttrError, Attribute as RawAttribute, Attributes},
-        },
-        name::QName,
-    };
-    let text = std::str::from_utf8(bytes).map_err(|_| unsupported("non-UTF-8 XML", "XLSX XML"))?;
-    valid_text(text)?;
-    let mut reader = Reader::from_str(text);
-    reader.config_mut().check_end_names = true;
-    reader.config_mut().check_comments = true;
-    let mut scopes = Scopes::new();
-    let mut parsed = Vec::new();
-    let mut attributes = Vec::new();
-    let mut hot = crate::xlsx::xml::worksheet::attributes::HotAttributes::default();
-    let mut path = Vec::new();
-    let mut depth = 0usize;
-    let mut roots = 0;
-    let mut events = 0u64;
-    let mut declaration = false;
-    let mut pending_pop = false;
-    let mut pending_path_pop = false;
-    let mut scoped_depths = Vec::new();
-    let mut sheet_data_generation = None;
-    let mut sheet_data_depth = None;
+    use crate::xlsx::xml::{Kind, Node, backend};
+    use quick_xml::events::Event;
+    let mut lexical = tokenizer::XmlState::new(bytes)?;
     // Text goes straight from the borrowed quick-xml event to cell state.
     // Only the uncommon rich-inline adapter needs a generic XML node.
     macro_rules! accept_text {
         ($value:expr, $start:expr, $end:expr) => {{
             let value = $value;
             if sheet.open_cell.is_inline() {
-                cursor.materialize(&mut path, depth)?;
+                cursor.materialize(&mut lexical.path, lexical.depth)?;
             }
-            sheet
-                .open_cell
-                .text(value, $start..$end, text, &path, cursor.position)?;
+            sheet.open_cell.text(
+                value,
+                $start..$end,
+                lexical.text,
+                &lexical.path,
+                cursor.position,
+            )?;
         }};
     }
     loop {
-        if events & 1023 == 0 {
-            checkpoint(&options.cancel)?;
-        }
-        events += 1;
-        if pending_path_pop {
-            if path.len() == depth {
-                path.pop();
-            }
-            depth -= 1;
-            pending_path_pop = false;
-        }
-        if pending_pop {
-            scopes.pop();
-            pending_pop = false;
-        }
-        let decoder = reader.decoder();
-        let start = reader.buffer_position() as usize;
-        let event = reader.read_event().map_err(backend)?;
-        let end = reader.buffer_position() as usize;
+        lexical.advance(options)?;
+        let start = lexical.reader.buffer_position() as usize;
+        let event = lexical.reader.read_event().map_err(backend)?;
+        let end = lexical.reader.buffer_position() as usize;
         let span = start..end;
         let (boundary, attrs, element) = match event {
             Event::Start(ref e) | Event::Empty(ref e) => {
                 let empty = matches!(event, Event::Empty(_));
-                let (_, content) = content(text, e)?;
-                let name_len = e.name().as_ref().len();
-                let qualified = &content[..name_len];
-                let fast = sheet_data_depth.is_some()
-                    && matches!(
-                        cursor.position,
-                        Position::SheetData
-                            | Position::Row
-                            | Position::Cell
-                            | Position::CellFormula
-                            | Position::CellValue
-                            | Position::CellInline
-                    )
-                    && sheet_data_generation == Some(scopes.generation)
-                    && matches!(qualified, "row" | "c" | "f" | "v" | "is" | "t")
-                    && hot.parse(content, qualified, start);
-                if COUNT_PATHS {
-                    if fast {
-                        path_counts.0 += 1;
-                    } else {
-                        path_counts.1 += 1;
-                    }
-                }
-                let malformed = if fast {
-                    false
-                } else {
-                    bind(&mut scopes, content, name_len, &mut parsed)?
-                };
-                pending_pop = empty && !fast;
-                if depth >= options.limits.max_xml_depth {
-                    return Err(unsupported("XML depth limit", "XLSX XML"));
-                }
-                if depth == 0 {
-                    roots += 1;
-                    if roots != 1 {
-                        return Err(unsupported("multiple XML roots", "XLSX XML"));
-                    }
-                }
-                if !fast {
-                    qualified_name(qualified.as_bytes())?;
-                }
-                let element = Element {
-                    ns: if fast {
-                        Ns::Main
-                    } else {
-                        scopes.element(qualified)?
-                    },
-                    local: local_part(qualified),
-                    qualified,
-                };
-                attributes.clear();
-                let mut seen = None;
-                if !fast {
-                    if malformed {
-                        for a in Attributes::new(content, name_len) {
-                            attribute(
-                                a.map_err(backend)?,
-                                content,
-                                start,
-                                decoder,
-                                &mut scopes,
-                                &mut seen,
-                                &mut attributes,
-                            )?;
-                        }
-                    } else {
-                        for (i, p) in parsed.iter().enumerate() {
-                            if let Some(prev) = parsed[..i].iter().find(|q| q.key == p.key) {
-                                let raw = content.as_bytes();
-                                return Err(backend(AttrError::Duplicated(
-                                    offset(raw, p.key)?,
-                                    offset(raw, prev.key)?,
-                                )));
-                            }
-                            attribute(
-                                RawAttribute {
-                                    key: QName(p.key),
-                                    value: Cow::Borrowed(p.value),
-                                },
-                                content,
-                                start,
-                                decoder,
-                                &mut scopes,
-                                &mut seen,
-                                &mut attributes,
-                            )?;
-                        }
-                    }
-                }
-                // Re-establish a default-main witness only after full cold
-                // binding, name resolution and attribute validation of this tag.
-                if !fast && !qualified.contains(':') && element.ns.is_main() {
-                    sheet_data_generation = Some(scopes.generation);
-                }
-                if !fast {
-                    cursor.materialize(&mut path, depth)?;
-                    path.push(element.clone());
-                }
-                depth += 1;
-                if !empty && !fast {
-                    scoped_depths.push(depth);
-                }
-                if depth == 2
-                    && path[0].ns.is_main()
-                    && path[0].local == "worksheet"
-                    && path[1].ns.is_main()
-                    && path[1].local == "sheetData"
-                    && !empty
-                {
-                    sheet_data_depth = Some(depth);
-                }
-                pending_path_pop = empty;
+                let (fast, element) = lexical.open::<COUNT_PATHS>(
+                    e,
+                    empty,
+                    start,
+                    options,
+                    &mut cursor,
+                    path_counts,
+                )?;
                 (
                     Boundary::Open { empty },
                     if fast {
-                        TagAttributes::Hot(&hot)
+                        TagAttributes::Hot(&lexical.hot)
                     } else {
-                        TagAttributes::Cold(&attributes)
+                        TagAttributes::Cold(&lexical.attributes)
                     },
                     element,
                 )
             }
-            Event::End(e) => {
-                if sheet_data_depth == Some(depth) {
-                    sheet_data_depth = None;
-                }
-                pending_pop = scoped_depths.last().copied() == Some(depth);
-                if pending_pop {
-                    scoped_depths.pop();
-                }
-                if depth == 0 {
-                    return Err(unsupported("unbalanced XML", "XLSX XML"));
-                }
-                let element = if path.len() == depth {
-                    path.last()
-                        .ok_or_else(|| unsupported("unbalanced XML", "XLSX XML"))?
-                        .clone()
-                } else {
-                    let name = e.name();
-                    let raw = name.as_ref();
-                    let at = offset(bytes, raw)?;
-                    let qualified = text
-                        .get(at..at + raw.len())
-                        .ok_or_else(|| unsupported("unavailable XML name span", "XLSX XML"))?;
-                    Element {
-                        ns: Ns::Main,
-                        local: qualified,
-                        qualified,
-                    }
-                };
-                pending_path_pop = true;
-                (Boundary::Close, TagAttributes::Cold(&[]), element)
-            }
+            Event::End(e) => (Boundary::Close, TagAttributes::Cold(&[]), lexical.close(e)?),
             Event::Text(t) => {
-                let value = match plain_text(text, &t) {
-                    Some(value) => Cow::Borrowed(value),
-                    None => {
-                        if cdata_end(&t) {
-                            return Err(unsupported("CDATA terminator in text", "XLSX XML"));
-                        }
-                        let value = t.xml_content().map_err(backend)?;
-                        if let Cow::Owned(value) = &value {
-                            valid_text(value)?;
-                        }
-                        value
-                    }
-                };
-                if path.is_empty() && !value.trim().is_empty() {
-                    return Err(unsupported("text outside XML root", "XLSX XML"));
-                }
+                let value = lexical.text(t)?;
                 accept_text!(value, start, end);
                 continue;
             }
@@ -411,58 +223,25 @@ fn scan_inner<const COUNT_PATHS: bool>(
                 ));
             }
             Event::GeneralRef(reference) => {
-                let name = reference.decode().map_err(backend)?;
-                let value: Cow<'_, str> = match name.as_ref() {
-                    "amp" => "&".into(),
-                    "lt" => "<".into(),
-                    "gt" => ">".into(),
-                    "quot" => "\"".into(),
-                    "apos" => "'".into(),
-                    _ => reference
-                        .resolve_char_ref()
-                        .map_err(backend)?
-                        .ok_or_else(|| unsupported("unknown XML entity", "XLSX XML"))?
-                        .to_string()
-                        .into(),
-                };
-                if path.is_empty() {
-                    return Err(unsupported("entity outside XML root", "XLSX XML"));
-                }
-                valid_text(&value)?;
+                let value = lexical.reference(reference)?;
                 accept_text!(value, start, end);
                 continue;
             }
             Event::DocType(_) => return Err(unsupported("DTD/entity declarations", "XLSX XML")),
             Event::Decl(d) => {
-                if roots != 0 || declaration {
-                    return Err(unsupported("misplaced XML declaration", "XLSX XML"));
-                }
-                declaration = true;
-                if d.version().map_err(backend)?.as_ref() != b"1.0" {
-                    return Err(unsupported("unsupported XML version", "XLSX XML"));
-                }
-                if let Some(encoding) = d.encoding() {
-                    let encoding = encoding.map_err(backend)?;
-                    if !(encoding.eq_ignore_ascii_case(b"utf-8")
-                        || encoding.eq_ignore_ascii_case(b"us-ascii") && bytes.is_ascii())
-                    {
-                        return Err(unsupported("unsupported XML encoding", "XLSX XML"));
-                    }
-                }
+                lexical.declaration(d)?;
                 continue;
             }
             Event::Eof => {
-                if !path.is_empty() || roots != 1 {
-                    return Err(unsupported("incomplete XML document", "XLSX XML"));
-                }
+                lexical.finish()?;
                 break;
             }
             Event::Comment(_) | Event::PI(_) => continue,
         };
         if sheet.open_cell.is_inline() {
-            if path.len() < depth {
-                cursor.materialize(&mut path, depth - 1)?;
-                path.push(element.clone());
+            if lexical.path.len() < lexical.depth {
+                cursor.materialize(&mut lexical.path, lexical.depth - 1)?;
+                lexical.path.push(element.clone());
             }
             let kind = match boundary {
                 Boundary::Open { empty } => Kind::Open {
@@ -471,26 +250,27 @@ fn scan_inner<const COUNT_PATHS: bool>(
                 },
                 Boundary::Close => Kind::Close,
             };
-            sheet
-                .open_cell
-                .inline_text
-                .event(&path, &Node::new(kind, span.clone()), bytes)?;
+            sheet.open_cell.inline_text.event(
+                &lexical.path,
+                &Node::new(kind, span.clone()),
+                bytes,
+            )?;
         }
         let tag = Tag::of(&element);
         if matches!(boundary, Boundary::Open { .. }) {
-            cursor.open(tag, element.local, depth);
+            cursor.open(tag, element.local, lexical.depth);
         }
         let closes = matches!(boundary, Boundary::Open { empty: true } | Boundary::Close);
         let rule_event = RuleEvent {
             attrs,
             element,
-            path: &path,
+            path: &lexical.path,
             span,
             tag,
             position: cursor.position,
             restore: cursor.restore,
-            depth,
-            direct: cursor.direct(depth),
+            depth: lexical.depth,
+            direct: cursor.direct(lexical.depth),
             empty: matches!(boundary, Boundary::Open { empty: true }),
         };
         let mut context = RuleContext {
@@ -506,7 +286,7 @@ fn scan_inner<const COUNT_PATHS: bool>(
         }
 
         if closes {
-            cursor.close(depth);
+            cursor.close(lexical.depth);
         }
     }
     sheet.finish(options, logical_cells)
