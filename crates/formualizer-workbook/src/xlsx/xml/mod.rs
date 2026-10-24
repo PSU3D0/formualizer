@@ -674,6 +674,23 @@ thread_local! {
 pub(crate) fn walk<'a>(
     bytes: &'a [u8],
     options: &CacheOptions,
+    visit: impl FnMut(&[Element<'a>], Node<'_, 'a>) -> Result<(), IoError>,
+) -> Result<(), IoError> {
+    walk_inner::<false>(bytes, options, visit)
+}
+
+#[cfg(feature = "xlsx-recalc")]
+pub(crate) fn walk_ignoring_cdata<'a>(
+    bytes: &'a [u8],
+    options: &CacheOptions,
+    visit: impl FnMut(&[Element<'a>], Node<'_, 'a>) -> Result<(), IoError>,
+) -> Result<(), IoError> {
+    walk_inner::<true>(bytes, options, visit)
+}
+
+fn walk_inner<'a, const IGNORE_CDATA: bool>(
+    bytes: &'a [u8],
+    options: &CacheOptions,
     mut visit: impl FnMut(&[Element<'a>], Node<'_, 'a>) -> Result<(), IoError>,
 ) -> Result<(), IoError> {
     #[cfg(test)]
@@ -877,10 +894,12 @@ pub(crate) fn walk<'a>(
             Event::CData(_) => {
                 // Calamine's formula/string readers ignore these events rather
                 // than concatenating their text. Never accept a divergent view.
-                return Err(unsupported(
-                    "CDATA is not supported by the ingestion view",
-                    "XLSX XML",
-                ));
+                if !IGNORE_CDATA {
+                    return Err(unsupported(
+                        "CDATA is not supported by the ingestion view",
+                        "XLSX XML",
+                    ));
+                }
             }
             Event::GeneralRef(reference) => {
                 let name = reference.decode().map_err(backend)?;

@@ -15,15 +15,15 @@ impl SharedStringTable {
     }
 
     /// Extraction uses shared read bounds, not evaluation/publication admission.
-    pub(in crate::xlsx) fn parse_read(
-        bytes: &[u8],
+    pub(in crate::xlsx) fn parse_read<'a>(
+        bytes: &'a [u8],
         options: &ReadOptions,
     ) -> Result<Self, IoError> {
         let mut values = Vec::new();
         let mut current: Option<DisplayString<'_>> = None;
         let mut closing = None;
         let mut done = false;
-        xml::walk(bytes, options, |path, node| {
+        let visit = |path: &[xml::Element<'a>], node: xml::Node<'_, 'a>| {
             let Some(element) = path.last() else {
                 return Ok(());
             };
@@ -62,7 +62,12 @@ impl SharedStringTable {
                 }
             }
             Ok(())
-        })?;
+        };
+        if options.policy == crate::xlsx::options::ReadPolicy::Compatible {
+            xml::walk_ignoring_cdata(bytes, options, visit)?;
+        } else {
+            xml::walk(bytes, options, visit)?;
+        }
         Ok(Self(values))
     }
     pub(in crate::xlsx) fn len(&self) -> usize {

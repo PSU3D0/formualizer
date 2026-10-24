@@ -278,6 +278,7 @@ impl NativeXlsxAdapter {
             limits,
         })?;
         let mut sink = LoadSink {
+            source: &sheet.data,
             values,
             records: Vec::new(),
             coordinates: reader_coordinates.then(BTreeSet::new),
@@ -319,18 +320,66 @@ struct ParsedSheet {
     coordinates: BTreeSet<(u32, u32)>,
 }
 struct LoadSink<'a> {
+    source: &'a [u8],
     values: ValueSink<'a>,
     records: Vec<OwnedSpoolFormulaRecord>,
     coordinates: Option<BTreeSet<(u32, u32)>>,
 }
+fn ordinary_coordinate(
+    source: &[u8],
+    span: Option<&std::ops::Range<usize>>,
+) -> Result<(), IoError> {
+    if let Some(span) = span
+        && source[span.clone()].contains(&b'$')
+    {
+        return Err(IoError::Calamine(calamine::Error::Xlsx(
+            calamine::XlsxError::Alphanumeric(b'$'),
+        )));
+    }
+    Ok(())
+}
 impl Sink for LoadSink<'_> {
-    fn literal(&mut self, literal: Literal<'_>) -> Result<(), IoError> {
+    fn literal(&mut self, mut literal: Literal<'_>) -> Result<(), IoError> {
+        ordinary_coordinate(self.source, literal.raw_coordinate_span.as_ref())?;
+        if let Some(raw) = literal.raw_value(self.source)
+            && matches!(literal.value, worksheet::events::Value::Text(_))
+            && raw.windows(9).any(|s| s == b"<![CDATA[")
+        {
+            let mut fragment = b"<v>".to_vec();
+            fragment.extend_from_slice(raw);
+            fragment.extend_from_slice(b"</v>");
+            let mut value = String::new();
+            xml::walk_ignoring_cdata(&fragment, &ReadOptions::default(), |_, node| {
+                if let xml::Kind::Text(text) = node.kind {
+                    value.push_str(&text);
+                }
+                Ok(())
+            })?;
+            literal.value = worksheet::events::Value::Text(std::borrow::Cow::Owned(value));
+        }
         if let Some(coordinates) = &mut self.coordinates {
             coordinates.insert((literal.row, literal.col));
         }
         self.values.push(literal)
     }
     fn formula(&mut self, formula: Formula<'_>) -> Result<(), IoError> {
+        ordinary_coordinate(self.source, formula.envelope.raw_coordinate.as_ref())?;
+        if matches!(
+            formula.kind,
+            FormulaKind::SharedAnchor { .. } | FormulaKind::SharedDescendant { .. }
+        ) && !formula
+            .envelope
+            .raw_shared_index
+            .as_ref()
+            .is_some_and(|span| {
+                let raw = &self.source[span.clone()];
+                !raw.is_empty() && raw.iter().all(u8::is_ascii_digit)
+            })
+        {
+            return Err(IoError::Calamine(calamine::Error::Xlsx(
+                calamine::XlsxError::Unexpected("si attribute must be a number"),
+            )));
+        }
         if let Some(coordinates) = &mut self.coordinates {
             coordinates.insert((formula.row, formula.col));
         }
@@ -377,7 +426,7 @@ impl Sink for LoadSink<'_> {
             },
             FormulaKind::SharedDescendant { shared_index: None } => {
                 return Err(IoError::Calamine(calamine::Error::Xlsx(
-                    calamine::XlsxError::Io(std::io::Error::other("missing shared formula index")),
+                    calamine::XlsxError::Unexpected("si attribute must be a number"),
                 )));
             }
         };

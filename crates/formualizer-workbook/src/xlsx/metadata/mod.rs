@@ -19,6 +19,33 @@ pub(in crate::xlsx) use styles::raw_attribute;
 
 #[cfg(all(test, feature = "xlsx-recalc"))]
 #[test]
+fn compatible_metadata_ignores_cdata_and_honors_empty_section_closes() {
+    use crate::xlsx::options::{ReadOptions, ReadPolicy};
+    let compatible = ReadOptions::default();
+    let strict = ReadOptions {
+        policy: ReadPolicy::Strict,
+        ..ReadOptions::default()
+    };
+    let strings = br#"<sst><si><t>a<![CDATA[b]]>c</t></si></sst>"#;
+    assert_eq!(
+        SharedStringTable::parse_read(strings, &compatible)
+            .unwrap()
+            .get(0)
+            .unwrap(),
+        "ac"
+    );
+    assert!(SharedStringTable::parse_read(strings, &strict).is_err());
+    for styles in [
+        br#"<styleSheet><cellXfs><cellXfs/><xf numFmtId="14"/></cellXfs></styleSheet>"#.as_slice(),
+        br#"<styleSheet><numFmts><numFmts/><numFmt numFmtId="164" formatCode="yyyy"/></numFmts><cellXfs><xf numFmtId="164"/></cellXfs></styleSheet>"#.as_slice(),
+    ] {
+        assert_eq!(Styles::parse_read(styles, &compatible).unwrap().format(Some("0"), 1.0), None);
+        assert!(Styles::parse_read(styles, &strict).unwrap().format(Some("0"), 1.0).is_some());
+    }
+}
+
+#[cfg(all(test, feature = "xlsx-recalc"))]
+#[test]
 fn value_metadata_extraction_is_independent_of_publication_policy() {
     use crate::xlsx::options::{ReadOptions, ReadPolicy};
     let compatible = ReadOptions::default();

@@ -217,6 +217,59 @@ fn native_formula_handoff_stats_include_unresolved_shared_records() {
     }
 }
 
+#[cfg(feature = "xlsx-recalc")]
+#[test]
+fn native_scalar_text_and_formula_attribute_refusals_match() {
+    use formualizer_workbook::backends::NativeXlsxAdapter;
+    for cell in [
+        r#"<c r="$A$1"><v>1</v></c>"#,
+        r#"<c r="A1"><f t="shared" si="bad"/></c>"#,
+        r#"<c r="A1"><f si="&#48;" t="shared" ref="A1:A2">1</f></c>"#,
+    ] {
+        let bytes = book(&[Ws::new("Sheet1", vec![("A1".into(), cell.into())])], "");
+        let baseline = Workbook::from_reader(
+            CalamineAdapter::open_bytes(bytes.clone()).unwrap(),
+            LoadStrategy::EagerAll,
+            WorkbookConfig::ephemeral(),
+        )
+        .err()
+        .expect("reader must refuse");
+        let native = Workbook::from_reader(
+            NativeXlsxAdapter::open_bytes(bytes).unwrap(),
+            LoadStrategy::EagerAll,
+            WorkbookConfig::ephemeral(),
+        )
+        .err()
+        .expect("reader must refuse");
+        assert_eq!(format!("{baseline:?}"), format!("{native:?}"));
+    }
+    let bytes = book(
+        &[Ws::new(
+            "Sheet1",
+            vec![(
+                "A1".into(),
+                r#"<c r="A1" t="str"><v>a<![CDATA[b]]>c</v></c>"#.into(),
+            )],
+        )],
+        "",
+    );
+    let baseline = load(bytes.clone(), WorkbookConfig::ephemeral());
+    let native = Workbook::from_reader(
+        NativeXlsxAdapter::open_bytes(bytes).unwrap(),
+        LoadStrategy::EagerAll,
+        WorkbookConfig::ephemeral(),
+    )
+    .unwrap();
+    assert_eq!(
+        baseline.get_value("Sheet1", 1, 1),
+        Some(LiteralValue::Text("ac".into()))
+    );
+    assert_eq!(
+        baseline.get_value("Sheet1", 1, 1),
+        native.get_value("Sheet1", 1, 1)
+    );
+}
+
 #[test]
 fn cached_links_eager() {
     check_mode(WorkbookConfig::ephemeral());

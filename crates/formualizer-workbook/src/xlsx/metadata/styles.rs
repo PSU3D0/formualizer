@@ -115,6 +115,14 @@ impl Styles {
             let xml::Kind::Open { empty, .. } = &node.kind else {
                 return Ok(());
             };
+            if options.policy == crate::xlsx::options::ReadPolicy::Compatible
+                && *empty
+                && section == Some(element.local)
+            {
+                // Empty elements own an immediate close in the ordinary reader.
+                section = None;
+                return Ok(());
+            }
             if section.is_none() {
                 if matches!(element.local, "numFmts" | "cellXfs") && !empty {
                     section = Some(element.local);
