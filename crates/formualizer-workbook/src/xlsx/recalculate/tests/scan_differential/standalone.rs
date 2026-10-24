@@ -28,7 +28,8 @@ fn control(c: &mut Option<(std::fs::File, std::io::BufReader<std::fs::File>)>, c
         writer.write_all(command).unwrap();
         let mut ack = String::new();
         reader.read_line(&mut ack).unwrap();
-        assert_eq!(ack, "ack\n");
+        // perf may include the C-string terminator after the previous ack.
+        assert_eq!(ack.trim_matches('\0'), "ack\n");
     }
 }
 
