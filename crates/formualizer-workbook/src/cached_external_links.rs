@@ -25,7 +25,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 mod ordinary;
 pub use ordinary::CachedExternalLinkValues;
-pub(crate) use ordinary::{has_links, load};
+pub(crate) use ordinary::load;
 
 /// Workbook relationship type of an external link part.
 pub(crate) const LINK_RELATIONSHIP: &str =
@@ -777,7 +777,7 @@ fn formula_texts<'p>(
             ));
             continue;
         }
-        let expanded = calamine::expand_shared_formula(
+        let expanded = crate::xlsx::types::expand_shared_formula(
             &anchor.formula_text,
             (anchor.row - 1, anchor.col - 1),
             (cell.row - 1, cell.col - 1),

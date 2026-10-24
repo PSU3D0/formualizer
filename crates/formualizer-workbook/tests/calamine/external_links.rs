@@ -418,7 +418,7 @@ fn native_shared_string_cdata_matches_display_text() {
 #[cfg(feature = "xlsx-recalc")]
 #[test]
 fn native_reader_preserves_source_order_and_separate_refusals() {
-    use formualizer_workbook::{IoError, backends::NativeXlsxAdapter};
+    use formualizer_workbook::backends::NativeXlsxAdapter;
     for cells in [
         r#"<c r="A1"><f>1</f><v>1</v></c><c r="A1"><v>2</v></c>"#,
         r#"<c r="A1"><v>2</v></c><c r="A1"><f>1</f><v>1</v></c>"#,
@@ -443,7 +443,7 @@ fn native_reader_preserves_source_order_and_separate_refusals() {
                 native.sheet_bounds("Sheet1"),
                 "{cells}"
             );
-            let baseline = baseline.read_sheet("Sheet1").map_err(IoError::from);
+            let baseline = baseline.read_sheet("Sheet1");
             let native = native.read_sheet("Sheet1");
             assert_eq!(format!("{baseline:?}"), format!("{native:?}"), "{cells}");
         }

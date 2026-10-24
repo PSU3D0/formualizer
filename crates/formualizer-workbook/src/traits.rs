@@ -343,7 +343,7 @@ pub trait SpreadsheetReader: Send + Sync {
 
     /// Read-only external workbook values cached in the source package.
     /// The default supplies no cached links and never opens linked files.
-    #[cfg(feature = "calamine")]
+    #[cfg(feature = "xlsx-recalc")]
     fn cached_external_link_values(
         &mut self,
     ) -> Option<std::sync::Arc<crate::CachedExternalLinkValues>> {

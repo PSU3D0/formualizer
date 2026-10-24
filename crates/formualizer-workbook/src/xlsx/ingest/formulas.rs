@@ -80,11 +80,6 @@ impl EvaluationTexts {
 fn xml_error(error: impl std::error::Error) -> IoError {
     IoError::from_backend("xlsx-formula", error)
 }
-#[cfg(test)]
-fn reader_error(error: calamine::XlsxError) -> IoError {
-    IoError::Calamine(calamine::Error::Xlsx(error))
-}
-
 /// Convert the scanner's source event using its already-validated raw envelope.
 /// Transformed evaluation text stays separate from immutable source text/marks.
 fn source_record(
@@ -112,9 +107,9 @@ fn source_record(
             .text(cell, &plan.data, text)
             .map(Cow::into_owned)
             .map_err(|error| {
-                IoError::Calamine(calamine::Error::Xlsx(calamine::XlsxError::Io(
-                    std::io::Error::other(error.to_string()),
-                )))
+                IoError::XlsxRead(crate::xlsx::types::XlsxReadError::Xlsx(
+                    crate::xlsx::types::XlsxError::Io(std::io::Error::other(error.to_string())),
+                ))
             })
     };
     if !raw_shared {
@@ -192,8 +187,8 @@ use formualizer_eval::engine::{
     SourceFamilyId, SourceFormulaFamily, SourceFormulaOrder,
 };
 use formula_replay::{
-    CalamineDeferredFormulaReplay as SourceDeferredFormulaReplay, FormulaReplaySpool,
-    FormulaReplayState, FormulaSpoolLimits, HybridFormulaReplaySpool,
+    FormulaReplaySpool, FormulaReplayState, FormulaSpoolLimits, HybridFormulaReplaySpool,
+    NativeDeferredFormulaReplay as SourceDeferredFormulaReplay,
     replay_spool_per_cell_filtered_with_family,
 };
 
@@ -349,7 +344,7 @@ pub(in crate::xlsx) fn stage_records_produced<
         if let Some(spool) = spool.as_mut() {
             spool
                 .append(record.as_borrowed())
-                .map_err(|error| IoError::Calamine(engine_error(error)))?;
+                .map_err(|error| IoError::XlsxRead(engine_error(error)))?;
         } else if let Some(replay) = replay.as_mut() {
             replay
                 .emit_record(
@@ -372,7 +367,7 @@ pub(in crate::xlsx) fn stage_records_produced<
                         )
                     },
                 )
-                .map_err(IoError::Calamine)?;
+                .map_err(IoError::XlsxRead)?;
         }
         count += 1;
         Ok(())
@@ -385,7 +380,7 @@ pub(in crate::xlsx) fn stage_records_produced<
         .into_iter()
         .map(|proposal| {
             crate::xlsx::ingest::partition::convert(proposal)
-                .map_err(|error| IoError::Calamine(engine_error(error)))
+                .map_err(|error| IoError::XlsxRead(engine_error(error)))
         })
         .collect::<Result<Vec<_>, IoError>>()?;
     let spool_bytes = if count == 0 {
@@ -427,7 +422,7 @@ pub(in crate::xlsx) fn stage_records_produced<
                         sheet_instance,
                     )),
                 )
-                .map_err(|error| IoError::Calamine(engine_error(error)))?,
+                .map_err(|error| IoError::XlsxRead(engine_error(error)))?,
         )
     } else {
         None
@@ -454,7 +449,7 @@ pub(in crate::xlsx) fn stage_records_produced<
                 )
             },
         )
-        .map_err(IoError::Calamine)?;
+        .map_err(IoError::XlsxRead)?;
     }
     engine.finish_family_grouper(&mut staging.grouper);
     let package = deferred.then(|| {

@@ -40,7 +40,7 @@ impl FormulaStaging {
         formula: &str,
         shared: Option<usize>,
         debug: bool,
-    ) -> Result<(), calamine::Error> {
+    ) -> Result<(), crate::xlsx::types::XlsxReadError> {
         let excel_row = position.0 + 1;
         let excel_col = position.1 + 1;
         let normalized = if formula.starts_with('=') {
@@ -141,6 +141,6 @@ impl FormulaStaging {
     }
 }
 
-pub(crate) fn engine_error(error: impl std::fmt::Display) -> calamine::Error {
-    calamine::Error::Io(std::io::Error::other(error.to_string()))
+pub(crate) fn engine_error(error: impl std::fmt::Display) -> crate::xlsx::types::XlsxReadError {
+    crate::xlsx::types::XlsxReadError::Io(std::io::Error::other(error.to_string()))
 }

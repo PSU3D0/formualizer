@@ -2,16 +2,16 @@ pub mod backends;
 pub mod builtins;
 #[cfg(feature = "xlsx-recalc")]
 pub mod cache_recalculate;
-#[cfg(feature = "calamine")]
+#[cfg(feature = "xlsx-recalc")]
 mod cached_external_links;
 pub mod calc_pr;
-#[cfg(feature = "calamine")]
+#[cfg(feature = "xlsx-recalc")]
 mod xlsx;
-#[cfg(feature = "calamine")]
+#[cfg(feature = "xlsx-recalc")]
 pub use cached_external_links::CachedExternalLinkValues;
 pub mod error;
 #[cfg(any(
-    feature = "calamine",
+    feature = "xlsx-recalc",
     feature = "json",
     feature = "umya",
     feature = "umya3"
@@ -43,7 +43,7 @@ pub use backends::UmyaAdapter;
 pub use backends::csv::CsvArrayPolicy;
 #[cfg(feature = "json")]
 pub use backends::json::JsonReadOptions;
-#[cfg(feature = "calamine")]
+#[cfg(feature = "xlsx-recalc")]
 pub use backends::{CalamineAdapter, XlsxPathSource};
 #[cfg(any(feature = "umya", feature = "umya3"))]
 pub use backends::{FormulaCacheUpdate, FormulaCacheUpdateRef};
@@ -90,3 +90,8 @@ pub use workbook::{
 #[cfg(feature = "wasm_plugins")]
 pub use workbook::{extract_wasm_manifest_json_from_module, parse_wasm_manifest_json};
 pub use worksheet::WorksheetHandle;
+
+#[cfg(feature = "xlsx-recalc")]
+pub use backends::NativeXlsxAdapter;
+#[cfg(feature = "xlsx-recalc")]
+pub use xlsx::types::{XlsxError, XlsxReadError};

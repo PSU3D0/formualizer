@@ -2,7 +2,9 @@
 //! Source recalculation admits the extension markup Excel 2010+ writes
 //! routinely (see `tests/fixtures/excel_extensions/generate.py`) where both
 //! readers provably ignore it, and keeps refusing lookalikes elsewhere.
-use calamine::{Data, Reader, Xlsx};
+#[path = "support/cached_reader.rs"]
+mod cached_reader;
+use crate::cached_reader::{Data, Xlsx};
 use formualizer_workbook::recalculate_xlsx_bytes;
 use std::{
     collections::BTreeMap,
@@ -63,8 +65,6 @@ fn number(bytes: &[u8], sheet: &str, cell: (u32, u32)) -> f64 {
     let mut x = Xlsx::new(Cursor::new(bytes)).unwrap();
     match x.worksheet_range(sheet).unwrap().get_value(cell) {
         Some(Data::Float(f)) => *f,
-        Some(Data::Int(i)) => *i as f64,
-        Some(Data::DateTime(d)) => d.as_f64(),
         other => panic!("{sheet}!{cell:?}: {other:?}"),
     }
 }
@@ -247,7 +247,7 @@ fn worksheet_lookalikes_in_data_bearing_or_unknown_positions_are_refused() {
 /// Under sheetData Calamine's cell reader treats every element inside a cell
 /// as cell payload: an extension list holding `xm:f` there is not ignored.
 #[test]
-fn calamine_does_not_ignore_extension_content_inside_cells() {
+fn native_recalculation_refuses_extension_content_inside_cells() {
     let formula = |bytes: &[u8], cell| {
         let mut x = Xlsx::new(Cursor::new(bytes)).unwrap();
         x.worksheet_formula("Data")
@@ -267,7 +267,7 @@ fn calamine_does_not_ignore_extension_content_inside_cells() {
             "{b1}<extLst><ext uri=\"{{0}}\"><xm:f xmlns:xm=\"http://schemas.microsoft.com/office/excel/2006/main\">A1*3</xm:f></ext></extLst>"
         ),
     );
-    assert!(formula(&cell_ext, (0, 1)).is_err());
+    assert!(recalculate_xlsx_bytes(&cell_ext, Default::default()).is_err());
 }
 
 #[test]

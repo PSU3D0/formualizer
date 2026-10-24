@@ -11,11 +11,11 @@ pub(in crate::xlsx) enum Refusal {
 impl Refusal {
     pub fn error(&self) -> IoError {
         let error = match self {
-            Self::Coordinate(byte) => calamine::XlsxError::Alphanumeric(*byte),
-            Self::CellType(kind) => calamine::XlsxError::CellTAttribute(kind.to_string()),
-            Self::SharedIndex(reason) => calamine::XlsxError::Unexpected(reason),
+            Self::Coordinate(byte) => crate::xlsx::types::XlsxError::Alphanumeric(*byte),
+            Self::CellType(kind) => crate::xlsx::types::XlsxError::CellTAttribute(kind.to_string()),
+            Self::SharedIndex(reason) => crate::xlsx::types::XlsxError::Unexpected(reason),
         };
-        IoError::Calamine(calamine::Error::Xlsx(error))
+        IoError::XlsxRead(crate::xlsx::types::XlsxReadError::Xlsx(error))
     }
 }
 

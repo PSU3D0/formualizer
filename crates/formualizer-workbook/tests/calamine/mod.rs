@@ -1,3 +1,5 @@
+//! Regression coverage for the legacy CalamineAdapter name, now a native alias.
+//! Historical test names are retained; these are not Calamine differential oracles.
 // Shared test helpers (umya workbook builders, etc.)
 #[path = "../common.rs"]
 mod common;

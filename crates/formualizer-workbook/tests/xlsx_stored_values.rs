@@ -3,7 +3,9 @@
 //! zero-length strings are empty text, not blank cells, and date-formatted
 //! numbers keep every bit of their serial. Covered on both the cache
 //! recalculation path and the Calamine workbook loader.
-use calamine::{Data, Reader, Xlsx};
+#[path = "support/cached_reader.rs"]
+mod cached_reader;
+use crate::cached_reader::{Data, Xlsx};
 use formualizer_workbook::{
     CalamineAdapter, LiteralValue, LoadStrategy, SpreadsheetReader, Workbook, WorkbookConfig,
     XlsxRecalculateOptions, recalculate_xlsx_bytes,

@@ -29,8 +29,6 @@ pub(in crate::xlsx) fn take_chain_reads() -> usize {
 }
 
 use crate::XlsxRecalculateOptions;
-#[cfg(test)]
-use crate::xlsx::recalculate::Patch;
 use crate::xlsx::recalculate::{IoError, SheetPlan, checkpoint, package, xml};
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 use formualizer_parse::tokenizer::{TokenStream, TokenSubType, TokenType};
@@ -797,40 +795,13 @@ pub(in crate::xlsx) struct Stats {
     pub skipped: usize,
 }
 
-/// Ingestion-view patches that make legacy formulas of one worksheet
+/// Conservative evaluation-text lowering that makes legacy formulas of one worksheet
 /// intersect. `formula_cells_in_chain` decides evidence per cell; a shared
 /// family is rewritten only when every member is listed. In a workbook with
 /// external links (`external_range_names` present: the lowercased defined
 /// names that hold an external range), formulas whose `[` may come from
 /// external references are classified too; structured references still
-/// skip them.
-#[cfg(test)]
-pub(in crate::xlsx) fn patches(
-    sheet_index: usize,
-    plan: &SheetPlan,
-    chain: &CalcChain,
-    table_names: &[String],
-    external_range_names: Option<&HashSet<String>>,
-    options: &XlsxRecalculateOptions,
-) -> Result<(Vec<Patch>, Stats), IoError> {
-    let (texts, stats) = lowered_texts(
-        sheet_index,
-        plan,
-        chain,
-        table_names,
-        external_range_names,
-        options,
-    )?;
-    Ok((
-        texts
-            .into_iter()
-            .map(crate::xlsx::recalculate::FormulaTextTransform::into_patch)
-            .collect(),
-        stats,
-    ))
-}
-
-/// The same conservative legacy lowering, without an XML transport copy.
+/// skip them. No intermediate XML transport copy is constructed.
 pub(in crate::xlsx) fn lowered_texts(
     sheet_index: usize,
     plan: &SheetPlan,

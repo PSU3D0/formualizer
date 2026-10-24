@@ -6,7 +6,7 @@
 // XLSX-only direct reader: Calamine's local-name cell loop feeds our Arrow
 // sinks and source-formula records without publication state or XML nodes.
 use super::*;
-use calamine::XlsxError;
+use crate::xlsx::types::XlsxError;
 use quick_xml::{
     Reader,
     events::{BytesStart, Event},
@@ -17,7 +17,7 @@ use worksheet::events::Value;
 
 type Result<T> = std::result::Result<T, IoError>;
 fn xlsx(error: XlsxError) -> IoError {
-    IoError::Calamine(calamine::Error::Xlsx(error))
+    IoError::XlsxRead(crate::xlsx::types::XlsxReadError::Xlsx(error))
 }
 fn eof(node: &'static str) -> IoError {
     xlsx(XlsxError::XmlEof(node))
@@ -99,12 +99,14 @@ impl<'a, 'o> CellXml<'a, 'o> {
         let depth = self.depth;
         loop {
             let event = match self.read_event() {
-                Err(IoError::Calamine(calamine::Error::Xlsx(XlsxError::Xml(
-                    quick_xml::Error::IllFormed(
+                Err(IoError::XlsxRead(crate::xlsx::types::XlsxReadError::Xlsx(
+                    XlsxError::Xml(quick_xml::Error::IllFormed(
                         quick_xml::errors::IllFormedError::MismatchedEndTag { .. },
-                    ),
-                ))))
-                | Err(IoError::Calamine(calamine::Error::Xlsx(XlsxError::XmlEof(_)))) => {
+                    )),
+                )))
+                | Err(IoError::XlsxRead(crate::xlsx::types::XlsxReadError::Xlsx(
+                    XlsxError::XmlEof(_),
+                ))) => {
                     // The pinned reader's read_to_end reports the missing
                     // requested close, not the mismatched tag encountered
                     // inside a skipped scalar. Keep the balance refusal.
@@ -790,13 +792,13 @@ mod tests {
             .join(":");
         assert!(matches!(
             dimension(many.as_bytes()),
-            Err(IoError::Calamine(calamine::Error::Xlsx(
+            Err(IoError::XlsxRead(crate::xlsx::types::XlsxReadError::Xlsx(
                 XlsxError::DimensionCount(10_000)
             )))
         ));
         assert!(matches!(
             dimension(b"A1:B2:bad"),
-            Err(IoError::Calamine(calamine::Error::Xlsx(
+            Err(IoError::XlsxRead(crate::xlsx::types::XlsxReadError::Xlsx(
                 XlsxError::RangeWithoutRowComponent
             )))
         ));

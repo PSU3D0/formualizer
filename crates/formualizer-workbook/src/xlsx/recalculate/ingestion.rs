@@ -250,9 +250,9 @@ pub(super) fn ingest_source<'a>(
 }
 
 fn ingest_error(error: impl std::fmt::Display) -> IoError {
-    IoError::Calamine(calamine::Error::Io(std::io::Error::other(
-        error.to_string(),
-    )))
+    IoError::XlsxRead(crate::xlsx::types::XlsxReadError::Io(
+        std::io::Error::other(error.to_string()),
+    ))
 }
 use crate::xlsx::ingest::stream::{FormulaBatches, LoadConfig, SheetFormulas, install_values};
 
@@ -333,14 +333,14 @@ fn stream(
         }
         checkpoint(&options.cancel)?;
         if !batches.replay.is_empty() {
-            batches.install_replay(engine).map_err(IoError::Calamine)?;
+            batches.install_replay(engine).map_err(IoError::XlsxRead)?;
         }
         checkpoint(&options.cancel)?;
         if !batches.direct.is_empty() {
-            batches.install_direct(engine).map_err(IoError::Calamine)?;
+            batches.install_direct(engine).map_err(IoError::XlsxRead)?;
         }
         checkpoint(&options.cancel)?;
-        names.register(engine).map_err(IoError::Calamine)?;
+        names.register(engine).map_err(IoError::XlsxRead)?;
         checkpoint(&options.cancel)?;
         Ok(())
     })();

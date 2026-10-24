@@ -378,9 +378,11 @@ impl<'a, const STRICT: bool> SheetState<'a, STRICT> {
                         let raw = raw_attribute_span(context.bytes, &attribute.span)?;
                         let raw = &context.bytes[raw];
                         if let Some(byte) = raw.iter().find(|byte| !byte.is_ascii_alphanumeric()) {
-                            return Err(IoError::Calamine(calamine::Error::Xlsx(
-                                calamine::XlsxError::Alphanumeric(*byte),
-                            )));
+                            return Err(IoError::XlsxRead(
+                                crate::xlsx::types::XlsxReadError::Xlsx(
+                                    crate::xlsx::types::XlsxError::Alphanumeric(*byte),
+                                ),
+                            ));
                         }
                         // Ordinary readers accept an A1-shaped row address too.
                         // Its row component remains subject to the same grid bound.

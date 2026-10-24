@@ -1,8 +1,6 @@
 //! Ingest-only token lowering for immutable, validated source table geometry.
 //! It never rewrites output formulas. Parser enums, not string splitting,
 //! describe selectors; decoded formula bytes outside reference tokens survive.
-#[cfg(test)]
-use crate::xlsx::recalculate::Patch;
 use crate::xlsx::recalculate::{
     IoError, SheetPlan, XlsxRecalculateOptions, checkpoint, package, sheet, tables::Table,
     unsupported,
@@ -349,20 +347,6 @@ pub(in crate::xlsx) fn validate_defined_name(text: &str, names: &[String]) -> Re
         }
     }
     Ok(())
-}
-
-#[cfg(test)]
-pub(in crate::xlsx) fn patches(
-    sheet_name: &str,
-    plan: &SheetPlan,
-    sheets: &[package::Sheet],
-    plans: &[SheetPlan],
-    options: &XlsxRecalculateOptions,
-) -> Result<Vec<Patch>, IoError> {
-    Ok(lowered_texts(sheet_name, plan, sheets, plans, options)?
-        .into_iter()
-        .map(crate::xlsx::recalculate::FormulaTextTransform::into_patch)
-        .collect())
 }
 
 /// Structured-reference evaluation text; publication retains the source text.

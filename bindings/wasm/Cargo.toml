@@ -38,13 +38,13 @@ wasm-bindgen-test = "0.3"
 zip = { version = "7.2", default-features = false, features = ["deflate"] }
 
 [features]
-default = ["console_panic", "json", "calamine", "xlsx-recalc"]
+default = ["console_panic", "json", "xlsx-recalc"]
 # Cache-only XLSX recalculation uses the shared Rust implementation.
 xlsx-recalc = ["formualizer/xlsx-recalc"]
 console_panic = ["console_error_panic_hook"]
 # Expose local feature toggles and forward them to the workbook dependency
 json = ["formualizer/json"]
-calamine = ["formualizer/calamine"]
+calamine = ["xlsx-recalc"]
 
 # JS runtime (web-time + JS-backed getrandom) is activated transitively via
 # formualizer/wasm-js → formualizer-eval/js-runtime. No explicit getrandom

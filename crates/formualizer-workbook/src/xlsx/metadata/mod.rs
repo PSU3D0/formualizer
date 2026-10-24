@@ -13,9 +13,6 @@ pub(crate) mod tables;
 pub(in crate::xlsx) use strings::SharedStringTable;
 #[cfg(feature = "xlsx-recalc")]
 pub(in crate::xlsx) use styles::Styles;
-#[cfg(test)]
-#[cfg(feature = "xlsx-recalc")]
-pub(in crate::xlsx) use styles::raw_attribute;
 
 #[cfg(all(test, feature = "xlsx-recalc"))]
 #[test]

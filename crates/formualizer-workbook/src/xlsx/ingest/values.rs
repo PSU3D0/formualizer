@@ -231,8 +231,8 @@ impl<'a> ValueSink<'a> {
             && let Some(kind) = kind
             && !matches!(kind, "s" | "b" | "d" | "e" | "str" | "n")
         {
-            return Err(IoError::Calamine(calamine::Error::Xlsx(
-                calamine::XlsxError::CellTAttribute(kind.to_owned()),
+            return Err(IoError::XlsxRead(crate::xlsx::types::XlsxReadError::Xlsx(
+                crate::xlsx::types::XlsxError::CellTAttribute(kind.to_owned()),
             )));
         }
         let mut format = None;
@@ -478,9 +478,9 @@ pub(in crate::xlsx) fn dimension_hint(
     hint
 }
 fn load_error(error: impl std::fmt::Display) -> IoError {
-    IoError::Calamine(calamine::Error::Io(std::io::Error::other(
-        error.to_string(),
-    )))
+    IoError::XlsxRead(crate::xlsx::types::XlsxReadError::Io(
+        std::io::Error::other(error.to_string()),
+    ))
 }
 fn unsigned_index(raw: &[u8]) -> usize {
     if raw.iter().all(u8::is_ascii_digit) {
@@ -496,16 +496,15 @@ fn unsigned_index(raw: &[u8]) -> usize {
 #[path = "values_bulk_tests.rs"]
 mod bulk_tests;
 
-fn error_code(error: calamine::CellErrorType) -> u8 {
+fn error_code(error: crate::xlsx::types::CellErrorType) -> u8 {
     let kind = match error {
-        calamine::CellErrorType::Div0 => ExcelErrorKind::Div,
-        calamine::CellErrorType::NA => ExcelErrorKind::Na,
-        calamine::CellErrorType::Name => ExcelErrorKind::Name,
-        calamine::CellErrorType::Null => ExcelErrorKind::Null,
-        calamine::CellErrorType::Num => ExcelErrorKind::Num,
-        calamine::CellErrorType::Ref => ExcelErrorKind::Ref,
-        calamine::CellErrorType::Value => ExcelErrorKind::Value,
-        _ => ExcelErrorKind::Error,
+        crate::xlsx::types::CellErrorType::Div0 => ExcelErrorKind::Div,
+        crate::xlsx::types::CellErrorType::NA => ExcelErrorKind::Na,
+        crate::xlsx::types::CellErrorType::Name => ExcelErrorKind::Name,
+        crate::xlsx::types::CellErrorType::Null => ExcelErrorKind::Null,
+        crate::xlsx::types::CellErrorType::Num => ExcelErrorKind::Num,
+        crate::xlsx::types::CellErrorType::Ref => ExcelErrorKind::Ref,
+        crate::xlsx::types::CellErrorType::Value => ExcelErrorKind::Value,
     };
     map_error_code(kind)
 }

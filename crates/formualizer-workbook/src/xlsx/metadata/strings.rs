@@ -82,9 +82,11 @@ impl SharedStringTable {
     }
     pub(in crate::xlsx) fn get(&self, index: usize) -> Result<&str, IoError> {
         self.0.get(index).map(String::as_str).ok_or_else(|| {
-            IoError::Calamine(calamine::Error::Xlsx(calamine::XlsxError::Unexpected(
-                "Cell string index not found in shared strings table",
-            )))
+            IoError::XlsxRead(crate::xlsx::types::XlsxReadError::Xlsx(
+                crate::xlsx::types::XlsxError::Unexpected(
+                    "Cell string index not found in shared strings table",
+                ),
+            ))
         })
     }
 }

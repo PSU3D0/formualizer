@@ -426,7 +426,7 @@ impl HybridFormulaReplaySpool {
 
 type ExactReplayLocator = (Vec<(u32, u32, u64)>, Vec<(usize, u64)>);
 
-pub(crate) struct CalamineDeferredFormulaReplay {
+pub(crate) struct NativeDeferredFormulaReplay {
     /// Lazy, text-free coordinate/offset locator. None means not scanned yet;
     /// The second buffer maps shared ids to anchor offsets, never anchor text.
     /// Err means unsupported metadata requires conservative replay.
@@ -464,7 +464,7 @@ fn sort_by_source_order(formulas: &mut [DeferredReplayFormula]) {
     }
 }
 
-impl CalamineDeferredFormulaReplay {
+impl NativeDeferredFormulaReplay {
     pub(crate) fn new(
         spool: HybridFormulaReplaySpool,
         sheet_name: String,
@@ -574,7 +574,7 @@ impl CalamineDeferredFormulaReplay {
     }
 }
 
-impl DeferredFormulaReplay for CalamineDeferredFormulaReplay {
+impl DeferredFormulaReplay for NativeDeferredFormulaReplay {
     fn selection_cache_footprint(&self) -> Option<std::sync::Weak<std::sync::atomic::AtomicU64>> {
         Some(std::sync::Arc::downgrade(&self.cache_footprint))
     }
@@ -1415,7 +1415,7 @@ pub(crate) struct ExpandedFormulaCell {
 #[derive(Debug)]
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) enum SourceFormulaError {
-    Expansion(calamine::XlsxError),
+    Expansion(crate::xlsx::types::XlsxError),
     UnsupportedMetadata {
         sheet_name: Arc<str>,
         coord0: SourceCoord,
@@ -1423,11 +1423,11 @@ pub(crate) enum SourceFormulaError {
 }
 
 impl SourceFormulaError {
-    pub(crate) fn into_calamine(self) -> calamine::Error {
+    pub(crate) fn into_reader_error(self) -> crate::xlsx::types::XlsxReadError {
         match self {
-            Self::Expansion(error) => calamine::Error::Xlsx(error),
+            Self::Expansion(error) => crate::xlsx::types::XlsxReadError::Xlsx(error),
             error @ Self::UnsupportedMetadata { .. } => {
-                calamine::Error::Io(std::io::Error::other(error.to_string()))
+                crate::xlsx::types::XlsxReadError::Io(std::io::Error::other(error.to_string()))
             }
         }
     }
@@ -1463,8 +1463,13 @@ impl FormulaReplayState {
         record: OwnedSpoolFormulaRecord,
         sheet_name: &str,
         mut emit_shared_coord: impl FnMut(usize, SourceCoord) -> bool,
-        mut emit: impl FnMut(u64, SourceCoord, &str, Option<usize>) -> Result<(), calamine::Error>,
-    ) -> Result<(), calamine::Error> {
+        mut emit: impl FnMut(
+            u64,
+            SourceCoord,
+            &str,
+            Option<usize>,
+        ) -> Result<(), crate::xlsx::types::XlsxReadError>,
+    ) -> Result<(), crate::xlsx::types::XlsxReadError> {
         match record {
             OwnedSpoolFormulaRecord::Ordinary {
                 sequence,
@@ -1495,7 +1500,7 @@ impl FormulaReplayState {
                                 (target.row, target.col),
                                 &mut self.expansion,
                             )
-                            .map_err(calamine::Error::Xlsx)?;
+                            .map_err(crate::xlsx::types::XlsxReadError::Xlsx)?;
                             emit(sequence, target, &self.expansion, Some(shared_index))?;
                         }
                     }
@@ -1514,7 +1519,7 @@ impl FormulaReplayState {
                             (coord0.row, coord0.col),
                             &mut self.expansion,
                         )
-                        .map_err(calamine::Error::Xlsx)?;
+                        .map_err(crate::xlsx::types::XlsxReadError::Xlsx)?;
                         emit(sequence, coord0, &self.expansion, Some(shared_index))?;
                     }
                 } else {
@@ -1529,7 +1534,7 @@ impl FormulaReplayState {
                     sheet_name: Arc::from(sheet_name),
                     coord0,
                 }
-                .into_calamine());
+                .into_reader_error());
             }
         }
         Ok(())
@@ -1540,15 +1545,21 @@ fn replay_spool_with_family<S: FormulaReplaySpool>(
     spool: &mut S,
     sheet_name: &str,
     mut emit_shared_coord: impl FnMut(usize, SourceCoord) -> bool,
-    mut emit: impl FnMut(u64, SourceCoord, &str, Option<usize>) -> Result<(), calamine::Error>,
-) -> Result<(), calamine::Error> {
+    mut emit: impl FnMut(
+        u64,
+        SourceCoord,
+        &str,
+        Option<usize>,
+    ) -> Result<(), crate::xlsx::types::XlsxReadError>,
+) -> Result<(), crate::xlsx::types::XlsxReadError> {
     let mut state = FormulaReplayState::default();
-    let records = spool
-        .replay()
-        .map_err(|error| calamine::Error::Io(std::io::Error::other(error.to_string())))?;
+    let records = spool.replay().map_err(|error| {
+        crate::xlsx::types::XlsxReadError::Io(std::io::Error::other(error.to_string()))
+    })?;
     for record in records {
-        let record = record
-            .map_err(|error| calamine::Error::Io(std::io::Error::other(error.to_string())))?;
+        let record = record.map_err(|error| {
+            crate::xlsx::types::XlsxReadError::Io(std::io::Error::other(error.to_string()))
+        })?;
         state.emit_record(record, sheet_name, &mut emit_shared_coord, &mut emit)?;
     }
     Ok(())
@@ -1559,8 +1570,8 @@ pub(crate) fn replay_spool_per_cell_filtered<S: FormulaReplaySpool>(
     spool: &mut S,
     sheet_name: &str,
     mut skip_family: impl FnMut(usize) -> bool,
-    mut emit: impl FnMut(SourceCoord, &str) -> Result<(), calamine::Error>,
-) -> Result<(), calamine::Error> {
+    mut emit: impl FnMut(SourceCoord, &str) -> Result<(), crate::xlsx::types::XlsxReadError>,
+) -> Result<(), crate::xlsx::types::XlsxReadError> {
     replay_spool_with_family(
         spool,
         sheet_name,
@@ -1573,8 +1584,8 @@ pub(crate) fn replay_spool_per_cell_filtered_with_family<S: FormulaReplaySpool>(
     spool: &mut S,
     sheet_name: &str,
     mut skip_family: impl FnMut(usize) -> bool,
-    emit: impl FnMut(SourceCoord, &str, Option<usize>) -> Result<(), calamine::Error>,
-) -> Result<(), calamine::Error> {
+    emit: impl FnMut(SourceCoord, &str, Option<usize>) -> Result<(), crate::xlsx::types::XlsxReadError>,
+) -> Result<(), crate::xlsx::types::XlsxReadError> {
     replay_spool_per_cell_with_coordinate_disposition(
         spool,
         sheet_name,
@@ -1587,8 +1598,12 @@ pub(crate) fn replay_spool_per_cell_with_coordinate_disposition<S: FormulaReplay
     spool: &mut S,
     sheet_name: &str,
     emit_shared_coord: impl FnMut(usize, SourceCoord) -> bool,
-    mut emit: impl FnMut(SourceCoord, &str, Option<usize>) -> Result<(), calamine::Error>,
-) -> Result<(), calamine::Error> {
+    mut emit: impl FnMut(
+        SourceCoord,
+        &str,
+        Option<usize>,
+    ) -> Result<(), crate::xlsx::types::XlsxReadError>,
+) -> Result<(), crate::xlsx::types::XlsxReadError> {
     replay_spool_with_family(
         spool,
         sheet_name,
@@ -1984,9 +1999,9 @@ mod tests {
         };
         let mut disposition = FormulaReplayDisposition::default();
         disposition.register_partition(&family, true).unwrap();
-        let mut replay = CalamineDeferredFormulaReplay::new(spool, "Sheet1".to_string(), 7);
+        let mut replay = NativeDeferredFormulaReplay::new(spool, "Sheet1".to_string(), 7);
 
-        let formulas = DeferredFormulaReplay::replay_partitioned(
+        let formulas = NativeDeferredFormulaReplay::replay_partitioned(
             &mut replay,
             &disposition,
             std::slice::from_ref(&family),
@@ -2075,7 +2090,7 @@ mod tests {
                 })
                 .unwrap();
         }
-        let mut replay = CalamineDeferredFormulaReplay::new(spool, "Sheet1".into(), 0);
+        let mut replay = NativeDeferredFormulaReplay::new(spool, "Sheet1".into(), 0);
         let records = replay
             .replay_selected_ordinary(&[(1, 1)], &mut |_, _| Ok(()))
             .unwrap()
@@ -2124,7 +2139,7 @@ mod tests {
                 text: "A1+1",
             })
             .unwrap();
-        let mut replay = CalamineDeferredFormulaReplay::new(spool, "Sheet1".into(), 0);
+        let mut replay = NativeDeferredFormulaReplay::new(spool, "Sheet1".into(), 0);
         assert_eq!(replay.formula_at(2, 2).unwrap().unwrap().text, "99");
         let selected = replay
             .replay_selected_exact(&[(2, 2)], &mut |_, _| Ok(()))
@@ -2231,7 +2246,7 @@ mod tests {
                     shared_index: 9,
                 })
                 .unwrap();
-            let mut replay = CalamineDeferredFormulaReplay::new(spool, "Sheet1".into(), 0);
+            let mut replay = NativeDeferredFormulaReplay::new(spool, "Sheet1".into(), 0);
             assert!(replay.ordinary_index.is_none());
             let mut work = 0;
             assert!(
@@ -2303,7 +2318,7 @@ mod tests {
                     })
                     .unwrap();
             }
-            let mut replay = CalamineDeferredFormulaReplay::new(spool, "Sheet1".into(), 0);
+            let mut replay = NativeDeferredFormulaReplay::new(spool, "Sheet1".into(), 0);
             assert!(replay.ordinary_index.is_none());
             let footprint = replay.selection_cache_footprint().unwrap();
             let mut scanned = 0;
@@ -2641,7 +2656,7 @@ mod tests {
 
     fn replay_production(
         records: Vec<SpoolFormulaRecord<'static>>,
-    ) -> Result<Vec<ReplayedFormula>, calamine::Error> {
+    ) -> Result<Vec<ReplayedFormula>, crate::xlsx::types::XlsxReadError> {
         let mut spool =
             HybridFormulaReplaySpool::new(hybrid_limits(16_384, 16_384, u64::MAX, 16_384, false));
         for record in records {
@@ -2812,7 +2827,7 @@ mod tests {
         ] {
             spool.append(record).unwrap();
         }
-        let mut replay = CalamineDeferredFormulaReplay::new(spool, "Sheet1".to_string(), 7);
+        let mut replay = NativeDeferredFormulaReplay::new(spool, "Sheet1".to_string(), 7);
         let formulas = replay.replay(&FormulaReplayDisposition::default()).unwrap();
         assert_eq!(
             formulas

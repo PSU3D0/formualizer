@@ -1,9 +1,12 @@
 //! Original source-XML builders and independent readers for the public
 //! source-preserving spill tests. Packages are built from literal XML (no
 //! spreadsheet library round trip), and outputs are inspected with quick-xml
-//! (namespace-aware for the metadata chain), the `zip` crate and Calamine.
+//! (namespace-aware for the metadata chain), the `zip` crate and a separate
+//! cached-cell XML inspector.
 #![allow(dead_code)]
-use calamine::{Data, Reader, Xlsx};
+#[path = "cached_reader.rs"]
+pub mod cached_reader;
+use cached_reader::{Data, Xlsx};
 use quick_xml::NsReader;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::name::ResolveResult;

@@ -1,89 +1,11 @@
 //! Non-calculating sheet positions and references to them.
 //! Sheet ordinals are retained without admitting calculation cells or references.
-//! Only the legacy-ingestion test oracle projects a temporary package view.
-#[cfg(test)]
-use crate::backends::calamine::CalamineAdapter;
 use crate::xlsx::recalculate::{
     IoError, SheetPlan, XlsxRecalculateOptions, package, unsupported, xml,
 };
-#[cfg(test)]
-use crate::xlsx::recalculate::{Patch, apply_patches};
 use formualizer_parse::parser::{ASTNode, RefView};
 
 pub(in crate::xlsx) const EMPTY: &str = "<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><sheetData/></worksheet>";
-
-#[cfg(test)]
-pub(in crate::xlsx) fn project(
-    archive: &mut package::Archive<'_>,
-    sheets: &[package::Sheet],
-    edits: &mut package::Edits,
-    options: &XlsxRecalculateOptions,
-) -> Result<(), IoError> {
-    if !sheets.iter().any(|s| s.inert) {
-        return Ok(());
-    }
-    let workbook = package::read_part(
-        archive,
-        "xl/workbook.xml",
-        options.limits.max_worksheet_bytes,
-    )?;
-    let mut patches = Vec::new();
-    let mut relationships = Vec::new();
-    let mut parts = Vec::new();
-    xml::walk(&workbook, options, |path, node| {
-        if xml::path_is(path, xml::MAIN, &["workbook", "sheets", "sheet"])
-            && let Some(name) = node.value("name")
-            && let Some((i, _)) = sheets
-                .iter()
-                .enumerate()
-                .find(|(_, s)| s.inert && s.name == name)
-        {
-            let id = format!("__inert_sheet_{i}");
-            let part = format!("xl/worksheets/__inert_sheet_{i}.xml");
-            if archive.file_names().any(|n| n == part) {
-                return Err(unsupported("inert sheet projection collision", name));
-            }
-            patches.push(Patch {
-                span: node
-                    .attribute(xml::OFFICE, "id")
-                    .expect("admitted r:id")
-                    .span
-                    .clone(),
-                replacement: format!("r:id=\"{id}\"").into_bytes(),
-            });
-            relationships.push((id, part.clone()));
-            parts.push(part);
-        }
-        Ok(())
-    })?;
-    edits.replace.insert(
-        "xl/workbook.xml".into(),
-        apply_patches(&workbook, patches, options.limits.max_worksheet_bytes)?,
-    );
-    let rel_part = "xl/_rels/workbook.xml.rels";
-    let rels = package::read_part(archive, rel_part, options.limits.max_worksheet_bytes)?;
-    xml::walk(&rels, options, |_, node| {
-        if node
-            .value("Id")
-            .is_some_and(|id| relationships.iter().any(|(r, _)| r == id))
-        {
-            return Err(unsupported("inert sheet projection collision", rel_part));
-        }
-        Ok(())
-    })?;
-    edits.replace.insert(rel_part.into(), package::append_child(&rels, rel_part, |prefix| {
-        relationships.iter().map(|(id, part)| format!("<{prefix}Relationship Id=\"{id}\" Type=\"{}/worksheet\" Target=\"/{}\"/>", xml::OFFICE, part)).collect()
-    }, options)?);
-    let types_part = "[Content_Types].xml";
-    let types = package::read_part(archive, types_part, options.limits.max_worksheet_bytes)?;
-    edits.replace.insert(types_part.into(), package::append_child(&types, types_part, |prefix| {
-        parts.iter().map(|part| format!("<{prefix}Override PartName=\"/{part}\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>")).collect()
-    }, options)?);
-    for part in parts {
-        edits.add.insert(part, EMPTY.as_bytes().to_vec());
-    }
-    Ok(())
-}
 
 /// Preserve the old projection collision refusal without creating any view.
 pub(in crate::xlsx) fn validate_projection_names(
@@ -240,28 +162,4 @@ fn check(ast: &ASTNode, sheets: &[package::Sheet]) -> Result<(), IoError> {
         ));
     }
     check_indirect(ast, sheets)
-}
-
-#[cfg(test)]
-pub(in crate::xlsx) fn validate(
-    sheets: &[package::Sheet],
-    plans: &[SheetPlan],
-    adapter: &CalamineAdapter,
-    options: &XlsxRecalculateOptions,
-) -> Result<(), IoError> {
-    if !sheets.iter().any(|s| s.inert) {
-        return Ok(());
-    }
-    for cell in plans.iter().flat_map(|p| &p.cells) {
-        crate::xlsx::recalculate::checkpoint(&options.cancel)?;
-        if !cell.formula_text.is_empty()
-            && let Ok(ast) = formualizer_parse::parser::parse(format!("={}", cell.formula_text))
-        {
-            check(&ast, sheets)?;
-        }
-    }
-    for ast in adapter.calculation_name_asts()? {
-        check(&ast, sheets)?;
-    }
-    Ok(())
 }

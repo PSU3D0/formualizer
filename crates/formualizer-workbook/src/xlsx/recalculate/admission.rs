@@ -76,9 +76,9 @@ pub(super) enum ScannedValues {
     },
 }
 fn reader_error(byte: u8) -> IoError {
-    IoError::Calamine(calamine::Error::Xlsx(calamine::XlsxError::Alphanumeric(
-        byte,
-    )))
+    IoError::XlsxRead(crate::xlsx::types::XlsxReadError::Xlsx(
+        crate::xlsx::types::XlsxError::Alphanumeric(byte),
+    ))
 }
 fn coordinate(raw: &[u8], dimension: bool) -> Result<(), IoError> {
     match raw

@@ -4,7 +4,7 @@
 use super::*;
 
 /// Dependency-owned until the common reader's error vocabulary is extracted.
-pub(in crate::xlsx) type ErrorToken = calamine::CellErrorType;
+pub(in crate::xlsx) type ErrorToken = crate::xlsx::types::CellErrorType;
 
 #[derive(Debug, Clone)]
 pub(in crate::xlsx) enum Value<'a> {

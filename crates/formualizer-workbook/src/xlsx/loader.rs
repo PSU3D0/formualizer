@@ -224,11 +224,12 @@ mod retained_tests {
             }
             assert_eq!(
                 native.read_sheet("absent").unwrap_err().to_string(),
-                IoError::from(baseline.read_sheet("absent").unwrap_err()).to_string()
+                baseline.read_sheet("absent").unwrap_err().to_string()
             );
         }
     }
 }
+use super::source::XlsxSource;
 use super::{
     ingest::{
         formulas,
@@ -243,7 +244,7 @@ use super::{
 };
 use crate::{
     IoError, SpreadsheetReader,
-    backends::{XlsxPathSource, calamine::XlsxSource},
+    backends::XlsxPathSource,
     traits::{AccessGranularity, AdapterLoadStats, BackendCaps, CellData, SheetData},
 };
 use formualizer_common::{DateSystem, LiteralValue};
@@ -266,7 +267,7 @@ struct SheetSource {
     reader_parsed: OnceLock<ParsedSheet>,
 }
 
-/// Opt-in XLSX reader using the shared Compatible read policy.
+/// Native XLSX reader using the shared Compatible read policy.
 pub struct NativeXlsxAdapter {
     source: XlsxSource,
     sheets: Vec<SheetSource>,
@@ -295,10 +296,26 @@ impl NativeXlsxAdapter {
     ) -> Result<Self, IoError> {
         Self::open_source(XlsxSource::open_path(path.as_ref(), source)?)
     }
+    /// Open immutable XLSX bytes with cooperative cancellation during admission and ingestion.
+    pub fn open_bytes_cancellable(
+        bytes: Vec<u8>,
+        cancel: crate::CancelToken,
+    ) -> Result<Self, IoError> {
+        Self::open_source_with_options(
+            XlsxSource::from_bytes(bytes),
+            ReadOptions {
+                cancel: Some(cancel),
+                ..ReadOptions::default()
+            },
+        )
+    }
     fn open_source(source: XlsxSource) -> Result<Self, IoError> {
+        Self::open_source_with_options(source, ReadOptions::default())
+    }
+    fn open_source_with_options(source: XlsxSource, options: ReadOptions) -> Result<Self, IoError> {
+        super::options::checkpoint(&options.cancel)?;
         let debug_load = std::env::var_os("FZ_DEBUG_LOAD").is_some();
         let load_clock = timing::Timer::start(debug_load);
-        let options = ReadOptions::default();
         let (sheets, strings, styles, names, calc_settings, has_links, sheet_diagnostics) = {
             let bytes = source.bytes(options.limits.max_input_bytes)?;
             let (mut archive, (workbook_xml, relationships, declared, has_links)) =
@@ -533,8 +550,8 @@ impl NativeXlsxAdapter {
             .iter()
             .find(|sheet| sheet.name == name)
             .ok_or_else(|| {
-                IoError::Calamine(calamine::Error::Xlsx(
-                    calamine::XlsxError::WorksheetNotFound(name.to_owned()),
+                IoError::XlsxRead(crate::xlsx::types::XlsxReadError::Xlsx(
+                    crate::xlsx::types::XlsxError::WorksheetNotFound(name.to_owned()),
                 ))
             })
     }
@@ -800,42 +817,42 @@ enum DeferredReadError {
 impl DeferredReadError {
     fn capture(error: IoError) -> Result<Self, IoError> {
         match error {
-            IoError::Calamine(calamine::Error::Xlsx(calamine::XlsxError::Unexpected(message))) => {
-                Ok(Self::Unexpected(message))
-            }
-            IoError::Calamine(calamine::Error::Xlsx(calamine::XlsxError::CellTAttribute(kind))) => {
-                Ok(Self::CellType(kind))
-            }
-            IoError::Calamine(calamine::Error::Xlsx(calamine::XlsxError::Alphanumeric(byte))) => {
-                Ok(Self::Alphanumeric(byte))
-            }
-            IoError::Calamine(calamine::Error::Xlsx(calamine::XlsxError::Xml(e))) => {
-                Ok(Self::Xml(e))
-            }
-            IoError::Calamine(calamine::Error::Xlsx(calamine::XlsxError::XmlEof(e))) => {
-                Ok(Self::XmlEof(e))
-            }
-            IoError::Calamine(calamine::Error::Xlsx(calamine::XlsxError::UnexpectedNode(e))) => {
-                Ok(Self::UnexpectedNode(e))
-            }
-            IoError::Calamine(calamine::Error::Xlsx(calamine::XlsxError::ParseFloat(e))) => {
-                Ok(Self::ParseFloat(e))
-            }
-            IoError::Calamine(calamine::Error::Xlsx(calamine::XlsxError::CellError(e))) => {
-                Ok(Self::CellError(e))
-            }
-            IoError::Calamine(calamine::Error::Xlsx(
-                calamine::XlsxError::RangeWithoutRowComponent,
+            IoError::XlsxRead(crate::xlsx::types::XlsxReadError::Xlsx(
+                crate::xlsx::types::XlsxError::Unexpected(message),
+            )) => Ok(Self::Unexpected(message)),
+            IoError::XlsxRead(crate::xlsx::types::XlsxReadError::Xlsx(
+                crate::xlsx::types::XlsxError::CellTAttribute(kind),
+            )) => Ok(Self::CellType(kind)),
+            IoError::XlsxRead(crate::xlsx::types::XlsxReadError::Xlsx(
+                crate::xlsx::types::XlsxError::Alphanumeric(byte),
+            )) => Ok(Self::Alphanumeric(byte)),
+            IoError::XlsxRead(crate::xlsx::types::XlsxReadError::Xlsx(
+                crate::xlsx::types::XlsxError::Xml(e),
+            )) => Ok(Self::Xml(e)),
+            IoError::XlsxRead(crate::xlsx::types::XlsxReadError::Xlsx(
+                crate::xlsx::types::XlsxError::XmlEof(e),
+            )) => Ok(Self::XmlEof(e)),
+            IoError::XlsxRead(crate::xlsx::types::XlsxReadError::Xlsx(
+                crate::xlsx::types::XlsxError::UnexpectedNode(e),
+            )) => Ok(Self::UnexpectedNode(e)),
+            IoError::XlsxRead(crate::xlsx::types::XlsxReadError::Xlsx(
+                crate::xlsx::types::XlsxError::ParseFloat(e),
+            )) => Ok(Self::ParseFloat(e)),
+            IoError::XlsxRead(crate::xlsx::types::XlsxReadError::Xlsx(
+                crate::xlsx::types::XlsxError::CellError(e),
+            )) => Ok(Self::CellError(e)),
+            IoError::XlsxRead(crate::xlsx::types::XlsxReadError::Xlsx(
+                crate::xlsx::types::XlsxError::RangeWithoutRowComponent,
             )) => Ok(Self::NoRow),
-            IoError::Calamine(calamine::Error::Xlsx(
-                calamine::XlsxError::RangeWithoutColumnComponent,
+            IoError::XlsxRead(crate::xlsx::types::XlsxReadError::Xlsx(
+                crate::xlsx::types::XlsxError::RangeWithoutColumnComponent,
             )) => Ok(Self::NoColumn),
-            IoError::Calamine(calamine::Error::Xlsx(calamine::XlsxError::DimensionCount(e))) => {
-                Ok(Self::DimensionCount(e))
-            }
-            IoError::Calamine(calamine::Error::Xlsx(calamine::XlsxError::NotAWorksheet(e))) => {
-                Ok(Self::NotAWorksheet(e))
-            }
+            IoError::XlsxRead(crate::xlsx::types::XlsxReadError::Xlsx(
+                crate::xlsx::types::XlsxError::DimensionCount(e),
+            )) => Ok(Self::DimensionCount(e)),
+            IoError::XlsxRead(crate::xlsx::types::XlsxReadError::Xlsx(
+                crate::xlsx::types::XlsxError::NotAWorksheet(e),
+            )) => Ok(Self::NotAWorksheet(e)),
             IoError::Unsupported { feature, context } => Ok(Self::Unsupported { feature, context }),
             IoError::Backend { backend, message } => Ok(Self::Backend { backend, message }),
             other => Err(other),
@@ -849,18 +866,18 @@ impl DeferredReadError {
                     message: message.clone(),
                 };
             }
-            Self::Unexpected(message) => calamine::XlsxError::Unexpected(message),
-            Self::CellType(kind) => calamine::XlsxError::CellTAttribute(kind.clone()),
-            Self::Alphanumeric(byte) => calamine::XlsxError::Alphanumeric(*byte),
-            Self::Xml(e) => calamine::XlsxError::Xml(e.clone()),
-            Self::XmlEof(e) => calamine::XlsxError::XmlEof(e),
-            Self::UnexpectedNode(e) => calamine::XlsxError::UnexpectedNode(e),
-            Self::ParseFloat(e) => calamine::XlsxError::ParseFloat(e.clone()),
-            Self::CellError(e) => calamine::XlsxError::CellError(e.clone()),
-            Self::NoRow => calamine::XlsxError::RangeWithoutRowComponent,
-            Self::NoColumn => calamine::XlsxError::RangeWithoutColumnComponent,
-            Self::DimensionCount(e) => calamine::XlsxError::DimensionCount(*e),
-            Self::NotAWorksheet(e) => calamine::XlsxError::NotAWorksheet(e.clone()),
+            Self::Unexpected(message) => crate::xlsx::types::XlsxError::Unexpected(message),
+            Self::CellType(kind) => crate::xlsx::types::XlsxError::CellTAttribute(kind.clone()),
+            Self::Alphanumeric(byte) => crate::xlsx::types::XlsxError::Alphanumeric(*byte),
+            Self::Xml(e) => crate::xlsx::types::XlsxError::Xml(e.clone()),
+            Self::XmlEof(e) => crate::xlsx::types::XlsxError::XmlEof(e),
+            Self::UnexpectedNode(e) => crate::xlsx::types::XlsxError::UnexpectedNode(e),
+            Self::ParseFloat(e) => crate::xlsx::types::XlsxError::ParseFloat(e.clone()),
+            Self::CellError(e) => crate::xlsx::types::XlsxError::CellError(e.clone()),
+            Self::NoRow => crate::xlsx::types::XlsxError::RangeWithoutRowComponent,
+            Self::NoColumn => crate::xlsx::types::XlsxError::RangeWithoutColumnComponent,
+            Self::DimensionCount(e) => crate::xlsx::types::XlsxError::DimensionCount(*e),
+            Self::NotAWorksheet(e) => crate::xlsx::types::XlsxError::NotAWorksheet(e.clone()),
             Self::Unsupported { feature, context } => {
                 return IoError::Unsupported {
                     feature: feature.clone(),
@@ -868,7 +885,7 @@ impl DeferredReadError {
                 };
             }
         };
-        IoError::Calamine(calamine::Error::Xlsx(error))
+        IoError::XlsxRead(crate::xlsx::types::XlsxReadError::Xlsx(error))
     }
 }
 
@@ -1164,7 +1181,7 @@ impl<R: EvaluationContext> EngineLoadStream<R> for NativeXlsxAdapter {
                 let populated = (parsed.values.values_observed as u64)
                     .saturating_add(staged.formulas_observed as u64);
                 if populated > engine.workbook_load_limits().max_sheet_logical_cells {
-                    return Err(IoError::Calamine(super::ingest::staging::engine_error(
+                    return Err(IoError::XlsxRead(super::ingest::staging::engine_error(
                         format!(
                             "Workbook load budget exceeded in calamine for sheet {}: observed populated cell count exceeds configured logical-cell budget of {}",
                             sheet.name,
@@ -1206,10 +1223,12 @@ impl<R: EvaluationContext> EngineLoadStream<R> for NativeXlsxAdapter {
                 self.loaded.insert(sheet.name.clone());
             }
             let install_timer = timing::Timer::start(self.debug_load);
-            if !engine.config.defer_graph_building {
+            if !engine.config.defer_graph_building && !batches.replay.is_empty() {
                 batches.install_replay(engine).map_err(IoError::from)?;
             }
-            batches.install_direct(engine).map_err(IoError::from)?;
+            if !batches.direct.is_empty() {
+                batches.install_direct(engine).map_err(IoError::from)?;
+            }
             self.names.register(engine).map_err(IoError::from)?;
             self.name_diagnostics = self.names.import_diagnostics()?;
             for diagnostic in &self.name_diagnostics {
@@ -1240,7 +1259,7 @@ impl<R: EvaluationContext> EngineLoadStream<R> for NativeXlsxAdapter {
                     .names
                     .skippable_name_registration_error(&diagnostic.name, &error)
                 {
-                    return Err(IoError::Calamine(super::ingest::staging::engine_error(
+                    return Err(IoError::XlsxRead(super::ingest::staging::engine_error(
                         error,
                     )));
                 }

@@ -4,8 +4,7 @@ mod error;
 pub(crate) mod ingest;
 #[cfg(feature = "xlsx-recalc")]
 pub(crate) mod loader;
-#[cfg(all(test, feature = "xlsx-recalc"))]
-mod loader_differential;
+
 pub(crate) mod metadata;
 pub(crate) mod options;
 #[cfg(feature = "xlsx-recalc")]
@@ -15,3 +14,6 @@ pub mod recalculate;
 #[cfg(feature = "xlsx-recalc")]
 pub(crate) mod worksheet;
 pub(crate) mod xml;
+
+pub(crate) mod source;
+pub mod types;
