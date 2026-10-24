@@ -56,6 +56,46 @@ fn rewrite_workbook(bytes: Vec<u8>, rewrite: impl FnOnce(String) -> String) -> V
     output.finish().unwrap().into_inner()
 }
 
+#[cfg(feature = "xlsx-recalc")]
+#[test]
+fn native_inert_sheet_names_scopes_and_diagnostics_match() {
+    use formualizer_workbook::backends::NativeXlsxAdapter;
+    for kind in ["chartsheet", "dialogsheet", "module"] {
+        for formula in ["1+1", "Chart1!A1", "SUM(Chart1!A1:B3)"] {
+            let bytes = fixture(kind, formula);
+            for config in [WorkbookConfig::interactive(), WorkbookConfig::ephemeral()] {
+                let mut baseline = Workbook::from_reader(
+                    CalamineAdapter::open_bytes(bytes.clone()).unwrap(),
+                    LoadStrategy::EagerAll,
+                    config.clone(),
+                )
+                .unwrap();
+                let mut native = Workbook::from_reader(
+                    NativeXlsxAdapter::open_bytes(bytes.clone()).unwrap(),
+                    LoadStrategy::EagerAll,
+                    config,
+                )
+                .unwrap();
+                assert_eq!(baseline.sheet_names(), native.sheet_names());
+                assert_eq!(
+                    baseline.sheet_import_diagnostics(),
+                    native.sheet_import_diagnostics()
+                );
+                assert_eq!(
+                    baseline.name_import_diagnostics(),
+                    native.name_import_diagnostics()
+                );
+                for sheet in ["Sheet1", "After"] {
+                    assert_eq!(
+                        baseline.evaluate_cell(sheet, 1, 1).unwrap(),
+                        native.evaluate_cell(sheet, 1, 1).unwrap()
+                    );
+                }
+            }
+        }
+    }
+}
+
 #[test]
 fn module_first_paired_tag_and_relationship_namespace_alias() {
     let bytes = rewrite_workbook(fixture("module", "1+1"), |xml| {

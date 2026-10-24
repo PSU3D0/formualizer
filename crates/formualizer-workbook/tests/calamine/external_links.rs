@@ -182,6 +182,41 @@ fn native_cached_links_match_supported_refused_and_named_values() {
     }
 }
 
+#[cfg(feature = "xlsx-recalc")]
+#[test]
+fn native_formula_handoff_stats_include_unresolved_shared_records() {
+    use formualizer_workbook::backends::NativeXlsxAdapter;
+    let bytes = book(
+        &[Ws::new(
+            "Sheet1",
+            vec![(
+                "A1".into(),
+                "<c r=\"A1\"><f t=\"shared\" si=\"9\"/></c>".into(),
+            )],
+        )],
+        "",
+    );
+    for config in [WorkbookConfig::ephemeral(), WorkbookConfig::interactive()] {
+        let (_, baseline) = Workbook::from_reader_with_adapter_stats(
+            CalamineAdapter::open_bytes(bytes.clone()).unwrap(),
+            LoadStrategy::EagerAll,
+            config.clone(),
+        )
+        .unwrap();
+        let (_, native) = Workbook::from_reader_with_adapter_stats(
+            NativeXlsxAdapter::open_bytes(bytes.clone()).unwrap(),
+            LoadStrategy::EagerAll,
+            config,
+        )
+        .unwrap();
+        assert_eq!(
+            baseline.as_ref().unwrap().formula_cells_handed_to_engine,
+            Some(1)
+        );
+        assert_eq!(baseline, native);
+    }
+}
+
 #[test]
 fn cached_links_eager() {
     check_mode(WorkbookConfig::ephemeral());

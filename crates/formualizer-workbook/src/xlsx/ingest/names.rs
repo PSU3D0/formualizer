@@ -54,6 +54,7 @@ pub(in crate::xlsx) struct CalculationNames {
     raw: Vec<(String, String, Option<usize>)>,
     calamine_defined_names: Vec<(String, String)>,
     sheet_names: Vec<String>,
+    inert_sheet_names: HashSet<String>,
     defined_names: OnceLock<Vec<DefinedName>>,
     name_index: OnceLock<CalculationNameIndex>,
     name_analysis: OnceLock<CalculationNameAnalysis>,
@@ -89,6 +90,15 @@ impl CalculationNames {
             raw,
             calamine_defined_names,
             sheet_names: sheets.iter().map(|s| s.name.clone()).collect(),
+            inert_sheet_names: if policy.strict_validation {
+                HashSet::new()
+            } else {
+                sheets
+                    .iter()
+                    .filter(|sheet| sheet.inert)
+                    .map(|sheet| sheet.name.to_lowercase())
+                    .collect()
+            },
             defined_names: OnceLock::new(),
             name_index: OnceLock::new(),
             name_analysis: OnceLock::new(),
@@ -207,7 +217,19 @@ impl CalculationNames {
             .is_some_and(|values| values.contains(raw))
     }
 
+    fn is_inert_sheet(&self, name: &str) -> bool {
+        !self.policy.strict_validation && self.inert_sheet_names.contains(&name.to_lowercase())
+    }
+    fn inert_scope(&self, scope: Option<usize>) -> bool {
+        !self.policy.strict_validation
+            && scope
+                .and_then(|id| self.sheet_names.get(id))
+                .is_some_and(|name| self.is_inert_sheet(name))
+    }
     fn grounded_calculation_name(&self, i: usize) -> Option<ASTNode> {
+        if self.inert_scope(self.raw_calculation_names()[i].2) {
+            return None;
+        }
         let name = &self.raw_calculation_names()[i].0;
         if self.policy.referenced_only
             && !self.legacy_calculation_name(name)
@@ -807,8 +829,9 @@ impl CalculationNames {
             .raw_calculation_names()
             .iter()
             .enumerate()
-            .filter(|(index, (name, _, _))| {
-                !self.legacy_calculation_name(name) && !imported.contains(index)
+            .filter(|(index, (name, _, scope))| {
+                self.inert_scope(*scope)
+                    || (!self.legacy_calculation_name(name) && !imported.contains(index))
             })
             .map(
                 |(_, (name, definition, local))| crate::traits::NameImportDiagnostic {
@@ -816,7 +839,12 @@ impl CalculationNames {
                     definition: definition.clone(),
                     scope_sheet: local.and_then(|index| self.sheet_names.get(index).cloned()),
                     local_sheet_id: *local,
-                    message: "Unevaluable or cyclic defined name omitted from calculation".into(),
+                    message: if self.inert_scope(*local) {
+                        "Defined name scoped to an omitted non-worksheet sheet"
+                    } else {
+                        "Unevaluable or cyclic defined name omitted from calculation"
+                    }
+                    .into(),
                 },
             )
             .collect())
@@ -857,6 +885,18 @@ impl CalculationNames {
                 FxHashSet::default();
 
             for dn in defined {
+                if dn
+                    .scope_sheet
+                    .as_deref()
+                    .is_some_and(|name| self.is_inert_sheet(name))
+                {
+                    continue;
+                }
+                if let DefinedNameDefinition::Range { address } = &dn.definition
+                    && self.is_inert_sheet(&address.sheet)
+                {
+                    continue;
+                }
                 Self::cancellation_checkpoint(cancel.as_ref())?;
                 let key = (dn.scope.clone(), dn.scope_sheet.clone(), dn.name.clone());
                 if !seen.insert(key) {

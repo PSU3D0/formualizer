@@ -50,6 +50,7 @@ pub struct NativeXlsxAdapter {
     names: super::ingest::names::CalculationNames,
     calc_settings: Option<crate::traits::CalcSettings>,
     name_diagnostics: Vec<crate::traits::NameImportDiagnostic>,
+    sheet_diagnostics: Vec<crate::traits::SheetImportDiagnostic>,
     has_links: bool,
     external: Option<Arc<crate::CachedExternalLinkValues>>,
     prepared: Vec<Option<ParsedSheet>>,
@@ -65,7 +66,7 @@ impl NativeXlsxAdapter {
     }
     fn open_source(source: XlsxSource) -> Result<Self, IoError> {
         let options = ReadOptions::default();
-        let (sheets, strings, styles, names, calc_settings, has_links) = {
+        let (sheets, strings, styles, names, calc_settings, has_links, sheet_diagnostics) = {
             let bytes = source.bytes(options.limits.max_input_bytes)?;
             let mut archive = package::admit_with(&bytes, &options, Ok)?;
             let root = package::relationships_read(&mut archive, "", &options)?;
@@ -94,25 +95,70 @@ impl NativeXlsxAdapter {
                     && matches!(node.kind, xml::Kind::Open { .. })
                     && let (Some(name), Some(id)) =
                         (node.value("name"), node.attribute(xml::OFFICE, "id"))
-                    && let Some(relation) = relationships.get(id.value.as_ref())
-                    && relation.kind.ends_with("/worksheet")
-                    && let Some(target) = &relation.target
                 {
-                    declared.push((name.to_owned(), target.clone()));
+                    let (inert, kind, target) = if id.value.is_empty() {
+                        (true, "module", String::new())
+                    } else {
+                        let relation = relationships.get(id.value.as_ref()).ok_or_else(|| {
+                            super::options::unsupported(
+                                "missing worksheet relationship",
+                                "workbook XML",
+                            )
+                        })?;
+                        let kind = if relation.kind == format!("{}/chartsheet", xml::OFFICE) {
+                            "chartsheet"
+                        } else if relation.kind == format!("{}/dialogsheet", xml::OFFICE) {
+                            "dialogsheet"
+                        } else if relation.kind == format!("{}/worksheet", xml::OFFICE) {
+                            "worksheet"
+                        } else {
+                            return Err(super::options::unsupported(
+                                "non-worksheet sheet",
+                                "workbook XML",
+                            ));
+                        };
+                        let target = relation.target.clone().ok_or_else(|| {
+                            super::options::unsupported("external worksheet", "workbook XML")
+                        })?;
+                        (kind != "worksheet", kind, target)
+                    };
+                    declared.push(package::Sheet {
+                        name: name.to_owned(),
+                        part: target,
+                        inert,
+                        kind,
+                        sheet_id: 0,
+                        tables: BTreeMap::new(),
+                    });
                 }
                 Ok(())
             })?;
             let mut sheets = Vec::new();
-            for (name, part) in declared {
+            for sheet in declared.iter().filter(|sheet| !sheet.inert) {
                 sheets.push(SheetSource {
-                    name,
+                    name: sheet.name.clone(),
                     data: package::read_part(
                         &mut archive,
-                        &part,
+                        &sheet.part,
                         options.limits.max_worksheet_bytes,
                     )?,
                 });
             }
+            // The baseline reports omitted modules first, then other inert
+            // sheet kinds, retaining declaration order within each group.
+            let sheet_diagnostics = declared
+                .iter()
+                .filter(|sheet| sheet.kind == "module")
+                .chain(
+                    declared
+                        .iter()
+                        .filter(|sheet| sheet.inert && sheet.kind != "module"),
+                )
+                .map(|sheet| crate::traits::SheetImportDiagnostic {
+                    name: sheet.name.clone(),
+                    kind: sheet.kind.to_owned(),
+                })
+                .collect();
             let mut metadata = |kind: &str| -> Result<Vec<u8>, IoError> {
                 let target = relationships
                     .values()
@@ -137,25 +183,22 @@ impl NativeXlsxAdapter {
             } else {
                 Styles::parse_read(&style_bytes, &options)?
             };
-            let scopes: Vec<_> = sheets
-                .iter()
-                .map(|sheet| package::Sheet {
-                    name: sheet.name.clone(),
-                    part: String::new(),
-                    inert: false,
-                    kind: "worksheet",
-                    sheet_id: 0,
-                    tables: BTreeMap::new(),
-                })
-                .collect();
             let names = super::ingest::names::CalculationNames::new(
                 &workbook_xml,
-                &scopes,
+                &declared,
                 options.cancel.clone(),
                 super::ingest::names::NameImportPolicy::COMPATIBLE_REFERENCED,
             );
             let calc_settings = crate::calc_pr::parse_calc_pr(&workbook_xml);
-            (sheets, strings, styles, names, calc_settings, has_links)
+            (
+                sheets,
+                strings,
+                styles,
+                names,
+                calc_settings,
+                has_links,
+                sheet_diagnostics,
+            )
         };
         Ok(Self {
             source,
@@ -168,6 +211,7 @@ impl NativeXlsxAdapter {
             names,
             calc_settings,
             name_diagnostics: Vec::new(),
+            sheet_diagnostics,
             has_links,
             external: None,
             prepared: Vec::new(),
@@ -396,6 +440,9 @@ impl SpreadsheetReader for NativeXlsxAdapter {
     fn defined_names(&mut self) -> Result<Vec<crate::traits::DefinedName>, IoError> {
         self.names.defined_names().map_err(IoError::from)
     }
+    fn sheet_import_diagnostics(&self) -> Vec<crate::traits::SheetImportDiagnostic> {
+        self.sheet_diagnostics.clone()
+    }
     fn name_import_diagnostics(&self) -> Vec<crate::traits::NameImportDiagnostic> {
         self.name_diagnostics.clone()
     }
@@ -563,11 +610,9 @@ impl<R: EvaluationContext> EngineLoadStream<R> for NativeXlsxAdapter {
                 usage.bytes += staged.spool_bytes;
                 usage.files += u32::from(staged.spool_spilled);
                 formulas_observed += staged.formulas_observed as u64;
-                formulas_handed += if engine.config.defer_graph_building {
-                    staged.formulas_observed as u64
-                } else {
-                    staged.records.len() as u64
-                };
+                // Match the ordinary loader's handoff accounting, including
+                // source formula records that produce no stored engine formula.
+                formulas_handed += staged.formulas_observed as u64;
                 shared += staged.shared_tags as u64;
                 batches.push(
                     engine,

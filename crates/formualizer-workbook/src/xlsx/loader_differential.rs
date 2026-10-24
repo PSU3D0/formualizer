@@ -378,7 +378,43 @@ where
     IoError: From<<A as EngineLoadStream<WBResolver>>::Error>
         + From<<B as EngineLoadStream<WBResolver>>::Error>,
 {
-    compare_projected(paths, baseline, candidate, output, |dump| dump)
+    compare_projected(
+        paths,
+        baseline,
+        candidate,
+        output,
+        |dump| dump,
+        &BTreeMap::new(),
+    )
+}
+
+// Keep operator fixture locations out of the library. Each manifest line is an
+// exact absolute path, a tab, and a nonempty one-line explanation; no wildcards.
+fn baseline_unavailable_manifest() -> BTreeMap<std::path::PathBuf, String> {
+    let Some(path) = std::env::var_os("FZ_LOADER_BASELINE_ALLOWLIST") else {
+        return BTreeMap::new();
+    };
+    parse_baseline_unavailable_manifest(
+        &std::fs::read_to_string(path).expect("allow-list manifest"),
+    )
+}
+fn parse_baseline_unavailable_manifest(text: &str) -> BTreeMap<std::path::PathBuf, String> {
+    let mut exclusions = BTreeMap::new();
+    for line in text.lines().filter(|line| !line.trim().is_empty()) {
+        let (path, reason) = line
+            .split_once('\t')
+            .expect("allow-list requires path<TAB>reason");
+        let path = std::path::PathBuf::from(path);
+        assert!(
+            path.is_absolute() && !reason.trim().is_empty(),
+            "allow-list requires absolute path and reason"
+        );
+        assert!(
+            exclusions.insert(path, reason.to_owned()).is_none(),
+            "duplicate allow-list path"
+        );
+    }
+    exclusions
 }
 
 fn compare_projected<A, B>(
@@ -387,6 +423,7 @@ fn compare_projected<A, B>(
     candidate: impl Fn(Vec<u8>) -> Result<B, IoError> + Copy,
     mut output: impl std::io::Write,
     project: impl Fn(Dump) -> Dump,
+    exclusions: &BTreeMap<std::path::PathBuf, String>,
 ) -> std::io::Result<(Coverage, usize)>
 where
     A: SpreadsheetReader + EngineLoadStream<WBResolver>,
@@ -396,7 +433,18 @@ where
 {
     let mut coverage = Coverage::default();
     let mut divergences = 0;
+    let mut skipped = 0;
     for path in paths {
+        if let Some(reason) = exclusions.get(path) {
+            skipped += 1;
+            writeln!(
+                output,
+                "SKIP BASELINE_UNAVAILABLE {}: {reason}",
+                path.display()
+            )?;
+            output.flush()?;
+            continue;
+        }
         writeln!(output, "BEGIN {}", path.display())?;
         let bytes = std::fs::read(path)?;
         writeln!(output, "ARM baseline")?;
@@ -419,7 +467,10 @@ where
         }
         output.flush()?;
     }
-    writeln!(output, "TOTAL {coverage:?} divergent_files={divergences}")?;
+    writeln!(
+        output,
+        "TOTAL {coverage:?} divergent_files={divergences} skipped_files={skipped}"
+    )?;
     Ok((coverage, divergences))
 }
 
@@ -443,6 +494,47 @@ fn listed_calamine_oracle_is_repeatable() {
     )
     .unwrap();
     assert_eq!(divergences, 0, "Calamine oracle is not deterministic");
+}
+
+#[test]
+fn baseline_unavailable_allowlist_is_exact_and_explicit() {
+    let exclusions = parse_baseline_unavailable_manifest(
+        "/fixtures/unavailable.xlsx\tbaseline reader returns no result\n",
+    );
+    let path = std::path::PathBuf::from("/fixtures/unavailable.xlsx");
+    let mut report = Vec::new();
+    let (coverage, differences) = compare_projected(
+        &[path],
+        calamine,
+        native,
+        &mut report,
+        |dump| dump,
+        &exclusions,
+    )
+    .unwrap();
+    assert_eq!(coverage.files, 0);
+    assert_eq!(differences, 0);
+    let report = String::from_utf8(report).unwrap();
+    assert!(report.contains("SKIP BASELINE_UNAVAILABLE"));
+    assert!(report.contains("baseline reader returns no result"));
+    assert!(!exclusions.contains_key(std::path::Path::new("/another/unavailable.xlsx")));
+}
+
+#[test]
+#[ignore = "set FZ_LOADER_REPORT and FZ_LOADER_BASELINE_ALLOWLIST for native-only observations"]
+fn listed_native_baseline_unavailable_observations() {
+    use std::io::Write;
+    let mut report =
+        std::fs::File::create(std::env::var_os("FZ_LOADER_REPORT").expect("report path")).unwrap();
+    let exclusions = baseline_unavailable_manifest();
+    assert!(!exclusions.is_empty(), "explicit allow-list required");
+    for (path, reason) in exclusions {
+        writeln!(report, "NATIVE_ONLY {}: {reason}", path.display()).unwrap();
+        report.flush().unwrap();
+        let dump = capture(&std::fs::read(path).unwrap(), native);
+        writeln!(report, "{dump:#?}").unwrap();
+        report.flush().unwrap();
+    }
 }
 
 fn native(bytes: Vec<u8>) -> Result<super::loader::NativeXlsxAdapter, IoError> {
@@ -578,6 +670,7 @@ fn listed_native_loader_differential() {
                 dump
             }
         },
+        &baseline_unavailable_manifest(),
     )
     .unwrap();
     assert_eq!(divergences, 0, "native loader differential; see report");
