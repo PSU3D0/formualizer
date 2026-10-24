@@ -8,6 +8,46 @@ mod retained_tests {
     use crate::{CalamineAdapter, Workbook};
 
     #[test]
+    fn reader_constructor_preserves_the_incoming_cursor() {
+        let bytes = include_bytes!("../../tests/fixtures/zip_containers/libreoffice.xlsx");
+        let mut prefixed = b"prefix".to_vec();
+        prefixed.extend_from_slice(bytes);
+        let mut reader = Cursor::new(prefixed);
+        reader.set_position(6);
+        let mut baseline = CalamineAdapter::open_reader(Box::new(reader.clone())).unwrap();
+        let mut native = NativeXlsxAdapter::open_reader(Box::new(reader)).unwrap();
+        for name in baseline.sheet_names().unwrap() {
+            assert_eq!(
+                format!("{:?}", baseline.read_sheet(&name).unwrap()),
+                format!("{:?}", native.read_sheet(&name).unwrap())
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn path_sources_keep_the_original_backing_after_path_replacement() {
+        let bytes = include_bytes!("../../tests/fixtures/zip_containers/libreoffice.xlsx");
+        for source in [XlsxPathSource::SharedFile, XlsxPathSource::DirectMmap] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("source.xlsx");
+            std::fs::write(&path, bytes).unwrap();
+            let mut baseline = CalamineAdapter::open_path_with_source(&path, source).unwrap();
+            let mut native = NativeXlsxAdapter::open_path_with_source(&path, source).unwrap();
+            // Replace the path, never truncate or mutate the retained/mapped
+            // inode: neither adapter may reopen the replacement by pathname.
+            std::fs::rename(&path, directory.path().join("retained.xlsx")).unwrap();
+            std::fs::write(&path, b"not the original workbook").unwrap();
+            for name in baseline.sheet_names().unwrap() {
+                assert_eq!(
+                    format!("{:?}", baseline.read_sheet(&name).unwrap()),
+                    format!("{:?}", native.read_sheet(&name).unwrap())
+                );
+            }
+        }
+    }
+
+    #[test]
     fn generic_and_stream_surfaces_share_retained_state() {
         let bytes = include_bytes!("../../tests/fixtures/zip_containers/libreoffice.xlsx");
         let mut baseline = CalamineAdapter::open_bytes(bytes.to_vec()).unwrap();
