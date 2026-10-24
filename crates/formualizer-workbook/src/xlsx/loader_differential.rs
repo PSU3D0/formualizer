@@ -46,6 +46,7 @@ struct Coverage {
     sheets: usize,
     cells: usize,
     formulas: usize,
+    evaluated_formulas: usize,
     names: usize,
     diagnostics: usize,
 }
@@ -101,6 +102,57 @@ where
     IoError:
         From<<B as EngineLoadStream<WBResolver>>::Error> + From<<B as SpreadsheetReader>::Error>,
 {
+    capture_snapshot(bytes, open, baseline_available).finish(true)
+}
+
+type FormulaTarget = (usize, String, u32, u32);
+struct PendingEvaluation {
+    workbook: Workbook,
+    formulas: Vec<FormulaTarget>,
+}
+struct Snapshot {
+    dump: Dump,
+    evaluation: Option<PendingEvaluation>,
+}
+impl Snapshot {
+    fn refused(dump: Dump) -> Self {
+        Self {
+            dump,
+            evaluation: None,
+        }
+    }
+    fn accepted(&self) -> bool {
+        self.evaluation.is_some()
+    }
+    fn finish(self, compare_evaluation: bool) -> Dump {
+        let Self {
+            mut dump,
+            evaluation,
+        } = self;
+        let Some(evaluation) = evaluation else {
+            return dump;
+        };
+        if !compare_evaluation {
+            dump.record("evaluation/status", "not compared: other loader refused");
+            return dump;
+        }
+        if std::env::var_os("FZ_LOADER_VALUES_ONLY").is_some() {
+            return dump;
+        }
+        evaluate_snapshot(dump, evaluation.workbook, evaluation.formulas)
+    }
+}
+
+fn capture_snapshot<B>(
+    bytes: &[u8],
+    open: impl Fn(Vec<u8>) -> Result<B, IoError>,
+    baseline_available: bool,
+) -> Snapshot
+where
+    B: SpreadsheetReader + EngineLoadStream<WBResolver>,
+    IoError:
+        From<<B as EngineLoadStream<WBResolver>>::Error> + From<<B as SpreadsheetReader>::Error>,
+{
     let mut dump = Dump::default();
     dump.coverage.files = 1;
     // Metadata/random reads use an independent reader. They must not populate
@@ -109,7 +161,7 @@ where
         Ok(reader) => reader,
         Err(error) => {
             dump.refusal("open", error);
-            return dump;
+            return Snapshot::refused(dump);
         }
     };
     dump.record("reader/capabilities", reader.capabilities());
@@ -172,7 +224,7 @@ where
         Ok(names) => names,
         Err(e) => {
             dump.reader_error("reader/sheets-error", e);
-            return dump;
+            return Snapshot::refused(dump);
         }
     };
     dump.record("reader/sheets", &names);
@@ -273,7 +325,7 @@ where
         Ok(backend) => backend,
         Err(error) => {
             dump.refusal("stream-open", error);
-            return dump;
+            return Snapshot::refused(dump);
         }
     };
     let mut config = WorkbookConfig::ephemeral();
@@ -281,12 +333,12 @@ where
         timestamp_utc: chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
         timezone: formualizer_eval::timezone::TimeZoneSpec::Utc,
     };
-    let (mut wb, stats) =
+    let (wb, stats) =
         match Workbook::from_reader_with_adapter_stats(backend, LoadStrategy::EagerAll, config) {
             Ok(loaded) => loaded,
             Err(error) => {
                 dump.refusal("load", error);
-                return dump;
+                return Snapshot::refused(dump);
             }
         };
     dump.record("loaded/stats", stats);
@@ -376,9 +428,17 @@ where
         }
     }
     dump.coverage.formulas = formulas.len();
-    if std::env::var_os("FZ_LOADER_VALUES_ONLY").is_some() {
-        return dump;
+    Snapshot {
+        dump,
+        evaluation: Some(PendingEvaluation {
+            workbook: wb,
+            formulas,
+        }),
     }
+}
+
+fn evaluate_snapshot(mut dump: Dump, mut wb: Workbook, formulas: Vec<FormulaTarget>) -> Dump {
+    dump.coverage.evaluated_formulas = formulas.len();
     // Evaluate only after snapshotting every cell. Evaluation can materialize
     // spills and build deferred graphs; neither belongs in the load snapshot.
     // A single public batch evaluates every requested formula, without
@@ -517,6 +577,7 @@ where
     let mut coverage = Coverage::default();
     let mut divergences = 0;
     let mut skipped = 0;
+    let mut acceptance_asymmetric = 0;
     for path in paths {
         if let Some(reason) = exclusions.get(path) {
             skipped += 1;
@@ -532,10 +593,25 @@ where
         let bytes = std::fs::read(path)?;
         writeln!(output, "ARM baseline")?;
         output.flush()?;
-        let a = project(capture(&bytes, baseline));
+        let a = capture_snapshot(&bytes, baseline, true);
         writeln!(output, "ARM native")?;
         output.flush()?;
-        let b = project(capture(&bytes, candidate));
+        let b = capture_snapshot(&bytes, candidate, true);
+        let both_accepted = a.accepted() && b.accepted();
+        if a.accepted() != b.accepted() {
+            acceptance_asymmetric += 1;
+            writeln!(output, "EVALUATION NOT COMPARED: acceptance asymmetry")?;
+        }
+        if both_accepted {
+            writeln!(output, "EVALUATE baseline")?;
+            output.flush()?;
+        }
+        let a = project(a.finish(both_accepted));
+        if both_accepted {
+            writeln!(output, "EVALUATE native")?;
+            output.flush()?;
+        }
+        let b = project(b.finish(both_accepted));
         if !a.raw_reader_errors.is_empty() || !b.raw_reader_errors.is_empty() {
             writeln!(
                 output,
@@ -547,6 +623,7 @@ where
         coverage.sheets += a.coverage.sheets;
         coverage.cells += a.coverage.cells;
         coverage.formulas += a.coverage.formulas;
+        coverage.evaluated_formulas += a.coverage.evaluated_formulas;
         coverage.names += a.coverage.names;
         coverage.diagnostics += a.coverage.diagnostics;
         if let Some(difference) = first_difference(&a, &b) {
@@ -559,7 +636,7 @@ where
     }
     writeln!(
         output,
-        "TOTAL {coverage:?} divergent_files={divergences} skipped_files={skipped}"
+        "TOTAL {coverage:?} divergent_files={divergences} skipped_files={skipped} acceptance_asymmetric_files={acceptance_asymmetric}"
     )?;
     Ok((coverage, divergences))
 }
@@ -804,10 +881,16 @@ fn refusal_asymmetry_does_not_stop_later_files() {
     let mut report = Vec::new();
     let (coverage, divergences) = compare_files(&paths, calamine, refused, &mut report).unwrap();
     assert_eq!(coverage.files, 2);
+    assert_eq!(
+        coverage.evaluated_formulas, 0,
+        "asymmetry must not evaluate the accepting arm"
+    );
     assert_eq!(divergences, 2);
     let report = String::from_utf8(report).unwrap();
     assert_eq!(report.matches("DIVERGENCE ").count(), 2);
     assert!(report.contains("deliberate candidate refusal"));
+    assert!(report.contains("acceptance_asymmetric_files=2"));
+    assert_eq!(report.matches("EVALUATION NOT COMPARED").count(), 2);
     let (_, reverse) = compare_files(&paths, refused, calamine, Vec::new()).unwrap();
     assert_eq!(
         reverse, 2,
@@ -851,5 +934,7 @@ fn calamine_oracle_is_repeatable() {
     let a = capture(bytes, calamine);
     let b = capture(bytes, calamine);
     assert!(a.coverage.cells > 0, "{:?}", a.records);
+    assert_eq!(a.coverage.evaluated_formulas, a.coverage.formulas);
+    assert!(a.coverage.evaluated_formulas > 0);
     assert_eq!(first_difference(&a, &b), None);
 }
