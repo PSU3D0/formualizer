@@ -1596,7 +1596,7 @@ class Workbook:
         
         Args:
             path: Path to the `.xlsx` file.
-            backend: Backend name (currently defaults to `calamine`).
+            backend: `calamine` (default), opt-in `native`, or `umya`.
             path_source: `XlsxPathSource.SHARED_FILE` (the safe default) or
                 `XlsxPathSource.DIRECT_MMAP`. Direct mmap requires a native
                 Calamine `.xlsx` path whose underlying file is not destructively
@@ -1644,7 +1644,7 @@ class Workbook:
         Args:
             data: XLSX payload as `bytes`.
             backend: Backend name. Defaults to `calamine` in native Python builds
-                and `umya` in Pyodide builds where Calamine is unavailable.
+                and `umya` in Pyodide. `native` is opt-in on either platform.
             mode/config: Optional workbook configuration.
         """
     def to_xlsx_bytes(self, backend: typing.Optional[builtins.str] = None) -> bytes:
@@ -2113,7 +2113,7 @@ class XlsxPathSource(enum.Enum):
     def __str__(self) -> builtins.str: ...
     def __repr__(self) -> builtins.str: ...
 
-def load_workbook(path: builtins.str, strategy: typing.Optional[builtins.str] = None, *, path_source: typing.Optional[XlsxPathSource] = None, span_evaluation: typing.Optional[builtins.bool] = None) -> Workbook:
+def load_workbook(path: builtins.str, strategy: typing.Optional[builtins.str] = None, *, backend: typing.Optional[builtins.str] = None, path_source: typing.Optional[XlsxPathSource] = None, span_evaluation: typing.Optional[builtins.bool] = None) -> Workbook:
     r"""
     Load an XLSX workbook from a filesystem path.
     
@@ -2121,8 +2121,8 @@ def load_workbook(path: builtins.str, strategy: typing.Optional[builtins.str] = 
     
     Args:
         path: Path to an `.xlsx` file.
-        strategy: Currently accepted for backward compatibility.
-            (The backend/strategy is currently fixed to `calamine` + eager load.)
+        strategy: Currently accepted for backward compatibility; loading is eager.
+        backend: `calamine` (default), opt-in `native`, or `umya`.
         path_source: `XlsxPathSource.SHARED_FILE` (the safe default) or
             `XlsxPathSource.DIRECT_MMAP`. Direct mmap retains an actual read-only
             mapping; the underlying file must not be destructively modified or
@@ -2146,7 +2146,8 @@ def load_workbook_bytes(data: bytes, strategy: typing.Optional[builtins.str] = N
     
     This is the byte-oriented counterpart to `load_workbook(...)`. Native Python
     builds default to `calamine`; Pyodide defaults to `umya` (pass
-    `backend="calamine"` to use Calamine there).
+    `backend="calamine"` to use Calamine there). Pass `backend="native"` to opt
+    into the native XLSX reader on either platform.
     """
 
 def parse(formula: builtins.str, dialect: typing.Optional[FormulaDialect] = None) -> ASTNode:

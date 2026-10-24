@@ -44,6 +44,8 @@ thread_local! {
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct JsWorkbookLoadOptions {
+    /// XLSX reader: `calamine` (default) or opt-in `native`.
+    backend: Option<String>,
     span_evaluation: Option<bool>,
     /// Cycle detection mode: `"static"` | `"runtime"` (spec §2).
     cycle_detection: Option<String>,
@@ -61,15 +63,23 @@ struct JsWorkbookLoadOptions {
 fn workbook_config_from_options(
     options: Option<JsValue>,
 ) -> Result<formualizer::workbook::WorkbookConfig, JsValue> {
-    use formualizer::eval::engine::{CycleDetection, CyclePolicy};
+    workbook_config_from_parsed(&parse_workbook_load_options(options)?)
+}
 
-    let parsed = match options {
+fn parse_workbook_load_options(options: Option<JsValue>) -> Result<JsWorkbookLoadOptions, JsValue> {
+    Ok(match options {
         Some(value) if !value.is_null() && !value.is_undefined() => {
             serde_wasm_bindgen::from_value::<JsWorkbookLoadOptions>(value)
                 .map_err(|e| js_error(format!("invalid workbook load options: {e}")))?
         }
         _ => JsWorkbookLoadOptions::default(),
-    };
+    })
+}
+
+fn workbook_config_from_parsed(
+    parsed: &JsWorkbookLoadOptions,
+) -> Result<formualizer::workbook::WorkbookConfig, JsValue> {
+    use formualizer::eval::engine::{CycleDetection, CyclePolicy};
     let mut cfg = formualizer::workbook::WorkbookConfig::interactive();
     if let Some(enabled) = parsed.span_evaluation {
         cfg = cfg.with_span_evaluation(enabled);
@@ -784,36 +794,74 @@ impl Workbook {
         Self::from_xlsx_bytes_with_options(bytes, None)
     }
 
-    /// Construct from XLSX bytes with options, e.g. `{ spanEvaluation: true }`
-    /// to opt into experimental FormulaPlane spans.
+    /// Construct from XLSX bytes with options, e.g. `{ backend: "native" }`
+    /// for the opt-in native reader, or `{ spanEvaluation: true }` for spans.
+    /// Calamine remains the default reader.
     #[wasm_bindgen(js_name = "fromXlsxBytesWithOptions")]
     pub fn from_xlsx_bytes_with_options(
         bytes: Vec<u8>,
         options: Option<JsValue>,
     ) -> Result<Workbook, JsValue> {
-        #[cfg(feature = "calamine")]
+        let parsed = parse_workbook_load_options(options)?;
+        #[cfg(not(any(feature = "calamine", feature = "xlsx-recalc")))]
         {
-            use formualizer::workbook::backends::CalamineAdapter;
-            use formualizer::workbook::traits::SpreadsheetReader;
-            let adapter = <CalamineAdapter as SpreadsheetReader>::open_bytes(bytes)
-                .map_err(|e| js_error(format!("open failed: {e}")))?;
-            let cfg = workbook_config_from_options(options)?;
-            let wb = formualizer::workbook::Workbook::from_reader(
-                adapter,
-                formualizer::workbook::LoadStrategy::EagerAll,
-                cfg,
-            )
-            .map_err(|e| js_error(format!("load failed: {e}")))?;
+            let _ = bytes;
+            match parsed.backend.as_deref().unwrap_or("calamine") {
+                "calamine" => Err(js_error("calamine feature not enabled")),
+                "native" => Err(js_error("native backend requires the xlsx-recalc feature")),
+                other => Err(js_error(format!(
+                    "invalid XLSX backend: {other}. Use 'calamine' or 'native'."
+                ))),
+            }
+        }
+        #[cfg(any(feature = "calamine", feature = "xlsx-recalc"))]
+        {
+            let wb = match parsed.backend.as_deref().unwrap_or("calamine") {
+                "calamine" => {
+                    #[cfg(feature = "calamine")]
+                    {
+                        use formualizer::workbook::backends::CalamineAdapter;
+                        use formualizer::workbook::traits::SpreadsheetReader;
+                        let adapter = <CalamineAdapter as SpreadsheetReader>::open_bytes(bytes)
+                            .map_err(|e| js_error(format!("open failed: {e}")))?;
+                        formualizer::workbook::Workbook::from_reader(
+                            adapter,
+                            formualizer::workbook::LoadStrategy::EagerAll,
+                            workbook_config_from_parsed(&parsed)?,
+                        )
+                        .map_err(|e| js_error(format!("load failed: {e}")))?
+                    }
+                    #[cfg(not(feature = "calamine"))]
+                    return Err(js_error("calamine feature not enabled"));
+                }
+                "native" => {
+                    #[cfg(feature = "xlsx-recalc")]
+                    {
+                        use formualizer::workbook::backends::NativeXlsxAdapter;
+                        use formualizer::workbook::traits::SpreadsheetReader;
+                        let adapter = NativeXlsxAdapter::open_bytes(bytes)
+                            .map_err(|e| js_error(format!("open failed: {e}")))?;
+                        formualizer::workbook::Workbook::from_reader(
+                            adapter,
+                            formualizer::workbook::LoadStrategy::EagerAll,
+                            workbook_config_from_parsed(&parsed)?,
+                        )
+                        .map_err(|e| js_error(format!("load failed: {e}")))?
+                    }
+                    #[cfg(not(feature = "xlsx-recalc"))]
+                    return Err(js_error("native backend requires the xlsx-recalc feature"));
+                }
+                other => {
+                    return Err(js_error(format!(
+                        "invalid XLSX backend: {other}. Use 'calamine' or 'native'."
+                    )));
+                }
+            };
             Ok(Workbook {
                 inner: Arc::new(RwLock::new(wb)),
                 cancel_flag: Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 callback_ids: Arc::new(RwLock::new(BTreeMap::new())),
             })
-        }
-        #[cfg(not(feature = "calamine"))]
-        {
-            let _ = bytes;
-            Err(js_error("calamine feature not enabled"))
         }
     }
 

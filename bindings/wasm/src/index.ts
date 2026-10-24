@@ -584,6 +584,8 @@ export interface SheetPortEvaluateOptions {
  * `fromJsonWithOptions` / `fromXlsxBytesWithOptions` loaders.
  */
 export interface WorkbookLoadOptions {
+  /** XLSX reader only: Calamine remains the default; native is opt-in. */
+  backend?: 'calamine' | 'native';
   /** Opt into experimental FormulaPlane span evaluation. */
   spanEvaluation?: boolean;
   /** Cycle detection mode (spec §2). */
@@ -771,7 +773,7 @@ export async function recalculateXlsxBytes(
 export type WorkbookConstructor = {
   new (options?: WorkbookLoadOptions): WorkbookApi;
   fromJson(json: string): WorkbookApi;
-  fromXlsxBytes(bytes: XlsxBytesSource): WorkbookApi;
+  fromXlsxBytes(bytes: XlsxBytesSource, options?: WorkbookLoadOptions): WorkbookApi;
   prototype: WorkbookApi;
 };
 
@@ -792,15 +794,18 @@ const rawWorkbookCtor = wasm.Workbook as unknown as {
   new (options?: WorkbookLoadOptions): WorkbookApi;
   fromJson(json: string): WorkbookApi;
   fromXlsxBytes(bytes: Uint8Array): WorkbookApi;
+  fromXlsxBytesWithOptions(bytes: Uint8Array, options?: WorkbookLoadOptions): WorkbookApi;
   prototype: WorkbookApi;
 };
 const rawWorkbookFromXlsxBytes = rawWorkbookCtor.fromXlsxBytes.bind(rawWorkbookCtor);
+const rawWorkbookFromXlsxBytesWithOptions = rawWorkbookCtor.fromXlsxBytesWithOptions.bind(rawWorkbookCtor);
 
 export const Workbook = Object.assign(rawWorkbookCtor, {
-  fromXlsxBytes(bytes: XlsxBytesSource): WorkbookApi {
-    return rawWorkbookFromXlsxBytes(
-      bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes),
-    );
+  fromXlsxBytes(bytes: XlsxBytesSource, options?: WorkbookLoadOptions): WorkbookApi {
+    const input = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    return options === undefined
+      ? rawWorkbookFromXlsxBytes(input)
+      : rawWorkbookFromXlsxBytesWithOptions(input, options);
   },
 }) as WorkbookConstructor;
 export const SheetPortSession = wasm.SheetPortSession as unknown as SheetPortSessionConstructor;

@@ -588,6 +588,34 @@ fn test_workbook_from_xlsx_bytes_evaluates_formula() {
 }
 
 #[wasm_bindgen_test]
+fn test_workbook_xlsx_backend_option() {
+    for backend in ["calamine", "native"] {
+        let options = Object::new();
+        Reflect::set(&options, &"backend".into(), &backend.into()).unwrap();
+        Reflect::set(&options, &"spanEvaluation".into(), &JsValue::FALSE).unwrap();
+        let wb = Workbook::from_xlsx_bytes_with_options(
+            build_fixture_xlsx_bytes(),
+            Some(options.into()),
+        )
+        .unwrap();
+        assert_eq!(
+            wb.evaluate_cell("Sheet1".into(), 1, 3).unwrap().as_f64(),
+            Some(3.0)
+        );
+        assert_eq!(
+            wb.sheet_names().unwrap().get(0).as_string().as_deref(),
+            Some("Sheet1")
+        );
+    }
+    let options = Object::new();
+    Reflect::set(&options, &"backend".into(), &"unknown".into()).unwrap();
+    assert!(
+        Workbook::from_xlsx_bytes_with_options(build_fixture_xlsx_bytes(), Some(options.into()))
+            .is_err()
+    );
+}
+
+#[wasm_bindgen_test]
 fn test_recalculate_xlsx_bytes_preserves_prototype_like_sheet_names() {
     let input = Uint8Array::from(build_named_fixture_xlsx_bytes("__proto__").as_slice());
     let result: Object = recalculate_xlsx_bytes(input, None, JsValue::UNDEFINED)

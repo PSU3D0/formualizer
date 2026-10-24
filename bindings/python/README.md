@@ -148,6 +148,13 @@ out = wb.to_xlsx_bytes()
 
 Native Python builds use `calamine` by default for both path-based and byte-oriented XLSX loading. Pyodide defaults to `umya` for byte loading and accepts `backend="calamine"` explicitly; `umya` also remains available explicitly on native builds. XLSX byte export uses `umya` because Calamine is read-only.
 
+The native XLSX reader is opt-in on desktop Python and Pyodide: pass `backend="native"` to `load_workbook`, `load_workbook_bytes`, `Workbook.from_path`, `Workbook.load_path`, or `Workbook.from_bytes`. Existing defaults are unchanged. Filesystem loading supports the same `SHARED_FILE` and host-only `DIRECT_MMAP` path sources; the native backend is read-only.
+
+```python
+wb = fz.load_workbook("financial_model.xlsx", backend="native")
+wb_from_bytes = fz.Workbook.from_bytes(payload, backend="native")
+```
+
 ### Recalculate XLSX cached values (writeback)
 
 ```python
@@ -485,7 +492,7 @@ To ship the manifest as a file instead, write it once with `manifest.to_yaml()` 
 ```python
 tokenize(formula: str, dialect: FormulaDialect = None) -> Tokenizer
 parse(formula: str, dialect: FormulaDialect = None) -> ASTNode
-load_workbook(path: str, strategy: str = None, *, path_source: XlsxPathSource | None = None, span_evaluation: bool | None = None) -> Workbook
+load_workbook(path: str, strategy: str = None, *, backend: str | None = None, path_source: XlsxPathSource | None = None, span_evaluation: bool | None = None) -> Workbook
 load_workbook_bytes(data: bytes, strategy: str = None, backend: str | None = None, *, span_evaluation: bool | None = None) -> Workbook
 recalculate_file(path: str, output: str | None = None) -> dict
 recalculate_xlsx_bytes(data: bytes, *, error_location_limit: int | None = None, rng_seed: int | None = None, deterministic_timestamp_utc: datetime | None = None, deterministic_timezone: str | int | None = None, external_links: str = "cached") -> dict

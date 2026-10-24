@@ -115,8 +115,8 @@ fn parse(formula: &str, dialect: Option<PyFormulaDialect>) -> PyResult<PyASTNode
 ///
 /// Args:
 ///     path: Path to an `.xlsx` file.
-///     strategy: Currently accepted for backward compatibility.
-///         (The backend/strategy is currently fixed to `calamine` + eager load.)
+///     strategy: Currently accepted for backward compatibility; loading is eager.
+///     backend: `calamine` (default), opt-in `native`, or `umya`.
 ///     path_source: `XlsxPathSource.SHARED_FILE` (the safe default) or
 ///         `XlsxPathSource.DIRECT_MMAP`. Direct mmap retains an actual read-only
 ///         mapping; the underlying file must not be destructively modified or
@@ -137,20 +137,21 @@ fn parse(formula: &str, dialect: Option<PyFormulaDialect>) -> PyResult<PyASTNode
     gen_stub_pyfunction(module = "formualizer.formualizer_py")
 )]
 #[pyfunction]
-#[pyo3(signature = (path, strategy=None, *, path_source=None, span_evaluation=None))]
+#[pyo3(signature = (path, strategy=None, *, backend=None, path_source=None, span_evaluation=None))]
 fn load_workbook(
     py: Python,
     path: &str,
     strategy: Option<&str>,
+    backend: Option<&str>,
     path_source: Option<PyXlsxPathSource>,
     span_evaluation: Option<bool>,
 ) -> PyResult<workbook::PyWorkbook> {
     // Backward-compat convenience
-    let _ = strategy; // placeholder, backend currently fixed to calamine
+    let _ = strategy; // placeholder, loading remains eager
     workbook::PyWorkbook::from_path(
         &py.get_type::<workbook::PyWorkbook>(),
         path,
-        Some("calamine"),
+        Some(backend.unwrap_or("calamine")),
         path_source,
         None,
         None,
@@ -162,7 +163,8 @@ fn load_workbook(
 ///
 /// This is the byte-oriented counterpart to `load_workbook(...)`. Native Python
 /// builds default to `calamine`; Pyodide defaults to `umya` (pass
-/// `backend="calamine"` to use Calamine there).
+/// `backend="calamine"` to use Calamine there). Pass `backend="native"` to opt
+/// into the native XLSX reader on either platform.
 #[cfg_attr(
     not(target_os = "emscripten"),
     gen_stub_pyfunction(module = "formualizer.formualizer_py")
