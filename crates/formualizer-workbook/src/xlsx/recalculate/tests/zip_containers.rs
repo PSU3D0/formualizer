@@ -35,6 +35,104 @@ fn admit(bytes: &[u8]) -> Result<(), crate::IoError> {
 }
 
 #[test]
+fn bulk_retention_keeps_physical_crc_expansion_and_error_order() {
+    use crate::xlsx::options::ReadOptions;
+    use std::collections::HashSet;
+    for duplicate in [false, true] {
+        let mut entries = workbook();
+        if duplicate {
+            entries.push(entries[0].clone());
+        }
+        for damaged in [0, entries.len() - 1] {
+            let mut bytes = build(&entries);
+            let mut archive = ZipArchive::new(Cursor::new(&bytes)).unwrap();
+            let offset = if duplicate && damaged == entries.len() - 1 {
+                // Both named entries must be audited; damage the final local
+                // payload by walking the writer's raw local records below.
+                let local = bytes.windows(4).rposition(|w| w == b"PK\x03\x04").unwrap();
+                local + 30 + entries[damaged].name.len() + entries[damaged].local_extra.len()
+            } else {
+                archive.by_index(damaged).unwrap().data_start() as usize
+            };
+            drop(archive);
+            bytes[offset] ^= 1;
+            let result = package::admit_retaining(&bytes, &ReadOptions::default(), |archive| {
+                let _ = package::read_part(archive, &entries[0].name, 1 << 20);
+                Err::<((), HashSet<String>), _>(crate::IoError::Backend {
+                    backend: "semantic".into(),
+                    message: "must follow CRC".into(),
+                })
+            });
+            let error = match result {
+                Ok(_) => panic!("damaged payload admitted"),
+                Err(e) => e.to_string(),
+            };
+            assert!(
+                !error.contains("must follow CRC"),
+                "physical failure must win: {error}"
+            );
+        }
+        let bytes = build(&entries);
+        let mut options = ReadOptions::default();
+        options.limits.max_expanded_bytes = entries.iter().map(|e| e.data.len()).sum::<usize>() - 1;
+        assert!(package::admit_retaining(&bytes, &options, |_| Ok(((), HashSet::new()))).is_err());
+    }
+}
+
+#[test]
+fn bulk_decoded_unicode_name_collisions_cannot_hide_physical_payloads() {
+    use crate::xlsx::options::ReadOptions;
+    let mut entries = workbook();
+    for (i, entry) in entries.iter_mut().take(2).enumerate() {
+        entry.name = format!("raw-{i}.xml");
+        let mut extra = vec![1];
+        extra.extend_from_slice(&crc32(entry.name.as_bytes()).to_le_bytes());
+        extra.extend_from_slice(b"same.xml");
+        entry.central_extra = field(0x7075, &extra);
+        entry.local_extra = entry.central_extra.clone();
+    }
+    let bytes = build(&entries);
+    let archive = ZipArchive::new(Cursor::new(&bytes)).unwrap();
+    assert!(
+        archive.len() < entries.len(),
+        "fixture must collide after Unicode name decoding"
+    );
+    // Corrupt the first physical payload, which the aggregate name map hid.
+    let local_name_len = entries[0].name.len();
+    let offset = 30 + local_name_len + entries[0].local_extra.len();
+    let mut bytes = bytes;
+    bytes[offset] ^= 1;
+    assert!(
+        package::admit_retaining(&bytes, &ReadOptions::default(), |_| Ok((
+            (),
+            std::collections::HashSet::new()
+        )))
+        .is_err()
+    );
+}
+
+#[test]
+fn bulk_retention_streams_unselected_members_and_bounds_cached_parts() {
+    use crate::xlsx::options::ReadOptions;
+    use std::collections::HashSet;
+    let entries = workbook();
+    let bytes = build(&entries);
+    let needed: HashSet<_> = [entries[1].name.clone()].into_iter().collect();
+    let mut options = ReadOptions::default();
+    options.limits.max_worksheet_bytes = 8;
+    package::take_part_inflates();
+    let (mut archive, ()) =
+        package::admit_retaining(&bytes, &options, |_| Ok(((), needed))).unwrap();
+    assert_eq!(
+        package::retained_bytes(&archive),
+        9,
+        "only bounded consumer prefix retained"
+    );
+    assert!(package::take_part(&mut archive, &entries[1].name, 8).is_err());
+    assert!(package::take_part_inflates().values().all(|&n| n == 1));
+}
+
+#[test]
 fn compatible_container_reads_skip_rewrite_only_admission() {
     use crate::xlsx::options::ReadOptions;
     for case in 0..6 {
@@ -276,6 +374,30 @@ fn opaque_payloads_are_streamed_before_discovery_not_retained() {
     assert!(counts.values().all(|count| *count == 1), "{counts:?}");
     // This metric covers the actual streaming audit buffer, not all source
     // allocations. The companion process-RSS regression checks retained heap.
+    assert_eq!(package::take_audit_buffer_peak(), 64 * 1024);
+}
+
+#[test]
+fn bulk_opaque_members_remain_streamed_with_retaining_admission() {
+    use crate::xlsx::options::ReadOptions;
+    let bytes = opaque_first(FIXTURES[0].1);
+    package::take_part_inflates();
+    package::take_audit_buffer_peak();
+    let (archive, ()) = package::admit_retaining(&bytes, &ReadOptions::default(), |archive| {
+        package::read_part(archive, "_rels/.rels", 64 * 1024)?;
+        Ok((
+            (),
+            ["xl/worksheets/sheet1.xml".to_owned()]
+                .into_iter()
+                .collect(),
+        ))
+    })
+    .unwrap();
+    assert!(package::retained_bytes(&archive) < 64 * 1024);
+    let counts = package::take_part_inflates();
+    assert!(counts.values().all(|&n| n == 1), "{counts:?}");
+    assert_eq!(counts["opaque/0.bin"], 1);
+    assert_eq!(counts["opaque/1.bin"], 1);
     assert_eq!(package::take_audit_buffer_peak(), 64 * 1024);
 }
 

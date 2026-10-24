@@ -71,6 +71,7 @@ impl RowValue<'_> {
 struct Dense<'a> {
     builder: IngestBuilder,
     row: Vec<RowValue<'a>>,
+    touched: Vec<usize>,
     current: usize,
     appended: usize,
     started: bool,
@@ -147,6 +148,7 @@ impl<'a> ValueSink<'a> {
                 context.date_system,
             ),
             row: vec![RowValue::default(); dimensions.1],
+            touched: Vec::new(),
             current: 0,
             appended: 0,
             started: false,
@@ -180,6 +182,9 @@ impl<'a> ValueSink<'a> {
             .checked_sub(1)
             .ok_or_else(|| unsupported("zero native column", self.context.name))?
             as usize;
+        if row < self.dimensions.0 && col < self.dimensions.1 {
+            return Ok((row, col));
+        }
         self.dimensions.0 = self.dimensions.0.max(row + 1);
         self.dimensions.1 = self.dimensions.1.max(col + 1);
         enforce_sheet_dimension_limits(
@@ -215,9 +220,6 @@ impl<'a> ValueSink<'a> {
             *value = RowValue::default();
         }
         Ok(())
-    }
-    pub(in crate::xlsx) fn observed_count(&self) -> usize {
-        self.values
     }
     pub(in crate::xlsx) fn push(&mut self, literal: Literal<'_>) -> Result<(), IoError> {
         let (row, col) = self.coordinate(literal.row, literal.col)?;
@@ -259,7 +261,7 @@ impl<'a> ValueSink<'a> {
                 Value::Text(Cow::Owned(s)) => Scalar::Text(Cow::Owned(s)),
                 Value::Text(Cow::Borrowed(s)) => Scalar::Text(self.source_text(s)),
                 Value::Shared(index) => {
-                    Scalar::Text(Cow::Borrowed(self.context.strings.get(index as usize)?))
+                    Scalar::Text(Cow::Borrowed(self.context.strings.get(index)?))
                 }
                 Value::Unreadable => {
                     return Err(unsupported(
@@ -269,12 +271,42 @@ impl<'a> ValueSink<'a> {
                 }
             }
         };
-        if matches!(scalar, Scalar::Empty) {
+        self.store(row, col, RowValue { scalar, format })
+    }
+    /// Already-decoded compatible cells need neither raw attribute spans nor
+    /// a second type/index parse. Keep the general scanner entry independent.
+    pub(in crate::xlsx) fn push_decoded(
+        &mut self,
+        row: u32,
+        col: u32,
+        value: Value<'_>,
+        format: Option<FormatId>,
+    ) -> Result<(), IoError> {
+        let (row, col) = self.coordinate(row, col)?;
+        let scalar = match value {
+            Value::Empty => Scalar::Empty,
+            Value::Number(n) if n.is_finite() => Scalar::Number(n),
+            Value::Number(_) => Scalar::Error(map_error_code(ExcelErrorKind::Num)),
+            Value::Boolean(b) => Scalar::Boolean(b),
+            Value::Error(e) => Scalar::Error(error_code(e)),
+            Value::Text(Cow::Owned(s)) => Scalar::Text(Cow::Owned(s)),
+            Value::Text(Cow::Borrowed(s)) => Scalar::Text(self.source_text(s)),
+            Value::Shared(index) => Scalar::Text(Cow::Borrowed(self.context.strings.get(index)?)),
+            Value::Unreadable => {
+                return Err(unsupported(
+                    "unmasked unreadable native value",
+                    self.context.name,
+                ));
+            }
+        };
+        self.store(row, col, RowValue { scalar, format })
+    }
+    fn store(&mut self, row: usize, col: usize, value: RowValue<'a>) -> Result<(), IoError> {
+        if matches!(value.scalar, Scalar::Empty) {
             return Ok(());
         }
         self.values += 1;
         self.budget()?;
-        let value = RowValue { scalar, format };
         if let Some(sheet) = self.sparse.as_mut() {
             self.pending.push(sheet, row, col, &value);
             return Ok(());
@@ -325,7 +357,9 @@ impl<'a> ValueSink<'a> {
         } else if row > dense.current {
             dense.append()?;
             dense.appended += 1;
-            dense.row.fill(RowValue::default());
+            for col in dense.touched.drain(..) {
+                dense.row[col] = RowValue::default();
+            }
             while dense.appended < row {
                 dense.append()?;
                 dense.appended += 1;
@@ -336,6 +370,9 @@ impl<'a> ValueSink<'a> {
             .row
             .get_mut(col)
             .ok_or_else(|| unsupported("native column overflow", self.context.name))?;
+        if matches!(target.scalar, Scalar::Empty) {
+            dense.touched.push(col);
+        }
         *target = value;
         Ok(())
     }
@@ -455,6 +492,10 @@ fn unsigned_index(raw: &[u8]) -> usize {
         0
     }
 }
+#[cfg(test)]
+#[path = "values_bulk_tests.rs"]
+mod bulk_tests;
+
 fn error_code(error: calamine::CellErrorType) -> u8 {
     let kind = match error {
         calamine::CellErrorType::Div0 => ExcelErrorKind::Div,

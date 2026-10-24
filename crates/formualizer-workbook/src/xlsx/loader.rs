@@ -1,12 +1,81 @@
 //! Compatible XLSX loading through the shared bounded source reader.
 
-mod cells;
+pub(in crate::xlsx) mod cells;
 mod timing;
 
 #[cfg(test)]
 mod retained_tests {
     use super::*;
     use crate::{CalamineAdapter, Workbook};
+
+    #[test]
+    fn bulk_unique_loader_inflates_consumed_parts_once() {
+        let bytes = include_bytes!("../../tests/fixtures/zip_containers/libreoffice.xlsx");
+        package::take_part_inflates();
+        let mut native = NativeXlsxAdapter::open_bytes(bytes.to_vec()).unwrap();
+        native
+            .stream_into_engine(Workbook::new().engine_mut())
+            .unwrap();
+        for (name, count) in package::take_part_inflates() {
+            assert_eq!(count, 1, "{name} must not be inflated again after audit");
+        }
+    }
+
+    #[test]
+    fn bulk_formula_producer_does_not_retain_a_second_record_vector() {
+        let bytes = include_bytes!("../../tests/fixtures/shared_formula_above_master.xlsx");
+        let native = NativeXlsxAdapter::open_bytes(bytes.to_vec()).unwrap();
+        let limits = Default::default();
+        let mut count = 0;
+        let mut emit = |_| {
+            count += 1;
+            Ok(())
+        };
+        let parsed = native
+            .scan_sheet_produced(
+                &native.sheets[0],
+                &limits,
+                DateSystem::Excel1900,
+                false,
+                Some(&mut emit),
+            )
+            .unwrap();
+        assert!(count > 0);
+        assert!(parsed.records.is_empty());
+        assert!(parsed.reader_values.is_none());
+    }
+
+    #[test]
+    fn bulk_source_errors_precede_later_or_same_cell_staging_failures() {
+        let bytes = include_bytes!("../../tests/fixtures/zip_containers/libreoffice.xlsx");
+        let native = NativeXlsxAdapter::open_bytes(bytes.to_vec()).unwrap();
+        for body in [
+            "<c r=\"A1\" t=\"s\"><v>999999</v></c><c r=\"B1\"><f>1</f></c>",
+            "<c r=\"A1\" t=\"s\"><f>1</f><v>999999</v></c>",
+            "<c r=\"A1\"><f t=\"shared\" si=\"bad\"/></c><c r=\"B1\"><f>1</f></c>",
+        ] {
+            let sheet = SheetSource {
+                name: "test".into(),
+                data: format!("<worksheet><sheetData><row>{body}</row></sheetData></worksheet>")
+                    .into_bytes(),
+                parsed: OnceLock::new(),
+                reader: OnceLock::new(),
+                reader_parsed: OnceLock::new(),
+            };
+            let limits = Default::default();
+            let mut emit = |_| panic!("source failure must prevent later staging failures");
+            let parsed = native
+                .scan_sheet_produced(
+                    &sheet,
+                    &limits,
+                    DateSystem::Excel1900,
+                    false,
+                    Some(&mut emit),
+                )
+                .unwrap();
+            assert!(parsed.stream_error.is_some(), "{body}");
+        }
+    }
 
     #[test]
     fn reader_constructor_preserves_the_incoming_cursor() {
@@ -89,7 +158,10 @@ mod retained_tests {
             }
             // Once each surface is requested, subsequent reads use its cache.
             for sheet in &mut native.sheets {
-                assert!(sheet.parsed.get().is_some());
+                assert!(
+                    sheet.parsed.get().is_none(),
+                    "engine handoff must consume its value plane"
+                );
                 assert!(sheet.reader_parsed.get().is_some());
                 sheet.data.clear();
             }
@@ -123,12 +195,7 @@ use super::{
     },
     metadata::{SharedStringTable, Styles, read_source},
     options::ReadOptions,
-    package,
-    worksheet::{
-        self,
-        events::{Formula, FormulaKind, Literal, Sink},
-    },
-    xml,
+    package, worksheet, xml,
 };
 use crate::{
     IoError, SpreadsheetReader,
@@ -190,71 +257,92 @@ impl NativeXlsxAdapter {
         let options = ReadOptions::default();
         let (sheets, strings, styles, names, calc_settings, has_links, sheet_diagnostics) = {
             let bytes = source.bytes(options.limits.max_input_bytes)?;
-            let mut archive = package::admit_with(&bytes, &options, Ok)?;
-            let root = package::relationships_read(&mut archive, "", &options)?;
-            let workbook = root
-                .values()
-                .find(|r| r.kind.ends_with("/officeDocument"))
-                .and_then(|r| r.target.clone())
-                .unwrap_or_else(|| "xl/workbook.xml".into());
-            let relationships = package::relationships_read(&mut archive, &workbook, &options)?;
-            let workbook_xml =
-                package::read_part(&mut archive, &workbook, options.limits.max_worksheet_bytes)?;
-            let mut has_links = archive
-                .file_names()
-                .any(|part| part.starts_with("xl/externalLinks/"));
-            let mut declared = Vec::new();
-            read_source(&workbook_xml, &options, |path, node| {
-                if xml::path_is(
-                    path,
-                    xml::MAIN,
-                    &["workbook", "externalReferences", "externalReference"],
-                ) && matches!(node.kind, xml::Kind::Open { .. })
-                {
-                    has_links = true;
-                }
-                if xml::path_is(path, xml::MAIN, &["workbook", "sheets", "sheet"])
-                    && matches!(node.kind, xml::Kind::Open { .. })
-                    && let (Some(name), Some(id)) =
-                        (node.value("name"), node.attribute(xml::OFFICE, "id"))
-                {
-                    let (inert, kind, target) = if id.value.is_empty() {
-                        (true, "module", String::new())
-                    } else {
-                        let relation = relationships.get(id.value.as_ref()).ok_or_else(|| {
-                            super::options::unsupported(
-                                "missing worksheet relationship",
-                                "workbook XML",
-                            )
-                        })?;
-                        let kind = if relation.kind == format!("{}/chartsheet", xml::OFFICE) {
-                            "chartsheet"
-                        } else if relation.kind == format!("{}/dialogsheet", xml::OFFICE) {
-                            "dialogsheet"
-                        } else if relation.kind == format!("{}/worksheet", xml::OFFICE) {
-                            "worksheet"
-                        } else {
-                            return Err(super::options::unsupported(
-                                "non-worksheet sheet",
-                                "workbook XML",
-                            ));
-                        };
-                        let target = relation.target.clone().ok_or_else(|| {
-                            super::options::unsupported("external worksheet", "workbook XML")
-                        })?;
-                        (kind != "worksheet", kind, target)
-                    };
-                    declared.push(package::Sheet {
-                        name: name.to_owned(),
-                        part: target,
-                        inert,
-                        kind,
-                        sheet_id: 0,
-                        tables: BTreeMap::new(),
-                    });
-                }
-                Ok(())
-            })?;
+            let (mut archive, (workbook_xml, relationships, declared, has_links)) =
+                package::admit_retaining(&bytes, &options, |archive| {
+                    let root = package::relationships_read(archive, "", &options)?;
+                    let workbook = root
+                        .values()
+                        .find(|r| r.kind.ends_with("/officeDocument"))
+                        .and_then(|r| r.target.clone())
+                        .unwrap_or_else(|| "xl/workbook.xml".into());
+                    let relationships = package::relationships_read(archive, &workbook, &options)?;
+                    let workbook_xml =
+                        package::read_part(archive, &workbook, options.limits.max_worksheet_bytes)?;
+                    let mut has_links = archive
+                        .file_names()
+                        .any(|part| part.starts_with("xl/externalLinks/"));
+                    let mut declared = Vec::new();
+                    read_source(&workbook_xml, &options, |path, node| {
+                        if xml::path_is(
+                            path,
+                            xml::MAIN,
+                            &["workbook", "externalReferences", "externalReference"],
+                        ) && matches!(node.kind, xml::Kind::Open { .. })
+                        {
+                            has_links = true;
+                        }
+                        if xml::path_is(path, xml::MAIN, &["workbook", "sheets", "sheet"])
+                            && matches!(node.kind, xml::Kind::Open { .. })
+                            && let (Some(name), Some(id)) =
+                                (node.value("name"), node.attribute(xml::OFFICE, "id"))
+                        {
+                            let (inert, kind, target) = if id.value.is_empty() {
+                                (true, "module", String::new())
+                            } else {
+                                let relation =
+                                    relationships.get(id.value.as_ref()).ok_or_else(|| {
+                                        super::options::unsupported(
+                                            "missing worksheet relationship",
+                                            "workbook XML",
+                                        )
+                                    })?;
+                                let kind = if relation.kind == format!("{}/chartsheet", xml::OFFICE)
+                                {
+                                    "chartsheet"
+                                } else if relation.kind == format!("{}/dialogsheet", xml::OFFICE) {
+                                    "dialogsheet"
+                                } else if relation.kind == format!("{}/worksheet", xml::OFFICE) {
+                                    "worksheet"
+                                } else {
+                                    return Err(super::options::unsupported(
+                                        "non-worksheet sheet",
+                                        "workbook XML",
+                                    ));
+                                };
+                                let target = relation.target.clone().ok_or_else(|| {
+                                    super::options::unsupported(
+                                        "external worksheet",
+                                        "workbook XML",
+                                    )
+                                })?;
+                                (kind != "worksheet", kind, target)
+                            };
+                            declared.push(package::Sheet {
+                                name: name.to_owned(),
+                                part: target,
+                                inert,
+                                kind,
+                                sheet_id: 0,
+                                tables: BTreeMap::new(),
+                            });
+                        }
+                        Ok(())
+                    })?;
+                    let mut needed: HashSet<_> = declared
+                        .iter()
+                        .filter(|s| !s.inert)
+                        .map(|s| s.part.clone())
+                        .collect();
+                    for relation in relationships.values() {
+                        if (relation.kind.ends_with("/sharedStrings")
+                            || relation.kind.ends_with("/styles"))
+                            && let Some(target) = &relation.target
+                        {
+                            needed.insert(target.clone());
+                        }
+                    }
+                    Ok(((workbook_xml, relationships, declared, has_links), needed))
+                })?;
             let mut sheets = Vec::new();
             for sheet in declared.iter().filter(|sheet| !sheet.inert) {
                 sheets.push(SheetSource {
@@ -262,7 +350,7 @@ impl NativeXlsxAdapter {
                     parsed: OnceLock::new(),
                     reader: OnceLock::new(),
                     reader_parsed: OnceLock::new(),
-                    data: package::read_part(
+                    data: package::take_part(
                         &mut archive,
                         &sheet.part,
                         options.limits.max_worksheet_bytes,
@@ -291,7 +379,7 @@ impl NativeXlsxAdapter {
                     .and_then(|r| r.target.as_deref());
                 target
                     .map(|part| {
-                        package::read_part(&mut archive, part, options.limits.max_worksheet_bytes)
+                        package::take_part(&mut archive, part, options.limits.max_worksheet_bytes)
                     })
                     .transpose()
                     .map(Option::unwrap_or_default)
@@ -301,12 +389,12 @@ impl NativeXlsxAdapter {
             let strings = if string_bytes.is_empty() {
                 SharedStringTable::default()
             } else {
-                SharedStringTable::parse_read(&string_bytes, &options)?
+                SharedStringTable::parse_direct(&string_bytes, &options)?
             };
             let styles = if style_bytes.is_empty() {
                 Styles::default()
             } else {
-                Styles::parse_read(&style_bytes, &options)?
+                Styles::parse_direct(&style_bytes, &options)?
             };
             let names = super::ingest::names::CalculationNames::new(
                 &workbook_xml,
@@ -527,9 +615,19 @@ impl NativeXlsxAdapter {
         date_system: DateSystem,
         retain_reader_values: bool,
     ) -> Result<ParsedSheet, IoError> {
+        self.scan_sheet_produced(sheet, limits, date_system, retain_reader_values, None)
+    }
+    fn scan_sheet_produced<'a>(
+        &'a self,
+        sheet: &'a SheetSource,
+        limits: &'a formualizer_eval::engine::WorkbookLoadLimits,
+        date_system: DateSystem,
+        retain_reader_values: bool,
+        emit: Option<&'a mut dyn FnMut(OwnedSpoolFormulaRecord) -> Result<(), IoError>>,
+    ) -> Result<ParsedSheet, IoError> {
         let scan_timer = timing::Timer::start(self.debug_load);
-        // A bounded dimension hint sizes Arrow; actual populated bounds win.
-        let dimensions = super::ingest::values::dimension_hint(&sheet.data, &Default::default());
+        let mut xml = cells::CellXml::new(&sheet.data, &self.options);
+        let dimensions = cells::header(&mut xml)?;
         let values = ValueSink::new(Context {
             name: &sheet.name,
             source: &sheet.data,
@@ -555,11 +653,13 @@ impl NativeXlsxAdapter {
             None
         };
         let mut sink = LoadSink {
-            source: &sheet.data,
             strings: &self.strings,
+            styles: &self.styles,
             values,
             reader_values,
             records: Vec::new(),
+            record_count: 0,
+            emit,
             value_error: None,
             formula_error: None,
             stream_error: None,
@@ -567,7 +667,7 @@ impl NativeXlsxAdapter {
             skipped_values: 0,
         };
         let bounds = (0, 0);
-        if let Err(error) = cells::scan(&sheet.data, &self.options, &mut sink) {
+        if let Err(error) = cells::scan(&mut xml, &self.options, &mut sink) {
             let error = DeferredReadError::capture(error)?;
             sink.stream_error.get_or_insert_with(|| error.clone());
             sink.value_error.get_or_insert(error);
@@ -641,6 +741,15 @@ enum DeferredReadError {
     Unexpected(&'static str),
     CellType(String),
     Alphanumeric(u8),
+    Xml(quick_xml_cells::Error),
+    XmlEof(&'static str),
+    UnexpectedNode(&'static str),
+    ParseFloat(std::num::ParseFloatError),
+    CellError(String),
+    NoRow,
+    NoColumn,
+    DimensionCount(usize),
+    NotAWorksheet(String),
     Unsupported { feature: String, context: String },
     Backend { backend: String, message: String },
 }
@@ -655,6 +764,33 @@ impl DeferredReadError {
             }
             IoError::Calamine(calamine::Error::Xlsx(calamine::XlsxError::Alphanumeric(byte))) => {
                 Ok(Self::Alphanumeric(byte))
+            }
+            IoError::Calamine(calamine::Error::Xlsx(calamine::XlsxError::Xml(e))) => {
+                Ok(Self::Xml(e))
+            }
+            IoError::Calamine(calamine::Error::Xlsx(calamine::XlsxError::XmlEof(e))) => {
+                Ok(Self::XmlEof(e))
+            }
+            IoError::Calamine(calamine::Error::Xlsx(calamine::XlsxError::UnexpectedNode(e))) => {
+                Ok(Self::UnexpectedNode(e))
+            }
+            IoError::Calamine(calamine::Error::Xlsx(calamine::XlsxError::ParseFloat(e))) => {
+                Ok(Self::ParseFloat(e))
+            }
+            IoError::Calamine(calamine::Error::Xlsx(calamine::XlsxError::CellError(e))) => {
+                Ok(Self::CellError(e))
+            }
+            IoError::Calamine(calamine::Error::Xlsx(
+                calamine::XlsxError::RangeWithoutRowComponent,
+            )) => Ok(Self::NoRow),
+            IoError::Calamine(calamine::Error::Xlsx(
+                calamine::XlsxError::RangeWithoutColumnComponent,
+            )) => Ok(Self::NoColumn),
+            IoError::Calamine(calamine::Error::Xlsx(calamine::XlsxError::DimensionCount(e))) => {
+                Ok(Self::DimensionCount(e))
+            }
+            IoError::Calamine(calamine::Error::Xlsx(calamine::XlsxError::NotAWorksheet(e))) => {
+                Ok(Self::NotAWorksheet(e))
             }
             IoError::Unsupported { feature, context } => Ok(Self::Unsupported { feature, context }),
             IoError::Backend { backend, message } => Ok(Self::Backend { backend, message }),
@@ -672,6 +808,15 @@ impl DeferredReadError {
             Self::Unexpected(message) => calamine::XlsxError::Unexpected(message),
             Self::CellType(kind) => calamine::XlsxError::CellTAttribute(kind.clone()),
             Self::Alphanumeric(byte) => calamine::XlsxError::Alphanumeric(*byte),
+            Self::Xml(e) => calamine::XlsxError::Xml(e.clone()),
+            Self::XmlEof(e) => calamine::XlsxError::XmlEof(e),
+            Self::UnexpectedNode(e) => calamine::XlsxError::UnexpectedNode(e),
+            Self::ParseFloat(e) => calamine::XlsxError::ParseFloat(e.clone()),
+            Self::CellError(e) => calamine::XlsxError::CellError(e.clone()),
+            Self::NoRow => calamine::XlsxError::RangeWithoutRowComponent,
+            Self::NoColumn => calamine::XlsxError::RangeWithoutColumnComponent,
+            Self::DimensionCount(e) => calamine::XlsxError::DimensionCount(*e),
+            Self::NotAWorksheet(e) => calamine::XlsxError::NotAWorksheet(e.clone()),
             Self::Unsupported { feature, context } => {
                 return IoError::Unsupported {
                     feature: feature.clone(),
@@ -694,10 +839,12 @@ struct ParsedSheet {
     stream_error: Option<DeferredReadError>,
 }
 struct LoadSink<'a> {
-    source: &'a [u8],
     strings: &'a SharedStringTable,
+    styles: &'a Styles,
     values: ValueSink<'a>,
     records: Vec<OwnedSpoolFormulaRecord>,
+    record_count: usize,
+    emit: Option<&'a mut dyn FnMut(OwnedSpoolFormulaRecord) -> Result<(), IoError>>,
     reader_values: Option<ValueSink<'a>>,
     last_formula_coord: Option<(u32, u32)>,
     skipped_values: usize,
@@ -705,99 +852,53 @@ struct LoadSink<'a> {
     formula_error: Option<DeferredReadError>,
     stream_error: Option<DeferredReadError>,
 }
-fn ordinary_coordinate(
-    source: &[u8],
-    span: Option<&std::ops::Range<usize>>,
-) -> Result<(), IoError> {
-    if let Some(span) = span
-        && source[span.clone()].contains(&b'$')
-    {
-        return Err(IoError::Calamine(calamine::Error::Xlsx(
-            calamine::XlsxError::Alphanumeric(b'$'),
-        )));
-    }
-    Ok(())
-}
-fn ordinary_literal<'a>(source: &[u8], mut literal: Literal<'a>) -> Result<Literal<'a>, IoError> {
-    ordinary_coordinate(source, literal.raw_coordinate_span.as_ref())?;
-    if let Some(raw) = literal.raw_value(source)
-        && matches!(literal.value, worksheet::events::Value::Text(_))
-        && (raw.windows(9).any(|s| s == b"<![CDATA[")
-            || raw.windows(2).any(|s| s == b"\xC2\x85")
-            || raw.windows(3).any(|s| s == b"\xE2\x80\xA8"))
-    {
-        let mut fragment = b"<v>".to_vec();
-        fragment.extend_from_slice(raw);
-        fragment.extend_from_slice(b"</v>");
-        let mut value = String::new();
-        xml::walk_ignoring_cdata(&fragment, &ReadOptions::default(), |_, node| {
-            if let xml::Kind::Text(text) = &node.kind {
-                value.push_str(&worksheet::events::text(&fragment, &node, text.clone())?);
-            }
-            Ok(())
-        })?;
-        literal.value = worksheet::events::Value::Text(std::borrow::Cow::Owned(value));
-    }
-    Ok(literal)
-}
-impl Sink for LoadSink<'_> {
-    fn retain_formula_cache(&self) -> bool {
-        true
-    }
-    fn formula_cache(&mut self, literal: Literal<'_>) -> Result<(), IoError> {
-        if self.value_error.is_none() {
-            let result = ordinary_literal(self.source, literal).and_then(|literal| {
-                if let Some(values) = &mut self.reader_values {
-                    values.push(literal)
-                } else {
-                    self.validate_cache(&literal)
-                }
-            });
-            self.retain_value_error(result)?;
-        }
-        Ok(())
-    }
-    fn literal(&mut self, literal: Literal<'_>) -> Result<(), IoError> {
-        if self.value_error.is_none() {
-            let result = ordinary_literal(self.source, literal).and_then(|literal| {
-                let observed = if let Some(reader) = &mut self.reader_values {
-                    let before = reader.observed_count();
-                    reader.push(literal.clone())?;
-                    reader.observed_count() - before
-                } else {
-                    usize::from(!matches!(literal.value, worksheet::events::Value::Empty))
-                };
-                if self.last_formula_coord == Some((literal.row, literal.col)) {
-                    self.validate_cache(&literal)?;
-                    self.skipped_values += observed;
-                    Ok(())
-                } else {
-                    self.values.push(literal)
-                }
-            });
-            self.retain_value_error(result)?;
-        }
-        Ok(())
-    }
-    fn formula(&mut self, formula: Formula<'_>) -> Result<(), IoError> {
-        if self.formula_error.is_none()
-            && let Err(error) = self.source_formula(formula)
-        {
-            let error = DeferredReadError::capture(error)?;
-            self.stream_error.get_or_insert_with(|| error.clone());
-            self.formula_error = Some(error);
-        }
-        Ok(())
-    }
-}
 impl LoadSink<'_> {
-    fn validate_cache(&self, literal: &Literal<'_>) -> Result<(), IoError> {
-        if literal.raw_type(self.source) == Some("s")
-            && let Some(raw) = literal.raw_value(self.source)
-            && !raw.is_empty()
-        {
-            let index = atoi_simd::parse::<usize, true, false>(raw).unwrap_or(0);
-            self.strings.get(index)?;
+    fn emit_cell(
+        &mut self,
+        row: u32,
+        col: u32,
+        value: worksheet::events::Value<'_>,
+        format: Option<formualizer_eval::format::FormatId>,
+        formula: Option<OwnedSpoolFormulaRecord>,
+    ) -> Result<(), IoError> {
+        if let Some(record) = formula {
+            self.values.observe_formula(row, col)?;
+            self.last_formula_coord = Some((row, col));
+            self.record_count += 1;
+            if self.value_error.is_none() {
+                let result = if let Some(reader) = &mut self.reader_values {
+                    reader.push_decoded(row, col, value, format)
+                } else if let worksheet::events::Value::Shared(index) = value {
+                    self.strings.get(index).map(|_| ())
+                } else {
+                    Ok(())
+                };
+                self.retain_value_error(result)?;
+            }
+            if let Some(emit) = &mut self.emit {
+                // A later staging failure must not replace an earlier source
+                // refusal. In particular validate this cell's cache first.
+                if self.stream_error.is_none() {
+                    emit(record)?;
+                }
+            } else {
+                self.records.push(record);
+            }
+        } else if self.value_error.is_none() {
+            let result = if let Some(reader) = &mut self.reader_values {
+                reader.push_decoded(row, col, value, format)
+            } else if self.last_formula_coord == Some((row, col)) {
+                self.skipped_values +=
+                    usize::from(!matches!(value, worksheet::events::Value::Empty));
+                if let worksheet::events::Value::Shared(index) = value {
+                    self.strings.get(index).map(|_| ())
+                } else {
+                    Ok(())
+                }
+            } else {
+                self.values.push_decoded(row, col, value, format)
+            };
+            self.retain_value_error(result)?;
         }
         Ok(())
     }
@@ -808,75 +909,6 @@ impl LoadSink<'_> {
             self.stream_error.get_or_insert_with(|| error.clone());
             self.value_error = Some(error);
         }
-        Ok(())
-    }
-    fn source_formula(&mut self, formula: Formula<'_>) -> Result<(), IoError> {
-        ordinary_coordinate(self.source, formula.envelope.raw_coordinate.as_ref())?;
-        if matches!(
-            formula.kind,
-            FormulaKind::SharedAnchor { .. } | FormulaKind::SharedDescendant { .. }
-        ) && !formula
-            .envelope
-            .raw_shared_index
-            .as_ref()
-            .is_some_and(|span| {
-                let raw = &self.source[span.clone()];
-                !raw.is_empty() && raw.iter().all(u8::is_ascii_digit)
-            })
-        {
-            return Err(IoError::Calamine(calamine::Error::Xlsx(
-                calamine::XlsxError::Unexpected("si attribute must be a number"),
-            )));
-        }
-        self.values.observe_formula(formula.row, formula.col)?;
-        self.last_formula_coord = Some((formula.row, formula.col));
-        let coord0 = SourceCoord {
-            row: formula.row - 1,
-            col: formula.col - 1,
-        };
-        let sequence = formula.sequence;
-        let record = match formula.kind {
-            FormulaKind::SharedAnchor {
-                shared_index: Some(index),
-                declared_range: range,
-                text,
-            } => OwnedSpoolFormulaRecord::SharedAnchor {
-                sequence,
-                coord0,
-                shared_index: index as usize,
-                declared_range: Some(SourceRect {
-                    start: SourceCoord {
-                        row: range.first_row - 1,
-                        col: range.first_col - 1,
-                    },
-                    end: SourceCoord {
-                        row: range.last_row - 1,
-                        col: range.last_col - 1,
-                    },
-                }),
-                text: text.to_owned(),
-            },
-            FormulaKind::SharedDescendant {
-                shared_index: Some(index),
-            } => OwnedSpoolFormulaRecord::SharedDescendant {
-                sequence,
-                coord0,
-                shared_index: index as usize,
-            },
-            FormulaKind::Ordinary { text }
-            | FormulaKind::Unsupported { text, .. }
-            | FormulaKind::SharedAnchor { text, .. } => OwnedSpoolFormulaRecord::Ordinary {
-                sequence,
-                coord0,
-                text: text.to_owned(),
-            },
-            FormulaKind::SharedDescendant { shared_index: None } => {
-                return Err(IoError::Calamine(calamine::Error::Xlsx(
-                    calamine::XlsxError::Unexpected("si attribute must be a number"),
-                )));
-            }
-        };
-        self.records.push(record);
         Ok(())
     }
 }
@@ -1011,8 +1043,57 @@ impl<R: EvaluationContext> EngineLoadStream<R> for NativeXlsxAdapter {
             let mut formulas_observed = 0;
             let mut formulas_handed = 0;
             let mut shared = 0;
-            for (index, sheet) in self.sheets.iter().enumerate() {
-                let parsed = self.parsed_sheet(sheet)?;
+            for index in 0..self.sheets.len() {
+                let cached = self.sheets[index].parsed.take();
+                let sheet = &self.sheets[index];
+                let refused: HashSet<_> = self
+                    .external
+                    .iter()
+                    .flat_map(|snapshot| snapshot.refused_formulas.keys())
+                    .filter(|(name, _, _)| name == &sheet.name)
+                    .map(|(_, row, col)| (row - 1, col - 1))
+                    .collect();
+                let limits = engine.workbook_load_limits().clone();
+                let mut parsed_result = None;
+                let formula_timer = timing::Timer::start(self.debug_load);
+                let staged = formulas::stage_records_produced::<R, true>(
+                    engine,
+                    &sheet.name,
+                    index as u32,
+                    |emit| {
+                        let mut parsed = if let Some(mut parsed) = cached {
+                            if let Some(error) = &parsed.stream_error {
+                                return Err(error.to_error());
+                            }
+                            for record in std::mem::take(&mut parsed.records) {
+                                emit(record)?;
+                            }
+                            parsed
+                        } else {
+                            self.scan_sheet_produced(
+                                sheet,
+                                &limits,
+                                DateSystem::Excel1900,
+                                false,
+                                Some(emit),
+                            )?
+                        };
+                        if let Some(error) = &parsed.stream_error {
+                            return Err(error.to_error());
+                        }
+                        // Record storage is consumed by staging, not retained as
+                        // an unbounded parallel copy of the bounded replay spool.
+                        parsed.records.clear();
+                        parsed_result = Some(parsed);
+                        Ok(())
+                    },
+                    usage,
+                    &self.options.cancel,
+                    &refused,
+                )?;
+                let parsed = parsed_result.expect("producer completed");
+                let combined_ms = formula_timer.elapsed_ms();
+                phases.formulas_ms += (combined_ms - parsed.scan_ms - parsed.sinks_ms).max(0.0);
                 // External-cache preparation may already have populated these
                 // sheets. Include their original scan once in the adapter lap.
                 phases.scan_ms += parsed.scan_ms;
@@ -1028,7 +1109,7 @@ impl<R: EvaluationContext> EngineLoadStream<R> for NativeXlsxAdapter {
                     engine.workbook_load_limits(),
                 )?;
                 let populated = (parsed.values.values_observed as u64)
-                    .saturating_add(parsed.records.len() as u64);
+                    .saturating_add(staged.formulas_observed as u64);
                 if populated > engine.workbook_load_limits().max_sheet_logical_cells {
                     return Err(IoError::Calamine(super::ingest::staging::engine_error(
                         format!(
@@ -1040,30 +1121,15 @@ impl<R: EvaluationContext> EngineLoadStream<R> for NativeXlsxAdapter {
                 }
                 // The source sink stores raw numeric serials, not converted chrono
                 // values. Select the caller's epoch before these lanes are installed.
-                let mut arrow = parsed.values.arrow.clone();
+                let mut arrow = parsed.values.arrow;
                 arrow.date_system = engine.config.date_system;
-                let refused: HashSet<_> = self
-                    .external
-                    .iter()
-                    .flat_map(|snapshot| snapshot.refused_formulas.keys())
-                    .filter(|(name, _, _)| name == &sheet.name)
-                    .map(|(_, row, col)| (row - 1, col - 1))
-                    .collect();
+
                 values_observed += parsed.values.values_observed as u64;
                 values_handed += parsed.values.values_handed_to_engine as u64;
                 let install_timer = timing::Timer::start(self.debug_load);
                 install_values(engine, &sheet.name, arrow);
                 phases.install_ms += install_timer.elapsed_ms();
                 let formula_timer = timing::Timer::start(self.debug_load);
-                let staged = formulas::stage_records_with_refusals(
-                    engine,
-                    &sheet.name,
-                    index as u32,
-                    parsed.records.iter().cloned().map(Ok),
-                    usage,
-                    &self.options.cancel,
-                    &refused,
-                )?;
                 usage.bytes += staged.spool_bytes;
                 usage.files += u32::from(staged.spool_spilled);
                 formulas_observed += staged.formulas_observed as u64;

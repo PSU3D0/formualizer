@@ -88,6 +88,95 @@ impl Styles {
         Self::parse_read(bytes, &ReadOptions::from(options))
     }
 
+    pub(in crate::xlsx) fn parse_direct(
+        bytes: &[u8],
+        options: &ReadOptions,
+    ) -> Result<Self, IoError> {
+        use quick_xml_cells::events::Event;
+        let mut xml = crate::xlsx::loader::cells::CellXml::new(bytes, options);
+        let mut custom = HashMap::new();
+        let mut values = Vec::new();
+        let mut section: Option<Vec<u8>> = None;
+        let mut done = false;
+        loop {
+            match xml.read_event()? {
+                Event::Start(e) if !done => {
+                    let local = e.local_name();
+                    let kind = local.as_ref();
+                    if section.is_none() {
+                        if matches!(kind, b"numFmts" | b"cellXfs") {
+                            section = Some(kind.to_vec());
+                        }
+                        continue;
+                    }
+                    if kind == b"numFmt" && section.as_deref() == Some(b"numFmts") {
+                        let (mut id, mut code) = (None, None);
+                        for attr in e.attributes().with_checks(false) {
+                            let attr = attr.map_err(|e| IoError::from_backend("xlsx-style", e))?;
+                            match attr.key.as_ref() {
+                                b"numFmtId" => {
+                                    id = Some(
+                                        String::from_utf8(attr.value.into_owned())
+                                            .map_err(|e| IoError::from_backend("xlsx-style", e))?,
+                                    )
+                                }
+                                b"formatCode" => {
+                                    let raw = String::from_utf8(attr.value.into_owned())
+                                        .map_err(|e| IoError::from_backend("xlsx-style", e))?;
+                                    code = Some(
+                                        quick_xml_cells::escape::unescape(&raw)
+                                            .map_err(|e| IoError::from_backend("xlsx-style", e))?
+                                            .into_owned(),
+                                    );
+                                }
+                                _ => (),
+                            }
+                        }
+                        if let (Some(id), Some(code)) = (id, code) {
+                            custom.insert(id, NumberClass::custom(&code));
+                        }
+                    } else if kind == b"xf" && section.as_deref() == Some(b"cellXfs") {
+                        let mut class = NumberClass::Other;
+                        for attr in e.attributes().with_checks(false) {
+                            let attr = attr.map_err(|e| IoError::from_backend("xlsx-style", e))?;
+                            if attr.key.as_ref() == b"numFmtId" {
+                                let raw = std::str::from_utf8(&attr.value)
+                                    .map_err(|e| IoError::from_backend("xlsx-style", e))?;
+                                class = custom
+                                    .get(raw)
+                                    .copied()
+                                    .unwrap_or_else(|| NumberClass::builtin(raw));
+                                break;
+                            }
+                        }
+                        values.push(class);
+                    }
+                }
+                Event::End(e) => {
+                    if section.as_deref() == Some(e.local_name().as_ref()) {
+                        section = None;
+                    } else if section.is_none() && e.local_name().as_ref() == b"styleSheet" {
+                        done = true;
+                    }
+                }
+                Event::Eof => return Ok(Self(values)),
+                _ => (),
+            }
+        }
+    }
+
+    pub(in crate::xlsx) fn format_index(
+        &self,
+        index: Option<usize>,
+        number: f64,
+    ) -> Option<FormatId> {
+        self.0
+            .get(index?)
+            .copied()
+            .unwrap_or_default()
+            .annotation(number)
+    }
+
     /// Extraction uses shared read bounds, not evaluation/publication admission.
     pub(in crate::xlsx) fn parse_read(
         bytes: &[u8],

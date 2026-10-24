@@ -33,13 +33,13 @@ pub(super) fn bootstrap_read(
     archive: &mut Archive<'_>,
     name: &str,
     limit: usize,
-    options: &XlsxRecalculateOptions,
+    options: &ReadOptions,
 ) -> Result<Vec<u8>, IoError> {
     if !archive.parts.contains_key(name) {
         let index = archive
             .index_for_name(name)
             .ok_or_else(|| IoError::from_backend("zip", zip::result::ZipError::FileNotFound))?;
-        let part = read(archive, index, Some(limit), &ReadOptions::from(options));
+        let part = read(archive, index, Some(limit), options);
         archive.parts.insert(name.to_owned(), part);
     }
     let part = &archive.parts[name];
@@ -116,7 +116,7 @@ pub(super) fn audit<'a>(
     mut archive: Archive<'a>,
     options: &XlsxRecalculateOptions,
 ) -> Result<Archive<'a>, IoError> {
-    archive.provisional = Some(options.clone());
+    archive.provisional = Some(ReadOptions::from(options));
     // Semantic and provisional read failures are deliberately ignored here.
     // The real discovery repeats from verified metadata after the full audit.
     let needed = closure(&mut archive, options).unwrap_or_default();
@@ -128,7 +128,7 @@ pub(super) fn audit<'a>(
 /// equal raw/indexed counts: indices therefore cover every physical member.
 /// Preserve this single-inflate path and its provisional-error replay order.
 /// Permissive admission instead audits raw members before name resolution.
-fn audit_unique_payloads<'a>(
+pub(super) fn audit_unique_payloads<'a>(
     mut archive: Archive<'a>,
     needed: &HashSet<String>,
     options: &ReadOptions,
@@ -144,10 +144,12 @@ fn audit_unique_payloads<'a>(
         if file.encrypted() {
             return Err(unsupported("encrypted ZIP member", &name));
         }
-        if name.starts_with("_xmlsignatures/") || name.ends_with("origin.sigs") {
+        if options.policy == ReadPolicy::Strict
+            && (name.starts_with("_xmlsignatures/") || name.ends_with("origin.sigs"))
+        {
             return Err(unsupported("package digital signature", "XLSX package"));
         }
-        if name.starts_with("xl/richData/") {
+        if options.policy == ReadPolicy::Strict && name.starts_with("xl/richData/") {
             return Err(unsupported("rich value data", "XLSX package"));
         }
         drop(file);

@@ -75,6 +75,57 @@ fn value_metadata_extraction_is_independent_of_publication_policy() {
     }
 }
 
+#[cfg(all(test, feature = "xlsx-recalc"))]
+#[test]
+fn bulk_direct_metadata_matches_edge_case_extraction() {
+    let options = crate::xlsx::options::ReadOptions::default();
+    for source in [
+        r#"<sst><si/><si><t>A&amp;B_x0041_</t></si></sst>"#,
+        "<sst><si><t>a<![CDATA[b]]>c</t><rPh><t>hidden</t></rPh></si></sst>",
+        "<sst><si><r><t xml:space=\"preserve\"> a </t></r><r><t> b </t></r></si><si><t/></si></sst>",
+        "<sst><si><t>a\u{85}b\u{2028}c</t></si></sst>",
+    ] {
+        let expected = SharedStringTable::parse_read(source.as_bytes(), &options).unwrap();
+        let actual = SharedStringTable::parse_direct(source.as_bytes(), &options).unwrap();
+        assert_eq!(expected.len(), actual.len(), "{source}");
+        for i in 0..expected.len() {
+            assert_eq!(expected.get(i).unwrap(), actual.get(i).unwrap(), "{source}");
+        }
+    }
+    for source in [
+        r#"<styleSheet><numFmts><numFmt numFmtId="164" formatCode="&quot;x&quot;yyyy"/></numFmts><cellXfs><xf numFmtId="14"/><xf numFmtId="46"/><xf numFmtId="164"/><xf/></cellXfs></styleSheet>"#,
+        r#"<styleSheet><cellXfs><cellXfs/><xf numFmtId="14"/></cellXfs></styleSheet>"#,
+        r#"<styleSheet><numFmts><numFmts/><numFmt numFmtId="164" formatCode="yyyy"/></numFmts><cellXfs><xf numFmtId="164"/></cellXfs></styleSheet>"#,
+    ] {
+        let expected = Styles::parse_read(source.as_bytes(), &options).unwrap();
+        let actual = Styles::parse_direct(source.as_bytes(), &options).unwrap();
+        assert_eq!(expected.len(), actual.len());
+        for style in [
+            None,
+            Some("0"),
+            Some("1"),
+            Some("2"),
+            Some("bad"),
+            Some("999999999999999999999999"),
+        ] {
+            for n in [0.5, 1.0, 1.5] {
+                assert_eq!(
+                    expected.format(style, n),
+                    actual.format(style, n),
+                    "{source}"
+                );
+            }
+        }
+    }
+    for source in [
+        "<!DOCTYPE sst><sst/>",
+        "<sst><si></sst>",
+        "<sst><si><t>&unknown;</t></si></sst>",
+    ] {
+        assert!(SharedStringTable::parse_direct(source.as_bytes(), &options).is_err());
+    }
+}
+
 /// Stream immutable declarations under shared XML safety/read bounds.
 /// This entry does not grant calculation or source-publication authority.
 /// Consumers bind declarations in the callback to preserve refusal priority;

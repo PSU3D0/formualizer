@@ -23,6 +23,7 @@ pub(crate) struct ScanRetention {
 }
 
 /// Shared parser input; evaluation and publication options do not enter the scanner.
+#[derive(Clone)]
 pub(crate) struct ReadOptions {
     #[cfg(feature = "xlsx-recalc")]
     pub(crate) policy: ReadPolicy,
@@ -31,6 +32,7 @@ pub(crate) struct ReadOptions {
 }
 
 /// Bounds applied regardless of source-admission policy.
+#[derive(Clone)]
 pub(crate) struct ReadLimits {
     #[cfg(feature = "xlsx-recalc")]
     pub(crate) max_input_bytes: usize,

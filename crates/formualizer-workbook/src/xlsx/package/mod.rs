@@ -18,7 +18,7 @@ use zip::ZipArchive;
 pub(crate) struct Archive<'a> {
     zip: ZipArchive<Cursor<&'a [u8]>>,
     parts: BTreeMap<String, VerifiedPart>,
-    provisional: Option<XlsxRecalculateOptions>,
+    provisional: Option<ReadOptions>,
 }
 struct VerifiedPart {
     bytes: Vec<u8>,
@@ -503,6 +503,52 @@ pub(super) fn admit_with<'a>(
             open::<false>(bytes, &directory)
         }
     }
+}
+
+/// Compatible loading discovers its consumer closure provisionally, then
+/// replays all payload failures in physical order before exposing metadata.
+/// Unique names permit the indexed single-inflate audit. Duplicate names keep
+/// the independent physical audit: a shadowed payload may never escape checks.
+pub(super) fn admit_retaining<'a, T>(
+    bytes: &'a [u8],
+    options: &ReadOptions,
+    discover: impl FnOnce(&mut Archive<'a>) -> Result<(T, HashSet<String>), IoError>,
+) -> Result<(Archive<'a>, T), IoError> {
+    checkpoint(&options.cancel)?;
+    if bytes.len() > options.limits.max_input_bytes {
+        return Err(unsupported("input byte limit", "XLSX package"));
+    }
+    let directory = audit_directory_with::<false>(bytes, options)?;
+    let mut names = HashSet::new();
+    let unique = directory.members.iter().all(|member| {
+        let start = member.central + 46;
+        let length = le16(bytes, member.central + 28);
+        names.insert(&bytes[start..start + length])
+    });
+    if !unique {
+        physical::audit(bytes, &directory, options)?;
+        let mut archive = open::<false>(bytes, &directory)?;
+        let (metadata, _) = discover(&mut archive)?;
+        return Ok((archive, metadata));
+    }
+    let mut archive = open::<false>(bytes, &directory)?;
+    if archive.len() != directory.members.len() {
+        // Unicode-path extras can collapse distinct raw names in the ZIP
+        // decoder. Count equality is part of the physical-identity proof.
+        physical::audit(bytes, &directory, options)?;
+        let (metadata, _) = discover(&mut archive)?;
+        return Ok((archive, metadata));
+    }
+    archive.provisional = Some(options.clone());
+    let discovery = discover(&mut archive);
+    archive.provisional = None;
+    let needed = discovery
+        .as_ref()
+        .map(|(_, needed)| needed.clone())
+        .unwrap_or_default();
+    let archive = ownership::audit_unique_payloads(archive, &needed, options)?;
+    let (metadata, _) = discovery?;
+    Ok((archive, metadata))
 }
 
 pub(crate) fn read_part(

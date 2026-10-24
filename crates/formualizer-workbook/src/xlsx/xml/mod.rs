@@ -680,15 +680,6 @@ pub(crate) fn walk<'a>(
 }
 
 #[cfg(feature = "xlsx-recalc")]
-pub(crate) fn walk_ignoring_cdata<'a>(
-    bytes: &'a [u8],
-    options: &CacheOptions,
-    visit: impl FnMut(&[Element<'a>], Node<'_, 'a>) -> Result<(), IoError>,
-) -> Result<(), IoError> {
-    walk_inner::<1>(bytes, options, visit)
-}
-
-#[cfg(feature = "xlsx-recalc")]
 pub(crate) fn walk_display_cdata<'a>(
     bytes: &'a [u8],
     options: &CacheOptions,

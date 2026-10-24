@@ -426,6 +426,10 @@ fn native_reader_preserves_source_order_and_separate_refusals() {
         "<c r=\"A1\" t=\"str\"><f>1</f><v>a\u{85}b\u{2028}c</v></c>",
         r#"<c r="A1"><f t="shared" si="bad"/><v>7</v></c><c r="B1" t="s"><v>999</v></c>"#,
         r#"<c r="A1" t="s"><v>999</v></c><c r="B1"><v>2</wrong>"#,
+        r#"<c r="A1" t="s"><v>999</v></c><c r="B1" t="n"><v>bad</v></c>"#,
+        r#"<c r="A1" t="s"><v>999</v></c><c r="B1" t="e"><v>bogus</v></c>"#,
+        r#"<c r="A1" t="s"><v>999</v></c><c r="B"><v>1</v></c>"#,
+        r#"<c r="A1"><f t="shared" si="bad"/><v>7</v></c><c r="B1"><v>2</wrong>"#,
     ] {
         let bytes = book(&[Ws::new("Sheet1", vec![])], "");
         let mut parts = unpack(&bytes);

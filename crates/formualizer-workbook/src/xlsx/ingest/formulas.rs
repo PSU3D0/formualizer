@@ -249,44 +249,32 @@ pub(in crate::xlsx) fn stage_records<C: formualizer_eval::traits::EvaluationCont
     usage: WorkbookSpoolUsage,
     cancel: &Option<formualizer_eval::engine::CancelToken>,
 ) -> Result<StagedFormulas, IoError> {
-    stage_records_inner::<C, false>(
+    stage_records_produced::<C, false>(
         engine,
         sheet,
         sheet_instance,
-        records,
+        |emit| {
+            for record in records {
+                emit(record?)?;
+            }
+            Ok(())
+        },
         usage,
         cancel,
         &Default::default(),
     )
 }
 
-pub(in crate::xlsx) fn stage_records_with_refusals<
+pub(in crate::xlsx) fn stage_records_produced<
     C: formualizer_eval::traits::EvaluationContext,
+    const FILTER: bool,
 >(
     engine: &mut Engine<C>,
     sheet: &str,
     sheet_instance: u32,
-    records: impl IntoIterator<Item = Result<OwnedSpoolFormulaRecord, IoError>>,
-    usage: WorkbookSpoolUsage,
-    cancel: &Option<formualizer_eval::engine::CancelToken>,
-    refused: &std::collections::HashSet<(u32, u32)>,
-) -> Result<StagedFormulas, IoError> {
-    stage_records_inner::<C, true>(
-        engine,
-        sheet,
-        sheet_instance,
-        records,
-        usage,
-        cancel,
-        refused,
-    )
-}
-
-fn stage_records_inner<C: formualizer_eval::traits::EvaluationContext, const FILTER: bool>(
-    engine: &mut Engine<C>,
-    sheet: &str,
-    sheet_instance: u32,
-    records: impl IntoIterator<Item = Result<OwnedSpoolFormulaRecord, IoError>>,
+    produce: impl FnOnce(
+        &mut dyn FnMut(OwnedSpoolFormulaRecord) -> Result<(), IoError>,
+    ) -> Result<(), IoError>,
     usage: WorkbookSpoolUsage,
     cancel: &Option<formualizer_eval::engine::CancelToken>,
     refused: &std::collections::HashSet<(u32, u32)>,
@@ -317,9 +305,8 @@ fn stage_records_inner<C: formualizer_eval::traits::EvaluationContext, const FIL
     let mut coordinates = Vec::new();
     let mut count = 0usize;
     let mut shared_tags = 0;
-    for record in records {
+    produce(&mut |record| {
         checkpoint(cancel)?;
-        let record = record?;
         let coord0 = match &record {
             OwnedSpoolFormulaRecord::Ordinary { coord0, .. }
             | OwnedSpoolFormulaRecord::SharedAnchor { coord0, .. }
@@ -388,7 +375,8 @@ fn stage_records_inner<C: formualizer_eval::traits::EvaluationContext, const FIL
                 .map_err(IoError::Calamine)?;
         }
         count += 1;
-    }
+        Ok(())
+    })?;
     let output = evidence.finish();
     let mut report = output.report;
     let families = output.families;

@@ -14,6 +14,13 @@ impl SharedStringTable {
         Self::parse_read(bytes, &ReadOptions::from(options))
     }
 
+    pub(in crate::xlsx) fn parse_direct(
+        bytes: &[u8],
+        options: &ReadOptions,
+    ) -> Result<Self, IoError> {
+        crate::xlsx::loader::cells::shared_strings(bytes, options).map(Self)
+    }
+
     /// Extraction uses shared read bounds, not evaluation/publication admission.
     pub(in crate::xlsx) fn parse_read<'a>(
         bytes: &'a [u8],

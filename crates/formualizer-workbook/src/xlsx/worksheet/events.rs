@@ -13,7 +13,7 @@ pub(in crate::xlsx) enum Value<'a> {
     Boolean(bool),
     Error(ErrorToken),
     Text(Cow<'a, str>),
-    Shared(u32),
+    Shared(usize),
     /// Bad scalar caches can occur in generated children and are masked by
     /// ownership before ingestion. Keep the refusal as an event, not a new
     /// earlier admission error.

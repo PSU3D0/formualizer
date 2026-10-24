@@ -12,7 +12,7 @@ use quick_xml::{
     events::{BytesStart, Event},
 };
 use quick_xml_cells as quick_xml;
-use std::{borrow::Cow, ops::Range};
+use std::borrow::Cow;
 use worksheet::events::Value;
 
 type Result<T> = std::result::Result<T, IoError>;
@@ -27,27 +27,56 @@ fn xml_error(error: impl Into<quick_xml::Error>) -> IoError {
 }
 
 // Bound checks ride on the existing event stream; no validation rescan.
-struct CellXml<'a, 'o> {
+pub(in crate::xlsx) struct CellXml<'a, 'o> {
     reader: Reader<&'a [u8]>,
     options: &'o ReadOptions,
     depth: usize,
+    events_until_poll: u8,
+    last_poll_position: u64,
 }
 impl<'a, 'o> CellXml<'a, 'o> {
-    fn new(source: &'a [u8], options: &'o ReadOptions) -> Self {
+    pub(in crate::xlsx) fn new(source: &'a [u8], options: &'o ReadOptions) -> Self {
         let mut reader = Reader::from_reader(source);
         reader.config_mut().expand_empty_elements = true;
         Self {
             reader,
             options,
             depth: 0,
+            events_until_poll: 0,
+            last_poll_position: 0,
         }
     }
     #[inline]
-    fn read_event(&mut self) -> Result<Event<'a>> {
-        super::super::options::checkpoint(&self.options.cancel)?;
+    pub(in crate::xlsx) fn read_event(&mut self) -> Result<Event<'a>> {
+        if self.events_until_poll == 0
+            || (self.options.cancel.is_some()
+                && self
+                    .reader
+                    .buffer_position()
+                    .saturating_sub(self.last_poll_position)
+                    >= 64 * 1024)
+        {
+            if self.reader.buffer_position() == 0
+                && self.reader.get_ref().len() > self.options.limits.max_worksheet_bytes
+            {
+                return Err(super::super::options::unsupported(
+                    "XML part byte limit",
+                    "worksheet XML",
+                ));
+            }
+            super::super::options::checkpoint(&self.options.cancel)?;
+            self.events_until_poll = 128;
+            self.last_poll_position = self.reader.buffer_position();
+        }
+        self.events_until_poll -= 1;
         let event = self.reader.read_event().map_err(xml_error)?;
         match &event {
-            Event::Start(_) => {
+            Event::Start(e) => {
+                if e.local_name().as_ref() == b"row" {
+                    super::super::options::checkpoint(&self.options.cancel)?;
+                    self.events_until_poll = 128;
+                    self.last_poll_position = self.reader.buffer_position();
+                }
                 self.depth += 1;
                 if self.depth > self.options.limits.max_xml_depth {
                     return Err(super::super::options::unsupported(
@@ -61,17 +90,33 @@ impl<'a, 'o> CellXml<'a, 'o> {
                 return Err(super::super::options::unsupported("DTD", "worksheet XML"));
             }
             Event::Eof if self.depth != 0 => return Err(eof("worksheet")),
+            Event::Eof => super::super::options::checkpoint(&self.options.cancel)?,
             _ => (),
         }
         Ok(event)
     }
-    fn buffer_position(&self) -> u64 {
-        self.reader.buffer_position()
-    }
     fn read_to_end(&mut self, closing: quick_xml::name::QName<'_>) -> Result<()> {
         let depth = self.depth;
         loop {
-            match self.read_event()? {
+            let event = match self.read_event() {
+                Err(IoError::Calamine(calamine::Error::Xlsx(XlsxError::Xml(
+                    quick_xml::Error::IllFormed(
+                        quick_xml::errors::IllFormedError::MismatchedEndTag { .. },
+                    ),
+                ))))
+                | Err(IoError::Calamine(calamine::Error::Xlsx(XlsxError::XmlEof(_)))) => {
+                    // The pinned reader's read_to_end reports the missing
+                    // requested close, not the mismatched tag encountered
+                    // inside a skipped scalar. Keep the balance refusal.
+                    return Err(xml_error(quick_xml::Error::IllFormed(
+                        quick_xml::errors::IllFormedError::MissingEndTag(
+                            String::from_utf8_lossy(closing.as_ref()).into_owned(),
+                        ),
+                    )));
+                }
+                result => result?,
+            };
+            match event {
                 Event::End(e) if self.depth < depth && e.name() == closing => return Ok(()),
                 Event::Eof => return Err(eof("v")),
                 _ => (),
@@ -196,25 +241,9 @@ macro_rules! get_attrs {
     (@count_one $e:expr) => { 1u8 };
 }
 
-#[inline]
-fn source_span(source: &[u8], value: Option<&[u8]>) -> Option<Range<usize>> {
-    value.map(|value| {
-        let start = value.as_ptr() as usize - source.as_ptr() as usize;
-        start..start + value.len()
-    })
-}
-
-fn bytes<'a>(source: &'a [u8], span: &Option<Range<usize>>) -> Option<&'a [u8]> {
-    span.as_ref().map(|s| &source[s.clone()])
-}
-
-pub(super) fn scan(source: &[u8], options: &ReadOptions, sink: &mut LoadSink<'_>) -> Result<()> {
-    let mut xml = CellXml::new(source, options);
-    // Keep balance checking enabled: malformed XML is not a loader tolerance.
-    let mut row_index = 0;
-    let mut col_index = 0;
+pub(super) fn header(xml: &mut CellXml<'_, '_>) -> Result<(usize, usize)> {
     let mut first_kind = None;
-    let mut cell_count = 0usize;
+    let mut dimensions = (1, 1);
     loop {
         match xml.read_event()? {
             Event::Start(e) => match e.local_name().as_ref() {
@@ -228,13 +257,12 @@ pub(super) fn scan(source: &[u8], options: &ReadOptions, sink: &mut LoadSink<'_>
                         })
                         .transpose()
                         .map_err(|e| xml_error(quick_xml::Error::InvalidAttr(e)))?;
-                    let span = source_span(source, span);
-                    dimension(
-                        bytes(source, &span)
-                            .ok_or_else(|| xlsx(XlsxError::UnexpectedNode("dimension")))?,
+                    let rect = dimension(
+                        span.ok_or_else(|| xlsx(XlsxError::UnexpectedNode("dimension")))?,
                     )?;
+                    dimensions = (rect.end.row as usize + 1, rect.end.col as usize + 1);
                 }
-                b"sheetData" => break,
+                b"sheetData" => return Ok(dimensions),
                 kind => {
                     if first_kind.is_none() {
                         first_kind = Some(String::from_utf8_lossy(kind).into_owned());
@@ -255,6 +283,16 @@ pub(super) fn scan(source: &[u8], options: &ReadOptions, sink: &mut LoadSink<'_>
             _ => (),
         }
     }
+}
+
+pub(super) fn scan(
+    xml: &mut CellXml<'_, '_>,
+    options: &ReadOptions,
+    sink: &mut LoadSink<'_>,
+) -> Result<()> {
+    let mut row_index = 0;
+    let mut col_index = 0;
+    let mut cell_count = 0usize;
     loop {
         match xml.read_event()? {
             Event::Start(e) if e.local_name().as_ref() == b"row" => {
@@ -267,8 +305,7 @@ pub(super) fn scan(source: &[u8], options: &ReadOptions, sink: &mut LoadSink<'_>
                     })
                     .transpose()
                     .map_err(|e| xml_error(quick_xml::Error::InvalidAttr(e)))?;
-                let r = source_span(source, r);
-                if let Some(r) = bytes(source, &r) {
+                if let Some(r) = r {
                     row_index = row_column_optional(r).map_err(xlsx)?.0;
                 }
             }
@@ -279,12 +316,7 @@ pub(super) fn scan(source: &[u8], options: &ReadOptions, sink: &mut LoadSink<'_>
             Event::Start(e) if e.local_name().as_ref() == b"c" => {
                 let (r, style, kind) = get_attrs!(e, b"r" => r, b"s" => style, b"t" => kind)
                     .map_err(|e| xml_error(quick_xml::Error::InvalidAttr(e)))?;
-                let (r, style, kind) = (
-                    source_span(source, r),
-                    source_span(source, style),
-                    source_span(source, kind),
-                );
-                let pos = if let Some(r) = bytes(source, &r) {
+                let pos = if let Some(r) = r {
                     let p = coordinate(r)?;
                     col_index = p.1;
                     p
@@ -304,38 +336,24 @@ pub(super) fn scan(source: &[u8], options: &ReadOptions, sink: &mut LoadSink<'_>
                         "worksheet XML",
                     ));
                 }
-                let mut literal = Literal {
-                    row: pos.0 + 1,
-                    col: pos.1 + 1,
-                    style: None,
-                    generated_child_hint: false,
-                    raw_coordinate_span: r,
-                    raw_style_span: style,
-                    raw_type_span: kind,
-                    raw_value_span: None,
-                    value: Value::Empty,
-                };
+                let mut value = Value::Empty;
                 let mut formula = None;
                 loop {
                     match xml.read_event()? {
                         Event::Start(e) if e.local_name().as_ref() == b"f" => {
-                            let text = text(&mut xml, e.name(), false)?;
+                            let text = text(xml, e.name(), false)?;
                             let (t, si, range) =
                                 get_attrs!(e, b"t" => t, b"si" => si, b"ref" => range)
                                     .map_err(|e| xml_error(quick_xml::Error::InvalidAttr(e)))?;
-                            let (t, si, range) = (
-                                source_span(source, t),
-                                source_span(source, si),
-                                source_span(source, range),
-                            );
-                            let sequence = sink.records.len() as u64;
+
+                            let sequence = sink.record_count as u64;
                             let coord0 = SourceCoord {
                                 row: pos.0,
                                 col: pos.1,
                             };
                             let parsed = (|| -> Result<_> {
-                                let record = if bytes(source, &t) == Some(b"shared") {
-                                    let index = bytes(source, &si)
+                                let record = if t == Some(b"shared") {
+                                    let index = si
                                         .and_then(|v| {
                                             atoi_simd::parse::<usize, true, false>(v).ok()
                                         })
@@ -344,7 +362,7 @@ pub(super) fn scan(source: &[u8], options: &ReadOptions, sink: &mut LoadSink<'_>
                                                 "si attribute must be a number",
                                             ))
                                         })?;
-                                    if let Some(range) = bytes(source, &range) {
+                                    if let Some(range) = range {
                                         OwnedSpoolFormulaRecord::SharedAnchor {
                                             sequence,
                                             coord0,
@@ -378,20 +396,12 @@ pub(super) fn scan(source: &[u8], options: &ReadOptions, sink: &mut LoadSink<'_>
                             }
                         }
                         Event::Start(e) if e.local_name().as_ref() == b"is" => {
-                            literal.value =
-                                Value::Text(Cow::Owned(read_string(&mut xml, e.name())?));
-                            literal.raw_value_span = None;
+                            value = Value::Text(Cow::Owned(read_string(xml, e.name())?));
                         }
                         Event::Start(e) if e.local_name().as_ref() == b"v" => {
-                            let start = xml.buffer_position() as usize;
-                            let t = bytes(source, &literal.raw_type_span);
-                            let (value, end) = read_value(&mut xml, e.name(), t)?;
-                            if !matches!(t, Some(b"inlineStr" | b"is")) {
-                                literal.value = value;
-                                literal.raw_value_span = Some(start..end);
-                            } else {
-                                literal.value = Value::Empty;
-                                literal.raw_value_span = None;
+                            value = read_value(xml, e.name(), kind)?;
+                            if matches!(kind, Some(b"inlineStr" | b"is")) {
+                                value = Value::Empty;
                             }
                         }
                         Event::Start(_) => {
@@ -402,14 +412,12 @@ pub(super) fn scan(source: &[u8], options: &ReadOptions, sink: &mut LoadSink<'_>
                         _ => (),
                     }
                 }
-                if let Some(record) = formula {
-                    sink.values.observe_formula(literal.row, literal.col)?;
-                    sink.last_formula_coord = Some((literal.row, literal.col));
-                    sink.records.push(record);
-                    sink.formula_cache(literal)?;
+                let format = if let Value::Number(number) = value {
+                    sink.styles.format_index(style.map(index), number)
                 } else {
-                    sink.literal(literal)?;
-                }
+                    None
+                };
+                sink.emit_cell(pos.0 + 1, pos.1 + 1, value, format, formula)?;
                 col_index += 1;
             }
             Event::End(e) if e.local_name().as_ref() == b"sheetData" => {
@@ -434,25 +442,18 @@ fn read_value<'a>(
     xml: &mut CellXml<'a, '_>,
     closing: quick_xml::name::QName<'_>,
     kind: Option<&[u8]>,
-) -> Result<(Value<'a>, usize)> {
-    let mut end = xml.buffer_position() as usize;
+) -> Result<Value<'a>> {
     let value = if matches!(kind, Some(b"n" | b"s" | b"b" | b"e") | None) {
         let value = match xml.read_event()? {
-            Event::Text(t) => {
-                end = xml.buffer_position() as usize;
-                scalar(t.as_ref(), kind)?
-            }
-            Event::End(e) if e.name() == closing => return Ok((Value::Empty, end)),
+            Event::Text(t) => scalar(t.as_ref(), kind)?,
+            Event::End(e) if e.name() == closing => return Ok(Value::Empty),
             Event::Eof => return Err(eof("v")),
             _ => Value::Empty,
         };
         xml.read_to_end(closing)?;
         value
     } else {
-        let start = xml.buffer_position() as usize;
         let content = text(xml, closing, false)?;
-        // Payload spans are needed only for raw numeric/shared-index handling.
-        end = start;
         match kind {
             Some(b"str" | b"d") => Value::Text(Cow::Owned(content)),
             Some(b"inlineStr" | b"is") => Value::Empty,
@@ -464,8 +465,14 @@ fn read_value<'a>(
             None => unreachable!(),
         }
     };
-    Ok((value, end))
+    Ok(value)
 }
+fn index(raw: &[u8]) -> usize {
+    // The pinned parser already rejects signs, non-digits and overflow while
+    // accepting arbitrarily long leading-zero runs. Do not rescan the token.
+    atoi_simd::parse::<usize, true, false>(raw).unwrap_or(0)
+}
+
 fn scalar(v: &[u8], kind: Option<&[u8]>) -> Result<Value<'static>> {
     let s = std::str::from_utf8(v)
         .map_err(|_| xlsx(XlsxError::Unexpected("invalid UTF-8 in cell value")))?;
@@ -474,9 +481,9 @@ fn scalar(v: &[u8], kind: Option<&[u8]>) -> Result<Value<'static>> {
             if v.is_empty() {
                 Value::Empty
             } else {
-                Value::Shared(0)
+                Value::Shared(index(v))
             }
-        } // raw index resolved once by ValueSink
+        } // Resolve the typed index once in the sink.
         Some(b"b") => Value::Boolean(v != b"0"),
         Some(b"e") => Value::Error(s.parse().map_err(xlsx)?),
         Some(b"n") | None => {
@@ -541,6 +548,22 @@ fn read_string(xml: &mut CellXml<'_, '_>, closing: quick_xml::name::QName<'_>) -
                 }));
             }
             Event::Eof => return Err(eof("")),
+            _ => (),
+        }
+    }
+}
+
+pub(in crate::xlsx) fn shared_strings(source: &[u8], options: &ReadOptions) -> Result<Vec<String>> {
+    let mut xml = CellXml::new(source, options);
+    let mut values = Vec::new();
+    let mut done = false;
+    loop {
+        match xml.read_event()? {
+            Event::Start(e) if !done && e.local_name().as_ref() == b"si" => {
+                values.push(read_string(&mut xml, e.name())?)
+            }
+            Event::End(e) if e.local_name().as_ref() == b"sst" => done = true,
+            Event::Eof => return Ok(values),
             _ => (),
         }
     }
@@ -673,15 +696,24 @@ fn coordinate(raw: &[u8]) -> Result<(u32, u32)> {
     ))
 }
 fn dimension(raw: &[u8]) -> Result<SourceRect> {
-    let parts = raw
-        .split(|b| *b == b':')
-        .map(coordinate)
-        .collect::<Result<Vec<_>>>()?;
-    let (start, end) = match parts.as_slice() {
-        [a] => (*a, *a),
-        [a, b] => (*a, *b),
-        other => return Err(xlsx(XlsxError::DimensionCount(other.len()))),
+    let mut parts = raw.split(|b| *b == b':');
+    let start = coordinate(parts.next().expect("split has at least one element"))?;
+    let mut count = 1;
+    let end = if let Some(raw) = parts.next() {
+        count += 1;
+        coordinate(raw)?
+    } else {
+        start
     };
+    // Validate every token before the count error, as the pinned reader does,
+    // without allocating a vector proportional to a malicious ref attribute.
+    for raw in parts {
+        coordinate(raw)?;
+        count += 1;
+    }
+    if count > 2 {
+        return Err(xlsx(XlsxError::DimensionCount(count)));
+    }
     Ok(SourceRect {
         start: SourceCoord {
             row: start.0,
@@ -697,6 +729,117 @@ fn dimension(raw: &[u8]) -> Result<SourceRect> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn bulk_cancellation_is_amortized_but_bounded_inside_one_row() {
+        let token = formualizer_eval::engine::CancelToken::new();
+        let options = ReadOptions {
+            cancel: Some(token.clone()),
+            ..Default::default()
+        };
+        let source = format!(
+            "<worksheet><sheetData><row>{}</row></sheetData></worksheet>",
+            "<c><v>1</v></c>".repeat(1024)
+        );
+        let mut xml = CellXml::new(source.as_bytes(), &options);
+        // Entry check succeeds. A cancellation inside a huge row must be seen
+        // within 128 events, without loading an atomic on every event.
+        xml.read_event().unwrap();
+        token.cancel();
+        let mut successful = 0;
+        loop {
+            match xml.read_event() {
+                Err(_) => break,
+                Ok(Event::Eof) => panic!("cancelled row escaped its checkpoint"),
+                _ => successful += 1,
+            }
+            assert!(successful <= 128);
+        }
+        assert!(successful > 0, "do not poll an atomic on every event");
+    }
+
+    #[test]
+    fn bulk_header_and_raw_tokens_preserve_dimensions_and_fallbacks() {
+        let options = ReadOptions::default();
+        for (source, expected) in [
+            ("<worksheet><sheetData/>", (1, 1)),
+            ("<worksheet><dimension ref=\"B2:D5\"/><sheetData/>", (5, 4)),
+        ] {
+            let mut xml = CellXml::new(source.as_bytes(), &options);
+            assert_eq!(header(&mut xml).unwrap(), expected);
+        }
+        for raw in [
+            b"+1".as_slice(),
+            b" 1",
+            b"1 ",
+            b"1x",
+            b"18446744073709551616000",
+            b"",
+        ] {
+            assert_eq!(index(raw), 0);
+        }
+        assert_eq!(index(b"000000000000000000000000000001"), 1);
+        let many = std::iter::repeat_n("A1", 10_000)
+            .collect::<Vec<_>>()
+            .join(":");
+        assert!(matches!(
+            dimension(many.as_bytes()),
+            Err(IoError::Calamine(calamine::Error::Xlsx(
+                XlsxError::DimensionCount(10_000)
+            )))
+        ));
+        assert!(matches!(
+            dimension(b"A1:B2:bad"),
+            Err(IoError::Calamine(calamine::Error::Xlsx(
+                XlsxError::RangeWithoutRowComponent
+            )))
+        ));
+        assert!(coordinate(b"$A$1").is_err());
+        assert!(coordinate(b"A0000000000000000000000000000000000000000000000000000001").is_ok());
+    }
+
+    #[test]
+    fn bulk_text_cdata_entities_and_unicode_keep_pinned_reader_semantics() {
+        let options = ReadOptions::default();
+        // Ordinary cached string values ignore CDATA; inline display strings
+        // retain it. Do not turn on CDATA globally to remove the old repair pass.
+        let source = "<v>a<![CDATA[b]]>c&amp;d\u{85}e\u{2028}f</v>";
+        let mut xml = CellXml::new(source.as_bytes(), &options);
+        let Event::Start(e) = xml.read_event().unwrap() else {
+            panic!()
+        };
+        match read_value(&mut xml, e.name(), Some(b"str")).unwrap() {
+            Value::Text(value) => assert_eq!(value, "ac&d\u{85}e\u{2028}f"),
+            _ => panic!(),
+        }
+        let source = "<is><t>a<![CDATA[b]]>c&amp;d</t></is>";
+        let mut xml = CellXml::new(source.as_bytes(), &options);
+        let Event::Start(e) = xml.read_event().unwrap() else {
+            panic!()
+        };
+        assert_eq!(read_string(&mut xml, e.name()).unwrap(), "abc&d");
+    }
+
+    #[test]
+    fn bulk_large_text_forces_the_next_byte_checkpoint_and_part_limits() {
+        let token = formualizer_eval::engine::CancelToken::new();
+        let options = ReadOptions {
+            cancel: Some(token.clone()),
+            ..Default::default()
+        };
+        let source = format!("<v>{}</v>", "x".repeat(128 * 1024));
+        let mut xml = CellXml::new(source.as_bytes(), &options);
+        xml.read_event().unwrap();
+        xml.read_event().unwrap();
+        token.cancel();
+        assert!(
+            xml.read_event().is_err(),
+            "large text must not wait for another 128 events"
+        );
+        let mut options = ReadOptions::default();
+        options.limits.max_worksheet_bytes = 3;
+        assert!(CellXml::new(b"<sst/>", &options).read_event().is_err());
+    }
+
     #[test]
     fn direct_xml_keeps_depth_dtd_balance_and_cancellation_bounds() {
         let mut options = ReadOptions::default();

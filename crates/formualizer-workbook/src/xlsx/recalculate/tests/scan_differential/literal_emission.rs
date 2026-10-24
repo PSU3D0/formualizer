@@ -132,7 +132,7 @@ fn compare_package(bytes: &[u8], label: &str) -> Result<(usize, usize), IoError>
                     Value::Shared(index) => format!(
                         "text:{:?}",
                         table
-                            .get(index as usize)
+                            .get(index)
                             .unwrap_or_else(|| panic!("{label}: missing SST index {index}"))
                     ),
                     Value::Unreadable => panic!(
