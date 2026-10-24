@@ -204,8 +204,8 @@ fn output_budget_is_enforced_at_publication_not_a_nonexistent_ingestion_zip() {
     assert_eq!(unchanged.bytes, bytes);
     let mut options = XlsxRecalculateOptions::default();
     options.limits.max_output_bytes = 0;
-    // Positive old-path control: precisely the intermediate-view artifact that
-    // this packet deliberately retires, never a blanket budget relaxation.
+    // Positive old-path control: the intermediate-view byte-limit artifact that
+    // native ingestion deliberately retired, never a blanket budget relaxation.
     let admission = admit_source(&bytes, &options).unwrap();
     let old = legacy_ingest_source(&bytes, admission, &options, &mut PhaseClock::from_env())
         .err()
