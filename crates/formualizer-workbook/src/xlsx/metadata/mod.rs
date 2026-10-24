@@ -19,7 +19,7 @@ pub(in crate::xlsx) use styles::raw_attribute;
 
 #[cfg(all(test, feature = "xlsx-recalc"))]
 #[test]
-fn compatible_metadata_ignores_cdata_and_honors_empty_section_closes() {
+fn compatible_metadata_retains_cdata_and_honors_empty_section_closes() {
     use crate::xlsx::options::{ReadOptions, ReadPolicy};
     let compatible = ReadOptions::default();
     let strict = ReadOptions {
@@ -32,7 +32,7 @@ fn compatible_metadata_ignores_cdata_and_honors_empty_section_closes() {
             .unwrap()
             .get(0)
             .unwrap(),
-        "ac"
+        "abc"
     );
     assert!(SharedStringTable::parse_read(strings, &strict).is_err());
     for styles in [

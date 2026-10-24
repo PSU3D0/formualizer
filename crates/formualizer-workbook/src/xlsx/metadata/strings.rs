@@ -64,7 +64,7 @@ impl SharedStringTable {
             Ok(())
         };
         if options.policy == crate::xlsx::options::ReadPolicy::Compatible {
-            xml::walk_ignoring_cdata(bytes, options, visit)?;
+            xml::walk_display_cdata(bytes, options, visit)?;
         } else {
             xml::walk(bytes, options, visit)?;
         }

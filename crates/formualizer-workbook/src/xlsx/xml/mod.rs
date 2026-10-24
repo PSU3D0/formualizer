@@ -676,7 +676,7 @@ pub(crate) fn walk<'a>(
     options: &CacheOptions,
     visit: impl FnMut(&[Element<'a>], Node<'_, 'a>) -> Result<(), IoError>,
 ) -> Result<(), IoError> {
-    walk_inner::<false>(bytes, options, visit)
+    walk_inner::<0>(bytes, options, visit)
 }
 
 #[cfg(feature = "xlsx-recalc")]
@@ -685,10 +685,21 @@ pub(crate) fn walk_ignoring_cdata<'a>(
     options: &CacheOptions,
     visit: impl FnMut(&[Element<'a>], Node<'_, 'a>) -> Result<(), IoError>,
 ) -> Result<(), IoError> {
-    walk_inner::<true>(bytes, options, visit)
+    walk_inner::<1>(bytes, options, visit)
 }
 
-fn walk_inner<'a, const IGNORE_CDATA: bool>(
+#[cfg(feature = "xlsx-recalc")]
+pub(crate) fn walk_display_cdata<'a>(
+    bytes: &'a [u8],
+    options: &CacheOptions,
+    visit: impl FnMut(&[Element<'a>], Node<'_, 'a>) -> Result<(), IoError>,
+) -> Result<(), IoError> {
+    walk_inner::<2>(bytes, options, visit)
+}
+
+// Strict source preservation refuses CDATA; scalar readers ignore it, while
+// shared display strings retain its literal text. Dispatch once per part.
+fn walk_inner<'a, const CDATA: u8>(
     bytes: &'a [u8],
     options: &CacheOptions,
     mut visit: impl FnMut(&[Element<'a>], Node<'_, 'a>) -> Result<(), IoError>,
@@ -892,13 +903,25 @@ fn walk_inner<'a, const IGNORE_CDATA: bool>(
                 )?;
             }
             Event::CData(_) => {
-                // Calamine's formula/string readers ignore these events rather
-                // than concatenating their text. Never accept a divergent view.
-                if !IGNORE_CDATA {
+                if CDATA == 0 {
                     return Err(unsupported(
                         "CDATA is not supported by the ingestion view",
                         "XLSX XML",
                     ));
+                }
+                if path.is_empty() {
+                    return Err(unsupported("CDATA outside XML root", "XLSX XML"));
+                }
+                if CDATA == 2 {
+                    let span = start + 9..end - 3;
+                    visit(
+                        &path,
+                        Node {
+                            kind: Kind::Text(Cow::Borrowed(&text[span.clone()])),
+                            span,
+                            fast_attributes: None,
+                        },
+                    )?;
                 }
             }
             Event::GeneralRef(reference) => {

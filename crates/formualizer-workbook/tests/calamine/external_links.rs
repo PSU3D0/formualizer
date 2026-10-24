@@ -360,6 +360,61 @@ fn native_shared_follower_before_anchor_matches() {
     }
 }
 
+#[cfg(feature = "xlsx-recalc")]
+#[test]
+fn native_shared_string_cdata_matches_display_text() {
+    use formualizer_workbook::backends::NativeXlsxAdapter;
+    let bytes = book(
+        &[Ws::new(
+            "Sheet1",
+            vec![
+                ("A1".into(), "<c r=\"A1\" t=\"s\"><v>0</v></c>".into()),
+                formula("B1", "A1"),
+            ],
+        )],
+        "",
+    );
+    let mut parts = unpack(&bytes);
+    parts.insert(
+        "xl/sharedStrings.xml".into(),
+        format!("<sst xmlns=\"{MAIN}\"><si><t>a<![CDATA[b]]>c</t></si></sst>"),
+    );
+    let parts = edit(
+        parts,
+        WB_RELS,
+        "</Relationships>",
+        &format!(
+            "<Relationship Id=\"rIdSst\" Type=\"{OFFICE}/sharedStrings\" Target=\"sharedStrings.xml\"/></Relationships>"
+        ),
+    );
+    let parts = edit(
+        parts,
+        TYPES,
+        "</Types>",
+        "<Override PartName=\"/xl/sharedStrings.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml\"/></Types>",
+    );
+    let bytes = pack(&parts);
+    let mut baseline = load(bytes.clone(), WorkbookConfig::ephemeral());
+    let mut native = Workbook::from_reader(
+        NativeXlsxAdapter::open_bytes(bytes).unwrap(),
+        LoadStrategy::EagerAll,
+        WorkbookConfig::ephemeral(),
+    )
+    .unwrap();
+    baseline.evaluate_all().unwrap();
+    native.evaluate_all().unwrap();
+    for col in [1, 2] {
+        assert_eq!(
+            baseline.get_value("Sheet1", 1, col),
+            Some(LiteralValue::Text("abc".into()))
+        );
+        assert_eq!(
+            baseline.get_value("Sheet1", 1, col),
+            native.get_value("Sheet1", 1, col)
+        );
+    }
+}
+
 #[test]
 fn cached_links_eager() {
     check_mode(WorkbookConfig::ephemeral());
