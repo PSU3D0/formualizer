@@ -2,6 +2,8 @@
 //! Source bytes remain immutable; evaluation text and publication edits are separate.
 mod error;
 pub(crate) mod ingest;
+#[cfg(feature = "xlsx-recalc")]
+pub(crate) mod loader;
 #[cfg(all(test, feature = "xlsx-recalc"))]
 mod loader_differential;
 pub(crate) mod metadata;

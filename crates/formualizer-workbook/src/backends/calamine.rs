@@ -185,6 +185,40 @@ fn read_slice(source: &[u8], position: &mut u64, buf: &mut [u8]) -> std::io::Res
     Ok(read)
 }
 
+/// Retained source access shared by XLSX readers without reopening paths.
+pub(crate) struct XlsxSource(SharedXlsxReader);
+impl XlsxSource {
+    pub(crate) fn from_bytes(bytes: Vec<u8>) -> Self {
+        Self(SharedXlsxReader::from_bytes(bytes))
+    }
+    pub(crate) fn open_path(path: &Path, policy: XlsxPathSource) -> std::io::Result<Self> {
+        SharedXlsxReader::from_file(File::open(path)?, policy).map(Self)
+    }
+    pub(crate) fn bytes(&self, limit: usize) -> std::io::Result<std::borrow::Cow<'_, [u8]>> {
+        let borrowed = match &self.0 {
+            SharedXlsxReader::Bytes { bytes, .. } => Some(bytes.as_ref()),
+            #[cfg(any(unix, windows))]
+            SharedXlsxReader::Mapped { source, .. } => Some(source.map.as_ref()),
+            SharedXlsxReader::File(_) => None,
+        };
+        if let Some(bytes) = borrowed {
+            if bytes.len() > limit {
+                return Err(std::io::Error::other("XLSX input byte limit exceeded"));
+            }
+            return Ok(std::borrow::Cow::Borrowed(bytes));
+        }
+        let mut bytes = Vec::new();
+        self.0
+            .reader()
+            .take((limit as u64).saturating_add(1))
+            .read_to_end(&mut bytes)?;
+        if bytes.len() > limit {
+            return Err(std::io::Error::other("XLSX input byte limit exceeded"));
+        }
+        Ok(std::borrow::Cow::Owned(bytes))
+    }
+}
+
 impl SharedXlsxReader {
     fn from_bytes(data: Vec<u8>) -> Self {
         Self::Bytes {

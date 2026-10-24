@@ -1,6 +1,8 @@
 #[cfg(feature = "calamine")]
 pub mod calamine;
 
+#[cfg(feature = "xlsx-recalc")]
+pub use crate::xlsx::loader::NativeXlsxAdapter;
 #[cfg(feature = "calamine")]
 pub use calamine::{CalamineAdapter, XlsxPathSource};
 

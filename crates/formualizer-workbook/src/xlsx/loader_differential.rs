@@ -297,6 +297,9 @@ where
         }
     }
     dump.coverage.formulas = formulas.len();
+    if std::env::var_os("FZ_LOADER_VALUES_ONLY").is_some() {
+        return dump;
+    }
     // Evaluate only after snapshotting every cell. Evaluation can materialize
     // spills and build deferred graphs; neither belongs in the load snapshot.
     // A single public batch evaluates every requested formula, without
@@ -367,7 +370,23 @@ fn compare_files<A, B>(
     paths: &[std::path::PathBuf],
     baseline: impl Fn(Vec<u8>) -> Result<A, IoError> + Copy,
     candidate: impl Fn(Vec<u8>) -> Result<B, IoError> + Copy,
+    output: impl std::io::Write,
+) -> std::io::Result<(Coverage, usize)>
+where
+    A: SpreadsheetReader + EngineLoadStream<WBResolver>,
+    B: SpreadsheetReader + EngineLoadStream<WBResolver>,
+    IoError: From<<A as EngineLoadStream<WBResolver>>::Error>
+        + From<<B as EngineLoadStream<WBResolver>>::Error>,
+{
+    compare_projected(paths, baseline, candidate, output, |dump| dump)
+}
+
+fn compare_projected<A, B>(
+    paths: &[std::path::PathBuf],
+    baseline: impl Fn(Vec<u8>) -> Result<A, IoError> + Copy,
+    candidate: impl Fn(Vec<u8>) -> Result<B, IoError> + Copy,
     mut output: impl std::io::Write,
+    project: impl Fn(Dump) -> Dump,
 ) -> std::io::Result<(Coverage, usize)>
 where
     A: SpreadsheetReader + EngineLoadStream<WBResolver>,
@@ -379,8 +398,8 @@ where
     let mut divergences = 0;
     for path in paths {
         let bytes = std::fs::read(path)?;
-        let a = capture(&bytes, baseline);
-        let b = capture(&bytes, candidate);
+        let a = project(capture(&bytes, baseline));
+        let b = project(capture(&bytes, candidate));
         coverage.files += 1;
         coverage.sheets += a.coverage.sheets;
         coverage.cells += a.coverage.cells;
@@ -419,6 +438,102 @@ fn listed_calamine_oracle_is_repeatable() {
     )
     .unwrap();
     assert_eq!(divergences, 0, "Calamine oracle is not deterministic");
+}
+
+fn native(bytes: Vec<u8>) -> Result<super::loader::NativeXlsxAdapter, IoError> {
+    super::loader::NativeXlsxAdapter::open_bytes(bytes)
+}
+
+fn values_and_formulas(mut dump: Dump) -> Dump {
+    dump.records.retain(|key, _| {
+        (key.ends_with("/refusal") && !key.starts_with("evaluate"))
+            || key == "loaded/sheets"
+            || (key.starts_with("loaded/sheet/") && key.contains("/cell/"))
+    });
+    dump
+}
+
+#[test]
+fn native_values_and_formulas_match_committed_fixture() {
+    let bytes = include_bytes!("../../tests/fixtures/shared_formula_above_master.xlsx");
+    let a = values_and_formulas(capture(bytes, calamine));
+    let b = values_and_formulas(capture(bytes, native));
+    assert_eq!(first_difference(&a, &b), None);
+}
+
+#[test]
+fn native_formula_staging_matches_eager_deferred_and_authoritative_modes() {
+    use formualizer_eval::engine::FormulaPlaneMode;
+    let bytes = include_bytes!("../../tests/fixtures/shared_formula_above_master.xlsx");
+    let mut source = calamine(bytes.to_vec()).unwrap();
+    let name = source.sheet_names().unwrap().remove(0);
+    let formulas: Vec<_> = source
+        .read_sheet(&name)
+        .unwrap()
+        .cells
+        .into_iter()
+        .filter(|(_, cell)| cell.formula.is_some())
+        .map(|(coord, _)| coord)
+        .collect();
+    for config in [
+        WorkbookConfig::ephemeral(),
+        WorkbookConfig::interactive().with_formula_plane_mode(FormulaPlaneMode::Off),
+        WorkbookConfig::interactive()
+            .with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental),
+    ] {
+        let mut a = Workbook::from_reader(
+            calamine(bytes.to_vec()).unwrap(),
+            LoadStrategy::EagerAll,
+            config.clone(),
+        )
+        .unwrap();
+        let mut b = Workbook::from_reader(
+            native(bytes.to_vec()).unwrap(),
+            LoadStrategy::EagerAll,
+            config,
+        )
+        .unwrap();
+        for &(row, col) in &formulas {
+            assert_eq!(
+                a.get_formula(&name, row, col),
+                b.get_formula(&name, row, col)
+            );
+            assert_eq!(
+                value(Some(a.evaluate_cell(&name, row, col).unwrap())),
+                value(Some(b.evaluate_cell(&name, row, col).unwrap()))
+            );
+        }
+    }
+}
+
+#[test]
+#[ignore = "set FZ_LOADER_FILES and FZ_LOADER_REPORT for native differential"]
+fn listed_native_loader_differential() {
+    let list = std::env::var_os("FZ_LOADER_FILES").expect("fixture list");
+    let report = std::env::var_os("FZ_LOADER_REPORT").expect("report path");
+    let paths: Vec<_> = std::fs::read_to_string(list)
+        .unwrap()
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(std::path::PathBuf::from)
+        .collect();
+    assert!(!paths.is_empty());
+    let values_only = std::env::var_os("FZ_LOADER_VALUES_ONLY").is_some();
+    let (_, divergences) = compare_projected(
+        &paths,
+        calamine,
+        native,
+        std::fs::File::create(report).unwrap(),
+        |dump| {
+            if values_only {
+                values_and_formulas(dump)
+            } else {
+                dump
+            }
+        },
+    )
+    .unwrap();
+    assert_eq!(divergences, 0, "native loader differential; see report");
 }
 
 #[test]
