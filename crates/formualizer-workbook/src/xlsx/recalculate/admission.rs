@@ -146,20 +146,7 @@ pub(super) fn scan(
             return Ok(());
         }
         if let Some(sink) = &mut sink {
-            let raw =
-                values::RawCell {
-                    kind: literal.raw_type_span.as_ref().map(|span| {
-                        std::str::from_utf8(&data[span.clone()]).expect("admitted UTF-8")
-                    }),
-                    style: literal.raw_style_span.as_ref().map(|span| {
-                        std::str::from_utf8(&data[span.clone()]).expect("admitted UTF-8")
-                    }),
-                    payload: literal
-                        .raw_value_span
-                        .as_ref()
-                        .map(|span| &data[span.clone()]),
-                };
-            record(&mut first, offset, sink.push(literal, raw));
+            record(&mut first, offset, sink.push(literal));
         }
         Ok(())
     })?;

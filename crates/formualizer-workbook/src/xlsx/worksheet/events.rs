@@ -32,6 +32,24 @@ pub(in crate::xlsx) struct Literal<'a> {
     pub value: Value<'a>,
 }
 
+impl Literal<'_> {
+    pub(in crate::xlsx) fn raw_type<'a>(&self, source: &'a [u8]) -> Option<&'a str> {
+        self.raw_type_span
+            .as_ref()
+            .map(|span| std::str::from_utf8(&source[span.clone()]).expect("admitted UTF-8"))
+    }
+    pub(in crate::xlsx) fn raw_style<'a>(&self, source: &'a [u8]) -> Option<&'a str> {
+        self.raw_style_span
+            .as_ref()
+            .map(|span| std::str::from_utf8(&source[span.clone()]).expect("admitted UTF-8"))
+    }
+    pub(in crate::xlsx) fn raw_value<'a>(&self, source: &'a [u8]) -> Option<&'a [u8]> {
+        self.raw_value_span
+            .as_ref()
+            .map(|span| &source[span.clone()])
+    }
+}
+
 /// Borrowed source identity, independent of publication marks or engine staging.
 #[derive(Debug)]
 pub(in crate::xlsx) enum FormulaKind<'a> {

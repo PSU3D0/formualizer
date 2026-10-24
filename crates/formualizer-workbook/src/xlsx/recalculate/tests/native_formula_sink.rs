@@ -1,7 +1,7 @@
 use super::*;
 use crate::xlsx::recalculate::{
     metadata::{SharedStringTable, Styles},
-    values::{Context, RawCell, ValueSink, dimension_hint},
+    values::{Context, ValueSink, dimension_hint},
 };
 use crate::{CalamineAdapter, SpreadsheetReader, workbook::WBResolver};
 use calamine::Reader;
@@ -87,24 +87,13 @@ fn load(data: &[u8], config: EvalConfig, native: bool) -> Engine<WBResolver> {
         limits: &limits,
     })
     .unwrap();
-    // This isolated fixture uses only unstyled numeric literals. Corpus raw
-    // metadata coverage below uses the complete contextual admission view.
     sheet::scanner::scan_emitting(
         &plan.data,
         &options,
         sheet::ScanStrategy::Indexed,
         &mut 0,
         &mut 0,
-        |event| {
-            values.push(
-                event,
-                RawCell {
-                    kind: None,
-                    style: None,
-                    payload: None,
-                },
-            )
-        },
+        |event| values.push(event),
     )
     .unwrap();
     for cell in &plan.cells {
