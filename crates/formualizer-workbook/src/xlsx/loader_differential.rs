@@ -299,12 +299,33 @@ where
     dump.coverage.formulas = formulas.len();
     // Evaluate only after snapshotting every cell. Evaluation can materialize
     // spills and build deferred graphs; neither belongs in the load snapshot.
-    for (i, name, row, col) in formulas {
-        let result = wb
-            .evaluate_cell(&name, row, col)
-            .map(|v| value(Some(v)))
-            .map_err(|e| format!("{e:?}: {e}"));
-        dump.record(format!("evaluated/sheet/{i:08}/{row:08}/{col:08}"), result);
+    // A single public batch evaluates every requested formula, without
+    // rebuilding demand/preparation state separately for thousands of targets.
+    // If the batch refuses, still visit each target to expose all cell results.
+    let targets: Vec<_> = formulas
+        .iter()
+        .map(|(_, name, row, col)| (name.as_str(), *row, *col))
+        .collect();
+    match wb.evaluate_cells(&targets) {
+        Ok(values) => {
+            assert_eq!(values.len(), formulas.len());
+            for ((i, _, row, col), result) in formulas.into_iter().zip(values) {
+                dump.record(
+                    format!("evaluated/sheet/{i:08}/{row:08}/{col:08}"),
+                    Ok::<_, String>(value(Some(result))),
+                );
+            }
+        }
+        Err(error) => {
+            dump.refusal("evaluate-batch", error);
+            for (i, name, row, col) in formulas {
+                let result = wb
+                    .evaluate_cell(&name, row, col)
+                    .map(|v| value(Some(v)))
+                    .map_err(|e| format!("{e:?}: {e}"));
+                dump.record(format!("evaluated/sheet/{i:08}/{row:08}/{col:08}"), result);
+            }
+        }
     }
     dump
 }
