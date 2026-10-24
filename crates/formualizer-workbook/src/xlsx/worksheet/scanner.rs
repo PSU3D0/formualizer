@@ -3,6 +3,8 @@
 pub(in crate::xlsx) use super::events as emission;
 use super::*;
 mod generated;
+mod state;
+use state::OpenCellState;
 #[cfg(test)]
 mod path_tests;
 mod scalar;
@@ -169,14 +171,7 @@ fn scan_inner<const COUNT_PATHS: bool>(
     let mut table_count = None;
     let mut serialized = 0usize;
     let mut cells = Vec::new();
-    let mut current: Option<ScalarCell<'_>> = None;
-    let mut formula = FormulaState::default();
-    let mut current_style = None;
-    let mut current_raw_coordinate = None;
-    let mut current_raw_type = None;
-    let mut current_raw_style = None;
-    let mut literal_text = Cow::Borrowed("");
-    let mut inline_text = emission::DisplayString::default();
+    let mut open_cell = OpenCellState::default();
     let mut row = 0;
     let mut column = 0;
     let mut sheet_data_count = 0;
@@ -235,36 +230,10 @@ fn scan_inner<const COUNT_PATHS: bool>(
     macro_rules! accept_text {
         ($value:expr, $start:expr, $end:expr) => {{
             let value = $value;
-            if current
-                .as_ref()
-                .is_some_and(|c| c.inline.is_some() && !c.has_formula)
-            {
+            if open_cell.is_inline() {
                 cursor.materialize(&mut path, depth)?;
-                let node = Node::new(Kind::Text(value.clone()), $start..$end);
-                inline_text.event(&path, &node, bytes)?;
             }
-            if let Some(cell) = current.as_mut() {
-                match cursor.position {
-                    Position::CellFormula => append(&mut formula.text, value),
-                    Position::CellValue => {
-                        if !cell.has_formula {
-                            let raw = text.get($start..$end).ok_or_else(|| {
-                                unsupported("unavailable XML text span", "worksheet")
-                            })?;
-                            let literal = if raw.starts_with('&') {
-                                value.clone()
-                            } else if !raw.contains('\r') {
-                                Cow::Borrowed(raw)
-                            } else {
-                                Cow::Owned(raw.replace("\r\n", "\n").replace('\r', "\n"))
-                            };
-                            append(&mut literal_text, literal);
-                        }
-                        append(&mut cell.value.as_mut().expect("opened v").text, value);
-                    }
-                    _ => {}
-                }
-            }
+            open_cell.text(value, $start..$end, text, &path, cursor.position)?;
         }};
     }
     loop {
@@ -519,10 +488,7 @@ fn scan_inner<const COUNT_PATHS: bool>(
             }
             Event::Comment(_) | Event::PI(_) => continue,
         };
-        if current
-            .as_ref()
-            .is_some_and(|c| c.inline.is_some() && !c.has_formula)
-        {
+        if open_cell.is_inline() {
             if path.len() < depth {
                 cursor.materialize(&mut path, depth - 1)?;
                 path.push(element.clone());
@@ -534,7 +500,9 @@ fn scan_inner<const COUNT_PATHS: bool>(
                 },
                 Boundary::Close => Kind::Close,
             };
-            inline_text.event(&path, &Node::new(kind, span.clone()), bytes)?;
+            open_cell
+                .inline_text
+                .event(&path, &Node::new(kind, span.clone()), bytes)?;
         }
         let tag = Tag::of(&element);
         if matches!(boundary, Boundary::Open { .. }) {
@@ -765,11 +733,11 @@ fn scan_inner<const COUNT_PATHS: bool>(
                         }
                     }
                     if tag.local == Local::C {
-                        if !is_cell || current.is_some() {
+                        if !is_cell || open_cell.cell.is_some() {
                             return Err(unsupported("misplaced/nested cell", "worksheet"));
                         }
                         let coordinate_attribute = attrs.required_attribute("r")?;
-                        current_raw_coordinate =
+                        open_cell.raw_coordinate =
                             Some(raw_attribute_span(bytes, &coordinate_attribute.span)?);
                         let address = &coordinate_attribute.value;
                         let canonical = plain_coord(address);
@@ -828,20 +796,20 @@ fn scan_inner<const COUNT_PATHS: bool>(
                             return Err(unsupported("unknown cell type", "worksheet"));
                         }
                         let kind_span = kind_attribute.as_ref().map(|a| a.span.clone());
-                        current_raw_type = kind_attribute
+                        open_cell.raw_type = kind_attribute
                             .as_ref()
                             .map(|a| raw_attribute_span(bytes, &a.span))
                             .transpose()?;
                         let style_attribute = attrs.attribute("", "s");
-                        current_raw_style = style_attribute
+                        open_cell.raw_style = style_attribute
                             .as_ref()
                             .map(|a| raw_attribute_span(bytes, &a.span))
                             .transpose()?;
-                        current_style = style_attribute.map(|a| a.value);
-                        literal_text = Cow::Borrowed("");
-                        inline_text = emission::DisplayString::default();
+                        open_cell.style = style_attribute.map(|a| a.value);
+                        open_cell.literal_text = Cow::Borrowed("");
+                        open_cell.inline_text = emission::DisplayString::default();
                         if !*empty {
-                            current = Some(ScalarCell {
+                            open_cell.cell = Some(ScalarCell {
                                 row: r,
                                 col: c,
                                 span: span.clone(),
@@ -891,17 +859,18 @@ fn scan_inner<const COUNT_PATHS: bool>(
                                 row: r,
                                 col: c,
                                 generated_child_hint: generated_children.contains(r, c),
-                                style: current_style.take(),
-                                raw_coordinate_span: current_raw_coordinate.take(),
-                                raw_type_span: current_raw_type.take(),
-                                raw_style_span: current_raw_style.take(),
+                                style: open_cell.style.take(),
+                                raw_coordinate_span: open_cell.raw_coordinate.take(),
+                                raw_type_span: open_cell.raw_type.take(),
+                                raw_style_span: open_cell.raw_style.take(),
                                 raw_value_span: None,
                                 value: emission::Value::Empty,
                             })?;
                         }
                     }
                     if direct {
-                        let cell = current
+                        let cell = open_cell
+                            .cell
                             .as_mut()
                             .ok_or_else(|| unsupported("payload without cell", "worksheet"))?;
                         match tag.local {
@@ -914,9 +883,9 @@ fn scan_inner<const COUNT_PATHS: bool>(
                                     ));
                                 }
                                 cell.has_formula = true;
-                                formula = FormulaState::default();
+                                open_cell.formula = FormulaState::default();
                                 let kind_attribute = attrs.attribute("", "t");
-                                formula.kind = match kind_attribute
+                                open_cell.formula.kind = match kind_attribute
                                     .as_ref()
                                     .map_or("normal", |a| &*a.value)
                                 {
@@ -933,10 +902,11 @@ fn scan_inner<const COUNT_PATHS: bool>(
                                         ));
                                     }
                                 };
-                                formula.open = span.clone();
-                                formula.kind_span = kind_attribute.map(|a| a.span.clone());
+                                open_cell.formula.open = span.clone();
+                                open_cell.formula.kind_span =
+                                    kind_attribute.map(|a| a.span.clone());
                                 let extent = attrs.attribute("", "ref");
-                                if formula.kind == "array" {
+                                if open_cell.formula.kind == "array" {
                                     if index.is_none() {
                                         *needs_index = true;
                                         return Err(unsupported(NEEDS_INDEX, "worksheet"));
@@ -967,19 +937,20 @@ fn scan_inner<const COUNT_PATHS: bool>(
                                         dynamic.array_ref = Some(rect);
                                         dynamic.array_ref_span = Some(extent.span.clone());
                                     }
-                                } else if extent.is_some() && formula.kind != "shared" {
+                                } else if extent.is_some() && open_cell.formula.kind != "shared" {
                                     return Err(unsupported(
                                         "non-shared formula extent",
                                         "worksheet",
                                     ));
                                 }
-                                if formula.kind == "shared" {
-                                    formula.shared_id = Some(integer(attrs.required("si")?)?);
-                                    formula.shared_range =
+                                if open_cell.formula.kind == "shared" {
+                                    open_cell.formula.shared_id =
+                                        Some(integer(attrs.required("si")?)?);
+                                    open_cell.formula.shared_range =
                                         extent.map(|a| rect(&a.value)).transpose()?;
                                 }
                                 if *empty {
-                                    formula.end = span.end;
+                                    open_cell.formula.end = span.end;
                                 }
                             }
                             Local::V => {
@@ -1025,19 +996,7 @@ fn scan_inner<const COUNT_PATHS: bool>(
                         }
                     }
                     if direct {
-                        let cell = current
-                            .as_mut()
-                            .ok_or_else(|| unsupported("unbalanced cell payload", "worksheet"))?;
-                        match tag.local {
-                            Local::F => formula.end = span.end,
-                            Local::V => {
-                                let v = cell.value.as_mut().expect("opened v");
-                                v.close_start = span.start;
-                                v.span.end = span.end;
-                            }
-                            Local::Is => cell.inline.as_mut().expect("opened is").end = span.end,
-                            _ => {}
-                        }
+                        open_cell.close_payload(tag.local, &span)?;
                     }
                     if let Some(index) = index.as_mut() {
                         if position == Position::Row {
@@ -1049,22 +1008,23 @@ fn scan_inner<const COUNT_PATHS: bool>(
                         }
                     }
                     if is_cell {
-                        let cell = current
+                        let cell = open_cell
+                            .cell
                             .as_mut()
                             .ok_or_else(|| unsupported("unbalanced cell", "worksheet"))?;
                         cell.span.end = span.end;
                         let emitted_value = (!cell.has_formula).then(|| {
                             cell.decode(
-                                std::mem::take(&mut literal_text),
-                                std::mem::take(&mut inline_text),
+                                std::mem::take(&mut open_cell.literal_text),
+                                std::mem::take(&mut open_cell.inline_text),
                             )
                         });
                         let refusal = emitted_value
                             .as_ref()
                             .and_then(|value| cell.refusal(bytes, value));
-                        cell.dynamic_anchor_extent(&formula)?;
+                        cell.dynamic_anchor_extent(&open_cell.formula)?;
                         if cell.has_formula
-                            && formula.kind == "array"
+                            && open_cell.formula.kind == "array"
                             && let Some(extent) = cell.dynamic.as_ref().and_then(|d| d.array_ref)
                         {
                             // cm/XLDAPR and legacy array anchors share the same
@@ -1099,29 +1059,32 @@ fn scan_inner<const COUNT_PATHS: bool>(
                                 col: cell.col,
                                 generated_child_hint: generated_children
                                     .contains(cell.row, cell.col),
-                                style: current_style.take(),
-                                raw_coordinate_span: current_raw_coordinate.take(),
-                                raw_type_span: current_raw_type.take(),
-                                raw_style_span: current_raw_style.take(),
+                                style: open_cell.style.take(),
+                                raw_coordinate_span: open_cell.raw_coordinate.take(),
+                                raw_type_span: open_cell.raw_type.take(),
+                                raw_style_span: open_cell.raw_style.take(),
                                 raw_value_span: cell
                                     .value
                                     .as_ref()
                                     .map(|v| v.open_end..v.close_start),
                                 value,
                             })?;
-                            current = None;
+                            open_cell.cell = None;
                         } else {
-                            if formula.kind == "normal" && formula.text.trim().is_empty() {
+                            if open_cell.formula.kind == "normal"
+                                && open_cell.formula.text.trim().is_empty()
+                            {
                                 return Err(unsupported("empty ordinary formula", "worksheet"));
                             }
-                            if formula.end == 0 {
+                            if open_cell.formula.end == 0 {
                                 return Err(unsupported("missing formula boundary", "worksheet"));
                             }
                             cells.push(
-                                current
+                                open_cell
+                                    .cell
                                     .take()
                                     .expect("open cell")
-                                    .retain(std::mem::take(&mut formula), bytes),
+                                    .retain(std::mem::take(&mut open_cell.formula), bytes),
                             );
                             if cells.len() > options.limits.max_formula_cells {
                                 return Err(unsupported("formula cell count limit", "worksheet"));
