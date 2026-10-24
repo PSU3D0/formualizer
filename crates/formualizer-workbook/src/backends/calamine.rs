@@ -186,7 +186,9 @@ fn read_slice(source: &[u8], position: &mut u64, buf: &mut [u8]) -> std::io::Res
 }
 
 /// Retained source access shared by XLSX readers without reopening paths.
+#[cfg(feature = "xlsx-recalc")]
 pub(crate) struct XlsxSource(SharedXlsxReader);
+#[cfg(feature = "xlsx-recalc")]
 impl XlsxSource {
     pub(crate) fn from_bytes(bytes: Vec<u8>) -> Self {
         Self(SharedXlsxReader::from_bytes(bytes))
