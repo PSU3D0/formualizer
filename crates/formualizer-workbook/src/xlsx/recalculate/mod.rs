@@ -63,6 +63,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
 #[cfg(not(target_arch = "wasm32"))]
 use std::io::Read;
+#[cfg(not(target_arch = "wasm32"))]
 use std::io::Write;
 use std::ops::Range;
 #[cfg(not(target_arch = "wasm32"))]
