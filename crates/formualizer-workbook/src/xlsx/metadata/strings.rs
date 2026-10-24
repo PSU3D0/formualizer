@@ -1,7 +1,8 @@
 //! Positional shared strings decoded without mutating source XML.
 //! Text-owned nested events and XML whitespace preserve reader compatibility.
-use crate::xlsx::recalculate::sheet::events::DisplayString;
-use crate::xlsx::recalculate::{IoError, XlsxRecalculateOptions, xml};
+use crate::xlsx::worksheet::events::DisplayString;
+use crate::xlsx::{options::ReadOptions, xml};
+use crate::{IoError, cache_recalculate::XlsxRecalculateOptions};
 
 #[derive(Debug, Default)]
 pub(in crate::xlsx) struct SharedStringTable(Vec<String>);
@@ -9,6 +10,14 @@ impl SharedStringTable {
     pub(in crate::xlsx) fn parse(
         bytes: &[u8],
         options: &XlsxRecalculateOptions,
+    ) -> Result<Self, IoError> {
+        Self::parse_read(bytes, &ReadOptions::from(options))
+    }
+
+    /// Extraction uses shared read bounds, not evaluation/publication admission.
+    pub(in crate::xlsx) fn parse_read(
+        bytes: &[u8],
+        options: &ReadOptions,
     ) -> Result<Self, IoError> {
         let mut values = Vec::new();
         let mut current: Option<DisplayString<'_>> = None;
