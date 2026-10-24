@@ -270,6 +270,47 @@ fn native_scalar_text_and_formula_attribute_refusals_match() {
     );
 }
 
+#[cfg(feature = "xlsx-recalc")]
+#[test]
+fn native_compatible_row_addresses_match() {
+    use formualizer_workbook::backends::NativeXlsxAdapter;
+    for row in ["a1", "A01", "A0001", "a01", "&#65;1"] {
+        let bytes = book(&[Ws::new("Sheet1", vec![formula("A1", "1")])], "");
+        let parts = edit(
+            unpack(&bytes),
+            "xl/worksheets/sheet1.xml",
+            "<row r=\"1\">",
+            &format!("<row r=\"{row}\">"),
+        );
+        let bytes = pack(&parts);
+        let baseline = Workbook::from_reader(
+            CalamineAdapter::open_bytes(bytes.clone()).unwrap(),
+            LoadStrategy::EagerAll,
+            WorkbookConfig::ephemeral(),
+        );
+        let native = Workbook::from_reader(
+            NativeXlsxAdapter::open_bytes(bytes).unwrap(),
+            LoadStrategy::EagerAll,
+            WorkbookConfig::ephemeral(),
+        );
+        match (baseline, native) {
+            (Ok(mut baseline), Ok(mut native)) => {
+                baseline.evaluate_all().unwrap();
+                native.evaluate_all().unwrap();
+                assert_eq!(
+                    baseline.get_value("Sheet1", 1, 1),
+                    native.get_value("Sheet1", 1, 1),
+                    "{row}"
+                );
+            }
+            (Err(baseline), Err(native)) => {
+                assert_eq!(format!("{baseline:?}"), format!("{native:?}"), "{row}")
+            }
+            _ => panic!("different admission for row {row}"),
+        }
+    }
+}
+
 #[test]
 fn cached_links_eager() {
     check_mode(WorkbookConfig::ephemeral());

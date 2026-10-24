@@ -373,11 +373,25 @@ impl<'a, const STRICT: bool> SheetState<'a, STRICT> {
             let next_row = if STRICT {
                 integer(attrs.required("r")?)?
             } else {
-                attrs
-                    .value("r")
-                    .map(integer)
-                    .transpose()?
-                    .unwrap_or(self.row.saturating_add(1))
+                match attrs.attribute("", "r") {
+                    Some(attribute) => {
+                        let raw = raw_attribute_span(context.bytes, &attribute.span)?;
+                        let raw = &context.bytes[raw];
+                        if let Some(byte) = raw.iter().find(|byte| !byte.is_ascii_alphanumeric()) {
+                            return Err(IoError::Calamine(calamine::Error::Xlsx(
+                                calamine::XlsxError::Alphanumeric(*byte),
+                            )));
+                        }
+                        // Ordinary readers accept an A1-shaped row address too.
+                        // Its row component remains subject to the same grid bound.
+                        integer(
+                            attribute
+                                .value
+                                .trim_start_matches(|c: char| c.is_ascii_alphabetic()),
+                        )?
+                    }
+                    None => self.row.saturating_add(1),
+                }
             };
             if STRICT && self.raw_row_refusal_span.is_none() {
                 let raw = raw_attribute_span(context.bytes, &attrs.required_attribute("r")?.span)?;
