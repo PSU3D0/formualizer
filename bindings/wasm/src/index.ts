@@ -584,7 +584,7 @@ export interface SheetPortEvaluateOptions {
  * `fromJsonWithOptions` / `fromXlsxBytesWithOptions` loaders.
  */
 export interface WorkbookLoadOptions {
-  /** XLSX reader only: Calamine remains the default; native is opt-in. */
+  /** XLSX reader only: native is the default; calamine is a native compatibility alias. */
   backend?: 'calamine' | 'native';
   /** Opt into experimental FormulaPlane span evaluation. */
   spanEvaluation?: boolean;

@@ -65,15 +65,36 @@ fn native_and_legacy_name_share_path_bytes_and_reader_ingress() {
 fn cancellation_is_checked_before_admission_and_during_load() {
     let token = CancelToken::new();
     token.cancel();
-    assert!(NativeXlsxAdapter::open_bytes_cancellable(b"not a zip".to_vec(), token).is_err());
+    let error = NativeXlsxAdapter::open_bytes_cancellable(b"not a zip".to_vec(), token)
+        .err()
+        .unwrap();
+    assert!(matches!(error, IoError::Engine(error)
+        if error.kind == formualizer_common::ExcelErrorKind::Cancelled));
     let token = CancelToken::new();
     let adapter = NativeXlsxAdapter::open_bytes_cancellable(fixture("n"), token.clone()).unwrap();
     token.cancel();
+    let error = Workbook::from_reader(adapter, LoadStrategy::EagerAll, WorkbookConfig::ephemeral())
+        .err()
+        .unwrap();
+    assert!(matches!(error, IoError::Engine(error)
+        if error.kind == formualizer_common::ExcelErrorKind::Cancelled));
+}
+#[cfg(any(unix, windows))]
+#[test]
+fn direct_mmap_failure_is_an_ordinary_error_without_shared_file_fallback() {
+    let file = tempfile::NamedTempFile::new().unwrap();
+    let error = NativeXlsxAdapter::open_path_with_source(file.path(), XlsxPathSource::DirectMmap)
+        .err()
+        .unwrap();
+    assert!(matches!(error, IoError::Io(ref error)
+        if error.kind() == std::io::ErrorKind::InvalidInput));
     assert!(
-        Workbook::from_reader(adapter, LoadStrategy::EagerAll, WorkbookConfig::ephemeral())
-            .is_err()
+        error
+            .to_string()
+            .contains("cannot memory-map an empty XLSX file")
     );
 }
+
 #[test]
 fn malformed_cell_types_use_native_error_payload_and_preserve_display() {
     let mut adapter = NativeXlsxAdapter::open_bytes(fixture("unknown")).unwrap();

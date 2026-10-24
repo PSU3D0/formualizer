@@ -131,6 +131,8 @@ print(wb.get_value("Summary", 5, 2))       # read an output (B5)
 
 ### Rust
 
+In this checkout, the legacy `calamine` feature and `CalamineAdapter` names below are native-reader compatibility aliases. New integrations can use `xlsx-recalc` and `NativeXlsxAdapter`; see the [migration guide](docs/native-xlsx-migration.md).
+
 ```toml
 [dependencies]
 formualizer = { version = "0.10", features = ["calamine"] }
@@ -174,7 +176,7 @@ More in the [quickstarts](https://www.formualizer.dev/docs/quickstarts) for [Rus
 |---|---|
 | **400+ Excel functions** | Math, text, lookup (`XLOOKUP`, `VLOOKUP`, `INDEX`/`MATCH`), date and time, statistics, financial, database, engineering, with edge cases checked against Excel. |
 | **Dynamic arrays** | `FILTER`, `UNIQUE`, `SORT`, `SORTBY`, `SEQUENCE`, `LET`, `LAMBDA`, with spill semantics |
-| **Real workbooks** | Load and write XLSX (Calamine, umya), CSV and JSON. Defined names, tables and cross-sheet references. |
+| **Real workbooks** | Load and write XLSX (native reader, umya writer), CSV and JSON. Defined names, tables and cross-sheet references. |
 | **Incremental recalculation** | Change an input and only its dependents recalculate. Cycle detection, iterative calculation and optional parallel evaluation. |
 | **Undo / redo** | A transactional change log with action grouping, rollback and replay |
 | **SheetPort** | Treat a spreadsheet as a typed function: inputs and outputs declared in code or YAML, validated |

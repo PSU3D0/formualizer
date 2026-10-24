@@ -38,3 +38,19 @@ def test_native_bytes_entrypoints(xlsx_builder, backend):
 def test_native_invalid_package_is_io_error():
     with pytest.raises(OSError, match="open failed"):
         fz.Workbook.from_bytes(b"not an XLSX package", backend="native")
+
+
+@pytest.mark.parametrize("backend", ["unknown", "Calamine", "xlsx", ""])
+def test_unknown_backends_are_not_silently_fallbacks(xlsx_builder, backend):
+    path = str(xlsx_builder(_populate))
+    for loader in [fz.load_workbook, fz.Workbook.load_path, fz.Workbook.from_path]:
+        with pytest.raises(ValueError, match="Unsupported backend"):
+            loader(path, backend=backend)
+    for loader in [fz.load_workbook_bytes, fz.Workbook.from_bytes]:
+        with pytest.raises(ValueError, match="Unsupported backend"):
+            loader(b"not an XLSX package", backend=backend)
+
+
+def test_legacy_reader_name_does_not_claim_a_writer():
+    with pytest.raises(NotImplementedError, match="does not currently support XLSX byte export"):
+        fz.Workbook().to_xlsx_bytes(backend="calamine")

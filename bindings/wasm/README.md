@@ -77,7 +77,7 @@ console.log(wb.sheet('Summary').getValue(5, 2)); // B5
 
 For Node.js, read the bytes with `readFile` from `node:fs/promises` instead of `fetch`. Initialization and WASM asset loading depend on your runtime and bundler; see the [JS quickstart](https://www.formualizer.dev/docs/quickstarts/js-wasm-quickstart). Calculation methods are synchronous: use a Web Worker for large browser workloads to keep the UI responsive.
 
-Calamine remains the default XLSX reader. Opt into the native reader with `Workbook.fromXlsxBytes(bytes, { backend: 'native' })`. The raw WASM API accepts the same option through `Workbook.fromXlsxBytesWithOptions(bytes, { backend: 'native' })`. The native backend requires the existing `xlsx-recalc` feature (included in default builds); it does not enable XLSX writing.
+Native is the default XLSX reader. `backend: 'calamine'` remains a native compatibility alias. The raw WASM API accepts the same option through `Workbook.fromXlsxBytesWithOptions`. Native reading requires `xlsx-recalc` (included in default builds); it does not enable XLSX writing.
 
 ### Cache-only XLSX recalculation
 
@@ -290,7 +290,7 @@ parse(formula: string, dialect?: FormulaDialect): Promise<ASTNodeData>
 | `unregisterFunction(name)` | Remove a previously registered custom function |
 | `listFunctions()` | List registered custom function metadata |
 | `static fromJson(json)` | Load workbook from JSON string |
-| `static fromXlsxBytes(bytes, options?)` | Load XLSX bytes; `backend: 'calamine'` (default) or opt-in `'native'` |
+| `static fromXlsxBytes(bytes, options?)` | Load XLSX bytes; `backend: 'native'` (default) or `'calamine'` (native alias) |
 | `static fromXlsxBytesWithOptions(bytes, options)` / `static fromJsonWithOptions(json, options)` | Same loaders with `WorkbookLoadOptions` |
 | `inspectCell(cell, options?)` / `precedents(...)` / `dependents(...)` / `trace(...)` / `rangePage(...)` | Inspection and dependency tracing |
 | `getEvalPlan(targets)` | Inspect the evaluation schedule before computing |

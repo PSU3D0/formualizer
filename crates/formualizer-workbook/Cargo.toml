@@ -101,7 +101,7 @@ required-features = ["xlsx-recalc"]
 [[test]]
 name = "calamine"
 path = "tests/calamine/mod.rs"
-required-features = ["calamine"]
+required-features = ["xlsx-recalc"]
 
 [[test]]
 name = "umya3_export"

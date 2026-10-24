@@ -783,7 +783,7 @@ impl Workbook {
         }
         #[cfg(not(feature = "json"))]
         {
-            let _ = json;
+            let _ = (json, options);
             Err(js_error("json feature not enabled"))
         }
     }
