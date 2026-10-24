@@ -4,6 +4,7 @@ mod content_types;
 pub(super) use crate::xlsx::metadata::read_source as read_workbook;
 use crate::xlsx::options::{ReadOptions, ReadPolicy};
 mod ownership;
+mod physical;
 mod rewrite;
 use crate::xlsx::recalculate::{IoError, XlsxRecalculateOptions, checkpoint, unsupported, xml};
 pub(super) use content_types::add_override;
@@ -496,11 +497,10 @@ pub(super) fn admit_with<'a>(
         }
         ReadPolicy::Compatible => {
             let directory = audit_directory_with::<false>(bytes, options)?;
-            ownership::audit_payloads::<false>(
-                open::<false>(bytes, &directory)?,
-                &HashSet::new(),
-                options,
-            )
+            // Audit physical central-directory entries before aggregate ZIP
+            // name resolution can discard shadowed duplicate members.
+            physical::audit(bytes, &directory, options)?;
+            open::<false>(bytes, &directory)
         }
     }
 }

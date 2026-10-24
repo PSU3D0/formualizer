@@ -121,11 +121,14 @@ pub(super) fn audit<'a>(
     // The real discovery repeats from verified metadata after the full audit.
     let needed = closure(&mut archive, options).unwrap_or_default();
     archive.provisional = None;
-    audit_payloads::<true>(archive, &needed, &ReadOptions::from(options))
+    audit_unique_payloads(archive, &needed, &ReadOptions::from(options))
 }
 
-/// CRC, actual expansion and cancellation are independent of binding policy.
-pub(super) fn audit_payloads<'a, const STRICT: bool>(
+/// Strict directory admission rejects duplicate names and `open` verifies
+/// equal raw/indexed counts: indices therefore cover every physical member.
+/// Preserve this single-inflate path and its provisional-error replay order.
+/// Permissive admission instead audits raw members before name resolution.
+fn audit_unique_payloads<'a>(
     mut archive: Archive<'a>,
     needed: &HashSet<String>,
     options: &ReadOptions,
@@ -141,10 +144,10 @@ pub(super) fn audit_payloads<'a, const STRICT: bool>(
         if file.encrypted() {
             return Err(unsupported("encrypted ZIP member", &name));
         }
-        if STRICT && (name.starts_with("_xmlsignatures/") || name.ends_with("origin.sigs")) {
+        if name.starts_with("_xmlsignatures/") || name.ends_with("origin.sigs") {
             return Err(unsupported("package digital signature", "XLSX package"));
         }
-        if STRICT && name.starts_with("xl/richData/") {
+        if name.starts_with("xl/richData/") {
             return Err(unsupported("rich value data", "XLSX package"));
         }
         drop(file);

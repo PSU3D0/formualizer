@@ -1,4 +1,5 @@
-//! Transient cell state. Raw source spellings stay separate from decoded text.
+//! Typed per-sheet admission/geometry state and transient open-cell value/formula
+//! state. Raw source spellings stay separate from decoded text and retained marks.
 use super::*;
 
 #[derive(Default)]

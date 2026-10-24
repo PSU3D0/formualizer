@@ -140,11 +140,77 @@ fn compatible_relationship_extraction_has_no_strict_binding_authority() {
 }
 
 #[test]
+fn duplicate_physical_crc_cannot_be_shadowed() {
+    use crate::xlsx::options::ReadOptions;
+    for corrupt_first in [true, false] {
+        let mut entries = workbook();
+        entries.push(entries[0].clone());
+        let mut bytes = build(&entries);
+        let index = if corrupt_first { 0 } else { entries.len() - 1 };
+        // This raw writer uses stored members without extras/descriptors here.
+        let local: usize = entries[..index]
+            .iter()
+            .map(|e| 30 + e.name.len() + e.data.len())
+            .sum();
+        bytes[local + 30 + entries[index].name.len()] ^= 1;
+        assert!(
+            package::admit_with(&bytes, &ReadOptions::default(), |_| panic!(
+                "strict binding"
+            ))
+            .is_err(),
+            "CRC failure in physical member {index} must not be hidden by name resolution"
+        );
+    }
+}
+
+#[test]
+fn duplicate_physical_expansion_counts_shadowed_members() {
+    use crate::xlsx::options::ReadOptions;
+    let mut entries = workbook();
+    entries.push(entries[0].clone());
+    let physical: usize = entries.iter().map(|e| e.data.len()).sum();
+    let mut options = ReadOptions::default();
+    options.limits.max_expanded_bytes = physical - entries[0].data.len();
+    let bytes = build(&entries);
+    assert!(
+        package::admit_with(&bytes, &options, |_| panic!("strict binding")).is_err(),
+        "the shadowed member must count toward actual cumulative expansion"
+    );
+    // A shadowed member independently exceeding the per-member bound is also refused.
+    entries[0].data = vec![b'x'; options.limits.max_expanded_bytes + 1];
+    let bytes = build(&entries);
+    assert!(package::admit_with(&bytes, &options, |_| panic!("strict binding")).is_err());
+}
+
+#[test]
+fn duplicate_physical_valid_members_keep_permissive_name_resolution() {
+    use crate::xlsx::options::ReadOptions;
+    let mut entries = workbook();
+    let mut winner = entries[0].clone();
+    winner.data = b"duplicate winner".to_vec();
+    entries.push(winner.clone());
+    let bytes = build(&entries);
+    let mut archive = package::admit_with(&bytes, &ReadOptions::default(), |_| {
+        panic!("strict binding")
+    })
+    .unwrap();
+    assert_eq!(archive.len(), entries.len() - 1);
+    assert_eq!(
+        package::read_part(&mut archive, &winner.name, 1024).unwrap(),
+        winner.data
+    );
+}
+
+#[test]
 fn producer_containers_are_admitted() {
     for (name, bytes) in FIXTURES {
         if let Err(e) = admit(bytes) {
             panic!("{name}: {e}");
         }
+        package::admit_with(bytes, &crate::xlsx::options::ReadOptions::default(), |_| {
+            panic!("compatible producer fixture must not invoke strict binding")
+        })
+        .unwrap_or_else(|e| panic!("compatible physical audit {name}: {e}"));
     }
 }
 

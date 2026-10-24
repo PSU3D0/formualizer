@@ -1,5 +1,6 @@
-//! Borrowed worksheet value events. Workbook-owned shared strings and style
-//! indices are resolved by the sink, not copied into per-cell owned records.
+//! Borrowed worksheet value and formula-source events, independent of retained
+//! publication marks. Workbook-owned shared strings and style indices are
+//! resolved by the sink, not copied into per-cell owned records.
 use super::*;
 
 /// Dependency-owned until the common reader's error vocabulary is extracted.
