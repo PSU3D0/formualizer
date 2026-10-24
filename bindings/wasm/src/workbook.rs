@@ -44,7 +44,7 @@ thread_local! {
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct JsWorkbookLoadOptions {
-    /// XLSX reader: `calamine` (default) or opt-in `native`.
+    /// XLSX reader: `native` (default) or `calamine` (compatibility alias).
     backend: Option<String>,
     span_evaluation: Option<bool>,
     /// Cycle detection mode: `"static"` | `"runtime"` (spec §2).
@@ -788,15 +788,15 @@ impl Workbook {
         }
     }
 
-    /// Construct from XLSX bytes via the Calamine reader path (feature: calamine)
+    /// Construct from XLSX bytes using the native Compatible reader.
     #[wasm_bindgen(js_name = "fromXlsxBytes")]
     pub fn from_xlsx_bytes(bytes: Vec<u8>) -> Result<Workbook, JsValue> {
         Self::from_xlsx_bytes_with_options(bytes, None)
     }
 
     /// Construct from XLSX bytes with options, e.g. `{ backend: "native" }`
-    /// for the opt-in native reader, or `{ spanEvaluation: true }` for spans.
-    /// Calamine remains the default reader.
+    /// for the native reader, or `{ spanEvaluation: true }` for spans.
+    /// Native is the default; `calamine` is a compatibility alias.
     #[wasm_bindgen(js_name = "fromXlsxBytesWithOptions")]
     pub fn from_xlsx_bytes_with_options(
         bytes: Vec<u8>,
@@ -806,7 +806,7 @@ impl Workbook {
         #[cfg(not(any(feature = "calamine", feature = "xlsx-recalc")))]
         {
             let _ = bytes;
-            match parsed.backend.as_deref().unwrap_or("calamine") {
+            match parsed.backend.as_deref().unwrap_or("native") {
                 "calamine" => Err(js_error("calamine feature not enabled")),
                 "native" => Err(js_error("native backend requires the xlsx-recalc feature")),
                 other => Err(js_error(format!(
@@ -816,25 +816,8 @@ impl Workbook {
         }
         #[cfg(any(feature = "calamine", feature = "xlsx-recalc"))]
         {
-            let wb = match parsed.backend.as_deref().unwrap_or("calamine") {
-                "calamine" => {
-                    #[cfg(feature = "calamine")]
-                    {
-                        use formualizer::workbook::backends::CalamineAdapter;
-                        use formualizer::workbook::traits::SpreadsheetReader;
-                        let adapter = <CalamineAdapter as SpreadsheetReader>::open_bytes(bytes)
-                            .map_err(|e| js_error(format!("open failed: {e}")))?;
-                        formualizer::workbook::Workbook::from_reader(
-                            adapter,
-                            formualizer::workbook::LoadStrategy::EagerAll,
-                            workbook_config_from_parsed(&parsed)?,
-                        )
-                        .map_err(|e| js_error(format!("load failed: {e}")))?
-                    }
-                    #[cfg(not(feature = "calamine"))]
-                    return Err(js_error("calamine feature not enabled"));
-                }
-                "native" => {
+            let wb = match parsed.backend.as_deref().unwrap_or("native") {
+                "native" | "calamine" => {
                     #[cfg(feature = "xlsx-recalc")]
                     {
                         use formualizer::workbook::backends::NativeXlsxAdapter;

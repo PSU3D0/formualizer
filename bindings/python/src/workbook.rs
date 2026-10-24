@@ -19,14 +19,7 @@ type SheetCache = HashMap<String, SheetCellMap>;
 
 type PyObject = pyo3::Py<pyo3::PyAny>;
 
-#[cfg(not(target_os = "emscripten"))]
-pub(crate) const DEFAULT_XLSX_BYTE_BACKEND: &str = "calamine";
-
-// Pyodide builds Calamine (and source recalculation) since Pyodide 314, but
-// keeps Umya as its default byte backend so existing Pyodide callers see the
-// same loader; pass backend='calamine' to choose it.
-#[cfg(target_os = "emscripten")]
-pub(crate) const DEFAULT_XLSX_BYTE_BACKEND: &str = "umya";
+pub(crate) const DEFAULT_XLSX_BYTE_BACKEND: &str = "native";
 
 fn validate_cell_coords(row: u32, col: u32) -> PyResult<()> {
     if row == 0 || col == 0 {
@@ -277,7 +270,7 @@ impl PyWorkbook {
     ///
     /// Args:
     ///     path: Path to the `.xlsx` file.
-    ///     backend: `calamine` (default), opt-in `native`, or `umya`.
+    ///     backend: `native` (default), `calamine` (native alias), or `umya`.
     ///     path_source: `XlsxPathSource.SHARED_FILE` (the safe default) or
     ///         `XlsxPathSource.DIRECT_MMAP`. Direct mmap requires a native
     ///         Calamine `.xlsx` path whose underlying file is not destructively
@@ -361,7 +354,7 @@ impl PyWorkbook {
         config: Option<PyWorkbookConfig>,
         span_evaluation: Option<bool>,
     ) -> PyResult<Self> {
-        let backend = backend.unwrap_or("calamine");
+        let backend = backend.unwrap_or(DEFAULT_XLSX_BYTE_BACKEND);
         let path_source = path_source.unwrap_or_default();
         if path_source == PyXlsxPathSource::DirectMmap && !matches!(backend, "calamine" | "native")
         {
@@ -380,7 +373,7 @@ impl PyWorkbook {
         }
         let cfg = resolve_workbook_config(mode, config, span_evaluation)?;
         match backend {
-            "native" => {
+            "native" | "calamine" => {
                 #[cfg(target_os = "emscripten")]
                 if path_source == PyXlsxPathSource::DirectMmap {
                     return Err(PyErr::new::<pyo3::exceptions::PyNotImplementedError, _>(
@@ -410,39 +403,6 @@ impl PyWorkbook {
                     PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("load failed: {e}"))
                 })?;
                 Ok(Self::from_inner_workbook(wb))
-            }
-            "calamine" => {
-                #[cfg(target_os = "emscripten")]
-                if path_source == PyXlsxPathSource::DirectMmap {
-                    return Err(PyErr::new::<pyo3::exceptions::PyNotImplementedError, _>(
-                        "XlsxPathSource.DIRECT_MMAP is unavailable in the Pyodide build; use SHARED_FILE or an in-memory XLSX byte API",
-                    ));
-                }
-                {
-                    use formualizer::workbook::backends::CalamineAdapter;
-                    let adapter = CalamineAdapter::open_path_with_source(
-                        std::path::Path::new(path),
-                        path_source.into(),
-                    )
-                    .map_err(|e| {
-                        let source = match path_source {
-                            PyXlsxPathSource::SharedFile => "SHARED_FILE",
-                            PyXlsxPathSource::DirectMmap => "DIRECT_MMAP",
-                        };
-                        PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
-                            "open failed with XlsxPathSource.{source}: {e}"
-                        ))
-                    })?;
-                    let wb = formualizer::workbook::Workbook::from_reader(
-                        adapter,
-                        formualizer::workbook::LoadStrategy::EagerAll,
-                        cfg,
-                    )
-                    .map_err(|e| {
-                        PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("load failed: {e}"))
-                    })?;
-                    Ok(Self::from_inner_workbook(wb))
-                }
             }
             "umya" => {
                 use formualizer::workbook::backends::UmyaAdapter;
@@ -476,8 +436,7 @@ impl PyWorkbook {
     ///
     /// Args:
     ///     data: XLSX payload as `bytes`.
-    ///     backend: Backend name. Defaults to `calamine` in native Python builds
-    ///         and `umya` in Pyodide. `native` is opt-in on either platform.
+    ///     backend: Backend name. Defaults to `native` on all platforms. `calamine` is a compatibility alias.
     ///     mode/config: Optional workbook configuration.
     #[classmethod]
     #[pyo3(signature = (data, backend=None, *, mode=None, config=None, span_evaluation=None))]
@@ -1595,7 +1554,7 @@ impl PyWorkbook {
         cfg: formualizer::workbook::WorkbookConfig,
     ) -> PyResult<Self> {
         match backend {
-            "native" => {
+            "native" | "calamine" => {
                 use formualizer::workbook::backends::NativeXlsxAdapter;
                 use formualizer::workbook::traits::SpreadsheetReader;
                 let adapter = NativeXlsxAdapter::open_bytes(data).map_err(|e| {
@@ -1617,24 +1576,6 @@ impl PyWorkbook {
 
                 let adapter =
                     <UmyaAdapter as SpreadsheetReader>::open_bytes(data).map_err(|e| {
-                        PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("open failed: {e}"))
-                    })?;
-                let wb = formualizer::workbook::Workbook::from_reader(
-                    adapter,
-                    formualizer::workbook::LoadStrategy::EagerAll,
-                    cfg,
-                )
-                .map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("load failed: {e}"))
-                })?;
-                Ok(Self::from_inner_workbook(wb))
-            }
-            "calamine" => {
-                use formualizer::workbook::backends::CalamineAdapter;
-                use formualizer::workbook::traits::SpreadsheetReader;
-
-                let adapter =
-                    <CalamineAdapter as SpreadsheetReader>::open_bytes(data).map_err(|e| {
                         PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("open failed: {e}"))
                     })?;
                 let wb = formualizer::workbook::Workbook::from_reader(
@@ -1850,8 +1791,8 @@ mod tests {
 
     #[cfg(not(target_os = "emscripten"))]
     #[test]
-    fn native_xlsx_byte_loads_default_to_calamine() {
-        assert_eq!(DEFAULT_XLSX_BYTE_BACKEND, "calamine");
+    fn xlsx_byte_loads_default_to_native() {
+        assert_eq!(DEFAULT_XLSX_BYTE_BACKEND, "native");
     }
 
     #[test]

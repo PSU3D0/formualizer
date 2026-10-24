@@ -1,4 +1,4 @@
-"""The native XLSX reader is opt-in through the existing load entrypoints."""
+"""Native is the default reader; explicit legacy names remain compatible."""
 
 import pytest
 
@@ -15,18 +15,22 @@ def _populate(workbook):
 @pytest.mark.parametrize(
     "source", [fz.XlsxPathSource.SHARED_FILE, fz.XlsxPathSource.DIRECT_MMAP]
 )
-def test_native_path_entrypoints(xlsx_builder, source):
+@pytest.mark.parametrize("backend", [None, "native", "calamine"])
+def test_native_path_entrypoints(xlsx_builder, source, backend):
     path = str(xlsx_builder(_populate))
     for loader in [fz.load_workbook, fz.Workbook.load_path, fz.Workbook.from_path]:
-        workbook = loader(path, backend="native", path_source=source)
+        kwargs = {} if backend is None else {"backend": backend}
+        workbook = loader(path, path_source=source, **kwargs)
         assert workbook.evaluate_cell("Sheet1", 1, 2) == 42.0
         assert workbook.evaluate_cell("Sheet1", 2, 1) == "retained text"
 
 
-def test_native_bytes_entrypoints(xlsx_builder):
+@pytest.mark.parametrize("backend", [None, "native", "calamine"])
+def test_native_bytes_entrypoints(xlsx_builder, backend):
     payload = xlsx_builder(_populate).read_bytes()
     for loader in [fz.load_workbook_bytes, fz.Workbook.from_bytes]:
-        workbook = loader(payload, backend="native", span_evaluation=False)
+        kwargs = {} if backend is None else {"backend": backend}
+        workbook = loader(payload, span_evaluation=False, **kwargs)
         assert workbook.evaluate_cell("Sheet1", 1, 2) == 42.0
         assert workbook.evaluate_cell("Sheet1", 2, 1) == "retained text"
 
